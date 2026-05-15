@@ -1039,7 +1039,62 @@ async def generate_analysis(
     out_path = analysis_path(workspace_root, epoch_id)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(composed))
+
+    _write_html_companion(out_path, epoch_id, typed_gens, typed_exps)
     return out_path
+
+
+def _write_html_companion(
+    md_path: Path,
+    epoch_id: str,
+    typed_gens: list[Generation],
+    typed_exps: list[Experiment],
+) -> None:
+    """Write the sibling ``analysis.html`` next to ``analysis.md``.
+
+    Best-effort: HTML rendering failures are not fatal — the markdown report
+    is the canonical artifact. Logs a debug message and continues.
+    """
+    try:
+        from zicato.epoch.html_report import HtmlReportContext, write_html_report
+    except ImportError:  # pragma: no cover - html_report ships in the same package
+        return
+
+    promoted_count = sum(
+        1
+        for e in typed_exps
+        if e.outcome is not None and e.outcome.tournament_decision == "promoted"
+    )
+    rejected_count = sum(
+        1
+        for e in typed_exps
+        if e.outcome is not None and e.outcome.tournament_decision == "rejected"
+    )
+    final_scalar = 0.0
+    for e in typed_exps:
+        if e.outcome is not None and e.outcome.tournament_decision == "promoted":
+            final_scalar += e.outcome.scalar_score_delta
+
+    ctx = HtmlReportContext(
+        epoch_id=epoch_id,
+        epoch_name=epoch_id,
+        duration="",
+        generations=typed_gens,
+        experiments=typed_exps,
+        final_scalar=final_scalar,
+        promoted_count=promoted_count,
+        rejected_count=rejected_count,
+        narrative_html="",
+    )
+    html_path = md_path.with_suffix(".html")
+    try:
+        write_html_report(html_path, ctx)
+    except Exception as exc:  # pragma: no cover - defensive; HTML is non-critical
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "skipping analysis.html (write_html_report raised): %s", exc
+        )
 
 
 __all__ = [
