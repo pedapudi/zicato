@@ -503,6 +503,20 @@ async def evolve_n_rounds(
                 phase=f"after_round_{round_idx}:{outcome.tournament_decision}",
             )
             beater.bump_now()
+            # Best-effort progressive analysis.html refresh so file://
+            # readers (and the dashboard's static fallback) see the
+            # latest lineage immediately after each round.
+            try:
+                from zicato.epoch.analysis import (  # noqa: PLC0415
+                    regenerate_in_progress_html,
+                )
+                from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
+
+                eid = epoch_id or current_epoch_id(workspace_root)
+                if eid:
+                    regenerate_in_progress_html(workspace_root, eid)
+            except Exception as exc:  # noqa: BLE001 — HTML refresh is non-critical
+                log.debug("progressive analysis.html refresh skipped: %s", exc)
             if outcome.tournament_decision == "promoted":
                 consecutive_rejections = 0
             else:

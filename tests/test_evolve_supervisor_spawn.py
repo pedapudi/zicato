@@ -110,15 +110,13 @@ def test_spawn_missing_binary_returns_none(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """If the binary can't be resolved, the helper prints a warning + returns None."""
-    monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(tmp_path / "missing"))
-    monkeypatch.setenv("PATH", "/nonexistent")
-    # The in-tree binary may exist on dev machines; mock the resolver to
-    # force a miss so this test is deterministic.
-    monkeypatch.setattr(
-        "zicato.cli.commands.evolve._resolve_supervisor_binary",
-        lambda: None,
-    )
+    # Replace the resolver via the module dict so the call inside
+    # _maybe_spawn_supervisor sees the override (the call site uses a
+    # global-name lookup against the same module globals).
+    import zicato.cli.commands.evolve as ev
+
+    monkeypatch.setattr(ev, "_resolve_supervisor_binary", lambda: None)
     proc = asyncio.run(
-        _maybe_spawn_supervisor(tmp_path, 7892, "127.0.0.1", disabled=False)
+        ev._maybe_spawn_supervisor(tmp_path, 7892, "127.0.0.1", disabled=False)
     )
     assert proc is None

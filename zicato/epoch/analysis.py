@@ -1055,6 +1055,22 @@ def _write_html_companion(
     Best-effort: HTML rendering failures are not fatal — the markdown report
     is the canonical artifact. Logs a debug message and continues.
     """
+    html_path = md_path.with_suffix(".html")
+    _render_html_report(html_path, epoch_id, typed_gens, typed_exps)
+
+
+def _render_html_report(
+    html_path: Path,
+    epoch_id: str,
+    typed_gens: list[Generation],
+    typed_exps: list[Experiment],
+) -> None:
+    """Shared HTML render — used by both the at-close + progressive paths.
+
+    The narrative section is left empty for the progressive variant. The
+    at-close path overwrites the file with the same shape after the LLM
+    narrative lands so structure is consistent.
+    """
     try:
         from zicato.epoch.html_report import HtmlReportContext, write_html_report
     except ImportError:  # pragma: no cover - html_report ships in the same package
@@ -1086,7 +1102,6 @@ def _write_html_companion(
         rejected_count=rejected_count,
         narrative_html="",
     )
-    html_path = md_path.with_suffix(".html")
     try:
         write_html_report(html_path, ctx)
     except Exception as exc:  # pragma: no cover - defensive; HTML is non-critical
@@ -1097,9 +1112,32 @@ def _write_html_companion(
         )
 
 
+def regenerate_in_progress_html(workspace_root: Path, epoch_id: str) -> Path | None:
+    """Re-render ``analysis.html`` mid-epoch from on-disk experiments.
+
+    Deterministic — no LLM call. Reads every ``experiment.json`` under the
+    epoch's ``generations/``, hydrates the typed view used by the at-close
+    renderer, and writes a fresh HTML file. Returns the written path on
+    success or ``None`` if there is nothing to render yet.
+
+    Used by the orchestrator's evolve loop to keep the file ``file://``
+    readers (and the supervisor's dashboard) see in sync with the latest
+    round, rather than only at epoch close.
+    """
+    experiments = _collect_experiments(workspace_root, epoch_id)
+    typed_gens, typed_exps = _hydrate_typed_view(workspace_root, epoch_id, experiments)
+    if not typed_gens and not typed_exps:
+        return None
+    html_path = analysis_path(workspace_root, epoch_id).with_suffix(".html")
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    _render_html_report(html_path, epoch_id, typed_gens, typed_exps)
+    return html_path if html_path.exists() else None
+
+
 __all__ = [
     "REQUIRED_SECTIONS",
     "generate_analysis",
+    "regenerate_in_progress_html",
     "render_drift_kind_movement_table",
     "render_mermaid_lineage",
     "render_score_sparkline",
