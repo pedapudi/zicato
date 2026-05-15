@@ -190,9 +190,7 @@ def aggregate_generation_score(
 
     entry_count = len(losses)
     drift_loss_mean = drift_total / entry_count if entry_count > 0 else 0.0
-    pass_rate = (
-        pass_count / expectation_count if expectation_count > 0 else 1.0
-    )
+    pass_rate = pass_count / expectation_count if expectation_count > 0 else 1.0
 
     # Namespace aggregates are already weight-multiplied per
     # :func:`aggregate_namespaced_metrics` — they slot straight into

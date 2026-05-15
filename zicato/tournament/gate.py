@@ -140,9 +140,7 @@ def _regressed_namespaces(
     return regressed
 
 
-def _regressed_entries(
-    parent_agg: dict[str, Any], child_agg: dict[str, Any]
-) -> list[str]:
+def _regressed_entries(parent_agg: dict[str, Any], child_agg: dict[str, Any]) -> list[str]:
     """Return ids where parent passed and child failed (sorted).
 
     "Failed" means either ``pass_fail=False`` OR ``pass_fail=None`` on
