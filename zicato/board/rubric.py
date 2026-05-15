@@ -72,7 +72,7 @@ def _strip_code_fences(raw: str) -> str:
         else:
             text = text[3:]
     if text.endswith("```"):
-        text = text[: -3]
+        text = text[:-3]
     return text.strip()
 
 
@@ -166,7 +166,7 @@ async def evaluate_rubric_judge(
             aux_call_llm(_SYSTEM_PROMPT, user_prompt, ""),
             timeout=aux_call_timeout_s(),
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return ExpectationResult(
             kind="rubric",
             passed=False,

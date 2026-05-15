@@ -1,4 +1,4 @@
-"""Programmatic factory helpers for :class:`~zicato.core.Expectation`.
+r"""Programmatic factory helpers for :class:`~zicato.core.Expectation`.
 
 The board JSONL format encodes matcher specs as a single string field on
 :class:`~zicato.core.Expectation` (one wire shape per matcher kind). This
@@ -42,15 +42,11 @@ class Predicate:
     ``staticmethod``s for the namespacing.
     """
 
-    def __new__(cls) -> "Predicate":  # pragma: no cover — defensive
-        raise TypeError(
-            "Predicate is a namespace of static helpers; do not instantiate."
-        )
+    def __new__(cls) -> Predicate:  # pragma: no cover — defensive
+        raise TypeError("Predicate is a namespace of static helpers; do not instantiate.")
 
     @staticmethod
-    def contains(
-        substring: str, *, fires_on: ExpectationFiresOn = "final_output"
-    ) -> Expectation:
+    def contains(substring: str, *, fires_on: ExpectationFiresOn = "final_output") -> Expectation:
         """Pass iff ``final_output`` contains ``substring`` (case-sensitive).
 
         Empty substrings are rejected at matcher time (see
@@ -59,14 +55,10 @@ class Predicate:
         here — the operator should hear about the typo at run time
         regardless of which construction path produced the expectation.
         """
-        return Expectation(
-            kind="expected_text", spec=substring, fires_on=fires_on
-        )
+        return Expectation(kind="expected_text", spec=substring, fires_on=fires_on)
 
     @staticmethod
-    def regex(
-        pattern: str, *, fires_on: ExpectationFiresOn = "final_output"
-    ) -> Expectation:
+    def regex(pattern: str, *, fires_on: ExpectationFiresOn = "final_output") -> Expectation:
         """Pass iff ``re.search(pattern, final_output)`` matches."""
         return Expectation(kind="regex", spec=pattern, fires_on=fires_on)
 
@@ -87,9 +79,7 @@ class Predicate:
         return Expectation(kind="json_schema", spec=spec, fires_on=fires_on)
 
     @staticmethod
-    def python(
-        dotted_path: str, *, fires_on: ExpectationFiresOn = "final_output"
-    ) -> Expectation:
+    def python(dotted_path: str, *, fires_on: ExpectationFiresOn = "final_output") -> Expectation:
         """Pass iff the imported ``dotted_path`` callable returns ``True``.
 
         The dotted path must resolve to a callable accepting a
@@ -109,10 +99,8 @@ class Rubric:
     :func:`zicato.board.rubric.evaluate_rubric_judge`.
     """
 
-    def __new__(cls) -> "Rubric":  # pragma: no cover — defensive
-        raise TypeError(
-            "Rubric is a namespace of static helpers; do not instantiate."
-        )
+    def __new__(cls) -> Rubric:  # pragma: no cover — defensive
+        raise TypeError("Rubric is a namespace of static helpers; do not instantiate.")
 
     @staticmethod
     def judge(
@@ -147,13 +135,9 @@ class Rubric:
             matchers.
         """
         if scale[0] >= scale[1]:
-            raise ValueError(
-                f"Rubric.judge: scale must be (lo, hi) with lo < hi, got {scale!r}"
-            )
+            raise ValueError(f"Rubric.judge: scale must be (lo, hi) with lo < hi, got {scale!r}")
         if threshold is not None and not (scale[0] <= threshold <= scale[1]):
-            raise ValueError(
-                f"Rubric.judge: threshold {threshold} is outside scale {scale!r}"
-            )
+            raise ValueError(f"Rubric.judge: threshold {threshold} is outside scale {scale!r}")
         payload = {
             "rubric": rubric_text,
             "threshold": threshold,

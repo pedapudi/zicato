@@ -79,24 +79,25 @@ def load_board(path: Path) -> list[BoardEntry]:
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"{path}: line {line_no}: malformed JSON: {exc.msg}"
-                ) from exc
+                raise ValueError(f"{path}: line {line_no}: malformed JSON: {exc.msg}") from exc
             if not isinstance(payload, dict):
                 raise ValueError(
-                    f"{path}: line {line_no}: expected a JSON object, got "
-                    f"{type(payload).__name__}"
+                    f"{path}: line {line_no}: expected a JSON object, got {type(payload).__name__}"
                 )
+            # Back-compat alias: ``budget_s`` is the short field name
+            # preferred by Python-builder boards (see
+            # :class:`zicato.board.builder.Entry`). Promote it to the
+            # canonical ``wall_clock_budget_seconds`` when only the
+            # short form is present so older readers stay tolerant of
+            # boards written by the builder API.
+            if "budget_s" in payload and "wall_clock_budget_seconds" not in payload:
+                payload["wall_clock_budget_seconds"] = payload.pop("budget_s")
             try:
                 entry = validate_board_entry(payload)
             except (KeyError, ValueError) as exc:
-                raise ValueError(
-                    f"{path}: line {line_no}: invalid entry: {exc}"
-                ) from exc
+                raise ValueError(f"{path}: line {line_no}: invalid entry: {exc}") from exc
             if entry.id in seen_ids:
-                raise ValueError(
-                    f"{path}: line {line_no}: duplicate entry id {entry.id!r}"
-                )
+                raise ValueError(f"{path}: line {line_no}: duplicate entry id {entry.id!r}")
             seen_ids.add(entry.id)
             entries.append(entry)
 
@@ -104,11 +105,19 @@ def load_board(path: Path) -> list[BoardEntry]:
 
 
 def _entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
-    """Serialize one entry, emitting only the keys relevant to its kind."""
+    """Serialize one entry, emitting only the keys relevant to its kind.
+
+    The wall-clock budget is written as ``budget_s`` (the short form)
+    rather than the dataclass-canonical ``wall_clock_budget_seconds``.
+    The reader in :func:`load_board` accepts both names — long form for
+    legacy boards and operator-written JSONL, short form for boards
+    produced by :class:`zicato.board.builder.Board.save` — so this
+    asymmetry is invisible to round-trip callers.
+    """
     out: dict[str, Any] = {
         "id": entry.id,
         "kind": entry.kind,
-        "wall_clock_budget_seconds": entry.wall_clock_budget_seconds,
+        "budget_s": entry.wall_clock_budget_seconds,
     }
     # Optional envelope fields — only emit if they carry signal.
     if entry.weight != 1.0:
@@ -221,9 +230,7 @@ def append_entry(path: Path, entry: BoardEntry) -> None:
     if path.exists():
         existing = load_board(path)
         if any(e.id == entry.id for e in existing):
-            raise ValueError(
-                f"{path}: entry id {entry.id!r} already exists in board"
-            )
+            raise ValueError(f"{path}: entry id {entry.id!r} already exists in board")
 
     row = _entry_to_dict(entry)
     with path.open("a", encoding="utf-8") as fh:

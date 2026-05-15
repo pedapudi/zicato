@@ -34,7 +34,6 @@ from zicato.core.types import (
     UserPersona,
 )
 
-
 # ---------------------------------------------------------------------------
 # Entry: the friendly factory facade
 # ---------------------------------------------------------------------------
@@ -54,9 +53,7 @@ def _coerce_turns(
     if turns is None:
         return None
     if not isinstance(turns, (list, tuple)):
-        raise ValueError(
-            f"Entry: 'turns' must be a list or tuple, got {type(turns).__name__}"
-        )
+        raise ValueError(f"Entry: 'turns' must be a list or tuple, got {type(turns).__name__}")
     if len(turns) == 0:
         raise ValueError("Entry: 'turns' must be non-empty when provided")
     out: list[ScriptedTurn] = []
@@ -67,8 +64,7 @@ def _coerce_turns(
             out.append(ScriptedTurn(user=t))
         else:
             raise ValueError(
-                f"Entry: 'turns[{i}]' must be str or ScriptedTurn, got "
-                f"{type(t).__name__}"
+                f"Entry: 'turns[{i}]' must be str or ScriptedTurn, got {type(t).__name__}"
             )
     return tuple(out)
 
@@ -104,9 +100,7 @@ def _infer_kind(
             "synthetic_adversarial",
             "synthetic_clean",
         ):
-            raise ValueError(
-                f"Entry: kind={explicit_kind!r} is not a recognized BoardEntryKind"
-            )
+            raise ValueError(f"Entry: kind={explicit_kind!r} is not a recognized BoardEntryKind")
         return explicit_kind  # type: ignore[return-value]
 
     discriminants_present: list[str] = []
@@ -144,8 +138,7 @@ def _infer_kind(
     if adversarial_agent_spec is not None:
         if input is None:
             raise ValueError(
-                "Entry: synthetic_adversarial requires 'input' alongside "
-                "'adversarial_agent_spec'"
+                "Entry: synthetic_adversarial requires 'input' alongside 'adversarial_agent_spec'"
             )
         return "synthetic_adversarial"
 
@@ -267,7 +260,7 @@ class Board:
 
     entries: list[BoardEntry] = field(default_factory=list)
 
-    def add(self, entry: BoardEntry) -> "Board":
+    def add(self, entry: BoardEntry) -> Board:
         """Append ``entry`` and return ``self`` for chaining.
 
         Accepts a raw :class:`~zicato.core.BoardEntry` (which is also
@@ -277,13 +270,9 @@ class Board:
         at construction time rather than at :meth:`save` time.
         """
         if not isinstance(entry, BoardEntry):
-            raise TypeError(
-                f"Board.add expects a BoardEntry, got {type(entry).__name__}"
-            )
+            raise TypeError(f"Board.add expects a BoardEntry, got {type(entry).__name__}")
         if any(e.id == entry.id for e in self.entries):
-            raise ValueError(
-                f"Board.add: entry id {entry.id!r} already present in board"
-            )
+            raise ValueError(f"Board.add: entry id {entry.id!r} already present in board")
         self.entries.append(entry)
         return self
 
@@ -300,7 +289,7 @@ class Board:
         save_board(self.entries, Path(path))
 
     @classmethod
-    def load(cls, path: Path) -> "Board":
+    def load(cls, path: Path) -> Board:
         """Build a :class:`Board` from the JSONL file at ``path``.
 
         Delegates to :func:`zicato.board.jsonl.load_board` for parsing,

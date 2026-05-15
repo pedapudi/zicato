@@ -8,9 +8,9 @@ import json
 import pytest
 
 from zicato.board.matchers import evaluate_expectation
-from zicato.board.rubric import evaluate_rubric_judge
 from zicato.board.predicates import Rubric
-from zicato.core.types import Expectation, RunResult
+from zicato.board.rubric import evaluate_rubric_judge
+from zicato.core.types import RunResult
 
 
 def _result(

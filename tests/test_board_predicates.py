@@ -9,7 +9,6 @@ import pytest
 from zicato.board.predicates import Predicate, Rubric
 from zicato.core.types import Expectation
 
-
 # ---------------------------------------------------------------------------
 # Predicate.contains
 # ---------------------------------------------------------------------------
@@ -164,7 +163,5 @@ def test_expectation_round_trips_through_json() -> None:
         as_dict = {"kind": exp.kind, "spec": exp.spec, "fires_on": exp.fires_on}
         s = json.dumps(as_dict)
         back = json.loads(s)
-        rebuilt = Expectation(
-            kind=back["kind"], spec=back["spec"], fires_on=back["fires_on"]
-        )
+        rebuilt = Expectation(kind=back["kind"], spec=back["spec"], fires_on=back["fires_on"])
         assert rebuilt == exp

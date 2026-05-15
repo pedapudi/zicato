@@ -62,9 +62,7 @@ from zicato.core.types import Expectation, ExpectationResult, RunResult
 def _import_dotted(path: str) -> object:
     """Import a dotted path like ``pkg.module.attr`` and return the attr."""
     if "." not in path:
-        raise ValueError(
-            f"dotted path {path!r} has no module component; expected 'pkg.mod.attr'"
-        )
+        raise ValueError(f"dotted path {path!r} has no module component; expected 'pkg.mod.attr'")
     module_path, _, attr_name = path.rpartition(".")
     module = importlib.import_module(module_path)
     try:
@@ -75,9 +73,7 @@ def _import_dotted(path: str) -> object:
         ) from exc
 
 
-async def _eval_predicate(
-    expectation: Expectation, result: RunResult
-) -> ExpectationResult:
+async def _eval_predicate(expectation: Expectation, result: RunResult) -> ExpectationResult:
     try:
         fn = _import_dotted(expectation.spec)
     except (ImportError, ValueError) as exc:
@@ -109,8 +105,7 @@ async def _eval_predicate(
             kind="predicate",
             passed=False,
             detail=(
-                f"predicate {expectation.spec!r} returned {type(outcome).__name__}, "
-                "expected bool"
+                f"predicate {expectation.spec!r} returned {type(outcome).__name__}, expected bool"
             ),
         )
     return ExpectationResult(
@@ -120,9 +115,7 @@ async def _eval_predicate(
     )
 
 
-def _eval_expected_text(
-    expectation: Expectation, result: RunResult
-) -> ExpectationResult:
+def _eval_expected_text(expectation: Expectation, result: RunResult) -> ExpectationResult:
     spec = expectation.spec
     if spec == "":
         return ExpectationResult(
@@ -131,11 +124,7 @@ def _eval_expected_text(
             detail="expected_text spec is empty",
         )
     passed = spec in result.final_output
-    detail = (
-        ""
-        if passed
-        else f"expected substring {spec!r} not found in final_output"
-    )
+    detail = "" if passed else f"expected substring {spec!r} not found in final_output"
     return ExpectationResult(kind="expected_text", passed=passed, detail=detail)
 
 
@@ -162,9 +151,7 @@ def _eval_regex(expectation: Expectation, result: RunResult) -> ExpectationResul
     )
 
 
-def _eval_json_schema(
-    expectation: Expectation, result: RunResult
-) -> ExpectationResult:
+def _eval_json_schema(expectation: Expectation, result: RunResult) -> ExpectationResult:
     # spec is either a JSON string of the schema, or (when constructed
     # in-memory) already a JSON-shaped string. We always treat it as
     # JSON-text here because :class:`Expectation` typed it as ``str``.
@@ -267,10 +254,8 @@ async def _eval_judge(
         # it. We pass an empty string to keep this dispatcher
         # model-agnostic; configuration of which model the judge runs
         # against lives on the aux callable.
-        raw = await asyncio.wait_for(
-            aux_call_llm(system, user, ""), timeout=aux_call_timeout_s()
-        )
-    except asyncio.TimeoutError:
+        raw = await asyncio.wait_for(aux_call_llm(system, user, ""), timeout=aux_call_timeout_s())
+    except TimeoutError:
         return ExpectationResult(
             kind="judge",
             passed=False,

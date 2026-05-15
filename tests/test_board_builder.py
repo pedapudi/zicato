@@ -19,7 +19,6 @@ from zicato.core import (
     UserPersona,
 )
 
-
 # ---------------------------------------------------------------------------
 # Entry: auto-detect by kind
 # ---------------------------------------------------------------------------
@@ -83,9 +82,7 @@ def test_entry_with_adversarial_agent_spec_is_synthetic_adversarial() -> None:
 
 def test_entry_with_explicit_synthetic_clean_kind() -> None:
     """``Entry(input=..., kind="synthetic_clean")`` produces a synthetic_clean entry."""
-    entry = Entry(
-        id="e1", input="a known-clean question", kind="synthetic_clean", budget_s=30
-    )
+    entry = Entry(id="e1", input="a known-clean question", kind="synthetic_clean", budget_s=30)
     assert entry.kind == "synthetic_clean"
     assert entry.input == "a known-clean question"
 
@@ -184,9 +181,7 @@ def test_board_add_accepts_entry_factory_result() -> None:
 def test_board_add_accepts_raw_board_entry() -> None:
     """Board.add also accepts a hand-constructed BoardEntry."""
     board = Board()
-    raw = BoardEntry(
-        id="raw1", kind="single_turn", wall_clock_budget_seconds=10, input="x"
-    )
+    raw = BoardEntry(id="raw1", kind="single_turn", wall_clock_budget_seconds=10, input="x")
     board.add(raw)
     assert board.entries == [raw]
 
@@ -242,5 +237,3 @@ def test_board_save_load_round_trip(tmp_path: Path) -> None:
 
     reloaded = Board.load(path)
     assert reloaded.entries == board.entries
-
-
