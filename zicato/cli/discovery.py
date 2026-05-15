@@ -15,8 +15,12 @@ Robustness rules:
 * A module with no :class:`click.Command` attributes is silently
   ignored — modules can hold helpers without claiming a subcommand.
 * If a module exposes multiple top-level commands, all of them are
-  registered. Module-level ``__all__`` is *not* consulted; presence of
-  a top-level :class:`click.Command` instance is the only criterion.
+  registered. When ``__all__`` is defined on the module, only the
+  names it lists are considered candidate commands; otherwise every
+  module-level :class:`click.Command` attribute is considered.
+* Commands that are already mounted under a :class:`click.Group`
+  defined on the same module are filtered out, so a module that
+  exposes a group of subcommands surfaces only the group at the root.
 """
 
 from __future__ import annotations
@@ -86,15 +90,38 @@ def _extract_commands(module: ModuleType) -> list[click.Command]:
     Includes :class:`click.Group` (a subclass of
     :class:`click.Command`). Order is the module's ``dir()`` order
     (alphabetical), which keeps the registration deterministic.
+
+    Commands that are already attached as a child of another
+    :class:`click.Group` defined on the same module are filtered out —
+    so a module that defines a group with sub-commands surfaces only
+    the group, not its sub-commands. Modules can also opt into an
+    explicit allow-list via ``__all__``: if present, only attributes
+    listed there are considered candidate commands.
     """
-    found: list[click.Command] = []
+    explicit: list[str] | None = None
+    raw_all = getattr(module, "__all__", None)
+    if isinstance(raw_all, (list, tuple)):
+        explicit = [str(n) for n in raw_all]
+
+    candidates: list[click.Command] = []
     for attr_name in dir(module):
         if attr_name.startswith("_"):
             continue
+        if explicit is not None and attr_name not in explicit:
+            continue
         obj = getattr(module, attr_name, None)
         if isinstance(obj, click.Command):
-            found.append(obj)
-    return found
+            candidates.append(obj)
+
+    # Collect the names of every command already mounted under a group
+    # on this module so we don't double-register them at the root.
+    nested: set[int] = set()
+    for cmd in candidates:
+        if isinstance(cmd, click.Group):
+            for child in cmd.commands.values():
+                nested.add(id(child))
+
+    return [cmd for cmd in candidates if id(cmd) not in nested]
 
 
 def build_cli_root() -> click.Group:
