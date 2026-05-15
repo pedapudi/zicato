@@ -558,7 +558,6 @@ deployments (target 3 — nested zicato instances) key the workspace by
         v0/
           snapshot/                # inner-harness source at this generation
           experiment.json          # absent for v0 (the baseline)
-          patches_applied.json     # absent for v0
           runs/
             {entry_id}/
               events.jsonl         # goldfive wire, via JSONLPersistenceSink
@@ -566,19 +565,28 @@ deployments (target 3 — nested zicato instances) key the workspace by
           gen_score.json
         v1/
           snapshot/
-          experiment.json          # hypothesis + patches + outcome
-          patches_applied.json
+          experiment.json          # hypothesis + patch_ids + outcome
+          patches/
+            {patch_id}.json        # one file per patch
           runs/{entry_id}/
             events.jsonl
             loss.json
           gen_score.json
         ...
+      current_generation           # marker: id of the promoted head
       patterns/
         round_{NNN}.json           # detector output, one per round
       journal.md                   # running narrative across generations
       analysis.md                  # generated at epoch close
   lineage.json                     # cross-epoch generation DAG
 ```
+
+`experiment.json` carries `patch_ids: [...]` and each patch lives in
+its own `patches/{patch_id}.json` file. Writes go patches-first,
+`experiment.json` last; the read helper transparently accepts the
+older inline `patches: [...]` form for backward compatibility. See
+[EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3.2 for the
+write-order rationale.
 
 The layout is deliberately filesystem-native — no SQLite, no embedded
 DB. Every artifact is a human-readable file. The cost of `ls`-and-`cat`

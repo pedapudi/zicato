@@ -89,7 +89,6 @@ directory.
       generations/
         v0/
           snapshot/                  # inner-harness source at this generation
-          patches_applied.json       # absent for v0
           experiment.json            # absent for v0 (the baseline)
           runs/
             {entry_id}/
@@ -98,8 +97,9 @@ directory.
           gen_score.json
         v1/
           snapshot/
-          patches_applied.json
-          experiment.json            # hypothesis + patches + outcome
+          experiment.json            # hypothesis + patch_ids + outcome
+          patches/
+            {patch_id}.json          # one file per patch (see §3.2)
           runs/
             {entry_id}/
               events.jsonl
@@ -107,6 +107,7 @@ directory.
           gen_score.json
         v2/
           ...
+      current_generation             # marker: id of the promoted head
       patterns/
         round_001.json               # detector output, one per round
         round_002.json
@@ -135,9 +136,10 @@ A few specifics:
   initial-registered source for the first epoch).
 - `experiment.json` is absent for `v0` and present for every
   subsequent generation in the epoch.
-- `patches_applied.json` records what the applier actually wrote.
-  It is a derivable from `experiment.json["patches"]` but is kept as
-  a separate artifact for audit.
+- Patches live in **separate `patches/{patch_id}.json` files** under
+  each generation directory. The body of `experiment.json` carries
+  `patch_ids: [...]` referencing them. See §3.2 for the rationale and
+  the write order.
 
 ## 3. The Experiment
 
@@ -173,12 +175,18 @@ rejected; the proposer is re-prompted.
       "If sources are unavailable the researcher may refuse instead of approximating."
     ]
   },
-  "patches": [
-    {"mutation_point_id": "researcher.instruction", "new_text": "..."},
-    {"mutation_point_id": "researcher.description", "new_text": "..."}
+  "patch_ids": [
+    "be4c8de0b5234ec4a8d8db4e8af3f8f0",
+    "1f29c6a2e9e44ad99c4f55c9f7df0a3e"
   ]
 }
 ```
+
+The two patch objects themselves live in separate per-patch files —
+see §3.2 below. The body of `experiment.json` only references them
+by id. This keeps the `experiment.json` body small (operator-readable
+in a terminal pager) and gives the operator one file per patch when
+they want to inspect or hand-edit a specific change.
 
 The fields in detail:
 
@@ -195,20 +203,55 @@ The schema is enforced at proposer-output time. The proposer is given
 the schema in its system prompt and the response is parsed as JSON;
 malformed responses get one retry with an error message.
 
-### 3.2 Patches schema
+### 3.2 Patch storage (per-patch files)
 
-```json
-[
-  {
-    "mutation_point_id": "<id from mutation_points()>",
-    "new_text": "<the post-patch text>"
-  },
-  ...
-]
+Each patch is serialised to its own file under the generation
+directory:
+
+```
+generations/v1/
+  experiment.json              # body carries patch_ids: [...]
+  patches/
+    be4c8de0b5234ec4a8d8db4e8af3f8f0.json
+    1f29c6a2e9e44ad99c4f55c9f7df0a3e.json
 ```
 
-The patch is referenced by id, not by file path. The applier resolves
-the id to a location and rewrites it. See
+A patch file's payload:
+
+```json
+{
+  "id": "be4c8de0b5234ec4a8d8db4e8af3f8f0",
+  "mutation_id": "researcher.instruction",
+  "op": "replace",
+  "new_content": "...",
+  "new_numeric": null,
+  "new_enum": null,
+  "rationale": "tighter wording to require citations"
+}
+```
+
+**Write order.** Per-patch files are written FIRST; `experiment.json`
+is written LAST. A partial write (crash between the two phases)
+leaves orphan patch files behind, which are harmless — no reader
+picks them up because `experiment.json`'s `patch_ids` list is the
+authoritative source. Writing in the other order would leave a
+dangling reference to a missing patch file, which IS harmful.
+
+**In-memory shape.** `Experiment.patches` remains a
+`tuple[Patch, ...]` regardless. Only the on-disk shape splits; every
+write helper round-trips back to the same tuple of dataclasses on
+read.
+
+**Legacy inline form.** Workspaces produced before this layout
+landed used an inline `patches: [{...}, ...]` array directly on
+`experiment.json`. The read helper transparently accepts that old
+shape for backward compatibility; new writes always use the
+per-patch layout. The `zicato.epoch.migrate.migrate_inline_to_perpatch`
+utility brings an old generation in line with the new layout when
+the operator wants a clean conversion.
+
+The patch is referenced by mutation id, not by file path. The
+applier resolves the id to a location and rewrites it. See
 [MUTATION-SURFACE.md](MUTATION-SURFACE.md) for validator constraints.
 
 ### 3.3 Outcome (written after the run)
@@ -220,7 +263,7 @@ file.
 ```json
 {
   "hypothesis": { ... },
-  "patches": [ ... ],
+  "patch_ids": [ ... ],
   "outcome": {
     "drift_movements_actual": [
       {"kind": "CONFABULATION_RISK", "direction": "down", "magnitude": "moderate"},
@@ -239,6 +282,10 @@ file.
   }
 }
 ```
+
+The per-patch files are NOT rewritten when the outcome lands —
+`update_experiment_outcome` only re-writes `experiment.json`. The
+patches are immutable once written.
 
 The fields:
 
