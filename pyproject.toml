@@ -32,7 +32,11 @@ classifiers = [
 dependencies = [
     # Core is intentionally light; storage / telemetry / LLMs are pluggable.
     "goldfive",
+    "click >= 8.1",
 ]
+
+[project.scripts]
+zicato = "zicato.cli:main"
 
 [project.optional-dependencies]
 adk = ["google-adk", "goldfive[adk]"]
