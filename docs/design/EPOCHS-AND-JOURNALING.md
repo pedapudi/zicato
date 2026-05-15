@@ -402,12 +402,117 @@ The auto-close runs the same analysis pass; the warning exists so
 operators notice they missed the manual step (where they might have
 added a `--focus` flag or otherwise steered the pass).
 
-### 5.2 Why analysis at close, not continuously
+### 5.2 Progressive `analysis.html`
 
-Generating `analysis.md` is expensive (a multi-thousand-token LLM
-call) and the output is most useful when the epoch is done. Within an
-epoch, the per-round journal entry and the patterns aggregate are
-enough. The analysis is the retrospective.
+`analysis.md` is generated only at epoch close (it requires the
+LLM pass). `analysis.html` is different — it is regenerated
+**after every generation**, deterministically, with no LLM call.
+
+This gives the operator a current archival snapshot of the epoch
+at any moment, even mid-flight:
+
+| Property | `analysis.md` | `analysis.html` |
+|---|---|---|
+| Cadence | once, at epoch close | regenerated after every generation |
+| Requires LLM? | yes (auxiliary pass) | no (deterministic render) |
+| Persisted across `evolve` exits? | yes | yes |
+| Contains the closing-pass narrative? | yes | only after close (final regeneration appends the LLM sections) |
+| Suitable for `file://` opening mid-epoch? | not generated yet | yes |
+
+The flow per generation:
+
+```
+generation v{N} promote/reject committed
+            │
+            ▼
+orchestrator at safe point:
+            │
+            ▼
+read every experiment.json in the epoch so far
+            │
+            ▼
+call render_html_report(...)   # deterministic; no LLM
+            │
+            ▼
+write analysis.html.tmp; atomic rename to analysis.html
+            │
+            ▼
+broadcast SSE 'round_finished' to dashboard
+            (if supervisor is running — see DASHBOARD.md)
+```
+
+#### Atomic write protocol
+
+`analysis.html` uses the same atomic-rename pattern as every
+state file (see [RUNTIME.md](RUNTIME.md) §6):
+
+```python
+def write_html_report_atomic(epoch_path: pathlib.Path, html: str) -> None:
+    target = epoch_path / "analysis.html"
+    tmp = target.with_suffix(".html.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        f.write(html)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.rename(target)
+```
+
+This matters because operators frequently have `analysis.html`
+open in a browser tab and reload it during long epochs. A partial
+read (browser fetches mid-write) would render a broken HTML
+document; the atomic rename guarantees readers always see either
+the previous full document or the new full document, never a
+half-written one.
+
+#### Final regeneration at epoch close
+
+At `zicato epoch close`:
+
+1. The LLM analysis pass runs as before (§5 above), producing
+   the narrative sections.
+2. `render_html_report` runs once more, this time embedding the
+   narrative sections in the dedicated `<section>` blocks.
+3. The final `analysis.html` is written atomically.
+
+A closed epoch's `analysis.html` has everything: full lineage,
+per-generation experiment cards, score trajectory, drift
+heatmap, AND the LLM narrative sections at the top. An open
+epoch's `analysis.html` has everything except the LLM
+narrative — placeholders where the narrative sections will go.
+
+#### Relationship to the live dashboard
+
+The dashboard ([DASHBOARD.md](DASHBOARD.md)) is the **live view**
+of the in-flight epoch. `analysis.html` is the **archival
+snapshot** that persists across `evolve` exits.
+
+The two coexist intentionally:
+
+- During an `evolve`, the operator opens the dashboard URL for
+  the live view; `analysis.html` exists as the current snapshot
+  but the dashboard supersedes it.
+- Between `evolve` invocations (or after the epoch closes), the
+  dashboard URL no longer works (supervisor has exited);
+  `analysis.html` is opened directly via `file://` for the
+  same data.
+- For sharing — sending a link to a teammate, attaching to a
+  ticket, archiving with the project — `analysis.html` is the
+  shareable artifact. The dashboard is local-only by default.
+
+The dashboard reads from `.zicato/runtime/*`; `analysis.html`
+is regenerated from `.zicato/epochs/{id}/`. They consume
+different sources and serve different roles, but the operator
+sees roughly the same lineage and score trajectory in both
+(rendered by the same shared component library).
+
+### 5.3 Why LLM analysis at close, not continuously
+
+Generating the LLM analysis pass that lives inside `analysis.md`
+is expensive (a multi-thousand-token LLM call) and the output is
+most useful when the epoch is done. Within an epoch, the
+per-round journal entry, the patterns aggregate, the live
+dashboard, and the deterministically-generated
+`analysis.html` are enough. The LLM pass is the retrospective.
 
 ## 6. Lineage
 
@@ -538,4 +643,7 @@ aggregate across rounds:
 | Loss profile written into each `runs/{id}/loss.json` | [TELEMETRY.md](TELEMETRY.md) |
 | Drift loss scalar that drives `tournament_decision` | [SCORING.md](SCORING.md) |
 | CLI commands for `epoch new` / `close` / `list` | [CLI.md](CLI.md) |
+| Atomic-rename helper used by `analysis.html` writes | [RUNTIME.md](RUNTIME.md) §6 |
+| Live dashboard that supersedes `analysis.html` during an `evolve` | [DASHBOARD.md](DASHBOARD.md) |
+| Git-backed storage that moves generation directories into a private repo | [STORAGE.md](STORAGE.md) |
 | Why mandatory structured hypothesis up front | [RATIONALE.md](RATIONALE.md) |
