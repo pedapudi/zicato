@@ -23,8 +23,10 @@ tmpdir bookkeeping.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterable
 
+from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.types import Experiment, MutationPoint, Pattern
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
 from zicato.proposer.rubric import enforce_forbidden
@@ -141,7 +143,17 @@ async def propose_experiment(
             feedback=feedback,
         )
         try:
-            response_text = await aux_call_llm(system_prompt, user_prompt, model)
+            response_text = await asyncio.wait_for(
+                aux_call_llm(system_prompt, user_prompt, model),
+                timeout=aux_call_timeout_s(),
+            )
+        except asyncio.TimeoutError:
+            err = (
+                f"auxiliary LLM call timed out after {aux_call_timeout_s():.1f}s"
+            )
+            attempt_errors.append(err)
+            feedback = err
+            continue
         except Exception as exc:  # noqa: BLE001 — opaque LLM errors are common
             err = f"auxiliary LLM call raised {type(exc).__name__}: {exc}"
             attempt_errors.append(err)

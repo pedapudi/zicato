@@ -25,11 +25,14 @@ takes a ``model`` arg today for forward compat).
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.types import (
     DriftMovementActual,
     Experiment,
@@ -1017,7 +1020,25 @@ async def generate_analysis(
         tournament_outcomes_md=tournament_outcomes_md,
     )
 
-    narrative = await aux_call_llm(_SYSTEM_PROMPT, user_prompt, model)
+    try:
+        narrative = await asyncio.wait_for(
+            aux_call_llm(_SYSTEM_PROMPT, user_prompt, model),
+            timeout=aux_call_timeout_s(),
+        )
+    except asyncio.TimeoutError:
+        logging.getLogger(__name__).warning(
+            "analysis pass timed out after %.1fs; substituting placeholder narrative",
+            aux_call_timeout_s(),
+        )
+        narrative = (
+            "## Headline movements\n\n"
+            "_(analysis LLM timed out; placeholder narrative written. "
+            "Re-run the analysis pass after the endpoint recovers.)_\n\n"
+            "## Hypotheses that held\n\n_(unavailable)_\n\n"
+            "## Hypotheses that didn't\n\n_(unavailable)_\n\n"
+            "## Surface still open at epoch close\n\n_(unavailable)_\n\n"
+            "## Recommended focus for next epoch\n\n_(unavailable)_\n"
+        )
 
     composed: list[str] = []
     composed.append(f"# Epoch analysis: {epoch_id}")

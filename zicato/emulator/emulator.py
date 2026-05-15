@@ -16,12 +16,14 @@ closure. That keeps the emulator pluggable across harness backends.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.types import BoardEntry, RunResult, RuntimeConfig
 from zicato.core.workspace import assert_distinct_callables
 from zicato.emulator.answer_leak import check_answer_leak
@@ -160,9 +162,23 @@ class EmulatedMultiTurnDriver:
 
         for _turn_index in range(max_turns):
             user_prompt = build_emulator_user_prompt(tuple(agent_transcript))
-            emulator_output = await config.auxiliary_call_llm(
-                system_prompt, user_prompt, _DEFAULT_EMULATOR_MODEL
-            )
+            try:
+                emulator_output = await asyncio.wait_for(
+                    config.auxiliary_call_llm(
+                        system_prompt, user_prompt, _DEFAULT_EMULATOR_MODEL
+                    ),
+                    timeout=aux_call_timeout_s(),
+                )
+            except asyncio.TimeoutError:
+                aborted = True
+                abort_reason = "emulator_timeout"
+                _log.warning(
+                    "run %s aborted: emulator turn timed out after %.1fs (entry=%s)",
+                    run_id,
+                    aux_call_timeout_s(),
+                    entry.id,
+                )
+                break
 
             audit = audit_turn(persona, tuple(agent_transcript), emulator_output)
             self._audits.append(audit)

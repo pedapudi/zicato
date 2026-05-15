@@ -46,6 +46,7 @@ schema-validation error path, judge rationale, etc.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import inspect
 import json
@@ -54,6 +55,7 @@ from collections.abc import Awaitable, Callable
 
 import jsonschema
 
+from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.types import Expectation, ExpectationResult, RunResult
 
 
@@ -265,7 +267,15 @@ async def _eval_judge(
         # it. We pass an empty string to keep this dispatcher
         # model-agnostic; configuration of which model the judge runs
         # against lives on the aux callable.
-        raw = await aux_call_llm(system, user, "")
+        raw = await asyncio.wait_for(
+            aux_call_llm(system, user, ""), timeout=aux_call_timeout_s()
+        )
+    except asyncio.TimeoutError:
+        return ExpectationResult(
+            kind="judge",
+            passed=False,
+            detail="judge_timeout",
+        )
     except Exception as exc:  # noqa: BLE001
         return ExpectationResult(
             kind="judge",
