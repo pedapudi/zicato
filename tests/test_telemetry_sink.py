@@ -82,7 +82,9 @@ def test_make_run_sink_writes_to_expected_path(tmp_path: Path) -> None:
     assert parsed[0].run_started.goal_summary == "hello"
 
 
-def test_make_run_sink_missing_goldfive_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_make_run_sink_missing_goldfive_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """When goldfive cannot be imported, make_run_sink surfaces a clear error.
 
     We simulate the missing module by patching the lazy import inside

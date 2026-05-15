@@ -63,7 +63,7 @@ class _FinalOutputHarness:
         def __init__(self, text: str) -> None:
             self.final_output = text
 
-    async def run(self, user_message: str) -> "_FinalOutputHarness._Reply":
+    async def run(self, user_message: str) -> _FinalOutputHarness._Reply:
         return self._Reply(f"wrapped: {user_message}")
 
 

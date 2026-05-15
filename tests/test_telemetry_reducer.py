@@ -22,11 +22,9 @@ import pytest
 from zicato.core import (
     BoardEntry,
     DriftCount,
-    Expectation,
     ExpectationResult,
     LossProfile,
     ScoringWeights,
-    ScriptedTurn,
     UserPersona,
 )
 from zicato.telemetry.reducer import (
@@ -35,7 +33,6 @@ from zicato.telemetry.reducer import (
     reduce_loss,
     write_loss_profile,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -612,11 +609,11 @@ def test_reduce_loss_via_real_goldfive_replay(tmp_path: Path) -> None:
     """
     pytest.importorskip("goldfive")
     pytest.importorskip("google.protobuf")
+    import asyncio
+
     from goldfive.pb.goldfive.v1 import events_pb2  # type: ignore
 
     from zicato.telemetry import make_run_sink, make_run_sink_path
-
-    import asyncio
 
     sink = make_run_sink(tmp_path, "ep1", "v0", "ent-real")
     target = make_run_sink_path(tmp_path, "ep1", "v0", "ent-real")

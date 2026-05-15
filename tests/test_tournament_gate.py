@@ -138,7 +138,7 @@ def test_gate_ignores_pass_rate_regression_when_monotonicity_disabled() -> None:
 
 
 def test_gate_does_not_penalize_entries_parent_failed() -> None:
-    """A child that improves a parent-failed entry is fine; only parent-pass→child-fail trips the gate."""
+    """A child improving parent-failed entries is fine; only parent-pass→child-fail trips."""
     parent = _agg(
         scalar=2.0,
         per_entry={

@@ -421,4 +421,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["build_agent_tree", "root_agent"]
+# ``root_agent`` is provided lazily via PEP 562 ``__getattr__`` above so
+# importing the module doesn't construct the agent eagerly. Ruff can't
+# see that and flags it as undefined — silence the specific check.
+__all__ = ["build_agent_tree", "root_agent"]  # noqa: F822

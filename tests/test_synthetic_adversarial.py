@@ -18,7 +18,6 @@ from zicato.synthetic.adversarial import (
 )
 from zicato.synthetic.clean import run_clean_entry
 
-
 # ---------------------------------------------------------------------------
 # Stub agents — used in dotted-path resolution tests
 # ---------------------------------------------------------------------------

@@ -27,11 +27,11 @@ protobuf machinery.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from zicato.core.types import ExpectationResult, RuntimeConfig
-
 
 # Severities the matchers treat as "this counts" — warning and critical.
 # INFO is filtered out everywhere because it is observational by design.

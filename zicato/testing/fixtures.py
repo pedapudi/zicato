@@ -53,7 +53,6 @@ from zicato.core.types import (
 )
 from zicato.testing.mock_llm import CannedCallLLM
 
-
 # ---------------------------------------------------------------------------
 # Board / expectation / persona
 # ---------------------------------------------------------------------------
@@ -477,7 +476,7 @@ def make_synthetic_events_jsonl(
         evt.run_started.started_at.CopyFrom(_ts(1_700_000_000))
         lines.append(MessageToJson(evt, sort_keys=True, indent=None))
 
-        for i in range(conversation_turns):
+        for _ in range(conversation_turns):
             evt = _envelope()
             evt.conversation_started.SetInParent()
             lines.append(MessageToJson(evt, sort_keys=True, indent=None))
@@ -540,7 +539,7 @@ def make_synthetic_events_jsonl(
             evt.plan_revised.severity = sev_enum
             lines.append(MessageToJson(evt, sort_keys=True, indent=None))
 
-        for i in range(conversation_turns):
+        for _ in range(conversation_turns):
             evt = _envelope()
             evt.conversation_ended.SetInParent()
             lines.append(MessageToJson(evt, sort_keys=True, indent=None))
@@ -576,7 +575,7 @@ def make_synthetic_events_jsonl(
             {"run_id": run_id, "goal_summary": "synthetic run"},
         )
     ]
-    for i in range(conversation_turns):
+    for _ in range(conversation_turns):
         rows.append(_dict_envelope("conversation_started", {}))
     for i in range(task_starts):
         rows.append(
@@ -620,7 +619,7 @@ def make_synthetic_events_jsonl(
                 },
             )
         )
-    for i in range(conversation_turns):
+    for _ in range(conversation_turns):
         rows.append(_dict_envelope("conversation_ended", {}))
     rows.append(_dict_envelope("run_completed", {}))
 

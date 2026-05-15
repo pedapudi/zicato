@@ -33,15 +33,15 @@ import json
 import re
 import uuid
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import jsonschema
 
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import (
-    Experiment,
     ExpectedDriftMovement,
+    Experiment,
     HypothesisSpec,
     MutationPoint,
     Patch,
@@ -411,7 +411,7 @@ def parse_experiment_json(
         epoch_id=epoch_id,
         generation_id=new_gen,
         parent_generation_id=parent_gen,
-        proposed_at=datetime.now(timezone.utc).isoformat(),
+        proposed_at=datetime.now(UTC).isoformat(),
         hypothesis=hypothesis,
         patches=tuple(patches),
         outcome=None,

@@ -43,7 +43,6 @@ from zicato.core.workspace import (
 from zicato.proposer.proposer import ProposerError, propose_experiment
 from zicato.proposer.rubric import load_rubric
 
-
 # ---------------------------------------------------------------------------
 # Workspace loading helpers
 # ---------------------------------------------------------------------------
@@ -164,7 +163,7 @@ def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list
         raise click.ClickException(
             "Workspace config has no 'source_roots'; cannot enumerate mutations."
         )
-    enumerate_mutations = getattr(mutation_pkg, "enumerate_mutations")
+    enumerate_mutations = mutation_pkg.enumerate_mutations
     return list(enumerate_mutations(source_roots))
 
 

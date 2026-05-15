@@ -30,7 +30,6 @@ from zicato.patterns import (
 )
 from zicato.patterns.detectors import _pattern_id
 
-
 # ---------------------------------------------------------------------------
 # Loss / entry builders
 # ---------------------------------------------------------------------------

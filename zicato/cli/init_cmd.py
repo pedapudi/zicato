@@ -25,7 +25,7 @@ from zicato.cli.common import (
 
 def _utcnow_iso() -> str:
     """Return the current UTC time as an ISO-8601 string with ``Z`` suffix."""
-    return _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    return _dt.datetime.now(_dt.UTC).isoformat().replace("+00:00", "Z")
 
 
 def initialize_workspace(

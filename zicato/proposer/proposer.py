@@ -133,7 +133,7 @@ async def propose_experiment(
     attempt_errors: list[str] = []
 
     total_attempts = max_retries + 1
-    for attempt in range(total_attempts):
+    for _attempt in range(total_attempts):
         user_prompt = render_user_prompt(
             current_loss_summary=current_loss_summary,
             patterns=patterns_list,

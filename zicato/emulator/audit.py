@@ -70,7 +70,7 @@ def _hash_persona(persona: UserPersona) -> str:
         f"goal\x00{persona.goal}\x00"
         f"constraints\x00{persona.constraints}\x00"
         f"stop_when\x00{persona.stop_when}"
-    ).encode("utf-8")
+    ).encode()
     return hashlib.sha256(blob).hexdigest()[:16]
 
 

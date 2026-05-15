@@ -47,7 +47,6 @@ from zicato.adapters.adk import (  # noqa: E402
 from zicato.adapters.base import HarnessAdapter, RunnableHarness  # noqa: E402
 from zicato.core import BoardEntry, RunResult, RuntimeConfig  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # _split_entrypoint
 # ---------------------------------------------------------------------------

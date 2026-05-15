@@ -310,7 +310,7 @@ async def run_adversarial_entry(
             _run_under_wrap(agent, entry.input, sinks, config),
             timeout=entry.wall_clock_budget_seconds,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         aborted = True
         abort_reason = "wall_clock_budget_exceeded"
     except AdversarialResolutionError:

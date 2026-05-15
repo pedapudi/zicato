@@ -1,3 +1,8 @@
+# ruff: noqa: E501
+# This module is a prompt template — several lines inside the embedded
+# one-shot JSON example exceed the project line limit by design. Breaking
+# the example across lines would change what the model sees, so the
+# whole file is exempted from E501 rather than splitting prompt content.
 """System + user prompt templates for the structured proposer.
 
 The proposer is asked to emit a single JSON object containing a typed

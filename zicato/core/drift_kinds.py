@@ -22,7 +22,6 @@ zicato type surface — extending this set is forward-compatible.
 
 from __future__ import annotations
 
-
 #: All drift-kind strings zicato will accept inside :class:`DriftCount`,
 #: :class:`ExpectedDriftMovement`, :class:`DriftMovementActual`, and the
 #: ``required_drift_kinds`` field of synthetic-adversarial board entries.

@@ -40,7 +40,6 @@ from typing import Any
 
 from zicato.core import BoardEntry, LossProfile, Pattern
 
-
 # ---------------------------------------------------------------------------
 # Detector input + alias
 # ---------------------------------------------------------------------------
@@ -431,7 +430,11 @@ def detect_plan_revision_instability(inp: DetectorInput) -> list[Pattern]:
         f"plan-revision instability: {len(flapping)} run(s) with "
         f">= {threshold:.1f} revisions (mean {mean_count:.2f})"
     )
-    sev: str = "warning" if any(loss.plan_revisions >= mean_count + 4 for loss in flapping) else "info"
+    sev: str = (
+        "warning"
+        if any(loss.plan_revisions >= mean_count + 4 for loss in flapping)
+        else "info"
+    )
     return [
         Pattern(
             id=_pattern_id(

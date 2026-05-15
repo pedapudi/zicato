@@ -30,7 +30,6 @@ a re-exporting package init. Downstream callers import from
 
 from __future__ import annotations
 
-from zicato.proposer.proposer import ProposerError, propose_experiment
 from zicato.proposer.prompts import (
     SYSTEM_PROMPT_TEMPLATE,
     USER_PROMPT_TEMPLATE,
@@ -39,6 +38,7 @@ from zicato.proposer.prompts import (
     render_system_prompt,
     render_user_prompt,
 )
+from zicato.proposer.proposer import ProposerError, propose_experiment
 from zicato.proposer.rubric import Rubric, enforce_forbidden, load_rubric
 from zicato.proposer.structured import (
     EXPERIMENT_JSON_SCHEMA,

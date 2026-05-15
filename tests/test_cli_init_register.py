@@ -12,7 +12,6 @@ from zicato.cli.commands.init import init_cmd
 from zicato.cli.commands.register import register_cmd
 from zicato.cli.common import CONFIG_FILENAME, LINEAGE_FILENAME
 
-
 # ---------------------------------------------------------------------------
 # init
 # ---------------------------------------------------------------------------

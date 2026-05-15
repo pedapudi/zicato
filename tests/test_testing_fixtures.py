@@ -50,7 +50,6 @@ from zicato.testing.fixtures import (
     make_user_persona,
 )
 
-
 # ---------------------------------------------------------------------------
 # Single-instance per-type checks: every factory builds the right type.
 # ---------------------------------------------------------------------------
@@ -238,7 +237,8 @@ def test_make_synthetic_events_jsonl_writes_a_file(tmp_path: Path) -> None:
     )
     assert path.exists()
     lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert len(lines) >= 4  # run_started + conv_started + task_started + drift + conv_ended + run_completed
+    # run_started + conv_started + task_started + drift + conv_ended + run_completed
+    assert len(lines) >= 4
 
     # Each line is parseable JSON.
     for line in lines:

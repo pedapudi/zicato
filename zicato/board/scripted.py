@@ -156,7 +156,7 @@ class ScriptedMultiTurnDriver:
                     invoker(user_message),
                     timeout=remaining,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 aborted = True
                 abort_reason = "wall_clock_budget"
                 break

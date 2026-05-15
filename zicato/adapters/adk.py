@@ -240,7 +240,7 @@ class ADKRunnableHarness:
 
         try:
             return await asyncio.wait_for(_drive(), timeout=budget_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
             return RunResult(
                 run_id=run_id,
@@ -431,7 +431,7 @@ class ADKHarnessAdapter:
     # HarnessAdapter surface
     # ------------------------------------------------------------------
 
-    def load(self, generation_root: Path) -> "RunnableHarness":
+    def load(self, generation_root: Path) -> RunnableHarness:
         """Load the entrypoint agent from ``generation_root``.
 
         Puts ``generation_root`` at the front of :data:`sys.path`,

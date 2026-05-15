@@ -11,7 +11,6 @@ import pytest
 
 from zicato.emulator.answer_leak import LEAK_PATTERNS, check_answer_leak
 
-
 # ---------------------------------------------------------------------------
 # Positive cases — leakage MUST be flagged.
 # ---------------------------------------------------------------------------

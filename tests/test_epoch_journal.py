@@ -8,15 +8,14 @@ import pytest
 
 from zicato.core.types import (
     DriftMovementActual,
-    Experiment,
     ExpectedDriftMovement,
+    Experiment,
     HypothesisSpec,
     OutcomeRecord,
     Patch,
 )
 from zicato.core.workspace import journal_path
 from zicato.epoch import append_journal_entry, read_journal
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -53,10 +53,10 @@ class RunnableHarness(Protocol):
 
     async def run(
         self,
-        entry: "BoardEntry",
+        entry: BoardEntry,
         sinks: list[Any],
-        config: "RuntimeConfig",
-    ) -> "RunResult":
+        config: RuntimeConfig,
+    ) -> RunResult:
         """Execute ``entry`` under this generation and return a :class:`RunResult`.
 
         Parameters
@@ -128,7 +128,7 @@ class HarnessAdapter(Protocol):
 
     def mutation_points(
         self, source_roots: list[Path] | None = None
-    ) -> list["MutationPoint"]:
+    ) -> list[MutationPoint]:
         """Enumerate the inner harness's mutation points.
 
         Parameters

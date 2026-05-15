@@ -80,7 +80,7 @@ def test_apply_replace_file_kind(tmp_path: Path) -> None:
 
 def test_apply_numeric(tmp_path: Path) -> None:
     src = tmp_path / "src"
-    tgt = tmp_path / "tgt"
+    _tgt = tmp_path / "tgt"
     file_path = src / "config.py"
     # The marker binds to the string "DEFAULT_THRESHOLD" name on the
     # assignment target by the enumerator, but the applier looks for
@@ -89,7 +89,7 @@ def test_apply_numeric(tmp_path: Path) -> None:
         # zicato:mutable id="threshold"
         DEFAULT_THRESHOLD = 0.85
     ''')
-    patches = [_patch(pid="p1", mutation_id="threshold", op="set_numeric", new_numeric=0.42)]
+    _patches = [_patch(pid="p1", mutation_id="threshold", op="set_numeric", new_numeric=0.42)]
     # The string-only enumeration won't bind to a string literal here
     # (the assignment value is numeric). So we need a string literal
     # for the enumerator's resolution, then the applier rewrites the

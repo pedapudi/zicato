@@ -141,6 +141,8 @@ def _resolve_workspace_components(workspace_root: Path):  # type: ignore[no-unty
         from zicato import (  # noqa: PLC0415
             adapter_factory,
             runtime_factory,
+        )
+        from zicato import (
             workspace_loader as loader,
         )
     except ImportError as exc:  # pragma: no cover — exercised once those modules land

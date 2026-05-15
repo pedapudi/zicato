@@ -8,9 +8,8 @@ from pathlib import Path
 import pytest
 
 from zicato.core.types import MutationPoint, Pattern
-from zicato.proposer.proposer import ProposerError, propose_experiment
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
-
+from zicato.proposer.proposer import ProposerError, propose_experiment
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -36,7 +36,6 @@ from zicato.synthetic.adversarial import (
     resolve_adversarial_agent,
 )
 
-
 # Default dotted-path spec for the cooperative reference agent. Overridable
 # via ``BoardEntry.context['clean_agent_spec']`` so operators who want to
 # wire a project-specific clean agent (e.g. one that uses real tool
@@ -160,7 +159,7 @@ async def run_clean_entry(
             _run_under_wrap(agent, entry.input, sinks, config),
             timeout=entry.wall_clock_budget_seconds,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         aborted = True
         abort_reason = "wall_clock_budget_exceeded"
     except AdversarialResolutionError:

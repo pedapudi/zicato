@@ -65,7 +65,6 @@ from zicato.core import (
     ScoringWeights,
 )
 
-
 # ---------------------------------------------------------------------------
 # Event walking — wire-form helpers
 # ---------------------------------------------------------------------------
@@ -184,7 +183,6 @@ def _load_events_as_dicts(events_jsonl_path: Path) -> list[dict[str, Any]]:
     """
     try:
         from goldfive.sinks.persistence import replay_from_jsonl
-
         from google.protobuf.json_format import MessageToDict
     except ModuleNotFoundError:
         # Plain-JSON fallback. Each line is a MessageToJson dict already.

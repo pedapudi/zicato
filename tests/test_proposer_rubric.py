@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
 from zicato.core.types import Patch
 from zicato.proposer.rubric import Rubric, enforce_forbidden, load_rubric
-
 
 # ---------------------------------------------------------------------------
 # load_rubric
@@ -132,5 +132,6 @@ def test_enforce_forbidden_returns_one_error_per_offending_patch() -> None:
 
 def test_rubric_is_frozen() -> None:
     r = Rubric(text="x", forbidden_ids=("a",), preferred_ids=())
-    with pytest.raises(Exception):
+    # ``@dataclass(frozen=True)`` raises FrozenInstanceError on assignment.
+    with pytest.raises(dataclasses.FrozenInstanceError):
         r.text = "y"  # type: ignore[misc]
