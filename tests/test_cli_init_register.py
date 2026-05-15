@@ -1,0 +1,204 @@
+"""Tests for the ``init`` and ``register`` subcommands."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from zicato.cli.commands.init import init_cmd
+from zicato.cli.commands.register import register_cmd
+from zicato.cli.common import CONFIG_FILENAME, LINEAGE_FILENAME
+
+
+# ---------------------------------------------------------------------------
+# init
+# ---------------------------------------------------------------------------
+
+
+def test_init_creates_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    runner = CliRunner()
+    result = runner.invoke(
+        init_cmd,
+        ["--workspace", str(workspace), "--instance-id", "alpha"],
+    )
+    assert result.exit_code == 0, result.output
+    assert workspace.is_dir()
+
+    config_path = workspace / CONFIG_FILENAME
+    assert config_path.exists()
+    config = json.loads(config_path.read_text())
+    assert config["instance_id"] == "alpha"
+    assert "created_at" in config
+
+    lineage_path = workspace / LINEAGE_FILENAME
+    assert lineage_path.exists()
+    lineage = json.loads(lineage_path.read_text())
+    assert lineage == {"nodes": [], "edges": []}
+
+
+def test_init_default_instance_id(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    runner = CliRunner()
+    result = runner.invoke(init_cmd, ["--workspace", str(workspace)])
+    assert result.exit_code == 0, result.output
+    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    assert config["instance_id"] == "default"
+
+
+def test_init_refuses_to_overwrite(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    runner = CliRunner()
+    first = runner.invoke(init_cmd, ["--workspace", str(workspace)])
+    assert first.exit_code == 0
+
+    second = runner.invoke(init_cmd, ["--workspace", str(workspace)])
+    assert second.exit_code != 0
+    # The error message should mention --force as the escape hatch.
+    assert "--force" in second.output
+
+
+def test_init_force_overwrites(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    runner = CliRunner()
+    first = runner.invoke(
+        init_cmd, ["--workspace", str(workspace), "--instance-id", "first"]
+    )
+    assert first.exit_code == 0
+    assert json.loads((workspace / CONFIG_FILENAME).read_text())["instance_id"] == "first"
+
+    second = runner.invoke(
+        init_cmd,
+        ["--workspace", str(workspace), "--instance-id", "second", "--force"],
+    )
+    assert second.exit_code == 0, second.output
+    assert (
+        json.loads((workspace / CONFIG_FILENAME).read_text())["instance_id"] == "second"
+    )
+
+
+# ---------------------------------------------------------------------------
+# register
+# ---------------------------------------------------------------------------
+
+
+def _init_workspace(tmp_path: Path) -> Path:
+    workspace = tmp_path / ".zicato"
+    runner = CliRunner()
+    result = runner.invoke(init_cmd, ["--workspace", str(workspace)])
+    assert result.exit_code == 0, result.output
+    return workspace
+
+
+def test_register_writes_entrypoint_and_trees(tmp_path: Path) -> None:
+    workspace = _init_workspace(tmp_path)
+    src_a = tmp_path / "src_a"
+    src_a.mkdir()
+    src_b = tmp_path / "src_b"
+    src_b.mkdir()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        register_cmd,
+        [
+            "--workspace",
+            str(workspace),
+            "--adk",
+            "my_pkg.agent:root_agent",
+            "--mutable-tree",
+            str(src_a),
+            "--mutable-tree",
+            str(src_b),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    # init keys preserved:
+    assert config["instance_id"] == "default"
+    assert "created_at" in config
+    # register keys written:
+    assert config["adk_entrypoint"] == "my_pkg.agent:root_agent"
+    assert config["mutable_trees"] == [str(src_a), str(src_b)]
+
+
+def test_register_with_no_mutable_trees(tmp_path: Path) -> None:
+    workspace = _init_workspace(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(
+        register_cmd,
+        [
+            "--workspace",
+            str(workspace),
+            "--adk",
+            "pkg.module:agent",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    assert config["mutable_trees"] == []
+
+
+def test_register_requires_initialized_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / ".not-yet-initialized"
+    runner = CliRunner()
+    result = runner.invoke(
+        register_cmd,
+        [
+            "--workspace",
+            str(workspace),
+            "--adk",
+            "pkg.module:agent",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "init" in result.output.lower()
+
+
+def test_register_rejects_malformed_entrypoint(tmp_path: Path) -> None:
+    workspace = _init_workspace(tmp_path)
+    runner = CliRunner()
+
+    bad_inputs = ["no_colon_here", ":missing_module", "missing_symbol:"]
+    for bad in bad_inputs:
+        result = runner.invoke(
+            register_cmd,
+            ["--workspace", str(workspace), "--adk", bad],
+        )
+        assert result.exit_code != 0, f"expected failure for {bad!r}: {result.output}"
+
+
+def test_register_requires_adk_flag(tmp_path: Path) -> None:
+    workspace = _init_workspace(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(
+        register_cmd, ["--workspace", str(workspace)]
+    )
+    assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# Shared option behaviour via env vars
+# ---------------------------------------------------------------------------
+
+
+def test_init_uses_env_var_for_instance_id_when_explicit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # init_cmd's own --instance-id has a hardcoded default; it does not
+    # consult ZICATO_INSTANCE_ID directly (that env var is honoured by
+    # shared_options on the broader CLI). This test just confirms an
+    # explicit flag still wins.
+    workspace = tmp_path / ".zicato"
+    monkeypatch.setenv("ZICATO_INSTANCE_ID", "from-env")
+    runner = CliRunner()
+    result = runner.invoke(
+        init_cmd,
+        ["--workspace", str(workspace), "--instance-id", "explicit-wins"],
+    )
+    assert result.exit_code == 0
+    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    assert config["instance_id"] == "explicit-wins"
