@@ -95,6 +95,15 @@ def _enumerate_file(
     literal_spans = _collect_literal_spans(tree)
     points: list[MutationPoint] = []
 
+    # Lines that fall INSIDE a string literal don't count as marker
+    # comments — they're documentation / examples written by the
+    # operator. A marker comment must be a real ``#`` comment on a code
+    # line, not text that happens to start with ``#`` inside a docstring.
+    literal_line_set: set[int] = set()
+    for line_start, line_end, _node in literal_spans:
+        for line_no in range(line_start, line_end + 1):
+            literal_line_set.add(line_no)
+
     # Walk markers in source order so file-level (top-of-module) markers
     # are emitted before span markers within the same file.
     for idx, raw_line in enumerate(lines):
@@ -102,6 +111,10 @@ def _enumerate_file(
         if parsed is None:
             continue
         marker_line = idx + 1  # 1-indexed
+        if marker_line in literal_line_set:
+            # Inside a docstring / module-level string literal — operators
+            # use this for marker-syntax examples; treat as documentation.
+            continue
         if parsed.is_file:
             content = text
             points.append(
@@ -142,11 +155,24 @@ def _enumerate_file(
 
 
 def enumerate_mutations(source_roots: list[Path]) -> list[MutationPoint]:
-    """Walk Python files under each source root, return all mutation points.
+    """Walk source roots and return every mutation point we can find.
 
-    Results are sorted by ``(source_root, file, line_start)`` for
-    determinism. Callers can rely on that order across runs as long as
-    the source tree's content is unchanged.
+    Two discovery passes run for each root:
+
+    * The native marker pass — walks ``*.py`` files for
+      ``# zicato:mutable`` comment markers and binds them to the nearest
+      string literal (the historical behaviour).
+    * The manifest bridge — if the root looks like a goldfive worktree
+      (carries an ``optimization/manifest.toml``), the bridge in
+      :mod:`zicato.synthetic.manifest_bridge` translates each manifest
+      entry into a :class:`MutationPoint`. This is how target 2 of the
+      dogfood plan exposes goldfive's prompt + threshold surface
+      without sprinkling zicato-specific markers through the upstream
+      tree.
+
+    Results are sorted by ``(source_root, file, line_start, id)`` for
+    determinism. Callers can rely on that order across runs as long
+    as the source tree's content is unchanged.
 
     Parameters
     ----------
@@ -166,7 +192,24 @@ def enumerate_mutations(source_roots: list[Path]) -> list[MutationPoint]:
             continue
         for py_file in sorted(root.rglob("*.py")):
             out.extend(_enumerate_file(py_file.resolve(), root))
-    out.sort(key=lambda p: (str(p.source_root), str(p.file), p.line_start))
+
+    # Manifest bridge — additive, runs after the native marker pass.
+    # Imported here (not at module top) so the bridge's tomllib /
+    # synthetic-package dependencies stay out of the import path for
+    # operators who only ever use the marker form.
+    try:
+        from zicato.synthetic.manifest_bridge import (  # noqa: PLC0415
+            enumerate_manifest_points,
+        )
+    except ImportError:
+        # The bridge module is sibling-package; if it ever moves and
+        # the import fails, the enumerator should still return the
+        # marker-discovered points rather than crashing.
+        pass
+    else:
+        out.extend(enumerate_manifest_points(source_roots))
+
+    out.sort(key=lambda p: (str(p.source_root), str(p.file), p.line_start, p.id))
     return out
 
 

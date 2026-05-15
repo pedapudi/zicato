@@ -108,8 +108,76 @@ def _replace_node_text(
     file_path.write_text(before + new_text + after, encoding="utf-8")
 
 
+def _looks_like_python_string_literal(text: str) -> bool:
+    """Heuristic: does ``text`` already look like a Python source-form
+    string literal (quoted, possibly triple-quoted, possibly prefixed)?
+
+    Used to decide whether ``new_content`` came in as raw prose (in
+    which case the applier must wrap it as a literal) or as fully-formed
+    Python source (in which case the applier should preserve it
+    verbatim). The check is intentionally permissive — false positives
+    on this branch only mean the applier writes the operator's
+    pre-formatted source unchanged.
+    """
+    stripped = text.lstrip()
+    # Skip optional string prefixes: r, R, b, B, u, U, f, F (and combos).
+    i = 0
+    while i < len(stripped) and i < 2 and stripped[i] in "rRbBuUfF":
+        i += 1
+    rest = stripped[i:]
+    return rest.startswith(('"""', "'''", '"', "'"))
+
+
+def _quote_as_python_string(content: str, indent: str) -> str:
+    """Wrap ``content`` as a Python triple-quoted string literal.
+
+    The indent prefix is the leading whitespace of the original span's
+    first line so the produced source slots into the original
+    syntactic position (kwarg value, return expression, parenthesised
+    concat, etc.) without disturbing the surrounding code's indent.
+
+    Triple double-quotes are used unless ``content`` itself contains a
+    triple-double-quote sequence, in which case we fall back to triple
+    single-quotes. When both collide we hard-escape one — rare enough
+    that the fallback's mild ugliness is acceptable.
+    """
+    if '"""' not in content:
+        return f'{indent}"""{content}"""'
+    if "'''" not in content:
+        return f"{indent}'''{content}'''"
+    # Both triple-quote forms appear in the content; escape one.
+    escaped = content.replace('"""', '\\"\\"\\"')
+    return f'{indent}"""{escaped}"""'
+
+
+def _leading_indent(text: str) -> str:
+    """Return the leading-whitespace prefix of the first non-empty line."""
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped:
+            return line[: len(line) - len(stripped)]
+    return ""
+
+
 def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
-    """Replace a span point's content with ``new_content``."""
+    """Replace a span point's content with ``new_content``.
+
+    For file-kind points the new content overwrites the whole file.
+    For span-kind points the policy depends on the file's syntax:
+
+    * For ``.py`` files, the span is a Python string-literal expression
+      and the applier either preserves ``new_content`` verbatim when it
+      already looks like a Python source-form string literal, or wraps
+      it as a triple-quoted literal. The wrap step is what makes
+      "describe-the-new-string-as-prose" patches survive the post-apply
+      syntax check.
+    * For non-``.py`` files (markdown prompt bodies, plain text, etc.)
+      the span is plain content; the applier writes ``new_content``
+      verbatim with no Python-syntactic wrapping. This is the path the
+      target-2 manifest bridge takes when a patch rewrites a prompt
+      markdown body — wrapping the body in ``\"\"\"...\"\"\"`` would
+      corrupt the file.
+    """
 
     text = point.file.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
@@ -118,7 +186,21 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
         return
     before = "".join(lines[: point.line_start - 1])
     after = "".join(lines[point.line_end :])
-    middle = new_content
+
+    if point.file.suffix == ".py":
+        if _looks_like_python_string_literal(new_content):
+            middle = new_content
+        else:
+            original_span = "".join(lines[point.line_start - 1 : point.line_end])
+            indent = _leading_indent(original_span)
+            middle = _quote_as_python_string(new_content, indent)
+    else:
+        # Non-Python span: write the content verbatim. The enumerator
+        # binds the span to a content range in the source file (e.g.
+        # the prompt body inside a manifest-bridged markdown file);
+        # syntactic wrapping would corrupt the surrounding format.
+        middle = new_content
+
     if not middle.endswith("\n"):
         # Preserve the trailing newline that the original span almost
         # certainly had — joining without it would merge the span with

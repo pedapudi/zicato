@@ -85,7 +85,13 @@ def register_cmd(
 
     config = read_workspace_config(workspace_root)
     config["adk_entrypoint"] = entrypoint
+    # ``mutable_trees`` and ``source_roots`` are the same concept under
+    # two historical names: ``zicato mutations`` and ``zicato propose``
+    # read ``source_roots``; the adapter factory reads ``mutable_trees``.
+    # Writing both keeps the readers consistent without forcing a
+    # workspace-format migration.
     config["mutable_trees"] = list(mutable_trees)
+    config["source_roots"] = list(mutable_trees)
     write_workspace_config(workspace_root, config)
 
     click.echo(
