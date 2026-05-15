@@ -216,9 +216,7 @@ BoardEntryKind = Literal[
 #:   ``{"rubric": <text>, "threshold": <float|null>, "scale": [lo, hi]}``.
 #:   No operator-supplied dotted path — the matcher is provided by
 #:   :mod:`zicato.board.rubric`.
-ExpectationKind = Literal[
-    "predicate", "expected_text", "regex", "json_schema", "judge", "rubric"
-]
+ExpectationKind = Literal["predicate", "expected_text", "regex", "json_schema", "judge", "rubric"]
 
 
 #: When the expectation fires.
@@ -1385,6 +1383,19 @@ class EpochConfig:
     closed_at:
         ISO-8601 UTC timestamp of closure, or empty string when still
         open.
+    contract_hash:
+        ``sha256`` hex digest of the canonicalized evaluation contract
+        (board + rubric + scoring + the registered inner-harness
+        identity) at the time this epoch was created. See
+        :mod:`zicato.epoch.contract`. The orchestrator recomputes this
+        on every ``evolve`` and auto-rolls the epoch when the live
+        contract drifts from the stored value.
+
+        The default is the empty string. An empty ``contract_hash``
+        means "epoch created before contract-hash auto-epoching landed"
+        — such legacy epochs are treated as *always matching* so the
+        orchestrator never spuriously rolls a workspace that predates
+        the feature.
     """
 
     id: str
@@ -1395,6 +1406,7 @@ class EpochConfig:
     scoring: ScoringWeights
     closed: bool = False
     closed_at: str = ""
+    contract_hash: str = ""
 
 
 @dataclass(frozen=True, slots=True)

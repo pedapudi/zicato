@@ -139,9 +139,7 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
             drift_weight=float(d.get("drift_weight", 1.0)),
             pass_weight=float(d.get("pass_weight", 1.0)),
             severity_weights=severity,
-            per_kind_weights={
-                str(k): float(v) for k, v in d.get("per_kind_weights", {}).items()
-            },
+            per_kind_weights={str(k): float(v) for k, v in d.get("per_kind_weights", {}).items()},
             plan_revision_weight=float(d.get("plan_revision_weight", 0.5)),
             runtime_weight=float(d.get("runtime_weight", 0.0)),
             promote_margin=float(d.get("promote_margin", 0.01)),
@@ -150,9 +148,7 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     return ScoringWeights(
         drift_weight=float(d.get("drift_weight", 1.0)),
         pass_weight=float(d.get("pass_weight", 1.0)),
-        per_kind_weights={
-            str(k): float(v) for k, v in d.get("per_kind_weights", {}).items()
-        },
+        per_kind_weights={str(k): float(v) for k, v in d.get("per_kind_weights", {}).items()},
         plan_revision_weight=float(d.get("plan_revision_weight", 0.5)),
         runtime_weight=float(d.get("runtime_weight", 0.0)),
         promote_margin=float(d.get("promote_margin", 0.01)),
@@ -170,10 +166,14 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         "scoring": _scoring_to_dict(cfg.scoring),
         "closed": cfg.closed,
         "closed_at": cfg.closed_at,
+        "contract_hash": cfg.contract_hash,
     }
 
 
 def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
+    # ``contract_hash`` defaults to "" so epochs written before
+    # contract-hash auto-epoching landed load cleanly — see
+    # :class:`zicato.core.types.EpochConfig` and the contract module.
     return EpochConfig(
         id=d["id"],
         name=d["name"],
@@ -183,6 +183,7 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         scoring=_scoring_from_dict(d.get("scoring", {})),
         closed=bool(d.get("closed", False)),
         closed_at=d.get("closed_at", ""),
+        contract_hash=str(d.get("contract_hash", "")),
     )
 
 
@@ -217,9 +218,7 @@ def switch_epoch(workspace_root: Path, epoch_id: str) -> None:
     step — that path is the common one.
     """
     if not epoch_dir(workspace_root, epoch_id).exists():
-        raise FileNotFoundError(
-            f"epoch {epoch_id!r} does not exist under {workspace_root}"
-        )
+        raise FileNotFoundError(f"epoch {epoch_id!r} does not exist under {workspace_root}")
     workspace_root.mkdir(parents=True, exist_ok=True)
     _current_marker(workspace_root).write_text(epoch_id + "\n")
 
@@ -233,9 +232,7 @@ def load_epoch(workspace_root: Path, epoch_id: str) -> EpochConfig:
     """Read one epoch's ``config.json`` back into an :class:`EpochConfig`."""
     path = _config_path(workspace_root, epoch_id)
     if not path.exists():
-        raise FileNotFoundError(
-            f"epoch {epoch_id!r} has no config.json under {workspace_root}"
-        )
+        raise FileNotFoundError(f"epoch {epoch_id!r} has no config.json under {workspace_root}")
     return _config_from_dict(json.loads(path.read_text()))
 
 
@@ -277,6 +274,9 @@ def new_epoch(
     weights: ScoringWeights,
     auto_close_previous: bool = True,
     aux_call_llm: _AuxCallLLM | None = None,
+    *,
+    entrypoint: str = "",
+    mutable_trees: tuple[str, ...] = (),
 ) -> EpochConfig:
     """Create a new epoch directory and switch to it.
 
@@ -287,8 +287,17 @@ def new_epoch(
       2. Compute the epoch id from ``name`` and today's date.
       3. Create ``.zicato/epochs/{id}/`` and copy the board + rubric in.
       4. Serialize ``weights`` to ``scoring.json``.
-      5. Write ``config.json`` and update ``lineage.json``.
-      6. Update the ``current_epoch`` marker.
+      5. Compute the contract hash over the frozen board/rubric/scoring
+         plus ``entrypoint`` + ``mutable_trees``, and store it on the
+         :class:`EpochConfig`. See :mod:`zicato.epoch.contract`.
+      6. Write ``config.json`` and update ``lineage.json``.
+      7. Update the ``current_epoch`` marker.
+
+    ``entrypoint`` and ``mutable_trees`` carry the registered inner-
+    harness identity into the contract hash. They default to empty so
+    existing callers (and tests) keep working — an epoch created
+    without them simply hashes those two components as empty, which is
+    stable and back-compatible.
 
     Returns the constructed :class:`EpochConfig`.
     """
@@ -326,11 +335,29 @@ def new_epoch(
     shutil.copyfile(rubric_source, target_rubric)
 
     # 4. Scoring weights.
-    scoring_path(workspace_root, epoch_id).write_text(
-        json.dumps(_scoring_to_dict(weights), indent=2, sort_keys=True)
+    target_scoring = scoring_path(workspace_root, epoch_id)
+    target_scoring.write_text(json.dumps(_scoring_to_dict(weights), indent=2, sort_keys=True))
+
+    # 5. Contract hash over the frozen board/rubric/scoring plus the
+    # registered inner-harness identity. Computed from the just-written
+    # frozen copies so the stored hash is exactly what a later
+    # ``resolve_contract_inputs`` over equivalent live files produces.
+    from zicato.epoch.contract import (  # noqa: PLC0415
+        ContractInputs,
+        compute_contract_hash,
     )
 
-    # 5. Config + lineage.
+    contract_hash = compute_contract_hash(
+        ContractInputs(
+            board_path=target_board,
+            rubric_path=target_rubric,
+            scoring_path=target_scoring,
+            entrypoint=entrypoint,
+            mutable_trees=tuple(mutable_trees),
+        )
+    )
+
+    # 6. Config + lineage.
     cfg = EpochConfig(
         id=epoch_id,
         name=name,
@@ -340,6 +367,7 @@ def new_epoch(
         scoring=weights,
         closed=False,
         closed_at="",
+        contract_hash=contract_hash,
     )
     _write_config(workspace_root, cfg)
 
@@ -349,9 +377,54 @@ def new_epoch(
 
     _lineage.register_epoch(workspace_root, cfg, parent_epoch_id=prev_id)
 
-    # 6. Marker.
+    # 7. Marker.
     switch_epoch(workspace_root, epoch_id)
     return cfg
+
+
+def _close_epoch_prelude(
+    workspace_root: Path,
+    epoch_id: str | None,
+) -> tuple[str, Path]:
+    """Mark an epoch closed + stamp lineage; return ``(epoch_id, out_path)``.
+
+    Shared by the sync :func:`close_epoch` and the async
+    :func:`close_epoch_async` so the only thing that differs between
+    the two is *how* the (possibly async) analysis pass is driven.
+    """
+    if epoch_id is None:
+        epoch_id = current_epoch_id(workspace_root)
+        if epoch_id is None:
+            raise RuntimeError("close_epoch: no epoch_id supplied and no current_epoch marker")
+
+    cfg = load_epoch(workspace_root, epoch_id)
+    if not cfg.closed:
+        from dataclasses import replace
+
+        cfg = replace(cfg, closed=True, closed_at=_now_iso())
+        _write_config(workspace_root, cfg)
+
+    # Update lineage's per-epoch closed_at.
+    from zicato.epoch import lineage as _lineage
+
+    _lineage.mark_closed(workspace_root, epoch_id, cfg.closed_at)
+    return epoch_id, analysis_path(workspace_root, epoch_id)
+
+
+def _write_stub_analysis(workspace_root: Path, epoch_id: str, out_path: Path) -> None:
+    """Write a stub ``analysis.md`` + HTML companion (no-LLM close path)."""
+    if not out_path.exists():
+        jpath = journal_path(workspace_root, epoch_id)
+        journal_content = jpath.read_text() if jpath.exists() else "(no journal entries)"
+        out_path.write_text(
+            f"# Epoch analysis: {epoch_id}\n\n"
+            "_No auxiliary LLM was supplied at close; this is a stub. "
+            "Re-run `zicato epoch close` with an `aux_call_llm` configured "
+            "to regenerate._\n\n"
+            "## Journal snapshot\n\n"
+            f"{journal_content}\n"
+        )
+    _write_stub_html_companion(workspace_root, epoch_id, out_path)
 
 
 def close_epoch(
@@ -366,25 +439,13 @@ def close_epoch(
     write a stub ``analysis.md`` (the operator can re-run the analysis
     pass later by hand). The return value is the analysis path so the
     caller can render it / chmod it / etc.
+
+    This is the **synchronous** entry point — it drives the (async)
+    analysis pass via :func:`asyncio.run`, so it must NOT be called
+    from inside a running event loop. Async callers use
+    :func:`close_epoch_async`.
     """
-    if epoch_id is None:
-        epoch_id = current_epoch_id(workspace_root)
-        if epoch_id is None:
-            raise RuntimeError(
-                "close_epoch: no epoch_id supplied and no current_epoch marker"
-            )
-
-    cfg = load_epoch(workspace_root, epoch_id)
-    if not cfg.closed:
-        from dataclasses import replace
-
-        cfg = replace(cfg, closed=True, closed_at=_now_iso())
-        _write_config(workspace_root, cfg)
-
-    # Update lineage's per-epoch closed_at.
-    from zicato.epoch import lineage as _lineage
-
-    _lineage.mark_closed(workspace_root, epoch_id, cfg.closed_at)
+    epoch_id, out_path = _close_epoch_prelude(workspace_root, epoch_id)
 
     # Generate analysis.md. If no aux callable was provided we still
     # leave a placeholder so callers see a non-empty file — the analysis
@@ -392,7 +453,6 @@ def close_epoch(
     # ``analysis.html`` so the HTML report stays available when
     # operators close an epoch without an auxiliary LLM (e.g. the smoke
     # test).
-    out_path = analysis_path(workspace_root, epoch_id)
     if aux_call_llm is not None:
         from zicato.epoch import analysis as _analysis
 
@@ -405,18 +465,35 @@ def close_epoch(
             )
         )
     else:
-        if not out_path.exists():
-            jpath = journal_path(workspace_root, epoch_id)
-            journal_content = jpath.read_text() if jpath.exists() else "(no journal entries)"
-            out_path.write_text(
-                f"# Epoch analysis: {epoch_id}\n\n"
-                "_No auxiliary LLM was supplied at close; this is a stub. "
-                "Re-run `zicato epoch close` with an `aux_call_llm` configured "
-                "to regenerate._\n\n"
-                "## Journal snapshot\n\n"
-                f"{journal_content}\n"
-            )
-        _write_stub_html_companion(workspace_root, epoch_id, out_path)
+        _write_stub_analysis(workspace_root, epoch_id, out_path)
+    return out_path
+
+
+async def close_epoch_async(
+    workspace_root: Path,
+    epoch_id: str | None = None,
+    aux_call_llm: _AuxCallLLM | None = None,
+) -> Path:
+    """Async sibling of :func:`close_epoch`.
+
+    Identical behaviour, but ``await``\\ s the analysis pass instead of
+    driving it through :func:`asyncio.run`. This is the path the
+    orchestrator's contract-hash auto-roll uses — it already runs
+    inside an event loop, so a nested :func:`asyncio.run` would raise.
+    """
+    epoch_id, out_path = _close_epoch_prelude(workspace_root, epoch_id)
+
+    if aux_call_llm is not None:
+        from zicato.epoch import analysis as _analysis
+
+        await _analysis.generate_analysis(
+            workspace_root,
+            epoch_id,
+            aux_call_llm,
+            model="",
+        )
+    else:
+        _write_stub_analysis(workspace_root, epoch_id, out_path)
     return out_path
 
 
@@ -444,9 +521,7 @@ def _write_stub_html_companion(
         return
     try:
         raw_experiments = _collect_experiments(workspace_root, epoch_id)
-        typed_gens, typed_exps = _hydrate_typed_view(
-            workspace_root, epoch_id, raw_experiments
-        )
+        typed_gens, typed_exps = _hydrate_typed_view(workspace_root, epoch_id, raw_experiments)
         _write_html_companion(md_path, epoch_id, typed_gens, typed_exps)
     except Exception:  # noqa: BLE001 — HTML is best-effort at close
         return
@@ -455,6 +530,7 @@ def _write_stub_html_companion(
 __all__ = [
     "new_epoch",
     "close_epoch",
+    "close_epoch_async",
     "list_epochs",
     "switch_epoch",
     "current_epoch_id",

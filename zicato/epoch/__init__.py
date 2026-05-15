@@ -29,6 +29,7 @@ from zicato.epoch.journal import (
 )
 from zicato.epoch.lifecycle import (
     close_epoch,
+    close_epoch_async,
     current_epoch_id,
     list_epochs,
     load_epoch,
@@ -47,6 +48,7 @@ __all__ = [
     # lifecycle
     "new_epoch",
     "close_epoch",
+    "close_epoch_async",
     "list_epochs",
     "switch_epoch",
     "current_epoch_id",
