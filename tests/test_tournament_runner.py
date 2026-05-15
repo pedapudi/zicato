@@ -30,9 +30,11 @@ import pytest
 from zicato.core import (
     BoardEntry,
     DriftCount,
+    Expectation,
     ExpectationResult,
     Generation,
     LossProfile,
+    RunResult,
     RuntimeConfig,
     ScoringWeights,
 )
@@ -141,15 +143,18 @@ def _install_telemetry_stubs(
     reducer_mod = types.ModuleType("zicato.telemetry.reducer")
 
     def reduce_loss(
-        *,
         events_jsonl_path: Path,
-        entry_id: str,
+        entry: BoardEntry,
         generation_id: str,
         epoch_id: str,
+        expectation_result: ExpectationResult | None,
+        runtime_ms: int,
+        wall_clock_budget_exceeded: bool,
         weights: ScoringWeights,
     ) -> LossProfile:
         del events_jsonl_path, epoch_id, weights  # unused in stub
-        return canned[(generation_id, entry_id)]
+        del expectation_result, runtime_ms, wall_clock_budget_exceeded
+        return canned[(generation_id, entry.id)]
 
     reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
 
@@ -476,6 +481,222 @@ def test_run_fast_mode_runs_only_child(
 # ---------------------------------------------------------------------------
 # Serialization
 # ---------------------------------------------------------------------------
+
+
+def test_run_single_uses_full_protocol_and_evaluates_expectation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A session with the rich (entry, sinks, config) shape gets a RunResult.
+
+    The reducer must receive the entry, runtime, budget flag, and a
+    non-None expectation_result computed by evaluate_expectation.
+    """
+    parent_gen = Generation(
+        id="v0",
+        epoch_id="e0",
+        parent_id=None,
+        snapshot_root=tmp_path / "snap_v0",
+        created_at="2024-01-01T00:00:00Z",
+    )
+    child_gen = Generation(
+        id="v1",
+        epoch_id="e0",
+        parent_id="v0",
+        snapshot_root=tmp_path / "snap_v1",
+        created_at="2024-01-02T00:00:00Z",
+    )
+
+    entry = BoardEntry(
+        id="entry_a",
+        kind="single_turn",
+        wall_clock_budget_seconds=60,
+        input="hello",
+        expectation=Expectation(kind="expected_text", spec="world"),
+    )
+
+    received_reducer_kwargs: list[dict[str, Any]] = []
+
+    sink_mod = types.ModuleType("zicato.telemetry.sink")
+    sink_mod.make_run_sink_path = lambda **kw: (  # type: ignore[attr-defined]
+        kw["workspace_root"] / "events.jsonl"
+    )
+
+    reducer_mod = types.ModuleType("zicato.telemetry.reducer")
+
+    def reduce_loss(
+        events_jsonl_path: Path,
+        passed_entry: BoardEntry,
+        generation_id: str,
+        epoch_id: str,
+        expectation_result: ExpectationResult | None,
+        runtime_ms: int,
+        wall_clock_budget_exceeded: bool,
+        weights: ScoringWeights,
+    ) -> LossProfile:
+        received_reducer_kwargs.append(
+            {
+                "entry_id": passed_entry.id,
+                "generation_id": generation_id,
+                "epoch_id": epoch_id,
+                "expectation_result": expectation_result,
+                "runtime_ms": runtime_ms,
+                "wall_clock_budget_exceeded": wall_clock_budget_exceeded,
+            }
+        )
+        del events_jsonl_path, weights
+        return _loss(
+            generation_id=generation_id,
+            entry_id=passed_entry.id,
+            drift_loss=0.5,
+            pass_fail=(expectation_result.passed if expectation_result else None),
+        )
+
+    reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
+
+    telemetry_pkg = types.ModuleType("zicato.telemetry")
+    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
+    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
+
+    class _RichSession:
+        async def run(
+            self, entry: BoardEntry, sinks: list[Any], config: RuntimeConfig
+        ) -> RunResult:
+            del sinks, config
+            return RunResult(
+                run_id="r1",
+                entry_id=entry.id,
+                final_output="hello world",
+                transcript=("hello world",),
+                runtime_ms=42,
+            )
+
+    class _RichAdapter:
+        def load(self, snapshot_root: Path) -> _RichSession:
+            del snapshot_root
+            return _RichSession()
+
+    config = _make_runtime_config(tmp_path)
+    asyncio.run(
+        run_tournament(
+            adapter=_RichAdapter(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=[entry],
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+    # Two reducer calls — one per generation.
+    assert len(received_reducer_kwargs) == 2
+    for kw in received_reducer_kwargs:
+        assert kw["entry_id"] == "entry_a"
+        # runtime_ms reflects the session's reported runtime.
+        assert kw["runtime_ms"] == 42
+        assert kw["wall_clock_budget_exceeded"] is False
+        # expectation_result populated and matched "world" substring.
+        assert kw["expectation_result"] is not None
+        assert kw["expectation_result"].passed is True
+
+
+def test_run_single_detects_wall_clock_budget_exceeded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A RunResult with abort_reason='wall_clock_budget' flips the flag."""
+    parent_gen = Generation(
+        id="v0",
+        epoch_id="e0",
+        parent_id=None,
+        snapshot_root=tmp_path / "snap_v0",
+        created_at="2024-01-01T00:00:00Z",
+    )
+    child_gen = Generation(
+        id="v1",
+        epoch_id="e0",
+        parent_id="v0",
+        snapshot_root=tmp_path / "snap_v1",
+        created_at="2024-01-02T00:00:00Z",
+    )
+
+    received_flags: list[bool] = []
+
+    sink_mod = types.ModuleType("zicato.telemetry.sink")
+    sink_mod.make_run_sink_path = lambda **kw: (  # type: ignore[attr-defined]
+        kw["workspace_root"] / "events.jsonl"
+    )
+    reducer_mod = types.ModuleType("zicato.telemetry.reducer")
+
+    def reduce_loss(
+        events_jsonl_path: Path,
+        passed_entry: BoardEntry,
+        generation_id: str,
+        epoch_id: str,
+        expectation_result: ExpectationResult | None,
+        runtime_ms: int,
+        wall_clock_budget_exceeded: bool,
+        weights: ScoringWeights,
+    ) -> LossProfile:
+        del events_jsonl_path, expectation_result, runtime_ms, weights, epoch_id
+        received_flags.append(wall_clock_budget_exceeded)
+        return _loss(
+            generation_id=generation_id,
+            entry_id=passed_entry.id,
+            drift_loss=999.0,
+            pass_fail=None,
+        )
+
+    reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
+    telemetry_pkg = types.ModuleType("zicato.telemetry")
+    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
+    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
+
+    entry = BoardEntry(
+        id="entry_a", kind="single_turn", wall_clock_budget_seconds=60, input="hi"
+    )
+
+    class _AbortedSession:
+        async def run(
+            self, entry: BoardEntry, sinks: list[Any], config: RuntimeConfig
+        ) -> RunResult:
+            del sinks, config
+            return RunResult(
+                run_id="r1",
+                entry_id=entry.id,
+                final_output="",
+                transcript=(),
+                runtime_ms=1000,
+                aborted=True,
+                abort_reason="wall_clock_budget",
+            )
+
+    class _AbortedAdapter:
+        def load(self, snapshot_root: Path) -> _AbortedSession:
+            del snapshot_root
+            return _AbortedSession()
+
+    config = _make_runtime_config(tmp_path)
+    asyncio.run(
+        run_tournament(
+            adapter=_AbortedAdapter(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=[entry],
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+    assert received_flags == [True, True]
 
 
 def test_tournament_result_is_json_serializable(

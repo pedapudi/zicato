@@ -24,28 +24,34 @@ wired up. The two helpers we expect from telemetry are:
 * ``zicato.telemetry.sink.make_run_sink_path(workspace_root, epoch_id,
   generation_id, entry_id) -> Path`` — returns the events JSONL path
   the sink should write to. Must be deterministic.
-* ``zicato.telemetry.reducer.reduce_loss(events_jsonl_path, *,
-  entry_id, generation_id, epoch_id, weights) -> LossProfile`` — reads
+* ``zicato.telemetry.reducer.reduce_loss(events_jsonl_path, entry,
+  generation_id, epoch_id, expectation_result, runtime_ms,
+  wall_clock_budget_exceeded, weights) -> LossProfile`` — reads
   the JSONL and produces a :class:`LossProfile`.
 
-The adapter contract used here is intentionally narrow: a callable-
-shaped object exposing ``load(snapshot_root)`` returning a "harness
-session" with an async ``run(entry, sink_path)`` method that writes
-the events JSONL at ``sink_path`` and returns. Concrete
-:class:`HarnessAdapter` implementations conform; tests stub it.
+The session protocol used here intentionally accepts both the rich
+:class:`~zicato.adapters.RunnableHarness` shape (``run(entry, sinks,
+config) -> RunResult``) and the legacy stub shape (``run(entry,
+sink_path) -> None``) so adapter implementations and lightweight
+tests can both drive the runner. The driver inspects the session's
+:meth:`run` signature at runtime and dispatches accordingly.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from zicato.core import (
     BoardEntry,
+    ExpectationResult,
     Generation,
     LossProfile,
+    RunResult,
     RuntimeConfig,
     ScoringWeights,
 )
@@ -86,26 +92,127 @@ def _telemetry_helpers() -> tuple[Any, Any]:
     return _sink, _reducer
 
 
+async def _drive_session(
+    *,
+    session: Any,
+    entry: BoardEntry,
+    sink_path: Path,
+    config: RuntimeConfig,
+) -> tuple[RunResult | None, int, bool]:
+    """Drive one ``session.run`` call and return (result, runtime_ms, budget_exceeded).
+
+    Two session shapes are accepted:
+
+    * ``run(entry, sinks, config) -> RunResult`` — the full
+      :class:`~zicato.adapters.RunnableHarness` shape. The runner
+      constructs a single-element ``sinks`` list with a
+      :class:`JSONLPersistenceSink` aimed at ``sink_path`` (lazily, to
+      keep goldfive optional). When the result is ``aborted`` with
+      ``abort_reason == "wall_clock_budget"`` we set the budget-
+      exceeded flag.
+    * ``run(entry, sink_path) -> None`` — legacy / stub shape used by
+      tests that hand-write the events JSONL. The runner measures
+      wall-clock duration itself; budget-exceeded is always ``False``
+      on this path because the stub has no way to communicate an
+      abort.
+
+    The dispatch is by parameter-name inspection rather than by
+    ``hasattr(session, "run")`` introspection so a test stub that
+    deliberately mimics the legacy shape can do so without having to
+    register a runtime-protocol marker.
+    """
+    sig = inspect.signature(session.run)
+    param_names = list(sig.parameters)
+    started = time.monotonic()
+
+    # Decide by the second positional parameter (after ``entry``).
+    legacy = len(param_names) >= 2 and param_names[1] in ("sink_path", "events_path")
+
+    if legacy:
+        await session.run(entry, sink_path)
+        runtime_ms = int((time.monotonic() - started) * 1000)
+        return None, runtime_ms, False
+
+    # Full-protocol path — construct the JSONL sink and capture RunResult.
+    sinks = _build_sinks(sink_path)
+    result = await session.run(entry, sinks, config)
+    runtime_ms = (
+        result.runtime_ms
+        if isinstance(result, RunResult) and result.runtime_ms > 0
+        else int((time.monotonic() - started) * 1000)
+    )
+    budget_exceeded = bool(
+        isinstance(result, RunResult)
+        and result.aborted
+        and result.abort_reason == "wall_clock_budget"
+    )
+    return (result if isinstance(result, RunResult) else None), runtime_ms, budget_exceeded
+
+
+def _build_sinks(sink_path: Path) -> list[Any]:
+    """Build the per-run sink list.
+
+    Lazily imports :mod:`goldfive.sinks.persistence`; if goldfive is
+    not installed we return an empty list rather than raising. The
+    adapter is free to wire its own telemetry capture in that case;
+    the reducer's JSONL fallback path also handles a missing file by
+    producing an empty event walk.
+    """
+    try:
+        from goldfive.sinks.persistence import JSONLPersistenceSink  # noqa: PLC0415
+    except ModuleNotFoundError:
+        return []
+    sink_path.parent.mkdir(parents=True, exist_ok=True)
+    return [JSONLPersistenceSink(path=sink_path, mode="write")]
+
+
+async def _evaluate_entry_expectation(
+    entry: BoardEntry,
+    run_result: RunResult | None,
+    config: RuntimeConfig,
+) -> ExpectationResult | None:
+    """Evaluate ``entry.expectation`` against ``run_result`` if both present.
+
+    Returns ``None`` when the entry has no expectation OR when the
+    session shape was legacy and we therefore have no
+    :class:`RunResult` to feed the matcher. The reducer handles a
+    ``None`` expectation result by leaving the corresponding
+    :class:`LossProfile` fields unset.
+    """
+    if entry.expectation is None or run_result is None:
+        return None
+    from zicato.board.matchers import evaluate_expectation  # noqa: PLC0415
+
+    return await evaluate_expectation(
+        entry.expectation,
+        run_result,
+        aux_call_llm=config.auxiliary_call_llm,
+    )
+
+
 async def _run_single(
     *,
     adapter: Any,
     generation: Generation,
     entry: BoardEntry,
     weights: ScoringWeights,
+    config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
 ) -> LossProfile:
     """Run one entry under one generation; produce its :class:`LossProfile`.
 
-    Sequencing (matches the spec):
+    Sequencing:
 
     1. Build the per-run sink path via the telemetry sink helper.
     2. Load the harness via ``adapter.load(generation.snapshot_root)``.
-    3. ``await session.run(entry, sink_path)`` — the session writes the
-       events JSONL.
-    4. ``reducer.reduce_loss(...)`` reads the JSONL and produces the
-       :class:`LossProfile`. The reducer is also responsible for
-       persisting ``loss.json`` next to ``events.jsonl``.
+    3. Drive ``session.run`` via :func:`_drive_session`, which handles
+       the two session shapes (legacy / rich) and returns the optional
+       :class:`RunResult`, runtime, and budget-exceeded flag.
+    4. Evaluate the entry's expectation (if any) against the
+       :class:`RunResult` using the workspace's auxiliary callable.
+    5. Call :func:`reduce_loss` with the full positional contract,
+       which produces and persists the :class:`LossProfile`.
     """
     sink_module, reducer_module = _telemetry_helpers()
     sink_path = sink_module.make_run_sink_path(
@@ -116,14 +223,24 @@ async def _run_single(
     )
 
     session = adapter.load(generation.snapshot_root)
-    await session.run(entry, sink_path)
+    run_result, runtime_ms, budget_exceeded = await _drive_session(
+        session=session,
+        entry=entry,
+        sink_path=sink_path,
+        config=config,
+    )
+
+    expectation_result = await _evaluate_entry_expectation(entry, run_result, config)
 
     loss: LossProfile = reducer_module.reduce_loss(
-        events_jsonl_path=sink_path,
-        entry_id=entry.id,
-        generation_id=generation.id,
-        epoch_id=epoch_id,
-        weights=weights,
+        sink_path,
+        entry,
+        generation.id,
+        epoch_id,
+        expectation_result,
+        runtime_ms,
+        budget_exceeded,
+        weights,
     )
     return loss
 
@@ -134,6 +251,7 @@ async def _run_generation(
     generation: Generation,
     board: list[BoardEntry],
     weights: ScoringWeights,
+    config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
 ) -> dict[str, LossProfile]:
@@ -145,6 +263,7 @@ async def _run_generation(
             generation=generation,
             entry=entry,
             weights=weights,
+            config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
         )
@@ -177,6 +296,7 @@ async def run_tournament(
         generation=parent_gen,
         board=board,
         weights=weights,
+        config=config,
         workspace_root=workspace_root,
         epoch_id=epoch_id,
     )
@@ -185,6 +305,7 @@ async def run_tournament(
         generation=child_gen,
         board=board,
         weights=weights,
+        config=config,
         workspace_root=workspace_root,
         epoch_id=epoch_id,
     )
@@ -245,6 +366,7 @@ async def run_fast_mode(
         generation=child_gen,
         board=board,
         weights=weights,
+        config=config,
         workspace_root=workspace_root,
         epoch_id=epoch_id,
     )
