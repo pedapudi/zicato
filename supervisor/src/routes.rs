@@ -47,6 +47,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/control/promote/:generation_id", post(control_promote))
         .route("/api/control/reject/:generation_id", post(control_reject))
         .route("/api/control/rubric", post(control_rubric))
+        // Any unmatched GET is treated as a request for a bundled static
+        // asset. This makes `index.html`'s relative references
+        // (`style.css`, `app.js`, `icons.svg`) resolve at the document
+        // root, where a browser requests them — without it the page
+        // loads unstyled and inert. Explicit routes above always win;
+        // unknown assets fall through to a 404 inside `static_assets`.
+        .fallback(get(serve_fallback))
         .with_state(state)
 }
 
@@ -56,6 +63,10 @@ async fn serve_root() -> Response {
 
 async fn serve_static(AxumPath(path): AxumPath<String>) -> Response {
     static_assets::serve(&path)
+}
+
+async fn serve_fallback(uri: axum::http::Uri) -> Response {
+    static_assets::serve(uri.path())
 }
 
 async fn api_state(State(s): State<AppState>) -> Json<serde_json::Value> {
