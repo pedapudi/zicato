@@ -7,6 +7,14 @@ common Python convention ``module.path:symbol``; mutable trees are
 filesystem roots (one or many, passed as repeated ``--mutable-tree``
 flags).
 
+``register`` also records the canonical *contract source paths* — the
+operator's live, editable ``board.jsonl`` / ``rubric.md`` /
+``scoring.json``. These default to the conventional location next to
+the ``.zicato/`` workspace, but ``--board`` / ``--rubric`` /
+``--scoring`` override the default. Contract-hash auto-epoching reads
+these paths back on every ``evolve`` to decide whether the evaluation
+contract has drifted (see ``docs/design/EPOCHS-AND-JOURNALING.md``).
+
 The values are persisted to ``{workspace}/config.json`` so subsequent
 subcommands can read them back without re-asking the operator.
 """
@@ -65,16 +73,45 @@ def _validate_entrypoint(entrypoint: str) -> None:
     type=click.Path(),
     help="Source root the proposer is allowed to mutate (repeatable).",
 )
+@click.option(
+    "--board",
+    "board_path",
+    default=None,
+    type=click.Path(),
+    help="Canonical board.jsonl path (default: <workspace_parent>/board.jsonl).",
+)
+@click.option(
+    "--rubric",
+    "rubric_path",
+    default=None,
+    type=click.Path(),
+    help="Canonical rubric.md path (default: <workspace_parent>/rubric.md).",
+)
+@click.option(
+    "--scoring",
+    "scoring_path",
+    default=None,
+    type=click.Path(),
+    help="Canonical scoring.json path (default: <workspace_parent>/scoring.json).",
+)
 def register_cmd(
     workspace: str,
     entrypoint: str,
     mutable_trees: tuple[str, ...],
+    board_path: str | None,
+    rubric_path: str | None,
+    scoring_path: str | None,
 ) -> None:
-    """Record the adapter entrypoint and mutable trees in the workspace.
+    """Record the adapter entrypoint, mutable trees, and contract paths.
 
     Merges into the existing ``config.json`` rather than replacing it,
     so any keys :func:`zicato.cli.init_cmd.initialize_workspace` wrote
     (``instance_id``, ``created_at``) are preserved.
+
+    The canonical contract source paths (``board`` / ``rubric`` /
+    ``scoring``) default to the conventional location alongside the
+    workspace. They are stored under the ``contract`` key and read back
+    by contract-hash auto-epoching on every ``evolve``.
     """
     _validate_entrypoint(entrypoint)
     workspace_root = Path(workspace)
@@ -92,6 +129,23 @@ def register_cmd(
     # workspace-format migration.
     config["mutable_trees"] = list(mutable_trees)
     config["source_roots"] = list(mutable_trees)
+
+    # Canonical contract source paths. The operator's live, editable
+    # copies — frozen into epochs/{id}/ on each epoch creation / roll.
+    from zicato.epoch.contract import default_contract_paths  # noqa: PLC0415
+
+    defaults = default_contract_paths(workspace_root)
+    config["contract"] = {
+        "board_path": str(
+            Path(board_path).resolve() if board_path is not None else defaults["board_path"]
+        ),
+        "rubric_path": str(
+            Path(rubric_path).resolve() if rubric_path is not None else defaults["rubric_path"]
+        ),
+        "scoring_path": str(
+            Path(scoring_path).resolve() if scoring_path is not None else defaults["scoring_path"]
+        ),
+    }
     write_workspace_config(workspace_root, config)
 
     click.echo(
