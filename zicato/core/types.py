@@ -211,7 +211,14 @@ BoardEntryKind = Literal[
 #:   JSON) must validate against.
 #: * ``"judge"`` — dotted path to an async LLM-judge callable
 #:   ``(run_result, expectation_spec) -> bool``.
-ExpectationKind = Literal["predicate", "expected_text", "regex", "json_schema", "judge"]
+#: * ``"rubric"`` — built-in LLM-as-judge rubric evaluator. ``spec`` is a
+#:   JSON document of the form
+#:   ``{"rubric": <text>, "threshold": <float|null>, "scale": [lo, hi]}``.
+#:   No operator-supplied dotted path — the matcher is provided by
+#:   :mod:`zicato.board.rubric`.
+ExpectationKind = Literal[
+    "predicate", "expected_text", "regex", "json_schema", "judge", "rubric"
+]
 
 
 #: When the expectation fires.

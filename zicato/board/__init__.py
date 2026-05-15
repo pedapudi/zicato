@@ -6,7 +6,7 @@ This package wires the concerns that all live behind the
 * :mod:`zicato.board.jsonl` — round-trip serialization of a
   :class:`~zicato.core.BoardEntry` list to / from JSONL on disk, plus
   small append / remove helpers used by the ``zicato board`` CLI.
-* :mod:`zicato.board.matchers` — async dispatcher over the
+* :mod:`zicato.board.matchers` — async dispatcher over the six
   :class:`~zicato.core.Expectation` kinds, returning a uniform
   :class:`~zicato.core.ExpectationResult`.
 * :mod:`zicato.board.scripted` — driver that walks a
@@ -17,6 +17,8 @@ This package wires the concerns that all live behind the
 * :mod:`zicato.board.predicates` — :class:`Predicate` / :class:`Rubric`
   factory helpers that produce well-formed
   :class:`~zicato.core.Expectation` instances.
+* :mod:`zicato.board.rubric` — built-in LLM-as-judge implementation of
+  the ``"rubric"`` expectation kind.
 
 The package re-exports the symbols downstream code (the runner, the
 reducer, the CLI, board authors) actually imports; the submodules stay
@@ -34,6 +36,7 @@ from zicato.board.jsonl import (
 )
 from zicato.board.matchers import evaluate_expectation
 from zicato.board.predicates import Predicate, Rubric
+from zicato.board.rubric import evaluate_rubric_judge
 from zicato.board.scripted import ScriptedMultiTurnDriver
 
 __all__ = [
@@ -42,6 +45,7 @@ __all__ = [
     "remove_entry",
     "save_board",
     "evaluate_expectation",
+    "evaluate_rubric_judge",
     "ScriptedMultiTurnDriver",
     "Board",
     "Entry",

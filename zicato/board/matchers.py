@@ -351,6 +351,13 @@ async def evaluate_expectation(
         return _eval_json_schema(expectation, result)
     if expectation.kind == "judge":
         return await _eval_judge(expectation, result, aux_call_llm)
+    if expectation.kind == "rubric":
+        # Local import keeps the matchers module decoupled from the
+        # rubric module's prompt strings — anyone hot-swapping the
+        # rubric judge implementation only edits :mod:`zicato.board.rubric`.
+        from zicato.board.rubric import evaluate_rubric_judge  # noqa: PLC0415
+
+        return await evaluate_rubric_judge(expectation, result, aux_call_llm)
     # Literal-typed; belt-and-braces for forward compatibility.
     raise ValueError(f"unknown expectation kind {expectation.kind!r}")
 
