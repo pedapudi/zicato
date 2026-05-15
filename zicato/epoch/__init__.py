@@ -20,7 +20,13 @@ individual submodules so the surface stays stable.
 from __future__ import annotations
 
 from zicato.epoch.analysis import REQUIRED_SECTIONS, generate_analysis
-from zicato.epoch.journal import append_journal_entry, read_journal
+from zicato.epoch.journal import (
+    append_journal_entry,
+    read_experiment,
+    read_journal,
+    update_experiment_outcome,
+    write_experiment,
+)
 from zicato.epoch.lifecycle import (
     close_epoch,
     current_epoch_id,
@@ -48,6 +54,9 @@ __all__ = [
     # journal
     "append_journal_entry",
     "read_journal",
+    "write_experiment",
+    "read_experiment",
+    "update_experiment_outcome",
     # analysis
     "REQUIRED_SECTIONS",
     "generate_analysis",

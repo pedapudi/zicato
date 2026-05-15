@@ -101,6 +101,28 @@ def experiment_json_path(
     return _generation_root(workspace_root, epoch_id, generation_id) / "experiment.json"
 
 
+def patches_dir(
+    workspace_root: Path, epoch_id: str, generation_id: str
+) -> Path:
+    """Path to the per-patch JSON directory under a generation.
+
+    See :doc:`project_zicato_storage_design` for the per-patch file
+    layout. The directory is created lazily by writers; readers tolerate
+    its absence (an experiment with zero patches has no directory).
+    """
+    return _generation_root(workspace_root, epoch_id, generation_id) / "patches"
+
+
+def patch_json_path(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    patch_id: str,
+) -> Path:
+    """Path to one patch JSON file inside a generation's patches directory."""
+    return patches_dir(workspace_root, epoch_id, generation_id) / f"{patch_id}.json"
+
+
 def journal_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to an epoch's running narrative journal."""
     return _epoch_root(workspace_root, epoch_id) / "journal.md"
@@ -173,6 +195,8 @@ __all__ = [
     "events_jsonl_path",
     "loss_profile_path",
     "experiment_json_path",
+    "patches_dir",
+    "patch_json_path",
     "journal_path",
     "analysis_path",
     "lineage_path",

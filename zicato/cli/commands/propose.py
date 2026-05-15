@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +39,7 @@ from zicato.core.workspace import (
     generation_dir,
     rubric_path,
 )
+from zicato.epoch.journal import write_experiment
 from zicato.proposer.proposer import ProposerError, propose_experiment
 from zicato.proposer.rubric import load_rubric
 
@@ -232,22 +232,11 @@ def _load_loss_summary(workspace_dir: Path, epoch_id: str, parent_gen: str) -> s
     return "(loss summary unavailable)"
 
 
-def _serialize_experiment(exp: Any) -> str:
-    """Render an :class:`Experiment` to JSON for ``experiment.json``."""
-
-    # asdict() converts the frozen dataclasses recursively; Path values
-    # land as PosixPath objects which json.dumps cannot serialize, so we
-    # walk the result and stringify them.
-    def _coerce(obj: Any) -> Any:
-        if isinstance(obj, Path):
-            return str(obj)
-        if isinstance(obj, dict):
-            return {k: _coerce(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            return [_coerce(v) for v in obj]
-        return obj
-
-    return json.dumps(_coerce(asdict(exp)), indent=2, sort_keys=True) + "\n"
+# The historic in-line serializer used to live here; the per-patch
+# storage layout makes that obsolete. Writes now go through
+# :func:`zicato.epoch.journal.write_experiment`. We keep the import
+# pattern (asdict / Path coercion) localised in journal.py so every
+# writer of an experiment routes through one helper.
 
 
 # ---------------------------------------------------------------------------
@@ -387,9 +376,8 @@ def propose_cmd(
     except ProposerError as exc:
         raise click.ClickException(str(exc)) from exc
 
+    write_experiment(workspace_dir, epoch_id, new_gen, experiment)
     out_path = experiment_json_path(workspace_dir, epoch_id, new_gen)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(_serialize_experiment(experiment), encoding="utf-8")
     click.echo(
         f"Wrote experiment {experiment.id} for {epoch_id}/{new_gen} "
         f"to {out_path}"
