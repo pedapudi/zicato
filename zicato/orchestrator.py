@@ -208,9 +208,7 @@ async def evolve_once(
     # diff against; the operator-facing alternative was to require a
     # manual ``zicato baseline`` invocation, but materialising it on
     # demand here keeps the CLI surface narrow.
-    _ensure_baseline_snapshot(
-        workspace_root, resolved_epoch_id, workspace_config
-    )
+    _ensure_baseline_snapshot(workspace_root, resolved_epoch_id, workspace_config)
     parent_id = _resolve_current_generation(workspace_root, resolved_epoch_id)
     parent_gen = Generation(
         id=parent_id,
@@ -232,9 +230,7 @@ async def evolve_once(
     losses = _load_parent_losses(
         workspace_root, resolved_epoch_id, parent_id, board, read_loss_profile
     )
-    events_paths = _build_events_paths(
-        workspace_root, resolved_epoch_id, parent_id, board
-    )
+    events_paths = _build_events_paths(workspace_root, resolved_epoch_id, parent_id, board)
     detector_input = DetectorInput(
         losses=losses,
         entries={e.id: e for e in board},
@@ -269,13 +265,10 @@ async def evolve_once(
                 f"proposer-emitted patch {patch.id!r} targets unknown "
                 f"mutation_id {patch.mutation_id!r}"
             )
-    forbidden_violations = check_forbidden_ids(
-        list(experiment.patches), list(rubric.forbidden_ids)
-    )
+    forbidden_violations = check_forbidden_ids(list(experiment.patches), list(rubric.forbidden_ids))
     if forbidden_violations:
         raise RuntimeError(
-            "proposer-emitted patches violate forbidden_ids: "
-            + "; ".join(forbidden_violations)
+            "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
         )
 
     # --- 8. Apply patches into the child snapshot ---
@@ -295,9 +288,7 @@ async def evolve_once(
     )
 
     # --- 9. Validate post-apply ---
-    validation_errors = validate_post_apply(
-        child_snapshot, list(experiment.patches), mutations
-    )
+    validation_errors = validate_post_apply(child_snapshot, list(experiment.patches), mutations)
     if validation_errors:
         # Persist the experiment with a rejected outcome describing
         # the validator findings, then abort.
@@ -336,9 +327,7 @@ async def evolve_once(
         created_at=_now_iso(),
     )
     if fast_mode:
-        parent_historical = _load_historical_aggregate(
-            workspace_root, resolved_epoch_id, parent_id
-        )
+        parent_historical = _load_historical_aggregate(workspace_root, resolved_epoch_id, parent_id)
         tournament_result = await run_fast_mode(
             adapter=adapter,
             child_gen=child_gen,
@@ -362,12 +351,8 @@ async def evolve_once(
         )
 
     # Cache gen_score.json for future fast-mode runs.
-    _cache_gen_score(
-        workspace_root, resolved_epoch_id, parent_id, tournament_result.parent_agg
-    )
-    _cache_gen_score(
-        workspace_root, resolved_epoch_id, next_id, tournament_result.child_agg
-    )
+    _cache_gen_score(workspace_root, resolved_epoch_id, parent_id, tournament_result.parent_agg)
+    _cache_gen_score(workspace_root, resolved_epoch_id, next_id, tournament_result.child_agg)
 
     # --- 11. Persist outcome ---
     decision = tournament_result.outcome.decision
@@ -401,9 +386,7 @@ async def evolve_once(
             created_at=child_gen.created_at,
             promoted=True,
         )
-        append_to_lineage(
-            workspace_root, resolved_epoch_id, promoted_gen, parent_id=parent_id
-        )
+        append_to_lineage(workspace_root, resolved_epoch_id, promoted_gen, parent_id=parent_id)
         _set_current_generation(workspace_root, resolved_epoch_id, next_id)
     else:
         # Still record the rejected generation in lineage so the
@@ -416,12 +399,31 @@ async def evolve_once(
             created_at=child_gen.created_at,
             promoted=False,
         )
-        append_to_lineage(
-            workspace_root, resolved_epoch_id, rejected_gen, parent_id=parent_id
-        )
+        append_to_lineage(workspace_root, resolved_epoch_id, rejected_gen, parent_id=parent_id)
 
     # --- 13. Journal ---
     append_journal_entry(workspace_root, resolved_epoch_id, finalised)
+
+    # --- 14. Best-effort decision-telemetry analyzer ---
+    # Analyser failure must never abort the round; the orchestrator
+    # only logs at debug level and keeps going. The analyser writes
+    # ``epochs/{epoch}/insights/round_{N}.md`` which the next round's
+    # proposer (via :func:`zicato.analyzer.load_latest_insights`) reads.
+    # The round number is derived from the newly-proposed generation
+    # id (``v{N}``) so the insight file lines up with the lineage.
+    try:
+        from zicato.analyzer import analyze_epoch_telemetry  # noqa: PLC0415
+
+        analyzer_round = _round_n_from_generation_id(next_id)
+        await analyze_epoch_telemetry(
+            workspace_root,
+            resolved_epoch_id,
+            auxiliary_call_llm,
+            model=str(workspace_config.get("auxiliary_model", "")),
+            round_n=analyzer_round,
+        )
+    except Exception as exc:  # noqa: BLE001 — analyser is best-effort
+        log.debug("decision telemetry analyzer skipped: %s", exc)
 
     return EvolveRoundOutcome(
         parent_generation_id=parent_id,
@@ -523,8 +525,7 @@ async def evolve_n_rounds(
                 consecutive_rejections += 1
                 if consecutive_rejections >= max_consecutive_rejections:
                     log.warning(
-                        "evolve_n_rounds: stopping after %d consecutive rejections "
-                        "(round %d/%d)",
+                        "evolve_n_rounds: stopping after %d consecutive rejections (round %d/%d)",
                         consecutive_rejections,
                         round_idx + 1,
                         rounds,
@@ -547,6 +548,22 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat()
 
 
+def _round_n_from_generation_id(generation_id: str) -> int | None:
+    """Map a ``vN`` generation id back to ``N`` for the analyzer's filename.
+
+    Returns ``None`` (which makes the analyzer write
+    ``insights/latest.md`` instead of a numbered round) for any
+    generation id that doesn't follow the ``vN`` convention. Defensive
+    against future schema changes; the orchestrator's own
+    ``_next_generation_id`` always picks ``vN`` so this is a no-op on
+    healthy inputs.
+    """
+
+    if generation_id.startswith("v") and generation_id[1:].isdigit():
+        return int(generation_id[1:])
+    return None
+
+
 def _current_generation_marker(workspace_root: Path, epoch_id: str) -> Path:
     return workspace_root / "epochs" / epoch_id / "current_generation"
 
@@ -567,14 +584,10 @@ def _resolve_current_generation(workspace_root: Path, epoch_id: str) -> str:
             return text
     gens_root = workspace_root / "epochs" / epoch_id / "generations"
     if not gens_root.exists():
-        raise FileNotFoundError(
-            f"no generations under {gens_root}; the epoch has no baseline yet"
-        )
+        raise FileNotFoundError(f"no generations under {gens_root}; the epoch has no baseline yet")
     candidates = [p.name for p in gens_root.iterdir() if p.is_dir()]
     if not candidates:
-        raise FileNotFoundError(
-            f"no generations under {gens_root}; the epoch has no baseline yet"
-        )
+        raise FileNotFoundError(f"no generations under {gens_root}; the epoch has no baseline yet")
 
     def _key(name: str) -> tuple[int, int, str]:
         if name.startswith("v") and name[1:].isdigit():
@@ -584,9 +597,7 @@ def _resolve_current_generation(workspace_root: Path, epoch_id: str) -> str:
     return sorted(candidates, key=_key)[-1]
 
 
-def _set_current_generation(
-    workspace_root: Path, epoch_id: str, generation_id: str
-) -> None:
+def _set_current_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> None:
     marker = _current_generation_marker(workspace_root, epoch_id)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(generation_id + "\n", encoding="utf-8")
@@ -652,9 +663,7 @@ def _build_events_paths(
     from zicato.core.workspace import events_jsonl_path  # noqa: PLC0415
 
     return {
-        entry.id: events_jsonl_path(
-            workspace_root, epoch_id, parent_id, entry.id
-        )
+        entry.id: events_jsonl_path(workspace_root, epoch_id, parent_id, entry.id)
         for entry in board
     }
 
@@ -667,15 +676,11 @@ def _render_loss_summary(losses: list[Any]) -> str:
     drift_mean = drift_total / len(losses)
     pass_eligible = [loss for loss in losses if getattr(loss, "pass_fail", None) is not None]
     if pass_eligible:
-        pass_rate = sum(
-            1 for loss in pass_eligible if loss.pass_fail
-        ) / len(pass_eligible)
+        pass_rate = sum(1 for loss in pass_eligible if loss.pass_fail) / len(pass_eligible)
         pass_part = f", pass_rate={pass_rate:.2f} over {len(pass_eligible)} entries"
     else:
         pass_part = ""
-    return (
-        f"drift_loss_mean={drift_mean:.3f} over {len(losses)} runs" + pass_part
-    )
+    return f"drift_loss_mean={drift_mean:.3f} over {len(losses)} runs" + pass_part
 
 
 def _cache_gen_score(
@@ -719,11 +724,7 @@ def _ensure_baseline_snapshot(
     gens_root = workspace_root / "epochs" / epoch_id / "generations"
     if gens_root.exists() and any(p.is_dir() for p in gens_root.iterdir()):
         return  # already have at least one generation; nothing to do
-    raw_trees = (
-        workspace_config.get("mutable_trees")
-        or workspace_config.get("source_roots")
-        or []
-    )
+    raw_trees = workspace_config.get("mutable_trees") or workspace_config.get("source_roots") or []
     if not raw_trees:
         raise RuntimeError(
             "evolve_once: workspace_config has no 'mutable_trees' / "
