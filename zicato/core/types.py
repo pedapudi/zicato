@@ -1197,6 +1197,58 @@ def _default_severity_weights() -> Mapping[str, float]:
     return {"info": 1.0, "warning": 3.0, "critical": 10.0}
 
 
+def _default_namespace_weights() -> Mapping[str, float]:
+    """Default per-namespace weights for the multi-objective scalar.
+
+    The mapping keys are namespace prefixes (with the trailing colon
+    preserved so callers never have to remember to add or strip it).
+    Values are signed coefficients that turn a namespace's per-run mean
+    metric value into a scalar-component contribution:
+
+    * Positive weight → "higher value is worse". The component is added
+      to the scalar as ``weight * mean``. Drift, cost, latency, and
+      schema-failure namespaces have positive weights.
+    * Negative weight → "higher value is better". Rubric scores grow with
+      quality, so a negative weight turns the scalar into a loss.
+    * Zero → namespace excluded from the scalar entirely. Useful for
+      observability-only namespaces (``output:`` length stats) the
+      operator wants to track but not optimise.
+
+    Defaults intentionally span several orders of magnitude — cost is
+    often counted in tokens (thousands) while drift loss is a small
+    weighted sum, so the cost coefficient is small to keep both terms
+    in a comparable scale.
+    """
+    return {
+        "drift:": 1.0,
+        "cost:": 0.001,
+        "latency:": 0.0001,
+        "rubric:": -1.0,
+        "output:": 0.0,
+        "schema:": 5.0,
+    }
+
+
+def _default_namespace_monotonicity() -> Mapping[str, bool]:
+    """Default per-namespace monotonicity flags for the promote gate.
+
+    When a namespace's flag is ``True``, the gate rejects any child
+    whose per-namespace aggregate has regressed against the parent (in
+    the namespace's own "worse" direction, as encoded by the sign of
+    the corresponding :func:`_default_namespace_weights` entry).
+
+    The defaults guard the namespaces whose regression is qualitatively
+    bad even when the overall scalar improves: rubric (quality drop)
+    and schema (introducing failures). Drift is left unguarded so
+    proposers can trade some drift movement for gains elsewhere.
+    """
+    return {
+        "drift:": False,
+        "rubric:": True,
+        "schema:": True,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ScoringWeights:
     """Tunable weights that turn a :class:`LossProfile` into a scalar.
@@ -1252,6 +1304,29 @@ class ScoringWeights:
     regression_timeout_s:
         Wall-clock seconds the regression subprocess is allowed before
         the runner kills it. A timeout counts as a regression failure.
+    namespace_weights:
+        Per-namespace coefficients used by the multi-objective scalar.
+        Keys are namespace prefixes (with the trailing colon, e.g.
+        ``"drift:"``). The sign of each coefficient codifies the
+        namespace's "worse" direction:
+
+        * Positive → higher value is worse (drift, cost, latency,
+          schema). Added to the scalar as ``weight * mean``.
+        * Negative → higher value is better (rubric). The negation
+          flips the metric into a loss so the scalar stays
+          lower-is-better.
+        * Zero → namespace excluded from the scalar; tracked but not
+          optimised (default for ``"output:"``).
+
+        See :func:`_default_namespace_weights` for the shipped values.
+    namespace_monotonicity:
+        Per-namespace strict-monotonicity flags. When a namespace's
+        flag is ``True``, the promote gate rejects any child whose
+        per-namespace aggregate has moved in the namespace's "worse"
+        direction (as defined by the sign in
+        :attr:`namespace_weights`) by more than the namespace's
+        tolerance — even when the combined scalar improves. Namespaces
+        whose flag is missing or ``False`` are not gated this way.
     """
 
     drift_weight: float = 1.0
@@ -1265,6 +1340,12 @@ class ScoringWeights:
     regression_gate_enabled: bool = False
     regression_test_command: tuple[str, ...] = ("pytest", "tests/", "-q")
     regression_timeout_s: int = 600
+    # Multi-objective surface — see the helpers above for the rationale
+    # behind the default coefficient choices.
+    namespace_weights: Mapping[str, float] = field(default_factory=_default_namespace_weights)
+    namespace_monotonicity: Mapping[str, bool] = field(
+        default_factory=_default_namespace_monotonicity
+    )
 
 
 @dataclass(frozen=True, slots=True)
