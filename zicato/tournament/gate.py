@@ -1,6 +1,6 @@
 """The promote gate: decide whether a child generation supersedes its parent.
 
-Two rules, applied in order:
+Three rules, applied in order:
 
 1. **Scalar margin.** The child's combined scalar must beat the parent's
    by at least :attr:`ScoringWeights.promote_margin`. The scalar is
@@ -19,7 +19,29 @@ Two rules, applied in order:
    parent failed (or had no expectation for) are not gated on this
    rule — the child is allowed to improve or stay the same.
 
-If neither rule rejects, the gate promotes.
+3. **Per-namespace monotonicity.** For each namespace whose flag in
+   :attr:`ScoringWeights.namespace_monotonicity` is ``True``, the
+   child's per-namespace aggregate may not have moved in the
+   namespace's "worse" direction relative to the parent's. The
+   direction is encoded by the sign of the namespace's coefficient in
+   :attr:`ScoringWeights.namespace_weights`:
+
+   * positive weight → higher aggregate is worse (drift, cost,
+     latency, schema);
+   * negative weight → higher aggregate is better (rubric);
+   * zero weight → no enforced direction (rule skipped for this
+     namespace even if monotonicity is requested).
+
+   Because :func:`aggregate_namespaced_metrics` already multiplies
+   each namespace's mean by its signed weight, an inspector can ignore
+   the sign at gate time and just check whether the child's
+   *weighted* aggregate is greater than the parent's: the weight has
+   already turned the namespace into a unified lower-is-better axis.
+   If any monotonicity-tracked namespace regressed, the gate rejects
+   and names every regressing namespace in the reason. Namespaces
+   whose flag is missing or ``False`` are not gated this way.
+
+If no rule rejects, the gate promotes.
 
 The :class:`GateOutcome` records the delta values regardless of the
 decision, so the journal always has the same shape of evidence to
@@ -39,6 +61,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from zicato.core import ScoringWeights, TournamentDecision
+
+#: Default tolerance applied to the child-vs-parent delta for a
+#: monotonicity-tracked namespace. The check is
+#: ``child_weighted > parent_weighted + tolerance`` so a tiny numerical
+#: drift does not trip the gate. Operators who want stricter or looser
+#: behaviour per namespace can override by computing aggregates
+#: themselves; the surface is intentionally simple at this layer.
+NAMESPACE_MONOTONICITY_TOLERANCE: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +95,49 @@ class GateOutcome:
     reason: str
     delta_scalar: float
     delta_pass_rate: float
+
+
+def _regressed_namespaces(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    weights: ScoringWeights,
+) -> list[str]:
+    """Return namespaces whose monotonicity flag fires (sorted).
+
+    A namespace is considered regressed when its weighted aggregate on
+    the child side is strictly worse than the parent's by more than
+    :data:`NAMESPACE_MONOTONICITY_TOLERANCE`. "Worse" is namespace-
+    dependent in the raw mean view, but because
+    :func:`aggregate_namespaced_metrics` already folds the sign of the
+    namespace weight into the aggregate, the comparison reduces to:
+
+        child_weighted_aggregate > parent_weighted_aggregate + tolerance
+
+    Namespaces whose weight is zero are skipped — the operator has
+    explicitly disabled scoring contribution for them, so it would be
+    surprising to gate the promotion on their movement.
+
+    Namespaces named in :attr:`ScoringWeights.namespace_monotonicity`
+    but missing from the parent or child aggregates are silently
+    skipped — we cannot judge regression without two points to compare.
+    """
+    parent_ns: dict[str, Any] = parent_agg.get("namespace_aggregates", {}) or {}
+    child_ns: dict[str, Any] = child_agg.get("namespace_aggregates", {}) or {}
+    regressed: list[str] = []
+    for ns, enabled in weights.namespace_monotonicity.items():
+        if not enabled:
+            continue
+        # Skip namespaces whose direction is undefined (zero weight).
+        if weights.namespace_weights.get(ns, 0.0) == 0.0:
+            continue
+        if ns not in parent_ns or ns not in child_ns:
+            continue
+        parent_val = float(parent_ns[ns])
+        child_val = float(child_ns[ns])
+        if child_val > parent_val + NAMESPACE_MONOTONICITY_TOLERANCE:
+            regressed.append(ns)
+    regressed.sort()
+    return regressed
 
 
 def _regressed_entries(
@@ -130,6 +203,20 @@ def evaluate_gate(
                 delta_pass_rate=delta_pass_rate,
             )
 
+    # Rule 3: per-namespace monotonicity. Applied last so the scalar
+    # margin and the entry-pass-rate guard fire first when they apply;
+    # we still cite EVERY regressing namespace in the reason so the
+    # journal records the full picture (not just the first one).
+    regressed_ns = _regressed_namespaces(parent_agg, child_agg, weights)
+    if regressed_ns:
+        reason = "monotonicity_regression on namespace=" + ", ".join(regressed_ns)
+        return GateOutcome(
+            decision="rejected",
+            reason=reason,
+            delta_scalar=delta_scalar,
+            delta_pass_rate=delta_pass_rate,
+        )
+
     return GateOutcome(
         decision="promoted",
         reason="",
@@ -138,4 +225,4 @@ def evaluate_gate(
     )
 
 
-__all__ = ["GateOutcome", "evaluate_gate"]
+__all__ = ["GateOutcome", "NAMESPACE_MONOTONICITY_TOLERANCE", "evaluate_gate"]

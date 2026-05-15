@@ -283,6 +283,69 @@ def test_aggregate_generation_score_breakdown_example() -> None:
     assert sum(components.values()) == pytest.approx(agg["scalar"])
 
 
+def test_end_to_end_aggregator_to_gate_promote_on_two_axes() -> None:
+    """Child improves drift AND improves rubric → gate promotes."""
+    from zicato.tournament.gate import evaluate_gate
+
+    parent_losses = [
+        _make_loss(
+            "a",
+            drift_loss=2.0,
+            pass_fail=True,
+            metric_counts=(MetricCount(name="rubric:quality", count=3.0),),
+        ),
+    ]
+    child_losses = [
+        _make_loss(
+            "a",
+            drift_loss=1.0,  # drift improved
+            pass_fail=True,
+            metric_counts=(MetricCount(name="rubric:quality", count=4.0),),  # rubric improved
+        ),
+    ]
+    weights = ScoringWeights()
+
+    parent_agg = aggregate_generation_score(parent_losses, weights)
+    child_agg = aggregate_generation_score(child_losses, weights)
+    outcome = evaluate_gate(parent_agg, child_agg, weights)
+    assert outcome.decision == "promoted"
+
+
+def test_end_to_end_aggregator_to_gate_reject_on_rubric_regression() -> None:
+    """Child improves drift enough to pass margin but rubric drops → namespace gate rejects."""
+    from zicato.tournament.gate import evaluate_gate
+
+    parent_losses = [
+        _make_loss(
+            "a",
+            drift_loss=5.0,
+            pass_fail=True,
+            metric_counts=(MetricCount(name="rubric:quality", count=4.0),),
+        ),
+    ]
+    # Child trades a large drift improvement for a smaller rubric drop;
+    # the combined scalar improves (passes margin) but rubric regresses
+    # → the per-namespace monotonicity rule fires.
+    child_losses = [
+        _make_loss(
+            "a",
+            drift_loss=1.0,  # huge drift improvement
+            pass_fail=True,
+            metric_counts=(MetricCount(name="rubric:quality", count=2.0),),  # rubric dropped
+        ),
+    ]
+    weights = ScoringWeights()
+
+    parent_agg = aggregate_generation_score(parent_losses, weights)
+    child_agg = aggregate_generation_score(child_losses, weights)
+    # Sanity-check the scalar actually improved so the margin rule passes.
+    assert child_agg["scalar"] < parent_agg["scalar"] - weights.promote_margin
+    outcome = evaluate_gate(parent_agg, child_agg, weights)
+    assert outcome.decision == "rejected"
+    assert "rubric:" in outcome.reason
+    assert "monotonicity_regression on namespace=" in outcome.reason
+
+
 def test_aggregate_generation_score_includes_observed_unknown_namespaces() -> None:
     """Namespaces not in weights.namespace_weights still appear at zero."""
     losses = [
