@@ -1,0 +1,1288 @@
+"""Foundational dataclasses for zicato.
+
+These types are the contract every other zicato module imports. They are
+frozen dataclasses with explicit field types so that downstream code —
+adapters, the runner, the proposer, the tournament, the persistence
+layer, pattern detectors, the CLI — can rely on a stable surface while
+their internals evolve independently.
+
+Design rules encoded here:
+
+* **Frozen** — every dataclass uses ``frozen=True, slots=True``. State
+  transitions construct new instances via :func:`dataclasses.replace`;
+  callers who captured a reference keep operating on their snapshot.
+* **JSON-friendly enums** — discriminant fields use :class:`typing.Literal`
+  rather than :class:`enum.Enum` so the types round-trip through JSON
+  without converters. The valid value sets are the type itself.
+* **Discriminated unions for board entries** — :class:`BoardEntry` carries
+  every kind's discriminant fields as optional attributes; the
+  :meth:`BoardEntry.validate` method (and the free function
+  :func:`validate_board_entry`) enforce that the right combination is
+  present for the declared ``kind``.
+* **Model-agnostic LLM surface** — the only callable shape this module
+  references is ``Callable[[str, str, str], Awaitable[str]]``
+  (``(system, user, model) -> response``). No vendor SDK is named.
+* **Open-ended kind strings where forward-compat matters** —
+  :class:`BoardEntry`'s ``kind`` field is a closed :class:`Literal` for
+  the v0 surface, but :class:`Pattern.kind` and the drift-kind strings
+  on :class:`DriftCount` / :class:`ExpectedDriftMovement` /
+  :class:`DriftMovementActual` are bare ``str`` validated against a
+  registered set (see :mod:`zicato.core.drift_kinds`). This is the
+  forward-compatible posture required by the dogfood-target plan.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Literal
+
+from zicato.core.drift_kinds import validate_drift_kind
+
+# ---------------------------------------------------------------------------
+# Mutation surface
+# ---------------------------------------------------------------------------
+
+#: Granularity of a mutable region in the inner-harness source tree.
+#:
+#: * ``"span"`` — a single annotated span (typically a string literal or
+#:   string-valued statement) immediately preceded by a marker comment.
+#:   Span granularity is the default; it gives the proposer typed targets
+#:   without exposing surrounding control flow.
+#: * ``"file"`` — a whole file declared mutable as one unit via a
+#:   top-of-file marker. Intended for prompt modules whose strings are
+#:   tightly coupled. Validator constraints (imports survive, syntax
+#:   parses) bound what a file-level rewrite can do.
+MutationKind = Literal["span", "file"]
+
+
+@dataclass(frozen=True, slots=True)
+class MutationPoint:
+    """An annotated mutable region in an inner-harness source tree.
+
+    Mutation points are enumerated by a ``HarnessAdapter`` and addressed
+    by stable :attr:`id` from :class:`Patch` instances. The id MUST be
+    stable across generations so a proposer can re-target the same span
+    after a previous generation rewrote its neighborhood; the contract
+    is "same logical mutable region → same id".
+
+    Fields
+    ------
+    id:
+        Globally unique mutation-point identifier within a generation.
+        Stable across generations — adapters compute ids from a hash of
+        the marker's structural position, not from the line range, so
+        unrelated edits to other parts of the file do not invalidate it.
+    kind:
+        Granularity of the region (see :data:`MutationKind`).
+    file:
+        Absolute path to the source file the region lives in.
+    source_root:
+        Absolute path to the source-root tree this point lives under.
+        A single harness may expose mutable surface across multiple
+        source roots (forward-compat for the goldfive-as-target dogfood
+        plan); this field disambiguates which root the patch applier
+        should resolve relative paths against.
+    line_start, line_end:
+        1-indexed inclusive line range of the region's CURRENT content.
+        Line numbers will drift as patches land; callers MUST re-enumerate
+        before applying patches if they cached an older snapshot.
+    content:
+        Current text of the mutable region — for ``"span"`` kind, the
+        span body (without the marker comment); for ``"file"`` kind, the
+        whole file contents.
+    content_hash:
+        Hex-encoded SHA-256 of :attr:`content`. The patch applier checks
+        this before applying a patch so a stale proposer round cannot
+        clobber an already-rewritten region.
+    metadata:
+        Adapter-specific structured metadata. Common keys include
+        ``"required_placeholders"`` (comma-separated f-string-style
+        placeholders the rewritten content must preserve), ``"language"``
+        (e.g. ``"text"`` / ``"markdown"`` / ``"python"``), and
+        ``"role"`` (e.g. ``"system_prompt"`` / ``"tool_description"``).
+        All values are strings to keep the structure JSON-friendly without
+        per-key converters.
+    """
+
+    id: str
+    kind: MutationKind
+    file: Path
+    source_root: Path
+    line_start: int
+    line_end: int
+    content: str
+    content_hash: str
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+
+#: The operation a :class:`Patch` performs on its target mutation point.
+#:
+#: * ``"replace"`` — overwrite :attr:`MutationPoint.content` with
+#:   :attr:`Patch.new_content`. The most general op; works on both span
+#:   and file mutation kinds.
+#: * ``"set_numeric"`` — replace the target with the decimal rendering
+#:   of :attr:`Patch.new_numeric`. Used when an adapter has typed the
+#:   mutation point as numeric (e.g. a threshold, a budget) so the
+#:   proposer doesn't need to handle string formatting.
+#: * ``"set_enum"`` — replace the target with :attr:`Patch.new_enum`, a
+#:   string the adapter has declared belongs to a finite enum (e.g. a
+#:   strategy name, a routing key).
+PatchOpKind = Literal["replace", "set_numeric", "set_enum"]
+
+
+@dataclass(frozen=True, slots=True)
+class Patch:
+    """A single proposed edit to one mutation point.
+
+    Patches are produced by the proposer, bundled into an
+    :class:`Experiment`, and consumed by the patch applier. They carry
+    a per-patch :attr:`id` (uuid4 hex by convention) so the journal
+    can refer to individual patches when an experiment's outcome is
+    ambiguous across multiple patches.
+
+    Exactly one of :attr:`new_content`, :attr:`new_numeric`,
+    :attr:`new_enum` is populated; which one is implied by :attr:`op`.
+    The dataclass does not enforce that invariant — the patch applier
+    raises at apply time on a mismatch. This keeps the dataclass cheap
+    to construct from JSON dicts in tests and fixtures.
+
+    Fields
+    ------
+    id:
+        Stable per-patch identifier (uuid4 hex by convention).
+    mutation_id:
+        The :attr:`MutationPoint.id` this patch targets.
+    op:
+        The kind of edit (see :data:`PatchOpKind`).
+    new_content:
+        New text for ``"replace"`` ops; ``None`` otherwise.
+    new_numeric:
+        New numeric value for ``"set_numeric"`` ops; ``None`` otherwise.
+        Floats cover both int- and float-typed mutation points; the
+        applier formats them according to adapter-supplied metadata.
+    new_enum:
+        New enum value for ``"set_enum"`` ops; ``None`` otherwise.
+    rationale:
+        One-sentence reason this specific patch is being applied. Joined
+        with the broader :class:`HypothesisSpec` in the journal but stored
+        per-patch so multi-patch experiments don't lose granularity.
+    """
+
+    id: str
+    mutation_id: str
+    op: PatchOpKind
+    new_content: str | None
+    new_numeric: float | None
+    new_enum: str | None
+    rationale: str
+
+
+# ---------------------------------------------------------------------------
+# Board
+# ---------------------------------------------------------------------------
+
+#: The kind of board entry. Closed Literal for the v0 surface, but the
+#: set is designed to extend without schema breakage as new harness
+#: targets motivate new kinds (the forward-compat slots
+#: ``"synthetic_adversarial"`` and ``"synthetic_clean"`` are reserved
+#: for the goldfive-as-target dogfood plan).
+BoardEntryKind = Literal[
+    "single_turn",
+    "multi_turn_scripted",
+    "multi_turn_emulated",
+    # Reserved forward-compat slots — present in the type today so adding
+    # them to the runtime doesn't require a schema bump for existing
+    # operators. See the dogfood-target plan for context.
+    "synthetic_adversarial",
+    "synthetic_clean",
+]
+
+
+#: The matcher used by a board entry's :class:`Expectation`.
+#:
+#: * ``"predicate"`` — dotted path to a Python callable
+#:   ``(run_result) -> bool``.
+#: * ``"expected_text"`` — exact-match string compared to the run's
+#:   final output (or full transcript for ``"conversation_end"``).
+#: * ``"regex"`` — regex compiled with :func:`re.search`.
+#: * ``"json_schema"`` — JSON Schema document the final output (parsed as
+#:   JSON) must validate against.
+#: * ``"judge"`` — dotted path to an async LLM-judge callable
+#:   ``(run_result, expectation_spec) -> bool``.
+ExpectationKind = Literal["predicate", "expected_text", "regex", "json_schema", "judge"]
+
+
+#: When the expectation fires.
+#:
+#: * ``"final_output"`` — checked against the last assistant turn's user-
+#:   facing output. Default for single-turn entries.
+#: * ``"conversation_end"`` — checked against the full transcript. Default
+#:   when the operator wants to assert on the whole conversation shape
+#:   for a multi-turn entry.
+ExpectationFiresOn = Literal["final_output", "conversation_end"]
+
+
+@dataclass(frozen=True, slots=True)
+class Expectation:
+    """A pass/fail assertion attached to a board entry.
+
+    Expectations are optional — entries without one are scored on drift
+    loss alone. When present, a passing/failing expectation contributes
+    to the tournament's pass-rate dimension alongside drift loss (see
+    :class:`ScoringWeights`).
+
+    Fields
+    ------
+    kind:
+        The matcher kind (see :data:`ExpectationKind`).
+    spec:
+        Matcher-specific specifier. For ``"predicate"`` and ``"judge"``,
+        the dotted import path of the callable. For ``"expected_text"``,
+        ``"regex"``, and ``"json_schema"``, the inline value. Kept as a
+        single string field so the discriminated union round-trips
+        through JSON without nested objects.
+    fires_on:
+        When the expectation is evaluated (see :data:`ExpectationFiresOn`).
+    """
+
+    kind: ExpectationKind
+    spec: str
+    fires_on: ExpectationFiresOn = "final_output"
+
+
+@dataclass(frozen=True, slots=True)
+class UserPersona:
+    """Persona spec for a multi-turn emulated entry.
+
+    The persona is the ONLY runtime input — alongside the user-facing
+    transcript — that the emulator agent receives. Internal harness
+    state, agent reasoning, tool calls, and the entry's expectation are
+    all withheld by construction. This is the collusion guard.
+
+    Fields
+    ------
+    goal:
+        What the simulated user is trying to accomplish, phrased from the
+        user's point of view.
+    constraints:
+        What the simulated user will and will not say or do — tone,
+        format, willingness to provide details, etc.
+    stop_when:
+        Plain-language termination condition; the emulator checks each
+        turn whether it has been met. Either this fires or
+        :attr:`BoardEntry.max_turns` caps the conversation.
+    """
+
+    goal: str
+    constraints: str
+    stop_when: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScriptedTurn:
+    """A single scripted user turn for a multi-turn scripted entry.
+
+    Fields
+    ------
+    user:
+        The exact user message to send on this turn. Sent regardless of
+        what the agent said on the previous turn — scripted entries are
+        deliberately rigid for cheap regression testing.
+    """
+
+    user: str
+
+
+@dataclass(frozen=True, slots=True)
+class BoardEntry:
+    """One entry in an evaluation board.
+
+    A board is a JSONL file of :class:`BoardEntry` rows; an entry is a
+    single executable evaluation under some generation of the inner
+    harness. Entries are kind-discriminated: the same dataclass carries
+    every kind's discriminant fields as optional attributes, and
+    :meth:`validate` (or the free function :func:`validate_board_entry`
+    when parsing from JSON) enforces that the right combination is set
+    for the declared :attr:`kind`.
+
+    Fields
+    ------
+    id:
+        Stable identifier for the entry. Used as a directory name under
+        ``runs/`` in the workspace; MUST be filesystem-safe.
+    kind:
+        Discriminant (see :data:`BoardEntryKind`).
+    wall_clock_budget_seconds:
+        Hard ceiling on total run time for the entry. For multi-turn
+        kinds the budget covers the whole conversation. Exceeding the
+        budget aborts the run and scores it as worst-case.
+    weight:
+        Relative importance in scoring aggregation. Defaults to 1.0;
+        operators can up-weight critical entries to dominate the
+        aggregate score.
+    tags:
+        Operator-supplied labels. Pattern detectors slice by tag (e.g.
+        ``"research"``, ``"router"``) to spot kind-specific regressions.
+    context:
+        Opaque adapter-specific metadata. String-valued for JSON
+        cleanliness; adapters parse known keys (e.g. ``"attachments"``,
+        ``"session_state"``) and ignore the rest.
+    expectation:
+        Optional pass/fail assertion. Absent → drift-loss-only scoring.
+
+    Discriminated-union fields (validate which are required by
+    :meth:`validate`)
+    -----------------------------------------------------------------
+    input:
+        Single-turn / synthetic-adversarial user message.
+    turns:
+        Scripted user turns (multi-turn-scripted).
+    user_persona:
+        Persona spec (multi-turn-emulated).
+    max_turns:
+        Conversation cap for multi-turn kinds.
+    adversarial_agent_spec:
+        Dotted path to a known-bad agent for synthetic-adversarial
+        entries (target-2 dogfood plan).
+    required_drift_kinds:
+        Drift kinds that MUST be detected for a synthetic-adversarial
+        entry to count as "passing" (the agent is known-bad; the
+        steerer's job is to notice).
+    """
+
+    id: str
+    kind: BoardEntryKind
+    wall_clock_budget_seconds: int
+    weight: float = 1.0
+    tags: tuple[str, ...] = ()
+    context: Mapping[str, str] = field(default_factory=dict)
+    expectation: Expectation | None = None
+    # Discriminated-union fields. Exactly which subset is required is a
+    # function of :attr:`kind` (see :meth:`validate`).
+    input: str | None = None
+    turns: tuple[ScriptedTurn, ...] | None = None
+    user_persona: UserPersona | None = None
+    max_turns: int | None = None
+    adversarial_agent_spec: str | None = None
+    required_drift_kinds: tuple[str, ...] | None = None
+
+    def validate(self) -> None:
+        """Raise :class:`ValueError` if the discriminant fields are wrong.
+
+        Called by :func:`validate_board_entry` after JSON parsing, and
+        intended to be called by ``zicato board add`` after operator
+        edits. Cheaper than per-kind subclasses while keeping the
+        discriminated-union semantics enforceable.
+        """
+        if self.wall_clock_budget_seconds <= 0:
+            raise ValueError(
+                f"BoardEntry {self.id!r}: wall_clock_budget_seconds must be > 0"
+            )
+        if self.weight < 0:
+            raise ValueError(f"BoardEntry {self.id!r}: weight must be >= 0")
+
+        if self.kind == "single_turn":
+            if self.input is None:
+                raise ValueError(f"BoardEntry {self.id!r}: single_turn requires 'input'")
+            if self.turns is not None:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: single_turn must not set 'turns'"
+                )
+            if self.user_persona is not None:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: single_turn must not set 'user_persona'"
+                )
+        elif self.kind == "multi_turn_scripted":
+            if self.turns is None or len(self.turns) == 0:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: multi_turn_scripted requires non-empty 'turns'"
+                )
+            if self.max_turns is None or self.max_turns <= 0:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: multi_turn_scripted requires 'max_turns' > 0"
+                )
+            if self.input is not None:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: multi_turn_scripted must not set 'input'"
+                )
+            if self.user_persona is not None:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: multi_turn_scripted must not set 'user_persona'"
+                )
+        elif self.kind == "multi_turn_emulated":
+            if self.user_persona is None:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: multi_turn_emulated requires 'user_persona'"
+                )
+            if self.max_turns is None or self.max_turns <= 0:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: multi_turn_emulated requires 'max_turns' > 0"
+                )
+            if self.input is not None:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: multi_turn_emulated must not set 'input'"
+                )
+            if self.turns is not None:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: multi_turn_emulated must not set 'turns'"
+                )
+        elif self.kind == "synthetic_adversarial":
+            if self.input is None:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: synthetic_adversarial requires 'input'"
+                )
+            if self.adversarial_agent_spec is None or not self.adversarial_agent_spec:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: synthetic_adversarial requires "
+                    "'adversarial_agent_spec'"
+                )
+            if (
+                self.required_drift_kinds is None
+                or len(self.required_drift_kinds) == 0
+            ):
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: synthetic_adversarial requires non-empty "
+                    "'required_drift_kinds'"
+                )
+            for kind in self.required_drift_kinds:
+                validate_drift_kind(kind)
+        elif self.kind == "synthetic_clean":
+            if self.input is None:
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: synthetic_clean requires 'input'"
+                )
+        else:  # pragma: no cover — Literal-typed; this is belt-and-braces
+            raise ValueError(f"BoardEntry {self.id!r}: unknown kind {self.kind!r}")
+
+        if self.expectation is not None:
+            # Cross-check the expectation's fires_on against the kind.
+            if (
+                self.kind == "single_turn"
+                and self.expectation.fires_on == "conversation_end"
+            ):
+                raise ValueError(
+                    f"BoardEntry {self.id!r}: single_turn expectation cannot fire on "
+                    "'conversation_end'"
+                )
+
+
+def validate_board_entry(d: Mapping[str, Any]) -> BoardEntry:
+    """Parse a JSON-shaped dict into a validated :class:`BoardEntry`.
+
+    Used by the board loader on JSONL rows and by ``zicato board add`` on
+    operator-authored entries. Performs:
+
+    1. Field extraction from the dict (with sensible coercions: lists to
+       tuples for ``tags`` / ``turns`` / ``required_drift_kinds``).
+    2. Construction of nested :class:`Expectation`, :class:`UserPersona`,
+       :class:`ScriptedTurn` objects from sub-dicts.
+    3. Discriminant-validation via :meth:`BoardEntry.validate`.
+
+    Raises :class:`ValueError` on any structural problem.
+    """
+
+    expectation_dict = d.get("expectation")
+    expectation: Expectation | None
+    if expectation_dict is None:
+        expectation = None
+    else:
+        expectation = Expectation(
+            kind=expectation_dict["kind"],
+            spec=expectation_dict["spec"],
+            fires_on=expectation_dict.get("fires_on", "final_output"),
+        )
+
+    persona_dict = d.get("user_persona")
+    user_persona: UserPersona | None
+    if persona_dict is None:
+        user_persona = None
+    else:
+        user_persona = UserPersona(
+            goal=persona_dict["goal"],
+            constraints=persona_dict["constraints"],
+            stop_when=persona_dict["stop_when"],
+        )
+
+    raw_turns = d.get("turns")
+    turns: tuple[ScriptedTurn, ...] | None
+    if raw_turns is None:
+        turns = None
+    else:
+        turns = tuple(ScriptedTurn(user=t["user"]) for t in raw_turns)
+
+    raw_required_drift = d.get("required_drift_kinds")
+    required_drift_kinds: tuple[str, ...] | None
+    if raw_required_drift is None:
+        required_drift_kinds = None
+    else:
+        required_drift_kinds = tuple(raw_required_drift)
+
+    entry = BoardEntry(
+        id=d["id"],
+        kind=d["kind"],
+        wall_clock_budget_seconds=int(d["wall_clock_budget_seconds"]),
+        weight=float(d.get("weight", 1.0)),
+        tags=tuple(d.get("tags", ())),
+        context=dict(d.get("context", {})),
+        expectation=expectation,
+        input=d.get("input"),
+        turns=turns,
+        user_persona=user_persona,
+        max_turns=d.get("max_turns"),
+        adversarial_agent_spec=d.get("adversarial_agent_spec"),
+        required_drift_kinds=required_drift_kinds,
+    )
+    entry.validate()
+    return entry
+
+
+# ---------------------------------------------------------------------------
+# Telemetry / loss
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DriftCount:
+    """A count of drift events of one (kind, severity) pair within one run.
+
+    Produced by the post-run reducer from a run's events JSONL. Multiple
+    :class:`DriftCount` entries with the same :attr:`kind` but different
+    :attr:`severity` may appear in one :class:`LossProfile` — the
+    INTENT_DIVERGENCE kind fires at variable severity by design and the
+    reducer keeps the buckets separate so severity-weighted scoring can
+    do the right thing.
+
+    Fields
+    ------
+    kind:
+        Lowercase wire-canonical drift-kind string (see
+        :mod:`zicato.core.drift_kinds`).
+    severity:
+        Goldfive's three-level severity scale.
+    count:
+        Number of drift events in this (kind, severity) bucket.
+    """
+
+    kind: str
+    severity: Literal["info", "warning", "critical"]
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectationResult:
+    """The outcome of evaluating a :class:`BoardEntry`'s expectation.
+
+    Fields
+    ------
+    kind:
+        The matcher kind that produced this result (same value as the
+        originating :class:`Expectation.kind`).
+    passed:
+        ``True`` iff the matcher accepted the run.
+    detail:
+        Optional human-readable explanation (e.g. regex match position,
+        judge rationale). Empty string when the matcher had nothing
+        useful to say. Stored to give the journal something concrete to
+        render alongside a pass/fail bit.
+    """
+
+    kind: ExpectationKind
+    passed: bool
+    detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class LossProfile:
+    """The reducer's per-run output — the contract scoring reads from.
+
+    A :class:`LossProfile` is produced by the post-run reducer after the
+    goldfive JSONL has been written. Pattern detectors and tournament
+    scoring consume :class:`LossProfile` instances; they never re-read
+    the raw events. This decoupling lets us evolve event schemas
+    upstream without touching scoring.
+
+    The structure is flat by design — every field is a scalar, a tuple of
+    scalars, or a tuple of small frozen dataclasses — so the reducer's
+    output round-trips through JSON and can be diffed in the journal.
+
+    Fields
+    ------
+    run_id:
+        Unique id of the run this profile describes.
+    entry_id:
+        The :class:`BoardEntry.id` the run executed.
+    generation_id, epoch_id:
+        Lineage coordinates — which generation under which epoch produced
+        this profile.
+    drift_counts:
+        Per (kind, severity) drift-event counts.
+    plan_revisions:
+        Number of plan-revision events observed. A high count generally
+        indicates the steerer worked hard; whether that is "good" or
+        "bad" depends on outcome and the operator's rubric.
+    task_failure_ratio:
+        Ratio of fatally-failed tasks to total tasks the run produced.
+        Range ``[0.0, 1.0]``.
+    runtime_ms:
+        Total wall-clock duration in milliseconds.
+    wall_clock_budget_exceeded:
+        ``True`` iff the run hit :attr:`BoardEntry.wall_clock_budget_seconds`
+        and was force-aborted. When true, scoring treats this run as
+        worst-case for the entry.
+    expectation_result:
+        Result of evaluating the entry's expectation, or ``None`` when
+        the entry had no expectation. Note: this is allowed to be ``None``
+        even on entries that DID have an expectation but the run was
+        aborted before the expectation could fire — the reducer records
+        that distinction via :attr:`wall_clock_budget_exceeded`.
+    drift_loss:
+        Weighted scalar derived from :attr:`drift_counts` using the
+        epoch's :class:`ScoringWeights`. Higher = worse.
+    pass_fail:
+        Derived from :attr:`expectation_result`; ``None`` when no
+        expectation was attached. Allows pass-rate aggregation across
+        the board to ignore entries without ground truth.
+
+    Multi-turn extras (single-turn entries leave these as ``None``)
+    ----------------------------------------------------------------
+    turns_completed:
+        Number of conversational turns the run executed before
+        terminating (whether by ``stop_when``, ``max_turns``, or abort).
+    memory_failure_count:
+        Zicato-derived signal: number of times across the conversation
+        the inner agent re-asked something the simulated user had
+        already answered. Computed by the reducer, not by goldfive.
+    context_loss_count:
+        Zicato-derived signal: number of times the inner agent appeared
+        to forget a fact established earlier in the conversation.
+        Heuristic; same multi-turn-pattern detector as
+        :attr:`memory_failure_count`.
+    """
+
+    run_id: str
+    entry_id: str
+    generation_id: str
+    epoch_id: str
+    drift_counts: tuple[DriftCount, ...]
+    plan_revisions: int
+    task_failure_ratio: float
+    runtime_ms: int
+    wall_clock_budget_exceeded: bool
+    expectation_result: ExpectationResult | None
+    drift_loss: float
+    pass_fail: bool | None
+    # Multi-turn extras
+    turns_completed: int | None = None
+    memory_failure_count: int | None = None
+    context_loss_count: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Run record / lineage
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RunRecord:
+    """Persistence-side record of one run.
+
+    Bridges a run's executed-state metadata (when it started, when it
+    ended, where its artifacts landed) with the lineage view. Distinct
+    from :class:`RunResult` (the transcript-shape result the harness
+    handed back) and :class:`LossProfile` (the reducer's output).
+
+    Fields
+    ------
+    run_id:
+        Unique id of the run.
+    entry_id:
+        The :class:`BoardEntry.id` executed.
+    generation_id, epoch_id:
+        Lineage coordinates.
+    started_at, ended_at:
+        ISO-8601 UTC strings — wall-clock timestamps.
+    events_jsonl_path:
+        Absolute path to the goldfive event JSONL written by the
+        persistence sink.
+    loss_profile_path:
+        Absolute path to the reducer's per-run ``loss.json``.
+    aborted:
+        ``True`` iff the run was force-terminated (budget exceeded,
+        operator cancel, runner exception).
+    abort_reason:
+        Short symbolic reason when :attr:`aborted` is true. Empty string
+        otherwise.
+    """
+
+    run_id: str
+    entry_id: str
+    generation_id: str
+    epoch_id: str
+    started_at: str
+    ended_at: str
+    events_jsonl_path: Path
+    loss_profile_path: Path
+    aborted: bool = False
+    abort_reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RunResult:
+    """The transcript-shape result of executing one board entry under one generation.
+
+    Returned by the runner to expectation evaluators and to the reducer's
+    multi-turn-pattern detectors. Carries only the user-facing surface —
+    internal agent reasoning, tool calls, and goldfive events are stored
+    elsewhere (the events JSONL) and intentionally not exposed here so
+    the emulator and the judge cannot trivially collude with the inner
+    harness.
+
+    Fields
+    ------
+    run_id:
+        Unique id of the run.
+    entry_id:
+        The :class:`BoardEntry.id` executed.
+    final_output:
+        The last assistant turn's user-facing output as a string. For
+        single-turn entries this is the only assistant output. For
+        multi-turn entries this is the final assistant turn.
+    transcript:
+        All assistant user-facing turns in order. For single-turn entries
+        this is a length-1 tuple matching :attr:`final_output`. For
+        multi-turn entries this is the full conversation from the user's
+        view. User turns are NOT included — the entry already carries
+        them (scripted) or the emulator produced them (emulated) and the
+        reducer fetches them from goldfive's transcript if needed.
+    runtime_ms:
+        Total wall-clock duration in milliseconds.
+    aborted:
+        ``True`` iff the runner force-terminated this run.
+    abort_reason:
+        Short symbolic reason when :attr:`aborted` is true.
+    """
+
+    run_id: str
+    entry_id: str
+    final_output: str
+    transcript: tuple[str, ...]
+    runtime_ms: int
+    aborted: bool = False
+    abort_reason: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Hypothesis / experiment
+# ---------------------------------------------------------------------------
+
+
+#: Predicted direction of movement for a drift kind under a hypothesis.
+#:
+#: * ``"decrease"`` / ``"increase"`` — strict directional predictions.
+#: * ``"neutral"`` — expected to stay roughly flat.
+#: * ``"decrease_or_neutral"`` / ``"increase_or_neutral"`` — directional
+#:   prediction with the neutral case acceptable (the proposer is
+#:   confident about one side but agnostic about the magnitude).
+DriftDirection = Literal[
+    "decrease",
+    "increase",
+    "neutral",
+    "decrease_or_neutral",
+    "increase_or_neutral",
+]
+
+#: Predicted magnitude of movement. Coarse buckets keep proposer
+#: schemas compact; the journal records the actual delta separately so
+#: this is only a qualitative hint.
+DriftMagnitude = Literal["small", "medium", "large"]
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedDriftMovement:
+    """A proposer's prediction about how one drift kind will move.
+
+    Fields
+    ------
+    kind:
+        The drift-kind string the prediction is about.
+    direction:
+        Predicted direction (see :data:`DriftDirection`).
+    magnitude:
+        Predicted magnitude bucket (see :data:`DriftMagnitude`).
+    """
+
+    kind: str
+    direction: DriftDirection
+    magnitude: DriftMagnitude
+
+
+@dataclass(frozen=True, slots=True)
+class HypothesisSpec:
+    """Structured hypothesis written by the proposer BEFORE the run.
+
+    Hypotheses are mandatory and structured so the journal captures what
+    the proposer was thinking and whether it was right, not just what
+    changed. Schema-invalid proposer responses are rejected and the
+    proposer is asked to fix.
+
+    Fields
+    ------
+    core_idea:
+        One sentence describing what is being modulated. Must be terse
+        enough to render in a one-line journal entry.
+    modulating:
+        The :class:`MutationPoint.id` values this hypothesis is touching.
+        The proposer's :class:`Patch` set MUST address only these ids; the
+        applier verifies.
+    why:
+        Pattern-driven rationale — why the proposer believes this edit
+        will move the loss in the expected direction. Free-form prose.
+    expected_drift_movements:
+        Per-drift-kind directional predictions (see
+        :class:`ExpectedDriftMovement`). Only kinds the proposer is
+        making claims about need appear — silence implies "no claim".
+    expected_pass_rate_delta:
+        Predicted change in board-wide pass rate as free-text
+        (e.g. ``"+0.10 to +0.20"``). Free text rather than a typed range
+        because the proposer expresses uncertainty differently per
+        hypothesis and a typed range would force false precision.
+    risks:
+        Optional one-paragraph description of failure modes the proposer
+        anticipates and any mitigations baked into the patches.
+    """
+
+    core_idea: str
+    modulating: tuple[str, ...]
+    why: str
+    expected_drift_movements: tuple[ExpectedDriftMovement, ...]
+    expected_pass_rate_delta: str
+    risks: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DriftMovementActual:
+    """Realized movement of one drift kind from parent to child generation.
+
+    Joined with :class:`ExpectedDriftMovement` at outcome-write time to
+    decide whether the proposer's prediction was correct.
+
+    Fields
+    ------
+    kind:
+        The drift-kind string.
+    from_rate:
+        Per-run mean count of this kind in the parent generation.
+    to_rate:
+        Per-run mean count of this kind in the child generation.
+    hypothesis_match:
+        ``True`` iff the realized movement matches the proposer's
+        directional prediction within the magnitude bucket. ``False`` if
+        the proposer predicted a movement that did not occur or occurred
+        in the wrong direction.
+    note:
+        Optional human-readable detail (e.g. "predicted decrease,
+        observed flat — within neutral band").
+    """
+
+    kind: str
+    from_rate: float
+    to_rate: float
+    hypothesis_match: bool
+    note: str = ""
+
+
+#: The tournament's decision about an experiment.
+#:
+#: * ``"promoted"`` — child wins; becomes the new lineage head.
+#: * ``"rejected"`` — child loses or regresses a hard gate.
+#: * ``"deferred"`` — neither wins decisively; lineage head unchanged but
+#:   the experiment is kept for analysis.
+TournamentDecision = Literal["promoted", "rejected", "deferred"]
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeRecord:
+    """The post-run record appended to an :class:`Experiment` after evaluation.
+
+    Written atomically by the tournament runner once the decision is
+    made. The pairing with :class:`HypothesisSpec` is the journal's
+    core unit — what was predicted, what happened, what was decided.
+
+    Fields
+    ------
+    ran_at:
+        ISO-8601 UTC timestamp when the experiment finished evaluating.
+    drift_movements:
+        Per-kind realized movements, one entry per kind the hypothesis
+        made a claim about plus any kind whose realized movement was
+        large enough for the tournament to flag.
+    pass_rate_delta:
+        Change in board-wide pass rate from parent to child generation.
+        Range ``[-1.0, 1.0]``.
+    drift_loss_delta:
+        Change in mean drift loss across the board. Negative = improvement.
+    scalar_score_delta:
+        Change in the combined tournament scalar (see
+        :class:`ScoringWeights`). The sign of this field gates the
+        :attr:`tournament_decision`.
+    tournament_decision:
+        The decision (see :data:`TournamentDecision`).
+    rejection_reason:
+        Symbolic reason when :attr:`tournament_decision` is
+        ``"rejected"``. Empty string for the other two outcomes.
+    """
+
+    ran_at: str
+    drift_movements: tuple[DriftMovementActual, ...]
+    pass_rate_delta: float
+    drift_loss_delta: float
+    scalar_score_delta: float
+    tournament_decision: TournamentDecision
+    rejection_reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Experiment:
+    """One generation's proposer output joined with its tournament outcome.
+
+    An :class:`Experiment` is the unit of journaling. It is constructed
+    when the proposer emits a hypothesis+patches; the :attr:`outcome`
+    starts as ``None`` and is filled in by the tournament runner once
+    the run completes and the decision is made.
+
+    Fields
+    ------
+    id:
+        Experiment identifier (convention: ``"exp_{epoch}_{generation}"``).
+    epoch_id, generation_id:
+        The lineage coordinates of THIS experiment's child generation.
+    parent_generation_id:
+        The lineage head this experiment is challenging.
+    proposed_at:
+        ISO-8601 UTC timestamp when the proposer emitted the hypothesis.
+    hypothesis:
+        The proposer's structured ahead-of-time prediction.
+    patches:
+        The concrete edits the proposer wants applied to the parent
+        snapshot to produce the child snapshot.
+    outcome:
+        The tournament's verdict, or ``None`` until the experiment runs.
+    """
+
+    id: str
+    epoch_id: str
+    generation_id: str
+    parent_generation_id: str
+    proposed_at: str
+    hypothesis: HypothesisSpec
+    patches: tuple[Patch, ...]
+    outcome: OutcomeRecord | None
+
+
+# ---------------------------------------------------------------------------
+# Epoch / generation
+# ---------------------------------------------------------------------------
+
+
+def _default_severity_weights() -> Mapping[str, float]:
+    """Default severity multipliers for drift-loss scoring.
+
+    INFO is the baseline (1.0), WARNING is materially worse (3.0), and
+    CRITICAL is qualitatively different (10.0) — a single CRITICAL drift
+    swamps a handful of INFOs. Operators tune these per epoch.
+    """
+    return {"info": 1.0, "warning": 3.0, "critical": 10.0}
+
+
+@dataclass(frozen=True, slots=True)
+class ScoringWeights:
+    """Tunable weights that turn a :class:`LossProfile` into a scalar.
+
+    A single :class:`ScoringWeights` instance is frozen for the lifetime
+    of an epoch. Changing weights starts a new epoch — generations across
+    different epochs are not directly comparable.
+
+    Fields
+    ------
+    drift_weight:
+        Coefficient on the aggregated drift-loss term.
+    pass_weight:
+        Coefficient on the ``(1 - pass_rate)`` term.
+    severity_weights:
+        Per-severity multipliers applied inside the drift-loss
+        aggregation. Keys are lowercase severity strings; missing keys
+        default to ``0.0`` (the aggregator treats unknown severities as
+        non-scoring rather than panicking).
+    per_kind_weights:
+        Optional per-drift-kind multipliers. Stacks multiplicatively
+        with :attr:`severity_weights`. Empty mapping = uniform weighting
+        across kinds.
+    plan_revision_weight:
+        Coefficient on :attr:`LossProfile.plan_revisions`. Defaults to
+        ``0.5`` — plan revisions are signal but less so than drift.
+    runtime_weight:
+        Coefficient on per-second runtime. Defaults to ``0.0`` — operators
+        usually rely on the wall-clock budget as a hard ceiling rather
+        than scoring runtime continuously, but the knob is here for
+        cases where runtime matters intrinsically.
+    promote_margin:
+        Minimum scalar-score improvement the child generation must show
+        over the parent to be promoted. Acts as a regression-noise
+        threshold.
+    pass_rate_monotonicity:
+        When ``True`` (default), any regression in pass rate
+        automatically rejects the child regardless of drift-side
+        improvement. The stricter half of the tournament gate; operators
+        can flip to ``False`` for experimental epochs where they expect
+        non-monotone exploration.
+    """
+
+    drift_weight: float = 1.0
+    pass_weight: float = 1.0
+    severity_weights: Mapping[str, float] = field(
+        default_factory=_default_severity_weights
+    )
+    per_kind_weights: Mapping[str, float] = field(default_factory=dict)
+    plan_revision_weight: float = 0.5
+    runtime_weight: float = 0.0
+    promote_margin: float = 0.01
+    pass_rate_monotonicity: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class EpochConfig:
+    """The frozen evaluation contract for an epoch.
+
+    Pinned for the lifetime of the epoch: board, rubric, scoring weights.
+    Changing any of these starts a new epoch — see
+    :doc:`project_zicato_journaling_and_epochs`.
+
+    Fields
+    ------
+    id:
+        Stable epoch identifier (operator-chosen; filesystem-safe).
+    name:
+        Human-readable name surfaced in CLI listings.
+    created_at:
+        ISO-8601 UTC timestamp of epoch creation.
+    board_path:
+        Absolute path to the frozen ``board.jsonl`` for this epoch.
+    rubric_path:
+        Absolute path to the operator-edited ``rubric.md`` the proposer
+        reads each round.
+    scoring:
+        The frozen :class:`ScoringWeights` for this epoch.
+    closed:
+        ``True`` once the epoch has been closed by ``zicato epoch close``
+        (or auto-closed by a subsequent ``zicato epoch new``). Closed
+        epochs are read-only.
+    closed_at:
+        ISO-8601 UTC timestamp of closure, or empty string when still
+        open.
+    """
+
+    id: str
+    name: str
+    created_at: str
+    board_path: Path
+    rubric_path: Path
+    scoring: ScoringWeights
+    closed: bool = False
+    closed_at: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Generation:
+    """One node in an epoch's generation lineage.
+
+    Fields
+    ------
+    id:
+        Stable generation identifier. Convention: ``"v0"``, ``"v1"``,
+        ascending under one epoch. The ``"v"`` prefix is preserved in
+        filesystem paths.
+    epoch_id:
+        The epoch this generation belongs to.
+    parent_id:
+        The generation this one was forked from, or ``None`` for the
+        epoch's seed generation (``"v0"``).
+    snapshot_root:
+        Absolute path to the source-tree snapshot for this generation.
+        The patch applier produced this by copying the parent's snapshot
+        and applying the experiment's patches; the runner mounts it as
+        the inner harness's source root for the duration of the run.
+    created_at:
+        ISO-8601 UTC creation timestamp.
+    promoted:
+        ``True`` iff this generation has been promoted to lineage head
+        by a tournament. The epoch's current head is the most-recent
+        promoted generation; ``promoted=False`` generations are dead
+        branches kept for analysis.
+    """
+
+    id: str
+    epoch_id: str
+    parent_id: str | None
+    snapshot_root: Path
+    created_at: str
+    promoted: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Patterns
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Pattern:
+    """A loss-pattern observation surfaced by a pattern detector.
+
+    Patterns are the bridge from raw :class:`LossProfile` instances to
+    proposer-actionable observations. Detectors produce a list of
+    :class:`Pattern` objects each generation; the proposer reads the
+    list and decides which to address. :attr:`kind` is open-ended (a
+    bare string, not a Literal) so new detector kinds can be added
+    without breaking the schema.
+
+    Fields
+    ------
+    id:
+        Stable pattern identifier within a generation.
+    kind:
+        Detector-defined kind string. Conventional values include
+        ``"drift_kind_frequency"`` (one drift kind dominates),
+        ``"hot_task"`` (one task id drifts disproportionately often),
+        ``"hot_agent"`` (one agent id is overrepresented in drift
+        sources). New detectors register new kinds without coordinating
+        with the type module.
+    summary:
+        One-line human-readable description for the journal.
+    detail:
+        Kind-specific structured payload. String-valued for JSON
+        cleanliness; consumers (the proposer) parse known fields per
+        kind and ignore the rest.
+    affected_mutation_ids:
+        Suggested mutation points the proposer might target if it
+        chooses to address this pattern. The proposer is not required
+        to act on the suggestion — patterns are advisory, not
+        prescriptive.
+    severity:
+        Detector-assigned severity. Same scale as drift severity for
+        consistency in journal rendering.
+    """
+
+    id: str
+    kind: str
+    summary: str
+    detail: Mapping[str, str]
+    affected_mutation_ids: tuple[str, ...] = ()
+    severity: Literal["info", "warning", "critical"] = "info"
+
+
+# ---------------------------------------------------------------------------
+# Runtime config
+# ---------------------------------------------------------------------------
+
+
+#: The model-agnostic LLM-call shape used everywhere in zicato.
+#:
+#: Mirrors goldfive's call_llm surface: ``(system, user, model) ->
+#: response``. The ``model`` parameter is a free-form string the caller
+#: passes through; concrete implementations interpret it (route to a
+#: provider, look up credentials, etc.). Zicato never inspects or
+#: switches on ``model``.
+CallLLM = Callable[[str, str, str], Awaitable[str]]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeConfig:
+    """The runtime-side parameters that bind one zicato instance.
+
+    Fields
+    ------
+    instance_id:
+        Identifier for this zicato instance. Distinguishes nested
+        instances when an outer zicato is optimizing an inner zicato
+        (the target-3 dogfood plan). v0 single-instance runs pass a
+        constant (e.g. ``"default"``); future nested runs key
+        workspaces, event streams, and lineage by this id.
+    workspace_root:
+        Absolute path to the ``.zicato/`` directory this instance
+        writes under.
+    harness_call_llm:
+        LLM callable used BY the inner harness during runs. Zicato
+        never invokes this directly; it is forwarded to the harness
+        adapter at construction.
+    auxiliary_call_llm:
+        LLM callable used by every zicato-internal LLM consumer — the
+        emulator, the proposer, the judge, the analysis pass. MUST be
+        a distinct callable from :attr:`harness_call_llm` (identity-
+        unequal) so the emulator cannot trivially collude with the
+        inner harness through shared state.
+    seed:
+        Optional integer seed for any zicato-internal random number
+        generators. Adapters may or may not honor it for the inner
+        harness.
+
+    Construction-time validation
+    ----------------------------
+    The frozen dataclass does NOT validate the two-callable rule on
+    construction (frozen dataclasses cannot run interesting
+    ``__post_init__`` logic against the slotted fields without
+    workarounds, and we keep this dataclass cheap to construct from
+    JSON+factory paths in tests). Instead, call
+    :func:`zicato.core.workspace.assert_distinct_callables` from the
+    construction site before handing the :class:`RuntimeConfig` to the
+    runner. The runner re-checks at startup as a defense in depth.
+    """
+
+    instance_id: str
+    workspace_root: Path
+    harness_call_llm: CallLLM
+    auxiliary_call_llm: CallLLM
+    seed: int | None = None
+
+
+__all__ = [
+    # Mutation surface
+    "MutationKind",
+    "MutationPoint",
+    "PatchOpKind",
+    "Patch",
+    # Board
+    "BoardEntryKind",
+    "ExpectationKind",
+    "ExpectationFiresOn",
+    "Expectation",
+    "UserPersona",
+    "ScriptedTurn",
+    "BoardEntry",
+    "validate_board_entry",
+    # Telemetry / loss
+    "DriftCount",
+    "ExpectationResult",
+    "LossProfile",
+    # Run record / lineage
+    "RunRecord",
+    "RunResult",
+    # Hypothesis / experiment
+    "DriftDirection",
+    "DriftMagnitude",
+    "ExpectedDriftMovement",
+    "HypothesisSpec",
+    "DriftMovementActual",
+    "TournamentDecision",
+    "OutcomeRecord",
+    "Experiment",
+    # Epoch / generation
+    "ScoringWeights",
+    "EpochConfig",
+    "Generation",
+    # Patterns
+    "Pattern",
+    # Runtime config
+    "CallLLM",
+    "RuntimeConfig",
+]
