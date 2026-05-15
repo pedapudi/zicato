@@ -38,6 +38,7 @@ from zicato.core.types import (
     Experiment,
     Generation,
     HypothesisSpec,
+    MetricMovementActual,
     OutcomeRecord,
 )
 from zicato.core.workspace import (
@@ -548,75 +549,94 @@ def _promoted_chain(
     return chain
 
 
-def render_drift_kind_movement_table(
+def render_metric_movement_table(
     generations: list[Generation],
     experiments: list[Experiment],
+    namespace_filter: str | None = None,
 ) -> str:
-    """Render a per-drift-kind rate table over the promoted lineage.
+    """Render a per-metric rate table over the promoted lineage.
 
-    The table reports the parent (``from_rate``) and child (``to_rate``)
-    rates recorded on each promoted experiment's
-    :class:`OutcomeRecord.drift_movements`, stitched into a per-kind
-    column sequence. Columns are ``drift_kind | severity | v0_rate |
-    v_{promoted_1}_rate | ... | final_rate | net_change``. Rows are
-    sorted by ``abs(net_change)`` descending and capped at
-    :data:`_DRIFT_KIND_TABLE_LIMIT` so the table stays readable.
+    Generalises :func:`render_drift_kind_movement_table` to any
+    namespace. ``namespace_filter`` is a string prefix (e.g.
+    ``"drift:"``, ``"cost:"``, ``"rubric:"``) that restricts the table
+    to a single namespace; pass ``None`` to render every metric across
+    every namespace.
 
-    If no promoted generation recorded drift movements, the function
-    returns the empty string — callers detect this and elide the
-    sub-section.
+    The table reports the parent (``from_value``) and child (``to_value``)
+    values for each metric, stitched into a per-metric column sequence.
+    Rows are sorted by ``abs(net_change)`` descending and capped at
+    :data:`_DRIFT_KIND_TABLE_LIMIT`.
+
+    For back-compat the column suffix is ``_rate`` and the row header
+    is ``drift_kind`` when ``namespace_filter == "drift:"`` (matches
+    the historical drift-only table verbatim); otherwise the columns
+    use ``_value`` and the header is ``metric``. Each row's display
+    name has the namespace prefix stripped when a single namespace
+    filter is in effect.
+
+    The hydration path reads both ``outcome.metric_movements`` (the
+    generalised surface) AND ``outcome.drift_movements`` lifted under
+    the ``"drift:"`` namespace; either populates the table so
+    operators don't lose drift signal even when only the older field
+    is filled in.
+
+    Returns the empty string when no movements were recorded in the
+    requested namespace.
     """
     chain = _promoted_chain(generations, experiments)
     if len(chain) < 2:
-        # Need at least one promoted step beyond v0 for movements.
         return ""
 
     exp_idx = _exp_by_child(experiments)
-    # Per-kind rate sequence aligned with `chain` (length = len(chain)).
-    # Index 0 = v0 (the parent of the first promoted step).
-    per_kind: dict[str, list[float | None]] = {}
-    # Severity is not on DriftMovementActual; we leave it blank in the
-    # header and let operators consult experiment.json for severity
-    # detail. Keeping the column makes the header match the spec.
+    per_metric: dict[str, list[float | None]] = {}
     seen_any = False
     n_cols = len(chain)
+
+    def _record(metric_name: str, step_idx: int, from_val: float, to_val: float) -> None:
+        nonlocal seen_any
+        if namespace_filter and not metric_name.startswith(namespace_filter):
+            return
+        seen_any = True
+        seq = per_metric.setdefault(metric_name, [None] * n_cols)
+        if seq[step_idx - 1] is None:
+            seq[step_idx - 1] = from_val
+        seq[step_idx] = to_val
+
     for step_idx, child in enumerate(chain[1:], start=1):
         exp = exp_idx.get(child.id)
         if exp is None or exp.outcome is None:
             continue
         for mv in exp.outcome.drift_movements:
-            seen_any = True
-            seq = per_kind.setdefault(mv.kind, [None] * n_cols)
-            # Record the parent rate at the parent index and the child
-            # rate at the child index. Later steps may overwrite the
-            # same parent slot with the same value — that is fine.
-            if seq[step_idx - 1] is None:
-                seq[step_idx - 1] = mv.from_rate
-            seq[step_idx] = mv.to_rate
+            _record(f"drift:{mv.kind}", step_idx, mv.from_rate, mv.to_rate)
+        for mm in exp.outcome.metric_movements:
+            _record(mm.metric_name, step_idx, mm.from_value, mm.to_value)
 
     if not seen_any:
         return ""
 
-    # Compute net_change as final - first non-None.
     rows: list[tuple[str, list[float | None], float]] = []
-    for kind, seq in per_kind.items():
+    for name, seq in per_metric.items():
         first = next((v for v in seq if v is not None), None)
         last = next((v for v in reversed(seq) if v is not None), None)
         if first is None or last is None:
             net = 0.0
         else:
             net = last - first
-        rows.append((kind, seq, net))
+        rows.append((name, seq, net))
     rows.sort(key=lambda r: (-abs(r[2]), r[0]))
     rows = rows[:_DRIFT_KIND_TABLE_LIMIT]
 
-    # Header. Each promoted generation contributes a rate column; the
-    # last column is aliased "final_rate" so the table reads naturally.
-    rate_cols = [f"{g.id}_rate" for g in chain]
+    # Column suffix: keep "_rate" for the drift namespace (back-compat)
+    # so the existing snapshot expectations don't shift; "_value" for
+    # any other namespace where "rate" would be a misnomer (cost,
+    # latency, rubric, ...).
+    col_suffix = "rate" if namespace_filter == "drift:" else "value"
+    rate_cols = [f"{g.id}_{col_suffix}" for g in chain]
     if rate_cols:
-        rate_cols[-1] = "final_rate"
+        rate_cols[-1] = f"final_{col_suffix}"
 
-    header_cells = ["drift_kind", "severity", *rate_cols, "net_change"]
+    name_header = "drift_kind" if namespace_filter == "drift:" else "metric"
+    header_cells = [name_header, "severity", *rate_cols, "net_change"]
     lines: list[str] = []
     lines.append("| " + " | ".join(header_cells) + " |")
     lines.append("| " + " | ".join("---" for _ in header_cells) + " |")
@@ -626,13 +646,34 @@ def render_drift_kind_movement_table(
             return ""
         return f"{v:.3f}"
 
-    for kind, seq, net in rows:
-        cells = [kind, ""]
+    for name, seq, net in rows:
+        if namespace_filter and name.startswith(namespace_filter):
+            display = name[len(namespace_filter) :]
+        else:
+            display = name
+        cells = [display, ""]
         cells.extend(_fmt(v) for v in seq)
         cells.append(f"{net:+.3f}")
         lines.append("| " + " | ".join(cells) + " |")
 
     return "\n".join(lines)
+
+
+def render_drift_kind_movement_table(
+    generations: list[Generation],
+    experiments: list[Experiment],
+) -> str:
+    """Render a per-drift-kind rate table over the promoted lineage.
+
+    Back-compat wrapper over :func:`render_metric_movement_table` with
+    ``namespace_filter="drift:"``. Output header and row format match
+    the pre-generalisation table verbatim (``drift_kind | severity |
+    {gen}_rate | ... | final_rate | net_change``) so existing tests
+    and consumers don't break.
+
+    Returns the empty string when no drift movements were recorded.
+    """
+    return render_metric_movement_table(generations, experiments, namespace_filter="drift:")
 
 
 def render_tournament_outcomes_section(
@@ -642,10 +683,15 @@ def render_tournament_outcomes_section(
     """Compose the full ``## Tournament outcomes`` markdown section.
 
     Stitches together the mermaid lineage graph, the trajectory table,
-    the ASCII sparkline, and the drift-kind movement table. Each
-    sub-section has its own level-3 heading so the LLM-written prose
-    can reference them by name. The drift-kind table is elided entirely
-    when no promoted experiment recorded movements.
+    the ASCII sparkline, and the per-metric movement tables. The drift
+    table renders in its historical position with the historical
+    heading (``### Drift-kind movements across the promoted lineage``);
+    if any non-drift metric movements are present, a separate
+    ``### Metric movements (non-drift namespaces)`` section is
+    appended after it.
+
+    Each sub-table is elided when its namespace has no recorded
+    movements.
     """
     parts: list[str] = []
     parts.append("## Tournament outcomes")
@@ -667,8 +713,77 @@ def render_tournament_outcomes_section(
         parts.append("### Drift-kind movements across the promoted lineage")
         parts.append("")
         parts.append(drift_table)
+    # Render a separate table for every non-drift metric movement so
+    # the section surfaces cost / rubric / latency / schema /
+    # output / ... signal without disturbing the drift table's shape.
+    nondrift_table = _render_non_drift_metric_table(generations, experiments)
+    if nondrift_table:
+        parts.append("")
+        parts.append("### Metric movements (non-drift namespaces)")
+        parts.append("")
+        parts.append(nondrift_table)
     parts.append("")
     return "\n".join(parts)
+
+
+def _render_non_drift_metric_table(
+    generations: list[Generation],
+    experiments: list[Experiment],
+) -> str:
+    """Render the metric-movement table restricted to non-drift namespaces.
+
+    Walks every outcome's :attr:`OutcomeRecord.metric_movements` and
+    elides entries whose metric_name starts with ``"drift:"`` — those
+    are already covered by the historical drift table. Returns the
+    empty string when no non-drift metric movements were recorded.
+    """
+    chain = _promoted_chain(generations, experiments)
+    if len(chain) < 2:
+        return ""
+    exp_idx = _exp_by_child(experiments)
+    per_metric: dict[str, list[float | None]] = {}
+    seen_any = False
+    n_cols = len(chain)
+    for step_idx, child in enumerate(chain[1:], start=1):
+        exp = exp_idx.get(child.id)
+        if exp is None or exp.outcome is None:
+            continue
+        for mm in exp.outcome.metric_movements:
+            if mm.metric_name.startswith("drift:"):
+                continue
+            seen_any = True
+            seq = per_metric.setdefault(mm.metric_name, [None] * n_cols)
+            if seq[step_idx - 1] is None:
+                seq[step_idx - 1] = mm.from_value
+            seq[step_idx] = mm.to_value
+    if not seen_any:
+        return ""
+
+    rows: list[tuple[str, list[float | None], float]] = []
+    for name, seq in per_metric.items():
+        first = next((v for v in seq if v is not None), None)
+        last = next((v for v in reversed(seq) if v is not None), None)
+        net = 0.0 if first is None or last is None else (last - first)
+        rows.append((name, seq, net))
+    rows.sort(key=lambda r: (-abs(r[2]), r[0]))
+    rows = rows[:_DRIFT_KIND_TABLE_LIMIT]
+
+    rate_cols = [f"{g.id}_value" for g in chain]
+    if rate_cols:
+        rate_cols[-1] = "final_value"
+    header_cells = ["metric", "severity", *rate_cols, "net_change"]
+    lines: list[str] = ["| " + " | ".join(header_cells) + " |"]
+    lines.append("| " + " | ".join("---" for _ in header_cells) + " |")
+
+    def _fmt(v: float | None) -> str:
+        return "" if v is None else f"{v:.3f}"
+
+    for name, seq, net in rows:
+        cells = [name, ""]
+        cells.extend(_fmt(v) for v in seq)
+        cells.append(f"{net:+.3f}")
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -695,6 +810,22 @@ def _hydrate_outcome(d: Mapping[str, Any] | None) -> OutcomeRecord | None:
             )
         except (KeyError, TypeError, ValueError):
             continue
+    metric_movements: list[MetricMovementActual] = []
+    for m in d.get("metric_movements", ()) or ():
+        if not isinstance(m, Mapping):
+            continue
+        try:
+            metric_movements.append(
+                MetricMovementActual(
+                    metric_name=str(m["metric_name"]),
+                    from_value=float(m.get("from_value", 0.0)),
+                    to_value=float(m.get("to_value", 0.0)),
+                    hypothesis_match=bool(m.get("hypothesis_match", False)),
+                    note=str(m.get("note", "")),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
     decision = d.get("tournament_decision")
     if decision not in ("promoted", "rejected", "deferred"):
         # An outcome dict without a recognisable decision is treated as
@@ -709,6 +840,7 @@ def _hydrate_outcome(d: Mapping[str, Any] | None) -> OutcomeRecord | None:
             scalar_score_delta=float(d.get("scalar_score_delta", 0.0)),
             tournament_decision=decision,
             rejection_reason=str(d.get("rejection_reason", "")),
+            metric_movements=tuple(metric_movements),
         )
     except (TypeError, ValueError):
         return None
@@ -1161,6 +1293,7 @@ __all__ = [
     "regenerate_in_progress_html",
     "render_drift_kind_movement_table",
     "render_mermaid_lineage",
+    "render_metric_movement_table",
     "render_score_sparkline",
     "render_tournament_outcomes_section",
     "render_trajectory_table",
