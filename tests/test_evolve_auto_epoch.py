@@ -1,0 +1,392 @@
+"""End-to-end-ish test: ``evolve`` auto-rolls the epoch on contract drift.
+
+Runs the full :func:`zicato.orchestrator.evolve_n_rounds` loop with a
+stub adapter and stub LLMs (no goldfive, no google-adk, no real model
+traffic), then edits the live rubric file and runs ``evolve`` again —
+the second run must detect the contract change and create a new epoch.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+import types
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from zicato.core.types import (
+    BoardEntry,
+    DriftCount,
+    ExpectationResult,
+    LossProfile,
+    RunResult,
+)
+from zicato.epoch.lifecycle import current_epoch_id, list_epochs
+
+# ---------------------------------------------------------------------------
+# LLM stubs
+# ---------------------------------------------------------------------------
+
+
+async def _harness_call_llm(system: str, user: str, model: str) -> str:
+    del system, user, model
+    return ""
+
+
+def _proposer_response() -> str:
+    """A schema-valid proposer response targeting the stub marker."""
+    return json.dumps(
+        {
+            "hypothesis": {
+                "core_idea": "swap the greeting string",
+                "modulating": ["greeting"],
+                "why": "Baseline round exercising the orchestrator.",
+                "expected_drift_movements": [
+                    {
+                        "kind": "off_topic",
+                        "direction": "decrease",
+                        "magnitude": "small",
+                    }
+                ],
+                "expected_pass_rate_delta": "+0.0 to +0.1",
+                "risks": "harmless",
+            },
+            "patches": [
+                {
+                    "mutation_id": "greeting",
+                    "op": "replace",
+                    "new_content": '"world"',
+                    "rationale": "different greeting word",
+                }
+            ],
+        }
+    )
+
+
+def _make_aux() -> Any:
+    """An aux callable that always returns a fresh valid proposer response.
+
+    Unlike the orchestrator test's exhausting responder, this one never
+    runs dry — auto-epoch close also calls the aux LLM (analysis pass),
+    and the round count across two evolve invocations is hard to
+    predict, so an inexhaustible stub keeps the test simple.
+    """
+
+    async def _aux(system: str, user: str, model: str) -> str:
+        del user, model
+        # The proposer expects JSON; the analysis pass expects prose.
+        # Returning JSON for everything is fine — the analysis pass
+        # tolerates arbitrary text.
+        if "hypothesis" in system or "proposer" in system.lower():
+            return _proposer_response()
+        return _proposer_response()
+
+    return _aux
+
+
+# ---------------------------------------------------------------------------
+# Workspace bootstrap — a *registered* workspace with live contract files
+# ---------------------------------------------------------------------------
+
+
+def _bootstrap_registered(tmp_path: Path) -> tuple[Path, Path]:
+    """Create a registered workspace + a mutable source tree.
+
+    Returns ``(workspace_root, rubric_path)``. No epoch is created —
+    the first ``evolve`` is expected to auto-create ``e0``.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+
+    # Live contract files next to the workspace.
+    board = tmp_path / "board.jsonl"
+    rubric = tmp_path / "rubric.md"
+    scoring = tmp_path / "scoring.json"
+    board.write_text(
+        json.dumps(
+            {
+                "id": "entry_a",
+                "kind": "single_turn",
+                "wall_clock_budget_seconds": 60,
+                "input": "hello",
+            }
+        )
+        + "\n"
+    )
+    rubric.write_text("# Rubric\n- Be careful.\n")
+    scoring.write_text(json.dumps({"drift_weight": 1.0, "pass_weight": 1.0}))
+
+    # The mutable source tree.
+    agent = tmp_path / "agent"
+    agent.mkdir()
+    (agent / "agent.py").write_text(
+        '"""Stub harness source for tests."""\n'
+        "\n"
+        '# zicato:mutable id="greeting"\n'
+        'GREETING = "hello"\n'
+    )
+
+    (workspace / "config.json").write_text(
+        json.dumps(
+            {
+                "instance_id": "test",
+                "adapter": {"kind": "stub"},
+                "adk_entrypoint": "pkg.mod:agent",
+                "mutable_trees": [str(agent)],
+                "source_roots": [str(agent)],
+                "contract": {
+                    "board_path": str(board),
+                    "rubric_path": str(rubric),
+                    "scoring_path": str(scoring),
+                },
+            }
+        )
+    )
+    return workspace, rubric
+
+
+# ---------------------------------------------------------------------------
+# Adapter / telemetry stubs (mirrors tests/test_orchestrator.py)
+# ---------------------------------------------------------------------------
+
+
+def _install_stub_adapter_factory(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _StubSession:
+        async def run(self, entry: BoardEntry, sinks: list[Any], config: Any) -> RunResult:
+            del sinks, config
+            return RunResult(
+                run_id=f"r-{entry.id}",
+                entry_id=entry.id,
+                final_output="hello world",
+                transcript=("hello world",),
+                runtime_ms=100,
+            )
+
+    class _StubAdapter:
+        name = "stub"
+
+        def load(self, snapshot_root: Path) -> _StubSession:
+            del snapshot_root
+            return _StubSession()
+
+        def mutation_points(self, source_roots: list[Path] | None = None) -> list[Any]:
+            del source_roots
+            return []
+
+    fake_factory = types.ModuleType("zicato.adapter_factory")
+
+    def make_adapter_from_config(workspace_config: dict[str, Any]) -> Any:
+        del workspace_config
+        return _StubAdapter()
+
+    fake_factory.make_adapter_from_config = make_adapter_from_config  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "zicato.adapter_factory", fake_factory)
+    import zicato
+
+    monkeypatch.setattr(zicato, "adapter_factory", fake_factory, raising=False)
+
+
+def _install_telemetry_stubs(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    canned_loss_by_gen: dict[str, float],
+    canned_pass_by_gen: dict[str, bool],
+) -> None:
+    sink_mod = types.ModuleType("zicato.telemetry.sink")
+
+    def make_run_sink_path(
+        *,
+        workspace_root: Path,
+        epoch_id: str,
+        generation_id: str,
+        entry_id: str,
+    ) -> Path:
+        del epoch_id, generation_id, entry_id
+        return workspace_root / "events.jsonl"
+
+    sink_mod.make_run_sink_path = make_run_sink_path  # type: ignore[attr-defined]
+
+    reducer_mod = types.ModuleType("zicato.telemetry.reducer")
+
+    def reduce_loss(
+        events_jsonl_path: Path,
+        entry: BoardEntry,
+        generation_id: str,
+        epoch_id: str,
+        expectation_result: ExpectationResult | None,
+        runtime_ms: int,
+        wall_clock_budget_exceeded: bool,
+        weights: Any,
+    ) -> LossProfile:
+        del events_jsonl_path, runtime_ms, wall_clock_budget_exceeded, weights
+        return LossProfile(
+            run_id=f"r-{generation_id}-{entry.id}",
+            entry_id=entry.id,
+            generation_id=generation_id,
+            epoch_id=epoch_id,
+            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            plan_revisions=0,
+            task_failure_ratio=0.0,
+            runtime_ms=100,
+            wall_clock_budget_exceeded=False,
+            expectation_result=expectation_result,
+            drift_loss=canned_loss_by_gen.get(generation_id, 0.0),
+            pass_fail=canned_pass_by_gen.get(generation_id),
+        )
+
+    def read_loss_profile(path: Path) -> LossProfile:
+        del path
+        raise FileNotFoundError
+
+    reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
+    reducer_mod.read_loss_profile = read_loss_profile  # type: ignore[attr-defined]
+
+    telemetry_pkg = types.ModuleType("zicato.telemetry")
+    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
+    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
+
+
+# ---------------------------------------------------------------------------
+# The end-to-end-ish test
+# ---------------------------------------------------------------------------
+
+
+def test_evolve_auto_creates_then_rolls_on_rubric_edit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace, rubric = _bootstrap_registered(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    # Always promote so each generation advances the head.
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={
+            "v0": 5.0,
+            "v1": 1.0,
+            "v2": 0.5,
+            "v3": 0.25,
+        },
+        canned_pass_by_gen={
+            "v0": True,
+            "v1": True,
+            "v2": True,
+            "v3": True,
+        },
+    )
+
+    from zicato.orchestrator import evolve_n_rounds
+
+    # First evolve — no epoch exists yet → auto-create e0.
+    outcomes = asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=None,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux(),
+        )
+    )
+    assert len(outcomes) == 1
+    epoch_after_first = current_epoch_id(workspace)
+    assert epoch_after_first is not None
+    assert epoch_after_first.endswith("_e0")
+    assert len(list_epochs(workspace)) == 1
+
+    # Edit the live rubric — the evaluation contract drifts.
+    rubric.write_text("# Rubric\n- Be careful.\n- And: cite your sources.\n")
+
+    # Second evolve — must detect the drift and roll to a new epoch.
+    outcomes2 = asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=None,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux(),
+        )
+    )
+    assert len(outcomes2) == 1
+    epoch_after_second = current_epoch_id(workspace)
+    assert epoch_after_second != epoch_after_first
+    assert epoch_after_second is not None
+    assert epoch_after_second.endswith("_e1")
+
+    # Two epochs now; the first is closed, the second is open.
+    epochs = list_epochs(workspace)
+    assert len(epochs) == 2
+    by_id = {e.id: e for e in epochs}
+    assert by_id[epoch_after_first].closed
+    assert not by_id[epoch_after_second].closed
+
+    # The rolled epoch's v0 baseline was seeded from the previous
+    # epoch's promoted head (the lineage continues).
+    new_v0_snapshot = workspace / "epochs" / epoch_after_second / "generations" / "v0" / "snapshot"
+    assert new_v0_snapshot.exists()
+    # The first evolve promoted v1 (greeting -> "world"); the rolled
+    # epoch's v0 must carry that promoted content forward.
+    agent_files = list(new_v0_snapshot.rglob("agent.py"))
+    assert agent_files, "expected agent.py in the seeded v0 snapshot"
+    assert '"world"' in agent_files[0].read_text()
+
+    # Cross-epoch lineage edge recorded.
+    lineage = json.loads((workspace / "lineage.json").read_text())
+    second = next(e for e in lineage["epochs"] if e["id"] == epoch_after_second)
+    assert second["v0_parent"] == epoch_after_first
+
+
+def test_evolve_no_auto_epoch_errors_on_drift(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With auto_epoch disabled, a drifted contract raises instead of rolling."""
+    workspace, rubric = _bootstrap_registered(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 5.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_n_rounds
+
+    # First evolve still creates e0 even with auto_epoch off? No — with
+    # auto_epoch off and no epoch, ensure_epoch_for_contract raises.
+    with pytest.raises(FileNotFoundError):
+        asyncio.run(
+            evolve_n_rounds(
+                rounds=1,
+                workspace_root=workspace,
+                epoch_id=None,
+                harness_call_llm=_harness_call_llm,
+                auxiliary_call_llm=_make_aux(),
+                auto_epoch=False,
+            )
+        )
+
+    # Create the first epoch with auto_epoch ON, then drift + retry with
+    # auto_epoch OFF → drift error.
+    asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=None,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux(),
+        )
+    )
+    rubric.write_text("# Rubric\n- totally different steering text\n")
+    with pytest.raises(RuntimeError, match="drifted"):
+        asyncio.run(
+            evolve_n_rounds(
+                rounds=1,
+                workspace_root=workspace,
+                epoch_id=None,
+                harness_call_llm=_harness_call_llm,
+                auxiliary_call_llm=_make_aux(),
+                auto_epoch=False,
+            )
+        )
