@@ -32,16 +32,22 @@ classifiers = [
 dependencies = [
     # Core is intentionally light; storage / telemetry / LLMs are pluggable.
     "goldfive",
+    "click >= 8.1",
+    "jsonschema >= 4.20",
 ]
 
 [project.optional-dependencies]
 adk = ["google-adk", "goldfive[adk]"]
 dev = [
-    "pytest",
-    "pytest-asyncio",
-    "ruff",
-    "mypy",
+    "pytest >= 8",
+    "pytest-asyncio >= 0.23",
+    "ruff >= 0.5",
+    "mypy >= 1.10",
+    "types-jsonschema",
 ]
+
+[project.scripts]
+zicato = "zicato.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/pedapudi/zicato"
@@ -54,5 +60,22 @@ packages = ["zicato"]
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+
+[tool.mypy]
+strict = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+warn_unused_ignores = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["tests"]
