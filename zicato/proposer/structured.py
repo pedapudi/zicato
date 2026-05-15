@@ -41,6 +41,7 @@ import jsonschema
 from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import (
     ExpectedDriftMovement,
+    ExpectedMetricMovement,
     Experiment,
     HypothesisSpec,
     MutationPoint,
@@ -58,6 +59,15 @@ from zicato.core.types import (
 #: the proposer some slack to attach commentary fields the schema author
 #: hadn't anticipated. The parser only reads documented keys; unknown
 #: keys are silently ignored.
+_DIRECTION_ENUM = [
+    "decrease",
+    "increase",
+    "neutral",
+    "decrease_or_neutral",
+    "increase_or_neutral",
+]
+_MAGNITUDE_ENUM = ["small", "medium", "large"]
+
 EXPERIMENT_JSON_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -65,11 +75,17 @@ EXPERIMENT_JSON_SCHEMA: dict[str, Any] = {
     "properties": {
         "hypothesis": {
             "type": "object",
+            # ``expected_drift_movements`` and ``expected_metric_movements``
+            # are interchangeable; at least one must be present. Schema-
+            # side we require ``core_idea`` / ``modulating`` / ``why`` /
+            # ``expected_pass_rate_delta`` only — the "at least one
+            # movements field" rule is enforced by the parser since
+            # JSON Schema's ``anyOf`` predicates obscure error messages
+            # in the proposer-retry path.
             "required": [
                 "core_idea",
                 "modulating",
                 "why",
-                "expected_drift_movements",
                 "expected_pass_rate_delta",
             ],
             "properties": {
@@ -87,18 +103,20 @@ EXPERIMENT_JSON_SCHEMA: dict[str, Any] = {
                         "required": ["kind", "direction", "magnitude"],
                         "properties": {
                             "kind": {"type": "string", "minLength": 1},
-                            "direction": {
-                                "enum": [
-                                    "decrease",
-                                    "increase",
-                                    "neutral",
-                                    "decrease_or_neutral",
-                                    "increase_or_neutral",
-                                ]
-                            },
-                            "magnitude": {
-                                "enum": ["small", "medium", "large"]
-                            },
+                            "direction": {"enum": _DIRECTION_ENUM},
+                            "magnitude": {"enum": _MAGNITUDE_ENUM},
+                        },
+                    },
+                },
+                "expected_metric_movements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["metric_name", "direction", "magnitude"],
+                        "properties": {
+                            "metric_name": {"type": "string", "minLength": 1},
+                            "direction": {"enum": _DIRECTION_ENUM},
+                            "magnitude": {"enum": _MAGNITUDE_ENUM},
                         },
                     },
                 },
@@ -142,9 +160,7 @@ class ExperimentParseError(ValueError):
 #: requires the fence to be the FIRST and LAST non-whitespace tokens —
 #: an inline code fence inside narrative prose would never legitimately
 #: open at the start of the buffer, so this is unambiguous.
-_FENCE_RE = re.compile(
-    r"^\s*```(?:json|JSON)?\s*\n(?P<body>.*?)\n```\s*$", re.DOTALL
-)
+_FENCE_RE = re.compile(r"^\s*```(?:json|JSON)?\s*\n(?P<body>.*?)\n```\s*$", re.DOTALL)
 
 
 def _strip_fences(response_text: str) -> str:
@@ -171,61 +187,43 @@ def _validate_op_fields(patch_dict: Mapping[str, Any], idx: int) -> None:
     if op == "replace":
         if not has_content or not isinstance(patch_dict["new_content"], str):
             raise ExperimentParseError(
-                f"patch[{idx}]: op='replace' requires a non-empty string "
-                f"'new_content' field"
+                f"patch[{idx}]: op='replace' requires a non-empty string 'new_content' field"
             )
         if not patch_dict["new_content"]:
             raise ExperimentParseError(
                 f"patch[{idx}]: op='replace' requires 'new_content' to be non-empty"
             )
         if has_numeric:
-            raise ExperimentParseError(
-                f"patch[{idx}]: op='replace' must not set 'new_numeric'"
-            )
+            raise ExperimentParseError(f"patch[{idx}]: op='replace' must not set 'new_numeric'")
         if has_enum:
-            raise ExperimentParseError(
-                f"patch[{idx}]: op='replace' must not set 'new_enum'"
-            )
+            raise ExperimentParseError(f"patch[{idx}]: op='replace' must not set 'new_enum'")
     elif op == "set_numeric":
         if not has_numeric:
             raise ExperimentParseError(
                 f"patch[{idx}]: op='set_numeric' requires a numeric 'new_numeric' field"
             )
         if has_content:
-            raise ExperimentParseError(
-                f"patch[{idx}]: op='set_numeric' must not set 'new_content'"
-            )
+            raise ExperimentParseError(f"patch[{idx}]: op='set_numeric' must not set 'new_content'")
         if has_enum:
-            raise ExperimentParseError(
-                f"patch[{idx}]: op='set_numeric' must not set 'new_enum'"
-            )
+            raise ExperimentParseError(f"patch[{idx}]: op='set_numeric' must not set 'new_enum'")
     elif op == "set_enum":
         if not has_enum or not isinstance(patch_dict["new_enum"], str):
             raise ExperimentParseError(
-                f"patch[{idx}]: op='set_enum' requires a non-empty string "
-                f"'new_enum' field"
+                f"patch[{idx}]: op='set_enum' requires a non-empty string 'new_enum' field"
             )
         if not patch_dict["new_enum"]:
             raise ExperimentParseError(
                 f"patch[{idx}]: op='set_enum' requires 'new_enum' to be non-empty"
             )
         if has_content:
-            raise ExperimentParseError(
-                f"patch[{idx}]: op='set_enum' must not set 'new_content'"
-            )
+            raise ExperimentParseError(f"patch[{idx}]: op='set_enum' must not set 'new_content'")
         if has_numeric:
-            raise ExperimentParseError(
-                f"patch[{idx}]: op='set_enum' must not set 'new_numeric'"
-            )
+            raise ExperimentParseError(f"patch[{idx}]: op='set_enum' must not set 'new_numeric'")
     else:  # pragma: no cover — JSON schema enum already gates this
-        raise ExperimentParseError(
-            f"patch[{idx}]: unknown op {op!r}"
-        )
+        raise ExperimentParseError(f"patch[{idx}]: unknown op {op!r}")
 
 
-def _validate_numeric_range(
-    patch_dict: Mapping[str, Any], mp: MutationPoint, idx: int
-) -> None:
+def _validate_numeric_range(patch_dict: Mapping[str, Any], mp: MutationPoint, idx: int) -> None:
     """Reject ``set_numeric`` patches whose value falls outside the metadata range."""
 
     value = float(patch_dict["new_numeric"])
@@ -237,8 +235,7 @@ def _validate_numeric_range(
             lo = None  # malformed metadata — fail open, the applier re-checks
         if lo is not None and value < lo:
             raise ExperimentParseError(
-                f"patch[{idx}]: new_numeric={value} below min={lo} for "
-                f"mutation {mp.id!r}"
+                f"patch[{idx}]: new_numeric={value} below min={lo} for mutation {mp.id!r}"
             )
     if "max" in metadata:
         try:
@@ -247,14 +244,11 @@ def _validate_numeric_range(
             hi = None
         if hi is not None and value > hi:
             raise ExperimentParseError(
-                f"patch[{idx}]: new_numeric={value} above max={hi} for "
-                f"mutation {mp.id!r}"
+                f"patch[{idx}]: new_numeric={value} above max={hi} for mutation {mp.id!r}"
             )
 
 
-def _validate_enum_domain(
-    patch_dict: Mapping[str, Any], mp: MutationPoint, idx: int
-) -> None:
+def _validate_enum_domain(patch_dict: Mapping[str, Any], mp: MutationPoint, idx: int) -> None:
     """Reject ``set_enum`` patches whose value is not in the metadata domain."""
 
     domain_raw = mp.metadata.get("enum")
@@ -334,22 +328,55 @@ def parse_experiment_json(
     except jsonschema.ValidationError as exc:
         # Render the path so the proposer can fix the exact field.
         path = "/".join(str(p) for p in exc.absolute_path) or "<root>"
-        raise ExperimentParseError(
-            f"schema violation at {path}: {exc.message}"
-        ) from exc
+        raise ExperimentParseError(f"schema violation at {path}: {exc.message}") from exc
 
     hyp_dict = data["hypothesis"]
-    raw_movements = hyp_dict["expected_drift_movements"]
-    movements: list[ExpectedDriftMovement] = []
-    for i, mv in enumerate(raw_movements):
+    # Either expected_drift_movements OR expected_metric_movements must
+    # be present; both are accepted and merged. expected_drift_movements
+    # is the back-compat path (drift kinds only); expected_metric_movements
+    # is the generalised namespaced path (drift / cost / rubric / ...).
+    raw_drift_movements = hyp_dict.get("expected_drift_movements", [])
+    raw_metric_movements = hyp_dict.get("expected_metric_movements", [])
+    if not raw_drift_movements and not raw_metric_movements:
+        raise ExperimentParseError(
+            "hypothesis: at least one of 'expected_drift_movements' or "
+            "'expected_metric_movements' must be present and non-empty"
+        )
+
+    drift_movements: list[ExpectedDriftMovement] = []
+    for i, mv in enumerate(raw_drift_movements):
         kind = mv["kind"]
         if kind not in GOLDFIVE_DRIFT_KINDS:
             raise ExperimentParseError(
                 f"hypothesis.expected_drift_movements[{i}]: unknown drift kind {kind!r}"
             )
-        movements.append(
+        drift_movements.append(
             ExpectedDriftMovement(
                 kind=kind,
+                direction=mv["direction"],
+                magnitude=mv["magnitude"],
+            )
+        )
+
+    metric_movements: list[ExpectedMetricMovement] = []
+    for i, mv in enumerate(raw_metric_movements):
+        metric_name = mv["metric_name"]
+        # Validate drift-namespace metric names against the registered
+        # goldfive kind set (defense in depth — the schema bounds the
+        # direction/magnitude domains but not the kind set). Other
+        # namespaces are accepted as-is; the convention is namespace-
+        # prefixed names but we don't lock down the namespace registry
+        # here so harnesses can add new namespaces freely.
+        if metric_name.startswith("drift:"):
+            bare = metric_name[len("drift:") :]
+            if bare not in GOLDFIVE_DRIFT_KINDS:
+                raise ExperimentParseError(
+                    f"hypothesis.expected_metric_movements[{i}]: unknown drift "
+                    f"kind {bare!r} in metric_name {metric_name!r}"
+                )
+        metric_movements.append(
+            ExpectedMetricMovement(
+                metric_name=metric_name,
                 direction=mv["direction"],
                 magnitude=mv["magnitude"],
             )
@@ -363,17 +390,17 @@ def parse_experiment_json(
     for ident in raw_modulating:
         if ident not in mutations_by_id:
             raise ExperimentParseError(
-                f"hypothesis.modulating: id {ident!r} does not match any "
-                "known mutation point"
+                f"hypothesis.modulating: id {ident!r} does not match any known mutation point"
             )
 
     hypothesis = HypothesisSpec(
         core_idea=hyp_dict["core_idea"],
         modulating=tuple(raw_modulating),
         why=hyp_dict["why"],
-        expected_drift_movements=tuple(movements),
+        expected_drift_movements=tuple(drift_movements),
         expected_pass_rate_delta=hyp_dict["expected_pass_rate_delta"],
         risks=hyp_dict.get("risks", ""),
+        expected_metric_movements=tuple(metric_movements),
     )
 
     raw_patches = data["patches"]
@@ -398,9 +425,7 @@ def parse_experiment_json(
                 mutation_id=mutation_id,
                 op=op,
                 new_content=p_dict.get("new_content") if op == "replace" else None,
-                new_numeric=(
-                    float(p_dict["new_numeric"]) if op == "set_numeric" else None
-                ),
+                new_numeric=(float(p_dict["new_numeric"]) if op == "set_numeric" else None),
                 new_enum=p_dict.get("new_enum") if op == "set_enum" else None,
                 rationale=p_dict["rationale"],
             )

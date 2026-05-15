@@ -64,8 +64,8 @@ The "hypothesis" object MUST contain:
   manifest.
 - "why" (string): pattern-driven rationale — why you believe this edit
   will move the loss in the expected direction.
-- "expected_drift_movements" (array): per-drift-kind directional
-  predictions. Each entry is an object with:
+- "expected_drift_movements" (array, optional): per-drift-kind
+  directional predictions. Each entry is an object with:
     * "kind" (string) — a registered goldfive drift-kind string
       (e.g. "off_topic", "looping_reasoning", "tool_error").
     * "direction" — one of "decrease", "increase", "neutral",
@@ -73,6 +73,18 @@ The "hypothesis" object MUST contain:
     * "magnitude" — one of "small", "medium", "large".
   Include only kinds you are making claims about; silence implies
   "no claim".
+- "expected_metric_movements" (array, optional): per-namespaced-metric
+  directional predictions. Generalises expected_drift_movements to
+  arbitrary metric namespaces beyond drift (cost, rubric, latency,
+  output, schema, ...). Each entry is an object with:
+    * "metric_name" (string) — a namespaced metric name like
+      "drift:off_topic", "cost:tokens_spent", "rubric:slide_structure",
+      "latency:p95_turn_ms", or "schema:failures".
+    * "direction" — same enum as expected_drift_movements.
+    * "magnitude" — same enum as expected_drift_movements.
+  Either expected_drift_movements OR expected_metric_movements (or
+  both) MUST be present and non-empty. Prefer expected_metric_movements
+  for cost / rubric / latency / schema / output objectives.
 - "expected_pass_rate_delta" (string): predicted change in the board-
   wide pass rate as free text (e.g. "+0.05 to +0.15"). Free text
   is intentional — express the uncertainty band naturally.
@@ -194,11 +206,7 @@ def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
         return "(no mutation points available)"
     for mp in items:
         meta_keys = sorted(mp.metadata.keys())
-        meta_render = (
-            "; ".join(f"{k}={mp.metadata[k]}" for k in meta_keys)
-            if meta_keys
-            else "—"
-        )
+        meta_render = "; ".join(f"{k}={mp.metadata[k]}" for k in meta_keys) if meta_keys else "—"
         snippet = _preview_content(mp.content)
         # Indent multi-line content under a "content:" lead-in.
         indented = textwrap.indent(snippet, "    ")
