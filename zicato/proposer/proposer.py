@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable
+from pathlib import Path
 
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.types import Experiment, MutationPoint, Pattern
@@ -48,12 +49,8 @@ class ProposerError(RuntimeError):
 
     def __init__(self, attempts: list[str]) -> None:
         self.attempts = list(attempts)
-        joined = "\n".join(
-            f"  attempt {i + 1}: {msg}" for i, msg in enumerate(self.attempts)
-        )
-        super().__init__(
-            f"proposer failed after {len(self.attempts)} attempt(s):\n{joined}"
-        )
+        joined = "\n".join(f"  attempt {i + 1}: {msg}" for i, msg in enumerate(self.attempts))
+        super().__init__(f"proposer failed after {len(self.attempts)} attempt(s):\n{joined}")
 
 
 async def propose_experiment(
@@ -69,6 +66,7 @@ async def propose_experiment(
     model: str = "",
     max_retries: int = 2,
     forbidden_ids: tuple[str, ...] = (),
+    workspace_root: Path | None = None,
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -111,6 +109,14 @@ async def propose_experiment(
     forbidden_ids:
         Mutation-point ids the proposer MUST NOT target. Sourced from
         the rubric in production. Empty tuple disables the check.
+    workspace_root:
+        Optional path to the ``.zicato/`` workspace root. When supplied,
+        the proposer reads the decision-telemetry analyzer's accumulated
+        insights for *epoch_id* (via
+        :func:`zicato.analyzer.load_latest_insights`) and prepends them
+        to the user prompt under a ``## Recent telemetry insights``
+        heading. When omitted, the proposer behaves exactly as before —
+        callers that pre-date the analyzer surface keep working.
 
     Returns
     -------
@@ -131,6 +137,18 @@ async def propose_experiment(
     mutations_by_id = {mp.id: mp for mp in mutations_list}
 
     system_prompt = render_system_prompt(rubric_text)
+
+    # Lazy import: keeps :mod:`zicato.proposer.proposer` independent of
+    # the analyzer module so the proposer is importable even when the
+    # analyzer's siblings haven't been installed. The function returns
+    # the empty string if no insights exist, which is the sentinel for
+    # "skip the insights block entirely".
+    insights_block = ""
+    if workspace_root is not None:
+        from zicato.analyzer import load_latest_insights  # noqa: PLC0415
+
+        insights_block = load_latest_insights(workspace_root, epoch_id)
+
     feedback = ""
     attempt_errors: list[str] = []
 
@@ -141,16 +159,15 @@ async def propose_experiment(
             patterns=patterns_list,
             mutations=mutations_list,
             feedback=feedback,
+            insights=insights_block,
         )
         try:
             response_text = await asyncio.wait_for(
                 aux_call_llm(system_prompt, user_prompt, model),
                 timeout=aux_call_timeout_s(),
             )
-        except asyncio.TimeoutError:
-            err = (
-                f"auxiliary LLM call timed out after {aux_call_timeout_s():.1f}s"
-            )
+        except TimeoutError:
+            err = f"auxiliary LLM call timed out after {aux_call_timeout_s():.1f}s"
             attempt_errors.append(err)
             feedback = err
             continue
@@ -177,10 +194,7 @@ async def propose_experiment(
         if forbidden_ids:
             violations = enforce_forbidden(list(experiment.patches), forbidden_ids)
             if violations:
-                err = (
-                    "patches violate rubric forbidden-edits list: "
-                    + "; ".join(violations)
-                )
+                err = "patches violate rubric forbidden-edits list: " + "; ".join(violations)
                 attempt_errors.append(err)
                 feedback = err
                 continue

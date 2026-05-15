@@ -236,6 +236,7 @@ def render_user_prompt(
     patterns: Iterable[Pattern],
     mutations: Iterable[MutationPoint],
     feedback: str = "",
+    insights: str = "",
 ) -> str:
     """Build the user prompt for one proposer call.
 
@@ -251,6 +252,13 @@ def render_user_prompt(
         Optional retry feedback. When non-empty, an extra section is
         prepended explaining the previous parse failure so the model
         can correct itself.
+    insights:
+        Optional markdown body produced by the decision-telemetry
+        analyzer (see :func:`zicato.analyzer.load_latest_insights`).
+        When non-empty, a ``## Recent telemetry insights`` section is
+        prepended to the body so the next round's proposer sees the
+        previous round's LLM-summarised observations alongside the
+        detector patterns.
     """
 
     body = USER_PROMPT_TEMPLATE.format(
@@ -258,6 +266,9 @@ def render_user_prompt(
         pattern_block=render_pattern_block(patterns),
         mutation_block=render_mutation_block(mutations),
     )
+    if insights.strip():
+        insights_prefix = f"## Recent telemetry insights\n{insights.strip()}\n\n"
+        body = insights_prefix + body
     if feedback:
         prefix = (
             "## Previous attempt was rejected\n"

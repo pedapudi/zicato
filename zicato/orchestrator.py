@@ -255,6 +255,7 @@ async def evolve_once(
         model=str(workspace_config.get("auxiliary_model", "")),
         max_retries=max_proposer_retries,
         forbidden_ids=rubric.forbidden_ids,
+        workspace_root=workspace_root,
     )
 
     # --- 7. Validate patch set against the manifest ---

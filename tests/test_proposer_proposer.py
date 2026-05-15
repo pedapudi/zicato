@@ -346,3 +346,72 @@ def test_render_user_prompt_mentions_mutation_metadata() -> None:
     )
     assert "role=system_prompt" in rendered
     assert "language=text" in rendered
+
+
+def test_render_user_prompt_includes_insights_when_present() -> None:
+    rendered = render_user_prompt(
+        current_loss_summary="loss=1.0",
+        patterns=[],
+        mutations=_MUTATIONS,
+        insights="## Headline observations\n- ladder escalations: observe->nudge x 5",
+    )
+    assert "Recent telemetry insights" in rendered
+    assert "ladder escalations: observe->nudge x 5" in rendered
+
+
+def test_render_user_prompt_omits_insights_section_when_empty() -> None:
+    rendered = render_user_prompt(
+        current_loss_summary="loss=1.0",
+        patterns=[],
+        mutations=_MUTATIONS,
+        insights="",
+    )
+    assert "Recent telemetry insights" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_propose_experiment_embeds_workspace_insights(tmp_path: Path) -> None:
+    """When workspace_root is supplied and insights exist, the user prompt embeds them."""
+    workspace = tmp_path / ".zicato"
+    insights_dir = workspace / "epochs" / "ep1" / "insights"
+    insights_dir.mkdir(parents=True, exist_ok=True)
+    (insights_dir / "round_0001.md").write_text(
+        "## Suggested next mutations\n- tighten router preamble\n",
+        encoding="utf-8",
+    )
+
+    stub = _StubLLM([_valid_response()])
+    await propose_experiment(
+        epoch_id="ep1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        rubric_text="rubric",
+        current_loss_summary="loss=1.0",
+        aux_call_llm=stub,
+        workspace_root=workspace,
+    )
+    _, user, _ = stub.calls[0]
+    assert "Recent telemetry insights" in user
+    assert "tighten router preamble" in user
+
+
+@pytest.mark.asyncio
+async def test_propose_experiment_unchanged_without_insights(tmp_path: Path) -> None:
+    """No insights dir → user prompt has no insights section."""
+    workspace = tmp_path / ".zicato"
+    stub = _StubLLM([_valid_response()])
+    await propose_experiment(
+        epoch_id="ep_none",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        rubric_text="rubric",
+        current_loss_summary="loss=1.0",
+        aux_call_llm=stub,
+        workspace_root=workspace,
+    )
+    _, user, _ = stub.calls[0]
+    assert "Recent telemetry insights" not in user
