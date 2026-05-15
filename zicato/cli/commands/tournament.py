@@ -14,8 +14,8 @@ Usage::
         [--mode full|fast]
 
 PARENT and CHILD are generation ids under the (resolved) epoch — the
-default-epoch resolution follows the workspace's ``lineage.json``
-when ``--epoch`` is omitted.
+default-epoch resolution follows the workspace's ``current_epoch``
+marker when ``--epoch`` is omitted.
 
 This command is a thin shell over :func:`zicato.tournament.run_tournament`
 and :func:`zicato.tournament.run_fast_mode`: it resolves paths,
@@ -30,11 +30,15 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import datetime as _dt
 import json
 from pathlib import Path
 from typing import Any
 
 import click
+
+from zicato.core.types import Generation
+from zicato.core.workspace import generation_dir
 
 
 @click.command(name="tournament")
@@ -68,24 +72,30 @@ def tournament_cmd(
     """Run a tournament between PARENT and CHILD generations."""
     workspace_root = Path(workspace).resolve()
 
-    # The wiring below is intentionally lazy: the workspace loader, the
-    # adapter factory, and the runtime config builder all live in
-    # sibling modules being filled in by parallel work-streams. We
-    # import them inside the command so importing this module (e.g.
-    # for ``zicato --help``) does not pull the world in.
-    loader, adapter_factory, runtime_factory = _resolve_workspace_components(
-        workspace_root
-    )
+    loader, adapter_factory, runtime_factory = _resolve_workspace_components()
 
-    resolved_epoch_id, parent_gen, child_gen, board, weights = loader.load_pair(
-        workspace_root=workspace_root,
-        epoch_id=epoch,
-        parent_id=parent,
-        child_id=child,
-    )
+    try:
+        workspace_config = loader.load_workspace_config(workspace_root)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    adapter = adapter_factory.build(workspace_root=workspace_root)
-    config = runtime_factory.build(workspace_root=workspace_root)
+    resolved_epoch_id = epoch or _resolve_epoch_id(workspace_root)
+    try:
+        board = loader.load_current_board(workspace_root)
+        weights = loader.load_current_scoring(workspace_root)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    parent_gen = _build_generation(workspace_root, resolved_epoch_id, parent)
+    child_gen = _build_generation(workspace_root, resolved_epoch_id, child)
+
+    try:
+        adapter = adapter_factory.make_adapter_from_config(workspace_config)
+        config = runtime_factory.make_runtime_config(
+            workspace_config, workspace_root=workspace_root
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     from zicato.tournament import run_fast_mode, run_tournament  # noqa: PLC0415
 
@@ -103,10 +113,8 @@ def tournament_cmd(
             )
         )
     else:
-        parent_historical = loader.load_historical_aggregate(
-            workspace_root=workspace_root,
-            epoch_id=resolved_epoch_id,
-            generation_id=parent_gen.id,
+        parent_historical = _load_historical_aggregate(
+            workspace_root, resolved_epoch_id, parent_gen.id
         )
         result = asyncio.run(
             run_fast_mode(
@@ -129,31 +137,93 @@ def tournament_cmd(
     click.echo(json.dumps(payload, default=str, indent=2, sort_keys=True))
 
 
-def _resolve_workspace_components(workspace_root: Path) -> tuple[Any, Any, Any]:
+def _resolve_workspace_components() -> tuple[Any, Any, Any]:
     """Locate the workspace's loader / adapter / runtime factories.
 
-    Wired lazily because the modules involved are owned by parallel
-    work-streams. Raises a clean :class:`click.ClickException` rather
-    than the underlying :class:`ImportError` so an operator running
-    ``zicato tournament`` against a not-yet-fully-assembled tree gets
-    a directionally-useful error instead of a stack trace.
+    Wired lazily because the modules involved have heavier transitive
+    imports than this command file wants to drag in at ``--help`` time.
+    Raises a clean :class:`click.ClickException` rather than the
+    underlying :class:`ImportError` so an operator running ``zicato
+    tournament`` against a not-yet-fully-assembled tree gets a
+    directionally-useful error instead of a stack trace.
     """
     try:
-        # These modules are owned by later workstreams and may not be
-        # in the tree at typecheck time. mypy can't see the runtime
-        # ImportError fallback, so the attribute lookups are silenced.
-        from zicato import (  # type: ignore[attr-defined]  # noqa: PLC0415
-            adapter_factory,
-            runtime_factory,
-        )
-        from zicato import (  # type: ignore[attr-defined]
-            workspace_loader as loader,
-        )
-    except ImportError as exc:  # pragma: no cover — exercised once those modules land
+        from zicato import adapter_factory, runtime_factory  # noqa: PLC0415
+        from zicato import workspace_loader as loader  # noqa: PLC0415
+    except ImportError as exc:  # pragma: no cover — defensive
         raise click.ClickException(
-            "zicato workspace wiring is not available yet: " + str(exc)
+            "zicato workspace wiring is not available: " + str(exc)
         ) from exc
     return loader, adapter_factory, runtime_factory
+
+
+def _resolve_epoch_id(workspace_root: Path) -> str:
+    """Read ``current_epoch`` from the workspace marker file."""
+    marker = workspace_root / "current_epoch"
+    if not marker.exists():
+        raise click.ClickException(
+            f"no current_epoch marker under {workspace_root}; "
+            "pass --epoch explicitly or run `zicato epoch new` first"
+        )
+    text = marker.read_text(encoding="utf-8").strip()
+    if not text:
+        raise click.ClickException(
+            f"{marker} is empty; pass --epoch explicitly or run "
+            "`zicato epoch new` first"
+        )
+    return text
+
+
+def _build_generation(
+    workspace_root: Path, epoch_id: str, generation_id: str
+) -> Generation:
+    """Build a :class:`Generation` from on-disk snapshot info.
+
+    The tournament runner needs a :class:`Generation` with a valid
+    ``snapshot_root``. We resolve the snapshot directory under the
+    generation's directory and trust the adapter to fail loudly if the
+    snapshot is missing the entrypoint module.
+    """
+    gen_dir = generation_dir(workspace_root, epoch_id, generation_id)
+    snapshot_root = gen_dir / "snapshot"
+    if not snapshot_root.exists():
+        raise click.ClickException(
+            f"snapshot not found at {snapshot_root}; "
+            f"generation {generation_id!r} under epoch {epoch_id!r} is incomplete"
+        )
+    return Generation(
+        id=generation_id,
+        epoch_id=epoch_id,
+        parent_id=None,  # the runner does not consult lineage here
+        snapshot_root=snapshot_root.resolve(),
+        created_at=_dt.datetime.now(_dt.UTC).isoformat(),
+    )
+
+
+def _load_historical_aggregate(
+    workspace_root: Path, epoch_id: str, generation_id: str
+) -> dict[str, Any]:
+    """Read the parent generation's cached ``gen_score.json`` aggregate.
+
+    Fast mode needs the parent's previously-computed scalar / per-entry
+    drift counts to gate against. The convention is that the runner
+    writes the aggregate to ``gen_score.json`` under the generation's
+    directory after a full-mode tournament.
+    """
+    gen_dir = generation_dir(workspace_root, epoch_id, generation_id)
+    path = gen_dir / "gen_score.json"
+    if not path.exists():
+        raise click.ClickException(
+            f"fast-mode tournament needs a cached parent aggregate at {path}; "
+            "run a full-mode tournament for the parent generation first"
+        )
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise click.ClickException(
+            f"{path}: expected a JSON object at top level"
+        )
+    raw.setdefault("generation_id", generation_id)
+    return raw
 
 
 __all__ = ["tournament_cmd"]
