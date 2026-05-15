@@ -226,6 +226,27 @@ async def _evaluate_entry_expectation(
     )
 
 
+def _now_iso_utc() -> str:
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _run_id_for(generation: Generation, entry: BoardEntry) -> str:
+    return f"{generation.id}--{entry.id}"
+
+
+def _runtime_state():  # type: ignore[no-untyped-def]
+    """Lazy-import runtime state helpers; return None if unavailable."""
+    try:
+        from zicato.runtime import state as state_mod  # noqa: PLC0415
+        from zicato.runtime.state import ActiveRun  # noqa: PLC0415
+
+        return state_mod, ActiveRun
+    except ImportError:
+        return None
+
+
 async def _run_single(
     *,
     adapter: Any,
@@ -258,27 +279,100 @@ async def _run_single(
         entry_id=entry.id,
     )
 
-    session = adapter.load(generation.snapshot_root)
-    run_result, runtime_ms, budget_exceeded = await _drive_session(
-        session=session,
-        entry=entry,
-        sink_path=sink_path,
-        config=config,
-    )
+    # Best-effort runtime-state write so the live dashboard can render
+    # the in-flight entry. Failures here MUST NOT abort the tournament.
+    rt = _runtime_state()
+    run_id = _run_id_for(generation, entry)
+    if rt is not None:
+        state_mod, ActiveRun = rt
+        try:
+            import os  # noqa: PLC0415
+            from datetime import datetime, timedelta, timezone  # noqa: PLC0415
 
-    expectation_result = await _evaluate_entry_expectation(entry, run_result, config)
+            now = datetime.now(timezone.utc)
+            deadline = now + timedelta(seconds=int(entry.wall_clock_budget_seconds))
+            state_mod.write_active_run(
+                workspace_root,
+                ActiveRun(
+                    run_id=run_id,
+                    pid=os.getpid(),
+                    started_at=now.isoformat(),
+                    last_progress=now.isoformat(),
+                    wall_clock_budget_seconds=int(entry.wall_clock_budget_seconds),
+                    deadline=deadline.isoformat(),
+                    events_jsonl_path=str(sink_path),
+                    entry_id=entry.id,
+                    generation_id=generation.id,
+                    epoch_id=epoch_id,
+                ),
+            )
+            state_mod.update_tournament_entry(
+                workspace_root,
+                entry.id,
+                side=_tournament_side_for(generation, workspace_root),
+                status="running",
+                started_at=now.isoformat(),
+            )
+        except Exception:  # noqa: BLE001 - state writes are best-effort
+            pass
 
-    loss: LossProfile = reducer_module.reduce_loss(
-        sink_path,
-        entry,
-        generation.id,
-        epoch_id,
-        expectation_result,
-        runtime_ms,
-        budget_exceeded,
-        weights,
-    )
-    return loss
+    try:
+        session = adapter.load(generation.snapshot_root)
+        run_result, runtime_ms, budget_exceeded = await _drive_session(
+            session=session,
+            entry=entry,
+            sink_path=sink_path,
+            config=config,
+        )
+
+        expectation_result = await _evaluate_entry_expectation(entry, run_result, config)
+
+        loss: LossProfile = reducer_module.reduce_loss(
+            sink_path,
+            entry,
+            generation.id,
+            epoch_id,
+            expectation_result,
+            runtime_ms,
+            budget_exceeded,
+            weights,
+        )
+        return loss
+    finally:
+        if rt is not None:
+            state_mod, _ = rt
+            try:
+                state_mod.remove_active_run(workspace_root, run_id)
+                state_mod.update_tournament_entry(
+                    workspace_root,
+                    entry.id,
+                    side=_tournament_side_for(generation, workspace_root),
+                    status="completed",
+                    completed_at=_now_iso_utc(),
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _tournament_side_for(generation: Generation, workspace_root: Path) -> str:
+    """Map a generation id to 'parent' or 'child' by consulting the
+    currently-active tournament state file. Returns '' if no tournament
+    is active (the dashboard falls back to neutral rendering)."""
+    rt = _runtime_state()
+    if rt is None:
+        return ""
+    state_mod, _ = rt
+    try:
+        tournament = state_mod.read_active_tournament(workspace_root)
+    except Exception:  # noqa: BLE001
+        return ""
+    if tournament is None:
+        return ""
+    if generation.id == tournament.parent_generation_id:
+        return "parent"
+    if generation.id == tournament.child_generation_id:
+        return "child"
+    return ""
 
 
 async def _run_generation(
@@ -327,24 +421,62 @@ async def run_tournament(
 
     assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
 
-    parent_losses = await _run_generation(
-        adapter=adapter,
-        generation=parent_gen,
-        board=board,
-        weights=weights,
-        config=config,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-    )
-    child_losses = await _run_generation(
-        adapter=adapter,
-        generation=child_gen,
-        board=board,
-        weights=weights,
-        config=config,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-    )
+    # Best-effort tournament-state publication for the live dashboard.
+    rt = _runtime_state()
+    if rt is not None:
+        state_mod, _ = rt
+        try:
+            from zicato.runtime.state import ActiveTournament, ActiveTournamentEntry  # noqa: PLC0415
+
+            now = _now_iso_utc()
+            entries = [
+                ActiveTournamentEntry(entry_id=e.id, side="parent", status="queued")
+                for e in board
+            ] + [
+                ActiveTournamentEntry(entry_id=e.id, side="child", status="queued")
+                for e in board
+            ]
+            state_mod.write_active_tournament(
+                workspace_root,
+                ActiveTournament(
+                    tournament_id=f"tour-{parent_gen.id}-vs-{child_gen.id}-{now}",
+                    parent_generation_id=parent_gen.id,
+                    child_generation_id=child_gen.id,
+                    epoch_id=epoch_id,
+                    started_at=now,
+                    entries=entries,
+                    phase="running",
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        parent_losses = await _run_generation(
+            adapter=adapter,
+            generation=parent_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+        )
+        child_losses = await _run_generation(
+            adapter=adapter,
+            generation=child_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+        )
+    finally:
+        if rt is not None:
+            state_mod, _ = rt
+            try:
+                state_mod.clear_active_tournament(workspace_root)
+            except Exception:  # noqa: BLE001
+                pass
 
     parent_agg = aggregate_generation_score(
         list(parent_losses.values()), weights
