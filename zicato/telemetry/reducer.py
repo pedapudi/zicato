@@ -62,6 +62,7 @@ from zicato.core import (
     DriftCount,
     ExpectationResult,
     LossProfile,
+    MetricCount,
     ScoringWeights,
 )
 
@@ -181,6 +182,7 @@ def _load_events_as_dicts(events_jsonl_path: Path) -> list[dict[str, Any]]:
     ``use_integers_for_enums=False`` so we get the uppercase enum names
     that ``_normalize_*`` already handle.
     """
+
     def _plain_json_fallback() -> list[dict[str, Any]]:
         """Read the JSONL with vanilla :mod:`json`, skipping malformed lines.
 
@@ -532,6 +534,7 @@ def reduce_loss(
     runtime_ms: int,
     wall_clock_budget_exceeded: bool,
     weights: ScoringWeights,
+    final_output: str | None = None,
 ) -> LossProfile:
     """Build a :class:`LossProfile` for one run.
 
@@ -555,6 +558,38 @@ def reduce_loss(
     first event's ``run_id`` envelope field; when the events file is
     empty (a run that aborted before the first emit), we fall back to
     a synthetic id of the form ``f"{generation_id}:{entry.id}"``.
+
+    Generalised metric surface
+    --------------------------
+    Alongside ``drift_counts``, the reducer populates
+    :attr:`LossProfile.metric_counts` with namespaced :class:`MetricCount`
+    entries — every drift entry under the ``"drift:"`` namespace plus
+    per-namespace derivations:
+
+    * ``"cost:llm_calls"`` — count of ``goldfive_llm_call_end`` events
+      observed. Used as the canonical cost proxy when the events file
+      does not carry token counts.
+    * ``"cost:tokens_spent"`` — populated when ``goldfive_llm_call_end``
+      payloads carry ``input_tokens`` / ``output_tokens`` extension
+      fields; silently zero (and the metric is suppressed) when absent.
+    * ``"output:chars"`` — length of ``final_output`` when supplied;
+      falls back to summed lengths of agent-side text payloads.
+    * ``"schema:failures"`` — count of drift events with kind
+      ``schema_violation``. Mirrored as a first-class scalar for
+      analysis-side convenience.
+
+    The first-class scalar fields :attr:`LossProfile.tokens_spent`,
+    :attr:`LossProfile.output_chars`, and
+    :attr:`LossProfile.schema_failures` are populated to agree with the
+    corresponding MetricCount entries — single source of truth.
+
+    Parameters
+    ----------
+    final_output:
+        Optional final user-facing output from the run. When supplied,
+        ``output_chars`` is taken as its length; otherwise the reducer
+        approximates from summed agent text payloads. Back-compat: the
+        parameter is optional so existing callers don't need to change.
     """
     events: list[dict[str, Any]] = []
     if events_jsonl_path.exists():
@@ -566,6 +601,9 @@ def reduce_loss(
     plan_revisions = 0
     task_started = 0
     task_failed = 0
+    llm_call_count = 0
+    token_count = 0
+    agent_text_chars = 0
     run_id = ""
     for evt in events:
         if not run_id:
@@ -584,11 +622,42 @@ def reduce_loss(
             task_started += 1
         elif key == "task_failed":
             task_failed += 1
+        elif key == "goldfive_llm_call_end":
+            llm_call_count += 1
+            # Token counts are not on the canonical goldfive proto but
+            # MAY be attached as extension fields by callers that wrap
+            # their LLM SDK with token-accounting middleware. Read
+            # opportunistically; missing keys yield 0 and are tolerated.
+            for tk in ("input_tokens", "output_tokens", "tokens", "total_tokens"):
+                v = payload.get(tk)
+                if isinstance(v, (int, float)):
+                    token_count += int(v)
+        elif key == "agent_invocation_completed":
+            s = payload.get("summary", "")
+            if isinstance(s, str):
+                agent_text_chars += len(s)
+        elif key == "task_completed":
+            s = payload.get("summary", "")
+            if isinstance(s, str):
+                agent_text_chars += len(s)
 
     drift_counts = tuple(
         DriftCount(kind=k, severity=s, count=n)  # type: ignore[arg-type]
         for (k, s), n in sorted(drift_bucket.items())
     )
+
+    # Schema-failure scalar derived from the drift bucket. Folds the
+    # `schema_violation` kind into a first-class metric so analysis
+    # sites that care about schema health don't have to re-walk drift.
+    schema_failures = sum(cnt for (k, _s), cnt in drift_bucket.items() if k == "schema_violation")
+
+    # Output-chars: prefer the caller's explicit final_output length
+    # (single source of truth for the user-facing surface); otherwise
+    # fall back to summed agent text.
+    if final_output is not None:
+        output_chars = len(final_output)
+    else:
+        output_chars = agent_text_chars
 
     if task_started > 0:
         task_failure_ratio = task_failed / task_started
@@ -640,6 +709,30 @@ def reduce_loss(
     if not run_id:
         run_id = f"{generation_id}:{entry.id}"
 
+    # Build the generalised metric_counts superset: drift entries lifted
+    # under the "drift:" namespace, plus per-namespace cost / output /
+    # schema metrics. Always emit cost:llm_calls (even at zero) so
+    # downstream analysis can rely on the key being present; the other
+    # entries are emitted only when non-zero to keep the JSON compact.
+    metric_counts_list: list[MetricCount] = [
+        MetricCount.from_drift_count(dc) for dc in drift_counts
+    ]
+    metric_counts_list.append(
+        MetricCount(name="cost:llm_calls", severity="", count=float(llm_call_count))
+    )
+    if token_count:
+        metric_counts_list.append(
+            MetricCount(name="cost:tokens_spent", severity="", count=float(token_count))
+        )
+    if output_chars:
+        metric_counts_list.append(
+            MetricCount(name="output:chars", severity="", count=float(output_chars))
+        )
+    if schema_failures:
+        metric_counts_list.append(
+            MetricCount(name="schema:failures", severity="", count=float(schema_failures))
+        )
+
     return LossProfile(
         run_id=run_id,
         entry_id=entry.id,
@@ -656,6 +749,10 @@ def reduce_loss(
         turns_completed=turns_completed,
         memory_failure_count=memory_failure_count,
         context_loss_count=context_loss_count,
+        metric_counts=tuple(metric_counts_list),
+        tokens_spent=token_count,
+        output_chars=output_chars,
+        schema_failures=schema_failures,
     )
 
 
@@ -700,6 +797,13 @@ def read_loss_profile(path: Path) -> LossProfile:
     Inverse of :func:`write_loss_profile`. Re-tuples ``drift_counts``
     (which JSON renders as a list) and re-constructs the nested
     :class:`DriftCount` and :class:`ExpectationResult` dataclasses.
+
+    Back-compat: profiles written before the generalised metric surface
+    omit ``metric_counts`` / ``tokens_spent`` / ``output_chars`` /
+    ``schema_failures``. The reader treats them as the dataclass
+    defaults (empty tuple / 0) so old JSON loads cleanly. New consumers
+    that want the merged view should call
+    :meth:`LossProfile.unified_metrics`.
     """
     with open(path, encoding="utf-8") as f:
         d = json.load(f)
@@ -710,6 +814,15 @@ def read_loss_profile(path: Path) -> LossProfile:
             count=int(c["count"]),
         )
         for c in d.get("drift_counts", ())
+    )
+    metric_counts = tuple(
+        MetricCount(
+            name=str(m.get("name", "")),
+            severity=m.get("severity", ""),  # type: ignore[arg-type]
+            count=float(m.get("count", 0.0)),
+        )
+        for m in d.get("metric_counts", ())
+        if isinstance(m, dict) and m.get("name")
     )
     exp = d.get("expectation_result")
     expectation_result: ExpectationResult | None
@@ -737,6 +850,10 @@ def read_loss_profile(path: Path) -> LossProfile:
         turns_completed=d.get("turns_completed"),
         memory_failure_count=d.get("memory_failure_count"),
         context_loss_count=d.get("context_loss_count"),
+        metric_counts=metric_counts,
+        tokens_spent=int(d.get("tokens_spent", 0) or 0),
+        output_chars=int(d.get("output_chars", 0) or 0),
+        schema_failures=int(d.get("schema_failures", 0) or 0),
     )
 
 
