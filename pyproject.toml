@@ -32,6 +32,7 @@ classifiers = [
 dependencies = [
     # Core is intentionally light; storage / telemetry / LLMs are pluggable.
     "goldfive",
+    "click>=8.1",
 ]
 
 [project.optional-dependencies]
