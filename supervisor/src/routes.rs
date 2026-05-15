@@ -1,0 +1,323 @@
+//! HTTP route handlers.
+//!
+//! GETs are always available; POST control endpoints return 403 when the
+//! server was started with `--read-only`.
+
+use crate::reader::{self, WorkspacePaths};
+use crate::sse;
+use crate::static_assets;
+use crate::watcher::WatchEvent;
+use axum::{
+    extract::{Path as AxumPath, State},
+    http::StatusCode,
+    response::{IntoResponse, Json, Response},
+    routing::{get, post},
+    Router,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::broadcast;
+use tracing::warn;
+
+/// Shared server state.
+#[derive(Clone)]
+pub struct AppState {
+    pub paths: WorkspacePaths,
+    pub watch_tx: broadcast::Sender<WatchEvent>,
+    pub read_only: bool,
+    pub started: Arc<Instant>,
+    pub build_version: &'static str,
+}
+
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/", get(serve_root))
+        .route("/static/*path", get(serve_static))
+        .route("/api/state", get(api_state))
+        .route("/api/lineage", get(api_lineage))
+        .route("/api/active-runs", get(api_active_runs))
+        .route("/api/active-tournament", get(api_active_tournament))
+        .route("/api/heartbeat", get(api_heartbeat))
+        .route("/api/health", get(api_health))
+        .route("/events", get(events))
+        .route("/api/control/pause", post(control_pause))
+        .route("/api/control/skip-round", post(control_skip_round))
+        .route("/api/control/kill/:run_id", post(control_kill))
+        .route("/api/control/promote/:generation_id", post(control_promote))
+        .route("/api/control/reject/:generation_id", post(control_reject))
+        .route("/api/control/rubric", post(control_rubric))
+        .with_state(state)
+}
+
+async fn serve_root() -> Response {
+    static_assets::serve("/")
+}
+
+async fn serve_static(AxumPath(path): AxumPath<String>) -> Response {
+    static_assets::serve(&path)
+}
+
+async fn api_state(State(s): State<AppState>) -> Json<serde_json::Value> {
+    let snap = reader::build_snapshot(&s.paths);
+    Json(serde_json::to_value(snap).unwrap_or(serde_json::Value::Null))
+}
+
+async fn api_lineage(State(s): State<AppState>) -> Json<serde_json::Value> {
+    Json(
+        reader::read_lineage(&s.paths)
+            .map(|l| serde_json::to_value(l).unwrap_or(serde_json::Value::Null))
+            .unwrap_or(serde_json::Value::Null),
+    )
+}
+
+async fn api_active_runs(State(s): State<AppState>) -> Json<serde_json::Value> {
+    Json(
+        serde_json::to_value(reader::read_active_runs(&s.paths)).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+async fn api_active_tournament(State(s): State<AppState>) -> Json<serde_json::Value> {
+    Json(
+        reader::read_active_tournament(&s.paths)
+            .map(|t| serde_json::to_value(t).unwrap_or(serde_json::Value::Null))
+            .unwrap_or(serde_json::Value::Null),
+    )
+}
+
+async fn api_heartbeat(State(s): State<AppState>) -> Json<serde_json::Value> {
+    Json(
+        reader::read_heartbeat(&s.paths)
+            .map(|h| serde_json::to_value(h).unwrap_or(serde_json::Value::Null))
+            .unwrap_or(serde_json::Value::Null),
+    )
+}
+
+#[derive(Serialize)]
+struct Health {
+    status: &'static str,
+    version: &'static str,
+    uptime_seconds: u64,
+    read_only: bool,
+    workspace: String,
+}
+
+async fn api_health(State(s): State<AppState>) -> Json<Health> {
+    Json(Health {
+        status: "ok",
+        version: s.build_version,
+        uptime_seconds: s.started.elapsed().as_secs(),
+        read_only: s.read_only,
+        workspace: s.paths.workspace.display().to_string(),
+    })
+}
+
+async fn events(State(s): State<AppState>) -> Response {
+    let rx = s.watch_tx.subscribe();
+    sse::build_sse(s.paths.clone(), rx).into_response()
+}
+
+// ---------- control endpoints ----------
+
+fn forbidden_if_read_only(s: &AppState) -> Option<Response> {
+    if s.read_only {
+        Some((StatusCode::FORBIDDEN, "supervisor is read-only").into_response())
+    } else {
+        None
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct EmptyBody {
+    #[serde(default)]
+    #[allow(dead_code)]
+    reason: Option<String>,
+}
+
+/// Atomic write: `path.tmp` -> rename to `path`.
+async fn atomic_write(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let tmp = path.with_extension({
+        let mut e = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        if !e.is_empty() {
+            e.push('.');
+        }
+        e.push_str("tmp");
+        e
+    });
+    tokio::fs::write(&tmp, contents).await?;
+    tokio::fs::rename(&tmp, path).await?;
+    Ok(())
+}
+
+async fn write_control_marker(s: &AppState, name: &str, payload: serde_json::Value) -> Response {
+    let path = s.paths.control_dir().join(name);
+    let body = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{}".to_vec());
+    match atomic_write(&path, &body).await {
+        Ok(_) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "accepted": true,
+                "path": path.display().to_string()
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            warn!(?path, error=%e, "control write failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("write failed: {e}"),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn control_pause(State(s): State<AppState>, body: Option<Json<EmptyBody>>) -> Response {
+    if let Some(r) = forbidden_if_read_only(&s) {
+        return r;
+    }
+    let reason = body.and_then(|Json(b)| b.reason).unwrap_or_default();
+    write_control_marker(
+        &s,
+        "pause_epoch",
+        serde_json::json!({"reason": reason, "ts": chrono::Utc::now()}),
+    )
+    .await
+}
+
+async fn control_skip_round(State(s): State<AppState>, body: Option<Json<EmptyBody>>) -> Response {
+    if let Some(r) = forbidden_if_read_only(&s) {
+        return r;
+    }
+    let reason = body.and_then(|Json(b)| b.reason).unwrap_or_default();
+    write_control_marker(
+        &s,
+        "skip_round",
+        serde_json::json!({"reason": reason, "ts": chrono::Utc::now()}),
+    )
+    .await
+}
+
+async fn control_kill(State(s): State<AppState>, AxumPath(run_id): AxumPath<String>) -> Response {
+    if let Some(r) = forbidden_if_read_only(&s) {
+        return r;
+    }
+    if !is_safe_id(&run_id) {
+        return (StatusCode::BAD_REQUEST, "invalid run_id").into_response();
+    }
+    let path = s.paths.control_dir().join("kill_runs").join(&run_id);
+    let payload = serde_json::json!({"run_id": run_id, "ts": chrono::Utc::now()});
+    let body = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{}".to_vec());
+    match atomic_write(&path, &body).await {
+        Ok(_) => (StatusCode::ACCEPTED, Json(payload)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("write failed: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn control_promote(
+    State(s): State<AppState>,
+    AxumPath(generation_id): AxumPath<String>,
+) -> Response {
+    if let Some(r) = forbidden_if_read_only(&s) {
+        return r;
+    }
+    if !is_safe_id(&generation_id) {
+        return (StatusCode::BAD_REQUEST, "invalid generation_id").into_response();
+    }
+    let path = s.paths.control_dir().join("promote").join(&generation_id);
+    let payload = serde_json::json!({"generation_id": generation_id, "ts": chrono::Utc::now()});
+    let body = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{}".to_vec());
+    match atomic_write(&path, &body).await {
+        Ok(_) => (StatusCode::ACCEPTED, Json(payload)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("write failed: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn control_reject(
+    State(s): State<AppState>,
+    AxumPath(generation_id): AxumPath<String>,
+) -> Response {
+    if let Some(r) = forbidden_if_read_only(&s) {
+        return r;
+    }
+    if !is_safe_id(&generation_id) {
+        return (StatusCode::BAD_REQUEST, "invalid generation_id").into_response();
+    }
+    let path = s.paths.control_dir().join("reject").join(&generation_id);
+    let payload = serde_json::json!({"generation_id": generation_id, "ts": chrono::Utc::now()});
+    let body = serde_json::to_vec(&payload).unwrap_or_else(|_| b"{}".to_vec());
+    match atomic_write(&path, &body).await {
+        Ok(_) => (StatusCode::ACCEPTED, Json(payload)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("write failed: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn control_rubric(State(s): State<AppState>, body: String) -> Response {
+    if let Some(r) = forbidden_if_read_only(&s) {
+        return r;
+    }
+    let path = s.paths.control_dir().join("rubric_replacement.txt");
+    match atomic_write(&path, body.as_bytes()).await {
+        Ok(_) => (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "accepted": true,
+                "bytes": body.len(),
+                "path": path.display().to_string(),
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("write failed: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+/// Conservative ID validator: reject path-traversal / separators / spaces.
+pub(crate) fn is_safe_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 200
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && id != "."
+        && id != ".."
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_ids() {
+        assert!(is_safe_id("gen-abc123"));
+        assert!(is_safe_id("run_42"));
+        assert!(is_safe_id("2026-05-14_test"));
+        assert!(!is_safe_id(""));
+        assert!(!is_safe_id(".."));
+        assert!(!is_safe_id("a/b"));
+        assert!(!is_safe_id("a b"));
+        assert!(!is_safe_id("a\0b"));
+    }
+}
