@@ -377,9 +377,7 @@ class BoardEntry:
         discriminated-union semantics enforceable.
         """
         if self.wall_clock_budget_seconds <= 0:
-            raise ValueError(
-                f"BoardEntry {self.id!r}: wall_clock_budget_seconds must be > 0"
-            )
+            raise ValueError(f"BoardEntry {self.id!r}: wall_clock_budget_seconds must be > 0")
         if self.weight < 0:
             raise ValueError(f"BoardEntry {self.id!r}: weight must be >= 0")
 
@@ -387,13 +385,9 @@ class BoardEntry:
             if self.input is None:
                 raise ValueError(f"BoardEntry {self.id!r}: single_turn requires 'input'")
             if self.turns is not None:
-                raise ValueError(
-                    f"BoardEntry {self.id!r}: single_turn must not set 'turns'"
-                )
+                raise ValueError(f"BoardEntry {self.id!r}: single_turn must not set 'turns'")
             if self.user_persona is not None:
-                raise ValueError(
-                    f"BoardEntry {self.id!r}: single_turn must not set 'user_persona'"
-                )
+                raise ValueError(f"BoardEntry {self.id!r}: single_turn must not set 'user_persona'")
         elif self.kind == "multi_turn_scripted":
             if self.turns is None or len(self.turns) == 0:
                 raise ValueError(
@@ -430,18 +424,13 @@ class BoardEntry:
                 )
         elif self.kind == "synthetic_adversarial":
             if self.input is None:
-                raise ValueError(
-                    f"BoardEntry {self.id!r}: synthetic_adversarial requires 'input'"
-                )
+                raise ValueError(f"BoardEntry {self.id!r}: synthetic_adversarial requires 'input'")
             if self.adversarial_agent_spec is None or not self.adversarial_agent_spec:
                 raise ValueError(
                     f"BoardEntry {self.id!r}: synthetic_adversarial requires "
                     "'adversarial_agent_spec'"
                 )
-            if (
-                self.required_drift_kinds is None
-                or len(self.required_drift_kinds) == 0
-            ):
+            if self.required_drift_kinds is None or len(self.required_drift_kinds) == 0:
                 raise ValueError(
                     f"BoardEntry {self.id!r}: synthetic_adversarial requires non-empty "
                     "'required_drift_kinds'"
@@ -450,18 +439,13 @@ class BoardEntry:
                 validate_drift_kind(kind)
         elif self.kind == "synthetic_clean":
             if self.input is None:
-                raise ValueError(
-                    f"BoardEntry {self.id!r}: synthetic_clean requires 'input'"
-                )
+                raise ValueError(f"BoardEntry {self.id!r}: synthetic_clean requires 'input'")
         else:  # pragma: no cover — Literal-typed; this is belt-and-braces
             raise ValueError(f"BoardEntry {self.id!r}: unknown kind {self.kind!r}")
 
         if self.expectation is not None:
             # Cross-check the expectation's fires_on against the kind.
-            if (
-                self.kind == "single_turn"
-                and self.expectation.fires_on == "conversation_end"
-            ):
+            if self.kind == "single_turn" and self.expectation.fires_on == "conversation_end":
                 raise ValueError(
                     f"BoardEntry {self.id!r}: single_turn expectation cannot fire on "
                     "'conversation_end'"
@@ -554,6 +538,17 @@ class DriftCount:
     reducer keeps the buckets separate so severity-weighted scoring can
     do the right thing.
 
+    Back-compat note
+    ----------------
+    :class:`DriftCount` is the original (drift-only) measurement unit.
+    The generalised successor is :class:`MetricCount`, which carries an
+    arbitrary namespaced metric name (``"drift:off_topic"``,
+    ``"cost:input_tokens"``, ``"rubric:slide_structure"``, ...) and a
+    float count. DriftCount is preserved verbatim so existing tests and
+    JSON shapes that mention ``drift_counts`` keep working; the
+    :meth:`MetricCount.from_drift_count` helper round-trips one into the
+    other.
+
     Fields
     ------
     kind:
@@ -568,6 +563,68 @@ class DriftCount:
     kind: str
     severity: Literal["info", "warning", "critical"]
     count: int
+
+
+#: Severity literal for :class:`MetricCount`. Adds the empty string as a
+#: "no severity" value for namespaces (cost, latency, output, ...) where
+#: the drift three-bucket scale is meaningless.
+MetricSeverity = Literal["info", "warning", "critical", ""]
+
+
+@dataclass(frozen=True, slots=True)
+class MetricCount:
+    """Generic per-run metric measurement.
+
+    Generalises :class:`DriftCount` so the same per-run unit can carry
+    any namespaced metric the reducer / detectors / scorer cares about:
+    drift kinds, cost (token counts, dollars), latency (p95 turn time),
+    rubric scores, schema-failure counts, output-length stats, and so
+    on. The namespace lives inside the :attr:`name` string as a
+    colon-prefix (``"drift:off_topic"``, ``"cost:input_tokens"``,
+    ``"rubric:slide_structure"``, ``"output:chars"``,
+    ``"latency:p95_turn_ms"``).
+
+    Drift becomes one namespace among many; :class:`DriftCount` stays as
+    the back-compat surface and :meth:`from_drift_count` is the canonical
+    promotion helper. The reducer continues to emit
+    :attr:`LossProfile.drift_counts` and additionally exposes the
+    superset view as :attr:`LossProfile.metric_counts` (everything in
+    drift_counts is also present in metric_counts under the ``"drift:"``
+    namespace, plus any other namespaces the reducer derived).
+
+    Fields
+    ------
+    name:
+        Namespaced metric name. Convention: ``"<namespace>:<key>"`` with
+        a lowercase namespace prefix. Unnamespaced names (no colon) are
+        legal but discouraged.
+    severity:
+        Severity bucket, or the empty string when the namespace has no
+        natural severity (e.g. cost / latency).
+    count:
+        The measured value. Float rather than int so the same dataclass
+        can carry counts (whole integers), rates (``[0.0, 1.0]``), scores
+        (``[0.0, 5.0]``), and durations (milliseconds) without
+        per-namespace dataclasses.
+    """
+
+    name: str
+    severity: MetricSeverity = ""
+    count: float = 0.0
+
+    @classmethod
+    def from_drift_count(cls, dc: DriftCount) -> MetricCount:
+        """Promote a :class:`DriftCount` into a :class:`MetricCount`.
+
+        The drift kind is prefixed with ``"drift:"`` to form the metric
+        name. Severity and count carry over verbatim; the count is
+        widened from ``int`` to ``float``.
+        """
+        return cls(
+            name=f"drift:{dc.kind}",
+            severity=dc.severity,
+            count=float(dc.count),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -659,6 +716,26 @@ class LossProfile:
         to forget a fact established earlier in the conversation.
         Heuristic; same multi-turn-pattern detector as
         :attr:`memory_failure_count`.
+
+    Generalised metric surface
+    --------------------------
+    metric_counts:
+        Superset of :attr:`drift_counts` lifted into the namespaced
+        :class:`MetricCount` shape. When the reducer populates it
+        explicitly, ``metric_counts`` carries every namespace the
+        reducer derived (drift kinds under ``"drift:"``, token counts
+        under ``"cost:"``, output length under ``"output:"``, schema
+        failures under ``"schema:"``, ...). When the field is left as
+        the empty tuple — the back-compat default — :meth:`unified_metrics`
+        synthesises it on the fly from :attr:`drift_counts` plus the
+        first-class scalar fields.
+    tokens_spent, output_chars, schema_failures:
+        First-class scalar metrics promoted out of the
+        ``metric_counts`` tuple because they show up so often in
+        analysis. Single source of truth: the reducer ensures these
+        scalars and their MetricCount mirror entries
+        (``"cost:tokens_spent"``, ``"output:chars"``, ``"schema:failures"``)
+        agree.
     """
 
     run_id: str
@@ -677,6 +754,62 @@ class LossProfile:
     turns_completed: int | None = None
     memory_failure_count: int | None = None
     context_loss_count: int | None = None
+    # Generalised metric surface (back-compat: default empty; consumers
+    # that want the merged view should call :meth:`unified_metrics`).
+    metric_counts: tuple[MetricCount, ...] = ()
+    tokens_spent: int = 0
+    output_chars: int = 0
+    schema_failures: int = 0
+
+    def unified_metrics(self) -> tuple[MetricCount, ...]:
+        """Return the merged metric view across drift_counts + metric_counts.
+
+        Always returns at least every :attr:`drift_counts` entry lifted
+        into a :class:`MetricCount` under the ``"drift:"`` namespace.
+        When :attr:`metric_counts` is non-empty, its entries are
+        appended after the drift-promoted ones; the caller can dedupe
+        on ``(name, severity)`` if they care, but the reducer is
+        responsible for not emitting the same drift entry in both
+        tuples — :attr:`metric_counts` is a superset when populated.
+
+        When :attr:`metric_counts` is empty, the helper also synthesises
+        :class:`MetricCount` entries for the first-class scalar fields
+        (``tokens_spent``, ``output_chars``, ``schema_failures``) so
+        downstream consumers see a uniform view regardless of how the
+        profile was constructed.
+        """
+        out: list[MetricCount] = [MetricCount.from_drift_count(dc) for dc in self.drift_counts]
+        if self.metric_counts:
+            # Caller (the reducer) has populated the superset view
+            # explicitly; trust it but skip duplicates of the drift
+            # entries we already emitted.
+            seen = {(mc.name, mc.severity) for mc in out}
+            for mc in self.metric_counts:
+                if (mc.name, mc.severity) in seen:
+                    continue
+                out.append(mc)
+                seen.add((mc.name, mc.severity))
+        else:
+            # Synthesise the first-class scalars only when the caller
+            # hasn't given us a richer view. Avoids double-counting when
+            # the reducer already wrote them into metric_counts.
+            if self.tokens_spent:
+                out.append(
+                    MetricCount(
+                        name="cost:tokens_spent", severity="", count=float(self.tokens_spent)
+                    )
+                )
+            if self.output_chars:
+                out.append(
+                    MetricCount(name="output:chars", severity="", count=float(self.output_chars))
+                )
+            if self.schema_failures:
+                out.append(
+                    MetricCount(
+                        name="schema:failures", severity="", count=float(self.schema_failures)
+                    )
+                )
+        return tuple(out)
 
 
 # ---------------------------------------------------------------------------
@@ -819,6 +952,32 @@ class ExpectedDriftMovement:
 
 
 @dataclass(frozen=True, slots=True)
+class ExpectedMetricMovement:
+    """A proposer's prediction about how one namespaced metric will move.
+
+    Generalises :class:`ExpectedDriftMovement` to any namespace. The
+    proposer can now make claims about non-drift objectives — cost,
+    latency, rubric scores, schema failures — using the same shape.
+
+    Fields
+    ------
+    metric_name:
+        The :class:`MetricCount.name` the prediction is about. Carries
+        the namespace prefix (``"drift:off_topic"``, ``"cost:tokens_spent"``,
+        ``"rubric:slide_structure"``, ``"latency:p95_turn_ms"``, ...).
+    direction:
+        Predicted direction (see :data:`DriftDirection` — reused
+        verbatim; the direction lattice is namespace-agnostic).
+    magnitude:
+        Predicted magnitude bucket (see :data:`DriftMagnitude`).
+    """
+
+    metric_name: str
+    direction: DriftDirection
+    magnitude: DriftMagnitude
+
+
+@dataclass(frozen=True, slots=True)
 class HypothesisSpec:
     """Structured hypothesis written by the proposer BEFORE the run.
 
@@ -859,6 +1018,11 @@ class HypothesisSpec:
     expected_drift_movements: tuple[ExpectedDriftMovement, ...]
     expected_pass_rate_delta: str
     risks: str = ""
+    # Generalised: predictions over any namespaced metric. Back-compat
+    # default: empty. The proposer prefers this field when emitting new
+    # hypotheses; the orchestrator round-trips the older
+    # `expected_drift_movements` shape transparently.
+    expected_metric_movements: tuple[ExpectedMetricMovement, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -889,6 +1053,38 @@ class DriftMovementActual:
     kind: str
     from_rate: float
     to_rate: float
+    hypothesis_match: bool
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class MetricMovementActual:
+    """Realised movement of one namespaced metric across two generations.
+
+    Generalises :class:`DriftMovementActual` for the metric-namespace
+    surface. Joined with :class:`ExpectedMetricMovement` at outcome-
+    write time to decide whether the proposer's prediction was correct.
+
+    Fields
+    ------
+    metric_name:
+        The :class:`MetricCount.name` whose movement is recorded.
+    from_value:
+        Per-run mean (or aggregate) value of this metric in the parent
+        generation.
+    to_value:
+        Per-run mean (or aggregate) value of this metric in the child
+        generation.
+    hypothesis_match:
+        ``True`` iff the realised movement matches the proposer's
+        directional prediction within the magnitude bucket.
+    note:
+        Optional human-readable detail.
+    """
+
+    metric_name: str
+    from_value: float
+    to_value: float
     hypothesis_match: bool
     note: str = ""
 
@@ -941,6 +1137,11 @@ class OutcomeRecord:
     scalar_score_delta: float
     tournament_decision: TournamentDecision
     rejection_reason: str = ""
+    # Generalised: realised movements over any namespaced metric. The
+    # original `drift_movements` field is kept verbatim so existing
+    # journal JSON keeps deserialising; `metric_movements` is the
+    # superset surface for new namespaces.
+    metric_movements: tuple[MetricMovementActual, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1055,9 +1256,7 @@ class ScoringWeights:
 
     drift_weight: float = 1.0
     pass_weight: float = 1.0
-    severity_weights: Mapping[str, float] = field(
-        default_factory=_default_severity_weights
-    )
+    severity_weights: Mapping[str, float] = field(default_factory=_default_severity_weights)
     per_kind_weights: Mapping[str, float] = field(default_factory=dict)
     plan_revision_weight: float = 0.5
     runtime_weight: float = 0.0
@@ -1279,6 +1478,8 @@ __all__ = [
     "validate_board_entry",
     # Telemetry / loss
     "DriftCount",
+    "MetricCount",
+    "MetricSeverity",
     "ExpectationResult",
     "LossProfile",
     # Run record / lineage
@@ -1288,8 +1489,10 @@ __all__ = [
     "DriftDirection",
     "DriftMagnitude",
     "ExpectedDriftMovement",
+    "ExpectedMetricMovement",
     "HypothesisSpec",
     "DriftMovementActual",
+    "MetricMovementActual",
     "TournamentDecision",
     "OutcomeRecord",
     "Experiment",
