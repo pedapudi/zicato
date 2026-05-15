@@ -56,3 +56,11 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+# Note: ``zicato.cli`` requires ``click``. ``click`` is intentionally NOT
+# pinned in [project.dependencies] yet because the umbrella CLI shell is
+# still being assembled across parallel work-streams; once the shell
+# lands, ``click`` should move into the required dependency list. In the
+# meantime install it via the existing dev extra (which pulls pytest)
+# or pin it in the consuming environment.
+
