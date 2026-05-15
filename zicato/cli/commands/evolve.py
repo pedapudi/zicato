@@ -27,10 +27,117 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 import click
+
+
+def _resolve_supervisor_binary() -> Path | None:
+    """Return the path to ``zicato-supervisor`` or ``None`` if unavailable.
+
+    Resolution order:
+
+    1. Environment override ``ZICATO_SUPERVISOR_BINARY`` (useful for tests
+       that point at a sentinel script).
+    2. The in-tree release build relative to this source file. This is
+       the path produced by ``cargo build --release`` and is the default
+       distribution mode for development checkouts.
+    3. The system ``PATH`` (``zicato-supervisor`` installed globally).
+
+    Returns ``None`` when nothing resolves — the caller prints a warning
+    and proceeds without a dashboard.
+    """
+    import os  # noqa: PLC0415
+
+    env_override = os.environ.get("ZICATO_SUPERVISOR_BINARY")
+    if env_override:
+        candidate = Path(env_override)
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate
+
+    # In-tree path: this file is at zicato/cli/commands/evolve.py; the
+    # binary lives at <repo_root>/supervisor/target/release/zicato-supervisor.
+    here = Path(__file__).resolve()
+    in_tree = (
+        here.parent.parent.parent.parent
+        / "supervisor"
+        / "target"
+        / "release"
+        / "zicato-supervisor"
+    )
+    if in_tree.exists() and os.access(in_tree, os.X_OK):
+        return in_tree
+
+    on_path = shutil.which("zicato-supervisor")
+    if on_path:
+        return Path(on_path)
+
+    return None
+
+
+async def _maybe_spawn_supervisor(
+    workspace_root: Path,
+    port: int,
+    bind: str,
+    disabled: bool,
+) -> asyncio.subprocess.Process | None:
+    """Spawn the supervisor binary as a subprocess (or return ``None``).
+
+    The binary's stdout/stderr are inherited from the parent so log
+    output appears alongside ``zicato evolve``'s own messages. On
+    failure-to-spawn the function still returns ``None`` and prints a
+    warning — ``evolve`` continues without a dashboard rather than
+    refusing to run.
+    """
+    if disabled:
+        return None
+    binary = _resolve_supervisor_binary()
+    if binary is None:
+        click.echo(
+            "warning: zicato-supervisor binary not found; dashboard disabled",
+            err=True,
+        )
+        return None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            str(binary),
+            "--workspace",
+            str(workspace_root),
+            "--port",
+            str(port),
+            "--bind",
+            bind,
+        )
+    except (OSError, FileNotFoundError) as exc:
+        click.echo(
+            f"warning: failed to spawn zicato-supervisor ({exc}); dashboard disabled",
+            err=True,
+        )
+        return None
+    click.echo(f"Dashboard: http://{bind}:{port}")
+    return proc
+
+
+async def _terminate_supervisor(proc: asyncio.subprocess.Process | None) -> None:
+    """Shut down a previously-spawned supervisor; idempotent."""
+    if proc is None:
+        return
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            return
+        await proc.wait()
 
 
 def _import_callable(dotted: str, *, kind: str) -> Any:
@@ -114,6 +221,25 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     type=click.IntRange(min=1),
     help="Stop early when this many rounds in a row are rejected.",
 )
+@click.option(
+    "--no-dashboard",
+    is_flag=True,
+    default=False,
+    help="Do not spawn the supervisor binary / dashboard server.",
+)
+@click.option(
+    "--dashboard-port",
+    default=7892,
+    show_default=True,
+    type=click.IntRange(min=1, max=65535),
+    help="Preferred port for the dashboard HTTP server.",
+)
+@click.option(
+    "--dashboard-bind",
+    default="127.0.0.1",
+    show_default=True,
+    help="Bind address for the dashboard HTTP server.",
+)
 def evolve_cmd(
     workspace: str,
     epoch: str | None,
@@ -122,6 +248,9 @@ def evolve_cmd(
     harness_dotted: str,
     auxiliary_dotted: str,
     max_consecutive_rejections: int,
+    no_dashboard: bool,
+    dashboard_port: int,
+    dashboard_bind: str,
 ) -> None:
     """Run the evolve loop for N rounds against the current epoch."""
     workspace_root = Path(workspace).resolve()
@@ -135,9 +264,15 @@ def evolve_cmd(
     # `zicato --help` time.
     from zicato.orchestrator import evolve_n_rounds  # noqa: PLC0415
 
-    try:
-        outcomes = asyncio.run(
-            evolve_n_rounds(
+    async def _run() -> list[Any]:
+        sup = await _maybe_spawn_supervisor(
+            workspace_root,
+            dashboard_port,
+            dashboard_bind,
+            disabled=no_dashboard,
+        )
+        try:
+            return await evolve_n_rounds(
                 rounds=rounds,
                 workspace_root=workspace_root,
                 epoch_id=epoch,
@@ -146,7 +281,11 @@ def evolve_cmd(
                 fast_mode=(mode == "fast"),
                 max_consecutive_rejections=max_consecutive_rejections,
             )
-        )
+        finally:
+            await _terminate_supervisor(sup)
+
+    try:
+        outcomes = asyncio.run(_run())
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
 
