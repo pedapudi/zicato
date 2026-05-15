@@ -62,12 +62,18 @@ from zicato.core.workspace import generation_dir
     show_default=True,
     help="full = run both generations; fast = child vs parent's historical aggregate.",
 )
+@click.option(
+    "--skip-regression",
+    is_flag=True,
+    help="Skip the regression-suite gate even when enabled in scoring.",
+)
 def tournament_cmd(
     parent: str,
     child: str,
     workspace: str,
     epoch: str | None,
     mode: str,
+    skip_regression: bool,
 ) -> None:
     """Run a tournament between PARENT and CHILD generations."""
     workspace_root = Path(workspace).resolve()
@@ -85,6 +91,11 @@ def tournament_cmd(
         weights = loader.load_current_scoring(workspace_root)
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
+
+    # ``--skip-regression`` is a per-invocation override; flip the
+    # weights' opt-in flag off so the runner takes the fast path.
+    if skip_regression and weights.regression_gate_enabled:
+        weights = dataclasses.replace(weights, regression_gate_enabled=False)
 
     parent_gen = _build_generation(workspace_root, resolved_epoch_id, parent)
     child_gen = _build_generation(workspace_root, resolved_epoch_id, child)
