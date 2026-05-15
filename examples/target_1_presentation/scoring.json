@@ -1,0 +1,17 @@
+{
+  "drift_weight": 1.0,
+  "pass_weight": 1.0,
+  "severity_weights": {
+    "info": 1.0,
+    "warning": 3.0,
+    "critical": 10.0
+  },
+  "per_kind_weights": {
+    "confabulation_risk": 2.0,
+    "looping_reasoning": 1.5
+  },
+  "plan_revision_weight": 0.5,
+  "runtime_weight": 0.0,
+  "promote_margin": 0.01,
+  "pass_rate_monotonicity": true
+}
