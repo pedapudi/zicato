@@ -85,23 +85,38 @@ agent's source. zicato is the only thing that does either.
 ## 2. The meta-loop, end to end
 
 ```
-   ┌─────────────────────────────────────────────────────────────────┐
-   │                       zicato meta-loop                          │
-   │                                                                 │
-   │   ┌──────────────┐    ┌───────────────────────────────────┐     │
-   │   │  Board       │    │  Inner harness (HarnessAdapter)   │     │
-   │   │ (.jsonl,     │    │                                   │     │
-   │   │  frozen      │    │   any multi-agent system          │     │
-   │   │  per epoch)  │    │   exposing:                       │     │
-   │   └──────┬───────┘    │     run_entry(entry) -> result    │     │
-   │          │            │     mutation_points() -> [...]    │     │
-   │          │            └─────────────┬─────────────────────┘     │
-   │          ▼                          │                           │
-   │   ┌──────────────┐                  │                           │
-   │   │  Runner      │ goldfive.wrap()  │                           │
-   │   │  (per entry) ├─────────────────►│                           │
-   │   └──────┬───────┘   one run        │                           │
-   │          │                          │                           │
+                                                ┌────────────────────────────┐
+                                                │  zicato-supervisor (Rust)  │
+                                                │  ────────────────────────  │
+                                                │  spawned by `evolve`;      │
+                                                │  watches .zicato/runtime/  │
+                                                │  serves the live dashboard │
+                                                │  (HTTP + SSE on :7892).    │
+                                                │                            │
+                                                │  Reads heartbeat.json,     │
+                                                │  active_runs/*, controls.  │
+                                                │  Escalates SIGTERM →       │
+                                                │  SIGKILL on stalled work.  │
+                                                └────────────┬───────────────┘
+                                                             │ inotify; signals
+                                                             │
+   ┌─────────────────────────────────────────────────────────┼───────────────┐
+   │                       zicato meta-loop                  │               │
+   │                       (orchestrator)                    │               │
+   │   ┌──────────────┐    ┌───────────────────────────────┐ │               │
+   │   │  Board       │    │  Inner harness (HarnessAdapter)│ │               │
+   │   │ (.jsonl,     │    │                                │ │               │
+   │   │  frozen      │    │   any multi-agent system       │ │               │
+   │   │  per epoch)  │    │   exposing:                    │ │               │
+   │   └──────┬───────┘    │     run_entry(entry) -> result │ │               │
+   │          │            │     mutation_points() -> [...] │ │               │
+   │          │            └─────────────┬──────────────────┘ │               │
+   │          ▼                          │                    │               │
+   │   ┌──────────────┐                  │                    ▼               │
+   │   │  Runner      │ goldfive.wrap()  │     .zicato/runtime/heartbeat.json │
+   │   │  (per entry) ├─────────────────►│     .zicato/runtime/active_runs/*  │
+   │   └──────┬───────┘   one run        │     atomic-renamed every 2s + on   │
+   │          │                          │     every phase transition         │
    │          ▼                          ▼                           │
    │   ┌──────────────────────────────────────┐                      │
    │   │  goldfive event stream               │                      │
@@ -539,7 +554,79 @@ in [CLI.md](CLI.md); a one-line tour:
 | `zicato journal show` | Render `journal.md`. |
 | `zicato analysis show` | Render `analysis.md` for a closed epoch. |
 
-## 5. Storage layout
+## 5. Runtime and observability layer
+
+The components above describe the meta-loop's logical structure.
+The runtime layer is the surrounding scaffold that makes the loop
+**survivable** (hangs, crashes, OOMs, the long tail of pathology)
+and **observable** (a live operator view of in-flight rounds, a
+durable audit trail of override decisions).
+
+The runtime layer's substrate is the file tree under
+`.zicato/runtime/` — a small set of single-writer state files
+that capture every important runtime fact on disk. No important
+state lives only in process memory. A crashed orchestrator
+restarts and resumes from the durable record; a crashed
+supervisor restarts and rebuilds its in-memory view from the
+files.
+
+```
+   ┌────────────────────────────────┐         ┌────────────────────────────┐
+   │  zicato evolve (Python)        │         │  zicato-supervisor (Rust)  │
+   │  ───────────────────────────   │  spawn  │  ────────────────────────  │
+   │  • acquires .zicato/runtime/   ├────────►│  Watchdog + dashboard      │
+   │    lock.json                   │         │  server in one binary.     │
+   │  • writes heartbeat.json (2s)  │         │                            │
+   │  • spawns subprocess workers   │         │  inotify on runtime/*      │
+   │    for each tournament run     │         │                            │
+   │  • reads control/ at safe      │         │  Heartbeat-stale → flag    │
+   │    points (between rounds)     │         │  the orchestrator stalled  │
+   └────────────────────────────────┘         │                            │
+                  │                           │  Worker stale → SIGTERM    │
+                  │ Popen                     │  → grace → SIGKILL         │
+                  ▼                           │                            │
+   ┌────────────────────────────────┐         │  Serves HTTP + SSE on      │
+   │  worker (Python subprocess)    │         │  :7892 (default). Renders  │
+   │  ───────────────────────────   │  reads  │  live dashboard from state │
+   │  • writes active_runs/{id}.json├────────►│  file changes.             │
+   │  • bumps phase + heartbeat_at  │         │                            │
+   │    every 1s                    │         │  v1.3: accepts POST writes │
+   │  • runs adapter.run_entry      │         │  to control/ files for     │
+   │  • dies on SIGTERM cleanly,    │         │  operator actions.         │
+   │    SIGKILL if it doesn't       │         └────────────────────────────┘
+   └────────────────────────────────┘
+```
+
+Three properties hold across the runtime layer:
+
+1. **File-based state is the only source of truth.** Memory
+   state in either process is a cache of what's on disk.
+2. **No LLM in the watchdog path.** Watchdog decisions are
+   deterministic functions of file timestamps.
+3. **Single-writer per file.** Each state file has exactly one
+   process that writes to it (orchestrator, supervisor, or one
+   specific worker). No locking beyond `lock.json`.
+
+The full design lives in four documents:
+
+| Concern | Document |
+|---|---|
+| State file layout, supervisor lifecycle, resume semantics, concurrency model | [RUNTIME.md](RUNTIME.md) |
+| Live dashboard panels, HTTP + SSE API, predicted gate verdict, control-file protocol for v1.3 interactivity | [DASHBOARD.md](DASHBOARD.md) |
+| The six-layer defense model (`asyncio.wait_for` → cancellation → subprocess workers → watchdog → circuit breaker → atomic writes) and what each catches | [ROBUSTNESS.md](ROBUSTNESS.md) |
+| v0 directory-backed storage today, plus the v0+1 git-backed roadmap (G0-G10) for blob dedup + `git log` / `git diff` / `git bisect` over generations | [STORAGE.md](STORAGE.md) |
+
+The runtime layer ships in phases. v1 has L1+L2 from
+[ROBUSTNESS.md](ROBUSTNESS.md) — `asyncio.wait_for` per call
+and structured cancellation — sufficient for cooperative inner
+harnesses. v1.1 is the production-readiness pass: subprocess
+workers, the Rust supervisor's watchdog role, atomic writes
+everywhere, the resume protocol. v1.2 adds the dashboard's
+read-only mode; v1.3 adds the interactive controls. The git
+storage backend (v0+1) lands after v1.3 in the sequencing that
+[STORAGE.md](STORAGE.md) §4 lays out.
+
+## 6. Storage layout
 
 zicato keeps everything under a per-project workspace, by default
 `.zicato/` next to the inner harness's source root. Multi-instance
@@ -592,7 +679,7 @@ The layout is deliberately filesystem-native — no SQLite, no embedded
 DB. Every artifact is a human-readable file. The cost of `ls`-and-`cat`
 debugging is the budget for the storage design.
 
-## 6. The data flow, in narrow contracts
+## 7. The data flow, in narrow contracts
 
 The diagram in §2 names the components; this section names the
 contracts between them so two components can be reimplemented without
@@ -614,7 +701,7 @@ in zicato — not "any framework works on day one" but "every contract is
 between named, typed shapes, so a new framework adapter is the only
 thing that needs to change to adopt zicato for it".
 
-## 7. What's deliberately out of scope for v0
+## 8. What's deliberately out of scope for v0
 
 - Cross-machine distribution. v0 runs locally; nothing in the design
   prevents distributed runners but the v0 storage layout is a single
@@ -631,7 +718,7 @@ thing that needs to change to adopt zicato for it".
   whatever the operator put on it; the JSONL captures exactly what
   flowed.
 
-## 8. Further reading
+## 9. Further reading
 
 | Topic | Document |
 |---|---|
@@ -642,6 +729,10 @@ thing that needs to change to adopt zicato for it".
 | Drift loss scalar, pass-rate, tournament promotion gate | [SCORING.md](SCORING.md) |
 | User emulator design + collusion-proof construction | [EMULATOR.md](EMULATOR.md) |
 | Three dogfood targets and the v0 design they force | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
+| `.zicato/runtime/` state files, the Rust supervisor binary, resume protocol | [RUNTIME.md](RUNTIME.md) |
+| Live dashboard panels, HTTP + SSE, predicted gate verdict, control-file protocol | [DASHBOARD.md](DASHBOARD.md) |
+| The six-layer defense model against hangs and crashes | [ROBUSTNESS.md](ROBUSTNESS.md) |
+| Git-backed storage roadmap (G0-G10) + migration tooling | [STORAGE.md](STORAGE.md) |
 | CLI reference, every subcommand | [CLI.md](CLI.md) |
 | Why each major decision was made the way it was | [RATIONALE.md](RATIONALE.md) |
 | Glossary | [VOCABULARY.md](VOCABULARY.md) |

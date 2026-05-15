@@ -397,6 +397,9 @@ Flags:
 | `--mode tournament\|fast` | `tournament` | Tournament mode (see §3.9). |
 | `--stop-on-reject` | off | Halt the loop after the first reject. |
 | `--stop-on-no-improvement` | off | Halt the loop after K consecutive rounds with no promote (K defaults to 3). |
+| `--no-dashboard` | off | Do not spawn the supervisor binary. Skips both the watchdog and the live dashboard. CI scripts that want predictable noise sometimes use this; the trade-off is no automatic worker-stall escalation. See [RUNTIME.md](RUNTIME.md) §3 and [DASHBOARD.md](DASHBOARD.md) §2.1. |
+| `--dashboard-port <port>` | `7892` | Bind the dashboard's HTTP server to a specific port. If taken, fails — the auto +1 retry only applies to the default. |
+| `--dashboard-bind <addr>` | `127.0.0.1` | Bind address for the dashboard. `0.0.0.0` exposes the dashboard to the LAN with no built-in auth; put a reverse proxy in front of it if you do this. |
 
 Exit codes: `0` if all rounds ran cleanly (regardless of how many
 promoted vs rejected), `1` for run-level failures, `2`/`3` for
@@ -405,6 +408,14 @@ usage/config.
 `evolve` is the right command to leave running overnight for a
 calibration epoch. A wrapper script that watches its output and
 notifies the operator on completion is a reasonable habit.
+
+Auto-spawn behaviour: in the absence of `--no-dashboard`, `evolve`
+spawns `zicato-supervisor` as a subprocess and prints the
+dashboard URL to stdout. The supervisor exits when `evolve`
+exits. See [DASHBOARD.md](DASHBOARD.md) §2 for the auto-spawn
+contract and §3.16 (`zicato dashboard --read-only` / `--daemon`)
+for when the operator wants the dashboard detached from a
+specific `evolve` invocation.
 
 ### 3.12 `zicato journal show`
 
@@ -427,6 +438,258 @@ Renders `analysis.md` for the named epoch (default current).
 Errors if the named epoch is not closed (no `analysis.md` yet).
 
 Exit codes: `0`, `2`, `3`.
+
+### 3.14 `zicato status` (v1.1+)
+
+Print a snapshot of the runtime state.
+
+```
+zicato status [--format json|text]
+```
+
+Reads `.zicato/runtime/` directly — does NOT require the
+supervisor to be running. Output:
+
+```
+$ zicato status
+workspace        /home/op/myagent/.zicato
+instance_id      default
+lock             held by pid 84321 (zicato evolve, started 00:08:42 ago)
+heartbeat        fresh (1.2s old) — phase=tournament round=4
+supervisor       running on :7892 (pid 84358)
+dashboard        http://localhost:7892/
+active tournament
+  round 4 — v4 → v5 (3 / 10 entries done, 2 in flight, 5 queued)
+active runs
+  e4f2_long_solar_candidate          v5  long_solar       agent_running  73%
+  e4f2_contradictory_brief_parent    v4  contradictory…   adapter_init   12%
+```
+
+`--format json` emits the full state-snapshot object (the same
+shape as `GET /api/state` on the dashboard — see
+[DASHBOARD.md](DASHBOARD.md) §6.1) for scripting.
+
+`zicato status` is useful when:
+
+- The dashboard is unreachable (supervisor wedged or
+  unreachable from the operator's terminal).
+- A wrapper script wants to know whether an `evolve` is in
+  flight before launching another.
+- Debugging a stale lock (`zicato status` reports the lock
+  holder's PID so the operator can confirm whether it's a real
+  conflict or stale state).
+
+Exit codes: `0` when state is readable; `3` when the workspace
+doesn't exist or `.zicato/runtime/` is missing.
+
+### 3.15 `zicato kill <run_id>` (v1.1+)
+
+Manual force-kill of an in-flight tournament run.
+
+```
+zicato kill <run_id> [--timeout <seconds>]
+```
+
+Writes `.zicato/runtime/control/kill_runs/<run_id>`. The
+orchestrator picks it up at the next safe-point check (within
+~500ms in v1.1; `kill` is a high-priority command). The
+orchestrator forwards SIGTERM to the worker; the supervisor's
+automatic escalation runs in parallel as a backstop.
+
+`--timeout` controls how long `zicato kill` waits for
+confirmation before returning. Default is 30 seconds. If the
+run is still alive after the timeout, the command exits with
+code 1 — the operator may want to investigate why the
+escalation isn't progressing (a SIGKILL-resistant pathology is
+exceptionally rare but possible; see
+[ROBUSTNESS.md](ROBUSTNESS.md) §3.6).
+
+`<run_id>` is the run identifier shown in `zicato status` or
+on the dashboard's active runs list.
+
+Exit codes: `0` on confirmed kill; `1` on timeout; `2` on
+usage; `3` if the named run is not active; `4` if the workspace
+is not running an `evolve` (no orchestrator to consume the
+control file).
+
+### 3.16 `zicato dashboard` (v1.2+; standalone modes)
+
+Launch the supervisor binary in a standalone mode (not tied to
+an `evolve` invocation).
+
+```
+zicato dashboard --read-only [--epoch <name>] [--port <port>] [--bind <addr>]
+zicato dashboard --daemon    [--port <port>] [--bind <addr>]
+```
+
+The auto-spawn case (the dashboard launched by `zicato evolve`)
+does NOT require this command. `zicato dashboard` is only for
+two scenarios:
+
+| Mode | Use case |
+|---|---|
+| `--read-only` | Post-mortem inspection of a completed epoch. Reads only committed state in `.zicato/epochs/`; no runtime/ interaction. No control surface (all POST endpoints disabled). |
+| `--daemon` | Long-running CI scenarios where the dashboard should outlive a specific `evolve` invocation. Uses `.zicato/runtime/supervisor.pid` to ensure only one daemon at a time. Picks up successive `evolve` invocations automatically. |
+
+Flags:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--read-only` | (mode flag) | Post-mortem mode. Disables all control endpoints. Mutually exclusive with `--daemon`. |
+| `--daemon` | (mode flag) | Daemon mode. Mutually exclusive with `--read-only`. |
+| `--epoch <name>` | current | (read-only only) Which epoch's snapshot to render. |
+| `--port <port>` | `7892` | Same as `zicato evolve --dashboard-port`. |
+| `--bind <addr>` | `127.0.0.1` | Same as `zicato evolve --dashboard-bind`. |
+
+Exit codes: `0` on clean exit (Ctrl-C, SIGTERM); `1` on
+internal error; `2` on usage; `3` on configuration error
+(workspace doesn't exist, port unavailable).
+
+### 3.17 `zicato repo` (v0+1)
+
+Print the path to the workspace's internal git repo.
+
+```
+zicato repo            # prints absolute path to .zicato/repo/
+zicato repo gc         # garbage-collect rejected branches older than N
+zicato repo init       # initialize (normally called by `workspace migrate-to-git`)
+```
+
+Only available after the workspace has been migrated to the
+git backend; see [STORAGE.md](STORAGE.md) §3 for the migration
+sequence.
+
+Exit codes: `0`, `2`, `3`.
+
+### 3.18 `zicato log` (v0+1)
+
+Log of every generation in the workspace, surfacing the
+zicato-meaningful view rather than raw git log.
+
+```
+zicato log [--epoch <name>] [--grep <pattern>] [--oneline] [--since-epoch <name>]
+```
+
+Thin wrapper over `git log` plus the `---zicato-meta---` block
+parser. Filters out non-experiment commits (e.g. the
+empty-commit epoch boundaries from [STORAGE.md](STORAGE.md) §3.6).
+
+`--grep` matches against the experiment's `core_idea`, `why`,
+or any `modulating` mutation id. `--since-epoch` walks the
+git history back to the named epoch's first commit.
+
+Exit codes: `0`, `2`, `3`.
+
+### 3.19 `zicato diff <gen-a> <gen-b>` (v0+1)
+
+Diff between two generations.
+
+```
+zicato diff <gen-a> <gen-b> [--stat]
+```
+
+`<gen-a>` and `<gen-b>` may be:
+
+- Full generation ids (e.g. `initial:v3`).
+- Short ids when unambiguous in the current epoch (e.g. `v3`).
+- `HEAD` for the current promoted head.
+- `HEAD~N` for N promotions ago.
+
+Output is a unified diff (git's default). `--stat` produces
+the short summary instead. The diff respects file-level
+mutation markers — files outside the mutation surface should
+never appear in a diff (and a warning is emitted if they do,
+since that suggests storage corruption or a manual edit
+outside the loop).
+
+Exit codes: `0` on success; `2` on usage; `3` on unknown
+generation id.
+
+### 3.20 `zicato show <gen-id>` (v0+1)
+
+Show one generation: experiment metadata + patch diff.
+
+```
+zicato show <gen-id>
+```
+
+Output combines `git show <commit>` (the patch diff) with the
+parsed `---zicato-meta---` block (hypothesis + outcome) so the
+operator sees both the *intent* and the *change* in one view.
+
+Format example in [STORAGE.md](STORAGE.md) §3.8.
+
+Exit codes: `0`, `2`, `3`.
+
+### 3.21 `zicato bisect` (v0+1)
+
+Find which generation introduced a regression.
+
+```
+zicato bisect <good-gen> <bad-gen>
+    --entry <entry_id>
+    [--metric drift_loss|pass_fail|<drift_kind>]
+```
+
+Powered by `git bisect`: at each bisect step, run the named
+entry against the candidate generation and apply the metric to
+determine "good" or "bad". Converges in O(log N) generations.
+
+Exit codes: `0` on identification; `1` on inconclusive (the
+metric was flat across the range); `2`/`3` for usage/config.
+
+### 3.22 `zicato blame <file:line>` (v0+1)
+
+For a line in the inner-harness source, identify the
+generation that last touched it and the hypothesis behind that
+change.
+
+```
+zicato blame <file>[:<line>]
+```
+
+Powered by `git blame` plus the meta-block parser. Output:
+
+```
+researcher/agent.py:42
+  last touched in epoch hardened_research / generation v3 (round 3)
+  hypothesis core_idea:
+    "Tighten the researcher's system prompt for citations."
+```
+
+Exit codes: `0`, `2`, `3`.
+
+### 3.23 `zicato workspace migrate-to-git` (v0+1)
+
+One-shot conversion of a directory-backed workspace to the
+git-backed storage layout.
+
+```
+zicato workspace migrate-to-git [--dry-run]
+```
+
+Pre-flight checks: no in-flight `evolve` (lock must be free),
+no rejected generations newer than the latest promote that the
+operator hasn't reviewed (configurable; this is for safety).
+Then walks every epoch's `generations/` directory, importing
+each generation into the new `.zicato/repo/` git repo with
+correct cross-epoch parentage.
+
+A pre-migration backup is written to
+`.zicato/migrations/<ts>.tar.gz` automatically. The migration
+is destructive (removes `generations/` from each epoch
+directory after the import) but reversible by restoring the
+backup.
+
+`--dry-run` walks the migration without changing disk; useful
+for sizing the post-migration footprint.
+
+The full design is in [STORAGE.md](STORAGE.md) §6.
+
+Exit codes: `0` on clean migration; `1` on failure (the
+workspace is left in a recoverable state — the staging
+directory is removed and the original `generations/` remain);
+`2`/`3` for usage/config.
 
 ## 4. Output formats
 
@@ -518,4 +781,8 @@ on the meaningful outcomes.
 | Experiment shape produced by `propose`, consumed by `patch apply` | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
 | `gen_score.json` shape produced by `tournament` | [SCORING.md](SCORING.md) |
 | Two-callable check enforced at `register` | [EMULATOR.md](EMULATOR.md) |
+| State files read by `zicato status`; supervisor binary auto-spawned by `evolve` | [RUNTIME.md](RUNTIME.md) |
+| Dashboard panels, API, and standalone modes for `zicato dashboard` | [DASHBOARD.md](DASHBOARD.md) |
+| Why subprocess workers, what `zicato kill` is hooked into | [ROBUSTNESS.md](ROBUSTNESS.md) |
+| The git-backed roadmap behind `zicato repo` / `log` / `diff` / `show` / `bisect` / `blame` / `workspace migrate-to-git` | [STORAGE.md](STORAGE.md) |
 | Why `evolve` defaults to rigorous tournament mode | [RATIONALE.md](RATIONALE.md) |
