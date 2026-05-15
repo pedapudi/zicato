@@ -17,6 +17,13 @@ Two entry points:
   experiment guarantee (the world may have drifted since the parent
   was scored). Same gate logic applies.
 
+The regression-suite gate (see :mod:`zicato.tournament.regression`)
+runs BEFORE the scoring gate when
+:attr:`ScoringWeights.regression_gate_enabled` is true. A failing
+regression suite hard-rejects the candidate, shadowing any drift_loss /
+pass_rate improvement: a patch that breaks the snapshot's own tests
+cannot promote even when its scoring signal looks perfect.
+
 The runner LAZY-imports :mod:`zicato.telemetry` per-call so the
 package keeps loading cheaply even before the telemetry layer is
 wired up. The two helpers we expect from telemetry are:
@@ -56,6 +63,7 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.tournament.gate import GateOutcome, evaluate_gate
+from zicato.tournament.regression import RegressionResult, run_regression_suite
 from zicato.tournament.scoring import aggregate_generation_score
 
 
@@ -401,6 +409,67 @@ async def _run_generation(
     return losses
 
 
+async def _gate_with_regression(
+    *,
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    child_snapshot_root: Path,
+    weights: ScoringWeights,
+) -> GateOutcome:
+    """Apply the promote gate, prefixed by a regression-suite check.
+
+    The regression check is a HARD GATE: when
+    :attr:`ScoringWeights.regression_gate_enabled` is true, the child
+    snapshot's own test suite runs as a subprocess BEFORE we evaluate
+    the scoring gate. Any failure (or timeout) forces the
+    :class:`GateOutcome` to ``"rejected"`` with a reason like
+    ``"regression suite failed: N tests"`` — regardless of how strongly
+    the child improved on drift_loss / pass_rate.
+
+    The deltas reported on the outcome are still computed against the
+    aggregate dicts so the journal can render evidence even when a
+    regression-side rejection shadows the scoring signal.
+    """
+    if weights.regression_gate_enabled:
+        regression = await run_regression_suite(
+            child_snapshot_root,
+            test_command=weights.regression_test_command,
+            timeout_s=weights.regression_timeout_s,
+        )
+        if not regression.passed:
+            return _regression_rejection(parent_agg, child_agg, regression)
+    return evaluate_gate(parent_agg, child_agg, weights)
+
+
+def _regression_rejection(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    regression: RegressionResult,
+) -> GateOutcome:
+    """Build the ``rejected`` :class:`GateOutcome` for a regression failure.
+
+    The reason string is short enough to fit on one journal line:
+    ``"regression suite failed: <N> tests"`` for ordinary failures or
+    ``"regression suite failed: <summary>"`` for timeouts / exit-code-
+    only failures. Deltas are computed from the aggregate dicts so the
+    rejection record still carries the scoring evidence.
+    """
+    parent_scalar = float(parent_agg.get("scalar", 0.0))
+    child_scalar = float(child_agg.get("scalar", 0.0))
+    parent_pass = float(parent_agg.get("pass_rate", 1.0))
+    child_pass = float(child_agg.get("pass_rate", 1.0))
+    if regression.failed_tests:
+        reason = f"regression suite failed: {len(regression.failed_tests)} tests"
+    else:
+        reason = f"regression suite failed: {regression.summary}"
+    return GateOutcome(
+        decision="rejected",
+        reason=reason,
+        delta_scalar=child_scalar - parent_scalar,
+        delta_pass_rate=child_pass - parent_pass,
+    )
+
+
 async def run_tournament(
     *,
     adapter: Any,
@@ -484,7 +553,13 @@ async def run_tournament(
     child_agg = aggregate_generation_score(
         list(child_losses.values()), weights
     )
-    outcome = evaluate_gate(parent_agg, child_agg, weights)
+
+    outcome = await _gate_with_regression(
+        parent_agg=parent_agg,
+        child_agg=child_agg,
+        child_snapshot_root=child_gen.snapshot_root,
+        weights=weights,
+    )
 
     per_entry_losses: dict[str, tuple[LossProfile, LossProfile]] = {}
     for entry_id, parent_loss in parent_losses.items():
@@ -542,7 +617,12 @@ async def run_fast_mode(
     child_agg = aggregate_generation_score(
         list(child_losses.values()), weights
     )
-    outcome = evaluate_gate(parent_historical_agg, child_agg, weights)
+    outcome = await _gate_with_regression(
+        parent_agg=parent_historical_agg,
+        child_agg=child_agg,
+        child_snapshot_root=child_gen.snapshot_root,
+        weights=weights,
+    )
 
     # Fast mode has no parent-side run, so per_entry_losses is empty.
     # Downstream code that wants to render per-entry deltas falls back
