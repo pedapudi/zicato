@@ -50,9 +50,12 @@ An operator starts a new epoch when any of the following hold:
   harness happened outside the loop and the parent `v0` of the next
   epoch is a fresh snapshot).
 
-The CLI does not automate this — the operator's judgment is what
-defines "material contract change". The CLI refuses board edits
-mid-epoch without `--force` to make the boundary obvious.
+Since the contract-hash auto-epoching feature landed (§10), the common
+workflow is automated: `zicato evolve` detects a material contract
+change and rolls the epoch for the operator. `zicato epoch new` /
+`close` / `switch` remain as manual escape hatches. The list above is
+still the authoritative definition of "what counts as a boundary" —
+auto-epoching simply applies it mechanically via a hash.
 
 ### 1.2 What does NOT cause an epoch boundary
 
@@ -634,7 +637,143 @@ aggregate across rounds:
 - `patterns/round_NNN.json` — pattern detector output for the round.
 - `journal.md` — running narrative.
 
-## 9. Cross-references
+## 10. Contract-hash auto-epoching
+
+Operators should never have to think about epoch management in the
+common workflow. They edit the board, the rubric, or the scoring; they
+run `zicato evolve`; the right thing happens. Contract-hash
+auto-epoching is the mechanism that makes that true.
+
+### 10.1 What's in the contract
+
+The **evaluation contract** is exactly four things:
+
+1. **The board** — test inputs + expectations (`board.jsonl`).
+2. **The rubric** — operator steering text (`rubric.md`).
+3. **The scoring** — weights + gate thresholds (`scoring.json`).
+4. **The registered inner-harness IDENTITY** — the `--adk` entrypoint
+   string plus the sorted list of `--mutable-tree` paths.
+
+A change to any one of these means generations on either side are no
+longer directly comparable, so the epoch must roll.
+
+The inner harness's *source content* is deliberately **not** in the
+contract — that source is exactly what zicato mutates within an epoch.
+Only the harness *identity* (which agent, which trees) is contractual;
+the bytes inside those trees are not.
+
+### 10.2 Canonical contract paths
+
+`zicato register` records the canonical contract source paths in
+`.zicato/config.json` under a `contract` key. The default convention
+(used when the operator does not override) is the operator's project
+root, alongside the `.zicato/` directory:
+
+- `<workspace_parent>/board.jsonl`
+- `<workspace_parent>/rubric.md`
+- `<workspace_parent>/scoring.json`
+
+`register --board PATH` / `--rubric PATH` / `--scoring PATH` override
+the default. These are the operator's *live, editable* copies. On epoch
+creation / roll they are frozen (copied) into `epochs/{id}/`.
+
+### 10.3 The contract hash
+
+`zicato/epoch/contract.py` reduces the four contract components to a
+single `sha256` hex digest, the **contract hash**. It is stored on the
+epoch's `EpochConfig` (`contract_hash`) at creation time.
+
+The hash is computed over a **canonicalized** form of each component,
+so spurious edits do not roll the epoch:
+
+| Component | Canonicalization |
+|---|---|
+| board | `load_board()`, sort entries by id, serialize each to a sorted-key JSON dict, join. Semantic content only — reordering rows or reformatting the JSONL is a no-op. |
+| rubric | Read text, normalize line endings to `\n`, strip trailing whitespace per line, strip leading/trailing blank lines. CRLF churn and re-indentation are no-ops. |
+| scoring | Parse into a fully-defaulted `ScoringWeights`, round every float to 6 decimal places, `json.dumps(sort_keys=True)`. Partial vs full documents and float-precision noise are no-ops. |
+| entrypoint | The string verbatim. |
+| mutable_trees | Sorted tuple of absolute path strings. Registration order is a no-op. |
+
+The five canonical forms are concatenated and hashed. Missing files are
+treated as the empty string for that component (so a board-less
+workspace still hashes deterministically) — a warning is logged.
+
+A whitespace-only rubric edit, a reordered board, or float noise in
+`scoring.json` leaves the hash unchanged. A changed board input, a
+changed weight, a different entrypoint, or an added mutable tree
+changes it.
+
+### 10.4 Roll-at-evolve-time semantics
+
+The hash is checked **at evolve time**, once per `zicato evolve`
+invocation, before the round loop starts:
+
+1. Compute the current contract hash from the live contract files +
+   the registered harness identity.
+2. Look at the current epoch.
+   - **No current epoch.** With auto-epoching on, `evolve` creates the
+     first epoch (`e0`) from the contract and runs against it. With
+     `--no-auto-epoch`, it errors and tells the operator to run
+     `zicato epoch new`.
+   - **Current epoch's hash matches** (or is empty — see §10.6).
+     No roll; `evolve` runs against the current epoch.
+   - **Current epoch's hash differs** (the contract drifted). With
+     auto-epoching on, `evolve` closes the current epoch (generating
+     `analysis.md`), opens a fresh one carrying the new contract, and
+     runs against it. The roll prints a clear message naming which
+     component changed:
+     ```
+     contract changed (rubric) — rolled 2026-05-15_e0 -> 2026-05-15_e1
+     ```
+     With `--no-auto-epoch`, it errors instead of rolling.
+
+The resolved epoch is pinned for every round of the invocation — the
+loop never re-rolls mid-flight. Passing `--epoch <id>` explicitly
+**skips auto-epoching entirely**: an explicit target always wins.
+
+### 10.5 Baselining a rolled epoch
+
+When the auto-roll creates a new epoch, its `v0` baseline is the
+**promoted head of the previous epoch** — the last promoted
+generation's snapshot — not the originally-registered harness. This
+continues the lineage: the new epoch starts from the best result of
+the old one. If the previous epoch had no promoted generations beyond
+`v0`, the new epoch seeds from the registered mutable trees as usual.
+
+The cross-epoch link is recorded in `lineage.json` as the new epoch's
+`v0_parent`, pointing back at the closed predecessor.
+
+### 10.6 Legacy workspaces and the empty hash
+
+`EpochConfig.contract_hash` defaults to the empty string. An epoch with
+an empty `contract_hash` is an epoch created **before** auto-epoching
+landed. Such epochs are treated as **always matching** — the
+orchestrator never rolls a legacy workspace spuriously. The operator
+keeps full manual control via `zicato epoch new` until they create
+their first hash-carrying epoch.
+
+### 10.7 Auto-epoch naming
+
+Auto-created epochs are named `e{N}` where `N` is the count of existing
+epochs — so `2026-05-15_e0`, `2026-05-15_e1`, and so on. `zicato epoch
+new <name>` with an explicit name is unchanged. `zicato evolve
+--epoch-name <name>` overrides the `e{N}` scheme for an epoch that
+`evolve` auto-creates.
+
+### 10.8 The escape hatches
+
+`epoch new` / `close` / `switch` all keep working unchanged. They are
+the manual escape hatches:
+
+- `--no-auto-epoch` makes `evolve` strict: it errors on contract drift
+  instead of rolling. Use this when you want to be told about drift
+  and decide deliberately.
+- `zicato epoch new` is still the way to start an epoch with a
+  hand-chosen name, or to roll for a reason the hash cannot see (e.g.
+  a regression-baseline rebase that did not touch any contract file).
+- `zicato epoch switch` still re-points the current-epoch marker.
+
+## 11. Cross-references
 
 | Topic | Document |
 |---|---|

@@ -70,6 +70,9 @@ Register an inner harness adapter.
 zicato register
     --adk <module_or_file>:<symbol>
     [--mutable-tree <path>]...
+    [--board <path>]
+    [--rubric <path>]
+    [--scoring <path>]
     [--call-llm <dotted_path>]
     [--auxiliary-call-llm <dotted_path>]
     [--harness-model <model_id>]
@@ -82,6 +85,9 @@ Flags:
 |---|---|---|
 | `--adk path:symbol` | yes (for ADK) | Adapter selector + entry point. `path` is a Python file or module; `symbol` is the root agent factory. |
 | `--mutable-tree <path>` | repeatable, at least one | Source root the mutation enumerator should walk. Repeat for multiple roots (target 2 — see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)). |
+| `--board <path>` | no | Canonical `board.jsonl` source path. Defaults to `<workspace_parent>/board.jsonl`. |
+| `--rubric <path>` | no | Canonical `rubric.md` source path. Defaults to `<workspace_parent>/rubric.md`. |
+| `--scoring <path>` | no | Canonical `scoring.json` source path. Defaults to `<workspace_parent>/scoring.json`. |
 | `--call-llm <dotted_path>` | yes | Dotted path to the `harness_call_llm` callable. |
 | `--auxiliary-call-llm <dotted_path>` | yes | Dotted path to the `auxiliary_call_llm` callable. |
 | `--harness-model <id>` | no | Default model for `harness_call_llm`. |
@@ -89,6 +95,13 @@ Flags:
 
 The registration is persisted to `.zicato/config.json` and used by
 every subsequent subcommand.
+
+The `--board` / `--rubric` / `--scoring` paths are the operator's
+*live, editable* copies of the evaluation contract. They are recorded
+under the `contract` key in `config.json` and read back on every
+`zicato evolve` for contract-hash auto-epoching (see
+[EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10). On epoch
+creation / roll they are frozen (copied) into `epochs/{id}/`.
 
 The two-callable check runs at register time. If
 `--call-llm == --auxiliary-call-llm` AND no distinct model
@@ -372,6 +385,9 @@ The orchestrator. One command, many rounds.
 zicato evolve
     [--rounds <N>]
     [--mode tournament|fast]
+    [--epoch <epoch_id>]
+    [--no-auto-epoch]
+    [--epoch-name <name>]
     [--stop-on-reject]
     [--stop-on-no-improvement]
 ```
@@ -395,6 +411,9 @@ Flags:
 |---|---|---|
 | `--rounds <N>` | `1` | How many rounds to attempt. |
 | `--mode tournament\|fast` | `tournament` | Tournament mode (see §3.9). |
+| `--epoch <epoch_id>` | current epoch | Run against a specific epoch. Passing this **skips contract-hash auto-epoching entirely** — the explicit target wins. |
+| `--no-auto-epoch` | off (auto-epoch ON) | Disable contract-hash auto-epoching. With this flag, `evolve` errors out when the evaluation contract has drifted from the current epoch instead of rolling. See [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10. |
+| `--epoch-name <name>` | the `e{N}` scheme | Name for an epoch `evolve` auto-creates (first epoch on a fresh workspace, or the new epoch after a roll). Ignored when `--epoch` is passed or no new epoch is created. |
 | `--stop-on-reject` | off | Halt the loop after the first reject. |
 | `--stop-on-no-improvement` | off | Halt the loop after K consecutive rounds with no promote (K defaults to 3). |
 | `--no-dashboard` | off | Do not spawn the supervisor binary. Skips both the watchdog and the live dashboard. CI scripts that want predictable noise sometimes use this; the trade-off is no automatic worker-stall escalation. See [RUNTIME.md](RUNTIME.md) §3 and [DASHBOARD.md](DASHBOARD.md) §2.1. |
