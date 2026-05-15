@@ -198,6 +198,17 @@ async def evolve_once(
         config = _replace(config, instance_id=instance_id)
 
     # --- 2. Parent generation ---
+    # Materialise a v0 baseline snapshot from the registered mutable
+    # trees if the epoch has no generations yet. The seed snapshot is
+    # the byte-for-byte copy of the operator's registered source tree —
+    # subsequent rounds patch into copies of this baseline. Without
+    # this step the orchestrator's first round would have nothing to
+    # diff against; the operator-facing alternative was to require a
+    # manual ``zicato baseline`` invocation, but materialising it on
+    # demand here keeps the CLI surface narrow.
+    _ensure_baseline_snapshot(
+        workspace_root, resolved_epoch_id, workspace_config
+    )
     parent_id = _resolve_current_generation(workspace_root, resolved_epoch_id)
     parent_gen = Generation(
         id=parent_id,
@@ -641,6 +652,75 @@ def _cache_gen_score(
         json.dumps(payload, default=str, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _ensure_baseline_snapshot(
+    workspace_root: Path,
+    epoch_id: str,
+    workspace_config: Any,
+) -> None:
+    """Seed a ``v0`` snapshot for the epoch if no generations exist yet.
+
+    The workspace config carries the registered ``mutable_trees`` (the
+    canonical source roots the operator is willing to mutate). On first
+    invocation we copy each tree under
+    ``epochs/{epoch}/generations/v0/snapshot/{tree_name}/`` so the
+    orchestrator's parent-resolution step finds a baseline to compare
+    against. Subsequent invocations are a no-op when ``v0`` already
+    exists.
+
+    The seed snapshot is also recorded in lineage (as the unparented
+    promoted head) and marked as the current generation; the same
+    bookkeeping the post-promotion path performs after every successful
+    round. This keeps lineage truthful when the epoch is later
+    summarised by the analysis pass.
+    """
+    gens_root = workspace_root / "epochs" / epoch_id / "generations"
+    if gens_root.exists() and any(p.is_dir() for p in gens_root.iterdir()):
+        return  # already have at least one generation; nothing to do
+    raw_trees = (
+        workspace_config.get("mutable_trees")
+        or workspace_config.get("source_roots")
+        or []
+    )
+    if not raw_trees:
+        raise RuntimeError(
+            "evolve_once: workspace_config has no 'mutable_trees' / "
+            "'source_roots' — cannot seed a v0 baseline snapshot. "
+            "Run `zicato register --mutable-tree ...` first."
+        )
+
+    snapshot_root = _snapshot_root(workspace_root, epoch_id, "v0")
+    snapshot_root.mkdir(parents=True, exist_ok=True)
+    for raw in raw_trees:
+        source = Path(raw).resolve()
+        if not source.exists():
+            raise FileNotFoundError(
+                f"evolve_once: registered mutable tree {source} does not "
+                "exist on disk; baseline snapshot cannot be seeded."
+            )
+        if source.is_file():
+            # Files are copied directly — rare in practice but cheap to
+            # support so the helper does not impose tree-only semantics.
+            shutil.copy2(source, snapshot_root / source.name)
+            continue
+        target = snapshot_root / source.name
+        shutil.copytree(source, target)
+
+    # Lineage + current-generation marker so the orchestrator's
+    # downstream readers see a clean baseline state.
+    from zicato.epoch import append_to_lineage  # noqa: PLC0415
+
+    baseline_gen = Generation(
+        id="v0",
+        epoch_id=epoch_id,
+        parent_id=None,
+        snapshot_root=snapshot_root,
+        created_at=_now_iso(),
+        promoted=True,
+    )
+    append_to_lineage(workspace_root, epoch_id, baseline_gen, parent_id=None)
+    _set_current_generation(workspace_root, epoch_id, "v0")
 
 
 def _load_historical_aggregate(
