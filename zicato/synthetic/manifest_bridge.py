@@ -62,15 +62,33 @@ def find_manifest(source_root: Path) -> Path | None:
     """Return the path to a goldfive optimization manifest under ``source_root``.
 
     Walks the conventional candidate locations in order and returns
-    the first that exists. Returns ``None`` when no manifest is found
-    so the bridge can be invoked unconditionally without raising on
-    non-goldfive source roots.
+    the first that exists. When the source root is a *parent* directory
+    that contains a goldfive worktree as a sub-directory (the typical
+    ``v0/snapshot/`` layout the orchestrator's baseline-seeder produces
+    when a single ``--mutable-tree /path/to/goldfive`` is registered),
+    we also probe one level deep — checking each immediate child
+    directory for the same conventional locations. This keeps the bridge
+    invariant under the orchestrator's snapshot-into-named-subdir
+    convention without requiring callers to know about it.
+
+    Returns ``None`` when no manifest is found so the bridge can be
+    invoked unconditionally without raising on non-goldfive source
+    roots.
     """
     root = Path(source_root).resolve()
     for rel in _MANIFEST_CANDIDATES:
         candidate = root / rel
         if candidate.is_file():
             return candidate
+    # One-level-deep probe to handle snapshot-into-named-subdir layouts.
+    if root.is_dir():
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            for rel in _MANIFEST_CANDIDATES:
+                candidate = child / rel
+                if candidate.is_file():
+                    return candidate
     return None
 
 
@@ -261,6 +279,14 @@ def enumerate_manifest_points(source_roots: Iterable[Path]) -> list[MutationPoin
     nothing. Roots whose manifest is malformed contribute nothing
     (best-effort).
 
+    The "source root" of each emitted :class:`MutationPoint` is the
+    directory that contains the manifest's parent ``goldfive/`` (or
+    ``optimization/``) folder — i.e. the goldfive worktree itself,
+    even when :func:`find_manifest` had to probe one level deep to
+    discover it. This keeps the MutationPoint's ``file.relative_to(
+    source_root)`` path consistent with goldfive's own layout
+    convention.
+
     The output is sorted by ``(source_root, id)`` for deterministic
     iteration. Composes cleanly with
     :func:`zicato.mutation.enumerator.enumerate_mutations`: callers
@@ -272,13 +298,18 @@ def enumerate_manifest_points(source_roots: Iterable[Path]) -> list[MutationPoin
         manifest_path = find_manifest(root)
         if manifest_path is None:
             continue
+        # Resolve the effective source root: the goldfive worktree dir
+        # the manifest lives under. For root-level manifests this is
+        # ``root`` itself; for the deep-probe case it's whichever child
+        # directory contained the manifest.
+        effective_root = manifest_path.parents[2]
         for entry in _load_manifest_entries(manifest_path):
             kind = entry.get("kind")
             point: MutationPoint | None
             if kind == "prompt":
-                point = _prompt_mutation_point(entry, root)
+                point = _prompt_mutation_point(entry, effective_root)
             elif kind == "numeric":
-                point = _numeric_mutation_point(entry, root)
+                point = _numeric_mutation_point(entry, effective_root)
             else:
                 point = None
             if point is not None:

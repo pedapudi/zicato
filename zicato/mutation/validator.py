@@ -90,16 +90,32 @@ def validate_post_apply(
     post_by_id: dict[str, MutationPoint] = {p.id: p for p in post_mutations}
     touched_files: set[Path] = set()
     for patch in patches:
-        point = post_by_id.get(patch.mutation_id) or pre_by_id.get(patch.mutation_id)
-        if point is not None:
-            # Translate pre-apply path into the post-apply tree.
+        post_point = post_by_id.get(patch.mutation_id)
+        if post_point is not None:
+            # Post-apply enumeration already gave us the absolute path
+            # inside ``target_root`` — use it directly. Translating
+            # through ``relative_to(source_root)`` re-joined to
+            # ``target_root`` only works when post-apply ``source_root``
+            # equals ``target_root``, which is not the case for the
+            # manifest-bridged surface (its ``source_root`` is the
+            # goldfive worktree subdir under the snapshot).
+            touched_files.add(post_point.file.resolve())
+            continue
+        pre_point = pre_by_id.get(patch.mutation_id)
+        if pre_point is not None:
+            # Pre-apply fallback: translate the pre-apply path into the
+            # post-apply tree.
             try:
-                rel = point.file.relative_to(point.source_root)
+                rel = pre_point.file.relative_to(pre_point.source_root)
                 touched_files.add((target_root / rel).resolve())
             except ValueError:
-                touched_files.add(point.file)
+                touched_files.add(pre_point.file)
 
-    # Check 1: every touched Python file still parses.
+    # Check 1: every touched Python file still parses. Non-Python files
+    # (markdown prompt bodies under a manifest-bridged surface, plain
+    # text, etc.) are checked for existence and readability but not for
+    # Python syntax — they are not Python and parsing them with
+    # :func:`ast.parse` produces false positives.
     for file_path in touched_files:
         if not file_path.exists():
             errors.append(f"Touched file {file_path} does not exist post-apply")
@@ -108,6 +124,8 @@ def validate_post_apply(
             text = file_path.read_text(encoding="utf-8")
         except OSError as exc:
             errors.append(f"Could not read {file_path}: {exc}")
+            continue
+        if file_path.suffix != ".py":
             continue
         try:
             ast.parse(text)
@@ -141,8 +159,12 @@ def validate_post_apply(
                     f"missing from post-apply content of {patch.mutation_id!r}"
                 )
 
-    # Check 4: top-level imports survive.
+    # Check 4: top-level imports survive. Only meaningful for ``.py``
+    # files — non-Python touched files (markdown prompts etc.) have no
+    # import statements to preserve.
     for file_path in touched_files:
+        if file_path.suffix != ".py":
+            continue
         # Find the pre-apply equivalent of this file by mapping back
         # through any pre_apply mutation that points at it.
         pre_file: Path | None = None
