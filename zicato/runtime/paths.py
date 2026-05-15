@@ -6,9 +6,11 @@ Every other function returns a :class:`Path` and never touches the
 filesystem.
 
 The runtime tree is the read/write surface the orchestrator and the
-external supervisor binary share. Layout::
+external supervisor binary share. Layout (``workspace_root`` is the
+``.zicato/`` directory itself, matching the convention every other
+zicato helper uses)::
 
-    {workspace_root}/.zicato/runtime/
+    {workspace_root}/runtime/
       lock.json                       # exclusive workspace lock
       heartbeat.json                  # orchestrator liveness beat
       active_runs/{run_id}.json       # per in-flight tournament run
@@ -21,10 +23,6 @@ external supervisor binary share. Layout::
         reject/{generation_id}        # one file per reject target
         rubric_replacement.txt        # full rubric text payload
       control_log/                    # consumed commands persist here
-
-The tree lives under ``.zicato/runtime/`` regardless of where the
-operator's source tree sits; ``workspace_root`` is the path of the
-``.zicato/`` directory itself in the convention this codebase uses.
 """
 
 from __future__ import annotations
@@ -33,8 +31,14 @@ from pathlib import Path
 
 
 def runtime_dir(workspace_root: Path) -> Path:
-    """Return ``.zicato/runtime/`` for a workspace."""
-    return workspace_root / ".zicato" / "runtime"
+    """Return ``runtime/`` for a workspace.
+
+    ``workspace_root`` is the ``.zicato/`` directory itself; the helper
+    does NOT prepend ``.zicato`` so the caller can name the workspace
+    whatever it likes (the CLI passes ``.zicato`` by default but tests
+    and embedded usage may pass alternate names).
+    """
+    return workspace_root / "runtime"
 
 
 def lock_path(workspace_root: Path) -> Path:

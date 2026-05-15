@@ -18,8 +18,9 @@ from zicato.runtime.paths import (
 )
 
 
-def test_runtime_dir_resolves_under_dot_zicato(tmp_path: Path) -> None:
-    assert runtime_dir(tmp_path) == tmp_path / ".zicato" / "runtime"
+def test_runtime_dir_resolves_directly_under_workspace(tmp_path: Path) -> None:
+    """``workspace_root`` is the ``.zicato/`` dir; runtime/ is its child."""
+    assert runtime_dir(tmp_path) == tmp_path / "runtime"
 
 
 def test_top_level_files_live_directly_under_runtime(tmp_path: Path) -> None:
@@ -68,7 +69,7 @@ def test_ensure_runtime_dirs_idempotent(tmp_path: Path) -> None:
 
 
 def test_paths_do_not_touch_filesystem(tmp_path: Path) -> None:
-    # Calling every path helper on a tmp_path that has no .zicato/ tree
+    # Calling every path helper on a tmp_path that has no runtime/ tree
     # must not create anything.
     _ = runtime_dir(tmp_path)
     _ = lock_path(tmp_path)
@@ -79,4 +80,4 @@ def test_paths_do_not_touch_filesystem(tmp_path: Path) -> None:
     _ = control_dir(tmp_path)
     _ = control_log_dir(tmp_path)
     _ = control_command_path(tmp_path, "pause_epoch")
-    assert not (tmp_path / ".zicato").exists()
+    assert not (tmp_path / "runtime").exists()
