@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>zicato supervisor</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <header id="header-bar" class="header-bar" role="banner" aria-label="Supervisor header">
+    <div class="header-left">
+      <h1 class="title">zicato</h1>
+      <span id="epoch-id" class="meta mono" aria-label="Epoch identifier">epoch &middot; &mdash;</span>
+      <span id="generation-id" class="meta mono" aria-label="Current generation">gen &middot; &mdash;</span>
+      <span id="round-id" class="meta mono" aria-label="Current round">round &middot; &mdash;</span>
+    </div>
+    <div class="header-right">
+      <span id="elapsed" class="meta mono" aria-label="Elapsed time">00:00:00</span>
+      <span id="health-badge" class="badge pending" role="status" aria-label="Supervisor health">connecting</span>
+      <span id="mock-badge" class="badge deferred hidden" aria-label="Mock mode active">mock</span>
+    </div>
+  </header>
+
+  <main id="main-content" role="main">
+
+    <section id="tournament-section" class="tournament-section panel" aria-label="Active tournament">
+      <div class="panel-header">
+        <h2 id="tournament-title">Tournament</h2>
+        <div class="panel-header-meta">
+          <span id="tournament-elapsed" class="meta mono" aria-label="Tournament elapsed">00:00</span>
+        </div>
+      </div>
+      <div id="tournament-body" class="panel-body">
+        <p class="empty">No active tournament.</p>
+      </div>
+    </section>
+
+    <section id="runs-section" aria-label="Active runs">
+      <h2>Active runs</h2>
+      <div id="active-runs" class="runs-strip" role="list">
+        <p class="empty">No active runs.</p>
+      </div>
+    </section>
+
+    <section id="lineage-section" aria-label="Lineage graph">
+      <h2>Lineage</h2>
+      <div class="diagram">
+        <svg id="lineage-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360"
+           role="img" aria-label="Lineage graph"></svg>
+      </div>
+    </section>
+
+    <section id="trajectory-section" aria-label="Score trajectory">
+      <h2>Score trajectory</h2>
+      <div class="diagram">
+        <svg id="trajectory-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220"
+           role="img" aria-label="Scalar score trajectory"></svg>
+      </div>
+    </section>
+
+    <section id="heatmap-section" aria-label="Drift heatmap">
+      <h2>Drift-kind movements</h2>
+      <div class="diagram">
+        <svg id="heatmap-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 320"
+           role="img" aria-label="Drift heatmap"></svg>
+      </div>
+    </section>
+
+    <section id="experiments-section" aria-label="Experiments">
+      <h2>Experiments</h2>
+      <div id="experiments-list">
+        <p class="empty">No experiments recorded.</p>
+      </div>
+    </section>
+
+    <section id="log-section" aria-label="Log tail">
+      <h2>Log tail</h2>
+      <div id="log-tail" class="log-tail mono" role="log" aria-live="polite" aria-relevant="additions">
+        <p class="empty">No events yet.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <aside id="drill-panel" class="drill-panel" role="complementary" aria-label="Drill-down panel" aria-hidden="true">
+    <div class="drill-panel-header">
+      <h2 id="drill-title">Detail</h2>
+      <button type="button" id="drill-close" class="icon-button" aria-label="Close drill-down panel">
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M5 5 L15 15 M15 5 L5 15" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" fill="none"/>
+        </svg>
+      </button>
+    </div>
+    <div id="drill-body" class="drill-panel-body"></div>
+  </aside>
+
+  <footer id="footer-bar" class="footer-bar" role="contentinfo">
+    <span id="supervisor-version" class="meta mono">supervisor &middot; &mdash;</span>
+    <span id="supervisor-port" class="meta mono">port &middot; &mdash;</span>
+    <span id="supervisor-build" class="meta mono">build &middot; &mdash;</span>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
