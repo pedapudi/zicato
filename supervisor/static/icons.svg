@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <!--
+    Icon sprite for the zicato supervisor dashboard. Reference an icon
+    via <svg><use href="/static/icons.svg#icon-name"/></svg>. Kept here
+    so the JS module can <use> them without a network round-trip
+    (the supervisor binary serves this file from /static/icons.svg).
+  -->
+  <symbol id="icon-pause" viewBox="0 0 20 20">
+    <rect x="5" y="4" width="3" height="12" rx="1" fill="currentColor"/>
+    <rect x="12" y="4" width="3" height="12" rx="1" fill="currentColor"/>
+  </symbol>
+  <symbol id="icon-skip" viewBox="0 0 20 20">
+    <path d="M3 4 L11 10 L3 16 Z" fill="currentColor"/>
+    <rect x="13" y="4" width="3" height="12" rx="1" fill="currentColor"/>
+  </symbol>
+  <symbol id="icon-kill" viewBox="0 0 20 20">
+    <path d="M5 5 L15 15 M15 5 L5 15" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" fill="none"/>
+  </symbol>
+  <symbol id="icon-promote" viewBox="0 0 20 20">
+    <path d="M4 12 L9 7 L14 12 L11 12 L11 16 L7 16 L7 12 Z"
+        fill="currentColor"/>
+  </symbol>
+  <symbol id="icon-reject" viewBox="0 0 20 20">
+    <circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M5 5 L15 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="icon-close" viewBox="0 0 20 20">
+    <path d="M5 5 L15 15 M15 5 L5 15" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" fill="none"/>
+  </symbol>
+  <symbol id="icon-running" viewBox="0 0 20 20">
+    <circle cx="10" cy="10" r="3" fill="currentColor">
+      <animate attributeName="r" values="3;5;3" dur="1.5s" repeatCount="indefinite"/>
+    </circle>
+  </symbol>
+  <symbol id="icon-ok" viewBox="0 0 20 20">
+    <path d="M4 10 L8 14 L16 6" stroke="currentColor" stroke-width="2.4"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </symbol>
+</svg>
