@@ -3,6 +3,99 @@
 All notable changes to zicato are recorded here. Format roughly follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] — 2026-05-15
+
+Second alpha. Major surface expansion: drift-free objectives are
+first-class, the board API has a friendly Python builder, multi-objective
+scoring lands, regression-suite gating protects against breaking-change
+patches, and zicato now consumes goldfive's decision telemetry through a
+dedicated LLM analyzer.
+
+### Drift-free metrics
+- `MetricCount` replaces drift-only counts. Arbitrary namespaces:
+  `drift:*`, `cost:*`, `latency:*`, `rubric:*`, `output:*`, `schema:*`.
+- `LossProfile.metric_counts` carries the unified view alongside
+  `drift_counts` for back-compat. New first-class fields:
+  `tokens_spent`, `output_chars`, `schema_failures`.
+- `HypothesisSpec.expected_metric_movements` accepted alongside
+  `expected_drift_movements`. Proposer schema validates either form.
+- `OutcomeRecord.metric_movements` records actual deltas per namespace.
+- New detectors: `detect_metric_frequency(namespace=...)`,
+  `detect_cost_outliers`, `detect_rubric_score_movement`. The original
+  `detect_drift_kind_frequency` is now a thin wrapper.
+- Analysis renderer: `render_metric_movement_table(namespace_filter=...)`
+  with a "drift" filter producing byte-identical legacy output.
+
+### Multi-objective scoring
+- `ScoringWeights.namespace_weights` — per-namespace weights with a
+  sign convention (positive = higher-is-worse; negative = higher-is-better;
+  zero = excluded from scalar).
+- `ScoringWeights.namespace_monotonicity` — per-namespace monotonicity
+  flags. Regression on a tracked namespace hard-rejects the candidate
+  regardless of overall scalar improvement.
+- `aggregate_namespaced_metrics` + `scalar_components` in the
+  generation aggregate.
+- `evaluate_gate` adds rule 3: per-namespace monotonicity check.
+
+### Regression-suite gate
+- `zicato.tournament.regression.run_regression_suite` — asyncio
+  subprocess pytest invoker with timeout + failed-id parsing.
+- `ScoringWeights.regression_gate_enabled` / `regression_test_command`
+  / `regression_timeout_s`. When enabled, any test failure in the
+  candidate snapshot hard-rejects regardless of other metrics.
+- `tournament --skip-regression` CLI flag.
+
+### Friendlier board API
+- `Board` + `Entry` programmatic builder. `Entry(id=..., input=...,
+  evaluate=..., budget_s=...)` auto-detects the kind from arguments
+  (`turns` → multi-turn-scripted, `persona` → multi-turn-emulated,
+  `adversarial_agent_spec` → synthetic-adversarial, etc.).
+- `Predicate` factory family: `Predicate.contains` / `.regex` /
+  `.schema` / `.python`.
+- `Rubric.judge(rubric_text, *, threshold, scale)` — built-in
+  LLM-as-judge matcher. Operator supplies the rubric text only; no
+  separate Python module needed.
+- New expectation kind `"rubric"` with `evaluate_rubric_judge` runtime.
+- `budget_s` JSONL field as a back-compat alias for
+  `wall_clock_budget_seconds` (preferred on write, accepted on read).
+
+### Decision-telemetry analyzer
+- New `zicato.analyzer` module: `DecisionEventSummary` +
+  `aggregate_decision_events` parse goldfive's new decision events
+  (`SteeringDecisionMade`, `LadderTransitionDecided`,
+  `DetectorDispatchOrdered`, `PolicyApplied`, `RetryBudgetSpent`).
+- `analyze_epoch_telemetry` calls the auxiliary LLM with a structured
+  prompt and writes
+  `epochs/{epoch}/insights/round_{N}.md` with sections:
+  Headline observations, Suspected over-intervention, Suspected
+  under-intervention, Suggested next mutations.
+- Orchestrator invokes the analyzer best-effort after every round;
+  proposer embeds the latest insights into its user prompt so the next
+  proposal is informed by the cross-run patterns.
+- CLI: `zicato analyze-telemetry [--workspace ...] [--epoch ...] [--round N]`.
+
+### Goldfive companion PRs (separate repo, awaiting merge)
+- [pedapudi/goldfive#440](https://github.com/pedapudi/goldfive/pull/440)
+  — manifest expansion from 31 → 60 entries; new proto events
+  `LadderTransitionDecided`, `DetectorDispatchOrdered`, `PolicyApplied`,
+  `RetryBudgetSpent` at tags 40-43.
+- [pedapudi/goldfive#439](https://github.com/pedapudi/goldfive/pull/439)
+  — pluggable `Judge` protocol with `JudgeContext` / `JudgeVerdict`;
+  `goldfive.wrap(judges=[...])`; built-in detectors refactored as Judge
+  instances; new `JudgementEmitted` proto event at tag 44.
+
+### Tests
+- 644 → 813 passing (+169). Same 5 pre-existing environment failures
+  on `test_adapter_adk` / `test_synthetic_adversarial` /
+  `test_telemetry_reducer_real_goldfive` are unchanged (all
+  environment-dependent on goldfive-editable-install drift).
+
+### Compatibility
+- Every existing `LossProfile`, JSONL board, `expected_drift_movements`
+  hypothesis, and tournament scoring config from 0.1 continues to work.
+  The drift namespace is preserved verbatim; multi-objective scoring
+  uses sensible defaults when namespace weights aren't configured.
+
 ## [0.1.0] — 2026-05-15
 
 First public alpha. End-to-end evolve loop functioning against both
