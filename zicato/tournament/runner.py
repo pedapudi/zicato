@@ -101,8 +101,16 @@ async def _drive_session(
 ) -> tuple[RunResult | None, int, bool]:
     """Drive one ``session.run`` call and return (result, runtime_ms, budget_exceeded).
 
-    Two session shapes are accepted:
+    Three execution paths are accepted:
 
+    * ``synthetic_adversarial`` / ``synthetic_clean`` entries — the
+      adapter does not own the adversarial-agent zoo (see
+      :mod:`zicato.synthetic`). The runner routes synthetic kinds
+      directly to :func:`zicato.synthetic.run_adversarial_entry` /
+      :func:`zicato.synthetic.run_clean_entry`, passing the same sink
+      list the full-protocol path would build. This is what makes the
+      target-2 dogfood board's adversarial recall / clean precision
+      entries actually produce events.jsonl.
     * ``run(entry, sinks, config) -> RunResult`` — the full
       :class:`~zicato.adapters.RunnableHarness` shape. The runner
       constructs a single-element ``sinks`` list with a
@@ -116,14 +124,42 @@ async def _drive_session(
       on this path because the stub has no way to communicate an
       abort.
 
-    The dispatch is by parameter-name inspection rather than by
-    ``hasattr(session, "run")`` introspection so a test stub that
-    deliberately mimics the legacy shape can do so without having to
-    register a runtime-protocol marker.
+    The dispatch between the second and third paths is by parameter-
+    name inspection rather than by ``hasattr(session, "run")``
+    introspection so a test stub that deliberately mimics the legacy
+    shape can do so without having to register a runtime-protocol
+    marker.
     """
+    started = time.monotonic()
+
+    # Synthetic kinds bypass the adapter's session entirely.
+    if entry.kind in ("synthetic_adversarial", "synthetic_clean"):
+        sinks = _build_sinks(sink_path)
+        from zicato.synthetic import (  # noqa: PLC0415
+            run_adversarial_entry,
+            run_clean_entry,
+        )
+
+        synth_runner = (
+            run_adversarial_entry
+            if entry.kind == "synthetic_adversarial"
+            else run_clean_entry
+        )
+        result = await synth_runner(entry, sinks, config)
+        runtime_ms = (
+            result.runtime_ms
+            if isinstance(result, RunResult) and result.runtime_ms > 0
+            else int((time.monotonic() - started) * 1000)
+        )
+        budget_exceeded = bool(
+            isinstance(result, RunResult)
+            and result.aborted
+            and result.abort_reason == "wall_clock_budget_exceeded"
+        )
+        return result, runtime_ms, budget_exceeded
+
     sig = inspect.signature(session.run)
     param_names = list(sig.parameters)
-    started = time.monotonic()
 
     # Decide by the second positional parameter (after ``entry``).
     legacy = len(param_names) >= 2 and param_names[1] in ("sink_path", "events_path")
