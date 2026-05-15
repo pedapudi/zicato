@@ -61,11 +61,7 @@ def _resolve_supervisor_binary() -> Path | None:
     # binary lives at <repo_root>/supervisor/target/release/zicato-supervisor.
     here = Path(__file__).resolve()
     in_tree = (
-        here.parent.parent.parent.parent
-        / "supervisor"
-        / "target"
-        / "release"
-        / "zicato-supervisor"
+        here.parent.parent.parent.parent / "supervisor" / "target" / "release" / "zicato-supervisor"
     )
     if in_tree.exists() and os.access(in_tree, os.X_OK):
         return in_tree
@@ -132,7 +128,7 @@ async def _terminate_supervisor(proc: asyncio.subprocess.Process | None) -> None
         return
     try:
         await asyncio.wait_for(proc.wait(), timeout=5)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except ProcessLookupError:
@@ -153,24 +149,18 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
         module_path, _, attr = dotted.rpartition(".")
     if not module_path or not attr:
         raise click.BadParameter(
-            f"{kind} dotted path {dotted!r} must be 'pkg.module.attr' or "
-            "'pkg.module:attr'"
+            f"{kind} dotted path {dotted!r} must be 'pkg.module.attr' or " "'pkg.module:attr'"
         )
     try:
         module = importlib.import_module(module_path)
     except ImportError as exc:
-        raise click.BadParameter(
-            f"{kind}: could not import module {module_path!r}: {exc}"
-        ) from exc
+        raise click.BadParameter(f"{kind}: could not import module {module_path!r}: {exc}") from exc
     if not hasattr(module, attr):
-        raise click.BadParameter(
-            f"{kind}: module {module_path!r} has no attribute {attr!r}"
-        )
+        raise click.BadParameter(f"{kind}: module {module_path!r} has no attribute {attr!r}")
     fn = getattr(module, attr)
     if not callable(fn):
         raise click.BadParameter(
-            f"{kind}: {dotted!r} resolved to {type(fn).__name__}, "
-            "expected a callable"
+            f"{kind}: {dotted!r} resolved to {type(fn).__name__}, " "expected a callable"
         )
     return fn
 
@@ -222,6 +212,24 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     help="Stop early when this many rounds in a row are rejected.",
 )
 @click.option(
+    "--no-auto-epoch",
+    is_flag=True,
+    default=False,
+    help=(
+        "Disable contract-hash auto-epoching. With this flag, evolve "
+        "errors out (instead of rolling the epoch) when the evaluation "
+        "contract has drifted from the current epoch."
+    ),
+)
+@click.option(
+    "--epoch-name",
+    default=None,
+    help=(
+        "Name for an auto-created epoch (default: the e{N} scheme). "
+        "Ignored when --epoch is passed or no new epoch is created."
+    ),
+)
+@click.option(
     "--no-dashboard",
     is_flag=True,
     default=False,
@@ -248,17 +256,25 @@ def evolve_cmd(
     harness_dotted: str,
     auxiliary_dotted: str,
     max_consecutive_rejections: int,
+    no_auto_epoch: bool,
+    epoch_name: str | None,
     no_dashboard: bool,
     dashboard_port: int,
     dashboard_bind: str,
 ) -> None:
-    """Run the evolve loop for N rounds against the current epoch."""
+    """Run the evolve loop for N rounds against the current epoch.
+
+    By default, contract-hash auto-epoching is ON: when the evaluation
+    contract (board / rubric / scoring / inner-harness identity) has
+    drifted, evolve closes the current epoch and opens a fresh one
+    before running. Pass ``--no-auto-epoch`` for the strict behaviour
+    (error on drift instead of rolling). ``--epoch`` skips auto-epoching
+    entirely.
+    """
     workspace_root = Path(workspace).resolve()
 
     harness_call_llm = _import_callable(harness_dotted, kind="harness_call_llm")
-    auxiliary_call_llm = _import_callable(
-        auxiliary_dotted, kind="auxiliary_call_llm"
-    )
+    auxiliary_call_llm = _import_callable(auxiliary_dotted, kind="auxiliary_call_llm")
 
     # Lazy import — the orchestrator is heavy. We keep it out of
     # `zicato --help` time.
@@ -280,13 +296,19 @@ def evolve_cmd(
                 auxiliary_call_llm=auxiliary_call_llm,
                 fast_mode=(mode == "fast"),
                 max_consecutive_rejections=max_consecutive_rejections,
+                auto_epoch=not no_auto_epoch,
+                epoch_name=epoch_name,
             )
         finally:
             await _terminate_supervisor(sup)
 
     try:
         outcomes = asyncio.run(_run())
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, RuntimeError) as exc:
+        # FileNotFoundError: missing config / epoch marker.
+        # RuntimeError: contract drift under --no-auto-epoch, or a
+        # missing baseline. Both are operator-actionable; surface them
+        # as a clean CLI error rather than a traceback.
         raise click.ClickException(str(exc)) from exc
 
     payload = [
