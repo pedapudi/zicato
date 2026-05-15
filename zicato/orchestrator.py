@@ -44,6 +44,8 @@ from zicato.core.workspace import (
     experiment_json_path,
     generation_dir,
 )
+from zicato.runtime.heartbeat import HeartbeatBeater
+from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -468,32 +470,57 @@ async def evolve_n_rounds(
         # nonsense values by treating them as "never stop early".
         max_consecutive_rejections = rounds + 1
 
+    # Workspace lock + heartbeat lifecycle. The lock keeps two concurrent
+    # orchestrators from corrupting the same workspace; the beater writes
+    # ``heartbeat.json`` so the supervisor binary can detect a wedge.
+    lock = acquire_workspace_lock(workspace_root, instance_id)
+    beater = HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)
     outcomes: list[EvolveRoundOutcome] = []
-    consecutive_rejections = 0
-    for round_idx in range(rounds):
-        outcome = await evolve_once(
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=auxiliary_call_llm,
-            instance_id=instance_id,
-            fast_mode=fast_mode,
-            max_proposer_retries=max_proposer_retries,
-        )
-        outcomes.append(outcome)
-        if outcome.tournament_decision == "promoted":
-            consecutive_rejections = 0
-        else:
-            consecutive_rejections += 1
-            if consecutive_rejections >= max_consecutive_rejections:
-                log.warning(
-                    "evolve_n_rounds: stopping after %d consecutive rejections "
-                    "(round %d/%d)",
-                    consecutive_rejections,
-                    round_idx + 1,
-                    rounds,
-                )
-                break
+    try:
+        await beater.start()
+        beater.update(epoch_id=epoch_id or "", phase="evolve_n_rounds:start")
+        beater.bump_now()
+        consecutive_rejections = 0
+        for round_idx in range(rounds):
+            beater.update(
+                round_index=round_idx,
+                round_started_at=_now_iso(),
+                phase=f"evolve_once:round_{round_idx}",
+            )
+            beater.bump_now()
+            outcome = await evolve_once(
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                harness_call_llm=harness_call_llm,
+                auxiliary_call_llm=auxiliary_call_llm,
+                instance_id=instance_id,
+                fast_mode=fast_mode,
+                max_proposer_retries=max_proposer_retries,
+            )
+            outcomes.append(outcome)
+            beater.update(
+                generation_id=outcome.proposed_generation_id,
+                phase=f"after_round_{round_idx}:{outcome.tournament_decision}",
+            )
+            beater.bump_now()
+            if outcome.tournament_decision == "promoted":
+                consecutive_rejections = 0
+            else:
+                consecutive_rejections += 1
+                if consecutive_rejections >= max_consecutive_rejections:
+                    log.warning(
+                        "evolve_n_rounds: stopping after %d consecutive rejections "
+                        "(round %d/%d)",
+                        consecutive_rejections,
+                        round_idx + 1,
+                        rounds,
+                    )
+                    break
+        beater.update(phase="evolve_n_rounds:done")
+        beater.bump_now()
+    finally:
+        await beater.stop()
+        release_workspace_lock(lock)
     return outcomes
 
 
