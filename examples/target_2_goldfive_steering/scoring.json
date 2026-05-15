@@ -1,0 +1,10 @@
+{
+  "drift_weight": 0.3,
+  "pass_weight": 1.0,
+  "severity_weights": {"info": 1.0, "warning": 2.0, "critical": 5.0},
+  "per_kind_weights": {},
+  "plan_revision_weight": 0.2,
+  "runtime_weight": 0.001,
+  "promote_margin": 0.02,
+  "pass_rate_monotonicity": true
+}
