@@ -162,19 +162,48 @@ def _payload_name(event: Any) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def detect_drift_kind_frequency(inp: DetectorInput) -> list[Pattern]:
-    """One Pattern per drift kind that fires in >=20% of runs.
+def detect_metric_frequency(
+    inp: DetectorInput,
+    namespace: str = "drift:",
+    *,
+    pattern_kind: str | None = None,
+    min_frequency: float = 0.20,
+) -> list[Pattern]:
+    """One Pattern per namespaced metric that fires in >= ``min_frequency`` of runs.
 
-    "Fires" means at least one :class:`zicato.core.DriftCount` with
-    ``count > 0`` for that kind appears in the run's
-    :attr:`LossProfile.drift_counts`. Severity is summarised as the
-    max-severity bucket observed for that kind in the window.
+    Generalises :func:`detect_drift_kind_frequency` to any
+    :class:`MetricCount` namespace. ``namespace`` is matched against the
+    ``MetricCount.name`` prefix (so ``"drift:"`` matches every drift
+    kind, ``"cost:"`` matches every cost metric, etc.). The empty
+    string matches every namespace.
 
-    Emits Pattern.kind = ``"drift_kind_frequency"``. Detail keys:
-    ``frequency`` (float in [0, 1] as a string), ``run_count`` (total
-    runs considered, as a string), ``hits`` (number of runs that fired
-    the kind), ``max_severity`` (the highest severity seen for this
-    kind in the window).
+    A metric "fires" in a run iff at least one
+    :class:`zicato.core.MetricCount` entry under :meth:`LossProfile.unified_metrics`
+    has the prefix and a positive count. Severity is the max-severity
+    bucket observed for the metric in the window (or ``"info"`` when
+    the namespace doesn't carry severity).
+
+    Emits Pattern.kind = ``pattern_kind`` (defaults to
+    ``"{namespace}metric_frequency"`` with the trailing colon stripped;
+    e.g. ``"drift:" -> "drift_metric_frequency"``). Detail keys mirror
+    the drift-only surface for back-compat: ``metric_name``,
+    ``frequency``, ``run_count``, ``hits``, ``max_severity``,
+    ``affected_entry_ids``.
+
+    Parameters
+    ----------
+    inp:
+        The detector input bundle.
+    namespace:
+        Prefix string the metric name must start with. Use ``"drift:"``
+        for drift-only detection (the back-compat path), ``"cost:"`` for
+        cost metrics, etc. Empty string matches every metric.
+    pattern_kind:
+        Override for :attr:`Pattern.kind`. When ``None`` the kind is
+        derived from the namespace.
+    min_frequency:
+        Minimum per-window frequency for a metric to be surfaced.
+        Default 0.20 matches the historical drift-detector threshold.
     """
 
     losses = inp.losses
@@ -182,57 +211,113 @@ def detect_drift_kind_frequency(inp: DetectorInput) -> list[Pattern]:
         return []
 
     total_runs = len(losses)
-    # kind -> set of run_ids that fired the kind
-    kind_hits: dict[str, set[str]] = {}
-    # kind -> ranked max severity observed
+    if pattern_kind is None:
+        ns = namespace.rstrip(":")
+        pattern_kind = f"{ns}_metric_frequency" if ns else "metric_frequency"
+
+    # metric_name -> set of run_ids that fired the metric
+    metric_hits: dict[str, set[str]] = {}
+    # metric_name -> ranked max severity observed
     severity_rank = {"info": 0, "warning": 1, "critical": 2}
-    kind_max_sev: dict[str, str] = {}
-    # kind -> set of affected entry ids
-    kind_entries: dict[str, set[str]] = {}
+    metric_max_sev: dict[str, str] = {}
+    # metric_name -> set of affected entry ids
+    metric_entries: dict[str, set[str]] = {}
 
     for loss in losses:
-        for dc in loss.drift_counts:
-            if dc.count <= 0:
+        for mc in loss.unified_metrics():
+            if mc.count <= 0:
                 continue
-            kind_hits.setdefault(dc.kind, set()).add(loss.run_id)
-            kind_entries.setdefault(dc.kind, set()).add(loss.entry_id)
-            current = kind_max_sev.get(dc.kind)
-            if current is None or severity_rank.get(dc.severity, -1) > severity_rank.get(
-                current, -1
-            ):
-                kind_max_sev[dc.kind] = dc.severity
+            if namespace and not mc.name.startswith(namespace):
+                continue
+            metric_hits.setdefault(mc.name, set()).add(loss.run_id)
+            metric_entries.setdefault(mc.name, set()).add(loss.entry_id)
+            sev = mc.severity or "info"
+            current = metric_max_sev.get(mc.name)
+            if current is None or severity_rank.get(sev, -1) > severity_rank.get(current, -1):
+                metric_max_sev[mc.name] = sev
 
     patterns: list[Pattern] = []
-    for kind, run_ids in sorted(kind_hits.items()):
+    for metric_name, run_ids in sorted(metric_hits.items()):
         frequency = len(run_ids) / total_runs
-        if frequency < 0.20:
+        if frequency < min_frequency:
             continue
-        affected = sorted(kind_entries.get(kind, set()))
+        affected = sorted(metric_entries.get(metric_name, set()))
         pct = round(frequency * 100, 1)
-        summary = (
-            f"drift kind {kind!r} fires in {pct}% of runs "
-            f"across {len(affected)} entries"
-        )
-        max_sev = kind_max_sev.get(kind, "info")
+        # Strip namespace prefix for the human-readable display when
+        # the caller asked for a single namespace; full name otherwise.
+        if namespace and metric_name.startswith(namespace):
+            display = metric_name[len(namespace) :]
+        else:
+            display = metric_name
+        label = "drift kind" if namespace == "drift:" else "metric"
+        summary = f"{label} {display!r} fires in {pct}% of runs across {len(affected)} entries"
+        max_sev = metric_max_sev.get(metric_name, "info")
         pattern_severity: str = max_sev if max_sev in ("info", "warning", "critical") else "info"
+        # For drift namespace the back-compat detail key is
+        # ``drift_kind``; for everything else we use ``metric_name`` so
+        # the proposer sees a more general label.
+        detail: dict[str, str] = {
+            "metric_name": metric_name,
+            "frequency": f"{frequency:.3f}",
+            "run_count": str(total_runs),
+            "hits": str(len(run_ids)),
+            "max_severity": max_sev,
+            "affected_entry_ids": ",".join(affected),
+        }
+        if namespace == "drift:":
+            detail["drift_kind"] = display
         patterns.append(
             Pattern(
-                id=_pattern_id("drift_kind_frequency", summary, affected),
-                kind="drift_kind_frequency",
+                id=_pattern_id(pattern_kind, summary, affected),
+                kind=pattern_kind,
                 summary=summary,
-                detail={
-                    "drift_kind": kind,
-                    "frequency": f"{frequency:.3f}",
-                    "run_count": str(total_runs),
-                    "hits": str(len(run_ids)),
-                    "max_severity": max_sev,
-                    "affected_entry_ids": ",".join(affected),
-                },
+                detail=detail,
                 affected_mutation_ids=(),
                 severity=pattern_severity,  # type: ignore[arg-type]
             )
         )
     return patterns
+
+
+def detect_drift_kind_frequency(inp: DetectorInput) -> list[Pattern]:
+    """One Pattern per drift kind that fires in >=20% of runs.
+
+    Back-compat wrapper over :func:`detect_metric_frequency` with
+    ``namespace="drift:"`` and ``pattern_kind="drift_kind_frequency"``.
+    The detail dict includes ``drift_kind`` for old consumers and
+    ``metric_name`` for new ones; the latter carries the fully
+    namespaced name (e.g. ``"drift:off_topic"``).
+
+    "Fires" means at least one :class:`zicato.core.DriftCount` with
+    ``count > 0`` for that kind appears in the run's
+    :attr:`LossProfile.drift_counts`. Severity is summarised as the
+    max-severity bucket observed for that kind in the window.
+    """
+
+    return detect_metric_frequency(inp, namespace="drift:", pattern_kind="drift_kind_frequency")
+
+
+def detect_cost_outliers(inp: DetectorInput) -> list[Pattern]:
+    """One Pattern per ``cost:*`` metric that fires in >=20% of runs.
+
+    Surfaces token/call-volume hotspots so the proposer can target
+    cost-side objectives directly. Emits
+    :attr:`Pattern.kind` = ``"cost_metric_frequency"``.
+    """
+
+    return detect_metric_frequency(inp, namespace="cost:", pattern_kind="cost_metric_frequency")
+
+
+def detect_rubric_score_movement(inp: DetectorInput) -> list[Pattern]:
+    """One Pattern per ``rubric:*`` metric that fires in >=20% of runs.
+
+    For rubric scores, "fires" is interpreted as "has a non-zero score
+    recorded in the run". This lets the proposer notice which rubric
+    dimensions the harness is actually scoring on. Emits
+    :attr:`Pattern.kind` = ``"rubric_metric_frequency"``.
+    """
+
+    return detect_metric_frequency(inp, namespace="rubric:", pattern_kind="rubric_metric_frequency")
 
 
 def detect_hot_tasks(inp: DetectorInput) -> list[Pattern]:
@@ -433,9 +518,7 @@ def detect_plan_revision_instability(inp: DetectorInput) -> list[Pattern]:
         f">= {threshold:.1f} revisions (mean {mean_count:.2f})"
     )
     sev: str = (
-        "warning"
-        if any(loss.plan_revisions >= mean_count + 4 for loss in flapping)
-        else "info"
+        "warning" if any(loss.plan_revisions >= mean_count + 4 for loss in flapping) else "info"
     )
     return [
         Pattern(
@@ -556,6 +639,8 @@ def detect_multi_turn_context_loss(inp: DetectorInput) -> list[Pattern]:
 #: one's row.
 ALL_DETECTORS: tuple[DetectorFn, ...] = (
     detect_drift_kind_frequency,
+    detect_cost_outliers,
+    detect_rubric_score_movement,
     detect_hot_tasks,
     detect_hot_agents,
     detect_plan_revision_instability,
@@ -591,11 +676,14 @@ __all__ = [
     "ALL_DETECTORS",
     "DetectorFn",
     "DetectorInput",
+    "detect_cost_outliers",
     "detect_drift_kind_frequency",
     "detect_hot_agents",
     "detect_hot_tasks",
+    "detect_metric_frequency",
     "detect_multi_turn_context_loss",
     "detect_multi_turn_memory_failure",
     "detect_patterns",
     "detect_plan_revision_instability",
+    "detect_rubric_score_movement",
 ]

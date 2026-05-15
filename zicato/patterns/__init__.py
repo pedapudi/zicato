@@ -22,13 +22,16 @@ from zicato.patterns.detectors import (
     ALL_DETECTORS,
     DetectorFn,
     DetectorInput,
+    detect_cost_outliers,
     detect_drift_kind_frequency,
     detect_hot_agents,
     detect_hot_tasks,
+    detect_metric_frequency,
     detect_multi_turn_context_loss,
     detect_multi_turn_memory_failure,
     detect_patterns,
     detect_plan_revision_instability,
+    detect_rubric_score_movement,
 )
 from zicato.patterns.registry import get_all_detectors, register_detector
 
@@ -36,13 +39,16 @@ __all__ = [
     "ALL_DETECTORS",
     "DetectorFn",
     "DetectorInput",
+    "detect_cost_outliers",
     "detect_drift_kind_frequency",
     "detect_hot_agents",
     "detect_hot_tasks",
+    "detect_metric_frequency",
     "detect_multi_turn_context_loss",
     "detect_multi_turn_memory_failure",
     "detect_patterns",
     "detect_plan_revision_instability",
+    "detect_rubric_score_movement",
     "get_all_detectors",
     "register_detector",
 ]
