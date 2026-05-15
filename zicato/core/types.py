@@ -1037,6 +1037,20 @@ class ScoringWeights:
         improvement. The stricter half of the tournament gate; operators
         can flip to ``False`` for experimental epochs where they expect
         non-monotone exploration.
+    regression_gate_enabled:
+        When ``True``, the tournament runner shells out to the
+        snapshot's own test suite BEFORE evaluating the scoring gate.
+        A non-passing suite hard-rejects the candidate regardless of
+        drift_loss / pass_rate movement. Defaults to ``False`` for
+        backwards compatibility with epochs whose snapshots do not
+        ship a regression suite.
+    regression_test_command:
+        The argv used to invoke the regression suite. Defaults to a
+        plain pytest invocation; operators with non-pytest suites can
+        override (e.g. ``("python", "-m", "unittest", "discover")``).
+    regression_timeout_s:
+        Wall-clock seconds the regression subprocess is allowed before
+        the runner kills it. A timeout counts as a regression failure.
     """
 
     drift_weight: float = 1.0
@@ -1049,6 +1063,9 @@ class ScoringWeights:
     runtime_weight: float = 0.0
     promote_margin: float = 0.01
     pass_rate_monotonicity: bool = True
+    regression_gate_enabled: bool = False
+    regression_test_command: tuple[str, ...] = ("pytest", "tests/", "-q")
+    regression_timeout_s: int = 600
 
 
 @dataclass(frozen=True, slots=True)

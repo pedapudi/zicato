@@ -24,6 +24,7 @@ loss profiles directly.
 from __future__ import annotations
 
 from zicato.tournament.gate import GateOutcome, evaluate_gate
+from zicato.tournament.regression import RegressionResult, run_regression_suite
 from zicato.tournament.runner import TournamentResult, run_fast_mode, run_tournament
 from zicato.tournament.scoring import (
     aggregate_generation_score,
@@ -32,10 +33,12 @@ from zicato.tournament.scoring import (
 
 __all__ = [
     "GateOutcome",
+    "RegressionResult",
     "TournamentResult",
     "aggregate_generation_score",
     "evaluate_gate",
     "per_run_drift_loss",
     "run_fast_mode",
+    "run_regression_suite",
     "run_tournament",
 ]
