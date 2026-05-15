@@ -44,6 +44,7 @@ dev = [
     "ruff >= 0.5",
     "mypy >= 1.10",
     "types-jsonschema",
+    "types-protobuf",
 ]
 
 [project.scripts]
@@ -75,6 +76,20 @@ strict = true
 disallow_untyped_defs = true
 disallow_any_unimported = false
 warn_unused_ignores = true
+
+# goldfive and google.adk are runtime-optional dependencies; their
+# stubs are not on PyPI and the modules may not be importable in the
+# typecheck environment. Treat references as untyped rather than
+# erroring at import time so the typecheck still covers the rest of
+# the tree.
+[[tool.mypy.overrides]]
+module = [
+    "goldfive",
+    "goldfive.*",
+    "google",
+    "google.*",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

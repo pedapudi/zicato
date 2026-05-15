@@ -110,7 +110,7 @@ def _resolve_clean_agent(entry: BoardEntry) -> Any:
 
 async def run_clean_entry(
     entry: BoardEntry,
-    sinks: list,
+    sinks: list[Any],
     config: RuntimeConfig,
 ) -> RunResult:
     """Run a ``synthetic_clean`` board entry under ``goldfive.wrap``.

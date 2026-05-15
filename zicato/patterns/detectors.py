@@ -129,13 +129,14 @@ def _replay_events(path: Path) -> list[Any] | None:
     """
 
     try:
-        from goldfive.sinks import replay_from_jsonl  # type: ignore[import-not-found]
+        from goldfive.sinks import replay_from_jsonl
     except Exception:
         return None
     if not Path(path).exists():
         return None
     try:
-        return replay_from_jsonl(path)
+        events: list[Any] = replay_from_jsonl(path)
+        return events
     except Exception:
         return None
 
@@ -150,7 +151,8 @@ def _payload_name(event: Any) -> str | None:
     """
 
     try:
-        return event.WhichOneof("payload")
+        result: str | None = event.WhichOneof("payload")
+        return result
     except Exception:
         return None
 

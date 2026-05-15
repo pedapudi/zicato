@@ -198,11 +198,15 @@ def _load_events_as_dicts(events_jsonl_path: Path) -> list[dict[str, Any]]:
     events = replay_from_jsonl(events_jsonl_path)
     out = []
     for evt in events:
+        # MessageToDict renamed ``including_default_value_fields`` to
+        # ``always_print_fields_with_no_presence`` in newer protobuf
+        # releases. We default the value to False either way, which is
+        # the historical behaviour, so just leaving the kwarg out is
+        # the version-portable choice.
         d = MessageToDict(
             evt,
             preserving_proto_field_name=True,
             use_integers_for_enums=False,
-            including_default_value_fields=False,
         )
         out.append(d)
     return out
@@ -328,7 +332,7 @@ def _has_shared_substring(a: str, b: str, min_len: int) -> bool:
     return False
 
 
-def _trigrams(text: str) -> Counter:
+def _trigrams(text: str) -> Counter[str]:
     """Character-trigram bag of ``text`` after a light normalisation.
 
     We lowercase and collapse whitespace before chunking, so phrasing
@@ -341,7 +345,7 @@ def _trigrams(text: str) -> Counter:
     return Counter(norm[i : i + 3] for i in range(len(norm) - 2))
 
 
-def _cosine(a: Counter, b: Counter) -> float:
+def _cosine(a: Counter[str], b: Counter[str]) -> float:
     """Cosine similarity between two trigram bags. Returns 0.0 on empty input."""
     if not a or not b:
         return 0.0
@@ -357,7 +361,7 @@ def _cosine(a: Counter, b: Counter) -> float:
     norm_b = sum(v * v for v in b.values()) ** 0.5
     if norm_a == 0 or norm_b == 0:
         return 0.0
-    return dot / (norm_a * norm_b)
+    return float(dot / (norm_a * norm_b))
 
 
 def _memory_failure_count(agent_turns: list[str]) -> int:

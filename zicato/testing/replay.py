@@ -56,7 +56,8 @@ def replay_events(jsonl_path: Path) -> list[Any]:
             "skip the test with pytest.importorskip('goldfive')."
         ) from exc
 
-    return replay_from_jsonl(jsonl_path)
+    events: list[Any] = replay_from_jsonl(jsonl_path)
+    return events
 
 
 def events_to_dicts(events: list[Any]) -> list[dict[str, Any]]:

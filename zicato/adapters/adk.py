@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.util
 import logging
 import sys
 import time
@@ -356,7 +357,7 @@ class ADKRunnableHarness:
         scripted driver above.
         """
         try:
-            from zicato import emulator  # type: ignore[attr-defined]
+            from zicato import emulator
         except ImportError:
             return RunResult(
                 run_id=run_id,

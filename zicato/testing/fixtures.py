@@ -389,7 +389,7 @@ def _try_import_goldfive_proto() -> Any | None:
     proto-canonical JSONL writer and the permissive dict-JSONL fallback.
     """
     try:
-        from goldfive.pb.goldfive.v1 import events_pb2  # type: ignore[import-not-found]
+        from goldfive.pb.goldfive.v1 import events_pb2
     except ImportError:
         return None
     return events_pb2
@@ -503,12 +503,12 @@ def make_synthetic_events_jsonl(
             kind_enum = getattr(events_pb2, proto_kind_name, None)
             if kind_enum is None:
                 # Fallback: look it up via the generated DriftKind descriptor.
-                from goldfive.pb.goldfive.v1 import types_pb2  # type: ignore[import-not-found]
+                from goldfive.pb.goldfive.v1 import types_pb2
 
                 kind_enum = getattr(types_pb2, proto_kind_name)
             sev_enum = getattr(events_pb2, proto_severity_name, None)
             if sev_enum is None:
-                from goldfive.pb.goldfive.v1 import types_pb2  # type: ignore[import-not-found]
+                from goldfive.pb.goldfive.v1 import types_pb2
 
                 sev_enum = getattr(types_pb2, proto_severity_name)
             evt.drift_detected.kind = kind_enum
@@ -531,7 +531,7 @@ def make_synthetic_events_jsonl(
             kind_enum = getattr(events_pb2, proto_kind_name, None)
             sev_enum = getattr(events_pb2, proto_severity_name, None)
             if kind_enum is None or sev_enum is None:
-                from goldfive.pb.goldfive.v1 import types_pb2  # type: ignore[import-not-found]
+                from goldfive.pb.goldfive.v1 import types_pb2
 
                 kind_enum = getattr(types_pb2, proto_kind_name)
                 sev_enum = getattr(types_pb2, proto_severity_name)

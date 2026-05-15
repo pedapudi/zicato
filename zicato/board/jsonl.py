@@ -270,5 +270,5 @@ __all__ = [
 
 # ``asdict`` and ``Mapping`` referenced for forward-compat with future
 # adapters that want to lean on the dataclass machinery directly.
-_ = asdict
-_ = Mapping
+_asdict_ref: Any = asdict
+_mapping_ref: Any = Mapping

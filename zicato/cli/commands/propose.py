@@ -55,7 +55,8 @@ def _load_workspace_config(workspace_dir: Path) -> dict[str, Any]:
             f"No workspace config at {config_path}. Run `zicato register` first."
         )
     try:
-        return json.loads(config_path.read_text(encoding="utf-8"))
+        loaded: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
+        return loaded
     except json.JSONDecodeError as exc:
         raise click.ClickException(f"Could not parse {config_path}: {exc}") from exc
 
@@ -269,7 +270,7 @@ async def _missing_aux_llm(_system: str, _user: str, _model: str) -> str:
     )
 
 
-def _resolve_aux_llm(config: dict[str, Any]):
+def _resolve_aux_llm(config: dict[str, Any]) -> Any:
     """Look up the auxiliary LLM callable from the workspace config.
 
     The config field ``"auxiliary_call_llm"`` is a dotted import path

@@ -83,15 +83,19 @@ def _find_constant_after(
     return best
 
 
-def _replace_node_text(file_path: Path, node: ast.AST, new_text: str) -> None:
+def _replace_node_text(
+    file_path: Path,
+    node: ast.expr | ast.stmt,
+    new_text: str,
+) -> None:
     """Replace the substring covered by ``node`` with ``new_text``."""
 
     text = file_path.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     line_start = node.lineno
-    line_end = getattr(node, "end_lineno", line_start) or line_start
+    line_end = node.end_lineno or line_start
     col_start = node.col_offset
-    col_end = getattr(node, "end_col_offset", None)
+    col_end = node.end_col_offset
     if col_end is None:
         # Fall back to end-of-line if the parser didn't give us a column.
         col_end = len(lines[line_end - 1].rstrip("\n").rstrip("\r"))

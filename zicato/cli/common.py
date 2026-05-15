@@ -102,7 +102,7 @@ def _config_path(workspace_root: Path) -> Path:
     return workspace_root / CONFIG_FILENAME
 
 
-def write_workspace_config(workspace_root: Path, config: dict) -> None:
+def write_workspace_config(workspace_root: Path, config: dict[str, Any]) -> None:
     """Atomically write ``config.json`` under ``workspace_root``.
 
     The workspace directory must already exist. Writes through a
@@ -118,7 +118,7 @@ def write_workspace_config(workspace_root: Path, config: dict) -> None:
     tmp.replace(target)
 
 
-def read_workspace_config(workspace_root: Path) -> dict:
+def read_workspace_config(workspace_root: Path) -> dict[str, Any]:
     """Read ``config.json`` from ``workspace_root`` and return it.
 
     Returns an empty dict if the file is missing — callers that *require*
@@ -128,7 +128,8 @@ def read_workspace_config(workspace_root: Path) -> dict:
     target = _config_path(workspace_root)
     if not target.exists():
         return {}
-    return json.loads(target.read_text())
+    result: dict[str, Any] = json.loads(target.read_text())
+    return result
 
 
 def workspace_is_initialized(workspace_root: Path) -> bool:

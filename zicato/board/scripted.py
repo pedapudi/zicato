@@ -56,7 +56,7 @@ import asyncio
 import inspect
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from zicato.core.types import BoardEntry, RunResult, RuntimeConfig
@@ -79,7 +79,7 @@ class ScriptedMultiTurnDriver:
         self,
         harness: Any,
         entry: BoardEntry,
-        sinks: list,
+        sinks: list[Any],
         config: RuntimeConfig,
     ) -> RunResult:
         """Play ``entry.turns`` against ``harness`` and return the accumulated result.
@@ -195,7 +195,7 @@ class ScriptedMultiTurnDriver:
 
 def _resolve_invoker(
     harness: Any,
-    sinks: list,
+    sinks: list[Any],
     config: RuntimeConfig,
 ) -> Callable[[str], Awaitable[Any]]:
     """Return an async callable that takes a user message and returns the agent's reply.
@@ -222,6 +222,7 @@ def _resolve_invoker(
                 f"got {type(harness).__name__}"
             )
 
+    params: Mapping[str, Any]
     try:
         sig = inspect.signature(method)
         params = sig.parameters
@@ -263,4 +264,24 @@ def _coerce_reply(reply: Any) -> str:
     return str(reply)
 
 
-__all__ = ["ScriptedMultiTurnDriver"]
+async def run_scripted(
+    agent: Any,
+    entry: BoardEntry,
+    sinks: list[Any],
+    config: RuntimeConfig,
+    run_id: str,
+) -> RunResult:
+    """Free-function entrypoint over :class:`ScriptedMultiTurnDriver`.
+
+    Provided for harness adapters that want to call a single function
+    rather than instantiating the driver themselves. The ``run_id``
+    argument is accepted for compatibility with the adapter surface
+    but is currently informational — the driver mints its own
+    correlation id internally.
+    """
+    del run_id  # accepted for API parity with run_emulated; not used yet
+    driver = ScriptedMultiTurnDriver()
+    return await driver.drive(harness=agent, entry=entry, sinks=sinks, config=config)
+
+
+__all__ = ["ScriptedMultiTurnDriver", "run_scripted"]

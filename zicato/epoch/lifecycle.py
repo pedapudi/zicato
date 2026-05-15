@@ -41,6 +41,7 @@ import sys
 import warnings
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from zicato.core.types import EpochConfig, ScoringWeights
 from zicato.core.workspace import (
@@ -117,7 +118,7 @@ def _make_epoch_id(workspace_root: Path, name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _scoring_to_dict(weights: ScoringWeights) -> dict:
+def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
     return {
         "drift_weight": weights.drift_weight,
         "pass_weight": weights.pass_weight,
@@ -130,7 +131,7 @@ def _scoring_to_dict(weights: ScoringWeights) -> dict:
     }
 
 
-def _scoring_from_dict(d: dict) -> ScoringWeights:
+def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     raw_sev = d.get("severity_weights")
     if raw_sev:
         severity = {str(k): float(v) for k, v in raw_sev.items()}
@@ -159,7 +160,7 @@ def _scoring_from_dict(d: dict) -> ScoringWeights:
     )
 
 
-def _config_to_dict(cfg: EpochConfig) -> dict:
+def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
     return {
         "id": cfg.id,
         "name": cfg.name,
@@ -172,7 +173,7 @@ def _config_to_dict(cfg: EpochConfig) -> dict:
     }
 
 
-def _config_from_dict(d: dict) -> EpochConfig:
+def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
     return EpochConfig(
         id=d["id"],
         name=d["name"],

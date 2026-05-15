@@ -217,7 +217,7 @@ def _transcript_from_outcome(outcome: Any, fallback_final: str) -> tuple[str, ..
 async def _run_under_wrap(
     agent: Any,
     user_input: str,
-    sinks: list,
+    sinks: list[Any],
     config: RuntimeConfig,
 ) -> Any:
     """Drive ``agent`` through ``goldfive.wrap(...).run(user_input)``.
@@ -226,7 +226,7 @@ async def _run_under_wrap(
     not require goldfive to be available — only this function does.
     """
     try:
-        import goldfive  # type: ignore[import-not-found]
+        import goldfive
     except ImportError as exc:  # pragma: no cover - exercised when goldfive missing
         raise AdversarialResolutionError(
             "goldfive is not importable; install the 'goldfive' package "
@@ -243,7 +243,7 @@ async def _run_under_wrap(
 
 async def run_adversarial_entry(
     entry: BoardEntry,
-    sinks: list,
+    sinks: list[Any],
     config: RuntimeConfig,
 ) -> RunResult:
     """Run a ``synthetic_adversarial`` board entry under ``goldfive.wrap``.

@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from zicato.core.workspace import (
     analysis_path,
@@ -86,7 +87,7 @@ def _slice(text: str, limit: int) -> str:
     return text[:limit] + "\n\n... [truncated for analysis pass]"
 
 
-def _collect_experiments(workspace_root: Path, epoch_id: str) -> list[dict]:
+def _collect_experiments(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
     """Read every ``experiment.json`` under the epoch's ``generations/``.
 
     Returns dicts in lineage order (sorted by generation id). Files that
@@ -96,7 +97,7 @@ def _collect_experiments(workspace_root: Path, epoch_id: str) -> list[dict]:
     gens_root = epoch_dir(workspace_root, epoch_id) / "generations"
     if not gens_root.exists():
         return []
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for gen_dir in sorted(gens_root.iterdir()):
         if not gen_dir.is_dir():
             continue
@@ -132,9 +133,9 @@ def _collect_patterns_snapshot(workspace_root: Path, epoch_id: str) -> str:
     return "\n\n".join(parts)
 
 
-def _format_experiment(d: dict) -> str:
+def _format_experiment(d: dict[str, Any]) -> str:
     """Compact one experiment dict down to its journal-relevant fields."""
-    keep: dict = {}
+    keep: dict[str, Any] = {}
     for k in (
         "id",
         "generation_id",
@@ -151,7 +152,7 @@ def _format_experiment(d: dict) -> str:
 def _compose_user_prompt(
     epoch_id: str,
     journal_text: str,
-    experiments: list[dict],
+    experiments: list[dict[str, Any]],
     patterns_text: str,
 ) -> str:
     """Assemble the prompt body. Order: journal, experiments, patterns."""

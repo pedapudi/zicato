@@ -118,7 +118,7 @@ async def _run_single(
     session = adapter.load(generation.snapshot_root)
     await session.run(entry, sink_path)
 
-    loss = reducer_module.reduce_loss(
+    loss: LossProfile = reducer_module.reduce_loss(
         events_jsonl_path=sink_path,
         entry_id=entry.id,
         generation_id=generation.id,

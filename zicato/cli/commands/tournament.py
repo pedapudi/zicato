@@ -32,6 +32,7 @@ import asyncio
 import dataclasses
 import json
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -128,7 +129,7 @@ def tournament_cmd(
     click.echo(json.dumps(payload, default=str, indent=2, sort_keys=True))
 
 
-def _resolve_workspace_components(workspace_root: Path):  # type: ignore[no-untyped-def]
+def _resolve_workspace_components(workspace_root: Path) -> tuple[Any, Any, Any]:
     """Locate the workspace's loader / adapter / runtime factories.
 
     Wired lazily because the modules involved are owned by parallel
@@ -138,11 +139,14 @@ def _resolve_workspace_components(workspace_root: Path):  # type: ignore[no-unty
     a directionally-useful error instead of a stack trace.
     """
     try:
-        from zicato import (  # noqa: PLC0415
+        # These modules are owned by later workstreams and may not be
+        # in the tree at typecheck time. mypy can't see the runtime
+        # ImportError fallback, so the attribute lookups are silenced.
+        from zicato import (  # type: ignore[attr-defined]  # noqa: PLC0415
             adapter_factory,
             runtime_factory,
         )
-        from zicato import (
+        from zicato import (  # type: ignore[attr-defined]
             workspace_loader as loader,
         )
     except ImportError as exc:  # pragma: no cover — exercised once those modules land

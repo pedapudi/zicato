@@ -39,16 +39,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from zicato.core.types import EpochConfig, Generation
 from zicato.core.workspace import lineage_path
 
 
-def _empty() -> dict:
+def _empty() -> dict[str, Any]:
     return {"epochs": []}
 
 
-def _load_raw(workspace_root: Path) -> dict:
+def _load_raw(workspace_root: Path) -> dict[str, Any]:
     path = lineage_path(workspace_root)
     if not path.exists():
         return _empty()
@@ -61,16 +62,17 @@ def _load_raw(workspace_root: Path) -> dict:
     return d
 
 
-def _save_raw(workspace_root: Path, raw: dict) -> None:
+def _save_raw(workspace_root: Path, raw: dict[str, Any]) -> None:
     path = lineage_path(workspace_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(raw, indent=2, sort_keys=True))
 
 
-def _find_epoch(raw: dict, epoch_id: str) -> dict | None:
+def _find_epoch(raw: dict[str, Any], epoch_id: str) -> dict[str, Any] | None:
     for entry in raw["epochs"]:
         if entry.get("id") == epoch_id:
-            return entry
+            result: dict[str, Any] = entry
+            return result
     return None
 
 
@@ -171,9 +173,10 @@ def append_to_lineage(
 # ---------------------------------------------------------------------------
 
 
-def load_lineage(workspace_root: Path) -> dict:
+def load_lineage(workspace_root: Path) -> dict[str, Any]:
     """Return the full lineage DAG as a nested dict (a deep copy)."""
-    return json.loads(json.dumps(_load_raw(workspace_root)))
+    result: dict[str, Any] = json.loads(json.dumps(_load_raw(workspace_root)))
+    return result
 
 
 def render_lineage_summary(workspace_root: Path) -> str:
