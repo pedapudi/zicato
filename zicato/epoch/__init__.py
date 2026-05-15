@@ -1,0 +1,60 @@
+"""Epoch lifecycle, journaling, analysis, and lineage.
+
+The epoch is the unit of evaluation contract: a frozen board, a frozen
+rubric, and a frozen scoring configuration. Generations within an epoch
+are directly comparable; cross-epoch comparison is fuzzy. Pattern
+aggregates reset at epoch boundaries.
+
+This subpackage owns four concerns:
+
+* :mod:`zicato.epoch.lifecycle` — create / close / list / switch.
+* :mod:`zicato.epoch.journal` — append-only narrative per experiment.
+* :mod:`zicato.epoch.analysis` — at-close LLM retrospective.
+* :mod:`zicato.epoch.lineage` — cross-cutting DAG persisted to
+  ``.zicato/lineage.json``.
+
+Downstream callers should import from ``zicato.epoch`` rather than the
+individual submodules so the surface stays stable.
+"""
+
+from __future__ import annotations
+
+from zicato.epoch.analysis import REQUIRED_SECTIONS, generate_analysis
+from zicato.epoch.journal import append_journal_entry, read_journal
+from zicato.epoch.lifecycle import (
+    close_epoch,
+    current_epoch_id,
+    list_epochs,
+    load_epoch,
+    new_epoch,
+    switch_epoch,
+)
+from zicato.epoch.lineage import (
+    append_to_lineage,
+    load_lineage,
+    mark_closed,
+    register_epoch,
+    render_lineage_summary,
+)
+
+__all__ = [
+    # lifecycle
+    "new_epoch",
+    "close_epoch",
+    "list_epochs",
+    "switch_epoch",
+    "current_epoch_id",
+    "load_epoch",
+    # journal
+    "append_journal_entry",
+    "read_journal",
+    # analysis
+    "REQUIRED_SECTIONS",
+    "generate_analysis",
+    # lineage
+    "register_epoch",
+    "mark_closed",
+    "append_to_lineage",
+    "load_lineage",
+    "render_lineage_summary",
+]
