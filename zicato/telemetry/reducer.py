@@ -181,22 +181,48 @@ def _load_events_as_dicts(events_jsonl_path: Path) -> list[dict[str, Any]]:
     ``use_integers_for_enums=False`` so we get the uppercase enum names
     that ``_normalize_*`` already handle.
     """
-    try:
-        from goldfive.sinks.persistence import replay_from_jsonl
-        from google.protobuf.json_format import MessageToDict
-    except ModuleNotFoundError:
-        # Plain-JSON fallback. Each line is a MessageToJson dict already.
+    def _plain_json_fallback() -> list[dict[str, Any]]:
+        """Read the JSONL with vanilla :mod:`json`, skipping malformed lines.
+
+        Each readable line is treated as a ``MessageToJson`` dict already
+        (the JSON form goldfive's persistence sink writes). Lines whose
+        payload mixes the two serialisation conventions goldfive emits
+        (camelCase ``"emittedAt": "ISO string"`` for some events,
+        snake_case ``"emitted_at": {seconds, nanos}`` for others) still
+        survive — the reducer's downstream consumers only inspect
+        payload keys, not the envelope timestamps, so we tolerate either
+        shape rather than aborting the whole replay on a strict-parse
+        failure.
+        """
+
         out: list[dict[str, Any]] = []
         with open(events_jsonl_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-                out.append(json.loads(line))
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
         return out
 
-    events = replay_from_jsonl(events_jsonl_path)
-    out = []
+    try:
+        from goldfive.sinks.persistence import replay_from_jsonl
+        from google.protobuf.json_format import MessageToDict
+    except ModuleNotFoundError:
+        return _plain_json_fallback()
+
+    try:
+        events = replay_from_jsonl(events_jsonl_path)
+    except Exception:  # noqa: BLE001 — goldfive's strict parser is brittle
+        # Strict proto-parse failed (typically because goldfive's sink
+        # emitted a mix of camelCase and snake_case event shapes within
+        # one JSONL file). Fall back to plain JSON so the reducer still
+        # produces a loss profile.
+        return _plain_json_fallback()
+
+    out: list[dict[str, Any]] = []
     for evt in events:
         # MessageToDict renamed ``including_default_value_fields`` to
         # ``always_print_fields_with_no_presence`` in newer protobuf
