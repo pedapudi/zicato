@@ -39,7 +39,11 @@ import datetime as _dt
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from zicato.runtime._atomic import atomic_write_json, atomic_write_text
+from zicato.runtime._storage import (
+    backend_for,
+    control_command_key,
+    control_log_prefix,
+)
 from zicato.runtime.paths import (
     control_dir,
     control_log_dir,
@@ -144,6 +148,16 @@ def list_pending_commands(workspace_root: Path) -> list[ControlCommand]:
 
     Half-written ``.tmp`` files (in the rare window of a racing write)
     are skipped.
+
+    The control protocol is a *directory tree* — flag files at the top
+    level, one file per target under a per-command-kind subdirectory —
+    so enumerating it is a two-level filesystem walk rather than a flat
+    keyed-record lookup. The storage backend's interface is deliberately
+    keyed records (read/write/delete by key), not a tree walker; pushing
+    a recursive-list method onto it to serve this one consumer would
+    bloat the seam. The leaf I/O — :func:`write_command`'s writes and
+    :func:`consume_command`'s audit-log write — does go through the
+    backend; the tree traversal here stays path-based on purpose.
     """
     cdir = control_dir(workspace_root)
     if not cdir.exists():
@@ -209,19 +223,24 @@ def write_command(workspace_root: Path, cmd: ControlCommand) -> Path:
       :class:`ValueError` if missing.
 
     Returns the absolute path of the written file.
+
+    The write itself goes through the storage backend's atomic
+    :meth:`~zicato.storage.StorageBackend.write_text`; the on-disk path is
+    still computed here (and returned) because the control protocol is a
+    directory-tree shape — one file per target under a per-command-kind
+    subdirectory — and callers want the concrete path back.
     """
     ensure_runtime_dirs(workspace_root)
+    backend = backend_for(workspace_root)
     cdir = control_dir(workspace_root)
 
     if cmd.name == CMD_RUBRIC_REPLACEMENT:
-        path = cdir / CMD_RUBRIC_REPLACEMENT
-        atomic_write_text(path, cmd.payload)
-        return path
+        backend.write_text(control_command_key(CMD_RUBRIC_REPLACEMENT), cmd.payload)
+        return cdir / CMD_RUBRIC_REPLACEMENT
 
     if cmd.name in (CMD_PAUSE_EPOCH, CMD_SKIP_ROUND):
-        path = cdir / cmd.name
-        atomic_write_text(path, "")
-        return path
+        backend.write_text(control_command_key(cmd.name), "")
+        return cdir / cmd.name
 
     # Targeted command. Require an arg.
     if not cmd.arg:
@@ -229,11 +248,8 @@ def write_command(workspace_root: Path, cmd: ControlCommand) -> Path:
             f"control command {cmd.name!r} requires a non-empty arg "
             "(e.g. run_id for kill_runs, generation_id for promote/reject)"
         )
-    target_dir = cdir / cmd.name
-    target_dir.mkdir(parents=True, exist_ok=True)
-    path = target_dir / cmd.arg
-    atomic_write_text(path, "")
-    return path
+    backend.write_text(control_command_key(f"{cmd.name}/{cmd.arg}"), "")
+    return cdir / cmd.name / cmd.arg
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +300,7 @@ def consume_command(
         "reason": reason,
         "original_file_path": str(cmd.file_path),
     }
-    atomic_write_json(log_path, record)
+    backend_for(workspace_root).write_json(f"{control_log_prefix()}/{log_name}", record)
     # Delete the source AFTER the log is durable.
     if cmd.file_path != Path() and cmd.file_path.exists():
         try:
