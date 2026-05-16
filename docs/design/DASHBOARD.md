@@ -205,12 +205,83 @@ Event IDs are monotonic per dashboard session. The browser stores
 the last ID it saw in `localStorage` so a reload reconnects
 without missing events.
 
+### 3.4 Data sourcing: files-canonical, index-derived
+
+zicato persistence is **files-canonical, index-derived**. This is
+a load-bearing rule for the dashboard, and getting it wrong is a
+real bug class — it produced a blank Tournament view mid-run (see
+below). The rule:
+
+> **Live dashboard state MUST read the JSON / JSONL files (or the
+> live endpoints that wrap them). Only resolved historical and
+> analytical queries may read `index.db`.**
+
+There are two tiers of storage, and they are refreshed on
+different cadences:
+
+| Tier | Files | Written | Read for |
+|---|---|---|---|
+| **Canonical, live** | `runtime/active_tournament.json`, `runtime/heartbeat.json`, `runtime/active_runs/*.json`, `lineage.json`, per-run `events.jsonl` | Live — the moment state changes, by the orchestrator or the worker that owns the file | The live dashboard: anything that must reflect *right now* |
+| **Derived, lagging** | `index.db` (SQLite) | Dual-written at **generation/round boundaries** only (see [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live)); fully rebuildable via `zicato reindex` | Resolved historical / analytical queries: the bracket of *closed* rounds, cross-run aggregates |
+
+`index.db` is a **derived analytical cache**. It is rebuilt from
+the canonical files by `zicato reindex`, and during a live run it
+is only refreshed at generation boundaries — so mid-round it does
+not yet contain the in-flight generation or the in-progress
+tournament. It is the right source for *resolved* data (closed
+rounds, cross-run aggregates) and the wrong source for *live*
+data.
+
+**The bug this rule prevents.** The Tournament view previously
+read its in-progress matchup from `index.db`. Because the index is
+only refreshed at generation boundaries, mid-round there was no
+row for the running tournament — so the panel rendered **blank**
+for the entire duration of every round, exactly when an operator
+most wants to watch it. The fix: the Tournament view now reads
+`runtime/active_tournament.json` (via `GET /api/active-tournament`)
+live. The index is still read — but only for the bracket of rounds
+that have already *closed*.
+
+The endpoints in §6 follow this split: `/api/active-tournament`,
+`/api/active-runs`, `/api/lineage`, `/api/run-log`, and
+`/api/heartbeat` are file-backed and live; `/api/tournaments`
+(the bracket) and `/api/tournaments/{id}` (matchup detail of
+resolved rounds) read the index and degrade gracefully — a missing
+or stale `index.db` yields an empty bracket with a `note` rather
+than an error.
+
 ## 4. UI panels
 
-The dashboard is a single page with eight panels stacked
-vertically. Each panel can collapse to a one-line summary. The
-order is fixed; the most operationally relevant panels are at the
-top.
+### 4.0 View structure
+
+The dashboard is a single page with a fixed header and a
+left-hand nav rail switching between **four views**. Each view
+composes the panels described in §4.1-§4.9. The header
+(§4.1) is always visible; the nav rail routes by URL fragment
+(`#/overview`, `#/tree`, `#/tournament`, `#/epoch`).
+
+| View | Route | What it shows | Primary source |
+|---|---|---|---|
+| **Overview** | `#/overview` | The live tournament panel — parent/child entry groups with per-entry **elapsed-vs-budget** bars — plus the log tail. The operator's "what is happening right now" view. | live files: `active_tournament.json`, `active_runs/*` (via `/api/active-runs`), `/api/run-log` |
+| **Tree** | `#/tree` | The cross-epoch lineage graph, **including in-flight generations** (the proposed-but-not-yet-resolved candidate is drawn mid-run), plus the score trajectory. | `/api/lineage` (directory walk, live) |
+| **Tournament** | `#/tournament` | The competition view: the bracket (champion spine + challengers) for resolved rounds, **and the in-progress tournament rendered live**. Selecting a node opens its matchup detail. | live: `active_tournament.json` for the in-progress round; index for closed rounds |
+| **Epoch** | `#/epoch` | The epoch's evaluation contract: scoring with **nested weight dicts**, the board, the rubric, mutation paths shown **relativized** to the workspace root. | `/api/epoch` |
+
+Two behaviors are the result of fixes and are called out per-view
+below:
+
+- The **Tournament** view renders the in-progress tournament live
+  — it previously read `index.db` and so was blank for the whole
+  duration of every round (see §3.4). It now reads
+  `active_tournament.json` via `/api/active-tournament` for the
+  active round and only reads the index for the bracket of closed
+  rounds.
+- The **Tree** view includes in-flight generations because
+  `/api/lineage` walks generation directories rather than reading
+  the resolved-only `lineage.json`.
+
+The per-panel sections below (§4.1-§4.9) describe the panel
+building blocks; the table above maps them onto views.
 
 | # | Panel | What it shows |
 |---|---|---|
@@ -267,10 +338,14 @@ round's matchup hangs off it, discarded challengers are marked.
 
 Each row shows the round, the verdict (`PROM` / `DISCARD`), and
 the score delta (negative is an improvement). Promoted rounds sit
-on the spine; discarded rounds are marked `✗`. The bracket is
-driven by the `tournaments` table of the analytical index (see
+on the spine; discarded rounds are marked `✗`. The bracket of
+**resolved** rounds is driven by the `tournaments` table of the
+analytical index (see
 [ANALYTICAL-INDEX.md §3.8](ANALYTICAL-INDEX.md#38-tournaments)).
-Clicking any round opens its **matchup detail** — the hypothesis,
+The **in-progress** round at the tip of the spine is rendered
+live from `active_tournament.json`, not the index — see §3.4 for
+why this distinction is load-bearing. Clicking any round opens its
+**matchup detail** — the hypothesis,
 patches, per-entry A/B grid, scalar breakdown, and gate verdict
 (specified in [TOURNAMENT.md §3](TOURNAMENT.md#3-per-matchup-detail)).
 
@@ -303,9 +378,11 @@ drift loss, pass/fail, and the running aggregate.
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Status glyphs.** `[⋯] queued`, `[▶ N%] running` (with progress
-percent from `wall_clock_deadline` countdown), `[✓] done`, `[!]
-aborted`, `[✗] killed`.
+**Status glyphs.** `[⋯] queued`, `[▶ N%] running` (where `N%` is
+the **deadline-elapsed fraction** — how far through its
+wall-clock budget the run is, from the `wall_clock_deadline`
+countdown — not true task progress), `[✓] done`, `[!] aborted`,
+`[✗] killed`.
 
 **Predicted gate verdict.** Computed deterministically from
 partial results — no LLM in this path.
@@ -379,20 +456,29 @@ projection so operators know what to expect.)
 
 ### 4.3 Active runs list
 
-A flat table of every `active_runs/{run_id}.json`. Updated on
-every SSE `active_run_*` event.
+A flat table of every `active_runs/{run_id}.json`, served by
+`GET /api/active-runs`. Updated on every SSE `active_run_*` event.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ Active runs                                                                 │
 │                                                                             │
-│  run_id                              gen   entry          phase       %    │
-│ ──────────────────────────────────  ────  ───────────────  ──────────  ──── │
-│  e4f2_long_solar_candidate          v5    long_solar       agent       73% │
-│  e4f2_contradictory_brief_parent    v4    contradictory…   adapter…    12% │
+│  run_id                              gen   entry          phase    deadline │
+│ ──────────────────────────────────  ────  ───────────────  ───────  ──────── │
+│  e4f2_long_solar_candidate          v5    long_solar       agent     73% ▓▓▓ │
+│  e4f2_contradictory_brief_parent    v4    contradictory…   adapter…  12% ▓   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+The `deadline` bar is the run's **elapsed-vs-budget** fraction —
+`elapsed_seconds / budget_seconds`, served as the `progress`
+field — NOT a measure of how much of the task is done. A run at
+`73%` is 73% through its wall-clock budget; it may finish (or be
+escalated) at any point. The bar is `null` / absent for a run
+with no budget or no start time. See
+[§6.1 `GET /api/active-runs`](#get-apiactive-runs) for the field
+shapes.
 
 Clicking a row opens the per-run drill-down (§4.9).
 
@@ -401,8 +487,13 @@ Clicking a row opens the per-run drill-down (§4.9).
 Same renderer as `analysis.html`'s lineage graph. Nodes are
 generations, edges are parent → promoted-child relationships
 within the epoch (and dashed edges to the previous epoch's final
-generation for cross-epoch parentage). The currently-running
-candidate is highlighted with a pulse animation.
+generation for cross-epoch parentage). The graph is driven by
+`GET /api/lineage`, which walks generation directories — so it
+**includes in-flight generations**: a candidate that has been
+proposed and applied but whose tournament has not yet resolved
+appears immediately, with `promoted: null`. The
+currently-running candidate is highlighted with a pulse
+animation.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -605,8 +696,15 @@ durable audit trail.
 | Open in harmonograf | Constructs URL; no zicato state change |
 | Reload page | Re-fetches `/api/state`, opens SSE |
 
-No control surface. The dashboard cannot pause the loop, kill a
-run, or override the gate. The operator can only watch.
+No active control surface. The dashboard cannot pause the loop,
+kill a run, or override the gate; the operator can only watch.
+The orchestrator control-channel buttons — **Pause**, **Skip**,
+**Force-kill**, **Override** — do render in the v1.2 UI, but as
+**disabled previews**: they are visible so the eventual control
+surface has a place in the layout, but they are inert and the
+POST endpoints behind them (§6.2) are a **v1.3 deliverable**.
+They become live only when v1.3 lands the `control/` file
+protocol and the action surface clears its safety review.
 
 ### 5.2 Write-back via the control-file protocol (v1.3)
 
@@ -745,11 +843,91 @@ isolated refresh; cheaper than `/api/state`.
 
 #### `GET /api/active-runs`
 
-The active runs list only.
+The active runs list only. Each element carries the raw
+`active_runs/{run_id}.json` fields plus three computed fields the
+per-entry progress bars need:
+
+| Field | Meaning |
+|---|---|
+| `progress` | A `0..1` fraction, or `null`. This is the **deadline-elapsed fraction** — `elapsed / budget` clamped to `[0,1]` — NOT a measure of true task progress. A run at `progress: 0.9` is 90% through its wall-clock budget, not 90% done with its work. |
+| `elapsed_seconds` | Wall-clock seconds since the run started. |
+| `budget_seconds` | The run's wall-clock budget (`wall_clock_budget_seconds`). |
+
+`progress` is `null` when the run carries no budget or no start
+time. The dashboard renders it as an elapsed-vs-budget bar, not a
+completion bar — the distinction matters because a run can finish
+well before its deadline.
 
 #### `GET /api/lineage`
 
-Lineage DAG plus per-generation experiment summaries.
+Lineage DAG plus per-generation metadata. The response is
+`{"generations": [...]}`; each node is:
+
+```json
+{
+  "generation_id": "v5",
+  "epoch_id": "hardened_research",
+  "parent_generation_id": "v4",
+  "promoted": null,
+  "created_at": "2026-05-14T12:34:55Z"
+}
+```
+
+The view is built by walking every generation **directory** in
+every epoch, so it includes **in-flight generations** — a
+candidate that has been proposed and applied but whose tournament
+has not yet resolved. `promoted` is a tri-state:
+
+| `promoted` | Meaning |
+|---|---|
+| `true` | Generation was promoted (won its tournament). |
+| `false` | Generation was rejected. |
+| `null` | Generation is **still being scored** — tournament in flight. |
+
+The legacy `lineage.json` only lists resolved (promoted)
+generations; it is used as a fallback for a root node's
+`created_at` / `parent_generation_id`, but the directory walk is
+authoritative. This is what lets the Tree view draw `v0` plus the
+in-flight `v5` mid-run rather than waiting for the round to close.
+
+#### `GET /api/run-log?limit=N`
+
+Tails the active run's `events.jsonl` and returns the last `N`
+goldfive events for the log-tail panel. `limit` defaults to `40`
+and is clamped to `1..=500` (an absent or zero value falls back to
+the default). When there is no active run, it falls back to the
+most recent `events.jsonl` under `epochs/`.
+
+Response shape:
+
+```json
+{
+  "events": [
+    {
+      "seq": 1423,
+      "kind": "drift_detected",
+      "ts": "2026-05-14T12:35:05.412Z",
+      "summary": "CONFABULATION_RISK · sev=MEDIUM"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `seq` | The event's sequence number, or `null` if the record carries none. |
+| `kind` | The goldfive payload kind, **normalized to snake_case**. |
+| `ts` | RFC-3339 emission timestamp, or `null` if unknown. |
+| `summary` | A short human-readable summary; falls back to `kind`. |
+
+goldfive writes events in two envelope shapes — a camelCase shape
+(`steeringDecisionMade`, `taskProgress`, ...) and a normalized
+`{kind, payload, emitted_at, ...}` shape from the reducer's
+proto-reparse path. The endpoint handles both and normalizes
+every `kind` to snake_case (the same normalization as zicato#1)
+so the dashboard keys on one stable vocabulary. Every failure
+mode — missing file, truncated tail line, unparseable record —
+degrades to fewer or zero events; the endpoint never `500`s.
 
 #### `GET /api/generation/{id}`
 
@@ -765,6 +943,29 @@ Live `active_runs/{run_id}.json` plus a tail of the run's
 
 Just the log tail. Useful for an "open in new tab" experience that
 just wants the rolling event view.
+
+#### `GET /api/health`
+
+A liveness/identity endpoint for the dashboard footer and for
+process-level health checks. Always `200`:
+
+```json
+{
+  "status": "ok",
+  "version": "0.3.0",
+  "uptime_seconds": 412,
+  "read_only": false,
+  "workspace": "/home/op/myagent/.zicato",
+  "port": 7893,
+  "build": "0.3.0+g67b5fac"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `port` | The TCP port the server actually **bound** — useful because the default `:7892` walks `+1` on a port clash, so the bound port is not always the requested one. The dashboard footer shows this so the operator can confirm which port to point a browser at. |
+| `build` | A build identifier: the crate version plus a short git SHA when the build script could resolve one (`0.3.0+g67b5fac`); the bare version otherwise. Always non-empty. |
+| `read_only` | `true` when the supervisor was started with `--read-only` (post-mortem mode); the POST control endpoints return `403` in that state. |
 
 ### 6.2 POST endpoints (v1.3)
 
@@ -817,7 +1018,7 @@ teammate" tool. Either can stand alone.
 
 | Phase | What ships |
 |---|---|
-| **v1.2** | Read-only dashboard. Auto-spawn from `zicato evolve`. All GET endpoints. All 8 panels render from state files (the Tournament view, the loop-health panel, and the cross-run analytics read the analytical index). SSE for live updates. Drill-down side panels. |
+| **v1.2** | Read-only dashboard. Auto-spawn from `zicato evolve`. All GET endpoints. The four views (Overview, Tree, Tournament, Epoch). Live panels read the runtime JSON files; only the bracket of *resolved* rounds and the cross-run analytics read the analytical index (see §3.4). SSE for live updates. Drill-down side panels. The v1.3 control buttons render as disabled previews (§5.1). |
 | **v1.3** | POST endpoints (`pause`, `resume`, `skip-round`, `kill`, `promote`, `reject`, `rubric`). Control file protocol. `control_log/` audit. Gate-override confirmation UX. |
 
 The split is the same split as the runtime work — v1.2 is the
@@ -838,7 +1039,8 @@ complete.
 | The tournament competition model — bracket, per-matchup detail, analytics | [TOURNAMENT.md](TOURNAMENT.md) |
 | The harmonograf split — execution view vs competition view | [TOURNAMENT.md](TOURNAMENT.md) §5 |
 | Loop-health diagnostics behind the loop-health panel | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
-| The analytical index the Tournament view and analytics read | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
+| The analytical index — derived, refreshed at generation boundaries, read only for resolved rounds (see §3.4) | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
+| The dual-write discipline behind the files-canonical / index-derived rule | [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live) |
 | The `experiment.json` shape displayed in drill-downs | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3 |
 | Progressive `analysis.html` generation | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §5.2 |
 | Robustness layers backing the supervisor | [ROBUSTNESS.md](ROBUSTNESS.md) |
