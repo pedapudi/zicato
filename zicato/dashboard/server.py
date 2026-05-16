@@ -1,0 +1,251 @@
+"""Standalone Starlette/ASGI dashboard service for zicato.
+
+This process replaces the dashboard server that the Rust supervisor used
+to embed. The supervisor is being slimmed to a watchdog; the dashboard
+is now its own process, started by ``zicato evolve`` alongside it.
+
+The service:
+
+* serves every JSON endpoint the retired Rust supervisor served, byte
+  compatible with what the existing vanilla-JS dashboard expects;
+* serves the ``/events`` SSE stream — a ``snapshot`` then live
+  ``state_change`` / ``run_log`` frames;
+* adds two conversation endpoints for the side-by-side transcript view;
+* serves the static dashboard bundle at ``/`` and ``/static/``.
+
+Public surface:
+
+* :func:`create_app` — build the configured :class:`~starlette.applications.Starlette`
+  app.
+* :func:`run` — bind a port (walking ``+1`` if taken) and serve via
+  uvicorn.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import socket
+import time
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, Response
+from starlette.routing import Route
+
+from zicato.dashboard.endpoints import make_endpoints
+from zicato.dashboard.sse import ChangeBroker, sse_event_stream
+from zicato.dashboard.state_reader import WorkspacePaths
+
+# Index-fallback when the static bundle is missing entirely. Mirrors the
+# Rust ``static_assets::PLACEHOLDER_HTML`` so an operator still sees
+# something useful at the document root.
+_PLACEHOLDER_HTML = """<!doctype html>
+<html><head><meta charset="utf-8"><title>zicato-dashboard</title></head>
+<body style="font-family:system-ui;padding:2rem;max-width:48rem">
+<h1>zicato-dashboard</h1>
+<p>The dashboard service is running. The UI bundle was not found.
+JSON endpoints under <code>/api/</code> and the <code>/events</code>
+SSE stream are available.</p>
+<ul>
+  <li><a href="/api/state">/api/state</a></li>
+  <li><a href="/api/health">/api/health</a></li>
+</ul>
+</body></html>
+"""
+
+
+def _resolve_workspace(workspace_root: Path) -> WorkspacePaths:
+    """Normalize a workspace argument to a :class:`WorkspacePaths`.
+
+    Accepts either the ``.zicato`` directory itself or a project root
+    that contains one — so callers can pass whichever they have.
+    """
+    root = Path(workspace_root)
+    if root.name != ".zicato" and (root / ".zicato").is_dir():
+        root = root / ".zicato"
+    return WorkspacePaths(root)
+
+
+def create_app(
+    workspace_root: Path,
+    static_dir: Path,
+    *,
+    read_only: bool = True,
+) -> Starlette:
+    """Build the dashboard ASGI application.
+
+    Parameters
+    ----------
+    workspace_root:
+        The ``.zicato`` directory to read live state from (a project root
+        containing ``.zicato`` is also accepted).
+    static_dir:
+        Directory holding the dashboard UI bundle (``index.html``,
+        ``app.js``, ``style.css``, ``icons.svg``).
+    read_only:
+        When ``True`` (the default) the POST control endpoints return
+        ``403``; the GET endpoints and SSE stream are always available.
+    """
+    paths = _resolve_workspace(workspace_root)
+    static_dir = Path(static_dir)
+    started = time.monotonic()
+    broker = ChangeBroker(paths)
+
+    handlers = make_endpoints(paths, read_only=read_only, started=started)
+
+    async def events(_request: Request) -> Response:
+        from starlette.responses import StreamingResponse
+
+        return StreamingResponse(
+            sse_event_stream(broker, paths),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # Static serving. The JS references assets both at the document root
+    # (`style.css`, `app.js`) and under `/static/`, so the bundle is
+    # mounted at both. An unknown asset falls through to a 404.
+    def _serve_static(name: str) -> Response:
+        if not name or name in (".", ".."):
+            name = "index.html"
+        # Reject path traversal.
+        candidate = (static_dir / name).resolve()
+        try:
+            candidate.relative_to(static_dir.resolve())
+        except ValueError:
+            return PlainTextResponse("not found", status_code=404)
+        if candidate.is_file():
+            import mimetypes
+
+            mime, _ = mimetypes.guess_type(str(candidate))
+            return Response(
+                candidate.read_bytes(),
+                media_type=mime or "application/octet-stream",
+            )
+        if name == "index.html":
+            return Response(_PLACEHOLDER_HTML, media_type="text/html; charset=utf-8")
+        return PlainTextResponse("not found", status_code=404)
+
+    async def serve_root(_request: Request) -> Response:
+        return _serve_static("index.html")
+
+    async def serve_static_path(request: Request) -> Response:
+        return _serve_static(request.path_params["path"])
+
+    async def serve_fallback(request: Request) -> Response:
+        # index.html's relative references resolve at the document root.
+        return _serve_static(request.url.path.lstrip("/"))
+
+    routes = [
+        Route("/", serve_root),
+        Route("/api/health", handlers["api_health"]),
+        Route("/api/state", handlers["api_state"]),
+        Route("/api/epoch", handlers["api_epoch"]),
+        Route("/api/lineage", handlers["api_lineage"]),
+        Route("/api/run-log", handlers["api_run_log"]),
+        Route("/api/active-runs", handlers["api_active_runs"]),
+        Route("/api/active-tournament", handlers["api_active_tournament"]),
+        Route("/api/heartbeat", handlers["api_heartbeat"]),
+        Route("/api/tournaments", handlers["api_tournaments"]),
+        Route(
+            "/api/tournaments/{generation_id}",
+            handlers["api_tournament_detail"],
+        ),
+        Route("/api/health-report", handlers["api_health_report"]),
+        Route("/api/conversation/{run_id}", handlers["api_conversation"]),
+        Route(
+            "/api/matchup/{entry_id}/conversations",
+            handlers["api_matchup_conversations"],
+        ),
+        Route("/events", events),
+        Route("/api/control/pause", handlers["control_pause"], methods=["POST"]),
+        Route(
+            "/api/control/skip-round",
+            handlers["control_skip_round"],
+            methods=["POST"],
+        ),
+        Route(
+            "/api/control/kill/{run_id}",
+            handlers["control_kill"],
+            methods=["POST"],
+        ),
+        Route(
+            "/api/control/promote/{generation_id}",
+            handlers["control_promote"],
+            methods=["POST"],
+        ),
+        Route(
+            "/api/control/reject/{generation_id}",
+            handlers["control_reject"],
+            methods=["POST"],
+        ),
+        Route("/api/control/rubric", handlers["control_rubric"], methods=["POST"]),
+        Route("/static/{path:path}", serve_static_path),
+        # Any unmatched GET is treated as a request for a bundled asset
+        # so index.html's root-relative references resolve.
+        Route("/{path:path}", serve_fallback),
+    ]
+
+    @contextlib.asynccontextmanager
+    async def _lifespan(_app: Starlette) -> AsyncIterator[None]:
+        await broker.start()
+        try:
+            yield
+        finally:
+            await broker.stop()
+
+    app = Starlette(routes=routes, lifespan=_lifespan)
+    app.state.bound_port = 0
+    app.state.broker = broker
+    app.state.workspace = paths
+    return app
+
+
+def _pick_port(host: str, preferred_port: int, max_retries: int = 10) -> int:
+    """Return the first free port in ``preferred..preferred+max_retries``.
+
+    Matches the Rust supervisor's ``build_listener`` retry walk: a port
+    already in use is skipped and the next is tried. The probe socket
+    deliberately does NOT set ``SO_REUSEADDR`` so a genuinely-bound port
+    is detected as occupied rather than silently re-bound.
+    """
+    last_err: OSError | None = None
+    for offset in range(max_retries + 1):
+        port = preferred_port + offset
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind((host, port))
+            return port
+        except OSError as exc:
+            last_err = exc
+        finally:
+            sock.close()
+    raise last_err or OSError("no port available")
+
+
+def run(
+    workspace_root: Path,
+    host: str,
+    port: int,
+    static_dir: Path,
+) -> None:
+    """Serve the dashboard via uvicorn.
+
+    Binds the given ``port``, walking ``+1`` up to ten times if it is
+    already in use (mirroring the supervisor's behavior). The dashboard
+    runs read-only when served standalone — the control POST endpoints
+    are enabled by ``create_app(..., read_only=False)``.
+    """
+    import uvicorn
+
+    bound_port = _pick_port(host, port)
+    app = create_app(workspace_root, static_dir, read_only=False)
+    app.state.bound_port = bound_port
+
+    uvicorn.run(app, host=host, port=bound_port, log_level="info")
