@@ -13,6 +13,14 @@ Every writer is atomic (``.tmp`` + ``fsync`` + ``os.replace``); see
 :mod:`zicato.runtime._atomic`. Readers tolerate missing files and return
 ``None`` so the supervisor can run against a workspace that has never
 booted an orchestrator.
+
+Persistence is routed through :class:`zicato.storage.StorageBackend` —
+the canonical file backend by default (see :mod:`zicato.runtime._storage`).
+The public helpers below keep their ``workspace_root: Path`` signatures
+unchanged; internally each constructs the workspace's backend and
+addresses records by logical key. The on-disk layout and the
+atomic-write discipline are byte-identical to the pre-seam
+implementation — a caller cannot tell the difference.
 """
 
 from __future__ import annotations
@@ -22,14 +30,14 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from zicato.runtime._atomic import atomic_write_json, read_json
-from zicato.runtime.paths import (
-    active_run_path,
-    active_runs_dir,
-    active_tournament_path,
-    ensure_runtime_dirs,
-    heartbeat_path,
+from zicato.runtime._storage import (
+    active_run_key,
+    active_runs_prefix,
+    active_tournament_key,
+    backend_for,
+    heartbeat_key,
 )
+from zicato.runtime.paths import ensure_runtime_dirs
 
 
 def _utc_now_iso() -> str:
@@ -137,7 +145,7 @@ class Heartbeat:
 
 def read_heartbeat(workspace_root: Path) -> Heartbeat | None:
     """Read ``heartbeat.json`` or return ``None`` if it does not exist."""
-    raw = read_json(heartbeat_path(workspace_root))
+    raw = backend_for(workspace_root).read_json(heartbeat_key())
     if raw is None:
         return None
     return Heartbeat.from_dict(raw)
@@ -150,7 +158,7 @@ def write_heartbeat(workspace_root: Path, hb: Heartbeat) -> None:
     callers don't need to call :func:`ensure_runtime_dirs` first.
     """
     ensure_runtime_dirs(workspace_root)
-    atomic_write_json(heartbeat_path(workspace_root), hb.to_dict())
+    backend_for(workspace_root).write_json(heartbeat_key(), hb.to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -245,17 +253,13 @@ def list_active_runs(workspace_root: Path) -> list[ActiveRun]:
     list when the directory does not exist or contains no run files.
 
     Half-written ``.tmp`` files (in the rare window of a racing write)
-    are skipped — :mod:`zicato.runtime._atomic` writes them with the
-    ``.tmp`` suffix and we glob for ``*.json`` only.
+    are skipped — the storage backend's :meth:`~zicato.storage.StorageBackend.list_keys`
+    excludes the ``.tmp`` artefacts an atomic write leaves behind.
     """
-    runs_dir = active_runs_dir(workspace_root)
-    if not runs_dir.exists():
-        return []
+    backend = backend_for(workspace_root)
     out: list[ActiveRun] = []
-    for entry in sorted(runs_dir.iterdir()):
-        if entry.suffix != ".json":
-            continue
-        raw = read_json(entry)
+    for key in backend.list_keys(active_runs_prefix()):
+        raw = backend.read_json(key)
         if raw is None:
             continue
         out.append(ActiveRun.from_dict(raw))
@@ -265,32 +269,31 @@ def list_active_runs(workspace_root: Path) -> list[ActiveRun]:
 def write_active_run(workspace_root: Path, run: ActiveRun) -> None:
     """Atomically write one run's state file."""
     ensure_runtime_dirs(workspace_root)
-    atomic_write_json(active_run_path(workspace_root, run.run_id), run.to_dict())
+    backend_for(workspace_root).write_json(active_run_key(run.run_id), run.to_dict())
 
 
 def remove_active_run(workspace_root: Path, run_id: str) -> None:
     """Delete one run's state file. Idempotent if already gone."""
-    path = active_run_path(workspace_root, run_id)
-    if path.exists():
-        path.unlink()
+    backend_for(workspace_root).delete(active_run_key(run_id))
 
 
 def touch_active_run_progress(workspace_root: Path, run_id: str) -> None:
     """Bump ``last_progress`` on one run's state file.
 
     Cheap helper for the orchestrator's per-event hook. Reads the
-    existing file, replaces the timestamp field, atomically writes it
-    back. If the file does not exist (e.g. the run already finished
+    existing record, replaces the timestamp field, atomically writes it
+    back. If the record does not exist (e.g. the run already finished
     and the cleanup beat the event hook), the call is a no-op rather
     than an error — that race is benign.
     """
-    path = active_run_path(workspace_root, run_id)
-    raw = read_json(path)
+    backend = backend_for(workspace_root)
+    key = active_run_key(run_id)
+    raw = backend.read_json(key)
     if raw is None:
         return
     current = ActiveRun.from_dict(raw)
     bumped = replace(current, last_progress=_utc_now_iso())
-    atomic_write_json(path, bumped.to_dict())
+    backend.write_json(key, bumped.to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +441,7 @@ class ActiveTournament:
 
 def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
     """Read the active-tournament JSON or return ``None`` if absent."""
-    raw = read_json(active_tournament_path(workspace_root))
+    raw = backend_for(workspace_root).read_json(active_tournament_key())
     if raw is None:
         return None
     return ActiveTournament.from_dict(raw)
@@ -447,22 +450,26 @@ def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
 def write_active_tournament(workspace_root: Path, t: ActiveTournament) -> None:
     """Atomically write the active-tournament JSON."""
     ensure_runtime_dirs(workspace_root)
-    atomic_write_json(active_tournament_path(workspace_root), t.to_dict())
+    backend_for(workspace_root).write_json(active_tournament_key(), t.to_dict())
 
 
-def update_tournament_entry(workspace_root: Path, entry_id: str, **updates: Any) -> None:
+def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **updates: Any) -> None:
     """Update one entry inside the active tournament.
 
-    Reads the current tournament JSON, replaces every entry whose
-    :attr:`ActiveTournamentEntry.entry_id` matches with the per-field
-    overrides supplied as keyword arguments, and atomically writes the
-    result. If no tournament file exists, the call is a no-op (rather
-    than an error) — the orchestrator may not have initialized one yet.
+    Reads the current tournament JSON, replaces the entry matching the
+    ``(entry_id, side)`` pair with the per-field overrides supplied as
+    keyword arguments, and atomically writes the result. If no
+    tournament file exists, the call is a no-op (rather than an error) —
+    the orchestrator may not have initialized one yet.
 
-    Multiple rows can share an ``entry_id`` (one per side) and the
-    updater touches every matching row. Callers that need per-side
-    targeting should call twice with different ``side=...`` payloads
-    in :func:`write_active_tournament` before transition.
+    Each board entry appears TWICE in :attr:`ActiveTournament.entries` —
+    once with ``side="parent"`` and once with ``side="child"``. Matching
+    on ``entry_id`` alone would land a parent-side transition on the
+    child row (or both rows), so the ``side`` is part of the key. Only
+    the FIRST row matching the pair is updated; if two rows somehow
+    still share the same ``(entry_id, side)`` the later duplicates are
+    left untouched rather than crashing — the call stays a benign no-op
+    on a malformed tournament file.
 
     Special-cased fields are passed through :class:`dataclasses.replace`
     so unknown keyword names raise :class:`TypeError` — the call site
@@ -471,16 +478,21 @@ def update_tournament_entry(workspace_root: Path, entry_id: str, **updates: Any)
     current = read_active_tournament(workspace_root)
     if current is None:
         return
-    new_entries = [replace(e, **updates) if e.entry_id == entry_id else e for e in current.entries]
+    new_entries: list[ActiveTournamentEntry] = []
+    updated = False
+    for e in current.entries:
+        if not updated and e.entry_id == entry_id and e.side == side:
+            new_entries.append(replace(e, **updates))
+            updated = True
+        else:
+            new_entries.append(e)
     new = replace(current, entries=new_entries)
     write_active_tournament(workspace_root, new)
 
 
 def clear_active_tournament(workspace_root: Path) -> None:
     """Remove the active-tournament JSON. Idempotent."""
-    path = active_tournament_path(workspace_root)
-    if path.exists():
-        path.unlink()
+    backend_for(workspace_root).delete(active_tournament_key())
 
 
 __all__ = [

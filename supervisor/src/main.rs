@@ -3,11 +3,12 @@
 use clap::Parser;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
 use tracing::{error, info};
-use zicato_supervisor::{log, reader, server, watchdog, watcher};
+use zicato_supervisor::{action_log::WatchdogLog, log, reader, server, watchdog, watcher};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -31,6 +32,12 @@ struct Cli {
     /// Disable control-file writing (POST endpoints return 403)
     #[arg(long, default_value_t = false)]
     read_only: bool,
+
+    /// Run as the watchdog only: do not mount the dashboard UI, the
+    /// analytical `/api/*` routes, the SSE stream, or the control
+    /// endpoints. The watchdog's own `/statusz` surface stays available.
+    #[arg(long, default_value_t = false)]
+    no_dashboard: bool,
 
     /// Heartbeat staleness check interval (seconds)
     #[arg(long, default_value_t = 2)]
@@ -135,16 +142,26 @@ async fn main() -> std::process::ExitCode {
     if cli.run_deadline_kill_disabled {
         info!("per-run wall-clock deadline enforcement is disabled");
     }
+    if cli.no_dashboard {
+        info!("watchdog-only mode: dashboard routes disabled; /statusz still served");
+    }
+
+    // Shared in-memory ring buffer: the watchdog loops record their
+    // escalations here, and `/statusz` reads them back.
+    let action_log = Arc::new(WatchdogLog::new());
+
     let interval = Duration::from_secs(cli.interval.max(1));
     let hb_paths = paths.clone();
     let hb_shutdown = shutdown_tx.clone();
+    let hb_log = action_log.clone();
     tokio::spawn(async move {
-        watchdog::heartbeat_loop(hb_paths, thresholds, interval, hb_shutdown).await
+        watchdog::heartbeat_loop(hb_paths, thresholds, interval, hb_log, hb_shutdown).await
     });
     let run_paths = paths.clone();
     let run_shutdown = shutdown_tx.clone();
+    let run_log = action_log.clone();
     tokio::spawn(async move {
-        watchdog::runs_loop(run_paths, thresholds, interval, run_shutdown).await
+        watchdog::runs_loop(run_paths, thresholds, interval, run_log, run_shutdown).await
     });
 
     // HTTP server.
@@ -152,7 +169,12 @@ async fn main() -> std::process::ExitCode {
         paths.clone(),
         cli.bind,
         cli.port,
-        cli.read_only,
+        server::ServeOptions {
+            read_only: cli.read_only,
+            dashboard_disabled: cli.no_dashboard,
+            heartbeat_stale_threshold_seconds: cli.heartbeat_stale_warn,
+            action_log: action_log.clone(),
+        },
         watch_tx.clone(),
         shutdown_tx.clone(),
     )

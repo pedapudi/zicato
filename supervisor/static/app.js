@@ -107,6 +107,33 @@ function clearChildren(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+// Robust ISO-8601 parser. heartbeat.json mixes zone forms: a trailing
+// `Z` on some fields, an explicit `+00:00` offset on others. A bare
+// `new Date` parses a zone-less value as *local* time, skewing every
+// elapsed clock. parseIso normalises both forms, pins zone-less values
+// to UTC, and returns epoch ms (or NaN when unparseable).
+function parseIso(value) {
+  if (value == null) return NaN;
+  if (typeof value === 'number') return isFinite(value) ? value : NaN;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value !== 'string') return NaN;
+  let s = value.trim();
+  if (s.length === 0) return NaN;
+  // A `Z` or numeric `±HH:MM` / `±HHMM` offset — `new Date` is
+  // reliable. Otherwise pin to UTC (the supervisor always emits UTC).
+  // A bare date is left alone — Date already treats it as UTC.
+  const hasZone = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s);
+  if (!hasZone && (s.indexOf('T') !== -1 || s.indexOf(' ') !== -1)) {
+    s = s.replace(' ', 'T') + 'Z';
+  }
+  const ms = Date.parse(s);
+  return isFinite(ms) ? ms : NaN;
+}
+
+// `Date.now()` is the single source of "now" — but pulling it through
+// one helper keeps the elapsed/stale math uniform and testable.
+function nowMs() { return Date.now(); }
+
 // --- AppState
 
 class AppState {
@@ -114,9 +141,19 @@ class AppState {
     this.connected = false;
     this.connecting = true;
     this.mock = false;
-    this.heartbeat = null;          // { timestamp, pid, instance_id, harmonograf_url? }
-    this.activeRuns = [];           // [{ run_id, entry_id, generation_id, session_id?, started_at, progress, drift_kinds: {kind: count} }]
-    this.activeTournament = null;   // see schema in mock-state
+    // heartbeat.json — { generation_id, round_index, last_heartbeat,
+    //   round_started_at, started_at, harmonograf_url?, ... }. Timestamps
+    //   arrive in mixed `Z` / `+00:00` zone forms; parse via parseIso.
+    this.heartbeat = null;
+    // GET /api/active-runs — array; each element carries
+    //   { ..., progress:0..1|null, elapsed_seconds:int|null,
+    //     budget_seconds:int|null }.
+    this.activeRuns = [];
+    // GET /api/active-tournament —
+    //   { round_index:int, parent_generation_id:str, child_generation_id:str,
+    //     entries:[{ entry_id:str, side:"parent"|"child", status:str,
+    //                scalar_score?:num }] }  — or null if none ever started.
+    this.activeTournament = null;
     this.pastTournaments = [];      // [{ ...tournament }] — optional, for the picker
     // GET /api/tournaments — the gauntlet bracket source.
     //   { epoch_id, champion_lineage:[genId...], matchups:[matchup...] }
@@ -130,7 +167,13 @@ class AppState {
     this.lineage = { generations: [], experiments: [] };
     this.experiments = [];
     this.logLines = [];             // {ts, line, level}
+    // GET /api/run-log?limit=40 — the structured event tail.
+    //   { events:[{ seq:int|null, kind:str, ts:str|null, summary:str }] }
+    this.logTail = { events: [] };
     this.supervisor = { version: '—', port: '—', build: '—' };
+    // GET /api/health — supervisor identity for the footer.
+    //   { version, port, build, uptime_seconds, ... }
+    this.health = null;
     this.scoring = { margin: DEFAULT_MARGIN };
     // header-level epoch summary (id / generation / round / startedAt)
     this.epoch = { id: '—', generation: '—', round: '—', startedAt: null };
@@ -141,14 +184,27 @@ class AppState {
   // Merge a heartbeat update into the current record rather than
   // replacing it wholesale. A heartbeat *ping* (the SSE keepalive or
   // the /api/heartbeat endpoint) is minimal — typically just
-  // { timestamp, pid } — and omits stable config-ish fields like
-  // `harmonograf_url` that only the full /api/state snapshot carries.
-  // A wholesale replace would drop `harmonograf_url` on the first
-  // ping after load, silently killing every harmonograf deep-link.
-  // Merging keeps the last-known url alive across pings.
+  // { last_heartbeat, generation_id, round_index } — and omits stable
+  // config-ish fields like `harmonograf_url` that only the full
+  // /api/state snapshot carries. A wholesale replace would drop
+  // `harmonograf_url` on the first ping after load, silently killing
+  // every harmonograf deep-link. Merging keeps the last-known url
+  // alive across pings.
+  //
+  // Hardening: a ping that carries `harmonograf_url` *explicitly* set
+  // to null / empty must not clobber a previously-known good url —
+  // a null in the patch is treated as "not provided", not "cleared".
   setHeartbeat(hb) {
     if (!hb || typeof hb !== 'object') return;
+    const prevUrl = this.heartbeat && this.heartbeat.harmonograf_url;
     this.heartbeat = Object.assign({}, this.heartbeat, hb);
+    // Restore the last-known url when the incoming patch nulled / blanked it.
+    if (typeof this.heartbeat.harmonograf_url !== 'string'
+        || this.heartbeat.harmonograf_url.trim() === '') {
+      if (typeof prevUrl === 'string' && prevUrl.trim() !== '') {
+        this.heartbeat.harmonograf_url = prevUrl;
+      }
+    }
   }
 
   setSnapshot(snap) {
@@ -164,6 +220,9 @@ class AppState {
     if (snap.lineage) this.lineage = snap.lineage;
     if (snap.experiments) this.experiments = snap.experiments;
     if (snap.supervisor) Object.assign(this.supervisor, snap.supervisor);
+    if (snap.health) this.setHealth(snap.health);
+    // `run_log` (object or bare array) feeds the structured log tail.
+    if (snap.run_log) this.setLogTail(snap.run_log);
     if (snap.scoring) Object.assign(this.scoring, snap.scoring);
     // The header epoch summary and the full epoch contract are distinct.
     // /api/state carries an `epoch` key that is the full contract object
@@ -195,6 +254,28 @@ class AppState {
 
   setBracket(bracket) {
     if (bracket && typeof bracket === 'object') this.bracket = bracket;
+  }
+
+  // GET /api/health — the footer's supervisor identity. The endpoint
+  // returns { version, port, build, ... }; mirror those into the
+  // legacy `supervisor` record so renderFooter has one source.
+  setHealth(health) {
+    if (!health || typeof health !== 'object') return;
+    this.health = health;
+    if (health.version != null) this.supervisor.version = health.version;
+    if (health.port != null) this.supervisor.port = health.port;
+    if (health.build != null) this.supervisor.build = health.build;
+  }
+
+  // GET /api/run-log — the structured event tail. Normalise to the
+  // { events: [...] } shape regardless of whether the server hands
+  // back a bare array or the wrapped object.
+  setLogTail(tail) {
+    if (Array.isArray(tail)) {
+      this.logTail = { events: tail };
+    } else if (tail && Array.isArray(tail.events)) {
+      this.logTail = tail;
+    }
   }
 
   setHealthReport(report) {
@@ -236,7 +317,11 @@ const state = new AppState();
 // fragment form (#/generation/<id>, #/entry/<id>, #/run/<id>) handled
 // separately by applyRoute().
 
-const VIEWS = ['overview', 'tree', 'tournament', 'epoch'];
+// `conversation` is a focused view — it has a `view-conversation`
+// container so the toggle machinery shows/hides it, but no nav-rail
+// tab. It is entered by drilling from a Tournament-view board card
+// (#conversation/{entry_id}) and has its own back link.
+const VIEWS = ['overview', 'tree', 'tournament', 'epoch', 'conversation'];
 const DEFAULT_VIEW = 'overview';
 let currentView = DEFAULT_VIEW;
 
@@ -476,14 +561,34 @@ function predictedGateVerdict(tournament, margin) {
 
 // --- Render: header + footer + connection
 
+// How long since the last heartbeat before the run is considered
+// stale. heartbeat.json is rewritten on a short cadence (well under a
+// minute); 90s leaves generous slack for a slow tick or a paused
+// scheduler without false-flagging a healthy live run.
+const STALE_HEARTBEAT_MS = 90_000;
+
 function renderHeader() {
+  const hb = state.heartbeat || {};
+  // Generation + round come straight off the heartbeat — `generation_id`
+  // ("v2") and `round_index` (an int). Fall back to the legacy header
+  // summary, then the em-dash placeholder.
+  const genId = hb.generation_id || state.epoch.generation;
+  const roundIdx = (hb.round_index != null) ? hb.round_index : state.epoch.round;
   $('epoch-id').textContent = 'epoch · ' + (state.epoch.id || '—');
-  $('generation-id').textContent = 'gen · ' + (state.epoch.generation || '—');
-  $('round-id').textContent = 'round · ' + (state.epoch.round || '—');
-  const startedAt = state.epoch.startedAt || (state.heartbeat && state.heartbeat.epoch_started_at);
-  if (startedAt) {
-    const seconds = (Date.now() - new Date(startedAt).getTime()) / 1000;
-    $('elapsed').textContent = fmtDuration(seconds);
+  $('generation-id').textContent = 'gen · ' + (genId != null && genId !== '' ? genId : '—');
+  $('round-id').textContent = 'round · ' + (roundIdx != null && roundIdx !== '' ? roundIdx : '—');
+
+  // Elapsed = now − started_at. The heartbeat's `started_at` is the
+  // run's start; `round_started_at` and the legacy `epoch_started_at`
+  // are accepted fallbacks. parseIso copes with both the `Z` and
+  // `+00:00` zone forms.
+  const startedRaw = hb.started_at || state.epoch.startedAt
+    || hb.round_started_at || hb.epoch_started_at;
+  const startedMs = parseIso(startedRaw);
+  if (isFinite(startedMs)) {
+    $('elapsed').textContent = fmtDuration((nowMs() - startedMs) / 1000);
+  } else {
+    $('elapsed').textContent = '—';
   }
 
   const badge = $('health-badge');
@@ -492,15 +597,19 @@ function renderHeader() {
     badge.classList.add('pending');
     badge.textContent = 'connecting';
   } else if (state.connected) {
-    // Check heartbeat freshness (must be within 15s)
-    const fresh = state.heartbeat
-      && (Date.now() - new Date(state.heartbeat.timestamp).getTime()) < 15_000;
-    if (fresh) {
-      badge.classList.add('ok');
-      badge.textContent = 'healthy';
-    } else {
+    // Stale = the last heartbeat is older than STALE_HEARTBEAT_MS.
+    // `last_heartbeat` is the canonical field; `timestamp` is the
+    // legacy name. A healthy live run keeps this fresh and must NOT
+    // trip the badge — an unparseable/absent timestamp is treated as
+    // healthy rather than falsely stale.
+    const hbMs = parseIso(hb.last_heartbeat != null ? hb.last_heartbeat : hb.timestamp);
+    const stale = isFinite(hbMs) && (nowMs() - hbMs) > STALE_HEARTBEAT_MS;
+    if (stale) {
       badge.classList.add('warn');
       badge.textContent = 'stale heartbeat';
+    } else {
+      badge.classList.add('ok');
+      badge.textContent = 'healthy';
     }
   } else {
     badge.classList.add('error');
@@ -513,12 +622,38 @@ function renderHeader() {
 }
 
 function renderFooter() {
-  $('supervisor-version').textContent = 'supervisor · ' + state.supervisor.version;
-  $('supervisor-port').textContent = 'port · ' + state.supervisor.port;
-  $('supervisor-build').textContent = 'build · ' + state.supervisor.build;
+  // GET /api/health is the source of truth (version / port / build);
+  // state.supervisor mirrors it and stands in until /api/health lands.
+  const h = state.health || {};
+  const pick = (a, b) => {
+    if (a != null && a !== '') return a;
+    if (b != null && b !== '') return b;
+    return '—';
+  };
+  $('supervisor-version').textContent =
+    'supervisor · ' + pick(h.version, state.supervisor.version);
+  $('supervisor-port').textContent =
+    'port · ' + pick(h.port, state.supervisor.port);
+  $('supervisor-build').textContent =
+    'build · ' + pick(h.build, state.supervisor.build);
 }
 
 // --- Render: active tournament
+
+// Find the live active-run record that drives a tournament entry's
+// progress, matched on entry_id. Returns null when no run matches —
+// callers render a neutral placeholder rather than a fake 0% bar.
+function findActiveRunForEntry(entry) {
+  if (!entry || !entry.entry_id || !Array.isArray(state.activeRuns)) {
+    return null;
+  }
+  const want = String(entry.entry_id);
+  return state.activeRuns.find((r) => {
+    if (!r) return false;
+    const rid = r.entry_id != null ? r.entry_id : r.entry;
+    return rid != null && String(rid) === want;
+  }) || null;
+}
 
 function renderActiveTournament() {
   const sec = $('tournament-section');
@@ -535,11 +670,21 @@ function renderActiveTournament() {
     return;
   }
 
+  // #4 — read the real round + generation ids from the shared
+  // AppState contract. Prefer the contract field names; fall back to
+  // the legacy runtime keys so the panel works regardless of the
+  // merge order between this branch and the core/state branches.
+  const roundIndex = t.round_index != null ? t.round_index : t.round;
+  const parentGen = t.parent_generation_id || t.parent_id;
+  const childGen = t.child_generation_id || t.child_id || t.generation_id;
+
   title.textContent =
-    `Tournament — round ${t.round || '?'} of ${t.total_rounds || '?'}`;
+    roundIndex != null ? `Tournament — round ${roundIndex}` : 'Tournament';
 
   const subheader = el('p', { class: 'panel-subheader' }, [
-    el('strong', null, [`${t.parent_id || '?'} (parent) vs ${t.child_id || '?'} (proposed)`]),
+    el('strong', null, [
+      `${parentGen || '?'} (champion) vs ${childGen || '?'} (proposed)`,
+    ]),
   ]);
   body.appendChild(subheader);
 
@@ -569,10 +714,43 @@ function renderActiveTournament() {
     body.appendChild(modsLine);
   }
 
-  // Entry rows
+  // #5 — entry rows, grouped by `side` with a header per group.
+  // Each side ("parent"/"child") gets its own labelled block; an entry
+  // with no side falls into an "unassigned" bucket so nothing is lost.
   const entriesWrap = el('div', { class: 'entries', role: 'list' });
+  const parentEntries = [];
+  const childEntries = [];
+  const otherEntries = [];
   for (const e of t.entries) {
-    entriesWrap.appendChild(renderEntryRow(e));
+    const side = String(e.side || '').toLowerCase();
+    if (side === 'parent') parentEntries.push(e);
+    else if (side === 'child') childEntries.push(e);
+    else otherEntries.push(e);
+  }
+
+  const appendGroup = (label, genId, items) => {
+    if (items.length === 0) return;
+    const header = el('div', { class: 'entry-group-header' }, [
+      el('span', { class: 'entry-group-label' }, [label]),
+    ]);
+    if (genId) {
+      header.appendChild(
+        el('code', { class: 'mono entry-group-gen' }, [genId]));
+    }
+    header.appendChild(
+      el('span', { class: 'meta entry-group-count' }, [`${items.length} board`]));
+    entriesWrap.appendChild(header);
+    for (const e of items) entriesWrap.appendChild(renderEntryRow(e));
+  };
+
+  // If `side` is present on at least one entry, render labelled
+  // groups. Otherwise (legacy un-stamped entries) render a flat list.
+  if (parentEntries.length > 0 || childEntries.length > 0) {
+    appendGroup('Champion', parentGen, parentEntries);
+    appendGroup('Challenger', childGen, childEntries);
+    appendGroup('Unassigned', null, otherEntries);
+  } else {
+    for (const e of t.entries) entriesWrap.appendChild(renderEntryRow(e));
   }
   body.appendChild(entriesWrap);
 
@@ -632,27 +810,58 @@ function renderEntryRow(entry) {
       childCell.appendChild(el('span', null, ['regression']));
     }
   } else if (status === 'running') {
-    const r = entry.runtime || {};
-    const pct = typeof r.percent === 'number' ? Math.max(0, Math.min(100, r.percent)) : 0;
+    // #6 — a running entry's progress comes from the matching
+    // active-run record (matched on entry_id), NOT from a per-entry
+    // `runtime` blob. The fraction is an elapsed-vs-budget deadline
+    // fraction, not a true task-completion percentage — label it as
+    // such. When no active-run matches, show a neutral placeholder.
+    const run = findActiveRunForEntry(entry);
     const drift = entry.child && entry.child.drift_kinds
       ? Object.entries(entry.child.drift_kinds).map(([k, v]) => `${v} ${k}`).join(', ')
       : '';
-    const elapsed = r.elapsed_seconds != null ? fmtDuration(r.elapsed_seconds) : '—';
-    const budget = r.budget_seconds != null ? fmtDuration(r.budget_seconds) : '—';
-    childCell.appendChild(el('span', { class: 'mono' }, [
-      `RUNNING ${elapsed}/${budget}`,
-    ]));
-    if (drift) {
-      childCell.appendChild(el('div', null, [
-        el('span', { class: 'meta' }, [`drift: ${drift}`]),
+    if (run) {
+      const frac = typeof run.progress === 'number' && isFinite(run.progress)
+        ? Math.max(0, Math.min(1, run.progress)) : null;
+      const pct = frac != null ? Math.round(frac * 100) : 0;
+      const elapsed = run.elapsed_seconds != null
+        ? fmtDuration(run.elapsed_seconds) : '—';
+      const budget = run.budget_seconds != null
+        ? fmtDuration(run.budget_seconds) : '—';
+      childCell.appendChild(el('span', { class: 'mono' }, [
+        `RUNNING ${elapsed}/${budget}`,
       ]));
+      childCell.appendChild(el('span', { class: 'meta' }, [' elapsed/budget']));
+      if (drift) {
+        childCell.appendChild(el('div', null, [
+          el('span', { class: 'meta' }, [`drift: ${drift}`]),
+        ]));
+      }
+      const prog = el('div', { class: 'progress', role: 'progressbar',
+                   'aria-valuemin': '0', 'aria-valuemax': '100',
+                   'aria-valuenow': String(pct),
+                   'aria-label': 'elapsed fraction of wall-clock budget' });
+      prog.appendChild(el('div', { class: 'bar', style: `width:${pct}%` }));
+      childCell.appendChild(prog);
+      childCell.appendChild(el('span', { class: 'meta' }, [
+        frac != null ? ` ${pct}% of budget` : ' budget —',
+      ]));
+      // #17 — deep-link the running board entry into its harmonograf
+      // trace when the heartbeat carries a harmonograf url.
+      const hg = harmonografMini(run, 'harmonograf',
+        `open harmonograf trace for ${entry.entry_id}`);
+      if (hg) {
+        hg.addEventListener('click', (ev) => ev.stopPropagation());
+        childCell.appendChild(el('div', { class: 'entry-hg' }, [hg]));
+      }
+    } else {
+      childCell.appendChild(el('span', { class: 'mono' }, ['RUNNING']));
+      childCell.appendChild(el('span', { class: 'meta' }, [' —']));
+      if (drift) {
+        childCell.appendChild(el('div', null, [
+          el('span', { class: 'meta' }, [`drift: ${drift}`]),
+        ]));
+      }
     }
-    const prog = el('div', { class: 'progress', role: 'progressbar',
-                 'aria-valuemin': '0', 'aria-valuemax': '100',
-                 'aria-valuenow': String(pct) });
-    prog.appendChild(el('div', { class: 'bar', style: `width:${pct}%` }));
-    childCell.appendChild(prog);
-    childCell.appendChild(el('span', { class: 'meta' }, [` ${pct}%`]));
   } else if (status === 'fail') {
     childCell.appendChild(el('span', { class: 'mono' }, ['FAILED']));
     if (entry.fail_reason) {
@@ -751,32 +960,36 @@ function renderVerdict(v) {
 }
 
 function renderTournamentButtons() {
-  // All buttons disabled in v1.2 — the wiring lands in v1.3. The
-  // POST handlers are present so flipping `disabled` is the only diff.
-  const tip = 'feature pending v1.3';
+  // #8 — these controls are PROVISIONAL. The orchestrator's
+  // control-file consumer does not exist until v1.3, so an enabled
+  // button would silently do nothing. Render them disabled, with a
+  // tooltip naming the gap and a visible "preview" tag, so an
+  // operator never mistakes them for live controls.
+  const tip = 'control channel — v1.3';
   const buttons = [
-    { label: 'Pause epoch', action: () => postControl('pause', null) },
-    { label: 'Skip round',  action: () => postControl('skip-round', null) },
-    { label: 'Force-kill running', action: () => {
-      const running = (state.activeTournament && state.activeTournament.entries || [])
-        .find(e => e.status === 'running');
-      if (running && running.run_id) postControl('kill/' + encodeURIComponent(running.run_id), null);
-    }, cls: 'danger' },
-    { label: 'Override', action: () => alert('Override is reserved — needs operator confirmation; v1.3.') },
+    { label: 'Pause epoch' },
+    { label: 'Skip round' },
+    { label: 'Force-kill running', cls: 'danger' },
+    { label: 'Override' },
   ];
-  const row = el('div', { class: 'button-row', role: 'toolbar', 'aria-label': 'Tournament controls' });
+  const row = el('div', {
+    class: 'button-row provisional',
+    role: 'toolbar',
+    'aria-label': 'Tournament controls (preview — not yet wired)',
+  });
   for (const b of buttons) {
-    row.appendChild(el('button', {
+    const btn = el('button', {
       type: 'button',
-      class: 'btn ' + (b.cls || ''),
+      class: 'btn provisional ' + (b.cls || ''),
       disabled: 'disabled',
+      'aria-disabled': 'true',
       title: tip,
       'aria-label': b.label + ' (' + tip + ')',
-      onClick: (ev) => {
-        ev.preventDefault();
-        alert(tip);
-      },
-    }, [b.label]));
+    }, [
+      b.label,
+      el('span', { class: 'preview-tag', 'aria-hidden': 'true' }, ['preview']),
+    ]);
+    row.appendChild(btn);
   }
   return row;
 }
@@ -811,19 +1024,41 @@ function renderActiveRuns() {
     card.appendChild(el('div', { class: 'run-meta' }, [
       `${r.entry_id || '?'} / ${r.generation_id || '?'}`,
     ]));
-    const pct = typeof r.percent === 'number' ? Math.max(0, Math.min(100, r.percent)) : 0;
+    // #6 — the bar is the run's elapsed-vs-budget deadline fraction
+    // from the shared contract (`progress` 0..1). When the run has no
+    // progress value the bar reads empty rather than a fake 0%.
+    const frac = typeof r.progress === 'number' && isFinite(r.progress)
+      ? Math.max(0, Math.min(1, r.progress)) : null;
+    const pct = frac != null ? Math.round(frac * 100) : 0;
     const prog = el('div', { class: 'progress', role: 'progressbar',
                  'aria-valuemin': '0', 'aria-valuemax': '100',
-                 'aria-valuenow': String(pct) });
+                 'aria-valuenow': String(pct),
+                 'aria-label': 'elapsed fraction of wall-clock budget' });
     prog.appendChild(el('div', { class: 'bar', style: `width:${pct}%` }));
     card.appendChild(prog);
-    if (r.started_at) {
-      const elapsed = (Date.now() - new Date(r.started_at).getTime()) / 1000;
+
+    // Elapsed / budget line — prefer the contract's `elapsed_seconds`,
+    // fall back to deriving elapsed from `started_at`. Labelled as a
+    // budget fraction, not task progress.
+    let elapsedSecs = null;
+    if (r.elapsed_seconds != null && isFinite(r.elapsed_seconds)) {
+      elapsedSecs = r.elapsed_seconds;
+    } else if (r.started_at) {
+      elapsedSecs = (Date.now() - new Date(r.started_at).getTime()) / 1000;
+    }
+    if (elapsedSecs != null || r.budget_seconds != null) {
+      const elapsedTxt = elapsedSecs != null ? fmtDuration(elapsedSecs) : '—';
+      const budgetTxt = r.budget_seconds != null
+        ? fmtDuration(r.budget_seconds) : '—';
       card.appendChild(el('div', { class: 'run-meta mono' }, [
-        `${fmtDuration(elapsed)}${r.budget_seconds ? ' / ' + fmtDuration(r.budget_seconds) : ''}`,
+        `${elapsedTxt} / ${budgetTxt}`,
+        el('span', { class: 'meta' }, [' elapsed/budget']),
       ]));
     }
-    const hg = harmonografLink(r);
+
+    // #17 — deep-link the run card into its harmonograf trace.
+    const hg = harmonografMini(r, 'Open in harmonograf',
+      `open harmonograf trace for run ${r.run_id || r.entry_id || ''}`);
     if (hg) {
       // Stop the card's click handler from also firing.
       hg.addEventListener('click', (ev) => ev.stopPropagation());
@@ -835,32 +1070,68 @@ function renderActiveRuns() {
 
 // --- Render: cross-epoch lineage graph (Tree view)
 //
+// Built from `state.lineage.generations` — the live `GET /api/lineage`
+// feed, which includes in-flight generations the moment a run starts.
 // Generations are laid out in horizontal lanes — one lane per epoch.
 // Within a lane, generations are ordered left-to-right. Promoted
 // generations form a solid green spine; rejected generations are
-// dashed red off-shoots that branch below the spine. Baseline / seed
-// nodes are neutral grey. A new epoch's v0 descends from the prior
-// epoch's promoted head; that cross-epoch link is drawn as a dashed
-// connector between lanes.
+// dashed red off-shoots that branch below the spine. In-flight
+// generations (still running, no verdict) read in the running blue.
+// Baseline / seed nodes (no parent) are neutral grey. A new epoch's v0
+// descends from the prior epoch's promoted head; that cross-epoch link
+// is drawn as a dashed connector between lanes.
 //
-// Each generation carries (defensively — any field may be absent):
-//   { id, parent_id?, epoch_id?, v0_parent? }
-// `epoch_id` groups a generation into a lane; `v0_parent` (or
-// `parent_epoch_head`) names the prior-epoch generation a fresh v0
-// descends from.
+// The feed contract (each field defensive — any may be absent):
+//   { generation_id, parent_generation_id?, epoch_id?, promoted?,
+//     created_at? }
+// `promoted` is true (promoted), false (rejected) or null (in flight).
+// Older feeds used `id` / `parent_id` / `v0_parent`; both are accepted.
 
-function lineageDecision(exp) {
+// Stable identity / parent accessors that tolerate the old and new
+// lineage shapes.
+function genId(g) {
+  return g.generation_id != null ? g.generation_id : g.id;
+}
+function genParentId(g) {
+  return g.parent_generation_id != null ? g.parent_generation_id : g.parent_id;
+}
+
+// Resolve a generation's tournament decision. The live feed's `promoted`
+// boolean is authoritative; an experiment outcome refines it (e.g.
+// `deferred`); a generation with no parent is the baseline.
+function lineageDecision(g, exp) {
   if (exp && exp.outcome && exp.outcome.tournament_decision) {
     return exp.outcome.tournament_decision;
+  }
+  if (g) {
+    if (genParentId(g) == null) return 'baseline';
+    if (g.promoted === true) return 'promoted';
+    if (g.promoted === false) return 'rejected';
+    return 'in_flight';
   }
   return null;
 }
 
+// Size an SVG so it renders exactly once, at one definite size: the
+// `viewBox`, the `width`/`height` attributes and `preserveAspectRatio`
+// are all set together. Without this an inline SVG carrying only a
+// viewBox falls back to a UA-default intrinsic size (often 300x150) and
+// then gets stretched by `height:auto` — which reads as a doubled or
+// oversized panel.
+function sizeSvg(svg, w, h) {
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+}
+
 function renderLineage() {
   const svg = $('lineage-svg');
-  const stage = $('lineage-stage');
   clearChildren(svg);
 
+  // Build straight from the live `GET /api/lineage` feed. This feed
+  // carries in-flight generations the instant a run starts, so the
+  // baseline v0 and any running v1/v2 all appear immediately.
   const gens = state.lineage.generations || [];
   const exps = state.lineage.experiments || [];
   const expByGen = new Map();
@@ -868,9 +1139,7 @@ function renderLineage() {
 
   if (gens.length === 0) {
     const w = 900, h = 360;
-    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-    svg.setAttribute('width', w);
-    svg.setAttribute('height', h);
+    sizeSvg(svg, w, h);
     svg.appendChild(svgEl('rect', {
       x: 1, y: 1, width: w - 2, height: h - 2,
       fill: 'none', stroke: COLORS.grid, 'stroke-width': 1,
@@ -904,7 +1173,7 @@ function renderLineage() {
   let maxCols = 0;
   for (const lane of laneOrder) {
     laneOf.get(lane).forEach((g, i) => {
-      colIndex.set(g.id, i);
+      colIndex.set(genId(g), i);
       if (i + 1 > maxCols) maxCols = i + 1;
     });
   }
@@ -912,9 +1181,7 @@ function renderLineage() {
   const laneHeight = nodeH + branchDrop + 28;
   const width = marginX + maxCols * (nodeW + colGap) + 40;
   const height = marginY + laneOrder.length * (laneHeight + laneGap) + 20;
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('width', width);
-  svg.setAttribute('height', height);
+  sizeSvg(svg, width, height);
 
   // Position every generation.
   const positions = new Map();
@@ -922,12 +1189,13 @@ function renderLineage() {
     const laneTop = marginY + laneIdx * (laneHeight + laneGap);
     const spineY = laneTop + 28;
     for (const g of laneOf.get(lane)) {
-      const col = colIndex.get(g.id);
+      const id = genId(g);
+      const col = colIndex.get(id);
       const x = marginX + col * (nodeW + colGap);
-      const decision = lineageDecision(expByGen.get(g.id));
+      const decision = lineageDecision(g, expByGen.get(id));
       // rejected generations branch below the promoted spine
       const y = decision === 'rejected' ? spineY + branchDrop : spineY;
-      positions.set(g.id, { x, y, laneIdx, spineY, laneTop });
+      positions.set(id, { x, y, laneIdx, spineY, laneTop });
     }
   });
 
@@ -942,6 +1210,11 @@ function renderLineage() {
       refX: 9, refY: 5, markerWidth: 5, markerHeight: 5,
       orient: 'auto-start-reverse',
     }, [svgEl('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: COLORS.rejected })]),
+    svgEl('marker', {
+      id: 'arr-running', viewBox: '0 0 10 10',
+      refX: 9, refY: 5, markerWidth: 6, markerHeight: 6,
+      orient: 'auto-start-reverse',
+    }, [svgEl('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: COLORS.running })]),
   ]);
   svg.appendChild(defs);
 
@@ -962,14 +1235,15 @@ function renderLineage() {
     }, ['epoch · ' + truncate(String(lane), 22)]));
   });
 
-  // Within-epoch edges (parent_id) + cross-epoch links (v0_parent).
+  // Within-epoch parent edges + cross-epoch inheritance links.
   for (const g of gens) {
-    const cp = positions.get(g.id);
+    const id = genId(g);
+    const cp = positions.get(id);
     if (!cp) continue;
-    const exp = expByGen.get(g.id);
-    const decision = lineageDecision(exp) || 'pending';
+    const exp = expByGen.get(id);
+    const decision = lineageDecision(g, exp);
 
-    const parentId = g.parent_id;
+    const parentId = genParentId(g);
     const crossId = g.v0_parent || g.parent_epoch_head || g.epoch_parent;
 
     // Within-epoch parent edge.
@@ -982,6 +1256,8 @@ function renderLineage() {
         stroke = COLORS.rejected; strokeW = 1.6; dash = '5 4'; marker = 'url(#arr-rejected)';
       } else if (decision === 'deferred') {
         stroke = COLORS.deferred; strokeW = 1.8; dash = '2 3';
+      } else if (decision === 'in_flight') {
+        stroke = COLORS.running; strokeW = 1.8; dash = '4 4'; marker = 'url(#arr-running)';
       }
       svg.appendChild(edgePath(pp, cp, nodeW, nodeH, stroke, strokeW, dash, marker));
     }
@@ -1004,13 +1280,14 @@ function renderLineage() {
 
   // Nodes.
   for (const g of gens) {
-    const pos = positions.get(g.id);
+    const id = genId(g);
+    const pos = positions.get(id);
     if (!pos) continue;
     const { x, y } = pos;
-    const exp = expByGen.get(g.id);
-    const decision = lineageDecision(exp) || (g.parent_id ? 'pending' : 'baseline');
+    const exp = expByGen.get(id);
+    const decision = lineageDecision(g, exp);
     let fill, stroke, dash = null, marker;
-    if (!g.parent_id) {
+    if (decision === 'baseline') {
       fill = 'rgba(110, 118, 129, 0.14)'; stroke = COLORS.baseline; marker = '(v0)';
     } else if (decision === 'promoted') {
       fill = 'rgba(46, 160, 67, 0.18)'; stroke = COLORS.promoted; marker = '[+]';
@@ -1019,21 +1296,22 @@ function renderLineage() {
     } else if (decision === 'deferred') {
       fill = 'rgba(191, 135, 0, 0.18)'; stroke = COLORS.deferred; dash = '2 3'; marker = '[=]';
     } else {
-      fill = 'rgba(110, 118, 129, 0.12)'; stroke = COLORS.baseline; marker = '(pending)';
+      // in_flight — still running, no verdict.
+      fill = 'rgba(31, 111, 235, 0.16)'; stroke = COLORS.running; dash = '4 4'; marker = '(running)';
     }
 
     const grp = svgEl('g', {
       class: 'lineage-node',
-      'data-gen': g.id,
+      'data-gen': id,
       role: 'button',
       tabindex: '0',
-      'aria-label': `generation ${g.id} ${decision}`,
+      'aria-label': `generation ${id} ${decision}`,
     });
-    grp.addEventListener('click', () => openDrillForGeneration(g.id));
+    grp.addEventListener('click', () => openDrillForGeneration(id));
     grp.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') {
         ev.preventDefault();
-        openDrillForGeneration(g.id);
+        openDrillForGeneration(id);
       }
     });
     grp.appendChild(svgEl('rect', {
@@ -1045,7 +1323,7 @@ function renderLineage() {
       class: 'svg-label',
       x: (x + nodeW / 2).toFixed(1), y: (y + 19).toFixed(1),
       'text-anchor': 'middle', 'font-weight': '600',
-    }, [`${g.id} ${marker}`]));
+    }, [`${id} ${marker}`]));
     if (exp && exp.outcome) {
       grp.appendChild(svgEl('text', {
         class: 'svg-axis',
@@ -1062,7 +1340,8 @@ function renderLineage() {
         class: 'svg-axis',
         x: (x + nodeW / 2).toFixed(1), y: (y + 42).toFixed(1),
         'text-anchor': 'middle',
-      }, [g.parent_id ? 'pending' : 'baseline']));
+      }, [decision === 'baseline' ? 'baseline'
+        : decision === 'in_flight' ? 'in flight' : 'pending']));
     }
     svg.appendChild(grp);
   }
@@ -1166,7 +1445,7 @@ function renderTrajectory() {
   for (const e of exps) expByGen.set(e.generation_id, e);
 
   const width = 720, height = 220;
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  sizeSvg(svg, width, height);
   if (gens.length === 0) {
     svg.appendChild(svgEl('text', {
       class: 'svg-axis', x: width / 2, y: height / 2, 'text-anchor': 'middle',
@@ -1175,10 +1454,13 @@ function renderTrajectory() {
   }
 
   const series = gens.map((g, i) => {
-    const exp = expByGen.get(g.id);
-    if (!exp || !exp.outcome) return { i, id: g.id, decision: 'baseline', v: 0 };
+    const id = genId(g);
+    const exp = expByGen.get(id);
+    if (!exp || !exp.outcome) {
+      return { i, id, decision: lineageDecision(g, exp), v: 0 };
+    }
     return {
-      i, id: g.id,
+      i, id,
       decision: exp.outcome.tournament_decision,
       v: exp.outcome.scalar_score_delta || 0,
     };
@@ -1267,6 +1549,13 @@ function renderTrajectory() {
         fill: 'none', stroke: COLORS.deferred, 'stroke-width': 1.6,
         'stroke-dasharray': '2 2',
       }));
+    } else if (s.decision === 'in_flight') {
+      // Still running — no verdict, drawn hollow in the running blue.
+      svg.appendChild(svgEl('circle', {
+        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4.5,
+        fill: 'none', stroke: COLORS.running, 'stroke-width': 1.6,
+        'stroke-dasharray': '3 2',
+      }));
     } else {
       svg.appendChild(svgEl('circle', {
         cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4,
@@ -1306,8 +1595,7 @@ function renderHeatmap() {
 
   // promoted generations only
   const promotedGens = gens.filter(g => {
-    const e = expByGen.get(g.id);
-    return e && e.outcome && e.outcome.tournament_decision === 'promoted';
+    return lineageDecision(g, expByGen.get(genId(g))) === 'promoted';
   });
 
   const cellSize = 28, innerPad = 4;
@@ -1316,10 +1604,10 @@ function renderHeatmap() {
   const cellValue = new Map();
   const kindMaxAbs = new Map();
   for (const g of promotedGens) {
-    const e = expByGen.get(g.id);
+    const e = expByGen.get(genId(g));
     if (!e || !e.outcome || !e.outcome.drift_movements) continue;
     for (const mv of e.outcome.drift_movements) {
-      cellValue.set(mv.kind + ' ' + g.id, mv.to_rate);
+      cellValue.set(mv.kind + ' ' + genId(g), mv.to_rate);
       const delta = Math.abs(mv.to_rate - mv.from_rate);
       const cur = kindMaxAbs.get(mv.kind) || 0;
       if (delta > cur) kindMaxAbs.set(mv.kind, delta);
@@ -1329,7 +1617,7 @@ function renderHeatmap() {
   if (promotedGens.length === 0 || kindMaxAbs.size === 0) {
     const w = cellSize * 12 + 180;
     const h = cellSize * 2 + 60;
-    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    sizeSvg(svg, w, h);
     svg.appendChild(svgEl('rect', {
       x: 1, y: 1, width: w - 2, height: h - 2,
       fill: 'none', stroke: COLORS.grid, 'stroke-width': 1,
@@ -1351,7 +1639,7 @@ function renderHeatmap() {
   const legendH = 28;
   const width = labelW + nCols * (cellSize + innerPad) + 24;
   const height = 28 + nRows * (cellSize + innerPad) + legendH + 8;
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  sizeSvg(svg, width, height);
 
   const allRates = [...cellValue.values()];
   let rateMin = Math.min(0, ...allRates);
@@ -1381,7 +1669,7 @@ function renderHeatmap() {
     const cx = labelW + i * (cellSize + innerPad) + cellSize / 2;
     svg.appendChild(svgEl('text', {
       class: 'svg-axis', x: cx.toFixed(1), y: 20, 'text-anchor': 'middle',
-    }, [promotedGens[i].id]));
+    }, [genId(promotedGens[i])]));
   }
 
   for (let r = 0; r < kinds.length; r++) {
@@ -1394,7 +1682,7 @@ function renderHeatmap() {
     }, [kind]));
     for (let c = 0; c < promotedGens.length; c++) {
       const cx = labelW + c * (cellSize + innerPad);
-      const v = cellValue.get(kind + ' ' + promotedGens[c].id);
+      const v = cellValue.get(kind + ' ' + genId(promotedGens[c]));
       if (v === undefined) {
         svg.appendChild(svgEl('rect', {
           x: cx.toFixed(1), y: ry.toFixed(1),
@@ -1575,6 +1863,57 @@ function liveMatchup() {
   return t;
 }
 
+// --- Active-tournament field accessors
+//
+// The active-tournament record reaches the dashboard from a few
+// producers whose field names have drifted: the runtime file uses
+// `generation_id` for the challenger, the shared AppState contract
+// uses `child_generation_id`, and older heartbeat payloads used
+// `child_id`. These accessors normalise all of them so the live path
+// never renders a `?` placeholder when the data is actually present.
+
+function liveChampionId(t) {
+  if (!t) return null;
+  return t.parent_generation_id || t.parent_id || t.champion || null;
+}
+
+function liveChallengerId(t) {
+  if (!t) return null;
+  return t.child_generation_id || t.child_id || t.generation_id ||
+    t.challenger || null;
+}
+
+function liveRoundLabel(t) {
+  if (!t) return null;
+  const r = (t.round_index != null) ? t.round_index : t.round;
+  if (r == null) return null;
+  return String(r);
+}
+
+// A finished entry — `status === 'done'`, treating any of the
+// terminal-status spellings the producers emit as done.
+function entryIsDone(e) {
+  const s = String((e && e.status) || '').toLowerCase();
+  return s === 'done' || s === 'complete' || s === 'completed';
+}
+
+// A failed entry — distinct from done so the live card can surface it.
+function entryFailed(e) {
+  const s = String((e && e.status) || '').toLowerCase();
+  return s === 'fail' || s === 'failed' || s === 'error';
+}
+
+// The per-entry scalar, under whichever key the producer used.
+function entryScalar(e) {
+  if (!e) return null;
+  const v = (e.scalar_score != null) ? e.scalar_score
+    : (e.score != null) ? e.score
+    : (e.child && typeof e.child.drift_loss === 'number')
+      ? e.child.drift_loss
+      : null;
+  return (typeof v === 'number' && isFinite(v)) ? v : null;
+}
+
 function renderBracket() {
   const wrap = $('tournament-bracket');
   if (!wrap) return;
@@ -1586,6 +1925,14 @@ function renderBracket() {
   if (lineage.length === 0 && matchups.length === 0 && !live) {
     wrap.appendChild(el('p', { class: 'empty' }, ['No tournaments recorded yet.']));
     return;
+  }
+
+  // The tournament hall — a grid of board cards for the in-progress
+  // round, rendered above the resolved-history spine. With parallel
+  // board execution many entries are `running` at once; the hall shows
+  // the whole round in play at a glance.
+  if (live) {
+    wrap.appendChild(renderHall(live));
   }
 
   // The spine: champion v0 ═> v2 ═> v6. Each champion node carries the
@@ -1634,12 +1981,34 @@ function renderBracket() {
     spine.appendChild(col);
   });
 
-  // Live matchup at the head — the in-progress challenge.
+  // Live matchup at the head — a compact pointer into the hall above.
+  // The hall grid renders the in-progress round in full; the spine
+  // only needs a connector node so the resolved lineage visibly
+  // continues into the live challenge.
   if (live) {
     const headCol = el('div', { class: 'bracket-col bracket-col-live' });
-    const champId = live.parent_id || live.champion ||
-      (lineage.length ? lineage[lineage.length - 1] : '?');
-    if (lineage.length > 0) {
+
+    // Resolve the champion the live challenger is facing. Prefer the
+    // id the active-tournament record carries; fall back to the tail
+    // of the resolved lineage.
+    const champId = liveChampionId(live) ||
+      (lineage.length ? lineage[lineage.length - 1] : null);
+
+    // #12 — when there is no resolved lineage yet (the very first
+    // tournament of an epoch, or a fresh workspace), the champion has
+    // no spine node of its own. Draw one here so the bracket always
+    // shows the baseline the challenger branches off.
+    if (lineage.length === 0 && champId) {
+      const champIdSpan = el('span', { class: 'bracket-champ-id mono' }, [champId]);
+      const champHg = harmonografGenLink(champId);
+      if (champHg) champIdSpan.appendChild(champHg);
+      headCol.appendChild(el('div', { class: 'bracket-champ is-seed' }, [
+        champIdSpan,
+        el('span', { class: 'bracket-champ-tag' }, ['champion']),
+      ]));
+    }
+
+    if (lineage.length > 0 || (lineage.length === 0 && champId)) {
       const conn = el('div', { class: 'bracket-connector live' });
       conn.appendChild(el('span', { class: 'bracket-conn-arrow', 'aria-hidden': 'true' }, ['┄▶']));
       headCol.appendChild(conn);
@@ -1649,6 +2018,277 @@ function renderBracket() {
   }
 
   wrap.appendChild(spine);
+}
+
+// --- Tournament hall
+//
+// The in-progress round renders as a grid of board cards. Each card is
+// one board entry's head-to-head: the Champion side (`side:"parent"`)
+// and the Challenger side (`side:"child"`). With parallel board
+// execution any number of entries are `running` simultaneously, so the
+// hall makes no one-at-a-time assumption — every board with a running
+// side gets an accent border so the active hall reads at a glance.
+
+// Group the flat per-side `entries` list into per-board records,
+// preserving first-seen order. Each board carries its parent-side and
+// child-side entry (either may be absent if the producer only emitted
+// one side so far).
+function hallBoards(t) {
+  const order = [];
+  const byId = new Map();
+  const entries = Array.isArray(t && t.entries) ? t.entries : [];
+  for (const e of entries) {
+    if (!e || e.entry_id == null) continue;
+    const id = String(e.entry_id);
+    if (!byId.has(id)) {
+      byId.set(id, { entry_id: id, parent: null, child: null });
+      order.push(id);
+    }
+    const board = byId.get(id);
+    const side = String(e.side || '').toLowerCase();
+    if (side === 'child' || side === 'challenger') board.child = e;
+    else board.parent = e;
+  }
+  return order.map((id) => byId.get(id));
+}
+
+// Status bucket for one side entry — drives the pill and counters.
+// Returns one of: 'queued' | 'running' | 'done' | 'failed'.
+function sideStatus(e) {
+  if (!e) return 'queued';
+  if (entryFailed(e)) return 'failed';
+  if (entryIsDone(e)) return 'done';
+  const s = String(e.status || '').toLowerCase();
+  if (s === 'running' || s === 'in_progress' || s === 'active') return 'running';
+  return 'queued';
+}
+
+// Occupancy header: round N · B boards · X in play · Y done · Z queued.
+// Counts are over the whole flat per-SIDE entries list so a board with
+// one running side and one queued side is correctly reflected. When a
+// `parallelism` value is present on state it is appended; never invented.
+function renderHallOccupancy(t, boards) {
+  const entries = Array.isArray(t && t.entries) ? t.entries : [];
+  let inPlay = 0, done = 0, queued = 0, failed = 0;
+  for (const e of entries) {
+    const st = sideStatus(e);
+    if (st === 'running') inPlay += 1;
+    else if (st === 'done') done += 1;
+    else if (st === 'failed') failed += 1;
+    else queued += 1;
+  }
+  const round = liveRoundLabel(t);
+  const bits = [];
+  if (round != null) bits.push('round ' + round);
+  bits.push(boards.length + ' board' + (boards.length === 1 ? '' : 's'));
+  bits.push(inPlay + ' in play');
+  bits.push(done + ' done');
+  if (failed > 0) bits.push(failed + ' failed');
+  bits.push(queued + ' queued');
+
+  // parallelism is optional — append only when state actually carries
+  // it (heartbeat is the documented producer); omit it gracefully.
+  const par = state.heartbeat && state.heartbeat.parallelism;
+  if (typeof par === 'number' && isFinite(par) && par > 0) {
+    bits.push('parallelism ' + par);
+  }
+
+  const head = el('div', { class: 'hall-occupancy', role: 'status' });
+  bits.forEach((b, i) => {
+    if (i > 0) head.appendChild(el('span', { class: 'hall-occ-sep', 'aria-hidden': 'true' }, ['·']));
+    head.appendChild(el('span', { class: 'hall-occ-stat' }, [b]));
+  });
+  return head;
+}
+
+// The hall: occupancy header + the board-card grid.
+function renderHall(t) {
+  const boards = hallBoards(t);
+  const hall = el('section', { class: 'tournament-hall', 'aria-label': 'tournament hall' });
+
+  const childId = liveChallengerId(t);
+  const champId = liveChampionId(t);
+  hall.appendChild(el('div', { class: 'hall-head' }, [
+    el('h3', { class: 'hall-title' }, ['Tournament hall']),
+    el('p', { class: 'hall-sub meta' }, [
+      el('strong', null, [childId || 'the challenger']),
+      ' is challenging ',
+      el('strong', null, [champId || 'the baseline']),
+      ' — every board runs both sides; cards in play are bordered.',
+    ]),
+  ]));
+  hall.appendChild(renderHallOccupancy(t, boards));
+
+  if (boards.length === 0) {
+    hall.appendChild(el('p', { class: 'empty' }, [
+      'Round has no board entries yet.',
+    ]));
+    return hall;
+  }
+
+  const grid = el('div', { class: 'hall-grid', role: 'list' });
+  for (const board of boards) {
+    grid.appendChild(renderBoardCard(board, t, champId, childId));
+  }
+  hall.appendChild(grid);
+  return hall;
+}
+
+// One board card — a single board entry's champion-vs-challenger
+// head-to-head. Clicking the card opens the Conversation view for the
+// entry (a sibling agent owns that route; we only set the hash).
+function renderBoardCard(board, t, champId, childId) {
+  const champSt = sideStatus(board.parent);
+  const childSt = sideStatus(board.child);
+  const anyRunning = champSt === 'running' || childSt === 'running';
+  const anyFailed = champSt === 'failed' || childSt === 'failed';
+  const bothDone = (champSt === 'done' || champSt === 'failed') &&
+    (childSt === 'done' || childSt === 'failed');
+
+  const card = el('div', {
+    class: 'board-card' +
+      (anyRunning ? ' is-running' : '') +
+      (anyFailed ? ' has-failed' : '') +
+      (bothDone && !anyFailed ? ' is-done' : ''),
+    role: 'listitem',
+    tabindex: '0',
+    'aria-label': 'board ' + board.entry_id +
+      ' — champion ' + champSt + ', challenger ' + childSt +
+      ' (open conversation)',
+    onClick: () => openBoardConversation(board.entry_id),
+    onKeydown: (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        openBoardConversation(board.entry_id);
+      }
+    },
+  });
+
+  // Head — the board entry id.
+  card.appendChild(el('div', { class: 'board-card-head' }, [
+    el('span', { class: 'board-card-id mono' }, [board.entry_id]),
+    anyRunning
+      ? el('span', { class: 'board-card-livedot', 'aria-hidden': 'true' }, [''])
+      : null,
+  ]));
+
+  // Two sides — Champion (parent) then Challenger (child).
+  card.appendChild(renderBoardSide('Champion', 'parent', board.parent,
+    champSt, champId));
+  card.appendChild(renderBoardSide('Challenger', 'child', board.child,
+    childSt, childId));
+
+  // Result strip — once both sides finish, which side won + the delta.
+  if (bothDone) {
+    card.appendChild(renderBoardResult(board));
+  }
+  return card;
+}
+
+// One side row of a board card: a status pill, a budget-fraction
+// progress bar (for a running side), and the scalar once the side is
+// done. An over-deadline running side turns the bar red.
+function renderBoardSide(label, side, entry, status, genId) {
+  const row = el('div', { class: 'board-side board-side-' + side + ' st-' + status });
+
+  const head = el('div', { class: 'board-side-head' }, [
+    el('span', { class: 'board-side-label' }, [label]),
+    el('span', { class: 'board-side-gen mono' }, [genId || '—']),
+    el('span', { class: 'pill pill-' + status }, [status]),
+  ]);
+  row.appendChild(head);
+
+  if (status === 'running') {
+    // The progress bar tracks the run's elapsed-vs-budget fraction.
+    const run = findActiveRunForEntry(entry);
+    let frac = (run && typeof run.progress === 'number' && isFinite(run.progress))
+      ? Math.max(0, Math.min(1, run.progress)) : null;
+
+    // Over-deadline detection — elapsed beyond budget. When it occurs
+    // the bar fills fully and turns red, and the card flags it.
+    let elapsed = run && run.elapsed_seconds;
+    if ((elapsed == null || !isFinite(elapsed)) && run && run.started_at) {
+      elapsed = (nowMs() - parseIso(run.started_at)) / 1000;
+    }
+    const budget = run && run.budget_seconds;
+    const overDeadline = typeof elapsed === 'number' && isFinite(elapsed) &&
+      typeof budget === 'number' && isFinite(budget) && budget > 0 &&
+      elapsed > budget;
+    if (overDeadline) frac = 1;
+    const pct = frac != null ? Math.round(frac * 100) : 0;
+
+    const bar = el('div', {
+      class: 'board-prog' + (overDeadline ? ' over-deadline' : ''),
+      role: 'progressbar',
+      'aria-valuemin': '0', 'aria-valuemax': '100',
+      'aria-valuenow': String(pct),
+      'aria-label': 'elapsed fraction of wall-clock budget',
+    }, [
+      el('div', { class: 'board-prog-fill', style: 'width:' + pct + '%' }),
+    ]);
+    row.appendChild(bar);
+
+    if (typeof elapsed === 'number' && isFinite(elapsed)) {
+      const budgetTxt = (typeof budget === 'number' && isFinite(budget))
+        ? fmtDuration(budget) : '—';
+      row.appendChild(el('div', {
+        class: 'board-side-meta mono' + (overDeadline ? ' over-deadline' : ''),
+      }, [
+        fmtDuration(elapsed) + ' / ' + budgetTxt,
+        overDeadline
+          ? el('span', { class: 'board-deadline-flag' }, [' over deadline'])
+          : el('span', { class: 'meta' }, [' elapsed/budget']),
+      ]));
+    } else {
+      row.appendChild(el('div', { class: 'board-side-meta meta' }, ['running…']));
+    }
+  } else if (status === 'done') {
+    const sc = entryScalar(entry);
+    row.appendChild(el('div', { class: 'board-side-score mono' }, [
+      sc != null ? 'scalar ' + fmtRate(sc) : 'done',
+    ]));
+  } else if (status === 'failed') {
+    row.appendChild(el('div', { class: 'board-side-meta board-fail' }, [
+      'run failed',
+    ]));
+  } else {
+    row.appendChild(el('div', { class: 'board-side-meta meta' }, ['queued']));
+  }
+  return row;
+}
+
+// The result strip — shown once both sides of a board finish. States
+// which side won (lower scalar wins) and the scalar delta between them.
+function renderBoardResult(board) {
+  const champSc = entryScalar(board.parent);
+  const childSc = entryScalar(board.child);
+
+  if (typeof champSc !== 'number' || typeof childSc !== 'number') {
+    return el('div', { class: 'board-result board-result-tbd' }, [
+      'Both sides finished — no scalar recorded.',
+    ]);
+  }
+  // Lower scalar (drift-derived loss) is better.
+  const delta = childSc - champSc;
+  let cls, text;
+  if (delta < 0) {
+    cls = 'board-result-win';
+    text = 'Challenger leads · Δ ' + fmtDelta(delta);
+  } else if (delta > 0) {
+    cls = 'board-result-loss';
+    text = 'Champion holds · Δ ' + fmtDelta(delta);
+  } else {
+    cls = 'board-result-flat';
+    text = 'Flat · Δ ' + fmtDelta(delta);
+  }
+  return el('div', { class: 'board-result ' + cls }, [text]);
+}
+
+// Board card click → the Conversation view. A sibling agent owns the
+// route that renders it; this only sets the hash.
+function openBoardConversation(entryId) {
+  if (entryId == null) return;
+  location.hash = 'conversation/' + encodeURIComponent(String(entryId));
 }
 
 // A discarded challenger card — dashed red, hung below its champion.
@@ -1688,51 +2328,79 @@ function renderChallengerCard(m, champId) {
 }
 
 // The in-progress challenge card at the head of the bracket.
+//
+// #13 — the card states plainly: which generation challenges which,
+// the round, how many board entries are done / running / failed, and
+// the predicted gate verdict so far. No `?` is rendered when the
+// active-tournament record actually carries the ids (#11).
 function renderLiveCard(t, champId) {
+  const childId = liveChallengerId(t);
+  const champLabel = champId || 'the baseline';
   const card = el('div', {
     class: 'bracket-live',
     role: 'listitem',
     tabindex: '0',
-    'aria-label': 'live matchup ' + (t.child_id || '?') + ' challenging ' + champId,
-    onClick: () => openMatchup(t.child_id),
+    'aria-label': 'live matchup ' + (childId || 'challenger') +
+      ' challenging ' + champLabel,
+    onClick: () => { if (childId) openMatchup(childId); },
     onKeydown: (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') {
+      if ((ev.key === 'Enter' || ev.key === ' ') && childId) {
         ev.preventDefault();
-        openMatchup(t.child_id);
+        openMatchup(childId);
       }
     },
   });
-  const liveIdSpan = el('span', { class: 'bracket-live-id mono' }, [t.child_id || '?']);
-  const liveHg = harmonografGenLink(t.child_id);
+
+  // Head — challenger id + a live badge.
+  const liveIdSpan = el('span', { class: 'bracket-live-id mono' }, [
+    childId || 'challenger',
+  ]);
+  const liveHg = harmonografGenLink(childId);
   if (liveHg) liveIdSpan.appendChild(liveHg);
   card.appendChild(el('div', { class: 'bracket-live-head' }, [
     liveIdSpan,
     el('span', { class: 'badge running' }, ['live']),
   ]));
-  card.appendChild(el('div', { class: 'bracket-live-vs meta' }, [
-    'challenging ' + champId,
+
+  // A plain-language matchup line: who challenges whom, and the round.
+  const round = liveRoundLabel(t);
+  card.appendChild(el('div', { class: 'bracket-live-vs' }, [
+    el('strong', null, [childId || 'the proposed generation']),
+    ' is challenging ',
+    el('strong', null, [champLabel]),
+    round != null ? ' · round ' + round : '',
   ]));
 
-  // Per-entry status dots.
-  const entries = t.entries || [];
+  // Per-entry status dots + a done/running/failed breakdown.
+  const entries = Array.isArray(t.entries) ? t.entries : [];
+  const done = entries.filter(entryIsDone).length;
+  const failed = entries.filter(entryFailed).length;
+  const running = entries.length - done - failed;
+
   const dots = el('div', { class: 'bracket-live-dots', 'aria-hidden': 'true' });
-  const done = entries.filter(e => e.status === 'done').length;
   for (const e of entries) {
-    const st = e.status || 'queued';
+    const st = String((e && e.status) || 'queued').toLowerCase();
     dots.appendChild(el('span', { class: 'bracket-dot ' + st }, ['']));
   }
   card.appendChild(dots);
-  card.appendChild(el('div', { class: 'bracket-live-prog meta mono' }, [
-    done + ' / ' + entries.length + ' entries',
+
+  const progBits = [done + ' of ' + entries.length + ' board entries done'];
+  if (running > 0) progBits.push(running + ' running');
+  if (failed > 0) progBits.push(failed + ' failed');
+  card.appendChild(el('div', { class: 'bracket-live-prog meta' }, [
+    progBits.join(' · '),
   ]));
 
-  // Predicted-gate verdict (kept from R8-C).
+  // Predicted-gate verdict so far — spelled out, not just a token.
   const verdict = predictedGateVerdict(t, state.scoring.margin);
   if (verdict) {
     const vcls = verdict.verdict === 'promote' ? 'promote'
       : verdict.verdict === 'reject' ? 'reject' : 'tbd';
+    const vlabel = verdict.verdict === 'promote' ? 'on track to be KEPT'
+      : verdict.verdict === 'reject' ? 'on track to be DISCARDED'
+      : 'verdict still undecided';
     card.appendChild(el('div', { class: 'bracket-live-verdict ' + vcls }, [
-      'predicted: ' + verdict.verdict.toUpperCase(),
+      'Gate so far: ' + vlabel,
     ]));
   }
   return card;
@@ -1772,11 +2440,11 @@ function renderMatchupDetail() {
   const summary = matchupSummary(genId);
   const detail = state.matchupDetail.get(genId);
   const live = liveMatchup();
-  const isLive = live && live.child_id === genId;
+  const isLive = !!(live && liveChallengerId(live) === genId);
 
   // Header line.
   const champ = (summary && summary.champion)
-    || (isLive && (live.parent_id || live.champion)) || '?';
+    || (isLive ? liveChampionId(live) : null) || '?';
   wrap.appendChild(el('h3', null, [
     'Matchup · ' + genId + ' vs ' + champ,
   ]));
@@ -2148,9 +2816,17 @@ function renderEpochBoard(def) {
 function renderEpochRubric(def) {
   const wrap = $('epoch-rubric');
   clearChildren(wrap);
+  // Centering / max-width is owned by the `.epoch-rubric` CSS rule;
+  // ensure the container carries the class even if markup drifts, and
+  // always wrap content in a `rubric-block` so the readable-block
+  // styling applies (no lopsided narrow column).
+  wrap.classList.add('epoch-rubric');
   const rubric = def && typeof def.rubric === 'string' ? def.rubric : '';
   if (!rubric.trim()) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No rubric recorded.']));
+    const empty = el('div', { class: 'rubric-block' }, [
+      el('p', { class: 'empty' }, ['No rubric recorded.']),
+    ]);
+    wrap.appendChild(empty);
     return;
   }
   const block = el('div', { class: 'rubric-block' });
@@ -2221,11 +2897,36 @@ function renderEpochScoring(def) {
   for (const [k, v] of Object.entries(scoring)) {
     tbody.appendChild(el('tr', null, [
       el('td', { class: 'mono' }, [k]),
-      el('td', { class: 'mono' }, [String(v)]),
+      el('td', { class: 'mono' }, [scoringValueCell(v)]),
     ]));
   }
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+}
+
+// Render a scoring weight value. Scalars render as plain text; an
+// object-valued weight (e.g. per_kind_weights, severity_weights)
+// renders as a nested key->value sub-list instead of stringifying to
+// the literal `[object Object]`.
+function scoringValueCell(v) {
+  if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+    const entries = Object.entries(v);
+    if (entries.length === 0) return el('span', { class: 'meta' }, ['{}']);
+    const sub = el('ul', { class: 'scoring-subdict' });
+    for (const [ik, iv] of entries) {
+      sub.appendChild(el('li', null, [
+        el('span', { class: 'scoring-subkey' }, [ik]),
+        el('span', { class: 'scoring-subval' }, [
+          iv != null && typeof iv === 'object'
+            ? scoringValueCell(iv)
+            : String(iv),
+        ]),
+      ]));
+    }
+    return sub;
+  }
+  if (Array.isArray(v)) return el('span', null, [v.join(', ')]);
+  return el('span', null, [String(v)]);
 }
 
 function renderEpochMutations(def) {
@@ -2249,10 +2950,15 @@ function renderEpochMutations(def) {
   ])]));
   const tbody = el('tbody');
   for (const m of muts) {
+    const fullPath = m.file || '';
+    const fileCell = fullPath
+      ? el('td', { class: 'mono', title: fullPath },
+          [relativizeMutationPath(fullPath)])
+      : el('td', { class: 'mono' }, ['—']);
     tbody.appendChild(el('tr', null, [
       el('td', { class: 'mono' }, [m.id || '—']),
       el('td', null, [m.kind || '—']),
-      el('td', { class: 'mono' }, [m.file || '—']),
+      fileCell,
       el('td', { class: 'mono' }, [m.lines || '—']),
       el('td', null, [truncate(m.preview || '', 64)]),
     ]));
@@ -2261,21 +2967,84 @@ function renderEpochMutations(def) {
   wrap.appendChild(tbl);
 }
 
+// Reduce an absolute snapshot path to a meaningful repo-relative path.
+// Mutation files arrive as full paths inside a per-run snapshot dir,
+// e.g. `/tmp/zicato-tournamentN/.zicato/epochs/.../generations/v0/
+// snapshot/agent/foo.py`. Strip everything up to and including a
+// `snapshot/` segment; if there is none, fall back to the last 2-3
+// path segments. The caller keeps the full path as a tooltip.
+function relativizeMutationPath(path) {
+  const norm = String(path).replace(/\\/g, '/');
+  const m = norm.match(/(?:^|\/)snapshot\/(.+)$/);
+  if (m && m[1]) return m[1];
+  const parts = norm.split('/').filter(Boolean);
+  if (parts.length <= 3) return parts.join('/');
+  return parts.slice(-3).join('/');
+}
+
 // --- Render: log tail
+
+// Format an event timestamp as a short clock time (HH:MM:SS). Falls
+// back to the raw string when it does not parse as a date.
+function fmtEventTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return String(ts);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 
 function renderLogTail() {
   const wrap = $('log-tail');
   clearChildren(wrap);
-  if (!state.logLines || state.logLines.length === 0) {
+
+  // #7 — the log tail consumes the shared `state.logTail` contract:
+  //   { events: [{ seq, kind, ts, summary }] }
+  // Fall back to the legacy `state.logLines` shape so the panel works
+  // regardless of the merge order with the core/state branch.
+  let events = [];
+  if (state.logTail && Array.isArray(state.logTail.events)) {
+    events = state.logTail.events.map((e) => ({
+      seq: e.seq != null ? e.seq : null,
+      kind: e.kind || 'event',
+      ts: e.ts || null,
+      summary: e.summary != null ? e.summary : '',
+    }));
+  } else if (Array.isArray(state.logLines)) {
+    events = state.logLines.map((line) => ({
+      seq: null,
+      kind: (line.level || 'log'),
+      ts: line.ts || null,
+      summary: line.message != null ? line.message : (line.line || ''),
+    }));
+  }
+
+  if (events.length === 0) {
     wrap.appendChild(el('p', { class: 'empty' }, ['No events yet.']));
     return;
   }
-  for (const line of state.logLines) {
+
+  // Oldest-first so the freshest event lands at the bottom, next to
+  // the auto-scroll — the natural reading order for a streaming tail.
+  for (const ev of events) {
     const lineEl = el('div', { class: 'log-line fade-in' });
-    if (line.ts) lineEl.appendChild(el('span', { class: 'ts' }, [line.ts]));
-    const lvl = (line.level || '').toLowerCase();
-    const cls = lvl === 'error' ? 'ev-error' : lvl === 'warn' ? 'ev-warn' : lvl === 'ok' ? 'ev-ok' : '';
-    lineEl.appendChild(el('span', { class: cls }, [String(line.message || '')]));
+    if (ev.ts) {
+      lineEl.appendChild(el('span', {
+        class: 'ts', title: String(ev.ts),
+      }, [fmtEventTime(ev.ts)]));
+    }
+    const kind = String(ev.kind || 'event');
+    const kl = kind.toLowerCase();
+    const cls = (kl.indexOf('error') >= 0 || kl.indexOf('fail') >= 0) ? 'ev-error'
+      : (kl.indexOf('warn') >= 0) ? 'ev-warn'
+      : (kl.indexOf('ok') >= 0 || kl.indexOf('done') >= 0 || kl.indexOf('pass') >= 0) ? 'ev-ok'
+      : '';
+    lineEl.appendChild(el('span', {
+      class: 'log-kind badge ' + cls,
+    }, [kind]));
+    lineEl.appendChild(el('span', { class: 'log-summary' }, [
+      String(ev.summary || ''),
+    ]));
     wrap.appendChild(lineEl);
   }
   wrap.scrollTop = wrap.scrollHeight;
@@ -2315,6 +3084,19 @@ function applyRoute() {
 
   if (segs.length === 0) {
     view = DEFAULT_VIEW;
+  } else if (segs[0] === 'conversation') {
+    // Focused Conversation view — #conversation/{entry_id}. The entry id
+    // follows the view segment directly (no kind segment). Board cards
+    // in the Tournament view link here.
+    view = 'conversation';
+    const entryId = segs.length >= 2
+      ? decodeURIComponent(segs.slice(1).join('/'))
+      : null;
+    if (view !== currentView) showView(view);
+    else showViewClassesOnly(view);
+    applyDrill(null, null);
+    selectConversation(entryId);
+    return;
   } else if (VIEWS.includes(segs[0])) {
     view = segs[0];
     if (segs.length >= 3) {
@@ -2424,20 +3206,59 @@ function applyDrill(kind, id) {
 
   if (kind === 'entry') {
     title.textContent = 'Entry ' + id;
-    // Look in every selectable tournament, not just the active one.
+    // Look in every selectable tournament — the active (in-flight) one
+    // first, then any past ones. allTournaments() now always includes
+    // state.activeTournament when set (core loads it globally), so an
+    // entry from a tournament that is still running resolves here.
     let entry = null;
+    let owner = null;
     for (const t of state.allTournaments()) {
       const found = (t.entries || []).find(e => e.entry_id === id);
-      if (found) { entry = found; break; }
+      if (found) { entry = found; owner = t; break; }
     }
     if (!entry) {
-      body.appendChild(el('p', { class: 'empty' }, ['Entry not found in any tournament.']));
+      body.appendChild(el('p', { class: 'empty' }, [
+        'Entry not found in any tournament. It may not have been ' +
+        'scheduled yet, or its tournament has not started.',
+      ]));
       return;
     }
-    const meta = el('p', null, [
+
+    // Real status — the producer's `status`, with a `queued` fallback
+    // only when the field is genuinely absent.
+    body.appendChild(el('p', null, [
       'Status: ', el('strong', null, [entry.status || 'queued']),
-    ]);
-    body.appendChild(meta);
+    ]));
+    // Which side of the matchup this entry ran (parent / child). The
+    // contract carries `side`; older records have no side at all.
+    if (entry.side) {
+      body.appendChild(el('p', null, [
+        'Side: ', el('strong', null, [entry.side]),
+      ]));
+    }
+    // Which tournament it belongs to, and whether that run is live.
+    if (owner) {
+      const champ = liveChampionId(owner);
+      const chal = liveChallengerId(owner);
+      if (champ || chal) {
+        body.appendChild(el('p', { class: 'meta' }, [
+          (owner.__active ? 'In-flight tournament: ' : 'Tournament: ') +
+          (chal || '?') + ' vs ' + (champ || '?'),
+        ]));
+      }
+    }
+    // The entry's scalar score — under whichever key the producer used.
+    const sc = entryScalar(entry);
+    if (sc != null) {
+      body.appendChild(el('p', { class: 'mono' }, [
+        'scalar score ' + fmtRate(sc),
+      ]));
+    }
+    if (entry.patch_id) {
+      body.appendChild(el('p', { class: 'meta mono' }, ['patch_id: ' + entry.patch_id]));
+    }
+
+    // Defensive: some producers attach per-side result sub-objects.
     if (entry.parent) {
       body.appendChild(el('h4', null, ['Parent result']));
       body.appendChild(el('p', { class: 'mono' }, [
@@ -2463,6 +3284,12 @@ function applyDrill(kind, id) {
     }
     if (entry.run_id) {
       body.appendChild(el('p', { class: 'meta mono' }, ['run_id: ' + entry.run_id]));
+      // #17 — deep-link the entry's run into harmonograf.
+      const hg = harmonografMini(
+        { entry_id: entry.entry_id, run_id: entry.run_id },
+        'harmonograf trace',
+        'open harmonograf trace for entry ' + entry.entry_id);
+      if (hg) body.appendChild(el('p', null, [hg]));
     }
     return;
   }
@@ -2506,6 +3333,495 @@ function applyDrill(kind, id) {
   }
 }
 
+// ===================================================================
+// --- Conversation view — side-by-side champion / challenger transcripts
+//
+// A focused view reached at #conversation/{entry_id}. It shows a board
+// entry's champion run and challenger run transcripts in two columns,
+// live: the transcript is fetched on entry and re-fetched on every
+// render tick while a run is still in progress, so the columns grow as
+// the runs execute. renderAll() runs on each SSE state_change, so the
+// view re-paints — and re-polls — without touching the SSE machinery.
+//
+// Data contract — GET /api/matchup/{entry_id}/conversations:
+//   { champion:   { run_id, generation_id, transcript },
+//     challenger: { run_id, generation_id, transcript } }
+// A `transcript` is { run_id, event_count, complete:bool,
+//   turns:[{ seq, ts, agent, role, kind, text, tool_calls[],
+//            tool_results[] }],
+//   annotations:[{ kind, ts, summary, anchor_seq, detail }] }.
+// The endpoint does not exist on every server build; an absent /
+// failing endpoint degrades to a clear "data unavailable" state.
+//
+// This whole section is self-contained: its state lives in the
+// module-level vars below rather than on AppState, and it drives its
+// own live re-fetch from renderConversationView — so it touches no
+// shared rendering or fetch code outside this block.
+
+// --- Conversation-view module state.
+let convEntryId = null;       // board entry whose diff is open, or null
+let convData = null;          // last { champion, challenger } payload
+let convError = false;        // endpoint absent / failed → degrade
+let convInFlight = false;     // a fetch is currently in the air
+let convLastFetch = 0;        // epoch-ms of the last fetch (poll throttle)
+
+// Minimum gap between live re-fetches while a run is in progress.
+const CONV_POLL_MS = 2500;
+
+// Enter the Conversation view for a board entry. Sets the selected
+// entry, paints immediately (so the header / loading state shows), then
+// kicks off the fetch. applyRoute() calls this on every renderAll(), so
+// it only (re-)fetches when the entry actually changed or nothing has
+// loaded yet — the render-driven poll handles the live growth.
+function selectConversation(entryId) {
+  if (!entryId) {
+    convEntryId = null;
+    convData = null;
+    convError = false;
+    renderConversationView();
+    return;
+  }
+  const changed = convEntryId !== entryId;
+  if (changed) {
+    // A different entry — drop the stale transcript so the loading
+    // state shows rather than the previous entry's columns.
+    convData = null;
+    convError = false;
+    convLastFetch = 0;
+  }
+  convEntryId = entryId;
+  renderConversationView();
+  if (changed || (convData == null && !convError)) {
+    loadConversation();
+  }
+}
+
+// GET /api/matchup/{entry_id}/conversations. Tolerant: an absent or
+// failing endpoint sets `convError` so the view degrades to a clear
+// "conversation data unavailable" message rather than crashing. In
+// mock mode the data is synthesised locally.
+async function loadConversation() {
+  const entryId = convEntryId;
+  if (!entryId || convInFlight) return;
+  convLastFetch = Date.now();
+  if (state.mock) {
+    convData = mockConversation(entryId);
+    convError = false;
+    if (currentView === 'conversation') renderConversationView();
+    return;
+  }
+  convInFlight = true;
+  try {
+    const data = await fetchJson(
+      '/api/matchup/' + encodeURIComponent(entryId) + '/conversations');
+    // Guard against the entry changing mid-flight (the operator drilled
+    // to a different entry while this request was in the air).
+    if (convEntryId !== entryId) return;
+    convData = (data && typeof data === 'object') ? data : null;
+    convError = !convData;
+  } catch (err) {
+    if (convEntryId !== entryId) return;
+    // Endpoint absent (404 on this branch) or transient — degrade.
+    convData = null;
+    convError = true;
+  } finally {
+    convInFlight = false;
+  }
+  if (currentView === 'conversation') renderConversationView();
+}
+
+// True while either side's transcript is still being produced.
+function convInProgress(conv) {
+  if (!conv) return false;
+  for (const side of [conv.champion, conv.challenger]) {
+    const t = side && side.transcript;
+    if (t && t.complete === false) return true;
+  }
+  return false;
+}
+
+// One side's transcript shape — defensive: fields may be absent on a
+// partial / in-progress record.
+function transcriptTurns(side) {
+  const t = side && side.transcript;
+  return (t && Array.isArray(t.turns)) ? t.turns : [];
+}
+function transcriptAnnotations(side) {
+  const t = side && side.transcript;
+  return (t && Array.isArray(t.annotations)) ? t.annotations : [];
+}
+
+// Render the Conversation view: a header, then two transcript columns.
+// While a run is still in progress this also schedules the next live
+// re-fetch — renderConversationView is reached on every SSE-driven
+// renderAll(), so this is the view's live loop.
+function renderConversationView() {
+  const wrap = $('conversation-panel');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const entryId = convEntryId;
+
+  // The back link always returns to the Tournament view — the
+  // Conversation view is only ever entered by drilling from there.
+  const backLink = el('a', {
+    class: 'conversation-back',
+    href: '#/tournament',
+  }, ['← back to tournament']);
+
+  if (!entryId) {
+    wrap.appendChild(backLink);
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'No board entry selected. Drill into a board card from the ' +
+      'Tournament view to see its conversation diff.',
+    ]));
+    return;
+  }
+
+  const conv = convData;
+  const champion = conv && conv.champion;
+  const challenger = conv && conv.challenger;
+
+  // --- Header: entry id, champion gen vs challenger gen.
+  const champGen = (champion && champion.generation_id) || '—';
+  const chalGen = (challenger && challenger.generation_id) || '—';
+  const header = el('div', { class: 'conversation-header' }, [
+    backLink,
+    el('h2', { class: 'conversation-title' }, [
+      'Conversation diff ',
+      el('code', { class: 'mono' }, [entryId]),
+    ]),
+    el('div', { class: 'conversation-versus' }, [
+      el('span', { class: 'conversation-side-tag champion' }, [
+        'champion ', el('code', { class: 'mono' }, [champGen]),
+      ]),
+      el('span', { class: 'conversation-vs' }, ['vs']),
+      el('span', { class: 'conversation-side-tag challenger' }, [
+        'challenger ', el('code', { class: 'mono' }, [chalGen]),
+      ]),
+    ]),
+  ]);
+  wrap.appendChild(header);
+
+  // --- Degraded states.
+  if (convError) {
+    wrap.appendChild(el('p', { class: 'empty conversation-unavailable' }, [
+      'Conversation data unavailable — the matchup transcript ' +
+      'endpoint did not respond. It may not be served by this ' +
+      'supervisor build, or the runs have not started.',
+    ]));
+    return;
+  }
+  if (!conv) {
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'Loading conversation…',
+    ]));
+    return;
+  }
+
+  // --- Two columns.
+  const cols = el('div', { class: 'conversation-columns' }, [
+    renderTranscriptColumn('champion', champion),
+    renderTranscriptColumn('challenger', challenger),
+  ]);
+  wrap.appendChild(cols);
+
+  // --- Live loop: while a run is still producing turns, schedule the
+  // next re-fetch. renderAll() (SSE-driven) re-enters this function and
+  // keeps the poll alive; the throttle keeps it from hammering when
+  // state_change ticks arrive fast.
+  if (!state.mock && convInProgress(conv)) {
+    const since = Date.now() - convLastFetch;
+    if (since >= CONV_POLL_MS) {
+      loadConversation();
+    } else {
+      setTimeout(() => {
+        if (currentView === 'conversation' && convEntryId === entryId
+            && convInProgress(convData)) {
+          loadConversation();
+        }
+      }, CONV_POLL_MS - since);
+    }
+  }
+}
+
+// Render one transcript column for a side ({ run_id, generation_id,
+// transcript }). The column header carries the run id and a live /
+// complete status; the body renders turns in seq order with annotations
+// hung as margin notes next to their anchored turn.
+function renderTranscriptColumn(sideKind, side) {
+  const col = el('div', { class: 'conversation-column ' + sideKind });
+
+  const transcript = side && side.transcript;
+  const runId = (side && side.run_id) || (transcript && transcript.run_id);
+
+  // Column header — side label, run id, status badge.
+  const complete = !!(transcript && transcript.complete);
+  const hasTranscript = !!transcript;
+  const statusBadge = !hasTranscript
+    ? el('span', { class: 'badge pending' }, ['no run'])
+    : complete
+      ? el('span', { class: 'badge promoted' }, ['complete'])
+      : el('span', { class: 'badge running conversation-live' }, [
+          el('span', { class: 'conversation-live-dot', 'aria-hidden': 'true' },
+            ['●']),
+          'in progress',
+        ]);
+  const head = el('div', { class: 'conversation-column-head' }, [
+    el('span', { class: 'conversation-column-label' }, [sideKind]),
+    el('code', { class: 'mono conversation-run-id' }, [runId || '—']),
+    statusBadge,
+  ]);
+  if (transcript && transcript.event_count != null) {
+    head.appendChild(el('span', { class: 'meta conversation-event-count' }, [
+      transcript.event_count + ' events',
+    ]));
+  }
+  col.appendChild(head);
+
+  const body = el('div', { class: 'conversation-column-body' });
+
+  if (!hasTranscript) {
+    body.appendChild(el('p', { class: 'empty' }, [
+      'No transcript for this side — the run has not started.',
+    ]));
+    col.appendChild(body);
+    return col;
+  }
+
+  const turns = transcriptTurns(side);
+  const annotations = transcriptAnnotations(side);
+
+  // Index annotations by the seq of the turn they anchor to.
+  const annoBySeq = new Map();
+  for (const a of annotations) {
+    const key = a && a.anchor_seq;
+    if (key == null) continue;
+    if (!annoBySeq.has(key)) annoBySeq.set(key, []);
+    annoBySeq.get(key).push(a);
+  }
+
+  if (turns.length === 0 && !complete) {
+    body.appendChild(el('p', { class: 'empty' }, [
+      'Waiting for the first turn…',
+    ]));
+  } else if (turns.length === 0) {
+    body.appendChild(el('p', { class: 'empty' }, [
+      'This run produced no transcript turns.',
+    ]));
+  }
+
+  for (const turn of turns) {
+    body.appendChild(renderTurn(turn, annoBySeq.get(turn && turn.seq)));
+  }
+
+  // A trailing live cue while the run is still executing.
+  if (!complete) {
+    body.appendChild(el('div', { class: 'conversation-tail-live' }, [
+      el('span', { class: 'conversation-live-dot', 'aria-hidden': 'true' },
+        ['●']),
+      'run in progress — more turns will stream in',
+    ]));
+  }
+
+  col.appendChild(body);
+  return col;
+}
+
+// Render a single transcript turn. `seq` is set as a data attribute so
+// the two columns can be aligned by seq. `annos` are the annotations
+// anchored to this turn, hung as margin notes.
+function renderTurn(turn, annos) {
+  const seq = turn && turn.seq;
+  const node = el('div', {
+    class: 'conversation-turn',
+    dataset: { seq: seq == null ? '' : String(seq) },
+  });
+
+  // Turn meta line — agent / role / kind, plus seq + timestamp.
+  const meta = el('div', { class: 'conversation-turn-meta' });
+  if (turn && turn.agent) {
+    meta.appendChild(el('span', { class: 'conversation-turn-agent' },
+      [String(turn.agent)]));
+  }
+  if (turn && turn.role) {
+    meta.appendChild(el('span', { class: 'conversation-turn-role' },
+      [String(turn.role)]));
+  }
+  if (turn && turn.kind) {
+    meta.appendChild(el('span', {
+      class: 'conversation-turn-kind kind-' + String(turn.kind),
+    }, [String(turn.kind)]));
+  }
+  if (seq != null) {
+    meta.appendChild(el('span', { class: 'meta mono conversation-turn-seq' },
+      ['#' + seq]));
+  }
+  if (turn && turn.ts) {
+    meta.appendChild(el('span', { class: 'meta conversation-turn-ts' },
+      [String(turn.ts)]));
+  }
+  node.appendChild(meta);
+
+  // Turn text.
+  if (turn && turn.text) {
+    node.appendChild(el('div', { class: 'conversation-turn-text' },
+      [String(turn.text)]));
+  }
+
+  // Tool calls — compact.
+  const calls = (turn && Array.isArray(turn.tool_calls)) ? turn.tool_calls : [];
+  for (const c of calls) {
+    const argStr = (c && c.args != null)
+      ? (typeof c.args === 'string' ? c.args : JSON.stringify(c.args))
+      : '';
+    node.appendChild(el('div', { class: 'conversation-tool tool-call' }, [
+      el('span', { class: 'conversation-tool-glyph', 'aria-hidden': 'true' },
+        ['→']),
+      el('span', { class: 'conversation-tool-name mono' },
+        [(c && c.name) || 'tool']),
+      argStr
+        ? el('code', { class: 'mono conversation-tool-args' },
+            [truncate(argStr, 160)])
+        : null,
+    ]));
+  }
+
+  // Tool results — compact.
+  const results = (turn && Array.isArray(turn.tool_results))
+    ? turn.tool_results : [];
+  for (const r of results) {
+    const resStr = (r && r.result != null)
+      ? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result))
+      : '';
+    node.appendChild(el('div', { class: 'conversation-tool tool-result' }, [
+      el('span', { class: 'conversation-tool-glyph', 'aria-hidden': 'true' },
+        ['←']),
+      el('span', { class: 'conversation-tool-name mono' },
+        [(r && r.name) || 'result']),
+      resStr
+        ? el('code', { class: 'mono conversation-tool-args' },
+            [truncate(resStr, 160)])
+        : null,
+    ]));
+  }
+
+  // Margin notes — annotations anchored to this turn. drift / steering /
+  // judge / plan are visually distinct (drift carries a warning color).
+  if (annos && annos.length > 0) {
+    const notes = el('div', { class: 'conversation-margin' });
+    for (const a of annos) {
+      const kind = (a && a.kind) || 'note';
+      const note = el('div', {
+        class: 'conversation-note note-' + kind,
+        title: (a && a.detail) || '',
+      });
+      note.appendChild(el('span', { class: 'conversation-note-kind' },
+        [kind]));
+      if (a && a.summary) {
+        note.appendChild(el('span', { class: 'conversation-note-summary' },
+          [String(a.summary)]));
+      }
+      if (a && a.detail) {
+        note.appendChild(el('span', { class: 'conversation-note-detail meta' },
+          [String(a.detail)]));
+      }
+      notes.appendChild(note);
+    }
+    node.appendChild(notes);
+  }
+
+  return node;
+}
+
+// Synthetic conversation data for ?mock=1 — keyed by board entry id,
+// with a sensible default so any entry previews. Exercises tool calls /
+// results, every annotation kind, an in-progress challenger run, and a
+// seq the two sides share so alignment is visible.
+function mockConversation(entryId) {
+  const championTranscript = {
+    run_id: 'v4--' + entryId,
+    event_count: 9,
+    complete: true,
+    turns: [
+      { seq: 1, ts: '04:35:01', agent: 'researcher', role: 'user',
+        kind: 'plan',
+        text: 'Extract the invoice total and due date from the attached PDF.' },
+      { seq: 2, ts: '04:35:03', agent: 'researcher', role: 'assistant',
+        kind: 'message',
+        text: 'I will read the document, then extract the two fields.',
+        tool_calls: [
+          { name: 'read_document', args: { path: 'invoice.pdf' },
+            task_id: 't1' },
+        ] },
+      { seq: 3, ts: '04:35:05', agent: 'researcher', role: 'tool',
+        kind: 'tool',
+        text: '',
+        tool_results: [
+          { name: 'read_document',
+            result: 'Invoice #4471 — total $1,240.00, due 2026-06-01.',
+            task_id: 't1' } ] },
+      { seq: 4, ts: '04:35:08', agent: 'researcher', role: 'assistant',
+        kind: 'message',
+        text: 'Total is $1,240.00 and the due date is 2026-06-01.' },
+    ],
+    annotations: [
+      { kind: 'plan', ts: '04:35:01', anchor_seq: 1,
+        summary: 'task plan registered',
+        detail: 'two-field extraction; predicate expectation.' },
+      { kind: 'judge', ts: '04:35:09', anchor_seq: 4,
+        summary: 'predicate passed',
+        detail: 'both fields match the expected contract.' },
+    ],
+  };
+  const challengerTranscript = {
+    run_id: 'v5--' + entryId,
+    event_count: 7,
+    complete: false,
+    turns: [
+      { seq: 1, ts: '04:36:00', agent: 'researcher', role: 'user',
+        kind: 'plan',
+        text: 'Extract the invoice total and due date from the attached PDF.' },
+      { seq: 2, ts: '04:36:02', agent: 'researcher', role: 'assistant',
+        kind: 'message',
+        text: 'Reading the document with the compressed tool description.',
+        tool_calls: [
+          { name: 'read_document', args: { path: 'invoice.pdf' },
+            task_id: 't1' } ] },
+      { seq: 3, ts: '04:36:04', agent: 'researcher', role: 'tool',
+        kind: 'tool',
+        text: '',
+        tool_results: [
+          { name: 'read_document',
+            result: 'Invoice #4471 — total $1,240.00, due 2026-06-01.',
+            task_id: 't1' } ] },
+      { seq: 4, ts: '04:36:07', agent: 'researcher', role: 'assistant',
+        kind: 'message',
+        text: 'The total appears to be $1,240 — still confirming the date.' },
+    ],
+    annotations: [
+      { kind: 'steering', ts: '04:36:03', anchor_seq: 2,
+        summary: 'steering nudge applied',
+        detail: 'reminded the agent to emit the date in ISO form.' },
+      { kind: 'drift', ts: '04:36:07', anchor_seq: 4,
+        summary: 'schema drift: total dropped its cents',
+        detail: 'emitted "$1,240" instead of the contract "$1,240.00".' },
+    ],
+  };
+  return {
+    champion: {
+      run_id: championTranscript.run_id,
+      generation_id: 'v4',
+      transcript: championTranscript,
+    },
+    challenger: {
+      run_id: challengerTranscript.run_id,
+      generation_id: 'v5',
+      transcript: challengerTranscript,
+    },
+  };
+}
+
 // --- View switching
 //
 // Only the active view's panels are in the DOM flow; switching views
@@ -2543,6 +3859,8 @@ function renderActiveView() {
     renderTournamentView();
   } else if (currentView === 'epoch') {
     renderEpochView();
+  } else if (currentView === 'conversation') {
+    renderConversationView();
   }
 }
 
@@ -2600,9 +3918,44 @@ async function loadFullState() {
   } catch (err) {
     // No /api/epoch — fine, the Epoch view degrades to empty states.
   }
-  // The bracket and health endpoints (R9-5) are likewise independent;
-  // fetch them in parallel and tolerate either being absent.
+  // The bracket and health-report endpoints (R9-5) are likewise
+  // independent; fetch them in parallel and tolerate either being
+  // absent.
   await Promise.all([loadBracket(), loadHealthReport()]);
+  // The keystone fix: the dashboard's live data must be loaded UP
+  // FRONT, not lazily when a view first renders. Previously
+  // `activeTournament` was only fetched when the Tournament view
+  // painted, so Overview and Epoch saw a null tournament and every
+  // board entry fell back to a hardcoded 'queued'. Pull the four
+  // cross-view feeds here so every view is live from the first paint.
+  await loadLiveFeeds();
+  // Repaint once the live feeds have landed — the earlier renderAll()
+  // ran before activeTournament / lineage / logTail / activeRuns were
+  // fetched, so without this the first paint stays stale.
+  renderAll();
+}
+
+// Fetch the cross-view live feeds — active tournament, lineage, the
+// run-log tail, health, and the active-runs list. Each is independent
+// and tolerates an absent endpoint. Re-rendering is left to the caller.
+async function loadLiveFeeds() {
+  await Promise.all([
+    fetchJson('/api/active-tournament')
+      .then((t) => { state.activeTournament = t; })
+      .catch(() => { /* no tournament endpoint — leave as-is */ }),
+    fetchJson('/api/lineage')
+      .then((l) => { if (l) state.lineage = l; })
+      .catch(() => { /* no lineage endpoint */ }),
+    fetchJson('/api/run-log?limit=40')
+      .then((log) => { state.setLogTail(log); })
+      .catch(() => { /* no run-log endpoint */ }),
+    fetchJson('/api/active-runs')
+      .then((r) => { if (Array.isArray(r)) state.activeRuns = r; })
+      .catch(() => { /* no active-runs endpoint */ }),
+    fetchJson('/api/health')
+      .then((h) => { state.setHealth(h); })
+      .catch(() => { /* no health endpoint */ }),
+  ]);
 }
 
 // GET /api/tournaments — the gauntlet bracket. Independent of /api/state.
@@ -2665,15 +4018,18 @@ async function refreshAfterEvent(payload) {
       await loadFullState();
       return;
     }
+    // Whatever the tag, the cross-view live feeds — the active
+    // tournament, the run-log tail and the active-runs list — are
+    // re-fetched on EVERY tick. They are what keep Overview/Epoch from
+    // going stale while the user is parked on another view; a tag of
+    // `epoch` still moves runs, and a `tournament` tag still moves the
+    // log. loadLiveFeeds also refreshes lineage + health cheaply.
+    const liveFeeds = loadLiveFeeds();
     if (tag === 'tournament') {
-      // A tournament changed: refresh both the live matchup and the
-      // bracket, and drop the cached detail for the moving matchup.
-      try {
-        const t = await fetchJson('/api/active-tournament');
-        state.activeTournament = t;
-      } catch (err) { /* may have just ended */ }
+      // A tournament changed: also refresh the bracket and drop the
+      // cached detail for the moving matchup.
       state.matchupDetail.clear();
-      await loadBracket();
+      await Promise.all([liveFeeds, loadBracket()]);
       if (state.selectedMatchup) loadMatchupDetail(state.selectedMatchup);
     } else if (tag === 'heartbeat') {
       try {
@@ -2683,12 +4039,7 @@ async function refreshAfterEvent(payload) {
         await loadFullState();
         return;
       }
-    } else if (tag === 'runs') {
-      const r = await fetchJson('/api/active-runs');
-      state.activeRuns = r;
-    } else if (tag === 'lineage') {
-      const l = await fetchJson('/api/lineage');
-      state.lineage = l;
+      await liveFeeds;
     } else if (tag === 'epoch') {
       try {
         const epoch = await fetchJson('/api/epoch');
@@ -2696,10 +4047,11 @@ async function refreshAfterEvent(payload) {
       } catch (err) { /* endpoint may be absent */ }
       // An epoch transition can also move the bracket and the health
       // report; refresh those too.
-      await Promise.all([loadBracket(), loadHealthReport()]);
+      await Promise.all([liveFeeds, loadBracket(), loadHealthReport()]);
     } else {
-      await loadFullState();
-      return;
+      // `runs`, `lineage`, or any unknown tag: the live feeds already
+      // cover runs + lineage, so just await them.
+      await liveFeeds;
     }
     renderAll();
   } catch (err) {
@@ -2895,7 +4247,21 @@ function mockSnapshot() {
       startedAt: new Date(Date.now() - 4 * 60_000 - 23_000).toISOString(),
     },
     heartbeat: {
-      timestamp: new Date().toISOString(), pid: 12345, instance_id: 'mock',
+      // The header reads generation_id / round_index straight off the
+      // heartbeat; the elapsed clock is now − started_at; the stale
+      // badge is now − last_heartbeat > 90s. The two zone forms (`Z`
+      // and `+00:00`) are mixed on purpose so ?mock=1 exercises the
+      // robust parseIso path.
+      generation_id: 'v5',
+      round_index: 2,
+      // Boards execute in parallel; the tournament hall appends this to
+      // its occupancy header when present.
+      parallelism: 3,
+      last_heartbeat: new Date().toISOString(),
+      round_started_at: new Date(Date.now() - 263_000).toISOString()
+        .replace('Z', '+00:00'),
+      started_at: new Date(Date.now() - 4 * 60_000 - 23_000).toISOString(),
+      pid: 12345, instance_id: 'mock',
       // Assembled from parts so the static bundle carries no literal
       // external URL — the no-external-fetch structural test forbids
       // `http://` / `https://`. A real heartbeat carries this verbatim
@@ -2904,39 +4270,66 @@ function mockSnapshot() {
       harmonograf_url: 'ht' + 'tp' + '://localhost:4180',
     },
     supervisor: { version: '1.2.0', port: '7892', build: 'mock' },
+    // GET /api/health — supervisor identity for the footer.
+    health: {
+      version: '0.1.0', port: 7892, build: '0.1.0+9feb5e8d3a16',
+      uptime_seconds: 5_280,
+    },
     scoring: { margin: 0.05 },
+    // GET /api/active-runs — each element carries progress (0..1),
+    // elapsed_seconds and budget_seconds so the run cards' progress
+    // meters render under ?mock=1.
     active_runs: [
       { run_id: 'r-9c2a', entry_id: 'research_topic_q3', generation_id: 'v5',
         session_id: 's-research-9c2a',
         started_at: new Date(Date.now() - 42_000).toISOString(),
-        budget_seconds: 180, percent: 23 },
+        progress: 0.23, elapsed_seconds: 42, budget_seconds: 180 },
       { run_id: 'r-7f10', entry_id: 'multi_turn_picky', generation_id: 'v5',
         started_at: new Date(Date.now() - 14_000).toISOString(),
-        budget_seconds: 240, percent: 6 },
+        progress: 0.06, elapsed_seconds: 14, budget_seconds: 240 },
+      // An over-deadline run — elapsed past budget. The hall board card
+      // turns its bar red and flags the side.
+      { run_id: 'r-3b88', entry_id: 'schema_response', generation_id: 'v5',
+        started_at: new Date(Date.now() - 720_000).toISOString(),
+        progress: 0.88, elapsed_seconds: 720, budget_seconds: 600 },
     ],
+    // GET /api/active-tournament — the contract shape: round_index,
+    // parent/child generation ids, and a flat per-SIDE entries list
+    // (each board entry appears once per side). Rich extras
+    // (hypothesis, drift_movements, per-entry runtime) are additive.
     active_tournament: {
-      round: 2, round_index: 2, total_rounds: 4,
-      parent_id: 'v4', child_id: 'v5',
+      round_index: 2, total_rounds: 4,
+      parent_generation_id: 'v4', child_generation_id: 'v5',
       elapsed_seconds: 263,
       hypothesis: {
         core_idea: 'Compress researcher tool descriptions to under 80 tokens each to reduce context bloat without dropping signal.',
         why: 'Round 1 drift was dominated by off_topic when the context window filled with verbose tool docs.',
         modulating: ['researcher_tool_descriptions', 'write_webpage_tool'],
       },
+      // Boards execute in parallel — several entries are `running` at
+      // once. The hall grid renders that naturally, with an accent
+      // border on every board that has a running side.
       entries: [
-        { entry_id: 'extract_invoice_001', status: 'done',
-          parent: { drift_loss: 0.23, pass: true },
-          child:  { drift_loss: 0.18, pass: true } },
-        { entry_id: 'extract_invoice_002', status: 'done',
-          parent: { drift_loss: 0.31, pass: true },
-          child:  { drift_loss: 0.45, pass: false } },
-        { entry_id: 'research_topic_q3', status: 'running',
-          run_id: 'r-9c2a',
-          parent: { drift_loss: 0.19, pass: true },
-          child:  { drift_loss: 0.0, pass: null, drift_kinds: { off_topic: 2 } },
-          runtime: { elapsed_seconds: 42, budget_seconds: 180, percent: 23 } },
-        { entry_id: 'multi_turn_picky', status: 'queued' },
-        { entry_id: 'schema_response', status: 'queued' },
+        { entry_id: 'extract_invoice_001', side: 'parent', status: 'done',
+          scalar_score: 0.23 },
+        { entry_id: 'extract_invoice_001', side: 'child', status: 'done',
+          scalar_score: 0.18 },
+        { entry_id: 'extract_invoice_002', side: 'parent', status: 'done',
+          scalar_score: 0.31 },
+        { entry_id: 'extract_invoice_002', side: 'child', status: 'done',
+          scalar_score: 0.45 },
+        { entry_id: 'research_topic_q3', side: 'parent', status: 'done',
+          scalar_score: 0.19 },
+        { entry_id: 'research_topic_q3', side: 'child', status: 'running',
+          run_id: 'r-9c2a' },
+        { entry_id: 'multi_turn_picky', side: 'parent', status: 'done',
+          scalar_score: 0.27 },
+        { entry_id: 'multi_turn_picky', side: 'child', status: 'running',
+          run_id: 'r-7f10' },
+        { entry_id: 'schema_response', side: 'parent', status: 'done',
+          scalar_score: 0.14 },
+        { entry_id: 'schema_response', side: 'child', status: 'running',
+          run_id: 'r-3b88' },
       ],
       drift_movements: [
         { kind: 'off_topic', from_rate: 0.18, to_rate: 0.12 },
@@ -3003,15 +4396,34 @@ function mockSnapshot() {
           detail: 'A narrow rubric spread weakens the optimization signal — challengers and champions score nearly the same. Consider widening the rubric or adding harder board entries.' },
       ],
     },
+    // GET /api/lineage — generations across every epoch. The contract
+    // keys are generation_id / parent_generation_id / promoted /
+    // created_at; promoted===null marks the in-flight generation. The
+    // legacy id / parent_id aliases are kept alongside for the tree
+    // view's existing node layout.
     lineage: {
       generations: [
-        { id: 'v0', parent_id: null, epoch_id: '2026-05-10_e0' },
-        { id: 'v1', parent_id: 'v0', epoch_id: '2026-05-10_e0' },
-        { id: 'v2', parent_id: 'v1', epoch_id: '2026-05-10_e0' },
-        { id: 'v2x', parent_id: 'v1', epoch_id: '2026-05-10_e0' },
-        { id: 'v4_seed', parent_id: null, epoch_id: '2026-05-15_e1', v0_parent: 'v2' },
-        { id: 'v4', parent_id: 'v4_seed', epoch_id: '2026-05-15_e1' },
-        { id: 'v5', parent_id: 'v4', epoch_id: '2026-05-15_e1' },
+        { generation_id: 'v0', id: 'v0', parent_generation_id: null,
+          parent_id: null, epoch_id: '2026-05-10_e0', promoted: true,
+          created_at: '2026-05-10T09:00:00Z' },
+        { generation_id: 'v1', id: 'v1', parent_generation_id: 'v0',
+          parent_id: 'v0', epoch_id: '2026-05-10_e0', promoted: false,
+          created_at: '2026-05-10T10:00:00Z' },
+        { generation_id: 'v2', id: 'v2', parent_generation_id: 'v1',
+          parent_id: 'v1', epoch_id: '2026-05-10_e0', promoted: true,
+          created_at: '2026-05-10T11:30:00Z' },
+        { generation_id: 'v2x', id: 'v2x', parent_generation_id: 'v1',
+          parent_id: 'v1', epoch_id: '2026-05-10_e0', promoted: false,
+          created_at: '2026-05-10T13:00:00Z' },
+        { generation_id: 'v4_seed', id: 'v4_seed', parent_generation_id: null,
+          parent_id: null, epoch_id: '2026-05-15_e1', v0_parent: 'v2',
+          promoted: true, created_at: '2026-05-15T09:02:00Z' },
+        { generation_id: 'v4', id: 'v4', parent_generation_id: 'v4_seed',
+          parent_id: 'v4_seed', epoch_id: '2026-05-15_e1', promoted: true,
+          created_at: '2026-05-15T09:20:00Z' },
+        { generation_id: 'v5', id: 'v5', parent_generation_id: 'v4',
+          parent_id: 'v4', epoch_id: '2026-05-15_e1', promoted: null,
+          created_at: '2026-05-15T09:50:00Z' },
       ],
       experiments: [
         { generation_id: 'v1', hypothesis: { core_idea: 'Tighten extraction schema.' },
@@ -3108,6 +4520,23 @@ function mockSnapshot() {
       { ts: '12:35:14', level: 'warn', message: 'drift detected: off_topic +1 in run r-9c2a' },
       { ts: '12:35:23', level: 'ok',   message: 'parent v4 entry extract_invoice_002 pass' },
     ],
+    // GET /api/run-log?limit=40 — the structured event tail. The
+    // contract shape is { events:[{ seq, kind, ts, summary }] }; seq
+    // and ts may be null for a synthetic / un-sequenced event.
+    run_log: {
+      events: [
+        { seq: 118, kind: 'tournament', ts: '2026-05-16T04:34:50Z',
+          summary: 'tournament r2 entry research_topic_q3 started (run r-9c2a)' },
+        { seq: 119, kind: 'run', ts: '2026-05-16T04:35:01Z',
+          summary: 'goldfive driver: tool researcher_search invoked' },
+        { seq: 120, kind: 'drift', ts: '2026-05-16T04:35:14Z',
+          summary: 'drift detected: off_topic +1 in run r-9c2a' },
+        { seq: 121, kind: 'score', ts: '2026-05-16T04:35:23Z',
+          summary: 'parent v4 entry extract_invoice_002 pass' },
+        { seq: null, kind: 'note', ts: null,
+          summary: 'supervisor watchdog tick — all workers responsive' },
+      ],
+    },
   };
 }
 

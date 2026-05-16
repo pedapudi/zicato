@@ -3,13 +3,20 @@
 Two entry points:
 
 * :func:`run_tournament` (full mode) — runs every board entry under
-  BOTH parent and child generations, sequentially. Sequentiality is
-  deliberate: running the same entry concurrently against two harness
-  instances exposes shared mutable state (file handles, telemetry
-  sinks, model-client globals) we cannot reason about per adapter.
-  Within a single generation the runner still does one entry at a
-  time, again because adapters routinely keep per-process state we'd
-  otherwise need a contract about.
+  BOTH parent and child generations. The parent/child phase boundary
+  stays strictly sequential: the whole parent board is scored before
+  the child board starts, because the gate compares two finished
+  aggregates. WITHIN one generation, though, the board entries play
+  concurrently — the "tournament hall" model, many boards in progress
+  at once — bounded by an :class:`asyncio.Semaphore` sized from
+  :attr:`RuntimeConfig.parallelism`. Concurrency is safe here because
+  every run is fully isolated: each board-entry run executes in its
+  OWN subprocess worker (see below) writing to a per-run
+  ``active_runs/{run_id}.json`` + ``events.jsonl`` + ``loss.json``,
+  keyed on a unique ``run_id`` of ``{generation_id}--{entry_id}``. The
+  generation's source snapshot is shared but only ever READ. Set
+  ``parallelism=1`` to recover the original strictly-sequential,
+  one-entry-at-a-time behaviour.
 
 * :func:`run_fast_mode` — autoresearch-style inline keep/discard.
   Only the child is run; comparison is against a previously-computed
@@ -567,8 +574,21 @@ async def _run_single(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    side: str,
 ) -> LossProfile:
     """Run one entry under one generation in an isolated subprocess worker.
+
+    ``side`` is the tournament side this run belongs to — ``"parent"``
+    or ``"child"`` — supplied explicitly by the caller, which knows
+    whether ``generation`` is the tournament's parent or child. It is
+    used solely to target the correct row in the
+    :class:`~zicato.runtime.state.ActiveTournament` grid: each board
+    entry has TWO rows (one per side), so a per-entry state transition
+    must be keyed on ``(entry_id, side)``, not ``entry_id`` alone, or a
+    parent-side transition lands on the child row (and vice versa).
+    Empty string when the run is not part of a tournament (ad-hoc
+    callers); :func:`update_tournament_entry` then matches nothing and
+    the call is a benign no-op.
 
     Sequencing:
 
@@ -618,7 +638,7 @@ async def _run_single(
             state_mod.update_tournament_entry(
                 workspace_root,
                 entry.id,
-                side=_tournament_side_for(generation, workspace_root),
+                side,
                 status="running",
                 started_at=_now_iso_utc(),
             )
@@ -767,33 +787,12 @@ async def _run_single(
                 state_mod.update_tournament_entry(
                     workspace_root,
                     entry.id,
-                    side=_tournament_side_for(generation, workspace_root),
+                    side,
                     status="completed",
                     completed_at=_now_iso_utc(),
                 )
             except Exception:  # noqa: BLE001
                 pass
-
-
-def _tournament_side_for(generation: Generation, workspace_root: Path) -> str:
-    """Map a generation id to 'parent' or 'child' by consulting the
-    currently-active tournament state file. Returns '' if no tournament
-    is active (the dashboard falls back to neutral rendering)."""
-    rt = _runtime_state()
-    if rt is None:
-        return ""
-    state_mod, _ = rt
-    try:
-        tournament = state_mod.read_active_tournament(workspace_root)
-    except Exception:  # noqa: BLE001
-        return ""
-    if tournament is None:
-        return ""
-    if generation.id == tournament.parent_generation_id:
-        return "parent"
-    if generation.id == tournament.child_generation_id:
-        return "child"
-    return ""
 
 
 async def _run_generation(
@@ -805,20 +804,81 @@ async def _run_generation(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    side: str,
 ) -> dict[str, LossProfile]:
-    """Run all board entries under one generation, sequentially."""
+    """Run all board entries under one generation with bounded concurrency.
+
+    The board entries are the "boards" of the tournament hall: up to
+    :attr:`RuntimeConfig.parallelism` of them play at once. Each
+    :func:`_run_single` call is wrapped in a shared
+    :class:`asyncio.Semaphore` sized from ``config.parallelism`` and the
+    whole set is driven by a single :func:`asyncio.gather`.
+
+    ``parallelism == 1`` is byte-identical to the original
+    strictly-sequential runner: the semaphore admits exactly one run at
+    a time, the tasks are created in board order, and the semaphore is
+    fair (FIFO), so entry *k* fully finishes — its subprocess spawn,
+    wait, loss read-back AND its ``finally`` cleanup — before entry
+    *k+1*'s ``_run_single`` body advances past the acquire.
+
+    Result ordering is independent of completion order: the
+    ``entry.id -> LossProfile`` mapping is rebuilt by zipping the board
+    (input order) with the gather results (which :func:`asyncio.gather`
+    returns in submission order, NOT completion order). So a slow entry
+    finishing last does not reorder anything.
+
+    Failure handling matches the sequential path's contract — no
+    exception is swallowed. ``gather`` is run with
+    ``return_exceptions=True`` so that a raising run does NOT cancel its
+    in-flight siblings mid-subprocess (which would orphan a worker
+    process and skip its cleanup); every sibling run is allowed to
+    finish first, and only then is the FIRST exception (in board order)
+    re-raised to the caller, exactly as the sequential ``await`` chain
+    would have surfaced the first failure.
+
+    ``side`` (``"parent"`` / ``"child"``, or ``""`` outside a
+    tournament) identifies which side of the active tournament this
+    generation is. It is threaded straight through to
+    :func:`_run_single` so per-entry dashboard transitions land on the
+    correct ``(entry_id, side)`` row — the caller knows the side
+    unambiguously (it picked ``generation`` as the parent or the child),
+    so it is passed explicitly rather than re-derived from the state
+    file.
+    """
+    semaphore = asyncio.Semaphore(config.parallelism)
+
+    async def _bounded(entry: BoardEntry) -> LossProfile:
+        async with semaphore:
+            return await _run_single(
+                adapter=adapter,
+                generation=generation,
+                entry=entry,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                side=side,
+            )
+
+    # gather preserves submission order in its result list regardless of
+    # which task finished first; return_exceptions keeps a failing run
+    # from cancelling siblings that are already mid-flight.
+    results = await asyncio.gather(
+        *(_bounded(entry) for entry in board),
+        return_exceptions=True,
+    )
+
+    # Surface the first failure (board order) the same way the old
+    # sequential ``await`` chain did — after every sibling has settled.
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+
     losses: dict[str, LossProfile] = {}
-    for entry in board:
-        loss = await _run_single(
-            adapter=adapter,
-            generation=generation,
-            entry=entry,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-        )
-        losses[entry.id] = loss
+    for entry, result in zip(board, results, strict=True):
+        # Every result is a LossProfile here: the loop above already
+        # re-raised on the first BaseException.
+        losses[entry.id] = result  # type: ignore[assignment]
     return losses
 
 
@@ -953,6 +1013,7 @@ async def run_tournament(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
+            side="parent",
         )
         child_losses = await _run_generation(
             adapter=adapter,
@@ -962,6 +1023,7 @@ async def run_tournament(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
+            side="child",
         )
     finally:
         if rt is not None:
@@ -1032,6 +1094,10 @@ async def run_fast_mode(
         config=config,
         workspace_root=workspace_root,
         epoch_id=epoch_id,
+        # Fast mode runs only the child and writes no ActiveTournament
+        # file; the side label is "child" for the rare case a tournament
+        # file does exist, and a benign no-op otherwise.
+        side="child",
     )
 
     child_agg = aggregate_generation_score(list(child_losses.values()), weights)

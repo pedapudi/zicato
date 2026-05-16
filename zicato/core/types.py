@@ -1541,6 +1541,18 @@ class RuntimeConfig:
         Optional integer seed for any zicato-internal random number
         generators. Adapters may or may not honor it for the inner
         harness.
+    parallelism:
+        Maximum number of board-entry runs the tournament runner keeps
+        in flight at once within a single generation. ``1`` is fully
+        sequential — one entry finishes before the next starts, which
+        reproduces the runner's pre-concurrency behaviour exactly.
+        Values above ``1`` let the runner play several "boards" of the
+        tournament hall simultaneously, bounded by an
+        :class:`asyncio.Semaphore`. The real-world ceiling is almost
+        always the LLM endpoint's own concurrency limit, not this
+        number, so a modest default (``4``) is a safe starting point;
+        operators raise it only when the endpoint can absorb more
+        in-flight calls. Must be ``>= 1``.
 
     Construction-time validation
     ----------------------------
@@ -1552,6 +1564,13 @@ class RuntimeConfig:
     :func:`zicato.core.workspace.assert_distinct_callables` from the
     construction site before handing the :class:`RuntimeConfig` to the
     runner. The runner re-checks at startup as a defense in depth.
+
+    The one check the dataclass DOES run in :meth:`__post_init__` is the
+    cheap, scalar ``parallelism >= 1`` bound: an out-of-range value is a
+    plain programming error (a sub-one semaphore is meaningless) caught
+    far better at construction than deep inside the runner's gather. It
+    reads no callable identity and mutates no field, so it does not
+    reopen the deliberately-deferred two-callable validation above.
     """
 
     instance_id: str
@@ -1559,6 +1578,15 @@ class RuntimeConfig:
     harness_call_llm: CallLLM
     auxiliary_call_llm: CallLLM
     seed: int | None = None
+    parallelism: int = 4
+
+    def __post_init__(self) -> None:
+        """Validate the cheap scalar invariants (currently ``parallelism``)."""
+        if self.parallelism < 1:
+            raise ValueError(
+                f"RuntimeConfig.parallelism must be >= 1, got {self.parallelism!r}; "
+                "use 1 for fully sequential board execution"
+            )
 
 
 __all__ = [

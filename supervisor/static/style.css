@@ -452,7 +452,14 @@ h4 {
   padding: 14px 16px;
   overflow-x: auto;
 }
-.diagram svg { display: block; max-width: 100%; height: auto; }
+/* A diagram SVG keeps its viewBox aspect ratio but is height-capped.
+   Without a cap an SVG scales to the full panel width and its height
+   follows the viewBox ratio — a wide panel turns even a thin chart
+   into a 300-450px slab, and an empty-state placeholder into a giant
+   empty box. The cap holds real charts to a readable band; the
+   empty-state SVG, drawn at its viewBox aspect, then reads as a
+   compact strip rather than a panel-tall void. */
+.diagram svg { display: block; max-width: 100%; height: auto; max-height: 320px; }
 
 .svg-label {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -587,11 +594,30 @@ h4 {
 }
 
 /* --- Misc */
+/* Empty-state line. A panel with nothing to show renders ONE line of
+   muted text — not a tall placeholder box. `display: block` + a fixed
+   small padding keeps it compact even when it is the sole child of a
+   flex / grid container that would otherwise stretch it. */
 .empty {
+  display: block;
   color: var(--text-muted);
   font-style: italic;
-  padding: 8px 0;
+  font-size: 13px;
+  padding: 6px 2px;
   margin: 0;
+  text-align: left;
+  /* Never let an empty-state inflate to fill a sized parent. */
+  min-height: 0;
+  height: auto;
+}
+/* An `.empty` that lands inside a bordered card / diagram shell still
+   reads as a single muted line — strip the heavy framing so it is not
+   a giant empty box. */
+.diagram > .empty,
+.tournament-bracket > .empty,
+.health-panel > .empty,
+.panel-body > .empty {
+  padding: 6px 2px;
 }
 
 .fade-in { animation: fadeIn 200ms ease; }
@@ -734,6 +760,14 @@ h4 {
   letter-spacing: 0.04em;
 }
 
+/* The rubric reads as a centred, readable column — not a lopsided
+   narrow strip pinned to the left edge of a wide section. `.epoch-rubric`
+   is the container the epoch agent renders into; `.rubric-block` is the
+   rendered markdown body. Centring lives here on the CSS side; the
+   epoch agent owns the DOM/classes. */
+.epoch-rubric {
+  display: block;
+}
 .epoch-rubric .rubric-block {
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -742,6 +776,9 @@ h4 {
   font-size: 14px;
   line-height: 1.6;
   max-width: 760px;
+  /* Centre the readable column within the section. */
+  margin-left: auto;
+  margin-right: auto;
 }
 /* Structured markdown DOM — no pre-wrap. pre-wrap fights the block
    elements the renderer emits and collapses everything into a
@@ -1018,4 +1055,513 @@ h4 {
   .nav-item .nav-label { font-size: 13px; }
   main { padding: 16px 16px 48px 16px; }
   .lineage-viewport { height: 360px; }
+}
+
+/* ============================================================
+   Tournament hall — board-card grid for the in-progress round.
+   Appended block; owned by the hall-grid Tournament-view work.
+   ============================================================ */
+
+.tournament-hall {
+  margin-bottom: 28px;
+}
+.hall-head {
+  margin-bottom: 10px;
+}
+.hall-title {
+  margin: 0 0 2px 0;
+}
+.hall-sub {
+  margin: 0;
+}
+
+/* Occupancy header — round N · B boards · X in play · ... */
+.hall-occupancy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.hall-occ-stat {
+  color: var(--text);
+  font-weight: 600;
+}
+.hall-occ-sep {
+  color: var(--text-muted);
+}
+
+/* The board-card grid — many boards visibly in play at once. */
+.hall-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 12px;
+}
+
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, transform 0.08s ease;
+}
+.board-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent-running);
+}
+.board-card:focus-visible {
+  outline: 2px solid var(--accent-running);
+  outline-offset: 1px;
+}
+/* Accent border so the active hall reads at a glance. */
+.board-card.is-running {
+  border-left-color: var(--accent-running);
+}
+.board-card.has-failed {
+  border-left-color: var(--accent-rejected);
+}
+.board-card.is-done {
+  border-left-color: var(--accent-promoted);
+}
+
+.board-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.board-card-id {
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+}
+.board-card-livedot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-running);
+  animation: hall-pulse 1.4s ease-in-out infinite;
+}
+@keyframes hall-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* One side row — Champion / Challenger. */
+.board-side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.board-side-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-side-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.board-side-gen {
+  font-size: 12px;
+  color: var(--text);
+}
+.board-side-meta {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.board-side-score {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.board-side-meta.over-deadline,
+.board-deadline-flag {
+  color: var(--accent-rejected);
+  font-weight: 600;
+}
+.board-fail {
+  color: var(--accent-rejected);
+  font-weight: 600;
+}
+
+/* Status pills. */
+.pill {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #fff;
+}
+.pill-queued  { background: var(--accent-baseline); }
+.pill-running { background: var(--accent-running); }
+.pill-done    { background: var(--accent-promoted); }
+.pill-failed  { background: var(--accent-rejected); }
+
+/* Progress bar — elapsed fraction of the wall-clock budget. */
+.board-prog {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.board-prog-fill {
+  height: 100%;
+  background: var(--accent-running);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.board-prog.over-deadline .board-prog-fill {
+  background: var(--accent-rejected);
+}
+
+/* Result strip — which side won + the scalar delta. */
+.board-result {
+  margin-top: 2px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.board-result-win {
+  background: rgba(46, 160, 67, 0.16);
+  color: var(--accent-promoted);
+}
+.board-result-loss {
+  background: rgba(215, 58, 73, 0.14);
+  color: var(--accent-rejected);
+}
+.board-result-flat,
+.board-result-tbd {
+  background: var(--bg);
+  color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+  .hall-grid {
+    grid-template-columns: 1fr;
+  }
+/* =================================================================
+   Conversation view — side-by-side champion / challenger transcripts
+   Appended block. A focused view (#conversation/{entry_id}) reached
+   by drilling from a Tournament-view board card.
+   ================================================================= */
+
+.conversation-section {
+  margin-bottom: 28px;
+}
+.conversation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* --- Header */
+.conversation-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.conversation-back {
+  font-size: 13px;
+  color: var(--accent-running);
+  text-decoration: none;
+  width: fit-content;
+}
+.conversation-back:hover { text-decoration: underline; }
+.conversation-title {
+  margin: 0;
+  font-size: 18px;
+}
+.conversation-versus {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.conversation-side-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.conversation-side-tag.champion {
+  border-left: 3px solid var(--accent-promoted);
+}
+.conversation-side-tag.challenger {
+  border-left: 3px solid var(--accent-running);
+}
+.conversation-vs {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.conversation-unavailable {
+  border: 1px dashed var(--accent-deferred);
+  border-radius: 8px;
+  padding: 18px;
+}
+
+/* --- Two-column layout */
+.conversation-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.conversation-column {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.conversation-column.champion {
+  border-top: 3px solid var(--accent-promoted);
+}
+.conversation-column.challenger {
+  border-top: 3px solid var(--accent-running);
+}
+
+/* --- Column header */
+.conversation-column-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  flex-wrap: wrap;
+}
+.conversation-column-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.conversation-run-id {
+  font-size: 12px;
+  color: var(--text);
+}
+.conversation-event-count {
+  margin-left: auto;
+  font-size: 11px;
+}
+.conversation-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.conversation-live-dot {
+  color: #fff;
+  font-size: 9px;
+  animation: conversation-pulse 1.4s ease-in-out infinite;
+}
+@keyframes conversation-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* --- Column body — independent vertical scroll per side */
+.conversation-column-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+/* --- A single turn */
+.conversation-turn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+}
+.conversation-turn-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+.conversation-turn-agent {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+.conversation-turn-role {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.conversation-turn-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+  padding: 0 5px;
+  background: var(--bg-elev);
+  color: var(--text-muted);
+}
+.conversation-turn-kind.kind-plan {
+  background: rgba(31, 111, 235, 0.14);
+  color: var(--accent-running);
+}
+.conversation-turn-kind.kind-tool {
+  background: rgba(110, 118, 129, 0.18);
+}
+.conversation-turn-seq { font-size: 10px; }
+.conversation-turn-ts {
+  font-size: 10px;
+  margin-left: auto;
+}
+.conversation-turn-text {
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- Tool calls / results — compact */
+.conversation-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 5px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  font-size: 11px;
+}
+.conversation-tool.tool-call { border-left: 2px solid var(--accent-running); }
+.conversation-tool.tool-result { border-left: 2px solid var(--accent-baseline); }
+.conversation-tool-glyph {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.conversation-tool-name { font-weight: 600; }
+.conversation-tool-args {
+  color: var(--text-muted);
+  word-break: break-word;
+  font-size: 11px;
+}
+
+/* --- Margin notes — annotations anchored to a turn */
+.conversation-margin {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-left: 10px;
+  border-left: 2px dotted var(--border);
+}
+.conversation-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  background: var(--bg-elev);
+  border-left: 3px solid var(--accent-baseline);
+}
+.conversation-note-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.conversation-note-summary { color: var(--text); }
+.conversation-note-detail { font-size: 10px; }
+/* drift in a warning color; the others each get a distinct accent */
+.conversation-note.note-drift {
+  background: rgba(215, 58, 73, 0.10);
+  border-left-color: var(--accent-rejected);
+}
+.conversation-note.note-drift .conversation-note-kind {
+  color: var(--accent-rejected);
+}
+.conversation-note.note-steering {
+  background: rgba(191, 135, 0, 0.12);
+  border-left-color: var(--accent-deferred);
+}
+.conversation-note.note-steering .conversation-note-kind {
+  color: var(--accent-deferred);
+}
+.conversation-note.note-judge {
+  background: rgba(46, 160, 67, 0.10);
+  border-left-color: var(--accent-promoted);
+}
+.conversation-note.note-judge .conversation-note-kind {
+  color: var(--accent-promoted);
+}
+.conversation-note.note-plan {
+  background: rgba(31, 111, 235, 0.10);
+  border-left-color: var(--accent-running);
+}
+.conversation-note.note-plan .conversation-note-kind {
+  color: var(--accent-running);
+}
+
+/* --- Trailing live cue */
+.conversation-tail-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+.conversation-tail-live .conversation-live-dot {
+  color: var(--accent-running);
+}
+
+/* --- Narrow screens — stack the two columns */
+@media (max-width: 720px) {
+  .conversation-columns {
+    grid-template-columns: 1fr;
+  }
+  .conversation-column-body {
+    max-height: none;
+  }
 }

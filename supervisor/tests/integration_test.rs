@@ -6,10 +6,13 @@ use chrono::{Duration as ChDuration, Utc};
 use serde_json::Value;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::broadcast;
-use zicato_supervisor::{reader, server, signal as sigutil, state, watchdog, watcher};
+use zicato_supervisor::{
+    action_log::WatchdogLog, reader, server, signal as sigutil, state, watchdog, watcher,
+};
 
 fn make_workspace() -> (TempDir, reader::WorkspacePaths) {
     let tmp = TempDir::new().unwrap();
@@ -18,6 +21,15 @@ fn make_workspace() -> (TempDir, reader::WorkspacePaths) {
     std::fs::create_dir_all(ws.join("runtime/control")).unwrap();
     std::fs::create_dir_all(ws.join("epochs")).unwrap();
     (tmp, reader::WorkspacePaths::new(ws))
+}
+
+fn serve_opts(read_only: bool) -> server::ServeOptions {
+    server::ServeOptions {
+        read_only,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+    }
 }
 
 async fn start_server(
@@ -30,7 +42,28 @@ async fn start_server(
         paths,
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         0, // ephemeral
-        read_only,
+        serve_opts(read_only),
+        watch_tx,
+        shutdown_tx.clone(),
+    )
+    .await
+    .unwrap();
+    (handle, shutdown_tx)
+}
+
+/// Like `start_server` but with a fully-specified `ServeOptions`, so
+/// `/statusz` tests can drive `--no-dashboard` and a shared action log.
+async fn start_server_with(
+    paths: reader::WorkspacePaths,
+    options: server::ServeOptions,
+) -> (server::ServerHandle, broadcast::Sender<()>) {
+    let (watch_tx, _) = broadcast::channel(64);
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let handle = server::serve(
+        paths,
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        0,
+        options,
         watch_tx,
         shutdown_tx.clone(),
     )
@@ -739,7 +772,7 @@ async fn sse_emits_snapshot_then_change_event() {
         paths.clone(),
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         0,
-        true,
+        serve_opts(true),
         watch_tx.clone(),
         shutdown_tx.clone(),
     )
@@ -905,6 +938,7 @@ async fn watchdog_sigterms_run_past_its_deadline() {
             loop_paths,
             fast_thresholds(false),
             Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
             loop_shutdown,
         )
         .await
@@ -945,6 +979,7 @@ async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
             loop_paths,
             fast_thresholds(false),
             Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
             loop_shutdown,
         )
         .await
@@ -973,6 +1008,7 @@ async fn watchdog_does_not_kill_run_when_deadline_disabled() {
             loop_paths,
             fast_thresholds(true), // --run-deadline-kill-disabled
             Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
             loop_shutdown,
         )
         .await
@@ -1017,6 +1053,7 @@ async fn watchdog_never_signals_orchestrator_or_init_pids() {
             loop_paths,
             fast_thresholds(false),
             Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
             loop_shutdown,
         )
         .await
@@ -1060,4 +1097,537 @@ async fn watchdog_deadline_decision_is_pure_and_separate_from_staleness() {
         decide_run_deadline(&run, now, Duration::from_secs(5), &protected),
         RunDeadlineAction::None,
     );
+}
+
+// ---------------------------------------------------------------------
+// Dashboard API gaps: run-log tail, in-flight lineage, per-run progress,
+// and the health-footer fields.
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn run_log_endpoint_tails_active_run_events() {
+    let (_t, paths) = make_workspace();
+
+    // A synthetic active-run events.jsonl: 50 events, mixed envelope
+    // shapes (camelCase + the normalized {kind,payload} shape).
+    let events_path = paths.workspace.join("run_events.jsonl");
+    let mut body = String::new();
+    for i in 0..48 {
+        body.push_str(&format!(
+            "{{\"emittedAt\":\"2026-05-16T04:36:{:02}Z\",\"sequence\":{i},\
+              \"taskProgress\":{{\"taskId\":\"t{i}\",\"fraction\":0.5}}}}\n",
+            i % 60
+        ));
+    }
+    // A camelCase steering decision and a normalized-shape event.
+    body.push_str(
+        "{\"emittedAt\":\"2026-05-16T04:37:00Z\",\"sequence\":48,\
+          \"steeringDecisionMade\":{\"agentName\":\"coordinator_agent\",\"outcome\":\"no_drift\"}}\n",
+    );
+    body.push_str(
+        "{\"emitted_at\":{\"seconds\":1778906222,\"nanos\":0},\"sequence\":49,\
+          \"kind\":\"pinResolved\",\"payload\":{\"agent_name\":\"research_agent\"}}\n",
+    );
+    std::fs::write(&events_path, body).unwrap();
+
+    let run = serde_json::json!({
+        "run_id": "v1--entry",
+        "events_jsonl_path": events_path.display().to_string(),
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("v1--entry.json"),
+        serde_json::to_vec(&run).unwrap(),
+    )
+    .unwrap();
+
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    // Default limit (40): last 40 of 50.
+    let resp = client
+        .get(format!("{base}/api/run-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    let events = r["events"].as_array().unwrap();
+    assert_eq!(events.len(), 40, "default limit is 40");
+
+    // The last two events: camelCase + normalized kinds, both snake_cased.
+    let last = events.last().unwrap();
+    assert_eq!(last["seq"], 49);
+    assert_eq!(last["kind"], "pin_resolved");
+    let penultimate = &events[events.len() - 2];
+    assert_eq!(penultimate["kind"], "steering_decision_made");
+    assert_eq!(
+        penultimate["summary"],
+        "steering_decision_made: coordinator_agent: no_drift"
+    );
+
+    // Explicit limit.
+    let r: Value = client
+        .get(format!("{base}/api/run-log?limit=5"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["events"].as_array().unwrap().len(), 5);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn run_log_endpoint_empty_when_no_events_file() {
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/run-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    assert_eq!(r["events"], serde_json::json!([]));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn lineage_endpoint_includes_in_flight_generation() {
+    let (_t, paths) = make_workspace();
+    let epoch_dir = paths.epochs.join("2026-05-15_e0");
+    let gens = epoch_dir.join("generations");
+
+    // v0: the root — a generation directory with no experiment.json.
+    std::fs::create_dir_all(gens.join("v0")).unwrap();
+
+    // v1: proposed, experiment.json present but outcome still null —
+    // the tournament has not resolved, so it is still in flight.
+    std::fs::create_dir_all(gens.join("v1")).unwrap();
+    let exp_v1 = serde_json::json!({
+        "epoch_id": "2026-05-15_e0",
+        "generation_id": "v1",
+        "parent_generation_id": "v0",
+        "proposed_at": "2026-05-15T10:00:00+00:00",
+        "outcome": null,
+    });
+    std::fs::write(gens.join("v1").join("experiment.json"), exp_v1.to_string()).unwrap();
+
+    // v2: resolved and rejected.
+    std::fs::create_dir_all(gens.join("v2")).unwrap();
+    let exp_v2 = serde_json::json!({
+        "epoch_id": "2026-05-15_e0",
+        "generation_id": "v2",
+        "parent_generation_id": "v0",
+        "proposed_at": "2026-05-15T11:00:00+00:00",
+        "outcome": {"decision": "rejected"},
+    });
+    std::fs::write(gens.join("v2").join("experiment.json"), exp_v2.to_string()).unwrap();
+
+    // The legacy lineage.json knows only the promoted root.
+    let lineage = serde_json::json!({
+        "epochs": [{
+            "id": "2026-05-15_e0",
+            "generations": [
+                {"id": "v0", "parent_id": null, "promoted": true,
+                 "created_at": "2026-05-15T09:00:00+00:00"},
+            ],
+        }],
+    });
+    std::fs::write(paths.lineage(), lineage.to_string()).unwrap();
+
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/lineage"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    let nodes = r["generations"].as_array().unwrap();
+    // All three generation directories appear — not only the promoted v0.
+    assert_eq!(nodes.len(), 3, "got: {r}");
+
+    let by_id = |id: &str| {
+        nodes
+            .iter()
+            .find(|n| n["generation_id"] == id)
+            .unwrap()
+            .clone()
+    };
+
+    let v0 = by_id("v0");
+    assert_eq!(v0["epoch_id"], "2026-05-15_e0");
+    assert_eq!(v0["promoted"], true);
+    assert!(v0["parent_generation_id"].is_null());
+    assert_eq!(v0["created_at"], "2026-05-15T09:00:00+00:00");
+
+    // v1 has no decision yet -> promoted is null (still in flight).
+    let v1 = by_id("v1");
+    assert!(v1["promoted"].is_null(), "in-flight v1 must be null: {v1}");
+    assert_eq!(v1["parent_generation_id"], "v0");
+    assert_eq!(v1["created_at"], "2026-05-15T10:00:00+00:00");
+
+    // v2 resolved-but-rejected -> promoted false.
+    let v2 = by_id("v2");
+    assert_eq!(v2["promoted"], false);
+    assert_eq!(v2["parent_generation_id"], "v0");
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn active_runs_endpoint_carries_computed_progress() {
+    let (_t, paths) = make_workspace();
+    let now = Utc::now();
+
+    // A run a quarter of the way through a 1000s budget window.
+    let ar = serde_json::json!({
+        "run_id": "v1--entry",
+        "pid": 4242,
+        "entry_id": "entry",
+        "started_at": now - ChDuration::seconds(250),
+        "deadline": now + ChDuration::seconds(750),
+        "wall_clock_budget_seconds": 1000.0,
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("v1--entry.json"),
+        serde_json::to_vec(&ar).unwrap(),
+    )
+    .unwrap();
+
+    // A run already past its deadline: fraction must clamp to 1.0.
+    let ar_late = serde_json::json!({
+        "run_id": "v2--late",
+        "pid": 4343,
+        "started_at": now - ChDuration::seconds(2000),
+        "deadline": now - ChDuration::seconds(1000),
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("v2--late.json"),
+        serde_json::to_vec(&ar_late).unwrap(),
+    )
+    .unwrap();
+
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/active-runs"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    let runs = r.as_array().unwrap();
+    assert_eq!(runs.len(), 2);
+
+    // Sorted by run_id: v1--entry first.
+    let entry = &runs[0];
+    assert_eq!(entry["run_id"], "v1--entry");
+    let progress = entry["progress"].as_f64().unwrap();
+    assert!(
+        (0.20..=0.30).contains(&progress),
+        "expected ~0.25, got {progress}"
+    );
+    let budget = entry["budget_seconds"].as_i64().unwrap();
+    assert!((990..=1010).contains(&budget), "got budget {budget}");
+    let elapsed = entry["elapsed_seconds"].as_i64().unwrap();
+    assert!((240..=260).contains(&elapsed), "got elapsed {elapsed}");
+
+    // The over-deadline run: progress clamps to exactly 1.0.
+    let late = &runs[1];
+    assert_eq!(late["run_id"], "v2--late");
+    assert_eq!(late["progress"].as_f64().unwrap(), 1.0);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn health_endpoint_carries_port_and_build() {
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+
+    // `port` is the actually-bound port and non-zero.
+    let port = r["port"].as_u64().unwrap();
+    assert_eq!(port, handle.addr.port() as u64);
+    assert!(port > 0);
+
+    // `build` is present and non-empty.
+    let build = r["build"].as_str().unwrap();
+    assert!(!build.is_empty(), "build identifier must be non-empty");
+
+    let _ = shutdown.send(());
+}
+
+// ---------------------------------------------------------------------
+// /statusz — the watchdog's own minimal operational surface.
+// ---------------------------------------------------------------------
+
+/// Write a fresh heartbeat plus two active runs: one comfortably within
+/// its deadline, one already past it.
+fn write_statusz_state(paths: &reader::WorkspacePaths) {
+    let now = Utc::now();
+    let hb = serde_json::json!({
+        "pid": std::process::id(),
+        "last_heartbeat": now,
+        "started_at": now - ChDuration::seconds(300),
+        "phase": "proposing:round_1:v2",
+    });
+    std::fs::write(paths.heartbeat(), serde_json::to_vec(&hb).unwrap()).unwrap();
+
+    // Within deadline.
+    let ok_run = serde_json::json!({
+        "run_id": "run-ok",
+        "pid": 4242,
+        "started_at": now - ChDuration::seconds(60),
+        "deadline": now + ChDuration::seconds(600),
+        "wall_clock_budget_seconds": 660.0,
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("run-ok.json"),
+        serde_json::to_vec(&ok_run).unwrap(),
+    )
+    .unwrap();
+
+    // Over deadline by ~120s.
+    let late_run = serde_json::json!({
+        "run_id": "run-late",
+        "pid": 4343,
+        "started_at": now - ChDuration::seconds(800),
+        "deadline": now - ChDuration::seconds(120),
+        "wall_clock_budget_seconds": 680.0,
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("run-late.json"),
+        serde_json::to_vec(&late_run).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn statusz_json_carries_identity_and_per_run_deadlines() {
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/json"),
+    );
+    let r: Value = resp.json().await.unwrap();
+
+    // Supervisor identity.
+    let sup = &r["supervisor"];
+    assert!(!sup["version"].as_str().unwrap().is_empty());
+    assert!(!sup["build"].as_str().unwrap().is_empty());
+    assert_eq!(sup["port"].as_u64().unwrap(), handle.addr.port() as u64);
+    assert_eq!(sup["read_only"], true);
+    assert_eq!(sup["dashboard_disabled"], false);
+    assert!(sup["pid"].as_i64().unwrap() > 1);
+    assert!(r["supervisor"]["workspace"].as_str().unwrap().contains('/'));
+
+    // Heartbeat freshness.
+    assert_eq!(r["heartbeat"]["present"], true);
+    assert_eq!(r["heartbeat"]["stale"], false);
+    assert_eq!(
+        r["heartbeat"]["orchestrator_pid"].as_u64().unwrap(),
+        std::process::id() as u64
+    );
+
+    // Per-run deadline rows: one within, one over.
+    let runs = r["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 2);
+    let by_id = |id: &str| runs.iter().find(|x| x["run_id"] == id).unwrap();
+
+    let ok = by_id("run-ok");
+    assert_eq!(ok["over_deadline"], false);
+    assert!(ok["remaining_seconds"].as_i64().unwrap() > 0);
+    assert!(ok["started_at"].as_str().is_some());
+    assert!(ok["deadline"].as_str().is_some());
+
+    let late = by_id("run-late");
+    assert_eq!(late["over_deadline"], true);
+    assert!(late["remaining_seconds"].as_i64().unwrap() < 0);
+    assert!(late["over_by_seconds"].as_i64().unwrap() >= 110);
+
+    // Summary flags the over-deadline run.
+    assert_eq!(r["runs_over_deadline"].as_u64().unwrap(), 1);
+    let summary = r["summary"].as_str().unwrap();
+    assert!(summary.contains("OVER deadline"), "got: {summary}");
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn statusz_html_serves_non_empty_page() {
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client.get(format!("{base}/statusz")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(ct.contains("text/html"), "got content-type: {ct}");
+
+    let body = resp.text().await.unwrap();
+    assert!(!body.is_empty());
+    assert!(body.starts_with("<!doctype html>"));
+    assert!(body.contains("/statusz"));
+    // The over-deadline run is surfaced and flagged.
+    assert!(body.contains("run-late"));
+    assert!(body.contains("OVER"));
+    // Self-contained: no external script reference.
+    assert!(!body.contains("<script"));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn statusz_routes_reachable_with_no_dashboard() {
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: true, // --no-dashboard
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+    };
+    let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    // Both /statusz surfaces are still served in watchdog-only mode.
+    let html = client.get(format!("{base}/statusz")).send().await.unwrap();
+    assert_eq!(html.status(), 200);
+    assert!(!html.text().await.unwrap().is_empty());
+
+    let json = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(json.status(), 200);
+    let r: Value = json.json().await.unwrap();
+    assert_eq!(r["supervisor"]["dashboard_disabled"], true);
+    assert_eq!(r["runs"].as_array().unwrap().len(), 2);
+
+    // The full dashboard routes are NOT mounted in this mode.
+    let dash = client
+        .get(format!("{base}/api/state"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dash.status(), 404);
+    let root = client.get(format!("{base}/")).send().await.unwrap();
+    assert_eq!(root.status(), 404);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn statusz_no_runs_summary_is_clean() {
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let r: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["runs"].as_array().unwrap().len(), 0);
+    assert_eq!(r["runs_over_deadline"].as_u64().unwrap(), 0);
+    assert_eq!(r["heartbeat"]["present"], false);
+    assert_eq!(r["watchdog_actions"].as_array().unwrap().len(), 0);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn statusz_surfaces_recorded_watchdog_actions() {
+    use zicato_supervisor::action_log::{Action, Outcome, Trigger};
+
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+
+    // A shared action log seeded with one escalation, as the watchdog
+    // loop would have recorded it.
+    let action_log = Arc::new(WatchdogLog::new());
+    action_log.record(Action {
+        ts: Utc::now(),
+        trigger: Trigger::RunDeadline,
+        pid: 4343,
+        run_id: Some("run-late".into()),
+        outcome: Outcome::KilledForcefully,
+    });
+
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: action_log.clone(),
+    };
+    let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let r: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let actions = r["watchdog_actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0]["trigger"], "run_deadline");
+    assert_eq!(actions[0]["pid"].as_i64().unwrap(), 4343);
+    assert_eq!(actions[0]["run_id"], "run-late");
+    assert_eq!(actions[0]["outcome"], "killed_forcefully");
+
+    let _ = shutdown.send(());
 }

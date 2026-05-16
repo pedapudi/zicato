@@ -30,8 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.runtime._atomic import atomic_write_json, read_json
-from zicato.runtime.paths import ensure_runtime_dirs, lock_path
+from zicato.runtime._storage import backend_for, lock_key
+from zicato.runtime.paths import ensure_runtime_dirs
 
 
 def _utc_now_iso() -> str:
@@ -157,10 +157,10 @@ def acquire_workspace_lock(
         it to ``False`` to require manual cleanup of stale locks.
     """
     ensure_runtime_dirs(workspace_root)
-    path = lock_path(workspace_root)
+    backend = backend_for(workspace_root)
     my_pid = os.getpid()
 
-    existing = read_json(path)
+    existing = backend.read_json(lock_key())
     if existing is not None:
         prior = WorkspaceLock.from_dict(existing)
         if prior.pid == my_pid:
@@ -187,7 +187,7 @@ def acquire_workspace_lock(
         acquired_at=_utc_now_iso(),
         workspace_root=workspace_root,
     )
-    atomic_write_json(path, lock.to_dict())
+    backend.write_json(lock_key(), lock.to_dict())
     return lock
 
 
@@ -202,16 +202,13 @@ def release_workspace_lock(lock: WorkspaceLock) -> None:
 
     Idempotent.
     """
-    path = lock_path(lock.workspace_root)
-    existing = read_json(path)
+    backend = backend_for(lock.workspace_root)
+    existing = backend.read_json(lock_key())
     if existing is None:
         return
     prior = WorkspaceLock.from_dict(existing)
     if prior.pid == lock.pid and prior.instance_id == lock.instance_id:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
+        backend.delete(lock_key())
 
 
 __all__ = [

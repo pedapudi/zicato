@@ -285,22 +285,87 @@ def test_active_tournament_entry_loss_summary_round_trips(tmp_path: Path) -> Non
     }
 
 
-def test_update_tournament_entry_touches_all_matching_rows(tmp_path: Path) -> None:
-    t = _sample_tournament()
+def test_update_tournament_entry_targets_child_side_only(tmp_path: Path) -> None:
+    """A child-side update lands on the child row only; the parent row is untouched.
+
+    Each board entry has TWO rows in the tournament grid (one per side).
+    ``update_tournament_entry`` keys on ``(entry_id, side)`` so a
+    child-side transition cannot bleed onto the parent's same-entry row.
+    """
+    t = _sample_tournament()  # entry_a on both sides, entry_b parent-only.
     write_active_tournament(tmp_path, t)
-    update_tournament_entry(tmp_path, "entry_a", status="running")
+    update_tournament_entry(tmp_path, "entry_a", "child", status="completed")
     got = read_active_tournament(tmp_path)
     assert got is not None
     by_pair = {(e.entry_id, e.side): e.status for e in got.entries}
-    # Both entry_a rows (parent + child) updated; entry_b untouched.
-    assert by_pair[("entry_a", "parent")] == "running"
-    assert by_pair[("entry_a", "child")] == "running"
+    # Only the child row moved; the parent entry_a row stayed queued.
+    assert by_pair[("entry_a", "child")] == "completed"
+    assert by_pair[("entry_a", "parent")] == "queued"
     assert by_pair[("entry_b", "parent")] == "queued"
+
+
+def test_update_tournament_entry_targets_parent_side_only(tmp_path: Path) -> None:
+    """Symmetric: a parent-side update lands on the parent row only."""
+    t = _sample_tournament()
+    write_active_tournament(tmp_path, t)
+    update_tournament_entry(tmp_path, "entry_a", "parent", status="running")
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    by_pair = {(e.entry_id, e.side): e.status for e in got.entries}
+    assert by_pair[("entry_a", "parent")] == "running"
+    assert by_pair[("entry_a", "child")] == "queued"
+    assert by_pair[("entry_b", "parent")] == "queued"
+
+
+def test_update_tournament_entry_preserves_side_field(tmp_path: Path) -> None:
+    """A status update must not perturb either row's ``side`` label."""
+    write_active_tournament(tmp_path, _sample_tournament())
+    update_tournament_entry(tmp_path, "entry_a", "child", status="completed")
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    sides = sorted((e.entry_id, e.side) for e in got.entries)
+    # All three rows keep their original (entry_id, side) identity.
+    assert sides == [
+        ("entry_a", "child"),
+        ("entry_a", "parent"),
+        ("entry_b", "parent"),
+    ]
+
+
+def test_update_tournament_entry_no_match_is_noop(tmp_path: Path) -> None:
+    """An (entry_id, side) pair that matches no row leaves the file unchanged."""
+    write_active_tournament(tmp_path, _sample_tournament())
+    # entry_b has no child row.
+    update_tournament_entry(tmp_path, "entry_b", "child", status="completed")
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    assert all(e.status == "queued" for e in got.entries)
+
+
+def test_update_tournament_entry_tolerates_duplicate_pairs(tmp_path: Path) -> None:
+    """Two rows sharing the same (entry_id, side): only the first is updated, no crash."""
+    t = ActiveTournament(
+        tournament_id="t",
+        parent_generation_id="v1",
+        child_generation_id="v2",
+        epoch_id="e",
+        started_at="2026-05-14T10:00:00Z",
+        entries=[
+            ActiveTournamentEntry(entry_id="dup", side="parent", status="queued"),
+            ActiveTournamentEntry(entry_id="dup", side="parent", status="queued"),
+        ],
+    )
+    write_active_tournament(tmp_path, t)
+    update_tournament_entry(tmp_path, "dup", "parent", status="running")
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    # First duplicate updated, second left untouched — no exception raised.
+    assert [e.status for e in got.entries] == ["running", "queued"]
 
 
 def test_update_tournament_entry_no_op_without_file(tmp_path: Path) -> None:
     # Must not raise; just a no-op.
-    update_tournament_entry(tmp_path, "anything", status="running")
+    update_tournament_entry(tmp_path, "anything", "parent", status="running")
     assert read_active_tournament(tmp_path) is None
 
 
