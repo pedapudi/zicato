@@ -1056,3 +1056,213 @@ h4 {
   main { padding: 16px 16px 48px 16px; }
   .lineage-viewport { height: 360px; }
 }
+
+/* ============================================================
+   Tournament hall — board-card grid for the in-progress round.
+   Appended block; owned by the hall-grid Tournament-view work.
+   ============================================================ */
+
+.tournament-hall {
+  margin-bottom: 28px;
+}
+.hall-head {
+  margin-bottom: 10px;
+}
+.hall-title {
+  margin: 0 0 2px 0;
+}
+.hall-sub {
+  margin: 0;
+}
+
+/* Occupancy header — round N · B boards · X in play · ... */
+.hall-occupancy {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.hall-occ-stat {
+  color: var(--text);
+  font-weight: 600;
+}
+.hall-occ-sep {
+  color: var(--text-muted);
+}
+
+/* The board-card grid — many boards visibly in play at once. */
+.hall-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 12px;
+}
+
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, transform 0.08s ease;
+}
+.board-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent-running);
+}
+.board-card:focus-visible {
+  outline: 2px solid var(--accent-running);
+  outline-offset: 1px;
+}
+/* Accent border so the active hall reads at a glance. */
+.board-card.is-running {
+  border-left-color: var(--accent-running);
+}
+.board-card.has-failed {
+  border-left-color: var(--accent-rejected);
+}
+.board-card.is-done {
+  border-left-color: var(--accent-promoted);
+}
+
+.board-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.board-card-id {
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+}
+.board-card-livedot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-running);
+  animation: hall-pulse 1.4s ease-in-out infinite;
+}
+@keyframes hall-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* One side row — Champion / Challenger. */
+.board-side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.board-side-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-side-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.board-side-gen {
+  font-size: 12px;
+  color: var(--text);
+}
+.board-side-meta {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.board-side-score {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.board-side-meta.over-deadline,
+.board-deadline-flag {
+  color: var(--accent-rejected);
+  font-weight: 600;
+}
+.board-fail {
+  color: var(--accent-rejected);
+  font-weight: 600;
+}
+
+/* Status pills. */
+.pill {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #fff;
+}
+.pill-queued  { background: var(--accent-baseline); }
+.pill-running { background: var(--accent-running); }
+.pill-done    { background: var(--accent-promoted); }
+.pill-failed  { background: var(--accent-rejected); }
+
+/* Progress bar — elapsed fraction of the wall-clock budget. */
+.board-prog {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.board-prog-fill {
+  height: 100%;
+  background: var(--accent-running);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.board-prog.over-deadline .board-prog-fill {
+  background: var(--accent-rejected);
+}
+
+/* Result strip — which side won + the scalar delta. */
+.board-result {
+  margin-top: 2px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.board-result-win {
+  background: rgba(46, 160, 67, 0.16);
+  color: var(--accent-promoted);
+}
+.board-result-loss {
+  background: rgba(215, 58, 73, 0.14);
+  color: var(--accent-rejected);
+}
+.board-result-flat,
+.board-result-tbd {
+  background: var(--bg);
+  color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+  .hall-grid {
+    grid-template-columns: 1fr;
+  }
+}

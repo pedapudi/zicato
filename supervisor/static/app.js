@@ -1923,6 +1923,14 @@ function renderBracket() {
     return;
   }
 
+  // The tournament hall — a grid of board cards for the in-progress
+  // round, rendered above the resolved-history spine. With parallel
+  // board execution many entries are `running` at once; the hall shows
+  // the whole round in play at a glance.
+  if (live) {
+    wrap.appendChild(renderHall(live));
+  }
+
   // The spine: champion v0 ═> v2 ═> v6. Each champion node carries the
   // challengers it defended against hung below it.
   const spine = el('div', { class: 'bracket-spine' });
@@ -1969,7 +1977,10 @@ function renderBracket() {
     spine.appendChild(col);
   });
 
-  // Live matchup at the head — the in-progress challenge.
+  // Live matchup at the head — a compact pointer into the hall above.
+  // The hall grid renders the in-progress round in full; the spine
+  // only needs a connector node so the resolved lineage visibly
+  // continues into the live challenge.
   if (live) {
     const headCol = el('div', { class: 'bracket-col bracket-col-live' });
 
@@ -2003,6 +2014,277 @@ function renderBracket() {
   }
 
   wrap.appendChild(spine);
+}
+
+// --- Tournament hall
+//
+// The in-progress round renders as a grid of board cards. Each card is
+// one board entry's head-to-head: the Champion side (`side:"parent"`)
+// and the Challenger side (`side:"child"`). With parallel board
+// execution any number of entries are `running` simultaneously, so the
+// hall makes no one-at-a-time assumption — every board with a running
+// side gets an accent border so the active hall reads at a glance.
+
+// Group the flat per-side `entries` list into per-board records,
+// preserving first-seen order. Each board carries its parent-side and
+// child-side entry (either may be absent if the producer only emitted
+// one side so far).
+function hallBoards(t) {
+  const order = [];
+  const byId = new Map();
+  const entries = Array.isArray(t && t.entries) ? t.entries : [];
+  for (const e of entries) {
+    if (!e || e.entry_id == null) continue;
+    const id = String(e.entry_id);
+    if (!byId.has(id)) {
+      byId.set(id, { entry_id: id, parent: null, child: null });
+      order.push(id);
+    }
+    const board = byId.get(id);
+    const side = String(e.side || '').toLowerCase();
+    if (side === 'child' || side === 'challenger') board.child = e;
+    else board.parent = e;
+  }
+  return order.map((id) => byId.get(id));
+}
+
+// Status bucket for one side entry — drives the pill and counters.
+// Returns one of: 'queued' | 'running' | 'done' | 'failed'.
+function sideStatus(e) {
+  if (!e) return 'queued';
+  if (entryFailed(e)) return 'failed';
+  if (entryIsDone(e)) return 'done';
+  const s = String(e.status || '').toLowerCase();
+  if (s === 'running' || s === 'in_progress' || s === 'active') return 'running';
+  return 'queued';
+}
+
+// Occupancy header: round N · B boards · X in play · Y done · Z queued.
+// Counts are over the whole flat per-SIDE entries list so a board with
+// one running side and one queued side is correctly reflected. When a
+// `parallelism` value is present on state it is appended; never invented.
+function renderHallOccupancy(t, boards) {
+  const entries = Array.isArray(t && t.entries) ? t.entries : [];
+  let inPlay = 0, done = 0, queued = 0, failed = 0;
+  for (const e of entries) {
+    const st = sideStatus(e);
+    if (st === 'running') inPlay += 1;
+    else if (st === 'done') done += 1;
+    else if (st === 'failed') failed += 1;
+    else queued += 1;
+  }
+  const round = liveRoundLabel(t);
+  const bits = [];
+  if (round != null) bits.push('round ' + round);
+  bits.push(boards.length + ' board' + (boards.length === 1 ? '' : 's'));
+  bits.push(inPlay + ' in play');
+  bits.push(done + ' done');
+  if (failed > 0) bits.push(failed + ' failed');
+  bits.push(queued + ' queued');
+
+  // parallelism is optional — append only when state actually carries
+  // it (heartbeat is the documented producer); omit it gracefully.
+  const par = state.heartbeat && state.heartbeat.parallelism;
+  if (typeof par === 'number' && isFinite(par) && par > 0) {
+    bits.push('parallelism ' + par);
+  }
+
+  const head = el('div', { class: 'hall-occupancy', role: 'status' });
+  bits.forEach((b, i) => {
+    if (i > 0) head.appendChild(el('span', { class: 'hall-occ-sep', 'aria-hidden': 'true' }, ['·']));
+    head.appendChild(el('span', { class: 'hall-occ-stat' }, [b]));
+  });
+  return head;
+}
+
+// The hall: occupancy header + the board-card grid.
+function renderHall(t) {
+  const boards = hallBoards(t);
+  const hall = el('section', { class: 'tournament-hall', 'aria-label': 'tournament hall' });
+
+  const childId = liveChallengerId(t);
+  const champId = liveChampionId(t);
+  hall.appendChild(el('div', { class: 'hall-head' }, [
+    el('h3', { class: 'hall-title' }, ['Tournament hall']),
+    el('p', { class: 'hall-sub meta' }, [
+      el('strong', null, [childId || 'the challenger']),
+      ' is challenging ',
+      el('strong', null, [champId || 'the baseline']),
+      ' — every board runs both sides; cards in play are bordered.',
+    ]),
+  ]));
+  hall.appendChild(renderHallOccupancy(t, boards));
+
+  if (boards.length === 0) {
+    hall.appendChild(el('p', { class: 'empty' }, [
+      'Round has no board entries yet.',
+    ]));
+    return hall;
+  }
+
+  const grid = el('div', { class: 'hall-grid', role: 'list' });
+  for (const board of boards) {
+    grid.appendChild(renderBoardCard(board, t, champId, childId));
+  }
+  hall.appendChild(grid);
+  return hall;
+}
+
+// One board card — a single board entry's champion-vs-challenger
+// head-to-head. Clicking the card opens the Conversation view for the
+// entry (a sibling agent owns that route; we only set the hash).
+function renderBoardCard(board, t, champId, childId) {
+  const champSt = sideStatus(board.parent);
+  const childSt = sideStatus(board.child);
+  const anyRunning = champSt === 'running' || childSt === 'running';
+  const anyFailed = champSt === 'failed' || childSt === 'failed';
+  const bothDone = (champSt === 'done' || champSt === 'failed') &&
+    (childSt === 'done' || childSt === 'failed');
+
+  const card = el('div', {
+    class: 'board-card' +
+      (anyRunning ? ' is-running' : '') +
+      (anyFailed ? ' has-failed' : '') +
+      (bothDone && !anyFailed ? ' is-done' : ''),
+    role: 'listitem',
+    tabindex: '0',
+    'aria-label': 'board ' + board.entry_id +
+      ' — champion ' + champSt + ', challenger ' + childSt +
+      ' (open conversation)',
+    onClick: () => openBoardConversation(board.entry_id),
+    onKeydown: (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        openBoardConversation(board.entry_id);
+      }
+    },
+  });
+
+  // Head — the board entry id.
+  card.appendChild(el('div', { class: 'board-card-head' }, [
+    el('span', { class: 'board-card-id mono' }, [board.entry_id]),
+    anyRunning
+      ? el('span', { class: 'board-card-livedot', 'aria-hidden': 'true' }, [''])
+      : null,
+  ]));
+
+  // Two sides — Champion (parent) then Challenger (child).
+  card.appendChild(renderBoardSide('Champion', 'parent', board.parent,
+    champSt, champId));
+  card.appendChild(renderBoardSide('Challenger', 'child', board.child,
+    childSt, childId));
+
+  // Result strip — once both sides finish, which side won + the delta.
+  if (bothDone) {
+    card.appendChild(renderBoardResult(board));
+  }
+  return card;
+}
+
+// One side row of a board card: a status pill, a budget-fraction
+// progress bar (for a running side), and the scalar once the side is
+// done. An over-deadline running side turns the bar red.
+function renderBoardSide(label, side, entry, status, genId) {
+  const row = el('div', { class: 'board-side board-side-' + side + ' st-' + status });
+
+  const head = el('div', { class: 'board-side-head' }, [
+    el('span', { class: 'board-side-label' }, [label]),
+    el('span', { class: 'board-side-gen mono' }, [genId || '—']),
+    el('span', { class: 'pill pill-' + status }, [status]),
+  ]);
+  row.appendChild(head);
+
+  if (status === 'running') {
+    // The progress bar tracks the run's elapsed-vs-budget fraction.
+    const run = findActiveRunForEntry(entry);
+    let frac = (run && typeof run.progress === 'number' && isFinite(run.progress))
+      ? Math.max(0, Math.min(1, run.progress)) : null;
+
+    // Over-deadline detection — elapsed beyond budget. When it occurs
+    // the bar fills fully and turns red, and the card flags it.
+    let elapsed = run && run.elapsed_seconds;
+    if ((elapsed == null || !isFinite(elapsed)) && run && run.started_at) {
+      elapsed = (nowMs() - parseIso(run.started_at)) / 1000;
+    }
+    const budget = run && run.budget_seconds;
+    const overDeadline = typeof elapsed === 'number' && isFinite(elapsed) &&
+      typeof budget === 'number' && isFinite(budget) && budget > 0 &&
+      elapsed > budget;
+    if (overDeadline) frac = 1;
+    const pct = frac != null ? Math.round(frac * 100) : 0;
+
+    const bar = el('div', {
+      class: 'board-prog' + (overDeadline ? ' over-deadline' : ''),
+      role: 'progressbar',
+      'aria-valuemin': '0', 'aria-valuemax': '100',
+      'aria-valuenow': String(pct),
+      'aria-label': 'elapsed fraction of wall-clock budget',
+    }, [
+      el('div', { class: 'board-prog-fill', style: 'width:' + pct + '%' }),
+    ]);
+    row.appendChild(bar);
+
+    if (typeof elapsed === 'number' && isFinite(elapsed)) {
+      const budgetTxt = (typeof budget === 'number' && isFinite(budget))
+        ? fmtDuration(budget) : '—';
+      row.appendChild(el('div', {
+        class: 'board-side-meta mono' + (overDeadline ? ' over-deadline' : ''),
+      }, [
+        fmtDuration(elapsed) + ' / ' + budgetTxt,
+        overDeadline
+          ? el('span', { class: 'board-deadline-flag' }, [' over deadline'])
+          : el('span', { class: 'meta' }, [' elapsed/budget']),
+      ]));
+    } else {
+      row.appendChild(el('div', { class: 'board-side-meta meta' }, ['running…']));
+    }
+  } else if (status === 'done') {
+    const sc = entryScalar(entry);
+    row.appendChild(el('div', { class: 'board-side-score mono' }, [
+      sc != null ? 'scalar ' + fmtRate(sc) : 'done',
+    ]));
+  } else if (status === 'failed') {
+    row.appendChild(el('div', { class: 'board-side-meta board-fail' }, [
+      'run failed',
+    ]));
+  } else {
+    row.appendChild(el('div', { class: 'board-side-meta meta' }, ['queued']));
+  }
+  return row;
+}
+
+// The result strip — shown once both sides of a board finish. States
+// which side won (lower scalar wins) and the scalar delta between them.
+function renderBoardResult(board) {
+  const champSc = entryScalar(board.parent);
+  const childSc = entryScalar(board.child);
+
+  if (typeof champSc !== 'number' || typeof childSc !== 'number') {
+    return el('div', { class: 'board-result board-result-tbd' }, [
+      'Both sides finished — no scalar recorded.',
+    ]);
+  }
+  // Lower scalar (drift-derived loss) is better.
+  const delta = childSc - champSc;
+  let cls, text;
+  if (delta < 0) {
+    cls = 'board-result-win';
+    text = 'Challenger leads · Δ ' + fmtDelta(delta);
+  } else if (delta > 0) {
+    cls = 'board-result-loss';
+    text = 'Champion holds · Δ ' + fmtDelta(delta);
+  } else {
+    cls = 'board-result-flat';
+    text = 'Flat · Δ ' + fmtDelta(delta);
+  }
+  return el('div', { class: 'board-result ' + cls }, [text]);
+}
+
+// Board card click → the Conversation view. A sibling agent owns the
+// route that renders it; this only sets the hash.
+function openBoardConversation(entryId) {
+  if (entryId == null) return;
+  location.hash = 'conversation/' + encodeURIComponent(String(entryId));
 }
 
 // A discarded challenger card — dashed red, hung below its champion.
@@ -3464,6 +3746,9 @@ function mockSnapshot() {
       // robust parseIso path.
       generation_id: 'v5',
       round_index: 2,
+      // Boards execute in parallel; the tournament hall appends this to
+      // its occupancy header when present.
+      parallelism: 3,
       last_heartbeat: new Date().toISOString(),
       round_started_at: new Date(Date.now() - 263_000).toISOString()
         .replace('Z', '+00:00'),
@@ -3494,6 +3779,11 @@ function mockSnapshot() {
       { run_id: 'r-7f10', entry_id: 'multi_turn_picky', generation_id: 'v5',
         started_at: new Date(Date.now() - 14_000).toISOString(),
         progress: 0.06, elapsed_seconds: 14, budget_seconds: 240 },
+      // An over-deadline run — elapsed past budget. The hall board card
+      // turns its bar red and flags the side.
+      { run_id: 'r-3b88', entry_id: 'schema_response', generation_id: 'v5',
+        started_at: new Date(Date.now() - 720_000).toISOString(),
+        progress: 0.88, elapsed_seconds: 720, budget_seconds: 600 },
     ],
     // GET /api/active-tournament — the contract shape: round_index,
     // parent/child generation ids, and a flat per-SIDE entries list
@@ -3508,6 +3798,9 @@ function mockSnapshot() {
         why: 'Round 1 drift was dominated by off_topic when the context window filled with verbose tool docs.',
         modulating: ['researcher_tool_descriptions', 'write_webpage_tool'],
       },
+      // Boards execute in parallel — several entries are `running` at
+      // once. The hall grid renders that naturally, with an accent
+      // border on every board that has a running side.
       entries: [
         { entry_id: 'extract_invoice_001', side: 'parent', status: 'done',
           scalar_score: 0.23 },
@@ -3521,10 +3814,14 @@ function mockSnapshot() {
           scalar_score: 0.19 },
         { entry_id: 'research_topic_q3', side: 'child', status: 'running',
           run_id: 'r-9c2a' },
-        { entry_id: 'multi_turn_picky', side: 'parent', status: 'queued' },
-        { entry_id: 'multi_turn_picky', side: 'child', status: 'queued' },
-        { entry_id: 'schema_response', side: 'parent', status: 'queued' },
-        { entry_id: 'schema_response', side: 'child', status: 'queued' },
+        { entry_id: 'multi_turn_picky', side: 'parent', status: 'done',
+          scalar_score: 0.27 },
+        { entry_id: 'multi_turn_picky', side: 'child', status: 'running',
+          run_id: 'r-7f10' },
+        { entry_id: 'schema_response', side: 'parent', status: 'done',
+          scalar_score: 0.14 },
+        { entry_id: 'schema_response', side: 'child', status: 'running',
+          run_id: 'r-3b88' },
       ],
       drift_movements: [
         { kind: 'off_topic', from_rate: 0.18, to_rate: 0.12 },
