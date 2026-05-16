@@ -17,7 +17,6 @@ import pytest
 
 from zicato.aux_timeout import DEFAULT_AUX_CALL_TIMEOUT_S, aux_call_timeout_s
 
-
 # ---------------------------------------------------------------------------
 # Module-level config
 # ---------------------------------------------------------------------------
@@ -84,7 +83,7 @@ def test_proposer_timeout_raises_proposer_error(
                 new_generation_id="v1",
                 patterns=(),
                 mutations=(mut,),
-                rubric_text="# rubric",
+                brief_text="# proposer brief",
                 current_loss_summary="",
                 aux_call_llm=_hung_aux,
                 max_retries=0,
@@ -95,27 +94,21 @@ def test_proposer_timeout_raises_proposer_error(
 
 
 # ---------------------------------------------------------------------------
-# Judge (board matcher)
+# Rubric (board matcher — the LLM-as-judge OUTCOME matcher)
 # ---------------------------------------------------------------------------
 
 
-def _judge_prompts() -> dict[str, str]:
-    return {"system": "judge it", "user_template": "result: {result}"}
-
-
-def test_judge_timeout_returns_judge_timeout_detail(
+def test_rubric_timeout_returns_rubric_timeout_detail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A hung judge aux returns ``passed=False`` with detail ``judge_timeout``."""
+    """A hung rubric aux returns ``passed=False`` with detail ``rubric_judge_timeout``."""
     monkeypatch.setenv("ZICATO_AUX_CALL_TIMEOUT", "0.05")
 
     from zicato.board.matchers import evaluate_expectation
-    from zicato.core.types import Expectation, RunResult
+    from zicato.board.predicates import Rubric
+    from zicato.core.types import RunResult
 
-    expectation = Expectation(
-        kind="judge",
-        spec=f"{__name__}._judge_prompts",
-    )
+    expectation = Rubric.score("score the answer 0-10", threshold=5.0)
     result = RunResult(
         run_id="r",
         entry_id="e",
@@ -124,11 +117,9 @@ def test_judge_timeout_returns_judge_timeout_detail(
         runtime_ms=10,
     )
 
-    outcome = asyncio.run(
-        evaluate_expectation(expectation, result, aux_call_llm=_hung_aux)
-    )
+    outcome = asyncio.run(evaluate_expectation(expectation, result, aux_call_llm=_hung_aux))
     assert outcome.passed is False
-    assert outcome.detail == "judge_timeout"
+    assert outcome.detail == "rubric_judge_timeout"
 
 
 # ---------------------------------------------------------------------------

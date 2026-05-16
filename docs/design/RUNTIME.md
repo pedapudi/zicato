@@ -301,7 +301,7 @@ file layout, since it's part of the runtime contract.
 | `control/kill_runs/{run_id}` | "kill" button on a run row | empty file per run |
 | `control/promote/{gen_id}` | "force promote" button (v1.3) | empty file per generation |
 | `control/reject/{gen_id}` | "force reject" button (v1.3) | empty file per generation |
-| `control/rubric_replacement.txt` | "edit rubric" panel | text file; contents replace `rubric.md` |
+| `control/rubric_replacement.txt` | "edit proposer brief" panel | text file; contents replace `brief.md` |
 
 Consumed-command record in `control_log/`:
 

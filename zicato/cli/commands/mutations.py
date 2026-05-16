@@ -1,9 +1,13 @@
 """``zicato mutations`` — audit the mutable surface in the registered inner harness.
 
-Standalone command file. The CLI-infrastructure agent auto-discovers
-command files under ``zicato/cli/commands/`` and wires them into the
-top-level ``zicato`` Click group; this file deliberately does NOT import
-from ``zicato.cli`` so the discovery layer can stay one-way.
+ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` enumerates
+the mutable surface internally when it proposes. Run ``zicato
+mutations`` by hand only to audit *what* the proposer is allowed to
+change.
+
+Standalone command file auto-discovered under
+``zicato/cli/commands/``; this file deliberately does NOT import from
+``zicato.cli`` so the discovery layer can stay one-way.
 
 The command reads ``<workspace>/config.json`` to learn the source roots
 to enumerate, then prints either a fixed-width table or a JSON document
@@ -40,14 +44,11 @@ def _load_source_roots(workspace_dir: Path) -> list[Path]:
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise click.ClickException(
-            f"Could not parse {config_path}: {exc}"
-        ) from exc
+        raise click.ClickException(f"Could not parse {config_path}: {exc}") from exc
     raw_roots = data.get("source_roots")
     if not raw_roots:
         raise click.ClickException(
-            f"{config_path} has no 'source_roots' field. "
-            "Run `zicato register` to populate it."
+            f"{config_path} has no 'source_roots' field. Run `zicato register` to populate it."
         )
     return [Path(r) for r in raw_roots]
 
@@ -87,9 +88,7 @@ def _preview(content: str) -> str:
     return flat[: _PREVIEW_LEN - 1] + "…"
 
 
-def _render_table(
-    points: list[MutationPoint], show_mode: str
-) -> str:
+def _render_table(points: list[MutationPoint], show_mode: str) -> str:
     if not points:
         return "(no mutation points found)\n"
     header = f"{'id':<32}  {'kind':<5}  {'lines':<11}  {'file':<40}  preview"
@@ -104,9 +103,7 @@ def _render_table(
             preview = "\n    " + p.content.replace("\n", "\n    ")
         else:
             preview = _preview(p.content)
-        lines.append(
-            f"{p.id:<32}  {p.kind:<5}  {line_range:<11}  {file_disp:<40}  {preview}"
-        )
+        lines.append(f"{p.id:<32}  {p.kind:<5}  {line_range:<11}  {file_disp:<40}  {preview}")
     total = len(points)
     by_kind: dict[str, int] = {}
     mutable_lines = 0
@@ -116,8 +113,7 @@ def _render_table(
     kind_breakdown = ", ".join(f"{k}={v}" for k, v in sorted(by_kind.items()))
     lines.append("")
     lines.append(
-        f"Total: {total} mutation point(s)  [{kind_breakdown}]  "
-        f"~{mutable_lines} mutable line(s)"
+        f"Total: {total} mutation point(s)  [{kind_breakdown}]  ~{mutable_lines} mutable line(s)"
     )
     return "\n".join(lines) + "\n"
 
@@ -157,7 +153,10 @@ def _render_json(points: list[MutationPoint], show_mode: str) -> str:
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
-@click.command(name="mutations")
+@click.command(
+    name="mutations",
+    short_help="Advanced: audit the mutable surface the proposer may change.",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -201,7 +200,11 @@ def mutations_cmd(
     show_mode: str,
     fmt: str,
 ) -> None:
-    """List mutable spans in the registered inner harness."""
+    """Advanced: list the mutable spans in the registered inner harness.
+
+    Off the happy path — `zicato evolve` enumerates these itself.
+    Use this to audit what the proposer is allowed to change.
+    """
 
     workspace_dir = Path(workspace)
     source_roots = _load_source_roots(workspace_dir)

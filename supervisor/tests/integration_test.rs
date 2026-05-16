@@ -181,7 +181,7 @@ async fn get_endpoints_return_state() {
     let _ = shutdown.send(());
 }
 
-/// Lay down a full epoch (board / rubric / scoring / config / mutations)
+/// Lay down a full epoch (board / brief / scoring / config / mutations)
 /// plus the workspace adapter config under `epochs/{id}/`.
 fn write_full_epoch(paths: &reader::WorkspacePaths, id: &str) {
     let dir = paths.epochs.join(id);
@@ -218,7 +218,7 @@ fn write_full_epoch(paths: &reader::WorkspacePaths, id: &str) {
     );
     std::fs::write(dir.join("board.jsonl"), board).unwrap();
 
-    std::fs::write(dir.join("rubric.md"), "# full rubric text\nbody").unwrap();
+    std::fs::write(dir.join("brief.md"), "# full brief text\nbody").unwrap();
 
     let scoring = serde_json::json!({
         "drift_weight": 1.0,
@@ -280,7 +280,7 @@ async fn epoch_endpoint_returns_full_definition() {
     assert_eq!(board[1]["budget_s"], 120.0);
     assert!(board[1]["expectation_kind"].is_null());
 
-    assert_eq!(r["rubric"], "# full rubric text\nbody");
+    assert_eq!(r["brief"], "# full brief text\nbody");
     assert_eq!(r["scoring"]["drift_weight"], 1.0);
     assert_eq!(r["scoring"]["pass_weight"], 1.0);
 
@@ -318,10 +318,10 @@ async fn epoch_endpoint_missing_mutations_yields_empty_list() {
 }
 
 #[tokio::test]
-async fn epoch_endpoint_missing_rubric_yields_empty_string() {
+async fn epoch_endpoint_missing_brief_yields_empty_string() {
     let (_t, paths) = make_workspace();
-    write_full_epoch(&paths, "e_no_rubric");
-    std::fs::remove_file(paths.epochs.join("e_no_rubric").join("rubric.md")).unwrap();
+    write_full_epoch(&paths, "e_no_brief");
+    std::fs::remove_file(paths.epochs.join("e_no_brief").join("brief.md")).unwrap();
     let (handle, shutdown) = start_server(paths.clone(), true).await;
     let base = format!("http://{}", handle.addr);
     let client = reqwest::Client::new();
@@ -334,7 +334,7 @@ async fn epoch_endpoint_missing_rubric_yields_empty_string() {
         .json()
         .await
         .unwrap();
-    assert_eq!(r["rubric"], "");
+    assert_eq!(r["brief"], "");
 
     let _ = shutdown.send(());
 }
@@ -438,24 +438,52 @@ async fn pause_writes_control_file_atomically() {
 }
 
 #[tokio::test]
-async fn rubric_post_writes_replacement_file() {
+async fn brief_post_writes_replacement_file() {
     let (_t, paths) = make_workspace();
     let (handle, shutdown) = start_server(paths.clone(), false).await;
     let base = format!("http://{}", handle.addr);
     let client = reqwest::Client::new();
 
-    let payload = "you are a better judge now\n";
+    let payload = "tighten the proposer brief\n";
     let r = client
-        .post(format!("{base}/api/control/rubric"))
+        .post(format!("{base}/api/control/brief"))
         .body(payload)
         .send()
         .await
         .unwrap();
     assert_eq!(r.status(), 202);
 
+    // The control file keeps its protocol name regardless of the
+    // UI-facing endpoint rename.
     let marker = paths.control_dir().join("rubric_replacement.txt");
     let got = std::fs::read_to_string(&marker).unwrap();
     assert_eq!(got, payload);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn epoch_endpoint_brief_falls_back_to_legacy_rubric_md() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "e_legacy");
+    // Pre-rename epoch on disk: replace `brief.md` with the legacy
+    // `rubric.md`. The endpoint must still surface it under `brief`.
+    let dir = paths.epochs.join("e_legacy");
+    std::fs::remove_file(dir.join("brief.md")).unwrap();
+    std::fs::write(dir.join("rubric.md"), "# legacy brief text").unwrap();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let r: Value = client
+        .get(format!("{base}/api/epoch"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["brief"], "# legacy brief text");
 
     let _ = shutdown.send(());
 }

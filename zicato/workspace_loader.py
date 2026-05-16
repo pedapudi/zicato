@@ -2,7 +2,7 @@
 
 This module is the single readers' surface for everything that lives
 under ``.zicato/`` — the workspace ``config.json``, the current-epoch
-marker, the per-epoch ``board.jsonl`` / ``rubric.md`` / ``scoring.json``
+marker, the per-epoch ``board.jsonl`` / ``brief.md`` / ``scoring.json``
 artifacts. Callers compose these helpers rather than walking the
 directory layout themselves; the layout is owned by
 :mod:`zicato.core.workspace`.
@@ -21,11 +21,26 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from zicato.board.jsonl import load_board
+from zicato.board.jsonl import load_board, load_board_with_meta
 from zicato.core.types import BoardEntry, EpochConfig, ScoringWeights
-from zicato.core.workspace import board_path, rubric_path, scoring_path
+from zicato.core.workspace import board_path, epoch_dir, scoring_path
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch
-from zicato.proposer.rubric import Rubric, load_rubric
+from zicato.proposer.brief import ProposerBrief, load_brief
+
+
+def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
+    """Path to the frozen proposer brief (``brief.md``) for one epoch.
+
+    Epochs created before the proposer-brief rename stored the file as
+    ``rubric.md``; when no ``brief.md`` exists the legacy name is used so
+    those epochs keep loading.
+    """
+    brief = epoch_dir(workspace_root, epoch_id) / "brief.md"
+    if not brief.exists():
+        legacy = epoch_dir(workspace_root, epoch_id) / "rubric.md"
+        if legacy.exists():
+            return legacy
+    return brief
 
 
 def load_workspace_config(workspace_root: Path) -> dict[str, Any]:
@@ -57,8 +72,7 @@ def load_workspace_config(workspace_root: Path) -> dict[str, Any]:
         raise ValueError(f"could not parse {config_path}: {exc.msg}") from exc
     if not isinstance(loaded, Mapping):
         raise ValueError(
-            f"{config_path}: expected a JSON object at top level, got "
-            f"{type(loaded).__name__}"
+            f"{config_path}: expected a JSON object at top level, got {type(loaded).__name__}"
         )
     return dict(loaded)
 
@@ -90,10 +104,26 @@ def load_current_board(workspace_root: Path) -> list[BoardEntry]:
     eid = _resolve_current_epoch(workspace_root)
     path = board_path(workspace_root, eid)
     if not path.exists():
-        raise FileNotFoundError(
-            f"board not found at {path}; the current epoch is incomplete"
-        )
+        raise FileNotFoundError(f"board not found at {path}; the current epoch is incomplete")
     return load_board(path)
+
+
+def load_current_board_with_meta(
+    workspace_root: Path,
+) -> tuple[list[BoardEntry], tuple[Any, ...]]:
+    """Load the current epoch's board plus its board-level ``disable_drift``.
+
+    Like :func:`load_current_board` but also returns the board-level
+    ``disable_drift`` tuple parsed from the board's ``board_meta`` header
+    (empty when the board has no header). The tournament runner needs the
+    suppression set to thread it onto each board entry, so this is the
+    loader the orchestrator and the ``zicato tournament`` command use.
+    """
+    eid = _resolve_current_epoch(workspace_root)
+    path = board_path(workspace_root, eid)
+    if not path.exists():
+        raise FileNotFoundError(f"board not found at {path}; the current epoch is incomplete")
+    return load_board_with_meta(path)
 
 
 def load_current_scoring(workspace_root: Path) -> ScoringWeights:
@@ -113,15 +143,13 @@ def load_current_scoring(workspace_root: Path) -> ScoringWeights:
     return _scoring_weights_from_dict(raw)
 
 
-def load_current_rubric(workspace_root: Path) -> Rubric:
-    """Load the current epoch's parsed :class:`Rubric`."""
+def load_current_brief(workspace_root: Path) -> ProposerBrief:
+    """Load the current epoch's parsed :class:`ProposerBrief`."""
     eid = _resolve_current_epoch(workspace_root)
-    path = rubric_path(workspace_root, eid)
+    path = _epoch_brief_path(workspace_root, eid)
     if not path.exists():
-        raise FileNotFoundError(
-            f"rubric.md not found at {path}; the current epoch is incomplete"
-        )
-    return load_rubric(path)
+        raise FileNotFoundError(f"brief.md not found at {path}; the current epoch is incomplete")
+    return load_brief(path)
 
 
 def _scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
@@ -135,15 +163,11 @@ def _scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     raw_sev = d.get("severity_weights")
     severity_kwarg: dict[str, Any] = {}
     if raw_sev:
-        severity_kwarg["severity_weights"] = {
-            str(k): float(v) for k, v in raw_sev.items()
-        }
+        severity_kwarg["severity_weights"] = {str(k): float(v) for k, v in raw_sev.items()}
     return ScoringWeights(
         drift_weight=float(d.get("drift_weight", 1.0)),
         pass_weight=float(d.get("pass_weight", 1.0)),
-        per_kind_weights={
-            str(k): float(v) for k, v in d.get("per_kind_weights", {}).items()
-        },
+        per_kind_weights={str(k): float(v) for k, v in d.get("per_kind_weights", {}).items()},
         plan_revision_weight=float(d.get("plan_revision_weight", 0.5)),
         runtime_weight=float(d.get("runtime_weight", 0.0)),
         promote_margin=float(d.get("promote_margin", 0.01)),
@@ -156,6 +180,7 @@ __all__ = [
     "load_workspace_config",
     "load_current_epoch_config",
     "load_current_board",
+    "load_current_board_with_meta",
     "load_current_scoring",
-    "load_current_rubric",
+    "load_current_brief",
 ]

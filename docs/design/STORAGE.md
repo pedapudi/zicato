@@ -31,7 +31,7 @@ section is a brief recap so this document is self-contained.
   epochs/
     {epoch_id}/
       board.jsonl
-      rubric.md
+      brief.md
       scoring.json
       generations/
         v0/
@@ -226,7 +226,7 @@ G2, etc. Some phases can be parallelized (noted).
   epochs/                            # PARTIALLY MIGRATED
     {epoch_id}/
       board.jsonl                    # unchanged (small, frequently edited)
-      rubric.md                      # unchanged
+      brief.md              # unchanged
       scoring.json                   # unchanged
       patterns/                      # unchanged (per-round detector output)
       journal.md                     # unchanged

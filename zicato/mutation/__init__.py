@@ -14,9 +14,16 @@ Public API
 ``enumerate_mutations(source_roots)``
     Walk one or more source roots, return all :class:`MutationPoint`
     instances in a deterministic order.
+``validate_patches(patches, *, source_root | enumeration)``
+    Deterministically pre-validate a patch set against the mutation
+    surface; return a list of every problem found (empty means clean).
 ``apply_patches(source_root, patches, target_root)``
-    Copy the source tree into ``target_root`` and apply patches against a
-    fresh enumeration of the copied tree. Raise on unresolved ids.
+    Copy the source tree into ``target_root``, run ``validate_patches``,
+    and atomically apply the batch (all-or-nothing) against a fresh
+    enumeration of the copied tree.
+``apply_patches_unchecked(source_root, patches, target_root)``
+    Legacy best-effort-sequential apply with no atomic pre-check, for
+    callers that have already validated the patch set themselves.
 ``validate_post_apply(target_root, patches, pre_apply_mutations)``
     Return a list of validation errors after a patch application; empty
     list means clean.
@@ -26,7 +33,7 @@ Public API
 
 from __future__ import annotations
 
-from zicato.mutation.applier import apply_patches
+from zicato.mutation.applier import apply_patches, apply_patches_unchecked
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato.mutation.markers import (
     MARKER_FILE_PREFIX,
@@ -34,11 +41,17 @@ from zicato.mutation.markers import (
     ParsedMarker,
     parse_marker_line,
 )
-from zicato.mutation.validator import check_forbidden_ids, validate_post_apply
+from zicato.mutation.validator import (
+    check_forbidden_ids,
+    validate_patches,
+    validate_post_apply,
+)
 
 __all__ = [
     "enumerate_mutations",
     "apply_patches",
+    "apply_patches_unchecked",
+    "validate_patches",
     "validate_post_apply",
     "check_forbidden_ids",
     "MARKER_FILE_PREFIX",

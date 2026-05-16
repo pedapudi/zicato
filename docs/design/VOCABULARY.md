@@ -41,10 +41,10 @@ See [EMULATOR.md §8](EMULATOR.md#8-audit-trail-the-zicatoemulator-lane).
 
 One of the two required `call_llm` callables. Used by everything
 zicato itself runs: the patch proposer, the analysis pass, the
-multi-turn user emulator, judge-shaped expectations, the rubric-
-extraction step if enabled. MUST be distinct from
-`harness_call_llm` by callable identity or by explicit model override.
-zicato refuses to start if the two are identical. See
+multi-turn user emulator, `rubric`-kind outcome checks (the LLM
+grader). MUST be distinct from `harness_call_llm` by callable
+identity or by explicit model override. zicato refuses to start if
+the two are identical. See
 [EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule).
 
 ## Board
@@ -62,11 +62,13 @@ evaluation contract and require explicit acknowledgment. See
 
 One task on the board. Carries an `id`, a `kind` discriminator, a
 `wall_clock_budget_seconds`, an optional `weight`, optional `tags`,
-and an optional `expectation`. Per-kind fields fill in the rest
-(single-turn entries carry `input`; multi-turn scripted entries carry
-`turns`; multi-turn emulated entries carry `user_persona`). The
+and two evaluation facets — an `expectations` list (outcome checks)
+and a `judges` list (process checks). Per-kind fields fill in the
+rest (single-turn entries carry `input`; multi-turn scripted entries
+carry `turns`; multi-turn emulated entries carry `user_persona`). The
 runner uses the entry id as a directory name under `runs/`. See
-[BOARD-FORMAT.md §1](BOARD-FORMAT.md#1-common-fields).
+[BOARD-FORMAT.md §1](BOARD-FORMAT.md#1-common-fields) and
+[BOARD-AUTHORING.md](BOARD-AUTHORING.md).
 
 ## Drift loss
 
@@ -80,8 +82,8 @@ Combines with pass-rate into the generation score. See
 ## Epoch
 
 The unit of evaluation contract. Within an epoch, the board, the
-rubric's `forbidden:` list, and the scoring weights are frozen.
-Generations inside an epoch are directly comparable; cross-epoch
+proposer brief's `## Forbidden` list, and the scoring weights are
+frozen. Generations inside an epoch are directly comparable; cross-epoch
 comparison is fuzzy by design. Pattern aggregates reset at epoch
 boundaries. An epoch is closed by the operator (`zicato epoch close`)
 or auto-closed on `zicato epoch new` with a warning. See
@@ -99,13 +101,52 @@ See [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md#3-the-experiment).
 
 ## Expectation
 
-An optional matcher on a board entry that decides pass/fail per run.
-Five kinds: `predicate` (Python callable), `expected_text` (exact
-string), `regex` (Python regex), `json_schema` (JSON-schema), and
-`judge` (LLM judge via `auxiliary_call_llm`). When present, the loss
-reducer evaluates the expectation and stamps `pass_fail: bool` on the
-loss profile. Absent → drift-loss-only scoring for the entry. See
-[BOARD-FORMAT.md §3](BOARD-FORMAT.md#3-expectation-kinds).
+An **outcome** check on a board entry — a matcher run post-hoc on the
+run's output or transcript. An entry's `expectations` list holds
+zero or more. Five kinds: `predicate` (Python callable),
+`expected_text` (exact string), `regex` (Python regex), `json_schema`
+(JSON-schema), and `rubric` (LLM-graded via `auxiliary_call_llm`).
+Authored with the `Predicate` and `Rubric` namespaces. The loss
+reducer ANDs the list into `pass_fail: bool`; an empty list →
+drift-loss-only scoring for the entry. Distinct from a *judge* (a
+process check). See
+[BOARD-FORMAT.md §3](BOARD-FORMAT.md#3-outcome-checks-the-expectations-list).
+
+## Judge
+
+A **process** check on a board entry — a goldfive judge that watches
+the agent's reasoning stream in-run, as distinct from an *expectation*
+(which inspects the finished output post-hoc). An entry's `judges`
+list holds zero or more. Authored with the `Judge` namespace:
+`Judge.custom(name, criterion, ...)` for an inline natural-language
+judge, `Judge.python(name, dotted_path, ...)` for a programmatic one.
+A violation emits a `DriftKind.CUSTOM` drift identified by the judge's
+`name` (carried as `judge_name`). goldfive's own built-in judges are
+ambient and default-on; a board's `disable_drift` suppresses built-ins
+by `DriftKind`. See
+[BOARD-FORMAT.md §4](BOARD-FORMAT.md#4-process-checks-the-judges-list)
+and [BOARD-AUTHORING.md §3](BOARD-AUTHORING.md).
+
+## Predicate
+
+The namespace of static factory helpers for the deterministic
+(non-LLM) outcome-check kinds: `Predicate.contains`, `Predicate.regex`,
+`Predicate.schema`, `Predicate.python`. Each returns an `Expectation`
+ready to attach to a board entry's `expectations` list. Paired with
+`Rubric` (the LLM-graded outcome check). See
+[BOARD-AUTHORING.md §2](BOARD-AUTHORING.md).
+
+## Proposer brief
+
+The operator-edited markdown file per epoch that steers the proposer
+— focus areas, style guidance, and a mechanically-enforced
+`## Forbidden` list of mutation-point ids. Read fresh into the
+proposer's prompt every round; no caching. Formerly called the epoch
+"rubric"; renamed so "rubric" refers only to the per-entry
+`Rubric.score()` outcome check. Distinct from that per-entry rubric:
+the proposer brief steers the proposer epoch-wide, a `Rubric` grades
+one entry's output. See
+[EPOCHS-AND-JOURNALING.md §7](EPOCHS-AND-JOURNALING.md#7-the-proposer-brief).
 
 ## Generation
 
@@ -232,8 +273,8 @@ transcript. See [BOARD-FORMAT.md §2.3](BOARD-FORMAT.md#23-multi_turn_emulated).
 
 ## Proposer
 
-The component that reads patterns and the operator-edited rubric and
-emits an `Experiment` (hypothesis + patches). Driven by
+The component that reads patterns and the operator-edited proposer
+brief and emits an `Experiment` (hypothesis + patches). Driven by
 `auxiliary_call_llm`. Schema-enforced output. See
 [ARCHITECTURE.md §4.7](ARCHITECTURE.md#47-patch-proposer).
 
@@ -255,14 +296,16 @@ global within an epoch. See [EPOCHS-AND-JOURNALING.md §8](EPOCHS-AND-JOURNALING
 
 ## Rubric
 
-The operator-edited markdown file per epoch that steers the
-proposer. `rubric.md` lives next to the board. Contains focus areas,
-style guidance, and a `## Forbidden` section (mechanically enforced
-against mutation-point ids). Read fresh into the proposer's system
-prompt every round; no caching. Edits mid-epoch are fine except for
-`## Forbidden` changes (which shrink the mutation surface and warrant
-a new epoch by convention). See
-[EPOCHS-AND-JOURNALING.md §7](EPOCHS-AND-JOURNALING.md#7-the-rubric).
+The namespace of the single static factory helper `Rubric.score()`,
+which builds an LLM-graded **outcome** check: the grader scores the
+run's output (or transcript) against an operator-supplied criterion on
+a numeric scale, and the resulting `Expectation` passes iff the score
+meets a threshold. `reads=OutputScope.FINAL|TRANSCRIPT` selects the
+slice graded. Paired with `Predicate` (the deterministic outcome
+checks). Formerly `Rubric.judge()` — renamed so "judge" refers only
+to the in-run process check. Not to be confused with the *proposer
+brief* (the epoch-level steering document, once also called a
+"rubric"). See [BOARD-AUTHORING.md §2](BOARD-AUTHORING.md).
 
 ## Run
 

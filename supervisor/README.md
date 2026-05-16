@@ -101,7 +101,7 @@ Python orchestrator expects.
 - `POST /api/control/kill/{run_id}`
 - `POST /api/control/promote/{generation_id}`
 - `POST /api/control/reject/{generation_id}`
-- `POST /api/control/rubric` — raw text body, replaces the current rubric
+- `POST /api/control/brief` — raw text body, replaces the proposer brief
 
 `POST` endpoints return `202 Accepted` on success, `403 Forbidden` when
 running with `--read-only`, and `400 Bad Request` if the path-parameter

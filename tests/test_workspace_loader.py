@@ -11,8 +11,8 @@ from zicato.core.types import ScoringWeights
 from zicato.epoch.lifecycle import new_epoch
 from zicato.workspace_loader import (
     load_current_board,
+    load_current_brief,
     load_current_epoch_config,
-    load_current_rubric,
     load_current_scoring,
     load_workspace_config,
 )
@@ -39,15 +39,15 @@ def fresh_workspace(tmp_path: Path) -> tuple[Path, str]:
         )
         + "\n"
     )
-    rubric_src = tmp_path / "rubric.md"
-    rubric_src.write_text("# Rubric\n- Be careful.\n")
+    brief_src = tmp_path / "brief.md"
+    brief_src.write_text("# Proposer brief\n- Be careful.\n")
 
     weights = ScoringWeights(drift_weight=1.5)
     cfg = new_epoch(
         workspace,
         name="alpha",
         board_source=board_src,
-        rubric_source=rubric_src,
+        brief_source=brief_src,
         weights=weights,
         auto_close_previous=False,
     )
@@ -106,9 +106,9 @@ def test_load_current_scoring_round_trips_weights(
     assert weights.drift_weight == 1.5
 
 
-def test_load_current_rubric_parses_markdown(
+def test_load_current_brief_parses_markdown(
     fresh_workspace: tuple[Path, str],
 ) -> None:
     workspace, _ = fresh_workspace
-    rubric = load_current_rubric(workspace)
-    assert "Be careful." in rubric.text
+    brief = load_current_brief(workspace)
+    assert "Be careful." in brief.text

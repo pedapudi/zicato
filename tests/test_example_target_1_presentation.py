@@ -16,11 +16,7 @@ from pathlib import Path
 
 import pytest
 
-EXAMPLE_DIR = (
-    Path(__file__).resolve().parent.parent
-    / "examples"
-    / "target_1_presentation"
-)
+EXAMPLE_DIR = Path(__file__).resolve().parent.parent / "examples" / "target_1_presentation"
 AGENT_DIR = EXAMPLE_DIR / "agent"
 BOARD_PATH = EXAMPLE_DIR / "board.jsonl"
 SCORING_PATH = EXAMPLE_DIR / "scoring.json"
@@ -79,11 +75,7 @@ _MARKER_RE = re.compile(r'#\s*zicato:mutable\s+id="([a-zA-Z0-9_]+)"')
 
 def _walk_python_files(root: Path) -> list[Path]:
     """Return every ``.py`` file under ``root`` (no ``__pycache__``)."""
-    return [
-        p
-        for p in sorted(root.rglob("*.py"))
-        if "__pycache__" not in p.parts
-    ]
+    return [p for p in sorted(root.rglob("*.py")) if "__pycache__" not in p.parts]
 
 
 def test_mutation_markers_minimum_count() -> None:
@@ -164,10 +156,7 @@ def test_board_jsonl_exists_and_is_well_formed() -> None:
             except json.JSONDecodeError as e:
                 pytest.fail(f"board.jsonl line {i}: invalid JSON ({e})")
             line_count += 1
-    assert line_count >= 6, (
-        f"Expected at least 6 board entries in {BOARD_PATH}, got "
-        f"{line_count}."
-    )
+    assert line_count >= 6, f"Expected at least 6 board entries in {BOARD_PATH}, got {line_count}."
 
 
 def test_board_jsonl_loads_via_zicato_board_loader() -> None:
@@ -183,8 +172,7 @@ def test_board_jsonl_loads_via_zicato_board_loader() -> None:
         load_board = importlib.import_module("zicato.board.jsonl").load_board
     except (ImportError, AttributeError) as e:
         pytest.skip(
-            f"zicato.board.jsonl.load_board not importable yet ({e}); "
-            "deferred to integration."
+            f"zicato.board.jsonl.load_board not importable yet ({e}); deferred to integration."
         )
 
     try:
@@ -203,7 +191,9 @@ def test_board_jsonl_validates_via_validate_board_entry() -> None:
 
     This is the underlying validator the board loader will call. It
     lives on the core types module which has shipped on main, so
-    unlike ``load_board`` this test does not need to skip.
+    unlike ``load_board`` this test does not need to skip. The leading
+    ``board_meta`` header line, when present, is board-level metadata
+    rather than an entry and is skipped here.
     """
     from zicato.core.types import validate_board_entry
 
@@ -213,6 +203,9 @@ def test_board_jsonl_validates_via_validate_board_entry() -> None:
             if not line:
                 continue
             d = json.loads(line)
+            if d.get("board_meta") is True:
+                # Board-level metadata header — not a BoardEntry.
+                continue
             try:
                 validate_board_entry(d)
             except Exception as e:  # noqa: BLE001

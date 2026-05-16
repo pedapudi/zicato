@@ -184,6 +184,7 @@ class LossProfile:
 
     # --- drift features ---
     drift_counts_by_kind: dict[str, int] = field(default_factory=dict)
+    drift_counts_by_judge: dict[str, int] = field(default_factory=dict)
     drift_counts_by_severity: dict[str, int] = field(default_factory=dict)
     escalations: int = 0
     plan_revisions: int = 0
@@ -202,8 +203,8 @@ class LossProfile:
 
     # --- derived ---
     drift_loss: float = 0.0    # weighted scalar (see SCORING.md)
-    pass_fail: Optional[bool] = None   # None if no expectation
-    judge_response_text: Optional[str] = None   # raw judge reply if kind=="judge"
+    pass_fail: Optional[bool] = None   # None if expectations list is empty
+    rubric_scores: list[float] = field(default_factory=list)  # scores from rubric-kind checks
 ```
 
 The fields, in groups:
@@ -218,7 +219,8 @@ can slice without re-joining.
 
 | Field | Computation |
 |---|---|
-| `drift_counts_by_kind` | Count `DriftDetected` payloads bucketed by the symbolic `kind` (e.g. `"DRIFT_KIND_CONFABULATION_RISK"`). |
+| `drift_counts_by_kind` | Count `DriftDetected` payloads bucketed by the symbolic `kind` (e.g. `"DRIFT_KIND_CONFABULATION_RISK"`). Custom-judge violations all bucket under `"DRIFT_KIND_CUSTOM"`. |
+| `drift_counts_by_judge` | Count `DRIFT_KIND_CUSTOM` payloads bucketed by `judge_name` — the per-custom-judge breakdown. See §3.2.1. |
 | `drift_counts_by_severity` | Same, bucketed by `severity` (`"INFO"` / `"WARNING"` / `"CRITICAL"`). |
 | `escalations` | Count of `DriftDetected` payloads whose `lifecycle == DRIFT_LIFECYCLE_ESCALATING`. |
 | `plan_revisions` | Count of `PlanRevised` payloads. |
@@ -229,6 +231,37 @@ The buckets use the symbolic enum names (the strings from the
 `.proto`) rather than the integer values. This keeps the JSON
 self-describing and survives proto-enum reordering in goldfive
 without invalidating historical loss profiles.
+
+#### 3.2.1 Custom judges and `DRIFT_KIND_CUSTOM`
+
+A board entry can carry **process** checks — `Judge.custom` /
+`Judge.python` — in its `judges` list (see
+[BOARD-FORMAT.md](BOARD-FORMAT.md) §4 and
+[BOARD-AUTHORING.md](BOARD-AUTHORING.md) §3). goldfive evaluates these
+custom judges against the live reasoning stream, and a violation is
+emitted as a `JudgementEmitted` event with `kind == DriftKind.CUSTOM`
+and `judge_name` set to the `Judge`'s `name`.
+
+The reducer treats these like any other drift event — they land in
+`drift_counts_by_kind` under `"DRIFT_KIND_CUSTOM"`. But because every
+custom judge shares that one kind, the kind alone cannot tell two
+judges apart. The reducer therefore also buckets `DRIFT_KIND_CUSTOM`
+payloads by their `judge_name` into `drift_counts_by_judge`:
+
+```json
+"drift_counts_by_kind":  {"DRIFT_KIND_CUSTOM": 3, "DRIFT_KIND_LOOPING_REASONING": 1},
+"drift_counts_by_judge": {"cite-before-metric": 2, "ack-before-edit": 1}
+```
+
+`drift_counts_by_judge` is what the scoring layer reads to apply
+`ScoringWeights.per_judge_weights` — the per-judge weight is keyed on
+`judge_name` (see [SCORING.md](SCORING.md) §2.2). It is also what the
+journal and the pattern detectors use to attribute a custom-judge
+failure to a specific judge.
+
+goldfive's built-in judges emit their own native `DriftKind`s, not
+`CUSTOM`, so they never appear in `drift_counts_by_judge` — they are
+already discriminated by kind.
 
 The drift kinds zicato cares about most are documented in goldfive's
 DRIFT.md; the full taxonomy is `DriftKind` in
@@ -283,8 +316,8 @@ small grace period the adapter's abort path takes.
 | Field | Source |
 |---|---|
 | `drift_loss` | Weighted scalar computed from the drift features. See [SCORING.md](SCORING.md). |
-| `pass_fail` | The entry's expectation evaluated against the run result. `None` if no expectation. |
-| `judge_response_text` | The raw judge reply, when the expectation kind is `judge`. Useful for the journal. |
+| `pass_fail` | The AND of the entry's `expectations` (outcome checks) evaluated against the run result. `None` when the `expectations` list is empty. |
+| `rubric_scores` | The numeric scores returned by the entry's `rubric`-kind outcome checks, in `expectations` order. Useful for the journal — including advisory rubrics (`threshold=None`) whose scores are recorded but do not gate `pass_fail`. |
 
 `drift_loss` is computed in the reducer (not in a downstream component)
 because the reducer is the single place that has both the per-kind
@@ -365,6 +398,7 @@ for scoring. Some are both. The split:
 | Field | Feature? | Loss? |
 |---|---|---|
 | `drift_counts_by_kind` | yes (per-kind movement is hypothesis-shaped) | yes (weighted into `drift_loss`) |
+| `drift_counts_by_judge` | yes (per-custom-judge movement is hypothesis-shaped) | yes (the `CUSTOM` slice of `drift_loss`, weighted by `per_judge_weights`) |
 | `drift_counts_by_severity` | yes | yes |
 | `escalations` | yes | yes |
 | `plan_revisions` | yes | yes |
@@ -376,7 +410,7 @@ for scoring. Some are both. The split:
 | `runtime_ms` | yes | partial (only the budget-exhaustion case adds a loss term) |
 | `aborted` | yes | yes (heavy loss term) |
 | `pass_fail` | yes | yes (the pass-rate side of the score) |
-| `judge_response_text` | yes (journal-only — not directly fed to the proposer's input by default) | no |
+| `rubric_scores` | yes (journal-only — not directly fed to the proposer's input by default) | no (`pass_fail` already carries each rubric's threshold verdict) |
 
 The proposer sees aggregated patterns (§4.6 of the architecture doc),
 not raw loss profiles. The tournament sees `drift_loss` and `pass_fail`

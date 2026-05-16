@@ -8,6 +8,32 @@ subcommand, every flag, exit codes, output formats.
 The CLI is the primary interface. There is no v0 web UI; harmonograf
 exists for the live run view.
 
+## 0. The evolve-centric happy path
+
+The CLI is **evolve-centric**. The day-to-day workflow is two
+commands:
+
+```
+zicato init       # scaffold a workspace and the contract files
+zicato evolve     # run the meta-loop; auto-epochs on contract change
+```
+
+`zicato evolve` (§3.11) is the orchestrator. It runs the per-entry
+runs, the analysis, the proposal, the patch apply, the tournament,
+and the journaling — and it **auto-epochs**: it hashes the evaluation
+contract (board + proposer brief + scoring + harness identity) and
+rolls a fresh epoch automatically whenever the operator has edited
+any of those. So the authoring loop is: edit `board.jsonl` and
+`brief.md`, run `zicato evolve`, and the epoch rolls itself.
+
+Every other subcommand in this reference — `zicato board`,
+`zicato analyze`, `zicato propose`, `zicato patch apply`,
+`zicato tournament`, `zicato epoch`, and the rest — is an
+**advanced / debug** tool: a way to drive one stage of the loop in
+isolation, inspect intermediate state, or take manual control. They
+are fully specified below, but a first-time operator does not need
+them; `init` + `evolve` is the path.
+
 ## 1. Conventions
 
 - Subcommands form a verb-noun shape: `zicato board add`,
@@ -55,8 +81,8 @@ zicato init [--workspace <path>] [--instance <id>]
 - Writes `.zicato/config.json` with the instance id and default
   paths.
 - Creates an initial epoch named `initial` with an empty
-  `board.jsonl`, a starter `rubric.md` template, and a default
-  `scoring.json`.
+  `board.jsonl`, a starter `brief.md` template, and a
+  default `scoring.json`.
 
 Idempotent: re-running `zicato init` on an existing workspace is a
 no-op (with a warning).
@@ -72,7 +98,7 @@ zicato register
     --adk <module_or_file>:<symbol>
     [--mutable-tree <path>]...
     [--board <path>]
-    [--rubric <path>]
+    [--brief <path>]
     [--scoring <path>]
     [--call-llm <dotted_path>]
     [--auxiliary-call-llm <dotted_path>]
@@ -87,7 +113,7 @@ Flags:
 | `--adk path:symbol` | yes (for ADK) | Adapter selector + entry point. `path` is a Python file or module; `symbol` is the root agent factory. |
 | `--mutable-tree <path>` | repeatable, at least one | Source root the mutation enumerator should walk. Repeat for multiple roots (target 2 — see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)). |
 | `--board <path>` | no | Canonical `board.jsonl` source path. Defaults to `<workspace_parent>/board.jsonl`. |
-| `--rubric <path>` | no | Canonical `rubric.md` source path. Defaults to `<workspace_parent>/rubric.md`. |
+| `--brief <path>` | no | Canonical `brief.md` source path. Defaults to `<workspace_parent>/brief.md`. |
 | `--scoring <path>` | no | Canonical `scoring.json` source path. Defaults to `<workspace_parent>/scoring.json`. |
 | `--call-llm <dotted_path>` | yes | Dotted path to the `harness_call_llm` callable. |
 | `--auxiliary-call-llm <dotted_path>` | yes | Dotted path to the `auxiliary_call_llm` callable. |
@@ -97,10 +123,10 @@ Flags:
 The registration is persisted to `.zicato/config.json` and used by
 every subsequent subcommand.
 
-The `--board` / `--rubric` / `--scoring` paths are the operator's
-*live, editable* copies of the evaluation contract. They are recorded
-under the `contract` key in `config.json` and read back on every
-`zicato evolve` for contract-hash auto-epoching (see
+The `--board` / `--brief` / `--scoring` paths are the
+operator's *live, editable* copies of the evaluation contract. They
+are recorded under the `contract` key in `config.json` and read back
+on every `zicato evolve` for contract-hash auto-epoching (see
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10). On epoch
 creation / roll they are frozen (copied) into `epochs/{id}/`.
 
@@ -200,8 +226,8 @@ Flags:
 | `--format json` | Emit JSON (the full `MutationPoint` shape) instead of text. |
 
 Text output is described in [MUTATION-SURFACE.md](MUTATION-SURFACE.md)
-§7. Forbidden ids (those in the rubric's `## Forbidden` section) are
-rendered with a `[forbidden]` annotation.
+§7. Forbidden ids (those in the proposer brief's `## Forbidden`
+section) are rendered with a `[forbidden]` annotation.
 
 Exit codes: `0`, `2`, `3`.
 
@@ -254,8 +280,8 @@ Run the proposer; emit an `Experiment`.
 zicato propose --output <file> [--from-round <NNN>]
 ```
 
-Reads the current epoch's rubric and the patterns produced by the
-most recent `analyze` run (or the round named by `--from-round`),
+Reads the current epoch's proposer brief and the patterns produced by
+the most recent `analyze` run (or the round named by `--from-round`),
 calls the proposer (using `auxiliary_call_llm`), validates the
 output against the experiment schema (see
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3), and writes
@@ -318,7 +344,7 @@ Manage epochs.
 #### 3.10.1 `zicato epoch new`
 
 ```
-zicato epoch new <name> [--from-board <jsonl_path>] [--from-rubric <md_path>]
+zicato epoch new <name> [--from-board <jsonl_path>] [--brief <md_path>]
 ```
 
 Creates a new epoch named `<name>`. The new epoch's `v0` snapshot is
@@ -334,7 +360,7 @@ Flags:
 | Flag | Meaning |
 |---|---|
 | `--from-board <jsonl_path>` | Seed the new epoch's `board.jsonl` from a file. Default is to inherit from the previous epoch. |
-| `--from-rubric <md_path>` | Seed the new epoch's `rubric.md` from a file. Default is to inherit. |
+| `--brief <md_path>` | Seed the new epoch's `brief.md` from a file. Default is to inherit. |
 
 Exit codes: `0`, `2`, `3`.
 
@@ -520,7 +546,7 @@ loop health — epoch 2026-05-15_e1 — round 7 — OVERALL: CRITICAL
       cannot drive a tournament.
 
   [info] no_expectations
-    No board entry carries an expectation; scoring is running on
+    No board entry carries any expectations; scoring is running on
     drift loss alone.
 
 1 critical, 0 warning, 1 info.
@@ -896,6 +922,7 @@ on the meaningful outcomes.
 |---|---|
 | Registration semantics, `mutation_points()` over multiple roots | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
 | Board entry schema accepted by `board add` | [BOARD-FORMAT.md](BOARD-FORMAT.md) |
+| Authoring boards — the Python builder, outcome/process checks | [BOARD-AUTHORING.md](BOARD-AUTHORING.md) |
 | Experiment shape produced by `propose`, consumed by `patch apply` | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
 | `gen_score.json` shape produced by `tournament` | [SCORING.md](SCORING.md) |
 | Two-callable check enforced at `register` | [EMULATOR.md](EMULATOR.md) |

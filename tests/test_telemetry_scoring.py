@@ -36,9 +36,7 @@ def _profile(
         runtime_ms=0,
         wall_clock_budget_exceeded=False,
         expectation_result=(
-            None
-            if pass_fail is None
-            else ExpectationResult(kind="predicate", passed=pass_fail)
+            None if pass_fail is None else ExpectationResult(kind="predicate", passed=pass_fail)
         ),
         drift_loss=drift_loss,
         pass_fail=pass_fail,
@@ -135,9 +133,7 @@ def test_combined_scalar_smoke_with_drift_count_profiles() -> None:
         entry_id="ent1",
         generation_id="v0",
         epoch_id="ep1",
-        drift_counts=(
-            DriftCount(kind="off_topic", severity="warning", count=2),
-        ),
+        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=2),),
         plan_revisions=1,
         task_failure_ratio=0.0,
         runtime_ms=1000,
@@ -165,3 +161,41 @@ def test_combined_scalar_smoke_with_drift_count_profiles() -> None:
     assert drift_mean == pytest.approx(3.25)
     assert pass_rate == pytest.approx(0.5)
     assert combined_scalar(drift_mean, pass_rate, weights) == pytest.approx(3.25 + 0.5)
+
+
+# ---------------------------------------------------------------------------
+# Custom-judge signal — scoring-layer back-compat
+# ---------------------------------------------------------------------------
+#
+# Custom-judge drift is folded into ``LossProfile.drift_loss`` upstream by the
+# reducer (weighted per judge_name via ``ScoringWeights.per_judge_weights``).
+# By the time a profile reaches this module its ``drift_loss`` already carries
+# that contribution, so the aggregation / combine arithmetic here is unchanged
+# in shape — these tests pin that back-compat invariant.
+
+
+def test_aggregate_treats_custom_judge_drift_loss_like_any_drift_loss() -> None:
+    """A profile whose drift_loss includes per-judge-weighted custom-judge
+    signal aggregates the same way as any other drift_loss value."""
+    # The reducer would have produced these drift_loss values already
+    # carrying the per_judge_weights contribution; the scorer just means them.
+    losses = [_profile(5.0, None), _profile(15.0, None)]
+    drift_mean, pass_rate = aggregate_generation_score(losses, ScoringWeights())
+    assert drift_mean == pytest.approx(10.0)
+    assert pass_rate == 1.0
+
+
+def test_combined_scalar_unchanged_with_per_judge_weights_configured() -> None:
+    """Setting per_judge_weights on ScoringWeights does not change the
+    combined-scalar formula — per_judge_weights is consumed by the reducer,
+    not by combined_scalar."""
+    plain = ScoringWeights(drift_weight=1.0, pass_weight=1.0)
+    with_judges = ScoringWeights(
+        drift_weight=1.0,
+        pass_weight=1.0,
+        per_judge_weights={"judge_a": 4.0, "judge_b": 0.5},
+        default_judge_weight=2.0,
+    )
+    # Identical drift_mean / pass_rate inputs → identical scalar regardless
+    # of whether per_judge_weights is populated.
+    assert combined_scalar(3.0, 0.5, plain) == pytest.approx(combined_scalar(3.0, 0.5, with_judges))

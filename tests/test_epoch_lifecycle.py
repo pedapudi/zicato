@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.board.builder import Board, Entry
 from zicato.core.types import ScoringWeights
 from zicato.epoch import (
     close_epoch,
@@ -18,6 +19,7 @@ from zicato.epoch import (
     new_epoch,
     switch_epoch,
 )
+from zicato.proposer.brief import ProposerBrief
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -34,15 +36,16 @@ def workspace(tmp_path: Path) -> Path:
 @pytest.fixture()
 def board_file(tmp_path: Path) -> Path:
     path = tmp_path / "board.jsonl"
-    path.write_text('{"id": "e1", "kind": "single_turn", '
-                    '"wall_clock_budget_seconds": 60, "input": "hi"}\n')
+    path.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n'
+    )
     return path
 
 
 @pytest.fixture()
-def rubric_file(tmp_path: Path) -> Path:
-    path = tmp_path / "rubric.md"
-    path.write_text("# Rubric for tests\n\n## Forbidden\n\n(none)\n")
+def brief_file(tmp_path: Path) -> Path:
+    path = tmp_path / "brief.md"
+    path.write_text("# Proposer brief for tests\n\n## Forbidden\n\n(none)\n")
     return path
 
 
@@ -52,14 +55,14 @@ def rubric_file(tmp_path: Path) -> Path:
 
 
 def test_new_epoch_creates_expected_layout(
-    workspace: Path, board_file: Path, rubric_file: Path
+    workspace: Path, board_file: Path, brief_file: Path
 ) -> None:
     weights = ScoringWeights()
     cfg = new_epoch(
         workspace_root=workspace,
         name="my first epoch",
         board_source=board_file,
-        rubric_source=rubric_file,
+        brief_source=brief_file,
         weights=weights,
     )
 
@@ -71,13 +74,18 @@ def test_new_epoch_creates_expected_layout(
     edir = workspace / "epochs" / cfg.id
     assert edir.is_dir()
     assert (edir / "board.jsonl").exists()
-    assert (edir / "rubric.md").exists()
+    assert (edir / "brief.md").exists()
     assert (edir / "scoring.json").exists()
     assert (edir / "config.json").exists()
+    # The per-epoch proposer brief is the renamed file; no legacy
+    # ``rubric.md`` is written.
+    assert not (edir / "rubric.md").exists()
 
-    # Board and rubric are copies, not the originals.
+    # Board and proposer brief are copies, not the originals.
     assert (edir / "board.jsonl").read_text() == board_file.read_text()
-    assert (edir / "rubric.md").read_text() == rubric_file.read_text()
+    assert (edir / "brief.md").read_text() == brief_file.read_text()
+    # EpochConfig.brief_path carries the path to the frozen brief.
+    assert cfg.brief_path == edir / "brief.md"
 
     # scoring.json is parseable and round-trips key fields.
     scoring = json.loads((edir / "scoring.json").read_text())
@@ -90,35 +98,33 @@ def test_new_epoch_creates_expected_layout(
 
 
 def test_new_epoch_with_duplicate_name_gets_numeric_suffix(
-    workspace: Path, board_file: Path, rubric_file: Path
+    workspace: Path, board_file: Path, brief_file: Path
 ) -> None:
     weights = ScoringWeights()
-    a = new_epoch(workspace, "experiment", board_file, rubric_file, weights)
-    b = new_epoch(workspace, "experiment", board_file, rubric_file, weights)
+    a = new_epoch(workspace, "experiment", board_file, brief_file, weights)
+    b = new_epoch(workspace, "experiment", board_file, brief_file, weights)
     assert a.id != b.id
     assert b.id.endswith("_2")
 
 
-def test_new_epoch_rejects_empty_slug(
-    workspace: Path, board_file: Path, rubric_file: Path
-) -> None:
+def test_new_epoch_rejects_empty_slug(workspace: Path, board_file: Path, brief_file: Path) -> None:
     with pytest.raises(ValueError, match="empty slug"):
-        new_epoch(workspace, "!!!", board_file, rubric_file, ScoringWeights())
+        new_epoch(workspace, "!!!", board_file, brief_file, ScoringWeights())
 
 
 def test_new_epoch_auto_closes_previous_open_epoch(
     workspace: Path,
     board_file: Path,
-    rubric_file: Path,
+    brief_file: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     weights = ScoringWeights()
-    first = new_epoch(workspace, "alpha", board_file, rubric_file, weights)
+    first = new_epoch(workspace, "alpha", board_file, brief_file, weights)
     assert not load_epoch(workspace, first.id).closed
 
     # A small time gap so the suffix logic doesn't collide.
     time.sleep(0.01)
-    second = new_epoch(workspace, "beta", board_file, rubric_file, weights)
+    second = new_epoch(workspace, "beta", board_file, brief_file, weights)
 
     # First epoch is now closed.
     refreshed = load_epoch(workspace, first.id)
@@ -132,21 +138,82 @@ def test_new_epoch_auto_closes_previous_open_epoch(
     assert not load_epoch(workspace, second.id).closed
 
 
-def test_new_epoch_can_skip_auto_close(
-    workspace: Path, board_file: Path, rubric_file: Path
-) -> None:
+def test_new_epoch_can_skip_auto_close(workspace: Path, board_file: Path, brief_file: Path) -> None:
     weights = ScoringWeights()
-    first = new_epoch(workspace, "alpha", board_file, rubric_file, weights)
+    first = new_epoch(workspace, "alpha", board_file, brief_file, weights)
     new_epoch(
         workspace,
         "beta",
         board_file,
-        rubric_file,
+        brief_file,
         weights,
         auto_close_previous=False,
     )
     # First epoch remains open.
     assert not load_epoch(workspace, first.id).closed
+
+
+def test_new_epoch_accepts_in_memory_objects_without_prior_save(
+    workspace: Path,
+) -> None:
+    """new_epoch can be handed live objects — no caller-side ``.save()``.
+
+    The board is an in-memory :class:`Board`, the proposer brief a
+    :class:`ProposerBrief`, the weights an in-memory
+    :class:`ScoringWeights`. None of them is persisted by the caller;
+    ``new_epoch`` owns canonicalization + persistence. The frozen files
+    must appear on disk and the contract hash must be set.
+    """
+    board = (
+        Board()
+        .add(Entry(id="e1", input="hi", budget_s=60))
+        .add(Entry(id="e2", input="bye", budget_s=60))
+    )
+    brief = ProposerBrief(
+        text="# Proposer brief\n\n# Forbidden edits\n- Avoid `router__sp`.\n",
+        forbidden_ids=("router__sp",),
+        preferred_ids=(),
+    )
+    weights = ScoringWeights(drift_weight=2.0, pass_weight=3.0)
+
+    cfg = new_epoch(
+        workspace_root=workspace,
+        name="in memory",
+        board_source=board,
+        brief_source=brief,
+        weights=weights,
+    )
+
+    edir = workspace / "epochs" / cfg.id
+    # The frozen contracts were written by new_epoch itself.
+    assert (edir / "board.jsonl").exists()
+    assert (edir / "brief.md").exists()
+    assert (edir / "scoring.json").exists()
+    # Board round-trips: both in-memory entries were persisted.
+    from zicato.board.jsonl import load_board
+
+    persisted = load_board(edir / "board.jsonl")
+    assert {e.id for e in persisted} == {"e1", "e2"}
+    # The brief's source text was written verbatim.
+    assert (edir / "brief.md").read_text() == brief.text
+    # Scoring weights were serialized from the in-memory object.
+    assert json.loads((edir / "scoring.json").read_text())["drift_weight"] == 2.0
+    # The contract hash is populated (64-hex sha256).
+    assert len(cfg.contract_hash) == 64
+    assert load_epoch(workspace, cfg.id).contract_hash == cfg.contract_hash
+
+
+def test_new_epoch_accepts_brief_as_plain_text(workspace: Path, board_file: Path) -> None:
+    """A plain ``str`` brief_source is treated as proposer-brief text."""
+    cfg = new_epoch(
+        workspace_root=workspace,
+        name="text brief",
+        board_source=board_file,
+        brief_source="# Proposer brief\n\nFree-form guidance.\n",
+        weights=ScoringWeights(),
+    )
+    written = (workspace / "epochs" / cfg.id / "brief.md").read_text()
+    assert written == "# Proposer brief\n\nFree-form guidance.\n"
 
 
 # ---------------------------------------------------------------------------
@@ -155,11 +222,9 @@ def test_new_epoch_can_skip_auto_close(
 
 
 def test_close_epoch_marks_closed_and_writes_analysis(
-    workspace: Path, board_file: Path, rubric_file: Path
+    workspace: Path, board_file: Path, brief_file: Path
 ) -> None:
-    cfg = new_epoch(
-        workspace, "alpha", board_file, rubric_file, ScoringWeights()
-    )
+    cfg = new_epoch(workspace, "alpha", board_file, brief_file, ScoringWeights())
 
     async def stub_call(system: str, user: str, model: str) -> str:
         # Echo a fixed structured response so we can assert on it.
@@ -186,11 +251,9 @@ def test_close_epoch_marks_closed_and_writes_analysis(
 
 
 def test_close_epoch_without_aux_writes_stub(
-    workspace: Path, board_file: Path, rubric_file: Path
+    workspace: Path, board_file: Path, brief_file: Path
 ) -> None:
-    cfg = new_epoch(
-        workspace, "alpha", board_file, rubric_file, ScoringWeights()
-    )
+    cfg = new_epoch(workspace, "alpha", board_file, brief_file, ScoringWeights())
     out = close_epoch(workspace, cfg.id, aux_call_llm=None)
     text = out.read_text()
     assert f"# Epoch analysis: {cfg.id}" in text
@@ -199,9 +262,9 @@ def test_close_epoch_without_aux_writes_stub(
 
 
 def test_close_epoch_uses_current_when_id_omitted(
-    workspace: Path, board_file: Path, rubric_file: Path
+    workspace: Path, board_file: Path, brief_file: Path
 ) -> None:
-    cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
+    cfg = new_epoch(workspace, "alpha", board_file, brief_file, ScoringWeights())
     close_epoch(workspace, None, aux_call_llm=None)
     assert load_epoch(workspace, cfg.id).closed
 
@@ -217,14 +280,14 @@ def test_close_epoch_with_no_current_raises(workspace: Path) -> None:
 
 
 def test_list_epochs_returns_creation_order(
-    workspace: Path, board_file: Path, rubric_file: Path
+    workspace: Path, board_file: Path, brief_file: Path
 ) -> None:
     weights = ScoringWeights()
-    a = new_epoch(workspace, "alpha", board_file, rubric_file, weights)
+    a = new_epoch(workspace, "alpha", board_file, brief_file, weights)
     time.sleep(1.01)  # created_at has second precision
-    b = new_epoch(workspace, "beta", board_file, rubric_file, weights)
+    b = new_epoch(workspace, "beta", board_file, brief_file, weights)
     time.sleep(1.01)
-    c = new_epoch(workspace, "gamma", board_file, rubric_file, weights)
+    c = new_epoch(workspace, "gamma", board_file, brief_file, weights)
     epochs = list_epochs(workspace)
     ids = [e.id for e in epochs]
     assert ids == [a.id, b.id, c.id]
@@ -235,21 +298,19 @@ def test_list_epochs_empty_when_no_workspace(tmp_path: Path) -> None:
 
 
 def test_list_epochs_skips_directories_without_config(
-    workspace: Path, board_file: Path, rubric_file: Path
+    workspace: Path, board_file: Path, brief_file: Path
 ) -> None:
-    new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
+    new_epoch(workspace, "alpha", board_file, brief_file, ScoringWeights())
     # Drop a stub directory with no config.json.
     (workspace / "epochs" / "junk").mkdir()
     epochs = list_epochs(workspace)
     assert len(epochs) == 1
 
 
-def test_switch_epoch_updates_marker(
-    workspace: Path, board_file: Path, rubric_file: Path
-) -> None:
+def test_switch_epoch_updates_marker(workspace: Path, board_file: Path, brief_file: Path) -> None:
     weights = ScoringWeights()
-    a = new_epoch(workspace, "alpha", board_file, rubric_file, weights)
-    b = new_epoch(workspace, "beta", board_file, rubric_file, weights)
+    a = new_epoch(workspace, "alpha", board_file, brief_file, weights)
+    b = new_epoch(workspace, "beta", board_file, brief_file, weights)
     assert current_epoch_id(workspace) == b.id
     switch_epoch(workspace, a.id)
     assert current_epoch_id(workspace) == a.id
@@ -264,13 +325,9 @@ def test_current_epoch_id_returns_none_when_marker_missing(workspace: Path) -> N
     assert current_epoch_id(workspace) is None
 
 
-def test_load_epoch_round_trips(
-    workspace: Path, board_file: Path, rubric_file: Path
-) -> None:
-    weights = ScoringWeights(
-        drift_weight=2.0, pass_weight=3.0, promote_margin=0.05
-    )
-    cfg = new_epoch(workspace, "alpha", board_file, rubric_file, weights)
+def test_load_epoch_round_trips(workspace: Path, board_file: Path, brief_file: Path) -> None:
+    weights = ScoringWeights(drift_weight=2.0, pass_weight=3.0, promote_margin=0.05)
+    cfg = new_epoch(workspace, "alpha", board_file, brief_file, weights)
     loaded = load_epoch(workspace, cfg.id)
     assert loaded.id == cfg.id
     assert loaded.name == "alpha"

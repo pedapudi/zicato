@@ -42,6 +42,21 @@ entry as :attr:`RunResult.final_output`. For trees that produce no
 ``completed_results`` (e.g. when the planner short-circuited
 PassthroughPlanner with no LLM available), the transcript is empty
 and :attr:`final_output` is ``""``.
+
+Judges
+------
+
+goldfive#437 lets a caller pass a custom :class:`~goldfive.judges.Judge`
+list into ``goldfive.run`` / ``goldfive.wrap`` via ``judges=[...]``. The
+adapter assembles that list per board entry through
+:func:`zicato.judge_runtime.assemble_judges`: goldfive's default
+built-in judges (minus any the board's ``disable_drift`` suppressed)
+plus the entry's declared :class:`~zicato.core.JudgeSpec` judges, each
+turned into a live goldfive ``Judge``. Inline judges run on zicato's
+*auxiliary* callable (the two-callable rule); python judges bring their
+own dependencies. When the entry declares no custom judges and the
+board suppresses nothing, the assembled list equals goldfive's default
+set, so behaviour is byte-identical to a plain ``goldfive.run`` call.
 """
 
 from __future__ import annotations
@@ -80,8 +95,7 @@ def _split_entrypoint(entrypoint: str) -> tuple[str, str]:
     """
     if not entrypoint or ":" not in entrypoint:
         raise ValueError(
-            f"ADKHarnessAdapter: entrypoint must be 'module.path:agent_symbol', "
-            f"got {entrypoint!r}"
+            f"ADKHarnessAdapter: entrypoint must be 'module.path:agent_symbol', got {entrypoint!r}"
         )
     parts = entrypoint.split(":")
     if len(parts) != 2:
@@ -94,8 +108,7 @@ def _split_entrypoint(entrypoint: str) -> tuple[str, str]:
     symbol = symbol.strip()
     if not module_path or not symbol:
         raise ValueError(
-            f"ADKHarnessAdapter: entrypoint module and symbol must be non-empty, "
-            f"got {entrypoint!r}"
+            f"ADKHarnessAdapter: entrypoint module and symbol must be non-empty, got {entrypoint!r}"
         )
     return module_path, symbol
 
@@ -146,6 +159,60 @@ def _outcome_transcript(outcome: Any) -> tuple[str, ...]:
     if not completed:
         return ()
     return tuple(str(v) for v in completed.values())
+
+
+# ---------------------------------------------------------------------------
+# Judge assembly inputs from a board entry
+# ---------------------------------------------------------------------------
+
+
+def _entry_judge_specs(entry: BoardEntry) -> tuple[Any, ...]:
+    """Return the entry's declared :class:`~zicato.core.JudgeSpec` tuple.
+
+    Reads ``BoardEntry.judges`` defensively via :func:`getattr` so the
+    adapter keeps working against a :class:`BoardEntry` revision that
+    predates the ``judges`` field (the field is owned by
+    ``zicato/core/types.py``; this adapter must not assume a particular
+    landing order). An absent / ``None`` field yields an empty tuple —
+    the entry simply contributes no custom judges.
+    """
+    judges = getattr(entry, "judges", None)
+    if not judges:
+        return ()
+    return tuple(judges)
+
+
+#: ``BoardEntry.context`` key the tournament runner stamps the
+#: board-level ``disable_drift`` suppression set under. Kept in sync with
+#: ``zicato.tournament.runner._DISABLE_DRIFT_CONTEXT_KEY`` — the two ends
+#: meet on this single string.
+_DISABLE_DRIFT_CONTEXT_KEY = "disable_drift"
+
+
+def _entry_disable_drift(entry: BoardEntry) -> tuple[Any, ...]:
+    """Return the drift kinds the board wants suppressed for ``entry``.
+
+    ``disable_drift`` is a board-LEVEL setting (``Board.disable_drift``),
+    but the :class:`~zicato.adapters.base.RunnableHarness` Protocol hands
+    the adapter a :class:`BoardEntry`, not the owning ``Board``. The
+    tournament runner therefore stamps the board-level suppression set
+    onto every entry's :attr:`~zicato.core.BoardEntry.context` mapping
+    under :data:`_DISABLE_DRIFT_CONTEXT_KEY` (see
+    ``zicato.tournament.runner._stamp_disable_drift``) — ``context`` is
+    the one per-entry channel that survives the runner -> subprocess
+    worker -> :func:`zicato.core.validate_board_entry` round-trip.
+
+    The value is a comma / whitespace separated list of
+    :class:`goldfive.DriftKind` wire strings. Returns an empty tuple when
+    the entry carries no such key, in which case goldfive's built-in
+    judges all stay default-on.
+    """
+    raw = (getattr(entry, "context", {}) or {}).get(_DISABLE_DRIFT_CONTEXT_KEY)
+    if not raw:
+        return ()
+    # ``context`` is a string-valued mapping; split on commas /
+    # whitespace into individual drift-kind wire strings.
+    return tuple(token for token in raw.replace(",", " ").split() if token)
 
 
 # ---------------------------------------------------------------------------
@@ -220,13 +287,9 @@ class ADKRunnableHarness:
             if entry.kind == "single_turn":
                 return await self._run_single_turn(run_id, entry, sinks, config)
             if entry.kind == "multi_turn_scripted":
-                return await self._run_multi_turn_scripted(
-                    run_id, entry, sinks, config
-                )
+                return await self._run_multi_turn_scripted(run_id, entry, sinks, config)
             if entry.kind == "multi_turn_emulated":
-                return await self._run_multi_turn_emulated(
-                    run_id, entry, sinks, config
-                )
+                return await self._run_multi_turn_emulated(run_id, entry, sinks, config)
             # Reserved forward-compat slots — not wired in v0.
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
             return RunResult(
@@ -287,16 +350,33 @@ class ADKRunnableHarness:
         :class:`RuntimeConfig`) and the entry's input. Returns a
         :class:`RunResult` constructed from the outcome's session's
         ``completed_results`` values.
+
+        Judges (goldfive#437) are assembled per entry and passed into
+        ``goldfive.run`` via its ``judges=`` parameter: goldfive's
+        default built-ins minus any the board's ``disable_drift``
+        suppressed, plus the entry's declared
+        :class:`~zicato.core.JudgeSpec` judges. Inline judges run on the
+        *auxiliary* callable — distinct from the harness callable the
+        agent runs on — so a judge cannot trivially collude with the
+        tree it grades.
         """
         import goldfive  # lazy: keep the optional dep out of import time
 
+        from zicato.judge_runtime import assemble_judges
+
         assert entry.input is not None, "single_turn entry must have 'input' (validated upstream)"
         started_at = time.monotonic()
+        judges = assemble_judges(
+            entry_judges=_entry_judge_specs(entry),
+            disable_drift=_entry_disable_drift(entry),
+            aux_call_llm=config.auxiliary_call_llm,
+        )
         outcome = await goldfive.run(
             self._agent,
             entry.input,
             sinks=sinks,
             call_llm=config.harness_call_llm,
+            judges=judges,
         )
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
         transcript = _outcome_transcript(outcome)
@@ -473,9 +553,7 @@ class ADKHarnessAdapter:
 
         return ADKRunnableHarness(agent=agent, mutable_trees=list(self.mutable_trees))
 
-    def mutation_points(
-        self, source_roots: list[Path] | None = None
-    ) -> list[MutationPoint]:
+    def mutation_points(self, source_roots: list[Path] | None = None) -> list[MutationPoint]:
         """Enumerate mutation points across ``source_roots``.
 
         When ``source_roots`` is ``None``, falls back to

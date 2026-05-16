@@ -1,7 +1,7 @@
 //! Assemble the current epoch's full evaluation contract for the dashboard.
 //!
 //! An epoch is defined by a handful of files under
-//! `.zicato/epochs/{epoch_id}/` (`board.jsonl`, `rubric.md`,
+//! `.zicato/epochs/{epoch_id}/` (`board.jsonl`, `brief.md`,
 //! `scoring.json`, `config.json`, optional `mutations.json`) plus the
 //! workspace-level `.zicato/config.json` (registered harness entrypoint
 //! and mutable trees).
@@ -35,8 +35,9 @@ pub struct EpochView {
     pub harness: Option<Harness>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub board: Option<Vec<BoardEntry>>,
+    /// The epoch's frozen proposer brief. Serialized as `brief`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub rubric: Option<String>,
+    pub brief: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scoring: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -287,11 +288,24 @@ pub fn build_epoch_view(paths: &WorkspacePaths) -> EpochView {
 
     let board = parse_board(&epoch_dir.join("board.jsonl"));
 
-    let rubric = match std::fs::read_to_string(epoch_dir.join("rubric.md")) {
+    // Proposer brief: `brief.md` post-rename, with the legacy
+    // `rubric.md` read as a fallback so pre-rename epochs still
+    // display. A missing file (either name) degrades to an empty
+    // string; any other read error does too, with a warning.
+    let brief = match std::fs::read_to_string(epoch_dir.join("brief.md")) {
         Ok(t) => Some(t),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(String::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            match std::fs::read_to_string(epoch_dir.join("rubric.md")) {
+                Ok(t) => Some(t),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(String::new()),
+                Err(e) => {
+                    warn!(error=%e, "failed to read legacy rubric.md");
+                    Some(String::new())
+                }
+            }
+        }
         Err(e) => {
-            warn!(error=%e, "failed to read rubric.md");
+            warn!(error=%e, "failed to read brief.md");
             Some(String::new())
         }
     };
@@ -308,7 +322,7 @@ pub fn build_epoch_view(paths: &WorkspacePaths) -> EpochView {
         closed,
         harness: read_harness(paths),
         board,
-        rubric,
+        brief,
         scoring,
         mutations,
     }
@@ -403,12 +417,47 @@ mod tests {
     }
 
     #[test]
-    fn missing_rubric_is_empty_string() {
+    fn missing_brief_is_empty_string() {
         let (_t, p) = ws();
         std::fs::write(p.current_epoch_marker(), "e1").unwrap();
         std::fs::create_dir_all(p.epochs.join("e1")).unwrap();
         let view = build_epoch_view(&p);
-        assert_eq!(view.rubric.as_deref(), Some(""));
+        assert_eq!(view.brief.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn brief_is_read_from_brief_md() {
+        let (_t, p) = ws();
+        std::fs::write(p.current_epoch_marker(), "e1").unwrap();
+        let dir = p.epochs.join("e1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("brief.md"), "# proposer brief").unwrap();
+        let view = build_epoch_view(&p);
+        assert_eq!(view.brief.as_deref(), Some("# proposer brief"));
+    }
+
+    #[test]
+    fn brief_falls_back_to_legacy_rubric_md() {
+        let (_t, p) = ws();
+        std::fs::write(p.current_epoch_marker(), "e1").unwrap();
+        let dir = p.epochs.join("e1");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Pre-rename epoch: only the legacy `rubric.md` exists.
+        std::fs::write(dir.join("rubric.md"), "# legacy brief").unwrap();
+        let view = build_epoch_view(&p);
+        assert_eq!(view.brief.as_deref(), Some("# legacy brief"));
+    }
+
+    #[test]
+    fn brief_md_wins_over_legacy_rubric_md() {
+        let (_t, p) = ws();
+        std::fs::write(p.current_epoch_marker(), "e1").unwrap();
+        let dir = p.epochs.join("e1");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("brief.md"), "current").unwrap();
+        std::fs::write(dir.join("rubric.md"), "legacy").unwrap();
+        let view = build_epoch_view(&p);
+        assert_eq!(view.brief.as_deref(), Some("current"));
     }
 
     #[test]

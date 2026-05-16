@@ -31,6 +31,7 @@ from zicato.telemetry.reducer import (
     compute_drift_loss,
     read_loss_profile,
     reduce_loss,
+    split_judge_attributed_kind,
     write_loss_profile,
 )
 
@@ -124,9 +125,7 @@ def test_compute_drift_loss_per_kind_multiplier() -> None:
         per_kind_weights={"off_topic": 2.0},
     )
     loss = compute_drift_loss(
-        drift_counts=(
-            DriftCount(kind="off_topic", severity="warning", count=3),
-        ),
+        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=3),),
         plan_revisions=0,
         task_failure_ratio=0.0,
         runtime_ms=0,
@@ -467,12 +466,8 @@ def test_reduce_loss_context_loss_heuristic(tmp_path: Path) -> None:
     question text near-duplicates the user's earlier statement, so
     the trigram overlap is high.
     """
-    user_statement = (
-        "My phone number is five five five one two three four five six seven."
-    )
-    agent_question = (
-        "My phone number is five five five one two three four five six seven?"
-    )
+    user_statement = "My phone number is five five five one two three four five six seven."
+    agent_question = "My phone number is five five five one two three four five six seven?"
     events = [
         {
             "event_id": "e1",
@@ -641,3 +636,416 @@ def test_reduce_loss_via_real_goldfive_replay(tmp_path: Path) -> None:
     by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
     assert by_key == {("off_topic", "warning"): 1}
     assert profile.run_id == "run-real"
+
+
+# ---------------------------------------------------------------------------
+# Custom-judge drift attribution
+# ---------------------------------------------------------------------------
+#
+# A custom judge emits a ``DriftDetected`` of kind ``custom`` AND a paired
+# ``JudgementEmitted`` carrying the stable ``judge_name``. The reducer must
+# attribute the ``custom``-kind drift to that ``judge_name`` (folded into the
+# drift kind as ``custom:<judge_name>``) so two distinct custom judges score
+# independently via ``ScoringWeights.per_judge_weights``. A custom judge with
+# no weight entry uses ``default_judge_weight``; boards with no custom judges
+# are unaffected (back-compat).
+
+
+def _judgement_emitted(
+    judge_name: str,
+    *,
+    drift_kind: str = "custom",
+    severity: str = "warning",
+    run_id: str = "run-J",
+    seq: int = 0,
+) -> dict:
+    """A ``JudgementEmitted`` event-dict for a drift-flavoured verdict.
+
+    Mirrors the wire shape goldfive's steerer emits for a custom judge's
+    drift verdict: ``verdict_kind == "drift"`` plus the bare lowercase
+    ``drift_kind`` / ``severity`` that mirror the paired ``DriftDetected``.
+    """
+    return {
+        "event_id": f"j{seq}",
+        "run_id": run_id,
+        "sequence": seq,
+        "judgement_emitted": {
+            "judge_name": judge_name,
+            "verdict_kind": "drift",
+            "drift_kind": drift_kind,
+            "severity": severity,
+        },
+    }
+
+
+def _drift_detected(
+    kind: str = "DRIFT_KIND_CUSTOM",
+    *,
+    severity: str = "DRIFT_SEVERITY_WARNING",
+    run_id: str = "run-J",
+    seq: int = 0,
+) -> dict:
+    """A ``DriftDetected`` event-dict in the MessageToJson wire form."""
+    return {
+        "event_id": f"d{seq}",
+        "run_id": run_id,
+        "sequence": seq,
+        "drift_detected": {"kind": kind, "severity": severity, "detail": ""},
+    }
+
+
+def test_split_judge_attributed_kind_round_trip() -> None:
+    """``split_judge_attributed_kind`` inverts the ``custom:<name>`` encoding."""
+    assert split_judge_attributed_kind("custom:slide_quality") == (True, "slide_quality")
+    assert split_judge_attributed_kind("custom") == (True, "")
+    assert split_judge_attributed_kind("off_topic") == (False, "")
+    # A judge name that itself contains a colon survives (split is on the
+    # first separator only).
+    assert split_judge_attributed_kind("custom:team:judge") == (True, "team:judge")
+
+
+def test_compute_drift_loss_per_judge_weight_distinct_judges() -> None:
+    """Two custom judges with distinct per_judge_weights score independently."""
+    weights = ScoringWeights(
+        per_judge_weights={"judge_a": 2.0, "judge_b": 5.0},
+    )
+    # judge_a: one warning-severity custom drift.
+    loss_a = compute_drift_loss(
+        drift_counts=(DriftCount(kind="custom:judge_a", severity="warning", count=1),),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=0,
+        weights=weights,
+    )
+    # judge_b: one warning-severity custom drift.
+    loss_b = compute_drift_loss(
+        drift_counts=(DriftCount(kind="custom:judge_b", severity="warning", count=1),),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=0,
+        weights=weights,
+    )
+    # severity_weights["warning"] == 3.0; per_judge multiplier stacks.
+    assert loss_a == pytest.approx(3.0 * 2.0)
+    assert loss_b == pytest.approx(3.0 * 5.0)
+    # The two judges are independent — judge_b's heavier weight does not
+    # bleed into judge_a's score.
+    assert loss_a != pytest.approx(loss_b)
+
+
+def test_compute_drift_loss_per_judge_weight_default_for_unknown_judge() -> None:
+    """A custom judge with no per_judge_weights entry uses default_judge_weight."""
+    weights = ScoringWeights(
+        per_judge_weights={"judge_a": 9.0},
+        default_judge_weight=4.0,
+    )
+    # judge_unknown is absent from per_judge_weights → default_judge_weight.
+    loss = compute_drift_loss(
+        drift_counts=(DriftCount(kind="custom:judge_unknown", severity="warning", count=1),),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=0,
+        weights=weights,
+    )
+    assert loss == pytest.approx(3.0 * 4.0)
+
+
+def test_compute_drift_loss_bare_custom_uses_default_judge_weight() -> None:
+    """An unattributed bare ``custom`` drift also scores at default_judge_weight."""
+    weights = ScoringWeights(default_judge_weight=2.5)
+    loss = compute_drift_loss(
+        drift_counts=(DriftCount(kind="custom", severity="warning", count=1),),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=0,
+        weights=weights,
+    )
+    assert loss == pytest.approx(3.0 * 2.5)
+
+
+def test_compute_drift_loss_default_judge_weight_defaults_to_one() -> None:
+    """With no per_judge config, a custom judge weighs the same as an unknown kind."""
+    weights = ScoringWeights()  # default_judge_weight == 1.0
+    custom = compute_drift_loss(
+        drift_counts=(DriftCount(kind="custom:some_judge", severity="warning", count=1),),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=0,
+        weights=weights,
+    )
+    first_class = compute_drift_loss(
+        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=1),),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=0,
+        weights=weights,
+    )
+    assert custom == pytest.approx(first_class)
+
+
+def test_compute_drift_loss_per_kind_and_per_judge_coexist() -> None:
+    """per_kind_weights and per_judge_weights apply to their own kinds only."""
+    weights = ScoringWeights(
+        per_kind_weights={"off_topic": 2.0},
+        per_judge_weights={"judge_a": 7.0},
+    )
+    loss = compute_drift_loss(
+        drift_counts=(
+            DriftCount(kind="off_topic", severity="warning", count=1),
+            DriftCount(kind="custom:judge_a", severity="warning", count=1),
+        ),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=0,
+        weights=weights,
+    )
+    # off_topic: 3.0 * 2.0 ; custom:judge_a: 3.0 * 7.0
+    assert loss == pytest.approx(3.0 * 2.0 + 3.0 * 7.0)
+
+
+def test_reduce_loss_attributes_custom_drift_to_paired_judge(tmp_path: Path) -> None:
+    """A custom DriftDetected is attributed to the judge_name of its paired
+    JudgementEmitted."""
+    events = [
+        _judgement_emitted("slide_quality", severity="warning", seq=0),
+        _drift_detected("DRIFT_KIND_CUSTOM", severity="DRIFT_SEVERITY_WARNING", seq=1),
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    # The drift is bucketed under the namespaced custom kind, not bare "custom".
+    assert by_key == {("custom:slide_quality", "warning"): 1}
+
+
+def test_reduce_loss_two_custom_judges_score_independently(tmp_path: Path) -> None:
+    """Two custom judges with distinct judge_names + per_judge_weights produce
+    independent drift_loss contributions."""
+    events = [
+        _judgement_emitted("judge_a", severity="warning", seq=0),
+        _drift_detected(severity="DRIFT_SEVERITY_WARNING", seq=1),
+        _judgement_emitted("judge_b", severity="critical", seq=2),
+        _drift_detected(severity="DRIFT_SEVERITY_CRITICAL", seq=3),
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    weights = ScoringWeights(per_judge_weights={"judge_a": 2.0, "judge_b": 5.0})
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=weights,
+    )
+    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    assert by_key == {
+        ("custom:judge_a", "warning"): 1,
+        ("custom:judge_b", "critical"): 1,
+    }
+    # drift_loss: judge_a -> 3.0(warning) * 2.0 ; judge_b -> 10.0(critical) * 5.0
+    assert profile.drift_loss == pytest.approx(3.0 * 2.0 + 10.0 * 5.0)
+
+
+def test_reduce_loss_custom_drift_without_judgement_uses_default(tmp_path: Path) -> None:
+    """A custom DriftDetected with no paired JudgementEmitted stays bare
+    "custom" and scores at default_judge_weight."""
+    events = [_drift_detected(severity="DRIFT_SEVERITY_WARNING", seq=0)]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    weights = ScoringWeights(
+        per_judge_weights={"judge_a": 9.0},
+        default_judge_weight=3.0,
+    )
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=weights,
+    )
+    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    assert by_key == {("custom", "warning"): 1}
+    # drift_loss: 3.0 (warning severity) * 3.0 (default_judge_weight) = 9.0
+    assert profile.drift_loss == pytest.approx(9.0)
+
+
+def test_reduce_loss_non_drift_judgement_does_not_attribute(tmp_path: Path) -> None:
+    """A rubric/boolean/numeric JudgementEmitted does not pair with a later
+    custom drift — only drift-flavoured judgements do."""
+    events = [
+        # A rubric verdict: verdict_kind != "drift". Mints no DriftDetected.
+        {
+            "event_id": "j0",
+            "run_id": "run-J",
+            "sequence": 0,
+            "judgement_emitted": {
+                "judge_name": "rubric_judge",
+                "verdict_kind": "rubric",
+                "rubric_score": 0.8,
+            },
+        },
+        _drift_detected(severity="DRIFT_SEVERITY_WARNING", seq=1),
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    # The rubric judgement must NOT have been mis-attributed: the custom
+    # drift stays bare "custom".
+    assert by_key == {("custom", "warning"): 1}
+
+
+def test_reduce_loss_judgement_pairs_only_with_next_drift(tmp_path: Path) -> None:
+    """One judgement pairs with exactly one (the next) DriftDetected — a second
+    custom drift does not inherit a stale judge_name."""
+    events = [
+        _judgement_emitted("judge_a", severity="warning", seq=0),
+        _drift_detected(severity="DRIFT_SEVERITY_WARNING", seq=1),
+        # No judgement before this second custom drift.
+        _drift_detected(severity="DRIFT_SEVERITY_WARNING", seq=2),
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    # First custom drift -> judge_a; second -> unattributed bare "custom".
+    assert by_key == {
+        ("custom:judge_a", "warning"): 1,
+        ("custom", "warning"): 1,
+    }
+
+
+def test_reduce_loss_first_class_drift_consumes_pending_judgement(tmp_path: Path) -> None:
+    """A custom judge emitting a FIRST-CLASS drift kind pairs its judgement with
+    that drift; a later bare custom drift is not mis-attributed to it."""
+    events = [
+        # Judge emits a drift-flavoured verdict for a first-class kind.
+        _judgement_emitted("judge_a", drift_kind="off_topic", severity="warning", seq=0),
+        _drift_detected("DRIFT_KIND_OFF_TOPIC", severity="DRIFT_SEVERITY_WARNING", seq=1),
+        # Later, an unrelated custom drift with no judgement of its own.
+        _drift_detected("DRIFT_KIND_CUSTOM", severity="DRIFT_SEVERITY_INFO", seq=2),
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    # off_topic stays first-class; the custom drift is NOT attributed to
+    # judge_a (whose judgement was consumed by the off_topic drift).
+    assert by_key == {
+        ("off_topic", "warning"): 1,
+        ("custom", "info"): 1,
+    }
+
+
+def test_reduce_loss_no_custom_judges_back_compat(tmp_path: Path) -> None:
+    """Boards with no custom judges reduce exactly as before — the custom-judge
+    attribution path is inert when no custom drift / judgement is present."""
+    events = [
+        {
+            "event_id": "e1",
+            "run_id": "run-A",
+            "sequence": 0,
+            "drift_detected": {
+                "kind": "DRIFT_KIND_OFF_TOPIC",
+                "severity": "DRIFT_SEVERITY_WARNING",
+                "detail": "topic drift",
+            },
+        },
+        {
+            "event_id": "e2",
+            "run_id": "run-A",
+            "sequence": 1,
+            "drift_detected": {
+                "kind": "DRIFT_KIND_LOOPING_REASONING",
+                "severity": "DRIFT_SEVERITY_CRITICAL",
+                "detail": "loop",
+            },
+        },
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    assert by_key == {
+        ("off_topic", "warning"): 1,
+        ("looping_reasoning", "critical"): 1,
+    }
+    # Loss = 3*1 (warning) + 10*1 (critical) = 13 — unchanged from the
+    # pre-custom-judge formula.
+    assert profile.drift_loss == pytest.approx(13.0)
+
+
+def test_reduce_loss_custom_drift_appears_in_metric_counts(tmp_path: Path) -> None:
+    """The attributed custom drift shows up in metric_counts under the
+    ``drift:`` namespace, carrying the judge name."""
+    events = [
+        _judgement_emitted("slide_quality", severity="warning", seq=0),
+        _drift_detected(severity="DRIFT_SEVERITY_WARNING", seq=1),
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    names = {m.name for m in profile.metric_counts}
+    # MetricCount.from_drift_count prefixes "drift:" — the judge identity
+    # rides inside the kind segment.
+    assert "drift:custom:slide_quality" in names

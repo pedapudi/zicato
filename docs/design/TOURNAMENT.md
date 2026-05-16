@@ -480,8 +480,8 @@ description` appearing in three promotes does not prove it caused
 them (it was bundled with other patches). But it is a strong
 steering hint: the operator reading "`coordinator.routing` has
 been touched five times and promoted once" knows that surface is
-resisting improvement, and can put it in the rubric's
-`forbidden:` list or focus the rubric elsewhere.
+resisting improvement, and can put it in the proposer brief's
+`## Forbidden` list or focus the brief elsewhere.
 
 ### 4.6 Tournament cost
 
@@ -600,7 +600,8 @@ The tournament bracket is scoped to **one epoch**. This follows
 directly from the epoch being the unit of evaluation contract
 (see [EPOCHS-AND-JOURNALING.md §1](EPOCHS-AND-JOURNALING.md#1-epoch-concept)):
 the gauntlet's matchups are only meaningful while the board, the
-rubric's `forbidden:` list, and the scoring weights hold steady.
+proposer brief's `## Forbidden` list, and the scoring weights hold
+steady.
 A challenger in epoch `e1` and a champion in epoch `e0` were
 judged against different contracts; a "matchup" between them
 would be comparing two numbers that do not mean the same thing.

@@ -176,7 +176,10 @@ def render_report(report: LoopHealth) -> str:
     return "\n".join(lines)
 
 
-@click.command(name="health")
+@click.command(
+    name="health",
+    short_help="Advanced: report whether the evolve loop has real optimization signal.",
+)
 @click.option(
     "--workspace",
     default=".zicato",

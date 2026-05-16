@@ -26,10 +26,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from goldfive import DriftKind
+
 from zicato.core.types import (
     BoardEntry,
     BoardEntryKind,
     Expectation,
+    JudgeSpec,
     ScriptedTurn,
     UserPersona,
 )
@@ -52,7 +55,7 @@ def _coerce_turns(
     """
     if turns is None:
         return None
-    if not isinstance(turns, (list, tuple)):
+    if not isinstance(turns, list | tuple):
         raise ValueError(f"Entry: 'turns' must be a list or tuple, got {type(turns).__name__}")
     if len(turns) == 0:
         raise ValueError("Entry: 'turns' must be non-empty when provided")
@@ -66,6 +69,28 @@ def _coerce_turns(
             raise ValueError(
                 f"Entry: 'turns[{i}]' must be str or ScriptedTurn, got {type(t).__name__}"
             )
+    return tuple(out)
+
+
+def _coerce_judges(
+    judges: tuple[Any, ...] | list[Any],
+) -> tuple[JudgeSpec, ...]:
+    """Coerce a user-supplied ``judges`` argument into a tuple of :class:`JudgeSpec`.
+
+    Accepts a list/tuple of already-built :class:`JudgeSpec` instances
+    (the value :class:`~zicato.board.judges.Judge` factories return).
+    Rejects anything else with a clear, builder-rooted error message.
+    """
+    if not isinstance(judges, list | tuple):
+        raise ValueError(f"Entry: 'judges' must be a list or tuple, got {type(judges).__name__}")
+    out: list[JudgeSpec] = []
+    for i, j in enumerate(judges):
+        if not isinstance(j, JudgeSpec):
+            raise ValueError(
+                f"Entry: 'judges[{i}]' must be a JudgeSpec (build one with "
+                f"Judge.custom / Judge.python), got {type(j).__name__}"
+            )
+        out.append(j)
     return tuple(out)
 
 
@@ -186,6 +211,7 @@ class Entry:
         turns: list[str] | list[ScriptedTurn] | tuple[Any, ...] | None = None,
         persona: UserPersona | None = None,
         evaluate: Expectation | None = None,
+        judges: tuple[JudgeSpec, ...] | list[JudgeSpec] = (),
         budget_s: int = 300,
         weight: float = 1.0,
         tags: tuple[str, ...] | list[str] = (),
@@ -195,7 +221,16 @@ class Entry:
         required_drift_kinds: tuple[str, ...] | list[str] | None = None,
         max_turns: int | None = None,
     ) -> BoardEntry:  # type: ignore[override]
-        """Build and return a validated :class:`~zicato.core.BoardEntry`."""
+        """Build and return a validated :class:`~zicato.core.BoardEntry`.
+
+        ``evaluate`` attaches an OUTCOME check
+        (:class:`~zicato.core.Expectation`, built via
+        :class:`~zicato.board.predicates.Predicate` /
+        :class:`~zicato.board.predicates.Rubric`); ``judges`` attaches
+        zero or more PROCESS checks (:class:`~zicato.core.JudgeSpec`,
+        built via :class:`~zicato.board.judges.Judge`). The two are
+        independent — an entry may carry both.
+        """
         coerced_turns = _coerce_turns(turns)
         inferred_kind = _infer_kind(
             input=input,
@@ -223,6 +258,8 @@ class Entry:
         else:
             coerced_required_drift = tuple(required_drift_kinds)
 
+        coerced_judges = _coerce_judges(judges)
+
         entry = BoardEntry(
             id=id,
             kind=inferred_kind,
@@ -231,6 +268,7 @@ class Entry:
             tags=tuple(tags),
             context=dict(context) if context else {},
             expectation=evaluate,
+            judges=coerced_judges,
             input=input,
             turns=coerced_turns,
             user_persona=persona,
@@ -256,9 +294,22 @@ class Board:
     build entries with :class:`Entry`, append them with :meth:`add`,
     and persist with :meth:`save`; :classmethod:`load` reads a JSONL
     file back into a fresh container.
+
+    Fields
+    ------
+    entries:
+        The board's :class:`~zicato.core.BoardEntry` rows, in order.
+    disable_drift:
+        Board-level tuple of :class:`goldfive.DriftKind` members the
+        operator wants suppressed for every run on this board. Empty by
+        default. Persisted to the JSONL file as a leading ``board_meta``
+        header line (see :mod:`zicato.board.jsonl`); a board with no
+        ``disable_drift`` writes no header line at all so simple boards
+        stay header-free.
     """
 
     entries: list[BoardEntry] = field(default_factory=list)
+    disable_drift: tuple[DriftKind, ...] = ()
 
     def add(self, entry: BoardEntry) -> Board:
         """Append ``entry`` and return ``self`` for chaining.
@@ -282,23 +333,25 @@ class Board:
         Delegates to :func:`zicato.board.jsonl.save_board` so the on-disk
         format stays in sync with the rest of the system. The parent
         directory must already exist; the writer is atomic (sibling
-        ``.tmp`` + rename).
+        ``.tmp`` + rename). :attr:`disable_drift` is persisted as the
+        leading ``board_meta`` header line when non-empty.
         """
         from zicato.board.jsonl import save_board  # noqa: PLC0415
 
-        save_board(self.entries, Path(path))
+        save_board(self.entries, Path(path), disable_drift=self.disable_drift)
 
     @classmethod
     def load(cls, path: Path) -> Board:
         """Build a :class:`Board` from the JSONL file at ``path``.
 
-        Delegates to :func:`zicato.board.jsonl.load_board` for parsing,
-        validation, and duplicate-id detection.
+        Delegates to :func:`zicato.board.jsonl.load_board_with_meta` for
+        parsing, validation, duplicate-id detection, and recovery of the
+        board-level :attr:`disable_drift` header.
         """
-        from zicato.board.jsonl import load_board  # noqa: PLC0415
+        from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
 
-        entries = load_board(Path(path))
-        return cls(entries=list(entries))
+        entries, disable_drift = load_board_with_meta(Path(path))
+        return cls(entries=list(entries), disable_drift=disable_drift)
 
 
 __all__ = ["Board", "Entry"]

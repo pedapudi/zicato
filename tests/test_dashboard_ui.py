@@ -167,7 +167,7 @@ REQUIRED_SECTIONS = {
     "log-section",
     "epoch-overview-section",
     "epoch-board-section",
-    "epoch-rubric-section",
+    "epoch-brief-section",
     "epoch-scoring-section",
     "epoch-mutations-section",
 }
@@ -193,7 +193,7 @@ REQUIRED_EPOCH_IDS = {
     "epoch-overview",
     "epoch-harness",
     "epoch-board",
-    "epoch-rubric",
+    "epoch-brief",
     "epoch-scoring",
     "epoch-mutations",
 }
@@ -289,7 +289,7 @@ def test_nav_rail_present_with_four_entries(index_html: str) -> None:
 
 
 def test_epoch_view_section_ids_present(index_html: str) -> None:
-    """The Epoch view exposes board / rubric / scoring / mutation panels."""
+    """The Epoch view exposes board / brief / scoring / mutation panels."""
     p = _SectionCollector()
     p.feed(index_html)
     missing = REQUIRED_EPOCH_IDS - p.all_ids
@@ -579,7 +579,7 @@ def test_mock_state_carries_contract_shapes(app_js: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Empty states + rubric column — compact CSS
+# Empty states + proposer-brief column — compact CSS
 # ---------------------------------------------------------------------------
 
 
@@ -600,15 +600,15 @@ def test_diagram_svg_is_height_capped(style_css: str) -> None:
     assert "max-height" in block, ".diagram svg must cap its height"
 
 
-def test_rubric_block_is_centered_column(style_css: str) -> None:
-    """The epoch rubric renders as a centred, readable max-width column."""
-    idx = style_css.find(".epoch-rubric .rubric-block {")
-    assert idx != -1, ".rubric-block rule missing"
+def test_brief_block_is_centered_column(style_css: str) -> None:
+    """The epoch proposer brief renders as a centred max-width column."""
+    idx = style_css.find(".epoch-brief .brief-block {")
+    assert idx != -1, ".brief-block rule missing"
     block = style_css[idx : idx + 320]
-    assert "max-width: 760px" in block, "rubric column should cap at ~760px"
+    assert "max-width: 760px" in block, "brief column should cap at ~760px"
     assert (
         "margin-left: auto" in block and "margin-right: auto" in block
-    ), "rubric column must be centred"
+    ), "brief column must be centred"
 
 
 # ---------------------------------------------------------------------------

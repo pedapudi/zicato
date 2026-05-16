@@ -102,7 +102,7 @@ async def test_propose_experiment_happy_path() -> None:
         new_generation_id="v1",
         patterns=[_pattern()],
         mutations=_MUTATIONS,
-        rubric_text="# Rubric\n- Be careful.\n",
+        brief_text="# Proposer brief\n- Be careful.\n",
         current_loss_summary="loss=2.3, pass_rate=0.6",
         aux_call_llm=stub,
         model="test-model",
@@ -116,16 +116,16 @@ async def test_propose_experiment_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_propose_experiment_passes_rubric_to_system_prompt() -> None:
+async def test_propose_experiment_passes_brief_to_system_prompt() -> None:
     stub = _StubLLM([_valid_response()])
-    rubric = "# Rubric\n- Operator hint: prefer router edits.\n"
+    brief = "# Proposer brief\n- Operator hint: prefer router edits.\n"
     await propose_experiment(
         epoch_id="e1",
         parent_generation_id="v0",
         new_generation_id="v1",
         patterns=[],
         mutations=_MUTATIONS,
-        rubric_text=rubric,
+        brief_text=brief,
         current_loss_summary="",
         aux_call_llm=stub,
     )
@@ -142,7 +142,7 @@ async def test_propose_experiment_passes_patterns_and_mutations() -> None:
         new_generation_id="v1",
         patterns=[_pattern()],
         mutations=_MUTATIONS,
-        rubric_text="",
+        brief_text="",
         current_loss_summary="loss summary text",
         aux_call_llm=stub,
     )
@@ -167,7 +167,7 @@ async def test_propose_experiment_retries_on_invalid_json() -> None:
         new_generation_id="v1",
         patterns=[],
         mutations=_MUTATIONS,
-        rubric_text="",
+        brief_text="",
         current_loss_summary="",
         aux_call_llm=stub,
         max_retries=2,
@@ -189,7 +189,7 @@ async def test_propose_experiment_retries_on_schema_error() -> None:
         new_generation_id="v1",
         patterns=[],
         mutations=_MUTATIONS,
-        rubric_text="",
+        brief_text="",
         current_loss_summary="",
         aux_call_llm=stub,
         max_retries=2,
@@ -208,7 +208,7 @@ async def test_propose_experiment_raises_after_exhausting_retries() -> None:
             new_generation_id="v1",
             patterns=[],
             mutations=_MUTATIONS,
-            rubric_text="",
+            brief_text="",
             current_loss_summary="",
             aux_call_llm=stub,
             max_retries=2,
@@ -226,7 +226,7 @@ async def test_propose_experiment_handles_llm_exception_as_retryable() -> None:
         new_generation_id="v1",
         patterns=[],
         mutations=_MUTATIONS,
-        rubric_text="",
+        brief_text="",
         current_loss_summary="",
         aux_call_llm=stub,
         max_retries=2,
@@ -250,7 +250,7 @@ async def test_propose_experiment_rejects_forbidden_patch() -> None:
             new_generation_id="v1",
             patterns=[],
             mutations=_MUTATIONS,
-            rubric_text="",
+            brief_text="",
             current_loss_summary="",
             aux_call_llm=stub,
             max_retries=0,
@@ -290,7 +290,7 @@ async def test_propose_experiment_succeeds_when_retry_avoids_forbidden_id() -> N
         new_generation_id="v1",
         patterns=[],
         mutations=_MUTATIONS,
-        rubric_text="",
+        brief_text="",
         current_loss_summary="",
         aux_call_llm=stub,
         max_retries=2,
@@ -304,7 +304,7 @@ async def test_propose_experiment_succeeds_when_retry_avoids_forbidden_id() -> N
 # ---------------------------------------------------------------------------
 
 
-def test_render_system_prompt_embeds_rubric() -> None:
+def test_render_system_prompt_embeds_brief() -> None:
     rendered = render_system_prompt("# Rubric\nSome guidance.")
     assert "Some guidance." in rendered
     # The schema description should mention required field names.
@@ -312,7 +312,7 @@ def test_render_system_prompt_embeds_rubric() -> None:
     assert "expected_drift_movements" in rendered
 
 
-def test_render_system_prompt_handles_empty_rubric() -> None:
+def test_render_system_prompt_handles_empty_brief() -> None:
     rendered = render_system_prompt("")
     assert "(empty)" in rendered
 
@@ -387,7 +387,7 @@ async def test_propose_experiment_embeds_workspace_insights(tmp_path: Path) -> N
         new_generation_id="v1",
         patterns=[],
         mutations=_MUTATIONS,
-        rubric_text="rubric",
+        brief_text="brief",
         current_loss_summary="loss=1.0",
         aux_call_llm=stub,
         workspace_root=workspace,
@@ -408,7 +408,7 @@ async def test_propose_experiment_unchanged_without_insights(tmp_path: Path) -> 
         new_generation_id="v1",
         patterns=[],
         mutations=_MUTATIONS,
-        rubric_text="rubric",
+        brief_text="brief",
         current_loss_summary="loss=1.0",
         aux_call_llm=stub,
         workspace_root=workspace,

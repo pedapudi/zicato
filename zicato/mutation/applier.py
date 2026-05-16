@@ -5,6 +5,17 @@ copy at ``target_root`` first, then resolves every :class:`Patch` against
 that fresh tree. This isolation is load-bearing: an experiment that fails
 mid-apply must not leave the parent generation's snapshot half-rewritten,
 and the operator must always be able to diff parent vs child cleanly.
+
+Atomicity
+---------
+
+:func:`apply_patches` is **all-or-nothing**: it runs the deterministic
+:func:`~zicato.mutation.validator.validate_patches` pre-check against the
+freshly-copied tree first and, if any patch is malformed, raises before a
+single edit lands and removes the copied tree so generation lineage stays
+append-only. The raw best-effort-sequential behaviour is still reachable
+through :func:`apply_patches_unchecked` for the rare caller that has
+already validated the batch itself.
 """
 
 from __future__ import annotations
@@ -16,6 +27,7 @@ from pathlib import Path
 from zicato.core.types import MutationPoint, Patch
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato.mutation.markers import parse_marker_line
+from zicato.mutation.validator import validate_patches
 
 
 def _format_numeric(value: float) -> str:
@@ -68,7 +80,7 @@ def _find_constant_after(
         if not isinstance(node, ast.Constant):
             continue
         if want_numeric:
-            if not isinstance(node.value, (int, float)) or isinstance(node.value, bool):
+            if not isinstance(node.value, int | float) or isinstance(node.value, bool):
                 continue
         else:
             if not isinstance(node.value, str):
@@ -222,7 +234,79 @@ def apply_patches(
     patches: list[Patch],
     target_root: Path,
 ) -> None:
-    """Materialise a child snapshot and apply ``patches`` to it.
+    """Materialise a child snapshot and atomically apply ``patches`` to it.
+
+    This is the default, **all-or-nothing** apply path. Behaviour:
+
+    1. Recursively copy ``source_root`` to ``target_root``. ``target_root``
+       must not already exist; the applier refuses to overwrite an
+       existing tree to keep generation lineage append-only.
+    2. Run the deterministic
+       :func:`~zicato.mutation.validator.validate_patches` pre-check
+       against the freshly-copied tree. Every patch is checked up front:
+       its ``mutation_id`` must resolve to a real enumerated point, its
+       ``op`` must be compatible with its payload, and its ``op`` must be
+       compatible with the target point's ``kind``.
+    3. If any patch fails validation, remove the copied tree and raise —
+       so a malformed batch leaves *nothing* half-applied.
+    4. Otherwise delegate to :func:`apply_patches_unchecked`, which
+       applies every patch in order against the copied tree.
+
+    Because the whole batch is validated before the first edit lands, the
+    deterministic guarantee holds: an edit can only ever land at a valid,
+    enumerated ``# zicato:mutable`` point, and a batch with one bad patch
+    applies none.
+
+    Callers that genuinely need the legacy best-effort-sequential
+    behaviour (no atomic pre-check) can call :func:`apply_patches_unchecked`
+    directly.
+
+    Raises
+    ------
+    FileExistsError
+        When ``target_root`` already exists.
+    ValueError
+        When the patch set fails :func:`validate_patches` — the error
+        message enumerates every problem found. The copied tree is
+        removed before the exception propagates.
+    """
+
+    source_root = Path(source_root).resolve()
+    target_root = Path(target_root).resolve()
+    if target_root.exists():
+        raise FileExistsError(
+            f"apply_patches: target_root {target_root} already exists; refusing to overwrite"
+        )
+    shutil.copytree(source_root, target_root)
+
+    # Atomic pre-validation: enumerate the freshly-copied tree and check
+    # every patch up front. The copied tree has identical content to
+    # ``source_root``, so its enumeration is the surface the subsequent
+    # apply will resolve against.
+    problems = validate_patches(patches, source_root=target_root)
+    if problems:
+        # Refuse the whole batch — remove the copied tree so generation
+        # lineage stays append-only and nothing is left half-applied.
+        shutil.rmtree(target_root, ignore_errors=True)
+        raise ValueError(
+            "apply_patches: refusing to apply patch set; "
+            f"{len(problems)} validation problem(s): " + "; ".join(problems)
+        )
+
+    _apply_patches_into_tree(target_root, patches)
+
+
+def apply_patches_unchecked(
+    source_root: Path,
+    patches: list[Patch],
+    target_root: Path,
+) -> None:
+    """Materialise a child snapshot and apply ``patches`` best-effort.
+
+    This is the **legacy, non-atomic** apply path, preserved for callers
+    that have already pre-validated the patch set themselves (e.g. via
+    :func:`~zicato.mutation.validator.validate_patches`). Prefer
+    :func:`apply_patches`, which validates the batch and is all-or-nothing.
 
     Behavior
     --------
@@ -235,9 +319,7 @@ def apply_patches(
     3. For each patch, look up its target mutation point by id. Raise
        :class:`KeyError` when the id is unknown. The whole-batch apply
        is best-effort sequential — earlier patches that succeeded stay
-       applied even if a later patch raises. Callers that want atomic
-       application should pre-validate the patch set against an
-       enumeration before calling.
+       applied even if a later patch raises.
     4. Dispatch by op:
 
        * ``replace``: rewrite span content (or whole-file content for a
@@ -262,9 +344,20 @@ def apply_patches(
     target_root = Path(target_root).resolve()
     if target_root.exists():
         raise FileExistsError(
-            f"apply_patches: target_root {target_root} already exists; refusing to overwrite"
+            f"apply_patches_unchecked: target_root {target_root} already "
+            f"exists; refusing to overwrite"
         )
     shutil.copytree(source_root, target_root)
+    _apply_patches_into_tree(target_root, patches)
+
+
+def _apply_patches_into_tree(target_root: Path, patches: list[Patch]) -> None:
+    """Apply ``patches`` in order against an already-materialised tree.
+
+    The shared, best-effort-sequential core of :func:`apply_patches` and
+    :func:`apply_patches_unchecked`. ``target_root`` must already exist
+    (the callers handle the copy + their respective pre-checks).
+    """
 
     points = enumerate_mutations([target_root])
     index = _build_index(points)
@@ -272,9 +365,7 @@ def apply_patches(
     for patch in patches:
         if patch.op == "replace":
             if patch.new_content is None:
-                raise ValueError(
-                    f"Patch {patch.id!r}: op=replace requires new_content"
-                )
+                raise ValueError(f"Patch {patch.id!r}: op=replace requires new_content")
             point = index.get(patch.mutation_id)
             if point is None:
                 raise KeyError(
@@ -287,9 +378,7 @@ def apply_patches(
             index = _build_index(points)
         elif patch.op == "set_numeric":
             if patch.new_numeric is None:
-                raise ValueError(
-                    f"Patch {patch.id!r}: op=set_numeric requires new_numeric"
-                )
+                raise ValueError(f"Patch {patch.id!r}: op=set_numeric requires new_numeric")
             point = index.get(patch.mutation_id)
             if point is None:
                 raise KeyError(
@@ -315,9 +404,7 @@ def apply_patches(
             index = _build_index(points)
         elif patch.op == "set_enum":
             if patch.new_enum is None:
-                raise ValueError(
-                    f"Patch {patch.id!r}: op=set_enum requires new_enum"
-                )
+                raise ValueError(f"Patch {patch.id!r}: op=set_enum requires new_enum")
             point = index.get(patch.mutation_id)
             if point is None:
                 raise KeyError(
@@ -343,4 +430,4 @@ def apply_patches(
             raise ValueError(f"Patch {patch.id!r}: unknown op {patch.op!r}")
 
 
-__all__ = ["apply_patches"]
+__all__ = ["apply_patches", "apply_patches_unchecked"]

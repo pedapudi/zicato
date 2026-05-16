@@ -1,5 +1,9 @@
 """``zicato tournament`` — run a tournament between two generations.
 
+ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` runs a
+tournament every round as part of the loop. Run ``zicato tournament``
+by hand only to re-score a specific PARENT/CHILD pair in isolation.
+
 Two modes:
 
 * ``full`` (default) — runs every board entry under both PARENT and
@@ -41,7 +45,10 @@ from zicato.core.types import Generation
 from zicato.core.workspace import generation_dir
 
 
-@click.command(name="tournament")
+@click.command(
+    name="tournament",
+    short_help="Advanced: run a tournament between two generations in isolation.",
+)
 @click.argument("parent")
 @click.argument("child")
 @click.option(
@@ -75,7 +82,11 @@ def tournament_cmd(
     mode: str,
     skip_regression: bool,
 ) -> None:
-    """Run a tournament between PARENT and CHILD generations."""
+    """Advanced: run a tournament between PARENT and CHILD generations.
+
+    Off the happy path — `zicato evolve` runs the tournament every
+    round. Use this only to re-score a specific generation pair.
+    """
     workspace_root = Path(workspace).resolve()
 
     loader, adapter_factory, runtime_factory = _resolve_workspace_components()
@@ -87,7 +98,7 @@ def tournament_cmd(
 
     resolved_epoch_id = epoch or _resolve_epoch_id(workspace_root)
     try:
-        board = loader.load_current_board(workspace_root)
+        board, disable_drift = loader.load_current_board_with_meta(workspace_root)
         weights = loader.load_current_scoring(workspace_root)
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -121,6 +132,7 @@ def tournament_cmd(
                 config=config,
                 workspace_root=workspace_root,
                 epoch_id=resolved_epoch_id,
+                disable_drift=disable_drift,
             )
         )
     else:
@@ -137,6 +149,7 @@ def tournament_cmd(
                 workspace_root=workspace_root,
                 epoch_id=resolved_epoch_id,
                 parent_historical_agg=parent_historical,
+                disable_drift=disable_drift,
             )
         )
 
@@ -162,9 +175,7 @@ def _resolve_workspace_components() -> tuple[Any, Any, Any]:
         from zicato import adapter_factory, runtime_factory  # noqa: PLC0415
         from zicato import workspace_loader as loader  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover — defensive
-        raise click.ClickException(
-            "zicato workspace wiring is not available: " + str(exc)
-        ) from exc
+        raise click.ClickException("zicato workspace wiring is not available: " + str(exc)) from exc
     return loader, adapter_factory, runtime_factory
 
 
@@ -179,15 +190,12 @@ def _resolve_epoch_id(workspace_root: Path) -> str:
     text = marker.read_text(encoding="utf-8").strip()
     if not text:
         raise click.ClickException(
-            f"{marker} is empty; pass --epoch explicitly or run "
-            "`zicato epoch new` first"
+            f"{marker} is empty; pass --epoch explicitly or run `zicato epoch new` first"
         )
     return text
 
 
-def _build_generation(
-    workspace_root: Path, epoch_id: str, generation_id: str
-) -> Generation:
+def _build_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> Generation:
     """Build a :class:`Generation` from on-disk snapshot info.
 
     The tournament runner needs a :class:`Generation` with a valid
@@ -230,9 +238,7 @@ def _load_historical_aggregate(
         )
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
-        raise click.ClickException(
-            f"{path}: expected a JSON object at top level"
-        )
+        raise click.ClickException(f"{path}: expected a JSON object at top level")
     raw.setdefault("generation_id", generation_id)
     return raw
 

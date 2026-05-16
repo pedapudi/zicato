@@ -202,7 +202,7 @@ def workspace(tmp_path: Path) -> Path:
         )
         + "\n",
     )
-    _write(epoch_dir / "rubric.md", "# Rubric\nBe clear.\n")
+    _write(epoch_dir / "brief.md", "# Proposer brief\nBe clear.\n")
     _write_json(epoch_dir / "scoring.json", {"weights": {"drift_loss": 1.0}})
     _write_json(epoch_dir / "config.json", {"contract_hash": "h1", "closed": False})
     _write_json(
@@ -444,9 +444,33 @@ def test_epoch_view(client: TestClient) -> None:
     assert body["harness"]["entrypoint"] == "mod:agent"
     assert len(body["board"]) == 1
     assert body["board"][0]["expectation_kind"] == "predicate"
-    assert body["rubric"].startswith("# Rubric")
+    assert body["brief"].startswith("# Proposer brief")
     assert len(body["mutations"]) == 1
     assert body["mutations"][0]["lines"] == "1-4"
+
+
+def test_epoch_view_brief_falls_back_to_legacy_rubric_md(workspace: Path) -> None:
+    """A pre-rename epoch with only ``rubric.md`` still populates ``brief``."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    # Simulate an epoch frozen before the rename: rename brief.md back
+    # to the legacy rubric.md.
+    (epoch_dir / "brief.md").rename(epoch_dir / "rubric.md")
+
+    view = build_epoch_view(WorkspacePaths(workspace))
+    assert view["brief"].startswith("# Proposer brief")
+
+
+def test_epoch_view_brief_prefers_brief_md_over_legacy(workspace: Path) -> None:
+    """When both files exist, ``brief.md`` wins over the legacy name."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write(epoch_dir / "rubric.md", "# legacy brief\nold\n")
+
+    view = build_epoch_view(WorkspacePaths(workspace))
+    assert view["brief"].startswith("# Proposer brief")
 
 
 def test_tournaments_bracket(client: TestClient) -> None:
@@ -565,11 +589,13 @@ def test_control_kill_rejects_bad_id(rw_client: TestClient) -> None:
     assert r.status_code == 400
 
 
-def test_control_rubric_writes_text(rw_client: TestClient, workspace: Path) -> None:
-    r = rw_client.post("/api/control/rubric", content=b"new rubric body")
+def test_control_brief_writes_text(rw_client: TestClient, workspace: Path) -> None:
+    r = rw_client.post("/api/control/brief", content=b"new brief body")
     assert r.status_code == 202
+    # The control file keeps its protocol name regardless of the
+    # UI-facing endpoint rename.
     path = workspace / "runtime" / "control" / "rubric_replacement.txt"
-    assert path.read_bytes() == b"new rubric body"
+    assert path.read_bytes() == b"new brief body"
 
 
 # ---------------------------------------------------------------------------

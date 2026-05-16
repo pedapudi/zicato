@@ -258,11 +258,14 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         _atomic_write(path, json.dumps(payload).encode())
         return JSONResponse(payload, status_code=202)
 
-    async def control_rubric(request: Request) -> Response:
+    async def control_brief(request: Request) -> Response:
         forbidden = _forbidden_if_read_only()
         if forbidden is not None:
             return forbidden
         body = await request.body()
+        # The on-disk control file keeps its protocol name
+        # (``rubric_replacement.txt``); it is part of the runtime
+        # control contract the orchestrator consumes, not a UI label.
         path = _control_path("rubric_replacement.txt")
         _atomic_write(path, body)
         return JSONResponse(
@@ -289,7 +292,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "control_kill": control_kill,
         "control_promote": control_promote,
         "control_reject": control_reject,
-        "control_rubric": control_rubric,
+        "control_brief": control_brief,
     }
 
 

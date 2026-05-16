@@ -8,9 +8,9 @@ combining two signals:
   and severity), plan revisions, task failure ratio, runtime
   features, and abort. Always available; works without ground-truth
   expectations.
-- **Pass-rate.** The fraction of board entries whose expectation
-  predicate / regex / schema / judge passed. Only entries with an
-  expectation contribute.
+- **Pass-rate.** The fraction of board entries whose outcome checks
+  (`expectations` — `Predicate` / `Rubric`) passed. Only entries with
+  a non-empty `expectations` list contribute.
 
 The two combine into a single tournament scalar via tunable weights.
 This document specifies both halves, their combination, and the
@@ -54,6 +54,8 @@ fields of the `LossProfile` (see [TELEMETRY.md](TELEMETRY.md)):
 drift_loss[entry] =
       sum over kind k of:
           per_kind_weight[k]      * drift_counts_by_kind[k]
+    + sum over custom judge j of:
+          per_judge_weight[j]     * judge_violation_counts[j]
     + sum over severity s of:
           severity_multiplier[s]  * drift_counts_by_severity[s]
     + plan_revisions_weight       * plan_revisions
@@ -63,11 +65,19 @@ drift_loss[entry] =
     + abort_weight                * (1 if aborted else 0)
 ```
 
+The `per_judge_weight` term is a refinement of the `per_kind_weight`
+term, not an addition to it: every custom-judge violation is also a
+`DRIFT_KIND_CUSTOM` drift, so for a custom judge `j` the effective
+weight is `per_judge_weight[j]` when `j` has an entry in
+`per_judge_weight`, and `per_kind_weight["DRIFT_KIND_CUSTOM"]`
+otherwise. See §2.2.
+
 Where:
 
 | Symbol | Default | Meaning |
 |---|---|---|
 | `per_kind_weight[k]` | `1.0` (most), `2.0` for CRITICAL-class kinds like `INTENT_DIVERGENCE`, `HUMAN_INTERVENTION_REQUIRED` | Per-`DriftKind` weight. |
+| `per_judge_weight[j]` | unset → falls back to `per_kind_weight["DRIFT_KIND_CUSTOM"]` | Per-custom-judge weight, keyed on the judge `name`. See §2.2. |
 | `severity_multiplier[s]` | `INFO`: `0.5`, `WARNING`: `1.0`, `CRITICAL`: `2.0` | Multiplier on per-severity counts. |
 | `plan_revisions_weight` | `0.5` | Each `PlanRevised` event is half a unit of loss. |
 | `task_failure_weight` | `5.0` | The ratio is in `[0, 1]`; the weight scales it to a meaningful contribution. |
@@ -87,7 +97,12 @@ The per-kind weights are stored in `scoring.json` per epoch:
     "DRIFT_KIND_LOOPING_TOOL_CALL": 1.0,
     "DRIFT_KIND_INTENT_DIVERGENCE": 2.0,
     "DRIFT_KIND_HUMAN_INTERVENTION_REQUIRED": 5.0,
+    "DRIFT_KIND_CUSTOM": 1.0,
     "_default": 1.0
+  },
+  "per_judge_weight": {
+    "cite-before-metric": 2.0,
+    "ack-before-edit": 0.5
   },
   "severity_multiplier": {
     "INFO": 0.5,
@@ -123,7 +138,44 @@ The weights are part of the **evaluation contract** (they live in
 the contract; if the operator wants different weights, they start a
 new epoch.
 
-### 2.2 Why an abort is a heavy constant
+### 2.2 Per-judge weights
+
+A board's custom judges (`Judge.custom` / `Judge.python` — see
+[BOARD-FORMAT.md](BOARD-FORMAT.md) §4) all emit the same drift kind,
+`DRIFT_KIND_CUSTOM`. `per_kind_weight["DRIFT_KIND_CUSTOM"]` therefore
+weights *every* custom judge identically. When that is too coarse —
+when a violation of one judge should count for more than a violation
+of another — `per_judge_weight` is the finer knob.
+
+`per_judge_weight` is a mapping **keyed on the judge `name`** (the
+first argument to `Judge.custom` / `Judge.python`, and the same
+string carried as `judge_name` on the emitted drift). The reducer,
+when it counts a `DRIFT_KIND_CUSTOM` drift, looks up
+`per_judge_weight[judge_name]` first; if the judge has no entry there,
+it falls back to `per_kind_weight["DRIFT_KIND_CUSTOM"]`.
+
+In the `ScoringWeights` dataclass this is the `per_judge_weights`
+field. Like every other weight it is frozen per epoch — changing it
+changes the evaluation contract and rolls the epoch. It mirrors
+`per_kind_weights`: `per_kind_weights` discriminates by `DriftKind`,
+`per_judge_weights` discriminates one step finer, by `judge_name`,
+within the `CUSTOM` kind.
+
+Example: a board with two judges, `cite-before-metric` and
+`ack-before-edit`, where a missing citation is a real defect but a
+missing acknowledgement is a nicety:
+
+```json
+"per_judge_weight": {
+  "cite-before-metric": 2.0,
+  "ack-before-edit": 0.5
+}
+```
+
+A third custom judge not listed here is weighted by
+`per_kind_weight["DRIFT_KIND_CUSTOM"]`.
+
+### 2.3 Why an abort is a heavy constant
 
 A run that exhausted its wall-clock budget didn't produce a result.
 The expectation can't fire; the drift counts are incomplete; the
@@ -138,13 +190,23 @@ heaviest single term, not the only term.
 
 ## 3. Per-entry pass-rate
 
-For an entry with an expectation, the reducer evaluates the
-expectation against the run result and stamps `pass_fail: bool`. For
-an entry without an expectation, `pass_fail` is `None` and the entry
-does not contribute to the pass-rate denominator.
+For an entry with a non-empty `expectations` list, the reducer
+evaluates every outcome check against the run result and ANDs the
+results into `pass_fail: bool` — the entry passes iff every
+expectation passes (advisory `Rubric`s, `threshold=None`, always
+pass). For an entry with an empty `expectations` list, `pass_fail` is
+`None` and the entry does not contribute to the pass-rate
+denominator.
 
-The expectation kinds and their evaluation are specified in
+The outcome-check kinds and their evaluation are specified in
 [BOARD-FORMAT.md](BOARD-FORMAT.md) §3.
+
+Note the division of labour: an entry's **process** checks (`judges`,
+[BOARD-FORMAT.md](BOARD-FORMAT.md) §4) never touch pass-rate. A
+violated judge emits a `DriftKind.CUSTOM` drift, which is counted in
+`drift_counts_by_kind` and feeds the **drift-loss** side of the score
+(§2). Pass-rate is purely the outcome-check side; drift loss is where
+both built-in and custom-judge violations land.
 
 ## 4. Per-generation aggregate score
 
@@ -404,8 +466,9 @@ A few things scoring does NOT do in v0:
   cost as a loss term.
 - **Operator pinning.** "This entry must pass" or "the score must
   improve on this tag slice" as hard gates are not in v0. The
-  rubric's `forbidden:` covers the mutation-side of pinning; the
-  scoring side is implicit through pass-rate monotonicity.
+  proposer brief's `## Forbidden` list covers the mutation-side of
+  pinning; the scoring side is implicit through pass-rate
+  monotonicity.
 
 These are roadmap items, not contract failures. The v0 score is
 intentionally narrow.
@@ -415,7 +478,8 @@ intentionally narrow.
 | Topic | Document |
 |---|---|
 | `LossProfile` fields and how they're computed | [TELEMETRY.md](TELEMETRY.md) |
-| `BoardEntry.weight` and `expectation` | [BOARD-FORMAT.md](BOARD-FORMAT.md) |
+| `BoardEntry.weight`, `expectations`, and `judges` | [BOARD-FORMAT.md](BOARD-FORMAT.md) |
+| Authoring outcome/process checks and `per_judge_weights` | [BOARD-AUTHORING.md](BOARD-AUTHORING.md) |
 | `tournament_decision` field on `experiment.json` | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
 | Target 2's non-drift loss model | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
 | Why drift loss + pass-rate and not free-text scoring | [RATIONALE.md](RATIONALE.md) |

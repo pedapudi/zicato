@@ -365,7 +365,7 @@ One row per `loss.json` — the reduced per-run feature vector.
 | `entry_id` | TEXT | (FK → `runs`) |
 | `side` | TEXT | (FK → `runs`) |
 | `drift_loss` | REAL | `LossProfile.drift_loss` |
-| `pass_fail` | INTEGER NULL | `LossProfile.pass_fail` (NULL when no expectation) |
+| `pass_fail` | INTEGER NULL | `LossProfile.pass_fail` (NULL when the entry's `expectations` list is empty) |
 | `escalations` | INTEGER | `LossProfile.escalations` |
 | `plan_revisions` | INTEGER | `LossProfile.plan_revisions` |
 | `task_failure_ratio` | REAL | `LossProfile.task_failure_ratio` |
@@ -380,9 +380,10 @@ self-join of `loss_profiles` on `entry_id` across the two
 ### 3.7 `metric_counts`
 
 The drift counts, unpivoted into one row per
-(run × drift kind) and (run × severity). The `LossProfile`
-carries `drift_counts_by_kind` and `drift_counts_by_severity`
-as dicts; storing them unpivoted makes them `GROUP BY`-able.
+(run × drift kind), (run × severity), and (run × custom judge).
+The `LossProfile` carries `drift_counts_by_kind`,
+`drift_counts_by_severity`, and `drift_counts_by_judge` as
+dicts; storing them unpivoted makes them `GROUP BY`-able.
 
 | Column | Type | Source |
 |---|---|---|
@@ -390,15 +391,17 @@ as dicts; storing them unpivoted makes them `GROUP BY`-able.
 | `generation` | TEXT | (FK) |
 | `entry_id` | TEXT | (FK → `runs`) |
 | `side` | TEXT | (FK → `runs`) |
-| `metric_kind` | TEXT | `drift_kind` or `severity` |
-| `metric_name` | TEXT | e.g. `DRIFT_KIND_CONFABULATION_RISK`, or `CRITICAL` |
+| `metric_kind` | TEXT | `drift_kind`, `severity`, or `judge` |
+| `metric_name` | TEXT | e.g. `DRIFT_KIND_CONFABULATION_RISK`, `CRITICAL`, or a custom judge's `judge_name` |
 | `count` | INTEGER | the count |
 
 No single-column primary key; the natural key is
 `(epoch_id, generation, entry_id, side, metric_kind,
 metric_name)`. The drift-kind heatmap in
 [DASHBOARD.md §4.6](DASHBOARD.md#46-drift-kind-heatmap) is a
-`SUM(count) GROUP BY metric_name, round` over this table.
+`SUM(count) GROUP BY metric_name, round` over this table; the
+`metric_kind = 'judge'` rows give the same view sliced by
+custom judge (`judge_name`) rather than by `DriftKind`.
 
 ### 3.8 `tournaments`
 

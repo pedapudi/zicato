@@ -1,52 +1,55 @@
-"""Async evaluator for the five expectation kinds.
+"""Async evaluator for the five OUTCOME-expectation kinds.
 
 Every kind dispatches through :func:`evaluate_expectation` and returns a
 uniform :class:`~zicato.core.ExpectationResult`. The dispatcher is async
-because the ``judge`` kind needs the auxiliary LLM callable, and the
-``predicate`` kind tolerates async predicates by design so projects can
+because the ``RUBRIC`` kind needs the auxiliary LLM callable, and the
+``PREDICATE`` kind tolerates async predicates by design so projects can
 write predicates that hit their own backends.
 
-Matcher dispatch
-----------------
+This module covers OUTCOME checks only — the post-hoc grading of a
+finished run. PROCESS checks (assertions about how a run unfolds while it
+is still running) are carried by :class:`~zicato.core.JudgeSpec` and
+evaluated elsewhere.
 
-* ``"predicate"``
+Matcher dispatch — keyed on the :class:`~zicato.core.ExpectationKind` enum
+-------------------------------------------------------------------------
+
+* :attr:`~zicato.core.ExpectationKind.PREDICATE`
     ``spec`` is a dotted Python path. The dispatcher imports it, calls
     it with the :class:`~zicato.core.RunResult`, and awaits the result
     if it is a coroutine. The callable must return :class:`bool`.
 
-* ``"expected_text"``
+* :attr:`~zicato.core.ExpectationKind.EXPECTED_TEXT`
     Substring containment check against
     :attr:`RunResult.final_output`. Empty ``spec`` is rejected to catch
     operator typos.
 
-* ``"regex"``
+* :attr:`~zicato.core.ExpectationKind.REGEX`
     ``re.search`` against :attr:`RunResult.final_output`, compiled with
     :data:`re.DOTALL` so ``.`` spans newlines. Anchoring is up to the
     operator (the regex is matched anywhere unless ``^`` / ``$`` are
     present).
 
-* ``"json_schema"``
+* :attr:`~zicato.core.ExpectationKind.JSON_SCHEMA`
     The final output is parsed as JSON, then validated against the
     schema in ``spec``. Non-JSON output, or output that fails schema
     validation, fails. ``jsonschema`` is the validator.
 
-* ``"judge"``
-    ``spec`` is a dotted Python path to a function returning
-    ``{"system": str, "user_template": str}``. The dispatcher renders
-    the user template with ``.format(result=...)``, calls
-    ``aux_call_llm(system, user, model)``, and expects a JSON response
-    of shape ``{"pass": bool, "reason": str}``. The judge never sees
-    the harness callable — collusion-proofing happens because the
+* :attr:`~zicato.core.ExpectationKind.RUBRIC`
+    The built-in LLM-as-judge rubric matcher. ``spec`` is the JSON
+    rubric document produced by
+    :meth:`zicato.board.predicates.Rubric.score`. Delegates to
+    :func:`zicato.board.rubric.evaluate_rubric_judge`. The matcher never
+    sees the harness callable — collusion-proofing happens because the
     aux callable is distinct (enforced by the workspace helper).
 
 Returned :class:`ExpectationResult.detail` carries enough information
 to debug a failing expectation without re-running it: regex match span,
-schema-validation error path, judge rationale, etc.
+schema-validation error path, rubric reasoning, etc.
 """
 
 from __future__ import annotations
 
-import asyncio
 import importlib
 import inspect
 import json
@@ -55,8 +58,7 @@ from collections.abc import Awaitable, Callable
 
 import jsonschema
 
-from zicato.aux_timeout import aux_call_timeout_s
-from zicato.core.types import Expectation, ExpectationResult, RunResult
+from zicato.core.types import Expectation, ExpectationKind, ExpectationResult, RunResult
 
 
 def _import_dotted(path: str) -> object:
@@ -78,13 +80,13 @@ async def _eval_predicate(expectation: Expectation, result: RunResult) -> Expect
         fn = _import_dotted(expectation.spec)
     except (ImportError, ValueError) as exc:
         return ExpectationResult(
-            kind="predicate",
+            kind=ExpectationKind.PREDICATE,
             passed=False,
             detail=f"predicate import failed: {exc}",
         )
     if not callable(fn):
         return ExpectationResult(
-            kind="predicate",
+            kind=ExpectationKind.PREDICATE,
             passed=False,
             detail=f"predicate {expectation.spec!r} is not callable",
         )
@@ -96,20 +98,20 @@ async def _eval_predicate(expectation: Expectation, result: RunResult) -> Expect
             outcome = maybe_awaitable
     except Exception as exc:  # noqa: BLE001 — surface to caller as detail
         return ExpectationResult(
-            kind="predicate",
+            kind=ExpectationKind.PREDICATE,
             passed=False,
             detail=f"predicate raised: {type(exc).__name__}: {exc}",
         )
     if not isinstance(outcome, bool):
         return ExpectationResult(
-            kind="predicate",
+            kind=ExpectationKind.PREDICATE,
             passed=False,
             detail=(
                 f"predicate {expectation.spec!r} returned {type(outcome).__name__}, expected bool"
             ),
         )
     return ExpectationResult(
-        kind="predicate",
+        kind=ExpectationKind.PREDICATE,
         passed=outcome,
         detail="" if outcome else "predicate returned False",
     )
@@ -119,13 +121,13 @@ def _eval_expected_text(expectation: Expectation, result: RunResult) -> Expectat
     spec = expectation.spec
     if spec == "":
         return ExpectationResult(
-            kind="expected_text",
+            kind=ExpectationKind.EXPECTED_TEXT,
             passed=False,
             detail="expected_text spec is empty",
         )
     passed = spec in result.final_output
     detail = "" if passed else f"expected substring {spec!r} not found in final_output"
-    return ExpectationResult(kind="expected_text", passed=passed, detail=detail)
+    return ExpectationResult(kind=ExpectationKind.EXPECTED_TEXT, passed=passed, detail=detail)
 
 
 def _eval_regex(expectation: Expectation, result: RunResult) -> ExpectationResult:
@@ -133,19 +135,19 @@ def _eval_regex(expectation: Expectation, result: RunResult) -> ExpectationResul
         pattern = re.compile(expectation.spec, re.DOTALL)
     except re.error as exc:
         return ExpectationResult(
-            kind="regex",
+            kind=ExpectationKind.REGEX,
             passed=False,
             detail=f"invalid regex {expectation.spec!r}: {exc}",
         )
     match = pattern.search(result.final_output)
     if match is None:
         return ExpectationResult(
-            kind="regex",
+            kind=ExpectationKind.REGEX,
             passed=False,
             detail=f"regex {expectation.spec!r} did not match final_output",
         )
     return ExpectationResult(
-        kind="regex",
+        kind=ExpectationKind.REGEX,
         passed=True,
         detail=f"matched at [{match.start()}:{match.end()}]",
     )
@@ -159,7 +161,7 @@ def _eval_json_schema(expectation: Expectation, result: RunResult) -> Expectatio
         schema = json.loads(expectation.spec)
     except json.JSONDecodeError as exc:
         return ExpectationResult(
-            kind="json_schema",
+            kind=ExpectationKind.JSON_SCHEMA,
             passed=False,
             detail=f"schema spec is not valid JSON: {exc.msg}",
         )
@@ -167,7 +169,7 @@ def _eval_json_schema(expectation: Expectation, result: RunResult) -> Expectatio
         payload = json.loads(result.final_output)
     except json.JSONDecodeError as exc:
         return ExpectationResult(
-            kind="json_schema",
+            kind=ExpectationKind.JSON_SCHEMA,
             passed=False,
             detail=f"final_output is not valid JSON: {exc.msg}",
         )
@@ -176,124 +178,34 @@ def _eval_json_schema(expectation: Expectation, result: RunResult) -> Expectatio
     except jsonschema.ValidationError as exc:
         path = "/".join(str(p) for p in exc.absolute_path) or "<root>"
         return ExpectationResult(
-            kind="json_schema",
+            kind=ExpectationKind.JSON_SCHEMA,
             passed=False,
             detail=f"schema validation failed at {path}: {exc.message}",
         )
     except jsonschema.SchemaError as exc:
         return ExpectationResult(
-            kind="json_schema",
+            kind=ExpectationKind.JSON_SCHEMA,
             passed=False,
             detail=f"schema is itself invalid: {exc.message}",
         )
-    return ExpectationResult(kind="json_schema", passed=True, detail="")
+    return ExpectationResult(kind=ExpectationKind.JSON_SCHEMA, passed=True, detail="")
 
 
-async def _eval_judge(
+async def _eval_rubric(
     expectation: Expectation,
     result: RunResult,
     aux_call_llm: Callable[[str, str, str], Awaitable[str]] | None,
 ) -> ExpectationResult:
-    if aux_call_llm is None:
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail="judge expectation requires aux_call_llm but none was provided",
-        )
-    try:
-        prompt_factory = _import_dotted(expectation.spec)
-    except (ImportError, ValueError) as exc:
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail=f"judge prompt factory import failed: {exc}",
-        )
-    if not callable(prompt_factory):
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail=f"judge spec {expectation.spec!r} is not callable",
-        )
-    try:
-        prompts = prompt_factory()
-        if inspect.isawaitable(prompts):
-            prompts = await prompts
-    except Exception as exc:  # noqa: BLE001
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail=f"judge prompt factory raised: {type(exc).__name__}: {exc}",
-        )
-    if not isinstance(prompts, dict):
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail=(
-                f"judge prompt factory returned {type(prompts).__name__}, "
-                "expected dict with 'system' and 'user_template'"
-            ),
-        )
-    system = prompts.get("system")
-    user_template = prompts.get("user_template")
-    if not isinstance(system, str) or not isinstance(user_template, str):
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail="judge prompt factory must return {'system': str, 'user_template': str}",
-        )
-    try:
-        user = user_template.format(result=result)
-    except (KeyError, IndexError) as exc:
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail=f"judge user_template format failed: {exc}",
-        )
-    try:
-        # Model name is opaque to zicato; the aux callable interprets
-        # it. We pass an empty string to keep this dispatcher
-        # model-agnostic; configuration of which model the judge runs
-        # against lives on the aux callable.
-        raw = await asyncio.wait_for(aux_call_llm(system, user, ""), timeout=aux_call_timeout_s())
-    except TimeoutError:
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail="judge_timeout",
-        )
-    except Exception as exc:  # noqa: BLE001
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail=f"aux_call_llm raised: {type(exc).__name__}: {exc}",
-        )
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail=f"judge response is not valid JSON: {exc.msg}",
-        )
-    if not isinstance(parsed, dict) or "pass" not in parsed:
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail="judge response must be {'pass': bool, 'reason': str}",
-        )
-    passed_value = parsed.get("pass")
-    reason = parsed.get("reason", "")
-    if not isinstance(passed_value, bool):
-        return ExpectationResult(
-            kind="judge",
-            passed=False,
-            detail=f"judge 'pass' field is {type(passed_value).__name__}, expected bool",
-        )
-    return ExpectationResult(
-        kind="judge",
-        passed=passed_value,
-        detail=str(reason) if reason else "",
-    )
+    """Dispatch the :attr:`~zicato.core.ExpectationKind.RUBRIC` kind.
+
+    Thin forwarder to :func:`zicato.board.rubric.evaluate_rubric_judge`.
+    The local import keeps this module decoupled from the rubric module's
+    prompt strings — anyone hot-swapping the rubric judge implementation
+    only edits :mod:`zicato.board.rubric`.
+    """
+    from zicato.board.rubric import evaluate_rubric_judge  # noqa: PLC0415
+
+    return await evaluate_rubric_judge(expectation, result, aux_call_llm)
 
 
 async def evaluate_expectation(
@@ -306,16 +218,17 @@ async def evaluate_expectation(
     Parameters
     ----------
     expectation:
-        The matcher to evaluate.
+        The OUTCOME matcher to evaluate.
     result:
         The run result the matcher fires against. For multi-turn
         entries, the caller is responsible for selecting which slice of
         the transcript to pass in :attr:`RunResult.final_output`.
     aux_call_llm:
-        Required for ``"judge"`` expectations; ignored for the rest.
-        Must be the auxiliary callable from
-        :class:`~zicato.core.RuntimeConfig` (the harness callable would
-        invite collusion — the workspace helper enforces distinctness).
+        Required for :attr:`~zicato.core.ExpectationKind.RUBRIC`
+        expectations; ignored for the rest. Must be the auxiliary
+        callable from :class:`~zicato.core.RuntimeConfig` (the harness
+        callable would invite collusion — the workspace helper enforces
+        distinctness).
 
     Returns
     -------
@@ -325,25 +238,27 @@ async def evaluate_expectation(
         captures them in :attr:`ExpectationResult.detail` and flags
         ``passed=False`` so the reducer can record the failure shape
         rather than crashing the run.
-    """
-    if expectation.kind == "predicate":
-        return await _eval_predicate(expectation, result)
-    if expectation.kind == "expected_text":
-        return _eval_expected_text(expectation, result)
-    if expectation.kind == "regex":
-        return _eval_regex(expectation, result)
-    if expectation.kind == "json_schema":
-        return _eval_json_schema(expectation, result)
-    if expectation.kind == "judge":
-        return await _eval_judge(expectation, result, aux_call_llm)
-    if expectation.kind == "rubric":
-        # Local import keeps the matchers module decoupled from the
-        # rubric module's prompt strings — anyone hot-swapping the
-        # rubric judge implementation only edits :mod:`zicato.board.rubric`.
-        from zicato.board.rubric import evaluate_rubric_judge  # noqa: PLC0415
 
-        return await evaluate_rubric_judge(expectation, result, aux_call_llm)
-    # Literal-typed; belt-and-braces for forward compatibility.
+    Raises
+    ------
+    ValueError
+        If ``expectation.kind`` is not a recognised
+        :class:`~zicato.core.ExpectationKind`.
+    """
+    # ``ExpectationKind`` subclasses ``str``; coerce so a producer that
+    # passed the bare wire token still dispatches correctly.
+    kind = ExpectationKind(expectation.kind)
+    if kind is ExpectationKind.PREDICATE:
+        return await _eval_predicate(expectation, result)
+    if kind is ExpectationKind.EXPECTED_TEXT:
+        return _eval_expected_text(expectation, result)
+    if kind is ExpectationKind.REGEX:
+        return _eval_regex(expectation, result)
+    if kind is ExpectationKind.JSON_SCHEMA:
+        return _eval_json_schema(expectation, result)
+    if kind is ExpectationKind.RUBRIC:
+        return await _eval_rubric(expectation, result, aux_call_llm)
+    # Enum-typed; belt-and-braces for forward compatibility.
     raise ValueError(f"unknown expectation kind {expectation.kind!r}")
 
 

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from zicato.board.matchers import evaluate_expectation
-from zicato.core.types import Expectation, RunResult
+from zicato.core.types import Expectation, ExpectationKind, RunResult
 
 
 def _result(final_output: str = "", transcript: tuple[str, ...] | None = None) -> RunResult:
@@ -266,112 +266,60 @@ async def test_json_schema_invalid_schema_fails() -> None:
 
 
 # ---------------------------------------------------------------------------
-# judge
+# rubric — dispatch only (the rubric matcher itself is covered by
+# test_board_rubric_judge.py)
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def judge_module() -> str:
-    """Synthetic module exposing a judge-prompt factory."""
-    module_name = "zicato_test_judges_synthetic"
-
-    def prompt_factory() -> dict[str, str]:
-        return {
-            "system": "You judge transcripts.",
-            "user_template": "Did the agent answer? final={result.final_output}",
-        }
-
-    def bad_factory() -> dict[str, str]:
-        return {"system": "x"}  # missing user_template
-
-    _install_predicate_module(
-        module_name,
-        {
-            "good": prompt_factory,
-            "bad": bad_factory,
-            "not_callable": "x",
-        },
-    )
-    yield module_name
-    sys.modules.pop(module_name, None)
-
-
-async def test_judge_passes_with_canned_response(judge_module: str) -> None:
-    captured: dict[str, str] = {}
+async def test_rubric_kind_dispatches_to_rubric_judge() -> None:
+    """The dispatcher routes ``ExpectationKind.RUBRIC`` to the rubric judge."""
 
     async def aux(system: str, user: str, model: str) -> str:
-        captured["system"] = system
-        captured["user"] = user
-        captured["model"] = model
-        return json.dumps({"pass": True, "reason": "agent answered crisply"})
+        return json.dumps({"score": 9.0, "dimensions": {}, "reasoning": "good"})
 
     res = await evaluate_expectation(
-        Expectation(kind="judge", spec=f"{judge_module}.good"),
-        _result("yes, answered"),
+        Expectation(kind=ExpectationKind.RUBRIC, spec=json.dumps({"rubric": "clarity"})),
+        _result("ok"),
         aux_call_llm=aux,
     )
+    assert res.kind == ExpectationKind.RUBRIC
     assert res.passed is True
-    assert res.detail == "agent answered crisply"
-    assert "yes, answered" in captured["user"]
-    assert captured["system"] == "You judge transcripts."
 
 
-async def test_judge_fails_with_canned_response(judge_module: str) -> None:
-    async def aux(system: str, user: str, model: str) -> str:
-        return json.dumps({"pass": False, "reason": "agent dodged the question"})
-
+async def test_rubric_kind_without_aux_fails() -> None:
+    """A rubric expectation with no aux callable fails cleanly, not crashes."""
     res = await evaluate_expectation(
-        Expectation(kind="judge", spec=f"{judge_module}.good"),
-        _result("hmm"),
-        aux_call_llm=aux,
-    )
-    assert res.passed is False
-    assert "dodged" in res.detail
-
-
-async def test_judge_without_aux_callable_fails(judge_module: str) -> None:
-    res = await evaluate_expectation(
-        Expectation(kind="judge", spec=f"{judge_module}.good"),
-        _result("hmm"),
+        Expectation(kind=ExpectationKind.RUBRIC, spec=json.dumps({"rubric": "x"})),
+        _result("ok"),
         aux_call_llm=None,
     )
     assert res.passed is False
     assert "aux_call_llm" in res.detail
 
 
-async def test_judge_bad_factory_shape_fails(judge_module: str) -> None:
-    async def aux(system: str, user: str, model: str) -> str:
-        return json.dumps({"pass": True, "reason": "x"})
+# ---------------------------------------------------------------------------
+# Enum dispatch / unknown kind
+# ---------------------------------------------------------------------------
 
+
+async def test_dispatch_accepts_bare_string_kind() -> None:
+    """A producer that stored the bare wire token still dispatches.
+
+    ``ExpectationKind`` subclasses ``str``, so ``Expectation(kind="regex")``
+    holds the raw token; the dispatcher coerces it to the enum member.
+    """
     res = await evaluate_expectation(
-        Expectation(kind="judge", spec=f"{judge_module}.bad"),
-        _result("x"),
-        aux_call_llm=aux,
+        Expectation(kind="regex", spec=r"\d+"),  # type: ignore[arg-type]
+        _result("answer 42"),
     )
-    assert res.passed is False
-    assert "user_template" in res.detail
+    assert res.passed is True
+    assert res.kind == ExpectationKind.REGEX
 
 
-async def test_judge_non_json_response_fails(judge_module: str) -> None:
-    async def aux(system: str, user: str, model: str) -> str:
-        return "not json"
-
-    res = await evaluate_expectation(
-        Expectation(kind="judge", spec=f"{judge_module}.good"),
-        _result("x"),
-        aux_call_llm=aux,
-    )
-    assert res.passed is False
-    assert "JSON" in res.detail
-
-
-async def test_judge_missing_pass_field_fails(judge_module: str) -> None:
-    async def aux(system: str, user: str, model: str) -> str:
-        return json.dumps({"reason": "no decision"})
-
-    res = await evaluate_expectation(
-        Expectation(kind="judge", spec=f"{judge_module}.good"),
-        _result("x"),
-        aux_call_llm=aux,
-    )
-    assert res.passed is False
+async def test_dispatch_rejects_unknown_kind() -> None:
+    """An expectation kind outside the enum raises ``ValueError``."""
+    with pytest.raises(ValueError, match="unknown expectation kind|not a valid"):
+        await evaluate_expectation(
+            Expectation(kind="definitely_not_a_kind", spec="x"),  # type: ignore[arg-type]
+            _result("x"),
+        )

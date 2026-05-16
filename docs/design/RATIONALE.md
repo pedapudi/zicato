@@ -52,9 +52,9 @@ discussion of why the single-file model was not adopted.
 average of historical scores. Patterns aggregate forever. No epochs.
 
 **Chosen.** Generations are grouped into epochs. Within an epoch the
-board, the rubric's `forbidden:` list, and the scoring weights are
-frozen. Pattern aggregates reset at epoch boundaries. Cross-epoch
-comparison is explicitly fuzzy. See
+board, the proposer brief's `## Forbidden` list, and the scoring
+weights are frozen. Pattern aggregates reset at epoch boundaries.
+Cross-epoch comparison is explicitly fuzzy. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md).
 
 **Why.** Without epochs, every operator decision contaminates the
@@ -253,7 +253,7 @@ needs.
 **Chosen.** Every board entry carries `wall_clock_budget_seconds`.
 Exceeded → run aborts and contributes a heavy loss term. See
 [BOARD-FORMAT.md §1.2](BOARD-FORMAT.md#12-wall_clock_budget_seconds)
-and [SCORING.md §2.2](SCORING.md#22-why-an-abort-is-a-heavy-constant).
+and [SCORING.md §2.3](SCORING.md#23-why-an-abort-is-a-heavy-constant).
 
 **Why.** Drift counts in a 30-second run vs a 4-minute run aren't
 apples-to-apples. The same generation against the same entry can
@@ -274,15 +274,21 @@ This is one of the highest-value single decisions in the loop — the
 shape that makes runs directly comparable in the face of latency
 variance.
 
-## 9. Why operator-edited rubric per epoch
+## 9. Why an operator-edited proposer brief per epoch
 
 **Alternative considered.** The proposer learns from past journal
 entries; no operator steering.
 
-**Chosen.** Each epoch carries a `rubric.md` the operator hand-edits.
-The proposer reads it verbatim into its system prompt each round.
-Read fresh every round; no caching. See
-[EPOCHS-AND-JOURNALING.md §7](EPOCHS-AND-JOURNALING.md#7-the-rubric).
+**Chosen.** Each epoch carries a `brief.md` the operator
+hand-edits. The proposer reads it verbatim into its system prompt
+each round. Read fresh every round; no caching. See
+[EPOCHS-AND-JOURNALING.md §7](EPOCHS-AND-JOURNALING.md#7-the-proposer-brief).
+
+(The proposer brief was once called the epoch "rubric". It is
+renamed so that "rubric" refers unambiguously to the per-entry
+`Rubric.score()` outcome check on a board entry — a distinct concept.
+The naming distinction matters: the proposer brief steers the
+*proposer* epoch-wide, a `Rubric` grades one *entry's output*.)
 
 **Why.** The proposer can read patterns and produce hypotheses, but
 it cannot read the operator's mind. Some things the operator knows
@@ -294,10 +300,10 @@ that the patterns don't:
   alone for now."
 - "Prefer terse, imperative prompts to verbose explanatory ones."
 
-These are operator-side context. Encoding them in a rubric the
+These are operator-side context. Encoding them in a brief the
 proposer reads gives the operator a steering wheel without writing
-code. The proposer reads the rubric, the proposer's hypothesis
-reflects the rubric, the journal records whether the proposer
+code. The proposer reads the brief, the proposer's hypothesis
+reflects the brief, the journal records whether the proposer
 followed it.
 
 The `## Forbidden` section is mechanically enforced (V5 in
@@ -307,8 +313,8 @@ mechanics handle the "you must not touch this" case; advisory
 prose handles the "I'd rather you focused on that" case.
 
 Reading fresh every round (no caching) means the operator can edit
-the rubric between rounds and see the effect immediately. Caching
-would create a stale-rubric bug class; the cost of re-reading a
+the brief between rounds and see the effect immediately. Caching
+would create a stale-brief bug class; the cost of re-reading a
 small markdown file is zero.
 
 ## 10. Why we did not lift the "one editable file" model

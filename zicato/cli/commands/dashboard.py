@@ -1,14 +1,13 @@
 """``zicato dashboard`` — serve the workspace dashboard over HTTP.
 
-Standalone command file picked up by :mod:`zicato.cli.discovery`.
+ADVANCED — off the happy path. ``zicato evolve`` auto-spawns the
+dashboard for the lifetime of a loop and prints its URL. ``zicato
+dashboard`` is the standalone counterpart: it runs the same Python
+dashboard service against an *existing* workspace — for post-mortem
+inspection of a completed epoch, or read-only viewing of a run some
+other process is driving.
 
-This command runs the Python dashboard service against an *existing*
-workspace, for post-mortem inspection of a completed epoch or for
-read-only viewing of a run that some other process is driving. It is
-the standalone counterpart to the dashboard that ``zicato evolve``
-auto-spawns: ``evolve`` owns the dashboard for the lifetime of a loop,
-whereas ``zicato dashboard`` lets an operator point at any workspace at
-any time.
+Standalone command file picked up by :mod:`zicato.cli.discovery`.
 
 The dashboard service itself lives in :mod:`zicato.dashboard.server`
 and exposes two entry points::
@@ -59,7 +58,10 @@ def resolve_static_dir() -> Path:
     return here.parent.parent.parent.parent / "supervisor" / "static"
 
 
-@click.command(name="dashboard")
+@click.command(
+    name="dashboard",
+    short_help="Advanced: serve the dashboard for an existing workspace (evolve auto-spawns it).",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -100,8 +102,7 @@ def dashboard_cmd(workspace: str, host: str, port: int) -> None:
         from zicato.dashboard import server as dashboard_server  # noqa: PLC0415
     except ImportError as exc:  # pragma: no cover - depends on parallel work
         raise click.ClickException(
-            "the dashboard service (zicato.dashboard.server) is not "
-            f"available in this build: {exc}"
+            f"the dashboard service (zicato.dashboard.server) is not available in this build: {exc}"
         ) from exc
 
     click.echo(f"Dashboard: http://{host}:{port}")

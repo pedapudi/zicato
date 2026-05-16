@@ -60,7 +60,7 @@ def test_make_expectation_default() -> None:
     assert isinstance(e, Expectation)
     assert e.kind == "expected_text"
     assert e.spec == "ok"
-    assert e.fires_on == "final_output"
+    assert e.reads == "final_output"
 
 
 def test_make_user_persona_default() -> None:
