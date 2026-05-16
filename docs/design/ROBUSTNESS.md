@@ -92,6 +92,57 @@ L1 is the **cheapest** defense; everything inside zicato uses it.
 But it's also the **weakest**: an L1-only defense is a
 "cooperative termination only" guarantee. Production needs more.
 
+#### Layered wall-clock budgets
+
+L1 budgets are applied at two nested granularities, and **both
+apply at once** — the inner ceiling does not replace the outer one.
+
+* **Per-entry budget.** Each `BoardEntry` carries its own
+  `wall_clock_budget_seconds`. The runner wraps that single entry's
+  run in `asyncio.wait_for(..., timeout=entry.wall_clock_budget_seconds)`;
+  a run that overruns is aborted and scored worst-case
+  (`abort_reason="wall_clock_budget"`). This bounds *one* run.
+
+* **Per-evolve total budget.** `evolve_n_rounds` accepts an optional
+  `max_wall_clock_seconds` ceiling on the *whole* `zicato evolve`
+  invocation (`None` — the default — leaves the loop unbounded). It
+  bounds the *aggregate*: an invocation of N entries × M rounds could
+  otherwise run for an unbounded total even though every individual
+  run respected its per-entry budget. The orchestrator records a
+  monotonic start time and enforces the ceiling two ways:
+
+  - **Between rounds** — before starting the next round, if the
+    elapsed time has reached the budget the loop stops cleanly and
+    returns the rounds gathered so far (same shape as the
+    consecutive-reject circuit breaker).
+  - **Within a round** — each round's work is wrapped in
+    `asyncio.wait_for` with a timeout of the *remaining* budget, so a
+    single long round cannot blow the total. A round cancelled this
+    way is recorded as an aborted round (a synthetic
+    `EvolveRoundOutcome` with a `wall_clock_budget` rejection reason)
+    and the loop stops.
+
+  ```python
+  # in zicato.orchestrator.evolve_n_rounds
+  remaining = max_wall_clock_seconds - (time.monotonic() - budget_start)
+  try:
+      outcome = await asyncio.wait_for(_run_round(), timeout=remaining)
+  except asyncio.TimeoutError:
+      # finishing this round would overrun the total budget
+      outcome = _budget_aborted_outcome(parent_id, max_wall_clock_seconds)
+  ```
+
+**The blocking-call caveat applies to both.** Both budgets are L1
+`asyncio.wait_for` guards: they pre-empt only *cooperative* async
+work. A run — or a round — wedged in a blocking call, a CPU-bound
+loop, or a GIL-holding C extension is **not** hard-killed by either
+budget; the `wait_for` timeout fires inside the event loop but the
+underlying work keeps going (see §2.3). A true hard-kill of an
+uncooperative inner harness needs the L3 subprocess-worker boundary.
+The per-evolve budget therefore *bounds the cooperative case* and is
+honest about not bounding the adversarial one — exactly the contract
+the per-entry budget already makes.
+
 ### 2.2 L2 — structured cancellation
 
 When `asyncio.wait_for` fires, it raises `CancelledError` in the
@@ -584,6 +635,9 @@ What lands:
 - Structured cancellation cleanup in the runner and the
   per-entry adapter calls.
 - The consecutive-reject counter in `evolve` (`--stop-on-no-improvement`).
+- The per-evolve total wall-clock budget
+  (`evolve --max-wall-clock-seconds`), an L1 ceiling on the whole
+  invocation layered on top of each entry's per-entry budget.
 - Atomic writes for `experiment.json` and `gen_score.json` (the
   files that, if corrupted, would break the journal).
 

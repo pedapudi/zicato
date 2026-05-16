@@ -3,6 +3,20 @@
 All notable changes to zicato are recorded here. Format roughly follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Robustness
+- `zicato evolve --max-wall-clock-seconds <S>` — a total wall-clock
+  budget for the whole evolve invocation. Previously only individual
+  board entries had a `wall_clock_budget_seconds`; an N-entry × M-round
+  invocation had no aggregate ceiling. The budget is enforced between
+  rounds (the loop stops cleanly once it is spent) and within a round
+  (a round that would overrun it is cancelled via `asyncio.wait_for`
+  and recorded as an aborted round). It applies on top of — not
+  instead of — each entry's per-entry budget. Also reads the
+  `ZICATO_MAX_WALL_CLOCK_SECONDS` environment variable. When the loop
+  stops on this budget, the `evolve` summary says so explicitly.
+
 ## [0.3.0] — 2026-05-15
 
 Observability + analytics release. zicato grows a real dashboard, a
