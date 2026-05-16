@@ -317,7 +317,11 @@ const state = new AppState();
 // fragment form (#/generation/<id>, #/entry/<id>, #/run/<id>) handled
 // separately by applyRoute().
 
-const VIEWS = ['overview', 'tree', 'tournament', 'epoch'];
+// `conversation` is a focused view — it has a `view-conversation`
+// container so the toggle machinery shows/hides it, but no nav-rail
+// tab. It is entered by drilling from a Tournament-view board card
+// (#conversation/{entry_id}) and has its own back link.
+const VIEWS = ['overview', 'tree', 'tournament', 'epoch', 'conversation'];
 const DEFAULT_VIEW = 'overview';
 let currentView = DEFAULT_VIEW;
 
@@ -3080,6 +3084,19 @@ function applyRoute() {
 
   if (segs.length === 0) {
     view = DEFAULT_VIEW;
+  } else if (segs[0] === 'conversation') {
+    // Focused Conversation view — #conversation/{entry_id}. The entry id
+    // follows the view segment directly (no kind segment). Board cards
+    // in the Tournament view link here.
+    view = 'conversation';
+    const entryId = segs.length >= 2
+      ? decodeURIComponent(segs.slice(1).join('/'))
+      : null;
+    if (view !== currentView) showView(view);
+    else showViewClassesOnly(view);
+    applyDrill(null, null);
+    selectConversation(entryId);
+    return;
   } else if (VIEWS.includes(segs[0])) {
     view = segs[0];
     if (segs.length >= 3) {
@@ -3316,6 +3333,495 @@ function applyDrill(kind, id) {
   }
 }
 
+// ===================================================================
+// --- Conversation view — side-by-side champion / challenger transcripts
+//
+// A focused view reached at #conversation/{entry_id}. It shows a board
+// entry's champion run and challenger run transcripts in two columns,
+// live: the transcript is fetched on entry and re-fetched on every
+// render tick while a run is still in progress, so the columns grow as
+// the runs execute. renderAll() runs on each SSE state_change, so the
+// view re-paints — and re-polls — without touching the SSE machinery.
+//
+// Data contract — GET /api/matchup/{entry_id}/conversations:
+//   { champion:   { run_id, generation_id, transcript },
+//     challenger: { run_id, generation_id, transcript } }
+// A `transcript` is { run_id, event_count, complete:bool,
+//   turns:[{ seq, ts, agent, role, kind, text, tool_calls[],
+//            tool_results[] }],
+//   annotations:[{ kind, ts, summary, anchor_seq, detail }] }.
+// The endpoint does not exist on every server build; an absent /
+// failing endpoint degrades to a clear "data unavailable" state.
+//
+// This whole section is self-contained: its state lives in the
+// module-level vars below rather than on AppState, and it drives its
+// own live re-fetch from renderConversationView — so it touches no
+// shared rendering or fetch code outside this block.
+
+// --- Conversation-view module state.
+let convEntryId = null;       // board entry whose diff is open, or null
+let convData = null;          // last { champion, challenger } payload
+let convError = false;        // endpoint absent / failed → degrade
+let convInFlight = false;     // a fetch is currently in the air
+let convLastFetch = 0;        // epoch-ms of the last fetch (poll throttle)
+
+// Minimum gap between live re-fetches while a run is in progress.
+const CONV_POLL_MS = 2500;
+
+// Enter the Conversation view for a board entry. Sets the selected
+// entry, paints immediately (so the header / loading state shows), then
+// kicks off the fetch. applyRoute() calls this on every renderAll(), so
+// it only (re-)fetches when the entry actually changed or nothing has
+// loaded yet — the render-driven poll handles the live growth.
+function selectConversation(entryId) {
+  if (!entryId) {
+    convEntryId = null;
+    convData = null;
+    convError = false;
+    renderConversationView();
+    return;
+  }
+  const changed = convEntryId !== entryId;
+  if (changed) {
+    // A different entry — drop the stale transcript so the loading
+    // state shows rather than the previous entry's columns.
+    convData = null;
+    convError = false;
+    convLastFetch = 0;
+  }
+  convEntryId = entryId;
+  renderConversationView();
+  if (changed || (convData == null && !convError)) {
+    loadConversation();
+  }
+}
+
+// GET /api/matchup/{entry_id}/conversations. Tolerant: an absent or
+// failing endpoint sets `convError` so the view degrades to a clear
+// "conversation data unavailable" message rather than crashing. In
+// mock mode the data is synthesised locally.
+async function loadConversation() {
+  const entryId = convEntryId;
+  if (!entryId || convInFlight) return;
+  convLastFetch = Date.now();
+  if (state.mock) {
+    convData = mockConversation(entryId);
+    convError = false;
+    if (currentView === 'conversation') renderConversationView();
+    return;
+  }
+  convInFlight = true;
+  try {
+    const data = await fetchJson(
+      '/api/matchup/' + encodeURIComponent(entryId) + '/conversations');
+    // Guard against the entry changing mid-flight (the operator drilled
+    // to a different entry while this request was in the air).
+    if (convEntryId !== entryId) return;
+    convData = (data && typeof data === 'object') ? data : null;
+    convError = !convData;
+  } catch (err) {
+    if (convEntryId !== entryId) return;
+    // Endpoint absent (404 on this branch) or transient — degrade.
+    convData = null;
+    convError = true;
+  } finally {
+    convInFlight = false;
+  }
+  if (currentView === 'conversation') renderConversationView();
+}
+
+// True while either side's transcript is still being produced.
+function convInProgress(conv) {
+  if (!conv) return false;
+  for (const side of [conv.champion, conv.challenger]) {
+    const t = side && side.transcript;
+    if (t && t.complete === false) return true;
+  }
+  return false;
+}
+
+// One side's transcript shape — defensive: fields may be absent on a
+// partial / in-progress record.
+function transcriptTurns(side) {
+  const t = side && side.transcript;
+  return (t && Array.isArray(t.turns)) ? t.turns : [];
+}
+function transcriptAnnotations(side) {
+  const t = side && side.transcript;
+  return (t && Array.isArray(t.annotations)) ? t.annotations : [];
+}
+
+// Render the Conversation view: a header, then two transcript columns.
+// While a run is still in progress this also schedules the next live
+// re-fetch — renderConversationView is reached on every SSE-driven
+// renderAll(), so this is the view's live loop.
+function renderConversationView() {
+  const wrap = $('conversation-panel');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const entryId = convEntryId;
+
+  // The back link always returns to the Tournament view — the
+  // Conversation view is only ever entered by drilling from there.
+  const backLink = el('a', {
+    class: 'conversation-back',
+    href: '#/tournament',
+  }, ['← back to tournament']);
+
+  if (!entryId) {
+    wrap.appendChild(backLink);
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'No board entry selected. Drill into a board card from the ' +
+      'Tournament view to see its conversation diff.',
+    ]));
+    return;
+  }
+
+  const conv = convData;
+  const champion = conv && conv.champion;
+  const challenger = conv && conv.challenger;
+
+  // --- Header: entry id, champion gen vs challenger gen.
+  const champGen = (champion && champion.generation_id) || '—';
+  const chalGen = (challenger && challenger.generation_id) || '—';
+  const header = el('div', { class: 'conversation-header' }, [
+    backLink,
+    el('h2', { class: 'conversation-title' }, [
+      'Conversation diff ',
+      el('code', { class: 'mono' }, [entryId]),
+    ]),
+    el('div', { class: 'conversation-versus' }, [
+      el('span', { class: 'conversation-side-tag champion' }, [
+        'champion ', el('code', { class: 'mono' }, [champGen]),
+      ]),
+      el('span', { class: 'conversation-vs' }, ['vs']),
+      el('span', { class: 'conversation-side-tag challenger' }, [
+        'challenger ', el('code', { class: 'mono' }, [chalGen]),
+      ]),
+    ]),
+  ]);
+  wrap.appendChild(header);
+
+  // --- Degraded states.
+  if (convError) {
+    wrap.appendChild(el('p', { class: 'empty conversation-unavailable' }, [
+      'Conversation data unavailable — the matchup transcript ' +
+      'endpoint did not respond. It may not be served by this ' +
+      'supervisor build, or the runs have not started.',
+    ]));
+    return;
+  }
+  if (!conv) {
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'Loading conversation…',
+    ]));
+    return;
+  }
+
+  // --- Two columns.
+  const cols = el('div', { class: 'conversation-columns' }, [
+    renderTranscriptColumn('champion', champion),
+    renderTranscriptColumn('challenger', challenger),
+  ]);
+  wrap.appendChild(cols);
+
+  // --- Live loop: while a run is still producing turns, schedule the
+  // next re-fetch. renderAll() (SSE-driven) re-enters this function and
+  // keeps the poll alive; the throttle keeps it from hammering when
+  // state_change ticks arrive fast.
+  if (!state.mock && convInProgress(conv)) {
+    const since = Date.now() - convLastFetch;
+    if (since >= CONV_POLL_MS) {
+      loadConversation();
+    } else {
+      setTimeout(() => {
+        if (currentView === 'conversation' && convEntryId === entryId
+            && convInProgress(convData)) {
+          loadConversation();
+        }
+      }, CONV_POLL_MS - since);
+    }
+  }
+}
+
+// Render one transcript column for a side ({ run_id, generation_id,
+// transcript }). The column header carries the run id and a live /
+// complete status; the body renders turns in seq order with annotations
+// hung as margin notes next to their anchored turn.
+function renderTranscriptColumn(sideKind, side) {
+  const col = el('div', { class: 'conversation-column ' + sideKind });
+
+  const transcript = side && side.transcript;
+  const runId = (side && side.run_id) || (transcript && transcript.run_id);
+
+  // Column header — side label, run id, status badge.
+  const complete = !!(transcript && transcript.complete);
+  const hasTranscript = !!transcript;
+  const statusBadge = !hasTranscript
+    ? el('span', { class: 'badge pending' }, ['no run'])
+    : complete
+      ? el('span', { class: 'badge promoted' }, ['complete'])
+      : el('span', { class: 'badge running conversation-live' }, [
+          el('span', { class: 'conversation-live-dot', 'aria-hidden': 'true' },
+            ['●']),
+          'in progress',
+        ]);
+  const head = el('div', { class: 'conversation-column-head' }, [
+    el('span', { class: 'conversation-column-label' }, [sideKind]),
+    el('code', { class: 'mono conversation-run-id' }, [runId || '—']),
+    statusBadge,
+  ]);
+  if (transcript && transcript.event_count != null) {
+    head.appendChild(el('span', { class: 'meta conversation-event-count' }, [
+      transcript.event_count + ' events',
+    ]));
+  }
+  col.appendChild(head);
+
+  const body = el('div', { class: 'conversation-column-body' });
+
+  if (!hasTranscript) {
+    body.appendChild(el('p', { class: 'empty' }, [
+      'No transcript for this side — the run has not started.',
+    ]));
+    col.appendChild(body);
+    return col;
+  }
+
+  const turns = transcriptTurns(side);
+  const annotations = transcriptAnnotations(side);
+
+  // Index annotations by the seq of the turn they anchor to.
+  const annoBySeq = new Map();
+  for (const a of annotations) {
+    const key = a && a.anchor_seq;
+    if (key == null) continue;
+    if (!annoBySeq.has(key)) annoBySeq.set(key, []);
+    annoBySeq.get(key).push(a);
+  }
+
+  if (turns.length === 0 && !complete) {
+    body.appendChild(el('p', { class: 'empty' }, [
+      'Waiting for the first turn…',
+    ]));
+  } else if (turns.length === 0) {
+    body.appendChild(el('p', { class: 'empty' }, [
+      'This run produced no transcript turns.',
+    ]));
+  }
+
+  for (const turn of turns) {
+    body.appendChild(renderTurn(turn, annoBySeq.get(turn && turn.seq)));
+  }
+
+  // A trailing live cue while the run is still executing.
+  if (!complete) {
+    body.appendChild(el('div', { class: 'conversation-tail-live' }, [
+      el('span', { class: 'conversation-live-dot', 'aria-hidden': 'true' },
+        ['●']),
+      'run in progress — more turns will stream in',
+    ]));
+  }
+
+  col.appendChild(body);
+  return col;
+}
+
+// Render a single transcript turn. `seq` is set as a data attribute so
+// the two columns can be aligned by seq. `annos` are the annotations
+// anchored to this turn, hung as margin notes.
+function renderTurn(turn, annos) {
+  const seq = turn && turn.seq;
+  const node = el('div', {
+    class: 'conversation-turn',
+    dataset: { seq: seq == null ? '' : String(seq) },
+  });
+
+  // Turn meta line — agent / role / kind, plus seq + timestamp.
+  const meta = el('div', { class: 'conversation-turn-meta' });
+  if (turn && turn.agent) {
+    meta.appendChild(el('span', { class: 'conversation-turn-agent' },
+      [String(turn.agent)]));
+  }
+  if (turn && turn.role) {
+    meta.appendChild(el('span', { class: 'conversation-turn-role' },
+      [String(turn.role)]));
+  }
+  if (turn && turn.kind) {
+    meta.appendChild(el('span', {
+      class: 'conversation-turn-kind kind-' + String(turn.kind),
+    }, [String(turn.kind)]));
+  }
+  if (seq != null) {
+    meta.appendChild(el('span', { class: 'meta mono conversation-turn-seq' },
+      ['#' + seq]));
+  }
+  if (turn && turn.ts) {
+    meta.appendChild(el('span', { class: 'meta conversation-turn-ts' },
+      [String(turn.ts)]));
+  }
+  node.appendChild(meta);
+
+  // Turn text.
+  if (turn && turn.text) {
+    node.appendChild(el('div', { class: 'conversation-turn-text' },
+      [String(turn.text)]));
+  }
+
+  // Tool calls — compact.
+  const calls = (turn && Array.isArray(turn.tool_calls)) ? turn.tool_calls : [];
+  for (const c of calls) {
+    const argStr = (c && c.args != null)
+      ? (typeof c.args === 'string' ? c.args : JSON.stringify(c.args))
+      : '';
+    node.appendChild(el('div', { class: 'conversation-tool tool-call' }, [
+      el('span', { class: 'conversation-tool-glyph', 'aria-hidden': 'true' },
+        ['→']),
+      el('span', { class: 'conversation-tool-name mono' },
+        [(c && c.name) || 'tool']),
+      argStr
+        ? el('code', { class: 'mono conversation-tool-args' },
+            [truncate(argStr, 160)])
+        : null,
+    ]));
+  }
+
+  // Tool results — compact.
+  const results = (turn && Array.isArray(turn.tool_results))
+    ? turn.tool_results : [];
+  for (const r of results) {
+    const resStr = (r && r.result != null)
+      ? (typeof r.result === 'string' ? r.result : JSON.stringify(r.result))
+      : '';
+    node.appendChild(el('div', { class: 'conversation-tool tool-result' }, [
+      el('span', { class: 'conversation-tool-glyph', 'aria-hidden': 'true' },
+        ['←']),
+      el('span', { class: 'conversation-tool-name mono' },
+        [(r && r.name) || 'result']),
+      resStr
+        ? el('code', { class: 'mono conversation-tool-args' },
+            [truncate(resStr, 160)])
+        : null,
+    ]));
+  }
+
+  // Margin notes — annotations anchored to this turn. drift / steering /
+  // judge / plan are visually distinct (drift carries a warning color).
+  if (annos && annos.length > 0) {
+    const notes = el('div', { class: 'conversation-margin' });
+    for (const a of annos) {
+      const kind = (a && a.kind) || 'note';
+      const note = el('div', {
+        class: 'conversation-note note-' + kind,
+        title: (a && a.detail) || '',
+      });
+      note.appendChild(el('span', { class: 'conversation-note-kind' },
+        [kind]));
+      if (a && a.summary) {
+        note.appendChild(el('span', { class: 'conversation-note-summary' },
+          [String(a.summary)]));
+      }
+      if (a && a.detail) {
+        note.appendChild(el('span', { class: 'conversation-note-detail meta' },
+          [String(a.detail)]));
+      }
+      notes.appendChild(note);
+    }
+    node.appendChild(notes);
+  }
+
+  return node;
+}
+
+// Synthetic conversation data for ?mock=1 — keyed by board entry id,
+// with a sensible default so any entry previews. Exercises tool calls /
+// results, every annotation kind, an in-progress challenger run, and a
+// seq the two sides share so alignment is visible.
+function mockConversation(entryId) {
+  const championTranscript = {
+    run_id: 'v4--' + entryId,
+    event_count: 9,
+    complete: true,
+    turns: [
+      { seq: 1, ts: '04:35:01', agent: 'researcher', role: 'user',
+        kind: 'plan',
+        text: 'Extract the invoice total and due date from the attached PDF.' },
+      { seq: 2, ts: '04:35:03', agent: 'researcher', role: 'assistant',
+        kind: 'message',
+        text: 'I will read the document, then extract the two fields.',
+        tool_calls: [
+          { name: 'read_document', args: { path: 'invoice.pdf' },
+            task_id: 't1' },
+        ] },
+      { seq: 3, ts: '04:35:05', agent: 'researcher', role: 'tool',
+        kind: 'tool',
+        text: '',
+        tool_results: [
+          { name: 'read_document',
+            result: 'Invoice #4471 — total $1,240.00, due 2026-06-01.',
+            task_id: 't1' } ] },
+      { seq: 4, ts: '04:35:08', agent: 'researcher', role: 'assistant',
+        kind: 'message',
+        text: 'Total is $1,240.00 and the due date is 2026-06-01.' },
+    ],
+    annotations: [
+      { kind: 'plan', ts: '04:35:01', anchor_seq: 1,
+        summary: 'task plan registered',
+        detail: 'two-field extraction; predicate expectation.' },
+      { kind: 'judge', ts: '04:35:09', anchor_seq: 4,
+        summary: 'predicate passed',
+        detail: 'both fields match the expected contract.' },
+    ],
+  };
+  const challengerTranscript = {
+    run_id: 'v5--' + entryId,
+    event_count: 7,
+    complete: false,
+    turns: [
+      { seq: 1, ts: '04:36:00', agent: 'researcher', role: 'user',
+        kind: 'plan',
+        text: 'Extract the invoice total and due date from the attached PDF.' },
+      { seq: 2, ts: '04:36:02', agent: 'researcher', role: 'assistant',
+        kind: 'message',
+        text: 'Reading the document with the compressed tool description.',
+        tool_calls: [
+          { name: 'read_document', args: { path: 'invoice.pdf' },
+            task_id: 't1' } ] },
+      { seq: 3, ts: '04:36:04', agent: 'researcher', role: 'tool',
+        kind: 'tool',
+        text: '',
+        tool_results: [
+          { name: 'read_document',
+            result: 'Invoice #4471 — total $1,240.00, due 2026-06-01.',
+            task_id: 't1' } ] },
+      { seq: 4, ts: '04:36:07', agent: 'researcher', role: 'assistant',
+        kind: 'message',
+        text: 'The total appears to be $1,240 — still confirming the date.' },
+    ],
+    annotations: [
+      { kind: 'steering', ts: '04:36:03', anchor_seq: 2,
+        summary: 'steering nudge applied',
+        detail: 'reminded the agent to emit the date in ISO form.' },
+      { kind: 'drift', ts: '04:36:07', anchor_seq: 4,
+        summary: 'schema drift: total dropped its cents',
+        detail: 'emitted "$1,240" instead of the contract "$1,240.00".' },
+    ],
+  };
+  return {
+    champion: {
+      run_id: championTranscript.run_id,
+      generation_id: 'v4',
+      transcript: championTranscript,
+    },
+    challenger: {
+      run_id: challengerTranscript.run_id,
+      generation_id: 'v5',
+      transcript: challengerTranscript,
+    },
+  };
+}
+
 // --- View switching
 //
 // Only the active view's panels are in the DOM flow; switching views
@@ -3353,6 +3859,8 @@ function renderActiveView() {
     renderTournamentView();
   } else if (currentView === 'epoch') {
     renderEpochView();
+  } else if (currentView === 'conversation') {
+    renderConversationView();
   }
 }
 
