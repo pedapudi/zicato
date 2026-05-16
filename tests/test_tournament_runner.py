@@ -99,8 +99,9 @@ def _stub_run_single(
         config: RuntimeConfig,
         workspace_root: Path,
         epoch_id: str,
+        side: str,
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id
+        del adapter, weights, config, workspace_root, epoch_id, side
         call_log.append((generation.id, entry.id))
         return canned[(generation.id, entry.id)]
 
@@ -298,6 +299,103 @@ def test_run_tournament_rejects_two_callable_invariant(tmp_path: Path) -> None:
                 epoch_id="e0",
             )
         )
+
+
+def test_run_tournament_stamps_each_entry_on_the_correct_side(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An 8-row tournament ends with exactly 4 parent + 4 child rows, each
+    transitioned on its OWN side.
+
+    The runner threads ``side`` ("parent" / "child") into ``_run_single``
+    explicitly per generation. This stub mirrors what the real
+    ``_run_single`` does to the live ``ActiveTournament`` grid — a
+    ``running`` then ``completed`` transition keyed on
+    ``(entry_id, side)`` — so the test proves the runner passes the
+    correct side and the per-side rows never collide (the 6/2
+    mislabeling bug).
+    """
+    from zicato.runtime.state import read_active_tournament, update_tournament_entry
+
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+
+    # 4-entry board -> 8 tournament rows (4 parent + 4 child).
+    board = [
+        BoardEntry(
+            id=f"entry_{n}",
+            kind="single_turn",
+            wall_clock_budget_seconds=60,
+            input="x",
+        )
+        for n in range(4)
+    ]
+    canned = {
+        (gen, e.id): _loss(generation_id=gen, entry_id=e.id, drift_loss=1.0, pass_fail=True)
+        for gen in ("v0", "v1")
+        for e in board
+    }
+
+    async def fake_run_single(
+        *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+    ) -> LossProfile:
+        del adapter, weights, config, epoch_id
+        # Exactly the transitions the real _run_single performs, keyed on
+        # (entry_id, side).
+        update_tournament_entry(workspace_root, entry.id, side, status="running")
+        update_tournament_entry(workspace_root, entry.id, side, status="completed")
+        return canned[(generation.id, entry.id)]
+
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+
+    # Inspect the ActiveTournament grid right before run_tournament clears
+    # it: monkeypatch clear_active_tournament to snapshot the final state.
+    captured: dict[str, Any] = {}
+    real_clear = runner_mod._runtime_state()[0].clear_active_tournament
+
+    def capturing_clear(workspace_root: Path) -> None:
+        snap = read_active_tournament(workspace_root)
+        if snap is not None:
+            captured["tournament"] = snap
+        real_clear(workspace_root)
+
+    import zicato.runtime.state as _state_mod
+
+    monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
+
+    config = _make_runtime_config(tmp_path)
+    asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+    tournament = captured["tournament"]
+    parents = [e for e in tournament.entries if e.side == "parent"]
+    children = [e for e in tournament.entries if e.side == "child"]
+    # Exactly 4 parent + 4 child — NOT 6/2.
+    assert len(parents) == 4
+    assert len(children) == 4
+    # Every row reached "completed", and crucially each side carries its
+    # OWN four entries (no parent-side update bled onto a child row).
+    assert all(e.status == "completed" for e in tournament.entries)
+    assert {e.entry_id for e in parents} == {e.id for e in board}
+    assert {e.entry_id for e in children} == {e.id for e in board}
 
 
 # ---------------------------------------------------------------------------

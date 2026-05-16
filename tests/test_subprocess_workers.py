@@ -273,6 +273,7 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
             config=_config(workspace),
             workspace_root=workspace,
             epoch_id="e0",
+            side="parent",
         )
     )
     elapsed = time.monotonic() - started
@@ -320,6 +321,7 @@ def test_tournament_continues_after_a_budget_killed_run(
                 config=_config(workspace),
                 workspace_root=workspace,
                 epoch_id="e0",
+                side="parent",
             )
         )
 
@@ -378,6 +380,7 @@ def test_run_single_handles_externally_killed_worker(
             config=_config(workspace),
             workspace_root=workspace,
             epoch_id="e0",
+            side="parent",
         )
     )
 
@@ -421,6 +424,7 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
             config=_config(workspace),
             workspace_root=workspace,
             epoch_id="e0",
+            side="parent",
         )
     )
     elapsed = time.monotonic() - started
