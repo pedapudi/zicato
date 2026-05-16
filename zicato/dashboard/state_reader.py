@@ -531,12 +531,18 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
     if board is not None:
         view["board"] = board
 
-    try:
-        view["rubric"] = (epoch_dir / "rubric.md").read_text(encoding="utf-8")
-    except FileNotFoundError:
-        view["rubric"] = ""
-    except OSError:
-        view["rubric"] = ""
+    # Proposer brief: ``brief.md`` post-rename; ``rubric.md`` is the
+    # legacy name and is read as a fallback so pre-rename epochs still
+    # display. Any read error degrades to an empty string.
+    view["brief"] = ""
+    for name in ("brief.md", "rubric.md"):
+        try:
+            view["brief"] = (epoch_dir / name).read_text(encoding="utf-8")
+            break
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
 
     scoring = _read_json_value(epoch_dir / "scoring.json")
     if scoring is not None:

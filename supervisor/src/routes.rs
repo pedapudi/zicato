@@ -82,7 +82,7 @@ pub fn router(state: AppState) -> Router {
             .route("/api/control/kill/:run_id", post(control_kill))
             .route("/api/control/promote/:generation_id", post(control_promote))
             .route("/api/control/reject/:generation_id", post(control_reject))
-            .route("/api/control/rubric", post(control_rubric))
+            .route("/api/control/brief", post(control_brief))
             // Any unmatched GET is treated as a request for a bundled
             // static asset. This makes `index.html`'s relative references
             // (`style.css`, `app.js`, `icons.svg`) resolve at the
@@ -440,10 +440,13 @@ async fn control_reject(
     }
 }
 
-async fn control_rubric(State(s): State<AppState>, body: String) -> Response {
+async fn control_brief(State(s): State<AppState>, body: String) -> Response {
     if let Some(r) = forbidden_if_read_only(&s) {
         return r;
     }
+    // The on-disk control file keeps its protocol name
+    // (`rubric_replacement.txt`) — it is part of the runtime control
+    // contract the orchestrator consumes, not a UI-facing label.
     let path = s.paths.control_dir().join("rubric_replacement.txt");
     match atomic_write(&path, body.as_bytes()).await {
         Ok(_) => (

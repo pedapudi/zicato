@@ -760,15 +760,15 @@ h4 {
   letter-spacing: 0.04em;
 }
 
-/* The rubric reads as a centred, readable column — not a lopsided
-   narrow strip pinned to the left edge of a wide section. `.epoch-rubric`
-   is the container the epoch agent renders into; `.rubric-block` is the
-   rendered markdown body. Centring lives here on the CSS side; the
-   epoch agent owns the DOM/classes. */
-.epoch-rubric {
+/* The proposer brief reads as a centred, readable column — not a
+   lopsided narrow strip pinned to the left edge of a wide section.
+   `.epoch-brief` is the container the epoch agent renders into;
+   `.brief-block` is the rendered markdown body. Centring lives here on
+   the CSS side; the epoch agent owns the DOM/classes. */
+.epoch-brief {
   display: block;
 }
-.epoch-rubric .rubric-block {
+.epoch-brief .brief-block {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -783,28 +783,28 @@ h4 {
 /* Structured markdown DOM — no pre-wrap. pre-wrap fights the block
    elements the renderer emits and collapses everything into a
    preformatted-looking blob. */
-.epoch-rubric .rubric-block h1,
-.epoch-rubric .rubric-block h2,
-.epoch-rubric .rubric-block h3 {
+.epoch-brief .brief-block h1,
+.epoch-brief .brief-block h2,
+.epoch-brief .brief-block h3 {
   border: none;
   padding: 0;
   margin: 16px 0 6px 0;
   font-weight: 600;
   color: var(--text);
 }
-.epoch-rubric .rubric-block h1 { font-size: 18px; }
-.epoch-rubric .rubric-block h2 { font-size: 15px; }
-.epoch-rubric .rubric-block h3 {
+.epoch-brief .brief-block h1 { font-size: 18px; }
+.epoch-brief .brief-block h2 { font-size: 15px; }
+.epoch-brief .brief-block h3 {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
-.epoch-rubric .rubric-block > :first-child { margin-top: 0; }
-.epoch-rubric .rubric-block p { margin: 6px 0; }
-.epoch-rubric .rubric-block ul { margin: 6px 0; padding-left: 22px; }
-.epoch-rubric .rubric-block li { margin: 3px 0; }
-.epoch-rubric .rubric-block code {
+.epoch-brief .brief-block > :first-child { margin-top: 0; }
+.epoch-brief .brief-block p { margin: 6px 0; }
+.epoch-brief .brief-block ul { margin: 6px 0; padding-left: 22px; }
+.epoch-brief .brief-block li { margin: 3px 0; }
+.epoch-brief .brief-block code {
   background: rgba(127, 127, 127, 0.14);
   padding: 1px 5px;
   border-radius: 4px;
