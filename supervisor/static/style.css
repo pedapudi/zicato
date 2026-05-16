@@ -797,6 +797,29 @@ h4 {
   outline-offset: 2px;
 }
 
+/* Compact variant for dense contexts — A/B-grid trace cells. */
+.harmonograf-mini {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.12);
+  white-space: nowrap;
+}
+.harmonograf-mini:hover { text-decoration: none; background: rgba(127, 127, 127, 0.22); }
+.ab-trace { white-space: nowrap; }
+.ab-trace .harmonograf-mini + .harmonograf-mini { margin-left: 6px; }
+
+/* Superscript-style affordance for bracket generation nodes. */
+.harmonograf-sup {
+  margin-left: 6px;
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.6;
+  vertical-align: super;
+}
+.harmonograf-sup:hover { opacity: 1; text-decoration: none; }
+
 /* --- Loop-health panel (Overview) */
 .health-panel { display: flex; flex-direction: column; gap: 12px; }
 .health-banner {
