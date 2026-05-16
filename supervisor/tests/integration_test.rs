@@ -148,6 +148,206 @@ async fn get_endpoints_return_state() {
     let _ = shutdown.send(());
 }
 
+/// Lay down a full epoch (board / rubric / scoring / config / mutations)
+/// plus the workspace adapter config under `epochs/{id}/`.
+fn write_full_epoch(paths: &reader::WorkspacePaths, id: &str) {
+    let dir = paths.epochs.join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(paths.current_epoch_marker(), id).unwrap();
+
+    let cfg = serde_json::json!({
+        "id": id,
+        "contract_hash": "abc123hash",
+        "created_at": "2026-05-15T23:42:25+00:00",
+        "closed": false,
+    });
+    std::fs::write(dir.join("config.json"), cfg.to_string()).unwrap();
+
+    let long_input = format!("Make a presentation about waffles {}", "x".repeat(200));
+    let board = format!(
+        "{}\n{}\n",
+        serde_json::json!({
+            "id": "waffles_single",
+            "kind": "single_turn",
+            "wall_clock_budget_seconds": 900,
+            "weight": 1.0,
+            "tags": ["presentation"],
+            "input": long_input,
+            "expectation": {"kind": "predicate", "spec": "x:y"},
+        }),
+        serde_json::json!({
+            "id": "aliased_budget",
+            "kind": "single_turn",
+            "budget_s": 120,
+            "weight": 0.5,
+            "input": "short input",
+        }),
+    );
+    std::fs::write(dir.join("board.jsonl"), board).unwrap();
+
+    std::fs::write(dir.join("rubric.md"), "# full rubric text\nbody").unwrap();
+
+    let scoring = serde_json::json!({
+        "drift_weight": 1.0,
+        "pass_weight": 1.0,
+        "promote_margin": 0.01,
+    });
+    std::fs::write(dir.join("scoring.json"), scoring.to_string()).unwrap();
+
+    let muts = serde_json::json!([
+        {"id": "researcher_instruction", "kind": "span", "file": "agent/agent.py",
+         "line_start": 12, "line_end": 34, "content": "You are a research specialist"},
+    ]);
+    std::fs::write(dir.join("mutations.json"), muts.to_string()).unwrap();
+
+    let ws_cfg = serde_json::json!({
+        "adk_entrypoint": "kossel_run:root_agent",
+        "mutable_trees": ["/abs/path/to/agent"],
+    });
+    std::fs::write(paths.workspace.join("config.json"), ws_cfg.to_string()).unwrap();
+}
+
+#[tokio::test]
+async fn epoch_endpoint_returns_full_definition() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "2026-05-15_e0");
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/epoch"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+
+    assert_eq!(r["epoch_id"], "2026-05-15_e0");
+    assert_eq!(r["contract_hash"], "abc123hash");
+    assert_eq!(r["created_at"], "2026-05-15T23:42:25+00:00");
+    assert_eq!(r["closed"], false);
+
+    assert_eq!(r["harness"]["entrypoint"], "kossel_run:root_agent");
+    assert_eq!(r["harness"]["mutable_trees"][0], "/abs/path/to/agent");
+
+    let board = r["board"].as_array().unwrap();
+    assert_eq!(board.len(), 2);
+    assert_eq!(board[0]["id"], "waffles_single");
+    assert_eq!(board[0]["kind"], "single_turn");
+    assert_eq!(board[0]["expectation_kind"], "predicate");
+    assert_eq!(board[0]["budget_s"], 900.0);
+    assert_eq!(board[0]["weight"], 1.0);
+    assert_eq!(board[0]["tags"][0], "presentation");
+    // input_preview is truncated.
+    let preview = board[0]["input_preview"].as_str().unwrap();
+    assert!(preview.ends_with("..."), "got: {preview}");
+    assert!(preview.chars().count() <= 123);
+    // budget_s alias resolved; missing expectation -> null.
+    assert_eq!(board[1]["budget_s"], 120.0);
+    assert!(board[1]["expectation_kind"].is_null());
+
+    assert_eq!(r["rubric"], "# full rubric text\nbody");
+    assert_eq!(r["scoring"]["drift_weight"], 1.0);
+    assert_eq!(r["scoring"]["pass_weight"], 1.0);
+
+    let muts = r["mutations"].as_array().unwrap();
+    assert_eq!(muts.len(), 1);
+    assert_eq!(muts[0]["id"], "researcher_instruction");
+    assert_eq!(muts[0]["kind"], "span");
+    assert_eq!(muts[0]["file"], "agent/agent.py");
+    assert_eq!(muts[0]["lines"], "12-34");
+    assert_eq!(muts[0]["preview"], "You are a research specialist");
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn epoch_endpoint_missing_mutations_yields_empty_list() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "e_no_muts");
+    std::fs::remove_file(paths.epochs.join("e_no_muts").join("mutations.json")).unwrap();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let r: Value = client
+        .get(format!("{base}/api/epoch"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["mutations"], serde_json::json!([]));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn epoch_endpoint_missing_rubric_yields_empty_string() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "e_no_rubric");
+    std::fs::remove_file(paths.epochs.join("e_no_rubric").join("rubric.md")).unwrap();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let r: Value = client
+        .get(format!("{base}/api/epoch"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["rubric"], "");
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn epoch_endpoint_no_current_epoch_yields_null_id() {
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/epoch"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    assert!(r["epoch_id"].is_null());
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn state_endpoint_includes_epoch_object() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "2026-05-15_e0");
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let r: Value = client
+        .get(format!("{base}/api/state"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["epoch"]["epoch_id"], "2026-05-15_e0");
+    assert_eq!(r["epoch"]["contract_hash"], "abc123hash");
+    assert_eq!(r["epoch"]["board"].as_array().unwrap().len(), 2);
+
+    let _ = shutdown.send(());
+}
+
 #[tokio::test]
 async fn read_only_blocks_post_endpoints() {
     let (_t, paths) = make_workspace();

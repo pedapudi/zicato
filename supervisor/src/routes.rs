@@ -35,6 +35,7 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(serve_root))
         .route("/static/*path", get(serve_static))
         .route("/api/state", get(api_state))
+        .route("/api/epoch", get(api_epoch))
         .route("/api/lineage", get(api_lineage))
         .route("/api/active-runs", get(api_active_runs))
         .route("/api/active-tournament", get(api_active_tournament))
@@ -72,6 +73,15 @@ async fn serve_fallback(uri: axum::http::Uri) -> Response {
 async fn api_state(State(s): State<AppState>) -> Json<serde_json::Value> {
     let snap = reader::build_snapshot(&s.paths);
     Json(serde_json::to_value(snap).unwrap_or(serde_json::Value::Null))
+}
+
+/// `GET /api/epoch` — the current epoch's full evaluation contract.
+///
+/// Always 200: a missing component degrades to empty/`null`, and no
+/// current epoch yields `{ "epoch_id": null }`.
+async fn api_epoch(State(s): State<AppState>) -> Json<serde_json::Value> {
+    let view = crate::epoch::build_epoch_view(&s.paths);
+    Json(serde_json::to_value(view).unwrap_or(serde_json::Value::Null))
 }
 
 async fn api_lineage(State(s): State<AppState>) -> Json<serde_json::Value> {

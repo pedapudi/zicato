@@ -145,6 +145,7 @@ pub fn build_snapshot(paths: &WorkspacePaths) -> Snapshot {
         active_tournament: read_active_tournament(paths),
         lineage: read_lineage(paths),
         epoch_id: read_current_epoch(paths),
+        epoch: crate::epoch::build_epoch_view(paths),
         generated_at: Utc::now(),
     }
 }
