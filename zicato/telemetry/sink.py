@@ -126,6 +126,27 @@ def resolve_harmonograf_url(workspace_config: dict[str, Any] | None = None) -> s
     return ""
 
 
+def _harmonograf_grpc_target(url: str) -> str:
+    """Derive a gRPC dial target (``host:port``) from a harmonograf URL.
+
+    ``ZICATO_HARMONOGRAF_URL`` is documented and consumed elsewhere (the
+    heartbeat, the dashboard drill-down link) as a browser-resolvable URL
+    — typically ``http://host:port``. The harmonograf client, however,
+    hands ``server_addr`` straight to ``grpc.aio.insecure_channel``,
+    which expects a bare ``host:port`` target: a leading ``http://`` or
+    ``https://`` scheme makes gRPC name resolution fail outright. Strip
+    any scheme (and a trailing path/slash) so the same env var works for
+    both the human-facing link and the gRPC client.
+    """
+    target = url.strip()
+    for scheme in ("http://", "https://"):
+        if target.lower().startswith(scheme):
+            target = target[len(scheme) :]
+            break
+    # gRPC targets are host:port only — drop any path component.
+    return target.split("/", 1)[0].rstrip("/")
+
+
 def _make_harmonograf_sink(url: str) -> Any | None:
     """Build a goldfive-compatible harmonograf sink for ``url``.
 
@@ -138,7 +159,8 @@ def _make_harmonograf_sink(url: str) -> Any | None:
     a hard dependency of a run.
 
     ``HarmonografSink`` takes a pre-built ``Client``; the client is
-    constructed against ``url`` (the harmonograf server address).
+    constructed against ``url`` reduced to a bare gRPC dial target via
+    :func:`_harmonograf_grpc_target`.
     """
     try:
         from harmonograf_client import Client, HarmonografSink  # noqa: PLC0415
@@ -152,7 +174,8 @@ def _make_harmonograf_sink(url: str) -> Any | None:
         )
         return None
     try:
-        client = Client(name="zicato", server_addr=url)
+        target = _harmonograf_grpc_target(url)
+        client = Client(name="zicato", server_addr=target)
         return HarmonografSink(client)
     except Exception as exc:  # noqa: BLE001 — never hard-fail a run on this
         log.warning(
