@@ -1,7 +1,12 @@
 """``zicato propose`` — generate a new :class:`Experiment` for the next generation.
 
-Standalone command file. Auto-discovered by the CLI-infrastructure
-agent under ``zicato/cli/commands/``; intentionally does not import from
+ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` proposes
+an experiment internally on every round. Run ``zicato propose`` by hand
+only to generate (and inspect) a single experiment without running the
+tournament.
+
+Standalone command file. Auto-discovered under
+``zicato/cli/commands/``; intentionally does not import from
 ``zicato.cli`` so discovery stays one-way.
 
 The command stitches together the proposer's inputs from the workspace:
@@ -301,7 +306,10 @@ def _resolve_aux_llm(config: dict[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@click.command(name="propose")
+@click.command(
+    name="propose",
+    short_help="Advanced: generate one Experiment for the next generation.",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -333,7 +341,12 @@ def propose_cmd(
     patterns_from: str | None,
     max_retries: int,
 ) -> None:
-    """Generate a new Experiment for the next generation."""
+    """Advanced: generate one Experiment for the next generation.
+
+    Off the happy path — `zicato evolve` proposes on every round.
+    Run this by hand only to produce and inspect a single experiment
+    without running the tournament.
+    """
 
     workspace_dir = Path(workspace)
     config = _load_workspace_config(workspace_dir)

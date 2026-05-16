@@ -1,5 +1,9 @@
 """``zicato reindex`` — full rebuild of the SQLite analytical index.
 
+ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` keeps the
+index up to date as it runs. Run ``zicato reindex`` by hand only to
+rebuild a stale or drifted index.
+
 The index (``.zicato/index.db``) is derived data: a queryable
 projection of the canonical workspace files. ``zicato reindex`` drops
 it and rebuilds it from scratch by walking every epoch / generation /
@@ -29,7 +33,10 @@ from zicato.index.ingest import rebuild_index
 from zicato.index.query import index_counts
 
 
-@click.command(name="reindex")
+@click.command(
+    name="reindex",
+    short_help="Advanced: rebuild the SQLite analytical index from workspace files.",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -37,10 +44,11 @@ from zicato.index.query import index_counts
     help="Path to the zicato workspace directory.",
 )
 def reindex_cmd(workspace: str) -> None:
-    """Rebuild the SQLite analytical index from the workspace files.
+    """Advanced: rebuild the SQLite analytical index from workspace files.
 
-    Drops ``index.db`` and re-derives every row from the canonical
-    files under the workspace. Prints a summary of how many epochs,
+    Off the happy path — `zicato evolve` keeps the index current.
+    Drops index.db and re-derives every row from the canonical files
+    under the workspace. Prints a summary of how many epochs,
     generations, and runs were indexed.
     """
     ws = Path(workspace).resolve()

@@ -14,7 +14,10 @@ import click
 from zicato.cli.init_cmd import initialize_workspace
 
 
-@click.command(name="init")
+@click.command(
+    name="init",
+    short_help="Scaffold a fresh .zicato/ workspace (run once per project).",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -36,12 +39,21 @@ from zicato.cli.init_cmd import initialize_workspace
     help="Overwrite config.json / lineage.json if the workspace already exists.",
 )
 def init_cmd(workspace: str, instance_id: str, force: bool) -> None:
-    """Initialize a new ``.zicato/`` workspace.
+    """Scaffold a fresh .zicato/ workspace — step one of the happy path.
 
-    Creates the directory if it doesn't exist, writes an empty
-    ``lineage.json`` (``{"nodes": [], "edges": []}``), and writes
-    ``config.json`` containing ``{instance_id, created_at}``. Refuses to
-    overwrite an existing workspace unless ``--force`` is passed.
+    This is the first of the two commands you run. It creates the
+    workspace directory if it doesn't exist, writes an empty lineage
+    DAG (lineage.json: {"nodes": [], "edges": []}), and writes
+    config.json containing {instance_id, created_at}. Run it once per
+    project; then point `zicato evolve` at the same workspace.
+
+    Refuses to overwrite an existing workspace unless --force is
+    passed (--force only rewrites config.json / lineage.json — it does
+    not delete epoch artifacts living alongside).
+
+    \b
+    Example:
+      zicato init --workspace .zicato --instance-id my-project
     """
     workspace_root = Path(workspace)
     try:
