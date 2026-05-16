@@ -481,6 +481,10 @@ async def evolve_once(
             f"no mutation points enumerated under {parent_gen.snapshot_root}; "
             "did the adapter declare its mutable_trees?"
         )
+    # Best-effort: snapshot the enumerated mutation surface so the
+    # dashboard can render it for the in-progress epoch. A failure to
+    # write the snapshot must never abort the round.
+    _dump_mutations_snapshot(workspace_root, resolved_epoch_id, mutations)
     # --- 4. Patterns ---
     losses = _load_parent_losses(
         workspace_root, resolved_epoch_id, parent_id, board, read_loss_profile
@@ -974,6 +978,57 @@ def _cache_gen_score(
         json.dumps(payload, default=str, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _dump_mutations_snapshot(
+    workspace_root: Path,
+    epoch_id: str,
+    mutations: list[Any],
+) -> None:
+    """Serialize the round's enumerated mutation points to ``mutations.json``.
+
+    Writes a JSON array of objects ``{id, kind, file, line_start,
+    line_end, content, content_hash}`` — i.e. :func:`dataclasses.asdict`
+    of each :class:`zicato.core.types.MutationPoint` with the ``Path``
+    fields stringified — to ``epochs/{epoch_id}/mutations.json``. The
+    write is atomic (``.tmp`` + :func:`os.replace`).
+
+    Best-effort: any failure (a serialisation error, an I/O error) is
+    swallowed at ``debug`` level so a broken snapshot can never abort the
+    evolve round. The proposer has already been fed the in-memory
+    ``mutations`` list by the time this runs; the on-disk file is purely
+    for the dashboard.
+    """
+    import dataclasses as _dataclasses  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
+
+    from zicato.core.workspace import mutations_json_path  # noqa: PLC0415
+
+    try:
+        payload: list[dict[str, Any]] = []
+        for point in mutations:
+            raw = _dataclasses.asdict(point)
+            payload.append(
+                {
+                    "id": raw["id"],
+                    "kind": raw["kind"],
+                    "file": str(raw["file"]),
+                    "line_start": raw["line_start"],
+                    "line_end": raw["line_end"],
+                    "content": raw["content"],
+                    "content_hash": raw["content_hash"],
+                }
+            )
+        target = mutations_json_path(workspace_root, epoch_id)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(
+            json.dumps(payload, indent=2, sort_keys=False) + "\n",
+            encoding="utf-8",
+        )
+        _os.replace(tmp, target)
+    except Exception as exc:  # noqa: BLE001 — snapshot write is best-effort
+        log.debug("mutations.json snapshot skipped: %s", exc)
 
 
 def _ensure_baseline_snapshot(
