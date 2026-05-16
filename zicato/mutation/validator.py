@@ -1,13 +1,32 @@
-"""Post-apply checks that gate a child snapshot's acceptance.
+"""Validation checks that gate a child snapshot's acceptance.
 
 The validator is intentionally narrow: it does NOT score, score-deltas, or
-otherwise reason about the experiment. It answers one question: "did the
-applier produce a snapshot that the runner can safely mount?" Concrete
-failures are returned as strings rather than raised so the tournament can
-log them as a single rejection record per experiment.
+otherwise reason about the experiment. It answers two questions:
 
-Checks performed
-----------------
+* :func:`validate_patches` — *before* application: "is this patch set
+  internally well-formed against the mutation surface — does every patch
+  target a real enumerated point with an op the point can satisfy?"
+* :func:`validate_post_apply` — *after* application: "did the applier
+  produce a snapshot that the runner can safely mount?"
+
+Concrete failures are returned as strings rather than raised so the
+tournament can log them as a single rejection record per experiment.
+
+Pre-apply checks (:func:`validate_patches`)
+-------------------------------------------
+
+1. Every patch's ``mutation_id`` resolves to a :class:`MutationPoint` in
+   the enumeration of the mutation surface.
+2. The patch's ``op`` is compatible with its payload — ``replace``
+   carries ``new_content``, ``set_numeric`` carries ``new_numeric``,
+   ``set_enum`` carries ``new_enum``; and no foreign payload field is set.
+3. The patch's ``op`` is compatible with its target point's ``kind`` —
+   ``set_numeric`` / ``set_enum`` only make sense against a ``span``
+   point (they locate a constant after the marker); ``file``-kind points
+   only accept ``replace``.
+
+Post-apply checks (:func:`validate_post_apply`)
+-----------------------------------------------
 
 1. Every Python file under ``target_root`` that was touched by at least
    one patch still parses (``ast.parse`` succeeds).
@@ -31,6 +50,121 @@ from pathlib import Path
 
 from zicato.core.types import MutationPoint, Patch
 from zicato.mutation.enumerator import enumerate_mutations
+
+#: Per-op required / forbidden payload fields and the mutation-point kinds
+#: each op can target. ``payload`` is the :class:`Patch` attribute the op
+#: consumes; ``kinds`` is the set of :data:`~zicato.core.types.MutationKind`
+#: values the op can be applied to. The applier in
+#: :mod:`zicato.mutation.applier` is the source of truth these rules
+#: mirror — ``replace`` works on any point, while ``set_numeric`` /
+#: ``set_enum`` locate a constant after the marker and so require a
+#: ``span`` point.
+_OP_RULES: dict[str, dict[str, object]] = {
+    "replace": {"payload": "new_content", "kinds": frozenset({"span", "file"})},
+    "set_numeric": {"payload": "new_numeric", "kinds": frozenset({"span"})},
+    "set_enum": {"payload": "new_enum", "kinds": frozenset({"span"})},
+}
+
+#: All payload fields a :class:`Patch` can carry. Used to flag a patch
+#: that sets a payload field foreign to its op (e.g. a ``replace`` patch
+#: that also populates ``new_numeric``).
+_ALL_PAYLOAD_FIELDS = ("new_content", "new_numeric", "new_enum")
+
+
+def validate_patches(
+    patches: list[Patch],
+    *,
+    source_root: Path | None = None,
+    enumeration: list[MutationPoint] | None = None,
+) -> list[str]:
+    """Deterministically pre-validate a patch set against the surface.
+
+    This is a non-LLM, side-effect-free check run *before* application so
+    the applier can refuse a malformed batch as a whole rather than
+    leaving earlier patches half-applied. It is the deterministic
+    guarantee that an edit can only ever land at a valid, enumerated
+    ``# zicato:mutable`` point.
+
+    Exactly one of ``source_root`` / ``enumeration`` must be supplied:
+
+    * ``source_root`` — a directory (or ``.py`` file) to enumerate the
+      mutation surface from via :func:`enumerate_mutations`.
+    * ``enumeration`` — an already-computed list of mutation points
+      (callers that have just enumerated the surface for another reason
+      can pass it straight through and skip the re-walk).
+
+    Every patch is checked; the return value lists *all* problems found
+    rather than stopping at the first. A well-formed batch returns an
+    empty list. The checks are:
+
+    1. ``mutation_id`` resolves to an enumerated :class:`MutationPoint`.
+    2. ``op`` is compatible with the patch payload — the op's required
+       payload field is populated and no foreign payload field is set.
+    3. ``op`` is compatible with the target point's ``kind``.
+
+    Raises
+    ------
+    ValueError
+        When neither or both of ``source_root`` / ``enumeration`` are
+        supplied — the caller must pick exactly one surface source.
+    """
+
+    if (source_root is None) == (enumeration is None):
+        raise ValueError("validate_patches: pass exactly one of source_root / enumeration")
+
+    if enumeration is None:
+        assert source_root is not None  # narrowed by the guard above
+        points = enumerate_mutations([Path(source_root)])
+    else:
+        points = enumeration
+    index: dict[str, MutationPoint] = {p.id: p for p in points}
+
+    errors: list[str] = []
+    for patch in patches:
+        rule = _OP_RULES.get(patch.op)
+        if rule is None:
+            # ``op`` is Literal-typed, but a JSON-constructed Patch can
+            # smuggle in an unknown string; flag it rather than trust it.
+            errors.append(
+                f"Patch {patch.id!r}: unknown op {patch.op!r} "
+                f"(expected one of {sorted(_OP_RULES)})"
+            )
+            continue
+
+        # Check 2a: the op's required payload field must be populated.
+        required_field = str(rule["payload"])
+        if getattr(patch, required_field) is None:
+            errors.append(f"Patch {patch.id!r}: op={patch.op} requires {required_field}")
+        # Check 2b: no foreign payload field may be set.
+        for field_name in _ALL_PAYLOAD_FIELDS:
+            if field_name == required_field:
+                continue
+            if getattr(patch, field_name) is not None:
+                errors.append(
+                    f"Patch {patch.id!r}: op={patch.op} must not set "
+                    f"{field_name} (only {required_field} applies)"
+                )
+
+        # Check 1: the mutation id must resolve to an enumerated point.
+        point = index.get(patch.mutation_id)
+        if point is None:
+            errors.append(
+                f"Patch {patch.id!r}: mutation_id {patch.mutation_id!r} does "
+                f"not resolve to an enumerated mutation point"
+            )
+            continue
+
+        # Check 3: the op must be compatible with the point's kind.
+        compatible_kinds = rule["kinds"]
+        assert isinstance(compatible_kinds, frozenset)  # see _OP_RULES
+        if point.kind not in compatible_kinds:
+            errors.append(
+                f"Patch {patch.id!r}: op={patch.op} is incompatible with "
+                f"mutation point {patch.mutation_id!r} of kind {point.kind!r} "
+                f"(op={patch.op} requires kind in {sorted(compatible_kinds)})"
+            )
+
+    return errors
 
 
 def _toplevel_imports(file_path: Path) -> set[str]:
@@ -188,16 +322,12 @@ def validate_post_apply(
         missing = pre_imports - post_imports
         if missing:
             missing_str = ", ".join(sorted(missing))
-            errors.append(
-                f"Post-apply file {file_path} dropped top-level imports: {missing_str}"
-            )
+            errors.append(f"Post-apply file {file_path} dropped top-level imports: {missing_str}")
 
     return errors
 
 
-def check_forbidden_ids(
-    patches: list[Patch], forbidden_ids: list[str]
-) -> list[str]:
+def check_forbidden_ids(patches: list[Patch], forbidden_ids: list[str]) -> list[str]:
     """Return one error string per patch that targets a forbidden id."""
 
     forbidden = set(forbidden_ids)
@@ -211,4 +341,4 @@ def check_forbidden_ids(
     return errors
 
 
-__all__ = ["validate_post_apply", "check_forbidden_ids"]
+__all__ = ["validate_patches", "validate_post_apply", "check_forbidden_ids"]
