@@ -506,7 +506,74 @@ loop in zicato becomes degenerate at a different level. See
 full argument and [RATIONALE.md](RATIONALE.md) for why this is
 *configured*, not *defaulted*.
 
-### 4.11 Journaling and analysis
+### 4.11 Analytical index
+
+**Responsibility.** Make cross-run questions fast. The
+filesystem layout (§5) is canonical and human-legible but poor
+for `GROUP BY` / `JOIN` queries that range across many
+generations. The analytical index is a derived, fully-rebuildable
+SQLite sidecar — `.zicato/index.db` — that projects the canonical
+artifacts into a relational schema.
+
+**Consumes.** Every `gen_score.json`, `experiment.json`,
+`patches/*.json`, `runs/*/loss.json`, and `lineage.json` in the
+workspace.
+
+**Produces.** Eight tables (`epochs`, `generations`,
+`experiments`, `patches`, `runs`, `loss_profiles`,
+`metric_counts`, `tournaments`) plus a `hypothesis_movements`
+table. Cross-run views — the dashboard's tournament analytics,
+loop-health detectors, the lineage queries — read the index
+instead of walking files.
+
+**Contracts.**
+
+- **Files are canonical; the index is derived.** The index holds
+  no fact not also on disk. `zicato reindex` reconstructs it
+  exactly from the filesystem; it is disposable.
+- **Canonical-file-first dual-write.** The orchestrator writes
+  the canonical file, then the index row. The index can only
+  ever lag the filesystem, never lead it — so a crash leaves a
+  self-healing behind-index, never a phantom row.
+- **Single writer.** Only the orchestrator writes the index; the
+  Rust supervisor opens it read-only via `rusqlite`.
+
+The full schema, the rebuild semantics, and the
+SQLite-here-not-there boundary are in
+[ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md).
+
+### 4.12 Loop-health diagnostics
+
+**Responsibility.** Detect when the meta-loop is *running but not
+optimising anything*. The robustness layers (§5) keep the loop
+from *breaking*; loop-health keeps it from being *toothless* — a
+degenerate evaluation that cannot distinguish any candidate. The
+motivating incident: a real run had `v0` and `v1` both score
+exactly `1.000000`, and the degeneracy was found only by an
+operator eyeballing the journal.
+
+**Consumes.** Each round's runs, scores, and the epoch-so-far
+history.
+
+**Produces.** A typed `LoopHealth` report per round, written to
+`epochs/{epoch}/loop_health/round_{NNN}.json`. Five detectors
+(degenerate scoring, non-differentiating board entries, flat
+drift signal, no-expectations, stalled loop) emit findings with
+`info` / `warning` / `critical` severities.
+
+**Contracts.**
+
+- A `critical` finding triggers a bannered orchestrator warning
+  and an SSE event to the dashboard's loop-health panel — the §1
+  silent-degeneracy failure mode never again depends on an
+  operator noticing.
+- `zicato evolve --stop-on-degenerate` opts into an early-stop
+  on sustained degeneracy. Opt-in, not default.
+
+The detectors, severities, and the `zicato health` CLI are in
+[LOOP-HEALTH.md](LOOP-HEALTH.md).
+
+### 4.13 Journaling and analysis
 
 **Responsibility.** Make every round narratable and every epoch
 analyzable, without the operator hand-writing the prose.
@@ -532,7 +599,7 @@ on `epoch new`** as a fallback that emits a warning so operators
 notice they missed the manual step. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md).
 
-### 4.12 The CLI
+### 4.14 The CLI
 
 zicato is operated through a single CLI binary. Every component above
 has at least one CLI subcommand that surfaces it. The full reference is
@@ -551,6 +618,8 @@ in [CLI.md](CLI.md); a one-line tour:
 | `zicato tournament vN vN+1` | Run the tournament between two generations. |
 | `zicato epoch new/close/list/switch` | Manage epochs. |
 | `zicato evolve [--rounds N] [--mode fast\|tournament]` | The orchestrator: one command, many rounds. |
+| `zicato reindex` | Rebuild the `.zicato/index.db` analytical index from the filesystem. |
+| `zicato health` | Run loop-health diagnostics on the current epoch. |
 | `zicato journal show` | Render `journal.md`. |
 | `zicato analysis show` | Render `analysis.md` for a closed epoch. |
 
@@ -607,14 +676,17 @@ Three properties hold across the runtime layer:
    process that writes to it (orchestrator, supervisor, or one
    specific worker). No locking beyond `lock.json`.
 
-The full design lives in four documents:
+The full design lives in seven documents:
 
 | Concern | Document |
 |---|---|
 | State file layout, supervisor lifecycle, resume semantics, concurrency model | [RUNTIME.md](RUNTIME.md) |
 | Live dashboard panels, HTTP + SSE API, predicted gate verdict, control-file protocol for v1.3 interactivity | [DASHBOARD.md](DASHBOARD.md) |
+| The tournament competition model — the king-of-the-hill gauntlet, the bracket view, the per-matchup detail, the tournament analytics | [TOURNAMENT.md](TOURNAMENT.md) |
 | The six-layer defense model (`asyncio.wait_for` → cancellation → subprocess workers → watchdog → circuit breaker → atomic writes) and what each catches | [ROBUSTNESS.md](ROBUSTNESS.md) |
+| Loop-health diagnostics — detectors for a degenerate / toothless evaluation, the `LoopHealth` report, `zicato health` | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
 | v0 directory-backed storage today, plus the v0+1 git-backed roadmap (G0-G10) for blob dedup + `git log` / `git diff` / `git bisect` over generations | [STORAGE.md](STORAGE.md) |
+| The `.zicato/index.db` SQLite analytical index — schema, the files-canonical / index-derived discipline, `zicato reindex` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 
 The runtime layer ships in phases. v1 has L1+L2 from
 [ROBUSTNESS.md](ROBUSTNESS.md) — `asyncio.wait_for` per call
@@ -663,8 +735,11 @@ deployments (target 3 — nested zicato instances) key the workspace by
       current_generation           # marker: id of the promoted head
       patterns/
         round_{NNN}.json           # detector output, one per round
+      loop_health/
+        round_{NNN}.json           # loop-health report, one per round
       journal.md                   # running narrative across generations
       analysis.md                  # generated at epoch close
+  index.db                         # derived SQLite analytical index (rebuildable)
   lineage.json                     # cross-epoch generation DAG
 ```
 
@@ -675,11 +750,62 @@ older inline `patches: [...]` form for backward compatibility. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3.2 for the
 write-order rationale.
 
-The layout is deliberately filesystem-native — no SQLite, no embedded
-DB. Every artifact is a human-readable file. The cost of `ls`-and-`cat`
-debugging is the budget for the storage design.
+Every **canonical** artifact is a human-readable file — JSON, JSONL,
+or markdown. The cost of `ls`-and-`cat` debugging is the budget for
+the storage design; the operator's first-class interface is the
+filesystem.
 
-## 7. The data flow, in narrow contracts
+The one non-text file is `.zicato/index.db` — the **analytical
+index**. It is *not* canonical: it is a derived, fully-rebuildable
+SQLite projection of the files above, a cache that makes cross-run
+`GROUP BY` / `JOIN` queries fast without a file-walk. It holds no
+fact not also on disk; `zicato reindex` reconstructs it exactly. The
+filesystem stays the source of truth; the index is a sidecar. See
+[ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md).
+
+## 7. The harmonograf split: execution view vs competition view
+
+zicato and harmonograf both render a "view of a run", and the
+boundary between them is load-bearing — they are deliberately
+two tools, linked, not one merged UI.
+
+> **harmonograf is the execution view; the zicato dashboard is
+> the competition view. They are linked by a per-run drill-down,
+> not merged.**
+
+- **harmonograf — the execution view.** It renders *one
+  goldfive run*: the temporal trace of a single execution — the
+  plan unfolding, per-turn drift, the intervention ladder, the
+  operator's live steering. It answers "what happened, moment by
+  moment, in *this run*?".
+- **the zicato dashboard — the competition view.** It renders
+  *one zicato epoch*: many runs across many generations — the
+  tournament bracket, the per-matchup A/B grid, the gate
+  verdict, the score trajectory, the hypothesis ledger. It
+  answers "which generation is winning, and why?".
+
+These are different objects. A run is a *trace*; a tournament is
+a *comparison of aggregates over many traces*. One is not a
+zoomed-in version of the other, so they are not merged — a
+single tool good at both a millisecond-resolution timeline and
+an epoch-resolution bracket would be mediocre at both.
+
+They are *linked* by a **per-run drill-down**. Anywhere the
+zicato dashboard shows an individual run — a cell in the A/B
+grid, a row in the active-runs list — there is an "open in
+harmonograf" affordance that hands off to harmonograf pointed at
+that run's `events.jsonl`. The operator moves *down* the
+competition view (epoch → round → matchup → run) and at the run
+level steps *across* into the execution view.
+
+This split is the observability face of the cadence separation
+in §3: goldfive acts within a run, harmonograf observes within a
+run, zicato acts across runs. harmonograf and the zicato
+dashboard are the within-a-run and across-runs observability
+surfaces respectively. The full treatment is in
+[TOURNAMENT.md §5](TOURNAMENT.md#5-the-harmonograf-split).
+
+## 8. The data flow, in narrow contracts
 
 The diagram in §2 names the components; this section names the
 contracts between them so two components can be reimplemented without
@@ -701,7 +827,7 @@ in zicato — not "any framework works on day one" but "every contract is
 between named, typed shapes, so a new framework adapter is the only
 thing that needs to change to adopt zicato for it".
 
-## 8. What's deliberately out of scope for v0
+## 9. What's deliberately out of scope for v0
 
 - Cross-machine distribution. v0 runs locally; nothing in the design
   prevents distributed runners but the v0 storage layout is a single
@@ -718,7 +844,7 @@ thing that needs to change to adopt zicato for it".
   whatever the operator put on it; the JSONL captures exactly what
   flowed.
 
-## 9. Further reading
+## 10. Further reading
 
 | Topic | Document |
 |---|---|
@@ -727,12 +853,15 @@ thing that needs to change to adopt zicato for it".
 | Epoch concept, experiment journaling, analysis pass | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
 | goldfive event capture, loss reducer, emulator audit lane | [TELEMETRY.md](TELEMETRY.md) |
 | Drift loss scalar, pass-rate, tournament promotion gate | [SCORING.md](SCORING.md) |
+| The tournament competition model — gauntlet, bracket, per-matchup detail, analytics | [TOURNAMENT.md](TOURNAMENT.md) |
 | User emulator design + collusion-proof construction | [EMULATOR.md](EMULATOR.md) |
 | Three dogfood targets and the v0 design they force | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
 | `.zicato/runtime/` state files, the Rust supervisor binary, resume protocol | [RUNTIME.md](RUNTIME.md) |
 | Live dashboard panels, HTTP + SSE, predicted gate verdict, control-file protocol | [DASHBOARD.md](DASHBOARD.md) |
 | The six-layer defense model against hangs and crashes | [ROBUSTNESS.md](ROBUSTNESS.md) |
+| Loop-health diagnostics — detectors for a degenerate evaluation, `zicato health` | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
 | Git-backed storage roadmap (G0-G10) + migration tooling | [STORAGE.md](STORAGE.md) |
+| The `.zicato/index.db` SQLite analytical index — schema, discipline, `zicato reindex` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | CLI reference, every subcommand | [CLI.md](CLI.md) |
 | Why each major decision was made the way it was | [RATIONALE.md](RATIONALE.md) |
 | Glossary | [VOCABULARY.md](VOCABULARY.md) |
