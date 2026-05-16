@@ -24,31 +24,47 @@ regression suite hard-rejects the candidate, shadowing any drift_loss /
 pass_rate improvement: a patch that breaks the snapshot's own tests
 cannot promote even when its scoring signal looks perfect.
 
+Subprocess isolation ("L3")
+---------------------------
+Each board-entry run executes in its OWN OS process — a
+``python -m zicato._tournament_worker`` subprocess (see
+:mod:`zicato._tournament_worker`). :func:`_run_single` serialises one
+run's inputs to a temp args file, spawns the worker, and waits on it
+bounded by the entry's wall-clock budget plus a small grace margin
+(:data:`_PARENT_BUDGET_GRACE_S`). The worker keeps its own cooperative
+``asyncio.wait_for`` budget as the first line of defence; the parent's
+SIGTERM-then-SIGKILL escalation is the second; an independent supervisor
+watchdog — keyed on the worker's own pid stamped into
+``active_runs/{run_id}.json`` — is the third. A wedged run can therefore
+be killed without taking down the whole ``evolve``. A worker that
+vanished without a result file (the supervisor SIGKILLed it) is recorded
+as a normal aborted run, not a crash; the tournament continues.
+
 The runner LAZY-imports :mod:`zicato.telemetry` per-call so the
 package keeps loading cheaply even before the telemetry layer is
-wired up. The two helpers we expect from telemetry are:
+wired up. It uses two telemetry helpers:
 
 * ``zicato.telemetry.sink.make_run_sink_path(workspace_root, epoch_id,
   generation_id, entry_id) -> Path`` — returns the events JSONL path
-  the sink should write to. Must be deterministic.
-* ``zicato.telemetry.reducer.reduce_loss(events_jsonl_path, entry,
-  generation_id, epoch_id, expectation_result, runtime_ms,
-  wall_clock_budget_exceeded, weights) -> LossProfile`` — reads
-  the JSONL and produces a :class:`LossProfile`.
+  the worker's sink writes to. Must be deterministic.
+* ``zicato.telemetry.reducer.read_loss_profile(path) -> LossProfile`` —
+  reads back the ``loss.json`` the worker produced.
 
-The session protocol used here intentionally accepts both the rich
-:class:`~zicato.adapters.RunnableHarness` shape (``run(entry, sinks,
-config) -> RunResult``) and the legacy stub shape (``run(entry,
-sink_path) -> None``) so adapter implementations and lightweight
-tests can both drive the runner. The driver inspects the session's
-:meth:`run` signature at runtime and dispatches accordingly.
+The actual ``session.run`` driving (rich
+:class:`~zicato.adapters.RunnableHarness` ``run(entry, sinks, config)``
+shape and the legacy ``run(entry, sink_path)`` stub shape) now lives
+inside the worker, not the runner — see
+:func:`zicato._tournament_worker._drive_session`.
 """
 
 from __future__ import annotations
 
 import asyncio
-import inspect
+import json
 import logging
+import os
+import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC
@@ -57,10 +73,8 @@ from typing import Any
 
 from zicato.core import (
     BoardEntry,
-    ExpectationResult,
     Generation,
     LossProfile,
-    RunResult,
     RuntimeConfig,
     ScoringWeights,
 )
@@ -242,192 +256,6 @@ def _telemetry_helpers() -> tuple[Any, Any]:
     return _sink, _reducer
 
 
-async def _drive_session(
-    *,
-    session: Any,
-    entry: BoardEntry,
-    sink_path: Path,
-    sinks: list[Any],
-    config: RuntimeConfig,
-) -> tuple[RunResult | None, int, bool]:
-    """Drive one ``session.run`` call and return (result, runtime_ms, budget_exceeded).
-
-    Three execution paths are accepted:
-
-    * ``synthetic_adversarial`` / ``synthetic_clean`` entries — the
-      adapter does not own the adversarial-agent zoo (see
-      :mod:`zicato.synthetic`). The runner routes synthetic kinds
-      directly to :func:`zicato.synthetic.run_adversarial_entry` /
-      :func:`zicato.synthetic.run_clean_entry`, passing the same sink
-      list the full-protocol path would build. This is what makes the
-      target-2 dogfood board's adversarial recall / clean precision
-      entries actually produce events.jsonl.
-    * ``run(entry, sinks, config) -> RunResult`` — the full
-      :class:`~zicato.adapters.RunnableHarness` shape. The caller passes
-      in the pre-built ``sinks`` list (a :class:`JSONLPersistenceSink`
-      aimed at ``sink_path`` plus, when configured, a live harmonograf
-      sink). When the result is ``aborted`` with ``abort_reason ==
-      "wall_clock_budget"`` we set the budget-exceeded flag.
-    * ``run(entry, sink_path) -> None`` — legacy / stub shape used by
-      tests that hand-write the events JSONL. The runner measures
-      wall-clock duration itself; budget-exceeded is always ``False``
-      on this path because the stub has no way to communicate an
-      abort.
-
-    The dispatch between the second and third paths is by parameter-
-    name inspection rather than by ``hasattr(session, "run")``
-    introspection so a test stub that deliberately mimics the legacy
-    shape can do so without having to register a runtime-protocol
-    marker.
-    """
-    started = time.monotonic()
-
-    # Synthetic kinds bypass the adapter's session entirely.
-    if entry.kind in ("synthetic_adversarial", "synthetic_clean"):
-        from zicato.synthetic import (  # noqa: PLC0415
-            run_adversarial_entry,
-            run_clean_entry,
-        )
-
-        synth_runner = (
-            run_adversarial_entry if entry.kind == "synthetic_adversarial" else run_clean_entry
-        )
-        result = await synth_runner(entry, sinks, config)
-        runtime_ms = (
-            result.runtime_ms
-            if isinstance(result, RunResult) and result.runtime_ms > 0
-            else int((time.monotonic() - started) * 1000)
-        )
-        budget_exceeded = bool(
-            isinstance(result, RunResult)
-            and result.aborted
-            and result.abort_reason == "wall_clock_budget_exceeded"
-        )
-        return result, runtime_ms, budget_exceeded
-
-    sig = inspect.signature(session.run)
-    param_names = list(sig.parameters)
-
-    # Decide by the second positional parameter (after ``entry``).
-    legacy = len(param_names) >= 2 and param_names[1] in ("sink_path", "events_path")
-
-    if legacy:
-        await session.run(entry, sink_path)
-        runtime_ms = int((time.monotonic() - started) * 1000)
-        return None, runtime_ms, False
-
-    # Full-protocol path — the caller pre-built the sink list (JSONL
-    # plus, when configured, a harmonograf live-stream sink).
-    result = await session.run(entry, sinks, config)
-    runtime_ms = (
-        result.runtime_ms
-        if isinstance(result, RunResult) and result.runtime_ms > 0
-        else int((time.monotonic() - started) * 1000)
-    )
-    budget_exceeded = bool(
-        isinstance(result, RunResult)
-        and result.aborted
-        and result.abort_reason == "wall_clock_budget"
-    )
-    return (result if isinstance(result, RunResult) else None), runtime_ms, budget_exceeded
-
-
-def _build_sinks(
-    workspace_root: Path,
-    epoch_id: str,
-    generation_id: str,
-    entry_id: str,
-) -> list[Any]:
-    """Build the per-run sink list via the telemetry multi-sink builder.
-
-    Delegates to :func:`zicato.telemetry.sink.make_run_sinks`, which
-    always attaches the canonical :class:`JSONLPersistenceSink` and,
-    when a harmonograf URL is configured (``ZICATO_HARMONOGRAF_URL`` env
-    or the workspace ``config.json``), additionally attaches a live
-    harmonograf sink. If goldfive is not installed the builder returns
-    an empty list rather than raising — the adapter is free to wire its
-    own telemetry capture in that case, and the reducer's JSONL fallback
-    handles a missing file by producing an empty event walk.
-
-    The workspace ``config.json`` is read best-effort so the
-    ``harmonograf_url`` config key is honoured; a failure to load it
-    falls back to the environment-variable-only resolution path.
-
-    Falls back to a direct :class:`JSONLPersistenceSink` build when the
-    multi-sink builder is unavailable — e.g. a lightweight test that
-    swaps a minimal stub module in for ``zicato.telemetry.sink``.
-    """
-    workspace_config: dict[str, Any] | None = None
-    try:
-        from zicato import workspace_loader  # noqa: PLC0415
-
-        workspace_config = workspace_loader.load_workspace_config(workspace_root)
-    except Exception:  # noqa: BLE001 — config is optional for sink wiring
-        workspace_config = None
-
-    try:
-        from zicato.telemetry.sink import make_run_sinks  # noqa: PLC0415
-    except ImportError:
-        # The telemetry sink module is present but does not expose the
-        # multi-sink builder (a stubbed module in a unit test). Fall
-        # back to the direct JSONL-only build.
-        return _build_jsonl_sink_only(workspace_root, epoch_id, generation_id, entry_id)
-
-    return make_run_sinks(
-        workspace_root,
-        epoch_id,
-        generation_id,
-        entry_id,
-        workspace_config=workspace_config,
-    )
-
-
-def _build_jsonl_sink_only(
-    workspace_root: Path,
-    epoch_id: str,
-    generation_id: str,
-    entry_id: str,
-) -> list[Any]:
-    """Direct JSONL-only sink build — the no-harmonograf fallback path.
-
-    Lazily imports :mod:`goldfive.sinks.persistence`; returns an empty
-    list when goldfive is not installed rather than raising.
-    """
-    try:
-        from goldfive.sinks.persistence import JSONLPersistenceSink  # noqa: PLC0415
-    except ModuleNotFoundError:
-        return []
-    from zicato.core.workspace import events_jsonl_path  # noqa: PLC0415
-
-    sink_path = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id)
-    sink_path.parent.mkdir(parents=True, exist_ok=True)
-    return [JSONLPersistenceSink(path=sink_path, mode="write")]
-
-
-async def _evaluate_entry_expectation(
-    entry: BoardEntry,
-    run_result: RunResult | None,
-    config: RuntimeConfig,
-) -> ExpectationResult | None:
-    """Evaluate ``entry.expectation`` against ``run_result`` if both present.
-
-    Returns ``None`` when the entry has no expectation OR when the
-    session shape was legacy and we therefore have no
-    :class:`RunResult` to feed the matcher. The reducer handles a
-    ``None`` expectation result by leaving the corresponding
-    :class:`LossProfile` fields unset.
-    """
-    if entry.expectation is None or run_result is None:
-        return None
-    from zicato.board.matchers import evaluate_expectation  # noqa: PLC0415
-
-    return await evaluate_expectation(
-        entry.expectation,
-        run_result,
-        aux_call_llm=config.auxiliary_call_llm,
-    )
-
-
 def _now_iso_utc() -> str:
     from datetime import datetime  # noqa: PLC0415
 
@@ -449,6 +277,287 @@ def _runtime_state():  # type: ignore[no-untyped-def]
         return None
 
 
+# ---------------------------------------------------------------------------
+# Subprocess worker spawn — the "L3" robustness layer.
+# ---------------------------------------------------------------------------
+#
+# Every tournament run now executes in its OWN OS process: a
+# ``python -m zicato._tournament_worker`` subprocess. The motivation is
+# hard-enforcement of the per-run wall-clock budget. A run wedged inside
+# the orchestrator process used to be un-killable without killing the
+# whole ``evolve``; isolated in a subprocess it can be SIGTERM'd then
+# SIGKILL'd by this parent — and, independently, by the supervisor
+# watchdog keyed on the worker's own pid in ``active_runs/{run_id}.json``.
+#
+# A free side benefit: the Python-module-caching problem (two
+# generations' source loaded into one interpreter, ``sys.modules``
+# handing back the wrong one) disappears — each worker imports exactly
+# one generation snapshot and then exits.
+
+#: Margin (seconds) added to the entry's wall-clock budget before the
+#: PARENT's ``asyncio.wait_for`` fires. The worker keeps its own
+#: cooperative ``asyncio.wait_for`` at exactly the entry budget, so under
+#: normal operation the worker aborts itself first and exits cleanly with
+#: a budget-exceeded result. The parent's wait_for is the SECOND line of
+#: defence — it only fires when the worker's cooperative budget did not
+#: (a worker stuck in a C extension, a blocked syscall, a hung import).
+#: 30s is comfortably longer than the worker's own teardown + loss-reduce
+#: path so a healthy worker is never racing the parent.
+_PARENT_BUDGET_GRACE_S: float = 30.0
+
+#: Seconds the parent waits after SIGTERM before escalating to SIGKILL.
+#: Matches the supervisor's two-stage escalation grace.
+_SIGTERM_TO_SIGKILL_GRACE_S: float = 5.0
+
+
+def _callable_dotted_path(fn: Any) -> str:
+    """Return a re-importable ``module:qualname`` dotted path for ``fn``.
+
+    The worker subprocess re-imports the harness / auxiliary LLM
+    callables from these paths. A callable must therefore be a
+    module-level (or class-attribute) object; a closure-local callable
+    has ``<locals>`` in its ``__qualname__`` and cannot be re-imported —
+    we surface that as a clear :class:`ValueError` at spawn time rather
+    than letting the worker fail opaquely.
+    """
+    module = getattr(fn, "__module__", None)
+    qualname = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", None)
+    if not module or not qualname:
+        raise ValueError(
+            f"cannot derive an import path for callable {fn!r}: it has no __module__/__qualname__"
+        )
+    if "<locals>" in qualname:
+        raise ValueError(
+            f"callable {module}:{qualname} is defined inside a function "
+            "(closure-local) and cannot be re-imported by a subprocess "
+            "worker; pass a module-level callable instead"
+        )
+    return f"{module}:{qualname}"
+
+
+def _adapter_spec(adapter: Any) -> dict[str, Any]:
+    """Serialise a harness adapter into a JSON-friendly spec dict.
+
+    The worker reconstructs the adapter from this dict (see
+    :func:`zicato._tournament_worker._build_adapter`). Resolution order:
+
+    1. If the adapter exposes a ``worker_spec()`` method, its return
+       value is used verbatim — the adapter knows best how to make
+       itself re-constructible in a subprocess. This is the
+       extensibility hook for non-ADK adapters.
+    2. Otherwise the :class:`~zicato.adapters.adk.ADKHarnessAdapter`
+       shape is recognised by its ``name == "adk"`` plus the private
+       ``_entrypoint`` attribute and the public ``mutable_trees`` list.
+
+    Raises :class:`ValueError` when neither path applies; ``_run_single``
+    turns that into an aborted run rather than crashing the tournament.
+    """
+    worker_spec = getattr(adapter, "worker_spec", None)
+    if callable(worker_spec):
+        spec = worker_spec()
+        if isinstance(spec, dict):
+            return spec
+        raise ValueError(
+            f"adapter {adapter!r}.worker_spec() returned {type(spec).__name__}, expected a dict"
+        )
+
+    name = getattr(adapter, "name", None)
+    entrypoint = getattr(adapter, "_entrypoint", None)
+    if name != "adk" or not entrypoint:
+        raise ValueError(
+            f"cannot serialise adapter {adapter!r} for subprocess execution: "
+            "only the 'adk' adapter shape (or an adapter exposing a "
+            "worker_spec() method) is supported"
+        )
+    trees = [str(Path(p)) for p in getattr(adapter, "mutable_trees", []) or []]
+    return {"kind": "adk", "entrypoint": str(entrypoint), "mutable_trees": trees}
+
+
+def _weights_spec(weights: ScoringWeights) -> dict[str, Any]:
+    """Serialise :class:`ScoringWeights` into a JSON-friendly subset dict.
+
+    Only the scalar / mapping / tuple fields are carried — enough for the
+    worker's :func:`reduce_loss` call. The worker rebuilds a
+    :class:`ScoringWeights` from this, defaulting any absent key.
+    """
+    return {
+        "drift_weight": weights.drift_weight,
+        "pass_weight": weights.pass_weight,
+        "severity_weights": dict(weights.severity_weights),
+        "per_kind_weights": dict(weights.per_kind_weights),
+        "plan_revision_weight": weights.plan_revision_weight,
+        "runtime_weight": weights.runtime_weight,
+        "promote_margin": weights.promote_margin,
+        "pass_rate_monotonicity": weights.pass_rate_monotonicity,
+        "regression_gate_enabled": weights.regression_gate_enabled,
+        "regression_test_command": list(weights.regression_test_command),
+        "regression_timeout_s": weights.regression_timeout_s,
+        "namespace_weights": dict(weights.namespace_weights),
+        "namespace_monotonicity": dict(weights.namespace_monotonicity),
+    }
+
+
+def _entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
+    """Serialise a :class:`BoardEntry` into the JSON shape ``validate_board_entry`` reads.
+
+    The worker re-parses the entry via
+    :func:`zicato.core.validate_board_entry`, so the dict must match that
+    parser's expected shape (nested ``expectation`` / ``user_persona`` /
+    ``turns`` sub-dicts; lists rather than tuples).
+    """
+    out: dict[str, Any] = {
+        "id": entry.id,
+        "kind": entry.kind,
+        "wall_clock_budget_seconds": entry.wall_clock_budget_seconds,
+        "weight": entry.weight,
+        "tags": list(entry.tags),
+        "context": dict(entry.context),
+    }
+    if entry.expectation is not None:
+        out["expectation"] = {
+            "kind": entry.expectation.kind,
+            "spec": entry.expectation.spec,
+            "fires_on": entry.expectation.fires_on,
+        }
+    if entry.input is not None:
+        out["input"] = entry.input
+    if entry.turns is not None:
+        out["turns"] = [{"user": t.user} for t in entry.turns]
+    if entry.user_persona is not None:
+        out["user_persona"] = {
+            "goal": entry.user_persona.goal,
+            "constraints": entry.user_persona.constraints,
+            "stop_when": entry.user_persona.stop_when,
+        }
+    if entry.max_turns is not None:
+        out["max_turns"] = entry.max_turns
+    if entry.adversarial_agent_spec is not None:
+        out["adversarial_agent_spec"] = entry.adversarial_agent_spec
+    if entry.required_drift_kinds is not None:
+        out["required_drift_kinds"] = list(entry.required_drift_kinds)
+    return out
+
+
+def _resolve_harmonograf_url(workspace_root: Path) -> str:
+    """Best-effort harmonograf URL resolution for the worker args file.
+
+    The worker runs in a fresh process and re-resolves the env var on
+    its own, but the workspace ``config.json`` value is read here (in the
+    orchestrator process) and threaded through the args file so the
+    worker does not need the workspace-config loader.
+    """
+    try:
+        from zicato import workspace_loader  # noqa: PLC0415
+        from zicato.telemetry.sink import resolve_harmonograf_url  # noqa: PLC0415
+
+        cfg = workspace_loader.load_workspace_config(workspace_root)
+        return resolve_harmonograf_url(cfg)
+    except Exception:  # noqa: BLE001 — harmonograf wiring is optional
+        return ""
+
+
+#: Multiplier on ``task_failure_ratio`` in the synthesised aborted-run
+#: loss — mirrors :data:`zicato.telemetry.reducer._TASK_FAILURE_RATIO_MULTIPLIER`
+#: ("pure failures matter"). Kept as a local constant so this module does
+#: not import the reducer just to compute an empty-counts loss.
+_ABORTED_TASK_FAILURE_MULTIPLIER: float = 10.0
+
+
+def _aborted_loss_profile(
+    *,
+    run_id: str,
+    entry: BoardEntry,
+    generation_id: str,
+    epoch_id: str,
+    weights: ScoringWeights,
+    runtime_ms: int,
+) -> LossProfile:
+    """Synthesise a worst-case aborted :class:`LossProfile` for one run.
+
+    Used when the parent has to kill a wedged worker, or when a worker
+    vanished (supervisor SIGKILL) without leaving a result file. The
+    profile carries ``wall_clock_budget_exceeded=True``.
+
+    The ``drift_loss`` scalar is computed inline (empty drift counts, a
+    full ``task_failure_ratio`` of 1.0, the heavy fixed budget-exceeded
+    term) rather than by calling into the reducer — the runner must be
+    able to synthesise a definite-loss profile even when the reducer is
+    unavailable, so the tournament can always aggregate a killed run as a
+    loss for the entry.
+    """
+    sev_vals = list(weights.severity_weights.values()) or [1.0]
+    drift_loss = (
+        weights.runtime_weight * (runtime_ms / 1000.0)
+        + _ABORTED_TASK_FAILURE_MULTIPLIER * 1.0
+        + 5.0 * max(sev_vals)
+    )
+    drift_loss = max(0.0, drift_loss)
+    return LossProfile(
+        run_id=run_id,
+        entry_id=entry.id,
+        generation_id=generation_id,
+        epoch_id=epoch_id,
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=1.0,
+        runtime_ms=runtime_ms,
+        wall_clock_budget_exceeded=True,
+        expectation_result=None,
+        drift_loss=drift_loss,
+        pass_fail=(False if entry.expectation is not None else None),
+    )
+
+
+async def _terminate_worker(proc: Any) -> None:
+    """Escalate SIGTERM -> (grace) -> SIGKILL on a wedged worker process.
+
+    Mirrors the supervisor's two-stage escalation. After SIGTERM we wait
+    :data:`_SIGTERM_TO_SIGKILL_GRACE_S` for a clean exit; if the worker
+    is still alive we SIGKILL it. Either way we ``await proc.wait()`` so
+    no zombie is left and the parent observes the final exit code.
+    """
+    if proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_SIGTERM_TO_SIGKILL_GRACE_S)
+        return
+    except TimeoutError:
+        pass
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+    try:
+        await proc.wait()
+    except ProcessLookupError:
+        pass
+
+
+def _load_worker_result(result_path: Path) -> dict[str, Any] | None:
+    """Read the worker's result JSON; return ``None`` if missing or corrupt.
+
+    A missing or unparseable result file is the canonical signal that the
+    worker did NOT finish cleanly — it was SIGKILLed (by the parent's own
+    escalation or by the supervisor) before it could write the file.
+    ``_run_single`` treats that as a normal aborted-run outcome, never a
+    crash.
+    """
+    if not result_path.exists():
+        return None
+    try:
+        with open(result_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
 async def _run_single(
     *,
     adapter: Any,
@@ -459,19 +568,31 @@ async def _run_single(
     workspace_root: Path,
     epoch_id: str,
 ) -> LossProfile:
-    """Run one entry under one generation; produce its :class:`LossProfile`.
+    """Run one entry under one generation in an isolated subprocess worker.
 
     Sequencing:
 
-    1. Build the per-run sink path via the telemetry sink helper.
-    2. Load the harness via ``adapter.load(generation.snapshot_root)``.
-    3. Drive ``session.run`` via :func:`_drive_session`, which handles
-       the two session shapes (legacy / rich) and returns the optional
-       :class:`RunResult`, runtime, and budget-exceeded flag.
-    4. Evaluate the entry's expectation (if any) against the
-       :class:`RunResult` using the workspace's auxiliary callable.
-    5. Call :func:`reduce_loss` with the full positional contract,
-       which produces and persists the :class:`LossProfile`.
+    1. Serialise the run's inputs (entry, adapter spec, call_llm dotted
+       paths, scoring weights, sink/loss/result paths) to a temp args
+       file.
+    2. Spawn ``python -m zicato._tournament_worker <args-file>`` via
+       :func:`asyncio.create_subprocess_exec`. The worker stamps its OWN
+       pid into ``active_runs/{run_id}.json`` so the supervisor can kill
+       it individually.
+    3. ``await asyncio.wait_for(proc.wait(), budget + GRACE)``. The
+       worker's own cooperative budget normally fires first; the parent's
+       wait_for is the second line of defence.
+    4. On parent timeout: SIGTERM -> (grace) -> SIGKILL the worker, then
+       synthesise an aborted :class:`LossProfile`.
+    5. On clean exit: read the worker's result file -> the
+       :class:`LossProfile` written to ``loss.json``. A worker that
+       exited non-zero, OR a missing/corrupt result file (e.g. the
+       SUPERVISOR SIGKILLed a wedged worker), is ALSO an aborted run —
+       not a crash. The tournament continues to the next entry either
+       way.
+    6. Always clean up the temp args/result files and — if the worker
+       was killed and could not remove its own ``active_runs`` file —
+       remove that too.
     """
     sink_module, reducer_module = _telemetry_helpers()
     sink_path = sink_module.make_run_sink_path(
@@ -480,80 +601,165 @@ async def _run_single(
         generation_id=generation.id,
         entry_id=entry.id,
     )
-    # Build the per-run sink list once: the canonical JSONL sink plus,
-    # when configured, a live harmonograf stream sink.
-    raw_sinks = _build_sinks(workspace_root, epoch_id, generation.id, entry.id)
+    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
 
-    # Best-effort runtime-state write so the live dashboard can render
-    # the in-flight entry. Failures here MUST NOT abort the tournament.
-    rt = _runtime_state()
+    loss_path = loss_profile_path(workspace_root, epoch_id, generation.id, entry.id)
     run_id = _run_id_for(generation, entry)
+    budget_s = float(entry.wall_clock_budget_seconds)
 
-    # Wrap each sink so a goldfive ``emit`` also bumps this run's
-    # ``ActiveRun.last_progress`` (throttled) — that is what makes the
-    # dashboard's run card animate while the run is in flight.
-    sinks = _wrap_sinks_with_progress(raw_sinks, workspace_root, run_id)
+    rt = _runtime_state()
+
+    # Best-effort tournament-entry transition for the live dashboard. The
+    # worker writes the per-run ``active_runs`` file (with its own pid);
+    # the orchestrator only owns the tournament-entry grid status.
     if rt is not None:
-        state_mod, ActiveRun = rt
+        state_mod, _ = rt
         try:
-            import os  # noqa: PLC0415
-            from datetime import datetime, timedelta  # noqa: PLC0415
-
-            now = datetime.now(UTC)
-            deadline = now + timedelta(seconds=int(entry.wall_clock_budget_seconds))
-            state_mod.write_active_run(
-                workspace_root,
-                ActiveRun(
-                    run_id=run_id,
-                    pid=os.getpid(),
-                    started_at=now.isoformat(),
-                    last_progress=now.isoformat(),
-                    wall_clock_budget_seconds=int(entry.wall_clock_budget_seconds),
-                    deadline=deadline.isoformat(),
-                    events_jsonl_path=str(sink_path),
-                    entry_id=entry.id,
-                    generation_id=generation.id,
-                    epoch_id=epoch_id,
-                ),
-            )
             state_mod.update_tournament_entry(
                 workspace_root,
                 entry.id,
                 side=_tournament_side_for(generation, workspace_root),
                 status="running",
-                started_at=now.isoformat(),
+                started_at=_now_iso_utc(),
             )
-        except Exception:  # noqa: BLE001 - state writes are best-effort
+        except Exception:  # noqa: BLE001 — state writes are best-effort
             pass
 
+    # --- 1. Serialise the run's inputs to a temp args file. ---
+    args_fd, args_name = tempfile.mkstemp(prefix=f"ztw-args-{run_id}-", suffix=".json")
+    os.close(args_fd)
+    args_path = Path(args_name)
+    result_path = Path(args_name[: -len(".json")] + ".result.json")
+    spawn_started = time.monotonic()
+
     try:
-        session = adapter.load(generation.snapshot_root)
-        run_result, runtime_ms, budget_exceeded = await _drive_session(
-            session=session,
-            entry=entry,
-            sink_path=sink_path,
-            sinks=sinks,
-            config=config,
+        try:
+            args_payload = {
+                "workspace_root": str(workspace_root),
+                "epoch_id": epoch_id,
+                "generation_id": generation.id,
+                "snapshot_root": str(generation.snapshot_root),
+                "entry": _entry_to_dict(entry),
+                "adapter": _adapter_spec(adapter),
+                "harness_call_llm": _callable_dotted_path(config.harness_call_llm),
+                "auxiliary_call_llm": _callable_dotted_path(config.auxiliary_call_llm),
+                "sink_events_path": str(sink_path),
+                "loss_path": str(loss_path),
+                "result_path": str(result_path),
+                "instance_id": config.instance_id,
+                "seed": config.seed,
+                "harmonograf_url": _resolve_harmonograf_url(workspace_root),
+                "weights": _weights_spec(weights),
+            }
+            args_path.write_text(json.dumps(args_payload), encoding="utf-8")
+        except ValueError as exc:
+            # The run could not even be serialised for a subprocess (a
+            # closure-local callable, a non-ADK adapter). Treat as an
+            # aborted run so the tournament still aggregates, rather than
+            # taking the whole evolve down.
+            log.warning("run %s not subprocess-serialisable: %s", run_id, exc)
+            return _aborted_loss_profile(
+                run_id=run_id,
+                entry=entry,
+                generation_id=generation.id,
+                epoch_id=epoch_id,
+                weights=weights,
+                runtime_ms=0,
+            )
+
+        # --- 2. Spawn the worker subprocess. ---
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "zicato._tournament_worker",
+            str(args_path),
         )
 
-        expectation_result = await _evaluate_entry_expectation(entry, run_result, config)
+        # --- 3. Wait, bounded by budget + GRACE. ---
+        killed_by_parent = False
+        try:
+            await asyncio.wait_for(
+                proc.wait(),
+                timeout=budget_s + _PARENT_BUDGET_GRACE_S,
+            )
+        except TimeoutError:
+            # --- 4. The worker's own cooperative budget did NOT fire.
+            # Escalate SIGTERM -> SIGKILL ourselves.
+            killed_by_parent = True
+            log.warning(
+                "run %s exceeded budget+grace (%.0fs); terminating worker",
+                run_id,
+                budget_s + _PARENT_BUDGET_GRACE_S,
+            )
+            await _terminate_worker(proc)
 
-        loss: LossProfile = reducer_module.reduce_loss(
-            sink_path,
-            entry,
-            generation.id,
-            epoch_id,
-            expectation_result,
-            runtime_ms,
-            budget_exceeded,
-            weights,
-        )
-        # Live index dual-write: the run's loss.json is now on disk, so
-        # fold it into the SQLite analytical index. Best-effort — see
-        # _ingest_run_into_index; the round never aborts on an index error.
+        runtime_ms = int((time.monotonic() - spawn_started) * 1000)
+        result = _load_worker_result(result_path)
+
+        if killed_by_parent or result is None or proc.returncode != 0:
+            # Aborted run. Three indistinguishable-and-equivalent causes,
+            # all NORMAL outcomes that must not abort the tournament:
+            #   * the PARENT killed a wedged worker (killed_by_parent),
+            #   * the SUPERVISOR SIGKILLed a worker past its deadline
+            #     (process gone, result file missing),
+            #   * the worker process itself crashed (non-zero exit, no
+            #     usable result file).
+            if not killed_by_parent and result is None:
+                log.info(
+                    "run %s: worker gone with no result file "
+                    "(supervisor kill or crash); recording aborted run",
+                    run_id,
+                )
+            elif proc.returncode not in (0, None):
+                log.info(
+                    "run %s: worker exited %s; recording aborted run",
+                    run_id,
+                    proc.returncode,
+                )
+            return _aborted_loss_profile(
+                run_id=run_id,
+                entry=entry,
+                generation_id=generation.id,
+                epoch_id=epoch_id,
+                weights=weights,
+                runtime_ms=runtime_ms,
+            )
+
+        # --- 5. Clean exit. Read the LossProfile the worker wrote. ---
+        # The worker may itself have aborted via its OWN cooperative
+        # budget — that is still a clean worker exit (exit code 0, result
+        # file present) and the loss.json it wrote already carries
+        # ``wall_clock_budget_exceeded=True``. We just read it back.
+        loss_profile_path_str = str(result.get("loss_profile_path", loss_path))
+        try:
+            loss: LossProfile = reducer_module.read_loss_profile(Path(loss_profile_path_str))
+        except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
+            # The worker said it finished cleanly but its loss.json is
+            # unreadable — treat as aborted rather than crashing.
+            log.warning("run %s: worker result loss.json unreadable: %s", run_id, exc)
+            return _aborted_loss_profile(
+                run_id=run_id,
+                entry=entry,
+                generation_id=generation.id,
+                epoch_id=epoch_id,
+                weights=weights,
+                runtime_ms=runtime_ms,
+            )
+
+        # Live index dual-write: the run's loss.json is on disk, so fold
+        # it into the SQLite analytical index. Best-effort.
         _ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
         return loss
     finally:
+        # --- 6. Cleanup. Remove the temp args/result files; if the
+        # worker was killed before it could remove its own active_runs
+        # file, the parent removes it here.
+        for tmp in (args_path, result_path):
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
         if rt is not None:
             state_mod, _ = rt
             try:
