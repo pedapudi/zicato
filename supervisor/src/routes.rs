@@ -4,17 +4,19 @@
 //! server was started with `--read-only`.
 
 use crate::reader::{self, WorkspacePaths};
+use crate::run_log;
 use crate::sse;
 use crate::static_assets;
 use crate::watcher::WatchEvent;
 use axum::{
-    extract::{Path as AxumPath, State},
+    extract::{Path as AxumPath, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
@@ -28,6 +30,11 @@ pub struct AppState {
     pub read_only: bool,
     pub started: Arc<Instant>,
     pub build_version: &'static str,
+    /// The port the HTTP server actually bound (after any retry walk).
+    pub port: u16,
+    /// A build identifier: the crate version, plus a short git SHA when
+    /// the build script could resolve one. Always non-empty.
+    pub build_id: &'static str,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -37,6 +44,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/state", get(api_state))
         .route("/api/epoch", get(api_epoch))
         .route("/api/lineage", get(api_lineage))
+        .route("/api/run-log", get(api_run_log))
         .route("/api/active-runs", get(api_active_runs))
         .route("/api/active-tournament", get(api_active_tournament))
         .route("/api/tournaments", get(api_tournaments))
@@ -90,17 +98,42 @@ async fn api_epoch(State(s): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::to_value(view).unwrap_or(serde_json::Value::Null))
 }
 
+/// `GET /api/lineage` — every generation directory in every epoch,
+/// in-flight and resolved.
+///
+/// Always 200. Each node is `{generation_id, epoch_id,
+/// parent_generation_id, promoted, created_at}` where `promoted` is
+/// `null` while the generation is still being scored — so the dashboard
+/// Tree can draw `v0` plus the in-flight `v1` mid-run.
 async fn api_lineage(State(s): State<AppState>) -> Json<serde_json::Value> {
-    Json(
-        reader::read_lineage(&s.paths)
-            .map(|l| serde_json::to_value(l).unwrap_or(serde_json::Value::Null))
-            .unwrap_or(serde_json::Value::Null),
-    )
+    let view = reader::build_lineage_view(&s.paths);
+    Json(serde_json::to_value(view).unwrap_or_else(|_| serde_json::json!({"generations": []})))
 }
 
+/// `GET /api/run-log?limit=N` — the last `N` (default 40) goldfive
+/// events from the active run's `events.jsonl`.
+///
+/// Always 200: no active run falls back to the most recent `events.jsonl`
+/// under `epochs/`; a missing file yields `{"events": []}`.
+async fn api_run_log(
+    State(s): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let requested = params
+        .get("limit")
+        .and_then(|v| v.trim().parse::<usize>().ok());
+    let limit = run_log::clamp_limit(requested);
+    let log = run_log::build_run_log(&s.paths, limit);
+    Json(serde_json::to_value(log).unwrap_or_else(|_| serde_json::json!({"events": []})))
+}
+
+/// `GET /api/active-runs` — each active run enriched with a computed
+/// deadline fraction (`progress`), `elapsed_seconds`, and
+/// `budget_seconds` for the per-entry progress bars.
 async fn api_active_runs(State(s): State<AppState>) -> Json<serde_json::Value> {
     Json(
-        serde_json::to_value(reader::read_active_runs(&s.paths)).unwrap_or(serde_json::Value::Null),
+        serde_json::to_value(reader::read_active_runs_view(&s.paths))
+            .unwrap_or(serde_json::Value::Null),
     )
 }
 
@@ -167,6 +200,11 @@ struct Health {
     uptime_seconds: u64,
     read_only: bool,
     workspace: String,
+    /// The TCP port the server is bound to — for the dashboard footer.
+    port: u16,
+    /// Build identifier: crate version plus a short git SHA when known.
+    /// Always non-empty.
+    build: &'static str,
 }
 
 async fn api_health(State(s): State<AppState>) -> Json<Health> {
@@ -176,6 +214,8 @@ async fn api_health(State(s): State<AppState>) -> Json<Health> {
         uptime_seconds: s.started.elapsed().as_secs(),
         read_only: s.read_only,
         workspace: s.paths.workspace.display().to_string(),
+        port: s.port,
+        build: s.build_id,
     })
 }
 

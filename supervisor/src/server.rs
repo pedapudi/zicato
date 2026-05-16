@@ -17,6 +17,30 @@ pub struct ServerHandle {
     pub addr: SocketAddr,
 }
 
+/// A non-empty build identifier for the dashboard footer.
+///
+/// The crate version, suffixed with a short git SHA when the build
+/// script (`build.rs`) could resolve one. Falls back to the bare version
+/// for source-tarball builds where `git` was unavailable — but is never
+/// empty.
+pub fn build_id() -> &'static str {
+    // `concat!` requires literals, so the SHA-suffixed form is a const
+    // string when `ZICATO_GIT_SHA` is populated, and the bare version
+    // otherwise. `env!` of an empty-valued var yields "".
+    const SHA: &str = env!("ZICATO_GIT_SHA");
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    if SHA.is_empty() {
+        VERSION
+    } else {
+        // Built once at first call; `concat!` cannot interpolate env at
+        // compile time across both branches, so format into a leaked
+        // 'static — done a single time for the process lifetime.
+        use std::sync::OnceLock;
+        static ID: OnceLock<String> = OnceLock::new();
+        ID.get_or_init(|| format!("{VERSION}+{SHA}")).as_str()
+    }
+}
+
 pub async fn build_listener(
     bind: IpAddr,
     preferred_port: u16,
@@ -53,6 +77,10 @@ pub async fn serve(
         read_only,
         started: Arc::new(Instant::now()),
         build_version: env!("CARGO_PKG_VERSION"),
+        // The port actually bound (which may differ from `preferred_port`
+        // after the retry walk).
+        port: addr.port(),
+        build_id: build_id(),
     };
 
     let cors = CorsLayer::new()

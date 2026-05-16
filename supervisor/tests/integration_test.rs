@@ -1061,3 +1061,285 @@ async fn watchdog_deadline_decision_is_pure_and_separate_from_staleness() {
         RunDeadlineAction::None,
     );
 }
+
+// ---------------------------------------------------------------------
+// Dashboard API gaps: run-log tail, in-flight lineage, per-run progress,
+// and the health-footer fields.
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn run_log_endpoint_tails_active_run_events() {
+    let (_t, paths) = make_workspace();
+
+    // A synthetic active-run events.jsonl: 50 events, mixed envelope
+    // shapes (camelCase + the normalized {kind,payload} shape).
+    let events_path = paths.workspace.join("run_events.jsonl");
+    let mut body = String::new();
+    for i in 0..48 {
+        body.push_str(&format!(
+            "{{\"emittedAt\":\"2026-05-16T04:36:{:02}Z\",\"sequence\":{i},\
+              \"taskProgress\":{{\"taskId\":\"t{i}\",\"fraction\":0.5}}}}\n",
+            i % 60
+        ));
+    }
+    // A camelCase steering decision and a normalized-shape event.
+    body.push_str(
+        "{\"emittedAt\":\"2026-05-16T04:37:00Z\",\"sequence\":48,\
+          \"steeringDecisionMade\":{\"agentName\":\"coordinator_agent\",\"outcome\":\"no_drift\"}}\n",
+    );
+    body.push_str(
+        "{\"emitted_at\":{\"seconds\":1778906222,\"nanos\":0},\"sequence\":49,\
+          \"kind\":\"pinResolved\",\"payload\":{\"agent_name\":\"research_agent\"}}\n",
+    );
+    std::fs::write(&events_path, body).unwrap();
+
+    let run = serde_json::json!({
+        "run_id": "v1--entry",
+        "events_jsonl_path": events_path.display().to_string(),
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("v1--entry.json"),
+        serde_json::to_vec(&run).unwrap(),
+    )
+    .unwrap();
+
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    // Default limit (40): last 40 of 50.
+    let resp = client
+        .get(format!("{base}/api/run-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    let events = r["events"].as_array().unwrap();
+    assert_eq!(events.len(), 40, "default limit is 40");
+
+    // The last two events: camelCase + normalized kinds, both snake_cased.
+    let last = events.last().unwrap();
+    assert_eq!(last["seq"], 49);
+    assert_eq!(last["kind"], "pin_resolved");
+    let penultimate = &events[events.len() - 2];
+    assert_eq!(penultimate["kind"], "steering_decision_made");
+    assert_eq!(
+        penultimate["summary"],
+        "steering_decision_made: coordinator_agent: no_drift"
+    );
+
+    // Explicit limit.
+    let r: Value = client
+        .get(format!("{base}/api/run-log?limit=5"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["events"].as_array().unwrap().len(), 5);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn run_log_endpoint_empty_when_no_events_file() {
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/run-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    assert_eq!(r["events"], serde_json::json!([]));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn lineage_endpoint_includes_in_flight_generation() {
+    let (_t, paths) = make_workspace();
+    let epoch_dir = paths.epochs.join("2026-05-15_e0");
+    let gens = epoch_dir.join("generations");
+
+    // v0: the root — a generation directory with no experiment.json.
+    std::fs::create_dir_all(gens.join("v0")).unwrap();
+
+    // v1: proposed, experiment.json present but outcome still null —
+    // the tournament has not resolved, so it is still in flight.
+    std::fs::create_dir_all(gens.join("v1")).unwrap();
+    let exp_v1 = serde_json::json!({
+        "epoch_id": "2026-05-15_e0",
+        "generation_id": "v1",
+        "parent_generation_id": "v0",
+        "proposed_at": "2026-05-15T10:00:00+00:00",
+        "outcome": null,
+    });
+    std::fs::write(gens.join("v1").join("experiment.json"), exp_v1.to_string()).unwrap();
+
+    // v2: resolved and rejected.
+    std::fs::create_dir_all(gens.join("v2")).unwrap();
+    let exp_v2 = serde_json::json!({
+        "epoch_id": "2026-05-15_e0",
+        "generation_id": "v2",
+        "parent_generation_id": "v0",
+        "proposed_at": "2026-05-15T11:00:00+00:00",
+        "outcome": {"decision": "rejected"},
+    });
+    std::fs::write(gens.join("v2").join("experiment.json"), exp_v2.to_string()).unwrap();
+
+    // The legacy lineage.json knows only the promoted root.
+    let lineage = serde_json::json!({
+        "epochs": [{
+            "id": "2026-05-15_e0",
+            "generations": [
+                {"id": "v0", "parent_id": null, "promoted": true,
+                 "created_at": "2026-05-15T09:00:00+00:00"},
+            ],
+        }],
+    });
+    std::fs::write(paths.lineage(), lineage.to_string()).unwrap();
+
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/lineage"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    let nodes = r["generations"].as_array().unwrap();
+    // All three generation directories appear — not only the promoted v0.
+    assert_eq!(nodes.len(), 3, "got: {r}");
+
+    let by_id = |id: &str| {
+        nodes
+            .iter()
+            .find(|n| n["generation_id"] == id)
+            .unwrap()
+            .clone()
+    };
+
+    let v0 = by_id("v0");
+    assert_eq!(v0["epoch_id"], "2026-05-15_e0");
+    assert_eq!(v0["promoted"], true);
+    assert!(v0["parent_generation_id"].is_null());
+    assert_eq!(v0["created_at"], "2026-05-15T09:00:00+00:00");
+
+    // v1 has no decision yet -> promoted is null (still in flight).
+    let v1 = by_id("v1");
+    assert!(v1["promoted"].is_null(), "in-flight v1 must be null: {v1}");
+    assert_eq!(v1["parent_generation_id"], "v0");
+    assert_eq!(v1["created_at"], "2026-05-15T10:00:00+00:00");
+
+    // v2 resolved-but-rejected -> promoted false.
+    let v2 = by_id("v2");
+    assert_eq!(v2["promoted"], false);
+    assert_eq!(v2["parent_generation_id"], "v0");
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn active_runs_endpoint_carries_computed_progress() {
+    let (_t, paths) = make_workspace();
+    let now = Utc::now();
+
+    // A run a quarter of the way through a 1000s budget window.
+    let ar = serde_json::json!({
+        "run_id": "v1--entry",
+        "pid": 4242,
+        "entry_id": "entry",
+        "started_at": now - ChDuration::seconds(250),
+        "deadline": now + ChDuration::seconds(750),
+        "wall_clock_budget_seconds": 1000.0,
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("v1--entry.json"),
+        serde_json::to_vec(&ar).unwrap(),
+    )
+    .unwrap();
+
+    // A run already past its deadline: fraction must clamp to 1.0.
+    let ar_late = serde_json::json!({
+        "run_id": "v2--late",
+        "pid": 4343,
+        "started_at": now - ChDuration::seconds(2000),
+        "deadline": now - ChDuration::seconds(1000),
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("v2--late.json"),
+        serde_json::to_vec(&ar_late).unwrap(),
+    )
+    .unwrap();
+
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/active-runs"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    let runs = r.as_array().unwrap();
+    assert_eq!(runs.len(), 2);
+
+    // Sorted by run_id: v1--entry first.
+    let entry = &runs[0];
+    assert_eq!(entry["run_id"], "v1--entry");
+    let progress = entry["progress"].as_f64().unwrap();
+    assert!(
+        (0.20..=0.30).contains(&progress),
+        "expected ~0.25, got {progress}"
+    );
+    let budget = entry["budget_seconds"].as_i64().unwrap();
+    assert!((990..=1010).contains(&budget), "got budget {budget}");
+    let elapsed = entry["elapsed_seconds"].as_i64().unwrap();
+    assert!((240..=260).contains(&elapsed), "got elapsed {elapsed}");
+
+    // The over-deadline run: progress clamps to exactly 1.0.
+    let late = &runs[1];
+    assert_eq!(late["run_id"], "v2--late");
+    assert_eq!(late["progress"].as_f64().unwrap(), 1.0);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn health_endpoint_carries_port_and_build() {
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+
+    // `port` is the actually-bound port and non-zero.
+    let port = r["port"].as_u64().unwrap();
+    assert_eq!(port, handle.addr.port() as u64);
+    assert!(port > 0);
+
+    // `build` is present and non-empty.
+    let build = r["build"].as_str().unwrap();
+    assert!(!build.is_empty(), "build identifier must be non-empty");
+
+    let _ = shutdown.send(());
+}
