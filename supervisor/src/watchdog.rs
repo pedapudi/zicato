@@ -14,10 +14,12 @@
 //! separate, complementary trigger — a run can be killed for stalling OR
 //! for blowing its wall-clock budget.
 
+use crate::action_log::{Action, Trigger, WatchdogLog};
 use crate::reader::{self, WorkspacePaths};
 use crate::signal::{self, escalate};
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::Sender;
 use tracing::{info, warn};
@@ -208,6 +210,7 @@ pub async fn heartbeat_loop(
     paths: WorkspacePaths,
     thresholds: Thresholds,
     interval: Duration,
+    log: Arc<WatchdogLog>,
     shutdown: Sender<()>,
 ) {
     let mut ticker = tokio::time::interval(interval);
@@ -231,6 +234,13 @@ pub async fn heartbeat_loop(
                         warn!(pid, "heartbeat stale past kill threshold; escalating");
                         let out = escalate(pid, thresholds.grace).await;
                         info!(?out, pid, "escalation complete");
+                        log.record(Action {
+                            ts: Utc::now(),
+                            trigger: Trigger::HeartbeatStale,
+                            pid,
+                            run_id: None,
+                            outcome: out.into(),
+                        });
                     }
                 }
             }
@@ -253,6 +263,7 @@ pub async fn runs_loop(
     paths: WorkspacePaths,
     thresholds: Thresholds,
     interval: Duration,
+    log: Arc<WatchdogLog>,
     shutdown: Sender<()>,
 ) {
     let mut ticker = tokio::time::interval(interval);
@@ -315,6 +326,13 @@ pub async fn runs_loop(
                                     "run deadline escalation complete; \
                                      leaving state file for orchestrator cleanup",
                                 );
+                                log.record(Action {
+                                    ts: Utc::now(),
+                                    trigger: Trigger::RunDeadline,
+                                    pid,
+                                    run_id: Some(run.run_id.clone()),
+                                    outcome: out.into(),
+                                });
                                 // Deliberately do NOT remove the state
                                 // file: the orchestrator/worker owns that
                                 // lifecycle.
@@ -341,6 +359,13 @@ pub async fn runs_loop(
                             warn!(run_id=%run.run_id, pid, "active run past kill threshold; escalating");
                             let out = escalate(pid, thresholds.grace).await;
                             info!(?out, run_id=%run.run_id, "run escalation complete");
+                            log.record(Action {
+                                ts: Utc::now(),
+                                trigger: Trigger::RunStale,
+                                pid,
+                                run_id: Some(run.run_id.clone()),
+                                outcome: out.into(),
+                            });
                             // Remove the state file so we don't re-escalate.
                             let run_file = paths.active_runs_dir().join(format!("{}.json", run.run_id));
                             if let Err(e) = std::fs::remove_file(&run_file) {
