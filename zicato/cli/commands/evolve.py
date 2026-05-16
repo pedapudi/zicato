@@ -75,24 +75,32 @@ def _resolve_supervisor_binary() -> Path | None:
 
 async def _maybe_spawn_supervisor(
     workspace_root: Path,
-    port: int,
-    bind: str,
     disabled: bool,
 ) -> asyncio.subprocess.Process | None:
     """Spawn the supervisor binary as a subprocess (or return ``None``).
 
+    The supervisor is now a watchdog-only process: it is started with
+    ``--no-dashboard`` so it runs the process-supervision loop and the
+    always-on ``/statusz`` probe but does NOT serve the dashboard UI.
+    The dashboard is served by the separate Python service spawned by
+    :func:`_maybe_spawn_dashboard`.
+
     The binary's stdout/stderr are inherited from the parent so log
     output appears alongside ``zicato evolve``'s own messages. On
     failure-to-spawn the function still returns ``None`` and prints a
-    warning — ``evolve`` continues without a dashboard rather than
+    warning — ``evolve`` continues without the watchdog rather than
     refusing to run.
+
+    ``disabled`` mirrors ``--no-dashboard``: with the dashboard
+    suppressed there is nothing for the watchdog to guard the lifecycle
+    of, so the supervisor is not spawned either.
     """
     if disabled:
         return None
     binary = _resolve_supervisor_binary()
     if binary is None:
         click.echo(
-            "warning: zicato-supervisor binary not found; dashboard disabled",
+            "warning: zicato-supervisor binary not found; watchdog disabled",
             err=True,
         )
         return None
@@ -101,23 +109,88 @@ async def _maybe_spawn_supervisor(
             str(binary),
             "--workspace",
             str(workspace_root),
-            "--port",
-            str(port),
-            "--bind",
-            bind,
+            "--no-dashboard",
         )
     except (OSError, FileNotFoundError) as exc:
         click.echo(
-            f"warning: failed to spawn zicato-supervisor ({exc}); dashboard disabled",
+            f"warning: failed to spawn zicato-supervisor ({exc}); watchdog disabled",
             err=True,
         )
         return None
-    click.echo(f"Dashboard: http://{bind}:{port}")
     return proc
 
 
-async def _terminate_supervisor(proc: asyncio.subprocess.Process | None) -> None:
-    """Shut down a previously-spawned supervisor; idempotent."""
+def _dashboard_spawn_argv(workspace_root: Path, host: str, port: int) -> list[str]:
+    """Return the argv that launches the Python dashboard service.
+
+    Spawned as ``python -m zicato.dashboard`` so the dashboard runs in
+    its own isolated process — the same pattern as the supervisor
+    subprocess, and the cleanest teardown story (kill the process, the
+    HTTP server dies with it).
+
+    The ``zicato.dashboard.__main__`` entry point is owned by a parallel
+    workstream. It is expected to accept ``--workspace``, ``--host`` and
+    ``--port`` and to call :func:`zicato.dashboard.server.run` with the
+    bundled static directory resolved the same way
+    :func:`zicato.cli.commands.dashboard.resolve_static_dir` resolves
+    it. If that entry point is absent the spawn fails cleanly and
+    ``evolve`` continues without a dashboard (see
+    :func:`_maybe_spawn_dashboard`).
+    """
+    import sys  # noqa: PLC0415
+
+    return [
+        sys.executable,
+        "-m",
+        "zicato.dashboard",
+        "--workspace",
+        str(workspace_root),
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+
+
+async def _maybe_spawn_dashboard(
+    workspace_root: Path,
+    port: int,
+    disabled: bool,
+) -> asyncio.subprocess.Process | None:
+    """Spawn the Python dashboard service as a subprocess (or ``None``).
+
+    This is the process that actually serves the dashboard UI — the
+    primary dashboard link ``evolve`` reports to the operator. It binds
+    ``127.0.0.1`` because the operator views it from the same host as
+    the evolve loop.
+
+    On failure-to-spawn the function returns ``None`` and prints a
+    warning — ``evolve`` continues without a dashboard rather than
+    refusing to run, exactly like the supervisor helper.
+    """
+    if disabled:
+        return None
+    host = "127.0.0.1"
+    argv = _dashboard_spawn_argv(workspace_root, host, port)
+    try:
+        proc = await asyncio.create_subprocess_exec(*argv)
+    except (OSError, FileNotFoundError) as exc:
+        click.echo(
+            f"warning: failed to spawn the dashboard service ({exc}); " "dashboard disabled",
+            err=True,
+        )
+        return None
+    click.echo(f"Dashboard: http://{host}:{port}")
+    return proc
+
+
+async def _terminate_child(proc: asyncio.subprocess.Process | None) -> None:
+    """Shut down a previously-spawned child process; idempotent.
+
+    Used to tear down both the watchdog supervisor and the Python
+    dashboard service. Sends ``SIGTERM``, waits up to five seconds for a
+    clean exit, then escalates to ``SIGKILL``.
+    """
     if proc is None:
         return
     if proc.returncode is not None:
@@ -134,6 +207,11 @@ async def _terminate_supervisor(proc: asyncio.subprocess.Process | None) -> None
         except ProcessLookupError:
             return
         await proc.wait()
+
+
+# Backwards-compatible alias: the supervisor-only teardown name is kept
+# so existing callers / tests that import it keep working.
+_terminate_supervisor = _terminate_child
 
 
 def _import_callable(dotted: str, *, kind: str) -> Any:
@@ -247,20 +325,17 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     "--no-dashboard",
     is_flag=True,
     default=False,
-    help="Do not spawn the supervisor binary / dashboard server.",
+    help=(
+        "Do not spawn the dashboard service (and the watchdog "
+        "supervisor that guards it). evolve still runs the loop."
+    ),
 )
 @click.option(
     "--dashboard-port",
     default=7892,
     show_default=True,
     type=click.IntRange(min=1, max=65535),
-    help="Preferred port for the dashboard HTTP server.",
-)
-@click.option(
-    "--dashboard-bind",
-    default="127.0.0.1",
-    show_default=True,
-    help="Bind address for the dashboard HTTP server.",
+    help="Port for the dashboard HTTP server (bound on 127.0.0.1).",
 )
 def evolve_cmd(
     workspace: str,
@@ -275,7 +350,6 @@ def evolve_cmd(
     epoch_name: str | None,
     no_dashboard: bool,
     dashboard_port: int,
-    dashboard_bind: str,
 ) -> None:
     """Run the evolve loop for N rounds against the current epoch.
 
@@ -301,10 +375,17 @@ def evolve_cmd(
     stop_reason_out: list[str] = []
 
     async def _run() -> list[Any]:
+        # The supervisor is now watchdog-only (spawned with
+        # --no-dashboard); the dashboard UI is served by the separate
+        # Python dashboard service. Both are children of this evolve
+        # process and both are torn down on exit.
         sup = await _maybe_spawn_supervisor(
             workspace_root,
+            disabled=no_dashboard,
+        )
+        dash = await _maybe_spawn_dashboard(
+            workspace_root,
             dashboard_port,
-            dashboard_bind,
             disabled=no_dashboard,
         )
         try:
@@ -322,7 +403,10 @@ def evolve_cmd(
                 stop_reason_out=stop_reason_out,
             )
         finally:
-            await _terminate_supervisor(sup)
+            # Tear down both children. Tear the dashboard down first so
+            # its port is freed before the watchdog notices it is gone.
+            await _terminate_child(dash)
+            await _terminate_child(sup)
 
     try:
         outcomes = asyncio.run(_run())
