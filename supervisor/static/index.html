@@ -50,6 +50,13 @@
       <!-- ============ OVERVIEW VIEW ============ -->
       <div id="view-overview" class="view" data-view="overview">
 
+        <section id="health-section" aria-label="Loop health">
+          <h2>Loop health</h2>
+          <div id="health-panel" class="health-panel" role="status" aria-live="polite">
+            <p class="empty">No health report yet.</p>
+          </div>
+        </section>
+
         <section id="tournament-section" class="tournament-section panel" aria-label="Active tournament">
           <div class="panel-header">
             <h2 id="tournament-title">Tournament</h2>
@@ -112,17 +119,22 @@
       <!-- ============ TOURNAMENT VIEW ============ -->
       <div id="view-tournament" class="view hidden" data-view="tournament">
 
-        <section id="tournament-picker-section" aria-label="Tournament selector">
-          <h2>Tournament</h2>
-          <div id="tournament-picker" class="tournament-picker">
-            <label class="picker-label" for="tournament-select">show</label>
-            <select id="tournament-select" class="picker-select" aria-label="Select a tournament"></select>
+        <section id="tournament-bracket-section" aria-label="Tournament bracket">
+          <h2>Tournament gauntlet</h2>
+          <p class="panel-subheader">
+            Champion lineage runs the green spine; each discarded challenger
+            hangs below the champion it failed to beat. Click a matchup.
+          </p>
+          <div id="tournament-bracket" class="tournament-bracket" role="list"
+             aria-label="Champion lineage and discarded challengers">
+            <p class="empty">No tournaments recorded yet.</p>
           </div>
         </section>
 
         <section id="tournament-detail-section" aria-label="Tournament detail">
+          <h2>Matchup detail</h2>
           <div id="tournament-detail" class="tournament-detail">
-            <p class="empty">No tournament selected.</p>
+            <p class="empty">Select a matchup above.</p>
           </div>
         </section>
 
