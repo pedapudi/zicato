@@ -80,6 +80,15 @@ class EvolveRoundOutcome:
         Child generation's scalar score.
     delta_scalar:
         ``child_scalar - parent_scalar``. Negative = improvement.
+    health_summary:
+        One-line summary of the round's loop-health assessment (see
+        :func:`zicato.health.diagnostics.assess_loop_health`). Empty
+        string when the health sibling is unavailable or the assessment
+        could not be run — the round's outcome is unaffected either way.
+    health_critical:
+        ``True`` when the round's loop-health assessment surfaced at
+        least one CRITICAL finding (e.g. degenerate scoring producing no
+        signal). ``False`` otherwise, including when no assessment ran.
     """
 
     parent_generation_id: str
@@ -89,6 +98,8 @@ class EvolveRoundOutcome:
     parent_scalar: float
     child_scalar: float
     delta_scalar: float
+    health_summary: str = ""
+    health_critical: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +603,18 @@ async def evolve_once(
         finalised = update_experiment_outcome(
             workspace_root, resolved_epoch_id, next_id, rejected_outcome
         )
+        # Live index dual-write: experiment.json now carries the rejected
+        # outcome, so fold it into the SQLite analytical index.
+        _ingest_experiment_into_index(workspace_root, resolved_epoch_id, next_id)
         append_journal_entry(workspace_root, resolved_epoch_id, finalised)
+        # Loop-health check for this round even on an early validator
+        # rejection — a stuck loop should still surface on the dashboard.
+        round_n = _round_n_from_generation_id(next_id) or round_index
+        health_summary, health_critical = _assess_and_persist_loop_health(
+            workspace_root, resolved_epoch_id, round_n, board
+        )
+        if health_critical:
+            _warn_loop_no_signal(resolved_epoch_id, round_n, health_summary)
         _beat(
             beater,
             epoch_id=resolved_epoch_id,
@@ -608,10 +630,16 @@ async def evolve_once(
             parent_scalar=0.0,
             child_scalar=0.0,
             delta_scalar=0.0,
+            health_summary=health_summary,
+            health_critical=health_critical,
         )
 
     # --- 10. Run the tournament ---
     write_experiment(workspace_root, resolved_epoch_id, next_id, experiment)
+    # Live index dual-write: the proposer-side experiment.json (outcome
+    # still None) is on disk — fold it in so the index reflects the
+    # in-progress generation before the tournament finishes.
+    _ingest_experiment_into_index(workspace_root, resolved_epoch_id, next_id)
     _beat(
         beater,
         epoch_id=resolved_epoch_id,
@@ -678,6 +706,9 @@ async def evolve_once(
     finalised = update_experiment_outcome(
         workspace_root, resolved_epoch_id, next_id, outcome_record
     )
+    # Live index dual-write: experiment.json now carries the tournament
+    # outcome — refresh the SQLite analytical index entry for it.
+    _ingest_experiment_into_index(workspace_root, resolved_epoch_id, next_id)
 
     # --- 12. Lineage / current-generation marker on promotion ---
     if bookkeeping_decision == "promoted":
@@ -707,7 +738,23 @@ async def evolve_once(
     # --- 13. Journal ---
     append_journal_entry(workspace_root, resolved_epoch_id, finalised)
 
-    # --- 14. Best-effort decision-telemetry analyzer ---
+    # --- 14. Per-round loop-health check ---
+    # Assess whether the loop is producing usable signal this round —
+    # the epoch's accumulated losses + experiments + board, fed to
+    # zicato.health. The LoopHealth report lands at
+    # epochs/{epoch}/health/round_{N}.json; a CRITICAL finding (e.g.
+    # degenerate scoring) escalates to a prominent stderr WARNING so the
+    # operator sees "the loop is producing no signal." Best-effort: a
+    # missing health sibling, or any assessment error, never aborts the
+    # round (see _assess_and_persist_loop_health).
+    round_n = _round_n_from_generation_id(next_id) or round_index
+    health_summary, health_critical = _assess_and_persist_loop_health(
+        workspace_root, resolved_epoch_id, round_n, board
+    )
+    if health_critical:
+        _warn_loop_no_signal(resolved_epoch_id, round_n, health_summary)
+
+    # --- 15. Best-effort decision-telemetry analyzer ---
     # Analyser failure must never abort the round; the orchestrator
     # only logs at debug level and keeps going. The analyser writes
     # ``epochs/{epoch}/insights/round_{N}.md`` which the next round's
@@ -744,12 +791,22 @@ async def evolve_once(
         parent_scalar=parent_scalar,
         child_scalar=child_scalar,
         delta_scalar=child_scalar - parent_scalar,
+        health_summary=health_summary,
+        health_critical=health_critical,
     )
 
 
 # ---------------------------------------------------------------------------
 # evolve_n_rounds
 # ---------------------------------------------------------------------------
+
+
+#: Default threshold for the loop-health circuit breaker: this many
+#: consecutive rounds with a CRITICAL loop-health finding stops the
+#: evolve loop early. Two is deliberately tight — one CRITICAL round
+#: could be a transient (e.g. a single degenerate tournament), but two
+#: in a row means the loop is genuinely producing no signal.
+_DEGENERATE_HEALTH_STOP_THRESHOLD = 2
 
 
 async def evolve_n_rounds(
@@ -765,6 +822,7 @@ async def evolve_n_rounds(
     max_proposer_retries: int = 2,
     auto_epoch: bool = True,
     epoch_name: str | None = None,
+    stop_on_degenerate_health: bool = True,
 ) -> list[EvolveRoundOutcome]:
     """Loop :func:`evolve_once` up to ``rounds`` times.
 
@@ -773,6 +831,17 @@ async def evolve_n_rounds(
     operator probably wants to inspect the rubric / patterns before
     spending more LLM calls. A successful promotion resets the
     consecutive-rejection counter.
+
+    A second circuit breaker watches loop *health*: when
+    ``stop_on_degenerate_health`` is true (the default), the loop stops
+    early once :data:`_DEGENERATE_HEALTH_STOP_THRESHOLD` consecutive
+    rounds report a CRITICAL loop-health finding (e.g. degenerate
+    scoring — the tournament can no longer tell a real improvement from
+    noise). Same spirit as the consecutive-rejection breaker: there is
+    no point spending more LLM calls on a loop that is producing no
+    usable signal. A round whose health is not CRITICAL resets the
+    counter. Pass ``stop_on_degenerate_health=False`` to opt out and run
+    every requested round regardless of health.
 
     Contract-hash auto-epoching runs ONCE, before the round loop: when
     ``epoch_id`` is ``None`` and ``auto_epoch`` is true, the orchestrator
@@ -783,7 +852,7 @@ async def evolve_n_rounds(
     skipped entirely — an explicit target always wins.
 
     The list of :class:`EvolveRoundOutcome` returned has one entry per
-    round attempted (which may be fewer than ``rounds`` if the
+    round attempted (which may be fewer than ``rounds`` if either
     early-stop fired).
     """
     if rounds <= 0:
@@ -822,6 +891,7 @@ async def evolve_n_rounds(
         )
         beater.bump_now()
         consecutive_rejections = 0
+        consecutive_critical_health = 0
         for round_idx in range(rounds):
             beater.update(
                 epoch_id=epoch_id or "",
@@ -876,6 +946,24 @@ async def evolve_n_rounds(
                         rounds,
                     )
                     break
+            # Loop-health circuit breaker — stop early when the loop has
+            # produced no usable signal for too many rounds running.
+            if stop_on_degenerate_health and outcome.health_critical:
+                consecutive_critical_health += 1
+                if consecutive_critical_health >= _DEGENERATE_HEALTH_STOP_THRESHOLD:
+                    log.warning(
+                        "evolve_n_rounds: stopping after %d consecutive rounds with a "
+                        "CRITICAL loop-health finding (round %d/%d) — the loop is "
+                        "producing no usable signal; inspect the scoring weights / "
+                        "rubric before resuming. (Pass stop_on_degenerate_health=False "
+                        "to opt out.)",
+                        consecutive_critical_health,
+                        round_idx + 1,
+                        rounds,
+                    )
+                    break
+            else:
+                consecutive_critical_health = 0
         beater.update(phase="evolve_n_rounds:done")
         beater.bump_now()
     finally:
@@ -1085,6 +1173,301 @@ def _cache_gen_score(
         json.dumps(payload, default=str, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+# ---------------------------------------------------------------------------
+# Live SQLite analytical index — best-effort dual-write
+# ---------------------------------------------------------------------------
+
+
+#: Location of the SQLite analytical index, relative to the workspace
+#: root (the ``.zicato/`` directory). The :mod:`zicato.index` sibling
+#: owns the schema; the orchestrator only knows the path so it can keep
+#: the index live as the loop runs.
+_INDEX_DB_RELPATH = "index.db"
+
+
+def _index_db_path(workspace_root: Path) -> Path:
+    """Return the SQLite analytical index path for a workspace."""
+    return workspace_root / _INDEX_DB_RELPATH
+
+
+def _ingest_experiment_into_index(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+) -> None:
+    """Best-effort dual-write of one generation's experiment into the index.
+
+    Called after ``experiment.json`` is written or its outcome updated,
+    so the live SQLite analytical index reflects the experiment as the
+    loop runs. The :mod:`zicato.index` sibling may not be installed (it
+    lands in parallel); the import is lazy and any failure — a missing
+    module, a schema mismatch, an I/O error — is logged at ``debug``
+    level and swallowed. ``experiment.json`` on disk stays canonical and
+    ``zicato reindex`` can always rebuild the index from scratch.
+    """
+    try:
+        from zicato.index.ingest import ingest_experiment  # noqa: PLC0415
+
+        ingest_experiment(
+            workspace_root,
+            _index_db_path(workspace_root),
+            epoch_id,
+            generation_id,
+        )
+    except ImportError:
+        log.debug("zicato.index.ingest unavailable; skipping live index dual-write")
+    except Exception as exc:  # noqa: BLE001 — index write is best-effort
+        log.debug(
+            "live index ingest_experiment skipped for %s/%s: %s",
+            epoch_id,
+            generation_id,
+            exc,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Per-round loop-health assessment
+# ---------------------------------------------------------------------------
+
+
+def _health_round_report_path(workspace_root: Path, epoch_id: str, round_n: int) -> Path:
+    """Return the path of one round's loop-health report JSON.
+
+    Layout: ``epochs/{epoch}/health/round_{N}.json``. ``N`` is the
+    round number derived from the child generation id (``vN``); a
+    non-``vN`` id (defensive) falls back to ``0``.
+    """
+    return workspace_root / "epochs" / epoch_id / "health" / f"round_{round_n}.json"
+
+
+def _collect_epoch_health_inputs(
+    workspace_root: Path,
+    epoch_id: str,
+    board: list[Any],
+) -> tuple[dict[str, list[Any]], list[Any]]:
+    """Gather the epoch's accumulated losses + experiments for a health check.
+
+    Walks every ``vN`` generation directory under the epoch and reads,
+    per generation, every per-entry ``loss.json`` and the generation's
+    ``experiment.json`` (when present). Returns a tuple of:
+
+    * ``losses_by_generation`` — ``{generation_id: [LossProfile, ...]}``
+    * ``experiments`` — ``[Experiment, ...]`` in generation order.
+
+    Best-effort throughout: a missing or unreadable file is skipped
+    rather than raised, because the health assessment must never be the
+    thing that aborts a round. ``v0`` typically has no experiment (it is
+    the seed) and may have no losses on a fresh epoch — both are fine.
+    """
+    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
+    from zicato.epoch import read_experiment  # noqa: PLC0415
+    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
+
+    losses_by_generation: dict[str, list[Any]] = {}
+    experiments: list[Any] = []
+
+    gens_root = workspace_root / "epochs" / epoch_id / "generations"
+    if not gens_root.exists():
+        return losses_by_generation, experiments
+
+    def _gen_key(name: str) -> tuple[int, int, str]:
+        if name.startswith("v") and name[1:].isdigit():
+            return (0, int(name[1:]), name)
+        return (1, 0, name)
+
+    gen_ids = sorted(
+        (p.name for p in gens_root.iterdir() if p.is_dir()),
+        key=_gen_key,
+    )
+    for gen_id in gen_ids:
+        gen_losses: list[Any] = []
+        for entry in board:
+            lpath = loss_profile_path(workspace_root, epoch_id, gen_id, entry.id)
+            if not lpath.exists():
+                continue
+            try:
+                gen_losses.append(read_loss_profile(lpath))
+            except (OSError, ValueError, KeyError):
+                continue
+        if gen_losses:
+            losses_by_generation[gen_id] = gen_losses
+        try:
+            experiments.append(read_experiment(workspace_root, epoch_id, gen_id))
+        except (FileNotFoundError, OSError, ValueError, KeyError):
+            # v0 (the seed) has no experiment.json; skip silently.
+            continue
+
+    return losses_by_generation, experiments
+
+
+def _assess_and_persist_loop_health(
+    workspace_root: Path,
+    epoch_id: str,
+    round_n: int,
+    board: list[Any],
+) -> tuple[str, bool]:
+    """Run the per-round loop-health check and persist its report.
+
+    Calls :func:`zicato.health.diagnostics.assess_loop_health` with the
+    epoch's accumulated losses, experiments, and board, then writes the
+    resulting :class:`LoopHealth` report atomically to
+    ``epochs/{epoch}/health/round_{N}.json``.
+
+    Returns a ``(summary, has_critical)`` tuple:
+
+    * ``summary`` — a one-line human-readable health summary for the
+      :class:`EvolveRoundOutcome` (empty when the assessment did not
+      run).
+    * ``has_critical`` — ``True`` when at least one finding is CRITICAL
+      (the loop is producing no signal); the caller logs a prominent
+      stderr WARNING in that case.
+
+    Best-effort: the :mod:`zicato.health` sibling lands in parallel and
+    may be absent. A missing module, or any failure assessing or writing
+    the report, is logged at ``debug`` level and yields ``("", False)``
+    — the round's outcome is never affected by a health-side error.
+    """
+    try:
+        from zicato.health.diagnostics import assess_loop_health  # noqa: PLC0415
+    except ImportError:
+        log.debug("zicato.health.diagnostics unavailable; skipping loop-health check")
+        return "", False
+
+    try:
+        losses_by_generation, experiments = _collect_epoch_health_inputs(
+            workspace_root, epoch_id, board
+        )
+        health = assess_loop_health(
+            losses_by_generation,
+            experiments,
+            board,
+            epoch_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
+        log.debug("loop-health assessment skipped for %s round %d: %s", epoch_id, round_n, exc)
+        return "", False
+
+    summary, has_critical = _summarise_loop_health(health)
+
+    try:
+        report_path = _health_round_report_path(workspace_root, epoch_id, round_n)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(report_path, _loop_health_to_json(health, epoch_id, round_n))
+    except Exception as exc:  # noqa: BLE001 — report write is best-effort
+        log.debug("loop-health report write skipped for %s round %d: %s", epoch_id, round_n, exc)
+
+    return summary, has_critical
+
+
+def _summarise_loop_health(health: Any) -> tuple[str, bool]:
+    """Derive a one-line summary + critical flag from a ``LoopHealth`` object.
+
+    Tolerant of the sibling's exact :class:`LoopHealth` shape: it is
+    documented to expose ``.findings`` and ``.healthy``, and each finding
+    is expected to carry a ``severity`` (string) and a ``message`` /
+    ``summary`` / ``detail`` text field. Anything missing is filled in
+    defensively so a schema drift in the sibling never raises here.
+    """
+    findings = list(getattr(health, "findings", ()) or ())
+    healthy = bool(getattr(health, "healthy", not findings))
+
+    def _severity(f: Any) -> str:
+        return str(getattr(f, "severity", "") or "").upper()
+
+    critical = [f for f in findings if _severity(f) == "CRITICAL"]
+    has_critical = bool(critical)
+
+    if not findings:
+        return ("loop healthy" if healthy else "loop health: no findings"), False
+
+    def _text(f: Any) -> str:
+        for attr in ("message", "summary", "detail", "description"):
+            val = getattr(f, attr, None)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return str(f)
+
+    if has_critical:
+        head = _text(critical[0])
+        extra = f" (+{len(critical) - 1} more critical)" if len(critical) > 1 else ""
+        return f"CRITICAL: {head}{extra}", True
+
+    head = _text(findings[0])
+    extra = f" (+{len(findings) - 1} more)" if len(findings) > 1 else ""
+    return f"{len(findings)} finding(s): {head}{extra}", False
+
+
+def _loop_health_to_json(health: Any, epoch_id: str, round_n: int) -> str:
+    """Serialize a ``LoopHealth`` object to a pretty-printed JSON string.
+
+    Uses :func:`dataclasses.asdict` when the sibling's :class:`LoopHealth`
+    is a dataclass; otherwise falls back to reading ``.healthy`` /
+    ``.findings`` and coercing each finding via :func:`dataclasses.asdict`
+    or ``vars()``. ``epoch_id`` / ``round`` / ``assessed_at`` are stamped
+    on so the report is self-describing for the dashboard.
+    """
+    import dataclasses as _dataclasses  # noqa: PLC0415
+
+    def _coerce(obj: Any) -> Any:
+        if _dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            return _dataclasses.asdict(obj)
+        if hasattr(obj, "__dict__"):
+            return dict(vars(obj))
+        return obj
+
+    body: dict[str, Any]
+    if _dataclasses.is_dataclass(health) and not isinstance(health, type):
+        body = _dataclasses.asdict(health)
+    else:
+        body = {
+            "healthy": bool(getattr(health, "healthy", False)),
+            "findings": [_coerce(f) for f in getattr(health, "findings", ()) or ()],
+        }
+    summary, has_critical = _summarise_loop_health(health)
+    body.update(
+        {
+            "epoch_id": epoch_id,
+            "round": round_n,
+            "assessed_at": _now_iso(),
+            "summary": summary,
+            "has_critical": has_critical,
+        }
+    )
+    return json.dumps(body, default=str, indent=2, sort_keys=True) + "\n"
+
+
+def _warn_loop_no_signal(epoch_id: str, round_n: int, summary: str) -> None:
+    """Emit a prominent stderr WARNING that the evolve loop has no signal.
+
+    Called when a round's loop-health assessment surfaces a CRITICAL
+    finding (e.g. degenerate scoring — every generation scoring the same,
+    so the tournament can never tell a real improvement from noise). The
+    operator must see this: a loop that produces no signal will burn LLM
+    calls forever without ever promoting anything meaningful.
+
+    The message goes to both the logger (``warning`` level) and, via the
+    logger's default stderr handler, the operator's terminal.
+    """
+    log.warning(
+        "LOOP HEALTH CRITICAL — epoch %s round %d: %s. "
+        "The evolve loop is producing no usable signal; inspect the "
+        "scoring weights / rubric before spending more LLM calls.",
+        epoch_id,
+        round_n,
+        summary or "degenerate scoring",
+    )
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Atomically write ``text`` to ``path`` (``.tmp`` + :func:`os.replace`)."""
+    import os as _os  # noqa: PLC0415
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    _os.replace(tmp, path)
 
 
 def _dump_mutations_snapshot(
