@@ -152,5 +152,10 @@ pub struct Snapshot {
     pub active_tournament: Option<ActiveTournament>,
     pub lineage: Option<Lineage>,
     pub epoch_id: Option<String>,
+    /// The current epoch's full definition (board, rubric, scoring,
+    /// registered harness, mutation surface). Embedded here so the UI
+    /// gets it in the initial snapshot without a second fetch; the same
+    /// object is served standalone by `/api/epoch`.
+    pub epoch: crate::epoch::EpochView,
     pub generated_at: DateTime<Utc>,
 }

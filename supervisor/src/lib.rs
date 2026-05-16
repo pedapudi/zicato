@@ -5,6 +5,7 @@
 //! library lets the integration tests in `tests/` exercise the same code
 //! paths without spawning the executable.
 
+pub mod epoch;
 pub mod log;
 pub mod reader;
 pub mod routes;
