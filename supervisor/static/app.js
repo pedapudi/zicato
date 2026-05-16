@@ -636,6 +636,21 @@ function renderFooter() {
 
 // --- Render: active tournament
 
+// Find the live active-run record that drives a tournament entry's
+// progress, matched on entry_id. Returns null when no run matches —
+// callers render a neutral placeholder rather than a fake 0% bar.
+function findActiveRunForEntry(entry) {
+  if (!entry || !entry.entry_id || !Array.isArray(state.activeRuns)) {
+    return null;
+  }
+  const want = String(entry.entry_id);
+  return state.activeRuns.find((r) => {
+    if (!r) return false;
+    const rid = r.entry_id != null ? r.entry_id : r.entry;
+    return rid != null && String(rid) === want;
+  }) || null;
+}
+
 function renderActiveTournament() {
   const sec = $('tournament-section');
   const body = $('tournament-body');
@@ -651,11 +666,21 @@ function renderActiveTournament() {
     return;
   }
 
+  // #4 — read the real round + generation ids from the shared
+  // AppState contract. Prefer the contract field names; fall back to
+  // the legacy runtime keys so the panel works regardless of the
+  // merge order between this branch and the core/state branches.
+  const roundIndex = t.round_index != null ? t.round_index : t.round;
+  const parentGen = t.parent_generation_id || t.parent_id;
+  const childGen = t.child_generation_id || t.child_id || t.generation_id;
+
   title.textContent =
-    `Tournament — round ${t.round || '?'} of ${t.total_rounds || '?'}`;
+    roundIndex != null ? `Tournament — round ${roundIndex}` : 'Tournament';
 
   const subheader = el('p', { class: 'panel-subheader' }, [
-    el('strong', null, [`${t.parent_id || '?'} (parent) vs ${t.child_id || '?'} (proposed)`]),
+    el('strong', null, [
+      `${parentGen || '?'} (champion) vs ${childGen || '?'} (proposed)`,
+    ]),
   ]);
   body.appendChild(subheader);
 
@@ -685,10 +710,43 @@ function renderActiveTournament() {
     body.appendChild(modsLine);
   }
 
-  // Entry rows
+  // #5 — entry rows, grouped by `side` with a header per group.
+  // Each side ("parent"/"child") gets its own labelled block; an entry
+  // with no side falls into an "unassigned" bucket so nothing is lost.
   const entriesWrap = el('div', { class: 'entries', role: 'list' });
+  const parentEntries = [];
+  const childEntries = [];
+  const otherEntries = [];
   for (const e of t.entries) {
-    entriesWrap.appendChild(renderEntryRow(e));
+    const side = String(e.side || '').toLowerCase();
+    if (side === 'parent') parentEntries.push(e);
+    else if (side === 'child') childEntries.push(e);
+    else otherEntries.push(e);
+  }
+
+  const appendGroup = (label, genId, items) => {
+    if (items.length === 0) return;
+    const header = el('div', { class: 'entry-group-header' }, [
+      el('span', { class: 'entry-group-label' }, [label]),
+    ]);
+    if (genId) {
+      header.appendChild(
+        el('code', { class: 'mono entry-group-gen' }, [genId]));
+    }
+    header.appendChild(
+      el('span', { class: 'meta entry-group-count' }, [`${items.length} board`]));
+    entriesWrap.appendChild(header);
+    for (const e of items) entriesWrap.appendChild(renderEntryRow(e));
+  };
+
+  // If `side` is present on at least one entry, render labelled
+  // groups. Otherwise (legacy un-stamped entries) render a flat list.
+  if (parentEntries.length > 0 || childEntries.length > 0) {
+    appendGroup('Champion', parentGen, parentEntries);
+    appendGroup('Challenger', childGen, childEntries);
+    appendGroup('Unassigned', null, otherEntries);
+  } else {
+    for (const e of t.entries) entriesWrap.appendChild(renderEntryRow(e));
   }
   body.appendChild(entriesWrap);
 
@@ -748,27 +806,58 @@ function renderEntryRow(entry) {
       childCell.appendChild(el('span', null, ['regression']));
     }
   } else if (status === 'running') {
-    const r = entry.runtime || {};
-    const pct = typeof r.percent === 'number' ? Math.max(0, Math.min(100, r.percent)) : 0;
+    // #6 — a running entry's progress comes from the matching
+    // active-run record (matched on entry_id), NOT from a per-entry
+    // `runtime` blob. The fraction is an elapsed-vs-budget deadline
+    // fraction, not a true task-completion percentage — label it as
+    // such. When no active-run matches, show a neutral placeholder.
+    const run = findActiveRunForEntry(entry);
     const drift = entry.child && entry.child.drift_kinds
       ? Object.entries(entry.child.drift_kinds).map(([k, v]) => `${v} ${k}`).join(', ')
       : '';
-    const elapsed = r.elapsed_seconds != null ? fmtDuration(r.elapsed_seconds) : '—';
-    const budget = r.budget_seconds != null ? fmtDuration(r.budget_seconds) : '—';
-    childCell.appendChild(el('span', { class: 'mono' }, [
-      `RUNNING ${elapsed}/${budget}`,
-    ]));
-    if (drift) {
-      childCell.appendChild(el('div', null, [
-        el('span', { class: 'meta' }, [`drift: ${drift}`]),
+    if (run) {
+      const frac = typeof run.progress === 'number' && isFinite(run.progress)
+        ? Math.max(0, Math.min(1, run.progress)) : null;
+      const pct = frac != null ? Math.round(frac * 100) : 0;
+      const elapsed = run.elapsed_seconds != null
+        ? fmtDuration(run.elapsed_seconds) : '—';
+      const budget = run.budget_seconds != null
+        ? fmtDuration(run.budget_seconds) : '—';
+      childCell.appendChild(el('span', { class: 'mono' }, [
+        `RUNNING ${elapsed}/${budget}`,
       ]));
+      childCell.appendChild(el('span', { class: 'meta' }, [' elapsed/budget']));
+      if (drift) {
+        childCell.appendChild(el('div', null, [
+          el('span', { class: 'meta' }, [`drift: ${drift}`]),
+        ]));
+      }
+      const prog = el('div', { class: 'progress', role: 'progressbar',
+                   'aria-valuemin': '0', 'aria-valuemax': '100',
+                   'aria-valuenow': String(pct),
+                   'aria-label': 'elapsed fraction of wall-clock budget' });
+      prog.appendChild(el('div', { class: 'bar', style: `width:${pct}%` }));
+      childCell.appendChild(prog);
+      childCell.appendChild(el('span', { class: 'meta' }, [
+        frac != null ? ` ${pct}% of budget` : ' budget —',
+      ]));
+      // #17 — deep-link the running board entry into its harmonograf
+      // trace when the heartbeat carries a harmonograf url.
+      const hg = harmonografMini(run, 'harmonograf',
+        `open harmonograf trace for ${entry.entry_id}`);
+      if (hg) {
+        hg.addEventListener('click', (ev) => ev.stopPropagation());
+        childCell.appendChild(el('div', { class: 'entry-hg' }, [hg]));
+      }
+    } else {
+      childCell.appendChild(el('span', { class: 'mono' }, ['RUNNING']));
+      childCell.appendChild(el('span', { class: 'meta' }, [' —']));
+      if (drift) {
+        childCell.appendChild(el('div', null, [
+          el('span', { class: 'meta' }, [`drift: ${drift}`]),
+        ]));
+      }
     }
-    const prog = el('div', { class: 'progress', role: 'progressbar',
-                 'aria-valuemin': '0', 'aria-valuemax': '100',
-                 'aria-valuenow': String(pct) });
-    prog.appendChild(el('div', { class: 'bar', style: `width:${pct}%` }));
-    childCell.appendChild(prog);
-    childCell.appendChild(el('span', { class: 'meta' }, [` ${pct}%`]));
   } else if (status === 'fail') {
     childCell.appendChild(el('span', { class: 'mono' }, ['FAILED']));
     if (entry.fail_reason) {
@@ -867,32 +956,36 @@ function renderVerdict(v) {
 }
 
 function renderTournamentButtons() {
-  // All buttons disabled in v1.2 — the wiring lands in v1.3. The
-  // POST handlers are present so flipping `disabled` is the only diff.
-  const tip = 'feature pending v1.3';
+  // #8 — these controls are PROVISIONAL. The orchestrator's
+  // control-file consumer does not exist until v1.3, so an enabled
+  // button would silently do nothing. Render them disabled, with a
+  // tooltip naming the gap and a visible "preview" tag, so an
+  // operator never mistakes them for live controls.
+  const tip = 'control channel — v1.3';
   const buttons = [
-    { label: 'Pause epoch', action: () => postControl('pause', null) },
-    { label: 'Skip round',  action: () => postControl('skip-round', null) },
-    { label: 'Force-kill running', action: () => {
-      const running = (state.activeTournament && state.activeTournament.entries || [])
-        .find(e => e.status === 'running');
-      if (running && running.run_id) postControl('kill/' + encodeURIComponent(running.run_id), null);
-    }, cls: 'danger' },
-    { label: 'Override', action: () => alert('Override is reserved — needs operator confirmation; v1.3.') },
+    { label: 'Pause epoch' },
+    { label: 'Skip round' },
+    { label: 'Force-kill running', cls: 'danger' },
+    { label: 'Override' },
   ];
-  const row = el('div', { class: 'button-row', role: 'toolbar', 'aria-label': 'Tournament controls' });
+  const row = el('div', {
+    class: 'button-row provisional',
+    role: 'toolbar',
+    'aria-label': 'Tournament controls (preview — not yet wired)',
+  });
   for (const b of buttons) {
-    row.appendChild(el('button', {
+    const btn = el('button', {
       type: 'button',
-      class: 'btn ' + (b.cls || ''),
+      class: 'btn provisional ' + (b.cls || ''),
       disabled: 'disabled',
+      'aria-disabled': 'true',
       title: tip,
       'aria-label': b.label + ' (' + tip + ')',
-      onClick: (ev) => {
-        ev.preventDefault();
-        alert(tip);
-      },
-    }, [b.label]));
+    }, [
+      b.label,
+      el('span', { class: 'preview-tag', 'aria-hidden': 'true' }, ['preview']),
+    ]);
+    row.appendChild(btn);
   }
   return row;
 }
@@ -927,19 +1020,41 @@ function renderActiveRuns() {
     card.appendChild(el('div', { class: 'run-meta' }, [
       `${r.entry_id || '?'} / ${r.generation_id || '?'}`,
     ]));
-    const pct = typeof r.percent === 'number' ? Math.max(0, Math.min(100, r.percent)) : 0;
+    // #6 — the bar is the run's elapsed-vs-budget deadline fraction
+    // from the shared contract (`progress` 0..1). When the run has no
+    // progress value the bar reads empty rather than a fake 0%.
+    const frac = typeof r.progress === 'number' && isFinite(r.progress)
+      ? Math.max(0, Math.min(1, r.progress)) : null;
+    const pct = frac != null ? Math.round(frac * 100) : 0;
     const prog = el('div', { class: 'progress', role: 'progressbar',
                  'aria-valuemin': '0', 'aria-valuemax': '100',
-                 'aria-valuenow': String(pct) });
+                 'aria-valuenow': String(pct),
+                 'aria-label': 'elapsed fraction of wall-clock budget' });
     prog.appendChild(el('div', { class: 'bar', style: `width:${pct}%` }));
     card.appendChild(prog);
-    if (r.started_at) {
-      const elapsed = (Date.now() - new Date(r.started_at).getTime()) / 1000;
+
+    // Elapsed / budget line — prefer the contract's `elapsed_seconds`,
+    // fall back to deriving elapsed from `started_at`. Labelled as a
+    // budget fraction, not task progress.
+    let elapsedSecs = null;
+    if (r.elapsed_seconds != null && isFinite(r.elapsed_seconds)) {
+      elapsedSecs = r.elapsed_seconds;
+    } else if (r.started_at) {
+      elapsedSecs = (Date.now() - new Date(r.started_at).getTime()) / 1000;
+    }
+    if (elapsedSecs != null || r.budget_seconds != null) {
+      const elapsedTxt = elapsedSecs != null ? fmtDuration(elapsedSecs) : '—';
+      const budgetTxt = r.budget_seconds != null
+        ? fmtDuration(r.budget_seconds) : '—';
       card.appendChild(el('div', { class: 'run-meta mono' }, [
-        `${fmtDuration(elapsed)}${r.budget_seconds ? ' / ' + fmtDuration(r.budget_seconds) : ''}`,
+        `${elapsedTxt} / ${budgetTxt}`,
+        el('span', { class: 'meta' }, [' elapsed/budget']),
       ]));
     }
-    const hg = harmonografLink(r);
+
+    // #17 — deep-link the run card into its harmonograf trace.
+    const hg = harmonografMini(r, 'Open in harmonograf',
+      `open harmonograf trace for run ${r.run_id || r.entry_id || ''}`);
     if (hg) {
       // Stop the card's click handler from also firing.
       hg.addEventListener('click', (ev) => ev.stopPropagation());
@@ -2432,19 +2547,67 @@ function relativizeMutationPath(path) {
 
 // --- Render: log tail
 
+// Format an event timestamp as a short clock time (HH:MM:SS). Falls
+// back to the raw string when it does not parse as a date.
+function fmtEventTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return String(ts);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 function renderLogTail() {
   const wrap = $('log-tail');
   clearChildren(wrap);
-  if (!state.logLines || state.logLines.length === 0) {
+
+  // #7 — the log tail consumes the shared `state.logTail` contract:
+  //   { events: [{ seq, kind, ts, summary }] }
+  // Fall back to the legacy `state.logLines` shape so the panel works
+  // regardless of the merge order with the core/state branch.
+  let events = [];
+  if (state.logTail && Array.isArray(state.logTail.events)) {
+    events = state.logTail.events.map((e) => ({
+      seq: e.seq != null ? e.seq : null,
+      kind: e.kind || 'event',
+      ts: e.ts || null,
+      summary: e.summary != null ? e.summary : '',
+    }));
+  } else if (Array.isArray(state.logLines)) {
+    events = state.logLines.map((line) => ({
+      seq: null,
+      kind: (line.level || 'log'),
+      ts: line.ts || null,
+      summary: line.message != null ? line.message : (line.line || ''),
+    }));
+  }
+
+  if (events.length === 0) {
     wrap.appendChild(el('p', { class: 'empty' }, ['No events yet.']));
     return;
   }
-  for (const line of state.logLines) {
+
+  // Oldest-first so the freshest event lands at the bottom, next to
+  // the auto-scroll — the natural reading order for a streaming tail.
+  for (const ev of events) {
     const lineEl = el('div', { class: 'log-line fade-in' });
-    if (line.ts) lineEl.appendChild(el('span', { class: 'ts' }, [line.ts]));
-    const lvl = (line.level || '').toLowerCase();
-    const cls = lvl === 'error' ? 'ev-error' : lvl === 'warn' ? 'ev-warn' : lvl === 'ok' ? 'ev-ok' : '';
-    lineEl.appendChild(el('span', { class: cls }, [String(line.message || '')]));
+    if (ev.ts) {
+      lineEl.appendChild(el('span', {
+        class: 'ts', title: String(ev.ts),
+      }, [fmtEventTime(ev.ts)]));
+    }
+    const kind = String(ev.kind || 'event');
+    const kl = kind.toLowerCase();
+    const cls = (kl.indexOf('error') >= 0 || kl.indexOf('fail') >= 0) ? 'ev-error'
+      : (kl.indexOf('warn') >= 0) ? 'ev-warn'
+      : (kl.indexOf('ok') >= 0 || kl.indexOf('done') >= 0 || kl.indexOf('pass') >= 0) ? 'ev-ok'
+      : '';
+    lineEl.appendChild(el('span', {
+      class: 'log-kind badge ' + cls,
+    }, [kind]));
+    lineEl.appendChild(el('span', { class: 'log-summary' }, [
+      String(ev.summary || ''),
+    ]));
     wrap.appendChild(lineEl);
   }
   wrap.scrollTop = wrap.scrollHeight;
