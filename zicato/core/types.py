@@ -1508,13 +1508,6 @@ class ScoringWeights:
         :attr:`namespace_weights`) by more than the namespace's
         tolerance — even when the combined scalar improves. Namespaces
         whose flag is missing or ``False`` are not gated this way.
-    per_judge_weights:
-        Optional per-judge multipliers, keyed on :attr:`JudgeSpec.name`.
-        Empty mapping (the default) = every PROCESS judge contributes at
-        its namespace's baseline weight. A missing judge name falls back
-        to that baseline; an explicit entry scales the named judge's
-        contribution to the scalar. Lets an operator up-weight a
-        safety-critical process judge without disturbing the rest.
     """
 
     drift_weight: float = 1.0
@@ -1536,8 +1529,6 @@ class ScoringWeights:
     namespace_monotonicity: Mapping[str, bool] = field(
         default_factory=_default_namespace_monotonicity
     )
-    # PROCESS-judge surface — keyed on :attr:`JudgeSpec.name`.
-    per_judge_weights: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
