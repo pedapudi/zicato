@@ -640,11 +640,14 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 170 KB uncompressed — the envelope grew again with the
-    # harmonograf deep-links woven through the Tournament view (A/B-grid
-    # trace links + bracket-node affordances) and the heartbeat-merge
-    # fix that keeps the harmonograf_url alive across heartbeat pings.
-    assert total < 170_000, f"bundle is {total} bytes, exceeds 170_000 envelope"
+    # 200 KB uncompressed. The r14 dashboard-fix wave (five parallel
+    # view-fix branches) grew the bundle with real feature code — live
+    # tournament rendering, lineage from /api/lineage, per-entry progress
+    # bars, the log tail, and harmonograf deep-links. It is a
+    # localhost-served vanilla bundle with no network cost; this envelope
+    # becomes moot once the dashboard moves to the standalone Python
+    # service.
+    assert total < 200_000, f"bundle is {total} bytes, exceeds 200_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
