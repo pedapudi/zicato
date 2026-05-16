@@ -82,12 +82,23 @@ warn_unused_ignores = true
 # typecheck environment. Treat references as untyped rather than
 # erroring at import time so the typecheck still covers the rest of
 # the tree.
+#
+# zicato.index / zicato.health are sibling subsystems the orchestrator
+# and tournament runner import lazily and best-effort — a round runs
+# fine without them and every import is wrapped in try/except
+# ImportError. They may not be present in every checkout, so they get
+# the same treatment: references are untyped rather than a hard import
+# error.
 [[tool.mypy.overrides]]
 module = [
     "goldfive",
     "goldfive.*",
     "google",
     "google.*",
+    "zicato.index",
+    "zicato.index.*",
+    "zicato.health",
+    "zicato.health.*",
 ]
 ignore_missing_imports = true
 
