@@ -174,6 +174,58 @@ def test_make_run_sinks_attaches_harmonograf_when_env_set(
     assert constructed["server_addr"] == "127.0.0.1:7531"
 
 
+def test_make_run_sinks_strips_url_scheme_for_grpc_target(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An ``http://`` harmonograf URL is reduced to a bare gRPC target.
+
+    ``ZICATO_HARMONOGRAF_URL`` is also consumed as a browser-resolvable
+    link, so operators set it as ``http://host:port``. The harmonograf
+    client hands ``server_addr`` straight to ``grpc.aio.insecure_channel``,
+    which rejects a scheme prefix — so the builder must strip it.
+    """
+    pytest.importorskip("goldfive")
+    import sys
+    import types
+
+    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+
+    constructed: dict[str, object] = {}
+
+    class _StubClient:
+        def __init__(self, *, name: str, server_addr: str) -> None:
+            constructed["server_addr"] = server_addr
+
+    class _StubHarmonografSink:
+        def __init__(self, client: object) -> None:
+            constructed["client"] = client
+
+    stub_mod = types.ModuleType("harmonograf_client")
+    stub_mod.Client = _StubClient  # type: ignore[attr-defined]
+    stub_mod.HarmonografSink = _StubHarmonografSink  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
+
+    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "http://127.0.0.1:7531")
+    sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
+
+    assert len(sinks) == 2
+    # The gRPC dial target has no scheme — just host:port.
+    assert constructed["server_addr"] == "127.0.0.1:7531"
+
+
+def test_harmonograf_grpc_target_normalizes_urls() -> None:
+    """_harmonograf_grpc_target strips scheme and trailing path components."""
+    from zicato.telemetry.sink import _harmonograf_grpc_target
+
+    assert _harmonograf_grpc_target("http://127.0.0.1:7531") == "127.0.0.1:7531"
+    assert _harmonograf_grpc_target("https://host:7531") == "host:7531"
+    assert _harmonograf_grpc_target("http://host:7531/") == "host:7531"
+    assert _harmonograf_grpc_target("host:7531/path") == "host:7531"
+    # Already a bare target — unchanged.
+    assert _harmonograf_grpc_target("127.0.0.1:7531") == "127.0.0.1:7531"
+    assert _harmonograf_grpc_target("  host:7531  ") == "host:7531"
+
+
 def test_make_run_sinks_falls_back_to_jsonl_when_harmonograf_client_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
