@@ -148,6 +148,21 @@
 
       </div>
 
+      <!-- ============ CONVERSATION VIEW ============ -->
+      <!-- Focused view: not a nav-rail tab. Reached by drilling from a
+           board card (#conversation/{entry_id}); the back link returns
+           to the Tournament view. -->
+      <div id="view-conversation" class="view hidden" data-view="conversation">
+
+        <section id="conversation-section" class="conversation-section"
+             aria-label="Side-by-side conversation diff">
+          <div id="conversation-panel" class="conversation-panel">
+            <p class="empty">No conversation selected.</p>
+          </div>
+        </section>
+
+      </div>
+
       <!-- ============ EPOCH VIEW ============ -->
       <div id="view-epoch" class="view hidden" data-view="epoch">
 

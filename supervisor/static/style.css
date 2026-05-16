@@ -1056,3 +1056,304 @@ h4 {
   main { padding: 16px 16px 48px 16px; }
   .lineage-viewport { height: 360px; }
 }
+
+/* =================================================================
+   Conversation view — side-by-side champion / challenger transcripts
+   Appended block. A focused view (#conversation/{entry_id}) reached
+   by drilling from a Tournament-view board card.
+   ================================================================= */
+
+.conversation-section {
+  margin-bottom: 28px;
+}
+.conversation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* --- Header */
+.conversation-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.conversation-back {
+  font-size: 13px;
+  color: var(--accent-running);
+  text-decoration: none;
+  width: fit-content;
+}
+.conversation-back:hover { text-decoration: underline; }
+.conversation-title {
+  margin: 0;
+  font-size: 18px;
+}
+.conversation-versus {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.conversation-side-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.conversation-side-tag.champion {
+  border-left: 3px solid var(--accent-promoted);
+}
+.conversation-side-tag.challenger {
+  border-left: 3px solid var(--accent-running);
+}
+.conversation-vs {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.conversation-unavailable {
+  border: 1px dashed var(--accent-deferred);
+  border-radius: 8px;
+  padding: 18px;
+}
+
+/* --- Two-column layout */
+.conversation-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.conversation-column {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.conversation-column.champion {
+  border-top: 3px solid var(--accent-promoted);
+}
+.conversation-column.challenger {
+  border-top: 3px solid var(--accent-running);
+}
+
+/* --- Column header */
+.conversation-column-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  flex-wrap: wrap;
+}
+.conversation-column-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.conversation-run-id {
+  font-size: 12px;
+  color: var(--text);
+}
+.conversation-event-count {
+  margin-left: auto;
+  font-size: 11px;
+}
+.conversation-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.conversation-live-dot {
+  color: #fff;
+  font-size: 9px;
+  animation: conversation-pulse 1.4s ease-in-out infinite;
+}
+@keyframes conversation-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* --- Column body — independent vertical scroll per side */
+.conversation-column-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+/* --- A single turn */
+.conversation-turn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+}
+.conversation-turn-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+.conversation-turn-agent {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+.conversation-turn-role {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.conversation-turn-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+  padding: 0 5px;
+  background: var(--bg-elev);
+  color: var(--text-muted);
+}
+.conversation-turn-kind.kind-plan {
+  background: rgba(31, 111, 235, 0.14);
+  color: var(--accent-running);
+}
+.conversation-turn-kind.kind-tool {
+  background: rgba(110, 118, 129, 0.18);
+}
+.conversation-turn-seq { font-size: 10px; }
+.conversation-turn-ts {
+  font-size: 10px;
+  margin-left: auto;
+}
+.conversation-turn-text {
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- Tool calls / results — compact */
+.conversation-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 5px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  font-size: 11px;
+}
+.conversation-tool.tool-call { border-left: 2px solid var(--accent-running); }
+.conversation-tool.tool-result { border-left: 2px solid var(--accent-baseline); }
+.conversation-tool-glyph {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.conversation-tool-name { font-weight: 600; }
+.conversation-tool-args {
+  color: var(--text-muted);
+  word-break: break-word;
+  font-size: 11px;
+}
+
+/* --- Margin notes — annotations anchored to a turn */
+.conversation-margin {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-left: 10px;
+  border-left: 2px dotted var(--border);
+}
+.conversation-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  background: var(--bg-elev);
+  border-left: 3px solid var(--accent-baseline);
+}
+.conversation-note-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.conversation-note-summary { color: var(--text); }
+.conversation-note-detail { font-size: 10px; }
+/* drift in a warning color; the others each get a distinct accent */
+.conversation-note.note-drift {
+  background: rgba(215, 58, 73, 0.10);
+  border-left-color: var(--accent-rejected);
+}
+.conversation-note.note-drift .conversation-note-kind {
+  color: var(--accent-rejected);
+}
+.conversation-note.note-steering {
+  background: rgba(191, 135, 0, 0.12);
+  border-left-color: var(--accent-deferred);
+}
+.conversation-note.note-steering .conversation-note-kind {
+  color: var(--accent-deferred);
+}
+.conversation-note.note-judge {
+  background: rgba(46, 160, 67, 0.10);
+  border-left-color: var(--accent-promoted);
+}
+.conversation-note.note-judge .conversation-note-kind {
+  color: var(--accent-promoted);
+}
+.conversation-note.note-plan {
+  background: rgba(31, 111, 235, 0.10);
+  border-left-color: var(--accent-running);
+}
+.conversation-note.note-plan .conversation-note-kind {
+  color: var(--accent-running);
+}
+
+/* --- Trailing live cue */
+.conversation-tail-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+.conversation-tail-live .conversation-live-dot {
+  color: var(--accent-running);
+}
+
+/* --- Narrow screens — stack the two columns */
+@media (max-width: 720px) {
+  .conversation-columns {
+    grid-template-columns: 1fr;
+  }
+  .conversation-column-body {
+    max-height: none;
+  }
+}
