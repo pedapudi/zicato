@@ -1575,6 +1575,57 @@ function liveMatchup() {
   return t;
 }
 
+// --- Active-tournament field accessors
+//
+// The active-tournament record reaches the dashboard from a few
+// producers whose field names have drifted: the runtime file uses
+// `generation_id` for the challenger, the shared AppState contract
+// uses `child_generation_id`, and older heartbeat payloads used
+// `child_id`. These accessors normalise all of them so the live path
+// never renders a `?` placeholder when the data is actually present.
+
+function liveChampionId(t) {
+  if (!t) return null;
+  return t.parent_generation_id || t.parent_id || t.champion || null;
+}
+
+function liveChallengerId(t) {
+  if (!t) return null;
+  return t.child_generation_id || t.child_id || t.generation_id ||
+    t.challenger || null;
+}
+
+function liveRoundLabel(t) {
+  if (!t) return null;
+  const r = (t.round_index != null) ? t.round_index : t.round;
+  if (r == null) return null;
+  return String(r);
+}
+
+// A finished entry — `status === 'done'`, treating any of the
+// terminal-status spellings the producers emit as done.
+function entryIsDone(e) {
+  const s = String((e && e.status) || '').toLowerCase();
+  return s === 'done' || s === 'complete' || s === 'completed';
+}
+
+// A failed entry — distinct from done so the live card can surface it.
+function entryFailed(e) {
+  const s = String((e && e.status) || '').toLowerCase();
+  return s === 'fail' || s === 'failed' || s === 'error';
+}
+
+// The per-entry scalar, under whichever key the producer used.
+function entryScalar(e) {
+  if (!e) return null;
+  const v = (e.scalar_score != null) ? e.scalar_score
+    : (e.score != null) ? e.score
+    : (e.child && typeof e.child.drift_loss === 'number')
+      ? e.child.drift_loss
+      : null;
+  return (typeof v === 'number' && isFinite(v)) ? v : null;
+}
+
 function renderBracket() {
   const wrap = $('tournament-bracket');
   if (!wrap) return;
@@ -1637,9 +1688,28 @@ function renderBracket() {
   // Live matchup at the head — the in-progress challenge.
   if (live) {
     const headCol = el('div', { class: 'bracket-col bracket-col-live' });
-    const champId = live.parent_id || live.champion ||
-      (lineage.length ? lineage[lineage.length - 1] : '?');
-    if (lineage.length > 0) {
+
+    // Resolve the champion the live challenger is facing. Prefer the
+    // id the active-tournament record carries; fall back to the tail
+    // of the resolved lineage.
+    const champId = liveChampionId(live) ||
+      (lineage.length ? lineage[lineage.length - 1] : null);
+
+    // #12 — when there is no resolved lineage yet (the very first
+    // tournament of an epoch, or a fresh workspace), the champion has
+    // no spine node of its own. Draw one here so the bracket always
+    // shows the baseline the challenger branches off.
+    if (lineage.length === 0 && champId) {
+      const champIdSpan = el('span', { class: 'bracket-champ-id mono' }, [champId]);
+      const champHg = harmonografGenLink(champId);
+      if (champHg) champIdSpan.appendChild(champHg);
+      headCol.appendChild(el('div', { class: 'bracket-champ is-seed' }, [
+        champIdSpan,
+        el('span', { class: 'bracket-champ-tag' }, ['champion']),
+      ]));
+    }
+
+    if (lineage.length > 0 || (lineage.length === 0 && champId)) {
       const conn = el('div', { class: 'bracket-connector live' });
       conn.appendChild(el('span', { class: 'bracket-conn-arrow', 'aria-hidden': 'true' }, ['┄▶']));
       headCol.appendChild(conn);
@@ -1688,51 +1758,79 @@ function renderChallengerCard(m, champId) {
 }
 
 // The in-progress challenge card at the head of the bracket.
+//
+// #13 — the card states plainly: which generation challenges which,
+// the round, how many board entries are done / running / failed, and
+// the predicted gate verdict so far. No `?` is rendered when the
+// active-tournament record actually carries the ids (#11).
 function renderLiveCard(t, champId) {
+  const childId = liveChallengerId(t);
+  const champLabel = champId || 'the baseline';
   const card = el('div', {
     class: 'bracket-live',
     role: 'listitem',
     tabindex: '0',
-    'aria-label': 'live matchup ' + (t.child_id || '?') + ' challenging ' + champId,
-    onClick: () => openMatchup(t.child_id),
+    'aria-label': 'live matchup ' + (childId || 'challenger') +
+      ' challenging ' + champLabel,
+    onClick: () => { if (childId) openMatchup(childId); },
     onKeydown: (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') {
+      if ((ev.key === 'Enter' || ev.key === ' ') && childId) {
         ev.preventDefault();
-        openMatchup(t.child_id);
+        openMatchup(childId);
       }
     },
   });
-  const liveIdSpan = el('span', { class: 'bracket-live-id mono' }, [t.child_id || '?']);
-  const liveHg = harmonografGenLink(t.child_id);
+
+  // Head — challenger id + a live badge.
+  const liveIdSpan = el('span', { class: 'bracket-live-id mono' }, [
+    childId || 'challenger',
+  ]);
+  const liveHg = harmonografGenLink(childId);
   if (liveHg) liveIdSpan.appendChild(liveHg);
   card.appendChild(el('div', { class: 'bracket-live-head' }, [
     liveIdSpan,
     el('span', { class: 'badge running' }, ['live']),
   ]));
-  card.appendChild(el('div', { class: 'bracket-live-vs meta' }, [
-    'challenging ' + champId,
+
+  // A plain-language matchup line: who challenges whom, and the round.
+  const round = liveRoundLabel(t);
+  card.appendChild(el('div', { class: 'bracket-live-vs' }, [
+    el('strong', null, [childId || 'the proposed generation']),
+    ' is challenging ',
+    el('strong', null, [champLabel]),
+    round != null ? ' · round ' + round : '',
   ]));
 
-  // Per-entry status dots.
-  const entries = t.entries || [];
+  // Per-entry status dots + a done/running/failed breakdown.
+  const entries = Array.isArray(t.entries) ? t.entries : [];
+  const done = entries.filter(entryIsDone).length;
+  const failed = entries.filter(entryFailed).length;
+  const running = entries.length - done - failed;
+
   const dots = el('div', { class: 'bracket-live-dots', 'aria-hidden': 'true' });
-  const done = entries.filter(e => e.status === 'done').length;
   for (const e of entries) {
-    const st = e.status || 'queued';
+    const st = String((e && e.status) || 'queued').toLowerCase();
     dots.appendChild(el('span', { class: 'bracket-dot ' + st }, ['']));
   }
   card.appendChild(dots);
-  card.appendChild(el('div', { class: 'bracket-live-prog meta mono' }, [
-    done + ' / ' + entries.length + ' entries',
+
+  const progBits = [done + ' of ' + entries.length + ' board entries done'];
+  if (running > 0) progBits.push(running + ' running');
+  if (failed > 0) progBits.push(failed + ' failed');
+  card.appendChild(el('div', { class: 'bracket-live-prog meta' }, [
+    progBits.join(' · '),
   ]));
 
-  // Predicted-gate verdict (kept from R8-C).
+  // Predicted-gate verdict so far — spelled out, not just a token.
   const verdict = predictedGateVerdict(t, state.scoring.margin);
   if (verdict) {
     const vcls = verdict.verdict === 'promote' ? 'promote'
       : verdict.verdict === 'reject' ? 'reject' : 'tbd';
+    const vlabel = verdict.verdict === 'promote' ? 'on track to be KEPT'
+      : verdict.verdict === 'reject' ? 'on track to be DISCARDED'
+      : 'verdict still undecided';
     card.appendChild(el('div', { class: 'bracket-live-verdict ' + vcls }, [
-      'predicted: ' + verdict.verdict.toUpperCase(),
+      'Gate so far: ' + vlabel,
     ]));
   }
   return card;
@@ -1772,11 +1870,11 @@ function renderMatchupDetail() {
   const summary = matchupSummary(genId);
   const detail = state.matchupDetail.get(genId);
   const live = liveMatchup();
-  const isLive = live && live.child_id === genId;
+  const isLive = !!(live && liveChallengerId(live) === genId);
 
   // Header line.
   const champ = (summary && summary.champion)
-    || (isLive && (live.parent_id || live.champion)) || '?';
+    || (isLive ? liveChampionId(live) : null) || '?';
   wrap.appendChild(el('h3', null, [
     'Matchup · ' + genId + ' vs ' + champ,
   ]));
@@ -2424,20 +2522,59 @@ function applyDrill(kind, id) {
 
   if (kind === 'entry') {
     title.textContent = 'Entry ' + id;
-    // Look in every selectable tournament, not just the active one.
+    // Look in every selectable tournament — the active (in-flight) one
+    // first, then any past ones. allTournaments() now always includes
+    // state.activeTournament when set (core loads it globally), so an
+    // entry from a tournament that is still running resolves here.
     let entry = null;
+    let owner = null;
     for (const t of state.allTournaments()) {
       const found = (t.entries || []).find(e => e.entry_id === id);
-      if (found) { entry = found; break; }
+      if (found) { entry = found; owner = t; break; }
     }
     if (!entry) {
-      body.appendChild(el('p', { class: 'empty' }, ['Entry not found in any tournament.']));
+      body.appendChild(el('p', { class: 'empty' }, [
+        'Entry not found in any tournament. It may not have been ' +
+        'scheduled yet, or its tournament has not started.',
+      ]));
       return;
     }
-    const meta = el('p', null, [
+
+    // Real status — the producer's `status`, with a `queued` fallback
+    // only when the field is genuinely absent.
+    body.appendChild(el('p', null, [
       'Status: ', el('strong', null, [entry.status || 'queued']),
-    ]);
-    body.appendChild(meta);
+    ]));
+    // Which side of the matchup this entry ran (parent / child). The
+    // contract carries `side`; older records have no side at all.
+    if (entry.side) {
+      body.appendChild(el('p', null, [
+        'Side: ', el('strong', null, [entry.side]),
+      ]));
+    }
+    // Which tournament it belongs to, and whether that run is live.
+    if (owner) {
+      const champ = liveChampionId(owner);
+      const chal = liveChallengerId(owner);
+      if (champ || chal) {
+        body.appendChild(el('p', { class: 'meta' }, [
+          (owner.__active ? 'In-flight tournament: ' : 'Tournament: ') +
+          (chal || '?') + ' vs ' + (champ || '?'),
+        ]));
+      }
+    }
+    // The entry's scalar score — under whichever key the producer used.
+    const sc = entryScalar(entry);
+    if (sc != null) {
+      body.appendChild(el('p', { class: 'mono' }, [
+        'scalar score ' + fmtRate(sc),
+      ]));
+    }
+    if (entry.patch_id) {
+      body.appendChild(el('p', { class: 'meta mono' }, ['patch_id: ' + entry.patch_id]));
+    }
+
+    // Defensive: some producers attach per-side result sub-objects.
     if (entry.parent) {
       body.appendChild(el('h4', null, ['Parent result']));
       body.appendChild(el('p', { class: 'mono' }, [
@@ -2463,6 +2600,12 @@ function applyDrill(kind, id) {
     }
     if (entry.run_id) {
       body.appendChild(el('p', { class: 'meta mono' }, ['run_id: ' + entry.run_id]));
+      // #17 — deep-link the entry's run into harmonograf.
+      const hg = harmonografMini(
+        { entry_id: entry.entry_id, run_id: entry.run_id },
+        'harmonograf trace',
+        'open harmonograf trace for entry ' + entry.entry_id);
+      if (hg) body.appendChild(el('p', null, [hg]));
     }
     return;
   }
