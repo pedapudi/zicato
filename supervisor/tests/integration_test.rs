@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::broadcast;
-use zicato_supervisor::{reader, server, signal as sigutil, state, watcher};
+use zicato_supervisor::{reader, server, signal as sigutil, state, watchdog, watcher};
 
 fn make_workspace() -> (TempDir, reader::WorkspacePaths) {
     let tmp = TempDir::new().unwrap();
@@ -715,6 +715,8 @@ async fn watchdog_kill_decision_fires_when_heartbeat_stale() {
         run_stale_warn: Duration::from_secs(10),
         run_stale_kill: Duration::from_secs(20),
         grace: Duration::from_millis(200),
+        run_kill_grace: Duration::from_millis(200),
+        run_deadline_kill_disabled: false,
     };
     let now = Utc::now();
     let hb = state::Heartbeat {
@@ -797,4 +799,265 @@ async fn sse_emits_snapshot_then_change_event() {
     );
 
     let _ = shutdown_tx.send(());
+}
+
+// ---------------------------------------------------------------------
+// Per-run wall-clock deadline enforcement.
+//
+// These exercise the real `watchdog::runs_loop` against a real workspace
+// and a real child process: when an `active_runs/{run_id}.json` carries a
+// `deadline` in the past, the supervisor must SIGTERM (then SIGKILL) the
+// worker pid named in that file — independent of any orchestrator.
+// ---------------------------------------------------------------------
+
+/// Spawn a long-lived child that ignores SIGTERM until it is SIGKILLed.
+fn spawn_sigterm_trapping_child() -> std::process::Child {
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg("trap '' TERM; while true; do sleep 1; done")
+        .spawn()
+        .unwrap()
+}
+
+/// Spawn a long-lived child that exits cleanly on SIGTERM (shell default).
+fn spawn_plain_sleeper() -> std::process::Child {
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg("exec sleep 600")
+        .spawn()
+        .unwrap()
+}
+
+/// Write an `active_runs/{run_id}.json` for `run_id` whose worker is `pid`
+/// and whose `deadline` is `deadline_offset` from now (negative = past).
+fn write_active_run(
+    paths: &reader::WorkspacePaths,
+    run_id: &str,
+    pid: i32,
+    deadline_offset: ChDuration,
+) {
+    let now = Utc::now();
+    let ar = serde_json::json!({
+        "run_id": run_id,
+        "pid": pid,
+        "entry_id": "e1",
+        "started_at": now - ChDuration::seconds(900),
+        "last_progress": now, // fresh progress: deadline is the only trigger
+        "deadline": now + deadline_offset,
+        "wall_clock_budget_seconds": 900.0,
+        "phase": "running",
+        "progress": 0.5,
+    });
+    std::fs::write(
+        paths.active_runs_dir().join(format!("{run_id}.json")),
+        serde_json::to_vec(&ar).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Poll until `child` has exited, or `deadline` elapses.
+///
+/// A child of this process becomes a zombie when it dies until it is
+/// reaped, and a zombie still answers `kill(pid, 0)` as "alive" — so we
+/// must `try_wait()` the actual `Child` handle rather than probe the pid.
+async fn wait_for_exit(child: &mut std::process::Child, deadline: Duration) -> bool {
+    let stop = std::time::Instant::now() + deadline;
+    while std::time::Instant::now() < stop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {}
+            Err(_) => return true,
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    matches!(child.try_wait(), Ok(Some(_)))
+}
+
+fn fast_thresholds(disable_deadline: bool) -> watchdog::Thresholds {
+    watchdog::Thresholds {
+        heartbeat_stale_warn: Duration::from_secs(3600),
+        heartbeat_stale_kill: Duration::from_secs(3600),
+        run_stale_warn: Duration::from_secs(3600),
+        run_stale_kill: Duration::from_secs(3600),
+        grace: Duration::from_millis(300),
+        run_kill_grace: Duration::from_millis(300),
+        run_deadline_kill_disabled: disable_deadline,
+    }
+}
+
+#[tokio::test]
+async fn watchdog_sigterms_run_past_its_deadline() {
+    let (_t, paths) = make_workspace();
+
+    // A child that exits on plain SIGTERM.
+    let mut child = spawn_plain_sleeper();
+    let pid = child.id() as i32;
+    assert!(sigutil::is_alive(pid));
+
+    // Its run blew the wall-clock budget 30s ago.
+    write_active_run(&paths, "run-late", pid, ChDuration::seconds(-30));
+
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            loop_shutdown,
+        )
+        .await
+    });
+
+    assert!(
+        wait_for_exit(&mut child, Duration::from_secs(5)).await,
+        "watchdog did not kill the over-deadline run worker",
+    );
+    let _ = shutdown_tx.send(());
+
+    // The watchdog must NOT delete the state file — lifecycle is the
+    // orchestrator's.
+    assert!(
+        paths.active_runs_dir().join("run-late.json").exists(),
+        "watchdog deleted the active_runs file; it must leave it for the orchestrator",
+    );
+}
+
+#[tokio::test]
+async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
+    let (_t, paths) = make_workspace();
+
+    // A child that traps (ignores) SIGTERM: only SIGKILL stops it.
+    let mut child = spawn_sigterm_trapping_child();
+    let pid = child.id() as i32;
+    // Give the shell time to install the trap.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(sigutil::is_alive(pid));
+
+    write_active_run(&paths, "run-stubborn", pid, ChDuration::seconds(-60));
+
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            loop_shutdown,
+        )
+        .await
+    });
+
+    assert!(
+        wait_for_exit(&mut child, Duration::from_secs(5)).await,
+        "watchdog did not escalate to SIGKILL for a SIGTERM-trapping run",
+    );
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn watchdog_does_not_kill_run_when_deadline_disabled() {
+    let (_t, paths) = make_workspace();
+
+    let mut child = spawn_plain_sleeper();
+    let pid = child.id() as i32;
+    write_active_run(&paths, "run-late", pid, ChDuration::seconds(-120));
+
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(true), // --run-deadline-kill-disabled
+            Duration::from_millis(50),
+            loop_shutdown,
+        )
+        .await
+    });
+
+    // Give the loop several ticks; the child must survive.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(
+        sigutil::is_alive(pid),
+        "deadline killing was disabled but the run worker was signalled anyway",
+    );
+
+    let _ = shutdown_tx.send(());
+    child.kill().ok();
+    let _ = child.wait();
+}
+
+#[tokio::test]
+async fn watchdog_never_signals_orchestrator_or_init_pids() {
+    let (_t, paths) = make_workspace();
+
+    // The heartbeat carries the orchestrator pid; here it is THIS test
+    // process. Even though we also point an over-deadline run at it, the
+    // watchdog must never SIGKILL it (we are still running afterwards).
+    let orchestrator = std::process::id() as i32;
+    let hb = serde_json::json!({
+        "pid": orchestrator,
+        "last_heartbeat": Utc::now(),
+        "phase": "running",
+    });
+    std::fs::write(paths.heartbeat(), serde_json::to_vec(&hb).unwrap()).unwrap();
+
+    // Run #1: pid is the orchestrator (protected). Run #2: pid 1 (init).
+    write_active_run(&paths, "run-orch", orchestrator, ChDuration::seconds(-300));
+    write_active_run(&paths, "run-init", 1, ChDuration::seconds(-300));
+
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let loop_paths = paths.clone();
+    let loop_shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        watchdog::runs_loop(
+            loop_paths,
+            fast_thresholds(false),
+            Duration::from_millis(50),
+            loop_shutdown,
+        )
+        .await
+    });
+
+    // Run several ticks. Survival of our own process proves the guard
+    // held (a SIGKILL would have ended this test process).
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(sigutil::is_alive(orchestrator), "orchestrator pid survives");
+    assert!(sigutil::is_alive(1), "init pid is untouched");
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn watchdog_deadline_decision_is_pure_and_separate_from_staleness() {
+    use std::collections::HashSet;
+    use zicato_supervisor::watchdog::{
+        decide_run, decide_run_deadline, RunAction, RunDeadlineAction,
+    };
+
+    let now = Utc::now();
+    let pid = std::process::id() as i32; // alive
+    let protected: HashSet<i32> = HashSet::new();
+    let t = fast_thresholds(false);
+
+    // Fresh progress, but the deadline blew 30s ago: staleness says
+    // Nothing, the deadline trigger says Sigkill (>grace overrun).
+    let run = state::ActiveRun {
+        run_id: "r1".into(),
+        // pid is the test process; the safety guard will refuse it, so
+        // use a different, definitely-dead pid for the timing assertions.
+        pid: Some(pid),
+        last_progress: Some(now),
+        deadline: Some(now - ChDuration::seconds(30)),
+        ..Default::default()
+    };
+    assert_eq!(decide_run(&run, now, &t), RunAction::Nothing);
+    // Own pid is guarded -> None even though the deadline is blown.
+    assert_eq!(
+        decide_run_deadline(&run, now, Duration::from_secs(5), &protected),
+        RunDeadlineAction::None,
+    );
 }

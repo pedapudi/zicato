@@ -52,6 +52,17 @@ struct Cli {
     #[arg(long, default_value_t = 120)]
     run_stale_kill: u64,
 
+    /// Disable per-run wall-clock deadline enforcement. Deadline killing
+    /// is on by default; pass this to attach a read-only observability
+    /// supervisor to a run it should not police.
+    #[arg(long, default_value_t = false)]
+    run_deadline_kill_disabled: bool,
+
+    /// Grace window (seconds) between SIGTERM and SIGKILL when killing a
+    /// run that has exceeded its wall-clock deadline.
+    #[arg(long, default_value_t = 5)]
+    run_kill_grace: u64,
+
     /// Log level (default: info)
     #[arg(long, default_value = "info")]
     log: String,
@@ -118,7 +129,12 @@ async fn main() -> std::process::ExitCode {
         run_stale_warn: Duration::from_secs(cli.run_stale_warn),
         run_stale_kill: Duration::from_secs(cli.run_stale_kill),
         grace: Duration::from_secs(5),
+        run_kill_grace: Duration::from_secs(cli.run_kill_grace),
+        run_deadline_kill_disabled: cli.run_deadline_kill_disabled,
     };
+    if cli.run_deadline_kill_disabled {
+        info!("per-run wall-clock deadline enforcement is disabled");
+    }
     let interval = Duration::from_secs(cli.interval.max(1));
     let hb_paths = paths.clone();
     let hb_shutdown = shutdown_tx.clone();

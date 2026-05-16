@@ -42,6 +42,11 @@ pub struct Heartbeat {
 }
 
 /// `.zicato/runtime/active_runs/{run_id}.json`
+///
+/// Each board-entry run executes in its own subprocess worker. The worker
+/// writes this file with `pid` = the *worker's own* pid (not the
+/// orchestrator's), so signalling `pid` affects exactly one run. `deadline`
+/// is `started_at + wall_clock_budget_seconds` (ISO-8601 UTC).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActiveRun {
     #[serde(default)]
@@ -53,11 +58,19 @@ pub struct ActiveRun {
     #[serde(default)]
     pub generation_id: Option<String>,
     #[serde(default)]
+    pub epoch_id: Option<String>,
+    #[serde(default)]
     pub started_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub last_progress: Option<DateTime<Utc>>,
     #[serde(default)]
     pub deadline: Option<DateTime<Utc>>,
+    /// Per-board-entry wall-clock budget in seconds (informational; the
+    /// authoritative cutoff is `deadline`).
+    #[serde(default)]
+    pub wall_clock_budget_seconds: Option<f64>,
+    #[serde(default)]
+    pub events_jsonl_path: Option<String>,
     #[serde(default)]
     pub phase: Option<String>,
     #[serde(default)]
