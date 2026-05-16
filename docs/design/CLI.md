@@ -34,6 +34,7 @@ exists for the live run view.
 | `6` | Tournament rejection (candidate failed promotion gate). Subcommand returns 6 with a successful informational output — useful in scripts that decide what to do next. |
 | `7` | Wall-clock budget exhausted. |
 | `8` | Collusion check failed (the two `call_llm` callables are identical). |
+| `9` | Loop-health degeneracy (`zicato health` found a `warning`/`critical` report; `zicato evolve --stop-on-degenerate` stopped on sustained degeneracy). |
 
 The non-zero codes are designed so a shell pipeline can branch on
 the precise failure shape (`zicato evolve` returning `6` means "no
@@ -390,6 +391,7 @@ zicato evolve
     [--epoch-name <name>]
     [--stop-on-reject]
     [--stop-on-no-improvement]
+    [--stop-on-degenerate]
 ```
 
 Runs the full meta-loop for `--rounds N` rounds:
@@ -416,13 +418,15 @@ Flags:
 | `--epoch-name <name>` | the `e{N}` scheme | Name for an epoch `evolve` auto-creates (first epoch on a fresh workspace, or the new epoch after a roll). Ignored when `--epoch` is passed or no new epoch is created. |
 | `--stop-on-reject` | off | Halt the loop after the first reject. |
 | `--stop-on-no-improvement` | off | Halt the loop after K consecutive rounds with no promote (K defaults to 3). |
+| `--stop-on-degenerate` | off | Halt the loop the first time loop-health diagnostics report sustained degeneracy (a toothless evaluation). Exits with code `9`. See [LOOP-HEALTH.md](LOOP-HEALTH.md) §6.2. |
 | `--no-dashboard` | off | Do not spawn the supervisor binary. Skips both the watchdog and the live dashboard. CI scripts that want predictable noise sometimes use this; the trade-off is no automatic worker-stall escalation. See [RUNTIME.md](RUNTIME.md) §3 and [DASHBOARD.md](DASHBOARD.md) §2.1. |
 | `--dashboard-port <port>` | `7892` | Bind the dashboard's HTTP server to a specific port. If taken, fails — the auto +1 retry only applies to the default. |
 | `--dashboard-bind <addr>` | `127.0.0.1` | Bind address for the dashboard. `0.0.0.0` exposes the dashboard to the LAN with no built-in auth; put a reverse proxy in front of it if you do this. |
 
 Exit codes: `0` if all rounds ran cleanly (regardless of how many
 promoted vs rejected), `1` for run-level failures, `2`/`3` for
-usage/config.
+usage/config, `9` if `--stop-on-degenerate` halted the loop on
+sustained loop-health degeneracy.
 
 `evolve` is the right command to leave running overnight for a
 calibration epoch. A wrapper script that watches its output and
@@ -432,11 +436,104 @@ Auto-spawn behaviour: in the absence of `--no-dashboard`, `evolve`
 spawns `zicato-supervisor` as a subprocess and prints the
 dashboard URL to stdout. The supervisor exits when `evolve`
 exits. See [DASHBOARD.md](DASHBOARD.md) §2 for the auto-spawn
-contract and §3.16 (`zicato dashboard --read-only` / `--daemon`)
+contract and §3.18 (`zicato dashboard --read-only` / `--daemon`)
 for when the operator wants the dashboard detached from a
 specific `evolve` invocation.
 
-### 3.12 `zicato journal show`
+### 3.12 `zicato reindex`
+
+Rebuild the `.zicato/index.db` analytical index from the
+filesystem.
+
+```
+zicato reindex [--epoch <id>] [--verify]
+```
+
+The index is a derived, fully-rebuildable SQLite projection of
+the workspace's canonical files (see
+[ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md)). With no flags,
+`reindex` acquires the workspace lock, drops every table,
+recreates the schema for the current zicato version, and
+re-derives every row by walking `lineage.json` and every epoch's
+`gen_score.json` / `experiment.json` / `patches/*.json` /
+`runs/*/loss.json`.
+
+Flags:
+
+| Flag | Meaning |
+|---|---|
+| `--epoch <id>` | Reindex only the named epoch's rows; leave other epochs untouched. Useful after hand-editing one epoch's files. |
+| `--verify` | Do not rebuild. Walk the filesystem and the index in parallel and report any disagreement (or any canonical file with no index row). The integrity check; CI for the dogfood targets runs it. |
+
+In normal operation the orchestrator dual-writes the index live,
+so an explicit `reindex` is rarely needed — it is the correctness
+backstop (after a crash, after a hand-edit, after a version
+bump). `reindex --verify` always reports clean in healthy
+operation; a non-clean result is either a benign behind-index
+(a plain `reindex` fixes it) or a real dual-write bug.
+
+```
+$ zicato reindex
+[reindex] workspace: /home/op/myagent/.zicato
+[reindex] dropping + recreating 9 tables (schema v3)
+[reindex] epoch initial          : 8 generations, 80 runs, 312 patches
+[reindex] epoch 2026-05-15_e1    : 5 generations, 50 runs, 191 patches
+[reindex] indexed 13 generations across 2 epochs in 1.4s
+```
+
+Exit codes: `0` on a clean rebuild, or on a clean `--verify`; `1`
+when `--verify` finds index drift; `2`/`3` for usage/config.
+
+### 3.13 `zicato health`
+
+Run loop-health diagnostics and print the `LoopHealth` report.
+
+```
+zicato health [--epoch <id>] [--round <N>] [--format json|text]
+```
+
+Loop-health diagnostics (see [LOOP-HEALTH.md](LOOP-HEALTH.md))
+detect a *running but meaningless* loop — a degenerate evaluation
+that cannot distinguish any candidate. With no flags, `health`
+runs every detector against the current epoch's full history and
+prints the report for the latest round.
+
+Flags:
+
+| Flag | Meaning |
+|---|---|
+| `--epoch <id>` | Target a non-current epoch. |
+| `--round <N>` | Print the stored report for a specific past round (read straight from `loop_health/round_{NNN}.json`; no recomputation). |
+| `--format json` | Emit the `LoopHealth` object verbatim for scripting. |
+
+```
+$ zicato health
+loop health — epoch 2026-05-15_e1 — round 7 — OVERALL: CRITICAL
+
+  [critical] degenerate_scoring
+    v0..v7 all carry gen_score = 1.000000; the evaluation has
+    produced zero score variance across 8 generations.
+    → Inspect scoring.json weights and the per-entry loss.json
+      files; a board where every entry scores identically
+      cannot drive a tournament.
+
+  [info] no_expectations
+    No board entry carries an expectation; scoring is running on
+    drift loss alone.
+
+1 critical, 0 warning, 1 info.
+```
+
+A CI / scheduled-run wrapper pairs `zicato health` with
+`zicato evolve` so a degenerate epoch is caught the next morning
+without an operator eyeballing the journal.
+
+Exit codes: `0` when the report's `overall` is `ok` or `info`;
+`9` when `overall` is `warning` or `critical` (a distinct code so
+a wrapper can branch on "the loop is degenerate"); `2`/`3` for
+usage/config.
+
+### 3.14 `zicato journal show`
 
 ```
 zicato journal show [--epoch <name>] [--since round=<N>]
@@ -447,7 +544,7 @@ Renders `journal.md` for the named epoch (default current).
 
 Exit codes: `0`, `2`, `3`.
 
-### 3.13 `zicato analysis show`
+### 3.15 `zicato analysis show`
 
 ```
 zicato analysis show [--epoch <name>]
@@ -458,7 +555,7 @@ Errors if the named epoch is not closed (no `analysis.md` yet).
 
 Exit codes: `0`, `2`, `3`.
 
-### 3.14 `zicato status` (v1.1+)
+### 3.16 `zicato status` (v1.1+)
 
 Print a snapshot of the runtime state.
 
@@ -501,7 +598,7 @@ shape as `GET /api/state` on the dashboard — see
 Exit codes: `0` when state is readable; `3` when the workspace
 doesn't exist or `.zicato/runtime/` is missing.
 
-### 3.15 `zicato kill <run_id>` (v1.1+)
+### 3.17 `zicato kill <run_id>` (v1.1+)
 
 Manual force-kill of an in-flight tournament run.
 
@@ -531,7 +628,7 @@ usage; `3` if the named run is not active; `4` if the workspace
 is not running an `evolve` (no orchestrator to consume the
 control file).
 
-### 3.16 `zicato dashboard` (v1.2+; standalone modes)
+### 3.18 `zicato dashboard` (v1.2+; standalone modes)
 
 Launch the supervisor binary in a standalone mode (not tied to
 an `evolve` invocation).
@@ -564,7 +661,7 @@ Exit codes: `0` on clean exit (Ctrl-C, SIGTERM); `1` on
 internal error; `2` on usage; `3` on configuration error
 (workspace doesn't exist, port unavailable).
 
-### 3.17 `zicato repo` (v0+1)
+### 3.19 `zicato repo` (v0+1)
 
 Print the path to the workspace's internal git repo.
 
@@ -580,7 +677,7 @@ sequence.
 
 Exit codes: `0`, `2`, `3`.
 
-### 3.18 `zicato log` (v0+1)
+### 3.20 `zicato log` (v0+1)
 
 Log of every generation in the workspace, surfacing the
 zicato-meaningful view rather than raw git log.
@@ -599,7 +696,7 @@ git history back to the named epoch's first commit.
 
 Exit codes: `0`, `2`, `3`.
 
-### 3.19 `zicato diff <gen-a> <gen-b>` (v0+1)
+### 3.21 `zicato diff <gen-a> <gen-b>` (v0+1)
 
 Diff between two generations.
 
@@ -624,7 +721,7 @@ outside the loop).
 Exit codes: `0` on success; `2` on usage; `3` on unknown
 generation id.
 
-### 3.20 `zicato show <gen-id>` (v0+1)
+### 3.22 `zicato show <gen-id>` (v0+1)
 
 Show one generation: experiment metadata + patch diff.
 
@@ -640,7 +737,7 @@ Format example in [STORAGE.md](STORAGE.md) §3.8.
 
 Exit codes: `0`, `2`, `3`.
 
-### 3.21 `zicato bisect` (v0+1)
+### 3.23 `zicato bisect` (v0+1)
 
 Find which generation introduced a regression.
 
@@ -657,7 +754,7 @@ determine "good" or "bad". Converges in O(log N) generations.
 Exit codes: `0` on identification; `1` on inconclusive (the
 metric was flat across the range); `2`/`3` for usage/config.
 
-### 3.22 `zicato blame <file:line>` (v0+1)
+### 3.24 `zicato blame <file:line>` (v0+1)
 
 For a line in the inner-harness source, identify the
 generation that last touched it and the hypothesis behind that
@@ -678,7 +775,7 @@ researcher/agent.py:42
 
 Exit codes: `0`, `2`, `3`.
 
-### 3.23 `zicato workspace migrate-to-git` (v0+1)
+### 3.25 `zicato workspace migrate-to-git` (v0+1)
 
 One-shot conversion of a directory-backed workspace to the
 git-backed storage layout.
@@ -804,4 +901,7 @@ on the meaningful outcomes.
 | Dashboard panels, API, and standalone modes for `zicato dashboard` | [DASHBOARD.md](DASHBOARD.md) |
 | Why subprocess workers, what `zicato kill` is hooked into | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | The git-backed roadmap behind `zicato repo` / `log` / `diff` / `show` / `bisect` / `blame` / `workspace migrate-to-git` | [STORAGE.md](STORAGE.md) |
+| The analytical index `zicato reindex` rebuilds — schema, discipline | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
+| The loop-health diagnostics `zicato health` reports — detectors, severities | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
+| The tournament competition model behind `zicato tournament` | [TOURNAMENT.md](TOURNAMENT.md) |
 | Why `evolve` defaults to rigorous tournament mode | [RATIONALE.md](RATIONALE.md) |

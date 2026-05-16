@@ -758,7 +758,48 @@ Reverting is supported but lossy: a pre-migration backup is in
 the directory layout. New generations created post-migration
 would be lost unless explicitly exported first.
 
-## 7. Cross-references
+## 7. Three storage concerns
+
+zicato has **three** distinct storage concerns, and they get
+three different substrates. Conflating them — "just put it all in
+one store" — would be wrong for at least two of the three. This
+section draws the lines so the boundaries are explicit; the same
+split is laid out from the index side in
+[ANALYTICAL-INDEX.md §5](ANALYTICAL-INDEX.md#5-where-sqlite-is-and-is-not-used).
+
+| Concern | What it is | Substrate | Why this substrate |
+|---|---|---|---|
+| **Generation source trees** | The post-apply inner-harness source at each generation. | **git** (v0+1; directory snapshots in v0). This document. | The data is intrinsically file-shaped; git is the file-shaped versioner and gives `diff` / `log` / `blame` / `bisect` for free (§5.1). SQLite blobs would be smaller and give *no tooling*. |
+| **Per-run event capture** | The `goldfive.v1.Event` stream of each tournament run. | **`events.jsonl`** — one append-only line-delimited file per run. See [TELEMETRY.md](TELEMETRY.md). | The access pattern is append-while-running, tail-for-the-log-panel, stream-to-SSE, replay-once-in-the-reducer. An append-only JSONL file wins every one of those; a row-per-event table would add write contention during the run for no query benefit (events are never queried *across* runs — the reduced `LossProfile` is). |
+| **Cross-run analytical views** | The relational projection that answers `GROUP BY` / `JOIN` questions across many generations. | **`.zicato/index.db`** — a SQLite analytical index. See [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md). | A relational index is exactly the right shape for cross-run aggregates. It is **derived**, never canonical: fully rebuildable from the two stores above via `zicato reindex`. |
+
+The principle: **git for the source trees, JSONL for the event
+capture, SQLite only for the derived cross-run index.** Each
+substrate fits one access pattern; none is forced to do another's
+job.
+
+A note on layering: the analytical index does not *replace* the
+storage layer in this document — it *projects* it. The
+`index.db`'s `runs.events_path` column points *at* an
+`events.jsonl` file; it does not contain the events. The
+`generations` and `experiments` index tables are derived from the
+canonical `gen_score.json` / `experiment.json` files (directory
+backend) or their git equivalents (v0+1 backend). The storage
+layer stays the source of truth under either backend; the index
+is a fast read sidecar on top of whichever backend is active.
+
+The v0 "no SQLite, no embedded DB" framing in
+[RATIONALE.md §7](RATIONALE.md#7-why-filesystem-layout-not-sqlite)
+refers specifically to the **canonical** layer — every artifact
+that *is* the source of truth stays a human-readable file. That
+position is unchanged. The analytical index is the *index
+sidecar* that the same rationale anticipated ("when pattern
+queries become a bottleneck, the right move is to add an index
+sidecar ... regenerable from the filesystem"). It is the
+permitted, derived use of SQLite — not a contradiction of the
+filesystem-native rule.
+
+## 8. Cross-references
 
 | Topic | Document |
 |---|---|
@@ -766,5 +807,7 @@ would be lost unless explicitly exported first.
 | The `.zicato/runtime/` layer (unchanged across backends) | [RUNTIME.md](RUNTIME.md) |
 | Worker subprocess design (pool comes in G7) | [ROBUSTNESS.md](ROBUSTNESS.md) §2.3 |
 | `MutationPoint.id` references that patches carry | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
-| CLI surface (`zicato repo`, `zicato log`, `zicato diff`, etc.) | [CLI.md](CLI.md) |
-| Why filesystem-native (no SQLite) in v0 | [RATIONALE.md](RATIONALE.md) |
+| Per-run event capture — `events.jsonl`, one file per run | [TELEMETRY.md](TELEMETRY.md) |
+| The `.zicato/index.db` SQLite analytical index — schema, discipline, `reindex` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
+| CLI surface (`zicato repo`, `zicato log`, `zicato diff`, `zicato reindex`, etc.) | [CLI.md](CLI.md) |
+| Why filesystem-native (canonical layer is no SQLite) | [RATIONALE.md](RATIONALE.md) §7 |

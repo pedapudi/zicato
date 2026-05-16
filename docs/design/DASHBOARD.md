@@ -18,21 +18,32 @@ experience and the HTTP / SSE surface.
 ## 1. What the dashboard is
 
 zicato's ecosystem already has a live UI for one goldfive run:
-**harmonograf**. Harmonograf shows the plan, the per-turn drift
-state, the intervention ladder, the operator-driven steering
-controls — all within a single run.
+**harmonograf**. Harmonograf is the **execution view** — it
+shows the plan, the per-turn drift state, the intervention
+ladder, the operator-driven steering controls: the temporal
+trace of a single run.
 
-The zicato dashboard is the cadence above harmonograf. It shows
+The zicato dashboard is the **competition view**. It shows
 **one epoch**: many goldfive runs across many generations, the
-lineage DAG, the live tournament, the score trajectory, the drift
-heatmap. The two are complementary; the dashboard's per-run
-drill-down opens harmonograf against the run's `events.jsonl`.
+lineage tree, the live tournament bracket, the score trajectory,
+the drift heatmap. It is the cadence above harmonograf.
 
-| Tool | Scope | Cadence |
-|---|---|---|
-| harmonograf | one goldfive run | within one run |
-| **zicato dashboard** | **one zicato epoch** | **across runs within the epoch** |
-| `analysis.html` | one zicato epoch (snapshot) | regenerated each round; persisted at close |
+The two are **not merged** — they are different objects (a run
+is a trace; a tournament is a comparison of aggregates over many
+traces). They are *linked* by a per-run drill-down: the
+dashboard's drill-down opens harmonograf against the run's
+`events.jsonl`. The operator moves *down* the competition view
+(epoch → round → matchup → run) and at the run level steps
+*across* into harmonograf's execution view. The full treatment
+of this split is in
+[TOURNAMENT.md §5](TOURNAMENT.md#5-the-harmonograf-split) and
+[ARCHITECTURE.md §7](ARCHITECTURE.md#7-the-harmonograf-split-execution-view-vs-competition-view).
+
+| Tool | View | Scope | Cadence |
+|---|---|---|---|
+| harmonograf | execution | one goldfive run | within one run |
+| **zicato dashboard** | **competition** | **one zicato epoch** | **across runs within the epoch** |
+| `analysis.html` | competition (snapshot) | one zicato epoch | regenerated each round; persisted at close |
 
 The same operator may have all three open at once: harmonograf
 focused on the specific run they're inspecting, the zicato
@@ -184,6 +195,7 @@ data: {"kind": "heartbeat_stale", "last_seen_at": "2026-05-14T12:35:02.418Z", "a
 | `kind: active_run_phase` | A worker bumped its `phase`. |
 | `kind: active_run_finished` | `active_runs/{run_id}.json` removed (clean) or finalised (killed/crashed). |
 | `kind: round_finished` | Orchestrator wrote round outcome to `experiment.json`. |
+| `kind: loop_health_critical` | A round's `LoopHealth` report came back `critical` (see [LOOP-HEALTH.md](LOOP-HEALTH.md)); payload carries the firing findings. |
 | `kind: epoch_close` | Operator (or auto) closed the epoch. |
 | `kind: control_applied` | A `control/<file>` command was consumed; payload includes the audit entry from `control_log/`. |
 | `kind: escalation_started` | Supervisor sent SIGTERM to a stalled worker. |
@@ -195,10 +207,21 @@ without missing events.
 
 ## 4. UI panels
 
-The dashboard is a single page with seven panels stacked
+The dashboard is a single page with eight panels stacked
 vertically. Each panel can collapse to a one-line summary. The
 order is fixed; the most operationally relevant panels are at the
 top.
+
+| # | Panel | What it shows |
+|---|---|---|
+| 4.1 | Header | epoch / generation / round / elapsed |
+| 4.2 | Tournament view | the competition — bracket, active matchup, predicted gate verdict |
+| 4.3 | Active runs list | every in-flight tournament run |
+| 4.4 | Lineage SVG | the cross-epoch generation tree |
+| 4.5 | Score trajectory | gen-score over rounds |
+| 4.6 | Drift-kind heatmap | which drift kinds move across the epoch |
+| 4.7 | Loop-health panel | loop-health findings — is the eval toothless? |
+| 4.8 | Log tail | rolling tail of the latest goldfive events |
 
 ### 4.1 Header
 
@@ -215,15 +238,52 @@ Always visible at the top. Phase indicator (`PROPOSING`,
 time is `now - evolve_started_at`. Round count is from
 `evolve_args` plus the running counter.
 
-### 4.2 Active tournament panel
+### 4.2 Tournament view
 
-The biggest panel. The whole point of the dashboard. Shows every
-board entry × (parent, candidate) with per-entry status, drift
-loss, pass/fail, and the running aggregate.
+The biggest panel. The whole point of the dashboard. The
+**Tournament view** is the competition view of the epoch's
+king-of-the-hill gauntlet (see [TOURNAMENT.md](TOURNAMENT.md) for
+the model). It has two levels.
+
+#### 4.2.1 The bracket
+
+At the top of the panel: the **bracket** — the whole epoch's
+gauntlet at a glance. The winners' spine runs left to right, each
+round's matchup hangs off it, discarded challengers are marked.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Tournament — epoch hardened_research — 4 rounds, 3 promotions                 │
+│                                                                                │
+│   v0 ──▶── v1 ──▶── v2 ────────▶── v3 ──▶── (v5 running)                      │
+│   │        │        │              │        │                                 │
+│   r1       r2       r3   ✗         r4       r5  ◀ in flight                    │
+│   PROM     PROM     DISCARD        PROM                                        │
+│   Δ -0.31  Δ -0.18  +0.02          Δ -0.24                                     │
+│                                                                                │
+│   click any round → matchup detail                                            │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Each row shows the round, the verdict (`PROM` / `DISCARD`), and
+the score delta (negative is an improvement). Promoted rounds sit
+on the spine; discarded rounds are marked `✗`. The bracket is
+driven by the `tournaments` table of the analytical index (see
+[ANALYTICAL-INDEX.md §3.8](ANALYTICAL-INDEX.md#38-tournaments)).
+Clicking any round opens its **matchup detail** — the hypothesis,
+patches, per-entry A/B grid, scalar breakdown, and gate verdict
+(specified in [TOURNAMENT.md §3](TOURNAMENT.md#3-per-matchup-detail)).
+
+#### 4.2.2 The active matchup
+
+Below the bracket: the **active matchup** — the in-flight round
+drilled in, with live partial data. Shows every board entry ×
+(parent champion, candidate challenger) with per-entry status,
+drift loss, pass/fail, and the running aggregate.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────┐
-│ Active tournament — round 4 — v4 → v5                                              │
+│ Active matchup — round 4 — v4 → v5                                                 │
 │                                                                                    │
 │  entry_id                       weight    parent              candidate    Δ-drift │
 │ ─────────────────────────────  ──────   ───────────────    ──────────────  ─────── │
@@ -250,7 +310,7 @@ aborted`, `[✗] killed`.
 **Predicted gate verdict.** Computed deterministically from
 partial results — no LLM in this path.
 
-#### 4.2.1 The predicted-verdict projection
+#### 4.2.3 The predicted-verdict projection
 
 The gate (see [SCORING.md](SCORING.md)) checks two things:
 
@@ -334,7 +394,7 @@ every SSE `active_run_*` event.
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Clicking a row opens the per-run drill-down (§4.8).
+Clicking a row opens the per-run drill-down (§4.9).
 
 ### 4.4 Lineage SVG
 
@@ -385,7 +445,7 @@ loss
 ```
 
 When the candidate is mid-tournament, its data point is shown as
-the **current-trend projection** (see §4.2.1) with a confidence
+the **current-trend projection** (see §4.2.3) with a confidence
 band drawn from the best/worst case spread.
 
 ### 4.6 Drift-kind heatmap
@@ -409,7 +469,49 @@ The heatmap is the "what's the lineage learning?" view. When
 immediately drill into round 4's runs and see what the proposer
 changed.
 
-### 4.7 Log tail
+### 4.7 Loop-health panel
+
+The loop-health panel surfaces zicato's loop-health diagnostics
+(see [LOOP-HEALTH.md](LOOP-HEALTH.md)) — the detectors that catch
+a *running but meaningless* loop, where the evaluation is
+degenerate and the tournament cannot distinguish any candidate.
+
+The panel renders the latest round's `LoopHealth` report: the
+`overall` severity and one row per firing detector, each with its
+severity, summary, and remedy.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Loop health — round 7 — OVERALL: CRITICAL                                    │
+│                                                                             │
+│  [critical] degenerate_scoring                                              │
+│    v0..v7 all carry gen_score = 1.000000; the evaluation has produced       │
+│    zero score variance across 8 generations.                                │
+│    → Inspect scoring.json and the per-entry loss.json files.                │
+│                                                                             │
+│  [critical] non_differentiating_entries                                     │
+│    9 of 10 board entries return identical drift_loss + pass_fail.            │
+│    → These entries are dead weight; replace them.                           │
+│                                                                             │
+│  [info] no_expectations                                                     │
+│    No board entry carries an expectation; scoring runs on drift loss only.  │
+│                                                                             │
+│  health trajectory:  ok ok ok warn warn crit crit  ← worsening              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+When the panel goes red the operator knows the loop is toothless
+*without* having to eyeball the journal — the exact manual step
+the motivating incident depended on (a real run had `v0` and `v1`
+both score exactly `1.000000`, found only by inspection). The
+panel border turns red on a `critical` SSE `loop_health_critical`
+event; the health trajectory strip shows the `overall` severity
+of each round so a worsening trend is visible at a glance. The
+per-round reports come from
+`epochs/{epoch}/loop_health/round_{NNN}.json` (projected into the
+analytical index for the trajectory query).
+
+### 4.8 Log tail
 
 A rolling tail of the latest goldfive events across all active
 runs. Each line: `{ts} {run_id_short} {event_kind} {summary}`.
@@ -427,7 +529,7 @@ The log tail is read from a Rust file watcher on each
 `events.jsonl` file referenced by `active_runs/*.json`. Each file
 is `read+tail`-ed; new lines stream to the SSE subscribers.
 
-### 4.8 Drill-down side panels
+### 4.9 Drill-down side panels
 
 Clicking any **generation node** in the lineage opens a side
 panel:
@@ -715,7 +817,7 @@ teammate" tool. Either can stand alone.
 
 | Phase | What ships |
 |---|---|
-| **v1.2** | Read-only dashboard. Auto-spawn from `zicato evolve`. All GET endpoints. All 7 panels render from state files. SSE for live updates. Drill-down side panels. |
+| **v1.2** | Read-only dashboard. Auto-spawn from `zicato evolve`. All GET endpoints. All 8 panels render from state files (the Tournament view, the loop-health panel, and the cross-run analytics read the analytical index). SSE for live updates. Drill-down side panels. |
 | **v1.3** | POST endpoints (`pause`, `resume`, `skip-round`, `kill`, `promote`, `reject`, `rubric`). Control file protocol. `control_log/` audit. Gate-override confirmation UX. |
 
 The split is the same split as the runtime work — v1.2 is the
@@ -733,6 +835,10 @@ complete.
 | Supervisor binary that serves the dashboard | [RUNTIME.md](RUNTIME.md) §3 |
 | `control/` and `control_log/` file shapes | [RUNTIME.md](RUNTIME.md) §2.5 |
 | Tournament gate formula the predicted verdict approximates | [SCORING.md](SCORING.md) |
+| The tournament competition model — bracket, per-matchup detail, analytics | [TOURNAMENT.md](TOURNAMENT.md) |
+| The harmonograf split — execution view vs competition view | [TOURNAMENT.md](TOURNAMENT.md) §5 |
+| Loop-health diagnostics behind the loop-health panel | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
+| The analytical index the Tournament view and analytics read | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | The `experiment.json` shape displayed in drill-downs | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3 |
 | Progressive `analysis.html` generation | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §5.2 |
 | Robustness layers backing the supervisor | [ROBUSTNESS.md](ROBUSTNESS.md) |
