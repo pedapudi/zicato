@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC
@@ -66,6 +67,65 @@ from zicato.core import (
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 from zicato.tournament.regression import RegressionResult, run_regression_suite
 from zicato.tournament.scoring import aggregate_generation_score
+
+log = logging.getLogger("zicato.tournament.runner")
+
+#: Location of the SQLite analytical index, relative to the workspace
+#: root (the ``.zicato/`` directory). Sibling module ``zicato.index``
+#: owns the schema; the runner only knows the path so it can dual-write.
+_INDEX_DB_RELPATH = "index.db"
+
+#: Minimum interval (seconds) between successive ``last_progress`` bumps
+#: for a single in-flight run. The per-run sink is wrapped so every
+#: goldfive event would otherwise trigger a state-file write; throttling
+#: keeps a chatty run from turning into a write storm on the runtime
+#: directory.
+_PROGRESS_BUMP_MIN_INTERVAL_S = 2.0
+
+
+def _index_db_path(workspace_root: Path) -> Path:
+    """Return the SQLite analytical index path for a workspace."""
+    return workspace_root / _INDEX_DB_RELPATH
+
+
+def _ingest_run_into_index(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> None:
+    """Best-effort dual-write of one run into the SQLite analytical index.
+
+    Called after the run's ``loss.json`` has been written so the live
+    index stays current as the tournament runs. The index module is a
+    sibling that may not be present (it lands in parallel); the import is
+    lazy and any failure — a missing module, a schema mismatch, an I/O
+    error — is logged at ``debug`` level and swallowed. The on-disk
+    ``loss.json`` / ``events.jsonl`` remain canonical and ``zicato
+    reindex`` can always rebuild the index from scratch.
+    """
+    try:
+        from zicato.index.ingest import ingest_run  # noqa: PLC0415
+
+        ingest_run(
+            workspace_root,
+            _index_db_path(workspace_root),
+            epoch_id,
+            generation_id,
+            entry_id,
+        )
+    except ImportError:
+        # The index sibling is not installed in this environment — the
+        # loop runs fine without the live index.
+        log.debug("zicato.index.ingest unavailable; skipping live index dual-write")
+    except Exception as exc:  # noqa: BLE001 — index write is best-effort
+        log.debug(
+            "live index ingest_run skipped for %s/%s/%s: %s",
+            epoch_id,
+            generation_id,
+            entry_id,
+            exc,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +146,87 @@ class TournamentResult:
     child_agg: dict[str, Any]
     outcome: GateOutcome
     per_entry_losses: dict[str, tuple[LossProfile, LossProfile]]
+
+
+class _ProgressBumpingSink:
+    """Sink decorator that bumps an :class:`ActiveRun`'s ``last_progress``.
+
+    Wraps the canonical per-run goldfive sink (a
+    :class:`~goldfive.sinks.persistence.JSONLPersistenceSink`, or any
+    object exposing the async ``emit`` / ``close`` pair). Every
+    :meth:`emit` is forwarded to the wrapped sink unchanged AND — at most
+    once per :data:`_PROGRESS_BUMP_MIN_INTERVAL_S` seconds — also calls
+    :func:`zicato.runtime.state.touch_active_run_progress` so the live
+    dashboard sees the run's heartbeat advance.
+
+    Why a wrapper rather than a hook inside the runner: goldfive owns the
+    run loop once ``session.run`` is entered, so the only place the
+    orchestrator can observe per-event progress is the sink boundary.
+
+    The throttle is a simple monotonic-clock gate: the first emit always
+    bumps (so a freshly-started run animates immediately), and subsequent
+    emits bump only after the interval has elapsed. A run that emits
+    nothing simply never bumps — the supervisor's deadline logic still
+    covers a genuinely wedged run.
+
+    The progress bump is strictly best-effort: a missing runtime-state
+    module, or a write failure (e.g. the run already finished and the
+    state file was removed), is swallowed. A telemetry-side error must
+    never abort a run.
+    """
+
+    __slots__ = ("_inner", "_workspace_root", "_run_id", "_last_bump", "_bump")
+
+    def __init__(self, inner: Any, workspace_root: Path, run_id: str) -> None:
+        self._inner = inner
+        self._workspace_root = workspace_root
+        self._run_id = run_id
+        # Negative-infinity sentinel so the very first emit always bumps.
+        self._last_bump = float("-inf")
+        # Resolve the bump callable once; ``None`` when runtime state is
+        # unavailable, which turns every bump into a cheap no-op.
+        self._bump: Any = None
+        try:
+            from zicato.runtime.state import (  # noqa: PLC0415
+                touch_active_run_progress,
+            )
+
+            self._bump = touch_active_run_progress
+        except ImportError:
+            self._bump = None
+
+    async def emit(self, event: Any) -> None:
+        """Forward the event to the wrapped sink, then bump progress (throttled)."""
+        await self._inner.emit(event)
+        if self._bump is None:
+            return
+        now = time.monotonic()
+        if now - self._last_bump < _PROGRESS_BUMP_MIN_INTERVAL_S:
+            return
+        self._last_bump = now
+        try:
+            self._bump(self._workspace_root, self._run_id)
+        except Exception as exc:  # noqa: BLE001 — progress bump is best-effort
+            log.debug("active-run progress bump skipped for %s: %s", self._run_id, exc)
+
+    async def close(self) -> None:
+        """Close the wrapped sink (no progress bump on close)."""
+        await self._inner.close()
+
+
+def _wrap_sinks_with_progress(
+    sinks: list[Any],
+    workspace_root: Path,
+    run_id: str,
+) -> list[Any]:
+    """Wrap each per-run sink so emits bump the run's ``last_progress``.
+
+    Returns a new list with every sink replaced by a
+    :class:`_ProgressBumpingSink`. An empty input (no-goldfive
+    environment) yields an empty list — there is nothing to wrap and the
+    run simply does not animate.
+    """
+    return [_ProgressBumpingSink(s, workspace_root, run_id) for s in sinks]
 
 
 def _telemetry_helpers() -> tuple[Any, Any]:
@@ -341,12 +482,17 @@ async def _run_single(
     )
     # Build the per-run sink list once: the canonical JSONL sink plus,
     # when configured, a live harmonograf stream sink.
-    sinks = _build_sinks(workspace_root, epoch_id, generation.id, entry.id)
+    raw_sinks = _build_sinks(workspace_root, epoch_id, generation.id, entry.id)
 
     # Best-effort runtime-state write so the live dashboard can render
     # the in-flight entry. Failures here MUST NOT abort the tournament.
     rt = _runtime_state()
     run_id = _run_id_for(generation, entry)
+
+    # Wrap each sink so a goldfive ``emit`` also bumps this run's
+    # ``ActiveRun.last_progress`` (throttled) — that is what makes the
+    # dashboard's run card animate while the run is in flight.
+    sinks = _wrap_sinks_with_progress(raw_sinks, workspace_root, run_id)
     if rt is not None:
         state_mod, ActiveRun = rt
         try:
@@ -402,6 +548,10 @@ async def _run_single(
             budget_exceeded,
             weights,
         )
+        # Live index dual-write: the run's loss.json is now on disk, so
+        # fold it into the SQLite analytical index. Best-effort — see
+        # _ingest_run_into_index; the round never aborts on an index error.
+        _ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
         return loss
     finally:
         if rt is not None:
