@@ -21,8 +21,9 @@ was thinking and whether it was right — is gone.
 An **epoch** is the unit of evaluation contract. It owns:
 
 - A frozen board (`board.jsonl`).
-- A frozen rubric (`rubric.md`) — read fresh each round but the file's
-  content is the operator's steering document for the duration.
+- A frozen proposer brief (`proposer_brief.md`) — read fresh each
+  round but the file's content is the operator's steering document
+  for the duration.
 - A frozen scoring configuration (`scoring.json`) — weights,
   tournament thresholds, tolerance bands.
 
@@ -41,11 +42,12 @@ changed; the past is no longer comparable.
 
 An operator starts a new epoch when any of the following hold:
 
-- The board changes (entries added, removed, or edited).
-- The rubric's `forbidden:` list changes — the mutation surface the
-  proposer can act on is materially different.
+- The board changes (entries added, removed, or edited — including a
+  change to the board's `disable_drift` set).
+- The proposer brief's `## Forbidden` list changes — the mutation
+  surface the proposer can act on is materially different.
 - The scoring weights change (e.g. the operator decides pass-rate
-  matters more relative to drift).
+  matters more relative to drift, or retunes `per_judge_weights`).
 - The regression baseline rebases (a major refactor of the inner
   harness happened outside the loop and the parent `v0` of the next
   epoch is a fresh snapshot).
@@ -59,8 +61,9 @@ auto-epoching simply applies it mechanically via a hash.
 
 ### 1.2 What does NOT cause an epoch boundary
 
-- Rubric text edits that don't change `forbidden:`. The rubric is
-  *steering*, not contract. The proposer reads it fresh every round.
+- Proposer-brief text edits that don't change `## Forbidden`. The
+  proposer brief is *steering*, not contract. The proposer reads it
+  fresh every round.
 - Stylistic edits to the inner harness's source that don't add or
   remove mutation points.
 - New `auxiliary_call_llm` model swaps. The model identity is
@@ -87,7 +90,7 @@ directory.
   epochs/
     initial/                         # default first epoch
       board.jsonl                    # frozen for this epoch
-      rubric.md                      # operator-edited; read fresh each round
+      proposer_brief.md              # operator-edited; read fresh each round
       scoring.json                   # weights + tournament thresholds
       generations/
         v0/
@@ -119,7 +122,7 @@ directory.
       analysis.md                    # generated at epoch close
     epoch_after_board_edit/
       board.jsonl
-      rubric.md
+      proposer_brief.md
       scoring.json
       generations/
         v0/                          # baseline at this epoch's start
@@ -343,7 +346,7 @@ close. The pass receives:
 
 - The full `journal.md` for the epoch.
 - The list of all `experiment.json` files (hypothesis + outcome).
-- The `rubric.md` for the epoch.
+- The `proposer_brief.md` for the epoch.
 - The aggregate pattern statistics across the epoch (drift kinds
   that moved most, kinds that stayed flat, tag slices with notable
   pass-rate movement).
@@ -561,21 +564,34 @@ initial              2026-04-01 10:00     2026-04-08 14:30     5         2      
 hardened_research    2026-04-08 14:31     (open)               2         0         initial:v7
 ```
 
-## 7. The rubric
+## 7. The proposer brief
 
-`rubric.md` is the operator's steering document for an epoch. It is
-markdown, no schema enforcement — the proposer reads it verbatim into
-its system prompt each round.
+`proposer_brief.md` is the operator's steering document for an epoch
+— the operator's brief *to the proposer* for how to rewrite the
+inner harness. It is markdown, no schema enforcement: the proposer
+reads it verbatim into its system prompt each round.
+
+> **Naming note.** The proposer brief was previously called the epoch
+> "rubric" (the file `rubric.md`). It is renamed to **proposer
+> brief** to disambiguate it from the per-entry `Rubric.score()`
+> outcome check on a board entry (see
+> [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.2). The two were
+> distinct concepts sharing a word — one steers the proposer
+> epoch-wide, the other grades one entry's output. They now have
+> distinct names: *proposer brief* for the epoch steering document,
+> *rubric* for the per-entry graded outcome check.
 
 A typical structure:
 
 ```markdown
-# Rubric for epoch: hardened_research
+# Proposer brief — epoch: hardened_research
 
 ## Focus
 - Reduce CONFABULATION_RISK on entries tagged `[research]`.
 - Investigate why the coordinator routes the researcher AFTER the
   writer on revision turns.
+- Look at why the custom judge `cite-before-metric` fires on
+  revision turns specifically.
 
 ## Style
 - Prefer terse, imperative instructions.
@@ -590,25 +606,26 @@ A typical structure:
   was flat. Steer away unless drift on writer entries gets worse.
 ```
 
-The `## Forbidden` section is **enforced mechanically**: any patch
-that targets a mutation-point id in this list is rejected at validate
-time (constraint V5 in [MUTATION-SURFACE.md](MUTATION-SURFACE.md)).
-Every other section is advisory — the proposer reads them as natural
-language and uses them to steer.
+The `## Forbidden` section — the **forbidden-id list** — is **enforced
+mechanically**: any patch that targets a mutation-point id in this
+list is rejected at validate time (constraint V5 in
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md)). Every other section is
+advisory — the proposer reads them as natural language and uses them
+to steer.
 
-The rubric is **read fresh every round**. There is no caching. The
-operator can edit it between rounds and the next round picks up the
-change.
+The proposer brief is **read fresh every round**. There is no
+caching. The operator can edit it between rounds and the next round
+picks up the change.
 
 ### 7.1 Why edits mid-epoch are fine
 
-Rubric edits are *steering*, not *contract*. The proposer can change
-focus mid-epoch and the comparability of generations within the
-epoch is preserved (every generation is still measured against the
-same board and the same scoring). The exception is the `forbidden:`
-list — adding ids to it shrinks the proposer's action space and
-warrants a new epoch by convention; the CLI does not enforce this
-but the convention is documented here so operators know.
+Proposer-brief edits are *steering*, not *contract*. The proposer can
+change focus mid-epoch and the comparability of generations within
+the epoch is preserved (every generation is still measured against
+the same board and the same scoring). The exception is the
+`## Forbidden` list — adding ids to it shrinks the proposer's action
+space and warrants a new epoch by convention; the CLI does not
+enforce this but the convention is documented here so operators know.
 
 ## 8. Round mechanics
 
@@ -640,16 +657,18 @@ aggregate across rounds:
 ## 10. Contract-hash auto-epoching
 
 Operators should never have to think about epoch management in the
-common workflow. They edit the board, the rubric, or the scoring; they
-run `zicato evolve`; the right thing happens. Contract-hash
-auto-epoching is the mechanism that makes that true.
+common workflow. They edit the board, the proposer brief, or the
+scoring; they run `zicato evolve`; the right thing happens.
+Contract-hash auto-epoching is the mechanism that makes that true.
 
 ### 10.1 What's in the contract
 
 The **evaluation contract** is exactly four things:
 
-1. **The board** — test inputs + expectations (`board.jsonl`).
-2. **The rubric** — operator steering text (`rubric.md`).
+1. **The board** — test inputs, `expectations`, `judges`, and the
+   board's `disable_drift` set (`board.jsonl`).
+2. **The proposer brief** — operator steering text
+   (`proposer_brief.md`).
 3. **The scoring** — weights + gate thresholds (`scoring.json`).
 4. **The registered inner-harness IDENTITY** — the `--adk` entrypoint
    string plus the sorted list of `--mutable-tree` paths.
@@ -670,12 +689,13 @@ the bytes inside those trees are not.
 root, alongside the `.zicato/` directory:
 
 - `<workspace_parent>/board.jsonl`
-- `<workspace_parent>/rubric.md`
+- `<workspace_parent>/proposer_brief.md`
 - `<workspace_parent>/scoring.json`
 
-`register --board PATH` / `--rubric PATH` / `--scoring PATH` override
-the default. These are the operator's *live, editable* copies. On epoch
-creation / roll they are frozen (copied) into `epochs/{id}/`.
+`register --board PATH` / `--proposer-brief PATH` / `--scoring PATH`
+override the default. These are the operator's *live, editable*
+copies. On epoch creation / roll they are frozen (copied) into
+`epochs/{id}/`.
 
 ### 10.3 The contract hash
 
@@ -688,8 +708,8 @@ so spurious edits do not roll the epoch:
 
 | Component | Canonicalization |
 |---|---|
-| board | `load_board()`, sort entries by id, serialize each to a sorted-key JSON dict, join. Semantic content only — reordering rows or reformatting the JSONL is a no-op. |
-| rubric | Read text, normalize line endings to `\n`, strip trailing whitespace per line, strip leading/trailing blank lines. CRLF churn and re-indentation are no-ops. |
+| board | `load_board()`, sort entries by id, serialize each to a sorted-key JSON dict (including its `expectations` and `judges`), join; the board's `disable_drift` set sorts into the same canonical form. Semantic content only — reordering rows or reformatting the JSONL is a no-op. |
+| proposer brief | Read text, normalize line endings to `\n`, strip trailing whitespace per line, strip leading/trailing blank lines. CRLF churn and re-indentation are no-ops. |
 | scoring | Parse into a fully-defaulted `ScoringWeights`, round every float to 6 decimal places, `json.dumps(sort_keys=True)`. Partial vs full documents and float-precision noise are no-ops. |
 | entrypoint | The string verbatim. |
 | mutable_trees | Sorted tuple of absolute path strings. Registration order is a no-op. |
@@ -698,10 +718,10 @@ The five canonical forms are concatenated and hashed. Missing files are
 treated as the empty string for that component (so a board-less
 workspace still hashes deterministically) — a warning is logged.
 
-A whitespace-only rubric edit, a reordered board, or float noise in
-`scoring.json` leaves the hash unchanged. A changed board input, a
-changed weight, a different entrypoint, or an added mutable tree
-changes it.
+A whitespace-only proposer-brief edit, a reordered board, or float
+noise in `scoring.json` leaves the hash unchanged. A changed board
+input, a retuned `per_judge_weight`, an added custom judge, a
+different entrypoint, or an added mutable tree changes it.
 
 ### 10.4 Roll-at-evolve-time semantics
 
@@ -723,7 +743,7 @@ invocation, before the round loop starts:
      runs against it. The roll prints a clear message naming which
      component changed:
      ```
-     contract changed (rubric) — rolled 2026-05-15_e0 -> 2026-05-15_e1
+     contract changed (proposer brief) — rolled 2026-05-15_e0 -> 2026-05-15_e1
      ```
      With `--no-auto-epoch`, it errors instead of rolling.
 
@@ -778,6 +798,7 @@ the manual escape hatches:
 | Topic | Document |
 |---|---|
 | Hypothesis schema, proposer contract | this document §3 |
+| The proposer brief vs the per-entry `Rubric`; authoring boards | [BOARD-AUTHORING.md](BOARD-AUTHORING.md) |
 | Patch shape and validator constraints | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
 | Loss profile written into each `runs/{id}/loss.json` | [TELEMETRY.md](TELEMETRY.md) |
 | Drift loss scalar that drives `tournament_decision` | [SCORING.md](SCORING.md) |

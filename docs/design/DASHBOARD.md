@@ -265,7 +265,7 @@ composes the panels described in §4.1-§4.9. The header
 | **Overview** | `#/overview` | The live tournament panel — parent/child entry groups with per-entry **elapsed-vs-budget** bars — plus the log tail. The operator's "what is happening right now" view. | live files: `active_tournament.json`, `active_runs/*` (via `/api/active-runs`), `/api/run-log` |
 | **Tree** | `#/tree` | The cross-epoch lineage graph, **including in-flight generations** (the proposed-but-not-yet-resolved candidate is drawn mid-run), plus the score trajectory. | `/api/lineage` (directory walk, live) |
 | **Tournament** | `#/tournament` | The competition view: the bracket (champion spine + challengers) for resolved rounds, **and the in-progress tournament rendered live**. Selecting a node opens its matchup detail. | live: `active_tournament.json` for the in-progress round; index for closed rounds |
-| **Epoch** | `#/epoch` | The epoch's evaluation contract: scoring with **nested weight dicts**, the board, the rubric, mutation paths shown **relativized** to the workspace root. | `/api/epoch` |
+| **Epoch** | `#/epoch` | The epoch's evaluation contract: scoring with **nested weight dicts** (including `per_judge_weights`), the board, the proposer brief, mutation paths shown **relativized** to the workspace root. | `/api/epoch` |
 
 Two behaviors are the result of fixes and are called out per-view
 below:
