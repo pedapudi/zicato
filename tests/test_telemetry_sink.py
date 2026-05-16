@@ -108,3 +108,111 @@ def test_make_run_sink_missing_goldfive_raises(
     # Message must point operators at "install goldfive", not at some
     # generic import-failure noise.
     assert "goldfive" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Multi-sink builder (JSONL + optional harmonograf live stream)
+# ---------------------------------------------------------------------------
+
+
+def test_make_run_sinks_jsonl_only_when_no_harmonograf_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no harmonograf URL configured, only the JSONL sink is attached."""
+    pytest.importorskip("goldfive")
+    from goldfive.sinks.persistence import JSONLPersistenceSink  # type: ignore
+
+    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+
+    monkeypatch.delenv(HARMONOGRAF_URL_ENV, raising=False)
+    sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
+    assert len(sinks) == 1
+    assert isinstance(sinks[0], JSONLPersistenceSink)
+
+
+def test_make_run_sinks_attaches_harmonograf_when_env_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ZICATO_HARMONOGRAF_URL appends a harmonograf sink alongside JSONL.
+
+    The goldfive-side harmonograf sink ships in ``harmonograf_client``,
+    which is not a test dependency — so we install a minimal stub
+    ``harmonograf_client`` module exporting ``Client`` + ``HarmonografSink``
+    and assert the builder constructs and appends it.
+    """
+    pytest.importorskip("goldfive")
+    import sys
+    import types
+
+    from goldfive.sinks.persistence import JSONLPersistenceSink  # type: ignore
+
+    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+
+    constructed: dict[str, object] = {}
+
+    class _StubClient:
+        def __init__(self, *, name: str, server_addr: str) -> None:
+            constructed["name"] = name
+            constructed["server_addr"] = server_addr
+
+    class _StubHarmonografSink:
+        def __init__(self, client: object) -> None:
+            constructed["client"] = client
+
+    stub_mod = types.ModuleType("harmonograf_client")
+    stub_mod.Client = _StubClient  # type: ignore[attr-defined]
+    stub_mod.HarmonografSink = _StubHarmonografSink  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
+
+    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "127.0.0.1:7531")
+    sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
+
+    assert len(sinks) == 2
+    assert isinstance(sinks[0], JSONLPersistenceSink)
+    assert isinstance(sinks[1], _StubHarmonografSink)
+    # The harmonograf client was built against the configured URL.
+    assert constructed["server_addr"] == "127.0.0.1:7531"
+
+
+def test_make_run_sinks_falls_back_to_jsonl_when_harmonograf_client_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A missing harmonograf_client never hard-fails — JSONL-only result."""
+    pytest.importorskip("goldfive")
+    import builtins
+
+    from goldfive.sinks.persistence import JSONLPersistenceSink  # type: ignore
+
+    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if name == "harmonograf_client":
+            raise ImportError("No module named 'harmonograf_client'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "127.0.0.1:7531")
+
+    sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
+    # Only JSONL — the harmonograf attachment degraded gracefully.
+    assert len(sinks) == 1
+    assert isinstance(sinks[0], JSONLPersistenceSink)
+
+
+def test_resolve_harmonograf_url_env_beats_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """resolve_harmonograf_url prefers the env var over the workspace config."""
+    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, resolve_harmonograf_url
+
+    monkeypatch.delenv(HARMONOGRAF_URL_ENV, raising=False)
+    # Config-only.
+    assert resolve_harmonograf_url({"harmonograf_url": "cfg-host:1234"}) == "cfg-host:1234"
+    # No source at all.
+    assert resolve_harmonograf_url(None) == ""
+    assert resolve_harmonograf_url({}) == ""
+    # Env wins over config.
+    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "env-host:9999")
+    assert resolve_harmonograf_url({"harmonograf_url": "cfg-host:1234"}) == "env-host:9999"

@@ -40,11 +40,18 @@ from zicato.telemetry.scoring import (
     aggregate_generation_score,
     combined_scalar,
 )
-from zicato.telemetry.sink import make_run_sink, make_run_sink_path
+from zicato.telemetry.sink import (
+    make_run_sink,
+    make_run_sink_path,
+    make_run_sinks,
+    resolve_harmonograf_url,
+)
 
 __all__ = [
     "make_run_sink",
     "make_run_sink_path",
+    "make_run_sinks",
+    "resolve_harmonograf_url",
     "reduce_loss",
     "compute_drift_loss",
     "read_loss_profile",
