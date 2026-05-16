@@ -17,10 +17,18 @@ This document specifies:
 - The common fields every entry carries.
 - The three entry kinds today (`single_turn`, `multi_turn_scripted`,
   `multi_turn_emulated`) and the per-kind fields.
-- The five expectation kinds.
+- The two evaluation facets an entry carries: **outcome** checks
+  (`expectations` — `Predicate` / `Rubric`) and **process** checks
+  (`judges` — `Judge`).
 - Wall-clock budget semantics, weight, tags, and tag-based pattern
   slicing.
+- The board-level `disable_drift` setting.
 - The forward-compatibility story for new entry kinds.
+
+This document is the schema reference. For the *practical* side of
+authoring — choosing outcome vs process checks, worked builder
+examples, scoring weights — see the companion
+[BOARD-AUTHORING.md](BOARD-AUTHORING.md).
 
 The emulator's collusion-proof construction is specified in
 [EMULATOR.md](EMULATOR.md); this document references it.
@@ -36,7 +44,8 @@ Every board entry carries the same envelope:
 | `wall_clock_budget_seconds` | `number` | yes | Hard ceiling for the WHOLE entry. Exceeded → run aborts and scores as worst-case. |
 | `weight` | `number` | no (default `1.0`) | Relative importance in scoring aggregation. |
 | `tags` | `list[string]` | no (default `[]`) | Operator labels; pattern detectors can slice by tag. |
-| `expectation` | `Expectation` | no | Optional matcher. Absent → drift-loss-only scoring for this entry. See §3. |
+| `expectations` | `list[Expectation]` | no (default `[]`) | **Outcome** checks — `Predicate` / `Rubric` matchers run post-hoc on the run's output or transcript. Empty → drift-loss-only scoring for this entry. See §3. |
+| `judges` | `list[Judge]` | no (default `[]`) | **Process** checks — goldfive judges that watch the reasoning stream in-run. Empty → only goldfive's ambient built-in judges run. See §4. |
 | `context` | `object` | no | Opaque adapter-specific metadata. ADK adapters might use `{"attachments": [...], "session_state": {...}}`. Zicato never interprets the contents. |
 
 Plus the per-kind fields in §2.
@@ -63,8 +72,8 @@ emulated) injects, plus every per-turn LLM call by the goldfive
 overlay. When the budget elapses, the adapter aborts the inner work
 and emits a `goldfive.v1.RunAborted` with `reason="wall_clock_budget"`.
 The reducer stamps `aborted=true` on the loss profile and the scoring
-treats abort as worst-case for the entry (in particular, the
-`pass_fail` is `False` if an expectation was set; the drift loss
+treats abort as worst-case for the entry (in particular, `pass_fail`
+is `False` if the entry had any `expectations`; the drift loss
 contribution is a large constant).
 
 The budget is in seconds for ergonomics; subsecond timing is not
@@ -120,11 +129,13 @@ Example:
   "wall_clock_budget_seconds": 180,
   "weight": 1.0,
   "tags": ["easy", "summarise"],
-  "expectation": {
-    "kind": "regex",
-    "spec": "^- .+\\n- .+\\n- .+$",
-    "fires_on": "final_output"
-  }
+  "expectations": [
+    {
+      "kind": "regex",
+      "spec": "^- .+\\n- .+\\n- .+$",
+      "fires_on": "final_output"
+    }
+  ]
 }
 ```
 
@@ -140,7 +151,9 @@ class SingleTurnRunResult:
 ```
 
 Expectations on single-turn entries default to `fires_on:
-"final_output"` and receive the `final_output` string.
+"final_output"` and receive the `final_output` string. `Judge`
+process checks (§4) are unaffected by `fires_on` — they watch the
+reasoning stream regardless of entry kind.
 
 ### 2.2 `multi_turn_scripted`
 
@@ -183,7 +196,9 @@ class MultiTurnScriptedRunResult:
 ```
 
 Expectations default to `fires_on: "conversation_end"` and receive the
-whole transcript.
+whole transcript. A `Rubric` outcome check authored with
+`reads=OutputScope.TRANSCRIPT` scores the whole conversation; see
+[BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.2.
 
 ### 2.3 `multi_turn_emulated`
 
@@ -244,25 +259,35 @@ answer-leakage heuristic, the audit-trail spans on the
 `zicato:emulator` lane — is in [EMULATOR.md](EMULATOR.md). The board
 format here covers only the entry shape.
 
-## 3. Expectation kinds
+## 3. Outcome checks: the `expectations` list
 
-An expectation is an optional matcher. When present, the loss reducer
-runs it against the appropriate slice of the run result and stamps
-`pass_fail: bool` on the loss profile. When absent, `pass_fail` is
-`None` and the entry contributes to drift-loss only.
+An entry's `expectations` are its **outcome** checks: matchers run
+post-hoc, after the run terminates, against the run's *product* — the
+final output or the whole transcript. They are evaluated in the loss
+reducer, which ANDs their results into `pass_fail: bool` on the loss
+profile. An entry with an empty `expectations` list has
+`pass_fail = None` and contributes to drift-loss only.
 
-All expectations share:
+`expectations` is a **list**. An entry passes iff every expectation in
+it passes (advisory rubrics — see §3.5 — always pass). The two
+authoring namespaces that build expectations are `Predicate`
+(deterministic) and `Rubric` (LLM-graded); see
+[BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.
+
+Every expectation object shares:
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `kind` | `string` | yes | One of the five values below. |
+| `kind` | `ExpectationKind` enum | yes | One of the five values below. |
 | `spec` | varies | yes | Matcher-specific (see each kind). |
-| `fires_on` | `string` | no | `"final_output"` (single-turn default) or `"conversation_end"` (multi-turn default). |
+| `fires_on` | `string` | no | `"final_output"` (single-turn default) or `"conversation_end"` (multi-turn default). Applies to the `Predicate` kinds. |
+| `reads` | `OutputScope` enum | no | `FINAL` or `TRANSCRIPT` — the slice a `rubric`-kind expectation grades. Defaults to `FINAL`. |
 
 ### 3.1 `predicate`
 
 A Python callable, addressed by dotted path. The callable receives the
-`RunResult` (typed by entry kind) and returns `bool`.
+`RunResult` (typed by entry kind) and returns `bool`. Built with
+`Predicate.python(...)`.
 
 ```json
 {
@@ -279,7 +304,7 @@ logic and shipping them as JSON would invite injection.
 ### 3.2 `expected_text`
 
 Exact-string match on the run result (or transcript end-text). Case-
-sensitive, whitespace-significant.
+sensitive, whitespace-significant. Built with `Predicate.contains(...)`.
 
 ```json
 {
@@ -293,7 +318,8 @@ known.
 
 ### 3.3 `regex`
 
-A Python `re`-flavour regex on the run result.
+A Python `re`-flavour regex on the run result. Built with
+`Predicate.regex(...)`.
 
 ```json
 {
@@ -310,7 +336,7 @@ anchor, include `^` / `$` explicitly.
 
 A JSON-schema validation. The run result is parsed as JSON, then
 validated against the schema. Schema-invalid → pass fails. Non-JSON
-output → pass fails.
+output → pass fails. Built with `Predicate.schema(...)`.
 
 ```json
 {
@@ -328,29 +354,42 @@ output → pass fails.
 
 Useful for structured-output agents where the contract is JSON.
 
-### 3.5 `judge`
+### 3.5 `rubric`
 
-A judge model. Like `predicate` but the callable goes through the
-`auxiliary_call_llm`. The spec is a dotted path to a Python function
-that constructs the judge prompt:
+An LLM-graded outcome check. The grader reads the output (or
+transcript), scores it on a numeric scale against an operator-supplied
+criterion, and the expectation passes iff the score meets a
+threshold. Built with `Rubric.score(...)`.
 
 ```json
 {
-  "kind": "judge",
-  "spec": "myproj.judges.is_summary_accurate"
+  "kind": "rubric",
+  "spec": "{\"rubric\":\"Each bullet is accurate and non-redundant.\",\"scale\":[0.0,10.0],\"threshold\":7.0}",
+  "reads": "FINAL"
 }
 ```
 
-The function receives the `RunResult` and returns a tuple
-`(system_prompt: str, user_prompt: str, expected_yes: bool)`. The
-reducer calls `auxiliary_call_llm(system_prompt, user_prompt,
-model=judge_model)` and checks whether the response (case-insensitive,
-first-token) is `"yes"` or `"no"`, comparing against `expected_yes`.
+The `spec` is a JSON document carrying the rubric criterion text, the
+`scale` `(lo, hi)` bounds, and the `threshold` (`null` for an
+advisory rubric that always passes and records its score for
+inspection). The `reads` field is an `OutputScope` enum value —
+`FINAL` (grade the final output) or `TRANSCRIPT` (grade the whole
+conversation).
 
-Judge expectations use the **auxiliary** callable, never the harness
-callable. This is enforced — see [EMULATOR.md](EMULATOR.md).
+The grader runs through **`auxiliary_call_llm`**, never the harness
+callable — the model grading the output must not be the model that
+produced it. This is enforced; see [EMULATOR.md](EMULATOR.md).
+
+A `rubric` is still an **outcome** check — it reads a finished
+product. The in-run check that watches the *reasoning* is the `Judge`
+(§4), a distinct concept. The `Rubric.score()` factory was previously
+named `Rubric.judge()`; it was renamed so "judge" means only the
+process check.
 
 ### 3.6 `fires_on` semantics
+
+`fires_on` selects which slice the `Predicate` kinds match against. (A
+`rubric` expectation uses its own `reads` field instead.)
 
 | Value | Single-turn | Multi-turn |
 |---|---|---|
@@ -363,7 +402,74 @@ Operators override only when the contract is unusual (e.g. a
 multi-turn entry where only the last reply is meant to satisfy the
 schema).
 
-## 4. Wall-clock budget semantics
+## 4. Process checks: the `judges` list
+
+An entry's `judges` are its **process** checks: goldfive judges that
+watch the agent's *reasoning stream* while the run is in flight.
+Where an outcome check inspects the finished product, a process check
+inspects *how the agent got there* — ordering, causality, intermediate
+steps.
+
+A process check is authored with the `Judge` namespace (see
+[BOARD-AUTHORING.md](BOARD-AUTHORING.md) §3). It is a goldfive-side
+judge: goldfive evaluates the criterion against the live event
+stream, and a violation emits a drift event that flows into the run's
+`LossProfile` exactly like any built-in drift.
+
+Every judge object shares:
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `kind` | `string` | yes | `"custom"` (inline natural-language judge) or `"python"` (programmatic). |
+| `name` | `string` | yes | Stable, board-unique, filesystem-safe identifier. Carried on the emitted drift as `judge_name`; `ScoringWeights.per_judge_weights` keys on it. |
+| `criterion` | `string` | yes (for `custom`) | A natural-language description of a **process** property observable in the reasoning. |
+| `dotted_path` | `string` | yes (for `python`) | Dotted path to a Python judge callable. The body lives in project source, never in the board JSON. |
+| `severity` | `DriftSeverity` enum | no (default `WARNING`) | `INFO` / `WARNING` / `CRITICAL` — how heavily a violation weighs in the drift loss. |
+
+A `custom` judge:
+
+```json
+{
+  "kind": "custom",
+  "name": "cite-before-metric",
+  "criterion": "The agent must cite a source before stating any market metric.",
+  "severity": "WARNING"
+}
+```
+
+### 4.1 What a violated judge emits
+
+A violated judge (either kind) emits a drift event of kind
+`DriftKind.CUSTOM`, **identified by the judge's `name`** carried as
+`judge_name`. The reducer counts it under `DRIFT_KIND_CUSTOM` in
+`drift_counts_by_kind`, and keys the per-judge breakdown on
+`judge_name`. Because every custom judge emits the same
+`DriftKind.CUSTOM`, the `judge_name` is the discriminator — two
+judges on a board are told apart by name, not by kind. This is why
+`name` must be stable and board-unique.
+
+The emit path is specified in [ARCHITECTURE.md](ARCHITECTURE.md)
+§4.6.1 and [TELEMETRY.md](TELEMETRY.md).
+
+### 4.2 Built-in judges and `disable_drift`
+
+goldfive ships its own judges — the detectors behind
+`DRIFT_KIND_CONFABULATION_RISK`, `DRIFT_KIND_LOOPING_REASONING`, and
+the rest of the taxonomy. They are **ambient and default-on**: every
+run is watched by them regardless of the entry's `judges` list. An
+entry's `judges` *adds* custom judges on top of the ambient set.
+
+A board suppresses a built-in judge with the board-level
+`disable_drift` setting — a list of `goldfive.DriftKind` enum values
+whose detectors are turned off for every entry on the board. It is a
+**board-wide** setting, not a per-entry field, and it suppresses
+**built-ins by kind only** — custom judges are removed by deleting
+them from `judges`, never via `disable_drift`. Changing `disable_drift`
+changes which signals score the board, so it is part of the
+evaluation contract and rolls the epoch (see
+[EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10).
+
+## 5. Wall-clock budget semantics
 
 The budget applies to the WHOLE entry. Specifically:
 
@@ -388,7 +494,7 @@ When the budget elapses mid-run, the adapter is responsible for:
 The reducer treats `aborted` runs as worst-case. The exact loss
 contribution is in [SCORING.md](SCORING.md).
 
-## 5. Tag-based pattern slicing
+## 6. Tag-based pattern slicing
 
 Pattern detectors slice loss profiles by tag. A few examples:
 
@@ -404,7 +510,7 @@ Pattern detectors slice loss profiles by tag. A few examples:
 The detector set is open-ended. Tags are the operator's lever for
 making the proposer attend to specific slices of the board.
 
-## 6. Forward-compatibility: open-ended `kind`
+## 7. Forward-compatibility: open-ended `kind`
 
 `kind` is a string, not an enum. The v0 registered set is
 `{"single_turn", "multi_turn_scripted", "multi_turn_emulated"}`.
@@ -426,13 +532,13 @@ kinds zicato does not ship in v0:
   drift; fail = drift fired when none was warranted.
 
 Both kinds will use the same envelope (id, wall-clock budget, weight,
-tags, expectation, context) and add per-kind fields specifying the
-synthetic harness wiring.
+tags, `expectations`, `judges`, context) and add per-kind fields
+specifying the synthetic harness wiring.
 
 The forward-compat property holds because:
 
 - The discriminator is a string.
-- The expectation kinds (predicate, judge) can express arbitrary
+- The expectation kinds (`predicate`, `rubric`) can express arbitrary
   matching logic, so new entry kinds don't need new expectation
   kinds.
 - The `RunResult` is typed per kind; the loss reducer dispatches on
@@ -441,7 +547,7 @@ The forward-compat property holds because:
 When the new kinds land, this document grows a §2.4 / §2.5; the
 v0 schema does not break.
 
-## 7. Validation
+## 8. Validation
 
 `zicato board add` validates the entry eagerly. Validation failures
 are noisy errors, not silent drops. The validator checks:
@@ -450,9 +556,13 @@ are noisy errors, not silent drops. The validator checks:
 2. `kind` is in the registered set.
 3. `wall_clock_budget_seconds` is a positive number.
 4. Per-kind fields are present and correctly shaped.
-5. `expectation`, if present, has a recognised `kind` and a
-   `spec` that the kind accepts.
-6. `tags` is a list of strings, no duplicates.
+5. Each entry in `expectations`, if any, has a recognised `kind` and
+   a `spec` that the kind accepts.
+6. Each entry in `judges`, if any, has a recognised `kind`, a stable
+   board-unique `name`, and a `severity` that resolves to a
+   `DriftSeverity` member.
+7. Any `disable_drift` value resolves to a `DriftKind` member.
+8. `tags` is a list of strings, no duplicates.
 
 `zicato board list` walks the board and re-validates as it renders.
 
@@ -460,7 +570,7 @@ are noisy errors, not silent drops. The validator checks:
 mid-epoch closes the epoch implicitly (the contract changed); the CLI
 refuses without `--force`.
 
-## 8. Editing the board mid-epoch
+## 9. Editing the board mid-epoch
 
 Don't. The epoch's evaluation contract includes the board; changing
 the board changes the contract. The CLI enforces this:
@@ -476,27 +586,32 @@ starting a new one), edit the board on the new epoch, run rounds
 there. See [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) for
 why epochs are designed this way.
 
-## 9. Example board
+## 10. Example board
 
-A small but realistic board for the presentation-agent dogfood:
+A small but realistic board for the presentation-agent dogfood. Two
+entries carry an `expectations` list; one also carries a `judges`
+list (its `cite-before-cost` process check):
 
 ```json
 {"id":"short_solar","kind":"single_turn","input":"Make a 3-slide presentation about solar panels.","wall_clock_budget_seconds":180,"tags":["easy","presentation","short"]}
-{"id":"long_solar_with_constraints","kind":"single_turn","input":"Make a 15-slide presentation about solar panels for a non-technical audience.","wall_clock_budget_seconds":300,"weight":1.5,"tags":["medium","presentation","long","audience"]}
+{"id":"long_solar_with_constraints","kind":"single_turn","input":"Make a 15-slide presentation about solar panels for a non-technical audience.","wall_clock_budget_seconds":300,"weight":1.5,"tags":["medium","presentation","long","audience"],"expectations":[{"kind":"rubric","spec":"{\"rubric\":\"Accessible to a non-technical audience.\",\"scale\":[0.0,10.0],\"threshold\":7.0}","reads":"FINAL"}],"judges":[{"kind":"custom","name":"cite-before-cost","criterion":"The agent must cite a source before stating a cost figure.","severity":"WARNING"}]}
 {"id":"contradictory_brief","kind":"single_turn","input":"Make a presentation about solar panels that is both very technical and accessible to grade-school children.","wall_clock_budget_seconds":300,"tags":["hard","ambiguous"]}
-{"id":"revision_dialog","kind":"multi_turn_scripted","turns":[{"user":"Make a presentation about solar panels."},{"user":"Add a slide about cost."},{"user":"Now make slide 3 less technical."}],"max_turns":6,"wall_clock_budget_seconds":480,"tags":["multi-turn","revision","presentation"]}
+{"id":"revision_dialog","kind":"multi_turn_scripted","turns":[{"user":"Make a presentation about solar panels."},{"user":"Add a slide about cost."},{"user":"Now make slide 3 less technical."}],"max_turns":6,"wall_clock_budget_seconds":480,"tags":["multi-turn","revision","presentation"],"expectations":[{"kind":"rubric","spec":"{\"rubric\":\"Every requested revision was applied.\",\"scale\":[0.0,10.0],\"threshold\":7.0}","reads":"TRANSCRIPT"}]}
 {"id":"expert_review","kind":"multi_turn_emulated","user_persona":{"goal":"Get feedback on a presentation outline you wrote.","constraints":["You are a domain expert.","Push back when the agent's feedback is shallow."],"stop_when":"The agent has given at least three concrete improvements."},"max_turns":8,"wall_clock_budget_seconds":600,"tags":["multi-turn","emulated","expert"]}
 ```
 
 That's 5 entries: 3 single-turn, 1 scripted multi-turn, 1 emulated
-multi-turn. A real first epoch usually has 20-50.
+multi-turn. A real first epoch usually has 20-50. The Python builder
+([BOARD-AUTHORING.md](BOARD-AUTHORING.md) §4) is the ergonomic way to
+produce a board this shape.
 
-## 10. Cross-references
+## 11. Cross-references
 
 | Topic | Document |
 |---|---|
+| Practical authoring — outcome vs process, builder, weights | [BOARD-AUTHORING.md](BOARD-AUTHORING.md) |
 | Loss profile fields written from entry runs | [TELEMETRY.md](TELEMETRY.md) |
-| How `weight` and `pass_fail` enter the score | [SCORING.md](SCORING.md) |
+| How `weight`, `expectations`, and `judges` enter the score | [SCORING.md](SCORING.md) |
 | Emulator collusion-proofing for multi-turn emulated | [EMULATOR.md](EMULATOR.md) |
 | Why entries can't be edited mid-epoch | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
 | Future entry kinds for target 2 | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |

@@ -15,7 +15,7 @@ This document specifies:
   `HarnessAdapter.mutation_points()` protocol method.
 - The `zicato mutations` audit CLI.
 - The applier's validator constraints.
-- The interaction with the rubric's `forbidden:` list.
+- The interaction with the proposer brief's `## Forbidden` list.
 
 The "why annotated, not free-form" argument lives in
 [RATIONALE.md](RATIONALE.md); this document is the contract.
@@ -262,7 +262,7 @@ proposer is informed via the round's wall-clock budget).
 | V2 | Every import name in the patched file resolves on import. | Catches `from foo import bar` where the patch deleted `bar`. |
 | V3 | The mutation-point id targeted by the patch resolves to exactly one location after the rewrite. | The next round must be able to re-find this id. |
 | V4 | For span markers labeled `kind="prompt"` or `kind="template"`, all `{...}` named placeholders in the pre-patch text are present in the post-patch text. | Prevents the proposer from silently dropping a `{user_message}` formatter that the surrounding code injects. |
-| V5 | The patch does NOT touch any mutation-point id that appears in the rubric's `forbidden:` section. | Operator's mechanical guard against the proposer rewriting things they marked off-limits. |
+| V5 | The patch does NOT touch any mutation-point id that appears in the proposer brief's `## Forbidden` list. | Operator's mechanical guard against the proposer rewriting things they marked off-limits. |
 | V6 | For file markers, the post-patch file contains the same file marker line (preserved verbatim). | The id must survive into the next round. |
 | V7 | The patch's `new_text` does not contain another `# zicato:mutable` marker that would introduce a new id. | New mutation points must be added by the operator, not the proposer. |
 
@@ -318,9 +318,9 @@ The intended workflow is:
    against the surface they just confirmed.
 
 `zicato mutations` is also the right place to invoke when an operator
-adds an id to the rubric's `forbidden:` section — the CLI surfaces
-forbidden ids as `[forbidden]` next to the kind so the operator can
-sanity-check that the right ids are excluded.
+adds an id to the proposer brief's `## Forbidden` list — the CLI
+surfaces forbidden ids as `[forbidden]` next to the kind so the
+operator can sanity-check that the right ids are excluded.
 
 ## 8. Adding new markers to existing code
 
