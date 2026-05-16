@@ -5,6 +5,43 @@ All notable changes to zicato are recorded here. Format roughly follows
 
 ## [Unreleased]
 
+### Storage
+- Settled the storage design end-to-end and rewrote `docs/design/STORAGE.md`
+  around it. The five data kinds get five fits: runtime state and the
+  lineage/experiment/journal records → files (one record per file,
+  through `StorageBackend`); telemetry → JSONL (goldfive's format,
+  unchanged); generation source trees → a pluggable `GenerationStore`
+  (directory snapshots today, git on the roadmap); the cross-run
+  analytical index → a real DB (`index.db`, SQLite — DuckDB evaluated
+  and deferred until scan latency is felt). The store of record stays
+  files-canonical so concurrent subprocess runs stay lock-free and
+  crash-isolated.
+- Resolved the record-level vs generation-level seam fork: `StorageBackend`
+  stays record-level (key→blob); generation source trees get a separate
+  peer seam, `GenerationStore`, at the `epoch/` domain layer — not an
+  extension of `StorageBackend`. Forcing source-tree transactions into
+  the record ABC would make it carry domain vocabulary and stop being an
+  honest storage seam.
+- `zicato.epoch.genstore` — the `GenerationStore` protocol plus the
+  shipped `DirectoryGenerationStore` (the existing directory-snapshot
+  mechanism, byte-for-byte). `derive_generation` is the generation-level
+  transaction boundary the record seam could not express: copy the
+  parent tree, apply the patch set all-or-nothing, return the child
+  snapshot root. The orchestrator's snapshot / baseline-seed / patch-apply
+  paths now route through this seam — the single site a git backend
+  would later be substituted.
+- `epoch/` record I/O migrated onto `StorageBackend` (via the new
+  `zicato.epoch._storage` adapter, mirroring `runtime/._storage`).
+  `experiment.json`, the per-patch files, `lineage.json`, per-epoch
+  `config.json` / `scoring.json`, and `journal.md` are now written with
+  the same `.tmp` + `fsync` + rename atomicity the runtime layer already
+  had — a crash mid-write can no longer leave a truncated record. No
+  on-disk bytes moved; every `epoch/` signature is unchanged.
+- Continuous indexing promoted from an add-on to the stated design: the
+  orchestrator's live dual-write keeps `index.db` current as the loop
+  runs; `zicato reindex` is the batch rebuild / repair path. The
+  canonical-file-first ordering rule is documented as load-bearing.
+
 ### Robustness
 - `zicato evolve --max-wall-clock-seconds <S>` — a total wall-clock
   budget for the whole evolve invocation. Previously only individual
