@@ -444,6 +444,250 @@ async fn kill_endpoint_rejects_path_traversal() {
     let _ = shutdown.send(());
 }
 
+/// Build a small `.zicato/index/index.db` with the tables the
+/// tournament endpoints read.
+fn write_index_db(paths: &reader::WorkspacePaths) {
+    use rusqlite::Connection;
+    let dir = paths.workspace.join("index");
+    std::fs::create_dir_all(&dir).unwrap();
+    let conn = Connection::open(dir.join("index.db")).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE generations(epoch_id TEXT, generation_id TEXT, \
+             parent_generation_id TEXT, promoted INTEGER);
+         CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT, \
+             hypothesis_core_idea TEXT, hypothesis_why TEXT, hypothesis_json TEXT, \
+             tournament_decision TEXT, rejection_reason TEXT, scalar_score_delta REAL, \
+             drift_loss_delta REAL, pass_rate_delta REAL, outcome_json TEXT);
+         CREATE TABLE patches(patch_id TEXT, epoch_id TEXT, generation_id TEXT, \
+             mutation_id TEXT, op TEXT, rationale TEXT);
+         CREATE TABLE loss_profiles(run_id TEXT, epoch_id TEXT, generation_id TEXT, \
+             entry_id TEXT, drift_loss REAL, pass_fail TEXT, loss_json TEXT);
+         CREATE TABLE tournaments(tournament_id TEXT, epoch_id TEXT, \
+             parent_generation_id TEXT, child_generation_id TEXT, decision TEXT, \
+             parent_scalar REAL, child_scalar REAL, delta_scalar REAL, \
+             rejection_reason TEXT, ran_at TEXT);
+         INSERT INTO generations VALUES('2026-05-15_e0','v0',NULL,1);
+         INSERT INTO generations VALUES('2026-05-15_e0','v1','v0',0);
+         INSERT INTO generations VALUES('2026-05-15_e0','v2','v0',1);
+         INSERT INTO experiments VALUES('2026-05-15_e0','v1',\
+             'tighten the planner','planner overshoots','{\"k\":1}',\
+             'rejected','worse drift overall',-0.1,0.2,-0.05,'{\"o\":2}');
+         INSERT INTO experiments VALUES('2026-05-15_e0','v2',\
+             'add a retry on tool error','tool calls are flaky','{\"k\":2}',\
+             'promoted',NULL,0.3,-0.1,0.1,'{\"o\":3}');
+         INSERT INTO patches VALUES('p1','2026-05-15_e0','v1','m1',\
+             'replace','swap the planner prompt');
+         INSERT INTO loss_profiles VALUES('r0a','2026-05-15_e0','v0','b1',0.4,'pass','{}');
+         INSERT INTO loss_profiles VALUES('r0b','2026-05-15_e0','v0','b2',0.1,'pass','{}');
+         INSERT INTO loss_profiles VALUES('r1a','2026-05-15_e0','v1','b1',0.6,'fail','{}');
+         INSERT INTO loss_profiles VALUES('r1b','2026-05-15_e0','v1','b2',0.1,'pass','{}');
+         INSERT INTO tournaments VALUES('t1','2026-05-15_e0','v0','v1',\
+             'rejected',0.8,0.8,0.0,'worse drift overall','2026-05-15T01:00:00Z');
+         INSERT INTO tournaments VALUES('t2','2026-05-15_e0','v0','v2',\
+             'promoted',0.8,1.1,0.3,NULL,'2026-05-15T02:00:00Z');",
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn tournaments_endpoint_returns_bracket() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "2026-05-15_e0");
+    write_index_db(&paths);
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/tournaments"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+
+    assert_eq!(r["epoch_id"], "2026-05-15_e0");
+    assert_eq!(
+        r["champion_lineage"],
+        serde_json::json!(["v0", "v2"]),
+        "got: {r}"
+    );
+    let matchups = r["matchups"].as_array().unwrap();
+    assert_eq!(matchups.len(), 2);
+    assert_eq!(matchups[0]["champion"], "v0");
+    assert_eq!(matchups[0]["challenger"], "v1");
+    assert_eq!(matchups[0]["decision"], "rejected");
+    assert_eq!(matchups[0]["delta_scalar"], 0.0);
+    assert_eq!(matchups[0]["rejection_reason"], "worse drift overall");
+    assert_eq!(matchups[0]["hypothesis_core_idea"], "tighten the planner");
+    assert_eq!(matchups[0]["ran_at"], "2026-05-15T01:00:00Z");
+    // No `note` when the index exists.
+    assert!(r.get("note").is_none());
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn tournaments_endpoint_notes_missing_index() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "2026-05-15_e0");
+    // No index.db written.
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/tournaments"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    assert_eq!(r["epoch_id"], "2026-05-15_e0");
+    assert_eq!(r["champion_lineage"], serde_json::json!([]));
+    assert_eq!(r["matchups"], serde_json::json!([]));
+    assert_eq!(r["note"], "index not built; run zicato reindex");
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn tournament_detail_endpoint_returns_full_matchup() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "2026-05-15_e0");
+    write_index_db(&paths);
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/tournaments/v1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+
+    assert_eq!(r["epoch_id"], "2026-05-15_e0");
+    assert_eq!(r["generation_id"], "v1");
+    assert_eq!(r["champion"], "v0");
+    assert_eq!(r["decision"], "rejected");
+    assert_eq!(r["rejection_reason"], "worse drift overall");
+    assert_eq!(r["ran_at"], "2026-05-15T01:00:00Z");
+    assert_eq!(r["parent_scalar"], 0.8);
+    assert_eq!(r["child_scalar"], 0.8);
+    assert_eq!(r["delta_scalar"], 0.0);
+
+    assert_eq!(r["hypothesis"]["core_idea"], "tighten the planner");
+    assert_eq!(r["hypothesis"]["why"], "planner overshoots");
+
+    let patches = r["patches"].as_array().unwrap();
+    assert_eq!(patches.len(), 1);
+    assert_eq!(patches[0]["patch_id"], "p1");
+    assert_eq!(patches[0]["op"], "replace");
+
+    let grid = r["ab_grid"].as_array().unwrap();
+    assert_eq!(grid.len(), 2);
+    // b1: parent 0.4 -> child 0.6 == regressed.
+    assert_eq!(grid[0]["entry_id"], "b1");
+    assert_eq!(grid[0]["parent_drift_loss"], 0.4);
+    assert_eq!(grid[0]["child_drift_loss"], 0.6);
+    assert_eq!(grid[0]["verdict"], "regressed");
+    // b2: parent 0.1 -> child 0.1 == flat.
+    assert_eq!(grid[1]["entry_id"], "b2");
+    assert_eq!(grid[1]["verdict"], "flat");
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn tournament_detail_missing_index_is_200() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "2026-05-15_e0");
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/tournaments/v1"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    assert_eq!(r["generation_id"], "v1");
+    assert_eq!(r["note"], "index not built; run zicato reindex");
+    assert_eq!(r["patches"], serde_json::json!([]));
+    assert_eq!(r["ab_grid"], serde_json::json!([]));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn health_report_endpoint_returns_latest_round() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "2026-05-15_e0");
+    let health_dir = paths.epochs.join("2026-05-15_e0").join("health");
+    std::fs::create_dir_all(&health_dir).unwrap();
+    std::fs::write(
+        health_dir.join("round_1.json"),
+        r#"{"epoch_id":"2026-05-15_e0","healthy":true,"findings":[]}"#,
+    )
+    .unwrap();
+    let report = serde_json::json!({
+        "epoch_id": "2026-05-15_e0",
+        "healthy": false,
+        "checked_at": "2026-05-15T03:00:00Z",
+        "findings": [
+            {"code": "stalled_runs", "severity": "warn",
+             "summary": "two runs idle", "detail": "no progress in 10m"},
+        ],
+    });
+    std::fs::write(health_dir.join("round_7.json"), report.to_string()).unwrap();
+
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/health-report"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    assert_eq!(r["epoch_id"], "2026-05-15_e0");
+    assert_eq!(r["healthy"], false);
+    assert_eq!(r["checked_at"], "2026-05-15T03:00:00Z");
+    let findings = r["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["code"], "stalled_runs");
+    assert_eq!(findings[0]["severity"], "warn");
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn health_report_endpoint_healthy_when_no_report() {
+    let (_t, paths) = make_workspace();
+    write_full_epoch(&paths, "2026-05-15_e0");
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/api/health-report"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let r: Value = resp.json().await.unwrap();
+    assert_eq!(r["healthy"], true);
+    assert_eq!(r["findings"], serde_json::json!([]));
+
+    let _ = shutdown.send(());
+}
+
 #[tokio::test]
 async fn watchdog_escalates_to_sigkill_when_sigterm_ignored() {
     // Spawn a child that traps SIGTERM and stays alive.

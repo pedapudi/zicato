@@ -56,6 +56,18 @@ impl WorkspacePaths {
     pub fn lineage(&self) -> PathBuf {
         self.workspace.join("lineage.json")
     }
+
+    /// SQLite analytical index built by `zicato reindex`
+    /// (`.zicato/index/index.db`). May be absent.
+    pub fn index_db(&self) -> PathBuf {
+        self.workspace.join("index").join("index.db")
+    }
+
+    /// Per-epoch loop-health report directory
+    /// (`.zicato/epochs/{epoch_id}/health/`).
+    pub fn epoch_health_dir(&self, epoch_id: &str) -> PathBuf {
+        self.epochs.join(epoch_id).join("health")
+    }
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
