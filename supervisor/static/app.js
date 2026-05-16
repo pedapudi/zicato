@@ -2264,9 +2264,17 @@ function renderEpochBoard(def) {
 function renderEpochRubric(def) {
   const wrap = $('epoch-rubric');
   clearChildren(wrap);
+  // Centering / max-width is owned by the `.epoch-rubric` CSS rule;
+  // ensure the container carries the class even if markup drifts, and
+  // always wrap content in a `rubric-block` so the readable-block
+  // styling applies (no lopsided narrow column).
+  wrap.classList.add('epoch-rubric');
   const rubric = def && typeof def.rubric === 'string' ? def.rubric : '';
   if (!rubric.trim()) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No rubric recorded.']));
+    const empty = el('div', { class: 'rubric-block' }, [
+      el('p', { class: 'empty' }, ['No rubric recorded.']),
+    ]);
+    wrap.appendChild(empty);
     return;
   }
   const block = el('div', { class: 'rubric-block' });
@@ -2337,11 +2345,36 @@ function renderEpochScoring(def) {
   for (const [k, v] of Object.entries(scoring)) {
     tbody.appendChild(el('tr', null, [
       el('td', { class: 'mono' }, [k]),
-      el('td', { class: 'mono' }, [String(v)]),
+      el('td', { class: 'mono' }, [scoringValueCell(v)]),
     ]));
   }
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+}
+
+// Render a scoring weight value. Scalars render as plain text; an
+// object-valued weight (e.g. per_kind_weights, severity_weights)
+// renders as a nested key->value sub-list instead of stringifying to
+// the literal `[object Object]`.
+function scoringValueCell(v) {
+  if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+    const entries = Object.entries(v);
+    if (entries.length === 0) return el('span', { class: 'meta' }, ['{}']);
+    const sub = el('ul', { class: 'scoring-subdict' });
+    for (const [ik, iv] of entries) {
+      sub.appendChild(el('li', null, [
+        el('span', { class: 'scoring-subkey' }, [ik]),
+        el('span', { class: 'scoring-subval' }, [
+          iv != null && typeof iv === 'object'
+            ? scoringValueCell(iv)
+            : String(iv),
+        ]),
+      ]));
+    }
+    return sub;
+  }
+  if (Array.isArray(v)) return el('span', null, [v.join(', ')]);
+  return el('span', null, [String(v)]);
 }
 
 function renderEpochMutations(def) {
@@ -2365,16 +2398,36 @@ function renderEpochMutations(def) {
   ])]));
   const tbody = el('tbody');
   for (const m of muts) {
+    const fullPath = m.file || '';
+    const fileCell = fullPath
+      ? el('td', { class: 'mono', title: fullPath },
+          [relativizeMutationPath(fullPath)])
+      : el('td', { class: 'mono' }, ['—']);
     tbody.appendChild(el('tr', null, [
       el('td', { class: 'mono' }, [m.id || '—']),
       el('td', null, [m.kind || '—']),
-      el('td', { class: 'mono' }, [m.file || '—']),
+      fileCell,
       el('td', { class: 'mono' }, [m.lines || '—']),
       el('td', null, [truncate(m.preview || '', 64)]),
     ]));
   }
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+}
+
+// Reduce an absolute snapshot path to a meaningful repo-relative path.
+// Mutation files arrive as full paths inside a per-run snapshot dir,
+// e.g. `/tmp/zicato-tournamentN/.zicato/epochs/.../generations/v0/
+// snapshot/agent/foo.py`. Strip everything up to and including a
+// `snapshot/` segment; if there is none, fall back to the last 2-3
+// path segments. The caller keeps the full path as a tooltip.
+function relativizeMutationPath(path) {
+  const norm = String(path).replace(/\\/g, '/');
+  const m = norm.match(/(?:^|\/)snapshot\/(.+)$/);
+  if (m && m[1]) return m[1];
+  const parts = norm.split('/').filter(Boolean);
+  if (parts.length <= 3) return parts.join('/');
+  return parts.slice(-3).join('/');
 }
 
 // --- Render: log tail
