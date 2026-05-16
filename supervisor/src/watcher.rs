@@ -34,6 +34,17 @@ pub struct WatchEvent {
     pub ts: chrono::DateTime<chrono::Utc>,
 }
 
+/// Whether `path` is an atomic-write intermediate (`*.tmp`). The Python
+/// side writes state files as `path.tmp` then renames to `path`; the
+/// `.tmp` create/modify/remove events are pure noise and must never
+/// reach an SSE client.
+fn is_tmp_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("tmp"))
+        .unwrap_or(false)
+}
+
 fn classify(path: &Path, paths: &WorkspacePaths) -> ChangeKind {
     if path == paths.heartbeat() {
         return ChangeKind::Heartbeat;
@@ -113,6 +124,11 @@ fn debounce_loop(
             continue;
         }
         for p in ev.paths {
+            // Atomic-write intermediates (`*.tmp`) are noise: the real
+            // event arrives when the file is renamed into place.
+            if is_tmp_path(&p) {
+                continue;
+            }
             let now = Instant::now();
             let too_soon = last_emit
                 .get(&p)
@@ -165,5 +181,15 @@ mod tests {
             ChangeKind::Control
         );
         assert_eq!(classify(Path::new("/nowhere"), &p), ChangeKind::Unknown);
+    }
+
+    #[test]
+    fn tmp_paths_are_recognised() {
+        assert!(is_tmp_path(Path::new("/x/heartbeat.json.tmp")));
+        assert!(is_tmp_path(Path::new("/x/lineage.tmp")));
+        assert!(is_tmp_path(Path::new("/x/FILE.TMP")));
+        assert!(!is_tmp_path(Path::new("/x/heartbeat.json")));
+        assert!(!is_tmp_path(Path::new("/x/tmp")));
+        assert!(!is_tmp_path(Path::new("/x/notatmp.json")));
     }
 }

@@ -6,6 +6,7 @@
 //! paths without spawning the executable.
 
 pub mod epoch;
+pub mod index_db;
 pub mod log;
 pub mod reader;
 pub mod routes;
@@ -14,5 +15,6 @@ pub mod signal;
 pub mod sse;
 pub mod state;
 pub mod static_assets;
+pub mod tournaments;
 pub mod watchdog;
 pub mod watcher;
