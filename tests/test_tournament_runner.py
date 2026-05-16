@@ -509,3 +509,254 @@ def test_tournament_result_is_json_serializable(
     assert decoded["outcome"]["decision"] == "promoted"
     # Per-entry losses round-tripped through asdict — paths string-ified.
     assert "entry_a" in decoded["per_entry_losses"]
+
+
+# ---------------------------------------------------------------------------
+# Bounded-concurrency board execution
+# ---------------------------------------------------------------------------
+
+
+def _board_of(n: int) -> list[BoardEntry]:
+    """A board of ``n`` distinct single-turn entries."""
+    return [
+        BoardEntry(
+            id=f"entry_{i}",
+            kind="single_turn",
+            wall_clock_budget_seconds=60,
+            input=f"in-{i}",
+        )
+        for i in range(n)
+    ]
+
+
+class _ConcurrencyStub:
+    """Instrumented ``_run_single`` replacement that tracks in-flight runs.
+
+    Each fake run yields control to the event loop a few times via
+    ``asyncio.sleep(0)`` so that, when the runner schedules more than one
+    at a time, they genuinely overlap. ``peak`` records the highest
+    observed number of simultaneously-in-flight runs.
+    """
+
+    def __init__(self, canned: dict[tuple[str, str], LossProfile]) -> None:
+        self._canned = canned
+        self.in_flight = 0
+        self.peak = 0
+        self.call_log: list[tuple[str, str]] = []
+        self.completed: list[tuple[str, str]] = []
+
+    async def run_single(
+        self,
+        *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+    ) -> LossProfile:
+        del adapter, weights, config, workspace_root, epoch_id, side
+        self.call_log.append((generation.id, entry.id))
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            # A handful of yields so overlapping runs actually interleave.
+            for _ in range(5):
+                await asyncio.sleep(0)
+            return self._canned[(generation.id, entry.id)]
+        finally:
+            self.in_flight -= 1
+            self.completed.append((generation.id, entry.id))
+
+
+def test_run_generation_respects_parallelism_bound(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A board of 6 entries with ``parallelism=3`` never exceeds 3 in flight."""
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(6)
+    canned = {
+        (gen, e.id): _loss(generation_id=gen, entry_id=e.id, drift_loss=1.0, pass_fail=True)
+        for gen in ("v0", "v1")
+        for e in board
+    }
+    stub = _ConcurrencyStub(canned)
+    monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+
+    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=3)
+    result = asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+    # At most 3 runs were ever in flight at once — but more than one was
+    # (proving the runner actually parallelised rather than serialising).
+    assert stub.peak == 3
+    # All 12 runs (6 entries x 2 generations) executed.
+    assert len(stub.call_log) == 12
+    # The result mapping is complete and order-independent.
+    assert set(result.per_entry_losses) == {e.id for e in board}
+
+
+def test_run_generation_result_matches_sequential_under_parallelism(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``parallelism=3`` yields the SAME entry.id -> LossProfile as ``parallelism=1``."""
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(6)
+    # Distinct drift_loss per (gen, entry) so a mis-mapped result is caught.
+    canned = {
+        (gen, f"entry_{i}"): _loss(
+            generation_id=gen,
+            entry_id=f"entry_{i}",
+            drift_loss=float(i) + (0.0 if gen == "v0" else 100.0),
+            pass_fail=True,
+        )
+        for gen in ("v0", "v1")
+        for i in range(6)
+    }
+
+    def _run(parallelism: int) -> dict[str, tuple[float, float]]:
+        stub = _ConcurrencyStub(canned)
+        monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+        config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=parallelism)
+        result = asyncio.run(
+            run_tournament(
+                adapter=object(),
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                board=board,
+                weights=ScoringWeights(),
+                config=config,
+                workspace_root=tmp_path,
+                epoch_id="e0",
+            )
+        )
+        return {
+            eid: (parent.drift_loss, child.drift_loss)
+            for eid, (parent, child) in result.per_entry_losses.items()
+        }
+
+    sequential = _run(1)
+    parallel = _run(3)
+    assert parallel == sequential
+    # And the values are the canned ones, correctly keyed per side.
+    assert sequential["entry_2"] == (2.0, 102.0)
+
+
+def test_run_generation_parallelism_one_is_strictly_sequential(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``parallelism=1`` runs exactly one entry at a time, in board order."""
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(5)
+    canned = {
+        (gen, e.id): _loss(generation_id=gen, entry_id=e.id, drift_loss=1.0, pass_fail=True)
+        for gen in ("v0", "v1")
+        for e in board
+    }
+    stub = _ConcurrencyStub(canned)
+    monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+
+    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=1)
+    asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+    # Never more than one run in flight — byte-identical to the old loop.
+    assert stub.peak == 1
+    # Parent board fully drained before the child board starts, each in
+    # board order — exactly the old ``for entry in board`` sequence.
+    expected = [("v0", e.id) for e in board] + [("v1", e.id) for e in board]
+    assert stub.call_log == expected
+    # Each run also COMPLETED before the next one started.
+    assert stub.completed == expected
+
+
+def test_run_generation_surfaces_failure_under_concurrency(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failing run under parallelism>1 raises, and siblings still finish.
+
+    The exception must propagate (not be swallowed by ``gather``), and
+    every sibling run that was already in flight must run to completion
+    — its ``finally`` cleanup must not be skipped by a cancellation.
+    """
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(4)
+
+    started: list[str] = []
+    finished: list[str] = []
+
+    async def failing_run_single(
+        *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+    ) -> LossProfile:
+        del adapter, weights, config, workspace_root, epoch_id, side
+        started.append(entry.id)
+        try:
+            for _ in range(3):
+                await asyncio.sleep(0)
+            if entry.id == "entry_1":
+                raise RuntimeError("worker blew up")
+            return _loss(
+                generation_id=generation.id,
+                entry_id=entry.id,
+                drift_loss=1.0,
+                pass_fail=True,
+            )
+        finally:
+            # Mirrors _run_single's own finally cleanup block.
+            finished.append(entry.id)
+
+    monkeypatch.setattr(runner_mod, "_run_single", failing_run_single)
+
+    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=4)
+    with pytest.raises(RuntimeError, match="worker blew up"):
+        asyncio.run(
+            run_tournament(
+                adapter=object(),
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                board=board,
+                weights=ScoringWeights(),
+                config=config,
+                workspace_root=tmp_path,
+                epoch_id="e0",
+            )
+        )
+
+    # Every parent-side run that started also reached its finally block —
+    # no in-flight sibling was cancelled mid-run / had cleanup skipped.
+    assert set(started) == {e.id for e in board}
+    assert set(finished) == set(started)
