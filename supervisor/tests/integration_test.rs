@@ -6,10 +6,13 @@ use chrono::{Duration as ChDuration, Utc};
 use serde_json::Value;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::broadcast;
-use zicato_supervisor::{reader, server, signal as sigutil, state, watchdog, watcher};
+use zicato_supervisor::{
+    action_log::WatchdogLog, reader, server, signal as sigutil, state, watchdog, watcher,
+};
 
 fn make_workspace() -> (TempDir, reader::WorkspacePaths) {
     let tmp = TempDir::new().unwrap();
@@ -18,6 +21,15 @@ fn make_workspace() -> (TempDir, reader::WorkspacePaths) {
     std::fs::create_dir_all(ws.join("runtime/control")).unwrap();
     std::fs::create_dir_all(ws.join("epochs")).unwrap();
     (tmp, reader::WorkspacePaths::new(ws))
+}
+
+fn serve_opts(read_only: bool) -> server::ServeOptions {
+    server::ServeOptions {
+        read_only,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+    }
 }
 
 async fn start_server(
@@ -30,7 +42,28 @@ async fn start_server(
         paths,
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         0, // ephemeral
-        read_only,
+        serve_opts(read_only),
+        watch_tx,
+        shutdown_tx.clone(),
+    )
+    .await
+    .unwrap();
+    (handle, shutdown_tx)
+}
+
+/// Like `start_server` but with a fully-specified `ServeOptions`, so
+/// `/statusz` tests can drive `--no-dashboard` and a shared action log.
+async fn start_server_with(
+    paths: reader::WorkspacePaths,
+    options: server::ServeOptions,
+) -> (server::ServerHandle, broadcast::Sender<()>) {
+    let (watch_tx, _) = broadcast::channel(64);
+    let (shutdown_tx, _) = broadcast::channel(4);
+    let handle = server::serve(
+        paths,
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        0,
+        options,
         watch_tx,
         shutdown_tx.clone(),
     )
@@ -739,7 +772,7 @@ async fn sse_emits_snapshot_then_change_event() {
         paths.clone(),
         IpAddr::V4(Ipv4Addr::LOCALHOST),
         0,
-        true,
+        serve_opts(true),
         watch_tx.clone(),
         shutdown_tx.clone(),
     )
@@ -905,6 +938,7 @@ async fn watchdog_sigterms_run_past_its_deadline() {
             loop_paths,
             fast_thresholds(false),
             Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
             loop_shutdown,
         )
         .await
@@ -945,6 +979,7 @@ async fn watchdog_escalates_to_sigkill_when_run_ignores_sigterm() {
             loop_paths,
             fast_thresholds(false),
             Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
             loop_shutdown,
         )
         .await
@@ -973,6 +1008,7 @@ async fn watchdog_does_not_kill_run_when_deadline_disabled() {
             loop_paths,
             fast_thresholds(true), // --run-deadline-kill-disabled
             Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
             loop_shutdown,
         )
         .await
@@ -1017,6 +1053,7 @@ async fn watchdog_never_signals_orchestrator_or_init_pids() {
             loop_paths,
             fast_thresholds(false),
             Duration::from_millis(50),
+            Arc::new(WatchdogLog::new()),
             loop_shutdown,
         )
         .await
@@ -1340,6 +1377,257 @@ async fn health_endpoint_carries_port_and_build() {
     // `build` is present and non-empty.
     let build = r["build"].as_str().unwrap();
     assert!(!build.is_empty(), "build identifier must be non-empty");
+
+    let _ = shutdown.send(());
+}
+
+// ---------------------------------------------------------------------
+// /statusz — the watchdog's own minimal operational surface.
+// ---------------------------------------------------------------------
+
+/// Write a fresh heartbeat plus two active runs: one comfortably within
+/// its deadline, one already past it.
+fn write_statusz_state(paths: &reader::WorkspacePaths) {
+    let now = Utc::now();
+    let hb = serde_json::json!({
+        "pid": std::process::id(),
+        "last_heartbeat": now,
+        "started_at": now - ChDuration::seconds(300),
+        "phase": "proposing:round_1:v2",
+    });
+    std::fs::write(paths.heartbeat(), serde_json::to_vec(&hb).unwrap()).unwrap();
+
+    // Within deadline.
+    let ok_run = serde_json::json!({
+        "run_id": "run-ok",
+        "pid": 4242,
+        "started_at": now - ChDuration::seconds(60),
+        "deadline": now + ChDuration::seconds(600),
+        "wall_clock_budget_seconds": 660.0,
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("run-ok.json"),
+        serde_json::to_vec(&ok_run).unwrap(),
+    )
+    .unwrap();
+
+    // Over deadline by ~120s.
+    let late_run = serde_json::json!({
+        "run_id": "run-late",
+        "pid": 4343,
+        "started_at": now - ChDuration::seconds(800),
+        "deadline": now - ChDuration::seconds(120),
+        "wall_clock_budget_seconds": 680.0,
+    });
+    std::fs::write(
+        paths.active_runs_dir().join("run-late.json"),
+        serde_json::to_vec(&late_run).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn statusz_json_carries_identity_and_per_run_deadlines() {
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/json"),
+    );
+    let r: Value = resp.json().await.unwrap();
+
+    // Supervisor identity.
+    let sup = &r["supervisor"];
+    assert!(!sup["version"].as_str().unwrap().is_empty());
+    assert!(!sup["build"].as_str().unwrap().is_empty());
+    assert_eq!(sup["port"].as_u64().unwrap(), handle.addr.port() as u64);
+    assert_eq!(sup["read_only"], true);
+    assert_eq!(sup["dashboard_disabled"], false);
+    assert!(sup["pid"].as_i64().unwrap() > 1);
+    assert!(r["supervisor"]["workspace"].as_str().unwrap().contains('/'));
+
+    // Heartbeat freshness.
+    assert_eq!(r["heartbeat"]["present"], true);
+    assert_eq!(r["heartbeat"]["stale"], false);
+    assert_eq!(
+        r["heartbeat"]["orchestrator_pid"].as_u64().unwrap(),
+        std::process::id() as u64
+    );
+
+    // Per-run deadline rows: one within, one over.
+    let runs = r["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 2);
+    let by_id = |id: &str| runs.iter().find(|x| x["run_id"] == id).unwrap();
+
+    let ok = by_id("run-ok");
+    assert_eq!(ok["over_deadline"], false);
+    assert!(ok["remaining_seconds"].as_i64().unwrap() > 0);
+    assert!(ok["started_at"].as_str().is_some());
+    assert!(ok["deadline"].as_str().is_some());
+
+    let late = by_id("run-late");
+    assert_eq!(late["over_deadline"], true);
+    assert!(late["remaining_seconds"].as_i64().unwrap() < 0);
+    assert!(late["over_by_seconds"].as_i64().unwrap() >= 110);
+
+    // Summary flags the over-deadline run.
+    assert_eq!(r["runs_over_deadline"].as_u64().unwrap(), 1);
+    let summary = r["summary"].as_str().unwrap();
+    assert!(summary.contains("OVER deadline"), "got: {summary}");
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn statusz_html_serves_non_empty_page() {
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let resp = client.get(format!("{base}/statusz")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(ct.contains("text/html"), "got content-type: {ct}");
+
+    let body = resp.text().await.unwrap();
+    assert!(!body.is_empty());
+    assert!(body.starts_with("<!doctype html>"));
+    assert!(body.contains("/statusz"));
+    // The over-deadline run is surfaced and flagged.
+    assert!(body.contains("run-late"));
+    assert!(body.contains("OVER"));
+    // Self-contained: no external script reference.
+    assert!(!body.contains("<script"));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn statusz_routes_reachable_with_no_dashboard() {
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: true, // --no-dashboard
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: Arc::new(WatchdogLog::new()),
+    };
+    let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    // Both /statusz surfaces are still served in watchdog-only mode.
+    let html = client.get(format!("{base}/statusz")).send().await.unwrap();
+    assert_eq!(html.status(), 200);
+    assert!(!html.text().await.unwrap().is_empty());
+
+    let json = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(json.status(), 200);
+    let r: Value = json.json().await.unwrap();
+    assert_eq!(r["supervisor"]["dashboard_disabled"], true);
+    assert_eq!(r["runs"].as_array().unwrap().len(), 2);
+
+    // The full dashboard routes are NOT mounted in this mode.
+    let dash = client
+        .get(format!("{base}/api/state"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(dash.status(), 404);
+    let root = client.get(format!("{base}/")).send().await.unwrap();
+    assert_eq!(root.status(), 404);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn statusz_no_runs_summary_is_clean() {
+    let (_t, paths) = make_workspace();
+    let (handle, shutdown) = start_server(paths.clone(), true).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let r: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(r["runs"].as_array().unwrap().len(), 0);
+    assert_eq!(r["runs_over_deadline"].as_u64().unwrap(), 0);
+    assert_eq!(r["heartbeat"]["present"], false);
+    assert_eq!(r["watchdog_actions"].as_array().unwrap().len(), 0);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn statusz_surfaces_recorded_watchdog_actions() {
+    use zicato_supervisor::action_log::{Action, Outcome, Trigger};
+
+    let (_t, paths) = make_workspace();
+    write_statusz_state(&paths);
+
+    // A shared action log seeded with one escalation, as the watchdog
+    // loop would have recorded it.
+    let action_log = Arc::new(WatchdogLog::new());
+    action_log.record(Action {
+        ts: Utc::now(),
+        trigger: Trigger::RunDeadline,
+        pid: 4343,
+        run_id: Some("run-late".into()),
+        outcome: Outcome::KilledForcefully,
+    });
+
+    let opts = server::ServeOptions {
+        read_only: true,
+        dashboard_disabled: false,
+        heartbeat_stale_threshold_seconds: 30,
+        action_log: action_log.clone(),
+    };
+    let (handle, shutdown) = start_server_with(paths.clone(), opts).await;
+    let base = format!("http://{}", handle.addr);
+    let client = reqwest::Client::new();
+
+    let r: Value = client
+        .get(format!("{base}/statusz.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let actions = r["watchdog_actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0]["trigger"], "run_deadline");
+    assert_eq!(actions[0]["pid"].as_i64().unwrap(), 4343);
+    assert_eq!(actions[0]["run_id"], "run-late");
+    assert_eq!(actions[0]["outcome"], "killed_forcefully");
 
     let _ = shutdown.send(());
 }

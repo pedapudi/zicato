@@ -1,6 +1,7 @@
 //! Axum HTTP + SSE server. Binds to the first available port in the
 //! `--port..=--port+10` range to avoid clashing with a previous run.
 
+use crate::action_log::WatchdogLog;
 use crate::reader::WorkspacePaths;
 use crate::routes::{router, AppState};
 use crate::watcher::WatchEvent;
@@ -59,11 +60,26 @@ pub async fn build_listener(
         .unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::AddrInUse, "no port available")))
 }
 
+/// Tunables for the HTTP server that are not derived from the listener.
+///
+/// Grouped into a struct so `serve` keeps a small, stable signature as the
+/// watchdog-only surface (`/statusz`) grows its inputs.
+#[derive(Clone)]
+pub struct ServeOptions {
+    pub read_only: bool,
+    /// `--no-dashboard`: serve only the watchdog surface (`/statusz`).
+    pub dashboard_disabled: bool,
+    /// Heartbeat staleness threshold the watchdog enforces (seconds).
+    pub heartbeat_stale_threshold_seconds: u64,
+    /// Shared in-memory ring buffer of recent watchdog escalations.
+    pub action_log: Arc<WatchdogLog>,
+}
+
 pub async fn serve(
     paths: WorkspacePaths,
     bind: IpAddr,
     preferred_port: u16,
-    read_only: bool,
+    options: ServeOptions,
     watch_tx: broadcast::Sender<WatchEvent>,
     shutdown: broadcast::Sender<()>,
 ) -> std::io::Result<ServerHandle> {
@@ -74,13 +90,16 @@ pub async fn serve(
     let state = AppState {
         paths,
         watch_tx,
-        read_only,
+        read_only: options.read_only,
         started: Arc::new(Instant::now()),
         build_version: env!("CARGO_PKG_VERSION"),
         // The port actually bound (which may differ from `preferred_port`
         // after the retry walk).
         port: addr.port(),
         build_id: build_id(),
+        dashboard_disabled: options.dashboard_disabled,
+        heartbeat_stale_threshold_seconds: options.heartbeat_stale_threshold_seconds,
+        action_log: options.action_log,
     };
 
     let cors = CorsLayer::new()
