@@ -3,6 +3,87 @@
 All notable changes to zicato are recorded here. Format roughly follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] — 2026-05-15
+
+Observability + analytics release. zicato grows a real dashboard, a
+SQLite analytical index, a tournament/competition view distinct from
+goldfive's execution view, and loop-health diagnostics. First real run
+against a live model landed in this cycle.
+
+### Live dashboard + supervisor
+- `zicato-supervisor` Rust binary: watchdog (state-file monitoring +
+  SIGTERM→SIGKILL escalation) + HTTP/SSE dashboard server, auto-spawned
+  by `zicato evolve`.
+- Multi-view dashboard (vanilla HTML/CSS/JS, bundled in the binary):
+  **Overview**, **Tree** (cross-epoch lineage graph), **Tournament**
+  (the bracket), **Epoch** (the contract). Fragment-routed; SSE-live.
+- `/api/epoch` — the epoch's full evaluation contract (board, rubric,
+  scoring, registered harness, mutation surface).
+- `/api/tournaments` + `/api/tournaments/:id` — the gauntlet bracket and
+  full per-matchup detail. `/api/health-report` — loop-health findings.
+- Static assets served at document root (fixes the relative-path 404
+  that rendered the dashboard unstyled).
+
+### SQLite analytical index
+- `.zicato/index.db` — a derived, queryable index of cross-run data
+  (epochs / generations / experiments / patches / runs / loss_profiles /
+  metric_counts / tournaments). Files stay canonical; the index is
+  rebuildable via `zicato reindex` and dual-written live by the
+  orchestrator. The Rust supervisor reads it via rusqlite.
+- Generation source trees are NOT in SQLite (git, per the roadmap);
+  per-run event capture stays JSONL. SQLite is the analytical layer only.
+
+### Tournament view — competition, not execution
+- The dashboard Tournament view is a king-of-the-hill **bracket**: a
+  champion lineage (winners spine) + discarded challengers, each matchup
+  parent-vs-child over the board.
+- Per-matchup detail: hypothesis, patches, per-entry A/B grid
+  (improved/regressed/flat), scalar breakdown, gate verdict + reasoning.
+- `zicato/tournament/detail.py` analytics: bracket assembly, A/B grid,
+  hypothesis ledger (proposer calibration with explicit sign+magnitude
+  match semantics), optimization trajectory + plateau detection,
+  mutation heat map (win-correlation), tournament cost.
+- Architectural split: harmonograf renders the *execution view* (the
+  temporal trace of one run); the zicato dashboard owns the *competition
+  view*. A per-run drill-down links the two.
+
+### Loop-health diagnostics
+- `zicato/health/` — detects a toothless evaluation loop: degenerate
+  scoring (consecutive zero-Δ tournaments), non-differentiating board
+  entries, flat drift signal, missing expectations, stalled loop.
+- `zicato health` CLI; the orchestrator writes a per-round health
+  report, logs a loud warning on a critical finding, and stops the loop
+  after sustained degeneracy (`evolve --stop-on-degenerate`).
+- Motivated by the first real run — v0 and v1 scored identically
+  (1.000000); the loop produced zero optimization signal and that was
+  only discoverable by manual inspection.
+
+### Runtime + telemetry
+- Orchestrator writes a populated heartbeat (epoch / generation / round
+  / phase); per-run progress is bumped on each goldfive event so
+  dashboard run cards animate.
+- `mutations.json` dumped per epoch so the dashboard can show the
+  mutation surface.
+- `HarmonografSink` attached when `ZICATO_HARMONOGRAF_URL` is set —
+  runs stream live to a harmonograf server; the dashboard deep-links
+  each run to its harmonograf session.
+- Progressive `analysis.html` — regenerated after every generation.
+
+### Harmonograf companion
+- [pedapudi/harmonograf#292](https://github.com/pedapudi/harmonograf/pull/292)
+  — a `harmonograf-replay` command ingests a zicato run's `events.jsonl`
+  from disk, so any finished run is viewable in harmonograf.
+
+### Design docs
+- New: `TOURNAMENT.md`, `ANALYTICAL-INDEX.md`, `LOOP-HEALTH.md`,
+  `RUNTIME.md`, `DASHBOARD.md`, `ROBUSTNESS.md`, `STORAGE.md`.
+- Updated `ARCHITECTURE.md` / `CLI.md` / `EPOCHS-AND-JOURNALING.md`.
+
+### Tests
+- ~961 Python tests + the Rust supervisor suite (48 unit + 19
+  integration). The 5 pre-existing environment-dependent failures
+  (goldfive editable-install drift) are unchanged.
+
 ## [0.2.0] — 2026-05-15
 
 Second alpha. Major surface expansion: drift-free objectives are
