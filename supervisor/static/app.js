@@ -1066,32 +1066,68 @@ function renderActiveRuns() {
 
 // --- Render: cross-epoch lineage graph (Tree view)
 //
+// Built from `state.lineage.generations` — the live `GET /api/lineage`
+// feed, which includes in-flight generations the moment a run starts.
 // Generations are laid out in horizontal lanes — one lane per epoch.
 // Within a lane, generations are ordered left-to-right. Promoted
 // generations form a solid green spine; rejected generations are
-// dashed red off-shoots that branch below the spine. Baseline / seed
-// nodes are neutral grey. A new epoch's v0 descends from the prior
-// epoch's promoted head; that cross-epoch link is drawn as a dashed
-// connector between lanes.
+// dashed red off-shoots that branch below the spine. In-flight
+// generations (still running, no verdict) read in the running blue.
+// Baseline / seed nodes (no parent) are neutral grey. A new epoch's v0
+// descends from the prior epoch's promoted head; that cross-epoch link
+// is drawn as a dashed connector between lanes.
 //
-// Each generation carries (defensively — any field may be absent):
-//   { id, parent_id?, epoch_id?, v0_parent? }
-// `epoch_id` groups a generation into a lane; `v0_parent` (or
-// `parent_epoch_head`) names the prior-epoch generation a fresh v0
-// descends from.
+// The feed contract (each field defensive — any may be absent):
+//   { generation_id, parent_generation_id?, epoch_id?, promoted?,
+//     created_at? }
+// `promoted` is true (promoted), false (rejected) or null (in flight).
+// Older feeds used `id` / `parent_id` / `v0_parent`; both are accepted.
 
-function lineageDecision(exp) {
+// Stable identity / parent accessors that tolerate the old and new
+// lineage shapes.
+function genId(g) {
+  return g.generation_id != null ? g.generation_id : g.id;
+}
+function genParentId(g) {
+  return g.parent_generation_id != null ? g.parent_generation_id : g.parent_id;
+}
+
+// Resolve a generation's tournament decision. The live feed's `promoted`
+// boolean is authoritative; an experiment outcome refines it (e.g.
+// `deferred`); a generation with no parent is the baseline.
+function lineageDecision(g, exp) {
   if (exp && exp.outcome && exp.outcome.tournament_decision) {
     return exp.outcome.tournament_decision;
+  }
+  if (g) {
+    if (genParentId(g) == null) return 'baseline';
+    if (g.promoted === true) return 'promoted';
+    if (g.promoted === false) return 'rejected';
+    return 'in_flight';
   }
   return null;
 }
 
+// Size an SVG so it renders exactly once, at one definite size: the
+// `viewBox`, the `width`/`height` attributes and `preserveAspectRatio`
+// are all set together. Without this an inline SVG carrying only a
+// viewBox falls back to a UA-default intrinsic size (often 300x150) and
+// then gets stretched by `height:auto` — which reads as a doubled or
+// oversized panel.
+function sizeSvg(svg, w, h) {
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+}
+
 function renderLineage() {
   const svg = $('lineage-svg');
-  const stage = $('lineage-stage');
   clearChildren(svg);
 
+  // Build straight from the live `GET /api/lineage` feed. This feed
+  // carries in-flight generations the instant a run starts, so the
+  // baseline v0 and any running v1/v2 all appear immediately.
   const gens = state.lineage.generations || [];
   const exps = state.lineage.experiments || [];
   const expByGen = new Map();
@@ -1099,9 +1135,7 @@ function renderLineage() {
 
   if (gens.length === 0) {
     const w = 900, h = 360;
-    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-    svg.setAttribute('width', w);
-    svg.setAttribute('height', h);
+    sizeSvg(svg, w, h);
     svg.appendChild(svgEl('rect', {
       x: 1, y: 1, width: w - 2, height: h - 2,
       fill: 'none', stroke: COLORS.grid, 'stroke-width': 1,
@@ -1135,7 +1169,7 @@ function renderLineage() {
   let maxCols = 0;
   for (const lane of laneOrder) {
     laneOf.get(lane).forEach((g, i) => {
-      colIndex.set(g.id, i);
+      colIndex.set(genId(g), i);
       if (i + 1 > maxCols) maxCols = i + 1;
     });
   }
@@ -1143,9 +1177,7 @@ function renderLineage() {
   const laneHeight = nodeH + branchDrop + 28;
   const width = marginX + maxCols * (nodeW + colGap) + 40;
   const height = marginY + laneOrder.length * (laneHeight + laneGap) + 20;
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('width', width);
-  svg.setAttribute('height', height);
+  sizeSvg(svg, width, height);
 
   // Position every generation.
   const positions = new Map();
@@ -1153,12 +1185,13 @@ function renderLineage() {
     const laneTop = marginY + laneIdx * (laneHeight + laneGap);
     const spineY = laneTop + 28;
     for (const g of laneOf.get(lane)) {
-      const col = colIndex.get(g.id);
+      const id = genId(g);
+      const col = colIndex.get(id);
       const x = marginX + col * (nodeW + colGap);
-      const decision = lineageDecision(expByGen.get(g.id));
+      const decision = lineageDecision(g, expByGen.get(id));
       // rejected generations branch below the promoted spine
       const y = decision === 'rejected' ? spineY + branchDrop : spineY;
-      positions.set(g.id, { x, y, laneIdx, spineY, laneTop });
+      positions.set(id, { x, y, laneIdx, spineY, laneTop });
     }
   });
 
@@ -1173,6 +1206,11 @@ function renderLineage() {
       refX: 9, refY: 5, markerWidth: 5, markerHeight: 5,
       orient: 'auto-start-reverse',
     }, [svgEl('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: COLORS.rejected })]),
+    svgEl('marker', {
+      id: 'arr-running', viewBox: '0 0 10 10',
+      refX: 9, refY: 5, markerWidth: 6, markerHeight: 6,
+      orient: 'auto-start-reverse',
+    }, [svgEl('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: COLORS.running })]),
   ]);
   svg.appendChild(defs);
 
@@ -1193,14 +1231,15 @@ function renderLineage() {
     }, ['epoch · ' + truncate(String(lane), 22)]));
   });
 
-  // Within-epoch edges (parent_id) + cross-epoch links (v0_parent).
+  // Within-epoch parent edges + cross-epoch inheritance links.
   for (const g of gens) {
-    const cp = positions.get(g.id);
+    const id = genId(g);
+    const cp = positions.get(id);
     if (!cp) continue;
-    const exp = expByGen.get(g.id);
-    const decision = lineageDecision(exp) || 'pending';
+    const exp = expByGen.get(id);
+    const decision = lineageDecision(g, exp);
 
-    const parentId = g.parent_id;
+    const parentId = genParentId(g);
     const crossId = g.v0_parent || g.parent_epoch_head || g.epoch_parent;
 
     // Within-epoch parent edge.
@@ -1213,6 +1252,8 @@ function renderLineage() {
         stroke = COLORS.rejected; strokeW = 1.6; dash = '5 4'; marker = 'url(#arr-rejected)';
       } else if (decision === 'deferred') {
         stroke = COLORS.deferred; strokeW = 1.8; dash = '2 3';
+      } else if (decision === 'in_flight') {
+        stroke = COLORS.running; strokeW = 1.8; dash = '4 4'; marker = 'url(#arr-running)';
       }
       svg.appendChild(edgePath(pp, cp, nodeW, nodeH, stroke, strokeW, dash, marker));
     }
@@ -1235,13 +1276,14 @@ function renderLineage() {
 
   // Nodes.
   for (const g of gens) {
-    const pos = positions.get(g.id);
+    const id = genId(g);
+    const pos = positions.get(id);
     if (!pos) continue;
     const { x, y } = pos;
-    const exp = expByGen.get(g.id);
-    const decision = lineageDecision(exp) || (g.parent_id ? 'pending' : 'baseline');
+    const exp = expByGen.get(id);
+    const decision = lineageDecision(g, exp);
     let fill, stroke, dash = null, marker;
-    if (!g.parent_id) {
+    if (decision === 'baseline') {
       fill = 'rgba(110, 118, 129, 0.14)'; stroke = COLORS.baseline; marker = '(v0)';
     } else if (decision === 'promoted') {
       fill = 'rgba(46, 160, 67, 0.18)'; stroke = COLORS.promoted; marker = '[+]';
@@ -1250,21 +1292,22 @@ function renderLineage() {
     } else if (decision === 'deferred') {
       fill = 'rgba(191, 135, 0, 0.18)'; stroke = COLORS.deferred; dash = '2 3'; marker = '[=]';
     } else {
-      fill = 'rgba(110, 118, 129, 0.12)'; stroke = COLORS.baseline; marker = '(pending)';
+      // in_flight — still running, no verdict.
+      fill = 'rgba(31, 111, 235, 0.16)'; stroke = COLORS.running; dash = '4 4'; marker = '(running)';
     }
 
     const grp = svgEl('g', {
       class: 'lineage-node',
-      'data-gen': g.id,
+      'data-gen': id,
       role: 'button',
       tabindex: '0',
-      'aria-label': `generation ${g.id} ${decision}`,
+      'aria-label': `generation ${id} ${decision}`,
     });
-    grp.addEventListener('click', () => openDrillForGeneration(g.id));
+    grp.addEventListener('click', () => openDrillForGeneration(id));
     grp.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') {
         ev.preventDefault();
-        openDrillForGeneration(g.id);
+        openDrillForGeneration(id);
       }
     });
     grp.appendChild(svgEl('rect', {
@@ -1276,7 +1319,7 @@ function renderLineage() {
       class: 'svg-label',
       x: (x + nodeW / 2).toFixed(1), y: (y + 19).toFixed(1),
       'text-anchor': 'middle', 'font-weight': '600',
-    }, [`${g.id} ${marker}`]));
+    }, [`${id} ${marker}`]));
     if (exp && exp.outcome) {
       grp.appendChild(svgEl('text', {
         class: 'svg-axis',
@@ -1293,7 +1336,8 @@ function renderLineage() {
         class: 'svg-axis',
         x: (x + nodeW / 2).toFixed(1), y: (y + 42).toFixed(1),
         'text-anchor': 'middle',
-      }, [g.parent_id ? 'pending' : 'baseline']));
+      }, [decision === 'baseline' ? 'baseline'
+        : decision === 'in_flight' ? 'in flight' : 'pending']));
     }
     svg.appendChild(grp);
   }
@@ -1397,7 +1441,7 @@ function renderTrajectory() {
   for (const e of exps) expByGen.set(e.generation_id, e);
 
   const width = 720, height = 220;
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  sizeSvg(svg, width, height);
   if (gens.length === 0) {
     svg.appendChild(svgEl('text', {
       class: 'svg-axis', x: width / 2, y: height / 2, 'text-anchor': 'middle',
@@ -1406,10 +1450,13 @@ function renderTrajectory() {
   }
 
   const series = gens.map((g, i) => {
-    const exp = expByGen.get(g.id);
-    if (!exp || !exp.outcome) return { i, id: g.id, decision: 'baseline', v: 0 };
+    const id = genId(g);
+    const exp = expByGen.get(id);
+    if (!exp || !exp.outcome) {
+      return { i, id, decision: lineageDecision(g, exp), v: 0 };
+    }
     return {
-      i, id: g.id,
+      i, id,
       decision: exp.outcome.tournament_decision,
       v: exp.outcome.scalar_score_delta || 0,
     };
@@ -1498,6 +1545,13 @@ function renderTrajectory() {
         fill: 'none', stroke: COLORS.deferred, 'stroke-width': 1.6,
         'stroke-dasharray': '2 2',
       }));
+    } else if (s.decision === 'in_flight') {
+      // Still running — no verdict, drawn hollow in the running blue.
+      svg.appendChild(svgEl('circle', {
+        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4.5,
+        fill: 'none', stroke: COLORS.running, 'stroke-width': 1.6,
+        'stroke-dasharray': '3 2',
+      }));
     } else {
       svg.appendChild(svgEl('circle', {
         cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4,
@@ -1537,8 +1591,7 @@ function renderHeatmap() {
 
   // promoted generations only
   const promotedGens = gens.filter(g => {
-    const e = expByGen.get(g.id);
-    return e && e.outcome && e.outcome.tournament_decision === 'promoted';
+    return lineageDecision(g, expByGen.get(genId(g))) === 'promoted';
   });
 
   const cellSize = 28, innerPad = 4;
@@ -1547,10 +1600,10 @@ function renderHeatmap() {
   const cellValue = new Map();
   const kindMaxAbs = new Map();
   for (const g of promotedGens) {
-    const e = expByGen.get(g.id);
+    const e = expByGen.get(genId(g));
     if (!e || !e.outcome || !e.outcome.drift_movements) continue;
     for (const mv of e.outcome.drift_movements) {
-      cellValue.set(mv.kind + ' ' + g.id, mv.to_rate);
+      cellValue.set(mv.kind + ' ' + genId(g), mv.to_rate);
       const delta = Math.abs(mv.to_rate - mv.from_rate);
       const cur = kindMaxAbs.get(mv.kind) || 0;
       if (delta > cur) kindMaxAbs.set(mv.kind, delta);
@@ -1560,7 +1613,7 @@ function renderHeatmap() {
   if (promotedGens.length === 0 || kindMaxAbs.size === 0) {
     const w = cellSize * 12 + 180;
     const h = cellSize * 2 + 60;
-    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    sizeSvg(svg, w, h);
     svg.appendChild(svgEl('rect', {
       x: 1, y: 1, width: w - 2, height: h - 2,
       fill: 'none', stroke: COLORS.grid, 'stroke-width': 1,
@@ -1582,7 +1635,7 @@ function renderHeatmap() {
   const legendH = 28;
   const width = labelW + nCols * (cellSize + innerPad) + 24;
   const height = 28 + nRows * (cellSize + innerPad) + legendH + 8;
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  sizeSvg(svg, width, height);
 
   const allRates = [...cellValue.values()];
   let rateMin = Math.min(0, ...allRates);
@@ -1612,7 +1665,7 @@ function renderHeatmap() {
     const cx = labelW + i * (cellSize + innerPad) + cellSize / 2;
     svg.appendChild(svgEl('text', {
       class: 'svg-axis', x: cx.toFixed(1), y: 20, 'text-anchor': 'middle',
-    }, [promotedGens[i].id]));
+    }, [genId(promotedGens[i])]));
   }
 
   for (let r = 0; r < kinds.length; r++) {
@@ -1625,7 +1678,7 @@ function renderHeatmap() {
     }, [kind]));
     for (let c = 0; c < promotedGens.length; c++) {
       const cx = labelW + c * (cellSize + innerPad);
-      const v = cellValue.get(kind + ' ' + promotedGens[c].id);
+      const v = cellValue.get(kind + ' ' + genId(promotedGens[c]));
       if (v === undefined) {
         svg.appendChild(svgEl('rect', {
           x: cx.toFixed(1), y: ry.toFixed(1),
