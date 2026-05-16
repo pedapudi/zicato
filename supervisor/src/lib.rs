@@ -10,6 +10,7 @@ pub mod index_db;
 pub mod log;
 pub mod reader;
 pub mod routes;
+pub mod run_log;
 pub mod server;
 pub mod signal;
 pub mod sse;
