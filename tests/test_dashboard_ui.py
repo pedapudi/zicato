@@ -640,14 +640,13 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 200 KB uncompressed. The r14 dashboard-fix wave (five parallel
-    # view-fix branches) grew the bundle with real feature code — live
-    # tournament rendering, lineage from /api/lineage, per-entry progress
-    # bars, the log tail, and harmonograf deep-links. It is a
-    # localhost-served vanilla bundle with no network cost; this envelope
-    # becomes moot once the dashboard moves to the standalone Python
-    # service.
-    assert total < 200_000, f"bundle is {total} bytes, exceeds 200_000 envelope"
+    # 250 KB uncompressed. Grew with the r14 fix wave and then the
+    # tournament-hall board grid + the side-by-side conversation view.
+    # It is a localhost-served vanilla bundle with no network cost; this
+    # guard exists only because the Rust supervisor embeds the bundle via
+    # include_dir!, and is slated for removal once the dashboard moves to
+    # the standalone Python service (which serves the files off disk).
+    assert total < 250_000, f"bundle is {total} bytes, exceeds 250_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
