@@ -38,9 +38,7 @@ def _epoch_root(workspace_root: Path, epoch_id: str) -> Path:
     return workspace_root / "epochs" / epoch_id
 
 
-def _generation_root(
-    workspace_root: Path, epoch_id: str, generation_id: str
-) -> Path:
+def _generation_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     return _epoch_root(workspace_root, epoch_id) / "generations" / generation_id
 
 
@@ -49,9 +47,7 @@ def epoch_dir(workspace_root: Path, epoch_id: str) -> Path:
     return _epoch_root(workspace_root, epoch_id)
 
 
-def generation_dir(
-    workspace_root: Path, epoch_id: str, generation_id: str
-) -> Path:
+def generation_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Return the directory holding one generation's artifacts."""
     return _generation_root(workspace_root, epoch_id, generation_id)
 
@@ -67,11 +63,7 @@ def run_dir(
     A run is one ``(epoch, generation, board_entry)`` triple; its
     directory holds the events JSONL and the reducer's loss profile.
     """
-    return (
-        _generation_root(workspace_root, epoch_id, generation_id)
-        / "runs"
-        / entry_id
-    )
+    return _generation_root(workspace_root, epoch_id, generation_id) / "runs" / entry_id
 
 
 def events_jsonl_path(
@@ -94,16 +86,12 @@ def loss_profile_path(
     return run_dir(workspace_root, epoch_id, generation_id, entry_id) / "loss.json"
 
 
-def experiment_json_path(
-    workspace_root: Path, epoch_id: str, generation_id: str
-) -> Path:
+def experiment_json_path(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Path to a generation's ``experiment.json`` (hypothesis + outcome)."""
     return _generation_root(workspace_root, epoch_id, generation_id) / "experiment.json"
 
 
-def patches_dir(
-    workspace_root: Path, epoch_id: str, generation_id: str
-) -> Path:
+def patches_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Path to the per-patch JSON directory under a generation.
 
     See :doc:`project_zicato_storage_design` for the per-patch file
@@ -121,6 +109,20 @@ def patch_json_path(
 ) -> Path:
     """Path to one patch JSON file inside a generation's patches directory."""
     return patches_dir(workspace_root, epoch_id, generation_id) / f"{patch_id}.json"
+
+
+def mutations_json_path(workspace_root: Path, epoch_id: str) -> Path:
+    """Path to an epoch's per-round mutation-points snapshot.
+
+    Written by the orchestrator after each round's mutation enumeration:
+    a JSON array of the :class:`zicato.core.types.MutationPoint` records
+    the proposer was offered. The dashboard reads this to render the
+    mutable surface for an in-progress epoch without re-walking the
+    snapshot tree. The file lives under the epoch directory (not a
+    generation directory) and is overwritten every round — it always
+    reflects the most recent enumeration.
+    """
+    return _epoch_root(workspace_root, epoch_id) / "mutations.json"
 
 
 def journal_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -197,6 +199,7 @@ __all__ = [
     "experiment_json_path",
     "patches_dir",
     "patch_json_path",
+    "mutations_json_path",
     "journal_path",
     "analysis_path",
     "lineage_path",

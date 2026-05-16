@@ -125,9 +125,7 @@ def _install_stub_adapter_factory(
     """Replace zicato.adapter_factory with one that dispatches kind='stub'."""
 
     class _StubSession:
-        async def run(
-            self, entry: BoardEntry, sinks: list[Any], config: Any
-        ) -> RunResult:
+        async def run(self, entry: BoardEntry, sinks: list[Any], config: Any) -> RunResult:
             del sinks, config
             return RunResult(
                 run_id=f"r-{entry.id}",
@@ -144,9 +142,7 @@ def _install_stub_adapter_factory(
             del snapshot_root
             return _StubSession()
 
-        def mutation_points(
-            self, source_roots: list[Path] | None = None
-        ) -> list[Any]:
+        def mutation_points(self, source_roots: list[Path] | None = None) -> list[Any]:
             del source_roots
             return []
 
@@ -421,3 +417,117 @@ def test_evolve_round_writes_per_patch_layout(
     assert isinstance(body["patch_ids"], list)
     assert len(body["patch_ids"]) == 1
     assert (v1 / "patches" / f"{body['patch_ids'][0]}.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# mutations.json per-epoch snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_mutations_json_path_helper(tmp_path: Path) -> None:
+    """mutations_json_path resolves under the epoch directory."""
+    from zicato.core.workspace import epoch_dir, mutations_json_path
+
+    p = mutations_json_path(tmp_path, "ep1")
+    assert p == epoch_dir(tmp_path, "ep1") / "mutations.json"
+    assert p.name == "mutations.json"
+
+
+def test_evolve_once_dumps_mutations_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """evolve_once snapshots the enumerated mutation surface to mutations.json.
+
+    The file lands at ``epochs/{epoch}/mutations.json`` and is a JSON
+    array of objects with exactly the
+    ``{id, kind, file, line_start, line_end, content, content_hash}``
+    shape — Path fields stringified.
+    """
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.core.workspace import mutations_json_path
+    from zicato.orchestrator import evolve_once
+
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+        )
+    )
+
+    snapshot_path = mutations_json_path(workspace, epoch_id)
+    assert snapshot_path.exists()
+    points = json.loads(snapshot_path.read_text())
+    assert isinstance(points, list)
+    # The stub snapshot carries a single zicato:mutable marker.
+    assert len(points) == 1
+    point = points[0]
+    assert set(point.keys()) == {
+        "id",
+        "kind",
+        "file",
+        "line_start",
+        "line_end",
+        "content",
+        "content_hash",
+    }
+    assert point["id"] == "greeting"
+    assert point["kind"] == "span"
+    # Path fields are stringified for JSON.
+    assert isinstance(point["file"], str)
+    assert point["file"].endswith("agent.py")
+    assert isinstance(point["line_start"], int)
+    assert isinstance(point["line_end"], int)
+    assert '"hello"' in point["content"]
+    assert isinstance(point["content_hash"], str)
+    # No leftover .tmp file from the atomic write.
+    assert not snapshot_path.with_name(snapshot_path.name + ".tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat metadata populated during a round
+# ---------------------------------------------------------------------------
+
+
+def test_evolve_n_rounds_populates_heartbeat_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The heartbeat carries the real epoch / generation / round during a round."""
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_n_rounds
+    from zicato.runtime.state import read_heartbeat
+
+    outcomes = asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            instance_id="hb-meta",
+        )
+    )
+    assert len(outcomes) == 1
+
+    hb = read_heartbeat(workspace)
+    assert hb is not None
+    # Real coordinates, not empty strings.
+    assert hb.epoch_id == epoch_id
+    assert hb.generation_id == "v1"
+    assert hb.round_index == 0
+    assert hb.phase  # descriptive, non-empty
+    # The harmonograf_url field round-trips (empty when unconfigured).
+    assert hb.harmonograf_url == ""

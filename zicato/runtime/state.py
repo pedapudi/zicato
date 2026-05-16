@@ -84,6 +84,12 @@ class Heartbeat:
         ISO-8601 UTC timestamp of when the current round began. Lets the
         supervisor compute elapsed-in-round without re-reading any other
         state file.
+    harmonograf_url:
+        Server address of the harmonograf console this run is streaming
+        telemetry to, when configured (via ``ZICATO_HARMONOGRAF_URL`` or
+        the workspace ``config.json``). Empty string when the run is
+        JSONL-only. The dashboard surfaces it as a "watch live" link.
+        Optional — old readers ignore the field.
     """
 
     pid: int
@@ -95,6 +101,7 @@ class Heartbeat:
     phase: str = ""
     round_index: int = 0
     round_started_at: str = ""
+    harmonograf_url: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for JSON encoding."""
@@ -108,6 +115,7 @@ class Heartbeat:
             "phase": self.phase,
             "round_index": self.round_index,
             "round_started_at": self.round_started_at,
+            "harmonograf_url": self.harmonograf_url,
         }
 
     @classmethod
@@ -123,6 +131,7 @@ class Heartbeat:
             phase=str(d.get("phase", "")),
             round_index=int(d.get("round_index", 0)),
             round_started_at=str(d.get("round_started_at", "")),
+            harmonograf_url=str(d.get("harmonograf_url", "")),
         )
 
 
@@ -373,6 +382,14 @@ class ActiveTournament:
         Symbolic state of the tournament as a whole — ``"running"``,
         ``"completed"``, ``"aborted"``. Distinct from any individual
         entry's ``status``.
+    round_index:
+        0-based index of the evolve round this tournament belongs to.
+        Lets the dashboard render "Tournament — round N of M". Defaults
+        to 0; old readers ignore the field.
+    total_rounds:
+        Total number of evolve rounds requested for the current
+        invocation. The "M" in "round N of M". Defaults to 0 (unknown);
+        old readers ignore the field.
     """
 
     tournament_id: str
@@ -382,6 +399,8 @@ class ActiveTournament:
     started_at: str
     entries: list[ActiveTournamentEntry] = field(default_factory=list)
     phase: str = "running"
+    round_index: int = 0
+    total_rounds: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -391,6 +410,8 @@ class ActiveTournament:
             "epoch_id": self.epoch_id,
             "started_at": self.started_at,
             "phase": self.phase,
+            "round_index": self.round_index,
+            "total_rounds": self.total_rounds,
             "entries": [e.to_dict() for e in self.entries],
         }
 
@@ -403,6 +424,8 @@ class ActiveTournament:
             epoch_id=str(d["epoch_id"]),
             started_at=str(d["started_at"]),
             phase=str(d.get("phase", "running")),
+            round_index=int(d.get("round_index", 0)),
+            total_rounds=int(d.get("total_rounds", 0)),
             entries=[ActiveTournamentEntry.from_dict(e) for e in d.get("entries", [])],
         )
 

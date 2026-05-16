@@ -360,8 +360,21 @@ async def evolve_once(
     instance_id: str = "default",
     fast_mode: bool = False,
     max_proposer_retries: int = 2,
+    beater: HeartbeatBeater | None = None,
+    round_index: int = 0,
+    total_rounds: int = 0,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round against the current epoch.
+
+    ``beater`` — when supplied by :func:`evolve_n_rounds` — receives a
+    :meth:`HeartbeatBeater.update` call at every phase transition
+    (proposing / applying / tournament / done) stamped with the real
+    ``epoch_id``, the generation id being worked on, and the
+    ``round_index``, so the dashboard header reflects live progress.
+    When ``None`` (a standalone ``evolve_once`` call) the heartbeat
+    plumbing is simply skipped. ``round_index`` / ``total_rounds`` are
+    also threaded into :func:`run_tournament` so the published
+    tournament state can render "round N of M".
 
     Steps:
 
@@ -481,6 +494,10 @@ async def evolve_once(
             f"no mutation points enumerated under {parent_gen.snapshot_root}; "
             "did the adapter declare its mutable_trees?"
         )
+    # Best-effort: snapshot the enumerated mutation surface so the
+    # dashboard can render it for the in-progress epoch. A failure to
+    # write the snapshot must never abort the round.
+    _dump_mutations_snapshot(workspace_root, resolved_epoch_id, mutations)
     # --- 4. Patterns ---
     losses = _load_parent_losses(
         workspace_root, resolved_epoch_id, parent_id, board, read_loss_profile
@@ -498,6 +515,13 @@ async def evolve_once(
 
     # --- 6. Propose ---
     next_id = _next_generation_id(workspace_root, resolved_epoch_id)
+    _beat(
+        beater,
+        epoch_id=resolved_epoch_id,
+        generation_id=next_id,
+        round_index=round_index,
+        phase=f"proposing:round_{round_index}:{next_id}",
+    )
     experiment = await propose_experiment(
         epoch_id=resolved_epoch_id,
         parent_generation_id=parent_id,
@@ -528,6 +552,13 @@ async def evolve_once(
         )
 
     # --- 8. Apply patches into the child snapshot ---
+    _beat(
+        beater,
+        epoch_id=resolved_epoch_id,
+        generation_id=next_id,
+        round_index=round_index,
+        phase=f"applying:round_{round_index}:{next_id}",
+    )
     child_snapshot = _snapshot_root(workspace_root, resolved_epoch_id, next_id)
     if child_snapshot.exists():
         # Defensive: a previous failed round may have left a partial
@@ -562,6 +593,13 @@ async def evolve_once(
             workspace_root, resolved_epoch_id, next_id, rejected_outcome
         )
         append_journal_entry(workspace_root, resolved_epoch_id, finalised)
+        _beat(
+            beater,
+            epoch_id=resolved_epoch_id,
+            generation_id=next_id,
+            round_index=round_index,
+            phase=f"done:round_{round_index}:{next_id}:rejected",
+        )
         return EvolveRoundOutcome(
             parent_generation_id=parent_id,
             proposed_generation_id=next_id,
@@ -574,6 +612,13 @@ async def evolve_once(
 
     # --- 10. Run the tournament ---
     write_experiment(workspace_root, resolved_epoch_id, next_id, experiment)
+    _beat(
+        beater,
+        epoch_id=resolved_epoch_id,
+        generation_id=next_id,
+        round_index=round_index,
+        phase=f"tournament:round_{round_index}:{next_id}",
+    )
 
     child_gen = Generation(
         id=next_id,
@@ -604,6 +649,8 @@ async def evolve_once(
             config=config,
             workspace_root=workspace_root,
             epoch_id=resolved_epoch_id,
+            round_index=round_index,
+            total_rounds=total_rounds,
         )
 
     # Cache gen_score.json for future fast-mode runs.
@@ -681,6 +728,14 @@ async def evolve_once(
     except Exception as exc:  # noqa: BLE001 — analyser is best-effort
         log.debug("decision telemetry analyzer skipped: %s", exc)
 
+    _beat(
+        beater,
+        epoch_id=resolved_epoch_id,
+        generation_id=next_id,
+        round_index=round_index,
+        phase=f"done:round_{round_index}:{next_id}:{bookkeeping_decision}",
+    )
+
     return EvolveRoundOutcome(
         parent_generation_id=parent_id,
         proposed_generation_id=next_id,
@@ -753,14 +808,23 @@ async def evolve_n_rounds(
     # ``heartbeat.json`` so the supervisor binary can detect a wedge.
     lock = acquire_workspace_lock(workspace_root, instance_id)
     beater = HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)
+    # Resolve the harmonograf console URL (if configured) once up front
+    # so the supervisor / dashboard can surface a "watch live" link from
+    # the heartbeat for the whole invocation.
+    harmonograf_url = _resolve_harmonograf_url(workspace_root)
     outcomes: list[EvolveRoundOutcome] = []
     try:
         await beater.start()
-        beater.update(epoch_id=epoch_id or "", phase="evolve_n_rounds:start")
+        beater.update(
+            epoch_id=epoch_id or "",
+            phase="evolve_n_rounds:start",
+            harmonograf_url=harmonograf_url,
+        )
         beater.bump_now()
         consecutive_rejections = 0
         for round_idx in range(rounds):
             beater.update(
+                epoch_id=epoch_id or "",
                 round_index=round_idx,
                 round_started_at=_now_iso(),
                 phase=f"evolve_once:round_{round_idx}",
@@ -774,10 +838,15 @@ async def evolve_n_rounds(
                 instance_id=instance_id,
                 fast_mode=fast_mode,
                 max_proposer_retries=max_proposer_retries,
+                beater=beater,
+                round_index=round_idx,
+                total_rounds=rounds,
             )
             outcomes.append(outcome)
             beater.update(
+                epoch_id=epoch_id or "",
                 generation_id=outcome.proposed_generation_id,
+                round_index=round_idx,
                 phase=f"after_round_{round_idx}:{outcome.tournament_decision}",
             )
             beater.bump_now()
@@ -822,6 +891,48 @@ async def evolve_n_rounds(
 
 def _now_iso() -> str:
     return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat()
+
+
+def _resolve_harmonograf_url(workspace_root: Path) -> str:
+    """Resolve the harmonograf console URL for this run, or ``""``.
+
+    Delegates to :func:`zicato.telemetry.sink.resolve_harmonograf_url`,
+    feeding it the workspace ``config.json`` so both the
+    ``ZICATO_HARMONOGRAF_URL`` environment variable and the
+    ``harmonograf_url`` config key are honoured. Best-effort: any
+    failure resolving the config falls back to the empty string so a
+    broken config never blocks an evolve run.
+    """
+    try:
+        from zicato import workspace_loader  # noqa: PLC0415
+        from zicato.telemetry.sink import resolve_harmonograf_url  # noqa: PLC0415
+
+        try:
+            cfg = workspace_loader.load_workspace_config(workspace_root)
+        except Exception:  # noqa: BLE001 — config is optional here
+            cfg = None
+        return resolve_harmonograf_url(cfg)
+    except Exception as exc:  # noqa: BLE001 — never block a run on this
+        log.debug("harmonograf url resolution skipped: %s", exc)
+        return ""
+
+
+def _beat(beater: HeartbeatBeater | None, **fields: Any) -> None:
+    """Push a heartbeat phase/coordinate update and flush it immediately.
+
+    A no-op when ``beater`` is ``None`` (a standalone ``evolve_once``
+    call with no heartbeat lifecycle). Every update is followed by a
+    :meth:`HeartbeatBeater.bump_now` so the dashboard sees the new phase
+    without waiting for the next periodic bump. Best-effort: a failure
+    to write the heartbeat must never abort the evolve round.
+    """
+    if beater is None:
+        return
+    try:
+        beater.update(**fields)
+        beater.bump_now()
+    except Exception as exc:  # noqa: BLE001 — heartbeat is non-critical
+        log.debug("heartbeat update skipped: %s", exc)
 
 
 def _round_n_from_generation_id(generation_id: str) -> int | None:
@@ -974,6 +1085,57 @@ def _cache_gen_score(
         json.dumps(payload, default=str, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _dump_mutations_snapshot(
+    workspace_root: Path,
+    epoch_id: str,
+    mutations: list[Any],
+) -> None:
+    """Serialize the round's enumerated mutation points to ``mutations.json``.
+
+    Writes a JSON array of objects ``{id, kind, file, line_start,
+    line_end, content, content_hash}`` — i.e. :func:`dataclasses.asdict`
+    of each :class:`zicato.core.types.MutationPoint` with the ``Path``
+    fields stringified — to ``epochs/{epoch_id}/mutations.json``. The
+    write is atomic (``.tmp`` + :func:`os.replace`).
+
+    Best-effort: any failure (a serialisation error, an I/O error) is
+    swallowed at ``debug`` level so a broken snapshot can never abort the
+    evolve round. The proposer has already been fed the in-memory
+    ``mutations`` list by the time this runs; the on-disk file is purely
+    for the dashboard.
+    """
+    import dataclasses as _dataclasses  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
+
+    from zicato.core.workspace import mutations_json_path  # noqa: PLC0415
+
+    try:
+        payload: list[dict[str, Any]] = []
+        for point in mutations:
+            raw = _dataclasses.asdict(point)
+            payload.append(
+                {
+                    "id": raw["id"],
+                    "kind": raw["kind"],
+                    "file": str(raw["file"]),
+                    "line_start": raw["line_start"],
+                    "line_end": raw["line_end"],
+                    "content": raw["content"],
+                    "content_hash": raw["content_hash"],
+                }
+            )
+        target = mutations_json_path(workspace_root, epoch_id)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(
+            json.dumps(payload, indent=2, sort_keys=False) + "\n",
+            encoding="utf-8",
+        )
+        _os.replace(tmp, target)
+    except Exception as exc:  # noqa: BLE001 — snapshot write is best-effort
+        log.debug("mutations.json snapshot skipped: %s", exc)
 
 
 def _ensure_baseline_snapshot(

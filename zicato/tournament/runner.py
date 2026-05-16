@@ -50,6 +50,7 @@ import asyncio
 import inspect
 import time
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +106,7 @@ async def _drive_session(
     session: Any,
     entry: BoardEntry,
     sink_path: Path,
+    sinks: list[Any],
     config: RuntimeConfig,
 ) -> tuple[RunResult | None, int, bool]:
     """Drive one ``session.run`` call and return (result, runtime_ms, budget_exceeded).
@@ -120,12 +122,11 @@ async def _drive_session(
       target-2 dogfood board's adversarial recall / clean precision
       entries actually produce events.jsonl.
     * ``run(entry, sinks, config) -> RunResult`` — the full
-      :class:`~zicato.adapters.RunnableHarness` shape. The runner
-      constructs a single-element ``sinks`` list with a
-      :class:`JSONLPersistenceSink` aimed at ``sink_path`` (lazily, to
-      keep goldfive optional). When the result is ``aborted`` with
-      ``abort_reason == "wall_clock_budget"`` we set the budget-
-      exceeded flag.
+      :class:`~zicato.adapters.RunnableHarness` shape. The caller passes
+      in the pre-built ``sinks`` list (a :class:`JSONLPersistenceSink`
+      aimed at ``sink_path`` plus, when configured, a live harmonograf
+      sink). When the result is ``aborted`` with ``abort_reason ==
+      "wall_clock_budget"`` we set the budget-exceeded flag.
     * ``run(entry, sink_path) -> None`` — legacy / stub shape used by
       tests that hand-write the events JSONL. The runner measures
       wall-clock duration itself; budget-exceeded is always ``False``
@@ -142,16 +143,13 @@ async def _drive_session(
 
     # Synthetic kinds bypass the adapter's session entirely.
     if entry.kind in ("synthetic_adversarial", "synthetic_clean"):
-        sinks = _build_sinks(sink_path)
         from zicato.synthetic import (  # noqa: PLC0415
             run_adversarial_entry,
             run_clean_entry,
         )
 
         synth_runner = (
-            run_adversarial_entry
-            if entry.kind == "synthetic_adversarial"
-            else run_clean_entry
+            run_adversarial_entry if entry.kind == "synthetic_adversarial" else run_clean_entry
         )
         result = await synth_runner(entry, sinks, config)
         runtime_ms = (
@@ -177,8 +175,8 @@ async def _drive_session(
         runtime_ms = int((time.monotonic() - started) * 1000)
         return None, runtime_ms, False
 
-    # Full-protocol path — construct the JSONL sink and capture RunResult.
-    sinks = _build_sinks(sink_path)
+    # Full-protocol path — the caller pre-built the sink list (JSONL
+    # plus, when configured, a harmonograf live-stream sink).
     result = await session.run(entry, sinks, config)
     runtime_ms = (
         result.runtime_ms
@@ -193,19 +191,74 @@ async def _drive_session(
     return (result if isinstance(result, RunResult) else None), runtime_ms, budget_exceeded
 
 
-def _build_sinks(sink_path: Path) -> list[Any]:
-    """Build the per-run sink list.
+def _build_sinks(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> list[Any]:
+    """Build the per-run sink list via the telemetry multi-sink builder.
 
-    Lazily imports :mod:`goldfive.sinks.persistence`; if goldfive is
-    not installed we return an empty list rather than raising. The
-    adapter is free to wire its own telemetry capture in that case;
-    the reducer's JSONL fallback path also handles a missing file by
-    producing an empty event walk.
+    Delegates to :func:`zicato.telemetry.sink.make_run_sinks`, which
+    always attaches the canonical :class:`JSONLPersistenceSink` and,
+    when a harmonograf URL is configured (``ZICATO_HARMONOGRAF_URL`` env
+    or the workspace ``config.json``), additionally attaches a live
+    harmonograf sink. If goldfive is not installed the builder returns
+    an empty list rather than raising — the adapter is free to wire its
+    own telemetry capture in that case, and the reducer's JSONL fallback
+    handles a missing file by producing an empty event walk.
+
+    The workspace ``config.json`` is read best-effort so the
+    ``harmonograf_url`` config key is honoured; a failure to load it
+    falls back to the environment-variable-only resolution path.
+
+    Falls back to a direct :class:`JSONLPersistenceSink` build when the
+    multi-sink builder is unavailable — e.g. a lightweight test that
+    swaps a minimal stub module in for ``zicato.telemetry.sink``.
+    """
+    workspace_config: dict[str, Any] | None = None
+    try:
+        from zicato import workspace_loader  # noqa: PLC0415
+
+        workspace_config = workspace_loader.load_workspace_config(workspace_root)
+    except Exception:  # noqa: BLE001 — config is optional for sink wiring
+        workspace_config = None
+
+    try:
+        from zicato.telemetry.sink import make_run_sinks  # noqa: PLC0415
+    except ImportError:
+        # The telemetry sink module is present but does not expose the
+        # multi-sink builder (a stubbed module in a unit test). Fall
+        # back to the direct JSONL-only build.
+        return _build_jsonl_sink_only(workspace_root, epoch_id, generation_id, entry_id)
+
+    return make_run_sinks(
+        workspace_root,
+        epoch_id,
+        generation_id,
+        entry_id,
+        workspace_config=workspace_config,
+    )
+
+
+def _build_jsonl_sink_only(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> list[Any]:
+    """Direct JSONL-only sink build — the no-harmonograf fallback path.
+
+    Lazily imports :mod:`goldfive.sinks.persistence`; returns an empty
+    list when goldfive is not installed rather than raising.
     """
     try:
         from goldfive.sinks.persistence import JSONLPersistenceSink  # noqa: PLC0415
     except ModuleNotFoundError:
         return []
+    from zicato.core.workspace import events_jsonl_path  # noqa: PLC0415
+
+    sink_path = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id)
     sink_path.parent.mkdir(parents=True, exist_ok=True)
     return [JSONLPersistenceSink(path=sink_path, mode="write")]
 
@@ -235,9 +288,9 @@ async def _evaluate_entry_expectation(
 
 
 def _now_iso_utc() -> str:
-    from datetime import datetime, timezone  # noqa: PLC0415
+    from datetime import datetime  # noqa: PLC0415
 
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _run_id_for(generation: Generation, entry: BoardEntry) -> str:
@@ -286,6 +339,9 @@ async def _run_single(
         generation_id=generation.id,
         entry_id=entry.id,
     )
+    # Build the per-run sink list once: the canonical JSONL sink plus,
+    # when configured, a live harmonograf stream sink.
+    sinks = _build_sinks(workspace_root, epoch_id, generation.id, entry.id)
 
     # Best-effort runtime-state write so the live dashboard can render
     # the in-flight entry. Failures here MUST NOT abort the tournament.
@@ -295,9 +351,9 @@ async def _run_single(
         state_mod, ActiveRun = rt
         try:
             import os  # noqa: PLC0415
-            from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+            from datetime import datetime, timedelta  # noqa: PLC0415
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             deadline = now + timedelta(seconds=int(entry.wall_clock_budget_seconds))
             state_mod.write_active_run(
                 workspace_root,
@@ -330,6 +386,7 @@ async def _run_single(
             session=session,
             entry=entry,
             sink_path=sink_path,
+            sinks=sinks,
             config=config,
         )
 
@@ -480,8 +537,18 @@ async def run_tournament(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    round_index: int = 0,
+    total_rounds: int = 0,
 ) -> TournamentResult:
-    """Run a full A/B tournament. See module docstring."""
+    """Run a full A/B tournament. See module docstring.
+
+    ``round_index`` / ``total_rounds`` are threaded through from the
+    orchestrator's evolve loop purely so the published
+    :class:`~zicato.runtime.state.ActiveTournament` can tell the
+    dashboard "round N of M". They default to ``0`` for callers (older
+    tests, ad-hoc invocations) that do not run inside the multi-round
+    loop; the runner's behaviour does not otherwise depend on them.
+    """
     # Defense-in-depth: the runner re-checks the two-callable invariant.
     # The check happens here (and not just at config construction) so a
     # caller who hand-built a RuntimeConfig can't slip a colluding pair
@@ -495,16 +562,15 @@ async def run_tournament(
     if rt is not None:
         state_mod, _ = rt
         try:
-            from zicato.runtime.state import ActiveTournament, ActiveTournamentEntry  # noqa: PLC0415
+            from zicato.runtime.state import (  # noqa: PLC0415
+                ActiveTournament,
+                ActiveTournamentEntry,
+            )
 
             now = _now_iso_utc()
             entries = [
-                ActiveTournamentEntry(entry_id=e.id, side="parent", status="queued")
-                for e in board
-            ] + [
-                ActiveTournamentEntry(entry_id=e.id, side="child", status="queued")
-                for e in board
-            ]
+                ActiveTournamentEntry(entry_id=e.id, side="parent", status="queued") for e in board
+            ] + [ActiveTournamentEntry(entry_id=e.id, side="child", status="queued") for e in board]
             state_mod.write_active_tournament(
                 workspace_root,
                 ActiveTournament(
@@ -515,6 +581,8 @@ async def run_tournament(
                     started_at=now,
                     entries=entries,
                     phase="running",
+                    round_index=round_index,
+                    total_rounds=total_rounds,
                 ),
             )
         except Exception:  # noqa: BLE001
@@ -547,12 +615,8 @@ async def run_tournament(
             except Exception:  # noqa: BLE001
                 pass
 
-    parent_agg = aggregate_generation_score(
-        list(parent_losses.values()), weights
-    )
-    child_agg = aggregate_generation_score(
-        list(child_losses.values()), weights
-    )
+    parent_agg = aggregate_generation_score(list(parent_losses.values()), weights)
+    child_agg = aggregate_generation_score(list(child_losses.values()), weights)
 
     outcome = await _gate_with_regression(
         parent_agg=parent_agg,
@@ -614,9 +678,7 @@ async def run_fast_mode(
         epoch_id=epoch_id,
     )
 
-    child_agg = aggregate_generation_score(
-        list(child_losses.values()), weights
-    )
+    child_agg = aggregate_generation_score(list(child_losses.values()), weights)
     outcome = await _gate_with_regression(
         parent_agg=parent_historical_agg,
         child_agg=child_agg,

@@ -52,10 +52,31 @@ def test_heartbeat_round_trip(tmp_path: Path) -> None:
         phase="proposer",
         round_index=2,
         round_started_at="2026-05-14T10:00:03Z",
+        harmonograf_url="127.0.0.1:7531",
     )
     write_heartbeat(tmp_path, hb)
     got = read_heartbeat(tmp_path)
     assert got == hb
+    assert got is not None
+    assert got.harmonograf_url == "127.0.0.1:7531"
+
+
+def test_heartbeat_harmonograf_url_back_compat(tmp_path: Path) -> None:
+    """A heartbeat JSON written by an old writer (no harmonograf_url) loads."""
+    legacy = {
+        "pid": 7,
+        "instance_id": "old",
+        "started_at": "2026-05-14T00:00:00Z",
+        "last_heartbeat": "2026-05-14T00:00:00Z",
+        "epoch_id": "e0",
+        "generation_id": "v0",
+        "phase": "proposer",
+        "round_index": 0,
+        "round_started_at": "",
+    }
+    hb = Heartbeat.from_dict(legacy)
+    # Missing field defaults to empty string, not a KeyError.
+    assert hb.harmonograf_url == ""
 
 
 def test_heartbeat_defaults_round_trip(tmp_path: Path) -> None:
@@ -200,6 +221,41 @@ def test_active_tournament_round_trip(tmp_path: Path) -> None:
     write_active_tournament(tmp_path, t)
     got = read_active_tournament(tmp_path)
     assert got == t
+
+
+def test_active_tournament_round_fields_round_trip(tmp_path: Path) -> None:
+    """round_index / total_rounds survive a write → read cycle."""
+    t = ActiveTournament(
+        tournament_id="tourn_e1_v2",
+        parent_generation_id="v1",
+        child_generation_id="v2",
+        epoch_id="e1",
+        started_at="2026-05-14T10:00:00Z",
+        round_index=3,
+        total_rounds=8,
+    )
+    write_active_tournament(tmp_path, t)
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    assert got.round_index == 3
+    assert got.total_rounds == 8
+    assert got == t
+
+
+def test_active_tournament_round_fields_back_compat(tmp_path: Path) -> None:
+    """A tournament JSON without the new round fields still loads (defaults 0)."""
+    legacy = {
+        "tournament_id": "t",
+        "parent_generation_id": "v1",
+        "child_generation_id": "v2",
+        "epoch_id": "e",
+        "started_at": "2026-05-14T10:00:00Z",
+        "phase": "running",
+        "entries": [],
+    }
+    t = ActiveTournament.from_dict(legacy)
+    assert t.round_index == 0
+    assert t.total_rounds == 0
 
 
 def test_active_tournament_entry_loss_summary_round_trips(tmp_path: Path) -> None:
