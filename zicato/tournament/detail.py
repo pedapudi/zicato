@@ -325,7 +325,9 @@ def _open(db_path: str | Path) -> sqlite3.Connection:
     if open_index is None:
         conn = sqlite3.connect(str(path))
     else:
-        conn = open_index(str(path))
+        # zicato.index.query.open_index expects a Path (it calls
+        # .exists()); pass the Path object, not its string form.
+        conn = open_index(path)
     conn.row_factory = sqlite3.Row
     return conn
 

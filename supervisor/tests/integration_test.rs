@@ -444,13 +444,12 @@ async fn kill_endpoint_rejects_path_traversal() {
     let _ = shutdown.send(());
 }
 
-/// Build a small `.zicato/index/index.db` with the tables the
+/// Build a small `<workspace>/index.db` with the tables the
 /// tournament endpoints read.
 fn write_index_db(paths: &reader::WorkspacePaths) {
     use rusqlite::Connection;
-    let dir = paths.workspace.join("index");
-    std::fs::create_dir_all(&dir).unwrap();
-    let conn = Connection::open(dir.join("index.db")).unwrap();
+    std::fs::create_dir_all(&paths.workspace).unwrap();
+    let conn = Connection::open(paths.index_db()).unwrap();
     conn.execute_batch(
         "CREATE TABLE generations(epoch_id TEXT, generation_id TEXT, \
              parent_generation_id TEXT, promoted INTEGER);

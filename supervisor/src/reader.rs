@@ -58,9 +58,9 @@ impl WorkspacePaths {
     }
 
     /// SQLite analytical index built by `zicato reindex`
-    /// (`.zicato/index/index.db`). May be absent.
+    /// (`<workspace>/index.db`). May be absent.
     pub fn index_db(&self) -> PathBuf {
-        self.workspace.join("index").join("index.db")
+        self.workspace.join("index.db")
     }
 
     /// Per-epoch loop-health report directory
