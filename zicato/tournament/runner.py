@@ -73,7 +73,7 @@ import os
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -271,6 +271,68 @@ def _now_iso_utc() -> str:
 
 def _run_id_for(generation: Generation, entry: BoardEntry) -> str:
     return f"{generation.id}--{entry.id}"
+
+
+#: ``BoardEntry.context`` key under which the board-level ``disable_drift``
+#: suppression set is threaded to the adapter. ``context`` is the only
+#: per-entry channel that already survives the full
+#: runner -> args-file -> subprocess-worker -> ``validate_board_entry`` ->
+#: adapter round-trip (it is a plain string-valued mapping serialised by
+#: ``zicato.board.jsonl._entry_to_dict`` and re-parsed by
+#: ``validate_board_entry``), and it is exactly what
+#: ``zicato.adapters.adk._entry_disable_drift`` reads back. The value is a
+#: space-separated list of ``goldfive.DriftKind`` wire strings.
+_DISABLE_DRIFT_CONTEXT_KEY = "disable_drift"
+
+
+def _drift_kind_wire(kind: Any) -> str:
+    """Project one ``disable_drift`` element to its lowercase wire string.
+
+    ``goldfive.DriftKind`` is a ``StrEnum`` whose ``.value`` is the wire
+    token; a bare string is accepted unchanged. A stray
+    ``"DriftKind.TOOL_ERROR"`` repr is normalised to its last dotted
+    segment, lowercased — the same projection
+    ``zicato.judge_runtime.disable`` applies on the read side, so the two
+    ends agree on the token form.
+    """
+    text = str(getattr(kind, "value", kind)).strip()
+    if "." in text:
+        text = text.rsplit(".", 1)[-1]
+    return text.lower()
+
+
+def _stamp_disable_drift(
+    board: list[BoardEntry],
+    disable_drift: tuple[Any, ...],
+) -> list[BoardEntry]:
+    """Return ``board`` with the board-level ``disable_drift`` set on each entry.
+
+    The board-level ``disable_drift`` (parsed by
+    :func:`zicato.board.jsonl.load_board_with_meta` from the ``board_meta``
+    header) is not a per-entry field, but the adapter is only ever handed
+    a :class:`BoardEntry`. This stamps the suppression set onto every
+    entry's :attr:`~zicato.core.BoardEntry.context` mapping under
+    :data:`_DISABLE_DRIFT_CONTEXT_KEY` so it threads end-to-end —
+    through the subprocess worker's entry (de)serialisation — to
+    :func:`zicato.adapters.adk._entry_disable_drift`.
+
+    When ``disable_drift`` is empty the board is returned unchanged, so a
+    board with no ``board_meta`` header — and any per-entry
+    ``context['disable_drift']`` an author set directly — is untouched.
+    When non-empty the board-level setting is authoritative: it
+    overwrites any per-entry value. :class:`BoardEntry` is frozen, so
+    each affected entry is rebuilt via :func:`dataclasses.replace` rather
+    than mutated.
+    """
+    if not disable_drift:
+        return board
+    wire = " ".join(_drift_kind_wire(k) for k in disable_drift)
+    stamped: list[BoardEntry] = []
+    for entry in board:
+        context = dict(entry.context)
+        context[_DISABLE_DRIFT_CONTEXT_KEY] = wire
+        stamped.append(replace(entry, context=context))
+    return stamped
 
 
 def _runtime_state():  # type: ignore[no-untyped-def]
@@ -953,10 +1015,18 @@ async def run_tournament(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    disable_drift: tuple[Any, ...] = (),
     round_index: int = 0,
     total_rounds: int = 0,
 ) -> TournamentResult:
     """Run a full A/B tournament. See module docstring.
+
+    ``disable_drift`` is the board-level drift-suppression set parsed
+    from the board's ``board_meta`` header (see
+    :func:`zicato.board.jsonl.load_board_with_meta`). It is stamped onto
+    every board entry's :attr:`~zicato.core.BoardEntry.context` so it
+    threads through to the adapter's judge assembly; an empty tuple (the
+    default) leaves the board entries untouched.
 
     ``round_index`` / ``total_rounds`` are threaded through from the
     orchestrator's evolve loop purely so the published
@@ -972,6 +1042,11 @@ async def run_tournament(
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
     assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
+
+    # Thread the board-level disable_drift onto each entry's context so
+    # the adapter (running in a subprocess worker) can suppress the named
+    # built-in judges. A no-op when the board has no board_meta header.
+    board = _stamp_disable_drift(board, disable_drift)
 
     # Best-effort tournament-state publication for the live dashboard.
     rt = _runtime_state()
@@ -1069,6 +1144,7 @@ async def run_fast_mode(
     workspace_root: Path,
     epoch_id: str,
     parent_historical_agg: dict[str, Any],
+    disable_drift: tuple[Any, ...] = (),
 ) -> TournamentResult:
     """Inline keep/discard against a historical aggregate.
 
@@ -1081,10 +1157,17 @@ async def run_fast_mode(
     keep parent slot ``None``-equivalent by simply omitting parent
     losses from the per-entry map. (Fast mode has no parent
     per-entry loss profiles to report.)
+
+    ``disable_drift`` is the board-level drift-suppression set, stamped
+    onto each board entry's context exactly as in :func:`run_tournament`;
+    an empty tuple (the default) leaves the board entries untouched.
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
     assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
+
+    # Same board-level disable_drift threading as the full A/B path.
+    board = _stamp_disable_drift(board, disable_drift)
 
     child_losses = await _run_generation(
         adapter=adapter,

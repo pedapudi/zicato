@@ -760,3 +760,233 @@ def test_run_generation_surfaces_failure_under_concurrency(
     # no in-flight sibling was cancelled mid-run / had cleanup skipped.
     assert set(started) == {e.id for e in board}
     assert set(finished) == set(started)
+
+
+# ---------------------------------------------------------------------------
+# Board-level disable_drift threading — runner -> adapter -> assemble_judges
+# ---------------------------------------------------------------------------
+#
+# These cover the previously-missing middle of the judges integration: a
+# board author sets ``disable_drift`` in the board's ``board_meta``
+# header, and that suppression set must reach the per-entry adapter call.
+# The runner stamps it onto each entry's ``context`` (the only per-entry
+# channel that survives the subprocess-worker round-trip); the adapter
+# reads it back and assemble_judges drops the matching built-in judge.
+
+
+def _capture_run_single(monkeypatch: pytest.MonkeyPatch) -> list[BoardEntry]:
+    """Replace ``_run_single`` with a capture of the entry it is handed.
+
+    Returns a list that accumulates, in call order, every
+    :class:`BoardEntry` the runner dispatched — i.e. the entries AFTER
+    the runner's board-level ``disable_drift`` stamping. Each call still
+    returns a benign passing :class:`LossProfile` so the tournament
+    completes normally.
+    """
+    seen: list[BoardEntry] = []
+
+    async def fake_run_single(
+        *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+    ) -> LossProfile:
+        del adapter, weights, config, workspace_root, epoch_id, side
+        seen.append(entry)
+        return _loss(
+            generation_id=generation.id,
+            entry_id=entry.id,
+            drift_loss=1.0,
+            pass_fail=True,
+        )
+
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    return seen
+
+
+def test_runner_stamps_board_disable_drift_onto_entry_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``run_tournament`` threads board-level ``disable_drift`` onto every entry.
+
+    The runner is handed a plain board plus a board-level ``disable_drift``
+    tuple; it must stamp the suppression set onto each dispatched entry's
+    ``context['disable_drift']`` so the (subprocess) adapter can read it.
+    A frozen :class:`BoardEntry` is rebuilt, not mutated — and the
+    caller's original board entries are left untouched.
+    """
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _make_board()
+    seen = _capture_run_single(monkeypatch)
+    config = _make_runtime_config(tmp_path)
+
+    asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            disable_drift=("tool_error", "agent_refusal"),
+        )
+    )
+
+    # Every dispatched entry (4 = 2 entries x 2 generations) carries the
+    # board-level suppression set on its context, as a space-joined list.
+    assert len(seen) == 4
+    for entry in seen:
+        assert entry.context["disable_drift"] == "tool_error agent_refusal"
+    # The caller's original board entries were NOT mutated in place.
+    assert all("disable_drift" not in e.context for e in board)
+
+
+def test_runner_empty_disable_drift_leaves_entries_untouched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An empty board-level ``disable_drift`` leaves each entry's context alone.
+
+    A board with no ``board_meta`` header yields an empty ``disable_drift``
+    tuple; the runner must then leave the entries exactly as supplied, so
+    a board author's own per-entry ``context`` is never clobbered.
+    """
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    # An entry that already carries an unrelated context key.
+    board = [
+        BoardEntry(
+            id="entry_ctx",
+            kind="single_turn",
+            wall_clock_budget_seconds=60,
+            input="hello",
+            context={"attachments": "doc.pdf"},
+        )
+    ]
+    seen = _capture_run_single(monkeypatch)
+    config = _make_runtime_config(tmp_path)
+
+    asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            # disable_drift defaults to ().
+        )
+    )
+
+    for entry in seen:
+        assert "disable_drift" not in entry.context
+        assert entry.context == {"attachments": "doc.pdf"}
+
+
+def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End-to-end: a board's ``board_meta`` ``disable_drift`` drops a built-in judge.
+
+    This is the integration test that was missing. It exercises the FULL
+    chain a board author relies on:
+
+    1. a real JSONL board file with a leading ``{"board_meta": true,
+       "disable_drift": [...]}`` header, parsed by
+       :func:`zicato.board.jsonl.load_board_with_meta`;
+    2. :func:`run_tournament` threading that board-level ``disable_drift``
+       onto each dispatched entry's ``context``;
+    3. the runner's subprocess-worker entry (de)serialisation round-trip
+       (:func:`zicato.tournament.runner._entry_to_dict` ->
+       :func:`zicato.core.validate_board_entry`) — proving the
+       suppression set survives the OS-process boundary;
+    4. the adapter's read side
+       (:func:`zicato.adapters.adk._entry_disable_drift`); and
+    5. :func:`zicato.judge_runtime.assemble_judges` actually producing a
+       goldfive judge list with the suppressed built-in REMOVED.
+
+    Needs goldfive for the real built-in judge set; skipped without it.
+    """
+    goldfive = pytest.importorskip("goldfive")
+    from zicato.adapters.adk import _entry_disable_drift
+    from zicato.board.jsonl import load_board_with_meta
+    from zicato.core import validate_board_entry
+    from zicato.judge_runtime import assemble_judges
+
+    # --- 1. A real board file: board_meta header suppresses tool_error. ---
+    board_path = tmp_path / "board.jsonl"
+    board_path.write_text(
+        json.dumps({"board_meta": True, "disable_drift": ["tool_error"]})
+        + "\n"
+        + json.dumps(
+            {
+                "id": "entry_e2e",
+                "kind": "single_turn",
+                "budget_s": 60,
+                "input": "hello",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    entries, disable_drift = load_board_with_meta(board_path)
+    assert len(entries) == 1
+    # The header parsed into a board-level DriftKind tuple.
+    assert tuple(str(k) for k in disable_drift) == ("tool_error",)
+
+    # --- 2. Run the board through run_tournament, capturing entries. ---
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    seen = _capture_run_single(monkeypatch)
+    config = _make_runtime_config(tmp_path)
+    asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=entries,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            disable_drift=disable_drift,
+        )
+    )
+    assert seen, "runner dispatched no entries"
+    dispatched = seen[0]
+
+    # --- 3. Subprocess-worker round-trip: the runner serialises the
+    # entry to the worker args file and the worker re-parses it. The
+    # suppression set rides on ``context``, which survives intact. ---
+    reparsed = validate_board_entry(runner_mod._entry_to_dict(dispatched))
+    assert reparsed.context.get("disable_drift") == "tool_error"
+
+    # --- 4 + 5. The adapter reads disable_drift off the re-parsed entry
+    # and assemble_judges produces a judge list with tool_error dropped. ---
+    suppressed = _entry_disable_drift(reparsed)
+    assert suppressed == ("tool_error",)
+
+    async def _aux(system: str, user: str, model: str) -> str:
+        return ""
+
+    judges = assemble_judges(
+        entry_judges=None,
+        disable_drift=suppressed,
+        aux_call_llm=_aux,
+    )
+    names = {j.name for j in judges}
+    full = {j.name for j in goldfive.builtin_judges.default_judges()}
+    assert "tool_error" in full, "baseline: tool_error is normally a built-in"
+    # THE assertion: the suppressed built-in is gone from the run's list.
+    assert "tool_error" not in names
+    # Every other built-in stays default-on.
+    assert names == full - {"tool_error"}

@@ -182,28 +182,32 @@ def _entry_judge_specs(entry: BoardEntry) -> tuple[Any, ...]:
     return tuple(judges)
 
 
+#: ``BoardEntry.context`` key the tournament runner stamps the
+#: board-level ``disable_drift`` suppression set under. Kept in sync with
+#: ``zicato.tournament.runner._DISABLE_DRIFT_CONTEXT_KEY`` — the two ends
+#: meet on this single string.
+_DISABLE_DRIFT_CONTEXT_KEY = "disable_drift"
+
+
 def _entry_disable_drift(entry: BoardEntry) -> tuple[Any, ...]:
     """Return the drift kinds the board wants suppressed for ``entry``.
 
-    ``disable_drift`` is a board-level setting (``Board.disable_drift``),
+    ``disable_drift`` is a board-LEVEL setting (``Board.disable_drift``),
     but the :class:`~zicato.adapters.base.RunnableHarness` Protocol hands
-    the adapter a :class:`BoardEntry`, not the owning ``Board``. We
-    therefore look for the suppression set on two channels, in order:
+    the adapter a :class:`BoardEntry`, not the owning ``Board``. The
+    tournament runner therefore stamps the board-level suppression set
+    onto every entry's :attr:`~zicato.core.BoardEntry.context` mapping
+    under :data:`_DISABLE_DRIFT_CONTEXT_KEY` (see
+    ``zicato.tournament.runner._stamp_disable_drift``) — ``context`` is
+    the one per-entry channel that survives the runner -> subprocess
+    worker -> :func:`zicato.core.validate_board_entry` round-trip.
 
-    #. an explicit ``entry.disable_drift`` attribute — populated when the
-       runner stamps the board-level setting onto each entry it
-       dispatches; then
-    #. ``entry.context['disable_drift']`` — the opaque adapter-metadata
-       channel, parsed as a comma / whitespace separated list of
-       drift-kind wire strings.
-
-    Returns an empty tuple when neither channel carries the setting, in
-    which case goldfive's built-in judges all stay default-on.
+    The value is a comma / whitespace separated list of
+    :class:`goldfive.DriftKind` wire strings. Returns an empty tuple when
+    the entry carries no such key, in which case goldfive's built-in
+    judges all stay default-on.
     """
-    explicit = getattr(entry, "disable_drift", None)
-    if explicit:
-        return tuple(explicit)
-    raw = (getattr(entry, "context", {}) or {}).get("disable_drift")
+    raw = (getattr(entry, "context", {}) or {}).get(_DISABLE_DRIFT_CONTEXT_KEY)
     if not raw:
         return ()
     # ``context`` is a string-valued mapping; split on commas /

@@ -600,32 +600,36 @@ def test_entry_judge_specs_reads_judges_field() -> None:
     assert _entry_judge_specs(plain) == ()
 
 
-def test_entry_disable_drift_reads_context_and_attribute() -> None:
-    """``_entry_disable_drift`` reads the explicit attr first, then context."""
+def test_entry_disable_drift_reads_context() -> None:
+    """``_entry_disable_drift`` reads the board-level set off ``entry.context``.
+
+    ``disable_drift`` is a board-LEVEL setting; the tournament runner
+    stamps it onto each entry's ``context['disable_drift']`` (see
+    ``zicato.tournament.runner._stamp_disable_drift``). The adapter reads
+    that one channel — a comma / whitespace separated list of drift-kind
+    wire strings.
+    """
     from zicato.adapters.adk import _entry_disable_drift
 
-    # context channel: comma / whitespace separated wire strings.
-    from_context = _EntryStub(
+    # comma-separated wire strings.
+    comma = _EntryStub(
         id="e",
         kind="single_turn",
         wall_clock_budget_seconds=5,
         context={"disable_drift": "tool_error, agent_refusal"},
     )
-    assert _entry_disable_drift(from_context) == ("tool_error", "agent_refusal")
+    assert _entry_disable_drift(comma) == ("tool_error", "agent_refusal")
 
-    # an explicit ``disable_drift`` attribute wins over context.
-    @dataclasses.dataclass
-    class _EntryWithAttr:
-        id: str = "e"
-        kind: str = "single_turn"
-        wall_clock_budget_seconds: int = 5
-        context: dict[str, str] = dataclasses.field(default_factory=dict)
-        disable_drift: tuple[str, ...] = ()
+    # whitespace-separated wire strings (the form the runner stamps).
+    spaced = _EntryStub(
+        id="e",
+        kind="single_turn",
+        wall_clock_budget_seconds=5,
+        context={"disable_drift": "tool_error agent_refusal"},
+    )
+    assert _entry_disable_drift(spaced) == ("tool_error", "agent_refusal")
 
-    explicit = _EntryWithAttr(disable_drift=("goal_drift",), context={"disable_drift": "x"})
-    assert _entry_disable_drift(explicit) == ("goal_drift",)  # type: ignore[arg-type]
-
-    # a plain BoardEntry with no disable_drift anywhere -> empty tuple.
+    # a plain BoardEntry with no disable_drift in context -> empty tuple.
     plain = BoardEntry(id="e", kind="single_turn", wall_clock_budget_seconds=5, input="x")
     assert _entry_disable_drift(plain) == ()
 

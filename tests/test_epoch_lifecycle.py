@@ -84,8 +84,8 @@ def test_new_epoch_creates_expected_layout(
     # Board and proposer brief are copies, not the originals.
     assert (edir / "board.jsonl").read_text() == board_file.read_text()
     assert (edir / "brief.md").read_text() == brief_file.read_text()
-    # EpochConfig.rubric_path carries the path to the frozen brief.
-    assert cfg.rubric_path == edir / "brief.md"
+    # EpochConfig.brief_path carries the path to the frozen brief.
+    assert cfg.brief_path == edir / "brief.md"
 
     # scoring.json is parseable and round-trips key fields.
     scoring = json.loads((edir / "scoring.json").read_text())

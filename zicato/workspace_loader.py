@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from zicato.board.jsonl import load_board
+from zicato.board.jsonl import load_board, load_board_with_meta
 from zicato.core.types import BoardEntry, EpochConfig, ScoringWeights
 from zicato.core.workspace import board_path, epoch_dir, scoring_path
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch
@@ -108,6 +108,24 @@ def load_current_board(workspace_root: Path) -> list[BoardEntry]:
     return load_board(path)
 
 
+def load_current_board_with_meta(
+    workspace_root: Path,
+) -> tuple[list[BoardEntry], tuple[Any, ...]]:
+    """Load the current epoch's board plus its board-level ``disable_drift``.
+
+    Like :func:`load_current_board` but also returns the board-level
+    ``disable_drift`` tuple parsed from the board's ``board_meta`` header
+    (empty when the board has no header). The tournament runner needs the
+    suppression set to thread it onto each board entry, so this is the
+    loader the orchestrator and the ``zicato tournament`` command use.
+    """
+    eid = _resolve_current_epoch(workspace_root)
+    path = board_path(workspace_root, eid)
+    if not path.exists():
+        raise FileNotFoundError(f"board not found at {path}; the current epoch is incomplete")
+    return load_board_with_meta(path)
+
+
 def load_current_scoring(workspace_root: Path) -> ScoringWeights:
     """Load the current epoch's frozen :class:`ScoringWeights`.
 
@@ -162,6 +180,7 @@ __all__ = [
     "load_workspace_config",
     "load_current_epoch_config",
     "load_current_board",
+    "load_current_board_with_meta",
     "load_current_scoring",
     "load_current_brief",
 ]
