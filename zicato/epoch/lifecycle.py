@@ -177,7 +177,7 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         "name": cfg.name,
         "created_at": cfg.created_at,
         "board_path": str(cfg.board_path),
-        "rubric_path": str(cfg.rubric_path),
+        "brief_path": str(cfg.brief_path),
         "scoring": _scoring_to_dict(cfg.scoring),
         "closed": cfg.closed,
         "closed_at": cfg.closed_at,
@@ -189,12 +189,16 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
     # ``contract_hash`` defaults to "" so epochs written before
     # contract-hash auto-epoching landed load cleanly — see
     # :class:`zicato.core.types.EpochConfig` and the contract module.
+    #
+    # ``brief_path`` is the current key; ``rubric_path`` is the
+    # pre-rename name, still accepted so an epoch ``config.json`` written
+    # before the field rename keeps loading.
     return EpochConfig(
         id=d["id"],
         name=d["name"],
         created_at=d["created_at"],
         board_path=Path(d["board_path"]),
-        rubric_path=Path(d["rubric_path"]),
+        brief_path=Path(d.get("brief_path") or d["rubric_path"]),
         scoring=_scoring_from_dict(d.get("scoring", {})),
         closed=bool(d.get("closed", False)),
         closed_at=d.get("closed_at", ""),
@@ -439,15 +443,14 @@ def new_epoch(
         )
     )
 
-    # 6. Config + lineage. ``EpochConfig.rubric_path`` carries the path
-    # to the frozen proposer brief (the field keeps its legacy name on
-    # the shared core type; the value is the ``brief.md`` path).
+    # 6. Config + lineage. ``EpochConfig.brief_path`` carries the path
+    # to the frozen proposer brief (the ``brief.md`` file).
     cfg = EpochConfig(
         id=epoch_id,
         name=name,
         created_at=_now_iso(),
         board_path=target_board,
-        rubric_path=target_brief,
+        brief_path=target_brief,
         scoring=weights,
         closed=False,
         closed_at="",

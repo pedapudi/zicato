@@ -462,7 +462,7 @@ async def evolve_once(
             )
     else:
         resolved_epoch_id = epoch_id
-    board = workspace_loader.load_current_board(workspace_root)
+    board, disable_drift = workspace_loader.load_current_board_with_meta(workspace_root)
     weights = workspace_loader.load_current_scoring(workspace_root)
     brief = workspace_loader.load_current_brief(workspace_root)
 
@@ -668,6 +668,7 @@ async def evolve_once(
             workspace_root=workspace_root,
             epoch_id=resolved_epoch_id,
             parent_historical_agg=parent_historical,
+            disable_drift=disable_drift,
         )
     else:
         tournament_result = await run_tournament(
@@ -679,6 +680,7 @@ async def evolve_once(
             config=config,
             workspace_root=workspace_root,
             epoch_id=resolved_epoch_id,
+            disable_drift=disable_drift,
             round_index=round_index,
             total_rounds=total_rounds,
         )

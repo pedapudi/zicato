@@ -1535,8 +1535,8 @@ class ScoringWeights:
 class EpochConfig:
     """The frozen evaluation contract for an epoch.
 
-    Pinned for the lifetime of the epoch: board, rubric, scoring weights.
-    Changing any of these starts a new epoch — see
+    Pinned for the lifetime of the epoch: board, proposer brief, scoring
+    weights. Changing any of these starts a new epoch — see
     :doc:`project_zicato_journaling_and_epochs`.
 
     Fields
@@ -1549,9 +1549,10 @@ class EpochConfig:
         ISO-8601 UTC timestamp of epoch creation.
     board_path:
         Absolute path to the frozen ``board.jsonl`` for this epoch.
-    rubric_path:
-        Absolute path to the operator-edited ``rubric.md`` the proposer
-        reads each round.
+    brief_path:
+        Absolute path to the frozen ``brief.md`` proposer brief the
+        proposer reads each round. (Earlier revisions named this field
+        ``rubric_path`` and the file ``rubric.md``; both were renamed.)
     scoring:
         The frozen :class:`ScoringWeights` for this epoch.
     closed:
@@ -1580,7 +1581,7 @@ class EpochConfig:
     name: str
     created_at: str
     board_path: Path
-    rubric_path: Path
+    brief_path: Path
     scoring: ScoringWeights
     closed: bool = False
     closed_at: str = ""

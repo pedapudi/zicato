@@ -295,7 +295,7 @@ def make_epoch_config(**overrides: Any) -> EpochConfig:
         "name": "default",
         "created_at": "2026-01-01T00:00:00Z",
         "board_path": Path("/tmp/zicato/test/epoch/board.jsonl"),
-        "rubric_path": Path("/tmp/zicato/test/epoch/rubric.md"),
+        "brief_path": Path("/tmp/zicato/test/epoch/brief.md"),
         "scoring": make_scoring_weights(),
     }
     kwargs.update(overrides)
@@ -497,9 +497,7 @@ def make_synthetic_events_jsonl(
         for drift_kind, severity in drift_events:
             evt = _envelope()
             proto_kind_name = _DRIFT_KIND_TO_PROTO.get(drift_kind, "DRIFT_KIND_CUSTOM")
-            proto_severity_name = _SEVERITY_TO_PROTO.get(
-                severity, "DRIFT_SEVERITY_UNSPECIFIED"
-            )
+            proto_severity_name = _SEVERITY_TO_PROTO.get(severity, "DRIFT_SEVERITY_UNSPECIFIED")
             kind_enum = getattr(events_pb2, proto_kind_name, None)
             if kind_enum is None:
                 # Fallback: look it up via the generated DriftKind descriptor.
