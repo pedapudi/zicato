@@ -1,0 +1,502 @@
+"""Tests for :mod:`zicato.health` — loop-health diagnostics.
+
+Covers each detector in isolation (fires when it should, silent when it
+should not), the :class:`LoopHealth.healthy` rollup rule, and a CLI
+smoke test through :class:`click.testing.CliRunner`.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from click.testing import CliRunner
+
+from zicato.cli.commands.health import health_cmd
+from zicato.core.types import (
+    BoardEntry,
+    DriftCount,
+    Expectation,
+    LossProfile,
+)
+from zicato.health.diagnostics import (
+    HealthFinding,
+    assess_loop_health,
+    detect_degenerate_scoring,
+    detect_flat_drift_signal,
+    detect_no_expectations,
+    detect_non_differentiating_entry,
+    detect_stalled_loop,
+)
+
+# ---------------------------------------------------------------------------
+# Factories
+# ---------------------------------------------------------------------------
+
+
+def _loss(
+    entry_id: str,
+    generation_id: str,
+    *,
+    drift_loss: float = 0.0,
+    drift_counts: tuple[DriftCount, ...] = (),
+    pass_fail: bool | None = None,
+) -> LossProfile:
+    """Build a minimal :class:`LossProfile` for detector tests."""
+    return LossProfile(
+        run_id=f"run_{generation_id}_{entry_id}",
+        entry_id=entry_id,
+        generation_id=generation_id,
+        epoch_id="e1",
+        drift_counts=drift_counts,
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=1000,
+        wall_clock_budget_exceeded=False,
+        expectation_result=None,
+        drift_loss=drift_loss,
+        pass_fail=pass_fail,
+    )
+
+
+def _experiment(generation_id: str, *, scalar_delta: float | None, decision: str) -> dict:
+    """Build an ``experiment.json``-shaped dict with a tournament outcome."""
+    outcome = None
+    if scalar_delta is not None:
+        outcome = {
+            "ran_at": "2026-05-15T00:00:00Z",
+            "drift_movements": [],
+            "pass_rate_delta": 0.0,
+            "drift_loss_delta": 0.0,
+            "scalar_score_delta": scalar_delta,
+            "tournament_decision": decision,
+            "rejection_reason": "" if decision != "rejected" else "no_improvement",
+        }
+    return {"generation_id": generation_id, "outcome": outcome}
+
+
+def _board_entry(entry_id: str, *, with_expectation: bool) -> BoardEntry:
+    """Build a single-turn :class:`BoardEntry`, optionally with an expectation."""
+    expectation = None
+    if with_expectation:
+        expectation = Expectation(kind="expected_text", spec="ok")
+    return BoardEntry(
+        id=entry_id,
+        kind="single_turn",
+        wall_clock_budget_seconds=60,
+        input="hello",
+        expectation=expectation,
+    )
+
+
+# ---------------------------------------------------------------------------
+# degenerate_scoring
+# ---------------------------------------------------------------------------
+
+
+def test_degenerate_scoring_fires_on_three_zero_delta_tournaments() -> None:
+    experiments = [
+        _experiment("v1", scalar_delta=0.0, decision="rejected"),
+        _experiment("v2", scalar_delta=0.0, decision="rejected"),
+        _experiment("v3", scalar_delta=0.0, decision="rejected"),
+    ]
+    findings = detect_degenerate_scoring(experiments)
+    assert len(findings) == 1
+    assert findings[0].code == "degenerate_scoring"
+    assert findings[0].severity == "critical"
+    assert findings[0].detail["generation_ids"] == ["v1", "v2", "v3"]
+
+
+def test_degenerate_scoring_silent_on_a_real_delta() -> None:
+    experiments = [
+        _experiment("v1", scalar_delta=0.0, decision="rejected"),
+        _experiment("v2", scalar_delta=0.0, decision="rejected"),
+        _experiment("v3", scalar_delta=-0.25, decision="promoted"),
+    ]
+    assert detect_degenerate_scoring(experiments) == []
+
+
+def test_degenerate_scoring_silent_below_window() -> None:
+    # Only two evaluated tournaments — fewer than the default window of 3.
+    experiments = [
+        _experiment("v1", scalar_delta=0.0, decision="rejected"),
+        _experiment("v2", scalar_delta=0.0, decision="rejected"),
+    ]
+    assert detect_degenerate_scoring(experiments) == []
+
+
+def test_degenerate_scoring_ignores_unevaluated_experiments() -> None:
+    # An experiment with no outcome carries no signal and is skipped;
+    # the three evaluated ones still trip the detector.
+    experiments = [
+        _experiment("v1", scalar_delta=None, decision="rejected"),
+        _experiment("v2", scalar_delta=0.0, decision="rejected"),
+        _experiment("v3", scalar_delta=0.0, decision="rejected"),
+        _experiment("v4", scalar_delta=0.0, decision="rejected"),
+    ]
+    findings = detect_degenerate_scoring(experiments)
+    assert len(findings) == 1
+    assert findings[0].detail["generation_ids"] == ["v2", "v3", "v4"]
+
+
+# ---------------------------------------------------------------------------
+# non_differentiating_entry
+# ---------------------------------------------------------------------------
+
+
+def test_non_differentiating_entry_flags_identical_loss_everywhere() -> None:
+    losses_by_generation = {
+        "v0": [_loss("dead", "v0", drift_loss=1.0), _loss("live", "v0", drift_loss=2.0)],
+        "v1": [_loss("dead", "v1", drift_loss=1.0), _loss("live", "v1", drift_loss=3.0)],
+        "v2": [_loss("dead", "v2", drift_loss=1.0), _loss("live", "v2", drift_loss=0.5)],
+    }
+    findings = detect_non_differentiating_entry(losses_by_generation)
+    assert len(findings) == 1
+    assert findings[0].code == "non_differentiating_entry"
+    assert findings[0].severity == "warning"
+    assert findings[0].detail["entry_id"] == "dead"
+
+
+def test_non_differentiating_entry_ignores_varying_entry() -> None:
+    losses_by_generation = {
+        "v0": [_loss("live", "v0", drift_loss=2.0)],
+        "v1": [_loss("live", "v1", drift_loss=3.0)],
+    }
+    assert detect_non_differentiating_entry(losses_by_generation) == []
+
+
+def test_non_differentiating_entry_ignores_single_generation_entry() -> None:
+    # An entry that ran under only one generation has nothing to compare.
+    losses_by_generation = {"v0": [_loss("solo", "v0", drift_loss=1.0)]}
+    assert detect_non_differentiating_entry(losses_by_generation) == []
+
+
+# ---------------------------------------------------------------------------
+# flat_drift_signal
+# ---------------------------------------------------------------------------
+
+
+def test_flat_drift_signal_fires_when_all_drift_counts_zero() -> None:
+    # Runs exist, but no drift count anywhere.
+    losses_by_generation = {
+        "v0": [_loss("a", "v0"), _loss("b", "v0")],
+        "v1": [_loss("a", "v1"), _loss("b", "v1")],
+    }
+    findings = detect_flat_drift_signal(losses_by_generation)
+    assert len(findings) == 1
+    assert findings[0].code == "flat_drift_signal"
+    assert findings[0].severity == "warning"
+    assert findings[0].detail["runs_inspected"] == 4
+
+
+def test_flat_drift_signal_silent_when_drift_fired() -> None:
+    losses_by_generation = {
+        "v0": [
+            _loss(
+                "a",
+                "v0",
+                drift_counts=(DriftCount(kind="off_topic", severity="warning", count=2),),
+            )
+        ],
+    }
+    assert detect_flat_drift_signal(losses_by_generation) == []
+
+
+def test_flat_drift_signal_silent_when_no_runs() -> None:
+    assert detect_flat_drift_signal({}) == []
+
+
+# ---------------------------------------------------------------------------
+# no_expectations
+# ---------------------------------------------------------------------------
+
+
+def test_no_expectations_fires_past_threshold() -> None:
+    # 3 of 4 entries have no expectation: 0.75 > 0.5 default threshold.
+    board = [
+        _board_entry("e1", with_expectation=False),
+        _board_entry("e2", with_expectation=False),
+        _board_entry("e3", with_expectation=False),
+        _board_entry("e4", with_expectation=True),
+    ]
+    findings = detect_no_expectations(board)
+    assert len(findings) == 1
+    assert findings[0].code == "no_expectations"
+    assert findings[0].severity == "info"
+    assert findings[0].detail["entries_without_expectation"] == 3
+
+
+def test_no_expectations_silent_at_or_below_threshold() -> None:
+    # Exactly half have no expectation: 0.5 is not strictly greater.
+    board = [
+        _board_entry("e1", with_expectation=False),
+        _board_entry("e2", with_expectation=True),
+    ]
+    assert detect_no_expectations(board) == []
+
+
+def test_no_expectations_silent_on_empty_board() -> None:
+    assert detect_no_expectations([]) == []
+
+
+# ---------------------------------------------------------------------------
+# stalled_loop
+# ---------------------------------------------------------------------------
+
+
+def test_stalled_loop_fires_on_three_consecutive_rejects() -> None:
+    experiments = [
+        _experiment("v1", scalar_delta=-0.2, decision="promoted"),
+        _experiment("v2", scalar_delta=0.0, decision="rejected"),
+        _experiment("v3", scalar_delta=0.0, decision="rejected"),
+        _experiment("v4", scalar_delta=0.0, decision="rejected"),
+    ]
+    findings = detect_stalled_loop(experiments)
+    assert len(findings) == 1
+    assert findings[0].code == "stalled_loop"
+    assert findings[0].severity == "warning"
+    assert findings[0].detail["rejected_generation_ids"] == ["v2", "v3", "v4"]
+
+
+def test_stalled_loop_silent_when_recent_promote_breaks_the_run() -> None:
+    experiments = [
+        _experiment("v1", scalar_delta=0.0, decision="rejected"),
+        _experiment("v2", scalar_delta=0.0, decision="rejected"),
+        _experiment("v3", scalar_delta=-0.2, decision="promoted"),
+    ]
+    assert detect_stalled_loop(experiments) == []
+
+
+def test_stalled_loop_silent_below_threshold() -> None:
+    experiments = [
+        _experiment("v1", scalar_delta=0.0, decision="rejected"),
+        _experiment("v2", scalar_delta=0.0, decision="rejected"),
+    ]
+    assert detect_stalled_loop(experiments) == []
+
+
+# ---------------------------------------------------------------------------
+# LoopHealth.healthy rollup
+# ---------------------------------------------------------------------------
+
+
+def test_loop_health_healthy_true_when_no_warning_or_critical() -> None:
+    # Drift-only board with a single generation: only the info-severity
+    # no_expectations detector can fire, which leaves the loop healthy.
+    board = [_board_entry("a", with_expectation=False)]
+    losses_by_generation = {
+        "v0": [
+            _loss(
+                "a",
+                "v0",
+                drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+            )
+        ],
+    }
+    report = assess_loop_health(
+        losses_by_generation=losses_by_generation,
+        experiments=[],
+        board_entries=board,
+        epoch_id="e1",
+    )
+    assert report.healthy is True
+    assert all(f.severity == "info" for f in report.findings)
+
+
+def test_loop_health_unhealthy_when_a_warning_finding_exists() -> None:
+    # flat_drift_signal is a warning → healthy must be False.
+    board = [_board_entry("a", with_expectation=True)]
+    losses_by_generation = {"v0": [_loss("a", "v0")]}
+    report = assess_loop_health(
+        losses_by_generation=losses_by_generation,
+        experiments=[],
+        board_entries=board,
+        epoch_id="e1",
+    )
+    assert report.healthy is False
+    assert any(f.severity == "warning" for f in report.findings)
+
+
+def test_loop_health_unhealthy_when_a_critical_finding_exists() -> None:
+    board = [_board_entry("a", with_expectation=True)]
+    losses_by_generation = {
+        "v0": [
+            _loss(
+                "a",
+                "v0",
+                drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+            )
+        ],
+    }
+    experiments = [
+        _experiment("v1", scalar_delta=0.0, decision="rejected"),
+        _experiment("v2", scalar_delta=0.0, decision="rejected"),
+        _experiment("v3", scalar_delta=0.0, decision="rejected"),
+    ]
+    report = assess_loop_health(
+        losses_by_generation=losses_by_generation,
+        experiments=experiments,
+        board_entries=board,
+        epoch_id="e1",
+    )
+    assert report.healthy is False
+    assert any(f.code == "degenerate_scoring" and f.severity == "critical" for f in report.findings)
+
+
+def test_health_finding_is_frozen() -> None:
+    finding = HealthFinding(code="x", severity="info", summary="s", detail={})
+    try:
+        finding.severity = "critical"  # type: ignore[misc]
+    except (AttributeError, TypeError):
+        pass
+    else:  # pragma: no cover - defensive
+        raise AssertionError("HealthFinding should be frozen")
+
+
+# ---------------------------------------------------------------------------
+# Threshold env overrides
+# ---------------------------------------------------------------------------
+
+
+def test_scoring_window_env_override_widens_detector(monkeypatch) -> None:
+    monkeypatch.setenv("ZICATO_HEALTH_SCORING_WINDOW", "5")
+    # Only 3 zero-delta tournaments — below the overridden window of 5.
+    experiments = [_experiment(f"v{n}", scalar_delta=0.0, decision="rejected") for n in range(1, 4)]
+    assert detect_degenerate_scoring(experiments) == []
+
+
+def test_stalled_rejects_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("ZICATO_HEALTH_STALLED_REJECTS", "2")
+    experiments = [
+        _experiment("v1", scalar_delta=0.0, decision="rejected"),
+        _experiment("v2", scalar_delta=0.0, decision="rejected"),
+    ]
+    findings = detect_stalled_loop(experiments)
+    assert len(findings) == 1
+    assert findings[0].detail["consecutive_rejects"] == 2
+
+
+# ---------------------------------------------------------------------------
+# CLI smoke test
+# ---------------------------------------------------------------------------
+
+
+def _write_run_loss(workspace: Path, epoch_id: str, generation_id: str, loss: LossProfile) -> None:
+    """Write a ``loss.json`` for one run into the workspace layout."""
+    run_dir = (
+        workspace / "epochs" / epoch_id / "generations" / generation_id / "runs" / loss.entry_id
+    )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    body = {
+        "run_id": loss.run_id,
+        "entry_id": loss.entry_id,
+        "generation_id": loss.generation_id,
+        "epoch_id": loss.epoch_id,
+        "drift_counts": [
+            {"kind": dc.kind, "severity": dc.severity, "count": dc.count}
+            for dc in loss.drift_counts
+        ],
+        "plan_revisions": loss.plan_revisions,
+        "task_failure_ratio": loss.task_failure_ratio,
+        "runtime_ms": loss.runtime_ms,
+        "wall_clock_budget_exceeded": loss.wall_clock_budget_exceeded,
+        "expectation_result": None,
+        "drift_loss": loss.drift_loss,
+        "pass_fail": loss.pass_fail,
+    }
+    (run_dir / "loss.json").write_text(json.dumps(body), encoding="utf-8")
+
+
+def _write_experiment(workspace: Path, epoch_id: str, generation_id: str, body: dict) -> None:
+    """Write an ``experiment.json`` into the workspace layout."""
+    gen_dir = workspace / "epochs" / epoch_id / "generations" / generation_id
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    (gen_dir / "experiment.json").write_text(json.dumps(body), encoding="utf-8")
+
+
+def _build_degenerate_workspace(tmp_path: Path) -> Path:
+    """Lay out a workspace that reproduces the toothless-eval failure mode."""
+    workspace = tmp_path / ".zicato"
+    epoch_id = "2026-05-15_loop"
+    epoch_root = workspace / "epochs" / epoch_id
+    epoch_root.mkdir(parents=True, exist_ok=True)
+
+    # Board: one entry, with an expectation so no_expectations stays quiet.
+    board_row = {
+        "id": "entry_a",
+        "kind": "single_turn",
+        "wall_clock_budget_seconds": 60,
+        "input": "hello",
+        "expectation": {"kind": "expected_text", "spec": "ok"},
+    }
+    (epoch_root / "board.jsonl").write_text(json.dumps(board_row) + "\n", encoding="utf-8")
+
+    # current_epoch marker.
+    (workspace / "current_epoch").write_text(epoch_id, encoding="utf-8")
+
+    # Two generations, both scoring an identical drift_loss, no drift fired.
+    for gen in ("v0", "v1"):
+        _write_run_loss(workspace, epoch_id, gen, _loss("entry_a", gen, drift_loss=1.0))
+
+    # Three consecutive zero-delta rejected tournaments → critical finding.
+    for gen in ("v1", "v2", "v3"):
+        _write_experiment(
+            workspace,
+            epoch_id,
+            gen,
+            _experiment(gen, scalar_delta=0.0, decision="rejected"),
+        )
+    return workspace
+
+
+def test_cli_health_reports_and_exits_nonzero_on_critical(tmp_path: Path) -> None:
+    workspace = _build_degenerate_workspace(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(health_cmd, ["--workspace", str(workspace)])
+    # A critical finding must drive a non-zero exit.
+    assert result.exit_code == 1, result.output
+    assert "UNHEALTHY" in result.output
+    assert "degenerate_scoring" in result.output
+
+
+def test_cli_health_healthy_workspace_exits_zero(tmp_path: Path) -> None:
+    # A workspace with a single generation, drift firing, an expectation,
+    # and no tournaments → every detector stays silent.
+    workspace = tmp_path / ".zicato"
+    epoch_id = "2026-05-15_ok"
+    epoch_root = workspace / "epochs" / epoch_id
+    epoch_root.mkdir(parents=True, exist_ok=True)
+    board_row = {
+        "id": "entry_a",
+        "kind": "single_turn",
+        "wall_clock_budget_seconds": 60,
+        "input": "hello",
+        "expectation": {"kind": "expected_text", "spec": "ok"},
+    }
+    (epoch_root / "board.jsonl").write_text(json.dumps(board_row) + "\n", encoding="utf-8")
+    (workspace / "current_epoch").write_text(epoch_id, encoding="utf-8")
+    _write_run_loss(
+        workspace,
+        epoch_id,
+        "v0",
+        _loss(
+            "entry_a",
+            "v0",
+            drift_loss=0.5,
+            drift_counts=(DriftCount(kind="off_topic", severity="info", count=1),),
+        ),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(health_cmd, ["--workspace", str(workspace)])
+    assert result.exit_code == 0, result.output
+    assert "HEALTHY" in result.output
+
+
+def test_cli_health_missing_epoch_marker_errors_cleanly(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runner = CliRunner()
+    result = runner.invoke(health_cmd, ["--workspace", str(workspace)])
+    assert result.exit_code != 0
+    assert "No active epoch" in result.output
