@@ -673,7 +673,73 @@ The wrappers do not replace L3. They're the cheap fast path that
 gives well-behaved aux clients a graceful timeout before
 escalation kicks in.
 
-## 6. What we explicitly do NOT defend against
+## 6. Loop health: a toothless evaluation is a failure mode
+
+The six layers above defend against the loop **breaking** —
+hangs, crashes, OOMs. They answer "is the loop broken?". There
+is a second, quieter failure mode they do not cover: the loop
+that is not broken but is **meaningless**.
+
+A meta-loop can satisfy every layer in this document — no hangs,
+no crashes, every round completing cleanly, every state file
+atomically written — and still produce **zero optimisation
+signal**. This happens when the *evaluation itself* is
+degenerate: a board whose entries all score identically for every
+generation, a drift signal that never moves, a scoring
+configuration that cannot distinguish any candidate. The
+tournament then compares two indistinguishable scalars round
+after round; the proposer can run forever and never legitimately
+promote.
+
+This is a failure mode in exactly the sense this document uses
+the term — a state the system can enter where it no longer does
+its job — and it is worse than a crash in one specific way: a
+crash *stops* and the operator notices; a toothless loop *keeps
+running*, consumes budget, and fills the journal with a
+confident-looking lineage that means nothing.
+
+The motivating incident: a real run had generations `v0` and `v1`
+both score **exactly `1.000000`**. Every robustness layer was
+satisfied; the loop reported itself healthy. The degeneracy was
+discovered only because an operator manually eyeballed the
+journal and noticed the suspicious number — nothing in zicato
+flagged it.
+
+So zicato treats **loop health** as a robustness concern, sitting
+alongside the six layers rather than downstream of them:
+
+| Concern | Question | Subsystem |
+|---|---|---|
+| Loop breaks (hang / crash / OOM) | Is the loop *broken*? | Layers L1-L6 (this document) |
+| Loop is unproductive | Is the loop *wasting time*? | L5 circuit breaker (§2.5) |
+| **Loop is meaningless** | **Is the eval *toothless*?** | **Loop-health diagnostics** |
+
+Loop-health diagnostics is a first-class subsystem: a fixed set
+of detectors (degenerate scoring, non-differentiating board
+entries, flat drift signal, no-expectations, stalled loop) run
+after every round, emit a typed `LoopHealth` report with
+`info` / `warning` / `critical` severities, and surface
+`critical` findings as a loud bannered orchestrator warning plus
+an SSE event to the dashboard's loop-health panel. An opt-in
+`zicato evolve --stop-on-degenerate` early-stops on sustained
+degeneracy.
+
+Loop health is a close cousin of the L5 circuit breaker (§2.5)
+and feeds it — the richer L5 signals (hypothesis match-rate
+decay, same drift kinds not moving) *are* loop-health detectors.
+But the two answer different questions: L5 fires on an
+*unproductive* loop (good eval, the proposer is just not finding
+wins); loop health fires on a *meaningless* loop (the eval
+itself cannot distinguish anything, so even a perfect proposer
+would never promote). An operator needs to know which one they
+are looking at.
+
+The full subsystem — every detector, the severity rules, the
+`LoopHealth` report schema, the `zicato health` CLI, and the
+orchestrator's surfacing behaviour — is specified in
+[LOOP-HEALTH.md](LOOP-HEALTH.md).
+
+## 7. What we explicitly do NOT defend against
 
 These are out of scope; including them would expand the surface
 without proportional value.
@@ -696,13 +762,14 @@ without proportional value.
   layers in this document are about process/IO failures, not
   output-quality failures.
 
-## 7. Cross-references
+## 8. Cross-references
 
 | Topic | Document |
 |---|---|
 | State files and the supervisor binary | [RUNTIME.md](RUNTIME.md) |
 | The live dashboard view of state | [DASHBOARD.md](DASHBOARD.md) |
 | Where atomic writes touch the storage layer | [STORAGE.md](STORAGE.md) |
+| Loop-health diagnostics — the detectors, `zicato health`, `--stop-on-degenerate` | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
 | Resume markers on `experiment.json` | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3 |
 | Worker entry point | [CLI.md](CLI.md) |
 | The cancellation contract assumed by L1+L2 | [ARCHITECTURE.md](ARCHITECTURE.md) §4 |
