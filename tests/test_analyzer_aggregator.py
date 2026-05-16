@@ -423,3 +423,110 @@ def test_aggregate_ignores_non_dict_lines(tmp_path: Path) -> None:
 
     assert summary.total_events_seen == 1
     assert summary.policy_outcomes["same_turn_dedup"] == {"skipped": 1}
+
+
+def test_aggregate_handles_goldfive_camelcase_shape(tmp_path: Path) -> None:
+    """Regression for issue #1.
+
+    goldfive's ``JSONLPersistenceSink`` serializes with ``MessageToJson``
+    WITHOUT ``preserving_proto_field_name`` — the real on-disk JSONL is
+    camelCase. The aggregator used to key on snake_case only, so it
+    matched zero events and ``steering_decisions`` was always empty. The
+    aggregator must normalize camelCase keys (envelope AND payload).
+    """
+
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                # SteeringDecisionMade — camelCase envelope key + camelCase
+                # payload field ``detectorName``.
+                json.dumps(
+                    {
+                        "eventId": "evt_0",
+                        "runId": "run_test",
+                        "sequence": 0,
+                        "sessionId": "sess_test",
+                        "steeringDecisionMade": {
+                            "detectorName": "reasoning_judge",
+                            "outcome": "drift_emitted",
+                        },
+                    }
+                ),
+                # LadderTransitionDecided — camelCase ``fromLevel`` /
+                # ``toLevel`` payload fields.
+                json.dumps(
+                    {
+                        "eventId": "evt_1",
+                        "runId": "run_test",
+                        "sequence": 1,
+                        "ladderTransitionDecided": {
+                            "fromLevel": "observe",
+                            "toLevel": "nudge",
+                            "reason": "first_occurrence",
+                        },
+                    }
+                ),
+                # RetryBudgetSpent — camelCase ``budgetRemaining``.
+                json.dumps(
+                    {
+                        "eventId": "evt_2",
+                        "runId": "run_test",
+                        "sequence": 2,
+                        "retryBudgetSpent": {
+                            "operation": "refine_steer",
+                            "attempt": 2,
+                            "budgetRemaining": 1,
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = aggregate_decision_events([path])
+
+    # The whole point of issue #1: steering_decisions is NOT empty.
+    assert summary.total_events_seen == 3
+    assert summary.steering_decisions == {"reasoning_judge": {"drift_emitted": 1}}
+    assert summary.ladder_transitions == {"observe->nudge": 1}
+    assert summary.ladder_reasons == {"first_occurrence": 1}
+    assert summary.retry_attempts == {"refine_steer": [2]}
+
+
+def test_aggregate_mixed_camel_and_snake_in_one_file(tmp_path: Path) -> None:
+    """A file with both casings aggregates without loss — the normalization
+    is idempotent on already-snake_case keys."""
+
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "sequence": 0,
+                        "steeringDecisionMade": {
+                            "detectorName": "goal_drift",
+                            "outcome": "no_drift",
+                        },
+                    }
+                ),
+                json.dumps(
+                    _envelope(
+                        1,
+                        "steering_decision_made",
+                        {"detector_name": "goal_drift", "outcome": "no_drift"},
+                    )
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = aggregate_decision_events([path])
+
+    assert summary.total_events_seen == 2
+    assert summary.steering_decisions == {"goal_drift": {"no_drift": 2}}

@@ -34,14 +34,26 @@ Tolerant on every axis:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# The five payload keys (snake_case) the analyzer cares about. Aligns
-# with the ``MessageToJson(preserving_proto_field_name=True)`` shape
-# goldfive's persistence sink produces.
+# goldfive's ``JSONLPersistenceSink.emit`` serializes each event with
+# ``MessageToJson(event, sort_keys=True, indent=None)`` — WITHOUT
+# ``preserving_proto_field_name=True`` — so the on-disk JSONL is
+# *camelCase* (``steeringDecisionMade``, ``detectorName``, ``fromLevel``,
+# ``dispatchOrder``, ``budgetRemaining``). The analyzer keys on
+# snake_case below and normalizes every event/payload dict's keys to
+# snake_case on read (see :func:`_snake_keys`), so the matching works on
+# the real on-disk shape AND on a snake_case producer (the reducer's
+# proto-reparse path, which uses ``preserving_proto_field_name=True``).
+# Normalizing keeps the analyzer proto-stub-free — it never imports the
+# goldfive proto module.
+#
+# The five ``Event.payload`` oneof field names the analyzer cares about,
+# in snake_case (the post-normalization form):
 _LADDER_KEY = "ladder_transition_decided"
 _DISPATCH_KEY = "detector_dispatch_ordered"
 _POLICY_KEY = "policy_applied"
@@ -106,6 +118,33 @@ class DecisionEventSummary:
     total_events_seen: int = 0
 
 
+_CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
+
+
+def _to_snake(name: str) -> str:
+    """Normalize a JSON key to snake_case.
+
+    ``camelCase`` / ``PascalCase`` -> ``snake_case``; an already
+    snake_case key passes through unchanged. ``steeringDecisionMade`` ->
+    ``steering_decision_made``; ``detectorName`` -> ``detector_name``;
+    ``outcome`` -> ``outcome``.
+    """
+
+    return _CAMEL_BOUNDARY.sub("_", name).lower()
+
+
+def _snake_keys(d: dict[str, Any]) -> dict[str, Any]:
+    """Return a shallow copy of ``d`` with top-level keys snake-cased.
+
+    Applied to both the Event envelope (so the payload oneof key matches)
+    and the payload sub-dict (so its field names match). Shallow is
+    sufficient: payload fields are scalars / lists, never nested dicts
+    the analyzer reaches into.
+    """
+
+    return {_to_snake(k): v for k, v in d.items()}
+
+
 def _iter_json_lines(path: Path) -> Iterable[dict[str, Any]]:
     """Yield parsed JSON objects from ``path``, one per line, skipping junk.
 
@@ -113,7 +152,8 @@ def _iter_json_lines(path: Path) -> Iterable[dict[str, Any]]:
     silently skipped so a single bad line cannot wipe out an entire
     file's signal. Non-dict top-level values (a stray bare number, a
     list) are also skipped — the analyzer only cares about goldfive
-    Event-dict shapes.
+    Event-dict shapes. Top-level keys are normalized to snake_case so
+    the camelCase shape goldfive's persistence sink writes is matched.
     """
 
     try:
@@ -127,7 +167,7 @@ def _iter_json_lines(path: Path) -> Iterable[dict[str, Any]]:
                 except json.JSONDecodeError:
                     continue
                 if isinstance(obj, dict):
-                    yield obj
+                    yield _snake_keys(obj)
     except OSError:
         # Missing / unreadable files contribute zero counts. The caller
         # is the analyzer entry point, which already accepts the
@@ -136,11 +176,16 @@ def _iter_json_lines(path: Path) -> Iterable[dict[str, Any]]:
 
 
 def _payload_for(event: dict[str, Any], key: str) -> dict[str, Any] | None:
-    """Return the payload sub-dict under ``key`` if present and a dict."""
+    """Return the payload sub-dict under ``key`` if present and a dict.
+
+    The payload's own field names are snake-cased too (goldfive writes
+    them camelCase: ``fromLevel``, ``detectorName``, ``dispatchOrder``,
+    ``budgetRemaining``), so the absorbers' snake_case lookups match.
+    """
 
     raw = event.get(key)
     if isinstance(raw, dict):
-        return raw
+        return _snake_keys(raw)
     return None
 
 
