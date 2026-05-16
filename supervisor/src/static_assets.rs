@@ -71,12 +71,16 @@ mod tests {
     use axum::http::StatusCode;
 
     #[tokio::test]
-    async fn missing_root_serves_placeholder() {
+    async fn root_serves_html() {
+        // With the UI bundle present the real dashboard is served; with an
+        // empty bundle the placeholder is served. Either way the root
+        // route returns a non-empty HTML document mentioning zicato.
         let resp = serve("/");
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = to_bytes(resp.into_body(), 1 << 20).await.unwrap();
         let body = std::str::from_utf8(&bytes).unwrap();
-        assert!(body.contains("zicato-supervisor"));
+        assert!(!body.is_empty());
+        assert!(body.to_lowercase().contains("zicato"));
     }
 
     #[tokio::test]
