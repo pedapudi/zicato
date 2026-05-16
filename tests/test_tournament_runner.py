@@ -1,17 +1,20 @@
-"""Tests for ``zicato.tournament.runner``.
+"""Tests for ``zicato.tournament.runner`` generation-level orchestration.
 
-The runner integrates several layers; tests here stub:
+Since the L3 subprocess-isolation refactor, the per-entry run mechanism
+(:func:`zicato.tournament.runner._run_single`) spawns a worker
+subprocess. The end-to-end subprocess behaviour — args-file shape,
+result-file shape, parent-side budget escalation, supervisor-kill
+handling — is covered by :mod:`tests.test_subprocess_workers`.
 
-* The harness adapter — returns a session that records which entries
-  it was asked to run against which sink paths but does no real work.
-* The lazily-imported ``zicato.telemetry.sink`` / ``.reducer`` modules
-  — built as ad-hoc ``types.ModuleType`` instances and inserted into
-  ``sys.modules`` for the duration of one test. The sink stub returns
-  a deterministic per-run path; the reducer stub returns canned
-  :class:`LossProfile` instances keyed by ``(generation_id, entry_id)``.
+These tests focus on what the runner module still owns *in-process*:
+``run_tournament`` / ``run_fast_mode`` iterating the board across
+generations, aggregating per-entry :class:`LossProfile` instances, and
+running the gate. They stub :func:`_run_single` with a canned-loss
+lookup so the orchestration logic is exercised without spawning real
+subprocesses.
 
 The two-callable invariant on :class:`RuntimeConfig` is honored by
-constructing two distinct lambda objects (identity-unequal) for
+constructing two distinct callables (identity-unequal) for
 ``harness_call_llm`` and ``auxiliary_call_llm``.
 """
 
@@ -20,21 +23,18 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-import sys
-import types
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import zicato.tournament.runner as runner_mod
 from zicato.core import (
     BoardEntry,
     DriftCount,
-    Expectation,
     ExpectationResult,
     Generation,
     LossProfile,
-    RunResult,
     RuntimeConfig,
     ScoringWeights,
 )
@@ -77,96 +77,35 @@ def _loss(
     )
 
 
-class _StubSession:
-    """Records every (entry_id, sink_path) the runner hands it."""
-
-    def __init__(self, log: list[tuple[str, str, Path]], generation_id: str) -> None:
-        self._log = log
-        self._generation_id = generation_id
-
-    async def run(self, entry: BoardEntry, sink_path: Path) -> None:
-        self._log.append((self._generation_id, entry.id, sink_path))
-
-
-class _StubAdapter:
-    """Returns a fresh stub session per ``load`` call."""
-
-    def __init__(self, log: list[tuple[str, str, Path]]) -> None:
-        self._log = log
-        # Map snapshot_root → generation_id for sessions we hand out.
-        self._snapshot_to_gen: dict[Path, str] = {}
-
-    def register_generation(self, generation: Generation) -> None:
-        self._snapshot_to_gen[generation.snapshot_root] = generation.id
-
-    def load(self, snapshot_root: Path) -> _StubSession:
-        generation_id = self._snapshot_to_gen[snapshot_root]
-        return _StubSession(self._log, generation_id)
-
-
-def _install_telemetry_stubs(
+def _stub_run_single(
     monkeypatch: pytest.MonkeyPatch,
     *,
     canned: dict[tuple[str, str], LossProfile],
-) -> list[Path]:
-    """Install fake ``zicato.telemetry.sink`` / ``.reducer`` modules.
+) -> list[tuple[str, str]]:
+    """Replace ``_run_single`` with a canned-loss lookup.
 
-    Returns the list the sink stub appends each path it was asked for —
-    tests use it to verify the runner iterates the board in order.
+    Returns the call log — a list of ``(generation_id, entry_id)`` tuples
+    in the order ``_run_single`` was invoked, so tests can assert the
+    runner iterates the board in order, parent generation first.
     """
-    requested_paths: list[Path] = []
+    call_log: list[tuple[str, str]] = []
 
-    sink_mod = types.ModuleType("zicato.telemetry.sink")
-
-    def make_run_sink_path(
+    async def fake_run_single(
         *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
         workspace_root: Path,
         epoch_id: str,
-        generation_id: str,
-        entry_id: str,
-    ) -> Path:
-        path = (
-            workspace_root
-            / "epochs"
-            / epoch_id
-            / "generations"
-            / generation_id
-            / "runs"
-            / entry_id
-            / "events.jsonl"
-        )
-        requested_paths.append(path)
-        return path
-
-    sink_mod.make_run_sink_path = make_run_sink_path  # type: ignore[attr-defined]
-
-    reducer_mod = types.ModuleType("zicato.telemetry.reducer")
-
-    def reduce_loss(
-        events_jsonl_path: Path,
-        entry: BoardEntry,
-        generation_id: str,
-        epoch_id: str,
-        expectation_result: ExpectationResult | None,
-        runtime_ms: int,
-        wall_clock_budget_exceeded: bool,
-        weights: ScoringWeights,
     ) -> LossProfile:
-        del events_jsonl_path, epoch_id, weights  # unused in stub
-        del expectation_result, runtime_ms, wall_clock_budget_exceeded
-        return canned[(generation_id, entry.id)]
+        del adapter, weights, config, workspace_root, epoch_id
+        call_log.append((generation.id, entry.id))
+        return canned[(generation.id, entry.id)]
 
-    reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
-
-    telemetry_pkg = types.ModuleType("zicato.telemetry")
-    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
-    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
-
-    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
-
-    return requested_paths
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    return call_log
 
 
 def _make_board() -> list[BoardEntry]:
@@ -203,6 +142,16 @@ def _make_runtime_config(tmp_path: Path) -> RuntimeConfig:
     )
 
 
+def _make_generation(tmp_path: Path, gen_id: str, parent: str | None) -> Generation:
+    return Generation(
+        id=gen_id,
+        epoch_id="e0",
+        parent_id=parent,
+        snapshot_root=tmp_path / f"snap_{gen_id}",
+        created_at="2024-01-01T00:00:00Z",
+    )
+
+
 # ---------------------------------------------------------------------------
 # run_tournament — full mode
 # ---------------------------------------------------------------------------
@@ -212,20 +161,8 @@ def test_run_tournament_iterates_board_for_both_generations(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Full mode runs every entry under both generations and aggregates correctly."""
-    parent_gen = Generation(
-        id="v0",
-        epoch_id="e0",
-        parent_id=None,
-        snapshot_root=tmp_path / "snap_v0",
-        created_at="2024-01-01T00:00:00Z",
-    )
-    child_gen = Generation(
-        id="v1",
-        epoch_id="e0",
-        parent_id="v0",
-        snapshot_root=tmp_path / "snap_v1",
-        created_at="2024-01-02T00:00:00Z",
-    )
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
 
     canned = {
         ("v0", "entry_a"): _loss(
@@ -241,13 +178,7 @@ def test_run_tournament_iterates_board_for_both_generations(
             generation_id="v1", entry_id="entry_b", drift_loss=1.0, pass_fail=True
         ),
     }
-
-    requested_paths = _install_telemetry_stubs(monkeypatch, canned=canned)
-
-    log: list[tuple[str, str, Path]] = []
-    adapter = _StubAdapter(log)
-    adapter.register_generation(parent_gen)
-    adapter.register_generation(child_gen)
+    call_log = _stub_run_single(monkeypatch, canned=canned)
 
     board = _make_board()
     weights = ScoringWeights(promote_margin=0.01)
@@ -255,7 +186,7 @@ def test_run_tournament_iterates_board_for_both_generations(
 
     result = asyncio.run(
         run_tournament(
-            adapter=adapter,
+            adapter=object(),
             parent_gen=parent_gen,
             child_gen=child_gen,
             board=board,
@@ -266,15 +197,13 @@ def test_run_tournament_iterates_board_for_both_generations(
         )
     )
 
-    # The adapter saw all 4 (generation, entry) combinations, parent first.
-    assert [(gen, entry_id) for gen, entry_id, _ in log] == [
+    # The runner drove all 4 (generation, entry) combinations, parent first.
+    assert call_log == [
         ("v0", "entry_a"),
         ("v0", "entry_b"),
         ("v1", "entry_a"),
         ("v1", "entry_b"),
     ]
-    # Sink paths were requested for the same 4 combinations.
-    assert len(requested_paths) == 4
 
     # Result wires generation ids through.
     assert isinstance(result, TournamentResult)
@@ -303,20 +232,8 @@ def test_run_tournament_rejects_when_child_regresses_pass_rate(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A child that improves drift but regresses pass-rate must be rejected."""
-    parent_gen = Generation(
-        id="v0",
-        epoch_id="e0",
-        parent_id=None,
-        snapshot_root=tmp_path / "snap_v0",
-        created_at="2024-01-01T00:00:00Z",
-    )
-    child_gen = Generation(
-        id="v1",
-        epoch_id="e0",
-        parent_id="v0",
-        snapshot_root=tmp_path / "snap_v1",
-        created_at="2024-01-02T00:00:00Z",
-    )
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
 
     canned = {
         ("v0", "entry_a"): _loss(
@@ -332,18 +249,12 @@ def test_run_tournament_rejects_when_child_regresses_pass_rate(
             generation_id="v1", entry_id="entry_b", drift_loss=0.0, pass_fail=False
         ),
     }
-
-    _install_telemetry_stubs(monkeypatch, canned=canned)
-
-    log: list[tuple[str, str, Path]] = []
-    adapter = _StubAdapter(log)
-    adapter.register_generation(parent_gen)
-    adapter.register_generation(child_gen)
+    _stub_run_single(monkeypatch, canned=canned)
 
     config = _make_runtime_config(tmp_path)
     result = asyncio.run(
         run_tournament(
-            adapter=adapter,
+            adapter=object(),
             parent_gen=parent_gen,
             child_gen=child_gen,
             board=_make_board(),
@@ -361,20 +272,8 @@ def test_run_tournament_rejects_when_child_regresses_pass_rate(
 
 def test_run_tournament_rejects_two_callable_invariant(tmp_path: Path) -> None:
     """The runner re-checks that harness/auxiliary callables differ."""
-    parent_gen = Generation(
-        id="v0",
-        epoch_id="e0",
-        parent_id=None,
-        snapshot_root=tmp_path / "snap_v0",
-        created_at="2024-01-01T00:00:00Z",
-    )
-    child_gen = Generation(
-        id="v1",
-        epoch_id="e0",
-        parent_id="v0",
-        snapshot_root=tmp_path / "snap_v1",
-        created_at="2024-01-02T00:00:00Z",
-    )
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
 
     async def shared(system: str, user: str, model: str) -> str:
         return ""
@@ -389,7 +288,7 @@ def test_run_tournament_rejects_two_callable_invariant(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError):
         asyncio.run(
             run_tournament(
-                adapter=_StubAdapter([]),
+                adapter=object(),
                 parent_gen=parent_gen,
                 child_gen=child_gen,
                 board=_make_board(),
@@ -406,17 +305,9 @@ def test_run_tournament_rejects_two_callable_invariant(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_run_fast_mode_runs_only_child(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_run_fast_mode_runs_only_child(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Fast mode runs only the child generation and compares to historical agg."""
-    child_gen = Generation(
-        id="v1",
-        epoch_id="e0",
-        parent_id="v0",
-        snapshot_root=tmp_path / "snap_v1",
-        created_at="2024-01-02T00:00:00Z",
-    )
+    child_gen = _make_generation(tmp_path, "v1", "v0")
 
     canned = {
         ("v1", "entry_a"): _loss(
@@ -426,12 +317,7 @@ def test_run_fast_mode_runs_only_child(
             generation_id="v1", entry_id="entry_b", drift_loss=0.5, pass_fail=True
         ),
     }
-
-    _install_telemetry_stubs(monkeypatch, canned=canned)
-
-    log: list[tuple[str, str, Path]] = []
-    adapter = _StubAdapter(log)
-    adapter.register_generation(child_gen)
+    call_log = _stub_run_single(monkeypatch, canned=canned)
 
     # Historical aggregate the operator saved off some time ago for v0.
     parent_historical = {
@@ -450,7 +336,7 @@ def test_run_fast_mode_runs_only_child(
     config = _make_runtime_config(tmp_path)
     result = asyncio.run(
         run_fast_mode(
-            adapter=adapter,
+            adapter=object(),
             child_gen=child_gen,
             board=_make_board(),
             weights=ScoringWeights(promote_margin=0.01),
@@ -462,10 +348,7 @@ def test_run_fast_mode_runs_only_child(
     )
 
     # Only the child was run.
-    assert {(gen, entry_id) for gen, entry_id, _ in log} == {
-        ("v1", "entry_a"),
-        ("v1", "entry_b"),
-    }
+    assert set(call_log) == {("v1", "entry_a"), ("v1", "entry_b")}
 
     # Parent agg passes through unchanged; child agg fresh from this run.
     assert result.parent_agg is parent_historical
@@ -483,240 +366,12 @@ def test_run_fast_mode_runs_only_child(
 # ---------------------------------------------------------------------------
 
 
-def test_run_single_uses_full_protocol_and_evaluates_expectation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A session with the rich (entry, sinks, config) shape gets a RunResult.
-
-    The reducer must receive the entry, runtime, budget flag, and a
-    non-None expectation_result computed by evaluate_expectation.
-    """
-    parent_gen = Generation(
-        id="v0",
-        epoch_id="e0",
-        parent_id=None,
-        snapshot_root=tmp_path / "snap_v0",
-        created_at="2024-01-01T00:00:00Z",
-    )
-    child_gen = Generation(
-        id="v1",
-        epoch_id="e0",
-        parent_id="v0",
-        snapshot_root=tmp_path / "snap_v1",
-        created_at="2024-01-02T00:00:00Z",
-    )
-
-    entry = BoardEntry(
-        id="entry_a",
-        kind="single_turn",
-        wall_clock_budget_seconds=60,
-        input="hello",
-        expectation=Expectation(kind="expected_text", spec="world"),
-    )
-
-    received_reducer_kwargs: list[dict[str, Any]] = []
-
-    sink_mod = types.ModuleType("zicato.telemetry.sink")
-    sink_mod.make_run_sink_path = lambda **kw: (  # type: ignore[attr-defined]
-        kw["workspace_root"] / "events.jsonl"
-    )
-
-    reducer_mod = types.ModuleType("zicato.telemetry.reducer")
-
-    def reduce_loss(
-        events_jsonl_path: Path,
-        passed_entry: BoardEntry,
-        generation_id: str,
-        epoch_id: str,
-        expectation_result: ExpectationResult | None,
-        runtime_ms: int,
-        wall_clock_budget_exceeded: bool,
-        weights: ScoringWeights,
-    ) -> LossProfile:
-        received_reducer_kwargs.append(
-            {
-                "entry_id": passed_entry.id,
-                "generation_id": generation_id,
-                "epoch_id": epoch_id,
-                "expectation_result": expectation_result,
-                "runtime_ms": runtime_ms,
-                "wall_clock_budget_exceeded": wall_clock_budget_exceeded,
-            }
-        )
-        del events_jsonl_path, weights
-        return _loss(
-            generation_id=generation_id,
-            entry_id=passed_entry.id,
-            drift_loss=0.5,
-            pass_fail=(expectation_result.passed if expectation_result else None),
-        )
-
-    reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
-
-    telemetry_pkg = types.ModuleType("zicato.telemetry")
-    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
-    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
-
-    class _RichSession:
-        async def run(
-            self, entry: BoardEntry, sinks: list[Any], config: RuntimeConfig
-        ) -> RunResult:
-            del sinks, config
-            return RunResult(
-                run_id="r1",
-                entry_id=entry.id,
-                final_output="hello world",
-                transcript=("hello world",),
-                runtime_ms=42,
-            )
-
-    class _RichAdapter:
-        def load(self, snapshot_root: Path) -> _RichSession:
-            del snapshot_root
-            return _RichSession()
-
-    config = _make_runtime_config(tmp_path)
-    asyncio.run(
-        run_tournament(
-            adapter=_RichAdapter(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=[entry],
-            weights=ScoringWeights(),
-            config=config,
-            workspace_root=tmp_path,
-            epoch_id="e0",
-        )
-    )
-
-    # Two reducer calls — one per generation.
-    assert len(received_reducer_kwargs) == 2
-    for kw in received_reducer_kwargs:
-        assert kw["entry_id"] == "entry_a"
-        # runtime_ms reflects the session's reported runtime.
-        assert kw["runtime_ms"] == 42
-        assert kw["wall_clock_budget_exceeded"] is False
-        # expectation_result populated and matched "world" substring.
-        assert kw["expectation_result"] is not None
-        assert kw["expectation_result"].passed is True
-
-
-def test_run_single_detects_wall_clock_budget_exceeded(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A RunResult with abort_reason='wall_clock_budget' flips the flag."""
-    parent_gen = Generation(
-        id="v0",
-        epoch_id="e0",
-        parent_id=None,
-        snapshot_root=tmp_path / "snap_v0",
-        created_at="2024-01-01T00:00:00Z",
-    )
-    child_gen = Generation(
-        id="v1",
-        epoch_id="e0",
-        parent_id="v0",
-        snapshot_root=tmp_path / "snap_v1",
-        created_at="2024-01-02T00:00:00Z",
-    )
-
-    received_flags: list[bool] = []
-
-    sink_mod = types.ModuleType("zicato.telemetry.sink")
-    sink_mod.make_run_sink_path = lambda **kw: (  # type: ignore[attr-defined]
-        kw["workspace_root"] / "events.jsonl"
-    )
-    reducer_mod = types.ModuleType("zicato.telemetry.reducer")
-
-    def reduce_loss(
-        events_jsonl_path: Path,
-        passed_entry: BoardEntry,
-        generation_id: str,
-        epoch_id: str,
-        expectation_result: ExpectationResult | None,
-        runtime_ms: int,
-        wall_clock_budget_exceeded: bool,
-        weights: ScoringWeights,
-    ) -> LossProfile:
-        del events_jsonl_path, expectation_result, runtime_ms, weights, epoch_id
-        received_flags.append(wall_clock_budget_exceeded)
-        return _loss(
-            generation_id=generation_id,
-            entry_id=passed_entry.id,
-            drift_loss=999.0,
-            pass_fail=None,
-        )
-
-    reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
-    telemetry_pkg = types.ModuleType("zicato.telemetry")
-    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
-    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
-
-    entry = BoardEntry(
-        id="entry_a", kind="single_turn", wall_clock_budget_seconds=60, input="hi"
-    )
-
-    class _AbortedSession:
-        async def run(
-            self, entry: BoardEntry, sinks: list[Any], config: RuntimeConfig
-        ) -> RunResult:
-            del sinks, config
-            return RunResult(
-                run_id="r1",
-                entry_id=entry.id,
-                final_output="",
-                transcript=(),
-                runtime_ms=1000,
-                aborted=True,
-                abort_reason="wall_clock_budget",
-            )
-
-    class _AbortedAdapter:
-        def load(self, snapshot_root: Path) -> _AbortedSession:
-            del snapshot_root
-            return _AbortedSession()
-
-    config = _make_runtime_config(tmp_path)
-    asyncio.run(
-        run_tournament(
-            adapter=_AbortedAdapter(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=[entry],
-            weights=ScoringWeights(),
-            config=config,
-            workspace_root=tmp_path,
-            epoch_id="e0",
-        )
-    )
-
-    assert received_flags == [True, True]
-
-
 def test_tournament_result_is_json_serializable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """``dataclasses.asdict`` + ``json.dumps(default=str)`` round-trips."""
-    parent_gen = Generation(
-        id="v0",
-        epoch_id="e0",
-        parent_id=None,
-        snapshot_root=tmp_path / "snap_v0",
-        created_at="2024-01-01T00:00:00Z",
-    )
-    child_gen = Generation(
-        id="v1",
-        epoch_id="e0",
-        parent_id="v0",
-        snapshot_root=tmp_path / "snap_v1",
-        created_at="2024-01-02T00:00:00Z",
-    )
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
     canned = {
         ("v0", "entry_a"): _loss(
             generation_id="v0", entry_id="entry_a", drift_loss=1.0, pass_fail=True
@@ -731,16 +386,12 @@ def test_tournament_result_is_json_serializable(
             generation_id="v1", entry_id="entry_b", drift_loss=0.5, pass_fail=True
         ),
     }
-    _install_telemetry_stubs(monkeypatch, canned=canned)
-
-    adapter = _StubAdapter([])
-    adapter.register_generation(parent_gen)
-    adapter.register_generation(child_gen)
+    _stub_run_single(monkeypatch, canned=canned)
     config = _make_runtime_config(tmp_path)
 
     result = asyncio.run(
         run_tournament(
-            adapter=adapter,
+            adapter=object(),
             parent_gen=parent_gen,
             child_gen=child_gen,
             board=_make_board(),

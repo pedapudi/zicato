@@ -164,15 +164,21 @@ class ActiveRun:
 
     One file per run lives under :func:`zicato.runtime.paths.active_runs_dir`.
     The supervisor reads them all to render the active-runs panel; the
-    orchestrator writes one on run-start, bumps ``last_progress`` as the
-    run produces events, and removes the file on run-end.
+    run's worker process writes one on run-start, bumps ``last_progress``
+    as the run produces events, and removes the file on a clean run-end.
 
     Fields
     ------
     run_id:
         Unique id of the run (matches :class:`zicato.core.types.RunRecord.run_id`).
     pid:
-        OS process id of the orchestrator process executing this run.
+        OS process id of the **run's own worker process** — the
+        ``python -m zicato._tournament_worker`` subprocess executing this
+        single entry, NOT the orchestrator. Each tournament run is
+        isolated in its own OS process; the worker stamps ``os.getpid()``
+        here on start. This is what lets the supervisor watchdog
+        SIGTERM/SIGKILL an individual wedged run (by this pid) without
+        touching the orchestrator or any sibling run.
     started_at, last_progress:
         ISO-8601 UTC timestamps. ``last_progress`` is bumped whenever
         the run emits a goldfive event; the supervisor compares against

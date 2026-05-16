@@ -90,9 +90,7 @@ def test_regression_result_is_frozen_and_round_trips() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_snapshot_with_test(
-    tmp_path: Path, test_body: str, *, subdir: str | None = None
-) -> Path:
+def _make_snapshot_with_test(tmp_path: Path, test_body: str, *, subdir: str | None = None) -> Path:
     """Create a snapshot layout with one ``tests/test_x.py`` file.
 
     When ``subdir`` is set, the tests live at
@@ -133,9 +131,7 @@ def test_run_regression_suite_passes_on_green_suite(tmp_path: Path) -> None:
         """,
     )
 
-    result = asyncio.run(
-        run_regression_suite(snapshot_root, test_command=_PYTEST_CMD)
-    )
+    result = asyncio.run(run_regression_suite(snapshot_root, test_command=_PYTEST_CMD))
 
     assert result.passed is True
     assert result.failed_tests == ()
@@ -156,9 +152,7 @@ def test_run_regression_suite_fails_with_failed_ids(tmp_path: Path) -> None:
         """,
     )
 
-    result = asyncio.run(
-        run_regression_suite(snapshot_root, test_command=_PYTEST_CMD)
-    )
+    result = asyncio.run(run_regression_suite(snapshot_root, test_command=_PYTEST_CMD))
 
     assert result.passed is False
     assert len(result.failed_tests) == 2
@@ -182,9 +176,7 @@ def test_run_regression_suite_locates_tests_under_mutable_tree_subdir(
         subdir="goldfive",
     )
 
-    result = asyncio.run(
-        run_regression_suite(snapshot_root, test_command=_PYTEST_CMD)
-    )
+    result = asyncio.run(run_regression_suite(snapshot_root, test_command=_PYTEST_CMD))
 
     assert result.passed is True
     assert result.summary == "all tests passed"
@@ -202,11 +194,7 @@ def test_run_regression_suite_times_out_on_slow_test(tmp_path: Path) -> None:
         """,
     )
 
-    result = asyncio.run(
-        run_regression_suite(
-            snapshot_root, test_command=_PYTEST_CMD, timeout_s=2
-        )
-    )
+    result = asyncio.run(run_regression_suite(snapshot_root, test_command=_PYTEST_CMD, timeout_s=2))
 
     assert result.passed is False
     assert result.failed_tests == ()
@@ -261,75 +249,36 @@ def _loss(
     )
 
 
-class _StubSession:
-    """Session that ignores its inputs (the reducer stub returns canned losses)."""
-
-    async def run(self, entry: BoardEntry, sink_path: Path) -> None:
-        del entry, sink_path
-
-
-class _StubAdapter:
-    def load(self, snapshot_root: Path) -> _StubSession:
-        del snapshot_root
-        return _StubSession()
-
-
-def _install_telemetry_stubs(
+def _install_run_single_stub(
     monkeypatch: pytest.MonkeyPatch,
     canned: dict[tuple[str, str], LossProfile],
 ) -> None:
-    sink_mod = types.ModuleType("zicato.telemetry.sink")
+    """Replace ``runner._run_single`` with a canned-loss lookup.
 
-    def make_run_sink_path(
+    Since the L3 subprocess-isolation refactor the per-entry run mechanism
+    spawns a worker process; the regression-gate tests only care about the
+    *generation-level* gate wiring, so they bypass the subprocess entirely
+    by stubbing ``_run_single`` with a deterministic loss lookup.
+    """
+    import zicato.tournament.runner as runner_mod  # noqa: PLC0415
+
+    async def fake_run_single(
         *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
         workspace_root: Path,
         epoch_id: str,
-        generation_id: str,
-        entry_id: str,
-    ) -> Path:
-        return (
-            workspace_root
-            / "epochs"
-            / epoch_id
-            / "generations"
-            / generation_id
-            / "runs"
-            / entry_id
-            / "events.jsonl"
-        )
-
-    sink_mod.make_run_sink_path = make_run_sink_path  # type: ignore[attr-defined]
-
-    reducer_mod = types.ModuleType("zicato.telemetry.reducer")
-
-    def reduce_loss(
-        events_jsonl_path: Path,
-        entry: BoardEntry,
-        generation_id: str,
-        epoch_id: str,
-        expectation_result: ExpectationResult | None,
-        runtime_ms: int,
-        wall_clock_budget_exceeded: bool,
-        weights: ScoringWeights,
     ) -> LossProfile:
-        del events_jsonl_path, epoch_id, weights
-        del expectation_result, runtime_ms, wall_clock_budget_exceeded
-        return canned[(generation_id, entry.id)]
+        del adapter, weights, config, workspace_root, epoch_id
+        return canned[(generation.id, entry.id)]
 
-    reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
-
-    telemetry_pkg = types.ModuleType("zicato.telemetry")
-    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
-    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
-
-    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
 
-def _set_regression_result(
-    monkeypatch: pytest.MonkeyPatch, regression: RegressionResult
-) -> None:
+def _set_regression_result(monkeypatch: pytest.MonkeyPatch, regression: RegressionResult) -> None:
     """Force ``run_regression_suite`` to return a canned result."""
 
     async def fake_run(snapshot_root: Path, **kwargs: Any) -> RegressionResult:
@@ -338,9 +287,7 @@ def _set_regression_result(
 
     # Patch the symbol the runner imported (function reference is bound
     # at runner import time, so we patch the runner module's view).
-    monkeypatch.setattr(
-        "zicato.tournament.runner.run_regression_suite", fake_run
-    )
+    monkeypatch.setattr("zicato.tournament.runner.run_regression_suite", fake_run)
 
 
 def _board() -> list[BoardEntry]:
@@ -379,7 +326,7 @@ def test_run_tournament_rejects_when_regression_fails(
         ("v0", "entry_a"): _loss("v0", "entry_a", drift_loss=5.0, pass_fail=False),
         ("v1", "entry_a"): _loss("v1", "entry_a", drift_loss=0.0, pass_fail=True),
     }
-    _install_telemetry_stubs(monkeypatch, canned)
+    _install_run_single_stub(monkeypatch, canned)
 
     # But the regression suite is busted on the child snapshot.
     _set_regression_result(
@@ -399,7 +346,7 @@ def test_run_tournament_rejects_when_regression_fails(
 
     result = asyncio.run(
         run_tournament(
-            adapter=_StubAdapter(),
+            adapter=object(),
             parent_gen=parent_gen,
             child_gen=child_gen,
             board=_board(),
@@ -441,7 +388,7 @@ def test_run_tournament_promotes_when_regression_passes(
         ("v0", "entry_a"): _loss("v0", "entry_a", drift_loss=5.0, pass_fail=True),
         ("v1", "entry_a"): _loss("v1", "entry_a", drift_loss=0.0, pass_fail=True),
     }
-    _install_telemetry_stubs(monkeypatch, canned)
+    _install_run_single_stub(monkeypatch, canned)
     _set_regression_result(
         monkeypatch,
         RegressionResult(
@@ -459,7 +406,7 @@ def test_run_tournament_promotes_when_regression_passes(
 
     result = asyncio.run(
         run_tournament(
-            adapter=_StubAdapter(),
+            adapter=object(),
             parent_gen=parent_gen,
             child_gen=child_gen,
             board=_board(),
@@ -498,7 +445,7 @@ def test_run_tournament_skips_regression_when_flag_off(
         ("v0", "entry_a"): _loss("v0", "entry_a", drift_loss=5.0, pass_fail=True),
         ("v1", "entry_a"): _loss("v1", "entry_a", drift_loss=0.0, pass_fail=True),
     }
-    _install_telemetry_stubs(monkeypatch, canned)
+    _install_run_single_stub(monkeypatch, canned)
 
     called = {"hit": False}
 
@@ -507,14 +454,12 @@ def test_run_tournament_skips_regression_when_flag_off(
         called["hit"] = True
         return RegressionResult(False, ("x",), "1 tests failed", 0.1)
 
-    monkeypatch.setattr(
-        "zicato.tournament.runner.run_regression_suite", fake_run
-    )
+    monkeypatch.setattr("zicato.tournament.runner.run_regression_suite", fake_run)
 
     weights = ScoringWeights(promote_margin=0.01)  # regression_gate_enabled=False
     result = asyncio.run(
         run_tournament(
-            adapter=_StubAdapter(),
+            adapter=object(),
             parent_gen=parent_gen,
             child_gen=child_gen,
             board=_board(),
@@ -539,17 +484,13 @@ def _make_cli_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     loader_mod = types.SimpleNamespace(
         load_workspace_config=lambda root: {"mutable_trees": []},
         load_current_board=lambda root: _board(),
-        load_current_scoring=lambda root: ScoringWeights(
-            regression_gate_enabled=True
-        ),
+        load_current_scoring=lambda root: ScoringWeights(regression_gate_enabled=True),
     )
     adapter_factory_mod = types.SimpleNamespace(
-        make_adapter_from_config=lambda cfg: _StubAdapter(),
+        make_adapter_from_config=lambda cfg: object(),
     )
     runtime_factory_mod = types.SimpleNamespace(
-        make_runtime_config=lambda cfg, *, workspace_root: _make_runtime_config(
-            workspace_root
-        ),
+        make_runtime_config=lambda cfg, *, workspace_root: _make_runtime_config(workspace_root),
     )
     monkeypatch.setattr(
         "zicato.cli.commands.tournament._resolve_workspace_components",
@@ -557,9 +498,7 @@ def _make_cli_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_cli_skip_regression_bypasses_gate(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_cli_skip_regression_bypasses_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """When ``--skip-regression`` is passed, the CLI mutates weights so the
     runner takes the fast path even if scoring.json enabled the gate."""
     from click.testing import CliRunner
@@ -594,9 +533,7 @@ def test_cli_skip_regression_bypasses_gate(
             per_entry_losses={},
         )
 
-    monkeypatch.setattr(
-        "zicato.tournament.run_tournament", fake_run_tournament
-    )
+    monkeypatch.setattr("zicato.tournament.run_tournament", fake_run_tournament)
 
     runner = CliRunner()
     res = runner.invoke(
@@ -646,9 +583,7 @@ def test_cli_keeps_regression_flag_when_not_skipped(
             per_entry_losses={},
         )
 
-    monkeypatch.setattr(
-        "zicato.tournament.run_tournament", fake_run_tournament
-    )
+    monkeypatch.setattr("zicato.tournament.run_tournament", fake_run_tournament)
 
     runner = CliRunner()
     res = runner.invoke(
