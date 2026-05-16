@@ -267,8 +267,9 @@ def _install_telemetry_stubs(
         config: Any,
         workspace_root: Path,
         epoch_id: str,
+        side: str,
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root
+        del adapter, weights, config, workspace_root, side
         expectation_result = (
             ExpectationResult(kind="predicate", passed=True)
             if entry.expectation is not None

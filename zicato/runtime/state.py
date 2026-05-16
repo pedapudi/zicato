@@ -450,19 +450,23 @@ def write_active_tournament(workspace_root: Path, t: ActiveTournament) -> None:
     atomic_write_json(active_tournament_path(workspace_root), t.to_dict())
 
 
-def update_tournament_entry(workspace_root: Path, entry_id: str, **updates: Any) -> None:
+def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **updates: Any) -> None:
     """Update one entry inside the active tournament.
 
-    Reads the current tournament JSON, replaces every entry whose
-    :attr:`ActiveTournamentEntry.entry_id` matches with the per-field
-    overrides supplied as keyword arguments, and atomically writes the
-    result. If no tournament file exists, the call is a no-op (rather
-    than an error) — the orchestrator may not have initialized one yet.
+    Reads the current tournament JSON, replaces the entry matching the
+    ``(entry_id, side)`` pair with the per-field overrides supplied as
+    keyword arguments, and atomically writes the result. If no
+    tournament file exists, the call is a no-op (rather than an error) —
+    the orchestrator may not have initialized one yet.
 
-    Multiple rows can share an ``entry_id`` (one per side) and the
-    updater touches every matching row. Callers that need per-side
-    targeting should call twice with different ``side=...`` payloads
-    in :func:`write_active_tournament` before transition.
+    Each board entry appears TWICE in :attr:`ActiveTournament.entries` —
+    once with ``side="parent"`` and once with ``side="child"``. Matching
+    on ``entry_id`` alone would land a parent-side transition on the
+    child row (or both rows), so the ``side`` is part of the key. Only
+    the FIRST row matching the pair is updated; if two rows somehow
+    still share the same ``(entry_id, side)`` the later duplicates are
+    left untouched rather than crashing — the call stays a benign no-op
+    on a malformed tournament file.
 
     Special-cased fields are passed through :class:`dataclasses.replace`
     so unknown keyword names raise :class:`TypeError` — the call site
@@ -471,7 +475,14 @@ def update_tournament_entry(workspace_root: Path, entry_id: str, **updates: Any)
     current = read_active_tournament(workspace_root)
     if current is None:
         return
-    new_entries = [replace(e, **updates) if e.entry_id == entry_id else e for e in current.entries]
+    new_entries: list[ActiveTournamentEntry] = []
+    updated = False
+    for e in current.entries:
+        if not updated and e.entry_id == entry_id and e.side == side:
+            new_entries.append(replace(e, **updates))
+            updated = True
+        else:
+            new_entries.append(e)
     new = replace(current, entries=new_entries)
     write_active_tournament(workspace_root, new)
 

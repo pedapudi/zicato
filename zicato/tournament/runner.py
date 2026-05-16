@@ -567,8 +567,21 @@ async def _run_single(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    side: str,
 ) -> LossProfile:
     """Run one entry under one generation in an isolated subprocess worker.
+
+    ``side`` is the tournament side this run belongs to — ``"parent"``
+    or ``"child"`` — supplied explicitly by the caller, which knows
+    whether ``generation`` is the tournament's parent or child. It is
+    used solely to target the correct row in the
+    :class:`~zicato.runtime.state.ActiveTournament` grid: each board
+    entry has TWO rows (one per side), so a per-entry state transition
+    must be keyed on ``(entry_id, side)``, not ``entry_id`` alone, or a
+    parent-side transition lands on the child row (and vice versa).
+    Empty string when the run is not part of a tournament (ad-hoc
+    callers); :func:`update_tournament_entry` then matches nothing and
+    the call is a benign no-op.
 
     Sequencing:
 
@@ -618,7 +631,7 @@ async def _run_single(
             state_mod.update_tournament_entry(
                 workspace_root,
                 entry.id,
-                side=_tournament_side_for(generation, workspace_root),
+                side,
                 status="running",
                 started_at=_now_iso_utc(),
             )
@@ -767,33 +780,12 @@ async def _run_single(
                 state_mod.update_tournament_entry(
                     workspace_root,
                     entry.id,
-                    side=_tournament_side_for(generation, workspace_root),
+                    side,
                     status="completed",
                     completed_at=_now_iso_utc(),
                 )
             except Exception:  # noqa: BLE001
                 pass
-
-
-def _tournament_side_for(generation: Generation, workspace_root: Path) -> str:
-    """Map a generation id to 'parent' or 'child' by consulting the
-    currently-active tournament state file. Returns '' if no tournament
-    is active (the dashboard falls back to neutral rendering)."""
-    rt = _runtime_state()
-    if rt is None:
-        return ""
-    state_mod, _ = rt
-    try:
-        tournament = state_mod.read_active_tournament(workspace_root)
-    except Exception:  # noqa: BLE001
-        return ""
-    if tournament is None:
-        return ""
-    if generation.id == tournament.parent_generation_id:
-        return "parent"
-    if generation.id == tournament.child_generation_id:
-        return "child"
-    return ""
 
 
 async def _run_generation(
@@ -805,8 +797,19 @@ async def _run_generation(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    side: str,
 ) -> dict[str, LossProfile]:
-    """Run all board entries under one generation, sequentially."""
+    """Run all board entries under one generation, sequentially.
+
+    ``side`` (``"parent"`` / ``"child"``, or ``""`` outside a
+    tournament) identifies which side of the active tournament this
+    generation is. It is threaded straight through to
+    :func:`_run_single` so per-entry dashboard transitions land on the
+    correct ``(entry_id, side)`` row — the caller knows the side
+    unambiguously (it picked ``generation`` as the parent or the child),
+    so it is passed explicitly rather than re-derived from the state
+    file.
+    """
     losses: dict[str, LossProfile] = {}
     for entry in board:
         loss = await _run_single(
@@ -817,6 +820,7 @@ async def _run_generation(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
+            side=side,
         )
         losses[entry.id] = loss
     return losses
@@ -953,6 +957,7 @@ async def run_tournament(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
+            side="parent",
         )
         child_losses = await _run_generation(
             adapter=adapter,
@@ -962,6 +967,7 @@ async def run_tournament(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
+            side="child",
         )
     finally:
         if rt is not None:
@@ -1032,6 +1038,10 @@ async def run_fast_mode(
         config=config,
         workspace_root=workspace_root,
         epoch_id=epoch_id,
+        # Fast mode runs only the child and writes no ActiveTournament
+        # file; the side label is "child" for the rare case a tournament
+        # file does exist, and a benign no-op otherwise.
+        side="child",
     )
 
     child_agg = aggregate_generation_score(list(child_losses.values()), weights)
