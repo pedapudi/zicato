@@ -27,10 +27,12 @@ Two public entry points:
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import json
 import logging
 import shutil
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -809,6 +811,29 @@ async def evolve_once(
 _DEGENERATE_HEALTH_STOP_THRESHOLD = 2
 
 
+def _budget_aborted_outcome(parent_generation_id: str, budget_s: int) -> EvolveRoundOutcome:
+    """Build the synthetic outcome for a round cut short by the total budget.
+
+    Used when a single round's work is cancelled by
+    :func:`asyncio.wait_for` because finishing it would push the whole
+    ``evolve_n_rounds`` invocation past ``max_wall_clock_seconds``. The
+    round never produced a real tournament decision, so we fabricate a
+    rejection-style outcome whose ``rejection_reason`` is the symbolic
+    ``"wall_clock_budget"`` string — the same token the per-entry
+    budget uses for its aborts — so journal readers and the CLI can
+    recognise it.
+    """
+    return EvolveRoundOutcome(
+        parent_generation_id=parent_generation_id,
+        proposed_generation_id="",
+        tournament_decision="rejected",
+        rejection_reason=f"wall_clock_budget: evolve total budget of {budget_s}s exceeded",
+        parent_scalar=0.0,
+        child_scalar=0.0,
+        delta_scalar=0.0,
+    )
+
+
 async def evolve_n_rounds(
     *,
     rounds: int,
@@ -823,6 +848,8 @@ async def evolve_n_rounds(
     auto_epoch: bool = True,
     epoch_name: str | None = None,
     stop_on_degenerate_health: bool = True,
+    max_wall_clock_seconds: int | None = None,
+    stop_reason_out: list[str] | None = None,
 ) -> list[EvolveRoundOutcome]:
     """Loop :func:`evolve_once` up to ``rounds`` times.
 
@@ -843,6 +870,31 @@ async def evolve_n_rounds(
     counter. Pass ``stop_on_degenerate_health=False`` to opt out and run
     every requested round regardless of health.
 
+    A third early-exit is the **total wall-clock budget**: when
+    ``max_wall_clock_seconds`` is set (``None``, the default, leaves the
+    loop unbounded — the historical behaviour), the orchestrator records
+    a monotonic start time and enforces the ceiling two ways:
+
+    * **Between rounds** — before starting round N+1, if the elapsed
+      time has already reached the budget, the loop stops cleanly with
+      a logged message and returns the outcomes gathered so far. This
+      mirrors the consecutive-reject breaker's shape exactly.
+    * **Within a round** — each round's work is wrapped in
+      :func:`asyncio.wait_for` with a timeout equal to the *remaining*
+      budget, so a single long round cannot blow the total. A round
+      that would exceed the ceiling is cancelled; it is recorded as an
+      aborted round (a synthetic :class:`EvolveRoundOutcome` carrying a
+      ``"wall_clock_budget"`` rejection reason) and the loop stops.
+
+    The total budget is enforced *in addition to* — not instead of —
+    each board entry's own ``wall_clock_budget_seconds``; both apply.
+    Note the within-round cancellation is a Layer-1 ``asyncio.wait_for``
+    guard (see ``docs/design/ROBUSTNESS.md``): it only pre-empts
+    *cooperative* async work. A round wedged in a blocking call or a
+    CPU-bound loop is not hard-killed here — that requires the
+    subprocess-worker layer (L3). This is the same contract the
+    per-entry budget relies on.
+
     Contract-hash auto-epoching runs ONCE, before the round loop: when
     ``epoch_id`` is ``None`` and ``auto_epoch`` is true, the orchestrator
     resolves (and, if the contract drifted, auto-rolls) the epoch via
@@ -852,10 +904,28 @@ async def evolve_n_rounds(
     skipped entirely — an explicit target always wins.
 
     The list of :class:`EvolveRoundOutcome` returned has one entry per
-    round attempted (which may be fewer than ``rounds`` if either
+    round attempted (which may be fewer than ``rounds`` if any
     early-stop fired).
+
+    ``stop_reason_out`` is an optional caller-supplied list the function
+    appends a single symbolic terminal-reason string to before
+    returning, so a caller (the CLI) can render a summary that
+    distinguishes the terminal states without re-deriving them from the
+    outcomes. One of: ``"completed"`` (all rounds ran),
+    ``"consecutive_rejections"``, ``"degenerate_health"``,
+    ``"wall_clock_budget_between_rounds"`` (the total budget was already
+    spent before the next round started), or
+    ``"wall_clock_budget_mid_round"`` (a round was cancelled because
+    finishing it would overrun the total budget). Callers that do not
+    pass the list see no behavioural change.
     """
+
+    def _set_stop_reason(reason: str) -> None:
+        if stop_reason_out is not None:
+            stop_reason_out.append(reason)
+
     if rounds <= 0:
+        _set_stop_reason("completed")
         return []
 
     # Contract-hash auto-epoching — resolve the epoch ONCE up front.
@@ -892,7 +962,30 @@ async def evolve_n_rounds(
         beater.bump_now()
         consecutive_rejections = 0
         consecutive_critical_health = 0
+        # Total wall-clock budget — a monotonic clock so a wall-clock
+        # adjustment mid-run can't move the deadline. ``None`` leaves
+        # the loop unbounded (the historical behaviour).
+        budget_start = time.monotonic()
+        budget_stopped = False
+        stop_reason = "completed"
         for round_idx in range(rounds):
+            # Between-rounds budget check — before spending the next
+            # round's LLM calls, bail if the total budget is spent.
+            # Same shape as the consecutive-reject breaker above.
+            if max_wall_clock_seconds is not None:
+                elapsed = time.monotonic() - budget_start
+                if elapsed >= max_wall_clock_seconds:
+                    log.warning(
+                        "evolve_n_rounds: evolve total wall-clock budget of %ds "
+                        "reached after %d rounds (round %d/%d)",
+                        max_wall_clock_seconds,
+                        round_idx,
+                        round_idx,
+                        rounds,
+                    )
+                    budget_stopped = True
+                    stop_reason = "wall_clock_budget_between_rounds"
+                    break
             beater.update(
                 epoch_id=epoch_id or "",
                 round_index=round_idx,
@@ -900,18 +993,56 @@ async def evolve_n_rounds(
                 phase=f"evolve_once:round_{round_idx}",
             )
             beater.bump_now()
-            outcome = await evolve_once(
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=auxiliary_call_llm,
-                instance_id=instance_id,
-                fast_mode=fast_mode,
-                max_proposer_retries=max_proposer_retries,
-                beater=beater,
-                round_index=round_idx,
-                total_rounds=rounds,
-            )
+
+            async def _run_round(_round_idx: int = round_idx) -> EvolveRoundOutcome:
+                return await evolve_once(
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    harness_call_llm=harness_call_llm,
+                    auxiliary_call_llm=auxiliary_call_llm,
+                    instance_id=instance_id,
+                    fast_mode=fast_mode,
+                    max_proposer_retries=max_proposer_retries,
+                    beater=beater,
+                    round_index=_round_idx,
+                    total_rounds=rounds,
+                )
+
+            if max_wall_clock_seconds is None:
+                # Unbounded — run the round with no within-round ceiling.
+                outcome = await _run_round()
+            else:
+                remaining = max_wall_clock_seconds - (time.monotonic() - budget_start)
+                # ``remaining`` is > 0 here (the between-rounds check
+                # above already returned for an exhausted budget), but
+                # clamp defensively against a tiny / negative slice.
+                remaining = max(remaining, 0.001)
+                try:
+                    # Layer-1 asyncio.wait_for guard: a round that would
+                    # push past the total budget is cancelled. This only
+                    # pre-empts cooperative async work — a round wedged
+                    # in a blocking call or CPU-bound loop is not
+                    # hard-killed here; that needs the L3 subprocess
+                    # worker. Same caveat as the per-entry budget. See
+                    # docs/design/ROBUSTNESS.md.
+                    outcome = await asyncio.wait_for(_run_round(), timeout=remaining)
+                except TimeoutError:
+                    # asyncio.wait_for raises the builtin TimeoutError
+                    # (asyncio.TimeoutError is an alias of it on 3.11+).
+                    parent_id = _safe_resolve_parent(workspace_root, epoch_id)
+                    outcome = _budget_aborted_outcome(parent_id, max_wall_clock_seconds)
+                    outcomes.append(outcome)
+                    log.warning(
+                        "evolve_n_rounds: round %d aborted — evolve total wall-clock "
+                        "budget of %ds exceeded mid-round; stopping (round %d/%d)",
+                        round_idx,
+                        max_wall_clock_seconds,
+                        round_idx + 1,
+                        rounds,
+                    )
+                    budget_stopped = True
+                    stop_reason = "wall_clock_budget_mid_round"
+                    break
             outcomes.append(outcome)
             beater.update(
                 epoch_id=epoch_id or "",
@@ -945,6 +1076,7 @@ async def evolve_n_rounds(
                         round_idx + 1,
                         rounds,
                     )
+                    stop_reason = "consecutive_rejections"
                     break
             # Loop-health circuit breaker — stop early when the loop has
             # produced no usable signal for too many rounds running.
@@ -961,14 +1093,18 @@ async def evolve_n_rounds(
                         round_idx + 1,
                         rounds,
                     )
+                    stop_reason = "degenerate_health"
                     break
             else:
                 consecutive_critical_health = 0
-        beater.update(phase="evolve_n_rounds:done")
+        beater.update(
+            phase="evolve_n_rounds:budget_exhausted" if budget_stopped else "evolve_n_rounds:done"
+        )
         beater.bump_now()
     finally:
         await beater.stop()
         release_workspace_lock(lock)
+    _set_stop_reason(stop_reason)
     return outcomes
 
 
@@ -1070,6 +1206,24 @@ def _resolve_current_generation(workspace_root: Path, epoch_id: str) -> str:
         return (1, 0, name)
 
     return sorted(candidates, key=_key)[-1]
+
+
+def _safe_resolve_parent(workspace_root: Path, epoch_id: str | None) -> str:
+    """Best-effort resolve the lineage head for a synthetic abort outcome.
+
+    Used only on the within-round budget-abort path, where we need *a*
+    ``parent_generation_id`` for the fabricated :class:`EvolveRoundOutcome`
+    but the round was cancelled before it resolved its own parent. Any
+    resolution failure (no baseline yet, missing epoch) degrades to the
+    empty string rather than masking the real budget-abort message with
+    an unrelated traceback.
+    """
+    if not epoch_id:
+        return ""
+    try:
+        return _resolve_current_generation(workspace_root, epoch_id)
+    except (FileNotFoundError, OSError):
+        return ""
 
 
 def _set_current_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> None:

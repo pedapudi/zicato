@@ -212,6 +212,20 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     help="Stop early when this many rounds in a row are rejected.",
 )
 @click.option(
+    "--max-wall-clock-seconds",
+    default=None,
+    type=click.IntRange(min=1),
+    envvar="ZICATO_MAX_WALL_CLOCK_SECONDS",
+    help=(
+        "Total wall-clock budget for this whole evolve invocation, in "
+        "seconds. The loop stops cleanly between rounds once the budget "
+        "is spent, and a single round that would overrun it is cancelled "
+        "and recorded as aborted. Unset (the default) leaves the loop "
+        "unbounded. Applies on top of each board entry's own "
+        "wall_clock_budget_seconds. Env var: ZICATO_MAX_WALL_CLOCK_SECONDS."
+    ),
+)
+@click.option(
     "--no-auto-epoch",
     is_flag=True,
     default=False,
@@ -256,6 +270,7 @@ def evolve_cmd(
     harness_dotted: str,
     auxiliary_dotted: str,
     max_consecutive_rejections: int,
+    max_wall_clock_seconds: int | None,
     no_auto_epoch: bool,
     epoch_name: str | None,
     no_dashboard: bool,
@@ -280,6 +295,11 @@ def evolve_cmd(
     # `zicato --help` time.
     from zicato.orchestrator import evolve_n_rounds  # noqa: PLC0415
 
+    # ``evolve_n_rounds`` appends a single symbolic terminal-reason
+    # string here so the summary below can name exactly why the loop
+    # ended.
+    stop_reason_out: list[str] = []
+
     async def _run() -> list[Any]:
         sup = await _maybe_spawn_supervisor(
             workspace_root,
@@ -296,8 +316,10 @@ def evolve_cmd(
                 auxiliary_call_llm=auxiliary_call_llm,
                 fast_mode=(mode == "fast"),
                 max_consecutive_rejections=max_consecutive_rejections,
+                max_wall_clock_seconds=max_wall_clock_seconds,
                 auto_epoch=not no_auto_epoch,
                 epoch_name=epoch_name,
+                stop_reason_out=stop_reason_out,
             )
         finally:
             await _terminate_supervisor(sup)
@@ -310,6 +332,41 @@ def evolve_cmd(
         # missing baseline. Both are operator-actionable; surface them
         # as a clean CLI error rather than a traceback.
         raise click.ClickException(str(exc)) from exc
+
+    # Final summary line — say explicitly why the loop ended. The
+    # total wall-clock budget stop is called out distinctly from "all
+    # rounds done" and from the consecutive-reject early-stop.
+    stop_reason = stop_reason_out[0] if stop_reason_out else "completed"
+    ran = len(outcomes)
+    if stop_reason == "wall_clock_budget_between_rounds":
+        click.echo(
+            f"evolve: stopped on the total wall-clock budget of "
+            f"{max_wall_clock_seconds}s — ran {ran} of {rounds} requested "
+            f"rounds before the budget was spent.",
+            err=True,
+        )
+    elif stop_reason == "wall_clock_budget_mid_round":
+        click.echo(
+            f"evolve: stopped on the total wall-clock budget of "
+            f"{max_wall_clock_seconds}s — round {ran} was cancelled "
+            f"mid-flight (recorded as aborted) because finishing it would "
+            f"have overrun the budget; ran {ran} of {rounds} requested rounds.",
+            err=True,
+        )
+    elif stop_reason == "consecutive_rejections":
+        click.echo(
+            f"evolve: stopped early after {max_consecutive_rejections} "
+            f"consecutive rejections — ran {ran} of {rounds} requested rounds.",
+            err=True,
+        )
+    elif stop_reason == "degenerate_health":
+        click.echo(
+            f"evolve: stopped early on a degenerate loop-health finding — "
+            f"ran {ran} of {rounds} requested rounds.",
+            err=True,
+        )
+    else:
+        click.echo(f"evolve: completed all {ran} requested rounds.", err=True)
 
     payload = [
         {
