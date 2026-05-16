@@ -1,0 +1,873 @@
+"""Build and incrementally update the zicato analytical index.
+
+Three public entry points:
+
+* :func:`rebuild_index` — the canonical "rebuild from files" path.
+  Drops ``index.db`` and walks every epoch / generation / run under
+  ``.zicato/``, re-deriving every row from the workspace files. Backs
+  ``zicato reindex``.
+* :func:`ingest_run` — incrementally upserts one run's ``runs`` /
+  ``loss_profiles`` / ``metric_counts`` rows. The orchestrator calls
+  this for live dual-write the moment a run's ``loss.json`` lands
+  (R9-4).
+* :func:`ingest_experiment` — incrementally upserts one experiment, its
+  patches, and (when the experiment has resolved) its tournament row.
+
+Source-of-truth rule
+--------------------
+Everything ingested is *derived*. The files under ``.zicato/`` are
+canonical; the index holds nothing that is not already on disk. That is
+why :func:`rebuild_index` can drop and recreate the database with no
+loss — it is purely a re-projection of the files.
+
+Idempotency
+-----------
+Every write is an ``INSERT ... ON CONFLICT DO UPDATE`` upsert keyed on
+the natural primary key (``run_id``, ``(epoch_id, generation_id)``,
+``patch_id``, ``tournament_id``). Running :func:`ingest_run` or
+:func:`ingest_experiment` twice produces the same rows; running
+:func:`rebuild_index` repeatedly is a no-op beyond the file drop.
+
+Reading source files
+--------------------
+The index reuses zicato's own readers wherever they exist
+(:func:`zicato.epoch.lineage.load_lineage`,
+:func:`zicato.epoch.lifecycle.list_epochs`,
+:func:`zicato.epoch.journal.read_experiment`,
+:func:`zicato.telemetry.reducer.read_loss_profile`) so the index never
+re-derives a parse that a canonical module already owns. The only
+bespoke parsing here is the events-JSONL drift tally, and even that
+mirrors the reducer's normalisation helpers.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections import Counter
+from collections.abc import Iterable
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+from zicato.core.types import Experiment, LossProfile
+from zicato.core.workspace import (
+    events_jsonl_path,
+    loss_profile_path,
+)
+from zicato.index.schema import apply_schema
+
+
+def _default_db_path(workspace_root: Path) -> Path:
+    """The canonical index location: ``{workspace_root}/index.db``."""
+    return workspace_root / "index.db"
+
+
+# ---------------------------------------------------------------------------
+# events.jsonl drift tally
+# ---------------------------------------------------------------------------
+
+
+def _drift_counts_from_events(events_path: Path) -> Counter[tuple[str, str]]:
+    """Tally ``(drift_kind, severity)`` pairs from a run's events JSONL.
+
+    A best-effort plain-JSON walk: every line is parsed as a dict and
+    any ``DriftDetected`` payload contributes one to its
+    ``(kind, severity)`` bucket. We deliberately do NOT route through
+    goldfive's strict proto replay here — the index must build in a
+    stripped-down environment, and the reducer already owns the
+    proto-strict path for scoring. The kind / severity normalisation
+    mirrors :mod:`zicato.telemetry.reducer` so the index agrees with
+    the loss profile.
+
+    Goldfive's persistence sink serialises events with
+    ``MessageToJson``, which renders payload keys in camelCase
+    (``driftDetected``); zicato's own dict-fallback writer uses
+    snake_case (``drift_detected``). We accept either so the index
+    builds regardless of which writer produced the JSONL.
+
+    Returns an empty counter when the file is absent or unreadable;
+    the index tolerates runs whose events file was never written.
+    """
+    tally: Counter[tuple[str, str]] = Counter()
+    if not events_path.exists():
+        return tally
+    try:
+        text = events_path.read_text(encoding="utf-8")
+    except OSError:
+        return tally
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(evt, dict):
+            continue
+        payload = evt.get("drift_detected")
+        if not isinstance(payload, dict):
+            payload = evt.get("driftDetected")
+        if not isinstance(payload, dict):
+            continue
+        kind = _normalize_drift_kind(payload.get("kind", ""))
+        sev = _normalize_severity(payload.get("severity", ""))
+        if kind is None or sev is None:
+            continue
+        tally[(kind, sev)] += 1
+    return tally
+
+
+def _normalize_drift_kind(raw: Any) -> str | None:
+    """Lowercase-canonicalise a wire-form drift-kind string.
+
+    Mirrors :func:`zicato.telemetry.reducer._normalize_drift_kind_str`:
+    accepts a bare lowercase kind, an uppercase ``DRIFT_KIND_*`` enum
+    name, or the unspecified sentinel (mapped to ``None``).
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+    if raw.startswith("DRIFT_KIND_"):
+        suffix = raw[len("DRIFT_KIND_") :].lower()
+        if suffix in ("", "unspecified"):
+            return None
+        return suffix
+    return raw.lower()
+
+
+def _normalize_severity(raw: Any) -> str | None:
+    """Map a wire-form severity string to ``info`` / ``warning`` / ``critical``."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    if raw.startswith("DRIFT_SEVERITY_"):
+        suffix = raw[len("DRIFT_SEVERITY_") :].lower()
+        return suffix if suffix in ("info", "warning", "critical") else None
+    lo = raw.lower()
+    return lo if lo in ("info", "warning", "critical") else None
+
+
+def _namespace_of(metric_name: str) -> str:
+    """Return the namespace prefix of a metric name (``""`` if unnamespaced).
+
+    The :class:`zicato.core.types.MetricCount` convention is
+    ``"<namespace>:<key>"``. We keep the namespace WITHOUT the trailing
+    colon in the ``metric_counts.namespace`` column so a query can
+    ``WHERE namespace = 'drift'`` without remembering the punctuation.
+    """
+    idx = metric_name.find(":")
+    return metric_name[:idx] if idx > 0 else ""
+
+
+# ---------------------------------------------------------------------------
+# Row writers (upserts)
+# ---------------------------------------------------------------------------
+
+
+def _upsert_epoch(
+    conn: sqlite3.Connection,
+    epoch_id: str,
+    contract_hash: str,
+    created_at: str,
+    closed: bool,
+) -> None:
+    conn.execute(
+        "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed) "
+        "VALUES(?, ?, ?, ?) "
+        "ON CONFLICT(epoch_id) DO UPDATE SET "
+        "contract_hash = excluded.contract_hash, "
+        "created_at = excluded.created_at, "
+        "closed = excluded.closed",
+        (epoch_id, contract_hash, created_at, 1 if closed else 0),
+    )
+
+
+def _upsert_generation(
+    conn: sqlite3.Connection,
+    epoch_id: str,
+    generation_id: str,
+    parent_generation_id: str | None,
+    promoted: bool,
+    created_at: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO generations("
+        "epoch_id, generation_id, parent_generation_id, promoted, created_at) "
+        "VALUES(?, ?, ?, ?, ?) "
+        "ON CONFLICT(epoch_id, generation_id) DO UPDATE SET "
+        "parent_generation_id = excluded.parent_generation_id, "
+        "promoted = excluded.promoted, "
+        "created_at = excluded.created_at",
+        (
+            epoch_id,
+            generation_id,
+            parent_generation_id,
+            1 if promoted else 0,
+            created_at,
+        ),
+    )
+
+
+def _upsert_run(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    started_at: str,
+    ended_at: str,
+    aborted: bool,
+    runtime_ms: int,
+) -> None:
+    conn.execute(
+        "INSERT INTO runs("
+        "run_id, epoch_id, generation_id, entry_id, started_at, ended_at, "
+        "aborted, runtime_ms) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(run_id) DO UPDATE SET "
+        "epoch_id = excluded.epoch_id, "
+        "generation_id = excluded.generation_id, "
+        "entry_id = excluded.entry_id, "
+        "started_at = excluded.started_at, "
+        "ended_at = excluded.ended_at, "
+        "aborted = excluded.aborted, "
+        "runtime_ms = excluded.runtime_ms",
+        (
+            run_id,
+            epoch_id,
+            generation_id,
+            entry_id,
+            started_at,
+            ended_at,
+            1 if aborted else 0,
+            int(runtime_ms),
+        ),
+    )
+
+
+def _upsert_loss_profile(conn: sqlite3.Connection, profile: LossProfile) -> None:
+    conn.execute(
+        "INSERT INTO loss_profiles("
+        "run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
+        "runtime_ms, wall_clock_budget_exceeded, loss_json) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(run_id) DO UPDATE SET "
+        "epoch_id = excluded.epoch_id, "
+        "generation_id = excluded.generation_id, "
+        "entry_id = excluded.entry_id, "
+        "drift_loss = excluded.drift_loss, "
+        "pass_fail = excluded.pass_fail, "
+        "runtime_ms = excluded.runtime_ms, "
+        "wall_clock_budget_exceeded = excluded.wall_clock_budget_exceeded, "
+        "loss_json = excluded.loss_json",
+        (
+            profile.run_id,
+            profile.epoch_id,
+            profile.generation_id,
+            profile.entry_id,
+            float(profile.drift_loss),
+            _bool_to_int_or_none(profile.pass_fail),
+            int(profile.runtime_ms),
+            1 if profile.wall_clock_budget_exceeded else 0,
+            json.dumps(asdict(profile), sort_keys=True),
+        ),
+    )
+
+
+def _bool_to_int_or_none(value: bool | None) -> int | None:
+    """Map an optional bool to SQLite's ``0`` / ``1`` / ``NULL``.
+
+    ``pass_fail`` is genuinely tri-state — ``None`` means "no
+    expectation was attached to the entry" — so we preserve ``NULL``
+    rather than collapsing it to ``0``.
+    """
+    if value is None:
+        return None
+    return 1 if value else 0
+
+
+def _replace_metric_counts(
+    conn: sqlite3.Connection,
+    run_id: str,
+    profile: LossProfile,
+) -> None:
+    """Rewrite the ``metric_counts`` rows for one run.
+
+    ``metric_counts`` has no natural primary key (a run produces many
+    rows), so an idempotent upsert is a delete-then-insert keyed on
+    ``run_id``. The rows come from
+    :meth:`LossProfile.unified_metrics`, which yields every drift entry
+    under the ``"drift:"`` namespace plus any non-drift namespaces the
+    reducer derived (cost / output / schema). That covers the contract
+    requirement that metric_counts is populated from BOTH the drift
+    events and the LossProfile's own metric surface.
+    """
+    conn.execute("DELETE FROM metric_counts WHERE run_id = ?", (run_id,))
+    rows: list[tuple[str, str, str, str, float]] = []
+    for mc in profile.unified_metrics():
+        rows.append(
+            (
+                run_id,
+                _namespace_of(mc.name),
+                mc.name,
+                mc.severity,
+                float(mc.count),
+            )
+        )
+    if rows:
+        conn.executemany(
+            "INSERT INTO metric_counts(run_id, namespace, name, severity, count) "
+            "VALUES(?, ?, ?, ?, ?)",
+            rows,
+        )
+
+
+def _upsert_experiment(conn: sqlite3.Connection, experiment: Experiment) -> None:
+    """Write the ``experiments`` row + every ``patches`` row for one experiment."""
+    hyp = experiment.hypothesis
+    outcome = experiment.outcome
+    if outcome is not None:
+        decision: str | None = outcome.tournament_decision
+        rejection_reason: str | None = outcome.rejection_reason
+        scalar_delta: float | None = outcome.scalar_score_delta
+        drift_delta: float | None = outcome.drift_loss_delta
+        pass_delta: float | None = outcome.pass_rate_delta
+        outcome_json: str | None = json.dumps(asdict(outcome), sort_keys=True)
+    else:
+        decision = None
+        rejection_reason = None
+        scalar_delta = None
+        drift_delta = None
+        pass_delta = None
+        outcome_json = None
+
+    conn.execute(
+        "INSERT INTO experiments("
+        "epoch_id, generation_id, hypothesis_core_idea, hypothesis_why, "
+        "hypothesis_json, tournament_decision, rejection_reason, "
+        "scalar_score_delta, drift_loss_delta, pass_rate_delta, outcome_json) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(epoch_id, generation_id) DO UPDATE SET "
+        "hypothesis_core_idea = excluded.hypothesis_core_idea, "
+        "hypothesis_why = excluded.hypothesis_why, "
+        "hypothesis_json = excluded.hypothesis_json, "
+        "tournament_decision = excluded.tournament_decision, "
+        "rejection_reason = excluded.rejection_reason, "
+        "scalar_score_delta = excluded.scalar_score_delta, "
+        "drift_loss_delta = excluded.drift_loss_delta, "
+        "pass_rate_delta = excluded.pass_rate_delta, "
+        "outcome_json = excluded.outcome_json",
+        (
+            experiment.epoch_id,
+            experiment.generation_id,
+            hyp.core_idea,
+            hyp.why,
+            json.dumps(asdict(hyp), sort_keys=True),
+            decision,
+            rejection_reason,
+            scalar_delta,
+            drift_delta,
+            pass_delta,
+            outcome_json,
+        ),
+    )
+
+    for patch in experiment.patches:
+        conn.execute(
+            "INSERT INTO patches("
+            "patch_id, epoch_id, generation_id, mutation_id, op, rationale) "
+            "VALUES(?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(patch_id) DO UPDATE SET "
+            "epoch_id = excluded.epoch_id, "
+            "generation_id = excluded.generation_id, "
+            "mutation_id = excluded.mutation_id, "
+            "op = excluded.op, "
+            "rationale = excluded.rationale",
+            (
+                patch.id,
+                experiment.epoch_id,
+                experiment.generation_id,
+                patch.mutation_id,
+                patch.op,
+                patch.rationale,
+            ),
+        )
+
+
+def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None:
+    """Write a ``tournaments`` row for a resolved experiment.
+
+    A no-op when the experiment has no outcome yet — an unresolved
+    experiment has no tournament. The tournament id is derived as
+    ``"{epoch_id}:{parent}->{child}"`` so it is stable across rebuilds
+    and unique per parent/child pairing.
+
+    The ``parent_scalar`` / ``child_scalar`` columns are not carried
+    by :class:`zicato.core.types.OutcomeRecord` directly — the outcome
+    records only the *delta*. We store the delta in ``delta_scalar``
+    and leave the absolute scalars ``NULL``; a consumer that needs the
+    absolutes joins against the generations' cached ``gen_score.json``.
+    """
+    outcome = experiment.outcome
+    if outcome is None:
+        return
+    tournament_id = (
+        f"{experiment.epoch_id}:{experiment.parent_generation_id}->{experiment.generation_id}"
+    )
+    conn.execute(
+        "INSERT INTO tournaments("
+        "tournament_id, epoch_id, parent_generation_id, child_generation_id, "
+        "decision, parent_scalar, child_scalar, delta_scalar, rejection_reason, "
+        "ran_at) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(tournament_id) DO UPDATE SET "
+        "epoch_id = excluded.epoch_id, "
+        "parent_generation_id = excluded.parent_generation_id, "
+        "child_generation_id = excluded.child_generation_id, "
+        "decision = excluded.decision, "
+        "parent_scalar = excluded.parent_scalar, "
+        "child_scalar = excluded.child_scalar, "
+        "delta_scalar = excluded.delta_scalar, "
+        "rejection_reason = excluded.rejection_reason, "
+        "ran_at = excluded.ran_at",
+        (
+            tournament_id,
+            experiment.epoch_id,
+            experiment.parent_generation_id,
+            experiment.generation_id,
+            outcome.tournament_decision,
+            None,
+            None,
+            float(outcome.scalar_score_delta),
+            outcome.rejection_reason,
+            outcome.ran_at,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Source-file readers
+# ---------------------------------------------------------------------------
+
+
+def _load_loss_profile(path: Path) -> LossProfile | None:
+    """Read one ``loss.json`` via the reducer's reader; ``None`` on failure.
+
+    The reducer owns the canonical ``LossProfile`` (de)serialisation,
+    including the back-compat handling for profiles written before the
+    generalised metric surface — so the index reuses it rather than
+    re-deriving the parse.
+    """
+    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
+
+    try:
+        return read_loss_profile(path)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def _iter_generation_dirs(workspace_root: Path, epoch_id: str) -> Iterable[str]:
+    """Yield generation ids that have a directory on disk under ``epoch_id``.
+
+    The lineage DAG is the authoritative generation list, but a run can
+    land before lineage is updated; walking the directory tree as well
+    means :func:`rebuild_index` never misses a generation that has
+    telemetry on disk.
+    """
+    gens_root = workspace_root / "epochs" / epoch_id / "generations"
+    if not gens_root.exists():
+        return []
+    out: list[str] = []
+    for child in sorted(gens_root.iterdir()):
+        if child.is_dir():
+            out.append(child.name)
+    return out
+
+
+def _iter_run_entry_ids(workspace_root: Path, epoch_id: str, generation_id: str) -> list[str]:
+    """Yield board-entry ids that have a ``runs/`` subdirectory on disk."""
+    runs_root = workspace_root / "epochs" / epoch_id / "generations" / generation_id / "runs"
+    if not runs_root.exists():
+        return []
+    return sorted(child.name for child in runs_root.iterdir() if child.is_dir())
+
+
+# ---------------------------------------------------------------------------
+# Per-run / per-experiment ingest (the building blocks)
+# ---------------------------------------------------------------------------
+
+
+def _ingest_run_into(
+    conn: sqlite3.Connection,
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> bool:
+    """Ingest one run's rows into an open connection.
+
+    Returns ``True`` when a ``loss.json`` was found and ingested,
+    ``False`` when the run directory has no loss profile yet (a run
+    that started but whose reducer has not run). Drift counts from the
+    events JSONL are folded into the loss profile's metric surface so
+    ``metric_counts`` reflects both sources.
+    """
+    lpath = loss_profile_path(workspace_root, epoch_id, generation_id, entry_id)
+    profile = _load_loss_profile(lpath)
+    if profile is None:
+        return False
+
+    # The loss profile already carries metric_counts (drift + cost +
+    # output + schema). When it was written by an older reducer that
+    # left metric_counts empty, fold the events-JSONL drift tally in so
+    # the index still reflects drift signal. We only synthesise when the
+    # profile itself has no drift surface — otherwise the reducer's view
+    # is authoritative and re-adding events would double-count.
+    if not profile.drift_counts and not profile.metric_counts:
+        epath = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id)
+        tally = _drift_counts_from_events(epath)
+        if tally:
+            from dataclasses import replace  # noqa: PLC0415
+
+            from zicato.core.types import DriftCount  # noqa: PLC0415
+
+            synthesised = tuple(
+                DriftCount(kind=kind, severity=sev, count=count)  # type: ignore[arg-type]
+                for (kind, sev), count in sorted(tally.items())
+            )
+            profile = replace(profile, drift_counts=synthesised)
+
+    _upsert_run(
+        conn,
+        run_id=profile.run_id,
+        epoch_id=epoch_id,
+        generation_id=generation_id,
+        entry_id=entry_id,
+        # The workspace does not persist a free-standing per-run record
+        # with wall-clock timestamps — loss.json carries only the
+        # duration. started_at / ended_at are left empty; runtime_ms is
+        # the authoritative timing field.
+        started_at="",
+        ended_at="",
+        aborted=profile.wall_clock_budget_exceeded,
+        runtime_ms=profile.runtime_ms,
+    )
+    _upsert_loss_profile(conn, profile)
+    _replace_metric_counts(conn, profile.run_id, profile)
+    return True
+
+
+def _ingest_experiment_into(
+    conn: sqlite3.Connection,
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+) -> bool:
+    """Ingest one experiment (+ patches + tournament) into an open connection.
+
+    Returns ``True`` when an ``experiment.json`` was found and
+    ingested, ``False`` when the generation has no experiment yet
+    (``v0`` seed generations have no proposer experiment).
+    """
+    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+
+    try:
+        experiment = read_experiment(workspace_root, epoch_id, generation_id)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        return False
+    _upsert_experiment(conn, experiment)
+    _upsert_tournament(conn, experiment)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
+    """Drop and rebuild the index database from the workspace files.
+
+    Walks every epoch (from ``lineage.json`` + each epoch's
+    ``config.json``), every generation under each epoch, and every run
+    under each generation, re-deriving the full set of rows. This is
+    the canonical "rebuild from files" path and backs ``zicato
+    reindex``.
+
+    The database file (and its WAL / SHM sidecars) is deleted first so
+    the rebuild starts from an empty schema — the index carries no
+    state that is not in the files, so dropping it loses nothing.
+
+    Idempotent: running it twice produces an identical database.
+
+    Parameters
+    ----------
+    workspace_root:
+        The ``.zicato/`` directory to index.
+    db_path:
+        Where to write the database. Defaults to
+        ``{workspace_root}/index.db`` — the location every consumer
+        expects.
+
+    Returns
+    -------
+    Path
+        The path the index was written to.
+    """
+    target = db_path if db_path is not None else _default_db_path(workspace_root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Drop the database + WAL/SHM sidecars so the rebuild is from scratch.
+    for suffix in ("", "-wal", "-shm"):
+        sidecar = target.with_name(target.name + suffix)
+        if sidecar.exists():
+            sidecar.unlink()
+
+    conn = sqlite3.connect(str(target))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        apply_schema(conn)
+        _rebuild_all(conn, workspace_root)
+        conn.commit()
+    finally:
+        conn.close()
+    return target
+
+
+def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
+    """Walk the whole workspace, populating every table.
+
+    Epochs come from :func:`zicato.epoch.lifecycle.list_epochs` (which
+    reads each ``config.json``). Generation lineage comes from
+    :func:`zicato.epoch.lineage.load_lineage`. Generation directories
+    and run directories are additionally walked so a generation / run
+    whose telemetry landed before lineage was updated is still indexed.
+    """
+    from zicato.epoch.lifecycle import list_epochs  # noqa: PLC0415
+    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+
+    lineage = load_lineage(workspace_root)
+    lineage_by_epoch: dict[str, dict[str, Any]] = {}
+    for entry in lineage.get("epochs", []):
+        eid = entry.get("id")
+        if isinstance(eid, str):
+            lineage_by_epoch[eid] = entry
+
+    epoch_configs = list_epochs(workspace_root)
+    # Index every epoch that has a config.json, plus any epoch that
+    # appears only in lineage.json (a thin auto-created lineage entry).
+    seen_epochs: set[str] = set()
+    for cfg in epoch_configs:
+        seen_epochs.add(cfg.id)
+        _upsert_epoch(
+            conn,
+            epoch_id=cfg.id,
+            contract_hash=cfg.contract_hash,
+            created_at=cfg.created_at,
+            closed=cfg.closed,
+        )
+        _rebuild_epoch(conn, workspace_root, cfg.id, lineage_by_epoch.get(cfg.id))
+
+    for eid, entry in lineage_by_epoch.items():
+        if eid in seen_epochs:
+            continue
+        # Epoch known only to lineage — no config.json. Index a thin
+        # epoch row and still walk its generations / runs.
+        _upsert_epoch(
+            conn,
+            epoch_id=eid,
+            contract_hash="",
+            created_at=str(entry.get("started_at", "")),
+            closed=bool(entry.get("closed_at")),
+        )
+        _rebuild_epoch(conn, workspace_root, eid, entry)
+
+
+def _rebuild_epoch(
+    conn: sqlite3.Connection,
+    workspace_root: Path,
+    epoch_id: str,
+    lineage_entry: dict[str, Any] | None,
+) -> None:
+    """Populate generations / experiments / runs for one epoch."""
+    # Generation metadata (parent + promoted) from lineage.json.
+    gen_meta: dict[str, dict[str, Any]] = {}
+    if lineage_entry is not None:
+        for g in lineage_entry.get("generations", []):
+            gid = g.get("id")
+            if isinstance(gid, str):
+                gen_meta[gid] = g
+
+    # The set of generations to index is the union of those in lineage
+    # and those with a directory on disk.
+    generation_ids = set(gen_meta) | set(_iter_generation_dirs(workspace_root, epoch_id))
+    for generation_id in sorted(generation_ids):
+        meta = gen_meta.get(generation_id, {})
+        _upsert_generation(
+            conn,
+            epoch_id=epoch_id,
+            generation_id=generation_id,
+            parent_generation_id=meta.get("parent_id"),
+            promoted=bool(meta.get("promoted", False)),
+            created_at=str(meta.get("created_at", "")),
+        )
+        _ingest_experiment_into(conn, workspace_root, epoch_id, generation_id)
+        for entry_id in _iter_run_entry_ids(workspace_root, epoch_id, generation_id):
+            _ingest_run_into(conn, workspace_root, epoch_id, generation_id, entry_id)
+
+
+def _open_for_write(workspace_root: Path, db_path: Path | None) -> tuple[sqlite3.Connection, Path]:
+    """Open (creating + schema-applying if needed) the index for a write.
+
+    Used by the incremental ingest paths. When the database does not
+    exist yet it is created and the schema applied — so the first
+    live dual-write from the orchestrator does not require a prior
+    ``rebuild_index``. The connection is in WAL mode for concurrent
+    reads.
+    """
+    target = db_path if db_path is not None else _default_db_path(workspace_root)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fresh = not target.exists()
+    conn = sqlite3.connect(str(target))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    if fresh:
+        apply_schema(conn)
+    else:
+        # Cheap idempotent re-apply guards against an index file that
+        # exists but predates a table (e.g. a partially-built database).
+        apply_schema(conn)
+    return conn, target
+
+
+def ingest_run(
+    workspace_root: Path,
+    db_path: Path | None,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> None:
+    """Incrementally upsert one run's index rows.
+
+    Reads the run's ``loss.json`` (and, for older profiles with no
+    metric surface, its ``events.jsonl`` drift tally) and upserts the
+    ``runs``, ``loss_profiles``, and ``metric_counts`` rows for it.
+
+    This is the live-dual-write entry point: the orchestrator calls it
+    the moment a run's loss profile lands (R9-4), so the index tracks
+    in-progress epochs without waiting for a full ``zicato reindex``.
+
+    Idempotent — calling it twice for the same run produces the same
+    rows (every write is a keyed upsert; ``metric_counts`` is
+    delete-then-insert keyed on ``run_id``).
+
+    The owning epoch / generation rows are also upserted (best-effort,
+    from ``config.json`` / ``lineage.json``) so a freshly-indexed run
+    is never an orphan. When the database does not exist yet it is
+    created with the schema applied.
+
+    A run whose ``loss.json`` has not been written yet is silently
+    skipped — the orchestrator may call this slightly early.
+    """
+    conn, _ = _open_for_write(workspace_root, db_path)
+    try:
+        _upsert_owning_epoch_generation(conn, workspace_root, epoch_id, generation_id)
+        _ingest_run_into(conn, workspace_root, epoch_id, generation_id, entry_id)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ingest_experiment(
+    workspace_root: Path,
+    db_path: Path | None,
+    epoch_id: str,
+    generation_id: str,
+) -> None:
+    """Incrementally upsert one experiment, its patches, and its tournament.
+
+    Reads the generation's ``experiment.json`` (+ per-patch files) via
+    :func:`zicato.epoch.journal.read_experiment` and upserts the
+    ``experiments`` and ``patches`` rows. When the experiment has a
+    resolved :class:`zicato.core.types.OutcomeRecord` a ``tournaments``
+    row is upserted too; an unresolved experiment writes no tournament
+    row (it gets one on the next ingest after the tournament runs).
+
+    Idempotent — every write is a keyed upsert.
+
+    The owning epoch / generation rows are upserted first so the
+    experiment is never an orphan. When the database does not exist
+    yet it is created with the schema applied. A generation with no
+    ``experiment.json`` (a ``v0`` seed) is silently skipped.
+    """
+    conn, _ = _open_for_write(workspace_root, db_path)
+    try:
+        _upsert_owning_epoch_generation(conn, workspace_root, epoch_id, generation_id)
+        _ingest_experiment_into(conn, workspace_root, epoch_id, generation_id)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _upsert_owning_epoch_generation(
+    conn: sqlite3.Connection,
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+) -> None:
+    """Best-effort upsert of the epoch + generation a run/experiment belongs to.
+
+    Keeps an incrementally-ingested run or experiment from being an
+    orphan row. Reads ``config.json`` for the epoch and ``lineage.json``
+    for the generation's parent / promoted flags; tolerates either
+    being absent (a thin row with empty metadata is still written so a
+    later ``rebuild_index`` or ``ingest_*`` call fills it in).
+    """
+    contract_hash = ""
+    created_at = ""
+    closed = False
+    try:
+        from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
+
+        cfg = load_epoch(workspace_root, epoch_id)
+        contract_hash = cfg.contract_hash
+        created_at = cfg.created_at
+        closed = cfg.closed
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        pass
+    _upsert_epoch(conn, epoch_id, contract_hash, created_at, closed)
+
+    parent_id: str | None = None
+    promoted = False
+    gen_created_at = ""
+    try:
+        from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+
+        lineage = load_lineage(workspace_root)
+        for entry in lineage.get("epochs", []):
+            if entry.get("id") != epoch_id:
+                continue
+            for g in entry.get("generations", []):
+                if g.get("id") == generation_id:
+                    parent_id = g.get("parent_id")
+                    promoted = bool(g.get("promoted", False))
+                    gen_created_at = str(g.get("created_at", ""))
+            break
+    except (OSError, json.JSONDecodeError):
+        pass
+    _upsert_generation(
+        conn,
+        epoch_id=epoch_id,
+        generation_id=generation_id,
+        parent_generation_id=parent_id,
+        promoted=promoted,
+        created_at=gen_created_at,
+    )
+
+
+__all__ = [
+    "rebuild_index",
+    "ingest_run",
+    "ingest_experiment",
+]
