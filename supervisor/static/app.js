@@ -226,10 +226,17 @@ class AppState {
     if (snap.scoring) Object.assign(this.scoring, snap.scoring);
     // The header epoch summary and the full epoch contract are distinct.
     // /api/state carries an `epoch` key that is the full contract object
-    // (epoch_id, board, rubric, ...). When it has an `epoch_id` field it
+    // (epoch_id, board, brief, ...). When it has an `epoch_id` field it
     // is the contract; we also derive the header summary from it.
+    // `rubric` is accepted alongside `brief` so a snapshot from a
+    // pre-rename supervisor build is still recognized as a contract.
     if (snap.epoch && typeof snap.epoch === 'object') {
-      if ('epoch_id' in snap.epoch || 'board' in snap.epoch || 'rubric' in snap.epoch) {
+      if (
+        'epoch_id' in snap.epoch ||
+        'board' in snap.epoch ||
+        'brief' in snap.epoch ||
+        'rubric' in snap.epoch
+      ) {
         this.epochDef = snap.epoch;
         if (snap.epoch.epoch_id) this.epoch.id = snap.epoch.epoch_id;
       } else {
@@ -2721,7 +2728,7 @@ function renderEpochView() {
   renderEpochOverview(def);
   renderEpochHarness(def);
   renderEpochBoard(def);
-  renderEpochRubric(def);
+  renderEpochBrief(def);
   renderEpochScoring(def);
   renderEpochMutations(def);
 }
@@ -2813,24 +2820,32 @@ function renderEpochBoard(def) {
   wrap.appendChild(tbl);
 }
 
-function renderEpochRubric(def) {
-  const wrap = $('epoch-rubric');
+function renderEpochBrief(def) {
+  const wrap = $('epoch-brief');
   clearChildren(wrap);
-  // Centering / max-width is owned by the `.epoch-rubric` CSS rule;
+  // Centering / max-width is owned by the `.epoch-brief` CSS rule;
   // ensure the container carries the class even if markup drifts, and
-  // always wrap content in a `rubric-block` so the readable-block
+  // always wrap content in a `brief-block` so the readable-block
   // styling applies (no lopsided narrow column).
-  wrap.classList.add('epoch-rubric');
-  const rubric = def && typeof def.rubric === 'string' ? def.rubric : '';
-  if (!rubric.trim()) {
-    const empty = el('div', { class: 'rubric-block' }, [
-      el('p', { class: 'empty' }, ['No rubric recorded.']),
+  wrap.classList.add('epoch-brief');
+  // The epoch contract carries the proposer brief under `brief`;
+  // `rubric` is the legacy key and is read as a fallback so a snapshot
+  // from a pre-rename supervisor build still renders.
+  let brief = '';
+  if (def && typeof def.brief === 'string') {
+    brief = def.brief;
+  } else if (def && typeof def.rubric === 'string') {
+    brief = def.rubric;
+  }
+  if (!brief.trim()) {
+    const empty = el('div', { class: 'brief-block' }, [
+      el('p', { class: 'empty' }, ['No proposer brief recorded.']),
     ]);
     wrap.appendChild(empty);
     return;
   }
-  const block = el('div', { class: 'rubric-block' });
-  renderMinimalMarkdown(rubric, block);
+  const block = el('div', { class: 'brief-block' });
+  renderMinimalMarkdown(brief, block);
   wrap.appendChild(block);
 }
 
@@ -4495,7 +4510,7 @@ function mockSnapshot() {
           input_preview: 'Return a strictly-typed JSON object matching the given schema...',
           expectation_kind: 'predicate', budget_s: 600, weight: 1.0, tags: ['schema'] },
       ],
-      rubric: '# Research rubric\n\nThe candidate response is judged on three axes.\n\n## Faithfulness\n\n- Every claim is grounded in a retrieved source.\n- No `off_topic` drift: the answer addresses the brief.\n\n## Completeness\n\n- All sub-questions in the brief are answered.\n- Schema-typed responses validate against the contract.\n\n## Concision\n\n- The answer is no longer than necessary; tool descriptions stay terse.\n',
+      brief: '# Proposer brief\n\nSteering for the proposer this epoch.\n\n## Forbidden edits\n\n- Do not touch `researcher.schema` — it was just stabilized.\n\n## Preferred edits\n\n- Prefer compressing `researcher_tool_descriptions` over persona rewrites.\n\nKeep tool descriptions terse and grounded; off-topic drift dominated v0.\n',
       scoring: {
         drift_weight: 1.0,
         pass_rate_weight: 1.0,

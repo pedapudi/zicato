@@ -45,7 +45,7 @@ POST /api/control/skip-round        — v1.3
 POST /api/control/kill/{run_id}     — v1.3
 POST /api/control/promote/{gen_id}  — v1.3
 POST /api/control/reject/{gen_id}   — v1.3
-POST /api/control/rubric            — v1.3 — body: new rubric text
+POST /api/control/brief             — v1.3 — body: new proposer brief text
 ```
 
 For v1.2 the action buttons render but are disabled with a tooltip

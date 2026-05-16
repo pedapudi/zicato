@@ -21,7 +21,7 @@ was thinking and whether it was right — is gone.
 An **epoch** is the unit of evaluation contract. It owns:
 
 - A frozen board (`board.jsonl`).
-- A frozen proposer brief (`proposer_brief.md`) — read fresh each
+- A frozen proposer brief (`brief.md`) — read fresh each
   round but the file's content is the operator's steering document
   for the duration.
 - A frozen scoring configuration (`scoring.json`) — weights,
@@ -90,7 +90,7 @@ directory.
   epochs/
     initial/                         # default first epoch
       board.jsonl                    # frozen for this epoch
-      proposer_brief.md              # operator-edited; read fresh each round
+      brief.md              # operator-edited; read fresh each round
       scoring.json                   # weights + tournament thresholds
       generations/
         v0/
@@ -122,7 +122,7 @@ directory.
       analysis.md                    # generated at epoch close
     epoch_after_board_edit/
       board.jsonl
-      proposer_brief.md
+      brief.md
       scoring.json
       generations/
         v0/                          # baseline at this epoch's start
@@ -346,7 +346,7 @@ close. The pass receives:
 
 - The full `journal.md` for the epoch.
 - The list of all `experiment.json` files (hypothesis + outcome).
-- The `proposer_brief.md` for the epoch.
+- The `brief.md` for the epoch.
 - The aggregate pattern statistics across the epoch (drift kinds
   that moved most, kinds that stayed flat, tag slices with notable
   pass-rate movement).
@@ -566,7 +566,7 @@ hardened_research    2026-04-08 14:31     (open)               2         0      
 
 ## 7. The proposer brief
 
-`proposer_brief.md` is the operator's steering document for an epoch
+`brief.md` is the operator's steering document for an epoch
 — the operator's brief *to the proposer* for how to rewrite the
 inner harness. It is markdown, no schema enforcement: the proposer
 reads it verbatim into its system prompt each round.
@@ -668,7 +668,7 @@ The **evaluation contract** is exactly four things:
 1. **The board** — test inputs, `expectations`, `judges`, and the
    board's `disable_drift` set (`board.jsonl`).
 2. **The proposer brief** — operator steering text
-   (`proposer_brief.md`).
+   (`brief.md`).
 3. **The scoring** — weights + gate thresholds (`scoring.json`).
 4. **The registered inner-harness IDENTITY** — the `--adk` entrypoint
    string plus the sorted list of `--mutable-tree` paths.
@@ -689,10 +689,10 @@ the bytes inside those trees are not.
 root, alongside the `.zicato/` directory:
 
 - `<workspace_parent>/board.jsonl`
-- `<workspace_parent>/proposer_brief.md`
+- `<workspace_parent>/brief.md`
 - `<workspace_parent>/scoring.json`
 
-`register --board PATH` / `--proposer-brief PATH` / `--scoring PATH`
+`register --board PATH` / `--brief PATH` / `--scoring PATH`
 override the default. These are the operator's *live, editable*
 copies. On epoch creation / roll they are frozen (copied) into
 `epochs/{id}/`.

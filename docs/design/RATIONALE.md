@@ -279,7 +279,7 @@ variance.
 **Alternative considered.** The proposer learns from past journal
 entries; no operator steering.
 
-**Chosen.** Each epoch carries a `proposer_brief.md` the operator
+**Chosen.** Each epoch carries a `brief.md` the operator
 hand-edits. The proposer reads it verbatim into its system prompt
 each round. Read fresh every round; no caching. See
 [EPOCHS-AND-JOURNALING.md §7](EPOCHS-AND-JOURNALING.md#7-the-proposer-brief).

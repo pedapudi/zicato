@@ -472,7 +472,7 @@ hypothesis plus the patches that test it.
 **Consumes.**
 
 - `list[Pattern]` from §4.6.
-- `.zicato/epochs/{epoch}/proposer_brief.md` — the operator's
+- `.zicato/epochs/{epoch}/brief.md` — the operator's
   steering document for the proposer. Read fresh every round; no
   caching. Contains preferred targets, a mechanically-enforced
   `## Forbidden` list of mutation-point ids, and style guidance. (The
@@ -814,7 +814,7 @@ deployments (target 3 — nested zicato instances) key the workspace by
   epochs/
     {epoch_id}/
       board.jsonl                  # frozen for this epoch
-      proposer_brief.md            # operator-edited; read fresh each round
+      brief.md            # operator-edited; read fresh each round
       scoring.json                 # weights + tournament thresholds
       generations/
         v0/

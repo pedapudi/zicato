@@ -185,7 +185,7 @@ def create_app(
             handlers["control_reject"],
             methods=["POST"],
         ),
-        Route("/api/control/rubric", handlers["control_rubric"], methods=["POST"]),
+        Route("/api/control/brief", handlers["control_brief"], methods=["POST"]),
         Route("/static/{path:path}", serve_static_path),
         # Any unmatched GET is treated as a request for a bundled asset
         # so index.html's root-relative references resolve.

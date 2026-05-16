@@ -24,7 +24,7 @@ and the journaling — and it **auto-epochs**: it hashes the evaluation
 contract (board + proposer brief + scoring + harness identity) and
 rolls a fresh epoch automatically whenever the operator has edited
 any of those. So the authoring loop is: edit `board.jsonl` and
-`proposer_brief.md`, run `zicato evolve`, and the epoch rolls itself.
+`brief.md`, run `zicato evolve`, and the epoch rolls itself.
 
 Every other subcommand in this reference — `zicato board`,
 `zicato analyze`, `zicato propose`, `zicato patch apply`,
@@ -81,7 +81,7 @@ zicato init [--workspace <path>] [--instance <id>]
 - Writes `.zicato/config.json` with the instance id and default
   paths.
 - Creates an initial epoch named `initial` with an empty
-  `board.jsonl`, a starter `proposer_brief.md` template, and a
+  `board.jsonl`, a starter `brief.md` template, and a
   default `scoring.json`.
 
 Idempotent: re-running `zicato init` on an existing workspace is a
@@ -98,7 +98,7 @@ zicato register
     --adk <module_or_file>:<symbol>
     [--mutable-tree <path>]...
     [--board <path>]
-    [--proposer-brief <path>]
+    [--brief <path>]
     [--scoring <path>]
     [--call-llm <dotted_path>]
     [--auxiliary-call-llm <dotted_path>]
@@ -113,7 +113,7 @@ Flags:
 | `--adk path:symbol` | yes (for ADK) | Adapter selector + entry point. `path` is a Python file or module; `symbol` is the root agent factory. |
 | `--mutable-tree <path>` | repeatable, at least one | Source root the mutation enumerator should walk. Repeat for multiple roots (target 2 — see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)). |
 | `--board <path>` | no | Canonical `board.jsonl` source path. Defaults to `<workspace_parent>/board.jsonl`. |
-| `--proposer-brief <path>` | no | Canonical `proposer_brief.md` source path. Defaults to `<workspace_parent>/proposer_brief.md`. |
+| `--brief <path>` | no | Canonical `brief.md` source path. Defaults to `<workspace_parent>/brief.md`. |
 | `--scoring <path>` | no | Canonical `scoring.json` source path. Defaults to `<workspace_parent>/scoring.json`. |
 | `--call-llm <dotted_path>` | yes | Dotted path to the `harness_call_llm` callable. |
 | `--auxiliary-call-llm <dotted_path>` | yes | Dotted path to the `auxiliary_call_llm` callable. |
@@ -123,7 +123,7 @@ Flags:
 The registration is persisted to `.zicato/config.json` and used by
 every subsequent subcommand.
 
-The `--board` / `--proposer-brief` / `--scoring` paths are the
+The `--board` / `--brief` / `--scoring` paths are the
 operator's *live, editable* copies of the evaluation contract. They
 are recorded under the `contract` key in `config.json` and read back
 on every `zicato evolve` for contract-hash auto-epoching (see
@@ -344,7 +344,7 @@ Manage epochs.
 #### 3.10.1 `zicato epoch new`
 
 ```
-zicato epoch new <name> [--from-board <jsonl_path>] [--from-proposer-brief <md_path>]
+zicato epoch new <name> [--from-board <jsonl_path>] [--brief <md_path>]
 ```
 
 Creates a new epoch named `<name>`. The new epoch's `v0` snapshot is
@@ -360,7 +360,7 @@ Flags:
 | Flag | Meaning |
 |---|---|
 | `--from-board <jsonl_path>` | Seed the new epoch's `board.jsonl` from a file. Default is to inherit from the previous epoch. |
-| `--from-proposer-brief <md_path>` | Seed the new epoch's `proposer_brief.md` from a file. Default is to inherit. |
+| `--brief <md_path>` | Seed the new epoch's `brief.md` from a file. Default is to inherit. |
 
 Exit codes: `0`, `2`, `3`.
 
