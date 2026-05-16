@@ -11,9 +11,17 @@ Design rules encoded here:
 * **Frozen** — every dataclass uses ``frozen=True, slots=True``. State
   transitions construct new instances via :func:`dataclasses.replace`;
   callers who captured a reference keep operating on their snapshot.
-* **JSON-friendly enums** — discriminant fields use :class:`typing.Literal`
-  rather than :class:`enum.Enum` so the types round-trip through JSON
-  without converters. The valid value sets are the type itself.
+* **JSON-friendly enums** — discriminant fields are either
+  :class:`typing.Literal` strings or string-valued :class:`enum.Enum`
+  members. The enums in this module (:class:`OutputScope`,
+  :class:`ExpectationKind`, :class:`JudgeMode`) subclass ``str``, so a
+  member compares equal to its wire string and ``json.dumps`` emits the
+  bare string with no converter. The board-authoring API
+  (:mod:`zicato.board`) hands operators those enum members directly so
+  there are no magic strings at any call site; the on-disk JSONL stays a
+  plain string token. Goldfive's own :class:`~goldfive.DriftKind` /
+  :class:`~goldfive.DriftSeverity` follow the same string-enum shape and
+  are reused verbatim where a board entry needs a drift coordinate.
 * **Discriminated unions for board entries** — :class:`BoardEntry` carries
   every kind's discriminant fields as optional attributes; the
   :meth:`BoardEntry.validate` method (and the free function
@@ -35,8 +43,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any, Literal
+
+from goldfive import DriftSeverity
 
 from zicato.core.drift_kinds import validate_drift_kind
 
@@ -200,61 +211,154 @@ BoardEntryKind = Literal[
 ]
 
 
-#: The matcher used by a board entry's :class:`Expectation`.
-#:
-#: * ``"predicate"`` — dotted path to a Python callable
-#:   ``(run_result) -> bool``.
-#: * ``"expected_text"`` — exact-match string compared to the run's
-#:   final output (or full transcript for ``"conversation_end"``).
-#: * ``"regex"`` — regex compiled with :func:`re.search`.
-#: * ``"json_schema"`` — JSON Schema document the final output (parsed as
-#:   JSON) must validate against.
-#: * ``"judge"`` — dotted path to an async LLM-judge callable
-#:   ``(run_result, expectation_spec) -> bool``.
-#: * ``"rubric"`` — built-in LLM-as-judge rubric evaluator. ``spec`` is a
-#:   JSON document of the form
-#:   ``{"rubric": <text>, "threshold": <float|null>, "scale": [lo, hi]}``.
-#:   No operator-supplied dotted path — the matcher is provided by
-#:   :mod:`zicato.board.rubric`.
-ExpectationKind = Literal["predicate", "expected_text", "regex", "json_schema", "judge", "rubric"]
+class ExpectationKind(StrEnum):
+    """The matcher behind a board entry's :class:`Expectation`.
+
+    ``Predicate`` + ``Rubric`` are the two OUTCOME-check families — they
+    grade a finished run post-hoc. The five members below are the
+    matchers those families compile to:
+
+    * :attr:`EXPECTED_TEXT` — exact substring compared to the run's final
+      output (or the full transcript when :attr:`Expectation.reads` is
+      :attr:`OutputScope.TRANSCRIPT`).
+    * :attr:`REGEX` — pattern compiled with :func:`re.search`.
+    * :attr:`JSON_SCHEMA` — JSON Schema document the final output (parsed
+      as JSON) must validate against.
+    * :attr:`PREDICATE` — dotted path to a Python callable
+      ``(run_result) -> bool``.
+    * :attr:`RUBRIC` — built-in LLM-as-judge rubric evaluator. ``spec`` is
+      a JSON document of the form ``{"rubric": <text>, "threshold":
+      <float|null>, "scale": [lo, hi]}``. No operator-supplied dotted
+      path — the matcher is provided by :mod:`zicato.board.rubric`.
+
+    The enum subclasses ``str``: a member equals its lowercase wire token
+    and serialises through ``json.dumps`` with no converter. The board
+    JSONL writer emits the bare token; the loader rejects any token not
+    in this enum with a message listing the valid values.
+    """
+
+    EXPECTED_TEXT = "expected_text"
+    REGEX = "regex"
+    JSON_SCHEMA = "json_schema"
+    PREDICATE = "predicate"
+    RUBRIC = "rubric"
 
 
-#: When the expectation fires.
-#:
-#: * ``"final_output"`` — checked against the last assistant turn's user-
-#:   facing output. Default for single-turn entries.
-#: * ``"conversation_end"`` — checked against the full transcript. Default
-#:   when the operator wants to assert on the whole conversation shape
-#:   for a multi-turn entry.
-ExpectationFiresOn = Literal["final_output", "conversation_end"]
+class OutputScope(StrEnum):
+    """Which slice of a run an :class:`Expectation` reads.
+
+    Replaces the older free ``fires_on`` string. A :class:`~enum.StrEnum`
+    for the same JSON-friendliness as :class:`ExpectationKind`.
+
+    * :attr:`FINAL` — the last assistant turn's user-facing output. The
+      single-turn-friendly default.
+    * :attr:`TRANSCRIPT` — the full conversation transcript. Used when the
+      operator wants to assert on the whole conversation shape for a
+      multi-turn entry.
+    """
+
+    FINAL = "final_output"
+    TRANSCRIPT = "conversation_end"
+
+
+#: Backwards-compatible alias. The board-authoring vocabulary renamed
+#: ``fires_on`` to ``reads`` and the value type from a ``Literal`` to the
+#: :class:`OutputScope` enum; this alias keeps the old name importable so
+#: downstream modules that referenced :data:`ExpectationFiresOn` by name
+#: continue to resolve while integration catches up. New code should use
+#: :class:`OutputScope` directly.
+ExpectationFiresOn = OutputScope
 
 
 @dataclass(frozen=True, slots=True)
 class Expectation:
-    """A pass/fail assertion attached to a board entry.
+    """A pass/fail OUTCOME assertion attached to a board entry.
 
     Expectations are optional — entries without one are scored on drift
     loss alone. When present, a passing/failing expectation contributes
     to the tournament's pass-rate dimension alongside drift loss (see
-    :class:`ScoringWeights`).
+    :class:`ScoringWeights`). An :class:`Expectation` is the compiled
+    form of a ``Predicate.*`` or ``Rubric.*`` authoring call; it is an
+    OUTCOME check (graded post-hoc). PROCESS checks — assertions about
+    *how* the run unfolded while it was still running — are carried
+    separately by :class:`JudgeSpec`.
 
     Fields
     ------
     kind:
-        The matcher kind (see :data:`ExpectationKind`).
+        The matcher kind (see :class:`ExpectationKind`).
     spec:
-        Matcher-specific specifier. For ``"predicate"`` and ``"judge"``,
-        the dotted import path of the callable. For ``"expected_text"``,
-        ``"regex"``, and ``"json_schema"``, the inline value. Kept as a
-        single string field so the discriminated union round-trips
+        Matcher-specific specifier. For :attr:`ExpectationKind.PREDICATE`
+        the dotted import path of the callable. For
+        :attr:`ExpectationKind.EXPECTED_TEXT`,
+        :attr:`ExpectationKind.REGEX`, and
+        :attr:`ExpectationKind.JSON_SCHEMA`, the inline value. For
+        :attr:`ExpectationKind.RUBRIC`, the JSON rubric document. Kept as
+        a single string field so the discriminated union round-trips
         through JSON without nested objects.
-    fires_on:
-        When the expectation is evaluated (see :data:`ExpectationFiresOn`).
+    reads:
+        Which slice of the run the expectation is evaluated against (see
+        :class:`OutputScope`). Renamed from the former ``fires_on``.
     """
 
     kind: ExpectationKind
     spec: str
-    fires_on: ExpectationFiresOn = "final_output"
+    reads: OutputScope = OutputScope.FINAL
+
+
+class JudgeMode(StrEnum):
+    """How a :class:`JudgeSpec`'s :attr:`~JudgeSpec.body` is interpreted.
+
+    * :attr:`INLINE` — :attr:`JudgeSpec.body` is a natural-language
+      criterion the process judge is asked to evaluate the run against.
+    * :attr:`PYTHON` — :attr:`JudgeSpec.body` is a dotted import path to
+      a Python process-judge callable.
+
+    A :class:`~enum.StrEnum` for the same JSON-friendliness as the other
+    board-authoring enums.
+    """
+
+    INLINE = "inline"
+    PYTHON = "python"
+
+
+@dataclass(frozen=True, slots=True)
+class JudgeSpec:
+    """A PROCESS check evaluated *while a run is in flight*.
+
+    Where an :class:`Expectation` is an OUTCOME check graded after the
+    run finishes, a :class:`JudgeSpec` is a PROCESS check: it observes
+    how the run unfolds and surfaces its verdict as a goldfive judge
+    signal. The :attr:`name` is mandatory and becomes goldfive's
+    ``judge_name``, so it must be a stable slug-like identifier.
+
+    A board entry carries a tuple of :class:`JudgeSpec` (see
+    :attr:`BoardEntry.judges`); :class:`ScoringWeights.per_judge_weights`
+    is keyed on :attr:`name`.
+
+    Fields
+    ------
+    name:
+        Stable slug-like identifier for the judge. Becomes goldfive's
+        ``judge_name``. Validated by the :class:`zicato.board.judges.Judge`
+        authoring helpers — lowercase alphanumerics, underscores, and
+        hyphens only.
+    mode:
+        How :attr:`body` is interpreted (see :class:`JudgeMode`).
+    body:
+        The natural-language criterion when :attr:`mode` is
+        :attr:`JudgeMode.INLINE`; the dotted import path of a Python
+        process-judge callable when :attr:`mode` is
+        :attr:`JudgeMode.PYTHON`.
+    severity:
+        Goldfive drift severity the judge's adverse verdict is reported
+        at. Reuses :class:`goldfive.DriftSeverity` verbatim.
+    """
+
+    name: str
+    mode: JudgeMode
+    body: str
+    severity: DriftSeverity
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,7 +439,13 @@ class BoardEntry:
         cleanliness; adapters parse known keys (e.g. ``"attachments"``,
         ``"session_state"``) and ignore the rest.
     expectation:
-        Optional pass/fail assertion. Absent → drift-loss-only scoring.
+        Optional pass/fail OUTCOME assertion. Absent → drift-loss-only
+        scoring.
+    judges:
+        Tuple of PROCESS checks (see :class:`JudgeSpec`) evaluated while
+        the run is in flight. Default empty. Independent of
+        :attr:`expectation` — an entry may carry any combination of an
+        outcome expectation and zero or more process judges.
 
     Discriminated-union fields (validate which are required by
     :meth:`validate`)
@@ -364,6 +474,7 @@ class BoardEntry:
     tags: tuple[str, ...] = ()
     context: Mapping[str, str] = field(default_factory=dict)
     expectation: Expectation | None = None
+    judges: tuple[JudgeSpec, ...] = ()
     # Discriminated-union fields. Exactly which subset is required is a
     # function of :attr:`kind` (see :meth:`validate`).
     input: str | None = None
@@ -449,12 +560,32 @@ class BoardEntry:
             raise ValueError(f"BoardEntry {self.id!r}: unknown kind {self.kind!r}")
 
         if self.expectation is not None:
-            # Cross-check the expectation's fires_on against the kind.
-            if self.kind == "single_turn" and self.expectation.fires_on == "conversation_end":
+            # Cross-check the expectation's read scope against the kind.
+            if self.kind == "single_turn" and self.expectation.reads == OutputScope.TRANSCRIPT:
                 raise ValueError(
-                    f"BoardEntry {self.id!r}: single_turn expectation cannot fire on "
-                    "'conversation_end'"
+                    f"BoardEntry {self.id!r}: single_turn expectation cannot read the "
+                    "full transcript (OutputScope.TRANSCRIPT)"
                 )
+
+        seen_judge_names: set[str] = set()
+        for judge in self.judges:
+            if judge.name in seen_judge_names:
+                raise ValueError(f"BoardEntry {self.id!r}: duplicate judge name {judge.name!r}")
+            seen_judge_names.add(judge.name)
+
+
+def _coerce_enum(enum_cls: type[Enum], raw: Any, field_name: str) -> Any:
+    """Coerce ``raw`` into a member of ``enum_cls`` or raise a clear error.
+
+    Used by :func:`validate_board_entry` for every enum-valued field so a
+    malformed board file fails with a message listing the valid tokens
+    rather than silently constructing an out-of-domain value.
+    """
+    try:
+        return enum_cls(raw)
+    except ValueError:
+        valid = ", ".join(repr(m.value) for m in enum_cls)
+        raise ValueError(f"invalid {field_name} {raw!r}; valid values are: {valid}") from None
 
 
 def validate_board_entry(d: Mapping[str, Any]) -> BoardEntry:
@@ -464,10 +595,14 @@ def validate_board_entry(d: Mapping[str, Any]) -> BoardEntry:
     operator-authored entries. Performs:
 
     1. Field extraction from the dict (with sensible coercions: lists to
-       tuples for ``tags`` / ``turns`` / ``required_drift_kinds``).
-    2. Construction of nested :class:`Expectation`, :class:`UserPersona`,
-       :class:`ScriptedTurn` objects from sub-dicts.
-    3. Discriminant-validation via :meth:`BoardEntry.validate`.
+       tuples for ``tags`` / ``turns`` / ``required_drift_kinds`` /
+       ``judges``).
+    2. Construction of nested :class:`Expectation`, :class:`JudgeSpec`,
+       :class:`UserPersona`, :class:`ScriptedTurn` objects from sub-dicts.
+    3. Coercion of every enum-valued token (``kind``, ``reads``, judge
+       ``mode`` / ``severity``) into its enum member, rejecting unknown
+       tokens with a message listing the valid values.
+    4. Discriminant-validation via :meth:`BoardEntry.validate`.
 
     Raises :class:`ValueError` on any structural problem.
     """
@@ -477,10 +612,29 @@ def validate_board_entry(d: Mapping[str, Any]) -> BoardEntry:
     if expectation_dict is None:
         expectation = None
     else:
+        # ``reads`` is the current key; ``fires_on`` is the pre-rename
+        # name. Accept both on input so a board mid-migration still
+        # loads, preferring the new key when both are present.
+        raw_reads = expectation_dict.get("reads", expectation_dict.get("fires_on", "final_output"))
         expectation = Expectation(
-            kind=expectation_dict["kind"],
+            kind=_coerce_enum(ExpectationKind, expectation_dict["kind"], "expectation kind"),
             spec=expectation_dict["spec"],
-            fires_on=expectation_dict.get("fires_on", "final_output"),
+            reads=_coerce_enum(OutputScope, raw_reads, "expectation reads"),
+        )
+
+    raw_judges = d.get("judges")
+    judges: tuple[JudgeSpec, ...]
+    if raw_judges is None:
+        judges = ()
+    else:
+        judges = tuple(
+            JudgeSpec(
+                name=j["name"],
+                mode=_coerce_enum(JudgeMode, j["mode"], "judge mode"),
+                body=j["body"],
+                severity=_coerce_enum(DriftSeverity, j["severity"], "judge severity"),
+            )
+            for j in raw_judges
         )
 
     persona_dict = d.get("user_persona")
@@ -516,6 +670,7 @@ def validate_board_entry(d: Mapping[str, Any]) -> BoardEntry:
         tags=tuple(d.get("tags", ())),
         context=dict(d.get("context", {})),
         expectation=expectation,
+        judges=judges,
         input=d.get("input"),
         turns=turns,
         user_persona=user_persona,
@@ -640,7 +795,10 @@ class ExpectationResult:
     ------
     kind:
         The matcher kind that produced this result (same value as the
-        originating :class:`Expectation.kind`).
+        originating :class:`Expectation.kind`). Typed as the
+        :class:`ExpectationKind` enum; because that enum subclasses
+        ``str``, a producer may still pass the bare wire token and it
+        compares equal to the matching member.
     passed:
         ``True`` iff the matcher accepted the run.
     detail:
@@ -1332,6 +1490,13 @@ class ScoringWeights:
         :attr:`namespace_weights`) by more than the namespace's
         tolerance — even when the combined scalar improves. Namespaces
         whose flag is missing or ``False`` are not gated this way.
+    per_judge_weights:
+        Optional per-judge multipliers, keyed on :attr:`JudgeSpec.name`.
+        Empty mapping (the default) = every PROCESS judge contributes at
+        its namespace's baseline weight. A missing judge name falls back
+        to that baseline; an explicit entry scales the named judge's
+        contribution to the scalar. Lets an operator up-weight a
+        safety-critical process judge without disturbing the rest.
     """
 
     drift_weight: float = 1.0
@@ -1351,6 +1516,8 @@ class ScoringWeights:
     namespace_monotonicity: Mapping[str, bool] = field(
         default_factory=_default_namespace_monotonicity
     )
+    # PROCESS-judge surface — keyed on :attr:`JudgeSpec.name`.
+    per_judge_weights: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1598,8 +1765,11 @@ __all__ = [
     # Board
     "BoardEntryKind",
     "ExpectationKind",
+    "OutputScope",
     "ExpectationFiresOn",
     "Expectation",
+    "JudgeMode",
+    "JudgeSpec",
     "UserPersona",
     "ScriptedTurn",
     "BoardEntry",

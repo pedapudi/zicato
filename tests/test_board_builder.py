@@ -10,11 +10,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from goldfive import DriftKind, DriftSeverity
 
-from zicato.board import Board, Entry, Predicate, Rubric
+from zicato.board import Board, Entry, Judge, Predicate, Rubric
 from zicato.core import (
     BoardEntry,
     Expectation,
+    ExpectationKind,
+    JudgeSpec,
     ScriptedTurn,
     UserPersona,
 )
@@ -154,15 +157,60 @@ def test_entry_budget_s_stored_as_wall_clock_budget_seconds() -> None:
 def test_entry_evaluate_attaches_expectation() -> None:
     """``evaluate=Predicate.contains(...)`` becomes ``entry.expectation``."""
     entry = Entry(id="e1", input="x", evaluate=Predicate.contains("ok"))
-    assert entry.expectation == Expectation(kind="expected_text", spec="ok")
+    assert entry.expectation == Expectation(kind=ExpectationKind.EXPECTED_TEXT, spec="ok")
 
 
-def test_entry_evaluate_with_rubric_judge() -> None:
-    """Rubric.judge expectations attach correctly."""
-    exp = Rubric.judge("score clarity", threshold=7.0, scale=(0.0, 10.0))
+def test_entry_evaluate_with_rubric_score() -> None:
+    """Rubric.score expectations attach correctly."""
+    exp = Rubric.score("score clarity", threshold=7.0, scale=(0.0, 10.0))
     entry = Entry(id="e1", input="x", evaluate=exp)
     assert entry.expectation is not None
-    assert entry.expectation.kind == "rubric"
+    assert entry.expectation.kind is ExpectationKind.RUBRIC
+
+
+# ---------------------------------------------------------------------------
+# Entry: judges (PROCESS checks)
+# ---------------------------------------------------------------------------
+
+
+def test_entry_with_no_judges_defaults_empty() -> None:
+    """An entry built without ``judges`` carries an empty judges tuple."""
+    entry = Entry(id="e1", input="x", budget_s=30)
+    assert entry.judges == ()
+
+
+def test_entry_judges_attach_to_board_entry() -> None:
+    """``judges=[Judge.custom(...), ...]`` becomes ``entry.judges``."""
+    j1 = Judge.custom("on_task", "stays on task", severity=DriftSeverity.WARNING)
+    j2 = Judge.python("no_pii", "proj.judges.pii", severity=DriftSeverity.CRITICAL)
+    entry = Entry(id="e1", input="x", judges=[j1, j2], budget_s=30)
+    assert entry.judges == (j1, j2)
+
+
+def test_entry_judges_accept_tuple() -> None:
+    """A tuple of judges is accepted as well as a list."""
+    j = Judge.custom("on_task", "stays on task", severity=DriftSeverity.INFO)
+    entry = Entry(id="e1", input="x", judges=(j,), budget_s=30)
+    assert entry.judges == (j,)
+
+
+def test_entry_judges_reject_non_judge_spec() -> None:
+    """A non-:class:`JudgeSpec` element in ``judges`` is rejected."""
+    with pytest.raises(ValueError, match="JudgeSpec"):
+        Entry(id="e1", input="x", judges=["not a judge"], budget_s=30)  # type: ignore[list-item]
+
+
+def test_entry_evaluate_and_judges_are_independent() -> None:
+    """An entry may carry both an OUTCOME expectation and PROCESS judges."""
+    entry = Entry(
+        id="e1",
+        input="x",
+        evaluate=Predicate.contains("ok"),
+        judges=[Judge.custom("on_task", "stays on task", severity=DriftSeverity.WARNING)],
+        budget_s=30,
+    )
+    assert entry.expectation is not None
+    assert len(entry.judges) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -237,3 +285,42 @@ def test_board_save_load_round_trip(tmp_path: Path) -> None:
 
     reloaded = Board.load(path)
     assert reloaded.entries == board.entries
+
+
+def test_board_disable_drift_defaults_empty() -> None:
+    """A bare :class:`Board` has an empty ``disable_drift`` tuple."""
+    assert Board().disable_drift == ()
+
+
+def test_board_disable_drift_round_trips(tmp_path: Path) -> None:
+    """Board-level ``disable_drift`` survives a save / load cycle."""
+    board = Board(disable_drift=(DriftKind.OFF_TOPIC, DriftKind.BLOCKED))
+    board.add(Entry(id="e1", input="x", budget_s=30))
+    path = tmp_path / "b.jsonl"
+    board.save(path)
+
+    reloaded = Board.load(path)
+    assert reloaded.disable_drift == (DriftKind.OFF_TOPIC, DriftKind.BLOCKED)
+    assert reloaded.entries == board.entries
+
+
+def test_board_save_load_round_trip_with_judges(tmp_path: Path) -> None:
+    """A board whose entries carry PROCESS judges round-trips through JSONL."""
+    board = Board()
+    board.add(
+        Entry(
+            id="judged",
+            input="x",
+            judges=[
+                Judge.custom("on_task", "stays on task", severity=DriftSeverity.WARNING),
+                Judge.python("no_pii", "proj.judges.pii", severity=DriftSeverity.CRITICAL),
+            ],
+            budget_s=30,
+        )
+    )
+    path = tmp_path / "b.jsonl"
+    board.save(path)
+
+    reloaded = Board.load(path)
+    assert reloaded.entries == board.entries
+    assert isinstance(reloaded.entries[0].judges[0], JudgeSpec)

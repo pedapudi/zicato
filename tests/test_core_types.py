@@ -6,17 +6,23 @@ import dataclasses
 from pathlib import Path
 
 import pytest
+from goldfive import DriftSeverity
 
 from zicato.core import (
     GOLDFIVE_DRIFT_KINDS,
     BoardEntry,
     DriftCount,
     Expectation,
+    ExpectationKind,
     ExpectationResult,
+    JudgeMode,
+    JudgeSpec,
     LossProfile,
     MutationPoint,
+    OutputScope,
     Patch,
     RuntimeConfig,
+    ScoringWeights,
     ScriptedTurn,
     UserPersona,
     analysis_path,
@@ -35,6 +41,63 @@ from zicato.core import (
     validate_board_entry,
     validate_drift_kind,
 )
+
+# ---------------------------------------------------------------------------
+# Board-authoring enums
+# ---------------------------------------------------------------------------
+
+
+def test_output_scope_members_and_str_equality() -> None:
+    """``OutputScope`` is a str-enum with the two documented members."""
+    assert {m.value for m in OutputScope} == {"final_output", "conversation_end"}
+    assert OutputScope.FINAL == "final_output"
+    assert OutputScope.TRANSCRIPT == "conversation_end"
+
+
+def test_expectation_kind_members_and_str_equality() -> None:
+    """``ExpectationKind`` is a str-enum covering the five OUTCOME matchers."""
+    assert {m.value for m in ExpectationKind} == {
+        "expected_text",
+        "regex",
+        "json_schema",
+        "predicate",
+        "rubric",
+    }
+    assert ExpectationKind.PREDICATE == "predicate"
+
+
+def test_judge_mode_members_and_str_equality() -> None:
+    """``JudgeMode`` is a two-member str-enum."""
+    assert {m.value for m in JudgeMode} == {"inline", "python"}
+    assert JudgeMode.INLINE == "inline"
+
+
+def test_expectation_defaults_reads_to_final() -> None:
+    """A bare :class:`Expectation` reads the final output by default."""
+    e = Expectation(kind=ExpectationKind.REGEX, spec="x")
+    assert e.reads is OutputScope.FINAL
+
+
+# ---------------------------------------------------------------------------
+# JudgeSpec
+# ---------------------------------------------------------------------------
+
+
+def test_judge_spec_is_frozen() -> None:
+    """:class:`JudgeSpec` is a frozen dataclass."""
+    js = JudgeSpec(name="on_task", mode=JudgeMode.INLINE, body="c", severity=DriftSeverity.WARNING)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        js.name = "renamed"  # type: ignore[misc]
+
+
+def test_judge_spec_carries_goldfive_severity() -> None:
+    """``JudgeSpec.severity`` is a goldfive :class:`DriftSeverity` member."""
+    js = JudgeSpec(
+        name="no_pii", mode=JudgeMode.PYTHON, body="p.j.f", severity=DriftSeverity.CRITICAL
+    )
+    assert js.severity is DriftSeverity.CRITICAL
+    assert isinstance(js.severity, DriftSeverity)
+
 
 # ---------------------------------------------------------------------------
 # validate_drift_kind
@@ -231,12 +294,37 @@ def test_board_entry_rejects_negative_weight() -> None:
         entry.validate()
 
 
-def test_board_entry_rejects_conversation_end_expectation_on_single_turn() -> None:
+def test_board_entry_rejects_transcript_scope_expectation_on_single_turn() -> None:
     entry = _single_turn_entry(
-        expectation=Expectation(kind="regex", spec=".*", fires_on="conversation_end"),
+        expectation=Expectation(
+            kind=ExpectationKind.REGEX, spec=".*", reads=OutputScope.TRANSCRIPT
+        ),
     )
-    with pytest.raises(ValueError, match="conversation_end"):
+    with pytest.raises(ValueError, match="transcript"):
         entry.validate()
+
+
+def test_board_entry_rejects_duplicate_judge_names() -> None:
+    """Two judges sharing a name on one entry is rejected."""
+    js = JudgeSpec(name="dup", mode=JudgeMode.INLINE, body="c", severity=DriftSeverity.INFO)
+    entry = _single_turn_entry(judges=(js, js))
+    with pytest.raises(ValueError, match="duplicate judge name"):
+        entry.validate()
+
+
+def test_board_entry_accepts_judges() -> None:
+    """A valid entry with distinct-named judges passes ``validate``."""
+    entry = _single_turn_entry(
+        judges=(
+            JudgeSpec(
+                name="on_task", mode=JudgeMode.INLINE, body="c", severity=DriftSeverity.WARNING
+            ),
+            JudgeSpec(
+                name="no_pii", mode=JudgeMode.PYTHON, body="p.j", severity=DriftSeverity.CRITICAL
+            ),
+        )
+    )
+    entry.validate()
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +354,8 @@ def test_validate_board_entry_single_turn_round_trip() -> None:
     assert entry.tags == ("regression", "smoke")
     assert entry.context == {"locale": "en-US"}
     assert entry.expectation is not None
-    assert entry.expectation.kind == "regex"
-    assert entry.expectation.fires_on == "final_output"
+    assert entry.expectation.kind is ExpectationKind.REGEX
+    assert entry.expectation.reads is OutputScope.FINAL
 
 
 def test_validate_board_entry_multi_turn_scripted_round_trip() -> None:
@@ -298,16 +386,55 @@ def test_validate_board_entry_multi_turn_emulated_round_trip() -> None:
         },
         "max_turns": 8,
         "expectation": {
-            "kind": "judge",
-            "spec": "mypkg.judges.scheduling_judge",
-            "fires_on": "conversation_end",
+            "kind": "rubric",
+            "spec": '{"rubric": "did the agent schedule cleanly?"}',
+            "reads": "conversation_end",
         },
+        "judges": [
+            {
+                "name": "no_double_booking",
+                "mode": "inline",
+                "body": "the agent never books an already-occupied slot",
+                "severity": "critical",
+            }
+        ],
     }
     entry = validate_board_entry(d)
     assert entry.user_persona is not None
     assert entry.user_persona.goal == "schedule a meeting"
     assert entry.expectation is not None
-    assert entry.expectation.fires_on == "conversation_end"
+    assert entry.expectation.kind is ExpectationKind.RUBRIC
+    assert entry.expectation.reads is OutputScope.TRANSCRIPT
+    assert len(entry.judges) == 1
+    assert entry.judges[0].name == "no_double_booking"
+    assert entry.judges[0].mode is JudgeMode.INLINE
+    assert entry.judges[0].severity is DriftSeverity.CRITICAL
+
+
+def test_validate_board_entry_rejects_unknown_expectation_kind() -> None:
+    """An expectation ``kind`` outside the enum is rejected with valid values."""
+    d = {
+        "id": "e",
+        "kind": "single_turn",
+        "wall_clock_budget_seconds": 60,
+        "input": "i",
+        "expectation": {"kind": "telepathy", "spec": "x"},
+    }
+    with pytest.raises(ValueError, match="invalid expectation kind"):
+        validate_board_entry(d)
+
+
+def test_validate_board_entry_rejects_unknown_judge_severity() -> None:
+    """A judge ``severity`` outside goldfive's enum is rejected."""
+    d = {
+        "id": "e",
+        "kind": "single_turn",
+        "wall_clock_budget_seconds": 60,
+        "input": "i",
+        "judges": [{"name": "j", "mode": "inline", "body": "b", "severity": "apocalyptic"}],
+    }
+    with pytest.raises(ValueError, match="invalid judge severity"):
+        validate_board_entry(d)
 
 
 def test_validate_board_entry_synthetic_adversarial_round_trip() -> None:
@@ -543,3 +670,28 @@ def test_runtime_config_rejects_sub_one_parallelism(tmp_path: Path, bad: int) ->
             auxiliary_call_llm=aux_call,  # type: ignore[arg-type]
             parallelism=bad,
         )
+
+
+# ---------------------------------------------------------------------------
+# ScoringWeights.per_judge_weights
+# ---------------------------------------------------------------------------
+
+
+def test_scoring_weights_per_judge_weights_defaults_empty() -> None:
+    """``per_judge_weights`` defaults to an empty mapping."""
+    assert ScoringWeights().per_judge_weights == {}
+
+
+def test_scoring_weights_per_judge_weights_accepts_mapping() -> None:
+    """``per_judge_weights`` is keyed on :attr:`JudgeSpec.name`."""
+    sw = ScoringWeights(per_judge_weights={"no_pii": 3.0, "on_task": 1.0})
+    assert sw.per_judge_weights["no_pii"] == 3.0
+    assert sw.per_judge_weights["on_task"] == 1.0
+
+
+def test_scoring_weights_per_judge_weights_replace_preserves() -> None:
+    """``dataclasses.replace`` keeps ``per_judge_weights`` intact."""
+    sw = ScoringWeights(per_judge_weights={"safety": 5.0})
+    updated = dataclasses.replace(sw, drift_weight=2.0)
+    assert updated.per_judge_weights == {"safety": 5.0}
+    assert updated.drift_weight == 2.0
