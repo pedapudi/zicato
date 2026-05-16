@@ -118,6 +118,15 @@ class AppState {
     this.activeRuns = [];           // [{ run_id, entry_id, generation_id, session_id?, started_at, progress, drift_kinds: {kind: count} }]
     this.activeTournament = null;   // see schema in mock-state
     this.pastTournaments = [];      // [{ ...tournament }] — optional, for the picker
+    // GET /api/tournaments — the gauntlet bracket source.
+    //   { epoch_id, champion_lineage:[genId...], matchups:[matchup...] }
+    this.bracket = null;
+    // GET /api/tournaments/:id detail, cached by generation id.
+    this.matchupDetail = new Map();
+    // generation id of the matchup whose detail panel is open (or null).
+    this.selectedMatchup = null;
+    // GET /api/health-report — the loop-health panel source.
+    this.healthReport = null;
     this.lineage = { generations: [], experiments: [] };
     this.experiments = [];
     this.logLines = [];             // {ts, line, level}
@@ -135,6 +144,10 @@ class AppState {
     if (snap.active_runs) this.activeRuns = snap.active_runs;
     if ('active_tournament' in snap) this.activeTournament = snap.active_tournament;
     if (Array.isArray(snap.past_tournaments)) this.pastTournaments = snap.past_tournaments;
+    if (snap.bracket && typeof snap.bracket === 'object') this.bracket = snap.bracket;
+    if (snap.health_report && typeof snap.health_report === 'object') {
+      this.healthReport = snap.health_report;
+    }
     if (snap.lineage) this.lineage = snap.lineage;
     if (snap.experiments) this.experiments = snap.experiments;
     if (snap.supervisor) Object.assign(this.supervisor, snap.supervisor);
@@ -164,6 +177,20 @@ class AppState {
     if (def && typeof def === 'object') {
       this.epochDef = def;
       if (def.epoch_id) this.epoch.id = def.epoch_id;
+    }
+  }
+
+  setBracket(bracket) {
+    if (bracket && typeof bracket === 'object') this.bracket = bracket;
+  }
+
+  setHealthReport(report) {
+    if (report && typeof report === 'object') this.healthReport = report;
+  }
+
+  setMatchupDetail(genId, detail) {
+    if (genId && detail && typeof detail === 'object') {
+      this.matchupDetail.set(genId, detail);
     }
   }
 
@@ -199,8 +226,6 @@ const state = new AppState();
 const VIEWS = ['overview', 'tree', 'tournament', 'epoch'];
 const DEFAULT_VIEW = 'overview';
 let currentView = DEFAULT_VIEW;
-// Which tournament index the Tournament view is showing (picker).
-let tournamentSelection = 0;
 
 // --- Harmonograf deep-links
 //
@@ -1331,82 +1356,361 @@ function renderHeatmap() {
   }, [rateMax.toFixed(2)]));
 }
 
-// --- Render: Tournament view
+// --- Render: loop-health panel (Overview)
 //
-// A dedicated A/B view. The picker selects the active tournament or any
-// past one. The selected tournament foregrounds the child generation's
-// hypothesis ("what is being tested"), then the full per-entry table,
-// the partial aggregate + predicted verdict, and the drift movements.
+// Renders GET /api/health-report — findings as severity-colored cards.
+// A CRITICAL finding raises a loud banner; healthy:true → a quiet line.
+
+function severityRank(sev) {
+  switch (String(sev || '').toLowerCase()) {
+    case 'critical': return 3;
+    case 'warning': case 'warn': return 2;
+    case 'info': return 1;
+    default: return 0;
+  }
+}
+
+function renderHealthPanel() {
+  const wrap = $('health-panel');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const report = state.healthReport;
+  if (!report) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No health report yet.']));
+    return;
+  }
+
+  const findings = Array.isArray(report.findings) ? report.findings.slice() : [];
+  findings.sort((a, b) => severityRank(b.severity) - severityRank(a.severity));
+  const hasCritical = findings.some(f => severityRank(f.severity) === 3);
+
+  // Loud banner whenever a CRITICAL finding exists.
+  if (hasCritical) {
+    const crit = findings.find(f => severityRank(f.severity) === 3);
+    const banner = el('div', { class: 'health-banner', role: 'alert' }, [
+      el('div', { class: 'health-banner-title' }, [
+        'This loop is producing no optimization signal.',
+      ]),
+      el('div', { class: 'health-banner-detail' }, [
+        crit && crit.summary
+          ? crit.summary
+          : 'A critical health check failed — investigate before trusting tournament results.',
+      ]),
+    ]);
+    wrap.appendChild(banner);
+  } else if (report.healthy === true && findings.length === 0) {
+    // Quiet, reassuring line when there is nothing to report.
+    wrap.appendChild(el('p', { class: 'health-ok' }, [
+      el('span', { class: 'health-ok-dot', 'aria-hidden': 'true' }, ['●']),
+      'Loop healthy — every health check passed.',
+    ]));
+  } else if (report.healthy === true) {
+    wrap.appendChild(el('p', { class: 'health-ok' }, [
+      el('span', { class: 'health-ok-dot', 'aria-hidden': 'true' }, ['●']),
+      'Loop healthy.',
+    ]));
+  }
+
+  if (findings.length > 0) {
+    const cards = el('div', { class: 'health-cards' });
+    for (const f of findings) {
+      const sev = String(f.severity || 'info').toLowerCase();
+      const sevCls = sev === 'warn' ? 'warning' : sev;
+      const card = el('div', { class: 'health-card sev-' + sevCls });
+      const head = el('div', { class: 'health-card-head' }, [
+        el('span', { class: 'health-sev badge' }, [sevCls]),
+        el('code', { class: 'mono health-code' }, [f.code || '—']),
+      ]);
+      card.appendChild(head);
+      if (f.summary) {
+        card.appendChild(el('div', { class: 'health-summary' }, [f.summary]));
+      }
+      if (f.detail) {
+        card.appendChild(el('div', { class: 'health-detail meta' }, [f.detail]));
+      }
+      cards.appendChild(card);
+    }
+    wrap.appendChild(cards);
+  }
+
+  // Footer line — epoch + checked-at timestamp.
+  const meta = [];
+  if (report.epoch_id) meta.push('epoch ' + report.epoch_id);
+  if (report.checked_at) meta.push('checked ' + report.checked_at);
+  if (meta.length > 0) {
+    wrap.appendChild(el('p', { class: 'health-meta meta mono' }, [meta.join(' · ')]));
+  }
+}
+
+// --- Render: Tournament view — the gauntlet bracket
+//
+// A horizontal champion spine (the promoted lineage) with discarded
+// challengers hung below the champion each failed to beat. A live
+// matchup is drawn at the head with its predicted-gate verdict. Click
+// any matchup → the per-matchup detail (GET /api/tournaments/:id).
 
 function renderTournamentView() {
-  renderTournamentPicker();
-  renderTournamentDetail();
+  renderBracket();
+  renderMatchupDetail();
   renderHeatmap();
 }
 
-function renderTournamentPicker() {
-  const select = $('tournament-select');
-  if (!select) return;
-  const tournaments = state.allTournaments();
-  const prev = tournamentSelection;
-  clearChildren(select);
+// Index the bracket: a champion-spine list and, per champion, the set
+// of challengers that lost to it.
+function bracketModel() {
+  const b = state.bracket || {};
+  const lineage = Array.isArray(b.champion_lineage) ? b.champion_lineage.slice() : [];
+  const matchups = Array.isArray(b.matchups) ? b.matchups : [];
 
-  if (tournaments.length === 0) {
-    select.appendChild(el('option', { value: '0' }, ['(none)']));
-    select.disabled = true;
+  // Every promoted challenger becomes the next champion; every rejected
+  // one is hung below the champion it challenged.
+  const promotedBy = new Map();   // champion genId -> matchup that promoted past it
+  const rejectedBy = new Map();   // champion genId -> [rejected matchup, ...]
+  for (const m of matchups) {
+    const champ = m.champion || '?';
+    const decision = String(m.decision || '').toLowerCase();
+    if (decision === 'promoted' || decision === 'promote') {
+      promotedBy.set(champ, m);
+    } else {
+      if (!rejectedBy.has(champ)) rejectedBy.set(champ, []);
+      rejectedBy.get(champ).push(m);
+    }
+  }
+  return { lineage, matchups, promotedBy, rejectedBy };
+}
+
+// The matchup record for an active (in-progress) tournament, derived
+// from /api/active-tournament. Keeps the predicted-verdict logic.
+function liveMatchup() {
+  const t = state.activeTournament;
+  if (!t || !Array.isArray(t.entries) || t.entries.length === 0) return null;
+  return t;
+}
+
+function renderBracket() {
+  const wrap = $('tournament-bracket');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const { lineage, matchups, promotedBy, rejectedBy } = bracketModel();
+  const live = liveMatchup();
+
+  if (lineage.length === 0 && matchups.length === 0 && !live) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No tournaments recorded yet.']));
     return;
   }
-  select.disabled = false;
-  tournaments.forEach((t, i) => {
-    const label = (t.__active ? 'active · ' : 'past · ') +
-      `${t.parent_id || '?'} vs ${t.child_id || '?'}` +
-      (t.round_index != null ? ` (round ${t.round_index})` : '');
-    select.appendChild(el('option', { value: String(i) }, [label]));
+
+  // The spine: champion v0 ═> v2 ═> v6. Each champion node carries the
+  // challengers it defended against hung below it.
+  const spine = el('div', { class: 'bracket-spine' });
+  lineage.forEach((champId, i) => {
+    const col = el('div', { class: 'bracket-col' });
+
+    const champNode = el('div', {
+      class: 'bracket-champ' + (i === 0 ? ' is-seed' : ''),
+    }, [
+      el('span', { class: 'bracket-champ-id mono' }, [champId]),
+      el('span', { class: 'bracket-champ-tag' }, [i === 0 ? 'seed' : 'champion']),
+    ]);
+    col.appendChild(champNode);
+
+    // Solid green connector to the next champion.
+    if (i < lineage.length - 1) {
+      const promo = promotedBy.get(champId);
+      const conn = el('div', { class: 'bracket-connector promoted' });
+      conn.appendChild(el('span', { class: 'bracket-conn-arrow', 'aria-hidden': 'true' }, ['═▶']));
+      if (promo) {
+        conn.appendChild(el('button', {
+          type: 'button',
+          class: 'bracket-conn-label',
+          'aria-label': 'matchup ' + champId + ' versus ' + (promo.challenger || '?'),
+          onClick: () => openMatchup(promo.challenger),
+        }, ['Δ ' + fmtDelta(promo.delta_scalar)]));
+      }
+      col.appendChild(conn);
+    }
+
+    // Discarded challengers hung below.
+    const losers = rejectedBy.get(champId) || [];
+    if (losers.length > 0) {
+      const drop = el('div', { class: 'bracket-drop' });
+      for (const m of losers) {
+        drop.appendChild(renderChallengerCard(m, champId));
+      }
+      col.appendChild(drop);
+    }
+
+    spine.appendChild(col);
   });
-  tournamentSelection = Math.min(prev, tournaments.length - 1);
-  select.value = String(tournamentSelection);
-  select.onchange = () => {
-    tournamentSelection = parseInt(select.value, 10) || 0;
-    renderTournamentDetail();
-  };
+
+  // Live matchup at the head — the in-progress challenge.
+  if (live) {
+    const headCol = el('div', { class: 'bracket-col bracket-col-live' });
+    const champId = live.parent_id || live.champion ||
+      (lineage.length ? lineage[lineage.length - 1] : '?');
+    if (lineage.length > 0) {
+      const conn = el('div', { class: 'bracket-connector live' });
+      conn.appendChild(el('span', { class: 'bracket-conn-arrow', 'aria-hidden': 'true' }, ['┄▶']));
+      headCol.appendChild(conn);
+    }
+    headCol.appendChild(renderLiveCard(live, champId));
+    spine.appendChild(headCol);
+  }
+
+  wrap.appendChild(spine);
 }
 
-// Resolve the child generation's experiment — what is being tested.
-// The proposed generation's experiment.json may have a null outcome
-// while the tournament is still in progress.
-function childHypothesis(t) {
-  if (!t) return null;
-  if (t.hypothesis) return t.hypothesis;
-  const exps = state.experiments || state.lineage.experiments || [];
-  const exp = exps.find(e => e.generation_id === t.child_id);
-  return exp ? exp.hypothesis : null;
+// A discarded challenger card — dashed red, hung below its champion.
+function renderChallengerCard(m, champId) {
+  const card = el('div', {
+    class: 'bracket-loser',
+    role: 'listitem',
+    tabindex: '0',
+    'aria-label': 'discarded challenger ' + (m.challenger || '?') +
+      ' rejected versus ' + champId,
+    onClick: () => openMatchup(m.challenger),
+    onKeydown: (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        openMatchup(m.challenger);
+      }
+    },
+  });
+  card.appendChild(el('div', { class: 'bracket-loser-head' }, [
+    el('span', { class: 'bracket-loser-id mono' }, [m.challenger || '?']),
+    el('span', { class: 'badge rejected' }, ['discarded']),
+  ]));
+  if (m.delta_scalar != null) {
+    card.appendChild(el('div', { class: 'bracket-loser-delta mono' }, [
+      'Δ scalar ' + fmtDelta(m.delta_scalar),
+    ]));
+  }
+  const reason = m.rejection_reason || (m.hypothesis_core_idea
+    ? truncate(m.hypothesis_core_idea, 70) : '');
+  if (reason) {
+    card.appendChild(el('div', { class: 'bracket-loser-reason meta' }, [reason]));
+  }
+  return card;
 }
 
-function renderTournamentDetail() {
+// The in-progress challenge card at the head of the bracket.
+function renderLiveCard(t, champId) {
+  const card = el('div', {
+    class: 'bracket-live',
+    role: 'listitem',
+    tabindex: '0',
+    'aria-label': 'live matchup ' + (t.child_id || '?') + ' challenging ' + champId,
+    onClick: () => openMatchup(t.child_id),
+    onKeydown: (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        openMatchup(t.child_id);
+      }
+    },
+  });
+  card.appendChild(el('div', { class: 'bracket-live-head' }, [
+    el('span', { class: 'bracket-live-id mono' }, [t.child_id || '?']),
+    el('span', { class: 'badge running' }, ['live']),
+  ]));
+  card.appendChild(el('div', { class: 'bracket-live-vs meta' }, [
+    'challenging ' + champId,
+  ]));
+
+  // Per-entry status dots.
+  const entries = t.entries || [];
+  const dots = el('div', { class: 'bracket-live-dots', 'aria-hidden': 'true' });
+  const done = entries.filter(e => e.status === 'done').length;
+  for (const e of entries) {
+    const st = e.status || 'queued';
+    dots.appendChild(el('span', { class: 'bracket-dot ' + st }, ['']));
+  }
+  card.appendChild(dots);
+  card.appendChild(el('div', { class: 'bracket-live-prog meta mono' }, [
+    done + ' / ' + entries.length + ' entries',
+  ]));
+
+  // Predicted-gate verdict (kept from R8-C).
+  const verdict = predictedGateVerdict(t, state.scoring.margin);
+  if (verdict) {
+    const vcls = verdict.verdict === 'promote' ? 'promote'
+      : verdict.verdict === 'reject' ? 'reject' : 'tbd';
+    card.appendChild(el('div', { class: 'bracket-live-verdict ' + vcls }, [
+      'predicted: ' + verdict.verdict.toUpperCase(),
+    ]));
+  }
+  return card;
+}
+
+// Navigate to a matchup's detail. The selection is held in state and
+// the detail endpoint is fetched lazily.
+function openMatchup(genId) {
+  if (!genId) return;
+  state.selectedMatchup = genId;
+  renderMatchupDetail();
+  loadMatchupDetail(genId);
+  const section = $('tournament-detail-section');
+  if (section && section.scrollIntoView) {
+    section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+// Resolve a matchup summary record (from the bracket) by challenger id.
+function matchupSummary(genId) {
+  const b = state.bracket || {};
+  const matchups = Array.isArray(b.matchups) ? b.matchups : [];
+  return matchups.find(m => m.challenger === genId) || null;
+}
+
+function renderMatchupDetail() {
   const wrap = $('tournament-detail');
   if (!wrap) return;
   clearChildren(wrap);
 
-  const tournaments = state.allTournaments();
-  if (tournaments.length === 0) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No tournament to show.']));
+  const genId = state.selectedMatchup;
+  if (!genId) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['Select a matchup above.']));
     return;
   }
-  const t = tournaments[Math.min(tournamentSelection, tournaments.length - 1)];
+
+  const summary = matchupSummary(genId);
+  const detail = state.matchupDetail.get(genId);
+  const live = liveMatchup();
+  const isLive = live && live.child_id === genId;
 
   // Header line.
-  const roundIdx = t.round_index != null ? t.round_index
-    : (t.round != null ? t.round : '?');
-  const totalRounds = t.total_rounds != null ? t.total_rounds : '?';
+  const champ = (summary && summary.champion)
+    || (isLive && (live.parent_id || live.champion)) || '?';
   wrap.appendChild(el('h3', null, [
-    `Tournament — round ${roundIdx} of ${totalRounds} · ` +
-    `${t.parent_id || '?'} vs ${t.child_id || '?'}`,
+    'Matchup · ' + genId + ' vs ' + champ,
   ]));
 
-  // Current hypothesis focus — what is being tested.
-  const hyp = childHypothesis(t);
+  if (!detail && !isLive) {
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'Loading matchup detail…',
+    ]));
+    return;
+  }
+
+  // The detail endpoint is authoritative; for a live matchup with no
+  // detail yet we fall back to the active-tournament record.
+  const hyp = (detail && detail.hypothesis) ||
+    (isLive ? live.hypothesis : null) ||
+    (summary && summary.hypothesis_core_idea
+      ? { core_idea: summary.hypothesis_core_idea } : null);
+  const patches = (detail && Array.isArray(detail.patches)) ? detail.patches : [];
+  const entryGrid = (detail && Array.isArray(detail.entry_grid))
+    ? detail.entry_grid : [];
+  const scalar = detail && detail.scalar;
+  const decision = (detail && detail.decision)
+    || (summary && summary.decision)
+    || (isLive ? 'in_progress' : null);
+  const rejectionReason = (detail && detail.rejection_reason)
+    || (summary && summary.rejection_reason) || null;
+
+  // --- What was tested
+  wrap.appendChild(el('h3', null, ['What was tested']));
   const focus = el('div', { class: 'hypothesis-focus' });
-  focus.appendChild(el('h3', null, ['What is being tested']));
   if (hyp && (hyp.core_idea || hyp.why || (hyp.modulating && hyp.modulating.length))) {
     if (hyp.core_idea) {
       focus.appendChild(el('p', null, [
@@ -1420,156 +1724,193 @@ function renderTournamentDetail() {
     }
     if (Array.isArray(hyp.modulating) && hyp.modulating.length > 0) {
       const line = el('p', null, [el('strong', null, ['Modulating. '])]);
-      hyp.modulating.forEach((m, i) => {
-        line.appendChild(el('code', { class: 'mono code-pill focus-tag' }, [m]));
+      hyp.modulating.forEach((mid) => {
+        line.appendChild(el('code', { class: 'mono code-pill focus-tag' }, [mid]));
       });
       focus.appendChild(line);
     }
   } else {
     focus.appendChild(el('p', { class: 'empty' }, [
-      'No hypothesis recorded for the proposed generation yet.',
+      'No hypothesis recorded for this challenger.',
     ]));
   }
   wrap.appendChild(focus);
 
-  // Full per-entry table.
-  const entries = t.entries || [];
-  if (entries.length === 0) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No board entries in this tournament.']));
+  // --- Patches
+  wrap.appendChild(el('h3', null, ['Patches']));
+  if (patches.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No patches recorded.']));
   } else {
-    wrap.appendChild(el('h3', null, ['Per-entry results']));
-    const tbl = el('table', { class: 'entry-table' });
+    const tbl = el('table', { class: 'data-table' });
     tbl.appendChild(el('thead', null, [el('tr', null, [
-      el('th', null, ['entry']),
-      el('th', null, ['status']),
-      el('th', null, [(t.parent_id || 'parent') + ' loss']),
-      el('th', null, [(t.child_id || 'child') + ' loss']),
-      el('th', null, ['note']),
+      el('th', null, ['mutation']),
+      el('th', null, ['op']),
+      el('th', null, ['rationale']),
     ])]));
     const tbody = el('tbody');
-    for (const e of entries) {
-      tbody.appendChild(renderTournamentRow(e));
-    }
-    tbl.appendChild(tbody);
-    wrap.appendChild(tbl);
-  }
-
-  // Partial aggregate + predicted verdict (only meaningful with entries).
-  if (entries.length > 0) {
-    wrap.appendChild(renderAggregate(t));
-    const verdict = predictedGateVerdict(t, state.scoring.margin);
-    if (verdict) wrap.appendChild(renderVerdict(verdict));
-  }
-
-  // Drift-kind / metric movement table.
-  wrap.appendChild(renderDriftMovementTable(t));
-
-  // Controls (active tournament only).
-  if (t.__active) {
-    wrap.appendChild(renderTournamentButtons());
-  }
-}
-
-function renderTournamentRow(entry) {
-  const status = entry.status || 'queued';
-  const parentTxt = entry.parent
-    ? `${fmtRate(entry.parent.drift_loss)} ${entry.parent.pass ? '✓' : '✗'}`
-    : '—';
-  const childDone = status === 'done' && entry.child;
-  const childTxt = childDone
-    ? `${fmtRate(entry.child.drift_loss)} ${entry.child.pass ? '✓' : '✗'}`
-    : (status === 'running' ? 'running' : (status === 'fail' ? 'failed' : '—'));
-  const regression = entry.parent && entry.child
-    && entry.parent.pass === true && entry.child.pass === false;
-  let note = '';
-  if (regression) note = 'pass regression';
-  else if (status === 'fail' && entry.fail_reason) note = entry.fail_reason;
-  else if (status === 'running' && entry.runtime && entry.runtime.percent != null) {
-    note = `${Math.round(entry.runtime.percent)}%`;
-  }
-
-  const childCell = el('td', { class: 'mono' + (regression ? ' regression' : '') }, [childTxt]);
-
-  const row = el('tr', {
-    tabindex: '0',
-    'aria-label': `entry ${entry.entry_id} status ${status}`,
-    onClick: () => openDrillForEntry(entry),
-    onKeydown: (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') {
-        ev.preventDefault();
-        openDrillForEntry(entry);
-      }
-    },
-  }, [
-    el('td', { class: 'mono' }, [entry.entry_id]),
-    el('td', { class: 'cell-status ' + status }, [status]),
-    el('td', { class: 'mono' }, [parentTxt]),
-    childCell,
-    el('td', { class: 'meta' }, [note]),
-  ]);
-  return row;
-}
-
-// Drift-kind movement table — per-kind from/to rates aggregated over
-// the tournament's done entries (child side).
-function renderDriftMovementTable(t) {
-  const wrap = el('div', { class: 'aggregate' });
-  wrap.appendChild(el('h4', null, ['Drift-kind movement']));
-
-  // Prefer an explicit drift_movements block on the tournament; else
-  // aggregate drift_kinds counts from the child entries.
-  const movements = Array.isArray(t.drift_movements) ? t.drift_movements : null;
-  if (movements && movements.length > 0) {
-    const tbl = el('table');
-    tbl.appendChild(el('thead', null, [el('tr', null, [
-      el('th', null, ['kind']),
-      el('th', null, ['from']),
-      el('th', null, ['to']),
-      el('th', null, ['Δ']),
-    ])]));
-    const tbody = el('tbody');
-    for (const m of movements) {
-      const delta = (m.to_rate || 0) - (m.from_rate || 0);
-      tbody.appendChild(el('tr', { class: delta > 0 ? 'row-flag' : '' }, [
-        el('td', null, [m.kind || '?']),
-        el('td', { class: 'mono' }, [fmtRate(m.from_rate)]),
-        el('td', { class: 'mono' }, [fmtRate(m.to_rate)]),
-        el('td', { class: 'mono' }, [fmtDelta(delta)]),
+    for (const p of patches) {
+      tbody.appendChild(el('tr', null, [
+        el('td', null, [el('code', { class: 'mono' }, [p.mutation_id || '—'])]),
+        el('td', null, [el('code', { class: 'mono' }, [p.op || '—'])]),
+        el('td', null, [p.rationale || '']),
       ]));
     }
     tbl.appendChild(tbody);
     wrap.appendChild(tbl);
+  }
+
+  // --- Per-entry A/B grid
+  wrap.appendChild(el('h3', null, ['Per-entry A/B grid']));
+  if (entryGrid.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      isLive
+        ? 'Tournament still in progress — per-entry grid lands on completion.'
+        : 'No per-entry grid recorded.',
+    ]));
+  } else {
+    const regressions = entryGrid.filter(
+      r => String(r.verdict || '').toLowerCase() === 'regressed').length;
+    if (regressions > 0) {
+      wrap.appendChild(el('p', { class: 'grid-note meta' }, [
+        regressions + ' regression' + (regressions === 1 ? '' : 's') +
+        ' — these are what the gate kills challengers on.',
+      ]));
+    }
+    const tbl = el('table', { class: 'ab-grid' });
+    tbl.appendChild(el('thead', null, [el('tr', null, [
+      el('th', null, ['board entry']),
+      el('th', null, [champ + ' loss']),
+      el('th', null, [genId + ' loss']),
+      el('th', null, ['pass A→B']),
+      el('th', null, ['verdict']),
+    ])]));
+    const tbody = el('tbody');
+    for (const row of entryGrid) {
+      const verdict = String(row.verdict || 'flat').toLowerCase();
+      const tr = el('tr', { class: 'ab-row ab-' + verdict }, [
+        el('td', { class: 'mono' }, [row.entry_id || '—']),
+        el('td', { class: 'mono' }, [fmtRate(row.parent_drift_loss)]),
+        el('td', { class: 'mono' }, [fmtRate(row.child_drift_loss)]),
+        el('td', { class: 'mono' }, [
+          (row.parent_pass ? '✓' : '✗') + ' → ' +
+          (row.child_pass ? '✓' : '✗'),
+        ]),
+        el('td', null, [
+          el('span', { class: 'ab-verdict ab-verdict-' + verdict }, [verdict]),
+        ]),
+      ]);
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+  }
+
+  // --- Scalar breakdown
+  wrap.appendChild(el('h3', null, ['Scalar breakdown']));
+  if (!scalar) {
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'No scalar breakdown recorded.',
+    ]));
+  } else {
+    wrap.appendChild(renderScalarBreakdown(scalar, champ, genId));
+  }
+
+  // --- Verdict
+  wrap.appendChild(el('h3', null, ['Verdict']));
+  wrap.appendChild(renderMatchupVerdict(decision, rejectionReason, isLive, live));
+}
+
+// Parent-vs-child scalar with per-namespace component bars.
+function renderScalarBreakdown(scalar, champ, genId) {
+  const wrap = el('div', { class: 'scalar-breakdown' });
+
+  const parent = typeof scalar.parent === 'number' ? scalar.parent : null;
+  const child = typeof scalar.child === 'number' ? scalar.child : null;
+  const delta = typeof scalar.delta === 'number'
+    ? scalar.delta
+    : (parent != null && child != null ? child - parent : null);
+
+  const head = el('div', { class: 'scalar-totals' }, [
+    el('div', { class: 'scalar-total' }, [
+      el('span', { class: 'scalar-total-label meta' }, [champ + ' (champion)']),
+      el('span', { class: 'scalar-total-val mono' }, [fmtRate(parent)]),
+    ]),
+    el('div', { class: 'scalar-total' }, [
+      el('span', { class: 'scalar-total-label meta' }, [genId + ' (challenger)']),
+      el('span', { class: 'scalar-total-val mono' }, [fmtRate(child)]),
+    ]),
+    el('div', { class: 'scalar-total scalar-delta' +
+      (delta != null && delta < 0 ? ' good' : delta != null && delta > 0 ? ' bad' : '') }, [
+      el('span', { class: 'scalar-total-label meta' }, ['Δ scalar']),
+      el('span', { class: 'scalar-total-val mono' }, [fmtDelta(delta)]),
+    ]),
+  ]);
+  wrap.appendChild(head);
+
+  // Per-namespace component bars. Each component is a contribution to
+  // the scalar; lower drift/cost is better so a negative bar is good.
+  const components = scalar.components && typeof scalar.components === 'object'
+    ? scalar.components : null;
+  if (components && Object.keys(components).length > 0) {
+    const entries = Object.entries(components);
+    let maxAbs = 0;
+    for (const [, v] of entries) {
+      const n = typeof v === 'number' ? Math.abs(v) : 0;
+      if (n > maxAbs) maxAbs = n;
+    }
+    if (maxAbs === 0) maxAbs = 1;
+    const bars = el('div', { class: 'scalar-bars' });
+    for (const [ns, v] of entries) {
+      const val = typeof v === 'number' ? v : 0;
+      const pct = Math.min(100, (Math.abs(val) / maxAbs) * 100);
+      const row = el('div', { class: 'scalar-bar-row' }, [
+        el('span', { class: 'scalar-bar-ns' }, [ns]),
+        el('span', { class: 'scalar-bar-track' }, [
+          el('span', {
+            class: 'scalar-bar-fill ' + (val < 0 ? 'good' : 'bad'),
+            style: 'width:' + pct.toFixed(1) + '%',
+          }),
+        ]),
+        el('span', { class: 'scalar-bar-val mono' }, [fmtDelta(val)]),
+      ]);
+      bars.appendChild(row);
+    }
+    wrap.appendChild(bars);
+  }
+  return wrap;
+}
+
+// Verdict block — kept/discarded plus the exact gate reasoning.
+function renderMatchupVerdict(decision, rejectionReason, isLive, live) {
+  const d = String(decision || '').toLowerCase();
+  if (isLive && (d === 'in_progress' || d === '')) {
+    const v = predictedGateVerdict(live, state.scoring.margin);
+    const cls = v && v.verdict === 'promote' ? 'promote'
+      : v && v.verdict === 'reject' ? 'reject' : 'tbd';
+    const wrap = el('div', { class: 'verdict ' + cls, role: 'status' });
+    wrap.appendChild(el('div', { class: 'verdict-line' }, [
+      'In progress — predicted gate: ' +
+      (v ? v.verdict.toUpperCase() : 'TBD'),
+    ]));
+    if (v) wrap.appendChild(el('div', { class: 'verdict-reason' }, [v.reason]));
     return wrap;
   }
 
-  // Fallback: counts of drift kinds across child entries.
-  const counts = new Map();
-  for (const e of (t.entries || [])) {
-    const dk = e.child && e.child.drift_kinds;
-    if (dk) {
-      for (const [k, v] of Object.entries(dk)) {
-        counts.set(k, (counts.get(k) || 0) + (v || 0));
-      }
-    }
-  }
-  if (counts.size === 0) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No drift movement recorded.']));
-    return wrap;
-  }
-  const tbl = el('table');
-  tbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', null, ['drift kind']),
-    el('th', null, ['count (child)']),
-  ])]));
-  const tbody = el('tbody');
-  for (const [k, v] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
-    tbody.appendChild(el('tr', null, [
-      el('td', null, [k]),
-      el('td', { class: 'mono' }, [String(v)]),
+  const promoted = d === 'promoted' || d === 'promote' || d === 'kept';
+  const cls = promoted ? 'promote' : 'reject';
+  const wrap = el('div', { class: 'verdict ' + cls, role: 'status' });
+  wrap.appendChild(el('div', { class: 'verdict-line' }, [
+    promoted ? 'Kept — promoted to champion' : 'Discarded by the gate',
+  ]));
+  if (promoted) {
+    wrap.appendChild(el('div', { class: 'verdict-reason' }, [
+      'Cleared the scalar margin without a pass regression.',
+    ]));
+  } else {
+    wrap.appendChild(el('div', { class: 'verdict-reason' }, [
+      rejectionReason || 'Failed to clear the scalar margin.',
     ]));
   }
-  tbl.appendChild(tbody);
-  wrap.appendChild(tbl);
   return wrap;
 }
 
@@ -2063,6 +2404,7 @@ function showView(view) {
 // footer and log tail (Overview) are cheap and always kept fresh.
 function renderActiveView() {
   if (currentView === 'overview') {
+    renderHealthPanel();
     renderActiveTournament();
     renderActiveRuns();
     renderLogTail();
@@ -2130,30 +2472,103 @@ async function loadFullState() {
   } catch (err) {
     // No /api/epoch — fine, the Epoch view degrades to empty states.
   }
+  // The bracket and health endpoints (R9-5) are likewise independent;
+  // fetch them in parallel and tolerate either being absent.
+  await Promise.all([loadBracket(), loadHealthReport()]);
+}
+
+// GET /api/tournaments — the gauntlet bracket. Independent of /api/state.
+async function loadBracket() {
+  try {
+    const bracket = await fetchJson('/api/tournaments');
+    state.setBracket(bracket);
+    if (currentView === 'tournament') renderTournamentView();
+  } catch (err) {
+    // No /api/tournaments — the bracket degrades to its empty state.
+  }
+}
+
+// GET /api/health-report — the loop-health panel.
+async function loadHealthReport() {
+  try {
+    const report = await fetchJson('/api/health-report');
+    state.setHealthReport(report);
+    if (currentView === 'overview') renderHealthPanel();
+  } catch (err) {
+    // No /api/health-report — the panel degrades to its empty state.
+  }
+}
+
+// GET /api/tournaments/:generation_id — the per-matchup detail. Cached
+// so re-opening a matchup is instant; SSE invalidates it.
+async function loadMatchupDetail(genId) {
+  if (!genId) return;
+  // In mock mode there is no server; synthesise the detail locally so
+  // the bracket's detail panel is fully populated offline.
+  if (state.mock) {
+    const detail = mockMatchupDetail(genId);
+    if (detail) {
+      state.setMatchupDetail(genId, detail);
+      if (currentView === 'tournament' && state.selectedMatchup === genId) {
+        renderMatchupDetail();
+      }
+    }
+    return;
+  }
+  try {
+    const detail = await fetchJson('/api/tournaments/' + encodeURIComponent(genId));
+    state.setMatchupDetail(genId, detail);
+    if (currentView === 'tournament' && state.selectedMatchup === genId) {
+      renderMatchupDetail();
+    }
+  } catch (err) {
+    // Detail endpoint absent or 404 — renderMatchupDetail falls back to
+    // the bracket summary record.
+  }
 }
 
 async function refreshAfterEvent(payload) {
-  // Most state_change events name a region; if missing, refresh all.
-  const region = (payload && payload.region) || 'all';
+  // A state_change event names a region (legacy) or a kind. The R9
+  // contract emits `kind` of epoch / tournament / heartbeat; the older
+  // shape used `region`. Accept either; absent → refresh everything.
+  const tag = (payload && (payload.kind || payload.region)) || 'all';
   try {
-    if (region === 'all') {
+    if (tag === 'all') {
       await loadFullState();
       return;
     }
-    if (region === 'tournament') {
-      const t = await fetchJson('/api/active-tournament');
-      state.activeTournament = t;
-    } else if (region === 'runs') {
+    if (tag === 'tournament') {
+      // A tournament changed: refresh both the live matchup and the
+      // bracket, and drop the cached detail for the moving matchup.
+      try {
+        const t = await fetchJson('/api/active-tournament');
+        state.activeTournament = t;
+      } catch (err) { /* may have just ended */ }
+      state.matchupDetail.clear();
+      await loadBracket();
+      if (state.selectedMatchup) loadMatchupDetail(state.selectedMatchup);
+    } else if (tag === 'heartbeat') {
+      try {
+        state.heartbeat = await fetchJson('/api/heartbeat');
+      } catch (err) {
+        // No dedicated heartbeat endpoint — fall back to a full refresh.
+        await loadFullState();
+        return;
+      }
+    } else if (tag === 'runs') {
       const r = await fetchJson('/api/active-runs');
       state.activeRuns = r;
-    } else if (region === 'lineage') {
+    } else if (tag === 'lineage') {
       const l = await fetchJson('/api/lineage');
       state.lineage = l;
-    } else if (region === 'epoch') {
+    } else if (tag === 'epoch') {
       try {
         const epoch = await fetchJson('/api/epoch');
         state.setEpochDef(epoch);
       } catch (err) { /* endpoint may be absent */ }
+      // An epoch transition can also move the bracket and the health
+      // report; refresh those too.
+      await Promise.all([loadBracket(), loadHealthReport()]);
     } else {
       await loadFullState();
       return;
@@ -2231,9 +2646,111 @@ function scheduleReconnect() {
 // --- Mock state — for file:// preview and offline development
 //
 // The mock covers all four views: a cross-epoch lineage (two epochs),
-// an active tournament plus a past one for the picker, the full epoch
-// contract for the Epoch view, and a heartbeat carrying a
-// harmonograf_url so the deep-links render.
+// the gauntlet bracket (multi-generation, mixed promoted / rejected), a
+// live matchup, a health report with one warning finding, the full
+// epoch contract, and a heartbeat carrying a harmonograf_url so the
+// deep-links render.
+
+// GET /api/tournaments/:generation_id — synthetic per-matchup detail
+// for mock mode. Keyed by challenger generation id.
+function mockMatchupDetail(genId) {
+  const details = {
+    v1: {
+      hypothesis: {
+        core_idea: 'Tighten the extraction schema to reject loose types.',
+        why: 'Schema drift was the dominant kind in v0.',
+        modulating: ['researcher.schema'],
+      },
+      patches: [
+        { mutation_id: 'researcher.schema', op: 'replace',
+          rationale: 'narrow allowed types to the strict invoice contract' },
+      ],
+      entry_grid: [
+        { entry_id: 'extract_invoice_001', parent_drift_loss: 0.30,
+          child_drift_loss: 0.21, parent_pass: true, child_pass: true,
+          verdict: 'improved' },
+        { entry_id: 'schema_response', parent_drift_loss: 0.12,
+          child_drift_loss: 0.34, parent_pass: true, child_pass: false,
+          verdict: 'regressed' },
+      ],
+      scalar: { parent: 0.41, child: 0.43, delta: 0.022,
+        components: { drift: -0.04, cost: 0.01, rubric: 0.05 } },
+      decision: 'rejected',
+      rejection_reason: 'pass-rate regression on schema_response — the strict schema rejected a valid borderline response.',
+    },
+    v2: {
+      hypothesis: {
+        core_idea: 'Move JSON validation earlier in the pipeline.',
+        why: 'Validating before emit catches malformed output before it scores.',
+        modulating: ['pipeline.order'],
+      },
+      patches: [
+        { mutation_id: 'pipeline.order', op: 'reorder',
+          rationale: 'validate-before-emit so a bad response never reaches scoring' },
+      ],
+      entry_grid: [
+        { entry_id: 'extract_invoice_001', parent_drift_loss: 0.23,
+          child_drift_loss: 0.15, parent_pass: true, child_pass: true,
+          verdict: 'improved' },
+        { entry_id: 'extract_invoice_002', parent_drift_loss: 0.31,
+          child_drift_loss: 0.22, parent_pass: true, child_pass: true,
+          verdict: 'improved' },
+        { entry_id: 'schema_response', parent_drift_loss: 0.18,
+          child_drift_loss: 0.18, parent_pass: true, child_pass: true,
+          verdict: 'flat' },
+      ],
+      scalar: { parent: 0.49, child: 0.41, delta: -0.080,
+        components: { drift: -0.06, cost: -0.01, rubric: -0.01 } },
+      decision: 'promoted', rejection_reason: null,
+    },
+    v2x: {
+      hypothesis: {
+        core_idea: 'Inline the validator instead of reordering the pipeline.',
+        why: 'Reordering added a stage; inlining avoids the extra hop.',
+        modulating: ['pipeline.order'],
+      },
+      patches: [
+        { mutation_id: 'pipeline.order', op: 'replace',
+          rationale: 'inline validate into emit to drop a pipeline stage' },
+      ],
+      entry_grid: [
+        { entry_id: 'extract_invoice_001', parent_drift_loss: 0.15,
+          child_drift_loss: 0.17, parent_pass: true, child_pass: true,
+          verdict: 'flat' },
+        { entry_id: 'schema_response', parent_drift_loss: 0.18,
+          child_drift_loss: 0.41, parent_pass: true, child_pass: false,
+          verdict: 'regressed' },
+      ],
+      scalar: { parent: 0.41, child: 0.44, delta: 0.030,
+        components: { drift: 0.02, cost: -0.02, rubric: 0.03 } },
+      decision: 'rejected',
+      rejection_reason: 'pass-rate regression on schema_response — coupling validation to emit dropped a guard.',
+    },
+    v4: {
+      hypothesis: {
+        core_idea: 'Carry the picky retry pass into the new epoch baseline.',
+        why: 'The retry pass cleared borderline rejections last epoch.',
+        modulating: ['researcher.retry'],
+      },
+      patches: [
+        { mutation_id: 'researcher.retry', op: 'insert',
+          rationale: 'retry once on a first-pass fail before scoring' },
+      ],
+      entry_grid: [
+        { entry_id: 'extract_invoice_002', parent_drift_loss: 0.34,
+          child_drift_loss: 0.31, parent_pass: false, child_pass: true,
+          verdict: 'improved' },
+        { entry_id: 'multi_turn_picky', parent_drift_loss: 0.28,
+          child_drift_loss: 0.27, parent_pass: true, child_pass: true,
+          verdict: 'flat' },
+      ],
+      scalar: { parent: 0.41, child: 0.38, delta: -0.030,
+        components: { drift: -0.03, cost: 0.02, rubric: -0.02 } },
+      decision: 'promoted', rejection_reason: null,
+    },
+  };
+  return details[genId] || null;
+}
 
 function mockSnapshot() {
   return {
@@ -2313,6 +2830,45 @@ function mockSnapshot() {
         ],
       },
     ],
+    // GET /api/tournaments — the gauntlet bracket. The champion lineage
+    // is the promoted spine; matchups carry both promoted and rejected
+    // challenges so the bracket can hang the discards below.
+    bracket: {
+      epoch_id: '2026-05-15_e1',
+      champion_lineage: ['v0', 'v2', 'v4'],
+      matchups: [
+        { champion: 'v0', challenger: 'v1', decision: 'rejected',
+          delta_scalar: 0.022,
+          rejection_reason: 'pass-rate regression on schema_response',
+          hypothesis_core_idea: 'Tighten the extraction schema to reject loose types.',
+          ran_at: '2026-05-10T10:12:00Z' },
+        { champion: 'v0', challenger: 'v2', decision: 'promoted',
+          delta_scalar: -0.080,
+          hypothesis_core_idea: 'Move JSON validation earlier in the pipeline.',
+          ran_at: '2026-05-10T11:40:00Z' },
+        { champion: 'v2', challenger: 'v2x', decision: 'rejected',
+          delta_scalar: 0.030,
+          rejection_reason: 'pass-rate regression on schema_response',
+          hypothesis_core_idea: 'Inline the validator instead of reordering the pipeline.',
+          ran_at: '2026-05-10T13:05:00Z' },
+        { champion: 'v2', challenger: 'v4', decision: 'promoted',
+          delta_scalar: -0.030,
+          hypothesis_core_idea: 'Carry the picky retry pass into the new epoch baseline.',
+          ran_at: '2026-05-15T09:20:00Z' },
+      ],
+    },
+    // GET /api/health-report — the loop-health panel. One warning
+    // finding so the panel demonstrates a non-trivial state.
+    health_report: {
+      epoch_id: '2026-05-15_e1',
+      healthy: false,
+      checked_at: new Date(Date.now() - 90_000).toISOString(),
+      findings: [
+        { code: 'rubric.low_spread', severity: 'warning',
+          summary: 'Rubric scores cluster in a 0.08-wide band across the board.',
+          detail: 'A narrow rubric spread weakens the optimization signal — challengers and champions score nearly the same. Consider widening the rubric or adding harder board entries.' },
+      ],
+    },
     lineage: {
       generations: [
         { id: 'v0', parent_id: null, epoch_id: '2026-05-10_e0' },

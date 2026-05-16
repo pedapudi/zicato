@@ -156,10 +156,13 @@ class _SectionCollector(HTMLParser):
 # Sections that must exist somewhere in the page (now spread across the
 # four views rather than one flat scroll).
 REQUIRED_SECTIONS = {
+    "health-section",
     "tournament-section",
     "runs-section",
     "lineage-section",
     "trajectory-section",
+    "tournament-bracket-section",
+    "tournament-detail-section",
     "heatmap-section",
     "log-section",
     "epoch-overview-section",
@@ -208,6 +211,9 @@ REQUIRED_IDS = (
         "tournament-title",
         "tournament-body",
         "tournament-elapsed",
+        "health-panel",
+        "tournament-bracket",
+        "tournament-detail",
         "active-runs",
         "log-tail",
         "drill-panel",
@@ -291,6 +297,45 @@ def test_epoch_view_section_ids_present(index_html: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tournament gauntlet bracket + per-matchup detail
+# ---------------------------------------------------------------------------
+
+
+def test_tournament_bracket_container_present(index_html: str) -> None:
+    """The Tournament view renders a gauntlet bracket container.
+
+    The bracket is the spine app.js paints the champion lineage and the
+    discarded challengers into; the detail panel holds the per-matchup
+    A/B grid and scalar breakdown.
+    """
+    p = _SectionCollector()
+    p.feed(index_html)
+    assert "tournament-bracket" in p.all_ids, "bracket container missing"
+    assert "tournament-detail" in p.all_ids, "matchup detail container missing"
+    # The bracket and detail each live in their own section.
+    assert "tournament-bracket-section" in set(p.section_ids)
+    assert "tournament-detail-section" in set(p.section_ids)
+
+
+def test_loop_health_panel_present(index_html: str) -> None:
+    """The Overview view carries a prominent loop-health panel."""
+    p = _SectionCollector()
+    p.feed(index_html)
+    assert "health-section" in set(p.section_ids), "loop-health section missing"
+    assert "health-panel" in p.all_ids, "loop-health panel container missing"
+
+
+def test_app_js_targets_r9_endpoints(app_js: str) -> None:
+    """app.js codes against the R9-5 bracket / health endpoint contract."""
+    for path in (
+        "/api/tournaments",
+        "/api/health-report",
+        "/api/active-tournament",
+    ):
+        assert path in app_js, f"app.js does not reference endpoint {path}"
+
+
+# ---------------------------------------------------------------------------
 # Dark mode + palette
 # ---------------------------------------------------------------------------
 
@@ -319,9 +364,10 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 130 KB uncompressed — the envelope grew with the multi-view app
-    # (nav rail, Tree / Tournament / Epoch views).
-    assert total < 130_000, f"bundle is {total} bytes, exceeds 130_000 envelope"
+    # 150 KB uncompressed — the envelope grew again with the real
+    # Tournament gauntlet bracket, per-matchup detail panel, and the
+    # loop-health panel.
+    assert total < 150_000, f"bundle is {total} bytes, exceeds 150_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
