@@ -1,10 +1,16 @@
-"""Operator-edited proposer rubric: parsing, enforcement, embedding.
+"""Operator-edited proposer brief: parsing, enforcement, embedding.
 
-A ``rubric.md`` lives at the epoch root alongside ``board.jsonl`` and
+A ``brief.md`` lives at the epoch root alongside ``board.jsonl`` and
 ``scoring.json``. It is the operator's running guidance to the proposer
 — the place where you encode "don't touch the router system prompt this
 epoch" or "prefer to edit the planner's tool descriptions over the
 planner's persona" without rewriting code.
+
+The proposer brief is an *epoch-level* concept: one brief governs every
+proposer call within an epoch. It is deliberately distinct from the
+per-board-entry ``Rubric`` (see :mod:`zicato.board.rubric`), which is an
+LLM-as-judge scorer for a single board entry — the two used to share the
+name "rubric" and no longer do.
 
 Two specially-named sections carry structured signal that the proposer
 enforces at validation time:
@@ -15,7 +21,7 @@ enforces at validation time:
 * ``# Preferred edits`` — soft hint. The proposer is encouraged to look
   there first but is not constrained.
 
-The full rubric text passes through verbatim to the system prompt so
+The full brief text passes through verbatim to the system prompt so
 free-form guidance the operator wrote outside the two structured
 sections still reaches the model.
 
@@ -50,8 +56,12 @@ _PREFERRED_HEADING = "preferred edits"
 
 
 @dataclass(frozen=True, slots=True)
-class Rubric:
-    """Parsed view of an operator-edited ``rubric.md``.
+class ProposerBrief:
+    """Parsed view of an operator-edited ``brief.md``.
+
+    The epoch-level brief the operator hands the proposer. Not to be
+    confused with :class:`zicato.board.rubric`'s per-entry judge — this
+    is improvement-loop steering, that is single-entry scoring.
 
     Fields
     ------
@@ -61,7 +71,7 @@ class Rubric:
         guidance in addition to the structured forbidden/preferred lists.
     forbidden_ids:
         Mutation-point ids the proposer MUST NOT touch this epoch.
-        Order is the order of appearance in the rubric.
+        Order is the order of appearance in the brief.
     preferred_ids:
         Mutation-point ids the proposer is encouraged to consider first.
         Soft hint; not enforced.
@@ -78,7 +88,7 @@ def _extract_ids_from_bullet(body: str) -> list[str]:
     Backticked tokens take priority — they are the unambiguous form and
     line up with how the CLI renders mutation ids. If no backticked
     tokens appear, quoted tokens are accepted as a convenience for
-    operators editing the rubric in editors that auto-format backticks
+    operators editing the brief in editors that auto-format backticks
     away.
     """
 
@@ -141,13 +151,13 @@ def _ids_from_section(body_lines: list[str]) -> tuple[str, ...]:
     return tuple(out)
 
 
-def load_rubric(path: Path) -> Rubric:
-    """Parse a ``rubric.md`` file from disk.
+def load_brief(path: Path) -> ProposerBrief:
+    """Parse a ``brief.md`` file from disk.
 
     The file is read as UTF-8. A missing file is a hard error — the
     proposer cannot operate without operator guidance, even if that
-    guidance is an empty rubric. Operators who want a permissive default
-    should commit a rubric that says so explicitly rather than relying
+    guidance is an empty brief. Operators who want a permissive default
+    should commit a brief that says so explicitly rather than relying
     on a defaulting behavior here.
 
     Raises
@@ -170,13 +180,13 @@ def load_rubric(path: Path) -> Rubric:
         elif normalized == _PREFERRED_HEADING:
             preferred_ids = _ids_from_section(body)
 
-    return Rubric(text=text, forbidden_ids=forbidden_ids, preferred_ids=preferred_ids)
+    return ProposerBrief(text=text, forbidden_ids=forbidden_ids, preferred_ids=preferred_ids)
 
 
 def enforce_forbidden(
     patches: list[Patch] | tuple[Patch, ...], forbidden_ids: tuple[str, ...]
 ) -> list[str]:
-    """Check a list of patches against the rubric's forbidden-id set.
+    """Check a list of patches against the brief's forbidden-id set.
 
     Returns
     -------
@@ -196,15 +206,12 @@ def enforce_forbidden(
     errors: list[str] = []
     for patch in patches:
         if patch.mutation_id in forbidden_set:
-            errors.append(
-                f"patch {patch.id!r} targets forbidden mutation id "
-                f"{patch.mutation_id!r}"
-            )
+            errors.append(f"patch {patch.id!r} targets forbidden mutation id {patch.mutation_id!r}")
     return errors
 
 
 __all__ = [
-    "Rubric",
-    "load_rubric",
+    "ProposerBrief",
+    "load_brief",
     "enforce_forbidden",
 ]

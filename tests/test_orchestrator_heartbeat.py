@@ -70,14 +70,14 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
         )
         + "\n"
     )
-    rubric_src = tmp_path / "rubric.md"
-    rubric_src.write_text("# Rubric\n- Be careful.\n")
+    brief_src = tmp_path / "brief.md"
+    brief_src.write_text("# Proposer brief\n- Be careful.\n")
 
     cfg = new_epoch(
         workspace,
         name="alpha",
         board_source=board_src,
-        rubric_source=rubric_src,
+        brief_source=brief_src,
         weights=ScoringWeights(promote_margin=0.01),
         auto_close_previous=False,
     )
@@ -86,18 +86,14 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
     snap = v0_dir / "snapshot"
     snap.mkdir(parents=True)
     (snap / "agent.py").write_text(
-        '"""Stub harness source."""\n\n'
-        '# zicato:mutable id="greeting"\n'
-        'GREETING = "hello"\n'
+        '"""Stub harness source."""\n\n# zicato:mutable id="greeting"\nGREETING = "hello"\n'
     )
     return workspace, cfg.id
 
 
 def _install_stub_adapter_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     class _StubSession:
-        async def run(
-            self, entry: BoardEntry, sinks: list[Any], config: Any
-        ) -> RunResult:
+        async def run(self, entry: BoardEntry, sinks: list[Any], config: Any) -> RunResult:
             del sinks, config
             return RunResult(
                 run_id=f"r-{entry.id}",
@@ -250,9 +246,7 @@ def test_evolve_n_rounds_writes_heartbeat_and_releases_lock(
     assert hb is not None
     assert hb.pid == os.getpid()
     assert hb.instance_id == "hb-test"
-    assert hb.phase.startswith("evolve_n_rounds:done") or hb.phase.startswith(
-        "after_round_"
-    )
+    assert hb.phase.startswith("evolve_n_rounds:done") or hb.phase.startswith("after_round_")
     # round_index was bumped to 0 during the round; survives shutdown.
     assert hb.round_index == 0
 
@@ -276,7 +270,8 @@ def test_evolve_n_rounds_refuses_when_workspace_locked(
 
     # Plant a foreign lock for a definitely-alive pid (our parent).
     from zicato.runtime._atomic import atomic_write_json
-    from zicato.runtime.paths import ensure_runtime_dirs, lock_path as _lp
+    from zicato.runtime.paths import ensure_runtime_dirs
+    from zicato.runtime.paths import lock_path as _lp
 
     ensure_runtime_dirs(workspace)
     atomic_write_json(

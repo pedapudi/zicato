@@ -123,7 +123,7 @@ def _component_diff_label(prev_components: dict[str, str], cur_components: dict[
     """Return a human-readable label naming which contract components moved.
 
     Compares the per-component sub-hashes; returns a comma-joined list
-    of the component names that differ (``board``, ``rubric``,
+    of the component names that differ (``board``, ``brief``,
     ``scoring``, ``entrypoint``, ``mutable_trees``). Falls back to a
     generic ``"contract"`` when no per-component breakdown is available
     (e.g. a legacy epoch with no stored components).
@@ -177,9 +177,9 @@ async def ensure_epoch_for_contract(
 ) -> str:
     """Resolve the epoch ``evolve`` should run against, auto-rolling on drift.
 
-    The "evaluation contract" is the board + rubric + scoring + the
-    registered inner-harness identity (entrypoint + mutable trees). A
-    change to any of those means generations on either side are no
+    The "evaluation contract" is the board + proposer brief + scoring +
+    the registered inner-harness identity (entrypoint + mutable trees).
+    A change to any of those means generations on either side are no
     longer comparable, so the epoch must roll. This function is the
     roll-at-evolve-time hook: it is called before the orchestrator
     resolves an epoch.
@@ -330,7 +330,7 @@ def _create_epoch_from_contract(
         workspace_root=workspace_root,
         name=name,
         board_source=inputs.board_path,
-        rubric_source=inputs.rubric_path,
+        brief_source=inputs.brief_path,
         weights=weights,
         auto_close_previous=False,  # ensure_epoch_for_contract closes explicitly
         aux_call_llm=aux_call_llm,
@@ -391,8 +391,8 @@ async def evolve_once(
 
     Steps:
 
-    1. Load the workspace config and the current epoch (board, rubric,
-       scoring, adapter via the workspace's adapter factory).
+    1. Load the workspace config and the current epoch (board, proposer
+       brief, scoring, adapter via the workspace's adapter factory).
     2. Resolve the current promoted generation as the parent.
     3. Re-enumerate mutation points against the parent's snapshot.
     4. Detect cross-run patterns over the parent's loss profiles.
@@ -464,7 +464,7 @@ async def evolve_once(
         resolved_epoch_id = epoch_id
     board = workspace_loader.load_current_board(workspace_root)
     weights = workspace_loader.load_current_scoring(workspace_root)
-    rubric = workspace_loader.load_current_rubric(workspace_root)
+    brief = workspace_loader.load_current_brief(workspace_root)
 
     adapter = adapter_factory.make_adapter_from_config(workspace_config)
     config = runtime_factory.make_runtime_config(
@@ -541,12 +541,12 @@ async def evolve_once(
         new_generation_id=next_id,
         patterns=patterns,
         mutations=mutations,
-        rubric_text=rubric.text,
+        brief_text=brief.text,
         current_loss_summary=loss_summary,
         aux_call_llm=auxiliary_call_llm,
         model=str(workspace_config.get("auxiliary_model", "")),
         max_retries=max_proposer_retries,
-        forbidden_ids=rubric.forbidden_ids,
+        forbidden_ids=brief.forbidden_ids,
         workspace_root=workspace_root,
     )
 
@@ -558,7 +558,7 @@ async def evolve_once(
                 f"proposer-emitted patch {patch.id!r} targets unknown "
                 f"mutation_id {patch.mutation_id!r}"
             )
-    forbidden_violations = check_forbidden_ids(list(experiment.patches), list(rubric.forbidden_ids))
+    forbidden_violations = check_forbidden_ids(list(experiment.patches), list(brief.forbidden_ids))
     if forbidden_violations:
         raise RuntimeError(
             "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
@@ -855,8 +855,8 @@ async def evolve_n_rounds(
 
     Stops early on ``max_consecutive_rejections`` rejected rounds in a
     row — that's a strong signal the proposer is stuck and the
-    operator probably wants to inspect the rubric / patterns before
-    spending more LLM calls. A successful promotion resets the
+    operator probably wants to inspect the proposer brief / patterns
+    before spending more LLM calls. A successful promotion resets the
     consecutive-rejection counter.
 
     A second circuit breaker watches loop *health*: when
@@ -1087,8 +1087,8 @@ async def evolve_n_rounds(
                         "evolve_n_rounds: stopping after %d consecutive rounds with a "
                         "CRITICAL loop-health finding (round %d/%d) — the loop is "
                         "producing no usable signal; inspect the scoring weights / "
-                        "rubric before resuming. (Pass stop_on_degenerate_health=False "
-                        "to opt out.)",
+                        "proposer brief before resuming. (Pass "
+                        "stop_on_degenerate_health=False to opt out.)",
                         consecutive_critical_health,
                         round_idx + 1,
                         rounds,
@@ -1607,7 +1607,7 @@ def _warn_loop_no_signal(epoch_id: str, round_n: int, summary: str) -> None:
     log.warning(
         "LOOP HEALTH CRITICAL — epoch %s round %d: %s. "
         "The evolve loop is producing no usable signal; inspect the "
-        "scoring weights / rubric before spending more LLM calls.",
+        "scoring weights / proposer brief before spending more LLM calls.",
         epoch_id,
         round_n,
         summary or "degenerate scoring",

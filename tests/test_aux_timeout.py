@@ -17,7 +17,6 @@ import pytest
 
 from zicato.aux_timeout import DEFAULT_AUX_CALL_TIMEOUT_S, aux_call_timeout_s
 
-
 # ---------------------------------------------------------------------------
 # Module-level config
 # ---------------------------------------------------------------------------
@@ -84,7 +83,7 @@ def test_proposer_timeout_raises_proposer_error(
                 new_generation_id="v1",
                 patterns=(),
                 mutations=(mut,),
-                rubric_text="# rubric",
+                brief_text="# proposer brief",
                 current_loss_summary="",
                 aux_call_llm=_hung_aux,
                 max_retries=0,
@@ -124,9 +123,7 @@ def test_judge_timeout_returns_judge_timeout_detail(
         runtime_ms=10,
     )
 
-    outcome = asyncio.run(
-        evaluate_expectation(expectation, result, aux_call_llm=_hung_aux)
-    )
+    outcome = asyncio.run(evaluate_expectation(expectation, result, aux_call_llm=_hung_aux))
     assert outcome.passed is False
     assert outcome.detail == "judge_timeout"
 

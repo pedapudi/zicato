@@ -3,8 +3,8 @@
 An epoch is the unit of *evaluation contract*. Four things make up that
 contract:
 
-1. The board — test inputs + expectations (``board.jsonl``).
-2. The rubric — operator steering text (``rubric.md``).
+1. The board — test inputs + expectations + judges (``board.jsonl``).
+2. The proposer brief — operator steering text (``brief.md``).
 3. The scoring — weights + gate thresholds (``scoring.json``).
 4. The registered inner-harness IDENTITY — the ``--adk`` entrypoint
    string plus the sorted list of ``--mutable-tree`` paths.
@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,8 +50,8 @@ class ContractInputs:
     ------
     board_path:
         Filesystem path to the live ``board.jsonl``.
-    rubric_path:
-        Filesystem path to the live ``rubric.md``.
+    brief_path:
+        Filesystem path to the live proposer brief (``brief.md``).
     scoring_path:
         Filesystem path to the live ``scoring.json``.
     entrypoint:
@@ -62,7 +63,7 @@ class ContractInputs:
     """
 
     board_path: Path
-    rubric_path: Path
+    brief_path: Path
     scoring_path: Path
     entrypoint: str
     mutable_trees: tuple[str, ...]
@@ -81,6 +82,13 @@ def _canon_board(board_path: Path) -> str:
     Entries are sorted by id and each is serialized to a sorted-key JSON
     dict. Reordering rows or reformatting the JSONL leaves the hash
     unchanged; editing an entry's input/expectation/weight changes it.
+
+    Beyond the per-entry rows the board also carries two *board-level*
+    pieces of contract: the configured ``judges`` and the board-level
+    ``disable_drift`` flag. Both are canonicalized here so swapping a
+    judge — or toggling drift scoring off — correctly rolls the epoch.
+    They are read defensively (see :func:`_canon_board_meta`) so a board
+    that predates those fields still hashes deterministically.
     """
     if not board_path.exists():
         log.warning(
@@ -95,24 +103,126 @@ def _canon_board(board_path: Path) -> str:
         json.dumps(_entry_to_dict(entry), sort_keys=True, ensure_ascii=False)
         for entry in sorted(entries, key=lambda e: e.id)
     ]
-    return "\n".join(canon_entries)
+    meta = _canon_board_meta(board_path)
+    # Prepend the board-level metadata line so it participates in the
+    # hash; the leading marker keeps it from colliding with an entry row.
+    return "\n".join(["\x00board-meta\x00" + meta, *canon_entries])
 
 
-def _canon_rubric(rubric_path: Path) -> str:
-    """Canonical form of the rubric: line-ending + whitespace normalized.
+def _canon_board_meta(board_path: Path) -> str:
+    """Canonical form of the board-level ``judges`` + ``disable_drift``.
+
+    The board carries two pieces of contract beyond its entry rows: the
+    list of configured judges and a board-level ``disable_drift`` flag
+    (both introduced alongside multi-judge scoring). This helper reduces
+    them to a stable, sorted-key JSON string.
+
+    The board-level fields are resolved defensively — the loader API for
+    them is owned by :mod:`zicato.board` and is reconciled at
+    integration time:
+
+    * If :mod:`zicato.board.jsonl` exposes a ``load_board_meta`` callable
+      it is used directly.
+    * Otherwise the raw JSONL is scanned for a board-level object (a line
+      that carries ``judges`` / ``disable_drift`` but no entry ``id``).
+    * A board with neither canonicalizes to the empty-meta form, so
+      boards written before these fields existed keep a stable hash.
+    """
+    judges: object = []
+    disable_drift = False
+
+    from zicato.board import jsonl as _board_jsonl  # noqa: PLC0415
+
+    loader = getattr(_board_jsonl, "load_board_meta", None)
+    if callable(loader):
+        try:
+            meta = loader(board_path)
+        except Exception:  # noqa: BLE001 — defensive: board API may evolve
+            meta = None
+        if meta is not None:
+            judges = _meta_get(meta, "judges", [])
+            disable_drift = bool(_meta_get(meta, "disable_drift", False))
+    else:
+        judges, disable_drift = _scan_raw_board_meta(board_path)
+
+    return json.dumps(
+        {"judges": _canon_judges(judges), "disable_drift": bool(disable_drift)},
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def _meta_get(meta: object, key: str, default: object) -> object:
+    """Read ``key`` off a board-meta object that may be a dict or struct."""
+    if isinstance(meta, Mapping):
+        return meta.get(key, default)
+    return getattr(meta, key, default)
+
+
+def _scan_raw_board_meta(board_path: Path) -> tuple[object, bool]:
+    """Best-effort scan for a board-level metadata object in raw JSONL.
+
+    A board-level object is a JSON line carrying ``judges`` and/or
+    ``disable_drift`` but no entry ``id`` (entry rows always have one).
+    Returns ``([], False)`` when no such line exists.
+    """
+    judges: object = []
+    disable_drift = False
+    try:
+        text = board_path.read_text(encoding="utf-8")
+    except OSError:
+        return judges, disable_drift
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict) or "id" in payload:
+            continue
+        if "judges" in payload:
+            judges = payload["judges"]
+        if "disable_drift" in payload:
+            disable_drift = bool(payload["disable_drift"])
+    return judges, disable_drift
+
+
+def _canon_judges(judges: object) -> object:
+    """Reduce the board's ``judges`` to a stable, order-independent form.
+
+    Each judge is normalized to a sorted-key dict; the list is then
+    sorted by its serialized form so judge declaration order does not
+    move the hash. Adding, removing, or editing a judge does.
+    """
+    if not isinstance(judges, list | tuple):
+        return judges
+    normalized: list[object] = []
+    for judge in judges:
+        if isinstance(judge, Mapping):
+            normalized.append({str(k): judge[k] for k in sorted(judge, key=str)})
+        else:
+            normalized.append(judge)
+    normalized.sort(key=lambda j: json.dumps(j, sort_keys=True, ensure_ascii=False, default=str))
+    return normalized
+
+
+def _canon_brief(brief_path: Path) -> str:
+    """Canonical form of the proposer brief: line-ending + ws normalized.
 
     Normalizes line endings to ``\\n``, strips trailing whitespace per
     line, and strips leading/trailing blank lines. Whitespace-only edits
     (re-indenting, CRLF churn, trailing-newline changes) do not move the
     hash; editing the actual prose does.
     """
-    if not rubric_path.exists():
+    if not brief_path.exists():
         log.warning(
-            "contract: rubric file %s is missing; hashing it as empty",
-            rubric_path,
+            "contract: proposer-brief file %s is missing; hashing it as empty",
+            brief_path,
         )
         return ""
-    text = rubric_path.read_text(encoding="utf-8")
+    text = brief_path.read_text(encoding="utf-8")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.rstrip() for line in text.split("\n")]
     # Strip leading / trailing blank lines.
@@ -212,9 +322,10 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
     Canonicalization (so spurious edits don't roll the epoch):
 
     * **board** — :func:`zicato.board.jsonl.load_board`, sort entries by
-      id, serialize each to a sorted-key JSON dict, join. Semantic
+      id, serialize each to a sorted-key JSON dict, join. The board-level
+      ``judges`` and ``disable_drift`` are folded in too. Semantic
       content only.
-    * **rubric** — read text, normalize line endings to ``\\n``, strip
+    * **brief** — read text, normalize line endings to ``\\n``, strip
       trailing whitespace per line, strip leading/trailing blank lines.
     * **scoring** — ``json.load``, round every float to 6 decimal
       places, ``json.dumps(sort_keys=True)``.
@@ -228,7 +339,7 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
     """
     components = [
         _canon_board(inputs.board_path),
-        _canon_rubric(inputs.rubric_path),
+        _canon_brief(inputs.brief_path),
         _canon_scoring(inputs.scoring_path),
         _canon_entrypoint(inputs.entrypoint),
         _canon_mutable_trees(inputs.mutable_trees),
@@ -241,12 +352,12 @@ def compute_component_hashes(inputs: ContractInputs) -> dict[str, str]:
     """Return a per-component ``sha256`` hex digest.
 
     Used by the auto-roll path to report *which* contract component
-    changed. The keys are ``"board"``, ``"rubric"``, ``"scoring"``,
+    changed. The keys are ``"board"``, ``"brief"``, ``"scoring"``,
     ``"entrypoint"``, ``"mutable_trees"``.
     """
     return {
         "board": _sha(_canon_board(inputs.board_path)),
-        "rubric": _sha(_canon_rubric(inputs.rubric_path)),
+        "brief": _sha(_canon_brief(inputs.brief_path)),
         "scoring": _sha(_canon_scoring(inputs.scoring_path)),
         "entrypoint": _sha(_canon_entrypoint(inputs.entrypoint)),
         "mutable_trees": _sha(_canon_mutable_trees(inputs.mutable_trees)),
@@ -262,13 +373,16 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
 
     Reads ``{workspace_root}/config.json``, then resolves:
 
-    * ``contract.board_path`` / ``contract.rubric_path`` /
+    * ``contract.board_path`` / ``contract.brief_path`` /
       ``contract.scoring_path`` — the canonical contract source paths
-      recorded by ``zicato register``. When the ``contract`` key is
-      absent (a workspace registered before auto-epoching landed) the
-      default convention is used: ``<workspace_root>/board.jsonl``,
-      ``rubric.md``, ``scoring.json`` relative to the workspace root's
-      parent (the operator's working directory).
+      recorded by ``zicato register``. The proposer-brief path is also
+      accepted under its legacy ``contract.rubric_path`` key so
+      workspaces registered before the rename keep resolving. When the
+      ``contract`` key is absent (a workspace registered before
+      auto-epoching landed) the default convention is used:
+      ``<workspace_root>/board.jsonl``, ``brief.md``, ``scoring.json``
+      relative to the workspace root's parent (the operator's working
+      directory).
     * ``adk_entrypoint`` — the registered adapter entrypoint.
     * ``mutable_trees`` — the registered source roots.
 
@@ -291,8 +405,12 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
     board_path = Path(
         contract.get("board_path") or _default_contract_path(workspace_root, "board.jsonl")
     )
-    rubric_path = Path(
-        contract.get("rubric_path") or _default_contract_path(workspace_root, "rubric.md")
+    # ``brief_path`` is the current key; ``rubric_path`` is the legacy
+    # name kept readable so pre-rename workspaces still resolve.
+    brief_path = Path(
+        contract.get("brief_path")
+        or contract.get("rubric_path")
+        or _default_brief_path(workspace_root)
     )
     scoring_path = Path(
         contract.get("scoring_path") or _default_contract_path(workspace_root, "scoring.json")
@@ -304,7 +422,7 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
 
     return ContractInputs(
         board_path=board_path,
-        rubric_path=rubric_path,
+        brief_path=brief_path,
         scoring_path=scoring_path,
         entrypoint=entrypoint,
         mutable_trees=mutable_trees,
@@ -315,16 +433,38 @@ def default_contract_paths(workspace_root: Path) -> dict[str, Path]:
     """Return the default canonical contract source paths for a workspace.
 
     The convention is ``<workspace_root_parent>/board.jsonl``,
-    ``rubric.md``, ``scoring.json`` — the operator's live, editable
+    ``brief.md``, ``scoring.json`` — the operator's live, editable
     copies sitting alongside the ``.zicato/`` directory. ``zicato
     register`` records these in ``config.json`` so subsequent commands
     do not have to re-derive them.
+
+    The proposer-brief default is returned under both ``brief_path``
+    (the current key) and ``rubric_path`` (a legacy alias) so callers
+    that have not yet adopted the rename keep resolving.
     """
+    brief_default = Path(_default_brief_path(workspace_root))
     return {
         "board_path": Path(_default_contract_path(workspace_root, "board.jsonl")),
-        "rubric_path": Path(_default_contract_path(workspace_root, "rubric.md")),
+        "brief_path": brief_default,
+        "rubric_path": brief_default,
         "scoring_path": Path(_default_contract_path(workspace_root, "scoring.json")),
     }
+
+
+def _default_brief_path(workspace_root: Path) -> str:
+    """The conventional location of the operator's live proposer brief.
+
+    Prefers ``brief.md`` next to the ``.zicato/`` directory. When that
+    file is absent but a legacy ``rubric.md`` exists in the same place,
+    the legacy file wins so workspaces created before the rename keep
+    resolving without an operator-side file rename.
+    """
+    brief = workspace_root.parent / "brief.md"
+    if not brief.exists():
+        legacy = workspace_root.parent / "rubric.md"
+        if legacy.exists():
+            return str(legacy.resolve())
+    return str(brief.resolve())
 
 
 def _default_contract_path(workspace_root: Path, filename: str) -> str:

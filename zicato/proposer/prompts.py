@@ -14,9 +14,9 @@ valid response and shows a one-shot worked example.
 Two layers of templating:
 
 * :data:`SYSTEM_PROMPT_TEMPLATE` — operator-tone scaffolding, schema
-  description, and an embedded one-shot example. The rubric body is
-  spliced in verbatim so the operator's free-form guidance reaches the
-  model.
+  description, and an embedded one-shot example. The proposer-brief body
+  is spliced in verbatim so the operator's free-form guidance reaches
+  the model.
 * :data:`USER_PROMPT_TEMPLATE` — per-round payload: loss summary,
   observed patterns, mutation-point manifest. The body is filled in by
   the orchestrator at call time.
@@ -94,8 +94,8 @@ The "hypothesis" object MUST contain:
 The "patches" array MUST contain at least one patch object. Each patch
 has:
 - "mutation_id" (string): the id of the target mutation point. MUST
-  appear in the supplied manifest. MUST NOT appear in the rubric's
-  forbidden-edits list.
+  appear in the supplied manifest. MUST NOT appear in the proposer
+  brief's forbidden-edits list.
 - "op" — one of "replace", "set_numeric", "set_enum".
 - "new_content" (string): required when op is "replace"; forbidden
   otherwise.
@@ -138,9 +138,9 @@ One-shot example of a valid response:
   ]
 }}
 
-Rubric (operator-edited guidance for this epoch):
+Proposer brief (operator-edited guidance for this epoch):
 
-{rubric_text}
+{brief_text}
 """
 
 
@@ -219,15 +219,15 @@ def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
     return "\n".join(lines)
 
 
-def render_system_prompt(rubric_text: str) -> str:
-    """Build the system prompt with the rubric body spliced in.
+def render_system_prompt(brief_text: str) -> str:
+    """Build the system prompt with the proposer-brief body spliced in.
 
-    The rubric body is inserted verbatim so the operator's prose
+    The proposer-brief body is inserted verbatim so the operator's prose
     guidance reaches the model alongside the structured forbidden /
     preferred lists.
     """
 
-    return SYSTEM_PROMPT_TEMPLATE.format(rubric_text=rubric_text.strip() or "(empty)")
+    return SYSTEM_PROMPT_TEMPLATE.format(brief_text=brief_text.strip() or "(empty)")
 
 
 def render_user_prompt(
