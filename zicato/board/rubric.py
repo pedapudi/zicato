@@ -1,11 +1,16 @@
 """Built-in LLM-as-judge rubric matcher.
 
 The :func:`evaluate_rubric_judge` coroutine implements the runtime side
-of the ``"rubric"`` expectation kind built by
-:meth:`zicato.board.predicates.Rubric.judge`. It renders the operator's
-rubric into a system+user prompt pair, calls the auxiliary LLM, parses
-the JSON response into a ``score`` / ``dimensions`` / ``reasoning``
-triple, and reports pass/fail against the operator-set threshold.
+of the :attr:`~zicato.core.ExpectationKind.RUBRIC` expectation kind built
+by :meth:`zicato.board.predicates.Rubric.score`. It renders the
+operator's rubric into a system+user prompt pair, calls the auxiliary
+LLM, parses the JSON response into a ``score`` / ``dimensions`` /
+``reasoning`` triple, and reports pass/fail against the operator-set
+threshold.
+
+Despite the LLM-as-judge name, this is an OUTCOME matcher — it grades a
+finished run. PROCESS judging (:class:`~zicato.core.JudgeSpec`) is a
+separate concern.
 
 Failure modes — bad JSON, missing fields, unparseable score, the LLM
 call itself raising — are surfaced as ``passed=False``
@@ -22,7 +27,7 @@ import json
 from collections.abc import Awaitable, Callable
 
 from zicato.aux_timeout import aux_call_timeout_s
-from zicato.core.types import Expectation, ExpectationResult, RunResult
+from zicato.core.types import Expectation, ExpectationKind, ExpectationResult, RunResult
 
 # ---------------------------------------------------------------------------
 # Prompt templates
@@ -99,13 +104,13 @@ async def evaluate_rubric_judge(
     result: RunResult,
     aux_call_llm: Callable[[str, str, str], Awaitable[str]] | None,
 ) -> ExpectationResult:
-    """Evaluate a ``"rubric"``-kind expectation against a :class:`RunResult`.
+    """Evaluate a :attr:`~zicato.core.ExpectationKind.RUBRIC` expectation.
 
     Parameters
     ----------
     expectation:
         The expectation to evaluate. ``spec`` must be the JSON document
-        produced by :meth:`zicato.board.predicates.Rubric.judge`.
+        produced by :meth:`zicato.board.predicates.Rubric.score`.
     result:
         The run result to grade.
     aux_call_llm:
@@ -116,14 +121,14 @@ async def evaluate_rubric_judge(
     Returns
     -------
     ExpectationResult
-        ``kind="rubric"``. ``passed`` is ``score >= threshold`` when the
+        ``kind=ExpectationKind.RUBRIC``. ``passed`` is ``score >= threshold`` when the
         rubric set a threshold, else ``True`` (advisory grading).
         ``detail`` always carries the parsed score and reasoning so the
         journal has something concrete to render.
     """
     if aux_call_llm is None:
         return ExpectationResult(
-            kind="rubric",
+            kind=ExpectationKind.RUBRIC,
             passed=False,
             detail="rubric expectation requires aux_call_llm but none was provided",
         )
@@ -132,13 +137,13 @@ async def evaluate_rubric_judge(
         parsed_spec = json.loads(expectation.spec)
     except json.JSONDecodeError as exc:
         return ExpectationResult(
-            kind="rubric",
+            kind=ExpectationKind.RUBRIC,
             passed=False,
             detail=f"rubric spec is not valid JSON: {exc.msg}",
         )
     if not isinstance(parsed_spec, dict) or "rubric" not in parsed_spec:
         return ExpectationResult(
-            kind="rubric",
+            kind=ExpectationKind.RUBRIC,
             passed=False,
             detail="rubric spec must be a JSON object with at least 'rubric'",
         )
@@ -146,9 +151,9 @@ async def evaluate_rubric_judge(
     rubric_text = parsed_spec["rubric"]
     threshold = parsed_spec.get("threshold")
     scale = parsed_spec.get("scale", [0.0, 10.0])
-    if not isinstance(scale, (list, tuple)) or len(scale) != 2:
+    if not isinstance(scale, list | tuple) or len(scale) != 2:
         return ExpectationResult(
-            kind="rubric",
+            kind=ExpectationKind.RUBRIC,
             passed=False,
             detail=f"rubric spec 'scale' must be [lo, hi], got {scale!r}",
         )
@@ -168,13 +173,13 @@ async def evaluate_rubric_judge(
         )
     except TimeoutError:
         return ExpectationResult(
-            kind="rubric",
+            kind=ExpectationKind.RUBRIC,
             passed=False,
             detail="rubric_judge_timeout",
         )
     except Exception as exc:  # noqa: BLE001 — surface to caller as detail
         return ExpectationResult(
-            kind="rubric",
+            kind=ExpectationKind.RUBRIC,
             passed=False,
             detail=f"aux_call_llm raised: {type(exc).__name__}: {exc}",
         )
@@ -184,13 +189,13 @@ async def evaluate_rubric_judge(
         data = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         return ExpectationResult(
-            kind="rubric",
+            kind=ExpectationKind.RUBRIC,
             passed=False,
             detail=f"rubric judge response is not valid JSON: {exc.msg}",
         )
     if not isinstance(data, dict) or "score" not in data:
         return ExpectationResult(
-            kind="rubric",
+            kind=ExpectationKind.RUBRIC,
             passed=False,
             detail="rubric judge response must be {'score': float, ...}",
         )
@@ -199,7 +204,7 @@ async def evaluate_rubric_judge(
         score = float(data["score"])
     except (TypeError, ValueError):
         return ExpectationResult(
-            kind="rubric",
+            kind=ExpectationKind.RUBRIC,
             passed=False,
             detail=f"rubric judge 'score' is not a number: {data.get('score')!r}",
         )
@@ -223,7 +228,7 @@ async def evaluate_rubric_judge(
             threshold_f = float(threshold)
         except (TypeError, ValueError):
             return ExpectationResult(
-                kind="rubric",
+                kind=ExpectationKind.RUBRIC,
                 passed=False,
                 detail=f"rubric spec threshold is not a number: {threshold!r}",
             )
@@ -237,7 +242,7 @@ async def evaluate_rubric_judge(
         detail_parts.append(f"reasoning={reasoning}")
     detail = " ".join(detail_parts)
 
-    return ExpectationResult(kind="rubric", passed=passed, detail=detail)
+    return ExpectationResult(kind=ExpectationKind.RUBRIC, passed=passed, detail=detail)
 
 
 __all__ = ["evaluate_rubric_judge"]

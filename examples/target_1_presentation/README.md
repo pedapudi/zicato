@@ -118,10 +118,22 @@ Notes on individual entries:
   realistic signal of agent quality.
 - **`every_expectation_kind_demo`** — a single-turn entry that uses
   the `regex` expectation kind directly, and enumerates the other
-  expectation kinds (`predicate`, `expected_text`, `json_schema`,
-  `judge`) in its `context.alt_expectations_for_demo` field so future
-  tooling can fan it out per kind without modifying `board.jsonl`.
-  Weight 0.5 — this entry exists for the demo more than for scoring.
+  OUTCOME expectation kinds (`predicate`, `expected_text`,
+  `json_schema`, `rubric`) in its `context.alt_expectations_for_demo`
+  field so future tooling can fan it out per kind without modifying
+  `board.jsonl`. Weight 0.5 — this entry exists for the demo more than
+  for scoring.
+
+The board also exercises two parts of the typed board-authoring API
+beyond plain OUTCOME expectations:
+
+- A board-level `board_meta` header line carrying `disable_drift`
+  (`user_steer`, `user_pause`) — drift kinds suppressed for every run
+  on this board.
+- PROCESS `judges` on `transformers_lay_audience` and
+  `picky_stakeholder_emulated`. Where an `expectation` grades the
+  finished output, a judge observes *how* the run unfolds and reports
+  an adverse verdict at the configured `goldfive.DriftSeverity`.
 
 ## Running
 
