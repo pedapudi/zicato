@@ -336,6 +336,143 @@ def test_app_js_targets_r9_endpoints(app_js: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Harmonograf deep-links — Tournament view + active-run cards
+# ---------------------------------------------------------------------------
+
+
+def test_harmonograf_helpers_present(app_js: str) -> None:
+    """app.js carries the harmonograf URL-building helpers.
+
+    The base resolver, the run-URL builder, the full link, the compact
+    A/B-grid link, and the bracket-node link must all exist.
+    """
+    for fn in (
+        "function harmonografBase(",
+        "function harmonografRunUrl(",
+        "function harmonografLink(",
+        "function harmonografMini(",
+        "function harmonografGenLink(",
+    ):
+        assert fn in app_js, f"app.js missing harmonograf helper: {fn}"
+
+
+def test_harmonograf_run_id_convention(app_js: str) -> None:
+    """A run with no explicit session id resolves via {generation}--{entry}.
+
+    Every board entry under a generation is a run; zicato names it
+    deterministically. The deep-link must fall back to that convention
+    rather than rendering nothing.
+    """
+    assert "deriveRunId" in app_js, "app.js missing the run-id derivation helper"
+    # The deterministic run-id form: `${gen}--${entry}`.
+    assert "${gen}--${entry}" in app_js, "app.js missing the {generation}--{entry} run-id form"
+    # The session deep-link path.
+    assert "/#/session/" in app_js, "app.js missing the harmonograf session URL form"
+
+
+def test_harmonograf_link_never_silently_disappears(app_js: str) -> None:
+    """The link must render whenever harmonograf_url is set.
+
+    harmonografRunUrl returns the bare base as a last resort and only
+    returns null when harmonografBase() is null (no url at all). This
+    is the contract that stops the active-run link from vanishing.
+    """
+    scrubbed = _strip_js_comments(app_js)
+    # harmonografRunUrl falls through to `return base` (the bare url).
+    idx = scrubbed.find("function harmonografRunUrl(")
+    assert idx != -1, "harmonografRunUrl not found"
+    body = scrubbed[idx : idx + 400]
+    assert "return base" in body, (
+        "harmonografRunUrl must fall back to the bare base url so the "
+        "link never silently disappears when harmonograf_url is set"
+    )
+
+
+def test_heartbeat_merge_preserves_harmonograf_url(app_js: str) -> None:
+    """Heartbeat updates merge rather than replace.
+
+    A heartbeat ping is minimal and omits harmonograf_url; a wholesale
+    replace would drop it and kill every deep-link. setHeartbeat must
+    merge so the last-known url survives a ping.
+    """
+    assert "setHeartbeat(" in app_js, "app.js missing the setHeartbeat merge method"
+    scrubbed = _strip_js_comments(app_js)
+    idx = scrubbed.find("setHeartbeat(hb)")
+    assert idx != -1, "setHeartbeat(hb) method body not found"
+    body = scrubbed[idx : idx + 200]
+    assert "Object.assign" in body, "setHeartbeat must merge (Object.assign), not replace"
+    # The SSE heartbeat handler and the heartbeat refresh both route
+    # through the merge — no raw `state.heartbeat =` from a ping.
+    assert (
+        "state.setHeartbeat(JSON.parse(ev.data))" in app_js
+    ), "the SSE heartbeat handler must merge via setHeartbeat"
+
+
+def test_ab_grid_has_harmonograf_trace_links(app_js: str) -> None:
+    """The per-matchup A/B grid wires a harmonograf trace per row side.
+
+    Every A/B-grid row is a run twice (champion side + challenger
+    side); each side gets its own harmonograf link.
+    """
+    # The trace column header and the per-side cell class.
+    assert "'trace'" in app_js or '"trace"' in app_js, "A/B grid missing the trace column header"
+    assert "ab-trace" in app_js, "A/B grid missing the ab-trace cell"
+    # Both sides resolve a run-like record for harmonografMini. The
+    # render block lives between the A/B-grid header and the scalar
+    # breakdown header.
+    idx = app_js.find("Per-entry A/B grid")
+    assert idx != -1, "A/B grid render block not found"
+    block = app_js[idx : idx + 3000]
+    assert "harmonografMini(" in block, "A/B grid does not call harmonografMini"
+    assert (
+        "parentRun" in block and "childRun" in block
+    ), "A/B grid must build a parent-side and child-side run record"
+
+
+def test_bracket_nodes_have_harmonograf_links(app_js: str) -> None:
+    """Bracket generation nodes (champion / challenger / live) link out.
+
+    Each generation node in the gauntlet bracket carries a subtle
+    harmonograf affordance.
+    """
+    scrubbed = _strip_js_comments(app_js)
+    # The champion node, the discarded-challenger card, and the live
+    # card each attach a harmonografGenLink.
+    for marker in ("champHg", "loserHg", "liveHg"):
+        assert marker in scrubbed, f"bracket node missing harmonograf link: {marker}"
+    assert (
+        scrubbed.count("harmonografGenLink(") >= 3
+    ), "expected harmonografGenLink on all three bracket node kinds"
+
+
+def test_harmonograf_link_styles_present(style_css: str) -> None:
+    """The harmonograf link variants are styled in the dark palette."""
+    for cls in (".harmonograf-link", ".harmonograf-mini", ".harmonograf-sup"):
+        assert cls in style_css, f"style.css missing harmonograf style: {cls}"
+
+
+def test_harmonograf_arrow_affordance(app_js: str) -> None:
+    """Every harmonograf link is suffixed with the unobtrusive arrow."""
+    # The full link, the mini link, and the superscript link all use
+    # the up-right arrow as their affordance.
+    assert "↗" in app_js, "harmonograf links missing the ↗ affordance"
+
+
+def test_mock_heartbeat_carries_harmonograf_url(app_js: str) -> None:
+    """Mock mode exercises the deep-links.
+
+    The mock heartbeat must carry a harmonograf_url so ?mock=1 renders
+    the Tournament-view and active-run links.
+    """
+    assert "harmonograf_url" in app_js, "mock heartbeat missing harmonograf_url"
+    # The mock entry_grid exercises both the explicit-session-id path
+    # and the {generation}--{entry} fallback.
+    assert (
+        "parent_session_id" in app_js
+    ), "mock A/B-grid rows should exercise explicit per-side session ids"
+
+
+# ---------------------------------------------------------------------------
 # Dark mode + palette
 # ---------------------------------------------------------------------------
 
@@ -364,10 +501,11 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 150 KB uncompressed — the envelope grew again with the real
-    # Tournament gauntlet bracket, per-matchup detail panel, and the
-    # loop-health panel.
-    assert total < 150_000, f"bundle is {total} bytes, exceeds 150_000 envelope"
+    # 170 KB uncompressed — the envelope grew again with the
+    # harmonograf deep-links woven through the Tournament view (A/B-grid
+    # trace links + bracket-node affordances) and the heartbeat-merge
+    # fix that keeps the harmonograf_url alive across heartbeat pings.
+    assert total < 170_000, f"bundle is {total} bytes, exceeds 170_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

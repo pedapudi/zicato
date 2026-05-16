@@ -138,9 +138,22 @@ class AppState {
     this.epochDef = null;
   }
 
+  // Merge a heartbeat update into the current record rather than
+  // replacing it wholesale. A heartbeat *ping* (the SSE keepalive or
+  // the /api/heartbeat endpoint) is minimal — typically just
+  // { timestamp, pid } — and omits stable config-ish fields like
+  // `harmonograf_url` that only the full /api/state snapshot carries.
+  // A wholesale replace would drop `harmonograf_url` on the first
+  // ping after load, silently killing every harmonograf deep-link.
+  // Merging keeps the last-known url alive across pings.
+  setHeartbeat(hb) {
+    if (!hb || typeof hb !== 'object') return;
+    this.heartbeat = Object.assign({}, this.heartbeat, hb);
+  }
+
   setSnapshot(snap) {
     if (!snap) return;
-    if (snap.heartbeat) this.heartbeat = snap.heartbeat;
+    if (snap.heartbeat) this.setHeartbeat(snap.heartbeat);
     if (snap.active_runs) this.activeRuns = snap.active_runs;
     if ('active_tournament' in snap) this.activeTournament = snap.active_tournament;
     if (Array.isArray(snap.past_tournaments)) this.pastTournaments = snap.past_tournaments;
@@ -230,9 +243,20 @@ let currentView = DEFAULT_VIEW;
 // --- Harmonograf deep-links
 //
 // The heartbeat MAY carry a non-empty `harmonograf_url`. When present,
-// active runs deep-link into harmonograf at the run's session. When the
-// run record has no session id, link to harmonograf bare. When the
-// heartbeat carries no url at all, render nothing — no disabled stub.
+// every run on the dashboard deep-links into harmonograf at the run's
+// execution trace. When the heartbeat carries no url at all, render
+// nothing — no disabled stub.
+//
+// A harmonograf *session* is a run. Its session id is the run's
+// goldfive run/session id. zicato names a run deterministically as
+// `{generation_id}--{entry_id}` — so even when a record carries no
+// explicit session id we can still resolve the trace from those two
+// fields. Resolution order, most-specific first:
+//   1. an explicit session id on the record
+//      (session_id / session / harmonograf_session / run_id)
+//   2. the `{generation_id}--{entry_id}` run-id convention
+//   3. the bare harmonograf url (last resort — never render nothing
+//      when harmonograf_url is set).
 
 function harmonografBase() {
   const url = state.heartbeat && state.heartbeat.harmonograf_url;
@@ -241,14 +265,39 @@ function harmonografBase() {
   return trimmed.length > 0 ? trimmed.replace(/\/+$/, '') : null;
 }
 
-function harmonografRunUrl(run) {
+// Derive the deterministic `{generation_id}--{entry_id}` run id from a
+// record, or null if neither field is present.
+function deriveRunId(rec) {
+  if (!rec) return null;
+  const gen = rec.generation_id || rec.generation || rec.child_id;
+  const entry = rec.entry_id || rec.entry;
+  if (gen && entry) return `${gen}--${entry}`;
+  return null;
+}
+
+// Resolve a harmonograf session id for a run-like record. Prefers a
+// real session id; falls back to the run-id convention.
+function harmonografSessionId(rec) {
+  if (!rec) return null;
+  const explicit = rec.session_id || rec.session ||
+    rec.harmonograf_session || rec.run_id;
+  if (explicit) return String(explicit);
+  return deriveRunId(rec);
+}
+
+// Build the harmonograf URL for a run-like record. Returns the bare
+// base when no session id is derivable, and null only when the
+// heartbeat carries no harmonograf_url at all.
+function harmonografRunUrl(rec) {
   const base = harmonografBase();
   if (!base) return null;
-  const sid = run && (run.session_id || run.session || run.harmonograf_session);
+  const sid = harmonografSessionId(rec);
   if (sid) return `${base}/#/session/${encodeURIComponent(sid)}`;
   return base;
 }
 
+// The full-width "Open in harmonograf ↗" link used on active-run cards
+// and the run drill-down.
 function harmonografLink(run, label) {
   const href = harmonografRunUrl(run);
   if (!href) return null;
@@ -258,6 +307,44 @@ function harmonografLink(run, label) {
     target: '_blank',
     rel: 'noopener',
   }, [(label || 'Open in harmonograf') + ' ↗']);
+}
+
+// A small, unobtrusive harmonograf link for dense contexts — A/B-grid
+// cells and bracket nodes. `target` is a run-like record (resolved via
+// the session-id / run-id convention) or, when no run can be named, a
+// plain string URL fragment is skipped and the bare base is used.
+function harmonografMini(target, label, ariaLabel) {
+  const href = harmonografRunUrl(target);
+  if (!href) return null;
+  return el('a', {
+    class: 'harmonograf-link harmonograf-mini',
+    href,
+    target: '_blank',
+    rel: 'noopener',
+    'aria-label': ariaLabel || 'open harmonograf trace',
+  }, [(label || 'harmonograf') + ' ↗']);
+}
+
+// A subtle superscript-style harmonograf link for a bracket generation
+// node. harmonograf has no per-generation filter URL, so this lands on
+// the bare harmonograf url — a way into the trace browser scoped by the
+// node's generation id in its aria-label. Renders nothing when the
+// heartbeat carries no harmonograf_url.
+function harmonografGenLink(genId) {
+  const base = harmonografBase();
+  if (!base) return null;
+  return el('a', {
+    class: 'harmonograf-link harmonograf-sup',
+    href: base,
+    target: '_blank',
+    rel: 'noopener',
+    'aria-label': 'open harmonograf traces for generation ' + (genId || '?'),
+    onClick: (ev) => ev.stopPropagation(),
+    onKeydown: (ev) => {
+      // Keep Enter/Space on the link from bubbling to the card.
+      if (ev.key === 'Enter' || ev.key === ' ') ev.stopPropagation();
+    },
+  }, ['↗']);
 }
 
 // --- Predicted-gate verdict
@@ -1507,10 +1594,13 @@ function renderBracket() {
   lineage.forEach((champId, i) => {
     const col = el('div', { class: 'bracket-col' });
 
+    const champIdSpan = el('span', { class: 'bracket-champ-id mono' }, [champId]);
+    const champHg = harmonografGenLink(champId);
+    if (champHg) champIdSpan.appendChild(champHg);
     const champNode = el('div', {
       class: 'bracket-champ' + (i === 0 ? ' is-seed' : ''),
     }, [
-      el('span', { class: 'bracket-champ-id mono' }, [champId]),
+      champIdSpan,
       el('span', { class: 'bracket-champ-tag' }, [i === 0 ? 'seed' : 'champion']),
     ]);
     col.appendChild(champNode);
@@ -1577,8 +1667,11 @@ function renderChallengerCard(m, champId) {
       }
     },
   });
+  const loserIdSpan = el('span', { class: 'bracket-loser-id mono' }, [m.challenger || '?']);
+  const loserHg = harmonografGenLink(m.challenger);
+  if (loserHg) loserIdSpan.appendChild(loserHg);
   card.appendChild(el('div', { class: 'bracket-loser-head' }, [
-    el('span', { class: 'bracket-loser-id mono' }, [m.challenger || '?']),
+    loserIdSpan,
     el('span', { class: 'badge rejected' }, ['discarded']),
   ]));
   if (m.delta_scalar != null) {
@@ -1609,8 +1702,11 @@ function renderLiveCard(t, champId) {
       }
     },
   });
+  const liveIdSpan = el('span', { class: 'bracket-live-id mono' }, [t.child_id || '?']);
+  const liveHg = harmonografGenLink(t.child_id);
+  if (liveHg) liveIdSpan.appendChild(liveHg);
   card.appendChild(el('div', { class: 'bracket-live-head' }, [
-    el('span', { class: 'bracket-live-id mono' }, [t.child_id || '?']),
+    liveIdSpan,
     el('span', { class: 'badge running' }, ['live']),
   ]));
   card.appendChild(el('div', { class: 'bracket-live-vs meta' }, [
@@ -1776,18 +1872,25 @@ function renderMatchupDetail() {
         ' — these are what the gate kills challengers on.',
       ]));
     }
-    const tbl = el('table', { class: 'ab-grid' });
-    tbl.appendChild(el('thead', null, [el('tr', null, [
+    // Every grid row is a board entry run twice — once under the
+    // champion generation, once under the challenger. Each side has
+    // its own harmonograf execution trace. We only add the trace
+    // column when the heartbeat actually carries a harmonograf_url.
+    const hgOn = harmonografBase() != null;
+    const headCells = [
       el('th', null, ['board entry']),
       el('th', null, [champ + ' loss']),
       el('th', null, [genId + ' loss']),
       el('th', null, ['pass A→B']),
       el('th', null, ['verdict']),
-    ])]));
+    ];
+    if (hgOn) headCells.push(el('th', null, ['trace']));
+    const tbl = el('table', { class: 'ab-grid' });
+    tbl.appendChild(el('thead', null, [el('tr', null, headCells)]));
     const tbody = el('tbody');
     for (const row of entryGrid) {
       const verdict = String(row.verdict || 'flat').toLowerCase();
-      const tr = el('tr', { class: 'ab-row ab-' + verdict }, [
+      const cells = [
         el('td', { class: 'mono' }, [row.entry_id || '—']),
         el('td', { class: 'mono' }, [fmtRate(row.parent_drift_loss)]),
         el('td', { class: 'mono' }, [fmtRate(row.child_drift_loss)]),
@@ -1798,8 +1901,33 @@ function renderMatchupDetail() {
         el('td', null, [
           el('span', { class: 'ab-verdict ab-verdict-' + verdict }, [verdict]),
         ]),
-      ]);
-      tbody.appendChild(tr);
+      ];
+      if (hgOn) {
+        // Resolve a per-side run. The grid row may carry explicit
+        // session ids (parent_run_id / child_run_id / *_session_id);
+        // when it does not, harmonografRunUrl falls back to the
+        // `{generation}--{entry}` run-id convention.
+        const entryId = row.entry_id;
+        const parentRun = {
+          entry_id: entryId,
+          generation_id: champ,
+          session_id: row.parent_session_id || row.parent_run_id || null,
+        };
+        const childRun = {
+          entry_id: entryId,
+          generation_id: genId,
+          session_id: row.child_session_id || row.child_run_id || row.run_id || null,
+        };
+        const sideA = harmonografMini(parentRun, champ,
+          'open harmonograf trace for ' + champ + ' run of ' + (entryId || 'entry'));
+        const sideB = harmonografMini(childRun, genId,
+          'open harmonograf trace for ' + genId + ' run of ' + (entryId || 'entry'));
+        const traceCell = el('td', { class: 'ab-trace' });
+        if (sideA) traceCell.appendChild(sideA);
+        if (sideB) traceCell.appendChild(sideB);
+        cells.push(traceCell);
+      }
+      tbody.appendChild(el('tr', { class: 'ab-row ab-' + verdict }, cells));
     }
     tbl.appendChild(tbody);
     wrap.appendChild(tbl);
@@ -2549,7 +2677,7 @@ async function refreshAfterEvent(payload) {
       if (state.selectedMatchup) loadMatchupDetail(state.selectedMatchup);
     } else if (tag === 'heartbeat') {
       try {
-        state.heartbeat = await fetchJson('/api/heartbeat');
+        state.setHeartbeat(await fetchJson('/api/heartbeat'));
       } catch (err) {
         // No dedicated heartbeat endpoint — fall back to a full refresh.
         await loadFullState();
@@ -2623,7 +2751,7 @@ function connectSSE() {
   });
   sse.addEventListener('heartbeat', (ev) => {
     try {
-      state.heartbeat = JSON.parse(ev.data);
+      state.setHeartbeat(JSON.parse(ev.data));
     } catch { /* ignore */ }
     renderHeader();
   });
@@ -2666,9 +2794,15 @@ function mockMatchupDetail(genId) {
           rationale: 'narrow allowed types to the strict invoice contract' },
       ],
       entry_grid: [
+        // This row carries explicit per-side session ids — the
+        // harmonograf grid links use them verbatim.
         { entry_id: 'extract_invoice_001', parent_drift_loss: 0.30,
           child_drift_loss: 0.21, parent_pass: true, child_pass: true,
-          verdict: 'improved' },
+          verdict: 'improved',
+          parent_session_id: 's-v0-extract_invoice_001',
+          child_session_id: 's-v1-extract_invoice_001' },
+        // This row carries no session ids — the grid links fall back
+        // to the deterministic `{generation}--{entry}` run-id form.
         { entry_id: 'schema_response', parent_drift_loss: 0.12,
           child_drift_loss: 0.34, parent_pass: true, child_pass: false,
           verdict: 'regressed' },
