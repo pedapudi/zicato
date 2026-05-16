@@ -1,0 +1,526 @@
+"""Turn a :class:`~zicato.core.JudgeSpec` into a live goldfive ``Judge``.
+
+A :class:`JudgeSpec` is zicato's *declarative* description of a quality
+signal an operator wants armed on a board entry — a name, a mode
+(``"inline"`` or ``"python"``), a ``body`` (a natural-language criterion
+for inline, a dotted import path for python), and a
+:class:`goldfive.DriftSeverity`. This module is the bridge that makes
+that declaration *executable*: :func:`judge_spec_to_goldfive` returns an
+object conforming to goldfive's :class:`~goldfive.judges.Judge`
+protocol — a stable ``.name`` plus an async ``evaluate(ctx) ->
+JudgeVerdict`` — that the goldfive runner installs via
+``goldfive.wrap(judges=[...])`` and calls at every reasoning
+observation point.
+
+Two-callable rule
+-----------------
+
+Inline judges are LLM-as-a-judge: they call an LLM to decide whether a
+reasoning trace violates the criterion. The callable they use is
+zicato's *auxiliary* callable (``RuntimeConfig.auxiliary_call_llm``) —
+NOT the harness callable the inner agent runs on. The judge is a
+zicato-internal LLM consumer exactly like the emulator / proposer /
+analyzer, so it shares their endpoint and stays identity-distinct from
+the harness so a judge cannot trivially collude with the agent it
+grades. The adapter owns picking the right callable; this module just
+receives whatever ``aux_call_llm`` it is handed and uses it verbatim.
+
+Enum -> string boundary
+-----------------------
+
+zicato carries drift taxonomy as :class:`goldfive.DriftKind` /
+:class:`goldfive.DriftSeverity` enum members (the typed form every
+zicato module passes around). goldfive's :class:`JudgeVerdict`, by
+contrast, wants the *lowercase wire string* on its ``drift_kind`` /
+``severity`` fields. Both enums are :class:`enum.StrEnum`, so the
+conversion is ``str(member)``. This module performs that conversion at
+exactly one place — :func:`_kind_str` / :func:`_severity_str`, called
+only when a verdict is constructed — so the string form never escapes
+upward into zicato code. Callers hand in enums; verdicts go out with
+strings; nothing in between sees the string.
+"""
+
+from __future__ import annotations
+
+import importlib
+import logging
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only imports
+    from collections.abc import Awaitable, Callable
+
+    import goldfive
+    from goldfive.judges import JudgeContext, JudgeVerdict
+
+    AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
+
+log = logging.getLogger("zicato.judge_runtime.builder")
+
+
+# ---------------------------------------------------------------------------
+# JudgeSpec structural protocol
+# ---------------------------------------------------------------------------
+#
+# ``JudgeSpec`` is owned by ``zicato/core/types.py`` (a parallel agent
+# defines it; this module must not redefine it). We deliberately depend
+# on it *structurally* rather than importing the concrete dataclass:
+#
+#   * it keeps ``zicato.judge_runtime`` importable even before the core
+#     type lands / in a partial checkout, and
+#   * it documents — in one place — exactly which attributes this
+#     builder reads, which is the real contract.
+#
+# Any object exposing ``name`` / ``mode`` / ``body`` / ``severity`` is
+# accepted. The concrete ``zicato.core.JudgeSpec`` satisfies it.
+
+
+@runtime_checkable
+class JudgeSpecLike(Protocol):
+    """Structural view of the fields :func:`judge_spec_to_goldfive` reads.
+
+    Mirrors ``zicato.core.JudgeSpec``::
+
+        {name: str,
+         mode: "inline" | "python",
+         body: str,
+         severity: goldfive.DriftSeverity}
+    """
+
+    name: str
+    mode: str
+    body: str
+    severity: Any  # goldfive.DriftSeverity at runtime
+
+
+# ---------------------------------------------------------------------------
+# Enum -> wire-string boundary
+# ---------------------------------------------------------------------------
+
+
+def _severity_str(severity: Any) -> str:
+    """Project a :class:`goldfive.DriftSeverity` onto its wire string.
+
+    ``DriftSeverity`` is a :class:`enum.StrEnum`, so ``str(member)`` is
+    the lowercase canonical value (``"info"`` / ``"warning"`` /
+    ``"critical"``). Tolerates a bare string too (already-projected
+    input) so the function is idempotent. Falls back to ``"warning"``
+    for an unrecognised value rather than raising — a judge's verdict
+    must never crash the run.
+    """
+    text = str(severity).strip().lower()
+    # ``str(DriftSeverity.WARNING)`` is already ``"warning"``; a stray
+    # ``"DriftSeverity.WARNING"`` repr (non-StrEnum enum) is normalised.
+    if "." in text:
+        text = text.rsplit(".", 1)[-1]
+    if text in ("info", "warning", "critical"):
+        return text
+    log.warning(
+        "judge_runtime: unrecognised severity %r; defaulting to 'warning'",
+        severity,
+    )
+    return "warning"
+
+
+def _custom_kind_str() -> str:
+    """Return the wire string for the CUSTOM drift kind.
+
+    Inline judges always emit :class:`goldfive.DriftKind.CUSTOM` — the
+    taxonomy slot reserved for operator-defined signals. We resolve the
+    enum member at call time (so the value tracks goldfive) and project
+    it to its :class:`enum.StrEnum` wire string. Falls back to the
+    literal ``"custom"`` if goldfive is somehow not importable, which
+    keeps the builder usable under a partial environment.
+    """
+    try:
+        import goldfive
+
+        return str(goldfive.DriftKind.CUSTOM)
+    except Exception:  # noqa: BLE001 - goldfive optional at import time
+        return "custom"
+
+
+# ---------------------------------------------------------------------------
+# Inline (LLM-as-a-judge) judge
+# ---------------------------------------------------------------------------
+
+
+#: System prompt for the inline criterion judge. Deliberately terse and
+#: contract-shaped: the model is asked for a single leading token
+#: (``VIOLATION`` / ``OK``) followed by a one-line reason, so the
+#: response parser in :meth:`_InlineCriterionJudge.evaluate` is a cheap
+#: prefix check rather than an NL classifier.
+_INLINE_SYSTEM_PROMPT = (
+    "You are a strict reviewer auditing an AI agent's chain-of-thought "
+    "against a single quality criterion. You are given the criterion and "
+    "the agent's reasoning so far. Decide whether the reasoning so far is "
+    "violating the criterion.\n\n"
+    "Answer on ONE line. Start with the single word VIOLATION if the "
+    "reasoning violates the criterion, or OK if it does not. After that "
+    "word, add a brief one-clause reason. Do not write anything else."
+)
+
+
+def _build_inline_user_prompt(criterion: str, reasoning_text: str) -> str:
+    """Assemble the user-message body for the inline criterion judge."""
+    return (
+        f"Criterion:\n{criterion}\n\n"
+        f"Agent reasoning so far:\n{reasoning_text}\n\n"
+        "Is the reasoning so far violating this criterion?"
+    )
+
+
+def _parse_inline_response(response: str) -> tuple[bool, str]:
+    """Parse the inline judge LLM response into ``(violation, reason)``.
+
+    The contract (see :data:`_INLINE_SYSTEM_PROMPT`) is a single line
+    whose first token is ``VIOLATION`` or ``OK``. We are liberal in what
+    we accept: the token match is case-insensitive and tolerates
+    surrounding punctuation / a leading bullet. A response that does not
+    clearly start with ``VIOLATION`` is treated as *no violation* — the
+    judge fails safe (no spurious drift) when the model is unclear.
+    """
+    text = (response or "").strip()
+    if not text:
+        return False, ""
+    first_line = text.splitlines()[0].strip()
+    # Strip a leading bullet / quote so "- VIOLATION ..." still matches.
+    stripped = first_line.lstrip("-*>\"' \t")
+    head, _, rest = stripped.partition(" ")
+    token = head.strip().strip(":.,;").upper()
+    reason = rest.strip().strip("-:") or first_line
+    if token == "VIOLATION":
+        return True, reason
+    # Defensive: a model that ignored the format but clearly says the
+    # word "violation" anywhere in the first line still trips. ``OK``
+    # and everything else is treated as no violation.
+    if token != "OK" and "violation" in first_line.lower():
+        return True, reason
+    return False, ""
+
+
+class _InlineCriterionJudge:
+    """LLM-as-a-judge wrapping a natural-language criterion.
+
+    Conforms to :class:`goldfive.judges.Judge` structurally: a stable
+    ``name`` plus an async :meth:`evaluate`. Stateless across calls — the
+    only retained state is the criterion, the severity wire string, and
+    the auxiliary callable, all fixed at construction.
+
+    :meth:`evaluate` calls the auxiliary LLM with the criterion plus
+    ``ctx.reasoning_text`` and asks whether the reasoning so far violates
+    the criterion. On a violation it returns a drift-flavoured
+    :class:`~goldfive.judges.JudgeVerdict`:
+
+    * ``drift_emitted = True``
+    * ``drift_kind`` = the wire string for :class:`goldfive.DriftKind.CUSTOM`
+    * ``severity`` = the wire string for the spec's
+      :class:`goldfive.DriftSeverity`
+    * ``detail`` = ``"<criterion>: <one-line reason>"``
+
+    On no violation — or an empty reasoning trace, or any error from the
+    auxiliary callable — it returns an empty-default verdict so the
+    steerer emits no :class:`JudgementEmitted` for that observation
+    point (no signal == no event). The steerer additionally bounds
+    :meth:`evaluate` with its own 30s timeout, so a hung auxiliary
+    endpoint degrades to "no signal" rather than wedging the run.
+    """
+
+    __slots__ = ("name", "_criterion", "_severity_str", "_aux_call_llm")
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        criterion: str,
+        severity: Any,
+        aux_call_llm: AuxCallLLM,
+    ) -> None:
+        self.name: str = name
+        self._criterion: str = criterion
+        # Project the enum to its wire string once, at construction —
+        # the verdict-time path never sees the enum.
+        self._severity_str: str = _severity_str(severity)
+        self._aux_call_llm: AuxCallLLM = aux_call_llm
+
+    async def evaluate(self, ctx: JudgeContext) -> JudgeVerdict:
+        """Audit ``ctx.reasoning_text`` against the criterion via the aux LLM."""
+        from goldfive.judges import JudgeVerdict
+
+        reasoning_text = (getattr(ctx, "reasoning_text", "") or "").strip()
+        if not reasoning_text:
+            # Not a reasoning-emit observation point — nothing to judge.
+            return JudgeVerdict()
+
+        system = _INLINE_SYSTEM_PROMPT
+        user = _build_inline_user_prompt(self._criterion, reasoning_text)
+        try:
+            # ``model=""`` matches zicato's CallLLM contract: the
+            # concrete auxiliary callable resolves its own model. The
+            # inline judge never pins a model — routing is the
+            # callable's job.
+            response = await self._aux_call_llm(system, user, "")
+        except Exception as exc:  # noqa: BLE001 - a judge must not crash the run
+            log.warning(
+                "judge_runtime: inline judge %r aux_call_llm raised %s (%s); treating as no signal",
+                self.name,
+                type(exc).__name__,
+                exc,
+            )
+            return JudgeVerdict()
+
+        violation, reason = _parse_inline_response(response)
+        if not violation:
+            return JudgeVerdict()
+
+        detail = f"{self._criterion}: {reason}" if reason else self._criterion
+        return JudgeVerdict(
+            drift_emitted=True,
+            drift_kind=_custom_kind_str(),
+            severity=self._severity_str,
+            detail=detail,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Python (dotted-path) judge
+# ---------------------------------------------------------------------------
+
+
+def _resolve_dotted_path(path: str) -> Any:
+    """Import and return the object at dotted ``path``.
+
+    Accepts both the ``pkg.mod:attr`` (entry-points style, used across
+    zicato adapters) and the ``pkg.mod.attr`` forms. Raises
+    :class:`ValueError` on a malformed / empty spec and
+    :class:`ImportError` / :class:`AttributeError` (chained) on a
+    missing module / attribute, so the caller sees an actionable
+    message rather than an opaque failure.
+    """
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError(
+            f"python-mode JudgeSpec.body must be a non-empty dotted path, got {path!r}"
+        )
+    spec = path.strip()
+    if ":" in spec:
+        module_name, _, attr_name = spec.partition(":")
+        module_name = module_name.strip()
+        attr_name = attr_name.strip()
+        if not module_name or not attr_name:
+            raise ValueError(
+                f"python-mode JudgeSpec.body uses colon form but module or "
+                f"attribute is empty: {spec!r}"
+            )
+    else:
+        if "." not in spec:
+            raise ValueError(
+                f"python-mode JudgeSpec.body must be 'pkg.mod:attr' or 'pkg.mod.attr'; got {spec!r}"
+            )
+        module_name, _, attr_name = spec.rpartition(".")
+
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise ImportError(
+            f"judge_runtime: could not import module {module_name!r} for "
+            f"python-mode JudgeSpec.body {spec!r}: {exc}"
+        ) from exc
+    try:
+        return getattr(module, attr_name)
+    except AttributeError as exc:
+        raise AttributeError(
+            f"judge_runtime: module {module_name!r} has no attribute "
+            f"{attr_name!r} (python-mode JudgeSpec.body {spec!r})"
+        ) from exc
+
+
+class _PythonJudgeWrapper:
+    """Wrap an operator-supplied callable / Judge as a goldfive ``Judge``.
+
+    ``python``-mode :class:`JudgeSpec` bodies are dotted paths to
+    operator code. The resolved object may be any of:
+
+    * a :class:`~goldfive.judges.Judge` *instance* (has an async
+      ``evaluate`` bound method) — used directly;
+    * a :class:`~goldfive.judges.Judge` *class* — instantiated with no
+      arguments, then used as an instance (the common "point the spec
+      at a judge class" case); or
+    * a plain ``async def evaluate(ctx) -> JudgeVerdict`` callable — this
+      wrapper supplies the ``name`` and adapts it.
+
+    In every case the wrapper guarantees ``name == spec.name`` (so the
+    :class:`JudgementEmitted` envelope keys on the operator-chosen name,
+    matching the inline case) and normalises the verdict so its
+    drift-flavoured fields carry *strings*, not enums — operator code is
+    free to return either, and the enum->string boundary stays inside
+    :mod:`zicato.judge_runtime`.
+
+    A python judge's verdict is drift-flavoured by contract: zicato
+    judges feed the drift loss signal. When the resolved callable
+    returns a non-drift verdict (rubric / boolean / numeric only) the
+    wrapper passes it through untouched — goldfive still emits the
+    :class:`JudgementEmitted` envelope for it — but does not synthesise
+    a drift flavour it was not given.
+    """
+
+    __slots__ = ("name", "_inner_evaluate")
+
+    def __init__(self, *, name: str, resolved: Any) -> None:
+        self.name: str = name
+        target = resolved
+        # A dotted path to a class -> instantiate it, so ``evaluate`` is
+        # a bound method (an unbound class method would still want
+        # ``self`` and blow up on the first call). Operator judge
+        # classes take no constructor args by the JudgeSpec contract;
+        # a class that needs args is a malformed spec and surfaces as a
+        # clear TypeError here rather than deep in the run.
+        if isinstance(resolved, type):
+            try:
+                target = resolved()
+            except TypeError as exc:
+                raise TypeError(
+                    f"judge_runtime: python-mode JudgeSpec resolved to class "
+                    f"{resolved!r}, which could not be instantiated with no "
+                    f"arguments: {exc}"
+                ) from exc
+        inner_evaluate = getattr(target, "evaluate", None)
+        if callable(inner_evaluate):
+            # Target is a Judge (or Judge-shaped) instance.
+            self._inner_evaluate = inner_evaluate
+        elif callable(target):
+            # Target is a bare ``async def evaluate`` callable.
+            self._inner_evaluate = target
+        else:
+            raise TypeError(
+                f"judge_runtime: python-mode JudgeSpec resolved to "
+                f"{resolved!r}, which is neither a Judge (no callable "
+                f"'evaluate') nor a callable"
+            )
+
+    async def evaluate(self, ctx: JudgeContext) -> JudgeVerdict:
+        """Delegate to the resolved callable and normalise the verdict."""
+        from goldfive.judges import JudgeVerdict
+
+        result = self._inner_evaluate(ctx)
+        # Tolerate both sync and async operator callables.
+        if hasattr(result, "__await__"):
+            verdict = await result
+        else:
+            verdict = result
+        if verdict is None:
+            return JudgeVerdict()
+        return _normalise_verdict(verdict)
+
+
+def _normalise_verdict(verdict: Any) -> JudgeVerdict:
+    """Re-stamp a verdict's drift fields as wire strings.
+
+    Operator-supplied python judges may set ``drift_kind`` / ``severity``
+    as :class:`goldfive.DriftKind` / :class:`goldfive.DriftSeverity`
+    enum members (the natural thing to reach for) or as the raw wire
+    strings. goldfive's steerer wants strings. We rebuild the verdict
+    with ``str(...)``-projected drift fields when it is drift-flavoured;
+    a non-drift verdict is returned unchanged.
+    """
+    from goldfive.judges import JudgeVerdict
+
+    if not getattr(verdict, "drift_emitted", False):
+        # rubric / boolean / numeric — leave untouched. Operator python
+        # judges are contracted to return a JudgeVerdict; cast narrows
+        # the ``Any`` parameter back to the declared return type.
+        return cast("JudgeVerdict", verdict)
+    return JudgeVerdict(
+        drift_emitted=True,
+        drift_kind=str(getattr(verdict, "drift_kind", "") or ""),
+        severity=_severity_str(getattr(verdict, "severity", "") or ""),
+        rubric_score=getattr(verdict, "rubric_score", None),
+        rubric_dimensions=dict(getattr(verdict, "rubric_dimensions", {}) or {}),
+        boolean_result=getattr(verdict, "boolean_result", None),
+        numeric_value=getattr(verdict, "numeric_value", None),
+        metric_name=str(getattr(verdict, "metric_name", "") or ""),
+        detail=str(getattr(verdict, "detail", "") or ""),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public builder
+# ---------------------------------------------------------------------------
+
+
+def judge_spec_to_goldfive(
+    spec: JudgeSpecLike,
+    aux_call_llm: AuxCallLLM,
+) -> goldfive.Judge:
+    """Build a live goldfive :class:`~goldfive.judges.Judge` from ``spec``.
+
+    Parameters
+    ----------
+    spec:
+        A :class:`zicato.core.JudgeSpec` (consumed structurally — any
+        object with ``name`` / ``mode`` / ``body`` / ``severity``).
+
+        * ``mode="inline"`` — ``body`` is a natural-language criterion.
+          Returns an LLM-as-a-judge that, on each reasoning observation,
+          asks ``aux_call_llm`` whether the reasoning so far violates the
+          criterion and emits a :class:`goldfive.DriftKind.CUSTOM`
+          drift verdict at the spec's severity when it does.
+        * ``mode="python"`` — ``body`` is a dotted import path
+          (``pkg.mod:attr`` or ``pkg.mod.attr``) to operator code that
+          is a :class:`~goldfive.judges.Judge` instance, a Judge class
+          (instantiated with no arguments), or a bare ``evaluate``
+          callable. Returns a wrapper with ``name == spec.name``.
+    aux_call_llm:
+        zicato's auxiliary LLM callable
+        (``RuntimeConfig.auxiliary_call_llm``) — ``(system, user, model)
+        -> str``. Used only by inline judges; ignored for python judges
+        (their code brings its own dependencies). The two-callable rule
+        means this is NOT the harness callable.
+
+    Returns
+    -------
+    goldfive.Judge
+        An object conforming to goldfive's :class:`Judge` protocol,
+        ready to drop into ``goldfive.wrap(judges=[...])``. Its ``name``
+        equals ``spec.name`` so the resulting
+        :class:`JudgementEmitted.judge_name` is the operator-chosen
+        name.
+
+    Raises
+    ------
+    ValueError
+        On an empty ``name``, an unknown ``mode``, or an empty / malformed
+        python-mode ``body``.
+    ImportError / AttributeError
+        On a python-mode ``body`` whose module / attribute cannot be
+        resolved (chained to the original cause).
+    TypeError
+        On a python-mode ``body`` resolving to something that is neither
+        a Judge nor a callable.
+    """
+    name = str(getattr(spec, "name", "") or "").strip()
+    if not name:
+        raise ValueError("JudgeSpec.name must be a non-empty string")
+    mode = str(getattr(spec, "mode", "") or "").strip().lower()
+    body = getattr(spec, "body", "")
+    severity = getattr(spec, "severity", "")
+
+    if mode == "inline":
+        criterion = str(body or "").strip()
+        if not criterion:
+            raise ValueError(
+                f"inline JudgeSpec {name!r}: body (the criterion) must be a non-empty string"
+            )
+        return _InlineCriterionJudge(
+            name=name,
+            criterion=criterion,
+            severity=severity,
+            aux_call_llm=aux_call_llm,
+        )
+
+    if mode == "python":
+        resolved = _resolve_dotted_path(str(body or ""))
+        return _PythonJudgeWrapper(name=name, resolved=resolved)
+
+    raise ValueError(f"JudgeSpec {name!r}: unknown mode {mode!r}; expected 'inline' or 'python'")
+
+
+__all__ = ["JudgeSpecLike", "judge_spec_to_goldfive"]

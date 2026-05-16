@@ -24,6 +24,7 @@ The strategy across the file:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import importlib
 import sys
 import textwrap
@@ -367,9 +368,7 @@ async def test_run_single_turn_forwards_sinks_and_callable(
 
     seen: dict[str, Any] = {}
 
-    async def fake_goldfive_run(
-        agent: Any, user_input: str, **kwargs: Any
-    ) -> _FakeOutcome:
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
         seen["agent"] = agent
         seen["user_input"] = user_input
         seen["sinks"] = kwargs.get("sinks")
@@ -401,6 +400,234 @@ async def test_run_single_turn_forwards_sinks_and_callable(
     # the harness_call_llm — NOT the auxiliary — is forwarded.
     assert seen["call_llm"] is config.harness_call_llm
     assert seen["call_llm"] is not config.auxiliary_call_llm
+
+
+# ---------------------------------------------------------------------------
+# Judge wiring — the adapter assembles judges and passes them to goldfive.run
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class _JudgeSpecStub:
+    """Structural stand-in for ``zicato.core.JudgeSpec`` (owned elsewhere).
+
+    The adapter forwards ``BoardEntry.judges`` to
+    :func:`zicato.judge_runtime.assemble_judges`, which consumes a
+    JudgeSpec duck-typed. This stub matches the
+    ``{name, mode, body, severity}`` contract.
+    """
+
+    name: str
+    mode: str
+    body: str
+    severity: Any
+
+
+@dataclasses.dataclass
+class _EntryStub:
+    """Mutable duck-typed stand-in for a :class:`BoardEntry`.
+
+    The real :class:`BoardEntry` is frozen + slotted, so its
+    judge-carrying field (``judges``, owned by ``zicato/core/types.py``)
+    cannot be set dynamically in a test that predates the field landing.
+    The adapter consumes the entry purely structurally — ``id`` /
+    ``kind`` / ``wall_clock_budget_seconds`` / ``input`` / ``judges`` /
+    ``context`` — so this stub drives the same ``run`` code path.
+    """
+
+    id: str
+    kind: str
+    wall_clock_budget_seconds: int
+    input: str | None = None
+    judges: tuple[Any, ...] = ()
+    context: dict[str, str] = dataclasses.field(default_factory=dict)
+
+
+@pytest.mark.asyncio
+async def test_run_single_turn_passes_judges_into_goldfive_run(
+    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The adapter forwards an explicit judge list to ``goldfive.run``.
+
+    For a plain entry with no custom :class:`JudgeSpec` declared, the
+    adapter still passes goldfive's default built-in judge set via
+    ``judges=`` — the judge surface is always wired in, not left to
+    goldfive's own default.
+    """
+    import goldfive
+
+    generation_root, entrypoint = inner_harness
+    adapter = ADKHarnessAdapter(
+        entrypoint=entrypoint, mutable_trees=[generation_root / "demo_inner"]
+    )
+    runnable = adapter.load(generation_root)
+
+    seen: dict[str, Any] = {}
+
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
+        seen["judges"] = kwargs.get("judges")
+        seen["call_llm"] = kwargs.get("call_llm")
+        return _FakeOutcome({"t1": "reply"})
+
+    monkeypatch.setattr(goldfive, "run", fake_goldfive_run)
+
+    entry = BoardEntry(
+        id="entry-judges",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="hello",
+    )
+    entry.validate()
+    config = _runtime_config(tmp_path)
+
+    result = await runnable.run(entry, sinks=[], config=config)
+    assert isinstance(result, RunResult)
+
+    judges = seen["judges"]
+    # goldfive.run was given an explicit judge list (not None / not absent).
+    assert judges is not None
+    names = [j.name for j in judges]
+    # goldfive's built-in judges stay default-on.
+    assert "reasoning_drift" in names
+    assert "tool_error" in names
+    assert names == [j.name for j in goldfive.builtin_judges.default_judges()]
+    # the harness callable is still forwarded; judges did not displace it.
+    assert seen["call_llm"] is config.harness_call_llm
+
+
+@pytest.mark.asyncio
+async def test_run_single_turn_includes_entry_custom_judges(
+    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An entry's declared ``JudgeSpec`` judges land in the ``goldfive.run`` list."""
+    import goldfive
+
+    generation_root, entrypoint = inner_harness
+    adapter = ADKHarnessAdapter(
+        entrypoint=entrypoint, mutable_trees=[generation_root / "demo_inner"]
+    )
+    runnable = adapter.load(generation_root)
+
+    seen: dict[str, Any] = {}
+
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
+        seen["judges"] = kwargs.get("judges")
+        return _FakeOutcome({"t1": "reply"})
+
+    monkeypatch.setattr(goldfive, "run", fake_goldfive_run)
+
+    custom = _JudgeSpecStub(
+        name="entry_custom_judge",
+        mode="inline",
+        body="the agent must stay on the user's task",
+        severity=goldfive.DriftSeverity.WARNING,
+    )
+    # ``BoardEntry`` is frozen+slotted; use the duck-typed entry stub so
+    # the test does not depend on the ``judges`` field's landing order.
+    entry = _EntryStub(
+        id="entry-custom",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="hello",
+        judges=(custom,),
+    )
+    config = _runtime_config(tmp_path)
+
+    await runnable.run(entry, sinks=[], config=config)  # type: ignore[arg-type]
+    names = [j.name for j in seen["judges"]]
+    # built-ins stay default-on AND the entry's custom judge is appended.
+    assert "reasoning_drift" in names
+    assert "entry_custom_judge" in names
+    # the custom judge is appended after the built-ins.
+    assert names.index("entry_custom_judge") > names.index("reasoning_drift")
+
+
+@pytest.mark.asyncio
+async def test_run_single_turn_disable_drift_suppresses_builtin(
+    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A board's ``disable_drift`` drops the matching built-in from ``judges=``."""
+    import goldfive
+
+    generation_root, entrypoint = inner_harness
+    adapter = ADKHarnessAdapter(
+        entrypoint=entrypoint, mutable_trees=[generation_root / "demo_inner"]
+    )
+    runnable = adapter.load(generation_root)
+
+    seen: dict[str, Any] = {}
+
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
+        seen["judges"] = kwargs.get("judges")
+        return _FakeOutcome({"t1": "reply"})
+
+    monkeypatch.setattr(goldfive, "run", fake_goldfive_run)
+
+    entry = BoardEntry(
+        id="entry-disable",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="hello",
+        # ``disable_drift`` is a board-level setting; the adapter reads
+        # it off the entry's opaque ``context`` channel (a comma /
+        # whitespace separated list of drift-kind wire strings).
+        context={"disable_drift": "tool_error"},
+    )
+    entry.validate()
+    config = _runtime_config(tmp_path)
+
+    await runnable.run(entry, sinks=[], config=config)
+    names = [j.name for j in seen["judges"]]
+    # the suppressed built-in is gone...
+    assert "tool_error" not in names
+    # ...the rest of the default built-ins remain default-on.
+    assert "reasoning_drift" in names
+    assert "refusal" in names
+
+
+def test_entry_judge_specs_reads_judges_field() -> None:
+    """``_entry_judge_specs`` returns ``entry.judges`` and tolerates its absence."""
+    from zicato.adapters.adk import _entry_judge_specs
+
+    spec = _JudgeSpecStub(name="j", mode="inline", body="...", severity="warning")
+    with_judges = _EntryStub(
+        id="e", kind="single_turn", wall_clock_budget_seconds=5, judges=(spec,)
+    )
+    assert _entry_judge_specs(with_judges) == (spec,)  # type: ignore[arg-type]
+
+    # A real BoardEntry has no ``judges`` field yet -> empty tuple, no raise.
+    plain = BoardEntry(id="e", kind="single_turn", wall_clock_budget_seconds=5, input="x")
+    assert _entry_judge_specs(plain) == ()
+
+
+def test_entry_disable_drift_reads_context_and_attribute() -> None:
+    """``_entry_disable_drift`` reads the explicit attr first, then context."""
+    from zicato.adapters.adk import _entry_disable_drift
+
+    # context channel: comma / whitespace separated wire strings.
+    from_context = _EntryStub(
+        id="e",
+        kind="single_turn",
+        wall_clock_budget_seconds=5,
+        context={"disable_drift": "tool_error, agent_refusal"},
+    )
+    assert _entry_disable_drift(from_context) == ("tool_error", "agent_refusal")
+
+    # an explicit ``disable_drift`` attribute wins over context.
+    @dataclasses.dataclass
+    class _EntryWithAttr:
+        id: str = "e"
+        kind: str = "single_turn"
+        wall_clock_budget_seconds: int = 5
+        context: dict[str, str] = dataclasses.field(default_factory=dict)
+        disable_drift: tuple[str, ...] = ()
+
+    explicit = _EntryWithAttr(disable_drift=("goal_drift",), context={"disable_drift": "x"})
+    assert _entry_disable_drift(explicit) == ("goal_drift",)  # type: ignore[arg-type]
+
+    # a plain BoardEntry with no disable_drift anywhere -> empty tuple.
+    plain = BoardEntry(id="e", kind="single_turn", wall_clock_budget_seconds=5, input="x")
+    assert _entry_disable_drift(plain) == ()
 
 
 @pytest.mark.asyncio
