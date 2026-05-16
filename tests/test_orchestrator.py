@@ -228,6 +228,52 @@ def _install_telemetry_stubs(
     monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
 
+    # Since the L3 subprocess-isolation refactor each tournament run
+    # spawns a worker subprocess, which cannot see these sys.modules
+    # stubs (it runs in a separate interpreter). The orchestrator tests
+    # only care about the *evolve-loop* logic above the per-run mechanism,
+    # so we stub ``runner._run_single`` to return the same canned
+    # LossProfile the in-process reduce_loss stub would have produced.
+    import zicato.tournament.runner as _runner_mod
+
+    async def _fake_run_single(
+        *,
+        adapter: Any,
+        generation: Any,
+        entry: BoardEntry,
+        weights: Any,
+        config: Any,
+        workspace_root: Path,
+        epoch_id: str,
+    ) -> LossProfile:
+        del adapter, weights, config
+        expectation_result = (
+            ExpectationResult(kind="predicate", passed=True)
+            if entry.expectation is not None
+            else None
+        )
+        # Mirror the clean-exit path of the real _run_single: it folds the
+        # finished run into the live SQLite index. The index-wiring tests
+        # assert on this; the real subprocess _run_single does it after
+        # reading the worker's loss.json.
+        _runner_mod._ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
+        return LossProfile(
+            run_id=f"r-{generation.id}-{entry.id}",
+            entry_id=entry.id,
+            generation_id=generation.id,
+            epoch_id=epoch_id,
+            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            plan_revisions=0,
+            task_failure_ratio=0.0,
+            runtime_ms=100,
+            wall_clock_budget_exceeded=False,
+            expectation_result=expectation_result,
+            drift_loss=canned_loss_by_gen.get(generation.id, 0.0),
+            pass_fail=canned_pass_by_gen.get(generation.id),
+        )
+
+    monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
+
 
 # ---------------------------------------------------------------------------
 # Proposer canned response
