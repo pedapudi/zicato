@@ -5,6 +5,7 @@
 //! library lets the integration tests in `tests/` exercise the same code
 //! paths without spawning the executable.
 
+pub mod action_log;
 pub mod epoch;
 pub mod index_db;
 pub mod log;
@@ -16,6 +17,7 @@ pub mod signal;
 pub mod sse;
 pub mod state;
 pub mod static_assets;
+pub mod statusz;
 pub mod tournaments;
 pub mod watchdog;
 pub mod watcher;

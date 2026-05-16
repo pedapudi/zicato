@@ -31,6 +31,10 @@ pub struct Heartbeat {
     pub instance_id: Option<String>,
     #[serde(default)]
     pub last_heartbeat: Option<DateTime<Utc>>,
+    /// When the orchestrator process started. Used by `/statusz` to report
+    /// the orchestrator's own uptime; absent in older writers.
+    #[serde(default)]
+    pub started_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub phase: Option<String>,
     #[serde(default)]

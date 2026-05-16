@@ -1,0 +1,573 @@
+//! `/statusz` — the watchdog's own minimal operational surface.
+//!
+//! This is deliberately *not* the dashboard. It reports only what the
+//! supervisor itself is responsible for and can directly observe:
+//!
+//!   * the supervisor process: version, build, bound port, uptime,
+//!     workspace, read-only flag;
+//!   * the process tree it polices: the orchestrator pid and each
+//!     in-flight run worker pid;
+//!   * per-run wall-clock deadlines and time remaining / overrun;
+//!   * heartbeat freshness against the staleness threshold;
+//!   * the watchdog actions (SIGTERM/SIGKILL escalations) actually taken
+//!     this process lifetime, from the in-memory action ring buffer.
+//!
+//! No lineage, no scores, no tournament brackets — those are analytical
+//! and belong to the (separate) dashboard service. Everything here is a
+//! pure function of `(state files, action log, now)` so it can be unit
+//! tested without a running server.
+
+use crate::action_log::{Action, WatchdogLog};
+use crate::reader::{self, WorkspacePaths};
+use crate::state::{ActiveRun, Heartbeat};
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use std::sync::Arc;
+
+/// The supervisor's own identity and lifetime.
+#[derive(Debug, Clone, Serialize)]
+pub struct SupervisorInfo {
+    /// Crate version.
+    pub version: String,
+    /// Build identifier (version + short git SHA when known).
+    pub build: String,
+    /// The TCP port the HTTP server is bound to.
+    pub port: u16,
+    /// Whole seconds the supervisor process has been up.
+    pub uptime_seconds: u64,
+    /// Absolute workspace path being watched.
+    pub workspace: String,
+    /// Whether control-file writes are disabled (`--read-only`).
+    pub read_only: bool,
+    /// Whether the full dashboard routes are disabled (`--no-dashboard`):
+    /// `true` means watchdog-only mode.
+    pub dashboard_disabled: bool,
+    /// This supervisor process's own pid.
+    pub pid: i32,
+}
+
+/// Heartbeat freshness from the watchdog's point of view.
+#[derive(Debug, Clone, Serialize)]
+pub struct HeartbeatStatus {
+    /// `true` once a heartbeat file with a timestamp has been seen.
+    pub present: bool,
+    /// The orchestrator pid carried by the heartbeat, when present.
+    pub orchestrator_pid: Option<i32>,
+    /// The last heartbeat timestamp (RFC-3339), when present.
+    pub last_heartbeat: Option<String>,
+    /// Age of the last heartbeat in whole seconds.
+    pub age_seconds: Option<i64>,
+    /// `true` when the age exceeds the staleness threshold.
+    pub stale: bool,
+    /// The staleness threshold the watchdog is using (seconds).
+    pub stale_threshold_seconds: u64,
+    /// The orchestrator's current phase string, when reported.
+    pub phase: Option<String>,
+    /// Whole seconds since the orchestrator process started, when known.
+    pub orchestrator_uptime_seconds: Option<i64>,
+}
+
+/// Per-run deadline status — strictly the supervisor's deadline view.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunDeadlineStatus {
+    pub run_id: String,
+    /// The worker pid the watchdog would signal.
+    pub pid: Option<i32>,
+    /// When the run started (RFC-3339), when known.
+    pub started_at: Option<String>,
+    /// The wall-clock deadline (RFC-3339), when known.
+    pub deadline: Option<String>,
+    /// Seconds remaining until the deadline; negative once past it.
+    /// `null` when the run carries no deadline.
+    pub remaining_seconds: Option<i64>,
+    /// `true` when the run is past its deadline.
+    pub over_deadline: bool,
+    /// Seconds the run is over its deadline (`0` when within deadline,
+    /// `null` when the run carries no deadline).
+    pub over_by_seconds: Option<i64>,
+}
+
+/// The whole `/statusz` payload.
+#[derive(Debug, Clone, Serialize)]
+pub struct StatuszView {
+    /// When this view was assembled (RFC-3339).
+    pub generated_at: String,
+    pub supervisor: SupervisorInfo,
+    pub heartbeat: HeartbeatStatus,
+    /// Per-run deadline rows, one per `active_runs/*.json`.
+    pub runs: Vec<RunDeadlineStatus>,
+    /// Count of runs currently past their deadline.
+    pub runs_over_deadline: usize,
+    /// A single human-readable summary line.
+    pub summary: String,
+    /// Recent watchdog escalations from the in-memory ring buffer,
+    /// newest last.
+    pub watchdog_actions: Vec<Action>,
+}
+
+/// Inputs the supervisor knows about itself, threaded in from `AppState`.
+#[derive(Debug, Clone)]
+pub struct SupervisorIdentity {
+    pub version: &'static str,
+    pub build: &'static str,
+    pub port: u16,
+    pub uptime_seconds: u64,
+    pub workspace: String,
+    pub read_only: bool,
+    pub dashboard_disabled: bool,
+}
+
+/// Compute per-run deadline status. Pure and `now`-injected.
+fn run_deadline_status(run: &ActiveRun, now: DateTime<Utc>) -> RunDeadlineStatus {
+    let (remaining_seconds, over_deadline, over_by_seconds) = match run.deadline {
+        Some(deadline) => {
+            let remaining = (deadline - now).num_seconds();
+            let over = remaining < 0;
+            (Some(remaining), over, Some((-remaining).max(0)))
+        }
+        None => (None, false, None),
+    };
+    RunDeadlineStatus {
+        run_id: run.run_id.clone(),
+        pid: run.pid,
+        started_at: run.started_at.map(|t| t.to_rfc3339()),
+        deadline: run.deadline.map(|t| t.to_rfc3339()),
+        remaining_seconds,
+        over_deadline,
+        over_by_seconds,
+    }
+}
+
+/// Heartbeat freshness, pure and `now`-injected.
+fn heartbeat_status(
+    hb: Option<&Heartbeat>,
+    now: DateTime<Utc>,
+    stale_threshold_seconds: u64,
+) -> HeartbeatStatus {
+    match hb.and_then(|h| h.last_heartbeat.map(|ts| (h, ts))) {
+        Some((h, last)) => {
+            let age = (now - last).num_seconds();
+            HeartbeatStatus {
+                present: true,
+                orchestrator_pid: h.pid,
+                last_heartbeat: Some(last.to_rfc3339()),
+                age_seconds: Some(age),
+                stale: age.max(0) as u64 >= stale_threshold_seconds,
+                stale_threshold_seconds,
+                phase: h.phase.clone(),
+                orchestrator_uptime_seconds: h.started_at.map(|s| (now - s).num_seconds().max(0)),
+            }
+        }
+        None => HeartbeatStatus {
+            present: false,
+            orchestrator_pid: hb.and_then(|h| h.pid),
+            last_heartbeat: None,
+            age_seconds: None,
+            stale: false,
+            stale_threshold_seconds,
+            phase: hb.and_then(|h| h.phase.clone()),
+            orchestrator_uptime_seconds: None,
+        },
+    }
+}
+
+/// Assemble the full `/statusz` view from disk + the action log.
+pub fn build_statusz(
+    paths: &WorkspacePaths,
+    identity: &SupervisorIdentity,
+    heartbeat_stale_threshold_seconds: u64,
+    action_log: &Arc<WatchdogLog>,
+) -> StatuszView {
+    let now = Utc::now();
+
+    let hb = reader::read_heartbeat(paths);
+    let heartbeat = heartbeat_status(hb.as_ref(), now, heartbeat_stale_threshold_seconds);
+
+    let runs: Vec<RunDeadlineStatus> = reader::read_active_runs(paths)
+        .iter()
+        .map(|r| run_deadline_status(r, now))
+        .collect();
+    let runs_over_deadline = runs.iter().filter(|r| r.over_deadline).count();
+
+    let summary = if runs.is_empty() {
+        "no active runs".to_string()
+    } else if runs_over_deadline == 0 {
+        format!("all {} run(s) within deadline", runs.len())
+    } else {
+        format!(
+            "{runs_over_deadline} run(s) OVER deadline / {} active",
+            runs.len()
+        )
+    };
+
+    StatuszView {
+        generated_at: now.to_rfc3339(),
+        supervisor: SupervisorInfo {
+            version: identity.version.to_string(),
+            build: identity.build.to_string(),
+            port: identity.port,
+            uptime_seconds: identity.uptime_seconds,
+            workspace: identity.workspace.clone(),
+            read_only: identity.read_only,
+            dashboard_disabled: identity.dashboard_disabled,
+            pid: std::process::id() as i32,
+        },
+        heartbeat,
+        runs,
+        runs_over_deadline,
+        summary,
+        watchdog_actions: action_log.snapshot(),
+    }
+}
+
+/// Minimal HTML escape for the few user-controlled strings rendered
+/// (workspace path, phase, run ids). Terse but correct.
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Format a signed second count as a terse `h:mm:ss` (or `-h:mm:ss`).
+fn hms(total: i64) -> String {
+    let neg = total < 0;
+    let t = total.unsigned_abs();
+    let h = t / 3600;
+    let m = (t % 3600) / 60;
+    let s = t % 60;
+    format!("{}{h}:{m:02}:{s:02}", if neg { "-" } else { "" })
+}
+
+/// Render the `/statusz` view as a self-contained terse HTML page.
+///
+/// Inline CSS, monospace, no JS, no framework. A single `<meta refresh>`
+/// keeps it current without scripting.
+pub fn render_html(v: &StatuszView) -> String {
+    let mut out = String::with_capacity(4096);
+    out.push_str(
+        "<!doctype html><html><head><meta charset=\"utf-8\">\
+<title>zicato supervisor / statusz</title>\
+<meta http-equiv=\"refresh\" content=\"5\">\
+<style>\
+body{background:#111;color:#ddd;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:1.5rem;max-width:60rem}\
+h1{font-size:14px;color:#fff;border-bottom:1px solid #444;padding-bottom:.3rem}\
+h2{font-size:13px;color:#9cf;margin:1.4rem 0 .3rem}\
+table{border-collapse:collapse;width:100%}\
+td,th{text-align:left;padding:.15rem .8rem .15rem 0;white-space:nowrap}\
+th{color:#888;font-weight:normal}\
+.ok{color:#7c7}.warn{color:#fc6}.bad{color:#f77;font-weight:bold}\
+.dim{color:#777}\
+.summary{padding:.4rem .6rem;margin:.6rem 0;border-left:3px solid #444}\
+.summary.ok{border-color:#7c7}.summary.bad{border-color:#f77}\
+</style></head><body>",
+    );
+
+    out.push_str("<h1>zicato supervisor &mdash; /statusz</h1>");
+
+    // Summary line.
+    let sum_class = if v.runs_over_deadline > 0 {
+        "bad"
+    } else {
+        "ok"
+    };
+    out.push_str(&format!(
+        "<div class=\"summary {sum_class}\">{}</div>",
+        esc(&v.summary)
+    ));
+
+    // Supervisor.
+    let s = &v.supervisor;
+    out.push_str("<h2>supervisor</h2><table>");
+    out.push_str(&format!(
+        "<tr><th>version</th><td>{}</td></tr>",
+        esc(&s.version)
+    ));
+    out.push_str(&format!(
+        "<tr><th>build</th><td>{}</td></tr>",
+        esc(&s.build)
+    ));
+    out.push_str(&format!("<tr><th>pid</th><td>{}</td></tr>", s.pid));
+    out.push_str(&format!("<tr><th>port</th><td>{}</td></tr>", s.port));
+    out.push_str(&format!(
+        "<tr><th>uptime</th><td>{}</td></tr>",
+        hms(s.uptime_seconds as i64)
+    ));
+    out.push_str(&format!(
+        "<tr><th>workspace</th><td>{}</td></tr>",
+        esc(&s.workspace)
+    ));
+    out.push_str(&format!(
+        "<tr><th>read-only</th><td>{}</td></tr>",
+        s.read_only
+    ));
+    out.push_str(&format!(
+        "<tr><th>mode</th><td>{}</td></tr>",
+        if s.dashboard_disabled {
+            "watchdog-only (--no-dashboard)"
+        } else {
+            "watchdog + dashboard"
+        }
+    ));
+    out.push_str("</table>");
+
+    // Heartbeat.
+    let h = &v.heartbeat;
+    out.push_str("<h2>heartbeat</h2><table>");
+    if h.present {
+        let (cls, label) = if h.stale {
+            ("bad", "STALE")
+        } else {
+            ("ok", "fresh")
+        };
+        out.push_str(&format!(
+            "<tr><th>state</th><td class=\"{cls}\">{label}</td></tr>"
+        ));
+        out.push_str(&format!(
+            "<tr><th>age</th><td>{} (threshold {}s)</td></tr>",
+            h.age_seconds.map(hms).unwrap_or_else(|| "?".into()),
+            h.stale_threshold_seconds
+        ));
+        out.push_str(&format!(
+            "<tr><th>last</th><td>{}</td></tr>",
+            esc(h.last_heartbeat.as_deref().unwrap_or("-"))
+        ));
+    } else {
+        out.push_str("<tr><th>state</th><td class=\"warn\">no heartbeat file</td></tr>");
+    }
+    out.push_str(&format!(
+        "<tr><th>orchestrator pid</th><td>{}</td></tr>",
+        h.orchestrator_pid
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".into())
+    ));
+    if let Some(p) = &h.phase {
+        out.push_str(&format!("<tr><th>phase</th><td>{}</td></tr>", esc(p)));
+    }
+    if let Some(u) = h.orchestrator_uptime_seconds {
+        out.push_str(&format!("<tr><th>orch uptime</th><td>{}</td></tr>", hms(u)));
+    }
+    out.push_str("</table>");
+
+    // Runs / deadlines.
+    out.push_str("<h2>runs &amp; deadlines</h2>");
+    if v.runs.is_empty() {
+        out.push_str("<p class=\"dim\">no active runs</p>");
+    } else {
+        out.push_str(
+            "<table><tr><th>run_id</th><th>pid</th><th>started</th>\
+<th>deadline</th><th>remaining</th><th>status</th></tr>",
+        );
+        for r in &v.runs {
+            let (cls, status) = if r.over_deadline {
+                (
+                    "bad",
+                    format!("OVER by {}", hms(r.over_by_seconds.unwrap_or(0))),
+                )
+            } else if r.remaining_seconds.is_some() {
+                ("ok", "within deadline".to_string())
+            } else {
+                ("dim", "no deadline".to_string())
+            };
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td>\
+<td class=\"{cls}\">{}</td><td class=\"{cls}\">{}</td></tr>",
+                esc(&r.run_id),
+                r.pid.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
+                esc(r.started_at.as_deref().unwrap_or("-")),
+                esc(r.deadline.as_deref().unwrap_or("-")),
+                r.remaining_seconds.map(hms).unwrap_or_else(|| "-".into()),
+                status,
+            ));
+        }
+        out.push_str("</table>");
+    }
+
+    // Watchdog actions.
+    out.push_str("<h2>watchdog actions</h2>");
+    if v.watchdog_actions.is_empty() {
+        out.push_str(
+            "<p class=\"dim\">no escalations this process lifetime \
+(in-memory; cleared on restart)</p>",
+        );
+    } else {
+        out.push_str(
+            "<table><tr><th>when</th><th>trigger</th><th>pid</th>\
+<th>run_id</th><th>outcome</th></tr>",
+        );
+        for a in v.watchdog_actions.iter().rev() {
+            let cls = match a.outcome {
+                crate::action_log::Outcome::Failed => "bad",
+                crate::action_log::Outcome::KilledForcefully => "warn",
+                _ => "dim",
+            };
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td>\
+<td class=\"{cls}\">{}</td></tr>",
+                esc(&a.ts.to_rfc3339()),
+                a.trigger.as_str(),
+                a.pid,
+                esc(a.run_id.as_deref().unwrap_or("-")),
+                a.outcome.as_str(),
+            ));
+        }
+        out.push_str("</table>");
+    }
+
+    out.push_str(&format!(
+        "<p class=\"dim\">generated {}</p>",
+        esc(&v.generated_at)
+    ));
+    out.push_str("</body></html>");
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::action_log::{Outcome, Trigger};
+    use chrono::Duration as ChDuration;
+
+    #[test]
+    fn run_within_deadline_is_not_flagged() {
+        let now = Utc::now();
+        let run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(4242),
+            started_at: Some(now - ChDuration::seconds(60)),
+            deadline: Some(now + ChDuration::seconds(300)),
+            ..Default::default()
+        };
+        let st = run_deadline_status(&run, now);
+        assert!(!st.over_deadline);
+        assert_eq!(st.over_by_seconds, Some(0));
+        assert!(st.remaining_seconds.unwrap() > 0);
+    }
+
+    #[test]
+    fn over_deadline_run_is_flagged() {
+        let now = Utc::now();
+        let run = ActiveRun {
+            run_id: "r-late".into(),
+            pid: Some(4242),
+            started_at: Some(now - ChDuration::seconds(1000)),
+            deadline: Some(now - ChDuration::seconds(90)),
+            ..Default::default()
+        };
+        let st = run_deadline_status(&run, now);
+        assert!(st.over_deadline);
+        assert!(st.remaining_seconds.unwrap() < 0);
+        assert!(st.over_by_seconds.unwrap() >= 89);
+    }
+
+    #[test]
+    fn run_without_deadline_is_not_over() {
+        let now = Utc::now();
+        let run = ActiveRun {
+            run_id: "r-nodl".into(),
+            pid: Some(1),
+            started_at: Some(now),
+            deadline: None,
+            ..Default::default()
+        };
+        let st = run_deadline_status(&run, now);
+        assert!(!st.over_deadline);
+        assert_eq!(st.remaining_seconds, None);
+        assert_eq!(st.over_by_seconds, None);
+    }
+
+    #[test]
+    fn stale_heartbeat_is_flagged() {
+        let now = Utc::now();
+        let hb = Heartbeat {
+            pid: Some(10015),
+            last_heartbeat: Some(now - ChDuration::seconds(120)),
+            ..Default::default()
+        };
+        let st = heartbeat_status(Some(&hb), now, 90);
+        assert!(st.present);
+        assert!(st.stale);
+        assert_eq!(st.orchestrator_pid, Some(10015));
+    }
+
+    #[test]
+    fn fresh_heartbeat_is_not_stale() {
+        let now = Utc::now();
+        let hb = Heartbeat {
+            pid: Some(10015),
+            last_heartbeat: Some(now - ChDuration::seconds(3)),
+            ..Default::default()
+        };
+        let st = heartbeat_status(Some(&hb), now, 90);
+        assert!(!st.stale);
+    }
+
+    #[test]
+    fn missing_heartbeat_is_not_present() {
+        let st = heartbeat_status(None, Utc::now(), 90);
+        assert!(!st.present);
+        assert!(!st.stale);
+    }
+
+    #[test]
+    fn html_renders_non_empty_and_self_contained() {
+        let view = StatuszView {
+            generated_at: Utc::now().to_rfc3339(),
+            supervisor: SupervisorInfo {
+                version: "0.1.0".into(),
+                build: "0.1.0".into(),
+                port: 7892,
+                uptime_seconds: 10,
+                workspace: "/tmp/ws".into(),
+                read_only: false,
+                dashboard_disabled: true,
+                pid: 1234,
+            },
+            heartbeat: heartbeat_status(None, Utc::now(), 90),
+            runs: vec![],
+            runs_over_deadline: 0,
+            summary: "no active runs".into(),
+            watchdog_actions: vec![Action {
+                ts: Utc::now(),
+                trigger: Trigger::RunDeadline,
+                pid: 4242,
+                run_id: Some("r-late".into()),
+                outcome: Outcome::KilledForcefully,
+            }],
+        };
+        let html = render_html(&view);
+        assert!(html.starts_with("<!doctype html>"));
+        assert!(html.contains("/statusz"));
+        // Self-contained: inline style, no external asset references.
+        assert!(html.contains("<style>"));
+        assert!(!html.contains("src=\""));
+        assert!(!html.contains("<script"));
+        // The watchdog action is surfaced.
+        assert!(html.contains("r-late"));
+        assert!(html.contains("killed_forcefully"));
+    }
+
+    #[test]
+    fn html_escapes_run_ids_and_paths() {
+        let view = StatuszView {
+            generated_at: Utc::now().to_rfc3339(),
+            supervisor: SupervisorInfo {
+                version: "0.1.0".into(),
+                build: "0.1.0".into(),
+                port: 7892,
+                uptime_seconds: 10,
+                workspace: "/tmp/<evil>".into(),
+                read_only: false,
+                dashboard_disabled: false,
+                pid: 1,
+            },
+            heartbeat: heartbeat_status(None, Utc::now(), 90),
+            runs: vec![],
+            runs_over_deadline: 0,
+            summary: "no active runs".into(),
+            watchdog_actions: vec![],
+        };
+        let html = render_html(&view);
+        assert!(html.contains("/tmp/&lt;evil&gt;"));
+        assert!(!html.contains("/tmp/<evil>"));
+    }
+}
