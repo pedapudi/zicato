@@ -1,5 +1,10 @@
 """``zicato board`` — CLI subcommand group for board file operations.
 
+ADVANCED / DEBUGGING — off the happy path. The board is part of the
+evaluation contract; the operator's *live* board edits are picked up
+by ``zicato evolve`` automatically (a board change rolls the epoch).
+Use ``zicato board`` to inspect or hand-edit a frozen per-epoch board.
+
 The board lives at ``{workspace}/epochs/{epoch_id}/board.jsonl`` and is
 the frozen-per-epoch list of evaluations the inner harness is scored
 against. This command group exposes the three operations the operator
@@ -59,10 +64,18 @@ def _resolve_board_path(workspace: str) -> Path:
     return board_path(workspace_root, epoch_id)
 
 
-@click.group(name="board")
+@click.group(
+    name="board",
+    short_help="Advanced: inspect / hand-edit a per-epoch board.jsonl.",
+)
 @click.pass_context
 def board_grp(ctx: click.Context) -> None:
-    """Manage the per-epoch board.jsonl file."""
+    """Advanced: manage the per-epoch board.jsonl file.
+
+    Off the happy path. The board is part of the evaluation contract,
+    and `zicato evolve` rolls the epoch when the live board changes —
+    use this group only to inspect or hand-edit a frozen board.
+    """
     # No shared state — every subcommand resolves the board path on
     # its own. The pass_context wiring exists so the integration CLI
     # can stash global flags (workspace overrides, verbosity) on
@@ -70,7 +83,10 @@ def board_grp(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
 
 
-@board_grp.command("add")
+@board_grp.command(
+    "add",
+    short_help="Append one validated board entry from a JSON file.",
+)
 @click.argument("entry_path", type=click.Path(exists=True, dir_okay=False))
 @click.option(
     "--workspace",
@@ -86,9 +102,7 @@ def add_cmd(entry_path: str, workspace: str) -> None:
     except json.JSONDecodeError as exc:
         raise click.ClickException(f"{src}: invalid JSON: {exc.msg}") from exc
     if not isinstance(payload, dict):
-        raise click.ClickException(
-            f"{src}: expected a JSON object, got {type(payload).__name__}"
-        )
+        raise click.ClickException(f"{src}: expected a JSON object, got {type(payload).__name__}")
     try:
         entry = validate_board_entry(payload)
     except (KeyError, ValueError) as exc:
@@ -104,7 +118,10 @@ def add_cmd(entry_path: str, workspace: str) -> None:
     click.echo(f"appended {entry.id} ({entry.kind}) to {target}")
 
 
-@board_grp.command("list")
+@board_grp.command(
+    "list",
+    short_help="List the entries in the current epoch's board.",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -135,7 +152,10 @@ def list_cmd(workspace: str) -> None:
         )
 
 
-@board_grp.command("remove")
+@board_grp.command(
+    "remove",
+    short_help="Remove a board entry by id from the current epoch.",
+)
 @click.argument("entry_id")
 @click.option(
     "--workspace",

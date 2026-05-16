@@ -1,8 +1,13 @@
 """``zicato epoch`` command group.
 
+ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` opens,
+closes, and rolls epochs automatically (contract-hash auto-epoching).
+Reach for ``zicato epoch`` only to inspect epochs or to force an epoch
+boundary by hand.
+
 Surface:
 
-  zicato epoch new <name> --board <path> --rubric <path> [--scoring <path>]
+  zicato epoch new <name> --board <path> --brief <path> [--scoring <path>]
   zicato epoch close [<epoch_id>]
   zicato epoch list
   zicato epoch switch <epoch_id>
@@ -56,9 +61,7 @@ def _load_weights(scoring_path: str | None) -> ScoringWeights:
             drift_weight=float(raw.get("drift_weight", 1.0)),
             pass_weight=float(raw.get("pass_weight", 1.0)),
             severity_weights=severity,
-            per_kind_weights={
-                str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()
-            },
+            per_kind_weights={str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()},
             plan_revision_weight=float(raw.get("plan_revision_weight", 0.5)),
             runtime_weight=float(raw.get("runtime_weight", 0.0)),
             promote_margin=float(raw.get("promote_margin", 0.01)),
@@ -67,9 +70,7 @@ def _load_weights(scoring_path: str | None) -> ScoringWeights:
     return ScoringWeights(
         drift_weight=float(raw.get("drift_weight", 1.0)),
         pass_weight=float(raw.get("pass_weight", 1.0)),
-        per_kind_weights={
-            str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()
-        },
+        per_kind_weights={str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()},
         plan_revision_weight=float(raw.get("plan_revision_weight", 0.5)),
         runtime_weight=float(raw.get("runtime_weight", 0.0)),
         promote_margin=float(raw.get("promote_margin", 0.01)),
@@ -77,12 +78,24 @@ def _load_weights(scoring_path: str | None) -> ScoringWeights:
     )
 
 
-@click.group(name="epoch")
+@click.group(
+    name="epoch",
+    short_help="Advanced: inspect / force epochs (evolve auto-epochs for you).",
+)
 def epoch_grp() -> None:
-    """Manage zicato epochs (the unit of evaluation contract)."""
+    """Advanced: manage zicato epochs — the unit of evaluation contract.
+
+    Off the happy path. `zicato evolve` opens, closes, and rolls
+    epochs on its own whenever the evaluation contract changes
+    (contract-hash auto-epoching). Use this group only to inspect
+    epochs (`epoch list`) or to force an epoch boundary by hand.
+    """
 
 
-@epoch_grp.command("new")
+@epoch_grp.command(
+    "new",
+    short_help="Create a new epoch and make it current.",
+)
 @click.argument("name")
 @click.option(
     "--workspace",
@@ -98,11 +111,11 @@ def epoch_grp() -> None:
     help="Path to a board.jsonl to copy into the epoch.",
 )
 @click.option(
-    "--rubric",
-    "rubric_source",
+    "--brief",
+    "brief_source",
     required=True,
     type=click.Path(exists=True, dir_okay=False),
-    help="Path to a rubric.md to copy into the epoch.",
+    help="Path to a proposer-brief markdown file to copy into the epoch.",
 )
 @click.option(
     "--scoring",
@@ -115,10 +128,13 @@ def new_cmd(
     name: str,
     workspace: str,
     board_source: str,
-    rubric_source: str,
+    brief_source: str,
     scoring_source: str | None,
 ) -> None:
-    """Create a new epoch and make it current.
+    """Advanced: create a new epoch and make it current.
+
+    Off the happy path — `zicato evolve` auto-opens epochs. Run this
+    by hand only to force an epoch boundary.
 
     If a previous epoch is still open it is auto-closed first; the auto
     close emits a stub analysis.md (no auxiliary LLM is wired through
@@ -130,7 +146,10 @@ def new_cmd(
         workspace_root=ws,
         name=name,
         board_source=Path(board_source),
-        rubric_source=Path(rubric_source),
+        # ``new_epoch``'s parameter is still named ``rubric_source`` —
+        # the proposer-brief rename of the lifecycle module is a
+        # separate workstream. The operator-facing flag is ``--brief``.
+        rubric_source=Path(brief_source),
         weights=weights,
         auto_close_previous=True,
         aux_call_llm=None,
@@ -138,7 +157,10 @@ def new_cmd(
     click.echo(f"Created epoch {cfg.id} (now current).")
 
 
-@epoch_grp.command("close")
+@epoch_grp.command(
+    "close",
+    short_help="Close an epoch and write its analysis.md.",
+)
 @click.argument("epoch_id", required=False)
 @click.option(
     "--workspace",
@@ -147,19 +169,23 @@ def new_cmd(
     help="Path to the zicato workspace directory.",
 )
 def close_cmd(epoch_id: str | None, workspace: str) -> None:
-    """Close an epoch and (best-effort) generate ``analysis.md``.
+    """Advanced: close an epoch and (best-effort) generate analysis.md.
 
-    When ``EPOCH_ID`` is omitted, the current epoch is closed. The
-    analysis pass runs only if an auxiliary LLM has been configured —
-    until then this writes a stub analysis.md that the operator can
-    regenerate later.
+    Off the happy path — `zicato evolve` closes epochs on its own when
+    the contract rolls. When EPOCH_ID is omitted, the current epoch is
+    closed. The analysis pass runs only if an auxiliary LLM has been
+    configured — until then this writes a stub analysis.md that the
+    operator can regenerate later.
     """
     ws = _resolve_workspace(workspace)
     out_path = lifecycle.close_epoch(ws, epoch_id=epoch_id, aux_call_llm=None)
     click.echo(f"Closed. Wrote {out_path}.")
 
 
-@epoch_grp.command("list")
+@epoch_grp.command(
+    "list",
+    short_help="List every epoch in the workspace.",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -167,12 +193,15 @@ def close_cmd(epoch_id: str | None, workspace: str) -> None:
     help="Path to the zicato workspace directory.",
 )
 def list_cmd(workspace: str) -> None:
-    """List every epoch in the workspace (markdown table)."""
+    """List every epoch in the workspace as a markdown table."""
     ws = _resolve_workspace(workspace)
     click.echo(render_lineage_summary(ws))
 
 
-@epoch_grp.command("switch")
+@epoch_grp.command(
+    "switch",
+    short_help="Point the current-epoch marker at EPOCH_ID.",
+)
 @click.argument("epoch_id")
 @click.option(
     "--workspace",
@@ -181,7 +210,7 @@ def list_cmd(workspace: str) -> None:
     help="Path to the zicato workspace directory.",
 )
 def switch_cmd(epoch_id: str, workspace: str) -> None:
-    """Point the workspace's ``current_epoch`` marker at ``EPOCH_ID``."""
+    """Advanced: point the workspace's current_epoch marker at EPOCH_ID."""
     ws = _resolve_workspace(workspace)
     lifecycle.switch_epoch(ws, epoch_id)
     click.echo(f"Switched to {epoch_id}.")

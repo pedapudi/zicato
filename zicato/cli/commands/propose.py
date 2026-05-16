@@ -1,15 +1,20 @@
 """``zicato propose`` — generate a new :class:`Experiment` for the next generation.
 
-Standalone command file. Auto-discovered by the CLI-infrastructure
-agent under ``zicato/cli/commands/``; intentionally does not import from
+ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` proposes
+an experiment internally on every round. Run ``zicato propose`` by hand
+only to generate (and inspect) a single experiment without running the
+tournament.
+
+Standalone command file. Auto-discovered under
+``zicato/cli/commands/``; intentionally does not import from
 ``zicato.cli`` so discovery stays one-way.
 
 The command stitches together the proposer's inputs from the workspace:
 
 * Workspace config (``<workspace>/config.json``) → source roots, current
   epoch, model id for the auxiliary LLM.
-* Epoch config (``<workspace>/epochs/<epoch_id>/scoring.json``) and
-  rubric (``<workspace>/epochs/<epoch_id>/rubric.md``).
+* Epoch config (``<workspace>/epochs/<epoch_id>/scoring.json``) and the
+  per-epoch proposer brief.
 * Latest generation → mutation manifest. If a ``mutations.json`` is
   cached for the latest generation, it is read; otherwise the command
   re-enumerates from the source roots if the enumerator is importable.
@@ -77,8 +82,7 @@ def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
         if text:
             return text
     raise click.ClickException(
-        f"No active epoch. Either pass --epoch or write the id to "
-        f"{current_path}."
+        f"No active epoch. Either pass --epoch or write the id to {current_path}."
     )
 
 
@@ -132,9 +136,7 @@ def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list
         try:
             data = json.loads(cache_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise click.ClickException(
-                f"Could not parse {cache_path}: {exc}"
-            ) from exc
+            raise click.ClickException(f"Could not parse {cache_path}: {exc}") from exc
         return [
             MutationPoint(
                 id=item["id"],
@@ -179,15 +181,11 @@ def _load_patterns(
     if patterns_from is not None:
         path = Path(patterns_from)
         if not path.exists():
-            raise click.ClickException(
-                f"--patterns-from path does not exist: {path}"
-            )
+            raise click.ClickException(f"--patterns-from path does not exist: {path}")
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise click.ClickException(
-                f"Could not parse {path}: {exc}"
-            ) from exc
+            raise click.ClickException(f"Could not parse {path}: {exc}") from exc
         return [_pattern_from_dict(d) for d in data]
 
     try:
@@ -293,7 +291,10 @@ def _resolve_aux_llm(config: dict[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@click.command(name="propose")
+@click.command(
+    name="propose",
+    short_help="Advanced: generate one Experiment for the next generation.",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -325,18 +326,23 @@ def propose_cmd(
     patterns_from: str | None,
     max_retries: int,
 ) -> None:
-    """Generate a new Experiment for the next generation."""
+    """Advanced: generate one Experiment for the next generation.
+
+    Off the happy path — `zicato evolve` proposes on every round.
+    Run this by hand only to produce and inspect a single experiment
+    without running the tournament.
+    """
 
     workspace_dir = Path(workspace)
     config = _load_workspace_config(workspace_dir)
     epoch_id = _resolve_epoch(workspace_dir, epoch)
 
-    rubric_file = rubric_path(workspace_dir, epoch_id)
-    if not rubric_file.exists():
+    brief_file = rubric_path(workspace_dir, epoch_id)
+    if not brief_file.exists():
         raise click.ClickException(
-            f"No rubric at {rubric_file}. Create it before proposing."
+            f"No proposer brief at {brief_file}. Create it before proposing."
         )
-    rubric = load_rubric(rubric_file)
+    rubric = load_rubric(brief_file)
 
     existing = _list_generations(workspace_dir, epoch_id)
     if not existing:
@@ -378,10 +384,7 @@ def propose_cmd(
 
     write_experiment(workspace_dir, epoch_id, new_gen, experiment)
     out_path = experiment_json_path(workspace_dir, epoch_id, new_gen)
-    click.echo(
-        f"Wrote experiment {experiment.id} for {epoch_id}/{new_gen} "
-        f"to {out_path}"
-    )
+    click.echo(f"Wrote experiment {experiment.id} for {epoch_id}/{new_gen} to {out_path}")
 
 
 __all__ = ["propose_cmd"]

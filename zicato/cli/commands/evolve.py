@@ -1,10 +1,28 @@
-"""``zicato evolve`` — run the evolve loop for N rounds against the current epoch.
+"""``zicato evolve`` — the single entry point to the self-improvement loop.
 
-This command is the operator-facing entry point to the round-by-round
-self-improvement loop. Each round proposes one experiment, applies it,
-runs the tournament, and either promotes or rejects the child
-generation. See :mod:`zicato.orchestrator` for the implementation
-details.
+``evolve`` is the whole happy path past ``zicato init``. It is
+self-orchestrating: the operator never runs ``register`` / ``propose``
+/ ``tournament`` / ``reindex`` / ``epoch`` by hand — ``evolve`` drives
+all of them internally.
+
+Each invocation:
+
+1. **Resolves the evaluation contract** via
+   :func:`zicato.epoch.contract.resolve_contract_inputs` — the board,
+   the proposer brief, the scoring config, and the registered
+   inner-harness identity (entrypoint + mutable trees).
+2. **Compares the contract hash to the current epoch.** On *any*
+   change it closes the current epoch (writing its ``analysis.md``) and
+   opens a fresh one carrying the new contract, before running. This is
+   contract-hash auto-epoching; it is ON by default. ``--no-auto-epoch``
+   makes a drifted contract a hard error instead; ``--epoch`` pins an
+   explicit epoch and skips the check entirely.
+3. **Runs the loop** for ``--rounds`` rounds. Each round proposes one
+   experiment, applies it, runs the tournament, and either promotes or
+   rejects the child generation.
+4. **Launches the dashboard** and prints its URL.
+
+See :mod:`zicato.orchestrator` for the loop implementation.
 
 Usage::
 
@@ -176,7 +194,7 @@ async def _maybe_spawn_dashboard(
         proc = await asyncio.create_subprocess_exec(*argv)
     except (OSError, FileNotFoundError) as exc:
         click.echo(
-            f"warning: failed to spawn the dashboard service ({exc}); " "dashboard disabled",
+            f"warning: failed to spawn the dashboard service ({exc}); dashboard disabled",
             err=True,
         )
         return None
@@ -227,7 +245,7 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
         module_path, _, attr = dotted.rpartition(".")
     if not module_path or not attr:
         raise click.BadParameter(
-            f"{kind} dotted path {dotted!r} must be 'pkg.module.attr' or " "'pkg.module:attr'"
+            f"{kind} dotted path {dotted!r} must be 'pkg.module.attr' or 'pkg.module:attr'"
         )
     try:
         module = importlib.import_module(module_path)
@@ -238,18 +256,36 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     fn = getattr(module, attr)
     if not callable(fn):
         raise click.BadParameter(
-            f"{kind}: {dotted!r} resolved to {type(fn).__name__}, " "expected a callable"
+            f"{kind}: {dotted!r} resolved to {type(fn).__name__}, expected a callable"
         )
     return fn
 
 
-@click.command(name="evolve")
+@click.command(
+    name="evolve",
+    short_help="Resolve the contract, auto-open an epoch on any change, and run the loop.",
+    epilog=(
+        "\b\n"
+        "Happy-path invocation:\n"
+        "  zicato evolve \\\n"
+        "      --harness-call-llm  my_pkg.llms:harness \\\n"
+        "      --auxiliary-call-llm my_pkg.llms:aux \\\n"
+        "      --rounds 4\n"
+        "\n"
+        "\b\n"
+        "Auto-epoching:\n"
+        "  By default evolve rolls the epoch whenever the evaluation\n"
+        "  contract (board + proposer brief + scoring + inner-harness\n"
+        "  identity) has drifted. Pass --no-auto-epoch to error on drift\n"
+        "  instead, or --epoch ID to pin an epoch and skip the check.\n"
+    ),
+)
 @click.option(
     "--workspace",
     default=".zicato",
     show_default=True,
     type=click.Path(),
-    help="Path to the zicato workspace root.",
+    help="Path to the zicato workspace root (the directory `zicato init` made).",
 )
 @click.option(
     "--epoch",
@@ -351,14 +387,22 @@ def evolve_cmd(
     no_dashboard: bool,
     dashboard_port: int,
 ) -> None:
-    """Run the evolve loop for N rounds against the current epoch.
+    """Run the self-improvement loop — the single happy-path entry point.
+
+    `evolve` is self-orchestrating: it resolves the evaluation
+    contract, auto-opens an epoch when that contract has changed, then
+    proposes / runs the tournament / promotes for --rounds rounds. You
+    do not run `register`, `propose`, `tournament`, `reindex`, or
+    `epoch` by hand — evolve drives them.
 
     By default, contract-hash auto-epoching is ON: when the evaluation
-    contract (board / rubric / scoring / inner-harness identity) has
-    drifted, evolve closes the current epoch and opens a fresh one
-    before running. Pass ``--no-auto-epoch`` for the strict behaviour
-    (error on drift instead of rolling). ``--epoch`` skips auto-epoching
-    entirely.
+    contract (board / proposer brief / scoring / inner-harness
+    identity) has drifted, evolve closes the current epoch and opens a
+    fresh one before running. Pass --no-auto-epoch for the strict
+    behaviour (error on drift instead of rolling). --epoch skips
+    auto-epoching entirely and pins an explicit epoch.
+
+    The dashboard is launched automatically and its URL is printed.
     """
     workspace_root = Path(workspace).resolve()
 

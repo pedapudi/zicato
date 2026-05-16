@@ -1,5 +1,9 @@
 """``zicato analyze-telemetry`` — manually run the decision-telemetry analyzer.
 
+ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` runs the
+analyzer as part of the loop. Run ``zicato analyze-telemetry`` by hand
+only to (re)generate a decision-telemetry insight for an epoch.
+
 Standalone command file. The auto-discovery layer in
 :mod:`zicato.cli.discovery` picks up the ``analyze_telemetry_cmd``
 exported below.
@@ -111,7 +115,10 @@ def _resolve_model(config: dict[str, Any]) -> str:
     return ""
 
 
-@click.command(name="analyze-telemetry")
+@click.command(
+    name="analyze-telemetry",
+    short_help="Advanced: (re)run the decision-telemetry analyzer for an epoch.",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -135,7 +142,11 @@ def _resolve_model(config: dict[str, Any]) -> str:
     ),
 )
 def analyze_telemetry_cmd(workspace: str, epoch: str | None, round_n: int | None) -> None:
-    """Manually run the decision-telemetry analyzer for the current epoch."""
+    """Advanced: run the decision-telemetry analyzer for the current epoch.
+
+    Off the happy path — `zicato evolve` runs the analyzer per round.
+    Use this to (re)generate an insight for an epoch out of band.
+    """
 
     # Lazy import: keeps `zicato --help` fast and the analyzer module
     # easy to install incrementally.

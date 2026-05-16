@@ -1,16 +1,19 @@
 """``zicato register`` — record adapter entrypoint and mutable trees.
 
-After ``zicato init`` creates the workspace, ``zicato register`` is the
-one-shot step that tells zicato *which* agent to run and *which* source
-trees the proposer is allowed to mutate. The entrypoint follows the
-common Python convention ``module.path:symbol``; mutable trees are
-filesystem roots (one or many, passed as repeated ``--mutable-tree``
-flags).
+ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` resolves
+and uses the evaluation contract on its own; you only run ``register``
+by hand to set the contract paths up front or to inspect/change them.
+
+After ``zicato init`` creates the workspace, ``zicato register``
+records *which* agent to run and *which* source trees the proposer is
+allowed to mutate. The entrypoint follows the common Python convention
+``module.path:symbol``; mutable trees are filesystem roots (one or
+many, passed as repeated ``--mutable-tree`` flags).
 
 ``register`` also records the canonical *contract source paths* — the
-operator's live, editable ``board.jsonl`` / ``rubric.md`` /
-``scoring.json``. These default to the conventional location next to
-the ``.zicato/`` workspace, but ``--board`` / ``--rubric`` /
+operator's live, editable ``board.jsonl`` / proposer brief (``brief.md``)
+/ ``scoring.json``. These default to the conventional location next to
+the ``.zicato/`` workspace, but ``--board`` / ``--brief`` /
 ``--scoring`` override the default. Contract-hash auto-epoching reads
 these paths back on every ``evolve`` to decide whether the evaluation
 contract has drifted (see ``docs/design/EPOCHS-AND-JOURNALING.md``).
@@ -52,7 +55,10 @@ def _validate_entrypoint(entrypoint: str) -> None:
         )
 
 
-@click.command(name="register")
+@click.command(
+    name="register",
+    short_help="Advanced: record the adapter entrypoint, mutable trees, and contract paths.",
+)
 @click.option(
     "--workspace",
     default=".zicato",
@@ -81,11 +87,11 @@ def _validate_entrypoint(entrypoint: str) -> None:
     help="Canonical board.jsonl path (default: <workspace_parent>/board.jsonl).",
 )
 @click.option(
-    "--rubric",
-    "rubric_path",
+    "--brief",
+    "brief_path",
     default=None,
     type=click.Path(),
-    help="Canonical rubric.md path (default: <workspace_parent>/rubric.md).",
+    help="Canonical proposer-brief path (default: <workspace_parent>/brief.md).",
 )
 @click.option(
     "--scoring",
@@ -99,19 +105,23 @@ def register_cmd(
     entrypoint: str,
     mutable_trees: tuple[str, ...],
     board_path: str | None,
-    rubric_path: str | None,
+    brief_path: str | None,
     scoring_path: str | None,
 ) -> None:
-    """Record the adapter entrypoint, mutable trees, and contract paths.
+    """Advanced: record the adapter entrypoint, mutable trees, and contract paths.
 
-    Merges into the existing ``config.json`` rather than replacing it,
-    so any keys :func:`zicato.cli.init_cmd.initialize_workspace` wrote
-    (``instance_id``, ``created_at``) are preserved.
+    Off the happy path — `zicato evolve` resolves the contract itself.
+    Run `register` by hand only to pin the contract source paths up
+    front, or to point the workspace at a different agent / brief.
 
-    The canonical contract source paths (``board`` / ``rubric`` /
-    ``scoring``) default to the conventional location alongside the
-    workspace. They are stored under the ``contract`` key and read back
-    by contract-hash auto-epoching on every ``evolve``.
+    Merges into the existing config.json rather than replacing it, so
+    any keys `zicato init` wrote (instance_id, created_at) are
+    preserved.
+
+    The canonical contract source paths (board / proposer brief /
+    scoring) default to the conventional location alongside the
+    workspace. They are stored under the `contract` key and read back
+    by contract-hash auto-epoching on every `evolve`.
     """
     _validate_entrypoint(entrypoint)
     workspace_root = Path(workspace)
@@ -135,12 +145,16 @@ def register_cmd(
     from zicato.epoch.contract import default_contract_paths  # noqa: PLC0415
 
     defaults = default_contract_paths(workspace_root)
+    # The proposer brief is recorded under the contract's ``rubric_path``
+    # key: that key name is the on-disk contract format read back by
+    # ``resolve_contract_inputs`` (a non-CLI module). The operator-facing
+    # flag is ``--brief``; only the persisted key keeps the older name.
     config["contract"] = {
         "board_path": str(
             Path(board_path).resolve() if board_path is not None else defaults["board_path"]
         ),
         "rubric_path": str(
-            Path(rubric_path).resolve() if rubric_path is not None else defaults["rubric_path"]
+            Path(brief_path).resolve() if brief_path is not None else defaults["rubric_path"]
         ),
         "scoring_path": str(
             Path(scoring_path).resolve() if scoring_path is not None else defaults["scoring_path"]
