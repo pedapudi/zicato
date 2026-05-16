@@ -17,6 +17,24 @@ tournament gate reads:
 
 The combined scalar is the tournament-side quantity the gate compares
 across generations: lower is better, by construction.
+
+Custom-judge signal
+-------------------
+A custom judge contributes through ``drift_loss`` like any other
+drift source — it does not get a separate scalar axis. The reducer
+(:func:`zicato.telemetry.reducer.compute_drift_loss`) attributes each
+``custom``-kind drift to its authoring judge by the stable
+``judge_name`` and weights it by
+:attr:`ScoringWeights.per_judge_weights` (falling back to
+:attr:`ScoringWeights.default_judge_weight` for an unconfigured
+judge). By the time a :class:`LossProfile` reaches this module its
+``drift_loss`` already carries the per-judge-weighted custom-judge
+contribution, so :func:`aggregate_generation_score` and
+:func:`combined_scalar` need no custom-judge-specific arithmetic —
+they mean / combine ``drift_loss`` exactly as before.
+``per_judge_weights`` enters the pipeline upstream, in the reducer,
+not here. ``ScoringWeights`` is still threaded through both functions
+unchanged so the call-site surface stays uniform.
 """
 
 from __future__ import annotations
@@ -93,10 +111,7 @@ def combined_scalar(
     (1.0 / 1.0) which keeps the two axes commensurate during early
     dogfood.
     """
-    return (
-        weights.drift_weight * drift_loss_mean
-        + weights.pass_weight * (1.0 - pass_rate)
-    )
+    return weights.drift_weight * drift_loss_mean + weights.pass_weight * (1.0 - pass_rate)
 
 
 __all__ = ["aggregate_generation_score", "combined_scalar"]

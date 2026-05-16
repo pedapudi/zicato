@@ -269,6 +269,91 @@ def _payload(event: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
 # tests can introspect it and so the value lives somewhere greppable.
 _TASK_FAILURE_RATIO_MULTIPLIER: float = 10.0
 
+# The bare wire-canonical drift-kind string a custom judge emits. All
+# custom judges share this single ``DriftKind`` value — the per-judge
+# identity lives on the paired ``JudgementEmitted.judge_name``, not on
+# the drift kind. The reducer re-attributes a ``custom``-kind drift to
+# its authoring judge and stores the result under a namespaced kind of
+# the form ``custom:<judge_name>`` (see ``_judge_attributed_kind``).
+_CUSTOM_DRIFT_KIND: str = "custom"
+
+# Separator between the ``custom`` namespace and the ``judge_name`` in
+# the attributed drift kind. A drift kind ``"custom:slide_quality"``
+# means "a CUSTOM-kind drift authored by the judge named
+# ``slide_quality``". A plain ``"custom"`` (no separator) is a
+# custom-kind drift the reducer could not pair with a judgement — it
+# scores at the default judge weight, same as an unconfigured judge.
+_JUDGE_KIND_SEP: str = ":"
+
+
+def _judge_attributed_kind(judge_name: str) -> str:
+    """Build the namespaced drift kind for a custom-judge-authored drift.
+
+    ``judge_name`` is the stable per-judge identity carried on the
+    paired :class:`JudgementEmitted`. The reducer folds it into the
+    :class:`DriftCount.kind` string as ``custom:<judge_name>`` so two
+    distinct custom judges occupy distinct drift buckets and
+    :func:`compute_drift_loss` can weight them independently via
+    :attr:`ScoringWeights.per_judge_weights`.
+
+    An empty / whitespace-only ``judge_name`` yields the bare
+    ``"custom"`` kind — an unattributed custom drift, weighted at the
+    default.
+    """
+    name = judge_name.strip()
+    if not name:
+        return _CUSTOM_DRIFT_KIND
+    return f"{_CUSTOM_DRIFT_KIND}{_JUDGE_KIND_SEP}{name}"
+
+
+def split_judge_attributed_kind(kind: str) -> tuple[bool, str]:
+    """Inverse of :func:`_judge_attributed_kind`.
+
+    Returns ``(is_custom, judge_name)``:
+
+    * For ``"custom:<judge_name>"`` → ``(True, "<judge_name>")``.
+    * For a bare ``"custom"`` → ``(True, "")`` (an unattributed
+      custom drift).
+    * For any other kind → ``(False, "")``.
+
+    Exposed (not underscore-private) because :func:`compute_drift_loss`
+    is not the only consumer that needs to recover the judge identity
+    from a :class:`DriftCount.kind` — analysis / journal-rendering
+    callers reading a persisted :class:`LossProfile` do too.
+    """
+    if kind == _CUSTOM_DRIFT_KIND:
+        return True, ""
+    prefix = _CUSTOM_DRIFT_KIND + _JUDGE_KIND_SEP
+    if kind.startswith(prefix):
+        return True, kind[len(prefix) :]
+    return False, ""
+
+
+def _kind_multiplier(kind: str, weights: ScoringWeights) -> float:
+    """Resolve the kind-/judge-level multiplier for one drift kind.
+
+    Two regimes, mirroring each other:
+
+    * **First-class kinds** (``off_topic``, ``tool_error``, ...) —
+      ``per_kind_weights.get(kind, 1.0)``. An unknown kind falls back
+      to ``1.0``.
+    * **Custom-judge kinds** (``custom`` / ``custom:<judge_name>``) —
+      ``per_judge_weights.get(judge_name, default_judge_weight)``. The
+      per-judge map is keyed on the stable ``judge_name`` recovered
+      from the namespaced kind; an unknown judge (or an unattributed
+      bare ``custom`` drift) falls back to ``default_judge_weight``.
+
+    Either way the returned multiplier stacks multiplicatively with
+    the severity weight inside :func:`compute_drift_loss`, so a custom
+    judge's drift contribution is ``per_judge_weights[judge_name] ×
+    severity_weights[severity] × count`` — structurally identical to
+    the first-class ``per_kind_weights × severity_weights × count``.
+    """
+    is_custom, judge_name = split_judge_attributed_kind(kind)
+    if is_custom:
+        return weights.per_judge_weights.get(judge_name, weights.default_judge_weight)
+    return weights.per_kind_weights.get(kind, 1.0)
+
 
 def compute_drift_loss(
     drift_counts: tuple[DriftCount, ...],
@@ -282,12 +367,23 @@ def compute_drift_loss(
     The formula is::
 
         loss = sum(
-            severity_weights[c.severity] * per_kind_weights.get(c.kind, 1.0) * c.count
+            severity_weights[c.severity] * kind_multiplier(c.kind) * c.count
             for c in drift_counts
         )
         + weights.plan_revision_weight * plan_revisions
         + 10.0 * task_failure_ratio
         + weights.runtime_weight * (runtime_ms / 1000.0)
+
+    where ``kind_multiplier`` is ``per_kind_weights.get(kind, 1.0)``
+    for a first-class drift kind and
+    ``per_judge_weights.get(judge_name, default_judge_weight)`` for a
+    custom-judge kind (``custom`` / ``custom:<judge_name>``). Custom
+    judges emit drift under the single ``custom`` kind; the reducer
+    attributes each ``custom``-kind drift to its authoring judge by
+    folding the paired ``JudgementEmitted.judge_name`` into the kind
+    string, so two distinct custom judges weigh independently via
+    :attr:`ScoringWeights.per_judge_weights` — the per-judge analogue
+    of :attr:`per_kind_weights`. See :func:`_kind_multiplier`.
 
     All terms are non-negative on legal inputs, so the return value is
     non-negative; we clamp to zero defensively in case weights are
@@ -297,15 +393,15 @@ def compute_drift_loss(
     constant rather than configurable — the contract pinned it as
     "pure failures matter". If operators want to dampen failures
     relative to drift, they should up-weight drift via
-    :attr:`ScoringWeights.severity_weights` or
-    :attr:`ScoringWeights.per_kind_weights` instead.
+    :attr:`ScoringWeights.severity_weights`,
+    :attr:`ScoringWeights.per_kind_weights`, or — for custom judges —
+    :attr:`ScoringWeights.per_judge_weights` instead.
     """
     sev_w = weights.severity_weights
-    kind_w = weights.per_kind_weights
     loss = 0.0
     for c in drift_counts:
         sev_mult = sev_w.get(c.severity, 0.0)
-        kind_mult = kind_w.get(c.kind, 1.0)
+        kind_mult = _kind_multiplier(c.kind, weights)
         loss += sev_mult * kind_mult * c.count
     loss += weights.plan_revision_weight * plan_revisions
     loss += _TASK_FAILURE_RATIO_MULTIPLIER * task_failure_ratio
@@ -471,6 +567,28 @@ def _extract_drift_buckets(payload: dict[str, Any]) -> tuple[str | None, str | N
     return kind, sev
 
 
+def _judgement_judge_name(payload: dict[str, Any]) -> str | None:
+    """Recover the authoring ``judge_name`` from a ``JudgementEmitted`` payload.
+
+    Returns the ``judge_name`` only when the judgement carries a
+    **drift-flavoured** verdict (``verdict_kind == "drift"``) — those
+    are the judgements paired one-for-one with a ``DriftDetected``
+    that the reducer needs to attribute. Rubric / boolean / numeric
+    judgements do not mint a ``DriftDetected`` and are irrelevant to
+    drift attribution, so we return ``None`` for them.
+
+    Returns ``None`` (rather than ``""``) when there is nothing
+    usable — no ``judge_name``, or a non-drift verdict — so the caller
+    can distinguish "no pairing candidate" from "a drift judgement
+    whose ``judge_name`` happens to be empty" (the latter still pairs,
+    just at the default weight).
+    """
+    verdict_kind = str(payload.get("verdict_kind", "") or "")
+    if verdict_kind != "drift":
+        return None
+    return str(payload.get("judge_name", "") or "")
+
+
 def _agent_and_user_turns_from_events(
     events: list[dict[str, Any]],
 ) -> tuple[list[str], list[str]]:
@@ -605,16 +723,49 @@ def reduce_loss(
     token_count = 0
     agent_text_chars = 0
     run_id = ""
+    # Custom-judge drift attribution. The steerer emits a
+    # drift-flavoured ``JudgementEmitted`` IMMEDIATELY before the
+    # paired ``DriftDetected`` (``_emit_judgement`` then
+    # ``handle_drift``), and custom judges fire in a sequential loop,
+    # so each (judgement, drift) pair is contiguous on the wire.
+    # ``pending_judge_name`` holds the ``judge_name`` of the most
+    # recent unconsumed drift-flavoured judgement; the next
+    # ``DriftDetected`` of any kind consumes it. A ``custom``-kind
+    # drift is then attributed to that judge via
+    # ``_judge_attributed_kind``; a custom drift with no pending
+    # judgement stays the bare ``"custom"`` kind (default-weighted).
+    pending_judge_name: str | None = None
     for evt in events:
         if not run_id:
             run_id = str(evt.get("run_id", "") or evt.get("runId", "") or "")
         key, payload = _payload(evt)
         if key is None:
             continue
-        if key == "drift_detected":
+        if key == "judgement_emitted":
+            jn = _judgement_judge_name(payload)
+            if jn is not None:
+                # A drift-flavoured judgement — it pairs with the
+                # next ``DriftDetected``. A non-drift judgement
+                # (``jn is None``) leaves any existing pending value
+                # untouched: it does not mint a drift and so must not
+                # clobber a still-unpaired drift judgement.
+                pending_judge_name = jn
+        elif key == "drift_detected":
             kind, sev = _extract_drift_buckets(payload)
+            # Consume the pending judgement regardless of whether the
+            # kind/severity parsed: this ``DriftDetected`` is the one
+            # the pending judgement paired with, so a later custom
+            # drift must not inherit a stale ``judge_name``.
+            paired_judge = pending_judge_name
+            pending_judge_name = None
             if kind is None or sev is None:
                 continue
+            if kind == _CUSTOM_DRIFT_KIND:
+                # Attribute the custom-kind drift to its authoring
+                # judge. ``paired_judge`` is "" when the wire carried
+                # no judgement to pair with — the bare ``"custom"``
+                # kind then scores at the default judge weight.
+                kind = _judge_attributed_kind(paired_judge or "")
             drift_bucket[(kind, sev)] = drift_bucket.get((kind, sev), 0) + 1
         elif key == "plan_revised":
             plan_revisions += 1
@@ -630,7 +781,7 @@ def reduce_loss(
             # opportunistically; missing keys yield 0 and are tolerated.
             for tk in ("input_tokens", "output_tokens", "tokens", "total_tokens"):
                 v = payload.get(tk)
-                if isinstance(v, (int, float)):
+                if isinstance(v, int | float):
                     token_count += int(v)
         elif key == "agent_invocation_completed":
             s = payload.get("summary", "")
@@ -860,6 +1011,7 @@ def read_loss_profile(path: Path) -> LossProfile:
 __all__ = [
     "reduce_loss",
     "compute_drift_loss",
+    "split_judge_attributed_kind",
     "read_loss_profile",
     "write_loss_profile",
 ]
