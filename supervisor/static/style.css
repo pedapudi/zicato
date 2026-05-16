@@ -452,7 +452,14 @@ h4 {
   padding: 14px 16px;
   overflow-x: auto;
 }
-.diagram svg { display: block; max-width: 100%; height: auto; }
+/* A diagram SVG keeps its viewBox aspect ratio but is height-capped.
+   Without a cap an SVG scales to the full panel width and its height
+   follows the viewBox ratio — a wide panel turns even a thin chart
+   into a 300-450px slab, and an empty-state placeholder into a giant
+   empty box. The cap holds real charts to a readable band; the
+   empty-state SVG, drawn at its viewBox aspect, then reads as a
+   compact strip rather than a panel-tall void. */
+.diagram svg { display: block; max-width: 100%; height: auto; max-height: 320px; }
 
 .svg-label {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -587,11 +594,30 @@ h4 {
 }
 
 /* --- Misc */
+/* Empty-state line. A panel with nothing to show renders ONE line of
+   muted text — not a tall placeholder box. `display: block` + a fixed
+   small padding keeps it compact even when it is the sole child of a
+   flex / grid container that would otherwise stretch it. */
 .empty {
+  display: block;
   color: var(--text-muted);
   font-style: italic;
-  padding: 8px 0;
+  font-size: 13px;
+  padding: 6px 2px;
   margin: 0;
+  text-align: left;
+  /* Never let an empty-state inflate to fill a sized parent. */
+  min-height: 0;
+  height: auto;
+}
+/* An `.empty` that lands inside a bordered card / diagram shell still
+   reads as a single muted line — strip the heavy framing so it is not
+   a giant empty box. */
+.diagram > .empty,
+.tournament-bracket > .empty,
+.health-panel > .empty,
+.panel-body > .empty {
+  padding: 6px 2px;
 }
 
 .fade-in { animation: fadeIn 200ms ease; }
@@ -734,6 +760,14 @@ h4 {
   letter-spacing: 0.04em;
 }
 
+/* The rubric reads as a centred, readable column — not a lopsided
+   narrow strip pinned to the left edge of a wide section. `.epoch-rubric`
+   is the container the epoch agent renders into; `.rubric-block` is the
+   rendered markdown body. Centring lives here on the CSS side; the
+   epoch agent owns the DOM/classes. */
+.epoch-rubric {
+  display: block;
+}
 .epoch-rubric .rubric-block {
   background: var(--bg-elev);
   border: 1px solid var(--border);
@@ -742,6 +776,9 @@ h4 {
   font-size: 14px;
   line-height: 1.6;
   max-width: 760px;
+  /* Centre the readable column within the section. */
+  margin-left: auto;
+  margin-right: auto;
 }
 /* Structured markdown DOM — no pre-wrap. pre-wrap fights the block
    elements the renderer emits and collapses everything into a
