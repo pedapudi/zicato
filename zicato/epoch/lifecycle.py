@@ -1,9 +1,9 @@
 """Epoch lifecycle: new / close / list / switch / load.
 
 An epoch is the unit of evaluation contract: a frozen board, a frozen
-rubric, and a frozen scoring configuration. The functions in this module
-are the only supported way to create, close, enumerate, and switch
-between epochs on disk.
+proposer brief, and a frozen scoring configuration. The functions in
+this module are the only supported way to create, close, enumerate, and
+switch between epochs on disk.
 
 Storage layout managed here::
 
@@ -12,8 +12,8 @@ Storage layout managed here::
       lineage.json                 # cross-cutting DAG (see lineage.py)
       epochs/
         {epoch_id}/
-          board.jsonl              # copy of board_source
-          rubric.md                # copy of rubric_source
+          board.jsonl              # frozen board
+          brief.md                 # frozen proposer brief
           scoring.json             # serialized ScoringWeights
           config.json              # EpochConfig serialized (id/name/created_at/closed/closed_at)
           journal.md               # appended per experiment (see journal.py)
@@ -41,7 +41,7 @@ import sys
 import warnings
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from zicato.core.types import EpochConfig, ScoringWeights
 from zicato.core.workspace import (
@@ -49,13 +49,28 @@ from zicato.core.workspace import (
     board_path,
     epoch_dir,
     journal_path,
-    rubric_path,
     scoring_path,
 )
+
+if TYPE_CHECKING:
+    from zicato.board.builder import Board
+    from zicato.proposer.brief import ProposerBrief
 
 # A callable shape compatible with goldfive's call_llm:
 # (system, user, model) -> awaitable[str].
 _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
+
+
+def _brief_path(workspace_root: Path, epoch_id: str) -> Path:
+    """Path to the frozen proposer brief (``brief.md``) for one epoch.
+
+    The proposer brief used to be stored as ``rubric.md`` and reached
+    through ``zicato.core.workspace.rubric_path``. The epoch directory
+    is owned by this module, so the brief path is defined here directly
+    — keeping the rename self-contained to ``zicato.epoch`` rather than
+    threading it through the shared workspace-path module.
+    """
+    return epoch_dir(workspace_root, epoch_id) / "brief.md"
 
 
 # ---------------------------------------------------------------------------
@@ -266,11 +281,58 @@ def list_epochs(workspace_root: Path) -> list[EpochConfig]:
 # ---------------------------------------------------------------------------
 
 
+def _materialize_board(board_source: Board | Path | str, target: Path) -> None:
+    """Write the frozen ``board.jsonl`` for an epoch from any board input.
+
+    ``board_source`` may be:
+
+    * a :class:`zicato.board.builder.Board` — its entries are serialized
+      to ``target`` via :func:`zicato.board.jsonl.save_board`, so no
+      caller-side ``.save()`` is needed;
+    * a :class:`pathlib.Path` (or ``str``) — the file is copied verbatim.
+
+    Passing an in-memory ``Board`` is the preferred path; the ``Path``
+    form is kept so callers holding an on-disk board still work.
+    """
+    if isinstance(board_source, str | Path):
+        shutil.copyfile(Path(board_source), target)
+        return
+    # In-memory Board: persist it ourselves. Import lazily so the epoch
+    # package does not hard-depend on the board builder at import time.
+    from zicato.board.jsonl import save_board  # noqa: PLC0415
+
+    save_board(list(board_source.entries), target)
+
+
+def _materialize_brief(brief_source: ProposerBrief | Path | str, target: Path) -> None:
+    """Write the frozen ``brief.md`` for an epoch from any brief input.
+
+    ``brief_source`` may be:
+
+    * a :class:`zicato.proposer.brief.ProposerBrief` — its ``text`` is
+      written to ``target`` verbatim;
+    * a ``str`` of proposer-brief markdown — written to ``target`` as-is;
+    * a :class:`pathlib.Path` — the file is copied verbatim.
+
+    Plain ``str`` is treated as brief *text*, never as a path; callers
+    with an on-disk brief pass a ``Path``. This keeps the in-memory path
+    free of any "does this string look like a filename" guessing.
+    """
+    if isinstance(brief_source, Path):
+        shutil.copyfile(brief_source, target)
+        return
+    if isinstance(brief_source, str):
+        target.write_text(brief_source, encoding="utf-8")
+        return
+    # ProposerBrief instance — persist its source text.
+    target.write_text(brief_source.text, encoding="utf-8")
+
+
 def new_epoch(
     workspace_root: Path,
     name: str,
-    board_source: Path,
-    rubric_source: Path,
+    board_source: Board | Path | str,
+    brief_source: ProposerBrief | Path | str,
     weights: ScoringWeights,
     auto_close_previous: bool = True,
     aux_call_llm: _AuxCallLLM | None = None,
@@ -285,13 +347,30 @@ def new_epoch(
          it first (warning to stderr). ``aux_call_llm`` is required for
          that close — the analysis pass runs on it.
       2. Compute the epoch id from ``name`` and today's date.
-      3. Create ``.zicato/epochs/{id}/`` and copy the board + rubric in.
+      3. Create ``.zicato/epochs/{id}/`` and write the frozen board +
+         proposer brief into it.
       4. Serialize ``weights`` to ``scoring.json``.
-      5. Compute the contract hash over the frozen board/rubric/scoring
+      5. Compute the contract hash over the frozen board/brief/scoring
          plus ``entrypoint`` + ``mutable_trees``, and store it on the
          :class:`EpochConfig`. See :mod:`zicato.epoch.contract`.
       6. Write ``config.json`` and update ``lineage.json``.
       7. Update the ``current_epoch`` marker.
+
+    Inputs — in-memory objects or paths
+    -----------------------------------
+    ``board_source`` accepts a :class:`zicato.board.builder.Board` *or*
+    a :class:`~pathlib.Path` to a ``board.jsonl``. ``brief_source``
+    accepts a :class:`zicato.proposer.brief.ProposerBrief`, a ``str`` of
+    proposer-brief markdown, *or* a :class:`~pathlib.Path` to a
+    ``brief.md``. ``weights`` is always an in-memory
+    :class:`~zicato.core.types.ScoringWeights`.
+
+    When given in-memory objects ``new_epoch`` owns canonicalization and
+    persistence end to end — it writes the frozen ``board.jsonl`` /
+    ``brief.md`` / ``scoring.json`` itself. The caller never needs a
+    prior ``.save()``; the on-disk files the contract hash is computed
+    from are this function's responsibility, not the caller's. Passing
+    paths still works and copies the files verbatim.
 
     ``entrypoint`` and ``mutable_trees`` carry the registered inner-
     harness identity into the contract hash. They default to empty so
@@ -326,19 +405,22 @@ def new_epoch(
     # 2. Construct the new id.
     epoch_id = _make_epoch_id(workspace_root, name)
 
-    # 3. Create the directory and copy contracts in.
+    # 3. Create the directory and write the frozen contracts. Both the
+    # board and the proposer brief are materialized here from whatever
+    # the caller passed (in-memory object or path) — canonicalization
+    # and persistence are owned by new_epoch, not the caller.
     edir = epoch_dir(workspace_root, epoch_id)
     edir.mkdir(parents=True, exist_ok=False)
     target_board = board_path(workspace_root, epoch_id)
-    target_rubric = rubric_path(workspace_root, epoch_id)
-    shutil.copyfile(board_source, target_board)
-    shutil.copyfile(rubric_source, target_rubric)
+    target_brief = _brief_path(workspace_root, epoch_id)
+    _materialize_board(board_source, target_board)
+    _materialize_brief(brief_source, target_brief)
 
-    # 4. Scoring weights.
+    # 4. Scoring weights — serialized from the in-memory ScoringWeights.
     target_scoring = scoring_path(workspace_root, epoch_id)
     target_scoring.write_text(json.dumps(_scoring_to_dict(weights), indent=2, sort_keys=True))
 
-    # 5. Contract hash over the frozen board/rubric/scoring plus the
+    # 5. Contract hash over the frozen board/brief/scoring plus the
     # registered inner-harness identity. Computed from the just-written
     # frozen copies so the stored hash is exactly what a later
     # ``resolve_contract_inputs`` over equivalent live files produces.
@@ -350,20 +432,22 @@ def new_epoch(
     contract_hash = compute_contract_hash(
         ContractInputs(
             board_path=target_board,
-            rubric_path=target_rubric,
+            brief_path=target_brief,
             scoring_path=target_scoring,
             entrypoint=entrypoint,
             mutable_trees=tuple(mutable_trees),
         )
     )
 
-    # 6. Config + lineage.
+    # 6. Config + lineage. ``EpochConfig.rubric_path`` carries the path
+    # to the frozen proposer brief (the field keeps its legacy name on
+    # the shared core type; the value is the ``brief.md`` path).
     cfg = EpochConfig(
         id=epoch_id,
         name=name,
         created_at=_now_iso(),
         board_path=target_board,
-        rubric_path=target_rubric,
+        rubric_path=target_brief,
         scoring=weights,
         closed=False,
         closed_at="",

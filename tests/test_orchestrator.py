@@ -89,14 +89,14 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
         )
         + "\n"
     )
-    rubric_src = tmp_path / "rubric.md"
-    rubric_src.write_text("# Rubric\n- Be careful.\n")
+    brief_src = tmp_path / "brief.md"
+    brief_src.write_text("# Proposer brief\n- Be careful.\n")
 
     cfg = new_epoch(
         workspace,
         name="alpha",
         board_source=board_src,
-        rubric_source=rubric_src,
+        brief_source=brief_src,
         weights=ScoringWeights(promote_margin=0.01),
         auto_close_previous=False,
     )

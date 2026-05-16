@@ -1,9 +1,9 @@
 """Epoch lifecycle, journaling, analysis, and lineage.
 
 The epoch is the unit of evaluation contract: a frozen board, a frozen
-rubric, and a frozen scoring configuration. Generations within an epoch
-are directly comparable; cross-epoch comparison is fuzzy. Pattern
-aggregates reset at epoch boundaries.
+proposer brief, and a frozen scoring configuration. Generations within
+an epoch are directly comparable; cross-epoch comparison is fuzzy.
+Pattern aggregates reset at epoch boundaries.
 
 This subpackage owns four concerns:
 

@@ -1,4 +1,4 @@
-"""Tests for the proposer rubric parser and forbidden-id enforcement."""
+"""Tests for the proposer brief parser and forbidden-id enforcement."""
 
 from __future__ import annotations
 
@@ -8,22 +8,22 @@ from pathlib import Path
 import pytest
 
 from zicato.core.types import Patch
-from zicato.proposer.rubric import Rubric, enforce_forbidden, load_rubric
+from zicato.proposer.brief import ProposerBrief, enforce_forbidden, load_brief
 
 # ---------------------------------------------------------------------------
-# load_rubric
+# load_brief
 # ---------------------------------------------------------------------------
 
 
 def _write(tmp_path: Path, body: str) -> Path:
-    p = tmp_path / "rubric.md"
+    p = tmp_path / "brief.md"
     p.write_text(body, encoding="utf-8")
     return p
 
 
-def test_load_rubric_extracts_forbidden_backticked_ids(tmp_path: Path) -> None:
+def test_load_brief_extracts_forbidden_backticked_ids(tmp_path: Path) -> None:
     body = """\
-# Rubric
+# Proposer brief
 
 Some prose the operator wrote.
 
@@ -34,58 +34,58 @@ Some prose the operator wrote.
 # Preferred edits
 - Tighten `researcher__system_prompt` instead.
 """
-    rubric = load_rubric(_write(tmp_path, body))
-    assert rubric.forbidden_ids == ("router__system_prompt", "planner__tool_descriptions")
-    assert rubric.preferred_ids == ("researcher__system_prompt",)
-    assert "Some prose" in rubric.text
+    brief = load_brief(_write(tmp_path, body))
+    assert brief.forbidden_ids == ("router__system_prompt", "planner__tool_descriptions")
+    assert brief.preferred_ids == ("researcher__system_prompt",)
+    assert "Some prose" in brief.text
 
 
-def test_load_rubric_falls_back_to_quoted_ids(tmp_path: Path) -> None:
+def test_load_brief_falls_back_to_quoted_ids(tmp_path: Path) -> None:
     body = """\
 # Forbidden edits
 - Don't touch "router_main"
 - And avoid 'planner_alt' too
 """
-    rubric = load_rubric(_write(tmp_path, body))
-    assert rubric.forbidden_ids == ("router_main", "planner_alt")
+    brief = load_brief(_write(tmp_path, body))
+    assert brief.forbidden_ids == ("router_main", "planner_alt")
 
 
-def test_load_rubric_handles_missing_sections(tmp_path: Path) -> None:
+def test_load_brief_handles_missing_sections(tmp_path: Path) -> None:
     body = "# Just prose\n\nNo structured sections here.\n"
-    rubric = load_rubric(_write(tmp_path, body))
-    assert rubric.forbidden_ids == ()
-    assert rubric.preferred_ids == ()
+    brief = load_brief(_write(tmp_path, body))
+    assert brief.forbidden_ids == ()
+    assert brief.preferred_ids == ()
 
 
-def test_load_rubric_case_insensitive_heading(tmp_path: Path) -> None:
+def test_load_brief_case_insensitive_heading(tmp_path: Path) -> None:
     body = """\
 ## FORBIDDEN Edits
 - Avoid `id_one`.
 """
-    rubric = load_rubric(_write(tmp_path, body))
-    assert rubric.forbidden_ids == ("id_one",)
+    brief = load_brief(_write(tmp_path, body))
+    assert brief.forbidden_ids == ("id_one",)
 
 
-def test_load_rubric_dedupes_repeated_ids(tmp_path: Path) -> None:
+def test_load_brief_dedupes_repeated_ids(tmp_path: Path) -> None:
     body = """\
 # Forbidden edits
 - Avoid `id_a`.
 - Avoid `id_a` again.
 - And also `id_b`.
 """
-    rubric = load_rubric(_write(tmp_path, body))
-    assert rubric.forbidden_ids == ("id_a", "id_b")
+    brief = load_brief(_write(tmp_path, body))
+    assert brief.forbidden_ids == ("id_a", "id_b")
 
 
-def test_load_rubric_missing_file_raises(tmp_path: Path) -> None:
+def test_load_brief_missing_file_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
-        load_rubric(tmp_path / "does_not_exist.md")
+        load_brief(tmp_path / "does_not_exist.md")
 
 
-def test_load_rubric_full_text_passes_through(tmp_path: Path) -> None:
+def test_load_brief_full_text_passes_through(tmp_path: Path) -> None:
     body = "# Title\n\nLine A.\nLine B.\n"
-    rubric = load_rubric(_write(tmp_path, body))
-    assert rubric.text == body
+    brief = load_brief(_write(tmp_path, body))
+    assert brief.text == body
 
 
 # ---------------------------------------------------------------------------
@@ -126,12 +126,12 @@ def test_enforce_forbidden_returns_one_error_per_offending_patch() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rubric dataclass shape
+# ProposerBrief dataclass shape
 # ---------------------------------------------------------------------------
 
 
-def test_rubric_is_frozen() -> None:
-    r = Rubric(text="x", forbidden_ids=("a",), preferred_ids=())
+def test_proposer_brief_is_frozen() -> None:
+    b = ProposerBrief(text="x", forbidden_ids=("a",), preferred_ids=())
     # ``@dataclass(frozen=True)`` raises FrozenInstanceError on assignment.
     with pytest.raises(dataclasses.FrozenInstanceError):
-        r.text = "y"  # type: ignore[misc]
+        b.text = "y"  # type: ignore[misc]

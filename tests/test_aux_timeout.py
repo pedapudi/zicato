@@ -83,7 +83,7 @@ def test_proposer_timeout_raises_proposer_error(
                 new_generation_id="v1",
                 patterns=(),
                 mutations=(mut,),
-                rubric_text="# rubric",
+                brief_text="# proposer brief",
                 current_loss_summary="",
                 aux_call_llm=_hung_aux,
                 max_retries=0,

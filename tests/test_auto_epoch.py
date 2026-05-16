@@ -42,24 +42,24 @@ _BOARD = (
     )
     + "\n"
 )
-_RUBRIC = "# Rubric\n- Be careful.\n"
+_BRIEF = "# Proposer brief\n- Be careful.\n"
 _SCORING = json.dumps({"drift_weight": 1.0, "pass_weight": 1.0})
 
 
 def _bootstrap(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
     """Create a registered workspace with live contract files.
 
-    Returns ``(workspace_root, {board, rubric, scoring})`` so tests can
+    Returns ``(workspace_root, {board, brief, scoring})`` so tests can
     mutate the live contract files and re-resolve.
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
 
     board = tmp_path / "board.jsonl"
-    rubric = tmp_path / "rubric.md"
+    brief = tmp_path / "brief.md"
     scoring = tmp_path / "scoring.json"
     board.write_text(_BOARD)
-    rubric.write_text(_RUBRIC)
+    brief.write_text(_BRIEF)
     scoring.write_text(_SCORING)
 
     (workspace / "config.json").write_text(
@@ -71,13 +71,13 @@ def _bootstrap(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
                 "source_roots": [str(tmp_path / "agent")],
                 "contract": {
                     "board_path": str(board),
-                    "rubric_path": str(rubric),
+                    "brief_path": str(brief),
                     "scoring_path": str(scoring),
                 },
             }
         )
     )
-    return workspace, {"board": board, "rubric": rubric, "scoring": scoring}
+    return workspace, {"board": board, "brief": brief, "scoring": scoring}
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +130,8 @@ def test_contract_changed_auto_rolls(tmp_path: Path) -> None:
         ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
     )
 
-    # Edit the rubric (semantic change) → contract drifts.
-    files["rubric"].write_text("# Rubric\n- Be careful.\n- Now also: be bold.\n")
+    # Edit the proposer brief (semantic change) → contract drifts.
+    files["brief"].write_text("# Proposer brief\n- Be careful.\n- Now also: be bold.\n")
 
     rolled = asyncio.run(
         ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
@@ -185,7 +185,7 @@ def test_legacy_epoch_treated_as_matching(tmp_path: Path) -> None:
         workspace,
         name="legacy",
         board_source=files["board"],
-        rubric_source=files["rubric"],
+        brief_source=files["brief"],
         weights=ScoringWeights(),
         auto_close_previous=False,
     )
@@ -196,7 +196,7 @@ def test_legacy_epoch_treated_as_matching(tmp_path: Path) -> None:
 
     # Even with a wildly different contract, a legacy epoch is treated
     # as always-matching → no roll.
-    files["rubric"].write_text("# totally different rubric content\n")
+    files["brief"].write_text("# totally different proposer brief content\n")
     resolved = asyncio.run(
         ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
     )
@@ -223,7 +223,7 @@ def test_explicit_epoch_skips_auto_roll(tmp_path: Path) -> None:
         ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
     )
     # Drift the contract — would trigger a roll if the hook ran.
-    files["rubric"].write_text("# changed rubric\n")
+    files["brief"].write_text("# changed proposer brief\n")
 
     import zicato.orchestrator as orch
 

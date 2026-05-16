@@ -2,14 +2,15 @@
 
 The function in this module:
 
-1. Builds the system + user prompts from the rubric, patterns, and
-   mutation manifest.
+1. Builds the system + user prompts from the proposer brief, patterns,
+   and mutation manifest.
 2. Calls the auxiliary LLM (zicato never invokes the harness LLM here
    — see :class:`zicato.core.types.RuntimeConfig` for the two-callable
    invariant).
 3. Parses the response into a typed :class:`Experiment` via
    :func:`zicato.proposer.structured.parse_experiment_json`.
-4. Enforces the rubric's forbidden-id list against the emitted patches.
+4. Enforces the proposer brief's forbidden-id list against the emitted
+   patches.
 5. On parse failure or forbidden-id violation, appends the error to the
    next user prompt and retries up to ``max_retries`` times.
 6. Raises :class:`ProposerError` after all retries are exhausted.
@@ -29,8 +30,8 @@ from pathlib import Path
 
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.types import Experiment, MutationPoint, Pattern
+from zicato.proposer.brief import enforce_forbidden
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
-from zicato.proposer.rubric import enforce_forbidden
 from zicato.proposer.structured import (
     ExperimentParseError,
     parse_experiment_json,
@@ -60,7 +61,7 @@ async def propose_experiment(
     new_generation_id: str,
     patterns: Iterable[Pattern],
     mutations: Iterable[MutationPoint],
-    rubric_text: str,
+    brief_text: str,
     current_loss_summary: str,
     aux_call_llm: Callable[[str, str, str], Awaitable[str]],
     model: str = "",
@@ -88,9 +89,9 @@ async def propose_experiment(
         Iterable of :class:`MutationPoint` instances — the valid patch
         targets. The orchestrator builds the id→MutationPoint map once
         from this iterable.
-    rubric_text:
-        Full text of the operator-edited rubric. Embedded verbatim into
-        the system prompt.
+    brief_text:
+        Full text of the operator-edited proposer brief. Embedded
+        verbatim into the system prompt.
     current_loss_summary:
         Short human-readable summary of the previous generation's
         losses. The orchestrator does not inspect it; it goes straight
@@ -108,7 +109,8 @@ async def propose_experiment(
         Defaults to 2 — three calls in the worst case.
     forbidden_ids:
         Mutation-point ids the proposer MUST NOT target. Sourced from
-        the rubric in production. Empty tuple disables the check.
+        the proposer brief in production. Empty tuple disables the
+        check.
     workspace_root:
         Optional path to the ``.zicato/`` workspace root. When supplied,
         the proposer reads the decision-telemetry analyzer's accumulated
@@ -136,7 +138,7 @@ async def propose_experiment(
     patterns_list = list(patterns)
     mutations_by_id = {mp.id: mp for mp in mutations_list}
 
-    system_prompt = render_system_prompt(rubric_text)
+    system_prompt = render_system_prompt(brief_text)
 
     # Lazy import: keeps :mod:`zicato.proposer.proposer` independent of
     # the analyzer module so the proposer is importable even when the
@@ -194,7 +196,9 @@ async def propose_experiment(
         if forbidden_ids:
             violations = enforce_forbidden(list(experiment.patches), forbidden_ids)
             if violations:
-                err = "patches violate rubric forbidden-edits list: " + "; ".join(violations)
+                err = "patches violate proposer-brief forbidden-edits list: " + "; ".join(
+                    violations
+                )
                 attempt_errors.append(err)
                 feedback = err
                 continue

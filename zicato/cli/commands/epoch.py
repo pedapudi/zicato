@@ -2,7 +2,7 @@
 
 Surface:
 
-  zicato epoch new <name> --board <path> --rubric <path> [--scoring <path>]
+  zicato epoch new <name> --board <path> --brief <path> [--scoring <path>]
   zicato epoch close [<epoch_id>]
   zicato epoch list
   zicato epoch switch <epoch_id>
@@ -56,9 +56,7 @@ def _load_weights(scoring_path: str | None) -> ScoringWeights:
             drift_weight=float(raw.get("drift_weight", 1.0)),
             pass_weight=float(raw.get("pass_weight", 1.0)),
             severity_weights=severity,
-            per_kind_weights={
-                str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()
-            },
+            per_kind_weights={str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()},
             plan_revision_weight=float(raw.get("plan_revision_weight", 0.5)),
             runtime_weight=float(raw.get("runtime_weight", 0.0)),
             promote_margin=float(raw.get("promote_margin", 0.01)),
@@ -67,9 +65,7 @@ def _load_weights(scoring_path: str | None) -> ScoringWeights:
     return ScoringWeights(
         drift_weight=float(raw.get("drift_weight", 1.0)),
         pass_weight=float(raw.get("pass_weight", 1.0)),
-        per_kind_weights={
-            str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()
-        },
+        per_kind_weights={str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()},
         plan_revision_weight=float(raw.get("plan_revision_weight", 0.5)),
         runtime_weight=float(raw.get("runtime_weight", 0.0)),
         promote_margin=float(raw.get("promote_margin", 0.01)),
@@ -98,11 +94,13 @@ def epoch_grp() -> None:
     help="Path to a board.jsonl to copy into the epoch.",
 )
 @click.option(
+    "--brief",
     "--rubric",
-    "rubric_source",
+    "brief_source",
     required=True,
     type=click.Path(exists=True, dir_okay=False),
-    help="Path to a rubric.md to copy into the epoch.",
+    help="Path to a proposer brief (brief.md) to freeze into the epoch. "
+    "``--rubric`` is accepted as a legacy alias.",
 )
 @click.option(
     "--scoring",
@@ -115,7 +113,7 @@ def new_cmd(
     name: str,
     workspace: str,
     board_source: str,
-    rubric_source: str,
+    brief_source: str,
     scoring_source: str | None,
 ) -> None:
     """Create a new epoch and make it current.
@@ -130,7 +128,7 @@ def new_cmd(
         workspace_root=ws,
         name=name,
         board_source=Path(board_source),
-        rubric_source=Path(rubric_source),
+        brief_source=Path(brief_source),
         weights=weights,
         auto_close_previous=True,
         aux_call_llm=None,
