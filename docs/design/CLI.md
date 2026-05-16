@@ -392,6 +392,7 @@ zicato evolve
     [--stop-on-reject]
     [--stop-on-no-improvement]
     [--stop-on-degenerate]
+    [--max-wall-clock-seconds <S>]
 ```
 
 Runs the full meta-loop for `--rounds N` rounds:
@@ -419,6 +420,7 @@ Flags:
 | `--stop-on-reject` | off | Halt the loop after the first reject. |
 | `--stop-on-no-improvement` | off | Halt the loop after K consecutive rounds with no promote (K defaults to 3). |
 | `--stop-on-degenerate` | off | Halt the loop the first time loop-health diagnostics report sustained degeneracy (a toothless evaluation). Exits with code `9`. See [LOOP-HEALTH.md](LOOP-HEALTH.md) §6.2. |
+| `--max-wall-clock-seconds <S>` | unset (unbounded) | Total wall-clock budget, in seconds, for the **whole** `evolve` invocation. The loop stops cleanly between rounds once the budget is spent, and a single round that would overrun it is cancelled and recorded as an aborted round. This is a ceiling on the *aggregate* — it applies on top of, and does not replace, each board entry's own `wall_clock_budget_seconds`. Both are L1 `asyncio.wait_for` guards: they bound cooperative async work only, not a wedged blocking call (see [ROBUSTNESS.md](ROBUSTNESS.md) §2.1). Also reads the `ZICATO_MAX_WALL_CLOCK_SECONDS` environment variable; an explicit flag wins over the env var. When the loop stops on this budget, the final summary says so explicitly. |
 | `--no-dashboard` | off | Do not spawn the supervisor binary. Skips both the watchdog and the live dashboard. CI scripts that want predictable noise sometimes use this; the trade-off is no automatic worker-stall escalation. See [RUNTIME.md](RUNTIME.md) §3 and [DASHBOARD.md](DASHBOARD.md) §2.1. |
 | `--dashboard-port <port>` | `7892` | Bind the dashboard's HTTP server to a specific port. If taken, fails — the auto +1 retry only applies to the default. |
 | `--dashboard-bind <addr>` | `127.0.0.1` | Bind address for the dashboard. `0.0.0.0` exposes the dashboard to the LAN with no built-in auth; put a reverse proxy in front of it if you do this. |
