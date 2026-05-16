@@ -1277,6 +1277,24 @@ class ScoringWeights:
         Optional per-drift-kind multipliers. Stacks multiplicatively
         with :attr:`severity_weights`. Empty mapping = uniform weighting
         across kinds.
+    per_judge_weights:
+        Optional per-custom-judge multipliers, keyed on the stable
+        ``judge_name`` (the value a judge implementation sets on its
+        ``name`` attribute). A custom judge emits drift under the
+        single ``"custom"`` drift kind, so :attr:`per_kind_weights`
+        cannot tell two custom judges apart — ``per_judge_weights``
+        is the per-judge analogue. It stacks multiplicatively with
+        :attr:`severity_weights` exactly the way :attr:`per_kind_weights`
+        does for first-class kinds. A custom judge with no entry here
+        scores at :attr:`default_judge_weight` rather than crashing —
+        mirroring how an unknown kind falls back to ``1.0`` under
+        :attr:`per_kind_weights`. Empty mapping = every custom judge
+        scores at the default.
+    default_judge_weight:
+        Fallback multiplier for a custom judge whose ``judge_name`` is
+        absent from :attr:`per_judge_weights`. Defaults to ``1.0`` so an
+        unconfigured custom judge contributes on the same footing as a
+        first-class drift kind with no ``per_kind_weights`` entry.
     plan_revision_weight:
         Coefficient on :attr:`LossProfile.plan_revisions`. Defaults to
         ``0.5`` — plan revisions are signal but less so than drift.
@@ -1338,6 +1356,8 @@ class ScoringWeights:
     pass_weight: float = 1.0
     severity_weights: Mapping[str, float] = field(default_factory=_default_severity_weights)
     per_kind_weights: Mapping[str, float] = field(default_factory=dict)
+    per_judge_weights: Mapping[str, float] = field(default_factory=dict)
+    default_judge_weight: float = 1.0
     plan_revision_weight: float = 0.5
     runtime_weight: float = 0.0
     promote_margin: float = 0.01
