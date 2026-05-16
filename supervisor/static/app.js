@@ -107,6 +107,33 @@ function clearChildren(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+// Robust ISO-8601 parser. heartbeat.json mixes zone forms: a trailing
+// `Z` on some fields, an explicit `+00:00` offset on others. A bare
+// `new Date` parses a zone-less value as *local* time, skewing every
+// elapsed clock. parseIso normalises both forms, pins zone-less values
+// to UTC, and returns epoch ms (or NaN when unparseable).
+function parseIso(value) {
+  if (value == null) return NaN;
+  if (typeof value === 'number') return isFinite(value) ? value : NaN;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value !== 'string') return NaN;
+  let s = value.trim();
+  if (s.length === 0) return NaN;
+  // A `Z` or numeric `±HH:MM` / `±HHMM` offset — `new Date` is
+  // reliable. Otherwise pin to UTC (the supervisor always emits UTC).
+  // A bare date is left alone — Date already treats it as UTC.
+  const hasZone = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s);
+  if (!hasZone && (s.indexOf('T') !== -1 || s.indexOf(' ') !== -1)) {
+    s = s.replace(' ', 'T') + 'Z';
+  }
+  const ms = Date.parse(s);
+  return isFinite(ms) ? ms : NaN;
+}
+
+// `Date.now()` is the single source of "now" — but pulling it through
+// one helper keeps the elapsed/stale math uniform and testable.
+function nowMs() { return Date.now(); }
+
 // --- AppState
 
 class AppState {
@@ -114,9 +141,19 @@ class AppState {
     this.connected = false;
     this.connecting = true;
     this.mock = false;
-    this.heartbeat = null;          // { timestamp, pid, instance_id, harmonograf_url? }
-    this.activeRuns = [];           // [{ run_id, entry_id, generation_id, session_id?, started_at, progress, drift_kinds: {kind: count} }]
-    this.activeTournament = null;   // see schema in mock-state
+    // heartbeat.json — { generation_id, round_index, last_heartbeat,
+    //   round_started_at, started_at, harmonograf_url?, ... }. Timestamps
+    //   arrive in mixed `Z` / `+00:00` zone forms; parse via parseIso.
+    this.heartbeat = null;
+    // GET /api/active-runs — array; each element carries
+    //   { ..., progress:0..1|null, elapsed_seconds:int|null,
+    //     budget_seconds:int|null }.
+    this.activeRuns = [];
+    // GET /api/active-tournament —
+    //   { round_index:int, parent_generation_id:str, child_generation_id:str,
+    //     entries:[{ entry_id:str, side:"parent"|"child", status:str,
+    //                scalar_score?:num }] }  — or null if none ever started.
+    this.activeTournament = null;
     this.pastTournaments = [];      // [{ ...tournament }] — optional, for the picker
     // GET /api/tournaments — the gauntlet bracket source.
     //   { epoch_id, champion_lineage:[genId...], matchups:[matchup...] }
@@ -130,7 +167,13 @@ class AppState {
     this.lineage = { generations: [], experiments: [] };
     this.experiments = [];
     this.logLines = [];             // {ts, line, level}
+    // GET /api/run-log?limit=40 — the structured event tail.
+    //   { events:[{ seq:int|null, kind:str, ts:str|null, summary:str }] }
+    this.logTail = { events: [] };
     this.supervisor = { version: '—', port: '—', build: '—' };
+    // GET /api/health — supervisor identity for the footer.
+    //   { version, port, build, uptime_seconds, ... }
+    this.health = null;
     this.scoring = { margin: DEFAULT_MARGIN };
     // header-level epoch summary (id / generation / round / startedAt)
     this.epoch = { id: '—', generation: '—', round: '—', startedAt: null };
@@ -141,14 +184,27 @@ class AppState {
   // Merge a heartbeat update into the current record rather than
   // replacing it wholesale. A heartbeat *ping* (the SSE keepalive or
   // the /api/heartbeat endpoint) is minimal — typically just
-  // { timestamp, pid } — and omits stable config-ish fields like
-  // `harmonograf_url` that only the full /api/state snapshot carries.
-  // A wholesale replace would drop `harmonograf_url` on the first
-  // ping after load, silently killing every harmonograf deep-link.
-  // Merging keeps the last-known url alive across pings.
+  // { last_heartbeat, generation_id, round_index } — and omits stable
+  // config-ish fields like `harmonograf_url` that only the full
+  // /api/state snapshot carries. A wholesale replace would drop
+  // `harmonograf_url` on the first ping after load, silently killing
+  // every harmonograf deep-link. Merging keeps the last-known url
+  // alive across pings.
+  //
+  // Hardening: a ping that carries `harmonograf_url` *explicitly* set
+  // to null / empty must not clobber a previously-known good url —
+  // a null in the patch is treated as "not provided", not "cleared".
   setHeartbeat(hb) {
     if (!hb || typeof hb !== 'object') return;
+    const prevUrl = this.heartbeat && this.heartbeat.harmonograf_url;
     this.heartbeat = Object.assign({}, this.heartbeat, hb);
+    // Restore the last-known url when the incoming patch nulled / blanked it.
+    if (typeof this.heartbeat.harmonograf_url !== 'string'
+        || this.heartbeat.harmonograf_url.trim() === '') {
+      if (typeof prevUrl === 'string' && prevUrl.trim() !== '') {
+        this.heartbeat.harmonograf_url = prevUrl;
+      }
+    }
   }
 
   setSnapshot(snap) {
@@ -164,6 +220,9 @@ class AppState {
     if (snap.lineage) this.lineage = snap.lineage;
     if (snap.experiments) this.experiments = snap.experiments;
     if (snap.supervisor) Object.assign(this.supervisor, snap.supervisor);
+    if (snap.health) this.setHealth(snap.health);
+    // `run_log` (object or bare array) feeds the structured log tail.
+    if (snap.run_log) this.setLogTail(snap.run_log);
     if (snap.scoring) Object.assign(this.scoring, snap.scoring);
     // The header epoch summary and the full epoch contract are distinct.
     // /api/state carries an `epoch` key that is the full contract object
@@ -195,6 +254,28 @@ class AppState {
 
   setBracket(bracket) {
     if (bracket && typeof bracket === 'object') this.bracket = bracket;
+  }
+
+  // GET /api/health — the footer's supervisor identity. The endpoint
+  // returns { version, port, build, ... }; mirror those into the
+  // legacy `supervisor` record so renderFooter has one source.
+  setHealth(health) {
+    if (!health || typeof health !== 'object') return;
+    this.health = health;
+    if (health.version != null) this.supervisor.version = health.version;
+    if (health.port != null) this.supervisor.port = health.port;
+    if (health.build != null) this.supervisor.build = health.build;
+  }
+
+  // GET /api/run-log — the structured event tail. Normalise to the
+  // { events: [...] } shape regardless of whether the server hands
+  // back a bare array or the wrapped object.
+  setLogTail(tail) {
+    if (Array.isArray(tail)) {
+      this.logTail = { events: tail };
+    } else if (tail && Array.isArray(tail.events)) {
+      this.logTail = tail;
+    }
   }
 
   setHealthReport(report) {
@@ -476,14 +557,34 @@ function predictedGateVerdict(tournament, margin) {
 
 // --- Render: header + footer + connection
 
+// How long since the last heartbeat before the run is considered
+// stale. heartbeat.json is rewritten on a short cadence (well under a
+// minute); 90s leaves generous slack for a slow tick or a paused
+// scheduler without false-flagging a healthy live run.
+const STALE_HEARTBEAT_MS = 90_000;
+
 function renderHeader() {
+  const hb = state.heartbeat || {};
+  // Generation + round come straight off the heartbeat — `generation_id`
+  // ("v2") and `round_index` (an int). Fall back to the legacy header
+  // summary, then the em-dash placeholder.
+  const genId = hb.generation_id || state.epoch.generation;
+  const roundIdx = (hb.round_index != null) ? hb.round_index : state.epoch.round;
   $('epoch-id').textContent = 'epoch · ' + (state.epoch.id || '—');
-  $('generation-id').textContent = 'gen · ' + (state.epoch.generation || '—');
-  $('round-id').textContent = 'round · ' + (state.epoch.round || '—');
-  const startedAt = state.epoch.startedAt || (state.heartbeat && state.heartbeat.epoch_started_at);
-  if (startedAt) {
-    const seconds = (Date.now() - new Date(startedAt).getTime()) / 1000;
-    $('elapsed').textContent = fmtDuration(seconds);
+  $('generation-id').textContent = 'gen · ' + (genId != null && genId !== '' ? genId : '—');
+  $('round-id').textContent = 'round · ' + (roundIdx != null && roundIdx !== '' ? roundIdx : '—');
+
+  // Elapsed = now − started_at. The heartbeat's `started_at` is the
+  // run's start; `round_started_at` and the legacy `epoch_started_at`
+  // are accepted fallbacks. parseIso copes with both the `Z` and
+  // `+00:00` zone forms.
+  const startedRaw = hb.started_at || state.epoch.startedAt
+    || hb.round_started_at || hb.epoch_started_at;
+  const startedMs = parseIso(startedRaw);
+  if (isFinite(startedMs)) {
+    $('elapsed').textContent = fmtDuration((nowMs() - startedMs) / 1000);
+  } else {
+    $('elapsed').textContent = '—';
   }
 
   const badge = $('health-badge');
@@ -492,15 +593,19 @@ function renderHeader() {
     badge.classList.add('pending');
     badge.textContent = 'connecting';
   } else if (state.connected) {
-    // Check heartbeat freshness (must be within 15s)
-    const fresh = state.heartbeat
-      && (Date.now() - new Date(state.heartbeat.timestamp).getTime()) < 15_000;
-    if (fresh) {
-      badge.classList.add('ok');
-      badge.textContent = 'healthy';
-    } else {
+    // Stale = the last heartbeat is older than STALE_HEARTBEAT_MS.
+    // `last_heartbeat` is the canonical field; `timestamp` is the
+    // legacy name. A healthy live run keeps this fresh and must NOT
+    // trip the badge — an unparseable/absent timestamp is treated as
+    // healthy rather than falsely stale.
+    const hbMs = parseIso(hb.last_heartbeat != null ? hb.last_heartbeat : hb.timestamp);
+    const stale = isFinite(hbMs) && (nowMs() - hbMs) > STALE_HEARTBEAT_MS;
+    if (stale) {
       badge.classList.add('warn');
       badge.textContent = 'stale heartbeat';
+    } else {
+      badge.classList.add('ok');
+      badge.textContent = 'healthy';
     }
   } else {
     badge.classList.add('error');
@@ -513,9 +618,20 @@ function renderHeader() {
 }
 
 function renderFooter() {
-  $('supervisor-version').textContent = 'supervisor · ' + state.supervisor.version;
-  $('supervisor-port').textContent = 'port · ' + state.supervisor.port;
-  $('supervisor-build').textContent = 'build · ' + state.supervisor.build;
+  // GET /api/health is the source of truth (version / port / build);
+  // state.supervisor mirrors it and stands in until /api/health lands.
+  const h = state.health || {};
+  const pick = (a, b) => {
+    if (a != null && a !== '') return a;
+    if (b != null && b !== '') return b;
+    return '—';
+  };
+  $('supervisor-version').textContent =
+    'supervisor · ' + pick(h.version, state.supervisor.version);
+  $('supervisor-port').textContent =
+    'port · ' + pick(h.port, state.supervisor.port);
+  $('supervisor-build').textContent =
+    'build · ' + pick(h.build, state.supervisor.build);
 }
 
 // --- Render: active tournament
@@ -2600,9 +2716,44 @@ async function loadFullState() {
   } catch (err) {
     // No /api/epoch — fine, the Epoch view degrades to empty states.
   }
-  // The bracket and health endpoints (R9-5) are likewise independent;
-  // fetch them in parallel and tolerate either being absent.
+  // The bracket and health-report endpoints (R9-5) are likewise
+  // independent; fetch them in parallel and tolerate either being
+  // absent.
   await Promise.all([loadBracket(), loadHealthReport()]);
+  // The keystone fix: the dashboard's live data must be loaded UP
+  // FRONT, not lazily when a view first renders. Previously
+  // `activeTournament` was only fetched when the Tournament view
+  // painted, so Overview and Epoch saw a null tournament and every
+  // board entry fell back to a hardcoded 'queued'. Pull the four
+  // cross-view feeds here so every view is live from the first paint.
+  await loadLiveFeeds();
+  // Repaint once the live feeds have landed — the earlier renderAll()
+  // ran before activeTournament / lineage / logTail / activeRuns were
+  // fetched, so without this the first paint stays stale.
+  renderAll();
+}
+
+// Fetch the cross-view live feeds — active tournament, lineage, the
+// run-log tail, health, and the active-runs list. Each is independent
+// and tolerates an absent endpoint. Re-rendering is left to the caller.
+async function loadLiveFeeds() {
+  await Promise.all([
+    fetchJson('/api/active-tournament')
+      .then((t) => { state.activeTournament = t; })
+      .catch(() => { /* no tournament endpoint — leave as-is */ }),
+    fetchJson('/api/lineage')
+      .then((l) => { if (l) state.lineage = l; })
+      .catch(() => { /* no lineage endpoint */ }),
+    fetchJson('/api/run-log?limit=40')
+      .then((log) => { state.setLogTail(log); })
+      .catch(() => { /* no run-log endpoint */ }),
+    fetchJson('/api/active-runs')
+      .then((r) => { if (Array.isArray(r)) state.activeRuns = r; })
+      .catch(() => { /* no active-runs endpoint */ }),
+    fetchJson('/api/health')
+      .then((h) => { state.setHealth(h); })
+      .catch(() => { /* no health endpoint */ }),
+  ]);
 }
 
 // GET /api/tournaments — the gauntlet bracket. Independent of /api/state.
@@ -2665,15 +2816,18 @@ async function refreshAfterEvent(payload) {
       await loadFullState();
       return;
     }
+    // Whatever the tag, the cross-view live feeds — the active
+    // tournament, the run-log tail and the active-runs list — are
+    // re-fetched on EVERY tick. They are what keep Overview/Epoch from
+    // going stale while the user is parked on another view; a tag of
+    // `epoch` still moves runs, and a `tournament` tag still moves the
+    // log. loadLiveFeeds also refreshes lineage + health cheaply.
+    const liveFeeds = loadLiveFeeds();
     if (tag === 'tournament') {
-      // A tournament changed: refresh both the live matchup and the
-      // bracket, and drop the cached detail for the moving matchup.
-      try {
-        const t = await fetchJson('/api/active-tournament');
-        state.activeTournament = t;
-      } catch (err) { /* may have just ended */ }
+      // A tournament changed: also refresh the bracket and drop the
+      // cached detail for the moving matchup.
       state.matchupDetail.clear();
-      await loadBracket();
+      await Promise.all([liveFeeds, loadBracket()]);
       if (state.selectedMatchup) loadMatchupDetail(state.selectedMatchup);
     } else if (tag === 'heartbeat') {
       try {
@@ -2683,12 +2837,7 @@ async function refreshAfterEvent(payload) {
         await loadFullState();
         return;
       }
-    } else if (tag === 'runs') {
-      const r = await fetchJson('/api/active-runs');
-      state.activeRuns = r;
-    } else if (tag === 'lineage') {
-      const l = await fetchJson('/api/lineage');
-      state.lineage = l;
+      await liveFeeds;
     } else if (tag === 'epoch') {
       try {
         const epoch = await fetchJson('/api/epoch');
@@ -2696,10 +2845,11 @@ async function refreshAfterEvent(payload) {
       } catch (err) { /* endpoint may be absent */ }
       // An epoch transition can also move the bracket and the health
       // report; refresh those too.
-      await Promise.all([loadBracket(), loadHealthReport()]);
+      await Promise.all([liveFeeds, loadBracket(), loadHealthReport()]);
     } else {
-      await loadFullState();
-      return;
+      // `runs`, `lineage`, or any unknown tag: the live feeds already
+      // cover runs + lineage, so just await them.
+      await liveFeeds;
     }
     renderAll();
   } catch (err) {
@@ -2895,7 +3045,18 @@ function mockSnapshot() {
       startedAt: new Date(Date.now() - 4 * 60_000 - 23_000).toISOString(),
     },
     heartbeat: {
-      timestamp: new Date().toISOString(), pid: 12345, instance_id: 'mock',
+      // The header reads generation_id / round_index straight off the
+      // heartbeat; the elapsed clock is now − started_at; the stale
+      // badge is now − last_heartbeat > 90s. The two zone forms (`Z`
+      // and `+00:00`) are mixed on purpose so ?mock=1 exercises the
+      // robust parseIso path.
+      generation_id: 'v5',
+      round_index: 2,
+      last_heartbeat: new Date().toISOString(),
+      round_started_at: new Date(Date.now() - 263_000).toISOString()
+        .replace('Z', '+00:00'),
+      started_at: new Date(Date.now() - 4 * 60_000 - 23_000).toISOString(),
+      pid: 12345, instance_id: 'mock',
       // Assembled from parts so the static bundle carries no literal
       // external URL — the no-external-fetch structural test forbids
       // `http://` / `https://`. A real heartbeat carries this verbatim
@@ -2904,19 +3065,31 @@ function mockSnapshot() {
       harmonograf_url: 'ht' + 'tp' + '://localhost:4180',
     },
     supervisor: { version: '1.2.0', port: '7892', build: 'mock' },
+    // GET /api/health — supervisor identity for the footer.
+    health: {
+      version: '0.1.0', port: 7892, build: '0.1.0+9feb5e8d3a16',
+      uptime_seconds: 5_280,
+    },
     scoring: { margin: 0.05 },
+    // GET /api/active-runs — each element carries progress (0..1),
+    // elapsed_seconds and budget_seconds so the run cards' progress
+    // meters render under ?mock=1.
     active_runs: [
       { run_id: 'r-9c2a', entry_id: 'research_topic_q3', generation_id: 'v5',
         session_id: 's-research-9c2a',
         started_at: new Date(Date.now() - 42_000).toISOString(),
-        budget_seconds: 180, percent: 23 },
+        progress: 0.23, elapsed_seconds: 42, budget_seconds: 180 },
       { run_id: 'r-7f10', entry_id: 'multi_turn_picky', generation_id: 'v5',
         started_at: new Date(Date.now() - 14_000).toISOString(),
-        budget_seconds: 240, percent: 6 },
+        progress: 0.06, elapsed_seconds: 14, budget_seconds: 240 },
     ],
+    // GET /api/active-tournament — the contract shape: round_index,
+    // parent/child generation ids, and a flat per-SIDE entries list
+    // (each board entry appears once per side). Rich extras
+    // (hypothesis, drift_movements, per-entry runtime) are additive.
     active_tournament: {
-      round: 2, round_index: 2, total_rounds: 4,
-      parent_id: 'v4', child_id: 'v5',
+      round_index: 2, total_rounds: 4,
+      parent_generation_id: 'v4', child_generation_id: 'v5',
       elapsed_seconds: 263,
       hypothesis: {
         core_idea: 'Compress researcher tool descriptions to under 80 tokens each to reduce context bloat without dropping signal.',
@@ -2924,19 +3097,22 @@ function mockSnapshot() {
         modulating: ['researcher_tool_descriptions', 'write_webpage_tool'],
       },
       entries: [
-        { entry_id: 'extract_invoice_001', status: 'done',
-          parent: { drift_loss: 0.23, pass: true },
-          child:  { drift_loss: 0.18, pass: true } },
-        { entry_id: 'extract_invoice_002', status: 'done',
-          parent: { drift_loss: 0.31, pass: true },
-          child:  { drift_loss: 0.45, pass: false } },
-        { entry_id: 'research_topic_q3', status: 'running',
-          run_id: 'r-9c2a',
-          parent: { drift_loss: 0.19, pass: true },
-          child:  { drift_loss: 0.0, pass: null, drift_kinds: { off_topic: 2 } },
-          runtime: { elapsed_seconds: 42, budget_seconds: 180, percent: 23 } },
-        { entry_id: 'multi_turn_picky', status: 'queued' },
-        { entry_id: 'schema_response', status: 'queued' },
+        { entry_id: 'extract_invoice_001', side: 'parent', status: 'done',
+          scalar_score: 0.23 },
+        { entry_id: 'extract_invoice_001', side: 'child', status: 'done',
+          scalar_score: 0.18 },
+        { entry_id: 'extract_invoice_002', side: 'parent', status: 'done',
+          scalar_score: 0.31 },
+        { entry_id: 'extract_invoice_002', side: 'child', status: 'done',
+          scalar_score: 0.45 },
+        { entry_id: 'research_topic_q3', side: 'parent', status: 'done',
+          scalar_score: 0.19 },
+        { entry_id: 'research_topic_q3', side: 'child', status: 'running',
+          run_id: 'r-9c2a' },
+        { entry_id: 'multi_turn_picky', side: 'parent', status: 'queued' },
+        { entry_id: 'multi_turn_picky', side: 'child', status: 'queued' },
+        { entry_id: 'schema_response', side: 'parent', status: 'queued' },
+        { entry_id: 'schema_response', side: 'child', status: 'queued' },
       ],
       drift_movements: [
         { kind: 'off_topic', from_rate: 0.18, to_rate: 0.12 },
@@ -3003,15 +3179,34 @@ function mockSnapshot() {
           detail: 'A narrow rubric spread weakens the optimization signal — challengers and champions score nearly the same. Consider widening the rubric or adding harder board entries.' },
       ],
     },
+    // GET /api/lineage — generations across every epoch. The contract
+    // keys are generation_id / parent_generation_id / promoted /
+    // created_at; promoted===null marks the in-flight generation. The
+    // legacy id / parent_id aliases are kept alongside for the tree
+    // view's existing node layout.
     lineage: {
       generations: [
-        { id: 'v0', parent_id: null, epoch_id: '2026-05-10_e0' },
-        { id: 'v1', parent_id: 'v0', epoch_id: '2026-05-10_e0' },
-        { id: 'v2', parent_id: 'v1', epoch_id: '2026-05-10_e0' },
-        { id: 'v2x', parent_id: 'v1', epoch_id: '2026-05-10_e0' },
-        { id: 'v4_seed', parent_id: null, epoch_id: '2026-05-15_e1', v0_parent: 'v2' },
-        { id: 'v4', parent_id: 'v4_seed', epoch_id: '2026-05-15_e1' },
-        { id: 'v5', parent_id: 'v4', epoch_id: '2026-05-15_e1' },
+        { generation_id: 'v0', id: 'v0', parent_generation_id: null,
+          parent_id: null, epoch_id: '2026-05-10_e0', promoted: true,
+          created_at: '2026-05-10T09:00:00Z' },
+        { generation_id: 'v1', id: 'v1', parent_generation_id: 'v0',
+          parent_id: 'v0', epoch_id: '2026-05-10_e0', promoted: false,
+          created_at: '2026-05-10T10:00:00Z' },
+        { generation_id: 'v2', id: 'v2', parent_generation_id: 'v1',
+          parent_id: 'v1', epoch_id: '2026-05-10_e0', promoted: true,
+          created_at: '2026-05-10T11:30:00Z' },
+        { generation_id: 'v2x', id: 'v2x', parent_generation_id: 'v1',
+          parent_id: 'v1', epoch_id: '2026-05-10_e0', promoted: false,
+          created_at: '2026-05-10T13:00:00Z' },
+        { generation_id: 'v4_seed', id: 'v4_seed', parent_generation_id: null,
+          parent_id: null, epoch_id: '2026-05-15_e1', v0_parent: 'v2',
+          promoted: true, created_at: '2026-05-15T09:02:00Z' },
+        { generation_id: 'v4', id: 'v4', parent_generation_id: 'v4_seed',
+          parent_id: 'v4_seed', epoch_id: '2026-05-15_e1', promoted: true,
+          created_at: '2026-05-15T09:20:00Z' },
+        { generation_id: 'v5', id: 'v5', parent_generation_id: 'v4',
+          parent_id: 'v4', epoch_id: '2026-05-15_e1', promoted: null,
+          created_at: '2026-05-15T09:50:00Z' },
       ],
       experiments: [
         { generation_id: 'v1', hypothesis: { core_idea: 'Tighten extraction schema.' },
@@ -3108,6 +3303,23 @@ function mockSnapshot() {
       { ts: '12:35:14', level: 'warn', message: 'drift detected: off_topic +1 in run r-9c2a' },
       { ts: '12:35:23', level: 'ok',   message: 'parent v4 entry extract_invoice_002 pass' },
     ],
+    // GET /api/run-log?limit=40 — the structured event tail. The
+    // contract shape is { events:[{ seq, kind, ts, summary }] }; seq
+    // and ts may be null for a synthetic / un-sequenced event.
+    run_log: {
+      events: [
+        { seq: 118, kind: 'tournament', ts: '2026-05-16T04:34:50Z',
+          summary: 'tournament r2 entry research_topic_q3 started (run r-9c2a)' },
+        { seq: 119, kind: 'run', ts: '2026-05-16T04:35:01Z',
+          summary: 'goldfive driver: tool researcher_search invoked' },
+        { seq: 120, kind: 'drift', ts: '2026-05-16T04:35:14Z',
+          summary: 'drift detected: off_topic +1 in run r-9c2a' },
+        { seq: 121, kind: 'score', ts: '2026-05-16T04:35:23Z',
+          summary: 'parent v4 entry extract_invoice_002 pass' },
+        { seq: null, kind: 'note', ts: null,
+          summary: 'supervisor watchdog tick — all workers responsive' },
+      ],
+    },
   };
 }
 

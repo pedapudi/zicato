@@ -473,6 +473,145 @@ def test_mock_heartbeat_carries_harmonograf_url(app_js: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Time / heartbeat / stale handling — header clock
+# ---------------------------------------------------------------------------
+
+
+def test_robust_iso_parser_present(app_js: str) -> None:
+    """app.js carries a robust ISO parser for the heartbeat timestamps.
+
+    heartbeat.json mixes the `Z` suffix and the `+00:00` offset form;
+    a bare ``new Date`` mis-parses a zone-less value as local time. The
+    parser normalises both and pins zone-less values to UTC.
+    """
+    assert "function parseIso(" in app_js, "app.js missing the parseIso helper"
+    scrubbed = _strip_js_comments(app_js)
+    # The header and the stale-badge math route through parseIso.
+    assert "parseIso(" in scrubbed
+
+
+def test_stale_threshold_is_ninety_seconds(app_js: str) -> None:
+    """A live heartbeat must not trip the stale badge.
+
+    Stale = (now - last_heartbeat) > 90s. The threshold is a named
+    constant so the badge logic is unambiguous.
+    """
+    assert "STALE_HEARTBEAT_MS" in app_js, "app.js missing the stale threshold constant"
+    assert "90_000" in app_js, "stale threshold should be 90s (90_000 ms)"
+
+
+def test_header_reads_heartbeat_generation_and_round(app_js: str) -> None:
+    """The header reads generation_id / round_index off the heartbeat."""
+    scrubbed = _strip_js_comments(app_js)
+    idx = scrubbed.find("function renderHeader(")
+    assert idx != -1, "renderHeader not found"
+    body = scrubbed[idx : idx + 1400]
+    assert "generation_id" in body, "renderHeader must read heartbeat.generation_id"
+    assert "round_index" in body, "renderHeader must read heartbeat.round_index"
+    assert "started_at" in body, "renderHeader elapsed clock must use started_at"
+
+
+# ---------------------------------------------------------------------------
+# Footer — wired from /api/health
+# ---------------------------------------------------------------------------
+
+
+def test_footer_wired_from_health(app_js: str) -> None:
+    """renderFooter sources version / port / build from /api/health."""
+    assert "/api/health" in app_js, "app.js does not reference /api/health"
+    scrubbed = _strip_js_comments(app_js)
+    idx = scrubbed.find("function renderFooter(")
+    assert idx != -1, "renderFooter not found"
+    body = scrubbed[idx : idx + 600]
+    assert "state.health" in body, "renderFooter must read state.health"
+
+
+# ---------------------------------------------------------------------------
+# Global data loading — the cross-view live feeds
+# ---------------------------------------------------------------------------
+
+
+def test_loadfullstate_fetches_cross_view_feeds(app_js: str) -> None:
+    """loadFullState pulls the four cross-view feeds up front.
+
+    activeTournament / lineage / logTail / activeRuns must be loaded
+    eagerly so Overview and Epoch are live from the first paint rather
+    than falling back to a hardcoded 'queued'.
+    """
+    for path in (
+        "/api/active-tournament",
+        "/api/lineage",
+        "/api/run-log?limit=40",
+        "/api/active-runs",
+    ):
+        assert path in app_js, f"app.js does not fetch cross-view feed {path}"
+    assert "loadLiveFeeds" in app_js, "app.js missing the loadLiveFeeds helper"
+
+
+def test_refresh_after_event_refetches_live_feeds(app_js: str) -> None:
+    """A state_change tick re-fetches the live feeds every time.
+
+    refreshAfterEvent must call loadLiveFeeds for every non-'all' tag so
+    the whole dashboard stays live regardless of the named region.
+    """
+    scrubbed = _strip_js_comments(app_js)
+    idx = scrubbed.find("async function refreshAfterEvent(")
+    assert idx != -1, "refreshAfterEvent not found"
+    body = scrubbed[idx : idx + 1800]
+    assert "loadLiveFeeds(" in body, "refreshAfterEvent must call loadLiveFeeds"
+
+
+def test_mock_state_carries_contract_shapes(app_js: str) -> None:
+    """mockSnapshot enriches every cross-view feed in the new shapes.
+
+    ?mock=1 must preview every view: the active tournament, lineage,
+    the structured run-log and the active-runs progress meters.
+    """
+    scrubbed = _strip_js_comments(app_js)
+    # The contract keys for the active tournament and lineage.
+    assert "parent_generation_id" in scrubbed, "mock active_tournament missing contract key"
+    assert "child_generation_id" in scrubbed, "mock active_tournament missing contract key"
+    # active-runs progress meter inputs.
+    for key in ("progress", "elapsed_seconds", "budget_seconds"):
+        assert key in scrubbed, f"mock active_runs missing {key}"
+    # The structured run-log.
+    assert "run_log" in scrubbed, "mock missing the run_log feed"
+
+
+# ---------------------------------------------------------------------------
+# Empty states + rubric column — compact CSS
+# ---------------------------------------------------------------------------
+
+
+def test_empty_state_is_compact(style_css: str) -> None:
+    """An .empty panel is one muted line, not a tall placeholder box."""
+    idx = style_css.find(".empty {")
+    assert idx != -1, ".empty rule missing from style.css"
+    block = style_css[idx : idx + 240]
+    # Compact padding, no inflated min-height.
+    assert "min-height: 0" in block, ".empty must not inflate to fill a sized parent"
+
+
+def test_diagram_svg_is_height_capped(style_css: str) -> None:
+    """Diagram SVGs are height-capped so an empty chart is not a slab."""
+    idx = style_css.find(".diagram svg")
+    assert idx != -1, ".diagram svg rule missing"
+    block = style_css[idx : idx + 160]
+    assert "max-height" in block, ".diagram svg must cap its height"
+
+
+def test_rubric_block_is_centered_column(style_css: str) -> None:
+    """The epoch rubric renders as a centred, readable max-width column."""
+    idx = style_css.find(".epoch-rubric .rubric-block {")
+    assert idx != -1, ".rubric-block rule missing"
+    block = style_css[idx : idx + 320]
+    assert "max-width: 760px" in block, "rubric column should cap at ~760px"
+    assert (
+        "margin-left: auto" in block and "margin-right: auto" in block
+    ), "rubric column must be centred"
+
+
+# ---------------------------------------------------------------------------
 # Dark mode + palette
 # ---------------------------------------------------------------------------
 
