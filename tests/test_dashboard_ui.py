@@ -7,8 +7,10 @@ assert structural invariants that the Rust supervisor relies on:
   no remote stylesheets, no Google Fonts).
 * The expected sections, IDs, and SVG hooks are all present so
   ``app.js`` can find them.
-* The total bundle size sits under the envelope (80 KB uncompressed for
-  HTML + CSS + JS + icon sprite).
+* The total bundle size sits under the envelope (130 KB uncompressed
+  for HTML + CSS + JS + icon sprite).
+* The four-view structure is present: a nav rail with four entries and
+  the matching view containers, plus the Epoch view's section ids.
 * The dark-mode media query exists in the CSS.
 
 These tests are pure parsing — no headless browser, no JS engine. They
@@ -60,21 +62,28 @@ def test_index_has_no_external_urls(index_html: str) -> None:
     # Allow xmlns and ARIA namespace references that contain http
     # (those are URI literals, not network fetches). We only want to
     # block actual resource attributes: src, href, action.
-    for forbidden in ('src="http', "src='http",
-                      'href="http', "href='http",
-                      'action="http', "action='http",
-                      'src="//', "src='//",
-                      'href="//', "href='//"):
+    for forbidden in (
+        'src="http',
+        "src='http",
+        'href="http',
+        "href='http",
+        'action="http',
+        "action='http",
+        'src="//',
+        "src='//",
+        'href="//',
+        "href='//",
+    ):
         # Filter out xmlns (the SVG namespace href starts with http)
         # by checking only resource attributes.
-        assert forbidden not in lowered, (
-            f"index.html contains a forbidden external resource ref: {forbidden!r}"
-        )
+        assert (
+            forbidden not in lowered
+        ), f"index.html contains a forbidden external resource ref: {forbidden!r}"
 
 
 def test_index_has_no_inline_external_script(index_html: str) -> None:
     """The page must not pull JS from any external host."""
-    assert "<script src=\"http" not in index_html.lower()
+    assert '<script src="http' not in index_html.lower()
     assert "<script src='http" not in index_html.lower()
     # CDN heuristic: any URL with cdn., googleapis, jsdelivr, unpkg
     for needle in ("cdn.", "googleapis.com", "jsdelivr", "unpkg", "fonts.google"):
@@ -87,8 +96,7 @@ def test_css_has_no_external_url(style_css: str) -> None:
     assert "@import" not in lowered, "style.css uses @import"
     # url(http://...) or url(//...) is banned. Inline data: URIs would be
     # fine but we don't currently emit any.
-    for needle in ("url(http", "url('http", 'url("http',
-                   "url(//", "url('//", 'url("//'):
+    for needle in ("url(http", "url('http", 'url("http', "url(//", "url('//", 'url("//'):
         assert needle not in lowered, f"style.css references external URL: {needle}"
 
 
@@ -103,9 +111,9 @@ def test_js_has_no_external_fetch(app_js: str) -> None:
     scrubbed = _strip_js_comments(app_js)
     scrubbed = scrubbed.replace("http://www.w3.org/2000/svg", "")
     for needle in ("http://", "https://"):
-        assert needle not in scrubbed, (
-            f"app.js still references {needle} outside comments / xmlns literal"
-        )
+        assert (
+            needle not in scrubbed
+        ), f"app.js still references {needle} outside comments / xmlns literal"
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +127,8 @@ class _SectionCollector(HTMLParser):
         self.section_ids: list[str] = []
         self.all_ids: set[str] = set()
         self.svg_ids: set[str] = set()
+        self.nav_hrefs: list[str] = []
+        self._in_nav = False
         self._svg_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -127,6 +137,10 @@ class _SectionCollector(HTMLParser):
             self._svg_depth += 1
             if "id" in attrs_d and attrs_d["id"]:
                 self.svg_ids.add(attrs_d["id"])
+        if tag == "nav":
+            self._in_nav = True
+        if self._in_nav and tag == "a" and attrs_d.get("href"):
+            self.nav_hrefs.append(attrs_d["href"])
         if "id" in attrs_d and attrs_d["id"]:
             self.all_ids.add(attrs_d["id"])
             if tag == "section":
@@ -135,40 +149,79 @@ class _SectionCollector(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag == "svg":
             self._svg_depth = max(0, self._svg_depth - 1)
+        if tag == "nav":
+            self._in_nav = False
 
 
+# Sections that must exist somewhere in the page (now spread across the
+# four views rather than one flat scroll).
 REQUIRED_SECTIONS = {
     "tournament-section",
     "runs-section",
     "lineage-section",
     "trajectory-section",
     "heatmap-section",
-    "experiments-section",
     "log-section",
+    "epoch-overview-section",
+    "epoch-board-section",
+    "epoch-rubric-section",
+    "epoch-scoring-section",
+    "epoch-mutations-section",
 }
 
-REQUIRED_IDS = {
-    "header-bar",
-    "footer-bar",
-    "epoch-id",
-    "generation-id",
-    "round-id",
-    "elapsed",
-    "health-badge",
-    "tournament-title",
-    "tournament-body",
-    "tournament-elapsed",
-    "active-runs",
-    "experiments-list",
-    "log-tail",
-    "drill-panel",
-    "drill-title",
-    "drill-body",
-    "drill-close",
-    "supervisor-version",
-    "supervisor-port",
-    "supervisor-build",
+# The four view containers of the multi-view app.
+REQUIRED_VIEW_IDS = {
+    "view-overview",
+    "view-tree",
+    "view-tournament",
+    "view-epoch",
 }
+
+# The nav rail's four entries.
+REQUIRED_NAV_IDS = {
+    "nav-overview",
+    "nav-tree",
+    "nav-tournament",
+    "nav-epoch",
+}
+
+# Epoch-view panel containers app.js renders into.
+REQUIRED_EPOCH_IDS = {
+    "epoch-overview",
+    "epoch-harness",
+    "epoch-board",
+    "epoch-rubric",
+    "epoch-scoring",
+    "epoch-mutations",
+}
+
+REQUIRED_IDS = (
+    {
+        "header-bar",
+        "footer-bar",
+        "nav-rail",
+        "epoch-id",
+        "generation-id",
+        "round-id",
+        "elapsed",
+        "health-badge",
+        "tournament-title",
+        "tournament-body",
+        "tournament-elapsed",
+        "active-runs",
+        "log-tail",
+        "drill-panel",
+        "drill-title",
+        "drill-body",
+        "drill-close",
+        "supervisor-version",
+        "supervisor-port",
+        "supervisor-build",
+    }
+    | REQUIRED_VIEW_IDS
+    | REQUIRED_NAV_IDS
+    | REQUIRED_EPOCH_IDS
+)
 
 REQUIRED_SVG_IDS = {
     "lineage-svg",
@@ -205,6 +258,39 @@ def test_index_loads_local_css_and_js(index_html: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Multi-view structure — nav rail + four view containers
+# ---------------------------------------------------------------------------
+
+
+def test_four_view_containers_present(index_html: str) -> None:
+    """Overview / Tree / Tournament / Epoch each have a view container."""
+    p = _SectionCollector()
+    p.feed(index_html)
+    missing = REQUIRED_VIEW_IDS - p.all_ids
+    assert not missing, f"missing view containers: {sorted(missing)}"
+
+
+def test_nav_rail_present_with_four_entries(index_html: str) -> None:
+    """The nav rail exists and has exactly the four expected entries."""
+    p = _SectionCollector()
+    p.feed(index_html)
+    assert "nav-rail" in p.all_ids, "nav rail container (#nav-rail) missing"
+    missing = REQUIRED_NAV_IDS - p.all_ids
+    assert not missing, f"missing nav entries: {sorted(missing)}"
+    # The nav entries must fragment-route to the four views.
+    for frag in ("#/overview", "#/tree", "#/tournament", "#/epoch"):
+        assert frag in p.nav_hrefs, f"nav rail missing route {frag}"
+
+
+def test_epoch_view_section_ids_present(index_html: str) -> None:
+    """The Epoch view exposes board / rubric / scoring / mutation panels."""
+    p = _SectionCollector()
+    p.feed(index_html)
+    missing = REQUIRED_EPOCH_IDS - p.all_ids
+    assert not missing, f"missing epoch-view panel ids: {sorted(missing)}"
+
+
+# ---------------------------------------------------------------------------
 # Dark mode + palette
 # ---------------------------------------------------------------------------
 
@@ -233,8 +319,9 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 80 KB uncompressed — matches the constraint in the design notes.
-    assert total < 80_000, f"bundle is {total} bytes, exceeds 80_000 envelope"
+    # 130 KB uncompressed — the envelope grew with the multi-view app
+    # (nav rail, Tree / Tournament / Epoch views).
+    assert total < 130_000, f"bundle is {total} bytes, exceeds 130_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
@@ -257,9 +344,13 @@ def test_skip_link_present(index_html: str) -> None:
 def test_roles_and_aria_labels(index_html: str) -> None:
     # A reasonable floor: at least banner / main / contentinfo /
     # complementary roles on the structural landmarks.
-    for role in ("role=\"banner\"", "role=\"main\"",
-                 "role=\"contentinfo\"", "role=\"complementary\"",
-                 "role=\"log\""):
+    for role in (
+        'role="banner"',
+        'role="main"',
+        'role="contentinfo"',
+        'role="complementary"',
+        'role="log"',
+    ):
         assert role in index_html, f"missing landmark role {role}"
 
 

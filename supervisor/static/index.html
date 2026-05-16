@@ -24,66 +24,168 @@
     </div>
   </header>
 
-  <main id="main-content" role="main">
+  <div class="app-shell">
 
-    <section id="tournament-section" class="tournament-section panel" aria-label="Active tournament">
-      <div class="panel-header">
-        <h2 id="tournament-title">Tournament</h2>
-        <div class="panel-header-meta">
-          <span id="tournament-elapsed" class="meta mono" aria-label="Tournament elapsed">00:00</span>
-        </div>
-      </div>
-      <div id="tournament-body" class="panel-body">
-        <p class="empty">No active tournament.</p>
-      </div>
-    </section>
+    <nav id="nav-rail" class="nav-rail" role="navigation" aria-label="Dashboard views">
+      <a class="nav-item" id="nav-overview" href="#/overview" aria-label="Overview">
+        <span class="nav-glyph" aria-hidden="true">&#9632;</span>
+        <span class="nav-label">Overview</span>
+      </a>
+      <a class="nav-item" id="nav-tree" href="#/tree" aria-label="Tree">
+        <span class="nav-glyph" aria-hidden="true">&#10138;</span>
+        <span class="nav-label">Tree</span>
+      </a>
+      <a class="nav-item" id="nav-tournament" href="#/tournament" aria-label="Tournament">
+        <span class="nav-glyph" aria-hidden="true">&#9707;</span>
+        <span class="nav-label">Tournament</span>
+      </a>
+      <a class="nav-item" id="nav-epoch" href="#/epoch" aria-label="Epoch">
+        <span class="nav-glyph" aria-hidden="true">&#9638;</span>
+        <span class="nav-label">Epoch</span>
+      </a>
+    </nav>
 
-    <section id="runs-section" aria-label="Active runs">
-      <h2>Active runs</h2>
-      <div id="active-runs" class="runs-strip" role="list">
-        <p class="empty">No active runs.</p>
-      </div>
-    </section>
+    <main id="main-content" role="main">
 
-    <section id="lineage-section" aria-label="Lineage graph">
-      <h2>Lineage</h2>
-      <div class="diagram">
-        <svg id="lineage-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360"
-           role="img" aria-label="Lineage graph"></svg>
-      </div>
-    </section>
+      <!-- ============ OVERVIEW VIEW ============ -->
+      <div id="view-overview" class="view" data-view="overview">
 
-    <section id="trajectory-section" aria-label="Score trajectory">
-      <h2>Score trajectory</h2>
-      <div class="diagram">
-        <svg id="trajectory-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220"
-           role="img" aria-label="Scalar score trajectory"></svg>
-      </div>
-    </section>
+        <section id="tournament-section" class="tournament-section panel" aria-label="Active tournament">
+          <div class="panel-header">
+            <h2 id="tournament-title">Tournament</h2>
+            <div class="panel-header-meta">
+              <span id="tournament-elapsed" class="meta mono" aria-label="Tournament elapsed">00:00</span>
+            </div>
+          </div>
+          <div id="tournament-body" class="panel-body">
+            <p class="empty">No active tournament.</p>
+          </div>
+        </section>
 
-    <section id="heatmap-section" aria-label="Drift heatmap">
-      <h2>Drift-kind movements</h2>
-      <div class="diagram">
-        <svg id="heatmap-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 320"
-           role="img" aria-label="Drift heatmap"></svg>
-      </div>
-    </section>
+        <section id="runs-section" aria-label="Active runs">
+          <h2>Active runs</h2>
+          <div id="active-runs" class="runs-strip" role="list">
+            <p class="empty">No active runs.</p>
+          </div>
+        </section>
 
-    <section id="experiments-section" aria-label="Experiments">
-      <h2>Experiments</h2>
-      <div id="experiments-list">
-        <p class="empty">No experiments recorded.</p>
-      </div>
-    </section>
+        <section id="log-section" aria-label="Log tail">
+          <h2>Log tail</h2>
+          <div id="log-tail" class="log-tail mono" role="log" aria-live="polite" aria-relevant="additions">
+            <p class="empty">No events yet.</p>
+          </div>
+        </section>
 
-    <section id="log-section" aria-label="Log tail">
-      <h2>Log tail</h2>
-      <div id="log-tail" class="log-tail mono" role="log" aria-live="polite" aria-relevant="additions">
-        <p class="empty">No events yet.</p>
       </div>
-    </section>
 
-  </main>
+      <!-- ============ TREE VIEW ============ -->
+      <div id="view-tree" class="view hidden" data-view="tree">
+
+        <section id="lineage-section" aria-label="Lineage graph">
+          <h2>Lineage</h2>
+          <p class="panel-subheader">
+            Generations across every epoch. Drag to pan, wheel to zoom; click a node for its experiment.
+          </p>
+          <div id="lineage-viewport" class="lineage-viewport">
+            <div id="lineage-stage" class="lineage-stage">
+              <svg id="lineage-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360"
+                 role="img" aria-label="Cross-epoch lineage graph"></svg>
+            </div>
+          </div>
+          <div class="lineage-controls">
+            <button type="button" id="lineage-zoom-out" class="btn" aria-label="Zoom out">&minus;</button>
+            <button type="button" id="lineage-zoom-reset" class="btn" aria-label="Reset zoom">reset</button>
+            <button type="button" id="lineage-zoom-in" class="btn" aria-label="Zoom in">+</button>
+          </div>
+        </section>
+
+        <section id="trajectory-section" aria-label="Score trajectory">
+          <h2>Score trajectory</h2>
+          <div class="diagram">
+            <svg id="trajectory-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220"
+               role="img" aria-label="Scalar score trajectory"></svg>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ============ TOURNAMENT VIEW ============ -->
+      <div id="view-tournament" class="view hidden" data-view="tournament">
+
+        <section id="tournament-picker-section" aria-label="Tournament selector">
+          <h2>Tournament</h2>
+          <div id="tournament-picker" class="tournament-picker">
+            <label class="picker-label" for="tournament-select">show</label>
+            <select id="tournament-select" class="picker-select" aria-label="Select a tournament"></select>
+          </div>
+        </section>
+
+        <section id="tournament-detail-section" aria-label="Tournament detail">
+          <div id="tournament-detail" class="tournament-detail">
+            <p class="empty">No tournament selected.</p>
+          </div>
+        </section>
+
+        <section id="heatmap-section" aria-label="Drift heatmap">
+          <h2>Drift-kind movements</h2>
+          <div class="diagram">
+            <svg id="heatmap-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 320"
+               role="img" aria-label="Drift heatmap"></svg>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ============ EPOCH VIEW ============ -->
+      <div id="view-epoch" class="view hidden" data-view="epoch">
+
+        <section id="epoch-overview-section" aria-label="Epoch definition">
+          <h2>Epoch definition</h2>
+          <div id="epoch-overview" class="epoch-overview">
+            <p class="empty">No epoch loaded.</p>
+          </div>
+        </section>
+
+        <section id="epoch-harness-section" aria-label="Registered harness">
+          <h2>Harness</h2>
+          <div id="epoch-harness" class="epoch-harness">
+            <p class="empty">No harness recorded.</p>
+          </div>
+        </section>
+
+        <section id="epoch-board-section" aria-label="Board entries">
+          <h2>Board</h2>
+          <div id="epoch-board" class="epoch-board">
+            <p class="empty">No board entries.</p>
+          </div>
+        </section>
+
+        <section id="epoch-rubric-section" aria-label="Rubric">
+          <h2>Rubric</h2>
+          <div id="epoch-rubric" class="epoch-rubric">
+            <p class="empty">No rubric recorded.</p>
+          </div>
+        </section>
+
+        <section id="epoch-scoring-section" aria-label="Scoring weights">
+          <h2>Scoring</h2>
+          <div id="epoch-scoring" class="epoch-scoring">
+            <p class="empty">No scoring weights recorded.</p>
+          </div>
+        </section>
+
+        <section id="epoch-mutations-section" aria-label="Mutation surface">
+          <h2>Mutation surface</h2>
+          <div id="epoch-mutations" class="epoch-mutations">
+            <p class="empty">No mutation snapshot yet.</p>
+          </div>
+        </section>
+
+      </div>
+
+    </main>
+
+  </div>
 
   <aside id="drill-panel" class="drill-panel" role="complementary" aria-label="Drill-down panel" aria-hidden="true">
     <div class="drill-panel-header">

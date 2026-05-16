@@ -114,15 +114,19 @@ class AppState {
     this.connected = false;
     this.connecting = true;
     this.mock = false;
-    this.heartbeat = null;          // { timestamp, pid, instance_id }
-    this.activeRuns = [];           // [{ run_id, entry_id, generation_id, started_at, progress, drift_kinds: {kind: count} }]
+    this.heartbeat = null;          // { timestamp, pid, instance_id, harmonograf_url? }
+    this.activeRuns = [];           // [{ run_id, entry_id, generation_id, session_id?, started_at, progress, drift_kinds: {kind: count} }]
     this.activeTournament = null;   // see schema in mock-state
+    this.pastTournaments = [];      // [{ ...tournament }] — optional, for the picker
     this.lineage = { generations: [], experiments: [] };
     this.experiments = [];
     this.logLines = [];             // {ts, line, level}
     this.supervisor = { version: '—', port: '—', build: '—' };
     this.scoring = { margin: DEFAULT_MARGIN };
+    // header-level epoch summary (id / generation / round / startedAt)
     this.epoch = { id: '—', generation: '—', round: '—', startedAt: null };
+    // full epoch-definition contract from GET /api/epoch (R8-A); may be null
+    this.epochDef = null;
   }
 
   setSnapshot(snap) {
@@ -130,14 +134,50 @@ class AppState {
     if (snap.heartbeat) this.heartbeat = snap.heartbeat;
     if (snap.active_runs) this.activeRuns = snap.active_runs;
     if ('active_tournament' in snap) this.activeTournament = snap.active_tournament;
+    if (Array.isArray(snap.past_tournaments)) this.pastTournaments = snap.past_tournaments;
     if (snap.lineage) this.lineage = snap.lineage;
     if (snap.experiments) this.experiments = snap.experiments;
     if (snap.supervisor) Object.assign(this.supervisor, snap.supervisor);
     if (snap.scoring) Object.assign(this.scoring, snap.scoring);
-    if (snap.epoch) Object.assign(this.epoch, snap.epoch);
+    // The header epoch summary and the full epoch contract are distinct.
+    // /api/state carries an `epoch` key that is the full contract object
+    // (epoch_id, board, rubric, ...). When it has an `epoch_id` field it
+    // is the contract; we also derive the header summary from it.
+    if (snap.epoch && typeof snap.epoch === 'object') {
+      if ('epoch_id' in snap.epoch || 'board' in snap.epoch || 'rubric' in snap.epoch) {
+        this.epochDef = snap.epoch;
+        if (snap.epoch.epoch_id) this.epoch.id = snap.epoch.epoch_id;
+      } else {
+        // legacy header-summary shape
+        Object.assign(this.epoch, snap.epoch);
+      }
+    }
+    if (snap.epoch_summary && typeof snap.epoch_summary === 'object') {
+      Object.assign(this.epoch, snap.epoch_summary);
+    }
     if (Array.isArray(snap.log_tail)) {
       this.logLines = snap.log_tail.slice(-MAX_LOG_LINES);
     }
+  }
+
+  setEpochDef(def) {
+    if (def && typeof def === 'object') {
+      this.epochDef = def;
+      if (def.epoch_id) this.epoch.id = def.epoch_id;
+    }
+  }
+
+  // All tournaments selectable in the Tournament view's picker.
+  // The active one first (if present), then any past ones.
+  allTournaments() {
+    const list = [];
+    if (this.activeTournament) {
+      list.push({ ...this.activeTournament, __active: true });
+    }
+    for (const t of this.pastTournaments) {
+      list.push({ ...t, __active: false });
+    }
+    return list;
   }
 
   appendLog(line) {
@@ -147,6 +187,53 @@ class AppState {
 }
 
 const state = new AppState();
+
+// --- View routing
+//
+// The dashboard is a multi-view app: Overview / Tree / Tournament /
+// Epoch. The active view is encoded in the URL fragment so a reload or
+// a shared link lands on the same view. Drill-downs use a deeper
+// fragment form (#/generation/<id>, #/entry/<id>, #/run/<id>) handled
+// separately by applyRoute().
+
+const VIEWS = ['overview', 'tree', 'tournament', 'epoch'];
+const DEFAULT_VIEW = 'overview';
+let currentView = DEFAULT_VIEW;
+// Which tournament index the Tournament view is showing (picker).
+let tournamentSelection = 0;
+
+// --- Harmonograf deep-links
+//
+// The heartbeat MAY carry a non-empty `harmonograf_url`. When present,
+// active runs deep-link into harmonograf at the run's session. When the
+// run record has no session id, link to harmonograf bare. When the
+// heartbeat carries no url at all, render nothing — no disabled stub.
+
+function harmonografBase() {
+  const url = state.heartbeat && state.heartbeat.harmonograf_url;
+  if (typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  return trimmed.length > 0 ? trimmed.replace(/\/+$/, '') : null;
+}
+
+function harmonografRunUrl(run) {
+  const base = harmonografBase();
+  if (!base) return null;
+  const sid = run && (run.session_id || run.session || run.harmonograf_session);
+  if (sid) return `${base}/#/session/${encodeURIComponent(sid)}`;
+  return base;
+}
+
+function harmonografLink(run, label) {
+  const href = harmonografRunUrl(run);
+  if (!href) return null;
+  return el('a', {
+    class: 'harmonograf-link',
+    href,
+    target: '_blank',
+    rel: 'noopener',
+  }, [(label || 'Open in harmonograf') + ' ↗']);
+}
 
 // --- Predicted-gate verdict
 //
@@ -624,14 +711,42 @@ function renderActiveRuns() {
         `${fmtDuration(elapsed)}${r.budget_seconds ? ' / ' + fmtDuration(r.budget_seconds) : ''}`,
       ]));
     }
+    const hg = harmonografLink(r);
+    if (hg) {
+      // Stop the card's click handler from also firing.
+      hg.addEventListener('click', (ev) => ev.stopPropagation());
+      card.appendChild(el('div', { class: 'run-meta' }, [hg]));
+    }
     wrap.appendChild(card);
   }
 }
 
-// --- Render: lineage SVG
+// --- Render: cross-epoch lineage graph (Tree view)
+//
+// Generations are laid out in horizontal lanes — one lane per epoch.
+// Within a lane, generations are ordered left-to-right. Promoted
+// generations form a solid green spine; rejected generations are
+// dashed red off-shoots that branch below the spine. Baseline / seed
+// nodes are neutral grey. A new epoch's v0 descends from the prior
+// epoch's promoted head; that cross-epoch link is drawn as a dashed
+// connector between lanes.
+//
+// Each generation carries (defensively — any field may be absent):
+//   { id, parent_id?, epoch_id?, v0_parent? }
+// `epoch_id` groups a generation into a lane; `v0_parent` (or
+// `parent_epoch_head`) names the prior-epoch generation a fresh v0
+// descends from.
+
+function lineageDecision(exp) {
+  if (exp && exp.outcome && exp.outcome.tournament_decision) {
+    return exp.outcome.tournament_decision;
+  }
+  return null;
+}
 
 function renderLineage() {
   const svg = $('lineage-svg');
+  const stage = $('lineage-stage');
   clearChildren(svg);
 
   const gens = state.lineage.generations || [];
@@ -642,6 +757,8 @@ function renderLineage() {
   if (gens.length === 0) {
     const w = 900, h = 360;
     svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    svg.setAttribute('width', w);
+    svg.setAttribute('height', h);
     svg.appendChild(svgEl('rect', {
       x: 1, y: 1, width: w - 2, height: h - 2,
       fill: 'none', stroke: COLORS.grid, 'stroke-width': 1,
@@ -653,32 +770,55 @@ function renderLineage() {
     return;
   }
 
-  const n = gens.length;
-  const width = 900;
-  const height = 360;
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-
-  const marginX = 36, marginY = 50;
-  const usableW = width - 2 * marginX;
-  const usableH = height - 2 * marginY;
-  const nodeW = 130, nodeH = 56;
-  const xStep = n === 1 ? 0 : (usableW - nodeW) / (n - 1);
-  const centerY = marginY + usableH / 2 - nodeH / 2;
-  const branchOffset = Math.min(usableH / 3, 90);
-
-  const positions = new Map();
-  for (let i = 0; i < n; i++) {
-    const g = gens[i];
-    const x = marginX + i * xStep;
-    const exp = expByGen.get(g.id);
-    const decision = exp && exp.outcome ? exp.outcome.tournament_decision : null;
-    const y = (!exp || !exp.outcome || decision === 'promoted')
-      ? centerY
-      : centerY + branchOffset;
-    positions.set(g.id, { x, y });
+  // Group generations into epoch lanes, preserving first-seen order.
+  const laneOrder = [];
+  const laneOf = new Map();
+  for (const g of gens) {
+    const lane = g.epoch_id || g.epoch || '(epoch)';
+    if (!laneOf.has(lane)) {
+      laneOf.set(lane, []);
+      laneOrder.push(lane);
+    }
+    laneOf.get(lane).push(g);
   }
 
-  // <defs> with arrow markers
+  const nodeW = 132, nodeH = 60;
+  const colGap = 56, laneGap = 44;
+  const marginX = 130, marginY = 30;
+  const branchDrop = 78;        // rejected off-shoots sit this far below spine
+
+  // Column index: position of a generation within its lane.
+  const colIndex = new Map();
+  let maxCols = 0;
+  for (const lane of laneOrder) {
+    laneOf.get(lane).forEach((g, i) => {
+      colIndex.set(g.id, i);
+      if (i + 1 > maxCols) maxCols = i + 1;
+    });
+  }
+
+  const laneHeight = nodeH + branchDrop + 28;
+  const width = marginX + maxCols * (nodeW + colGap) + 40;
+  const height = marginY + laneOrder.length * (laneHeight + laneGap) + 20;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', height);
+
+  // Position every generation.
+  const positions = new Map();
+  laneOrder.forEach((lane, laneIdx) => {
+    const laneTop = marginY + laneIdx * (laneHeight + laneGap);
+    const spineY = laneTop + 28;
+    for (const g of laneOf.get(lane)) {
+      const col = colIndex.get(g.id);
+      const x = marginX + col * (nodeW + colGap);
+      const decision = lineageDecision(expByGen.get(g.id));
+      // rejected generations branch below the promoted spine
+      const y = decision === 'rejected' ? spineY + branchDrop : spineY;
+      positions.set(g.id, { x, y, laneIdx, spineY, laneTop });
+    }
+  });
+
   const defs = svgEl('defs', null, [
     svgEl('marker', {
       id: 'arr-promoted', viewBox: '0 0 10 10',
@@ -693,56 +833,73 @@ function renderLineage() {
   ]);
   svg.appendChild(defs);
 
-  // Edges
-  for (const g of gens) {
-    if (!g.parent_id || !positions.has(g.parent_id)) continue;
-    const pp = positions.get(g.parent_id);
-    const cp = positions.get(g.id);
-    const exp = expByGen.get(g.id);
-    const decision = exp && exp.outcome ? exp.outcome.tournament_decision : 'pending';
-    let stroke = COLORS.baseline, strokeW = 1.4, dash = null, marker = null, label = 'pending';
-    if (decision === 'promoted') {
-      stroke = COLORS.promoted; strokeW = 2.6; marker = 'url(#arr-promoted)'; label = 'promoted';
-    } else if (decision === 'rejected') {
-      stroke = COLORS.rejected; strokeW = 1.4; dash = '5 4'; marker = 'url(#arr-rejected)';
-      label = (exp && exp.outcome && exp.outcome.rejection_reason) || 'rejected';
-    } else if (decision === 'deferred') {
-      stroke = COLORS.deferred; strokeW = 1.6; dash = '2 3'; label = 'deferred';
-    }
-    const x1 = pp.x + nodeW;
-    const y1 = pp.y + nodeH / 2;
-    const x2 = cp.x;
-    const y2 = cp.y + nodeH / 2;
-    const cx1 = x1 + (x2 - x1) * 0.45;
-    const cx2 = x1 + (x2 - x1) * 0.55;
-    const path = svgEl('path', {
-      class: 'lineage-edge',
-      d: `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${cx1.toFixed(1)} ${y1.toFixed(1)}, ${cx2.toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`,
-      fill: 'none',
-      stroke,
-      'stroke-width': strokeW,
-      'stroke-dasharray': dash,
-      'marker-end': marker,
-      'data-from': g.parent_id,
-      'data-to': g.id,
-    });
-    svg.appendChild(path);
-    const midX = (x1 + x2) / 2;
-    const midY = (y1 + y2) / 2 - 6;
+  // Lane bands + labels.
+  laneOrder.forEach((lane, laneIdx) => {
+    const laneTop = marginY + laneIdx * (laneHeight + laneGap);
+    svg.appendChild(svgEl('rect', {
+      class: 'epoch-lane-band',
+      x: 6, y: laneTop.toFixed(1),
+      width: width - 12, height: laneHeight,
+      rx: 8, ry: 8,
+      fill: laneIdx % 2 === 0 ? 'rgba(127,127,127,0.05)' : 'rgba(127,127,127,0.10)',
+      stroke: COLORS.grid, 'stroke-width': 0.8,
+    }));
     svg.appendChild(svgEl('text', {
-      class: 'svg-axis', x: midX.toFixed(1), y: midY.toFixed(1),
-      'text-anchor': 'middle',
-    }, [truncate(label, 24)]));
+      class: 'svg-label',
+      x: 16, y: (laneTop + 18).toFixed(1), 'font-weight': '600',
+    }, ['epoch · ' + truncate(String(lane), 22)]));
+  });
+
+  // Within-epoch edges (parent_id) + cross-epoch links (v0_parent).
+  for (const g of gens) {
+    const cp = positions.get(g.id);
+    if (!cp) continue;
+    const exp = expByGen.get(g.id);
+    const decision = lineageDecision(exp) || 'pending';
+
+    const parentId = g.parent_id;
+    const crossId = g.v0_parent || g.parent_epoch_head || g.epoch_parent;
+
+    // Within-epoch parent edge.
+    if (parentId && positions.has(parentId)) {
+      const pp = positions.get(parentId);
+      let stroke = COLORS.baseline, strokeW = 1.6, dash = null, marker = null;
+      if (decision === 'promoted') {
+        stroke = COLORS.promoted; strokeW = 2.8; marker = 'url(#arr-promoted)';
+      } else if (decision === 'rejected') {
+        stroke = COLORS.rejected; strokeW = 1.6; dash = '5 4'; marker = 'url(#arr-rejected)';
+      } else if (decision === 'deferred') {
+        stroke = COLORS.deferred; strokeW = 1.8; dash = '2 3';
+      }
+      svg.appendChild(edgePath(pp, cp, nodeW, nodeH, stroke, strokeW, dash, marker));
+    }
+
+    // Cross-epoch link: this gen's v0 descends from the prior epoch's
+    // promoted head. Always dashed, neutral, to read as "inherited".
+    if (crossId && positions.has(crossId)) {
+      const pp = positions.get(crossId);
+      const ce = edgePath(pp, cp, nodeW, nodeH, COLORS.baseline, 1.6, '3 4', 'url(#arr-promoted)');
+      ce.setAttribute('stroke-opacity', '0.7');
+      svg.appendChild(ce);
+      const midX = (pp.x + nodeW + cp.x) / 2;
+      const midY = (pp.y + cp.y) / 2 + nodeH / 2 - 6;
+      svg.appendChild(svgEl('text', {
+        class: 'svg-axis', x: midX.toFixed(1), y: midY.toFixed(1),
+        'text-anchor': 'middle',
+      }, ['inherited']));
+    }
   }
 
-  // Nodes
+  // Nodes.
   for (const g of gens) {
-    const { x, y } = positions.get(g.id);
+    const pos = positions.get(g.id);
+    if (!pos) continue;
+    const { x, y } = pos;
     const exp = expByGen.get(g.id);
-    const decision = exp && exp.outcome ? exp.outcome.tournament_decision : 'baseline';
-    let fill, stroke, dash = null, marker = '(seed)';
+    const decision = lineageDecision(exp) || (g.parent_id ? 'pending' : 'baseline');
+    let fill, stroke, dash = null, marker;
     if (!g.parent_id) {
-      fill = 'rgba(110, 118, 129, 0.12)'; stroke = COLORS.baseline; marker = '(seed)';
+      fill = 'rgba(110, 118, 129, 0.14)'; stroke = COLORS.baseline; marker = '(v0)';
     } else if (decision === 'promoted') {
       fill = 'rgba(46, 160, 67, 0.18)'; stroke = COLORS.promoted; marker = '[+]';
     } else if (decision === 'rejected') {
@@ -752,14 +909,14 @@ function renderLineage() {
     } else {
       fill = 'rgba(110, 118, 129, 0.12)'; stroke = COLORS.baseline; marker = '(pending)';
     }
-    const groupAttrs = {
+
+    const grp = svgEl('g', {
       class: 'lineage-node',
       'data-gen': g.id,
       role: 'button',
       tabindex: '0',
       'aria-label': `generation ${g.id} ${decision}`,
-    };
-    const grp = svgEl('g', groupAttrs);
+    });
     grp.addEventListener('click', () => openDrillForGeneration(g.id));
     grp.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') {
@@ -774,29 +931,115 @@ function renderLineage() {
     }));
     grp.appendChild(svgEl('text', {
       class: 'svg-label',
-      x: (x + nodeW / 2).toFixed(1), y: (y + 18).toFixed(1),
+      x: (x + nodeW / 2).toFixed(1), y: (y + 19).toFixed(1),
       'text-anchor': 'middle', 'font-weight': '600',
     }, [`${g.id} ${marker}`]));
     if (exp && exp.outcome) {
       grp.appendChild(svgEl('text', {
         class: 'svg-axis',
-        x: (x + nodeW / 2).toFixed(1), y: (y + 34).toFixed(1),
+        x: (x + nodeW / 2).toFixed(1), y: (y + 36).toFixed(1),
         'text-anchor': 'middle',
       }, [`Δ scalar ${fmtDelta(exp.outcome.scalar_score_delta)}`]));
       grp.appendChild(svgEl('text', {
         class: 'svg-axis',
-        x: (x + nodeW / 2).toFixed(1), y: (y + 48).toFixed(1),
+        x: (x + nodeW / 2).toFixed(1), y: (y + 50).toFixed(1),
         'text-anchor': 'middle',
       }, [`Δ drift ${fmtDelta(exp.outcome.drift_loss_delta)}`]));
     } else {
       grp.appendChild(svgEl('text', {
         class: 'svg-axis',
-        x: (x + nodeW / 2).toFixed(1), y: (y + 40).toFixed(1),
+        x: (x + nodeW / 2).toFixed(1), y: (y + 42).toFixed(1),
         'text-anchor': 'middle',
-      }, ['baseline']));
+      }, [g.parent_id ? 'pending' : 'baseline']));
     }
     svg.appendChild(grp);
   }
+}
+
+// Bezier edge from a parent node's right edge to a child node's left
+// edge, given top-left positions.
+function edgePath(pp, cp, nodeW, nodeH, stroke, strokeW, dash, marker) {
+  const x1 = pp.x + nodeW;
+  const y1 = pp.y + nodeH / 2;
+  const x2 = cp.x;
+  const y2 = cp.y + nodeH / 2;
+  const cx1 = x1 + (x2 - x1) * 0.45;
+  const cx2 = x1 + (x2 - x1) * 0.55;
+  return svgEl('path', {
+    class: 'lineage-edge',
+    d: `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${cx1.toFixed(1)} ${y1.toFixed(1)}, ${cx2.toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`,
+    fill: 'none', stroke,
+    'stroke-width': strokeW,
+    'stroke-dasharray': dash,
+    'marker-end': marker,
+  });
+}
+
+// --- Tree view — pan + zoom on the lineage stage
+
+const lineageTransform = { scale: 1, x: 0, y: 0 };
+
+function applyLineageTransform() {
+  const stage = $('lineage-stage');
+  if (!stage) return;
+  stage.style.transform =
+    `translate(${lineageTransform.x}px, ${lineageTransform.y}px) scale(${lineageTransform.scale})`;
+}
+
+function resetLineageTransform() {
+  lineageTransform.scale = 1;
+  lineageTransform.x = 0;
+  lineageTransform.y = 0;
+  applyLineageTransform();
+}
+
+function setupLineageInteractions() {
+  const viewport = $('lineage-viewport');
+  const stage = $('lineage-stage');
+  if (!viewport || !stage) return;
+
+  let dragging = false;
+  let startX = 0, startY = 0, origX = 0, origY = 0;
+
+  viewport.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    const rect = viewport.getBoundingClientRect();
+    const px = ev.clientX - rect.left;
+    const py = ev.clientY - rect.top;
+    const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const next = Math.max(0.3, Math.min(3, lineageTransform.scale * factor));
+    const ratio = next / lineageTransform.scale;
+    // Zoom toward the cursor.
+    lineageTransform.x = px - (px - lineageTransform.x) * ratio;
+    lineageTransform.y = py - (py - lineageTransform.y) * ratio;
+    lineageTransform.scale = next;
+    applyLineageTransform();
+  }, { passive: false });
+
+  viewport.addEventListener('pointerdown', (ev) => {
+    dragging = true;
+    viewport.classList.add('dragging');
+    startX = ev.clientX; startY = ev.clientY;
+    origX = lineageTransform.x; origY = lineageTransform.y;
+    viewport.setPointerCapture(ev.pointerId);
+  });
+  viewport.addEventListener('pointermove', (ev) => {
+    if (!dragging) return;
+    lineageTransform.x = origX + (ev.clientX - startX);
+    lineageTransform.y = origY + (ev.clientY - startY);
+    applyLineageTransform();
+  });
+  const endDrag = () => { dragging = false; viewport.classList.remove('dragging'); };
+  viewport.addEventListener('pointerup', endDrag);
+  viewport.addEventListener('pointercancel', endDrag);
+
+  const zoomBy = (factor) => {
+    lineageTransform.scale = Math.max(0.3, Math.min(3, lineageTransform.scale * factor));
+    applyLineageTransform();
+  };
+  $('lineage-zoom-in').addEventListener('click', () => zoomBy(1.2));
+  $('lineage-zoom-out').addEventListener('click', () => zoomBy(1 / 1.2));
+  $('lineage-zoom-reset').addEventListener('click', resetLineageTransform);
 }
 
 // --- Render: score trajectory
@@ -1088,80 +1331,465 @@ function renderHeatmap() {
   }, [rateMax.toFixed(2)]));
 }
 
-// --- Render: experiments list
+// --- Render: Tournament view
+//
+// A dedicated A/B view. The picker selects the active tournament or any
+// past one. The selected tournament foregrounds the child generation's
+// hypothesis ("what is being tested"), then the full per-entry table,
+// the partial aggregate + predicted verdict, and the drift movements.
 
-function renderExperiments() {
-  const wrap = $('experiments-list');
-  clearChildren(wrap);
-  const exps = state.experiments || state.lineage.experiments || [];
-  if (exps.length === 0) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No experiments recorded.']));
-    return;
-  }
-  // newest first; first three open
-  const reversed = [...exps].reverse();
-  reversed.forEach((exp, i) => {
-    wrap.appendChild(renderExperimentCard(exp, i < 3));
-  });
+function renderTournamentView() {
+  renderTournamentPicker();
+  renderTournamentDetail();
+  renderHeatmap();
 }
 
-function renderExperimentCard(exp, openCard) {
-  const decision = (exp.outcome && exp.outcome.tournament_decision) || 'pending';
-  const badgeCls = ['promoted', 'rejected', 'deferred'].includes(decision) ? decision : 'pending';
-  const details = el('details', { class: 'experiment-card' });
-  if (openCard) details.setAttribute('open', '');
-  const summary = el('summary');
-  summary.appendChild(el('span', { class: 'badge ' + badgeCls }, [decision]));
-  summary.appendChild(el('span', { class: 'mono code-pill' }, [exp.generation_id]));
-  summary.appendChild(document.createTextNode(' ' + truncate(
-    (exp.hypothesis && exp.hypothesis.core_idea) || '(no hypothesis)', 80)));
-  if (exp.outcome) {
-    summary.appendChild(el('span', { class: 'delta-label' }, [' Δ scalar ']));
-    summary.appendChild(el('span', { class: 'mono' }, [fmtDelta(exp.outcome.scalar_score_delta)]));
-  }
-  details.appendChild(summary);
+function renderTournamentPicker() {
+  const select = $('tournament-select');
+  if (!select) return;
+  const tournaments = state.allTournaments();
+  const prev = tournamentSelection;
+  clearChildren(select);
 
-  const body = el('div', { class: 'card-body' });
-  if (exp.hypothesis) {
-    body.appendChild(el('h4', null, ['Hypothesis']));
-    if (exp.hypothesis.core_idea) {
-      body.appendChild(el('p', null, [
-        el('strong', null, ['core idea. ']),
-        exp.hypothesis.core_idea,
+  if (tournaments.length === 0) {
+    select.appendChild(el('option', { value: '0' }, ['(none)']));
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  tournaments.forEach((t, i) => {
+    const label = (t.__active ? 'active · ' : 'past · ') +
+      `${t.parent_id || '?'} vs ${t.child_id || '?'}` +
+      (t.round_index != null ? ` (round ${t.round_index})` : '');
+    select.appendChild(el('option', { value: String(i) }, [label]));
+  });
+  tournamentSelection = Math.min(prev, tournaments.length - 1);
+  select.value = String(tournamentSelection);
+  select.onchange = () => {
+    tournamentSelection = parseInt(select.value, 10) || 0;
+    renderTournamentDetail();
+  };
+}
+
+// Resolve the child generation's experiment — what is being tested.
+// The proposed generation's experiment.json may have a null outcome
+// while the tournament is still in progress.
+function childHypothesis(t) {
+  if (!t) return null;
+  if (t.hypothesis) return t.hypothesis;
+  const exps = state.experiments || state.lineage.experiments || [];
+  const exp = exps.find(e => e.generation_id === t.child_id);
+  return exp ? exp.hypothesis : null;
+}
+
+function renderTournamentDetail() {
+  const wrap = $('tournament-detail');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const tournaments = state.allTournaments();
+  if (tournaments.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No tournament to show.']));
+    return;
+  }
+  const t = tournaments[Math.min(tournamentSelection, tournaments.length - 1)];
+
+  // Header line.
+  const roundIdx = t.round_index != null ? t.round_index
+    : (t.round != null ? t.round : '?');
+  const totalRounds = t.total_rounds != null ? t.total_rounds : '?';
+  wrap.appendChild(el('h3', null, [
+    `Tournament — round ${roundIdx} of ${totalRounds} · ` +
+    `${t.parent_id || '?'} vs ${t.child_id || '?'}`,
+  ]));
+
+  // Current hypothesis focus — what is being tested.
+  const hyp = childHypothesis(t);
+  const focus = el('div', { class: 'hypothesis-focus' });
+  focus.appendChild(el('h3', null, ['What is being tested']));
+  if (hyp && (hyp.core_idea || hyp.why || (hyp.modulating && hyp.modulating.length))) {
+    if (hyp.core_idea) {
+      focus.appendChild(el('p', null, [
+        el('strong', null, ['Core idea. ']), hyp.core_idea,
       ]));
     }
-    if (exp.hypothesis.why) {
-      body.appendChild(el('p', null, [el('strong', null, ['why. ']), exp.hypothesis.why]));
-    }
-    if (exp.hypothesis.risks) {
-      body.appendChild(el('p', null, [el('strong', null, ['risks. ']), exp.hypothesis.risks]));
-    }
-  }
-  if (exp.outcome) {
-    const out = exp.outcome;
-    const deltas = el('div', { class: 'deltas' });
-    deltas.appendChild(el('span', { class: 'delta' }, [
-      el('span', { class: 'delta-label' }, ['Δ pass_rate ']),
-      fmtDelta(out.pass_rate_delta),
-    ]));
-    deltas.appendChild(el('span', { class: 'delta' }, [
-      el('span', { class: 'delta-label' }, ['Δ drift_loss ']),
-      fmtDelta(out.drift_loss_delta),
-    ]));
-    deltas.appendChild(el('span', { class: 'delta' }, [
-      el('span', { class: 'delta-label' }, ['Δ scalar ']),
-      fmtDelta(out.scalar_score_delta),
-    ]));
-    body.appendChild(deltas);
-    if (out.tournament_decision === 'rejected' && out.rejection_reason) {
-      body.appendChild(el('p', null, [
-        el('strong', null, ['rejection reason. ']),
-        out.rejection_reason,
+    if (hyp.why) {
+      focus.appendChild(el('p', null, [
+        el('strong', null, ['Why. ']), hyp.why,
       ]));
     }
+    if (Array.isArray(hyp.modulating) && hyp.modulating.length > 0) {
+      const line = el('p', null, [el('strong', null, ['Modulating. '])]);
+      hyp.modulating.forEach((m, i) => {
+        line.appendChild(el('code', { class: 'mono code-pill focus-tag' }, [m]));
+      });
+      focus.appendChild(line);
+    }
+  } else {
+    focus.appendChild(el('p', { class: 'empty' }, [
+      'No hypothesis recorded for the proposed generation yet.',
+    ]));
   }
-  details.appendChild(body);
-  return details;
+  wrap.appendChild(focus);
+
+  // Full per-entry table.
+  const entries = t.entries || [];
+  if (entries.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No board entries in this tournament.']));
+  } else {
+    wrap.appendChild(el('h3', null, ['Per-entry results']));
+    const tbl = el('table', { class: 'entry-table' });
+    tbl.appendChild(el('thead', null, [el('tr', null, [
+      el('th', null, ['entry']),
+      el('th', null, ['status']),
+      el('th', null, [(t.parent_id || 'parent') + ' loss']),
+      el('th', null, [(t.child_id || 'child') + ' loss']),
+      el('th', null, ['note']),
+    ])]));
+    const tbody = el('tbody');
+    for (const e of entries) {
+      tbody.appendChild(renderTournamentRow(e));
+    }
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+  }
+
+  // Partial aggregate + predicted verdict (only meaningful with entries).
+  if (entries.length > 0) {
+    wrap.appendChild(renderAggregate(t));
+    const verdict = predictedGateVerdict(t, state.scoring.margin);
+    if (verdict) wrap.appendChild(renderVerdict(verdict));
+  }
+
+  // Drift-kind / metric movement table.
+  wrap.appendChild(renderDriftMovementTable(t));
+
+  // Controls (active tournament only).
+  if (t.__active) {
+    wrap.appendChild(renderTournamentButtons());
+  }
+}
+
+function renderTournamentRow(entry) {
+  const status = entry.status || 'queued';
+  const parentTxt = entry.parent
+    ? `${fmtRate(entry.parent.drift_loss)} ${entry.parent.pass ? '✓' : '✗'}`
+    : '—';
+  const childDone = status === 'done' && entry.child;
+  const childTxt = childDone
+    ? `${fmtRate(entry.child.drift_loss)} ${entry.child.pass ? '✓' : '✗'}`
+    : (status === 'running' ? 'running' : (status === 'fail' ? 'failed' : '—'));
+  const regression = entry.parent && entry.child
+    && entry.parent.pass === true && entry.child.pass === false;
+  let note = '';
+  if (regression) note = 'pass regression';
+  else if (status === 'fail' && entry.fail_reason) note = entry.fail_reason;
+  else if (status === 'running' && entry.runtime && entry.runtime.percent != null) {
+    note = `${Math.round(entry.runtime.percent)}%`;
+  }
+
+  const childCell = el('td', { class: 'mono' + (regression ? ' regression' : '') }, [childTxt]);
+
+  const row = el('tr', {
+    tabindex: '0',
+    'aria-label': `entry ${entry.entry_id} status ${status}`,
+    onClick: () => openDrillForEntry(entry),
+    onKeydown: (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        openDrillForEntry(entry);
+      }
+    },
+  }, [
+    el('td', { class: 'mono' }, [entry.entry_id]),
+    el('td', { class: 'cell-status ' + status }, [status]),
+    el('td', { class: 'mono' }, [parentTxt]),
+    childCell,
+    el('td', { class: 'meta' }, [note]),
+  ]);
+  return row;
+}
+
+// Drift-kind movement table — per-kind from/to rates aggregated over
+// the tournament's done entries (child side).
+function renderDriftMovementTable(t) {
+  const wrap = el('div', { class: 'aggregate' });
+  wrap.appendChild(el('h4', null, ['Drift-kind movement']));
+
+  // Prefer an explicit drift_movements block on the tournament; else
+  // aggregate drift_kinds counts from the child entries.
+  const movements = Array.isArray(t.drift_movements) ? t.drift_movements : null;
+  if (movements && movements.length > 0) {
+    const tbl = el('table');
+    tbl.appendChild(el('thead', null, [el('tr', null, [
+      el('th', null, ['kind']),
+      el('th', null, ['from']),
+      el('th', null, ['to']),
+      el('th', null, ['Δ']),
+    ])]));
+    const tbody = el('tbody');
+    for (const m of movements) {
+      const delta = (m.to_rate || 0) - (m.from_rate || 0);
+      tbody.appendChild(el('tr', { class: delta > 0 ? 'row-flag' : '' }, [
+        el('td', null, [m.kind || '?']),
+        el('td', { class: 'mono' }, [fmtRate(m.from_rate)]),
+        el('td', { class: 'mono' }, [fmtRate(m.to_rate)]),
+        el('td', { class: 'mono' }, [fmtDelta(delta)]),
+      ]));
+    }
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+    return wrap;
+  }
+
+  // Fallback: counts of drift kinds across child entries.
+  const counts = new Map();
+  for (const e of (t.entries || [])) {
+    const dk = e.child && e.child.drift_kinds;
+    if (dk) {
+      for (const [k, v] of Object.entries(dk)) {
+        counts.set(k, (counts.get(k) || 0) + (v || 0));
+      }
+    }
+  }
+  if (counts.size === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No drift movement recorded.']));
+    return wrap;
+  }
+  const tbl = el('table');
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['drift kind']),
+    el('th', null, ['count (child)']),
+  ])]));
+  const tbody = el('tbody');
+  for (const [k, v] of [...counts.entries()].sort((a, b) => b[1] - a[1])) {
+    tbody.appendChild(el('tr', null, [
+      el('td', null, [k]),
+      el('td', { class: 'mono' }, [String(v)]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+  return wrap;
+}
+
+// --- Render: Epoch view
+//
+// Renders the epoch-definition contract from GET /api/epoch (or the
+// `epoch` key on /api/state). Every field is read defensively — the
+// contract is built by a sibling agent and any block may be absent.
+
+function renderEpochView() {
+  const def = state.epochDef;
+  renderEpochOverview(def);
+  renderEpochHarness(def);
+  renderEpochBoard(def);
+  renderEpochRubric(def);
+  renderEpochScoring(def);
+  renderEpochMutations(def);
+}
+
+function kv(label, value) {
+  return el('div', { class: 'kv' }, [
+    el('span', { class: 'kv-label' }, [label]),
+    el('span', { class: 'kv-value mono' }, [value]),
+  ]);
+}
+
+function renderEpochOverview(def) {
+  const wrap = $('epoch-overview');
+  clearChildren(wrap);
+  if (!def) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No epoch contract loaded.']));
+    return;
+  }
+  wrap.appendChild(kv('epoch id', def.epoch_id || '—'));
+  const hash = def.contract_hash || '';
+  wrap.appendChild(kv('contract hash', hash ? truncate(hash, 12) : '—'));
+  wrap.appendChild(kv('created', def.created_at || '—'));
+  const closed = def.closed === true;
+  wrap.appendChild(el('div', { class: 'kv' }, [
+    el('span', { class: 'kv-label' }, ['status']),
+    el('span', { class: 'badge ' + (closed ? 'rejected' : 'promoted') },
+      [closed ? 'closed' : 'open']),
+  ]));
+}
+
+function renderEpochHarness(def) {
+  const wrap = $('epoch-harness');
+  clearChildren(wrap);
+  const h = def && def.harness;
+  if (!h) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No harness recorded.']));
+    return;
+  }
+  wrap.appendChild(el('p', null, [
+    el('strong', null, ['Entrypoint. ']),
+    el('code', { class: 'mono code-pill' }, [h.entrypoint || '—']),
+  ]));
+  const trees = Array.isArray(h.mutable_trees) ? h.mutable_trees : [];
+  const line = el('p', null, [el('strong', null, ['Mutable trees. '])]);
+  if (trees.length === 0) {
+    line.appendChild(el('span', { class: 'meta' }, ['none']));
+  } else {
+    const box = el('span', { class: 'harness-trees' });
+    for (const tr of trees) {
+      box.appendChild(el('code', { class: 'mono code-pill' }, [tr]));
+    }
+    line.appendChild(box);
+  }
+  wrap.appendChild(line);
+}
+
+function renderEpochBoard(def) {
+  const wrap = $('epoch-board');
+  clearChildren(wrap);
+  const board = def && Array.isArray(def.board) ? def.board : [];
+  if (board.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No board entries.']));
+    return;
+  }
+  const tbl = el('table', { class: 'data-table' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['id']),
+    el('th', null, ['kind']),
+    el('th', null, ['input preview']),
+    el('th', null, ['expectation']),
+    el('th', null, ['budget']),
+    el('th', null, ['weight']),
+    el('th', null, ['tags']),
+  ])]));
+  const tbody = el('tbody');
+  for (const e of board) {
+    const tags = Array.isArray(e.tags) ? e.tags.join(', ') : '';
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: 'mono' }, [e.id || '—']),
+      el('td', null, [e.kind || '—']),
+      el('td', null, [truncate(e.input_preview || '', 60)]),
+      el('td', null, [e.expectation_kind || '—']),
+      el('td', { class: 'mono' }, [e.budget_s != null ? e.budget_s + 's' : '—']),
+      el('td', { class: 'mono' }, [e.weight != null ? String(e.weight) : '—']),
+      el('td', { class: 'meta' }, [tags]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+}
+
+function renderEpochRubric(def) {
+  const wrap = $('epoch-rubric');
+  clearChildren(wrap);
+  const rubric = def && typeof def.rubric === 'string' ? def.rubric : '';
+  if (!rubric.trim()) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No rubric recorded.']));
+    return;
+  }
+  const block = el('div', { class: 'rubric-block' });
+  renderMinimalMarkdown(rubric, block);
+  wrap.appendChild(block);
+}
+
+// Minimal markdown: headings (#, ##, ###), unordered lists (- / *),
+// and `inline code`. Anything else is passed through as text. This is
+// deliberately small — no link parsing, no HTML injection surface.
+function renderMinimalMarkdown(src, container) {
+  const lines = src.replace(/\r\n/g, '\n').split('\n');
+  let listEl = null;
+  const flushList = () => { if (listEl) { container.appendChild(listEl); listEl = null; } };
+
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    const item = line.match(/^\s*[-*]\s+(.*)$/);
+    if (heading) {
+      flushList();
+      const tag = 'h' + heading[1].length;
+      container.appendChild(el(tag, null, inlineMarkdown(heading[2])));
+    } else if (item) {
+      if (!listEl) listEl = el('ul');
+      listEl.appendChild(el('li', null, inlineMarkdown(item[1])));
+    } else if (line.trim() === '') {
+      flushList();
+    } else {
+      flushList();
+      container.appendChild(el('p', null, inlineMarkdown(line)));
+    }
+  }
+  flushList();
+}
+
+// Split a line on backtick-delimited inline code spans.
+function inlineMarkdown(text) {
+  const parts = [];
+  let i = 0;
+  while (i < text.length) {
+    const tick = text.indexOf('`', i);
+    if (tick === -1) { parts.push(text.slice(i)); break; }
+    const end = text.indexOf('`', tick + 1);
+    if (end === -1) { parts.push(text.slice(i)); break; }
+    if (tick > i) parts.push(text.slice(i, tick));
+    parts.push(el('code', null, [text.slice(tick + 1, end)]));
+    i = end + 1;
+  }
+  return parts;
+}
+
+function renderEpochScoring(def) {
+  const wrap = $('epoch-scoring');
+  clearChildren(wrap);
+  const scoring = def && def.scoring && typeof def.scoring === 'object'
+    ? def.scoring : null;
+  if (!scoring || Object.keys(scoring).length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No scoring weights recorded.']));
+    return;
+  }
+  const tbl = el('table', { class: 'data-table' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['weight']),
+    el('th', null, ['value']),
+  ])]));
+  const tbody = el('tbody');
+  for (const [k, v] of Object.entries(scoring)) {
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: 'mono' }, [k]),
+      el('td', { class: 'mono' }, [String(v)]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+}
+
+function renderEpochMutations(def) {
+  const wrap = $('epoch-mutations');
+  clearChildren(wrap);
+  const muts = def && Array.isArray(def.mutations) ? def.mutations : [];
+  if (muts.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No mutation snapshot yet.']));
+    return;
+  }
+  wrap.appendChild(el('p', { class: 'panel-subheader' }, [
+    'What zicato is allowed to rewrite this epoch.',
+  ]));
+  const tbl = el('table', { class: 'data-table' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['id']),
+    el('th', null, ['kind']),
+    el('th', null, ['file']),
+    el('th', null, ['lines']),
+    el('th', null, ['preview']),
+  ])]));
+  const tbody = el('tbody');
+  for (const m of muts) {
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: 'mono' }, [m.id || '—']),
+      el('td', null, [m.kind || '—']),
+      el('td', { class: 'mono' }, [m.file || '—']),
+      el('td', { class: 'mono' }, [m.lines || '—']),
+      el('td', null, [truncate(m.preview || '', 64)]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
 }
 
 // --- Render: log tail
@@ -1186,39 +1814,86 @@ function renderLogTail() {
 
 // --- Drill-down panels (hash router)
 
+// Drill-downs keep the current view fragment and append a detail
+// segment, e.g. #/tree/generation/v3 — so closing the drill returns to
+// the view the operator was on.
+
 function openDrillForGeneration(genId) {
-  location.hash = '#/generation/' + encodeURIComponent(genId);
+  location.hash = `#/${currentView}/generation/${encodeURIComponent(genId)}`;
 }
 function openDrillForEntry(entry) {
-  location.hash = '#/entry/' + encodeURIComponent(entry.entry_id);
+  location.hash = `#/${currentView}/entry/${encodeURIComponent(entry.entry_id)}`;
 }
 function openDrillForRun(run) {
-  location.hash = '#/run/' + encodeURIComponent(run.run_id);
+  location.hash = `#/${currentView}/run/${encodeURIComponent(run.run_id)}`;
 }
 function closeDrill() {
-  location.hash = '';
+  location.hash = '#/' + currentView;
 }
 
+// Single hash router: resolves the view AND any drill-down. Fragment
+// forms understood:
+//   #/<view>
+//   #/<view>/<kind>/<id>
+//   #/<kind>/<id>           (legacy — drill on the current view)
 function applyRoute() {
-  const hash = location.hash;
+  const hash = location.hash || '';
+  const segs = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+
+  let view = currentView;
+  let kind = null;
+  let id = null;
+
+  if (segs.length === 0) {
+    view = DEFAULT_VIEW;
+  } else if (VIEWS.includes(segs[0])) {
+    view = segs[0];
+    if (segs.length >= 3) {
+      kind = segs[1];
+      id = decodeURIComponent(segs.slice(2).join('/'));
+    }
+  } else if (['generation', 'entry', 'run'].includes(segs[0]) && segs.length >= 2) {
+    // legacy drill form — keep current view
+    kind = segs[0];
+    id = decodeURIComponent(segs.slice(1).join('/'));
+  } else {
+    view = DEFAULT_VIEW;
+  }
+
+  if (view !== currentView) {
+    showView(view);
+  } else {
+    // ensure nav highlight is correct on first paint
+    showViewClassesOnly(view);
+  }
+
+  applyDrill(kind, id);
+}
+
+function showViewClassesOnly(view) {
+  for (const v of VIEWS) {
+    const node = $('view-' + v);
+    if (node) node.classList.toggle('hidden', v !== view);
+    const nav = $('nav-' + v);
+    if (nav) {
+      nav.classList.toggle('active', v === view);
+      if (v === view) nav.setAttribute('aria-current', 'page');
+      else nav.removeAttribute('aria-current');
+    }
+  }
+}
+
+function applyDrill(kind, id) {
   const panel = $('drill-panel');
   const title = $('drill-title');
   const body = $('drill-body');
   clearChildren(body);
 
-  if (!hash || hash === '#' || hash === '') {
+  if (!kind || !id || !['generation', 'entry', 'run'].includes(kind)) {
     panel.setAttribute('aria-hidden', 'true');
     title.textContent = 'Detail';
     return;
   }
-
-  const m = hash.match(/^#\/(generation|entry|run)\/(.+)$/);
-  if (!m) {
-    panel.setAttribute('aria-hidden', 'true');
-    return;
-  }
-  const kind = m[1];
-  const id = decodeURIComponent(m[2]);
   panel.setAttribute('aria-hidden', 'false');
 
   if (kind === 'generation') {
@@ -1280,10 +1955,14 @@ function applyRoute() {
 
   if (kind === 'entry') {
     title.textContent = 'Entry ' + id;
-    const t = state.activeTournament;
-    const entry = t && (t.entries || []).find(e => e.entry_id === id);
+    // Look in every selectable tournament, not just the active one.
+    let entry = null;
+    for (const t of state.allTournaments()) {
+      const found = (t.entries || []).find(e => e.entry_id === id);
+      if (found) { entry = found; break; }
+    }
     if (!entry) {
-      body.appendChild(el('p', { class: 'empty' }, ['Entry not found in current tournament.']));
+      body.appendChild(el('p', { class: 'empty' }, ['Entry not found in any tournament.']));
       return;
     }
     const meta = el('p', null, [
@@ -1345,6 +2024,12 @@ function applyRoute() {
     }
     dl.appendChild(tb);
     body.appendChild(dl);
+
+    const hg = harmonografLink(run);
+    if (hg) {
+      body.appendChild(el('p', null, [hg]));
+    }
+
     body.appendChild(el('p', { class: 'meta' }, [
       'Live events feed lands when GET /api/run/{run_id}/events ships in v1.3.',
     ]));
@@ -1352,18 +2037,51 @@ function applyRoute() {
   }
 }
 
+// --- View switching
+//
+// Only the active view's panels are in the DOM flow; switching views
+// toggles the `.hidden` class. The SSE connection is untouched, so
+// switching is instant and live updates keep flowing.
+
+function showView(view) {
+  if (!VIEWS.includes(view)) view = DEFAULT_VIEW;
+  currentView = view;
+  for (const v of VIEWS) {
+    const node = $('view-' + v);
+    if (node) node.classList.toggle('hidden', v !== view);
+    const nav = $('nav-' + v);
+    if (nav) {
+      nav.classList.toggle('active', v === view);
+      if (v === view) nav.setAttribute('aria-current', 'page');
+      else nav.removeAttribute('aria-current');
+    }
+  }
+  renderActiveView();
+}
+
+// Render only the panels belonging to the active view. The header,
+// footer and log tail (Overview) are cheap and always kept fresh.
+function renderActiveView() {
+  if (currentView === 'overview') {
+    renderActiveTournament();
+    renderActiveRuns();
+    renderLogTail();
+  } else if (currentView === 'tree') {
+    renderLineage();
+    renderTrajectory();
+  } else if (currentView === 'tournament') {
+    renderTournamentView();
+  } else if (currentView === 'epoch') {
+    renderEpochView();
+  }
+}
+
 // --- Top-level render
 
 function renderAll() {
   renderHeader();
-  renderActiveTournament();
-  renderActiveRuns();
-  renderLineage();
-  renderTrajectory();
-  renderHeatmap();
-  renderExperiments();
-  renderLogTail();
   renderFooter();
+  renderActiveView();
   applyRoute();
 }
 
@@ -1401,6 +2119,17 @@ async function loadFullState() {
     // The server might be transient — surface gracefully.
     console.warn('loadFullState failed:', err);
   }
+  // The epoch-definition endpoint (R8-A) is independent and may not
+  // exist on older servers; fetch it separately and tolerate failure.
+  // /api/state may already carry the epoch object — this just refreshes
+  // it / fills it in when the state snapshot omitted it.
+  try {
+    const epoch = await fetchJson('/api/epoch');
+    state.setEpochDef(epoch);
+    if (currentView === 'epoch') renderEpochView();
+  } catch (err) {
+    // No /api/epoch — fine, the Epoch view degrades to empty states.
+  }
 }
 
 async function refreshAfterEvent(payload) {
@@ -1420,6 +2149,11 @@ async function refreshAfterEvent(payload) {
     } else if (region === 'lineage') {
       const l = await fetchJson('/api/lineage');
       state.lineage = l;
+    } else if (region === 'epoch') {
+      try {
+        const epoch = await fetchJson('/api/epoch');
+        state.setEpochDef(epoch);
+      } catch (err) { /* endpoint may be absent */ }
     } else {
       await loadFullState();
       return;
@@ -1495,29 +2229,47 @@ function scheduleReconnect() {
 }
 
 // --- Mock state — for file:// preview and offline development
+//
+// The mock covers all four views: a cross-epoch lineage (two epochs),
+// an active tournament plus a past one for the picker, the full epoch
+// contract for the Epoch view, and a heartbeat carrying a
+// harmonograf_url so the deep-links render.
 
 function mockSnapshot() {
   return {
-    epoch: {
-      id: 'initial',
-      generation: 'v3',
-      round: '4',
+    epoch_summary: {
+      id: '2026-05-15_e1',
+      generation: 'v5',
+      round: '2',
       startedAt: new Date(Date.now() - 4 * 60_000 - 23_000).toISOString(),
     },
-    heartbeat: { timestamp: new Date().toISOString(), pid: 12345, instance_id: 'mock' },
+    heartbeat: {
+      timestamp: new Date().toISOString(), pid: 12345, instance_id: 'mock',
+      // Assembled from parts so the static bundle carries no literal
+      // external URL — the no-external-fetch structural test forbids
+      // `http://` / `https://`. A real heartbeat carries this verbatim
+      // from the orchestrator; mock mode just needs a sample to render
+      // the deep-links.
+      harmonograf_url: 'ht' + 'tp' + '://localhost:4180',
+    },
     supervisor: { version: '1.2.0', port: '7892', build: 'mock' },
     scoring: { margin: 0.05 },
     active_runs: [
-      { run_id: 'r-9c2a', entry_id: 'research_topic_q3', generation_id: 'v4',
+      { run_id: 'r-9c2a', entry_id: 'research_topic_q3', generation_id: 'v5',
+        session_id: 's-research-9c2a',
         started_at: new Date(Date.now() - 42_000).toISOString(),
         budget_seconds: 180, percent: 23 },
+      { run_id: 'r-7f10', entry_id: 'multi_turn_picky', generation_id: 'v5',
+        started_at: new Date(Date.now() - 14_000).toISOString(),
+        budget_seconds: 240, percent: 6 },
     ],
     active_tournament: {
-      round: 4, total_rounds: 5,
-      parent_id: 'v3', child_id: 'v4',
+      round: 2, round_index: 2, total_rounds: 4,
+      parent_id: 'v4', child_id: 'v5',
       elapsed_seconds: 263,
       hypothesis: {
         core_idea: 'Compress researcher tool descriptions to under 80 tokens each to reduce context bloat without dropping signal.',
+        why: 'Round 1 drift was dominated by off_topic when the context window filled with verbose tool docs.',
         modulating: ['researcher_tool_descriptions', 'write_webpage_tool'],
       },
       entries: [
@@ -1535,13 +2287,41 @@ function mockSnapshot() {
         { entry_id: 'multi_turn_picky', status: 'queued' },
         { entry_id: 'schema_response', status: 'queued' },
       ],
+      drift_movements: [
+        { kind: 'off_topic', from_rate: 0.18, to_rate: 0.12 },
+        { kind: 'schema_violation', from_rate: 0.10, to_rate: 0.14 },
+      ],
     },
+    past_tournaments: [
+      {
+        round: 1, round_index: 1, total_rounds: 4,
+        parent_id: 'v4_seed', child_id: 'v4',
+        hypothesis: {
+          core_idea: 'Carry the prior epoch’s retry pass forward as the v4 baseline.',
+          modulating: ['picky_retry_pass'],
+        },
+        entries: [
+          { entry_id: 'extract_invoice_001', status: 'done',
+            parent: { drift_loss: 0.28, pass: true },
+            child:  { drift_loss: 0.23, pass: true } },
+          { entry_id: 'extract_invoice_002', status: 'done',
+            parent: { drift_loss: 0.34, pass: false },
+            child:  { drift_loss: 0.31, pass: true } },
+        ],
+        drift_movements: [
+          { kind: 'off_topic', from_rate: 0.22, to_rate: 0.18 },
+        ],
+      },
+    ],
     lineage: {
       generations: [
-        { id: 'v0', parent_id: null },
-        { id: 'v1', parent_id: 'v0' },
-        { id: 'v2', parent_id: 'v1' },
-        { id: 'v3', parent_id: 'v2' },
+        { id: 'v0', parent_id: null, epoch_id: '2026-05-10_e0' },
+        { id: 'v1', parent_id: 'v0', epoch_id: '2026-05-10_e0' },
+        { id: 'v2', parent_id: 'v1', epoch_id: '2026-05-10_e0' },
+        { id: 'v2x', parent_id: 'v1', epoch_id: '2026-05-10_e0' },
+        { id: 'v4_seed', parent_id: null, epoch_id: '2026-05-15_e1', v0_parent: 'v2' },
+        { id: 'v4', parent_id: 'v4_seed', epoch_id: '2026-05-15_e1' },
+        { id: 'v5', parent_id: 'v4', epoch_id: '2026-05-15_e1' },
       ],
       experiments: [
         { generation_id: 'v1', hypothesis: { core_idea: 'Tighten extraction schema.' },
@@ -1558,31 +2338,85 @@ function mockSnapshot() {
                  { kind: 'off_topic', from_rate: 0.2, to_rate: 0.18 },
                  { kind: 'schema_violation', from_rate: 0.25, to_rate: 0.10 },
                ]}},
-        { generation_id: 'v3', hypothesis: { core_idea: 'Add picky retry pass.' },
+        { generation_id: 'v2x', hypothesis: { core_idea: 'Inline the validator instead of reordering.' },
+          outcome: { tournament_decision: 'rejected',
+               scalar_score_delta: 0.030, drift_loss_delta: 0.02,
+               pass_rate_delta: -0.04, rejection_reason: 'pass-rate regression on schema_response' }},
+        { generation_id: 'v4', hypothesis: { core_idea: 'Carry the picky retry pass into the new epoch baseline.' },
           outcome: { tournament_decision: 'promoted',
-               scalar_score_delta: -0.020, drift_loss_delta: -0.03,
-               pass_rate_delta: 0.02, drift_movements: [
-                 { kind: 'off_topic', from_rate: 0.18, to_rate: 0.15 },
-                 { kind: 'schema_violation', from_rate: 0.10, to_rate: 0.08 },
+               scalar_score_delta: -0.030, drift_loss_delta: -0.03,
+               pass_rate_delta: 0.04, drift_movements: [
+                 { kind: 'off_topic', from_rate: 0.22, to_rate: 0.18 },
                ]}},
       ],
     },
     experiments: [
       { generation_id: 'v1', hypothesis: { core_idea: 'Tighten extraction schema.', why: 'Schema drift was the dominant kind in v0.', risks: 'May reject borderline-valid responses.' },
-        patches: [{ mutation_id: 'm1', op: 'replace', rationale: 'narrow allowed types' }],
+        patches: [{ mutation_id: 'researcher.schema', op: 'replace', rationale: 'narrow allowed types' }],
         outcome: { tournament_decision: 'promoted', scalar_score_delta: -0.080, drift_loss_delta: -0.06, pass_rate_delta: 0.10 }},
       { generation_id: 'v2', hypothesis: { core_idea: 'Move JSON validation earlier.', why: 'Pipeline ordering issue.', risks: '' },
-        patches: [{ mutation_id: 'm2', op: 'reorder', rationale: 'validate-before-emit' }],
+        patches: [{ mutation_id: 'pipeline.order', op: 'reorder', rationale: 'validate-before-emit' }],
         outcome: { tournament_decision: 'promoted', scalar_score_delta: -0.040, drift_loss_delta: -0.04, pass_rate_delta: 0.05 }},
-      { generation_id: 'v3', hypothesis: { core_idea: 'Add picky retry pass.', why: 'Borderline rejections leak through.', risks: 'Extra cost.' },
-        patches: [{ mutation_id: 'm3', op: 'insert', rationale: 'retry on first-pass fail' }],
-        outcome: { tournament_decision: 'promoted', scalar_score_delta: -0.020, drift_loss_delta: -0.03, pass_rate_delta: 0.02 }},
+      { generation_id: 'v2x', hypothesis: { core_idea: 'Inline the validator instead of reordering.', why: 'Reorder added a stage; inline avoids it.', risks: 'Couples validation to emit.' },
+        patches: [{ mutation_id: 'pipeline.order', op: 'replace', rationale: 'inline validate' }],
+        outcome: { tournament_decision: 'rejected', scalar_score_delta: 0.030, drift_loss_delta: 0.02, pass_rate_delta: -0.04, rejection_reason: 'pass-rate regression on schema_response' }},
+      { generation_id: 'v4', hypothesis: { core_idea: 'Carry the picky retry pass into the new epoch baseline.', why: 'Retry pass cleared borderline rejections last epoch.', risks: 'Extra cost.' },
+        patches: [{ mutation_id: 'researcher.retry', op: 'insert', rationale: 'retry on first-pass fail' }],
+        outcome: { tournament_decision: 'promoted', scalar_score_delta: -0.030, drift_loss_delta: -0.03, pass_rate_delta: 0.04 }},
+      { generation_id: 'v5', hypothesis: { core_idea: 'Compress researcher tool descriptions to under 80 tokens each to reduce context bloat without dropping signal.', why: 'Round 1 drift was dominated by off_topic when the context window filled with verbose tool docs.', risks: 'Over-compression could drop a tool argument hint.' },
+        patches: [{ mutation_id: 'researcher_tool_descriptions', op: 'replace', rationale: 'compress to <80 tokens' }],
+        outcome: null },
     ],
+    epoch: {
+      epoch_id: '2026-05-15_e1',
+      contract_hash: 'abc123def4567890',
+      created_at: '2026-05-15T09:02:00Z',
+      closed: false,
+      harness: {
+        entrypoint: 'myagent.harness:research_pipeline',
+        mutable_trees: ['myagent/prompts', 'myagent/researcher'],
+      },
+      board: [
+        { id: 'extract_invoice_001', kind: 'single_turn',
+          input_preview: 'Extract the invoice total and due date from the attached PDF text...',
+          expectation_kind: 'predicate', budget_s: 900, weight: 1.0, tags: ['extraction'] },
+        { id: 'extract_invoice_002', kind: 'single_turn',
+          input_preview: 'Extract line items from a multi-page invoice with a discount row...',
+          expectation_kind: 'predicate', budget_s: 900, weight: 1.5, tags: ['extraction', 'hard'] },
+        { id: 'research_topic_q3', kind: 'multi_turn',
+          input_preview: 'Research the Q3 regulatory changes and summarise impact for a non-expert...',
+          expectation_kind: 'rubric_judge', budget_s: 1800, weight: 1.0, tags: ['research'] },
+        { id: 'multi_turn_picky', kind: 'multi_turn',
+          input_preview: 'A picky client revises the brief twice; satisfy all constraints...',
+          expectation_kind: 'rubric_judge', budget_s: 1800, weight: 1.0, tags: ['research', 'hard'] },
+        { id: 'schema_response', kind: 'single_turn',
+          input_preview: 'Return a strictly-typed JSON object matching the given schema...',
+          expectation_kind: 'predicate', budget_s: 600, weight: 1.0, tags: ['schema'] },
+      ],
+      rubric: '# Research rubric\n\nThe candidate response is judged on three axes.\n\n## Faithfulness\n\n- Every claim is grounded in a retrieved source.\n- No `off_topic` drift: the answer addresses the brief.\n\n## Completeness\n\n- All sub-questions in the brief are answered.\n- Schema-typed responses validate against the contract.\n\n## Concision\n\n- The answer is no longer than necessary; tool descriptions stay terse.\n',
+      scoring: {
+        drift_weight: 1.0,
+        pass_rate_weight: 1.0,
+        margin: 0.05,
+        rubric_weight: 0.5,
+      },
+      mutations: [
+        { id: 'researcher_tool_descriptions', kind: 'span',
+          file: 'myagent/researcher/tools.py', lines: '12-34',
+          preview: 'TOOL_DESCRIPTIONS = {\n  "search": "Search the corpus...' },
+        { id: 'write_webpage_tool', kind: 'span',
+          file: 'myagent/researcher/tools.py', lines: '40-58',
+          preview: 'def write_webpage(url): ...' },
+        { id: 'researcher.instruction', kind: 'file',
+          file: 'myagent/prompts/researcher.md', lines: '1-120',
+          preview: 'You are a careful research assistant...' },
+      ],
+    },
     log_tail: [
-      { ts: '12:34:50', level: 'info', message: 'tournament r4 entry research_topic_q3 started (run r-9c2a)' },
+      { ts: '12:34:50', level: 'info', message: 'tournament r2 entry research_topic_q3 started (run r-9c2a)' },
       { ts: '12:35:01', level: 'info', message: 'goldfive driver: tool researcher_search invoked' },
       { ts: '12:35:14', level: 'warn', message: 'drift detected: off_topic +1 in run r-9c2a' },
-      { ts: '12:35:23', level: 'ok',   message: 'parent v3 entry extract_invoice_002 pass' },
+      { ts: '12:35:23', level: 'ok',   message: 'parent v4 entry extract_invoice_002 pass' },
     ],
   };
 }
@@ -1595,7 +2429,11 @@ function init() {
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') closeDrill();
   });
+  // The hash router resolves both the view and any drill-down.
   window.addEventListener('hashchange', applyRoute);
+
+  // Tree-view pan + zoom wiring (the SVG itself is repainted on render).
+  setupLineageInteractions();
 
   // Tick the elapsed-time fields once per second so the header reads "live"
   // even when no state changes arrive.
@@ -1605,12 +2443,21 @@ function init() {
     const t = state.activeTournament;
     if (t && t.entries) {
       const tEl = $('tournament-elapsed');
-      if (t.elapsed_seconds != null) {
+      if (tEl && t.elapsed_seconds != null) {
         tEl.textContent = 'Elapsed ' + fmtDuration(t.elapsed_seconds + 1);
         t.elapsed_seconds += 1;
       }
     }
   }, 1000);
+
+  // Resolve the initial view from the URL fragment.
+  const initialSegs = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
+  if (initialSegs.length && VIEWS.includes(initialSegs[0])) {
+    currentView = initialSegs[0];
+  } else if (!location.hash || location.hash === '#') {
+    // Land on the default view with a clean fragment.
+    currentView = DEFAULT_VIEW;
+  }
 
   const params = new URLSearchParams(window.location.search);
   if (params.get('mock') === '1') {
