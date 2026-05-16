@@ -133,6 +133,7 @@ class HeartbeatBeater:
         phase: str | None = None,
         round_index: int | None = None,
         round_started_at: str | None = None,
+        harmonograf_url: str | None = None,
     ) -> None:
         """Update the in-memory heartbeat snapshot.
 
@@ -154,6 +155,8 @@ class HeartbeatBeater:
             snapshot = replace(snapshot, round_index=round_index)
         if round_started_at is not None:
             snapshot = replace(snapshot, round_started_at=round_started_at)
+        if harmonograf_url is not None:
+            snapshot = replace(snapshot, harmonograf_url=harmonograf_url)
         self._snapshot = snapshot
 
     def bump_now(self) -> None:

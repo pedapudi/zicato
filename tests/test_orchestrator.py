@@ -488,3 +488,46 @@ def test_evolve_once_dumps_mutations_json(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert isinstance(point["content_hash"], str)
     # No leftover .tmp file from the atomic write.
     assert not snapshot_path.with_name(snapshot_path.name + ".tmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat metadata populated during a round
+# ---------------------------------------------------------------------------
+
+
+def test_evolve_n_rounds_populates_heartbeat_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The heartbeat carries the real epoch / generation / round during a round."""
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_n_rounds
+    from zicato.runtime.state import read_heartbeat
+
+    outcomes = asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            instance_id="hb-meta",
+        )
+    )
+    assert len(outcomes) == 1
+
+    hb = read_heartbeat(workspace)
+    assert hb is not None
+    # Real coordinates, not empty strings.
+    assert hb.epoch_id == epoch_id
+    assert hb.generation_id == "v1"
+    assert hb.round_index == 0
+    assert hb.phase  # descriptive, non-empty
+    # The harmonograf_url field round-trips (empty when unconfigured).
+    assert hb.harmonograf_url == ""

@@ -537,8 +537,18 @@ async def run_tournament(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    round_index: int = 0,
+    total_rounds: int = 0,
 ) -> TournamentResult:
-    """Run a full A/B tournament. See module docstring."""
+    """Run a full A/B tournament. See module docstring.
+
+    ``round_index`` / ``total_rounds`` are threaded through from the
+    orchestrator's evolve loop purely so the published
+    :class:`~zicato.runtime.state.ActiveTournament` can tell the
+    dashboard "round N of M". They default to ``0`` for callers (older
+    tests, ad-hoc invocations) that do not run inside the multi-round
+    loop; the runner's behaviour does not otherwise depend on them.
+    """
     # Defense-in-depth: the runner re-checks the two-callable invariant.
     # The check happens here (and not just at config construction) so a
     # caller who hand-built a RuntimeConfig can't slip a colluding pair
@@ -571,6 +581,8 @@ async def run_tournament(
                     started_at=now,
                     entries=entries,
                     phase="running",
+                    round_index=round_index,
+                    total_rounds=total_rounds,
                 ),
             )
         except Exception:  # noqa: BLE001
