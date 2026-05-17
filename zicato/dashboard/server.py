@@ -24,6 +24,7 @@ Public surface:
 from __future__ import annotations
 
 import contextlib
+import json
 import socket
 import time
 from collections.abc import AsyncIterator
@@ -229,6 +230,37 @@ def _pick_port(host: str, preferred_port: int, max_retries: int = 10) -> int:
     raise last_err or OSError("no port available")
 
 
+def _publish_endpoint(workspace_root: Path, host: str, bound_port: int) -> None:
+    """Record the host/port the dashboard actually bound to.
+
+    Written to ``runtime/dashboard.json`` so ``zicato evolve`` — which
+    spawns this service as a subprocess and cannot otherwise know which
+    port the ``+1`` walk settled on — can read the real URL back rather
+    than assuming it equals the preferred port. Best-effort: a failure
+    to write must not stop the dashboard from serving, so the operator
+    still gets a working UI even if the convenience file is missing.
+    """
+    try:
+        from zicato.runtime.paths import (  # noqa: PLC0415
+            dashboard_endpoint_path,
+            ensure_runtime_dirs,
+        )
+
+        root = Path(workspace_root)
+        # ``run`` is called with the .zicato directory itself; accept a
+        # project root containing one too, matching create_app's lenient
+        # resolution.
+        if root.name != ".zicato" and (root / ".zicato").is_dir():
+            root = root / ".zicato"
+        ensure_runtime_dirs(root)
+        dashboard_endpoint_path(root).write_text(
+            json.dumps({"host": host, "port": bound_port}) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001 — the endpoint file is a convenience
+        return
+
+
 def run(
     workspace_root: Path,
     host: str,
@@ -241,11 +273,17 @@ def run(
     already in use (mirroring the supervisor's behavior). The dashboard
     runs read-only when served standalone — the control POST endpoints
     are enabled by ``create_app(..., read_only=False)``.
+
+    The host/port actually bound is recorded to ``runtime/dashboard.json``
+    (see :func:`_publish_endpoint`) so a parent ``zicato evolve`` can
+    report the dashboard's real URL.
     """
     import uvicorn
 
     bound_port = _pick_port(host, port)
     app = create_app(workspace_root, static_dir, read_only=False)
     app.state.bound_port = bound_port
+
+    _publish_endpoint(workspace_root, host, bound_port)
 
     uvicorn.run(app, host=host, port=bound_port, log_level="info")

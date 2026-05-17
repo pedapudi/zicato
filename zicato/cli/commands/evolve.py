@@ -20,7 +20,10 @@ Each invocation:
 3. **Runs the loop** for ``--rounds`` rounds. Each round proposes one
    experiment, applies it, runs the tournament, and either promotes or
    rejects the child generation.
-4. **Launches the dashboard** and prints its URL.
+4. **Launches the dashboard** and prints its URL. The dashboard service
+   and the watchdog-only supervisor bind distinct default ports so they
+   never contend; the reported URL is the dashboard's *actually-bound*
+   port, read back from ``runtime/dashboard.json`` rather than assumed.
 
 See :mod:`zicato.orchestrator` for the loop implementation.
 
@@ -170,6 +173,19 @@ def _dashboard_spawn_argv(workspace_root: Path, host: str, port: int) -> list[st
     ]
 
 
+#: Dashboard bind host. The operator views the dashboard from the same
+#: host as the evolve loop, so loopback is correct — there is no
+#: ``--dashboard-bind`` flag.
+_DASHBOARD_HOST = "127.0.0.1"
+
+
+def _dashboard_endpoint_file(workspace_root: Path) -> Path:
+    """Path the dashboard service writes its actually-bound host/port to."""
+    from zicato.runtime.paths import dashboard_endpoint_path  # noqa: PLC0415
+
+    return dashboard_endpoint_path(workspace_root)
+
+
 async def _maybe_spawn_dashboard(
     workspace_root: Path,
     port: int,
@@ -182,14 +198,30 @@ async def _maybe_spawn_dashboard(
     ``127.0.0.1`` because the operator views it from the same host as
     the evolve loop.
 
+    ``port`` is the *preferred* port; the dashboard walks ``+1`` from it
+    if it is taken, so the port it ends up serving on is read back from
+    ``runtime/dashboard.json`` (see :func:`_report_dashboard_url`). Any
+    stale endpoint file from a previous run is removed here, before the
+    spawn, so the readback cannot observe a leftover port.
+
     On failure-to-spawn the function returns ``None`` and prints a
     warning — ``evolve`` continues without a dashboard rather than
-    refusing to run, exactly like the supervisor helper.
+    refusing to run, exactly like the supervisor helper. The dashboard's
+    URL is NOT printed here; :func:`_report_dashboard_url` prints it once
+    the real bound port is known.
     """
     if disabled:
         return None
-    host = "127.0.0.1"
-    argv = _dashboard_spawn_argv(workspace_root, host, port)
+    # Drop a stale endpoint file so the post-spawn readback only ever
+    # sees this run's dashboard.
+    endpoint_file = _dashboard_endpoint_file(workspace_root)
+    try:
+        endpoint_file.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+    argv = _dashboard_spawn_argv(workspace_root, _DASHBOARD_HOST, port)
     try:
         proc = await asyncio.create_subprocess_exec(*argv)
     except (OSError, FileNotFoundError) as exc:
@@ -198,8 +230,77 @@ async def _maybe_spawn_dashboard(
             err=True,
         )
         return None
-    click.echo(f"Dashboard: http://{host}:{port}")
     return proc
+
+
+async def _report_dashboard_url(
+    workspace_root: Path,
+    preferred_port: int,
+    proc: asyncio.subprocess.Process | None,
+    *,
+    timeout_seconds: float = 10.0,
+) -> None:
+    """Print the dashboard's real URL, reading the bound port back.
+
+    The dashboard service writes the host/port it actually bound to
+    ``runtime/dashboard.json`` once its listener is up. evolve cannot
+    know that port up front — the dashboard walks ``+1`` when the
+    preferred port is taken — so this polls for that file and reports
+    the URL it names.
+
+    If ``proc`` is ``None`` (the dashboard failed to spawn) nothing is
+    printed. If the endpoint file never appears within ``timeout_seconds``
+    (a slow or wedged start) we fall back to the preferred port with a
+    note that it is unconfirmed, so the operator still gets a best-guess
+    link rather than silence.
+    """
+    if proc is None:
+        return
+    endpoint_file = _dashboard_endpoint_file(workspace_root)
+    deadline = asyncio.get_event_loop().time() + timeout_seconds
+    while asyncio.get_event_loop().time() < deadline:
+        # If the dashboard process died, stop waiting — no URL to report.
+        if proc.returncode is not None:
+            click.echo(
+                "warning: the dashboard service exited before binding a port",
+                err=True,
+            )
+            return
+        host, bound = _read_dashboard_endpoint(endpoint_file)
+        if bound is not None:
+            click.echo(f"Dashboard: http://{host}:{bound}")
+            return
+        await asyncio.sleep(0.1)
+    # Timed out waiting for the endpoint file. Report a best-guess URL
+    # rather than nothing, but make the uncertainty explicit.
+    click.echo(
+        f"Dashboard: http://{_DASHBOARD_HOST}:{preferred_port} "
+        "(port unconfirmed — the dashboard did not report its bound port in time)"
+    )
+
+
+def _read_dashboard_endpoint(endpoint_file: Path) -> tuple[str, int | None]:
+    """Read ``runtime/dashboard.json``; return ``(host, port-or-None)``.
+
+    Returns ``(_DASHBOARD_HOST, None)`` when the file is absent, empty,
+    mid-write (unparseable), or missing a port — every one of which the
+    caller treats as "not ready yet" and keeps polling.
+    """
+    try:
+        raw = endpoint_file.read_text(encoding="utf-8")
+    except OSError:
+        return _DASHBOARD_HOST, None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return _DASHBOARD_HOST, None
+    if not isinstance(payload, dict):
+        return _DASHBOARD_HOST, None
+    port = payload.get("port")
+    host = payload.get("host") or _DASHBOARD_HOST
+    if not isinstance(port, int):
+        return str(host), None
+    return str(host), port
 
 
 async def _terminate_child(proc: asyncio.subprocess.Process | None) -> None:
@@ -423,6 +524,12 @@ def evolve_cmd(
         # --no-dashboard); the dashboard UI is served by the separate
         # Python dashboard service. Both are children of this evolve
         # process and both are torn down on exit.
+        #
+        # The two bind distinct default ports (the watchdog supervisor
+        # on its own default, the dashboard on --dashboard-port) so
+        # neither walks onto the other's port. The dashboard's URL is
+        # reported only after reading the port it actually bound back
+        # from runtime/dashboard.json — never assumed.
         sup = await _maybe_spawn_supervisor(
             workspace_root,
             disabled=no_dashboard,
@@ -432,6 +539,7 @@ def evolve_cmd(
             dashboard_port,
             disabled=no_dashboard,
         )
+        await _report_dashboard_url(workspace_root, dashboard_port, dash)
         try:
             return await evolve_n_rounds(
                 rounds=rounds,
