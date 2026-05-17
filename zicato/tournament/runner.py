@@ -13,10 +13,31 @@ Two entry points:
   every run is fully isolated: each board-entry run executes in its
   OWN subprocess worker (see below) writing to a per-run
   ``active_runs/{run_id}.json`` + ``events.jsonl`` + ``loss.json``,
-  keyed on a unique ``run_id`` of ``{generation_id}--{entry_id}``. The
-  generation's source snapshot is shared but only ever READ. Set
+  keyed on a unique ``run_id`` of ``{generation_id}--{entry_id}``. Set
   ``parallelism=1`` to recover the original strictly-sequential,
   one-entry-at-a-time behaviour.
+
+Per-run ephemeral working copies
+--------------------------------
+The canonical generation snapshot
+(``epochs/{id}/generations/vN/snapshot/``) is treated as **immutable
+code**: it is the tree ``derive_generation`` copies forward to seed the
+next generation, so anything written into it accumulates across every
+generation and would eventually exhaust the disk. A target agent,
+however, may legitimately write near its own code — runtime ``output/``,
+scratch files, caches — and a meta-harness must be robust to that. So
+:func:`_run_single` never points a worker at the canonical snapshot
+directly. Instead it makes a per-run **ephemeral working copy** of the
+snapshot (a cheap, KB-sized ``copytree`` — code snapshots are small),
+points the worker at THAT copy, and discards it once the run finishes —
+on a clean exit, an abort, or a crash. Every runtime write the agent
+makes therefore lands in the throwaway per-run directory; the canonical
+snapshot stays code-only and small and ``derive_generation``'s
+``copytree`` stays cheap. The run's telemetry (``events.jsonl`` /
+``loss.json``) is unaffected — it is keyed on the workspace's
+``runs/{entry_id}/`` layout, not on the working copy. This is the same
+isolation a per-run ``git worktree`` would later give for free; a
+code-only ``copytree`` per run is the correct interim mechanism.
 
 * :func:`run_fast_mode` — autoresearch-style inline keep/discard.
   Only the child is run; comparison is against a previously-computed
@@ -70,6 +91,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -378,6 +400,66 @@ _PARENT_BUDGET_GRACE_S: float = 30.0
 #: Matches the supervisor's two-stage escalation grace.
 _SIGTERM_TO_SIGKILL_GRACE_S: float = 5.0
 
+#: Filename prefix for a run's ephemeral snapshot working copy. The copy
+#: lives in the system temp dir (``tempfile.mkdtemp``) so it never sits
+#: inside the workspace tree — nothing under it can be mistaken for a
+#: canonical generation snapshot, and it is removed when the run ends.
+_EPHEMERAL_SNAPSHOT_PREFIX = "ztw-snap-"
+
+
+def _make_ephemeral_snapshot(snapshot_root: Path, run_id: str) -> Path:
+    """Copy a generation's code snapshot into a fresh per-run working dir.
+
+    The worker is pointed at the returned path, NOT at ``snapshot_root``
+    itself, so any runtime write the target agent makes near its own code
+    (an ``output/`` directory, scratch files, a cache) lands in this
+    throwaway copy instead of polluting the canonical generation
+    snapshot. The canonical snapshot must stay code-only: it is the tree
+    :meth:`zicato.epoch.genstore.DirectoryGenerationStore.derive_generation`
+    copies forward to seed every subsequent generation, so any pollution
+    there accumulates without bound.
+
+    The copy is a plain :func:`shutil.copytree` — code snapshots are
+    KB-sized, so a copy per run (even under ``parallelism``) is cheap.
+    The destination is created under :func:`tempfile.mkdtemp` with the
+    OS temp dir as its parent, deliberately OUTSIDE the workspace tree:
+    a stray directory under ``epochs/.../generations/`` could be mistaken
+    for a real generation, and an ephemeral copy never should be.
+
+    The caller owns cleanup — see :func:`_discard_ephemeral_snapshot`,
+    which :func:`_run_single` invokes from its ``finally`` block so the
+    copy is removed even when the run aborts or crashes.
+
+    Returns the path the worker should mount as the inner harness's
+    source root.
+    """
+    parent = Path(tempfile.mkdtemp(prefix=f"{_EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-"))
+    # Copy *into* a child of the mkdtemp dir, keeping the snapshot's own
+    # basename so any path the agent derives from ``__file__`` looks the
+    # same as it would under the canonical snapshot.
+    working_copy = parent / Path(snapshot_root).name
+    shutil.copytree(snapshot_root, working_copy)
+    return working_copy
+
+
+def _discard_ephemeral_snapshot(working_copy: Path | None) -> None:
+    """Remove a per-run ephemeral snapshot working copy and its temp parent.
+
+    Best-effort: a cleanup failure must never turn a finished run into a
+    crash. Removes the whole :func:`tempfile.mkdtemp` directory (the
+    working copy's parent), not just the working copy, so no empty temp
+    directory is left behind. ``None`` — the run never got as far as
+    making a copy — is a no-op.
+    """
+    if working_copy is None:
+        return
+    # The mkdtemp dir is the working copy's parent; remove the whole thing.
+    temp_root = working_copy.parent
+    try:
+        shutil.rmtree(temp_root, ignore_errors=True)
+    except OSError as exc:  # noqa: BLE001 — ignore_errors already swallows most
+        log.debug("ephemeral snapshot cleanup skipped for %s: %s", temp_root, exc)
+
 
 def _callable_dotted_path(fn: Any) -> str:
     """Return a re-importable ``module:qualname`` dotted path for ``fn``.
@@ -664,27 +746,35 @@ async def _run_single(
 
     Sequencing:
 
-    1. Serialise the run's inputs (entry, adapter spec, call_llm dotted
-       paths, scoring weights, sink/loss/result paths) to a temp args
-       file.
-    2. Spawn ``python -m zicato._tournament_worker <args-file>`` via
+    1. Make a per-run **ephemeral working copy** of the generation's
+       code snapshot (a cheap ``copytree`` into a system-temp directory)
+       and point the worker at THAT, never at the canonical
+       ``generations/vN/snapshot/``. Any runtime write the agent makes
+       near its own code lands in the throwaway copy, so the canonical
+       snapshot stays code-only and ``derive_generation`` does not carry
+       runtime output forward. See :func:`_make_ephemeral_snapshot`.
+    2. Serialise the run's inputs (entry, adapter spec, call_llm dotted
+       paths, scoring weights, sink/loss/result paths, and the ephemeral
+       ``snapshot_root``) to a temp args file.
+    3. Spawn ``python -m zicato._tournament_worker <args-file>`` via
        :func:`asyncio.create_subprocess_exec`. The worker stamps its OWN
        pid into ``active_runs/{run_id}.json`` so the supervisor can kill
        it individually.
-    3. ``await asyncio.wait_for(proc.wait(), budget + GRACE)``. The
+    4. ``await asyncio.wait_for(proc.wait(), budget + GRACE)``. The
        worker's own cooperative budget normally fires first; the parent's
        wait_for is the second line of defence.
-    4. On parent timeout: SIGTERM -> (grace) -> SIGKILL the worker, then
+    5. On parent timeout: SIGTERM -> (grace) -> SIGKILL the worker, then
        synthesise an aborted :class:`LossProfile`.
-    5. On clean exit: read the worker's result file -> the
+    6. On clean exit: read the worker's result file -> the
        :class:`LossProfile` written to ``loss.json``. A worker that
        exited non-zero, OR a missing/corrupt result file (e.g. the
        SUPERVISOR SIGKILLed a wedged worker), is ALSO an aborted run —
        not a crash. The tournament continues to the next entry either
        way.
-    6. Always clean up the temp args/result files and — if the worker
-       was killed and could not remove its own ``active_runs`` file —
-       remove that too.
+    7. Always clean up: the ephemeral snapshot working copy (even when
+       the run aborted or crashed), the temp args/result files, and — if
+       the worker was killed and could not remove its own ``active_runs``
+       file — that too.
     """
     sink_module, reducer_module = _telemetry_helpers()
     sink_path = sink_module.make_run_sink_path(
@@ -717,20 +807,30 @@ async def _run_single(
         except Exception:  # noqa: BLE001 — state writes are best-effort
             pass
 
-    # --- 1. Serialise the run's inputs to a temp args file. ---
+    # --- 1./2. Serialise the run's inputs to a temp args file. ---
     args_fd, args_name = tempfile.mkstemp(prefix=f"ztw-args-{run_id}-", suffix=".json")
     os.close(args_fd)
     args_path = Path(args_name)
     result_path = Path(args_name[: -len(".json")] + ".result.json")
     spawn_started = time.monotonic()
+    # The per-run ephemeral snapshot working copy; assigned once the
+    # copytree below succeeds, discarded in this function's ``finally``.
+    ephemeral_snapshot: Path | None = None
 
     try:
         try:
+            # --- 1. Per-run ephemeral working copy of the code
+            # snapshot. The worker is pointed at this copy, never at the
+            # canonical ``generations/vN/snapshot/``, so any runtime
+            # write the agent makes near its own code lands here and is
+            # discarded with the copy — the canonical snapshot stays
+            # code-only and small.
+            ephemeral_snapshot = _make_ephemeral_snapshot(generation.snapshot_root, run_id)
             args_payload = {
                 "workspace_root": str(workspace_root),
                 "epoch_id": epoch_id,
                 "generation_id": generation.id,
-                "snapshot_root": str(generation.snapshot_root),
+                "snapshot_root": str(ephemeral_snapshot),
                 "entry": _entry_to_dict(entry),
                 "adapter": _adapter_spec(adapter),
                 "harness_call_llm": _callable_dotted_path(config.harness_call_llm),
@@ -744,12 +844,14 @@ async def _run_single(
                 "weights": _weights_spec(weights),
             }
             args_path.write_text(json.dumps(args_payload), encoding="utf-8")
-        except ValueError as exc:
-            # The run could not even be serialised for a subprocess (a
-            # closure-local callable, a non-ADK adapter). Treat as an
-            # aborted run so the tournament still aggregates, rather than
-            # taking the whole evolve down.
-            log.warning("run %s not subprocess-serialisable: %s", run_id, exc)
+        except (ValueError, OSError) as exc:
+            # The run could not be prepared for a subprocess: either it
+            # was not subprocess-serialisable (a closure-local callable,
+            # a non-ADK adapter -> ValueError) or the ephemeral snapshot
+            # copy failed (disk full, source snapshot missing -> OSError).
+            # Treat as an aborted run so the tournament still aggregates,
+            # rather than taking the whole evolve down.
+            log.warning("run %s could not be prepared for a subprocess: %s", run_id, exc)
             return _aborted_loss_profile(
                 run_id=run_id,
                 entry=entry,
@@ -759,7 +861,7 @@ async def _run_single(
                 runtime_ms=0,
             )
 
-        # --- 2. Spawn the worker subprocess. ---
+        # --- 3. Spawn the worker subprocess. ---
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
@@ -767,7 +869,7 @@ async def _run_single(
             str(args_path),
         )
 
-        # --- 3. Wait, bounded by budget + GRACE. ---
+        # --- 4. Wait, bounded by budget + GRACE. ---
         killed_by_parent = False
         try:
             await asyncio.wait_for(
@@ -775,7 +877,7 @@ async def _run_single(
                 timeout=budget_s + _PARENT_BUDGET_GRACE_S,
             )
         except TimeoutError:
-            # --- 4. The worker's own cooperative budget did NOT fire.
+            # --- 5. The worker's own cooperative budget did NOT fire.
             # Escalate SIGTERM -> SIGKILL ourselves.
             killed_by_parent = True
             log.warning(
@@ -817,7 +919,7 @@ async def _run_single(
                 runtime_ms=runtime_ms,
             )
 
-        # --- 5. Clean exit. Read the LossProfile the worker wrote. ---
+        # --- 6. Clean exit. Read the LossProfile the worker wrote. ---
         # The worker may itself have aborted via its OWN cooperative
         # budget — that is still a clean worker exit (exit code 0, result
         # file present) and the loss.json it wrote already carries
@@ -843,9 +945,13 @@ async def _run_single(
         _ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
         return loss
     finally:
-        # --- 6. Cleanup. Remove the temp args/result files; if the
-        # worker was killed before it could remove its own active_runs
-        # file, the parent removes it here.
+        # --- 7. Cleanup. Discard the per-run ephemeral snapshot working
+        # copy (every runtime write the agent made is inside it — it
+        # must not survive the run); remove the temp args/result files;
+        # if the worker was killed before it could remove its own
+        # active_runs file, the parent removes it here. This block runs
+        # on every exit path — clean finish, abort, or crash.
+        _discard_ephemeral_snapshot(ephemeral_snapshot)
         for tmp in (args_path, result_path):
             try:
                 if tmp.exists():
