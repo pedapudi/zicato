@@ -31,6 +31,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -39,6 +40,7 @@ import pytest
 import zicato.tournament.runner as runner_mod
 from tests._subprocess_worker_support import (
     SleepingAdapter,
+    SnapshotWritingAdapter,
     StubAdapter,
     auxiliary_call_llm,
     harness_call_llm,
@@ -287,6 +289,13 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     assert elapsed < 30.0
     # The parent cleaned up the worker's active_runs file.
     assert not active_run_path(workspace, f"{generation.id}--{entry.id}").exists()
+    # The per-run ephemeral snapshot working copy is discarded even on
+    # the abort path — _run_single's finally block runs unconditionally.
+    run_id = f"{generation.id}--{entry.id}"
+    leaked = list(
+        Path(tempfile.gettempdir()).glob(f"{runner_mod._EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-*")
+    )
+    assert not leaked, f"ephemeral snapshot not cleaned up after abort: {leaked}"
 
 
 def test_tournament_continues_after_a_budget_killed_run(
@@ -477,3 +486,121 @@ def test_worker_cooperative_budget_produces_clean_aborted_result(
 
     loss = read_loss_profile(Path(result["loss_profile_path"]))
     assert loss.wall_clock_budget_exceeded is True
+
+
+# ---------------------------------------------------------------------------
+# 6. Snapshot isolation — a run that writes near its own code does NOT
+#    pollute the canonical generation snapshot.
+# ---------------------------------------------------------------------------
+
+
+def _hash_tree(root: Path) -> str:
+    """Return a byte-level digest of a directory tree (paths + file bytes).
+
+    Walks ``root`` deterministically (sorted) and folds every relative
+    path and every file's bytes into a single SHA-256 digest. Two trees
+    with the same digest are byte-identical in both structure and
+    content — the assertion the snapshot-pollution test needs.
+    """
+    import hashlib  # noqa: PLC0415
+
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        digest.update(rel.encode("utf-8"))
+        if path.is_file():
+            digest.update(b"\0F\0")
+            digest.update(path.read_bytes())
+        else:
+            digest.update(b"\0D\0")
+    return digest.hexdigest()
+
+
+def _canonical_snapshot(workspace: Path, epoch_id: str, gen_id: str) -> Path:
+    """Return (and create) a canonical ``generations/{id}/snapshot/`` dir.
+
+    Lays the snapshot down at exactly the workspace path
+    :class:`~zicato.epoch.genstore.DirectoryGenerationStore` resolves —
+    ``epochs/{epoch}/generations/{gen}/snapshot/`` — with a tiny stub
+    ``agent/agent.py`` so the tree is code-only to begin with.
+    """
+    snap = workspace / "epochs" / epoch_id / "generations" / gen_id / "snapshot"
+    (snap / "agent").mkdir(parents=True, exist_ok=True)
+    (snap / "agent" / "agent.py").write_text("# stub agent module — code only\n", encoding="utf-8")
+    return snap
+
+
+def test_run_does_not_pollute_canonical_generation_snapshot(tmp_path: Path) -> None:
+    """A board-entry run whose agent writes ``output/`` near its own code does
+    NOT mutate the canonical generation snapshot.
+
+    The :class:`SnapshotWritingAdapter`'s session writes a runtime
+    artifact under the snapshot root it is loaded from — exactly what the
+    target-1 presentation agent's ``write_webpage`` tool does. ``_run_single``
+    must execute that run against a per-run EPHEMERAL working copy, so:
+
+    * the canonical ``generations/{id}/snapshot/`` tree is byte-identical
+      before and after the run (zero pollution), and
+    * a subsequent ``derive_generation`` copies a code-only snapshot
+      forward — the runtime ``output/`` directory never appears in the
+      child generation.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    epoch_id = "e0"
+
+    snap = _canonical_snapshot(workspace, epoch_id, "v0")
+    generation = Generation(
+        id="v0",
+        epoch_id=epoch_id,
+        parent_id=None,
+        snapshot_root=snap,
+        created_at="2026-05-15T00:00:00Z",
+    )
+    entry = _entry(budget_s=60)
+
+    # Digest the canonical snapshot BEFORE the run.
+    before = _hash_tree(snap)
+
+    loss = asyncio.run(
+        _run_single(
+            adapter=SnapshotWritingAdapter(),
+            generation=generation,
+            entry=entry,
+            weights=ScoringWeights(),
+            config=_config(workspace),
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            side="parent",
+        )
+    )
+    # The run itself completed and produced a loss profile.
+    assert isinstance(loss, LossProfile)
+    assert loss.entry_id == entry.id
+
+    # Zero pollution: the canonical snapshot is byte-identical, and the
+    # runtime ``output/`` directory the agent wrote is NOT in it.
+    assert _hash_tree(snap) == before, "canonical snapshot was mutated by the run"
+    assert not (
+        snap / "agent" / "output"
+    ).exists(), "runtime output/ leaked into the canonical generation snapshot"
+
+    # No ephemeral working copy for THIS run was left behind in the
+    # system temp dir — _run_single's finally block discards it. The
+    # glob is scoped to this run's run_id so a concurrent test's temp
+    # dir cannot cause a false failure.
+    run_id = f"{generation.id}--{entry.id}"
+    leaked = list(
+        Path(tempfile.gettempdir()).glob(f"{runner_mod._EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-*")
+    )
+    assert not leaked, f"ephemeral snapshot working copies were not cleaned up: {leaked}"
+
+    # A subsequent derive_generation carries a code-only snapshot forward.
+    from zicato.epoch.genstore import DirectoryGenerationStore  # noqa: PLC0415
+
+    store = DirectoryGenerationStore(workspace)
+    child_root = store.derive_generation(epoch_id, "v0", "v1", patches=[])
+    assert (child_root / "agent" / "agent.py").is_file()
+    assert not (
+        child_root / "agent" / "output"
+    ).exists(), "derive_generation carried runtime output/ forward into the child generation"

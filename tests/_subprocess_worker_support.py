@@ -47,6 +47,59 @@ class _StubSession:
         sink_path.write_text("", encoding="utf-8")
 
 
+class _SnapshotWritingSession:
+    """A session that writes runtime output INTO the snapshot it loaded from.
+
+    Mimics a real target agent (e.g. the target-1 presentation agent's
+    ``write_webpage`` tool) that writes near its own code — here, into an
+    ``output/`` directory under the generation source root it was handed.
+    The L3 isolation fix exists precisely so this write lands in a
+    discarded per-run working copy, NOT in the canonical generation
+    snapshot. The session also writes the events JSONL so the reducer
+    has a file to read (the legacy ``run(entry, sink_path)`` shape).
+    """
+
+    def __init__(self, generation_root: Path) -> None:
+        self._generation_root = Path(generation_root)
+
+    async def run(self, entry: Any, sink_path: Path) -> None:
+        del entry
+        # The pollution: write a runtime artifact under the snapshot root
+        # the worker mounted — exactly what the presentation agent's
+        # ``write_webpage`` does with ``os.path.dirname(__file__)/output``.
+        output_dir = self._generation_root / "output" / "demo_topic"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "index.html").write_text("<html>runtime artifact</html>", encoding="utf-8")
+        sink_path.parent.mkdir(parents=True, exist_ok=True)
+        sink_path.write_text("", encoding="utf-8")
+
+
+class SnapshotWritingAdapter:
+    """Adapter whose session writes runtime output into the loaded snapshot.
+
+    ``load`` captures the ``generation_root`` it is handed and passes it
+    to the session, so the session's write targets exactly the directory
+    the worker was pointed at. Used by the snapshot-pollution test to
+    prove that directory is a discardable per-run copy, never the
+    canonical generation snapshot.
+    """
+
+    name = "stub"
+
+    def load(self, generation_root: Path) -> _SnapshotWritingSession:
+        return _SnapshotWritingSession(generation_root)
+
+    def mutation_points(self, source_roots: Any = None) -> list[Any]:
+        del source_roots
+        return []
+
+    def worker_spec(self) -> dict[str, Any]:
+        return {
+            "kind": "import",
+            "factory": "tests._subprocess_worker_support:make_snapshot_writing_adapter",
+        }
+
+
 class _SleepingSession:
     """A session whose ``run`` blocks the event loop far past any budget.
 
@@ -146,6 +199,11 @@ class SleepingAdapter:
 def make_stub_adapter() -> StubAdapter:
     """Factory used by the ``import`` adapter spec for the happy path."""
     return StubAdapter()
+
+
+def make_snapshot_writing_adapter() -> SnapshotWritingAdapter:
+    """Factory for the snapshot-pollution test's snapshot-writing adapter."""
+    return SnapshotWritingAdapter()
 
 
 def make_sleeping_adapter() -> SleepingAdapter:

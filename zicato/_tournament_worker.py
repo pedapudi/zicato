@@ -21,8 +21,12 @@ shape). The worker:
 1. writes ``active_runs/{run_id}.json`` with ``pid = os.getpid()`` — its
    OWN pid, the key difference from the old in-process model where the
    orchestrator stamped its own pid;
-2. loads the harness from the generation snapshot and drives the one
-   entry under goldfive (mirroring the runner's old ``_drive_session``);
+2. loads the harness from the ``snapshot_root`` it was handed — a per-run
+   ephemeral working copy of the generation's code snapshot, NOT the
+   canonical ``generations/vN/snapshot/`` (the parent makes the copy so
+   any runtime write the agent does near its own code cannot pollute the
+   canonical snapshot) — and drives the one entry under goldfive
+   (mirroring the runner's old ``_drive_session``);
 3. computes the :class:`~zicato.core.LossProfile` via
    :func:`zicato.telemetry.reducer.reduce_loss` and writes ``loss.json``;
 4. writes a result file (the :class:`~zicato.core.RunResult` plus the
@@ -122,7 +126,7 @@ def _load_args(args_path: Path) -> dict[str, Any]:
           "workspace_root": "<abs path to .zicato dir>",
           "epoch_id": "<epoch id>",
           "generation_id": "<generation id>",
-          "snapshot_root": "<abs path to the generation source snapshot>",
+          "snapshot_root": "<abs path to a per-run code-snapshot working copy>",
           "entry": { ...BoardEntry as a dict (validate_board_entry shape)... },
           "adapter": {
             "kind": "adk",
