@@ -156,11 +156,12 @@ async def test_inline_judge_fires_on_violating_reasoning() -> None:
     verdict = await judge.evaluate(ctx)
 
     assert verdict.drift_emitted is True
-    # CUSTOM drift kind, as a lowercase wire string (not an enum).
+    # CUSTOM drift kind — goldfive's JudgeVerdict normalises it to the
+    # DriftKind enum (a StrEnum, so it still equals the "custom" wire token).
     assert verdict.drift_kind == str(goldfive.DriftKind.CUSTOM)
     assert verdict.drift_kind == "custom"
-    assert not isinstance(verdict.drift_kind, goldfive.DriftKind)
-    # severity is the spec's severity, as a wire string.
+    assert isinstance(verdict.drift_kind, goldfive.DriftKind)
+    # severity is the spec's severity, likewise normalised to the enum.
     assert verdict.severity == "warning"
     # detail is "<criterion>: <one-line reason>".
     assert verdict.detail.startswith(spec.body)
@@ -257,11 +258,11 @@ async def test_python_judge_class_target_loads_and_runs() -> None:
 
     verdict = await judge.evaluate(JudgeContext(reasoning_text="this is DANGER territory"))
     assert verdict.drift_emitted is True
-    # the target returned ENUM drift fields; the wrapper normalised them
-    # to wire strings.
+    # goldfive's JudgeVerdict normalises drift fields to the DriftKind /
+    # DriftSeverity enums (StrEnums — still equal to their wire tokens).
     assert verdict.drift_kind == "custom"
     assert isinstance(verdict.drift_kind, str)
-    assert not isinstance(verdict.drift_kind, goldfive.DriftKind)
+    assert isinstance(verdict.drift_kind, goldfive.DriftKind)
     assert verdict.severity == "critical"
     assert isinstance(verdict.severity, str)
     assert verdict.detail == "python judge tripped"
