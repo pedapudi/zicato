@@ -486,8 +486,18 @@ def _entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
         out["expectation"] = {
             "kind": entry.expectation.kind,
             "spec": entry.expectation.spec,
-            "fires_on": entry.expectation.fires_on,
+            "reads": entry.expectation.reads,
         }
+    if entry.judges:
+        out["judges"] = [
+            {
+                "name": j.name,
+                "mode": j.mode.value if hasattr(j.mode, "value") else j.mode,
+                "body": j.body,
+                "severity": (j.severity.value if hasattr(j.severity, "value") else j.severity),
+            }
+            for j in entry.judges
+        ]
     if entry.input is not None:
         out["input"] = entry.input
     if entry.turns is not None:
