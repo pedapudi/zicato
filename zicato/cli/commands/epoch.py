@@ -17,6 +17,23 @@ into :mod:`zicato.epoch.lifecycle`. There is no business logic here;
 when the surface changes that work happens in the lifecycle module and
 this file just plumbs the arguments.
 
+Contract source paths — single source of truth
+-----------------------------------------------
+``epoch new`` freezes a per-epoch copy of the board / proposer brief /
+scoring into ``epochs/{id}/`` (the immutable snapshot). It ALSO adopts
+the supplied files as the workspace's *live* contract: it copies them
+to the canonical contract source location and records that location in
+``config.json`` under the ``contract`` key. That canonical location is
+the one — and only — place ``zicato evolve`` /
+:func:`zicato.epoch.contract.resolve_contract_inputs` reads the live
+contract back from. Keeping ``epoch new`` and ``evolve`` pointed at the
+same files is what makes both the explicit
+``init → register → epoch new → evolve`` flow and the streamlined
+``init → register → (edit files) → evolve`` flow resolve the contract
+end to end. Because ``epoch new`` publishes the *same* bytes it freezes,
+the contract hash a later ``evolve`` derives matches the epoch's stored
+hash, so ``evolve`` does not spuriously roll the epoch.
+
 The auxiliary LLM callable required by ``epoch new --auto-close`` and
 ``epoch close`` is **not** wired through the CLI in this patch. A later
 patch lands ``zicato config`` to bind the callable from the operator's
@@ -28,12 +45,15 @@ the full surface for tests.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import click
 
+from zicato.cli.common import read_workspace_config, write_workspace_config
 from zicato.core.types import ScoringWeights
 from zicato.epoch import lifecycle
+from zicato.epoch.contract import default_contract_paths
 from zicato.epoch.lineage import render_lineage_summary
 
 
@@ -78,6 +98,79 @@ def _load_weights(scoring_path: str | None) -> ScoringWeights:
     )
 
 
+def _adopt_contract_sources(
+    workspace_root: Path,
+    *,
+    board_source: Path,
+    brief_source: Path,
+    scoring_source: Path | None,
+) -> None:
+    """Publish ``epoch new``'s contract files as the workspace's live contract.
+
+    ``epoch new`` freezes a per-epoch copy of the board / proposer brief
+    / scoring into ``epochs/{id}/``. That frozen copy is the immutable
+    snapshot, but it is NOT what ``zicato evolve`` reads on a subsequent
+    run — :func:`zicato.epoch.contract.resolve_contract_inputs` resolves
+    the *live* contract from the paths recorded in ``config.json`` under
+    the ``contract`` key (defaulting to the conventional location next
+    to the ``.zicato/`` directory).
+
+    Without this step the explicit ``init → register → epoch new →
+    evolve`` flow breaks: ``epoch new`` would copy the operator's files
+    only into the epoch dir, then ``evolve`` would resolve the live
+    contract from the (still empty) conventional location and fail with
+    "board file ... is missing".
+
+    This helper closes that gap. It:
+
+    1. Resolves the canonical contract source paths from the workspace's
+       existing ``config.json`` ``contract`` block, falling back to the
+       conventional defaults when a key (or the whole block) is absent.
+    2. Copies each supplied source file to its canonical path, unless
+       the source already *is* that path (the streamlined flow, where
+       the operator edited the live files in place).
+    3. Writes the ``contract`` block back so the resolved paths are
+       recorded — making ``epoch new`` agree with ``register`` and
+       ``evolve`` on where the live contract lives.
+
+    Because the bytes published here are the same bytes
+    :func:`zicato.epoch.lifecycle.new_epoch` froze into the epoch dir,
+    the contract hash a later ``evolve`` derives from these live files
+    matches the epoch's stored hash — so ``evolve`` continues the epoch
+    rather than spuriously rolling it.
+    """
+    config = read_workspace_config(workspace_root)
+    defaults = default_contract_paths(workspace_root)
+    contract = dict(config.get("contract") or {})
+
+    board_target = Path(contract.get("board_path") or defaults["board_path"])
+    # ``rubric_path`` is the on-disk key name for the proposer brief
+    # (kept for back-compat); ``brief_path`` is also accepted on read.
+    brief_target = Path(
+        contract.get("brief_path") or contract.get("rubric_path") or defaults["rubric_path"]
+    )
+    scoring_target = Path(contract.get("scoring_path") or defaults["scoring_path"])
+
+    def _publish(source: Path, target: Path) -> None:
+        source = source.resolve()
+        target = target.resolve()
+        if source == target:
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+    _publish(board_source, board_target)
+    _publish(brief_source, brief_target)
+    if scoring_source is not None:
+        _publish(scoring_source, scoring_target)
+
+    contract["board_path"] = str(board_target.resolve())
+    contract["rubric_path"] = str(brief_target.resolve())
+    contract["scoring_path"] = str(scoring_target.resolve())
+    config["contract"] = contract
+    write_workspace_config(workspace_root, config)
+
+
 @click.group(
     name="epoch",
     short_help="Advanced: inspect / force epochs (evolve auto-epochs for you).",
@@ -108,7 +201,8 @@ def epoch_grp() -> None:
     "board_source",
     required=True,
     type=click.Path(exists=True, dir_okay=False),
-    help="Path to a board.jsonl to copy into the epoch.",
+    help="Path to a board.jsonl. Frozen into the epoch and adopted as "
+    "the workspace's live contract board.",
 )
 @click.option(
     "--brief",
@@ -116,15 +210,17 @@ def epoch_grp() -> None:
     "brief_source",
     required=True,
     type=click.Path(exists=True, dir_okay=False),
-    help="Path to a proposer brief (brief.md) to freeze into the epoch. "
-    "``--rubric`` is accepted as a legacy alias.",
+    help="Path to a proposer brief (brief.md). Frozen into the epoch "
+    "and adopted as the workspace's live contract brief. ``--rubric`` "
+    "is accepted as a legacy alias.",
 )
 @click.option(
     "--scoring",
     "scoring_source",
     default=None,
     type=click.Path(exists=True, dir_okay=False),
-    help="Path to scoring.json; defaults applied if absent.",
+    help="Path to scoring.json; defaults applied if absent. When given, "
+    "frozen into the epoch and adopted as the live contract scoring.",
 )
 def new_cmd(
     name: str,
@@ -141,9 +237,27 @@ def new_cmd(
     If a previous epoch is still open it is auto-closed first; the auto
     close emits a stub analysis.md (no auxiliary LLM is wired through
     the CLI yet — see module docstring).
+
+    The supplied contract files are both frozen into the epoch
+    directory AND published as the workspace's live contract (recorded
+    in config.json under `contract`), so a subsequent `zicato evolve`
+    resolves the same contract and continues this epoch rather than
+    failing to find the board or spuriously rolling.
     """
     ws = _resolve_workspace(workspace)
     weights = _load_weights(scoring_source)
+
+    # Carry the registered inner-harness identity (entrypoint + mutable
+    # trees) into the epoch's contract hash. `zicato evolve` derives the
+    # contract hash from these same `config.json` values via
+    # resolve_contract_inputs; freezing the epoch with empty identity
+    # components would make the two hashes disagree and trigger a
+    # spurious roll on the very first evolve.
+    config = read_workspace_config(ws)
+    entrypoint = str(config.get("adk_entrypoint", ""))
+    raw_trees = config.get("mutable_trees") or config.get("source_roots") or []
+    mutable_trees = tuple(str(t) for t in raw_trees)
+
     cfg = lifecycle.new_epoch(
         workspace_root=ws,
         name=name,
@@ -152,6 +266,18 @@ def new_cmd(
         weights=weights,
         auto_close_previous=True,
         aux_call_llm=None,
+        entrypoint=entrypoint,
+        mutable_trees=mutable_trees,
+    )
+    # Publish the supplied files as the workspace's live contract so
+    # `zicato evolve` / resolve_contract_inputs find the same contract.
+    # Done after new_epoch so the workspace directory is guaranteed to
+    # exist (new_epoch mkdir's it) before config.json is written.
+    _adopt_contract_sources(
+        ws,
+        board_source=Path(board_source),
+        brief_source=Path(brief_source),
+        scoring_source=Path(scoring_source) if scoring_source is not None else None,
     )
     click.echo(f"Created epoch {cfg.id} (now current).")
 

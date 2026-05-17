@@ -13,6 +13,7 @@ zicato helper uses)::
     {workspace_root}/runtime/
       lock.json                       # exclusive workspace lock
       heartbeat.json                  # orchestrator liveness beat
+      dashboard.json                  # dashboard's actually-bound host/port
       active_runs/{run_id}.json       # per in-flight tournament run
       active_tournament.json          # current tournament shape
       control/                        # operator commands queued by dashboard
@@ -49,6 +50,18 @@ def lock_path(workspace_root: Path) -> Path:
 def heartbeat_path(workspace_root: Path) -> Path:
     """Return the path to the heartbeat JSON file."""
     return runtime_dir(workspace_root) / "heartbeat.json"
+
+
+def dashboard_endpoint_path(workspace_root: Path) -> Path:
+    """Return the path to the dashboard's bound-endpoint JSON file.
+
+    The standalone dashboard service walks ``+1`` from its preferred
+    port if that port is taken, so the port it ends up serving on is not
+    knowable up front. The service writes the host/port it actually
+    bound to this file once the listener is up; ``zicato evolve`` reads
+    it back to report the dashboard's real URL instead of guessing.
+    """
+    return runtime_dir(workspace_root) / "dashboard.json"
 
 
 def active_runs_dir(workspace_root: Path) -> Path:
@@ -104,6 +117,7 @@ __all__ = [
     "runtime_dir",
     "lock_path",
     "heartbeat_path",
+    "dashboard_endpoint_path",
     "active_runs_dir",
     "active_run_path",
     "active_tournament_path",

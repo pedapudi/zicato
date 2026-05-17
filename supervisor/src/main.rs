@@ -21,8 +21,15 @@ struct Cli {
     #[arg(long, default_value = ".zicato")]
     workspace: PathBuf,
 
-    /// HTTP server port (default: 7892; +1 retry up to 7902)
-    #[arg(long, default_value_t = 7892)]
+    /// HTTP server port (default: 7920; +1 retry up to 7930).
+    ///
+    /// Distinct from the Python dashboard service's default (7892) so
+    /// the watchdog's `/statusz` surface and the dashboard UI do not
+    /// contend for the same port: when `zicato evolve` spawns both, a
+    /// shared default would make the second binder walk `+1` and the
+    /// reported URL point at the wrong server. The two walk ranges
+    /// (7920-7930 here, 7892-7902 for the dashboard) are disjoint.
+    #[arg(long, default_value_t = 7920)]
     port: u16,
 
     /// Bind address (default: 127.0.0.1)

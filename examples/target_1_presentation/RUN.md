@@ -27,6 +27,15 @@ VIRTUAL_ENV=/home/sunil/git/zicato/.venv uv pip install google-adk
 
 ## End-to-end loop
 
+The evaluation contract — the board, the proposer brief, and the
+scoring config — has one canonical home: the three files
+`board.jsonl`, `brief.md`, and `scoring.json` sitting next to the
+`.zicato/` directory. `zicato evolve` resolves the live contract from
+exactly there (the paths are recorded in `.zicato/config.json` under
+`contract`). `epoch new` both freezes a per-epoch copy of those files
+*and* publishes them to that canonical location, so the two stay in
+agreement and `evolve` finds the contract whichever way you reach it.
+
 ```bash
 # Pick a scratch workspace anywhere off the repo. Symlink the examples/
 # tree so the dotted imports resolve.
@@ -45,17 +54,21 @@ $PY -m zicato.cli register --workspace .zicato \
     --adk examples.target_1_presentation.agent.agent:root_agent \
     --mutable-tree /home/sunil/git/zicato/examples/target_1_presentation/agent
 
-# 3. Open an epoch pinned to the example's board / rubric / scoring.
+# 3. Open an epoch from the example's board / brief / scoring. epoch new
+#    freezes a per-epoch copy AND publishes these files as the live
+#    contract (here: /tmp/zicato-smoke-t1/board.jsonl, brief.md,
+#    scoring.json) so the evolve in step 5 resolves the same contract.
 $PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
     --board   /home/sunil/git/zicato/examples/target_1_presentation/board.jsonl \
-    --rubric  /home/sunil/git/zicato/examples/target_1_presentation/rubric.md \
+    --brief   /home/sunil/git/zicato/examples/target_1_presentation/rubric.md \
     --scoring /home/sunil/git/zicato/examples/target_1_presentation/scoring.json
 
 # 4. Inspect the mutation surface the proposer will see (9 ids).
 $PY -m zicato.cli mutations --workspace .zicato
 
 # 5. Run two evolve rounds. PYTHONPATH=. picks up the symlinked
-#    examples/ tree.
+#    examples/ tree. evolve resolves the contract published in step 3,
+#    so it continues the t1_smoke epoch rather than rolling a new one.
 PYTHONPATH=. $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full \
     --harness-call-llm   examples.target_1_presentation.mocks:harness_llm \
@@ -64,6 +77,39 @@ PYTHONPATH=. $PY -m zicato.cli evolve --workspace .zicato \
 # 6. Close the epoch to produce analysis.md and analysis.html.
 $PY -m zicato.cli epoch close --workspace .zicato
 ```
+
+`evolve` also launches the live dashboard and prints its URL — for
+example `Dashboard: http://127.0.0.1:7892`. The port is read back from
+the dashboard service after it binds, so the printed URL always points
+at the dashboard itself (the watchdog supervisor binds a separate
+default port and never collides with it).
+
+### The streamlined evolve-centric flow
+
+`epoch new` is the explicit way to open an epoch. You do not have to
+use it: `evolve` auto-opens (and later auto-rolls) epochs on its own.
+The streamlined flow skips step 3 — instead, place the three contract
+files at the canonical location yourself and let `evolve` open the
+first epoch:
+
+```bash
+# After steps 1-2 above, with the contract files written next to the
+# workspace:
+cp /home/sunil/git/zicato/examples/target_1_presentation/board.jsonl  ./board.jsonl
+cp /home/sunil/git/zicato/examples/target_1_presentation/rubric.md    ./brief.md
+cp /home/sunil/git/zicato/examples/target_1_presentation/scoring.json ./scoring.json
+
+# evolve sees no current epoch, resolves the contract from the three
+# files above, and auto-opens epoch e0 before running the loop.
+PYTHONPATH=. $PY -m zicato.cli evolve --workspace .zicato \
+    --rounds 2 --mode full \
+    --harness-call-llm   examples.target_1_presentation.mocks:harness_llm \
+    --auxiliary-call-llm examples.target_1_presentation.mocks:aux_llm
+```
+
+Editing any of those three files between `evolve` invocations changes
+the evaluation contract; the next `evolve` detects the drift, closes
+the current epoch, and opens a fresh one automatically.
 
 ## What you should see
 
@@ -110,40 +156,45 @@ the promotion.
 
 ## Where the artifacts live
 
-After step 6 the workspace looks like this:
+After step 6 the scratch directory looks like this:
 
 ```
-.zicato/
-  config.json                       # adapter entrypoint + mutable trees
-  current_epoch                     # marker → t1_smoke epoch id
-  lineage.json                      # cross-cutting DAG (1 epoch, 3 gens)
-  epochs/
-    2026-MM-DD_t1_smoke/
-      board.jsonl                   # copy of examples/.../board.jsonl
-      rubric.md                     # copy of examples/.../rubric.md
-      scoring.json                  # copy of examples/.../scoring.json
-      config.json                   # EpochConfig with closed=true
-      current_generation            # marker → v0 (no promotion happened)
-      journal.md                    # one entry per round (v1, v2)
-      analysis.md                   # stub narrative + journal snapshot
-      analysis.html                 # self-contained HTML companion
-      generations/
-        v0/
-          gen_score.json            # cached aggregate for fast-mode reuse
-          snapshot/agent/agent.py   # baseline copy of the registered tree
-          runs/{entry_id}/events.jsonl
-        v1/
-          experiment.json
-          gen_score.json
-          patches/{patch_id}.json
-          snapshot/agent/agent.py   # v0 + the researcher_instruction patch
-          runs/{entry_id}/events.jsonl
-        v2/
-          experiment.json
-          gen_score.json
-          patches/{patch_id}.json
-          snapshot/agent/agent.py   # v0 + the coordinator_instruction patch
-          runs/{entry_id}/events.jsonl
+/tmp/zicato-smoke-t1/
+  board.jsonl                       # live contract — published by epoch new
+  brief.md                          # live contract — published by epoch new
+  scoring.json                      # live contract — published by epoch new
+  .zicato/
+    config.json                     # adapter entrypoint + mutable trees +
+                                    #   contract: paths to the three files above
+    current_epoch                   # marker → t1_smoke epoch id
+    lineage.json                    # cross-cutting DAG (1 epoch, 3 gens)
+    epochs/
+      2026-MM-DD_t1_smoke/
+        board.jsonl                 # frozen per-epoch copy of the board
+        brief.md                    # frozen per-epoch copy of the brief
+        scoring.json                # frozen per-epoch copy of the scoring
+        config.json                 # EpochConfig with closed=true
+        current_generation          # marker → v0 (no promotion happened)
+        journal.md                  # one entry per round (v1, v2)
+        analysis.md                 # stub narrative + journal snapshot
+        analysis.html               # self-contained HTML companion
+        generations/
+          v0/
+            gen_score.json          # cached aggregate for fast-mode reuse
+            snapshot/agent/agent.py # baseline copy of the registered tree
+            runs/{entry_id}/events.jsonl
+          v1/
+            experiment.json
+            gen_score.json
+            patches/{patch_id}.json
+            snapshot/agent/agent.py # v0 + the researcher_instruction patch
+            runs/{entry_id}/events.jsonl
+          v2/
+            experiment.json
+            gen_score.json
+            patches/{patch_id}.json
+            snapshot/agent/agent.py # v0 + the coordinator_instruction patch
+            runs/{entry_id}/events.jsonl
 ```
 
 Useful spot checks:
