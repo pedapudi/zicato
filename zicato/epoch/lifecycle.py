@@ -51,6 +51,12 @@ from zicato.core.workspace import (
     journal_path,
     scoring_path,
 )
+from zicato.epoch._storage import (
+    backend_for,
+    current_epoch_key,
+    epoch_config_key,
+    scoring_key,
+)
 
 if TYPE_CHECKING:
     from zicato.board.builder import Board
@@ -71,19 +77,6 @@ def _brief_path(workspace_root: Path, epoch_id: str) -> Path:
     threading it through the shared workspace-path module.
     """
     return epoch_dir(workspace_root, epoch_id) / "brief.md"
-
-
-# ---------------------------------------------------------------------------
-# Path helpers (epoch-local; the cross-cutting ones live in workspace.py)
-# ---------------------------------------------------------------------------
-
-
-def _config_path(workspace_root: Path, epoch_id: str) -> Path:
-    return epoch_dir(workspace_root, epoch_id) / "config.json"
-
-
-def _current_marker(workspace_root: Path) -> Path:
-    return workspace_root / "current_epoch"
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +200,8 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
 
 
 def _write_config(workspace_root: Path, cfg: EpochConfig) -> None:
-    path = _config_path(workspace_root, cfg.id)
-    path.write_text(json.dumps(_config_to_dict(cfg), indent=2, sort_keys=True))
+    """Atomically write one epoch's ``config.json`` through the storage seam."""
+    backend_for(workspace_root).write_json(epoch_config_key(cfg.id), _config_to_dict(cfg))
 
 
 # ---------------------------------------------------------------------------
@@ -222,11 +215,10 @@ def current_epoch_id(workspace_root: Path) -> str | None:
     Returns ``None`` when there is no marker (fresh workspace, or the
     marker was removed by hand). Returns the stripped contents otherwise.
     """
-    marker = _current_marker(workspace_root)
-    if not marker.exists():
+    text = backend_for(workspace_root).read_text(current_epoch_key())
+    if text is None:
         return None
-    text = marker.read_text().strip()
-    return text or None
+    return text.strip() or None
 
 
 def switch_epoch(workspace_root: Path, epoch_id: str) -> None:
@@ -238,8 +230,7 @@ def switch_epoch(workspace_root: Path, epoch_id: str) -> None:
     """
     if not epoch_dir(workspace_root, epoch_id).exists():
         raise FileNotFoundError(f"epoch {epoch_id!r} does not exist under {workspace_root}")
-    workspace_root.mkdir(parents=True, exist_ok=True)
-    _current_marker(workspace_root).write_text(epoch_id + "\n")
+    backend_for(workspace_root).write_text(current_epoch_key(), epoch_id + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -249,10 +240,10 @@ def switch_epoch(workspace_root: Path, epoch_id: str) -> None:
 
 def load_epoch(workspace_root: Path, epoch_id: str) -> EpochConfig:
     """Read one epoch's ``config.json`` back into an :class:`EpochConfig`."""
-    path = _config_path(workspace_root, epoch_id)
-    if not path.exists():
+    raw = backend_for(workspace_root).read_json(epoch_config_key(epoch_id))
+    if raw is None:
         raise FileNotFoundError(f"epoch {epoch_id!r} has no config.json under {workspace_root}")
-    return _config_from_dict(json.loads(path.read_text()))
+    return _config_from_dict(raw)
 
 
 def list_epochs(workspace_root: Path) -> list[EpochConfig]:
@@ -261,20 +252,31 @@ def list_epochs(workspace_root: Path) -> list[EpochConfig]:
     Directories under ``epochs/`` without a readable ``config.json`` are
     skipped silently — they are presumed to be in-progress writes from a
     crashed ``epoch new`` and the operator can clean them up by hand.
+
+    Epoch *ids* are discovered by a directory walk of ``epochs/`` — the
+    storage backend's :meth:`~zicato.storage.StorageBackend.list_keys`
+    is a non-recursive *record* listing and deliberately does not
+    descend into the per-epoch subdirectories, so the directory walk is
+    the right tool for discovering which epochs exist. Each epoch's
+    ``config.json`` is then read back through the storage seam.
     """
     epochs_root = workspace_root / "epochs"
     if not epochs_root.exists():
         return []
+    backend = backend_for(workspace_root)
     out: list[EpochConfig] = []
     for child in sorted(epochs_root.iterdir()):
         if not child.is_dir():
             continue
-        cfg_path = child / "config.json"
-        if not cfg_path.exists():
+        try:
+            raw = backend.read_json(epoch_config_key(child.name))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if raw is None:
             continue
         try:
-            out.append(_config_from_dict(json.loads(cfg_path.read_text())))
-        except (OSError, json.JSONDecodeError, KeyError):
+            out.append(_config_from_dict(raw))
+        except (KeyError, TypeError):
             continue
     out.sort(key=lambda c: (c.created_at, c.id))
     return out
@@ -420,9 +422,10 @@ def new_epoch(
     _materialize_board(board_source, target_board)
     _materialize_brief(brief_source, target_brief)
 
-    # 4. Scoring weights — serialized from the in-memory ScoringWeights.
+    # 4. Scoring weights — serialized from the in-memory ScoringWeights,
+    # written atomically through the storage seam.
     target_scoring = scoring_path(workspace_root, epoch_id)
-    target_scoring.write_text(json.dumps(_scoring_to_dict(weights), indent=2, sort_keys=True))
+    backend_for(workspace_root).write_json(scoring_key(epoch_id), _scoring_to_dict(weights))
 
     # 5. Contract hash over the frozen board/brief/scoring plus the
     # registered inner-harness identity. Computed from the just-written

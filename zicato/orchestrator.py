@@ -31,7 +31,6 @@ import asyncio
 import datetime as _dt
 import json
 import logging
-import shutil
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -433,7 +432,6 @@ async def evolve_once(
         write_experiment,
     )
     from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
-    from zicato.mutation.applier import apply_patches  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
     from zicato.mutation.validator import (  # noqa: PLC0415
         check_forbidden_ids,
@@ -572,19 +570,21 @@ async def evolve_once(
         round_index=round_index,
         phase=f"applying:round_{round_index}:{next_id}",
     )
-    child_snapshot = _snapshot_root(workspace_root, resolved_epoch_id, next_id)
-    if child_snapshot.exists():
-        # Defensive: a previous failed round may have left a partial
-        # snapshot. The applier refuses to overwrite, so we clear the
-        # tree before re-running. Removing only the snapshot
-        # subdirectory keeps any sibling debug data the operator may
-        # have dropped under the generation dir.
-        shutil.rmtree(child_snapshot)
-    child_snapshot.parent.mkdir(parents=True, exist_ok=True)
-    apply_patches(
-        source_root=parent_gen.snapshot_root,
+    # Materialise the child generation through the GenerationStore seam.
+    # derive_generation is the generation-level transaction boundary: it
+    # copies the parent's source tree, applies the patch set
+    # all-or-nothing, clears any stale child tree from a failed round,
+    # and returns the child snapshot root. The directory backend does
+    # exactly the copytree + apply_patches the orchestrator used to do
+    # inline; a git backend would commit instead. See
+    # docs/design/STORAGE.md §4-§5.
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+
+    child_snapshot = default_generation_store(workspace_root).derive_generation(
+        epoch_id=resolved_epoch_id,
+        parent_generation_id=parent_id,
+        child_generation_id=next_id,
         patches=list(experiment.patches),
-        target_root=child_snapshot,
     )
 
     # --- 9. Validate post-apply ---
@@ -1235,18 +1235,35 @@ def _set_current_generation(workspace_root: Path, epoch_id: str, generation_id: 
 
 
 def _snapshot_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
-    return generation_dir(workspace_root, epoch_id, generation_id) / "snapshot"
+    """Return a generation's source-tree path via the :class:`GenerationStore` seam.
+
+    Generation source trees are a pluggable store
+    (``docs/design/STORAGE.md`` §4-§5); this resolves the coordinate
+    through the workspace's :class:`~zicato.epoch.genstore.GenerationStore`
+    rather than hard-coding the directory layout. The default store is
+    the directory-snapshot backend, so the resolved path is unchanged
+    (``generations/{id}/snapshot/``) — but a git backend would resolve
+    it to a worktree at this one seam.
+    """
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+
+    return default_generation_store(workspace_root).snapshot_root(epoch_id, generation_id)
 
 
 def _next_generation_id(workspace_root: Path, epoch_id: str) -> str:
-    """Pick a fresh ``vN`` id one above the highest existing."""
-    gens_root = workspace_root / "epochs" / epoch_id / "generations"
-    if not gens_root.exists():
-        return "v0"
+    """Pick a fresh ``vN`` id one above the highest existing.
+
+    Generation presence comes from the
+    :class:`~zicato.epoch.genstore.GenerationStore` seam — the directory
+    backend reports the same on-disk ``vN`` directories as before.
+    """
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+
+    store = default_generation_store(workspace_root)
     max_n = -1
-    for child in gens_root.iterdir():
-        if child.is_dir() and child.name.startswith("v") and child.name[1:].isdigit():
-            n = int(child.name[1:])
+    for gid in store.list_generations(epoch_id):
+        if gid.startswith("v") and gid[1:].isdigit():
+            n = int(gid[1:])
             if n > max_n:
                 max_n = n
     return f"v{max_n + 1}"
@@ -1706,26 +1723,26 @@ def _ensure_baseline_snapshot(
     round. This keeps lineage truthful when the epoch is later
     summarised by the analysis pass.
     """
-    gens_root = workspace_root / "epochs" / epoch_id / "generations"
-    if gens_root.exists() and any(p.is_dir() for p in gens_root.iterdir()):
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+
+    store = default_generation_store(workspace_root)
+    if store.list_generations(epoch_id):
         return  # already have at least one generation; nothing to do
 
-    snapshot_root = _snapshot_root(workspace_root, epoch_id, "v0")
-
     # Priority 1 — cross-epoch lineage seed left by a contract-roll.
+    # The seed marker points at the *snapshot directory* of the
+    # predecessor epoch's promoted head; its CHILDREN become the new
+    # v0's top-level trees (the roll continues the lineage rather than
+    # nesting it one level deeper). seed_generation copies each source
+    # under its basename, so handing it the children reproduces the
+    # pre-seam flatten-into-v0 behaviour.
     seed_marker = _roll_seed_marker(workspace_root, epoch_id)
     seeded_from_roll = False
     if seed_marker.exists():
         seed_text = seed_marker.read_text(encoding="utf-8").strip()
         seed_source = Path(seed_text) if seed_text else None
         if seed_source is not None and seed_source.exists():
-            snapshot_root.mkdir(parents=True, exist_ok=True)
-            for child in sorted(seed_source.iterdir()):
-                target = snapshot_root / child.name
-                if child.is_dir():
-                    shutil.copytree(child, target)
-                else:
-                    shutil.copy2(child, target)
+            store.seed_generation(epoch_id, "v0", sorted(seed_source.iterdir()))
             seeded_from_roll = True
             log.info(
                 "epoch %s: seeded v0 from rolled predecessor snapshot %s",
@@ -1744,23 +1761,12 @@ def _ensure_baseline_snapshot(
                 "'source_roots' — cannot seed a v0 baseline snapshot. "
                 "Run `zicato register --mutable-tree ...` first."
             )
+        # seed_generation copies each registered tree under its basename
+        # and raises FileNotFoundError for a missing source — the same
+        # contract the inline loop enforced.
+        store.seed_generation(epoch_id, "v0", [Path(raw) for raw in raw_trees])
 
-        snapshot_root.mkdir(parents=True, exist_ok=True)
-        for raw in raw_trees:
-            source = Path(raw).resolve()
-            if not source.exists():
-                raise FileNotFoundError(
-                    f"evolve_once: registered mutable tree {source} does not "
-                    "exist on disk; baseline snapshot cannot be seeded."
-                )
-            if source.is_file():
-                # Files are copied directly — rare in practice but cheap
-                # to support so the helper does not impose tree-only
-                # semantics.
-                shutil.copy2(source, snapshot_root / source.name)
-                continue
-            target = snapshot_root / source.name
-            shutil.copytree(source, target)
+    snapshot_root = store.snapshot_root(epoch_id, "v0")
 
     # Lineage + current-generation marker so the orchestrator's
     # downstream readers see a clean baseline state.

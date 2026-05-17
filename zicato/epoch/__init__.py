@@ -5,13 +5,21 @@ proposer brief, and a frozen scoring configuration. Generations within
 an epoch are directly comparable; cross-epoch comparison is fuzzy.
 Pattern aggregates reset at epoch boundaries.
 
-This subpackage owns four concerns:
+This subpackage owns five concerns:
 
 * :mod:`zicato.epoch.lifecycle` — create / close / list / switch.
 * :mod:`zicato.epoch.journal` — append-only narrative per experiment.
 * :mod:`zicato.epoch.analysis` — at-close LLM retrospective.
 * :mod:`zicato.epoch.lineage` — cross-cutting DAG persisted to
   ``.zicato/lineage.json``.
+* :mod:`zicato.epoch.genstore` — the :class:`GenerationStore` seam:
+  generation source trees as a pluggable store (directory snapshots
+  today, git on the roadmap). See ``docs/design/STORAGE.md`` §4-§5.
+
+The first four persist *records* and route through
+:class:`zicato.storage.StorageBackend`; the fifth persists source
+trees and is a separate, peer seam — the two are kept distinct on
+purpose (``docs/design/STORAGE.md`` §4).
 
 Downstream callers should import from ``zicato.epoch`` rather than the
 individual submodules so the surface stays stable.
@@ -20,6 +28,11 @@ individual submodules so the surface stays stable.
 from __future__ import annotations
 
 from zicato.epoch.analysis import REQUIRED_SECTIONS, generate_analysis
+from zicato.epoch.genstore import (
+    DirectoryGenerationStore,
+    GenerationStore,
+    default_generation_store,
+)
 from zicato.epoch.journal import (
     append_journal_entry,
     read_experiment,
@@ -62,6 +75,10 @@ __all__ = [
     # analysis
     "REQUIRED_SECTIONS",
     "generate_analysis",
+    # generation store
+    "GenerationStore",
+    "DirectoryGenerationStore",
+    "default_generation_store",
     # lineage
     "register_epoch",
     "mark_closed",

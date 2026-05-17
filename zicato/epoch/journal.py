@@ -18,6 +18,14 @@ seam (one generation directory):
 The split-file form is the v0 storage shape pinned in the design
 memo; readers transparently accept the older inline ``patches: [...]``
 form so workspaces created before the refactor keep working.
+
+Persistence is routed through :class:`zicato.storage.StorageBackend`
+(see :mod:`zicato.epoch._storage` and ``docs/design/STORAGE.md`` §5.1).
+Every public helper keeps its ``workspace_root: Path`` signature; the
+on-disk layout is byte-identical to the pre-seam implementation. The
+one observable change is that every write is now atomic — a crash
+mid-write can no longer leave a truncated ``experiment.json`` or a
+half-written per-patch file.
 """
 
 from __future__ import annotations
@@ -35,11 +43,12 @@ from zicato.core.types import (
     OutcomeRecord,
     Patch,
 )
-from zicato.core.workspace import (
-    experiment_json_path,
-    journal_path,
-    patch_json_path,
-    patches_dir,
+from zicato.core.workspace import epoch_dir
+from zicato.epoch._storage import (
+    backend_for,
+    experiment_key,
+    journal_key,
+    patch_key,
 )
 
 
@@ -79,8 +88,7 @@ def _format_outcome(outcome: OutcomeRecord) -> str:
     scalar_part = f"Δscalar={outcome.scalar_score_delta:+.3f}"
     drift_part = f"Δdrift_loss={outcome.drift_loss_delta:+.3f}"
     return (
-        f"**outcome**: {outcome.tournament_decision} "
-        f"({scalar_part}, {drift_part}, {pass_part})"
+        f"**outcome**: {outcome.tournament_decision} " f"({scalar_part}, {drift_part}, {pass_part})"
     )
 
 
@@ -108,9 +116,7 @@ def _render_section(experiment: Experiment) -> str:
     lines.append("")
     lines.append(f"**proposed_at**: {experiment.proposed_at}")
     if experiment.hypothesis.modulating:
-        lines.append(
-            "**modulating**: " + ", ".join(experiment.hypothesis.modulating)
-        )
+        lines.append("**modulating**: " + ", ".join(experiment.hypothesis.modulating))
     else:
         lines.append("**modulating**: (none)")
     why = _first_sentence(experiment.hypothesis.why)
@@ -122,44 +128,45 @@ def _render_section(experiment: Experiment) -> str:
             experiment.outcome.tournament_decision == "rejected"
             and experiment.outcome.rejection_reason
         ):
-            lines.append(
-                f"**rejection_reason**: {experiment.outcome.rejection_reason}"
-            )
+            lines.append(f"**rejection_reason**: {experiment.outcome.rejection_reason}")
     lines.append("")
     return "\n".join(lines)
 
 
-def append_journal_entry(
-    workspace_root: Path, epoch_id: str, experiment: Experiment
-) -> None:
+def append_journal_entry(workspace_root: Path, epoch_id: str, experiment: Experiment) -> None:
     """Append a markdown section for ``experiment`` to the epoch's journal.
 
     Creates the file if it does not yet exist; otherwise appends with a
     leading newline so consecutive sections do not run together. The
     epoch directory MUST already exist — the caller is responsible for
     having created it via :func:`zicato.epoch.lifecycle.new_epoch`.
+
+    The journal is plain markdown, not JSONL, so the append is a
+    read-modify-write of the whole text through the storage backend's
+    atomic :meth:`~zicato.storage.StorageBackend.write_text`. A crash
+    mid-write leaves the prior journal intact rather than a truncated
+    file.
     """
-    path = journal_path(workspace_root, epoch_id)
-    if not path.parent.exists():
+    edir = epoch_dir(workspace_root, epoch_id)
+    if not edir.exists():
         raise FileNotFoundError(
-            f"epoch directory {path.parent} does not exist; create it with new_epoch first"
+            f"epoch directory {edir} does not exist; create it with new_epoch first"
         )
+    backend = backend_for(workspace_root)
+    key = journal_key(epoch_id)
     section = _render_section(experiment)
-    if path.exists() and path.stat().st_size > 0:
-        existing = path.read_text()
+    existing = backend.read_text(key)
+    if existing:
         if not existing.endswith("\n"):
             existing += "\n"
-        path.write_text(existing + section)
+        backend.write_text(key, existing + section)
     else:
-        path.write_text(section)
+        backend.write_text(key, section)
 
 
 def read_journal(workspace_root: Path, epoch_id: str) -> str:
     """Return the epoch's full journal text, or an empty string if missing."""
-    path = journal_path(workspace_root, epoch_id)
-    if not path.exists():
-        return ""
-    return path.read_text()
+    return backend_for(workspace_root).read_text(journal_key(epoch_id)) or ""
 
 
 def _coerce_paths(obj: Any) -> Any:
@@ -173,7 +180,7 @@ def _coerce_paths(obj: Any) -> Any:
         return str(obj)
     if isinstance(obj, dict):
         return {k: _coerce_paths(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [_coerce_paths(v) for v in obj]
     return obj
 
@@ -189,9 +196,7 @@ def _patch_from_dict(d: dict[str, Any]) -> Patch:
         mutation_id=str(d["mutation_id"]),
         op=d["op"],
         new_content=d.get("new_content"),
-        new_numeric=(
-            float(d["new_numeric"]) if d.get("new_numeric") is not None else None
-        ),
+        new_numeric=(float(d["new_numeric"]) if d.get("new_numeric") is not None else None),
         new_enum=d.get("new_enum"),
         rationale=str(d.get("rationale", "")),
     )
@@ -248,7 +253,7 @@ def write_experiment(
 ) -> None:
     """Persist an :class:`Experiment` using the per-patch storage layout.
 
-    Layout (see :doc:`project_zicato_storage_design`)::
+    Layout (see ``docs/design/STORAGE.md`` §5.1)::
 
         generations/{generation_id}/
           patches/{patch_id}.json     # one per patch
@@ -258,30 +263,28 @@ def write_experiment(
     crash between the two phases leaves orphan patch files (harmless;
     no reader picks them up because the ``patch_ids`` list in
     ``experiment.json`` is the authoritative source) but never a
-    dangling reference to a missing patch file.
+    dangling reference to a missing patch file. Each individual write
+    is itself atomic — routed through the storage backend's ``.tmp`` +
+    ``fsync`` + rename discipline — so no single file is ever observed
+    half-written either.
 
     The in-memory :class:`Experiment.patches` tuple is preserved by
     construction — only the on-disk shape is split. Round-tripping
     through :func:`read_experiment` reconstitutes the same tuple.
     """
-    gen_dir = experiment_json_path(
-        workspace_root, epoch_id, generation_id
-    ).parent
-    gen_dir.mkdir(parents=True, exist_ok=True)
+    backend = backend_for(workspace_root)
 
     patch_ids: list[str] = []
-    if experiment.patches:
-        pdir = patches_dir(workspace_root, epoch_id, generation_id)
-        pdir.mkdir(parents=True, exist_ok=True)
-        for patch in experiment.patches:
-            patch_ids.append(patch.id)
-            ppath = patch_json_path(
-                workspace_root, epoch_id, generation_id, patch.id
-            )
-            ppath.write_text(
-                json.dumps(_patch_to_dict(patch), indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
+    for patch in experiment.patches:
+        patch_ids.append(patch.id)
+        # Each patch file is written as text (not write_json) so the
+        # trailing newline of the pre-seam on-disk form is preserved
+        # byte-for-byte. The encoding (indent=2, sort_keys=True) is
+        # identical to write_json's.
+        backend.write_text(
+            patch_key(epoch_id, generation_id, patch.id),
+            json.dumps(_patch_to_dict(patch), indent=2, sort_keys=True) + "\n",
+        )
 
     body: dict[str, Any] = {
         "id": experiment.id,
@@ -292,15 +295,12 @@ def write_experiment(
         "hypothesis": _coerce_paths(asdict(experiment.hypothesis)),
         "patch_ids": patch_ids,
         "outcome": (
-            _coerce_paths(asdict(experiment.outcome))
-            if experiment.outcome is not None
-            else None
+            _coerce_paths(asdict(experiment.outcome)) if experiment.outcome is not None else None
         ),
     }
-    target = experiment_json_path(workspace_root, epoch_id, generation_id)
-    target.write_text(
+    backend.write_text(
+        experiment_key(epoch_id, generation_id),
         json.dumps(body, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
 
 
@@ -353,12 +353,14 @@ def read_experiment(
     of which on-disk form produced it. New writes always use the
     per-patch layout.
     """
-    target = experiment_json_path(workspace_root, epoch_id, generation_id)
-    if not target.exists():
+    backend = backend_for(workspace_root)
+    exp_key = experiment_key(epoch_id, generation_id)
+    body = backend.read_json(exp_key)
+    if body is None:
         raise FileNotFoundError(
-            f"experiment.json not found at {target}"
+            f"experiment.json not found for {epoch_id}/{generation_id} "
+            f"(storage key {exp_key!r})"
         )
-    body = json.loads(target.read_text(encoding="utf-8"))
 
     raw_inline = body.get("patches")
     patch_ids = body.get("patch_ids")
@@ -372,16 +374,14 @@ def read_experiment(
             patches.append(_patch_from_dict(d))
     elif isinstance(patch_ids, list):
         for pid in patch_ids:
-            ppath = patch_json_path(
-                workspace_root, epoch_id, generation_id, str(pid)
-            )
-            if not ppath.exists():
+            pkey = patch_key(epoch_id, generation_id, str(pid))
+            patch_body = backend.read_json(pkey)
+            if patch_body is None:
                 raise FileNotFoundError(
-                    f"patch file {ppath} referenced by experiment.json is missing"
+                    f"patch file referenced by experiment.json is missing "
+                    f"(storage key {pkey!r})"
                 )
-            patches.append(
-                _patch_from_dict(json.loads(ppath.read_text(encoding="utf-8")))
-            )
+            patches.append(_patch_from_dict(patch_body))
 
     hypothesis = _hypothesis_from_dict(body.get("hypothesis") or {})
     outcome = _outcome_from_dict(body.get("outcome"))

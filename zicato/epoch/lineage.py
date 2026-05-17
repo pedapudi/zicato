@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.types import EpochConfig, Generation
-from zicato.core.workspace import lineage_path
+from zicato.epoch._storage import backend_for, lineage_key
 
 
 def _empty() -> dict[str, Any]:
@@ -50,11 +50,18 @@ def _empty() -> dict[str, Any]:
 
 
 def _load_raw(workspace_root: Path) -> dict[str, Any]:
-    path = lineage_path(workspace_root)
-    if not path.exists():
-        return _empty()
+    """Read ``lineage.json`` through the storage backend.
+
+    A missing file, an unreadable file, or a malformed document all
+    collapse to the empty DAG — the lineage file is rebuilt forward by
+    the mutators, so a tolerant read keeps a one-off corruption from
+    wedging the loop. (This is intentionally more forgiving than the
+    storage backend's default ``read_json``, which surfaces a decode
+    error; lineage is reconstructible, so it absorbs the error here.)
+    """
+    backend = backend_for(workspace_root)
     try:
-        d = json.loads(path.read_text())
+        d = backend.read_json(lineage_key())
     except (OSError, json.JSONDecodeError):
         return _empty()
     if not isinstance(d, dict) or "epochs" not in d:
@@ -63,9 +70,8 @@ def _load_raw(workspace_root: Path) -> dict[str, Any]:
 
 
 def _save_raw(workspace_root: Path, raw: dict[str, Any]) -> None:
-    path = lineage_path(workspace_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(raw, indent=2, sort_keys=True))
+    """Atomically write ``lineage.json`` through the storage backend."""
+    backend_for(workspace_root).write_json(lineage_key(), raw)
 
 
 def _find_epoch(raw: dict[str, Any], epoch_id: str) -> dict[str, Any] | None:
@@ -193,9 +199,7 @@ def render_lineage_summary(workspace_root: Path) -> str:
     rows: list[str] = []
     rows.append("# Lineage")
     rows.append("")
-    rows.append(
-        "| epoch | started_at | closed_at | promoted | rejected | parent |"
-    )
+    rows.append("| epoch | started_at | closed_at | promoted | rejected | parent |")
     rows.append("| --- | --- | --- | --- | --- | --- |")
     for entry in epochs:
         gens = entry.get("generations", [])
