@@ -240,6 +240,22 @@
           </div>
         </section>
 
+        <!-- The mutation-site browser: every # zicato:mutable span in the
+             selected generation's epoch baseline, and — for each — a diff
+             of the v0 original against the patched content in any
+             generation whose patch touched that mutation id. -->
+        <section id="mutations-section" aria-label="Mutation-site browser">
+          <h2>Mutation sites</h2>
+          <div id="mutations-browser" class="mutations-browser">
+            <div id="mutations-list-pane" class="mutations-list-pane">
+              <p class="empty">Select a generation to browse its mutation sites.</p>
+            </div>
+            <div id="mutations-detail-pane" class="mutations-detail-pane">
+              <p class="empty">Select a mutation site to view its diff.</p>
+            </div>
+          </div>
+        </section>
+
       </div>
 
     </main>

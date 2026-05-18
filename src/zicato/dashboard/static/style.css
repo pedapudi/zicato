@@ -1749,8 +1749,152 @@ h4 {
   color: var(--text);
 }
 
+/* --- Files view: mutation-site browser ----------------------------
+   The mutation surface — every # zicato:mutable span — listed on the
+   left, with a baseline-vs-patched diff on the right. Shares the Files
+   view's two-column / elevated-panel idiom.                          */
+.mutations-browser {
+  display: grid;
+  grid-template-columns: 18rem 1fr;
+  gap: 0.75rem;
+  min-height: 0;
+}
+.mutations-list-pane,
+.mutations-detail-pane {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  padding: 0.5rem;
+  overflow: auto;
+  max-height: 32rem;
+}
+.mutations-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.mutations-list-item {
+  padding: 0;
+}
+.mutations-site-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.3rem 0.4rem;
+  cursor: pointer;
+  color: var(--text);
+}
+.mutations-site-button:hover {
+  border-color: var(--border);
+}
+.mutations-site-button.active {
+  border-color: var(--accent-running);
+  background: var(--bg);
+}
+.mutations-site-id {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+}
+.mutations-site-meta {
+  font-size: 0.72rem;
+  color: var(--accent-baseline);
+}
+.mutations-site-badge {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent-running);
+}
+.mutations-site-badge.unpatched {
+  color: var(--accent-baseline);
+}
+.mutations-detail-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.5rem;
+}
+.mutations-detail-id {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+.mutations-detail-loc {
+  font-size: 0.74rem;
+  color: var(--accent-baseline);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.mutations-version-label {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin: 0.6rem 0 0.2rem;
+}
+.mutations-version-op {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--accent-running);
+}
+.mutations-version-rationale {
+  font-size: 0.78rem;
+  color: var(--text);
+  margin-bottom: 0.3rem;
+}
+.mutations-diff {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+.mutations-diff-line {
+  display: flex;
+  white-space: pre;
+}
+.mutations-diff-sign {
+  width: 1.2rem;
+  flex: none;
+  text-align: center;
+  color: var(--accent-baseline);
+  user-select: none;
+}
+.mutations-diff-text {
+  flex: 1;
+  padding-right: 0.5rem;
+}
+.mutations-diff-line.add {
+  background: color-mix(in srgb, var(--accent-promoted) 16%, transparent);
+}
+.mutations-diff-line.add .mutations-diff-sign {
+  color: var(--accent-promoted);
+}
+.mutations-diff-line.del {
+  background: color-mix(in srgb, var(--accent-rejected) 16%, transparent);
+}
+.mutations-diff-line.del .mutations-diff-sign {
+  color: var(--accent-rejected);
+}
+
 @media (max-width: 720px) {
   .files-browser {
+    grid-template-columns: 1fr;
+  }
+  .mutations-browser {
     grid-template-columns: 1fr;
   }
 }

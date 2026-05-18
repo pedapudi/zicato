@@ -44,6 +44,8 @@ GET  /api/environment                — the consolidated environment read:
 GET  /api/run-log?after=<cursor>     — append-only run-log tail batch
 GET  /api/tournaments/{gen_id}       — per-matchup detail (drill-down)
 GET  /api/files...                   — generation file tree + patches
+GET  /api/mutations/{epoch}          — epoch mutation surface (sites)
+GET  /api/mutations/{epoch}/{id}     — one site: baseline + patched diff
 GET  /api/conversation/{run_id}      — reconstructed transcript
 GET  /api/matchup/{entry}/conversations — champion + challenger pair
 GET  /events                         — SSE: snapshot, coalesced

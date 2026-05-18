@@ -194,6 +194,28 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             )
         return JSONResponse(filetree.build_generation_patches(paths, epoch_id, generation_id))
 
+    # -- mutation-site browser endpoints -----------------------------
+
+    async def api_mutations(request: Request) -> JSONResponse:
+        from zicato.dashboard import mutations
+
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {"error": "invalid epoch id", "mutations": []},
+                status_code=400,
+            )
+        return JSONResponse(mutations.build_mutation_index(paths, epoch_id))
+
+    async def api_mutation_detail(request: Request) -> JSONResponse:
+        from zicato.dashboard import mutations
+
+        epoch_id = request.path_params["epoch_id"]
+        mutation_id = request.path_params["mutation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(mutation_id):
+            return JSONResponse({"error": "invalid epoch or mutation id"}, status_code=400)
+        return JSONResponse(mutations.build_mutation_detail(paths, epoch_id, mutation_id))
+
     # -- conversation endpoints --------------------------------------
 
     async def api_conversation(request: Request) -> Response:
@@ -349,6 +371,8 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_files_tree": api_files_tree,
         "api_files_content": api_files_content,
         "api_files_patches": api_files_patches,
+        "api_mutations": api_mutations,
+        "api_mutation_detail": api_mutation_detail,
         "api_conversation": api_conversation,
         "api_matchup_conversations": api_matchup_conversations,
         "control_pause": control_pause,

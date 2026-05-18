@@ -176,6 +176,11 @@ def create_app(
             "/api/files/{epoch_id}/{generation_id}/patches",
             handlers["api_files_patches"],
         ),
+        Route("/api/mutations/{epoch_id}", handlers["api_mutations"]),
+        Route(
+            "/api/mutations/{epoch_id}/{mutation_id}",
+            handlers["api_mutation_detail"],
+        ),
         Route("/api/conversation/{run_id}", handlers["api_conversation"]),
         Route(
             "/api/matchup/{entry_id}/conversations",

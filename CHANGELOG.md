@@ -54,6 +54,24 @@ All notable changes to zicato are recorded here. Format roughly follows
   `ZICATO_MAX_WALL_CLOCK_SECONDS` environment variable. When the loop
   stops on this budget, the `evolve` summary says so explicitly.
 
+### Dashboard
+- The Files view gained a **mutation-site browser**. Below the
+  generation file tree and patch set, an operator can now browse the
+  mutation surface — every `# zicato:mutable` annotated span — and, for
+  each site, see a line-level diff of the `v0` baseline content against
+  the patched content in any generation whose patch touched that
+  mutation id. Sites no patch has touched just show their baseline
+  content.
+- New endpoints `GET /api/mutations/{epoch}` (the epoch's mutation
+  surface, each site with file, role and the generations that patched
+  it) and `GET /api/mutations/{epoch}/{mutation_id}` (one site's
+  baseline content plus the per-generation patched content for a diff).
+  Both are deterministic and backend-neutral: they re-enumerate each
+  generation's materialised snapshot through `enumerate_mutations` and
+  route patch-set reads through the `GenerationStore` seam, so the
+  directory and git backends render identically. No re-apply — a
+  generation's snapshot already IS its post-apply state.
+
 ## [0.3.0] — 2026-05-15
 
 Observability + analytics release. zicato grows a real dashboard, a

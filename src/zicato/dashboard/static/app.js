@@ -3730,6 +3730,7 @@ async function renderFilesView() {
   renderFilesTree();
   renderFilesContent();
   renderFilesPatches();
+  renderMutationsView();
 }
 
 // Left pane top: the epoch -> generation picker, then the file tree.
@@ -3784,10 +3785,19 @@ async function selectFilesGeneration(epochId, generationId) {
   } catch (err) {
     filesState.tree = { entries: [], error: String(err) };
   }
+  // The mutation surface is per-epoch; a generation switch within the
+  // same epoch reuses the cached index, a switch to a new epoch reloads.
+  if (mutationsState.epochId !== epochId) {
+    mutationsState.epochId = epochId;
+    mutationsState.index = null;
+    mutationsState.selectedId = null;
+    mutationsState.detail = null;
+  }
   renderFilesIndex();
   renderFilesTree();
   renderFilesContent();
   renderFilesPatches();
+  renderMutationsView();
 }
 
 // The selected generation's source tree, rendered from the flat entry
@@ -3950,6 +3960,245 @@ async function renderFilesPatches() {
     );
   }
   pane.appendChild(list);
+}
+
+// --- Mutation-site browser (Files view) ----------------------------
+//
+// The mutation-site browser sits below the file tree and patch set. It
+// reads /api/mutations/{epoch} for the epoch's mutation surface — every
+// `# zicato:mutable` annotated span — and /api/mutations/{epoch}/{id}
+// for one site's v0-baseline content plus the patched content in any
+// generation whose patch touched that id. The detail pane renders a
+// line-level diff of baseline vs patched; a site with no patch just
+// shows its current (baseline) content.
+//
+// State is per-epoch: the index is fetched once per epoch, the detail
+// lazily on site selection.
+
+const mutationsState = {
+  epochId: null,    // epoch the surface belongs to
+  index: null,      // { mutations: [...] } for the epoch
+  selectedId: null, // mutation_id of the open site
+  detail: null,     // { baseline, versions: [...] } for the open site
+};
+
+// A minimal LCS line-diff: returns a list of { tag, text } rows where
+// tag is 'same' | 'add' | 'del'. Used to render the baseline-vs-patched
+// mutation-site diff without pulling in a diff library — the spans are
+// small (a prompt string), so the O(n*m) table is cheap.
+function diffLines(oldText, newText) {
+  const a = (oldText || '').split('\n');
+  const b = (newText || '').split('\n');
+  const n = a.length;
+  const m = b.length;
+  // LCS length table.
+  const lcs = [];
+  for (let i = 0; i <= n; i++) lcs.push(new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] = a[i] === b[j]
+        ? lcs[i + 1][j + 1] + 1
+        : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const rows = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      rows.push({ tag: 'same', text: a[i] });
+      i++; j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      rows.push({ tag: 'del', text: a[i] });
+      i++;
+    } else {
+      rows.push({ tag: 'add', text: b[j] });
+      j++;
+    }
+  }
+  while (i < n) { rows.push({ tag: 'del', text: a[i] }); i++; }
+  while (j < m) { rows.push({ tag: 'add', text: b[j] }); j++; }
+  return rows;
+}
+
+async function renderMutationsView() {
+  const listPane = $('mutations-list-pane');
+  const detailPane = $('mutations-detail-pane');
+  if (!listPane || !detailPane) return;
+
+  if (!mutationsState.epochId) {
+    clearChildren(listPane);
+    listPane.appendChild(
+      el('p', { class: 'empty' }, ['Select a generation to browse its mutation sites.'])
+    );
+    clearChildren(detailPane);
+    detailPane.appendChild(
+      el('p', { class: 'empty' }, ['Select a mutation site to view its diff.'])
+    );
+    return;
+  }
+  // Load the epoch's mutation surface once; cached across re-renders.
+  if (mutationsState.index == null) {
+    try {
+      mutationsState.index = await fetchJson(
+        '/api/mutations/' + encodeURIComponent(mutationsState.epochId)
+      );
+    } catch (err) {
+      mutationsState.index = { mutations: [], error: String(err) };
+    }
+  }
+  renderMutationsList();
+  renderMutationsDetail();
+}
+
+// Left pane: the list of mutation sites for the epoch's baseline.
+function renderMutationsList() {
+  const pane = $('mutations-list-pane');
+  if (!pane) return;
+  clearChildren(pane);
+
+  const index = mutationsState.index || { mutations: [] };
+  const sites = index.mutations || [];
+  if (sites.length === 0) {
+    pane.appendChild(
+      el('p', { class: 'empty' }, [
+        index.error || 'No mutation sites in this epoch.',
+      ])
+    );
+    return;
+  }
+  const list = el('ul', { class: 'mutations-list' });
+  for (const site of sites) {
+    const selected = mutationsState.selectedId === site.mutation_id;
+    const patched = (site.patched_generation_ids || []).length > 0;
+    list.appendChild(
+      el('li', { class: 'mutations-list-item' }, [
+        el('button', {
+          type: 'button',
+          class: 'mutations-site-button' + (selected ? ' active' : ''),
+          onclick: () => selectMutationSite(site.mutation_id),
+        }, [
+          el('span', { class: 'mutations-site-id' }, [site.mutation_id]),
+          el('span', { class: 'mutations-site-meta' }, [
+            (site.role || site.kind || '') + ' · ' + (site.file || ''),
+          ]),
+          patched
+            ? el('span', { class: 'mutations-site-badge' }, [
+                site.patched_generation_ids.join(', '),
+              ])
+            : el('span', { class: 'mutations-site-badge unpatched' }, ['baseline']),
+        ]),
+      ])
+    );
+  }
+  pane.appendChild(list);
+}
+
+async function selectMutationSite(mutationId) {
+  mutationsState.selectedId = mutationId;
+  mutationsState.detail = null;
+  const url = '/api/mutations/'
+    + encodeURIComponent(mutationsState.epochId) + '/'
+    + encodeURIComponent(mutationId);
+  try {
+    mutationsState.detail = await fetchJson(url);
+  } catch (err) {
+    mutationsState.detail = { mutation_id: mutationId, error: String(err) };
+  }
+  renderMutationsList();
+  renderMutationsDetail();
+}
+
+// Right pane: the selected site's baseline content and, per patching
+// generation, a line-level diff of baseline vs patched content.
+function renderMutationsDetail() {
+  const pane = $('mutations-detail-pane');
+  if (!pane) return;
+  clearChildren(pane);
+
+  if (!mutationsState.selectedId) {
+    pane.appendChild(
+      el('p', { class: 'empty' }, ['Select a mutation site to view its diff.'])
+    );
+    return;
+  }
+  const detail = mutationsState.detail;
+  if (!detail) {
+    pane.appendChild(el('p', { class: 'empty' }, ['Loading…']));
+    return;
+  }
+  if (detail.error) {
+    pane.appendChild(el('p', { class: 'empty' }, [detail.error]));
+    return;
+  }
+  const baseline = detail.baseline || {};
+  pane.appendChild(
+    el('div', { class: 'mutations-detail-header' }, [
+      el('span', { class: 'mutations-detail-id' }, [detail.mutation_id || '']),
+      el('span', { class: 'mutations-detail-loc' }, [
+        (baseline.role ? baseline.role + ' · ' : '')
+          + (baseline.file || '')
+          + (baseline.line_start
+              ? ':' + baseline.line_start + '-' + baseline.line_end
+              : ''),
+      ]),
+    ])
+  );
+
+  const versions = detail.versions || [];
+  if (versions.length === 0) {
+    // No patch ever touched this site — show the baseline content as-is.
+    pane.appendChild(
+      el('div', { class: 'mutations-version-label' }, [
+        'v0 baseline — no patch has touched this site',
+      ])
+    );
+    pane.appendChild(
+      el('pre', { class: 'files-content-body' }, [baseline.content || ''])
+    );
+    return;
+  }
+  // One diff block per generation whose patch touched this id.
+  for (const version of versions) {
+    pane.appendChild(
+      el('div', { class: 'mutations-version-label' }, [
+        el('span', {}, ['v0 → ' + (version.generation_id || '?')]),
+        version.op
+          ? el('span', { class: 'mutations-version-op' }, [version.op])
+          : null,
+      ])
+    );
+    if (version.rationale) {
+      pane.appendChild(
+        el('div', { class: 'mutations-version-rationale' }, [version.rationale])
+      );
+    }
+    if (version.error || version.content == null) {
+      pane.appendChild(
+        el('p', { class: 'empty' }, [
+          version.error || 'No patched content available for this generation.',
+        ])
+      );
+      continue;
+    }
+    pane.appendChild(renderMutationDiff(baseline.content || '', version.content));
+  }
+}
+
+// Render a unified line-level diff of baseline vs patched span content.
+function renderMutationDiff(baselineText, patchedText) {
+  const rows = diffLines(baselineText, patchedText);
+  const block = el('div', { class: 'mutations-diff' });
+  for (const row of rows) {
+    const sign = row.tag === 'add' ? '+' : (row.tag === 'del' ? '-' : ' ');
+    block.appendChild(
+      el('div', { class: 'mutations-diff-line ' + row.tag }, [
+        el('span', { class: 'mutations-diff-sign' }, [sign]),
+        el('span', { class: 'mutations-diff-text' }, [row.text]),
+      ])
+    );
+  }
+  return block;
 }
 
 // Render the Conversation view: a header, then two transcript columns.

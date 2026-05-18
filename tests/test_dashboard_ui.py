@@ -175,6 +175,7 @@ REQUIRED_SECTIONS = {
     "epoch-mutations-section",
     "files-section",
     "files-patches-section",
+    "mutations-section",
 }
 
 # The five view containers of the multi-view app.
