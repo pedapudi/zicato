@@ -787,6 +787,17 @@ async def test_run_multi_turn_emulated_graceful_when_emulator_missing(
     runnable = adapter.load(generation_root)
 
     monkeypatch.setitem(sys.modules, "zicato.emulator", None)
+    # If zicato.emulator was already imported before this test (e.g.
+    # because pytest collected test_emulator_driver.py earlier and that
+    # collection imported zicato.emulator), the 'from zicato import
+    # emulator' in production code resolves 'emulator' from the zicato
+    # package's __dict__, bypassing sys.modules entirely. Remove the
+    # attribute so the import path goes through sys.modules and sees
+    # the sentinel None, which raises ImportError as expected.
+    import zicato as _zicato_pkg
+
+    if hasattr(_zicato_pkg, "emulator"):
+        monkeypatch.delattr(_zicato_pkg, "emulator")
 
     from zicato.core import UserPersona
 

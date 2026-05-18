@@ -66,16 +66,12 @@ def _make_config(tmp_path: Path) -> RuntimeConfig:
 
 
 def test_resolve_agent_colon_form_returns_class() -> None:
-    cls = resolve_adversarial_agent(
-        f"{__name__}:_StubLoopingAgent"
-    )
+    cls = resolve_adversarial_agent(f"{__name__}:_StubLoopingAgent")
     assert cls is _StubLoopingAgent
 
 
 def test_resolve_agent_dotted_form_returns_class() -> None:
-    cls = resolve_adversarial_agent(
-        f"{__name__}._StubLoopingAgent"
-    )
+    cls = resolve_adversarial_agent(f"{__name__}._StubLoopingAgent")
     assert cls is _StubLoopingAgent
 
 
@@ -171,14 +167,19 @@ def fake_goldfive(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     }
 
     def _wrap(agent: Any, *, sinks: list, call_llm: Any, **_kwargs: Any) -> _FakeRunner:
-        state["wrap_calls"].append(
-            {"agent": agent, "sinks": list(sinks), "call_llm": call_llm}
-        )
+        state["wrap_calls"].append({"agent": agent, "sinks": list(sinks), "call_llm": call_llm})
         return _FakeRunner(state["outcome"], delay=state["delay"])
 
     fake_module = types.ModuleType("goldfive")
     fake_module.wrap = _wrap  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "goldfive", fake_module)
+    # Evict cached testkit submodules so that imports of
+    # goldfive.testkit.adversarial inside the production code see the
+    # fake (non-package) goldfive and raise ImportError, rather than
+    # finding the real module that was cached by an earlier test.
+    for _sub in list(sys.modules):
+        if _sub.startswith("goldfive."):
+            monkeypatch.delitem(sys.modules, _sub, raising=False)
     return state
 
 
@@ -330,9 +331,7 @@ async def test_run_adversarial_entry_aborts_on_budget(
         f"{__name__}:_LocalLoopingAgent",
         budget=1,
     )
-    result_short = await run_adversarial_entry(
-        entry_short, [], _make_config(tmp_path)
-    )
+    result_short = await run_adversarial_entry(entry_short, [], _make_config(tmp_path))
     assert result_short.aborted is True
     assert result_short.abort_reason == "wall_clock_budget_exceeded"
 
@@ -390,9 +389,7 @@ def _make_clean_entry(
 async def test_run_clean_entry_uses_explicit_override(
     fake_goldfive: dict[str, Any], tmp_path: Path
 ) -> None:
-    entry = _make_clean_entry(
-        context={"clean_agent_spec": f"{__name__}:_StubCleanAgent"}
-    )
+    entry = _make_clean_entry(context={"clean_agent_spec": f"{__name__}:_StubCleanAgent"})
     result = await run_clean_entry(entry, [], _make_config(tmp_path))
     assert result.aborted is False
     call = fake_goldfive["wrap_calls"][0]
@@ -421,9 +418,7 @@ async def test_run_clean_entry_explicit_override_surfaces_errors(
     # Explicit overrides MUST be strict — the fallback is only for the
     # default-spec path. If the operator types a spec, they get an
     # actionable error rather than silent fallback.
-    entry = _make_clean_entry(
-        context={"clean_agent_spec": "definitely.not.a.module:Foo"}
-    )
+    entry = _make_clean_entry(context={"clean_agent_spec": "definitely.not.a.module:Foo"})
     with pytest.raises(AdversarialResolutionError):
         await run_clean_entry(entry, [], _make_config(tmp_path))
 
@@ -465,9 +460,12 @@ async def test_run_adversarial_entry_with_real_testkit(tmp_path: Path) -> None:
     pytest.importorskip("goldfive")
     pytest.importorskip("goldfive.testkit.adversarial")
 
+    # LoopingAgent requires cycle_after_turns as its first positional arg.
+    # Pass it via context["args"] so _parse_agent_args supplies it.
     entry = _make_adversarial_entry(
         "goldfive.testkit.adversarial:LoopingAgent",
         budget=5,
+        context={"args": "[2]"},
     )
     # We do not assert on outcome shape — only that the runner does not
     # raise unexpectedly. The expectation matchers are the real check.

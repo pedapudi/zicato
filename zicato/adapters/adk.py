@@ -656,8 +656,14 @@ class ADKHarnessAdapter:
         # not exist yet at adapter import time. Surface a clean error
         # instead of an opaque ImportError so operators know which
         # module is missing.
+        #
+        # Use importlib.import_module explicitly (rather than a
+        # from-import) so test-side monkeypatches of
+        # importlib.import_module can intercept this call to simulate
+        # the module being absent.
         try:
-            from zicato.mutation.enumerator import enumerate_mutations
+            enumerator_mod = importlib.import_module("zicato.mutation.enumerator")
+            enumerate_mutations = enumerator_mod.enumerate_mutations
         except ImportError as exc:
             raise ImportError(
                 "ADKHarnessAdapter.mutation_points requires "
