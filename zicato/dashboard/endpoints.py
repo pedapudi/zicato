@@ -135,6 +135,51 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     async def api_health_report(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_health_report(paths))
 
+    # -- file-tree / file-browser endpoints --------------------------
+
+    async def api_files(_request: Request) -> JSONResponse:
+        from zicato.dashboard import filetree
+
+        return JSONResponse(filetree.build_file_index(paths))
+
+    async def api_files_tree(request: Request) -> JSONResponse:
+        from zicato.dashboard import filetree
+
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse(
+                {"error": "invalid epoch or generation id", "entries": []},
+                status_code=400,
+            )
+        return JSONResponse(filetree.build_generation_tree(paths, epoch_id, generation_id))
+
+    async def api_files_content(request: Request) -> JSONResponse:
+        from zicato.dashboard import filetree
+
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse({"error": "invalid epoch or generation id"}, status_code=400)
+        rel_path = request.query_params.get("path", "")
+        if not rel_path:
+            return JSONResponse({"error": "missing 'path' query param"}, status_code=400)
+        # The store layer rejects traversal; a 200 with an ``error``
+        # field keeps the dashboard from surfacing a hard failure.
+        return JSONResponse(filetree.read_generation_file(paths, epoch_id, generation_id, rel_path))
+
+    async def api_files_patches(request: Request) -> JSONResponse:
+        from zicato.dashboard import filetree
+
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse(
+                {"error": "invalid epoch or generation id", "patches": []},
+                status_code=400,
+            )
+        return JSONResponse(filetree.build_generation_patches(paths, epoch_id, generation_id))
+
     # -- conversation endpoints --------------------------------------
 
     async def api_conversation(request: Request) -> Response:
@@ -285,6 +330,10 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_tournaments": api_tournaments,
         "api_tournament_detail": api_tournament_detail,
         "api_health_report": api_health_report,
+        "api_files": api_files,
+        "api_files_tree": api_files_tree,
+        "api_files_content": api_files_content,
+        "api_files_patches": api_files_patches,
         "api_conversation": api_conversation,
         "api_matchup_conversations": api_matchup_conversations,
         "control_pause": control_pause,

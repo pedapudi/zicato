@@ -59,6 +59,47 @@ except ImportError:  # pragma: no cover — adk extra optional at import time
 
 
 # ---------------------------------------------------------------------------
+# Run-output routing.
+#
+# This agent's tools write a rendered webpage to disk. They MUST write
+# OUTSIDE this module's own source directory — writing next to ``__file__``
+# puts run output inside the generation snapshot, and zicato then copies
+# that output forward into every derived generation, compounding without
+# bound until the disk fills.
+#
+# The zicato tournament worker exports ``ZICATO_RUN_SCRATCH_DIR``: a fresh
+# per-run scratch directory outside the snapshot, discarded when the run
+# ends. ``_output_base`` resolves the on-disk root every tool writes
+# under: the scratch directory when zicato supplied one, else an
+# ``output/`` directory next to this module for a bare standalone run
+# (a developer running the agent directly, with no zicato around).
+#
+# The env var name is the contract pinned in
+# ``zicato/epoch/snapshot_scope.py`` (SCRATCH_DIR_ENV); it is duplicated
+# here as a bare string so this vendored target has no import dependency
+# on zicato internals.
+# ---------------------------------------------------------------------------
+
+_SCRATCH_DIR_ENV = "ZICATO_RUN_SCRATCH_DIR"
+
+
+def _output_base() -> str:
+    """Return the directory run output is written under.
+
+    The zicato-supplied per-run scratch directory when present; an
+    ``output/`` directory next to this module otherwise. The result
+    always exists on return.
+    """
+    scratch = os.environ.get(_SCRATCH_DIR_ENV)
+    if scratch:
+        base = os.path.join(scratch, "output")
+    else:
+        base = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+# ---------------------------------------------------------------------------
 # Tools — write / read / patch the generated presentation files.
 #
 # Each tool function's docstring is annotated with a ``# zicato:mutable``
@@ -69,9 +110,7 @@ except ImportError:  # pragma: no cover — adk extra optional at import time
 # ---------------------------------------------------------------------------
 
 
-def write_webpage(
-    topic: str, html_content: str, css_content: str, js_content: str
-) -> str:
+def write_webpage(topic: str, html_content: str, css_content: str, js_content: str) -> str:
     # zicato:mutable id="write_webpage_tool_description" role="tool_description"
     """Write an interactive webpage (HTML, CSS, JS) under ``output/``.
 
@@ -81,9 +120,7 @@ def write_webpage(
     """
     try:
         topic_filename = topic.lower().replace(" ", "_").replace("/", "_")
-        output_dir = os.path.join(
-            os.path.dirname(__file__), "output", topic_filename
-        )
+        output_dir = os.path.join(_output_base(), topic_filename)
         os.makedirs(output_dir, exist_ok=True)
 
         with open(os.path.join(output_dir, "index.html"), "w") as f:
@@ -107,9 +144,7 @@ def read_presentation_files(topic: str) -> dict[str, str]:
     as ``<error reading ...>`` strings rather than raising.
     """
     topic_filename = topic.lower().replace(" ", "_").replace("/", "_")
-    output_dir = os.path.join(
-        os.path.dirname(__file__), "output", topic_filename
-    )
+    output_dir = os.path.join(_output_base(), topic_filename)
     files: dict[str, str] = {}
     for name in ("index.html", "styles.css", "script.js"):
         path = os.path.join(output_dir, name)
@@ -133,18 +168,14 @@ def find_presentation_files(topic: str) -> dict[str, Any]:
     presentation files and returns their contents.
     """
     topic_slug = topic.lower().replace(" ", "_").replace("/", "_")
-    base_dir = os.path.realpath(
-        os.path.join(os.path.dirname(__file__), "output")
-    )
+    base_dir = os.path.realpath(_output_base())
 
     if not os.path.isdir(base_dir):
         return {"found": False, "candidates": []}
 
     suffixes = ("_interactive_presentation", "_presentation", "_slideshow")
     entries = sorted(
-        name
-        for name in os.listdir(base_dir)
-        if os.path.isdir(os.path.join(base_dir, name))
+        name for name in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, name))
     )
 
     match: str | None = None
@@ -163,10 +194,7 @@ def find_presentation_files(topic: str) -> dict[str, Any]:
 
     candidate_dir = os.path.realpath(os.path.join(base_dir, match))
     # Defence in depth: refuse anything that escaped the sandbox.
-    if not (
-        candidate_dir == base_dir
-        or candidate_dir.startswith(base_dir + os.sep)
-    ):
+    if not (candidate_dir == base_dir or candidate_dir.startswith(base_dir + os.sep)):
         return {"found": False, "candidates": entries}
 
     files: dict[str, str] = {}
@@ -191,9 +219,7 @@ def patch_file(path: str, new_content: str) -> str:
     """
     try:
         if not os.path.isabs(path):
-            path = os.path.join(
-                os.path.dirname(__file__), "output", path
-            )
+            path = os.path.join(_output_base(), path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(new_content)
@@ -404,9 +430,7 @@ def build_agent_tree(model: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-_MODEL_NAME = os.environ.get(
-    "ZICATO_TARGET_1_MODEL", "openai/gpt-4o-mini"
-)
+_MODEL_NAME = os.environ.get("ZICATO_TARGET_1_MODEL", "openai/gpt-4o-mini")
 
 _root_agent: Any | None = None
 

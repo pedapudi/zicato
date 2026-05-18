@@ -127,6 +127,7 @@ def _load_args(args_path: Path) -> dict[str, Any]:
           "epoch_id": "<epoch id>",
           "generation_id": "<generation id>",
           "snapshot_root": "<abs path to a per-run code-snapshot working copy>",
+          "scratch_dir": "<abs path to a per-run scratch dir OUTSIDE the snapshot>",
           "entry": { ...BoardEntry as a dict (validate_board_entry shape)... },
           "adapter": {
             "kind": "adk",
@@ -394,6 +395,21 @@ async def _run(args: dict[str, Any]) -> None:
     loss_path = Path(args["loss_path"])
     result_path = Path(args["result_path"])
     harmonograf_url = str(args.get("harmonograf_url", "") or "")
+
+    # Export the per-run scratch directory so the inner harness routes
+    # its run output OUTSIDE the generation snapshot. Without this a
+    # target writing next to its own code (e.g. the presentation agent's
+    # ``output/``) would pollute the snapshot, and the pollution would
+    # compound generation over generation. The runner supplies a fresh
+    # scratch dir per run; an absent key (a legacy args file) leaves the
+    # env var unset and the target falls back to its own default.
+    from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV  # noqa: PLC0415
+
+    scratch_raw = args.get("scratch_dir")
+    if scratch_raw:
+        scratch_dir = Path(scratch_raw)
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        os.environ[SCRATCH_DIR_ENV] = str(scratch_dir)
 
     entry = validate_board_entry(args["entry"])
     run_id = f"{generation_id}--{entry.id}"

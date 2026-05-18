@@ -38,14 +38,16 @@ class _StubHarnessAdapter:
     """Minimal :class:`HarnessAdapter` shape for Protocol-checking tests."""
 
     name: str = "stub"
+    run_output_names: tuple[str, ...] = ()
 
     def load(self, generation_root: Path) -> _StubRunnableHarness:
         return _StubRunnableHarness()
 
-    def mutation_points(
-        self, source_roots: list[Path] | None = None
-    ) -> list[MutationPoint]:
+    def mutation_points(self, source_roots: list[Path] | None = None) -> list[MutationPoint]:
         return []
+
+    def mutable_subpaths(self, generation_root: Path) -> list[Path]:
+        return [generation_root]
 
 
 def test_runnable_harness_protocol_accepts_stub_with_run_method() -> None:
@@ -73,9 +75,7 @@ def test_harness_adapter_protocol_rejects_class_without_load() -> None:
     class MissingLoad:
         name: str = "missing"
 
-        def mutation_points(
-            self, source_roots: list[Path] | None = None
-        ) -> list[MutationPoint]:
+        def mutation_points(self, source_roots: list[Path] | None = None) -> list[MutationPoint]:
             return []
 
     assert not isinstance(MissingLoad(), HarnessAdapter)

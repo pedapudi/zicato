@@ -487,12 +487,24 @@ class ADKHarnessAdapter:
         callers wanting a strict construction-time check should pass
         ``mutable_trees`` explicitly.
 
+    The ``mutable_trees`` paths are *absolute* (resolved at construction
+    against the registered source). The mutable surface inside a given
+    generation snapshot is obtained by :meth:`mutable_subpaths`, which
+    re-bases each ``mutable_trees`` entry onto the snapshot root.
+
     Conforms to :class:`~zicato.adapters.base.HarnessAdapter`
     structurally; the Protocol's ``runtime_checkable`` check passes
     without inheritance.
     """
 
     name: str = "adk"
+
+    #: Names the inner harness writes run output under, excluded from
+    #: every generation copy by :mod:`zicato.epoch.snapshot_scope`.
+    #: ``"output"`` is already in the standing artifact set; declaring it
+    #: here keeps the adapter contract explicit and lets the directory /
+    #: git stores honour an adapter-specific name without a code change.
+    run_output_names: tuple[str, ...] = ("output",)
 
     def __init__(
         self,
@@ -507,6 +519,33 @@ class ADKHarnessAdapter:
             self.mutable_trees = _default_mutable_trees(module_path)
         else:
             self.mutable_trees = [Path(p).resolve() for p in mutable_trees]
+
+    def mutable_subpaths(self, generation_root: Path) -> list[Path]:
+        """Re-base the adapter's mutable trees onto a concrete snapshot root.
+
+        Each construction-time ``mutable_trees`` entry is an absolute
+        path under the *registered* source. A generation snapshot copies
+        every registered tree under its basename, so the mutable surface
+        inside ``generation_root`` is ``generation_root / <basename>``
+        for each registered tree.
+
+        Returns only the sub-paths that exist under ``generation_root``.
+        Falls back to ``[generation_root]`` when the adapter has no
+        ``mutable_trees`` declaration at all — the whole snapshot is then
+        the surface, matching the pre-narrowing default behaviour.
+        """
+        root = Path(generation_root).resolve()
+        if not self.mutable_trees:
+            return [root]
+        subpaths: list[Path] = []
+        for tree in self.mutable_trees:
+            candidate = root / Path(tree).name
+            if candidate.exists():
+                subpaths.append(candidate)
+        # Every registered tree missing from the snapshot is a degenerate
+        # case (e.g. an empty snapshot); fall back to the whole root so
+        # enumeration still has something to walk.
+        return subpaths or [root]
 
     # ------------------------------------------------------------------
     # HarnessAdapter surface

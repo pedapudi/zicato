@@ -159,6 +159,19 @@ def create_app(
             handlers["api_tournament_detail"],
         ),
         Route("/api/health-report", handlers["api_health_report"]),
+        Route("/api/files", handlers["api_files"]),
+        Route(
+            "/api/files/{epoch_id}/{generation_id}/tree",
+            handlers["api_files_tree"],
+        ),
+        Route(
+            "/api/files/{epoch_id}/{generation_id}/content",
+            handlers["api_files_content"],
+        ),
+        Route(
+            "/api/files/{epoch_id}/{generation_id}/patches",
+            handlers["api_files_patches"],
+        ),
         Route("/api/conversation/{run_id}", handlers["api_conversation"]),
         Route(
             "/api/matchup/{entry_id}/conversations",
