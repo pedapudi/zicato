@@ -74,6 +74,7 @@ import subprocess
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from zicato.core.types import Patch
 from zicato.epoch.genstore import PatchRecord, TreeEntry
@@ -470,7 +471,7 @@ class GitGenerationStore:
         }
         return f"{subject}\n\n{_META_SENTINEL}\n{json.dumps(meta, indent=2)}\n"
 
-    def _read_commit_meta(self, ref: str) -> dict | None:
+    def _read_commit_meta(self, ref: str) -> dict[str, Any] | None:
         """Parse the metadata block out of a generation commit's message."""
         body = self._git("log", "-1", "--format=%B", ref)
         if _META_SENTINEL not in body:

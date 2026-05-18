@@ -8,6 +8,7 @@ import types
 from typing import Any
 
 import pytest
+
 from zicato.board.matchers import evaluate_expectation
 from zicato.core.types import Expectation, ExpectationKind, RunResult
 

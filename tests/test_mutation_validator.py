@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+
 from zicato.core.types import Patch
 from zicato.mutation.applier import apply_patches
 from zicato.mutation.enumerator import enumerate_mutations
