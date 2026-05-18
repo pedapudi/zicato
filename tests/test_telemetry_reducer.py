@@ -1333,4 +1333,147 @@ def test_reduce_loss_completed_run_unaffected_by_default(tmp_path: Path) -> None
         weights=_default_weights(),
     )
     assert profile.drift_loss == pytest.approx(0.0)
-    assert profile.task_failure_ratio == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# ADK session id — captured from the events.jsonl envelope
+# ---------------------------------------------------------------------------
+#
+# goldfive carries ``sessionId`` (camelCase) and ``session_id`` (snake_case)
+# on every event envelope. The reducer must capture the first non-empty
+# value it sees and persist it on LossProfile.adk_session_id so the
+# dashboard can build harmonograf deep-links.
+
+
+def test_reduce_loss_captures_adk_session_id_camel(tmp_path: Path) -> None:
+    """``sessionId`` (camelCase) on the first event is stored as ``adk_session_id``."""
+    events = [
+        {
+            "eventId": "e0",
+            "runId": "run-A",
+            "sessionId": "session-camel-123",
+            "sequence": 0,
+            "runStarted": {"goalSummary": "test"},
+        }
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    assert profile.adk_session_id == "session-camel-123"
+
+
+def test_reduce_loss_captures_adk_session_id_snake(tmp_path: Path) -> None:
+    """``session_id`` (snake_case) is accepted as a fallback when ``sessionId`` is absent."""
+    events = [
+        {
+            "event_id": "e0",
+            "run_id": "run-B",
+            "session_id": "session-snake-456",
+            "sequence": 0,
+            "run_started": {"goal_summary": "test"},
+        }
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    assert profile.adk_session_id == "session-snake-456"
+
+
+def test_reduce_loss_adk_session_id_empty_when_absent(tmp_path: Path) -> None:
+    """No ``sessionId`` / ``session_id`` envelope key → ``adk_session_id`` defaults to ``""``."""
+    events = [
+        {
+            "event_id": "e0",
+            "run_id": "run-C",
+            "sequence": 0,
+            "run_started": {"goal_summary": "no session"},
+        }
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    assert profile.adk_session_id == ""
+
+
+def test_loss_profile_round_trip_with_adk_session_id(tmp_path: Path) -> None:
+    """``adk_session_id`` survives ``write_loss_profile`` / ``read_loss_profile``."""
+    profile = LossProfile(
+        run_id="r-adk",
+        entry_id="ent-adk",
+        generation_id="v0",
+        epoch_id="ep1",
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=10,
+        wall_clock_budget_exceeded=False,
+        expectation_result=None,
+        drift_loss=0.0,
+        pass_fail=None,
+        turns_completed=None,
+        memory_failure_count=None,
+        context_loss_count=None,
+        adk_session_id="abc123def456",
+    )
+    p = tmp_path / "loss.json"
+    write_loss_profile(profile, p)
+    loaded = read_loss_profile(p)
+    assert loaded == profile
+    assert loaded.adk_session_id == "abc123def456"
+
+
+def test_read_loss_profile_back_compat_missing_adk_session_id(tmp_path: Path) -> None:
+    """An old ``loss.json`` without ``adk_session_id`` loads with the default ``""``."""
+    # Write a loss.json that predates the adk_session_id field.
+    import json as _json
+
+    old_loss = {
+        "run_id": "old-run",
+        "entry_id": "ent-old",
+        "generation_id": "v0",
+        "epoch_id": "ep1",
+        "drift_counts": [],
+        "plan_revisions": 0,
+        "task_failure_ratio": 0.0,
+        "runtime_ms": 100,
+        "wall_clock_budget_exceeded": False,
+        "expectation_result": None,
+        "drift_loss": 0.0,
+        "pass_fail": None,
+        "turns_completed": None,
+        "memory_failure_count": None,
+        "context_loss_count": None,
+        # intentionally omits adk_session_id
+    }
+    p = tmp_path / "loss.json"
+    p.write_text(_json.dumps(old_loss), encoding="utf-8")
+    loaded = read_loss_profile(p)
+    assert loaded.adk_session_id == ""
+    assert loaded.task_failure_ratio == pytest.approx(0.0)

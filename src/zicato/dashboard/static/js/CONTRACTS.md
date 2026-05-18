@@ -62,7 +62,8 @@ exception. Shape (as produced by `state_reader.build_environment`):
   "generations": { "generations":[...], "experiments":[...] },
   "score_trajectory": { "epoch_id", "points":[{generation_id,
         parent_generation_id, promoted, scalar, entry_count, created_at}] },
-  "active_runs": [ { ..., progress:0..1|null, elapsed_seconds, budget_seconds } ],
+  "active_runs": [ { ..., progress:0..1|null, elapsed_seconds, budget_seconds,
+                      adk_session_id:str } ],
   "health_report": { ...loop health... },
   "heartbeat": { generation_id, round_index, last_heartbeat,
         round_started_at, started_at, harmonograf_url? } | null,
@@ -229,7 +230,22 @@ navigates. The router emits `route:changed` on the bus.
 Built from `ZICATO_HARMONOGRAF_URL` surfaced on the heartbeat as
 `harmonograf_url`. Exports `harmonografBase()`, `harmonografRunUrl(rec)`,
 `harmonografLink(run, label)`, `harmonografMini(target, label, aria)`,
-`harmonografGenLink(genId)`, `deriveRunId(rec)`. Run-id convention:
-`${generation}--${entry}`; session path `/#/session/<id>`. The
-run-id↔harmonograf-route integration is a NOTED CONTRACT GAP — the
-dashboard side is implemented; the harmonograf side is flagged.
+`harmonografGenLink(genId)`, `harmonografSessionId(rec)`, `deriveRunId(rec)`.
+
+harmonograf keys its session views by the **ADK session id** — the
+`sessionId` present on every goldfive event envelope. The backend
+surfaces this as `adk_session_id` on run-like records (active-run rows
+from `/api/environment`; `ab_grid` cells from `/api/tournaments/{gen}`).
+Session path: `/#/session/<adk_session_id>`. No harmonograf-side change
+is required — the integration is complete.
+
+`harmonografSessionId(rec)` resolution order:
+1. `rec.adk_session_id` / `rec.child_adk_session_id` /
+   `rec.parent_adk_session_id` — the real ADK session id (preferred).
+2. `rec.session_id` / `rec.session` / `rec.harmonograf_session` —
+   legacy aliases for back-compat.
+3. bare `harmonograf_url` fallback when no session id is present.
+
+`deriveRunId(rec)` returns the synthetic `${generation}--${entry}`
+string for callers that need the run-id directly; it is no longer
+used for session resolution.

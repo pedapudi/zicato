@@ -317,6 +317,48 @@ def _compute_run_progress(
     return (fraction, elapsed, budget)
 
 
+def read_adk_session_id_from_events(events_jsonl_path: str | None) -> str:
+    """Best-effort read of the ADK session id from the first event line.
+
+    goldfive carries ``sessionId`` (camelCase) on every event envelope.
+    Reading just the first line is cheap — the session id is the same
+    on every event, so one line is sufficient. Returns ``""`` on any
+    failure so the caller degrades gracefully.
+
+    .. warning::
+        Do NOT call this from :func:`read_active_runs_view` or any
+        function that runs in the SSE hot path (``build_snapshot`` →
+        ``read_active_runs_view``).  Opening ``events.jsonl`` inside the
+        SSE handler triggers the filesystem watchdog and emits a spurious
+        ``run_log`` event before the expected ``state_change``, breaking
+        SSE ordering tests.  Use this utility only from non-hot-path
+        callers (e.g. a dedicated API endpoint, or the post-run reducer).
+        The per-run ``adk_session_id`` is persisted in ``loss.json`` by
+        the reducer and surfaced through ``build_matchup_detail`` via the
+        ``ab_grid`` cells — that is the preferred read path for completed
+        runs.
+    """
+    if not events_jsonl_path:
+        return ""
+    try:
+        p = Path(events_jsonl_path)
+        if not p.exists():
+            return ""
+        with open(p, encoding="utf-8") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                evt = json.loads(raw)
+                if not isinstance(evt, dict):
+                    continue
+                sid = evt.get("sessionId") or evt.get("session_id") or ""
+                return str(sid) if sid else ""
+    except Exception:  # noqa: BLE001 — best-effort
+        return ""
+    return ""
+
+
 def read_active_runs_view(paths: WorkspacePaths) -> list[dict[str, Any]]:
     """``active_runs/*.json`` enriched with computed deadline progress.
 
@@ -324,6 +366,14 @@ def read_active_runs_view(paths: WorkspacePaths) -> list[dict[str, Any]]:
     ``progress`` (deadline fraction), ``elapsed_seconds`` and
     ``budget_seconds`` — exactly what ``/api/active-runs`` returns from
     the Rust ``read_active_runs_view``.
+
+    ``adk_session_id`` is intentionally NOT read here: opening
+    ``events.jsonl`` files in this hot path (called from
+    ``build_snapshot`` on every SSE connection) triggers the filesystem
+    watchdog and emits a spurious ``run_log`` event, breaking SSE
+    ordering invariants.  For completed runs the ``adk_session_id`` is
+    available via ``build_matchup_detail`` → ``ab_grid`` cells (the
+    reducer persists it in ``loss.json``).
     """
     now = _utc_now()
     out: list[dict[str, Any]] = []
@@ -1124,14 +1174,14 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
 
         child_losses = _query(
             conn,
-            "SELECT entry_id, drift_loss, pass_fail FROM loss_profiles "
+            "SELECT entry_id, drift_loss, pass_fail, loss_json FROM loss_profiles "
             "WHERE generation_id = ? ORDER BY entry_id ASC",
             (generation_id,),
         )
         parent_losses = (
             _query(
                 conn,
-                "SELECT entry_id, drift_loss, pass_fail FROM loss_profiles "
+                "SELECT entry_id, drift_loss, pass_fail, loss_json FROM loss_profiles "
                 "WHERE generation_id = ? ORDER BY entry_id ASC",
                 (champion,),
             )
@@ -1145,12 +1195,22 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
             cell["entry_id"] = r["entry_id"]
             cell["parent_drift_loss"] = r["drift_loss"]
             cell["parent_pass_fail"] = r["pass_fail"]
+            lj = _opt_json(r["loss_json"])
+            if isinstance(lj, dict):
+                sid = lj.get("adk_session_id")
+                if isinstance(sid, str) and sid:
+                    cell["parent_adk_session_id"] = sid
         for r in child_losses:
             key = r["entry_id"] or ""
             cell = ab.setdefault(key, {"entry_id": r["entry_id"]})
             cell["entry_id"] = r["entry_id"]
             cell["child_drift_loss"] = r["drift_loss"]
             cell["child_pass_fail"] = r["pass_fail"]
+            lj = _opt_json(r["loss_json"])
+            if isinstance(lj, dict):
+                sid = lj.get("adk_session_id")
+                if isinstance(sid, str) and sid:
+                    cell["child_adk_session_id"] = sid
         ab_grid = []
         for key in sorted(ab):
             cell = ab[key]

@@ -5,17 +5,18 @@
 // execution trace. When the heartbeat carries no url at all, render
 // nothing — no disabled stub.
 //
-// A harmonograf *session* is a run. zicato names a run deterministically
-// as `{generation_id}--{entry_id}`, so even a record with no explicit
-// session id resolves a trace. Resolution order, most-specific first:
-//   1. explicit session id (session_id / session / harmonograf_session / run_id)
-//   2. the `{generation}--{entry}` run-id convention
+// harmonograf keys its session views by the ADK session id carried on
+// every goldfive event envelope (`sessionId`). The backend surfaces
+// this as `adk_session_id` on run-like records (active-run rows,
+// ab-grid cells). Resolution order, most-specific first:
+//   1. `adk_session_id` — the real ADK/goldfive session id (preferred).
+//   2. `session_id` / `session` / `harmonograf_session` — legacy aliases.
 //   3. the bare harmonograf url (last resort — never render nothing
 //      when harmonograf_url is set).
 //
-// NOTED CONTRACT GAP: the run-id ↔ harmonograf-route integration is
-// one-sided. The dashboard builds `/#/session/<id>`; harmonograf must
-// accept that id form. Flagged for the harmonograf side.
+// The harmonograf route is `/#/session/<adk_session_id>`. No harmonograf-
+// side change is needed — the integration is complete once the correct
+// ADK session id is used.
 
 import { el } from './dom.js';
 import { state } from './state.js';
@@ -27,7 +28,10 @@ export function harmonografBase() {
   return trimmed.length > 0 ? trimmed.replace(/\/+$/, '') : null;
 }
 
-// Derive the deterministic `{generation_id}--{entry_id}` run id.
+// Derive the zicato synthetic `{generation_id}--{entry_id}` run-id
+// convention. Kept for callers that need the run-id string directly;
+// no longer used for harmonograf session resolution (the backend now
+// surfaces the real ADK session id as `adk_session_id`).
 export function deriveRunId(rec) {
   if (!rec) return null;
   const gen = rec.generation_id || rec.generation || rec.child_id;
@@ -36,13 +40,17 @@ export function deriveRunId(rec) {
   return null;
 }
 
-// Resolve a harmonograf session id — explicit, else the run-id form.
+// Resolve a harmonograf session id from a run-like record.
+// Prefers the real ADK session id surfaced by the backend.
 export function harmonografSessionId(rec) {
   if (!rec) return null;
-  const explicit = rec.session_id || rec.session
-    || rec.harmonograf_session || rec.run_id;
-  if (explicit) return String(explicit);
-  return deriveRunId(rec);
+  // adk_session_id is the canonical ADK/goldfive session id.
+  const adk = rec.adk_session_id || rec.child_adk_session_id || rec.parent_adk_session_id;
+  if (adk && String(adk).trim()) return String(adk).trim();
+  // Legacy aliases — kept for back-compat with older backend responses.
+  const legacy = rec.session_id || rec.session || rec.harmonograf_session;
+  if (legacy) return String(legacy);
+  return null;
 }
 
 // Build the harmonograf URL for a run-like record. Falls back to the

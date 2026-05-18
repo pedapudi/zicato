@@ -825,6 +825,7 @@ def reduce_loss(
     token_count = 0
     agent_text_chars = 0
     run_id = ""
+    adk_session_id = ""
     # Custom-judge drift attribution. The steerer emits a
     # drift-flavoured ``JudgementEmitted`` IMMEDIATELY before the
     # paired ``DriftDetected`` (``_emit_judgement`` then
@@ -840,6 +841,8 @@ def reduce_loss(
     for evt in events:
         if not run_id:
             run_id = str(evt.get("run_id", "") or evt.get("runId", "") or "")
+        if not adk_session_id:
+            adk_session_id = str(evt.get("session_id", "") or evt.get("sessionId", "") or "")
         key, payload = _payload(evt)
         if key is None:
             continue
@@ -1021,6 +1024,7 @@ def reduce_loss(
         tokens_spent=token_count,
         output_chars=output_chars,
         schema_failures=schema_failures,
+        adk_session_id=adk_session_id,
     )
 
 
@@ -1122,6 +1126,7 @@ def read_loss_profile(path: Path) -> LossProfile:
         tokens_spent=int(d.get("tokens_spent", 0) or 0),
         output_chars=int(d.get("output_chars", 0) or 0),
         schema_failures=int(d.get("schema_failures", 0) or 0),
+        adk_session_id=str(d.get("adk_session_id", "") or ""),
     )
 
 
