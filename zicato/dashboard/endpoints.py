@@ -1,20 +1,20 @@
 """HTTP route handlers for the dashboard service.
 
 Each handler reads the live ``.zicato/`` workspace through
-:mod:`zicato.dashboard.state_reader` and returns a JSON shape that is
-byte-compatible with what the retired Rust supervisor served, so the
-existing vanilla-JS dashboard works unchanged.
+:mod:`zicato.dashboard.state_reader` and returns a JSON shape the
+dashboard front-end consumes. ``/api/environment`` is the consolidated
+read of the whole environment; the granular per-section endpoints are
+kept alongside it.
 
 GET routes are always available. The POST control routes write a marker
 file into ``.zicato/runtime/control/`` (the file-based control-channel
 protocol the orchestrator consumes) and return ``403`` when the server
 was created with ``read_only=True``.
 
-The two conversation endpoints reconstruct goldfive event streams into
-side-by-side transcripts via :mod:`zicato.dashboard.transcript`. That
-module is built by a parallel agent; its import is guarded so this
-server still starts (and every other endpoint still works) when it is
-not yet present in the worktree.
+The conversation endpoints reconstruct goldfive event streams into
+transcripts via :mod:`zicato.dashboard.transcript`; its import is
+guarded so the server still starts (and every other endpoint still
+works) when that module is not present.
 """
 
 from __future__ import annotations
@@ -31,9 +31,8 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from zicato.dashboard import state_reader
 from zicato.dashboard.state_reader import WorkspacePaths
 
-# The transcript reconstructor is owned by a parallel agent. Guard the
-# import so the whole server still runs (and its tests still pass) if the
-# module is not importable yet in this worktree.
+# Guard the transcript-reconstructor import so the whole server still
+# runs (and its tests still pass) even if that module is unavailable.
 _HAVE_TRANSCRIPT = False
 reconstruct_transcript: Any = None
 try:  # pragma: no cover - import availability varies across worktrees
@@ -89,6 +88,21 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     async def api_state(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_snapshot(paths))
 
+    async def api_environment(request: Request) -> JSONResponse:
+        # One coalesced read of the whole environment — the front-end
+        # refreshes the entire view from this single endpoint instead of
+        # fanning out to six. ``?run-log-limit=`` is clamped like the
+        # dedicated run-log endpoint.
+        raw = request.query_params.get("run-log-limit")
+        requested: int | None = None
+        if raw is not None:
+            try:
+                requested = int(raw.strip())
+            except ValueError:
+                requested = None
+        limit = state_reader.clamp_run_log_limit(requested)
+        return JSONResponse(state_reader.build_environment(paths, run_log_limit=limit))
+
     async def api_epoch(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_epoch_view(paths))
 
@@ -104,7 +118,16 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             except ValueError:
                 requested = None
         limit = state_reader.clamp_run_log_limit(requested)
-        return JSONResponse(state_reader.build_run_log(paths, limit))
+        # ``?after=<cursor>`` requests only events past a cursor so the
+        # dashboard appends to its log tail instead of re-rendering it.
+        after_raw = request.query_params.get("after")
+        after: int | None = None
+        if after_raw is not None:
+            try:
+                after = int(after_raw.strip())
+            except ValueError:
+                after = None
+        return JSONResponse(state_reader.build_run_log(paths, limit, after=after))
 
     async def api_active_runs(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.read_active_runs_view(paths))
@@ -321,6 +344,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     return {
         "api_health": api_health,
         "api_state": api_state,
+        "api_environment": api_environment,
         "api_epoch": api_epoch,
         "api_lineage": api_lineage,
         "api_run_log": api_run_log,

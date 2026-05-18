@@ -1,16 +1,20 @@
 """Standalone Starlette/ASGI dashboard service for zicato.
 
-This process replaces the dashboard server that the Rust supervisor used
-to embed. The supervisor is being slimmed to a watchdog; the dashboard
-is now its own process, started by ``zicato evolve`` alongside it.
+The dashboard is its own self-contained process. It runs independently
+of any other zicato process — point it at a live workspace a run is
+driving, or at a completed epoch for a post-mortem, and it serves a
+read-only-or-live view of that environment. ``zicato evolve`` spawns it
+for the lifetime of a loop; ``zicato dashboard`` runs it standalone.
 
 The service:
 
-* serves every JSON endpoint the retired Rust supervisor served, byte
-  compatible with what the existing vanilla-JS dashboard expects;
+* serves the JSON environment API under ``/api/`` — ``/api/environment``
+  is the single coalesced read of the whole environment, with the
+  granular per-section endpoints kept alongside it;
 * serves the ``/events`` SSE stream — a ``snapshot`` then live
-  ``state_change`` / ``run_log`` frames;
-* adds two conversation endpoints for the side-by-side transcript view;
+  coalesced ``state_change`` / ``run_log`` frames;
+* serves the conversation endpoints for the live and side-by-side
+  transcript views;
 * serves the static dashboard bundle at ``/`` and ``/static/``.
 
 Public surface:
@@ -39,9 +43,8 @@ from zicato.dashboard.endpoints import make_endpoints
 from zicato.dashboard.sse import ChangeBroker, sse_event_stream
 from zicato.dashboard.state_reader import WorkspacePaths
 
-# Index-fallback when the static bundle is missing entirely. Mirrors the
-# Rust ``static_assets::PLACEHOLDER_HTML`` so an operator still sees
-# something useful at the document root.
+# Index-fallback when the static bundle is missing entirely, so an
+# operator still sees something useful at the document root.
 _PLACEHOLDER_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><title>zicato-dashboard</title></head>
 <body style="font-family:system-ui;padding:2rem;max-width:48rem">
@@ -147,6 +150,7 @@ def create_app(
         Route("/", serve_root),
         Route("/api/health", handlers["api_health"]),
         Route("/api/state", handlers["api_state"]),
+        Route("/api/environment", handlers["api_environment"]),
         Route("/api/epoch", handlers["api_epoch"]),
         Route("/api/lineage", handlers["api_lineage"]),
         Route("/api/run-log", handlers["api_run_log"]),
@@ -224,10 +228,10 @@ def create_app(
 def _pick_port(host: str, preferred_port: int, max_retries: int = 10) -> int:
     """Return the first free port in ``preferred..preferred+max_retries``.
 
-    Matches the Rust supervisor's ``build_listener`` retry walk: a port
-    already in use is skipped and the next is tried. The probe socket
-    deliberately does NOT set ``SO_REUSEADDR`` so a genuinely-bound port
-    is detected as occupied rather than silently re-bound.
+    A port already in use is skipped and the next is tried. The probe
+    socket deliberately does NOT set ``SO_REUSEADDR`` so a
+    genuinely-bound port is detected as occupied rather than silently
+    re-bound.
     """
     last_err: OSError | None = None
     for offset in range(max_retries + 1):
@@ -283,9 +287,8 @@ def run(
     """Serve the dashboard via uvicorn.
 
     Binds the given ``port``, walking ``+1`` up to ten times if it is
-    already in use (mirroring the supervisor's behavior). The dashboard
-    runs read-only when served standalone — the control POST endpoints
-    are enabled by ``create_app(..., read_only=False)``.
+    already in use. The control POST endpoints are enabled here via
+    ``create_app(..., read_only=False)``.
 
     The host/port actually bound is recorded to ``runtime/dashboard.json``
     (see :func:`_publish_endpoint`) so a parent ``zicato evolve`` can

@@ -149,13 +149,12 @@ def _dashboard_spawn_argv(workspace_root: Path, host: str, port: int) -> list[st
     subprocess, and the cleanest teardown story (kill the process, the
     HTTP server dies with it).
 
-    The ``zicato.dashboard.__main__`` entry point is owned by a parallel
-    workstream. It is expected to accept ``--workspace``, ``--host`` and
-    ``--port`` and to call :func:`zicato.dashboard.server.run` with the
-    bundled static directory resolved the same way
-    :func:`zicato.cli.commands.dashboard.resolve_static_dir` resolves
-    it. If that entry point is absent the spawn fails cleanly and
-    ``evolve`` continues without a dashboard (see
+    The ``zicato.dashboard.__main__`` entry point accepts ``--workspace``,
+    ``--host`` and ``--port`` and calls :func:`zicato.dashboard.server.run`
+    with the bundled static directory resolved by
+    :func:`zicato.cli.commands.dashboard.resolve_static_dir`. If the
+    dashboard's optional dependencies are absent the spawn fails cleanly
+    and ``evolve`` continues without a dashboard (see
     :func:`_maybe_spawn_dashboard`).
     """
     import sys  # noqa: PLC0415

@@ -92,14 +92,14 @@ def dashboard_cmd(workspace: str, host: str, port: int) -> None:
     workspace_root = Path(workspace).resolve()
     static_dir = resolve_static_dir()
 
-    # Lazy import: the dashboard service pulls in Starlette and is owned
-    # by a parallel workstream. Importing it here (rather than at module
-    # top level) keeps `zicato --help` fast and means a not-yet-present
-    # ``zicato.dashboard.server`` does not break the rest of the CLI —
-    # the discovery layer would otherwise drop this whole command.
+    # Lazy import: the dashboard service pulls in Starlette. Importing it
+    # here (rather than at module top level) keeps `zicato --help` fast
+    # and means an environment without the dashboard's optional deps does
+    # not break the rest of the CLI — the discovery layer would otherwise
+    # drop this whole command.
     try:
         from zicato.dashboard import server as dashboard_server  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover - depends on parallel work
+    except ImportError as exc:  # pragma: no cover - depends on optional deps
         raise click.ClickException(
             f"the dashboard service (zicato.dashboard.server) is not available in this build: {exc}"
         ) from exc

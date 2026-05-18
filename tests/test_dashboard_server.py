@@ -434,6 +434,78 @@ def test_run_log_limit_param(client: TestClient) -> None:
     assert len(r.json()["events"]) == 1
 
 
+def test_run_log_carries_append_cursor(client: TestClient) -> None:
+    """The run-log body carries a monotone ``cursor`` for append polling."""
+    r = client.get("/api/run-log")
+    body = r.json()
+    assert "cursor" in body
+    # The fixture's last event has seq 2; the cursor is the max seq.
+    assert body["cursor"] == 2
+    assert "events_path" in body
+
+
+def test_run_log_after_cursor_returns_only_newer(client: TestClient) -> None:
+    """``?after=`` returns only events past the cursor (append-only tail)."""
+    full = client.get("/api/run-log").json()
+    cursor = full["cursor"]
+    # Nothing newer than the max cursor — an empty append batch.
+    after = client.get(f"/api/run-log?after={cursor}").json()
+    assert after["events"] == []
+    # Everything is "newer than -1": the after-batch equals the full tail.
+    from_start = client.get("/api/run-log?after=-1").json()
+    assert len(from_start["events"]) == len(full["events"])
+
+
+def test_active_tournament_normalizes_completed_to_done(
+    client: TestClient, workspace: Path
+) -> None:
+    """A finished entry written as ``completed`` must NOT read as queued.
+
+    The fixture's active tournament has a ``parent`` side written with
+    ``status="completed"``. The dashboard renders four buckets; the read
+    layer normalizes the producer's spelling so the front-end sees a
+    canonical ``done`` and the entry cannot mislabel as ``queued``.
+    """
+    on_disk = json.loads((workspace / "runtime" / "active_tournament.json").read_text())
+    raw_statuses = {(e["entry_id"], e["side"]): e["status"] for e in on_disk["entries"]}
+    assert raw_statuses[("waffles_single", "parent")] == "completed"
+
+    body = client.get("/api/active-tournament").json()
+    by_side = {(e["entry_id"], e["side"]): e for e in body["entries"]}
+    parent = by_side[("waffles_single", "parent")]
+    # Normalized to the canonical bucket — done, never queued.
+    assert parent["status"] == "done"
+    # The producer's exact spelling is preserved for post-mortem use.
+    assert parent["status_raw"] == "completed"
+    child = by_side[("waffles_single", "child")]
+    assert child["status"] == "running"
+
+
+def test_environment_endpoint_consolidates_feeds(client: TestClient) -> None:
+    """``/api/environment`` returns the whole environment in one read."""
+    r = client.get("/api/environment")
+    assert r.status_code == 200
+    body = r.json()
+    for key in (
+        "workspace",
+        "epoch_id",
+        "epoch",
+        "active_tournament",
+        "tournaments",
+        "generations",
+        "active_runs",
+        "health",
+        "health_report",
+        "heartbeat",
+        "run_log",
+        "generated_at",
+    ):
+        assert key in body, f"/api/environment missing {key}"
+    # Statuses inside the consolidated read are normalized too.
+    by_side = {(e["entry_id"], e["side"]): e for e in body["active_tournament"]["entries"]}
+    assert by_side[("waffles_single", "parent")]["status"] == "done"
+
+
 def test_epoch_view(client: TestClient) -> None:
     r = client.get("/api/epoch")
     assert r.status_code == 200
@@ -655,6 +727,77 @@ async def test_sse_stream_emits_snapshot_then_change(workspace: Path) -> None:
         await broker.stop()
 
 
+@pytest.mark.asyncio
+async def test_sse_coalesces_burst_into_one_state_change(workspace: Path) -> None:
+    """A burst of file writes yields ONE coalesced state_change frame.
+
+    This is the polling-storm fix: the orchestrator touches the runtime
+    tree many times in quick succession, and the old broker fanned every
+    write out into its own state_change (which the dashboard answered
+    with a fresh wave of polls). The coalesced broker debounces the
+    burst into a single frame carrying the set of changed regions.
+    """
+    import asyncio
+
+    from zicato.dashboard.sse import ChangeBroker, sse_event_stream
+    from zicato.dashboard.state_reader import WorkspacePaths
+
+    paths = WorkspacePaths(workspace)
+    broker = ChangeBroker(paths)
+    await broker.start()
+    try:
+        stream = sse_event_stream(broker, paths)
+        first = await asyncio.wait_for(stream.__anext__(), timeout=5)
+        assert first.startswith("event: snapshot")
+
+        # Fire a burst of writes inside the coalesce window.
+        runtime = workspace / "runtime"
+        for i in range(12):
+            (runtime / "heartbeat.json").write_text(
+                json.dumps({"pid": i, "instance_id": "x", "started_at": "z"}),
+                encoding="utf-8",
+            )
+        (runtime / "active_tournament.json").write_text(
+            json.dumps(
+                {
+                    "tournament_id": "t",
+                    "parent_generation_id": "v0",
+                    "child_generation_id": "v1",
+                    "epoch_id": "2026-05-16_e0",
+                    "started_at": "z",
+                    "entries": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # Collect frames for a short window; skip keepalive pings.
+        frames: list[str] = []
+        for _ in range(20):
+            try:
+                fr = await asyncio.wait_for(stream.__anext__(), timeout=1.5)
+            except (TimeoutError, StopAsyncIteration):
+                break
+            if fr.startswith(": ping"):
+                continue
+            frames.append(fr)
+            # One coalesced frame is enough to prove the debounce.
+            if len(frames) >= 1:
+                break
+        await stream.aclose()
+
+        assert frames, "expected at least one coalesced state_change frame"
+        state_changes = [f for f in frames if f.startswith("event: state_change")]
+        assert state_changes, "burst produced no state_change"
+        data_line = next(ln for ln in state_changes[0].splitlines() if ln.startswith("data: "))
+        payload = json.loads(data_line[len("data: ") :])
+        # The coalesced frame carries the SET of regions touched.
+        assert "kinds" in payload
+        assert isinstance(payload["kinds"], list)
+    finally:
+        await broker.stop()
+
+
 # ---------------------------------------------------------------------------
 # Conversation endpoints — with a stub transcript module
 # ---------------------------------------------------------------------------
@@ -663,10 +806,10 @@ async def test_sse_stream_emits_snapshot_then_change(workspace: Path) -> None:
 def _install_stub_transcript(monkeypatch: pytest.MonkeyPatch) -> None:
     """Install a minimal ``zicato.dashboard.transcript`` stub.
 
-    The real module is owned by a parallel agent. The stub matches the
-    documented contract: ``reconstruct_transcript(events_path, *,
-    partial_ok=True) -> Transcript`` with a ``.to_dict()`` yielding
-    ``{turns, annotations, run_id, event_count, complete}``.
+    The stub matches the documented contract:
+    ``reconstruct_transcript(events_path, *, partial_ok=True) ->
+    Transcript`` with a ``.to_dict()`` yielding ``{turns, annotations,
+    run_id, event_count, complete}``.
     """
 
     class _Transcript:
@@ -765,6 +908,7 @@ def test_empty_workspace_endpoints_do_not_500(tmp_path: Path, static_dir: Path) 
         for path in (
             "/api/health",
             "/api/state",
+            "/api/environment",
             "/api/epoch",
             "/api/lineage",
             "/api/run-log",

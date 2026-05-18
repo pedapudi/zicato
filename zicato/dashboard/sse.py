@@ -3,18 +3,26 @@
 A new client receives a ``snapshot`` event built from the current state
 files, then a live ``state_change`` event whenever a file under
 ``.zicato/runtime/`` mutates, plus a ``run_log`` event whenever a run's
-``events.jsonl`` grows so the side-by-side conversation view can stream
-new turns.
+``events.jsonl`` grows so the live conversation view can stream new
+turns.
+
+``state_change`` notifications are *coalesced*: a burst of file writes
+(the orchestrator can touch the runtime tree many times a second) is
+debounced into a single ``state_change`` frame carrying the set of
+changed ``kind`` regions. The dashboard reacts with ONE coalesced
+``/api/environment`` fetch — this is what stops the old flashing /
+self-DoS where every file write fanned out into a fresh wave of
+per-endpoint polls.
 
 The watch layer prefers the :mod:`watchdog` library when it is
 importable and falls back to a periodic poll loop otherwise. Either way
 the broker exposes the same async iterator of change notifications, so
 the rest of the server is agnostic to which backend is in play.
 
-The wire protocol matches the Rust supervisor's ``sse.rs`` exactly:
-``event: snapshot`` then ``event: state_change`` lines, each ``data:``
-carrying a JSON object — so the existing vanilla-JS dashboard works
-against this server with no changes.
+The wire protocol is ``event: snapshot`` then ``event: state_change``
+lines, each ``data:`` carrying a JSON object — the front-end reads
+``payload.kind`` (single region) and ``payload.kinds`` (the coalesced
+set).
 """
 
 from __future__ import annotations
@@ -40,8 +48,15 @@ except Exception:  # pragma: no cover - exercised only without watchdog
 # How often the poll-loop fallback re-scans the runtime tree.
 _POLL_INTERVAL_S = 1.0
 
-# SSE keepalive ping cadence (matches the Rust ``KeepAlive`` of 15s).
+# SSE keepalive ping cadence.
 _KEEPALIVE_S = 15.0
+
+# Debounce window for ``state_change`` coalescing. A burst of file
+# writes inside this window is collapsed into a single ``state_change``
+# frame, so the dashboard refreshes once per burst rather than once per
+# write. 250ms keeps the UI feeling live while absorbing the
+# orchestrator's write storms.
+_COALESCE_WINDOW_S = 0.25
 
 
 def _classify(path: Path, paths: WorkspacePaths) -> str:
@@ -89,6 +104,11 @@ class ChangeBroker:
         # Tracks events.jsonl sizes so a grow can be reported as a
         # `run_log` event for the live conversation stream.
         self._events_sizes: dict[str, int] = {}
+        # Coalescing state: pending changed `kind`s and the scheduled
+        # flush handle. A burst of file writes accumulates kinds here;
+        # the flush, _COALESCE_WINDOW_S later, emits one state_change.
+        self._pending_kinds: set[str] = set()
+        self._flush_handle: asyncio.TimerHandle | None = None
 
     # -- lifecycle ----------------------------------------------------
 
@@ -116,6 +136,10 @@ class ChangeBroker:
             except (asyncio.CancelledError, Exception):
                 pass
             self._poll_task = None
+        if self._flush_handle is not None:
+            self._flush_handle.cancel()
+            self._flush_handle = None
+        self._pending_kinds.clear()
 
     # -- subscription -------------------------------------------------
 
@@ -146,26 +170,62 @@ class ChangeBroker:
         loop.call_soon_threadsafe(self._emit, payload)
 
     def _on_path_changed(self, raw_path: str) -> None:
-        """Handle one changed path (called from the watch backend)."""
+        """Handle one changed path (called from the watch backend).
+
+        The ``state_change`` for this path is *not* emitted immediately;
+        its ``kind`` is folded into the pending set and a debounced
+        flush is (re)scheduled. A burst of writes therefore produces a
+        single coalesced ``state_change`` frame. The ``run_log`` event
+        for an ``events.jsonl`` growth is still emitted promptly so the
+        live conversation stream stays responsive.
+        """
         path = Path(raw_path)
         # Atomic-write intermediates are pure noise.
         if path.suffix == ".tmp":
             return
         kind = _classify(path, self.paths)
-        self._emit_threadsafe(
+        self._schedule_state_change(kind)
+        # An events.jsonl write also drives the live conversation stream.
+        if path.name == "events.jsonl":
+            self._report_events_growth(path)
+
+    def _schedule_state_change(self, kind: str) -> None:
+        """Fold ``kind`` into the pending set and (re)arm the flush.
+
+        Called from the watch backend thread; hops onto the event loop
+        so the timer and the pending set are only ever touched there.
+        """
+        loop = self._loop
+        if loop is None:
+            return
+        loop.call_soon_threadsafe(self._accumulate_kind, kind)
+
+    def _accumulate_kind(self, kind: str) -> None:
+        """Event-loop-side: record a changed kind, arm the flush timer."""
+        self._pending_kinds.add(kind)
+        if self._flush_handle is None and self._loop is not None:
+            self._flush_handle = self._loop.call_later(_COALESCE_WINDOW_S, self._flush_state_change)
+
+    def _flush_state_change(self) -> None:
+        """Emit one ``state_change`` for every kind seen in the window."""
+        self._flush_handle = None
+        kinds = sorted(self._pending_kinds)
+        self._pending_kinds.clear()
+        if not kinds:
+            return
+        # `kind` carries a single region for back-compat with a client
+        # that reads only one; `kinds` carries the whole coalesced set.
+        self._emit(
             {
                 "event": "state_change",
                 "data": {
                     "type": "state_change",
-                    "kind": kind,
-                    "path": str(path),
+                    "kind": kinds[0] if len(kinds) == 1 else "multiple",
+                    "kinds": kinds,
                     "ts": _now_iso(),
                 },
             }
         )
-        # An events.jsonl write also drives the live conversation stream.
-        if path.name == "events.jsonl":
-            self._report_events_growth(path)
 
     def _report_events_growth(self, path: Path) -> None:
         try:
