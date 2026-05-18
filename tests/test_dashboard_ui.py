@@ -170,22 +170,26 @@ REQUIRED_SECTIONS = {
     "epoch-brief-section",
     "epoch-scoring-section",
     "epoch-mutations-section",
+    "files-section",
+    "files-patches-section",
 }
 
-# The four view containers of the multi-view app.
+# The five view containers of the multi-view app.
 REQUIRED_VIEW_IDS = {
     "view-overview",
     "view-tree",
     "view-tournament",
     "view-epoch",
+    "view-files",
 }
 
-# The nav rail's four entries.
+# The nav rail's five entries.
 REQUIRED_NAV_IDS = {
     "nav-overview",
     "nav-tree",
     "nav-tournament",
     "nav-epoch",
+    "nav-files",
 }
 
 # Epoch-view panel containers app.js renders into.
@@ -269,7 +273,7 @@ def test_index_loads_local_css_and_js(index_html: str) -> None:
 
 
 def test_four_view_containers_present(index_html: str) -> None:
-    """Overview / Tree / Tournament / Epoch each have a view container."""
+    """Overview / Tree / Tournament / Epoch / Files each have a view container."""
     p = _SectionCollector()
     p.feed(index_html)
     missing = REQUIRED_VIEW_IDS - p.all_ids
@@ -277,14 +281,14 @@ def test_four_view_containers_present(index_html: str) -> None:
 
 
 def test_nav_rail_present_with_four_entries(index_html: str) -> None:
-    """The nav rail exists and has exactly the four expected entries."""
+    """The nav rail exists and has exactly the five expected entries."""
     p = _SectionCollector()
     p.feed(index_html)
     assert "nav-rail" in p.all_ids, "nav rail container (#nav-rail) missing"
     missing = REQUIRED_NAV_IDS - p.all_ids
     assert not missing, f"missing nav entries: {sorted(missing)}"
-    # The nav entries must fragment-route to the four views.
-    for frag in ("#/overview", "#/tree", "#/tournament", "#/epoch"):
+    # The nav entries must fragment-route to the five views.
+    for frag in ("#/overview", "#/tree", "#/tournament", "#/epoch", "#/files"):
         assert frag in p.nav_hrefs, f"nav rail missing route {frag}"
 
 

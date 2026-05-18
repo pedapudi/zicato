@@ -30,3 +30,12 @@ htmlcov/
 
 # Zicato workspace (per-project state)
 .zicato/
+
+# Target run output — agents write rendered artifacts here at run time.
+# This is exactly the artifact leak the snapshot-scope fix targets:
+# generation snapshots stay code-only, so run output is never committed.
+examples/target_1_presentation/agent/output/
+
+# Per-run scratch directories (zicato routes run output here, outside
+# every generation snapshot — see zicato/epoch/snapshot_scope.py).
+.zicato-scratch/

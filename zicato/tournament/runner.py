@@ -407,39 +407,57 @@ _SIGTERM_TO_SIGKILL_GRACE_S: float = 5.0
 _EPHEMERAL_SNAPSHOT_PREFIX = "ztw-snap-"
 
 
-def _make_ephemeral_snapshot(snapshot_root: Path, run_id: str) -> Path:
+def _make_ephemeral_snapshot(snapshot_root: Path, run_id: str) -> tuple[Path, Path]:
     """Copy a generation's code snapshot into a fresh per-run working dir.
 
-    The worker is pointed at the returned path, NOT at ``snapshot_root``
-    itself, so any runtime write the target agent makes near its own code
-    (an ``output/`` directory, scratch files, a cache) lands in this
-    throwaway copy instead of polluting the canonical generation
-    snapshot. The canonical snapshot must stay code-only: it is the tree
+    The worker is pointed at the returned snapshot path, NOT at
+    ``snapshot_root`` itself. The canonical snapshot must stay code-only:
+    it is the tree
     :meth:`zicato.epoch.genstore.DirectoryGenerationStore.derive_generation`
     copies forward to seed every subsequent generation, so any pollution
-    there accumulates without bound.
+    there accumulates without bound (a real disk-exhaustion failure).
 
-    The copy is a plain :func:`shutil.copytree` — code snapshots are
-    KB-sized, so a copy per run (even under ``parallelism``) is cheap.
-    The destination is created under :func:`tempfile.mkdtemp` with the
-    OS temp dir as its parent, deliberately OUTSIDE the workspace tree:
-    a stray directory under ``epochs/.../generations/`` could be mistaken
-    for a real generation, and an ephemeral copy never should be.
+    Two layers protect the canonical snapshot:
+
+    1. **Run output is routed to a per-run scratch directory** — this
+       function also creates a sibling scratch directory and returns it.
+       A target reads the scratch path from
+       :data:`zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` and writes
+       there, *outside* its own source tree. That is the primary fix.
+    2. **The ephemeral working copy** — a stray write that ignores the
+       scratch directory and lands next to the agent's own code still
+       only pollutes this throwaway copy, not the canonical snapshot.
+
+    The copy is a plain :func:`shutil.copytree` filtered by the shared
+    snapshot-scope ignore — code snapshots are KB-sized, so a copy per
+    run (even under ``parallelism``) is cheap. Both the working copy and
+    the scratch directory are created under a single
+    :func:`tempfile.mkdtemp` parent in the OS temp dir, deliberately
+    OUTSIDE the workspace tree.
 
     The caller owns cleanup — see :func:`_discard_ephemeral_snapshot`,
     which :func:`_run_single` invokes from its ``finally`` block so the
-    copy is removed even when the run aborts or crashes.
+    whole mkdtemp parent (working copy *and* scratch directory) is
+    removed even when the run aborts or crashes.
 
-    Returns the path the worker should mount as the inner harness's
-    source root.
+    Returns ``(working_copy, scratch_dir)``: the path the worker mounts
+    as the inner harness's source root, and the per-run scratch directory
+    the worker exports to the harness via the scratch-dir env var.
     """
+    from zicato.epoch.snapshot_scope import copytree_ignore  # noqa: PLC0415
+
     parent = Path(tempfile.mkdtemp(prefix=f"{_EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-"))
     # Copy *into* a child of the mkdtemp dir, keeping the snapshot's own
     # basename so any path the agent derives from ``__file__`` looks the
-    # same as it would under the canonical snapshot.
+    # same as it would under the canonical snapshot. The ignore filter
+    # drops run artifacts so a copy never carries forward stale output.
     working_copy = parent / Path(snapshot_root).name
-    shutil.copytree(snapshot_root, working_copy)
-    return working_copy
+    shutil.copytree(snapshot_root, working_copy, ignore=copytree_ignore())
+    # The per-run scratch directory: a sibling of the working copy under
+    # the same mkdtemp parent, so one cleanup removes both.
+    scratch_dir = parent / "run-scratch"
+    scratch_dir.mkdir()
+    return working_copy, scratch_dir
 
 
 def _discard_ephemeral_snapshot(working_copy: Path | None) -> None:
@@ -825,12 +843,15 @@ async def _run_single(
             # write the agent makes near its own code lands here and is
             # discarded with the copy — the canonical snapshot stays
             # code-only and small.
-            ephemeral_snapshot = _make_ephemeral_snapshot(generation.snapshot_root, run_id)
+            ephemeral_snapshot, scratch_dir = _make_ephemeral_snapshot(
+                generation.snapshot_root, run_id
+            )
             args_payload = {
                 "workspace_root": str(workspace_root),
                 "epoch_id": epoch_id,
                 "generation_id": generation.id,
                 "snapshot_root": str(ephemeral_snapshot),
+                "scratch_dir": str(scratch_dir),
                 "entry": _entry_to_dict(entry),
                 "adapter": _adapter_spec(adapter),
                 "harness_call_llm": _callable_dotted_path(config.harness_call_llm),

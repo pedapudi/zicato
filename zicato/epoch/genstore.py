@@ -50,11 +50,62 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from zicato.core.types import Patch
 from zicato.core.workspace import generation_dir
+from zicato.epoch.snapshot_scope import copytree_ignore, is_artifact
+
+
+@dataclass(frozen=True, slots=True)
+class TreeEntry:
+    """One node in a generation source tree, for the dashboard file browser.
+
+    The dashboard's file-tree view (``zicato/dashboard/``) renders a
+    generation's source as a tree without knowing whether it is backed
+    by a directory snapshot or a git commit. :meth:`GenerationStore.list_tree`
+    returns these — a backend-neutral description of one tree node.
+
+    Attributes
+    ----------
+    path:
+        ``/``-separated path **relative to the generation's source
+        root**. Always forward-slash, on every platform, so the wire
+        shape the dashboard consumes is stable.
+    is_dir:
+        ``True`` for a directory node, ``False`` for a file.
+    size:
+        File size in bytes; ``0`` for a directory.
+    """
+
+    path: str
+    is_dir: bool
+    size: int
+
+
+@dataclass(frozen=True, slots=True)
+class PatchRecord:
+    """One generation's applied patch set, for the dashboard patch browser.
+
+    A backend-neutral view of the patches that derived a generation from
+    its parent. The directory backend reads these from the per-patch
+    JSON files under ``experiment.json``; the git backend reads them from
+    the generation commit's metadata block. The dashboard renders the
+    list identically either way.
+
+    Attributes
+    ----------
+    generation_id:
+        The generation the patches derived.
+    patches:
+        The applied :class:`~zicato.core.types.Patch` objects, in apply
+        order. Empty for a seed (``v0``) generation.
+    """
+
+    generation_id: str
+    patches: tuple[Patch, ...]
 
 
 @runtime_checkable
@@ -138,6 +189,65 @@ class GenerationStore(Protocol):
         ValueError
             When the patch set fails validation — no child tree is left
             behind.
+        """
+        ...
+
+    # ------------------------------------------------------------------
+    # Read surface — the dashboard file-tree / file-browser API.
+    #
+    # These methods are *read-only* and backend-neutral: the dashboard
+    # (``zicato/dashboard/``) calls them to render a generation's source
+    # tree and its applied patches without knowing whether the backend
+    # is a directory snapshot or a git repo. The directory backend walks
+    # the snapshot directory; the git backend reads a commit's tree.
+    # ------------------------------------------------------------------
+
+    def list_tree(self, epoch_id: str, generation_id: str) -> list[TreeEntry]:
+        """Return every file and directory in a generation's source tree.
+
+        Each :class:`TreeEntry` carries a ``/``-separated path relative
+        to the generation's source root. Run artifacts
+        (:mod:`zicato.epoch.snapshot_scope`) are excluded — they are not
+        part of a generation. The list is sorted for a deterministic
+        render order.
+
+        Raises :class:`FileNotFoundError` when the generation has no
+        materialised source tree.
+        """
+        ...
+
+    def read_file(self, epoch_id: str, generation_id: str, rel_path: str) -> bytes:
+        """Return the raw bytes of one file in a generation's source tree.
+
+        ``rel_path`` is a ``/``-separated path relative to the
+        generation's source root — the ``path`` of a file
+        :class:`TreeEntry`. Implementations MUST reject any ``rel_path``
+        that escapes the source root (``..`` traversal) with a
+        :class:`ValueError`.
+
+        Raises
+        ------
+        FileNotFoundError
+            When the generation or the file does not exist.
+        ValueError
+            When ``rel_path`` escapes the generation source root, or
+            names a directory rather than a file.
+        """
+        ...
+
+    def list_patches(self, epoch_id: str, generation_id: str) -> PatchRecord:
+        """Return the patch set that derived ``generation_id`` from its parent.
+
+        For a seed (``v0``) generation the returned
+        :class:`PatchRecord` carries an empty ``patches`` tuple. For a
+        derived generation it carries the applied patches in apply
+        order. The patches are read from the canonical record (the
+        per-patch JSON files for the directory backend, the commit
+        metadata for the git backend) — this method does not re-derive
+        anything.
+
+        Returns an empty :class:`PatchRecord` rather than raising when
+        the generation exists but has no recorded patch set.
         """
         ...
 
@@ -229,7 +339,12 @@ class DirectoryGenerationStore:
             if source.is_file():
                 shutil.copy2(source, target)
             else:
-                shutil.copytree(source, target)
+                # The copy is filtered through the shared snapshot-scope
+                # policy: run artifacts (``output/``, caches) are never
+                # copied into a generation. Without this a registered
+                # tree's existing ``output/`` would seed v0 and then
+                # compound across the whole lineage.
+                shutil.copytree(source, target, ignore=copytree_ignore())
         return snapshot_root
 
     def derive_generation(
@@ -272,6 +387,8 @@ class DirectoryGenerationStore:
             # debug data under the generation directory is left alone.
             shutil.rmtree(child_root)
         child_root.parent.mkdir(parents=True, exist_ok=True)
+        # apply_patches defaults to the shared snapshot-scope ignore, so
+        # the parent-to-child copy stays code-only.
         apply_patches(
             source_root=parent_root,
             patches=list(patches),
@@ -279,21 +396,138 @@ class DirectoryGenerationStore:
         )
         return child_root
 
+    # ------------------------------------------------------------------
+    # Read surface — the dashboard file-tree / file-browser API.
+    # ------------------------------------------------------------------
+
+    def list_tree(self, epoch_id: str, generation_id: str) -> list[TreeEntry]:
+        """Walk the generation's ``snapshot/`` directory into :class:`TreeEntry` rows.
+
+        Artifacts (:func:`zicato.epoch.snapshot_scope.is_artifact`) are
+        skipped — a defensive second line behind the copy-time filter,
+        so a tree that somehow acquired an ``output/`` post-copy still
+        renders clean. Paths are ``/``-joined relative to the snapshot
+        root and the result is sorted for a deterministic render.
+        """
+        root = self.snapshot_root(epoch_id, generation_id)
+        if not root.is_dir():
+            raise FileNotFoundError(
+                f"list_tree: generation {epoch_id}/{generation_id} has no source tree at {root}"
+            )
+        entries: list[TreeEntry] = []
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(root)
+            # Skip anything whose path contains an artifact component.
+            if any(is_artifact(part) for part in rel.parts):
+                continue
+            is_dir = path.is_dir()
+            entries.append(
+                TreeEntry(
+                    path="/".join(rel.parts),
+                    is_dir=is_dir,
+                    size=0 if is_dir else path.stat().st_size,
+                )
+            )
+        return entries
+
+    def read_file(self, epoch_id: str, generation_id: str, rel_path: str) -> bytes:
+        """Return the bytes of ``rel_path`` inside the generation's ``snapshot/``.
+
+        Rejects ``..`` traversal and absolute paths — the resolved file
+        must sit under the snapshot root.
+        """
+        root = self.snapshot_root(epoch_id, generation_id)
+        if not root.is_dir():
+            raise FileNotFoundError(
+                f"read_file: generation {epoch_id}/{generation_id} has no source tree at {root}"
+            )
+        target = (root / rel_path).resolve()
+        root_resolved = root.resolve()
+        if target != root_resolved and root_resolved not in target.parents:
+            raise ValueError(f"read_file: rel_path {rel_path!r} escapes the generation source root")
+        if target.is_dir():
+            raise ValueError(f"read_file: {rel_path!r} is a directory, not a file")
+        if not target.is_file():
+            raise FileNotFoundError(
+                f"read_file: {rel_path!r} not found in {epoch_id}/{generation_id}"
+            )
+        return target.read_bytes()
+
+    def list_patches(self, epoch_id: str, generation_id: str) -> PatchRecord:
+        """Read the generation's applied patch set from ``experiment.json``.
+
+        Delegates to :func:`zicato.epoch.journal.read_experiment`, which
+        resolves both the per-patch-file and legacy-inline on-disk
+        shapes. A seed generation (no ``experiment.json``) yields an
+        empty :class:`PatchRecord`.
+        """
+        from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+
+        try:
+            experiment = read_experiment(self._workspace_root, epoch_id, generation_id)
+        except FileNotFoundError:
+            return PatchRecord(generation_id=generation_id, patches=())
+        return PatchRecord(
+            generation_id=generation_id,
+            patches=tuple(experiment.patches),
+        )
+
+
+#: Workspace ``config.json`` key selecting the generation-store backend.
+#: ``"directory"`` (the default / fallback) or ``"git"``.
+STORAGE_BACKEND_KEY = "storage_backend"
+
+
+def _read_storage_backend_knob(workspace_root: Path) -> str:
+    """Read the ``storage_backend`` knob from a workspace ``config.json``.
+
+    Best-effort: a missing or malformed ``config.json`` (a workspace not
+    yet ``zicato init``-ed, or one predating the knob) yields the
+    ``"directory"`` default. The generation store must never fail to
+    construct just because the config is absent.
+    """
+    config_path = Path(workspace_root) / "config.json"
+    if not config_path.is_file():
+        return "directory"
+    try:
+        import json  # noqa: PLC0415
+
+        loaded = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "directory"
+    if not isinstance(loaded, dict):
+        return "directory"
+    value = loaded.get(STORAGE_BACKEND_KEY, "directory")
+    return str(value).strip().lower() or "directory"
+
 
 def default_generation_store(workspace_root: Path) -> GenerationStore:
     """Return the canonical :class:`GenerationStore` for a workspace.
 
-    The directory-snapshot backend is the default and the always-
-    available fallback. A future git backend would be selected here off
-    a workspace ``config.json`` knob — this function is the single seam
-    where that choice is made, the generation-store mirror of
-    :func:`zicato.storage.factory.default_backend`.
+    The backend is selected off the workspace ``config.json``'s
+    :data:`STORAGE_BACKEND_KEY` knob:
+
+    * ``"git"`` → :class:`~zicato.epoch.git_genstore.GitGenerationStore`,
+      the content-addressed git backend (``docs/design/STORAGE.md`` §7).
+    * anything else, or no config → :class:`DirectoryGenerationStore`,
+      the directory-snapshot default and always-available fallback.
+
+    This function is the single seam where that choice is made — the
+    generation-store mirror of :func:`zicato.storage.factory.default_backend`.
     """
+    backend = _read_storage_backend_knob(workspace_root)
+    if backend == "git":
+        from zicato.epoch.git_genstore import GitGenerationStore  # noqa: PLC0415
+
+        return GitGenerationStore(workspace_root)
     return DirectoryGenerationStore(workspace_root)
 
 
 __all__ = [
     "GenerationStore",
     "DirectoryGenerationStore",
+    "TreeEntry",
+    "PatchRecord",
+    "STORAGE_BACKEND_KEY",
     "default_generation_store",
 ]

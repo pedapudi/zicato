@@ -22,12 +22,21 @@ from __future__ import annotations
 
 import ast
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 from zicato.core.types import MutationPoint, Patch
+from zicato.epoch.snapshot_scope import copytree_ignore
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato.mutation.markers import parse_marker_line
 from zicato.mutation.validator import validate_patches
+
+#: A ``shutil.copytree``-compatible ``ignore`` callable. When a caller
+#: passes ``None`` the applier falls back to the shared snapshot-scope
+#: policy (:func:`zicato.epoch.snapshot_scope.copytree_ignore`) so the
+#: copied child tree is code-only — run artifacts never propagate into a
+#: derived generation.
+CopytreeIgnore = Callable[[str, list[str]], set[str]]
 
 
 def _format_numeric(value: float) -> str:
@@ -233,14 +242,20 @@ def apply_patches(
     source_root: Path,
     patches: list[Patch],
     target_root: Path,
+    *,
+    ignore: CopytreeIgnore | None = None,
 ) -> None:
     """Materialise a child snapshot and atomically apply ``patches`` to it.
 
     This is the default, **all-or-nothing** apply path. Behaviour:
 
-    1. Recursively copy ``source_root`` to ``target_root``. ``target_root``
-       must not already exist; the applier refuses to overwrite an
-       existing tree to keep generation lineage append-only.
+    1. Recursively copy ``source_root`` to ``target_root``, skipping run
+       artifacts (``output/``, caches — see
+       :mod:`zicato.epoch.snapshot_scope`). ``target_root`` must not
+       already exist; the applier refuses to overwrite an existing tree
+       to keep generation lineage append-only. ``ignore`` overrides the
+       default snapshot-scope filter when a caller needs a wider skip
+       set.
     2. Run the deterministic
        :func:`~zicato.mutation.validator.validate_patches` pre-check
        against the freshly-copied tree. Every patch is checked up front:
@@ -277,7 +292,7 @@ def apply_patches(
         raise FileExistsError(
             f"apply_patches: target_root {target_root} already exists; refusing to overwrite"
         )
-    shutil.copytree(source_root, target_root)
+    shutil.copytree(source_root, target_root, ignore=ignore or copytree_ignore())
 
     # Atomic pre-validation: enumerate the freshly-copied tree and check
     # every patch up front. The copied tree has identical content to

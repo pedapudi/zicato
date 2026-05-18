@@ -102,9 +102,48 @@ class HarnessAdapter(Protocol):
         records so operators can tell at a glance which adapter
         executed a given generation. MUST be filesystem-safe; the
         runner uses it unmodified in journal entries.
+    run_output_names:
+        Optional set of directory / file *names* the inner harness
+        writes run output under, relative to anywhere in its source
+        tree. The generation store excludes these from every
+        generation copy (alongside the standing artifact set in
+        :mod:`zicato.epoch.snapshot_scope`) so run output never
+        compounds across a lineage. An adapter that routes all its
+        output through the per-run scratch directory (see
+        :meth:`mutable_subpaths` and the ``run_scratch_dir`` contract
+        below) can leave this empty. Default: an empty tuple.
     """
 
     name: str
+    run_output_names: tuple[str, ...]
+
+    def mutable_subpaths(self, generation_root: Path) -> list[Path]:
+        """Return the inner harness's mutable sub-trees under ``generation_root``.
+
+        The **mutable surface** is the set of paths the proposer may
+        rewrite — the source files carrying ``# zicato:mutable``
+        markers. It is deliberately *narrower* than the whole generation
+        snapshot: a snapshot also contains support code the worker needs
+        to execute the harness but that the proposer never edits.
+
+        Mutation enumeration walks only the returned sub-paths. The
+        orchestrator's ``_resolve_mutable_trees`` consults this instead
+        of defaulting to ``[generation_root]``.
+
+        Each returned path MUST be inside ``generation_root`` (the
+        method resolves the adapter's construction-time mutable-tree
+        declaration against this concrete snapshot root). An adapter
+        with no narrower declaration MAY return ``[generation_root]`` —
+        the whole tree — but that is the fallback, not the contract.
+
+        Note this concerns *which source the proposer edits*; it is
+        unrelated to *where the harness writes run output*. Run output
+        goes to the per-run scratch directory the runner supplies via
+        the :data:`zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV`
+        environment variable — never into a mutable sub-path and never
+        into the snapshot.
+        """
+        ...
 
     def load(self, generation_root: Path) -> RunnableHarness:
         """Load a :class:`RunnableHarness` rooted at ``generation_root``.
@@ -126,9 +165,7 @@ class HarnessAdapter(Protocol):
         """
         ...
 
-    def mutation_points(
-        self, source_roots: list[Path] | None = None
-    ) -> list[MutationPoint]:
+    def mutation_points(self, source_roots: list[Path] | None = None) -> list[MutationPoint]:
         """Enumerate the inner harness's mutation points.
 
         Parameters

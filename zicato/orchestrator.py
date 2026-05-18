@@ -499,7 +499,7 @@ async def evolve_once(
     )
 
     # --- 3. Mutations ---
-    mutations = enumerate_mutations(_resolve_mutable_trees(parent_gen.snapshot_root))
+    mutations = enumerate_mutations(_resolve_mutable_trees(adapter, parent_gen.snapshot_root))
     if not mutations:
         raise RuntimeError(
             f"no mutation points enumerated under {parent_gen.snapshot_root}; "
@@ -1269,8 +1269,26 @@ def _next_generation_id(workspace_root: Path, epoch_id: str) -> str:
     return f"v{max_n + 1}"
 
 
-def _resolve_mutable_trees(snapshot_root: Path) -> list[Path]:
-    """Default to the whole snapshot when an adapter doesn't narrow it."""
+def _resolve_mutable_trees(adapter: Any, snapshot_root: Path) -> list[Path]:
+    """Resolve the mutable surface for a generation snapshot.
+
+    The **mutable surface** is the set of sub-trees the proposer may
+    rewrite — narrower than the whole snapshot, which also carries
+    support code the worker executes but the proposer never edits. An
+    adapter declares it via :meth:`HarnessAdapter.mutable_subpaths`,
+    which re-bases the adapter's mutable-tree declaration onto this
+    concrete ``snapshot_root``.
+
+    Falls back to ``[snapshot_root]`` — the whole tree — only when the
+    adapter has no ``mutable_subpaths`` method (a non-conforming or
+    legacy adapter). Mutation enumeration walks exactly the returned
+    paths.
+    """
+    resolver = getattr(adapter, "mutable_subpaths", None)
+    if callable(resolver):
+        subpaths = resolver(snapshot_root)
+        if subpaths:
+            return list(subpaths)
     return [snapshot_root]
 
 
