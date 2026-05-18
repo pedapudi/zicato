@@ -1,21 +1,21 @@
-"""Structural tests for ``supervisor/static/`` — the bundled dashboard UI.
+"""Structural tests for ``zicato/dashboard/static/`` — the dashboard UI.
 
 These tests do not run the JavaScript. They parse the static HTML and
-assert structural invariants that the Rust supervisor relies on:
+assert structural invariants the dashboard service relies on:
 
 * No external resource references (no ``http`` URLs, no remote scripts,
   no remote stylesheets, no Google Fonts).
 * The expected sections, IDs, and SVG hooks are all present so
   ``app.js`` can find them.
-* The total bundle size sits under the envelope (130 KB uncompressed
-  for HTML + CSS + JS + icon sprite).
-* The four-view structure is present: a nav rail with four entries and
-  the matching view containers, plus the Epoch view's section ids.
+* The total bundle size sits under the envelope (uncompressed total of
+  HTML + CSS + JS + icon sprite).
+* The environment-view structure is present: the nav rail and the
+  matching view containers, plus each view's section ids.
 * The dark-mode media query exists in the CSS.
 
 These tests are pure parsing — no headless browser, no JS engine. They
-are the bare floor that protects the contract between the Rust binary
-and the static bundle.
+are the bare floor that protects the contract between the dashboard
+service and the static bundle.
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ from pathlib import Path
 
 import pytest
 
-# Locate the static directory relative to this test file. The structure
-# is fixed: ``<repo>/tests/`` and ``<repo>/supervisor/static/`` are
-# siblings.
-STATIC_DIR = Path(__file__).resolve().parent.parent / "supervisor" / "static"
+# Locate the static directory relative to this test file. The dashboard
+# UI bundle lives with the Python dashboard package at
+# ``<repo>/zicato/dashboard/static/``.
+STATIC_DIR = Path(__file__).resolve().parent.parent / "zicato" / "dashboard" / "static"
 
 
 @pytest.fixture(scope="module")

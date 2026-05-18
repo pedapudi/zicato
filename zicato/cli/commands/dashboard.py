@@ -16,8 +16,9 @@ and exposes two entry points::
     run(workspace_root, host, port, static_dir) -> None
 
 This command resolves the bundled static asset directory and calls
-``run(...)``. The static bundle is the same one the Rust supervisor
-embeds — ``<repo_root>/supervisor/static/`` in a development checkout.
+``run(...)``. The static bundle is the dashboard's own — it lives next
+to the dashboard package at ``zicato/dashboard/static/`` and is served
+straight off disk.
 """
 
 from __future__ import annotations
@@ -31,18 +32,16 @@ def resolve_static_dir() -> Path:
     """Return the path to the bundled dashboard static asset directory.
 
     The dashboard front-end (``index.html`` / ``app.js`` / ``style.css``
-    / ``icons.svg``) is shared with the Rust supervisor, which embeds it
-    at compile time. For the Python dashboard we serve it straight off
-    disk.
+    / ``icons.svg``) is the dashboard package's own asset bundle. It
+    lives beside the package source and is served straight off disk.
 
     Resolution order:
 
     1. Environment override ``ZICATO_DASHBOARD_STATIC_DIR`` — useful for
        tests and for installed wheels that relocate the bundle.
-    2. The in-tree ``supervisor/static`` directory, computed relative to
-       this source file. This file is at
+    2. The in-tree ``zicato/dashboard/static`` directory. This file is at
        ``zicato/cli/commands/dashboard.py``; the bundle lives at
-       ``<repo_root>/supervisor/static``.
+       ``zicato/dashboard/static`` under the same package root.
 
     The path is returned even when it does not exist on disk — the
     dashboard service is responsible for reporting a missing bundle.
@@ -53,9 +52,9 @@ def resolve_static_dir() -> Path:
     if env_override:
         return Path(env_override)
 
+    # zicato/cli/commands/dashboard.py -> zicato/dashboard/static
     here = Path(__file__).resolve()
-    # zicato/cli/commands/dashboard.py -> <repo_root>/supervisor/static
-    return here.parent.parent.parent.parent / "supervisor" / "static"
+    return here.parent.parent.parent / "dashboard" / "static"
 
 
 @click.command(

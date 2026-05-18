@@ -1,9 +1,13 @@
 //! Compile-time embedding of `supervisor/static/`.
 //!
-//! The UI agent (R3-D) populates the directory. If it's empty at compile
-//! time, `index.html` is missing and `/` returns 404 with a short
-//! placeholder; once the agent's branch is merged the binary rebuild
-//! picks up the real UI without code changes here.
+//! The dashboard UI now lives with the Python dashboard service
+//! (`zicato/dashboard/static/`), which serves it off disk. The
+//! supervisor is watchdog-only — `zicato evolve` always starts it with
+//! `--no-dashboard`, so the dashboard routes that use this module are
+//! never mounted. `supervisor/static/` is intentionally empty (a single
+//! `.gitkeep`); with no `index.html` this module's `serve` returns the
+//! short placeholder below. Kept so the `include_dir!` macro still
+//! compiles and the legacy non-watchdog code path stays well-defined.
 
 use axum::body::Body;
 use axum::http::{header, HeaderValue, StatusCode};
