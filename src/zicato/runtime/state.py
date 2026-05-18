@@ -364,6 +364,76 @@ class ActiveTournamentEntry:
         )
 
 
+def loss_summary_from_profile(profile: Any) -> dict[str, float]:
+    """Project a :class:`~zicato.core.types.LossProfile` to ``loss_summary``.
+
+    This is the pinned contract for the
+    :attr:`ActiveTournamentEntry.loss_summary` field — the per-entry
+    scalar snapshot the dashboard renders for a completed run. The
+    dashboard consumes exactly these keys; the runner produces them via
+    this single function so producer and consumer never diverge.
+
+    Returned keys (all values ``float``):
+
+    * ``drift_loss`` — the weighted drift-loss scalar (lower is better).
+    * ``task_failure_ratio`` — fatally-failed-task ratio, ``[0.0, 1.0]``.
+    * ``plan_revisions`` — plan-revision event count.
+    * ``runtime_ms`` — wall-clock duration, milliseconds.
+    * ``wall_clock_budget_exceeded`` — ``1.0`` iff the run was
+      force-aborted on its budget, else ``0.0``.
+    * ``tokens_spent``, ``output_chars``, ``schema_failures`` — the
+      first-class cost / output / schema scalars.
+    * ``pass_fail`` — ``1.0`` / ``0.0``; **omitted** when the profile's
+      ``pass_fail`` is ``None`` (entry had no expectation).
+    * ``turns_completed``, ``memory_failure_count``,
+      ``context_loss_count`` — multi-turn extras; each **omitted** when
+      ``None`` (single-turn entries leave these unset).
+
+    Accepts any object exposing the :class:`LossProfile` field surface
+    (typed as ``Any`` so this module stays free of a ``zicato.core``
+    import).
+    """
+    summary: dict[str, float] = {
+        "drift_loss": float(getattr(profile, "drift_loss", 0.0) or 0.0),
+        "task_failure_ratio": float(getattr(profile, "task_failure_ratio", 0.0) or 0.0),
+        "plan_revisions": float(getattr(profile, "plan_revisions", 0) or 0),
+        "runtime_ms": float(getattr(profile, "runtime_ms", 0) or 0),
+        "wall_clock_budget_exceeded": (
+            1.0 if getattr(profile, "wall_clock_budget_exceeded", False) else 0.0
+        ),
+        "tokens_spent": float(getattr(profile, "tokens_spent", 0) or 0),
+        "output_chars": float(getattr(profile, "output_chars", 0) or 0),
+        "schema_failures": float(getattr(profile, "schema_failures", 0) or 0),
+    }
+    pass_fail = getattr(profile, "pass_fail", None)
+    if pass_fail is not None:
+        summary["pass_fail"] = 1.0 if pass_fail else 0.0
+    for opt_name in ("turns_completed", "memory_failure_count", "context_loss_count"):
+        opt_val = getattr(profile, opt_name, None)
+        if opt_val is not None:
+            summary[opt_name] = float(opt_val)
+    return summary
+
+
+def drift_count_snapshot_from_profile(profile: Any) -> dict[str, int]:
+    """Project a :class:`~zicato.core.types.LossProfile` to ``drift_count_snapshot``.
+
+    Pinned contract for :attr:`ActiveTournamentEntry.drift_count_snapshot`
+    — the per-drift-kind total event count, **summed across severity
+    buckets**, keyed by the verbatim :class:`~zicato.core.types.DriftCount`
+    ``kind`` wire string (including ``custom:<judge_name>`` namespaced
+    custom-judge kinds). Drift kinds with no events are absent from the
+    mapping.
+    """
+    snapshot: dict[str, int] = {}
+    for dc in getattr(profile, "drift_counts", ()) or ():
+        kind = str(getattr(dc, "kind", ""))
+        if not kind:
+            continue
+        snapshot[kind] = snapshot.get(kind, 0) + int(getattr(dc, "count", 0) or 0)
+    return snapshot
+
+
 @dataclass(frozen=True, slots=True)
 class ActiveTournament:
     """Snapshot of an in-progress tournament.
@@ -510,4 +580,6 @@ __all__ = [
     "write_active_tournament",
     "update_tournament_entry",
     "clear_active_tournament",
+    "loss_summary_from_profile",
+    "drift_count_snapshot_from_profile",
 ]

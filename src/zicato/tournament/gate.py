@@ -8,8 +8,10 @@ Three rules, applied in order:
 
        child.scalar > parent.scalar - promote_margin  →  reject
 
-   A child that ties or slightly underperforms is rejected as
-   ``"insufficient margin"``.
+   A child whose loss improved but by less than ``promote_margin`` is
+   rejected with an ``"insufficient improvement"`` reason; a child whose
+   loss actually ROSE is rejected with a ``"challenger regressed"``
+   reason. Both reasons state the real child-minus-parent delta.
 
 2. **Pass-rate monotonicity** (when
    :attr:`ScoringWeights.pass_rate_monotonicity` is true). For every
@@ -177,15 +179,36 @@ def evaluate_gate(
     delta_scalar = child_scalar - parent_scalar
     delta_pass_rate = child_pass - parent_pass
 
-    # Rule 1: scalar margin.
+    # Rule 1: scalar margin. The scalar is a LOSS — lower is better — so
+    # a promotion needs the child's loss to drop by at least
+    # ``promote_margin``: ``child_scalar <= parent_scalar - promote_margin``.
+    # The rejection reason must (a) state the REAL delta (child minus
+    # parent), (b) name ``promote_margin`` as the *promotion threshold*,
+    # not as the observed gap, and (c) distinguish a child that improved
+    # but not enough ("near-miss") from a child that is outright worse
+    # ("regressed").
     if child_scalar > parent_scalar - weights.promote_margin:
+        # delta_scalar = child - parent. Positive => child's loss rose
+        # (worse); zero/negative => child improved or tied but by less
+        # than the promotion threshold.
+        if delta_scalar > 0.0:
+            verdict = (
+                f"challenger regressed: loss rose by {delta_scalar:.6f} "
+                f"(champion {parent_scalar:.6f} -> challenger {child_scalar:.6f}); "
+                f"a promotion needs the loss to drop by at least "
+                f"{weights.promote_margin:.6f}"
+            )
+        else:
+            improvement = -delta_scalar
+            verdict = (
+                f"insufficient improvement: loss fell by only "
+                f"{improvement:.6f} (champion {parent_scalar:.6f} -> "
+                f"challenger {child_scalar:.6f}); a promotion needs a drop "
+                f"of at least {weights.promote_margin:.6f}"
+            )
         return GateOutcome(
             decision="rejected",
-            reason=(
-                f"insufficient margin: child scalar {child_scalar:.6f} did not "
-                f"beat parent {parent_scalar:.6f} by required margin "
-                f"{weights.promote_margin:.6f}"
-            ),
+            reason=verdict,
             delta_scalar=delta_scalar,
             delta_pass_rate=delta_pass_rate,
         )

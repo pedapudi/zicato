@@ -16,7 +16,6 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-
 from zicato.config import (
     AuxConfig,
     BudgetConfig,
@@ -92,6 +91,7 @@ def test_env_sets_every_section() -> None:
             "ZICATO_WORKSPACE": "/work/.zicato",
             "ZICATO_INSTANCE_ID": "instance-7",
             "ZICATO_PARALLELISM": "16",
+            "ZICATO_HARNESS_CALL_TIMEOUT_MS": "600000",
         }
     )
     assert cfg.health.scoring_window == 8
@@ -106,6 +106,7 @@ def test_env_sets_every_section() -> None:
     assert cfg.workspace.root == "/work/.zicato"
     assert cfg.workspace.instance_id == "instance-7"
     assert cfg.runtime.parallelism == 16
+    assert cfg.runtime.harness_call_timeout_ms == 600000
 
 
 def test_env_int_coercion_produces_real_ints() -> None:
@@ -144,6 +145,10 @@ def test_non_positive_int_falls_back_to_default() -> None:
     assert load_config(env={"ZICATO_HEALTH_SCORING_WINDOW": "0"}).health.scoring_window == 3
     assert load_config(env={"ZICATO_HEALTH_STALLED_REJECTS": "-4"}).health.stalled_rejects == 3
     assert load_config(env={"ZICATO_PARALLELISM": "0"}).runtime.parallelism == 4
+    assert (
+        load_config(env={"ZICATO_HARNESS_CALL_TIMEOUT_MS": "0"}).runtime.harness_call_timeout_ms
+        == 1_800_000
+    )
 
 
 def test_negative_float_falls_back_to_default() -> None:

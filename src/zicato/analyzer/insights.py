@@ -26,7 +26,7 @@ contents so the proposer can splice them into its user prompt.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 from zicato.analyzer.aggregator import (
@@ -115,6 +115,7 @@ async def analyze_epoch_telemetry(
     aux_call_llm: Callable[[str, str, str], Awaitable[str]],
     model: str = "",
     round_n: int | None = None,
+    mutation_ids: Sequence[str] | None = None,
 ) -> Path:
     """Build the decision-event summary, call the LLM, persist the insight.
 
@@ -136,6 +137,15 @@ async def analyze_epoch_telemetry(
         Round number for the output filename. When ``None`` the insight
         is written to ``insights/latest.md`` instead of
         ``insights/round_{N}.md``.
+    mutation_ids:
+        The agent's real enumerated mutation-surface ids (the
+        :attr:`zicato.core.types.MutationPoint.id` values for the
+        epoch's current generation). Threaded into the insight prompt
+        so the LLM's "Suggested next mutations" section is grounded in
+        ids that actually exist — without it, the LLM hallucinated
+        mutation target ids absent from the agent's surface. When
+        ``None`` the prompt still renders, with a "none provided"
+        marker, and the system prompt forbids inventing an id.
 
     Returns
     -------
@@ -162,7 +172,7 @@ async def analyze_epoch_telemetry(
         target.write_text(_empty_insight_body(epoch_id, summary), encoding="utf-8")
         return target
 
-    user_prompt = render_insight_user_prompt(summary, epoch_id)
+    user_prompt = render_insight_user_prompt(summary, epoch_id, mutation_ids)
     try:
         response = await asyncio.wait_for(
             aux_call_llm(INSIGHT_SYSTEM_PROMPT, user_prompt, model),

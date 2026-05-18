@@ -38,10 +38,10 @@ pytest.importorskip("goldfive")
 pytest.importorskip("google.adk")
 
 from google.adk.agents import LlmAgent  # noqa: E402
-
 from zicato.adapters.adk import (  # noqa: E402
     ADKHarnessAdapter,
     ADKRunnableHarness,
+    _goldfive_runtime,
     _outcome_transcript,
     _split_entrypoint,
 )
@@ -855,7 +855,6 @@ async def test_run_multi_turn_scripted_calls_goldfive_run_per_turn(
       turn — the two-callable collusion guard holds for scripted entries.
     """
     import goldfive
-
     from zicato.core import ScriptedTurn
 
     generation_root, entrypoint = inner_harness
@@ -917,3 +916,201 @@ async def test_run_multi_turn_scripted_calls_goldfive_run_per_turn(
     # The transcript contains the final_output from each turn's outcome.
     assert result.transcript == ("reply:turn-one", "reply:turn-two", "reply:turn-three")
     assert result.final_output == "reply:turn-three"
+
+
+# ---------------------------------------------------------------------------
+# Regression: emulated multi-turn must NOT pass the raw ADK agent to the
+# emulator driver.  #105 fixed this bug class for the scripted path and
+# explicitly scoped out the emulated path; the emulator's run_emulated bridge
+# calls agent.run(user_message) with a bare string, which raises TypeError on
+# the raw ADK agent.  After the fix, a _PerTurnCaller wrapper is passed; it
+# calls goldfive.run(agent, user_message, ...) per emulated turn.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_multi_turn_emulated_calls_goldfive_run_per_turn(
+    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Emulated multi-turn entries drive goldfive.run once per emulated turn.
+
+    Regression guard for the TypeError that occurred when the raw ADK
+    agent was handed directly to the emulator driver: the driver's
+    ``run_emulated`` bridge found ``agent.run`` and called it as
+    ``agent.run(user_message)`` — wrong signature for an ADK agent,
+    hence TypeError.  #105 fixed the analogous bug on the *scripted*
+    path and explicitly scoped out the emulated path; this is the
+    matching fix.
+
+    The fix wraps the agent in a ``_PerTurnCaller`` that calls
+    ``goldfive.run(agent, user_message, ...)`` per turn.  This test
+    verifies:
+
+    * No TypeError is raised.
+    * ``goldfive.run`` is called once per harness (emulated) turn.
+    * The harness_call_llm (not auxiliary_call_llm) is forwarded on each
+      turn — the two-callable collusion guard holds for emulated entries.
+    * The auxiliary_call_llm drives the emulator's user turns.
+    """
+    import goldfive
+    from zicato.core import UserPersona
+    from zicato.emulator.sealed import END_TOKEN
+
+    generation_root, entrypoint = inner_harness
+    adapter = ADKHarnessAdapter(
+        entrypoint=entrypoint,
+        mutable_trees=[generation_root / "demo_inner"],
+    )
+    runnable = adapter.load(generation_root)
+
+    calls: list[dict[str, Any]] = []
+
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
+        calls.append(
+            {
+                "user_input": user_input,
+                "call_llm": kwargs.get("call_llm"),
+                "sinks": kwargs.get("sinks"),
+            }
+        )
+        return _FakeOutcome({"turn": f"reply:{len(calls)}"})
+
+    monkeypatch.setattr(goldfive, "run", fake_goldfive_run)
+
+    # The emulator emits one user turn, then <<END>> to terminate.
+    aux_outputs = ["I need a laptop for travel.", END_TOKEN]
+    aux_state = {"i": 0}
+
+    async def aux_llm(system: str, user: str, model: str) -> str:
+        out = aux_outputs[min(aux_state["i"], len(aux_outputs) - 1)]
+        aux_state["i"] += 1
+        return out
+
+    async def harness_llm(system: str, user: str, model: str) -> str:
+        return "harness-reply"
+
+    config = RuntimeConfig(
+        instance_id="test",
+        workspace_root=tmp_path,
+        harness_call_llm=harness_llm,
+        auxiliary_call_llm=aux_llm,
+    )
+
+    entry = BoardEntry(
+        id="emulated-regression",
+        kind="multi_turn_emulated",
+        wall_clock_budget_seconds=30,
+        user_persona=UserPersona(
+            goal="Buy a laptop for travel.",
+            constraints="Be vague about budget.",
+            stop_when="A specific model has been recommended.",
+        ),
+        max_turns=5,
+    )
+    entry.validate()
+    sentinel_sink = object()
+
+    result = await runnable.run(entry, sinks=[sentinel_sink], config=config)
+
+    # No TypeError — result is a clean RunResult, not aborted.
+    assert isinstance(result, RunResult)
+    assert not result.aborted, f"unexpected abort: {result.abort_reason!r}"
+    assert result.entry_id == "emulated-regression"
+
+    # goldfive.run was called once per emulated harness turn (the
+    # emulator emitted exactly one user turn before <<END>>).
+    assert len(calls) == 1
+    assert calls[0]["user_input"] == "I need a laptop for travel."
+
+    # The harness_call_llm (not auxiliary) is forwarded on every turn.
+    for call in calls:
+        assert call["call_llm"] is config.harness_call_llm
+        assert call["call_llm"] is not config.auxiliary_call_llm
+        assert call["sinks"] == [sentinel_sink]
+
+
+# ---------------------------------------------------------------------------
+# A2: per-call LLM timeout — the adapter raises goldfive's AgentConfig
+# call_timeout_ms above its 120s default so a real reasoning model under
+# concurrency does not get its healthy LLM calls aborted.
+# ---------------------------------------------------------------------------
+
+
+def test_goldfive_runtime_raises_call_timeout_above_goldfive_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_goldfive_runtime`` sets ``agent.call_timeout_ms`` from zicato config.
+
+    goldfive's :class:`~goldfive.config.AgentConfig` defaults
+    ``call_timeout_ms`` to 120 000 ms. zicato's
+    :attr:`RuntimeTuningConfig.harness_call_timeout_ms` defaults higher
+    (1 800 000 ms) so a real reasoning model's long LLM call is not
+    aborted; ``_goldfive_runtime`` must thread that value onto the
+    goldfive runtime config it builds.
+    """
+    monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
+    monkeypatch.delenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", raising=False)
+    runtime = _goldfive_runtime()
+    assert runtime.agent.call_timeout_ms == 1_800_000
+    assert runtime.agent.call_timeout_ms > 120_000
+
+
+def test_goldfive_runtime_honours_zicato_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ZICATO_HARNESS_CALL_TIMEOUT_MS`` tunes the per-call budget."""
+    monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
+    monkeypatch.setenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", "456000")
+    runtime = _goldfive_runtime()
+    assert runtime.agent.call_timeout_ms == 456000
+
+
+def test_goldfive_runtime_defers_to_explicit_goldfive_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ``GOLDFIVE_AGENT_CALL_TIMEOUT_MS`` is not overridden."""
+    monkeypatch.setenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", "999000")
+    monkeypatch.setenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", "111000")
+    runtime = _goldfive_runtime()
+    # goldfive's own env value wins; zicato does not override it.
+    assert runtime.agent.call_timeout_ms == 999000
+
+
+@pytest.mark.asyncio
+async def test_run_single_turn_forwards_runtime_to_goldfive_run(
+    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``goldfive.run`` receives a ``runtime`` carrying the raised timeout."""
+    monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
+    monkeypatch.delenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", raising=False)
+    generation_root, entrypoint = inner_harness
+    adapter = ADKHarnessAdapter(
+        entrypoint=entrypoint,
+        mutable_trees=[generation_root / "demo_inner"],
+    )
+    runnable = adapter.load(generation_root)
+
+    import goldfive
+
+    seen: dict[str, Any] = {}
+
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
+        seen["runtime"] = kwargs.get("runtime")
+        return _FakeOutcome({"t1": "reply"})
+
+    monkeypatch.setattr(goldfive, "run", fake_goldfive_run)
+
+    entry = BoardEntry(
+        id="entry-rt",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="hello",
+    )
+    entry.validate()
+    config = _runtime_config(tmp_path)
+
+    await runnable.run(entry, sinks=[], config=config)
+
+    runtime = seen["runtime"]
+    assert runtime is not None
+    assert runtime.agent.call_timeout_ms == 1_800_000

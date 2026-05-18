@@ -103,6 +103,123 @@ def test_analyze_epoch_telemetry_writes_markdown(tmp_path: Path) -> None:
     assert captured["model"] == "opaque-1"
 
 
+def test_analyze_epoch_telemetry_grounds_prompt_in_mutation_ids(tmp_path: Path) -> None:
+    """A5: the enumerated mutation ids are rendered into the insight prompt.
+
+    The insight prompt previously told the LLM to "reference the
+    optimization manifest's mutation ids" without ever giving it the
+    real ids, so the LLM hallucinated targets. The fix threads the
+    agent's real enumerated mutation surface into the user prompt and
+    the system prompt forbids inventing an id.
+    """
+    workspace = tmp_path / ".zicato"
+    epoch_id = "ep_test"
+    _make_epoch_tree(workspace, epoch_id)
+    _write_events(
+        workspace,
+        epoch_id,
+        "v0",
+        "e1",
+        [
+            _envelope(
+                0,
+                "ladder_transition_decided",
+                {
+                    "from_level": "observe",
+                    "to_level": "nudge",
+                    "reason": "first occurrence",
+                    "drift_kind": "DRIFT_KIND_OFF_TOPIC",
+                    "drift_id": "d1",
+                    "severity": "DRIFT_SEVERITY_WARNING",
+                },
+            ),
+        ],
+    )
+
+    captured: dict[str, str] = {}
+
+    async def fake_aux(system: str, user: str, model: str) -> str:
+        captured["system"] = system
+        captured["user"] = user
+        return "## Headline observations\n- ok\n"
+
+    mutation_ids = ["mut_prompt_a1b2", "mut_threshold_c3d4"]
+    asyncio.run(
+        analyze_epoch_telemetry(
+            workspace,
+            epoch_id,
+            fake_aux,
+            round_n=1,
+            mutation_ids=mutation_ids,
+        )
+    )
+
+    # The real ids appear VERBATIM in the user prompt.
+    for mid in mutation_ids:
+        assert mid in captured["user"]
+    # The user prompt has the dedicated grounding section.
+    assert "Available mutation targets" in captured["user"]
+    # The system prompt forbids inventing ids.
+    assert "verbatim" in captured["system"].lower()
+    assert "do not invent" in captured["system"].lower()
+
+
+def test_analyze_epoch_telemetry_marks_absent_mutation_surface(tmp_path: Path) -> None:
+    """Without enumerated ids, the prompt says so rather than leaving a blank."""
+    workspace = tmp_path / ".zicato"
+    epoch_id = "ep_test"
+    _make_epoch_tree(workspace, epoch_id)
+    _write_events(
+        workspace,
+        epoch_id,
+        "v0",
+        "e1",
+        [
+            _envelope(
+                0,
+                "ladder_transition_decided",
+                {
+                    "from_level": "observe",
+                    "to_level": "nudge",
+                    "reason": "x",
+                    "drift_kind": "DRIFT_KIND_OFF_TOPIC",
+                    "drift_id": "d1",
+                    "severity": "DRIFT_SEVERITY_WARNING",
+                },
+            ),
+        ],
+    )
+
+    captured: dict[str, str] = {}
+
+    async def fake_aux(system: str, user: str, model: str) -> str:
+        captured["user"] = user
+        return "## Headline observations\n- ok\n"
+
+    asyncio.run(analyze_epoch_telemetry(workspace, epoch_id, fake_aux, round_n=1))
+    assert "Available mutation targets" in captured["user"]
+    assert "none observed" in captured["user"].lower()
+
+
+def test_render_mutation_targets_dedupes_and_orders() -> None:
+    """``render_insight_user_prompt`` de-dupes mutation ids, first-seen order."""
+    from zicato.analyzer.aggregator import DecisionEventSummary
+    from zicato.analyzer.prompts import render_insight_user_prompt
+
+    summary = DecisionEventSummary(total_events_seen=0)
+    prompt = render_insight_user_prompt(
+        summary,
+        "ep1",
+        mutation_ids=["mut_b", "mut_a", "mut_b", "  ", "mut_c"],
+    )
+    # Each unique id appears exactly once.
+    assert prompt.count("`mut_b`") == 1
+    assert prompt.count("`mut_a`") == 1
+    assert prompt.count("`mut_c`") == 1
+    # First-seen order preserved.
+    assert prompt.index("`mut_b`") < prompt.index("`mut_a`") < prompt.index("`mut_c`")
+
+
 def test_analyze_epoch_telemetry_empty_epoch_short_circuits(tmp_path: Path) -> None:
     """Epoch with no events.jsonl → fallback body, aux callable NOT invoked."""
 

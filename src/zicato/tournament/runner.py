@@ -357,8 +357,15 @@ def _stamp_disable_drift(
     return stamped
 
 
-def _runtime_state():  # type: ignore[no-untyped-def]
-    """Lazy-import runtime state helpers; return None if unavailable."""
+def _runtime_state() -> tuple[Any, Any] | None:
+    """Lazy-import runtime state helpers; return None if unavailable.
+
+    Returns a ``(state_module, ActiveRun)`` pair, or ``None`` when the
+    runtime-state subsystem is not importable. Typed as ``tuple[Any,
+    Any]`` because the first element is a module object — there is no
+    useful static type for it — and an explicit annotation keeps the
+    call sites out of mypy's ``no-untyped-call`` net.
+    """
     try:
         from zicato.runtime import state as state_mod  # noqa: PLC0415
         from zicato.runtime.state import ActiveRun  # noqa: PLC0415
@@ -835,6 +842,12 @@ async def _run_single(
     # copytree below succeeds, discarded in this function's ``finally``.
     ephemeral_snapshot: Path | None = None
 
+    # The run's final LossProfile — assigned on every exit path (clean
+    # finish OR abort) so the ``finally`` block can fold the loss summary
+    # into the live active-tournament record (A3). Stays ``None`` only on
+    # an unexpected hard crash, where the ``finally`` skips the fold.
+    final_loss: LossProfile | None = None
+
     try:
         try:
             # --- 1. Per-run ephemeral working copy of the code
@@ -873,7 +886,7 @@ async def _run_single(
             # Treat as an aborted run so the tournament still aggregates,
             # rather than taking the whole evolve down.
             log.warning("run %s could not be prepared for a subprocess: %s", run_id, exc)
-            return _aborted_loss_profile(
+            final_loss = _aborted_loss_profile(
                 run_id=run_id,
                 entry=entry,
                 generation_id=generation.id,
@@ -881,6 +894,7 @@ async def _run_single(
                 weights=weights,
                 runtime_ms=0,
             )
+            return final_loss
 
         # --- 3. Spawn the worker subprocess. ---
         proc = await asyncio.create_subprocess_exec(
@@ -931,7 +945,7 @@ async def _run_single(
                     run_id,
                     proc.returncode,
                 )
-            return _aborted_loss_profile(
+            final_loss = _aborted_loss_profile(
                 run_id=run_id,
                 entry=entry,
                 generation_id=generation.id,
@@ -939,6 +953,7 @@ async def _run_single(
                 weights=weights,
                 runtime_ms=runtime_ms,
             )
+            return final_loss
 
         # --- 6. Clean exit. Read the LossProfile the worker wrote. ---
         # The worker may itself have aborted via its OWN cooperative
@@ -952,7 +967,7 @@ async def _run_single(
             # The worker said it finished cleanly but its loss.json is
             # unreadable — treat as aborted rather than crashing.
             log.warning("run %s: worker result loss.json unreadable: %s", run_id, exc)
-            return _aborted_loss_profile(
+            final_loss = _aborted_loss_profile(
                 run_id=run_id,
                 entry=entry,
                 generation_id=generation.id,
@@ -960,11 +975,13 @@ async def _run_single(
                 weights=weights,
                 runtime_ms=runtime_ms,
             )
+            return final_loss
 
         # Live index dual-write: the run's loss.json is on disk, so fold
         # it into the SQLite analytical index. Best-effort.
         _ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
-        return loss
+        final_loss = loss
+        return final_loss
     finally:
         # --- 7. Cleanup. Discard the per-run ephemeral snapshot working
         # copy (every runtime write the agent made is inside it — it
@@ -983,12 +1000,31 @@ async def _run_single(
             state_mod, _ = rt
             try:
                 state_mod.remove_active_run(workspace_root, run_id)
+                # A3: fold the run's per-entry loss summary into the live
+                # active-tournament record so the dashboard renders a
+                # per-entry score the instant the run finishes — rather
+                # than leaving ``loss_summary`` empty until the journal
+                # materialises. The shape is pinned by
+                # ``state.loss_summary_from_profile`` /
+                # ``drift_count_snapshot_from_profile`` (the Zone-B
+                # contract). ``final_loss`` is set on every clean-finish
+                # AND abort path; it is ``None`` only after an
+                # unexpected hard crash, where we fall back to the bare
+                # status transition.
+                entry_updates: dict[str, Any] = {
+                    "status": "completed",
+                    "completed_at": _now_iso_utc(),
+                }
+                if final_loss is not None:
+                    entry_updates["loss_summary"] = state_mod.loss_summary_from_profile(final_loss)
+                    entry_updates["drift_count_snapshot"] = (
+                        state_mod.drift_count_snapshot_from_profile(final_loss)
+                    )
                 state_mod.update_tournament_entry(
                     workspace_root,
                     entry.id,
                     side,
-                    status="completed",
-                    completed_at=_now_iso_utc(),
+                    **entry_updates,
                 )
             except Exception:  # noqa: BLE001
                 pass
