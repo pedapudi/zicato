@@ -332,7 +332,7 @@ const state = new AppState();
 // container so the toggle machinery shows/hides it, but no nav-rail
 // tab. It is entered by drilling from a Tournament-view board card
 // (#conversation/{entry_id}) and has its own back link.
-const VIEWS = ['overview', 'tree', 'tournament', 'epoch', 'conversation'];
+const VIEWS = ['overview', 'tree', 'tournament', 'epoch', 'files', 'conversation'];
 const DEFAULT_VIEW = 'overview';
 let currentView = DEFAULT_VIEW;
 
@@ -3587,6 +3587,266 @@ function transcriptAnnotations(side) {
   return (t && Array.isArray(t.annotations)) ? t.annotations : [];
 }
 
+// --- Files view -----------------------------------------------------
+//
+// The Files view browses every generation's source tree and applied
+// patch set. It reads through /api/files* — the server resolves those
+// through the GenerationStore seam, so this works identically for the
+// directory-snapshot and git storage backends.
+//
+// State is local to the view: which generation is selected, its tree,
+// and which file is open. The view lazily fetches a generation's tree
+// only on selection so the index stays cheap.
+
+const filesState = {
+  index: null,        // { epochs: [{ epoch_id, generations: [...] }] }
+  selectedGen: null,  // { epoch_id, generation_id }
+  tree: null,         // { entries: [{ path, is_dir, size }] }
+  openFile: null,     // rel path of the file shown in the content pane
+};
+
+function fmtFileSize(bytes) {
+  if (typeof bytes !== 'number' || bytes < 0) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function renderFilesView() {
+  // Load the epoch/generation index once; SSE-driven re-renders reuse it.
+  if (filesState.index == null) {
+    try {
+      filesState.index = await fetchJson('/api/files');
+    } catch (err) {
+      filesState.index = { epochs: [] };
+    }
+  }
+  renderFilesIndex();
+  renderFilesTree();
+  renderFilesContent();
+  renderFilesPatches();
+}
+
+// Left pane top: the epoch -> generation picker, then the file tree.
+function renderFilesIndex() {
+  const pane = $('files-tree-pane');
+  if (!pane) return;
+  clearChildren(pane);
+
+  const index = filesState.index || { epochs: [] };
+  const epochs = index.epochs || [];
+  if (epochs.length === 0) {
+    pane.appendChild(el('p', { class: 'empty' }, ['No generations yet.']));
+    return;
+  }
+
+  const picker = el('div', { class: 'files-gen-picker' });
+  for (const epoch of epochs) {
+    picker.appendChild(
+      el('div', { class: 'files-epoch-label' }, [epoch.epoch_id])
+    );
+    for (const gen of epoch.generations || []) {
+      const selected = filesState.selectedGen
+        && filesState.selectedGen.epoch_id === epoch.epoch_id
+        && filesState.selectedGen.generation_id === gen.generation_id;
+      const btn = el('button', {
+        type: 'button',
+        class: 'files-gen-button' + (selected ? ' active' : ''),
+        onclick: () => selectFilesGeneration(epoch.epoch_id, gen.generation_id),
+      }, [
+        el('span', { class: 'files-gen-id' }, [gen.generation_id]),
+        el('span', { class: 'files-gen-meta' }, [
+          `${gen.file_count} files · ${gen.patch_count} patches`,
+        ]),
+      ]);
+      picker.appendChild(btn);
+    }
+  }
+  pane.appendChild(picker);
+
+  // The file tree of the selected generation, below the picker.
+  pane.appendChild(el('div', { id: 'files-tree-root', class: 'files-tree-root' }));
+}
+
+async function selectFilesGeneration(epochId, generationId) {
+  filesState.selectedGen = { epoch_id: epochId, generation_id: generationId };
+  filesState.openFile = null;
+  filesState.tree = null;
+  // Fetch the tree + patches for the newly selected generation.
+  const base = `/api/files/${encodeURIComponent(epochId)}/${encodeURIComponent(generationId)}`;
+  try {
+    filesState.tree = await fetchJson(base + '/tree');
+  } catch (err) {
+    filesState.tree = { entries: [], error: String(err) };
+  }
+  renderFilesIndex();
+  renderFilesTree();
+  renderFilesContent();
+  renderFilesPatches();
+}
+
+// The selected generation's source tree, rendered from the flat entry
+// list the server returns (paths are '/'-separated; we group by dir).
+function renderFilesTree() {
+  const root = $('files-tree-root');
+  if (!root) return;
+  clearChildren(root);
+
+  if (!filesState.selectedGen) {
+    root.appendChild(
+      el('p', { class: 'empty' }, ['Select a generation.'])
+    );
+    return;
+  }
+  const tree = filesState.tree || { entries: [] };
+  if (tree.error) {
+    root.appendChild(el('p', { class: 'empty' }, [tree.error]));
+    return;
+  }
+  const entries = tree.entries || [];
+  if (entries.length === 0) {
+    root.appendChild(el('p', { class: 'empty' }, ['Empty tree.']));
+    return;
+  }
+  const list = el('ul', { class: 'files-tree-list' });
+  for (const entry of entries) {
+    const depth = entry.path.split('/').length - 1;
+    const name = entry.path.split('/').pop();
+    if (entry.is_dir) {
+      list.appendChild(
+        el('li', {
+          class: 'files-tree-dir',
+          style: `padding-left:${depth * 12}px`,
+        }, [name + '/'])
+      );
+    } else {
+      const open = filesState.openFile === entry.path;
+      list.appendChild(
+        el('li', {
+          class: 'files-tree-file' + (open ? ' active' : ''),
+          style: `padding-left:${depth * 12}px`,
+        }, [
+          el('button', {
+            type: 'button',
+            class: 'files-tree-file-button',
+            onclick: () => openFilesFile(entry.path),
+          }, [
+            el('span', { class: 'files-tree-file-name' }, [name]),
+            el('span', { class: 'files-tree-file-size' }, [
+              fmtFileSize(entry.size),
+            ]),
+          ]),
+        ])
+      );
+    }
+  }
+  root.appendChild(list);
+}
+
+async function openFilesFile(relPath) {
+  if (!filesState.selectedGen) return;
+  const { epoch_id, generation_id } = filesState.selectedGen;
+  const base = `/api/files/${encodeURIComponent(epoch_id)}/${encodeURIComponent(generation_id)}`;
+  const url = base + '/content?path=' + encodeURIComponent(relPath);
+  filesState.openFile = relPath;
+  let payload;
+  try {
+    payload = await fetchJson(url);
+  } catch (err) {
+    payload = { path: relPath, error: String(err) };
+  }
+  filesState._content = payload;
+  renderFilesTree();
+  renderFilesContent();
+}
+
+// The right pane: the open file's content.
+function renderFilesContent() {
+  const pane = $('files-content-pane');
+  if (!pane) return;
+  clearChildren(pane);
+
+  const payload = filesState._content;
+  if (!filesState.openFile || !payload) {
+    pane.appendChild(
+      el('p', { class: 'empty' }, ['Select a file to view its contents.'])
+    );
+    return;
+  }
+  pane.appendChild(
+    el('div', { class: 'files-content-header' }, [filesState.openFile])
+  );
+  if (payload.error) {
+    pane.appendChild(el('p', { class: 'empty' }, [payload.error]));
+    return;
+  }
+  if (payload.binary) {
+    pane.appendChild(
+      el('p', { class: 'empty' }, ['Binary file — not shown.'])
+    );
+    return;
+  }
+  if (payload.truncated) {
+    pane.appendChild(
+      el('div', { class: 'files-content-note' }, [
+        `Truncated — showing the first part of a ${fmtFileSize(payload.size)} file.`,
+      ])
+    );
+  }
+  pane.appendChild(
+    el('pre', { class: 'files-content-body' }, [payload.content || ''])
+  );
+}
+
+// The patch-set section: the patches that derived the selected generation.
+async function renderFilesPatches() {
+  const pane = $('files-patches');
+  if (!pane) return;
+  clearChildren(pane);
+
+  if (!filesState.selectedGen) {
+    pane.appendChild(
+      el('p', { class: 'empty' }, ['Select a generation to view its patches.'])
+    );
+    return;
+  }
+  const { epoch_id, generation_id } = filesState.selectedGen;
+  const base = `/api/files/${encodeURIComponent(epoch_id)}/${encodeURIComponent(generation_id)}`;
+  let payload;
+  try {
+    payload = await fetchJson(base + '/patches');
+  } catch (err) {
+    payload = { patches: [], error: String(err) };
+  }
+  const patches = payload.patches || [];
+  if (patches.length === 0) {
+    pane.appendChild(
+      el('p', { class: 'empty' }, [
+        payload.error || 'No patches — this is a seed generation.',
+      ])
+    );
+    return;
+  }
+  const list = el('ul', { class: 'files-patch-list' });
+  for (const patch of patches) {
+    list.appendChild(
+      el('li', { class: 'files-patch-item' }, [
+        el('div', { class: 'files-patch-head' }, [
+          el('span', { class: 'files-patch-id' }, [patch.id || '?']),
+          el('span', { class: 'files-patch-op' }, [patch.op || '']),
+          el('span', { class: 'files-patch-target' }, [
+            patch.mutation_id || '',
+          ]),
+        ]),
+        patch.rationale
+          ? el('div', { class: 'files-patch-rationale' }, [patch.rationale])
+          : null,
+      ])
+    );
+  }
+  pane.appendChild(list);
+}
+
 // Render the Conversation view: a header, then two transcript columns.
 // While a run is still in progress this also schedules the next live
 // re-fetch — renderConversationView is reached on every SSE-driven
@@ -3995,6 +4255,8 @@ function renderActiveView() {
     renderTournamentView();
   } else if (currentView === 'epoch') {
     renderEpochView();
+  } else if (currentView === 'files') {
+    renderFilesView();
   } else if (currentView === 'conversation') {
     renderConversationView();
   }

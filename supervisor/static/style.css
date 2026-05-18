@@ -1578,3 +1578,176 @@ h4 {
   flex-direction: column;
   gap: 12px;
 }
+
+/* --- Files view: generation file-tree + content browser ------------ */
+.files-browser {
+  display: grid;
+  grid-template-columns: 18rem 1fr;
+  gap: 0.75rem;
+  min-height: 0;
+}
+.files-tree-pane {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  padding: 0.5rem;
+  overflow: auto;
+  max-height: 32rem;
+}
+.files-content-pane {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  overflow: auto;
+  max-height: 32rem;
+}
+.files-gen-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.5rem;
+}
+.files-epoch-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-baseline);
+  margin-top: 0.35rem;
+}
+.files-gen-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.25rem 0.4rem;
+  cursor: pointer;
+  color: var(--text);
+}
+.files-gen-button:hover {
+  border-color: var(--border);
+}
+.files-gen-button.active {
+  border-color: var(--accent-running);
+  background: var(--bg);
+}
+.files-gen-id {
+  font-weight: 600;
+}
+.files-gen-meta {
+  font-size: 0.72rem;
+  color: var(--accent-baseline);
+}
+.files-tree-root {
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+.files-tree-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.82rem;
+}
+.files-tree-dir {
+  color: var(--accent-baseline);
+  padding: 0.1rem 0;
+}
+.files-tree-file {
+  padding: 0;
+}
+.files-tree-file-button {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+  padding: 0.1rem 0.2rem;
+  border-radius: 3px;
+  font-size: 0.82rem;
+}
+.files-tree-file-button:hover {
+  background: var(--bg);
+}
+.files-tree-file.active .files-tree-file-button {
+  background: var(--bg);
+  font-weight: 600;
+}
+.files-tree-file-size {
+  color: var(--accent-baseline);
+  font-size: 0.72rem;
+}
+.files-content-header {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+}
+.files-content-note {
+  font-size: 0.75rem;
+  color: var(--accent-deferred);
+  padding: 0.3rem 0.6rem;
+}
+.files-content-body {
+  margin: 0;
+  padding: 0.6rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+}
+.files-patch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.files-patch-item {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-elev);
+}
+.files-patch-head {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  font-size: 0.82rem;
+}
+.files-patch-id {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.files-patch-op {
+  color: var(--accent-running);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+}
+.files-patch-target {
+  color: var(--accent-baseline);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+}
+.files-patch-rationale {
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+@media (max-width: 720px) {
+  .files-browser {
+    grid-template-columns: 1fr;
+  }
+}

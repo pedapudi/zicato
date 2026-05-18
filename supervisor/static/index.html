@@ -43,6 +43,10 @@
         <span class="nav-glyph" aria-hidden="true">&#9638;</span>
         <span class="nav-label">Epoch</span>
       </a>
+      <a class="nav-item" id="nav-files" href="#/files" aria-label="Files">
+        <span class="nav-glyph" aria-hidden="true">&#9783;</span>
+        <span class="nav-label">Files</span>
+      </a>
     </nav>
 
     <main id="main-content" role="main">
@@ -205,6 +209,34 @@
           <h2>Mutation surface</h2>
           <div id="epoch-mutations" class="epoch-mutations">
             <p class="empty">No mutation snapshot yet.</p>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- ============ FILES VIEW ============ -->
+      <!-- Browse every generation's source tree and applied patches.
+           Works for both storage backends — the server reads through
+           the GenerationStore seam, so directory snapshots and the git
+           backend render identically here. -->
+      <div id="view-files" class="view hidden" data-view="files">
+
+        <section id="files-section" aria-label="Generation file browser">
+          <h2>Generation files</h2>
+          <div id="files-browser" class="files-browser">
+            <div id="files-tree-pane" class="files-tree-pane">
+              <p class="empty">No generations yet.</p>
+            </div>
+            <div id="files-content-pane" class="files-content-pane">
+              <p class="empty">Select a file to view its contents.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="files-patches-section" aria-label="Generation patch set">
+          <h2>Applied patches</h2>
+          <div id="files-patches" class="files-patches">
+            <p class="empty">Select a generation to view its patches.</p>
           </div>
         </section>
 
