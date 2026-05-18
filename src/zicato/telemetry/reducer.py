@@ -1086,7 +1086,7 @@ def read_loss_profile(path: Path) -> LossProfile:
     metric_counts = tuple(
         MetricCount(
             name=str(m.get("name", "")),
-            severity=m.get("severity", ""),  # type: ignore[arg-type]
+            severity=m.get("severity", ""),
             count=float(m.get("count", 0.0)),
         )
         for m in d.get("metric_counts", ())

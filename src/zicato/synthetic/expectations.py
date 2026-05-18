@@ -31,7 +31,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from zicato.core.types import ExpectationResult, RuntimeConfig
+from zicato.core.types import ExpectationKind, ExpectationResult, RuntimeConfig
 
 # Severities the matchers treat as "this counts" — warning and critical.
 # INFO is filtered out everywhere because it is observational by design.
@@ -178,7 +178,7 @@ async def evaluate_required_drift(
     required = {k.strip().lower() for k in required_kinds if isinstance(k, str) and k.strip()}
     if not required:
         return ExpectationResult(
-            kind="predicate",
+            kind=ExpectationKind.PREDICATE,
             passed=False,
             detail="required_drift_kinds was empty",
         )
@@ -191,12 +191,12 @@ async def evaluate_required_drift(
     missing = sorted(required - observed)
     if missing:
         return ExpectationResult(
-            kind="predicate",
+            kind=ExpectationKind.PREDICATE,
             passed=False,
             detail="missing required drift kinds: " + ", ".join(missing),
         )
     return ExpectationResult(
-        kind="predicate",
+        kind=ExpectationKind.PREDICATE,
         passed=True,
         detail="all required drift kinds observed: " + ", ".join(sorted(required)),
     )
@@ -239,18 +239,18 @@ async def evaluate_no_drift(
     if offending:
         rendered = ", ".join(f"{kind or '<unknown>'}@{sev}" for kind, sev in offending)
         return ExpectationResult(
-            kind="predicate",
+            kind=ExpectationKind.PREDICATE,
             passed=False,
             detail=f"clean run produced scoring drift: {rendered}",
         )
     if info_count:
         return ExpectationResult(
-            kind="predicate",
+            kind=ExpectationKind.PREDICATE,
             passed=True,
             detail=f"clean run: {info_count} info-severity drift event(s) tolerated",
         )
     return ExpectationResult(
-        kind="predicate",
+        kind=ExpectationKind.PREDICATE,
         passed=True,
         detail="clean run: no drift events",
     )

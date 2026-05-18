@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from zicato.cli.commands.evolve import (
     _dashboard_spawn_argv,
     _maybe_spawn_dashboard,

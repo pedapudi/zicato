@@ -113,17 +113,28 @@ select = [
     "UP",  # pyupgrade
 ]
 
+[tool.ruff.lint.isort]
+# Declare the in-repo packages as first-party so isort sorts them into
+# their own import group (after third-party). Without this ruff treats
+# `zicato` / `zicato_examples` as third-party and flags the blank line
+# the source files place between them and real third-party imports
+# (I001). Pre-commit only lints *changed* files, so the mismatch went
+# unnoticed until CI's repo-wide `ruff check .`.
+known-first-party = ["zicato", "zicato_examples"]
+
 [tool.mypy]
 strict = true
 disallow_untyped_defs = true
 disallow_any_unimported = false
 warn_unused_ignores = true
 
-# goldfive and google.adk are runtime-optional dependencies; their
-# stubs are not on PyPI and the modules may not be importable in the
-# typecheck environment. Treat references as untyped rather than
-# erroring at import time so the typecheck still covers the rest of
-# the tree.
+# goldfive, google.adk, and harmonograf_client are runtime-optional
+# dependencies; their stubs are not on PyPI and the modules may not be
+# importable in the typecheck environment. Treat references as untyped
+# rather than erroring at import time so the typecheck still covers the
+# rest of the tree. (harmonograf_client is imported lazily inside a
+# guarded try/except in zicato.telemetry.sink — telemetry falls back to
+# JSONL-only when it is absent.)
 #
 # zicato.index / zicato.health are sibling subsystems the orchestrator
 # and tournament runner import lazily and best-effort — a round runs
@@ -137,6 +148,8 @@ module = [
     "goldfive.*",
     "google",
     "google.*",
+    "harmonograf_client",
+    "harmonograf_client.*",
     "zicato.index",
     "zicato.index.*",
     "zicato.health",
@@ -168,10 +181,14 @@ members = ["examples"]
 [tool.uv.sources]
 zicato-examples = { workspace = true }
 # goldfive is a co-developed sibling package, not yet published to a
-# public index, so it must be available locally. Point uv at the
-# sibling checkout so `uv sync` resolves it editable; when goldfive is
-# published this entry is dropped and the [project.dependencies] spec
-# resolves it from the index. (harmonograf is consumed as a service
-# over ZICATO_HARMONOGRAF_URL, not imported as a package, so it needs
-# no entry here — only a reachable running instance.)
-goldfive = { path = "../goldfive", editable = true }
+# package index. It IS, however, public on GitHub
+# (github.com/pedapudi/goldfive), so uv resolves it from a git source:
+# this works both for a local `uv sync` and in CI (a public git
+# dependency clones with the default GITHUB_TOKEN — no secret needed).
+# The rev is pinned so `uv.lock` is reproducible; bump it when zicato
+# needs a newer goldfive. When goldfive is eventually published to an
+# index, this entry is dropped and the [project.dependencies] spec
+# resolves it from there. (harmonograf is consumed as a service over
+# ZICATO_HARMONOGRAF_URL, not imported as a package, so it needs no
+# entry here — only a reachable running instance.)
+goldfive = { git = "https://github.com/pedapudi/goldfive.git", rev = "ed44eaaf93215a5d4ae122293c39fbd04ff204d6" }

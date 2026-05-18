@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 
 from click.testing import CliRunner
+
 from zicato.cli.commands.epoch import new_cmd
 from zicato.cli.commands.evolve import (
     _DASHBOARD_HOST,

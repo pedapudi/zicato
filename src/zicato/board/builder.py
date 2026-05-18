@@ -203,7 +203,11 @@ class Entry:
     raises :class:`ValueError` with a message pointing at the conflict.
     """
 
-    def __new__(  # type: ignore[misc] — intentional factory facade
+    # ``__new__`` returns a ``BoardEntry`` (not an ``Entry``) on purpose —
+    # ``Entry`` is a pure factory facade. mypy 1.20+ rejects the prose
+    # that previously followed the ignore code, so the explanation is a
+    # plain comment now and the suppression code stands alone.
+    def __new__(  # type: ignore[misc]
         cls,
         *,
         id: str,
@@ -220,7 +224,7 @@ class Entry:
         adversarial_agent_spec: str | None = None,
         required_drift_kinds: tuple[str, ...] | list[str] | None = None,
         max_turns: int | None = None,
-    ) -> BoardEntry:  # type: ignore[override]
+    ) -> BoardEntry:
         """Build and return a validated :class:`~zicato.core.BoardEntry`.
 
         ``evaluate`` attaches an OUTCOME check

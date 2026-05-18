@@ -17,13 +17,21 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
+          # The cache is keyed off the committed uv.lock; without a
+          # lockfile setup-uv has nothing to hash and the cache step is
+          # a no-op. cache-dependency-glob makes the key explicit.
           enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
       - name: Sync dependencies
-        run: uv sync --all-extras
+        # --frozen installs exactly what uv.lock pins (and fails if the
+        # lock is stale) — reproducible CI. goldfive resolves from its
+        # public git source recorded in the lock; the default
+        # GITHUB_TOKEN is sufficient to clone a public repo.
+        run: uv sync --all-extras --frozen
 
       - name: Ruff
         run: uv run ruff check .
