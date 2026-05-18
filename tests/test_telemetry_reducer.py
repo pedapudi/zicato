@@ -606,7 +606,10 @@ def test_reduce_loss_via_real_goldfive_replay(tmp_path: Path) -> None:
     pytest.importorskip("google.protobuf")
     import asyncio
 
-    from goldfive.pb.goldfive.v1 import events_pb2  # type: ignore
+    from goldfive.pb.goldfive.v1 import (
+        events_pb2,  # type: ignore
+        types_pb2,  # type: ignore
+    )
 
     from zicato.telemetry import make_run_sink, make_run_sink_path
 
@@ -617,8 +620,9 @@ def test_reduce_loss_via_real_goldfive_replay(tmp_path: Path) -> None:
     e.event_id = "evt-1"
     e.run_id = "run-real"
     e.sequence = 0
-    e.drift_detected.kind = events_pb2.DRIFT_KIND_OFF_TOPIC
-    e.drift_detected.severity = events_pb2.DRIFT_SEVERITY_WARNING
+    # Enum constants live in types_pb2, not events_pb2.
+    e.drift_detected.kind = types_pb2.DRIFT_KIND_OFF_TOPIC
+    e.drift_detected.severity = types_pb2.DRIFT_SEVERITY_WARNING
 
     asyncio.run(sink.emit(e))
     asyncio.run(sink.close())
