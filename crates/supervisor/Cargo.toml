@@ -39,8 +39,6 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tempfile = "=3.13.0"
 reqwest = { version = "=0.12.9", default-features = false, features = ["json", "stream"] }
 
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-strip = true
+# NOTE: the [profile.release] tuning lives in the workspace-root
+# Cargo.toml. Cargo ignores profiles declared on a non-root workspace
+# member, so keeping it here would silently drop the optimizations.

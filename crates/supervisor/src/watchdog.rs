@@ -568,7 +568,11 @@ mod tests {
         };
         // 115s < 120s (2x budget) — not yet kill, may warn if past run_stale_warn.
         let action = decide_run(&run, now, &thresholds());
-        assert_ne!(action, RunAction::Kill { pid: 42 }, "115s should not kill with 2x budget=120s");
+        assert_ne!(
+            action,
+            RunAction::Kill { pid: 42 },
+            "115s should not kill with 2x budget=120s"
+        );
 
         // 121s >= 120s (2x budget) — should kill.
         run.last_progress = Some(now - ChDuration::seconds(121));

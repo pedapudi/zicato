@@ -7,3 +7,11 @@
 [workspace]
 resolver = "2"
 members = ["crates/supervisor"]
+
+# Release profile tuning. Profiles must be declared at the workspace
+# root — Cargo ignores [profile.*] on non-root members.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
