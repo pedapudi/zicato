@@ -308,8 +308,9 @@ def test_supervisor_and_dashboard_have_distinct_default_ports() -> None:
     dashboard_default = 7892
 
     # The supervisor's default lives in the Rust CLI; assert it via the
-    # source so the two defaults cannot silently re-converge.
-    main_rs = Path(__file__).resolve().parents[1] / "supervisor" / "src" / "main.rs"
+    # source so the two defaults cannot silently re-converge. The crate
+    # lives at crates/supervisor under the Cargo workspace.
+    main_rs = Path(__file__).resolve().parents[1] / "crates" / "supervisor" / "src" / "main.rs"
     text = main_rs.read_text(encoding="utf-8")
     assert (
         "default_value_t = 7892" not in text

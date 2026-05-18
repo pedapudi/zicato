@@ -25,13 +25,17 @@ process can be killed and restarted at any time without losing state.
 
 ## Build
 
+This crate is a member of the repo-root Cargo workspace; build it
+from the repository root:
+
 ```
-cargo build --release
+cargo build --release -p zicato-supervisor
 ```
 
 Produces a single static-ish binary at
-`target/release/zicato-supervisor`. The release profile uses thin LTO
-and `strip = true`, giving roughly 4 MB on x86_64-linux.
+`target/release/zicato-supervisor` (the workspace shares one `target/`
+directory at the repo root). The release profile uses thin LTO and
+`strip = true`, giving roughly 4 MB on x86_64-linux.
 
 ## Run
 
@@ -113,7 +117,7 @@ id contains characters outside `[A-Za-z0-9._-]`.
 ## Dashboard UI
 
 The dashboard UI lives with the standalone Python dashboard service at
-`zicato/dashboard/static/`, which serves it off disk. `supervisor/static/`
+`zicato/dashboard/static/`, which serves it off disk. `crates/supervisor/static/`
 is intentionally empty (a single `.gitkeep`) and is retained only so the
 `include_dir!` macro in `static_assets.rs` still compiles; under
 `--no-dashboard` — which `zicato evolve` always uses — the in-binary

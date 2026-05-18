@@ -39,3 +39,7 @@ examples/target_1_presentation/agent/output/
 # Per-run scratch directories (zicato routes run output here, outside
 # every generation snapshot — see zicato/epoch/snapshot_scope.py).
 .zicato-scratch/
+
+# Rust / Cargo build artifacts. The Cargo workspace builds every crate
+# into a single target/ directory at the repo root.
+/target/

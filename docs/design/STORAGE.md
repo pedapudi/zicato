@@ -299,7 +299,7 @@ list/struct columns).
    orders of magnitude short of where the engine choice would be felt.
 
 2. **The schema is a cross-language contract.** `zicato.index.schema`
-   is consumed by the Rust supervisor (`supervisor/src/index_db.rs`,
+   is consumed by the Rust supervisor (`crates/supervisor/src/index_db.rs`,
    via `rusqlite`) and the dashboard analytics. Moving to DuckDB means
    re-tooling the Rust reader (`rusqlite` → a DuckDB crate) and
    re-validating that contract. That is real work, justified only by a

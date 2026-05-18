@@ -39,19 +39,19 @@ clean:
 	@find $(ROOT) -type d -name .pytest_cache -prune -exec rm -rf {} + 2>/dev/null || true
 	@find $(ROOT) -type d -name .ruff_cache -prune -exec rm -rf {} + 2>/dev/null || true
 	@find $(ROOT) -type d -name .mypy_cache -prune -exec rm -rf {} + 2>/dev/null || true
-	@rm -rf $(ROOT)/supervisor/target
+	@rm -rf $(ROOT)/target
 	@echo "Clean done."
 
 supervisor:
-	@cd $(ROOT)/supervisor && cargo build --release
+	@cd $(ROOT) && cargo build --release -p zicato-supervisor
 
 supervisor-test:
-	@cd $(ROOT)/supervisor && cargo test
+	@cd $(ROOT) && cargo test -p zicato-supervisor
 
 supervisor-check:
-	@cd $(ROOT)/supervisor && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+	@cd $(ROOT) && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 
 install-supervisor: supervisor
 	@mkdir -p $(HOME)/.local/bin
-	@cp $(ROOT)/supervisor/target/release/zicato-supervisor $(HOME)/.local/bin/zicato-supervisor
+	@cp $(ROOT)/target/release/zicato-supervisor $(HOME)/.local/bin/zicato-supervisor
 	@echo "Installed zicato-supervisor to $(HOME)/.local/bin/zicato-supervisor"

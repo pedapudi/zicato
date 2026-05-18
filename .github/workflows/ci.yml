@@ -37,9 +37,6 @@ jobs:
   supervisor:
     name: supervisor (Rust)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: supervisor
     steps:
       - uses: actions/checkout@v4
 
@@ -50,8 +47,6 @@ jobs:
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: supervisor
 
       - name: Format
         run: cargo fmt --check

@@ -1,0 +1,9 @@
+# Cargo workspace root.
+#
+# zicato is polyglot: the Python package lives under src/zicato and the
+# Rust supervisor under crates/. This workspace groups every Rust crate
+# so `cargo` invoked from the repo root operates on the whole set and
+# shares a single target/ directory and lockfile.
+[workspace]
+resolver = "2"
+members = ["crates/supervisor"]
