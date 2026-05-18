@@ -12,19 +12,54 @@ dashboard read as siblings.
 
 ## Files
 
+The frontend is a modular ES-module app — a thin entry point plus the
+core spine, a shared component library and the render layer. No build
+step, no framework, no external network. The full contracts every
+module codes against are pinned in `js/CONTRACTS.md`.
+
 - `index.html` — single-page shell. Top-level `<svg>` elements are
-  declared here so the JS module can populate them via
-  `createElementNS`. Loads `style.css` and `app.js`.
+  declared here so the JS modules can populate them via
+  `createElementNS`. Loads `style.css` and `app.js` (as a module).
 - `style.css` — all styling. CSS custom properties drive light + dark
   themes; the dark branch lives under `@media (prefers-color-scheme:
   dark)`. Includes a print stylesheet (snapshot-only).
-- `app.js` — ES2022 module. Owns the `AppState`, connects to
-  `EventSource('/events')`, renders every panel. Pure DOM — no
-  framework runtime. The `predictedGateVerdict` function is the
-  deterministic gate-projection calculator used by the active
-  tournament panel.
+- `app.js` — the thin entry point. Imports the core spine, wires the
+  event bus (state mutation / route change → render), and bootstraps.
+- `js/core/` — the data/render spine. `state.js` (the single AppState),
+  `bus.js` (pub/sub), `router.js` (hash routing + deep links),
+  `api.js` (the consolidated `/api/environment` read + drill fetches),
+  `sse.js` (EventSource + typed deltas), `dom.js` (the incremental,
+  keyed, no-flash render primitives — `mount`, `reconcileList`,
+  `appendRows`, `patch*`), `format.js`, `harmonograf.js`.
+- `js/components/index.js` — the shared component library: cards,
+  tables, badges, the diff renderer, the line chart, progress meters.
+- `js/views/` — the render layer. `render.js` paints every view
+  (Overview / Lineage / Tournament / Epoch / Files / Conversation +
+  the chrome); `shared.js` holds the cross-view helpers
+  (`predictedGateVerdict`, the entry-status bucket, the data-quality
+  summary); `mock.js` is the offline `?mock=1` snapshot.
+- `js/CONTRACTS.md` — the pinned frontend contracts: the
+  `/api/environment` shape, the SSE delta types, the AppState shape,
+  the component API, per-view specs, the routes.
+- `test/` — a dependency-free JS/DOM test harness. `harness.mjs` is a
+  minimal DOM + assertion runner; `*.test.mjs` files verify the render
+  spine (incremental updates, the append-only no-flash log tail,
+  matchup-click survival across a state delta). Run with
+  `node test/run-all.mjs`; also driven from `tests/test_dashboard_js.py`.
+  The `test/` directory is a dev tool and is NOT shipped in the wheel.
 - `icons.svg` — inline-able sprite. Reference via
   `<use href="/static/icons.svg#icon-name"/>`.
+
+### The structural no-flash render spine
+
+A delta NEVER rebuilds a panel's `innerHTML`. After the api/sse layer
+folds new data into AppState, the render layer patches only the
+affected DOM nodes — keyed by a stable `data-*` id — via the
+`core/dom.js` primitives. Because nodes keep identity across a
+re-render, their event listeners survive (the matchup-click fix) and
+the browser does not repaint an unchanged subtree (no flashing). The
+activity-log tail is strictly append-only: `appendRows` adds only
+genuinely-new keyed rows and never clears the host.
 
 ## Environment-view data flow
 

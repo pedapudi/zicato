@@ -44,9 +44,35 @@ def style_css() -> str:
     return (STATIC_DIR / "style.css").read_text(encoding="utf-8")
 
 
+def _js_bundle_files() -> list[Path]:
+    """Every JS file in the shipped bundle.
+
+    The dashboard frontend was re-architected from a monolithic
+    ``app.js`` into ES modules: the thin entry point ``app.js`` plus the
+    modules under ``static/js/`` (the core spine, the shared component
+    library, and the render layer). The structural tests assert
+    properties of the *bundle* — they concatenate every JS file rather
+    than reading ``app.js`` alone, so the assertions hold regardless of
+    which module a given symbol lives in.
+    """
+    files = [STATIC_DIR / "app.js"]
+    js_dir = STATIC_DIR / "js"
+    if js_dir.is_dir():
+        # Deterministic order; the test bundle is order-insensitive but a
+        # stable order keeps any failure message reproducible.
+        files += sorted(js_dir.rglob("*.js"))
+    return files
+
+
 @pytest.fixture(scope="module")
 def app_js() -> str:
-    return (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    """The concatenated JS bundle — the modular successor to app.js.
+
+    See :func:`_js_bundle_files`. Every ``app.js`` structural assertion
+    in this file checks the bundle, so it is agnostic to the ES-module
+    split introduced by the dashboard redesign.
+    """
+    return "\n".join(p.read_text(encoding="utf-8") for p in _js_bundle_files())
 
 
 @pytest.fixture(scope="module")
@@ -548,13 +574,17 @@ def test_footer_wired_from_health(app_js: str) -> None:
 def test_loads_consolidated_environment_endpoint(app_js: str) -> None:
     """The dashboard reads the whole environment from /api/environment.
 
-    The redesign replaced the old per-section fan-out with a single
-    consolidated read — loadEnvironment() fetches /api/environment and
-    applyEnvironment() folds it into AppState.
+    The redesign keeps the single consolidated read: ``loadEnvironment``
+    (core/api.js) fetches ``/api/environment`` and ``applyEnvironment``
+    folds it into AppState. After the ES-module split ``applyEnvironment``
+    is an ``AppState`` method rather than a free function — both forms
+    are accepted so the assertion is agnostic to the refactor.
     """
-    assert "/api/environment" in app_js, "app.js does not fetch /api/environment"
-    assert "function loadEnvironment(" in app_js, "app.js missing loadEnvironment"
-    assert "function applyEnvironment(" in app_js, "app.js missing applyEnvironment"
+    assert "/api/environment" in app_js, "bundle does not fetch /api/environment"
+    assert "function loadEnvironment(" in app_js, "bundle missing loadEnvironment"
+    assert (
+        "function applyEnvironment(" in app_js or "applyEnvironment(env)" in app_js
+    ), "bundle missing applyEnvironment (free function or AppState method)"
 
 
 def test_refresh_after_event_is_debounced_single_fetch(app_js: str) -> None:
@@ -669,13 +699,20 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 270 KB uncompressed. Raised from 250 KB by the dashboard redesign:
-    # the consolidated environment-read client, the debounced refresh,
-    # the append-only log tail and the canonical entry-status helper add
-    # a few KB of JS. The dashboard is served off disk by the standalone
-    # Python service with no network cost; this guard only keeps the
-    # vanilla bundle from drifting unboundedly.
-    assert total < 270_000, f"bundle is {total} bytes, exceeds 270_000 envelope"
+    # 320 KB uncompressed. Raised from 270 KB by the dashboard redesign:
+    # the monolithic ``app.js`` was re-architected into ES modules — a
+    # thin entry point plus the core spine (state / bus / router / api /
+    # sse / dom / format / harmonograf), a shared component library and
+    # the render layer. The module boundaries add per-file headers,
+    # import statements and the documented contracts, costing a few tens
+    # of KB; that cost buys the structural no-flash render spine and the
+    # zero-collision modular layout. The ``app_js`` fixture concatenates
+    # every shipped JS file, so this envelope covers the whole bundle.
+    # The dev-only JS test harness under ``static/test/`` is NOT shipped
+    # and is excluded. The dashboard is served off disk by the
+    # standalone Python service with no network cost; this guard only
+    # keeps the vanilla bundle from drifting unboundedly.
+    assert total < 320_000, f"bundle is {total} bytes, exceeds 320_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
