@@ -14,6 +14,7 @@ into the markdown blocks the user template splices in.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 
 from zicato.analyzer.aggregator import DecisionEventSummary
 
@@ -30,7 +31,12 @@ Your job: identify ACTIONABLE patterns the operator should know about.
 For each pattern:
 - Be specific (cite the counts).
 - Suggest WHAT to change (a prompt? a threshold?) and WHERE.
-- Reference the optimization manifest's mutation ids when possible.
+- When you reference a mutation target, you MUST use a mutation id
+  drawn VERBATIM from the "Available mutation targets" list in the
+  payload below. Do NOT invent, guess, or paraphrase an id. If no
+  listed id fits the change you are suggesting, describe the change in
+  plain prose and say explicitly that no enumerated mutation target
+  covers it — never fabricate an id.
 
 Produce a markdown document with sections:
 ## Headline observations
@@ -59,6 +65,9 @@ INSIGHT_USER_TEMPLATE = """\
 
 ### Per-detector verdicts
 {steering_decisions_md}
+
+### Available mutation targets
+{mutation_targets_md}
 
 Total decision events observed: {total_events}
 """
@@ -153,12 +162,51 @@ def _render_steering_decisions(summary: DecisionEventSummary) -> str:
     return "\n".join(lines)
 
 
-def render_insight_user_prompt(summary: DecisionEventSummary, epoch_id: str) -> str:
+def _render_mutation_targets(mutation_ids: Sequence[str] | None) -> str:
+    """Render the enumerated mutation-target ids as a markdown bullet list.
+
+    This block GROUNDS the insight: the system prompt instructs the LLM
+    to reference only ids that appear here, so it can no longer
+    hallucinate a mutation target that is not on the agent's real
+    mutation surface. When the caller passes no ids (the analyzer was
+    not handed the enumerated surface), a "none provided" marker is
+    rendered and the system prompt's fallback rule applies — the LLM
+    must describe the change in prose rather than invent an id.
+    """
+    cleaned = [str(mid).strip() for mid in (mutation_ids or []) if str(mid).strip()]
+    if not cleaned:
+        return _none_block("no enumerated mutation surface was provided")
+    # De-duplicate while preserving first-seen order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for mid in cleaned:
+        if mid not in seen:
+            seen.add(mid)
+            ordered.append(mid)
+    lines = ["Reference ONLY these ids when suggesting a mutation (verbatim — do not invent ids):"]
+    lines.extend(f"- `{mid}`" for mid in ordered)
+    return "\n".join(lines)
+
+
+def render_insight_user_prompt(
+    summary: DecisionEventSummary,
+    epoch_id: str,
+    mutation_ids: Sequence[str] | None = None,
+) -> str:
     """Assemble the full user prompt body from a summary + epoch id.
 
     Sections render their own "none observed" notice when the
     aggregate is empty so the LLM sees explicit zeros rather than a
     blank section it might hallucinate against.
+
+    ``mutation_ids`` is the agent's real enumerated mutation surface
+    (the :attr:`zicato.core.types.MutationPoint.id` values). It is
+    rendered into the prompt so the LLM's "Suggested next mutations"
+    section is grounded in ids that actually exist — the system prompt
+    forbids referencing any id absent from this list. When ``None`` or
+    empty, the prompt still renders (with a "none provided" marker) so
+    the analyzer degrades gracefully for callers that cannot supply the
+    surface.
     """
 
     return INSIGHT_USER_TEMPLATE.format(
@@ -168,6 +216,7 @@ def render_insight_user_prompt(summary: DecisionEventSummary, epoch_id: str) -> 
         policy_outcomes_md=_render_policy_outcomes(summary),
         retry_budgets_md=_render_retry_budgets(summary),
         steering_decisions_md=_render_steering_decisions(summary),
+        mutation_targets_md=_render_mutation_targets(mutation_ids),
         total_events=summary.total_events_seen,
     )
 

@@ -657,8 +657,27 @@ async def evolve_once(
         snapshot_root=child_snapshot,
         created_at=_now_iso(),
     )
+    # Fast mode reuses the parent/champion's cached aggregate instead of
+    # re-running it every round. The very first round of a fresh epoch
+    # has no cache yet, so fast mode degrades to a single full A/B
+    # tournament for that round — which scores the parent and writes the
+    # cache below — and every subsequent fast round reuses it. This
+    # makes ``--mode fast`` safe as the default without an operator
+    # having to seed the cache with a manual full round first.
+    parent_historical: dict[str, Any] | None = None
     if fast_mode:
-        parent_historical = _load_historical_aggregate(workspace_root, resolved_epoch_id, parent_id)
+        try:
+            parent_historical = _load_historical_aggregate(
+                workspace_root, resolved_epoch_id, parent_id
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            log.info(
+                "fast-mode evolve: no cached parent aggregate (%s); "
+                "running a full tournament this round to seed the cache",
+                exc,
+            )
+            parent_historical = None
+    if fast_mode and parent_historical is not None:
         tournament_result = await run_fast_mode(
             adapter=adapter,
             child_gen=child_gen,
@@ -775,6 +794,11 @@ async def evolve_once(
             auxiliary_call_llm,
             model=str(workspace_config.get("auxiliary_model", "")),
             round_n=analyzer_round,
+            # Ground the insight prompt in the agent's REAL mutation
+            # surface (enumerated above for this round) so the LLM's
+            # "Suggested next mutations" section cannot hallucinate
+            # mutation target ids that do not exist.
+            mutation_ids=[m.id for m in mutations],
         )
     except Exception as exc:  # noqa: BLE001 — analyser is best-effort
         log.debug("decision telemetry analyzer skipped: %s", exc)

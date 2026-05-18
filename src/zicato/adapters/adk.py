@@ -162,6 +162,46 @@ def _outcome_transcript(outcome: Any) -> tuple[str, ...]:
 
 
 # ---------------------------------------------------------------------------
+# goldfive RuntimeConfig — per-call LLM timeout
+# ---------------------------------------------------------------------------
+
+
+def _goldfive_runtime() -> Any:
+    """Build the goldfive ``RuntimeConfig`` for a ``goldfive.run`` call.
+
+    goldfive's :class:`~goldfive.config.AgentConfig.call_timeout_ms`
+    defaults to 120 000 ms. A real reasoning model under concurrency
+    legitimately exceeds 120 s on a single long-prompt LLM call, so the
+    raw default aborts healthy calls and fires a spurious
+    ``LLM_CALL_TIMEOUT`` drift. zicato raises the per-call budget to
+    :attr:`zicato.config.RuntimeTuningConfig.harness_call_timeout_ms`
+    (operator-tunable via ``ZICATO_HARNESS_CALL_TIMEOUT_MS``).
+
+    We start from :meth:`goldfive.config.RuntimeConfig.from_env` so
+    every other goldfive subsystem (embedding, judge endpoint,
+    drift thresholds, ...) keeps its env-driven configuration, and only
+    replace the ``agent`` sub-config's ``call_timeout_ms``. An explicit
+    ``GOLDFIVE_AGENT_CALL_TIMEOUT_MS`` env var still wins — when set, we
+    leave goldfive's env-resolved value untouched so an operator who
+    tunes goldfive directly is not overridden.
+    """
+    import dataclasses  # noqa: PLC0415
+    import os  # noqa: PLC0415
+
+    from goldfive.config import RuntimeConfig as GoldfiveRuntimeConfig  # noqa: PLC0415
+
+    from zicato.config import load_config  # noqa: PLC0415
+
+    runtime = GoldfiveRuntimeConfig.from_env()
+    if os.environ.get("GOLDFIVE_AGENT_CALL_TIMEOUT_MS"):
+        # Operator tuned goldfive directly — defer to their value.
+        return runtime
+    timeout_ms = load_config().runtime.harness_call_timeout_ms
+    agent = dataclasses.replace(runtime.agent, call_timeout_ms=timeout_ms)
+    return dataclasses.replace(runtime, agent=agent)
+
+
+# ---------------------------------------------------------------------------
 # Judge assembly inputs from a board entry
 # ---------------------------------------------------------------------------
 
@@ -377,6 +417,7 @@ class ADKRunnableHarness:
             sinks=sinks,
             call_llm=config.harness_call_llm,
             judges=judges,
+            runtime=_goldfive_runtime(),
         )
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
         transcript = _outcome_transcript(outcome)
@@ -458,6 +499,7 @@ class ADKRunnableHarness:
                     sinks=sinks,
                     call_llm=config.harness_call_llm,
                     judges=judges,
+                    runtime=_goldfive_runtime(),
                 )
                 transcript = _outcome_transcript(outcome)
                 return transcript[-1] if transcript else ""
@@ -482,7 +524,24 @@ class ADKRunnableHarness:
         The emulator is owned by R2-I and may not exist at the time
         this adapter is built; same degradation contract as the
         scripted driver above.
+
+        The emulator driver (:func:`zicato.emulator.run_emulated`)
+        invokes its ``agent`` argument once per emulated turn as
+        ``agent.run(user_message)`` with a bare string. Passing the raw
+        ADK agent would raise :class:`TypeError` because the ADK
+        agent's ``.run()`` does not accept a bare string positional —
+        it expects ADK-specific invocation arguments. This is the same
+        bug class #105 fixed for the scripted path; the emulated path
+        was explicitly scoped out there and is fixed here by the
+        analogous wrapper. We therefore wrap the agent in a thin
+        per-turn caller that calls :func:`goldfive.run` with the
+        correct signature on each emulated turn — mirroring
+        :class:`_PerTurnCaller` in :meth:`_run_multi_turn_scripted`.
         """
+        import goldfive  # lazy: keep the optional dep out of import time
+
+        from zicato.judge_runtime import assemble_judges
+
         try:
             from zicato import emulator
         except ImportError:
@@ -495,8 +554,42 @@ class ADKRunnableHarness:
                 aborted=True,
                 abort_reason="emulator_unavailable",
             )
+
+        judges = assemble_judges(
+            entry_judges=_entry_judge_specs(entry),
+            disable_drift=_entry_disable_drift(entry),
+            aux_call_llm=config.auxiliary_call_llm,
+        )
+        agent = self._agent
+
+        class _PerTurnCaller:
+            """Thin wrapper that calls ``goldfive.run`` per emulated turn.
+
+            The emulator driver calls ``agent.run(user_message)``; this
+            wrapper satisfies that interface and dispatches each call to
+            ``goldfive.run(agent, user_message, ...)`` with the correct
+            ADK-level arguments. The return value is the last
+            user-facing assistant reply extracted from the outcome's
+            ``completed_results``, matching the extraction path used by
+            :meth:`_run_single_turn`. Identical in shape to the
+            scripted path's wrapper — the emulator driver and the
+            scripted driver both expect an ``async run(str) -> str``.
+            """
+
+            async def run(self, user_message: str) -> str:
+                outcome = await goldfive.run(
+                    agent,
+                    user_message,
+                    sinks=sinks,
+                    call_llm=config.harness_call_llm,
+                    judges=judges,
+                    runtime=_goldfive_runtime(),
+                )
+                transcript = _outcome_transcript(outcome)
+                return transcript[-1] if transcript else ""
+
         return await emulator.run_emulated(
-            agent=self._agent,
+            agent=_PerTurnCaller(),
             entry=entry,
             sinks=sinks,
             config=config,

@@ -210,9 +210,21 @@ class RuntimeTuningConfig:
         Maximum number of board-entry runs the tournament runner keeps
         in flight at once within a single generation. ``1`` is fully
         sequential. Must be ``>= 1``.
+    harness_call_timeout_ms:
+        Per-LLM-call wall-clock budget, in milliseconds, for the *inner
+        harness* agent's calls — distinct from
+        :attr:`AuxConfig.call_timeout_s` (the auxiliary-LLM budget).
+        goldfive's :class:`~goldfive.config.AgentConfig` defaults this
+        to 120 000 ms, which a real reasoning model legitimately
+        exceeds on a long prompt under concurrency; zicato raises the
+        default to a value sized for reasoning-model latency and
+        threads it into the goldfive ``RuntimeConfig`` it constructs
+        for every ``goldfive.run`` call. Operators tune via
+        ``ZICATO_HARNESS_CALL_TIMEOUT_MS``. Must be ``>= 1``.
     """
 
     parallelism: int = 4
+    harness_call_timeout_ms: int = 1_800_000
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +361,11 @@ _ENV_BINDINGS: dict[str, tuple[str, str, Any]] = {
     "ZICATO_WORKSPACE": ("workspace", "root", _coerce_str),
     "ZICATO_INSTANCE_ID": ("workspace", "instance_id", _coerce_str),
     "ZICATO_PARALLELISM": ("runtime", "parallelism", _coerce_positive_int),
+    "ZICATO_HARNESS_CALL_TIMEOUT_MS": (
+        "runtime",
+        "harness_call_timeout_ms",
+        _coerce_positive_int,
+    ),
 }
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from zicato.core import ScoringWeights
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 
@@ -47,7 +46,12 @@ def test_gate_rejects_when_margin_insufficient() -> None:
     outcome = evaluate_gate(parent, child, weights)
 
     assert outcome.decision == "rejected"
-    assert "insufficient margin" in outcome.reason
+    # A child that improved but not enough is a near-miss, NOT a
+    # regression — the reason says "insufficient improvement" and
+    # states the real loss drop.
+    assert "insufficient improvement" in outcome.reason
+    assert "regressed" not in outcome.reason
+    assert "0.005" in outcome.reason
     # Deltas reported regardless of decision
     assert outcome.delta_scalar == pytest.approx(-0.005)
 
@@ -60,7 +64,32 @@ def test_gate_rejects_when_child_ties_parent() -> None:
     outcome = evaluate_gate(parent, child, weights)
 
     assert outcome.decision == "rejected"
-    assert "insufficient margin" in outcome.reason
+    # A tie is no improvement at all — still a near-miss, not a
+    # regression.
+    assert "insufficient improvement" in outcome.reason
+    assert "regressed" not in outcome.reason
+
+
+def test_gate_reason_says_regressed_when_child_loss_rises() -> None:
+    """A child whose loss ROSE is reported as a regression, not a near-miss.
+
+    The scalar is a loss (lower is better). When the child's scalar is
+    higher than the parent's, the child is worse — the reason must say
+    so plainly and state the real positive delta, rather than the
+    misleading "did not beat by margin" phrasing.
+    """
+    parent = _agg(scalar=1.0)
+    child = _agg(scalar=1.3)  # loss ROSE by 0.3 — outright worse
+    weights = ScoringWeights(promote_margin=0.01)
+
+    outcome = evaluate_gate(parent, child, weights)
+
+    assert outcome.decision == "rejected"
+    assert "regressed" in outcome.reason
+    assert "insufficient improvement" not in outcome.reason
+    # The real delta (child - parent = +0.3) is stated.
+    assert "0.3" in outcome.reason or "0.300000" in outcome.reason
+    assert outcome.delta_scalar == pytest.approx(0.3)
 
 
 def test_gate_rejects_on_pass_rate_regression_even_when_scalar_improves() -> None:

@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from zicato.core.types import (
     BoardEntry,
     DriftCount,
@@ -365,6 +364,47 @@ def test_evolve_once_promotes_on_improvement(
     # Journal entry appended.
     journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
     assert "swap the greeting string" in journal
+
+
+def test_evolve_once_fast_mode_degrades_to_full_when_no_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A6: fast mode with no cached parent aggregate runs a full round.
+
+    ``--mode fast`` is now the CLI default; a fresh epoch's first round
+    has no cached ``gen_score.json`` yet. Rather than raising
+    ``FileNotFoundError``, fast mode degrades to a single full A/B
+    tournament that round — which scores the parent and writes the
+    cache — so subsequent fast rounds have a cache to reuse.
+    """
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    # No gen_score.json exists for v0 — fast mode must not crash.
+    v0_cache = workspace / "epochs" / epoch_id / "generations" / "v0" / "gen_score.json"
+    assert not v0_cache.exists()
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            fast_mode=True,
+        )
+    )
+
+    assert outcome.tournament_decision == "promoted"
+    # The seeding full round wrote the parent's cached aggregate, so a
+    # later fast round has something to reuse.
+    assert v0_cache.exists()
 
 
 def test_evolve_once_rejects_when_child_regresses(

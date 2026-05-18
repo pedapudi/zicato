@@ -21,7 +21,9 @@ from zicato.runtime.state import (
     ActiveTournamentEntry,
     Heartbeat,
     clear_active_tournament,
+    drift_count_snapshot_from_profile,
     list_active_runs,
+    loss_summary_from_profile,
     read_active_tournament,
     read_heartbeat,
     remove_active_run,
@@ -407,3 +409,174 @@ def test_atomic_write_does_not_leave_partial_on_overwrite(tmp_path: Path) -> Non
     # And it parses.
     parsed = json.loads(active_run_path(tmp_path, "run_a").read_text())
     assert parsed["pid"] == 42
+
+
+# ---------------------------------------------------------------------------
+# A3: loss-summary / drift-count-snapshot contract projection from LossProfile
+# ---------------------------------------------------------------------------
+
+
+def test_loss_summary_from_profile_projects_pinned_keys() -> None:
+    """``loss_summary_from_profile`` projects the pinned scalar keys."""
+    from zicato.core.types import DriftCount, ExpectationResult, LossProfile
+
+    profile = LossProfile(
+        run_id="r1",
+        entry_id="e1",
+        generation_id="v1",
+        epoch_id="ep1",
+        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=2),),
+        plan_revisions=3,
+        task_failure_ratio=0.25,
+        runtime_ms=4200,
+        wall_clock_budget_exceeded=False,
+        expectation_result=ExpectationResult(kind="literal", passed=True),
+        drift_loss=0.75,
+        pass_fail=True,
+        tokens_spent=1500,
+        output_chars=900,
+        schema_failures=1,
+    )
+    summary = loss_summary_from_profile(profile)
+    assert summary["drift_loss"] == 0.75
+    assert summary["task_failure_ratio"] == 0.25
+    assert summary["plan_revisions"] == 3.0
+    assert summary["runtime_ms"] == 4200.0
+    assert summary["wall_clock_budget_exceeded"] == 0.0
+    assert summary["tokens_spent"] == 1500.0
+    assert summary["output_chars"] == 900.0
+    assert summary["schema_failures"] == 1.0
+    assert summary["pass_fail"] == 1.0
+    # All values are floats — the contract is dict[str, float].
+    assert all(isinstance(v, float) for v in summary.values())
+    # Multi-turn extras are absent on a single-turn profile.
+    assert "turns_completed" not in summary
+    assert "memory_failure_count" not in summary
+    assert "context_loss_count" not in summary
+
+
+def test_loss_summary_from_profile_omits_pass_fail_when_none() -> None:
+    """An entry with no expectation has ``pass_fail`` omitted, not 0.0."""
+    from zicato.core.types import LossProfile
+
+    profile = LossProfile(
+        run_id="r1",
+        entry_id="e1",
+        generation_id="v1",
+        epoch_id="ep1",
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=10,
+        wall_clock_budget_exceeded=False,
+        expectation_result=None,
+        drift_loss=0.0,
+        pass_fail=None,
+    )
+    summary = loss_summary_from_profile(profile)
+    assert "pass_fail" not in summary
+
+
+def test_loss_summary_from_profile_includes_multi_turn_extras() -> None:
+    """Multi-turn extras are projected when populated."""
+    from zicato.core.types import LossProfile
+
+    profile = LossProfile(
+        run_id="r1",
+        entry_id="e1",
+        generation_id="v1",
+        epoch_id="ep1",
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=10,
+        wall_clock_budget_exceeded=True,
+        expectation_result=None,
+        drift_loss=0.0,
+        pass_fail=None,
+        turns_completed=5,
+        memory_failure_count=2,
+        context_loss_count=1,
+    )
+    summary = loss_summary_from_profile(profile)
+    assert summary["turns_completed"] == 5.0
+    assert summary["memory_failure_count"] == 2.0
+    assert summary["context_loss_count"] == 1.0
+    assert summary["wall_clock_budget_exceeded"] == 1.0
+
+
+def test_drift_count_snapshot_sums_across_severities() -> None:
+    """``drift_count_snapshot`` sums per-kind counts across severity buckets."""
+    from zicato.core.types import DriftCount, LossProfile
+
+    profile = LossProfile(
+        run_id="r1",
+        entry_id="e1",
+        generation_id="v1",
+        epoch_id="ep1",
+        drift_counts=(
+            DriftCount(kind="intent_divergence", severity="warning", count=2),
+            DriftCount(kind="intent_divergence", severity="critical", count=1),
+            DriftCount(kind="off_topic", severity="info", count=4),
+            DriftCount(kind="custom:slide_quality", severity="warning", count=3),
+        ),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=10,
+        wall_clock_budget_exceeded=False,
+        expectation_result=None,
+        drift_loss=0.0,
+        pass_fail=None,
+    )
+    snapshot = drift_count_snapshot_from_profile(profile)
+    assert snapshot == {
+        "intent_divergence": 3,
+        "off_topic": 4,
+        "custom:slide_quality": 3,
+    }
+    assert all(isinstance(v, int) for v in snapshot.values())
+
+
+def test_loss_summary_round_trips_through_active_tournament_entry(tmp_path: Path) -> None:
+    """A projected loss_summary survives the ActiveTournamentEntry JSON round-trip."""
+    from zicato.core.types import DriftCount, LossProfile
+
+    profile = LossProfile(
+        run_id="r1",
+        entry_id="entry_a",
+        generation_id="v1",
+        epoch_id="ep1",
+        drift_counts=(DriftCount(kind="off_topic", severity="warning", count=2),),
+        plan_revisions=1,
+        task_failure_ratio=0.0,
+        runtime_ms=100,
+        wall_clock_budget_exceeded=False,
+        expectation_result=None,
+        drift_loss=0.3,
+        pass_fail=None,
+    )
+    summary = loss_summary_from_profile(profile)
+    snapshot = drift_count_snapshot_from_profile(profile)
+    write_active_tournament(
+        tmp_path,
+        ActiveTournament(
+            tournament_id="t1",
+            parent_generation_id="v0",
+            child_generation_id="v1",
+            epoch_id="ep1",
+            started_at="2026-05-18T00:00:00Z",
+            entries=[ActiveTournamentEntry(entry_id="entry_a", side="child", status="queued")],
+        ),
+    )
+    update_tournament_entry(
+        tmp_path,
+        "entry_a",
+        "child",
+        status="completed",
+        loss_summary=summary,
+        drift_count_snapshot=snapshot,
+    )
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    assert got.entries[0].loss_summary == summary
+    assert got.entries[0].drift_count_snapshot == snapshot

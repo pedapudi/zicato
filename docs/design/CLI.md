@@ -439,7 +439,7 @@ Flags:
 | Flag | Default | Meaning |
 |---|---|---|
 | `--rounds <N>` | `1` | How many rounds to attempt. |
-| `--mode tournament\|fast` | `tournament` | Tournament mode (see §3.9). |
+| `--mode full\|fast` | `fast` | Tournament mode (see §3.9). `fast` (default) re-scores the champion only when it has no cached aggregate yet; `full` re-runs both generations every round. |
 | `--epoch <epoch_id>` | current epoch | Run against a specific epoch. Passing this **skips contract-hash auto-epoching entirely** — the explicit target wins. |
 | `--no-auto-epoch` | off (auto-epoch ON) | Disable contract-hash auto-epoching. With this flag, `evolve` errors out when the evaluation contract has drifted from the current epoch instead of rolling. See [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10. |
 | `--epoch-name <name>` | the `e{N}` scheme | Name for an epoch `evolve` auto-creates (first epoch on a fresh workspace, or the new epoch after a roll). Ignored when `--epoch` is passed or no new epoch is created. |

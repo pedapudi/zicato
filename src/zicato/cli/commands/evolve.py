@@ -34,9 +34,12 @@ Usage::
         --auxiliary-call-llm my_pkg.llms:aux_call_llm
 
 The ``--mode`` flag picks between full A/B tournaments and inline
-fast-mode keep/discard. The default is ``full``; fast mode reads the
-parent's cached aggregate from ``gen_score.json`` and requires that a
-prior full-mode round wrote that file.
+fast-mode keep/discard. The default is ``fast``: the parent/champion
+is scored once and its cached aggregate (``gen_score.json``) is reused
+every round instead of being re-run, which is materially cheaper.
+Fast mode falls back to scoring the parent when no cached aggregate
+exists yet, so a fresh epoch's first round still works. Pass
+``--mode full`` to re-run both parent and child every round.
 
 The two ``--*-call-llm`` options accept dotted import paths in either
 ``pkg.mod:attr`` or ``pkg.mod.attr`` form — the same convention the
@@ -424,9 +427,13 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
 @click.option(
     "--mode",
     type=click.Choice(["full", "fast"]),
-    default="full",
+    default="fast",
     show_default=True,
-    help="full = run both parent + child; fast = child vs cached parent aggregate.",
+    help=(
+        "fast (default) = child vs the champion's cached aggregate, "
+        "re-scoring the champion only when no cache exists yet; "
+        "full = re-run both parent and child every round."
+    ),
 )
 @click.option(
     "--harness-call-llm",
