@@ -402,7 +402,21 @@ class ADKRunnableHarness:
         time this adapter is built. We import it lazily and surface a
         clean abort if it is missing so the adapter degrades gracefully
         when other modules land out of order.
+
+        The scripted driver expects a ``harness`` object with an
+        ``async run(user_message: str)`` interface (see
+        :func:`zicato.board.scripted._resolve_invoker`). Passing the
+        raw ADK agent would cause :class:`TypeError` because the ADK
+        agent's ``.run()`` method does not accept a bare string
+        positional argument — it expects ADK-specific invocation
+        arguments. We therefore wrap the agent in a thin per-turn
+        caller that calls :func:`goldfive.run` with the correct
+        signature on each scripted turn.
         """
+        import goldfive  # lazy: keep the optional dep out of import time
+
+        from zicato.judge_runtime import assemble_judges
+
         try:
             from zicato.board import scripted as scripted_driver
         except ImportError:
@@ -415,8 +429,41 @@ class ADKRunnableHarness:
                 aborted=True,
                 abort_reason="scripted_driver_unavailable",
             )
+
+        judges = assemble_judges(
+            entry_judges=_entry_judge_specs(entry),
+            disable_drift=_entry_disable_drift(entry),
+            aux_call_llm=config.auxiliary_call_llm,
+        )
+        agent = self._agent
+
+        class _PerTurnCaller:
+            """Thin wrapper that calls ``goldfive.run`` per scripted turn.
+
+            The scripted driver calls ``harness.run(user_message)``; this
+            wrapper satisfies that interface and dispatches each call to
+            ``goldfive.run(agent, user_message, ...)`` with the correct
+            ADK-level arguments. The return value is the last user-facing
+            assistant reply extracted from the outcome's
+            ``completed_results``, matching the same extraction path used
+            by :meth:`_run_single_turn`. Returning a plain string lets the
+            scripted driver's :func:`~zicato.board.scripted._coerce_reply`
+            pass it through without any further unwrapping.
+            """
+
+            async def run(self, user_message: str) -> str:
+                outcome = await goldfive.run(
+                    agent,
+                    user_message,
+                    sinks=sinks,
+                    call_llm=config.harness_call_llm,
+                    judges=judges,
+                )
+                transcript = _outcome_transcript(outcome)
+                return transcript[-1] if transcript else ""
+
         return await scripted_driver.run_scripted(
-            agent=self._agent,
+            agent=_PerTurnCaller(),
             entry=entry,
             sinks=sinks,
             config=config,

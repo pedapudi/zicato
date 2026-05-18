@@ -807,3 +807,102 @@ async def test_run_multi_turn_emulated_graceful_when_emulator_missing(
     result = await runnable.run(entry, sinks=[], config=config)
     assert result.aborted
     assert result.abort_reason == "emulator_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Regression: scripted multi-turn must NOT pass the raw ADK agent to the
+# scripted driver — the driver expects async run(user_message: str), not the
+# ADK agent's own .run() signature.  Before the fix, _run_multi_turn_scripted
+# called run_scripted(agent=self._agent, ...) and the scripted driver's
+# _resolve_invoker found agent.run(), then called it as method(user_message)
+# — which raises TypeError because the ADK agent's .run() requires ADK-
+# specific positional arguments.  After the fix, a _PerTurnCaller wrapper is
+# passed instead; it calls goldfive.run(agent, user_message, ...) per turn.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_multi_turn_scripted_calls_goldfive_run_per_turn(
+    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Scripted multi-turn entries drive goldfive.run once per scripted turn.
+
+    Regression guard for the TypeError that occurred when the raw ADK
+    agent was handed directly to the scripted driver: the driver found
+    ``agent.run`` and called it as ``agent.run(user_message)`` — wrong
+    signature for an ADK agent, hence TypeError.
+
+    The fix wraps the agent in a ``_PerTurnCaller`` that calls
+    ``goldfive.run(agent, user_message, ...)`` per turn.  This test
+    verifies:
+
+    * No TypeError is raised.
+    * ``goldfive.run`` is called once per scripted turn (not zero times,
+      not once for the whole entry).
+    * The final transcript contains one reply per turn, in order.
+    * The harness_call_llm (not auxiliary_call_llm) is forwarded on each
+      turn — the two-callable collusion guard holds for scripted entries.
+    """
+    import goldfive
+
+    from zicato.core import ScriptedTurn
+
+    generation_root, entrypoint = inner_harness
+    adapter = ADKHarnessAdapter(
+        entrypoint=entrypoint,
+        mutable_trees=[generation_root / "demo_inner"],
+    )
+    runnable = adapter.load(generation_root)
+
+    calls: list[dict[str, Any]] = []
+
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
+        calls.append(
+            {
+                "user_input": user_input,
+                "call_llm": kwargs.get("call_llm"),
+                "sinks": kwargs.get("sinks"),
+            }
+        )
+        return _FakeOutcome({"turn": f"reply:{user_input}"})
+
+    monkeypatch.setattr(goldfive, "run", fake_goldfive_run)
+
+    entry = BoardEntry(
+        id="scripted-regression",
+        kind="multi_turn_scripted",
+        wall_clock_budget_seconds=30,
+        turns=(
+            ScriptedTurn(user="turn-one"),
+            ScriptedTurn(user="turn-two"),
+            ScriptedTurn(user="turn-three"),
+        ),
+        max_turns=5,
+    )
+    entry.validate()
+    config = _runtime_config(tmp_path)
+    sentinel_sink = object()
+
+    result = await runnable.run(entry, sinks=[sentinel_sink], config=config)
+
+    # No TypeError — result is a clean RunResult, not aborted.
+    assert isinstance(result, RunResult)
+    assert not result.aborted, f"unexpected abort: {result.abort_reason!r}"
+    assert result.entry_id == "scripted-regression"
+
+    # goldfive.run was called once per scripted turn, in order.
+    assert len(calls) == 3
+    assert [c["user_input"] for c in calls] == ["turn-one", "turn-two", "turn-three"]
+
+    # The harness_call_llm (not auxiliary) is forwarded on every turn.
+    for call in calls:
+        assert call["call_llm"] is config.harness_call_llm
+        assert call["call_llm"] is not config.auxiliary_call_llm
+
+    # Sinks are forwarded on every turn.
+    for call in calls:
+        assert call["sinks"] == [sentinel_sink]
+
+    # The transcript contains the final_output from each turn's outcome.
+    assert result.transcript == ("reply:turn-one", "reply:turn-two", "reply:turn-three")
+    assert result.final_output == "reply:turn-three"
