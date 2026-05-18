@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from zicato.cli.commands.evolve import (
     _dashboard_spawn_argv,
     _maybe_spawn_dashboard,
@@ -53,7 +52,7 @@ def test_resolve_supervisor_binary_uses_env_override(
 def test_resolve_supervisor_binary_returns_none_when_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """If env override + in-tree + PATH all miss, returns ``None``."""
+    """If env override + bundled + PATH + dev-checkout all miss, returns ``None``."""
     monkeypatch.delenv("ZICATO_SUPERVISOR_BINARY", raising=False)
     # Point env at a non-executable; resolver should fall through.
     not_executable = tmp_path / "not-exec"
@@ -61,11 +60,11 @@ def test_resolve_supervisor_binary_returns_none_when_missing(
     monkeypatch.setenv("ZICATO_SUPERVISOR_BINARY", str(not_executable))
     # Strip PATH so the system zicato-supervisor (if any) is unreachable.
     monkeypatch.setenv("PATH", "/nonexistent")
-    # The in-tree path is computed relative to __file__; we can't easily
-    # break that, so just confirm we get *some* path (possibly the in-tree
-    # one). If the in-tree binary is built, the resolver returns it.
+    # The bundled (zicato/_bin/) and dev-checkout (target/release/)
+    # paths are computed relative to the package; we can't easily break
+    # them, so just confirm we get *some* absolute path if a binary
+    # happens to be built, else None.
     result = _resolve_supervisor_binary()
-    # Either the in-tree compiled binary exists, or the resolver returns None.
     if result is not None:
         assert result.is_absolute()
 

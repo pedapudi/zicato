@@ -80,6 +80,25 @@ Issues = "https://github.com/pedapudi/zicato/issues"
 # prefix so the wheel still ships top-level `zicato/`.
 packages = ["src/zicato"]
 
+# Custom build hook (hatch_build.py): compiles the Rust supervisor
+# crate and bundles the binary at zicato/_bin/zicato-supervisor so it
+# ships inside the wheel. Best-effort — see hatch_build.py.
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+# The sdist carries the crate source so a downstream wheel build can
+# still run the supervisor build hook.
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/zicato",
+    "crates",
+    "Cargo.toml",
+    "Cargo.lock",
+    "hatch_build.py",
+    "README.md",
+    "LICENSE",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

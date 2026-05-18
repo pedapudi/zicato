@@ -66,10 +66,16 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
        :class:`~zicato.config.IntegrationConfig`, sourced from the
        ``ZICATO_SUPERVISOR_BINARY`` environment variable (useful for
        tests that point at a sentinel script).
-    2. The in-tree release build relative to this source file. This is
-       the path produced by ``cargo build --release`` and is the default
-       distribution mode for development checkouts.
+    2. The binary bundled inside the installed package at
+       ``zicato/_bin/zicato-supervisor``. The hatchling build hook
+       (``hatch_build.py``) compiles the crate and stages it there, so
+       this resolves for every wheel install — checkout or not.
     3. The system ``PATH`` (``zicato-supervisor`` installed globally).
+    4. Last resort, for a development checkout only: the Cargo
+       workspace's release build at ``<repo>/target/release/``. A bare
+       checkout that has never run ``python -m build`` has no bundled
+       ``_bin/`` binary, so this lets ``cargo build --release`` alone
+       suffice during development.
 
     Parameters
     ----------
@@ -84,24 +90,39 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
     """
     import os  # noqa: PLC0415
 
+    # 1. Explicit env override.
     integration = config if config is not None else load_config().integration
     if integration.supervisor_binary:
         candidate = Path(integration.supervisor_binary)
         if candidate.exists() and os.access(candidate, os.X_OK):
             return candidate
 
-    # In-tree path: this file is at zicato/cli/commands/evolve.py; the
-    # binary lives at <repo_root>/supervisor/target/release/zicato-supervisor.
-    here = Path(__file__).resolve()
-    in_tree = (
-        here.parent.parent.parent.parent / "supervisor" / "target" / "release" / "zicato-supervisor"
-    )
-    if in_tree.exists() and os.access(in_tree, os.X_OK):
-        return in_tree
+    # 2. Binary bundled inside the installed package. zicato/__file__
+    #    -> zicato/_bin/zicato-supervisor. This is the path the build
+    #    hook stages into the wheel and works for any install.
+    import zicato  # noqa: PLC0415
 
+    pkg_root = Path(zicato.__file__).resolve().parent
+    bundled = pkg_root / "_bin" / "zicato-supervisor"
+    if bundled.exists() and os.access(bundled, os.X_OK):
+        return bundled
+
+    # 3. The system PATH.
     on_path = shutil.which("zicato-supervisor")
     if on_path:
         return Path(on_path)
+
+    # 4. Development-checkout last resort. This file is installed at
+    #    <repo>/src/zicato/cli/commands/evolve.py; the Cargo workspace
+    #    builds every crate into <repo>/target/release/. Four parents
+    #    from this file reach src/zicato/, a fifth reaches the repo
+    #    root. This branch only fires for an editable/source checkout
+    #    that built the crate but never ran the wheel build hook.
+    here = Path(__file__).resolve()
+    repo_root = here.parents[4]
+    dev_checkout = repo_root / "target" / "release" / "zicato-supervisor"
+    if dev_checkout.exists() and os.access(dev_checkout, os.X_OK):
+        return dev_checkout
 
     return None
 
