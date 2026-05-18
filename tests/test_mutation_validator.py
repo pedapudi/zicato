@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-
 from zicato.core.types import Patch
 from zicato.mutation.applier import apply_patches
 from zicato.mutation.enumerator import enumerate_mutations
@@ -48,8 +47,10 @@ def _load_mutations_command():
     """Load the standalone mutations command without relying on a
     ``zicato.cli`` package init that lives outside this agent's scope."""
 
-    here = Path(__file__).resolve().parents[1]
-    file_path = here / "zicato" / "cli" / "commands" / "mutations.py"
+    import zicato
+
+    pkg_root = Path(zicato.__file__).resolve().parent
+    file_path = pkg_root / "cli" / "commands" / "mutations.py"
     spec = importlib.util.spec_from_file_location("zicato_mutations_cli_under_test", file_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

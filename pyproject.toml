@@ -70,7 +70,9 @@ Homepage = "https://github.com/pedapudi/zicato"
 Issues = "https://github.com/pedapudi/zicato/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["zicato"]
+# The package lives under a src/ root; hatchling strips the src/
+# prefix so the wheel still ships top-level `zicato/`.
+packages = ["src/zicato"]
 
 [tool.ruff]
 line-length = 100
@@ -124,3 +126,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# With the package under src/, an editable install puts `zicato` on
+# sys.path, but a bare `pytest` from a non-installed checkout would
+# not see it. Pin the repo root explicitly so src-layout imports
+# resolve via the installed/editable package consistently.
+pythonpath = ["."]

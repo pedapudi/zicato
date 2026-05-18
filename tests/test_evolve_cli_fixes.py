@@ -25,7 +25,6 @@ import json
 from pathlib import Path
 
 from click.testing import CliRunner
-
 from zicato.cli.commands.epoch import new_cmd
 from zicato.cli.commands.evolve import (
     _DASHBOARD_HOST,
@@ -299,7 +298,11 @@ def test_supervisor_and_dashboard_have_distinct_default_ports() -> None:
     """
     # The dashboard's preferred port — assert the ``python -m
     # zicato.dashboard`` argparse default directly from its source.
-    main_py = Path(__file__).resolve().parents[1] / "zicato" / "dashboard" / "__main__.py"
+    # Resolve through the installed package so the src/ layout move
+    # does not break the path.
+    import zicato.dashboard as _dashboard_pkg
+
+    main_py = Path(_dashboard_pkg.__file__).resolve().parent / "__main__.py"
     main_py_text = main_py.read_text(encoding="utf-8")
     assert '"--port", type=int, default=7892' in main_py_text
     dashboard_default = 7892

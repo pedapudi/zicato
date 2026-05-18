@@ -8,7 +8,7 @@ help:
 	@echo "  test               Run pytest"
 	@echo "  lint               Run ruff check"
 	@echo "  format             Run ruff format"
-	@echo "  typecheck          Run mypy over zicato/"
+	@echo "  typecheck          Run mypy over src/zicato/"
 	@echo "  check              Run lint + typecheck + test"
 	@echo "  clean              Remove build, cache, and generated artifacts"
 	@echo "  supervisor         Build the Rust zicato-supervisor binary (release)"
@@ -29,7 +29,7 @@ format:
 	@cd $(ROOT) && uv run ruff format .
 
 typecheck:
-	@cd $(ROOT) && uv run mypy zicato/
+	@cd $(ROOT) && uv run mypy src/zicato/
 
 check: lint typecheck test
 

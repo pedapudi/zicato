@@ -25,10 +25,13 @@ from pathlib import Path
 
 import pytest
 
-# Locate the static directory relative to this test file. The dashboard
-# UI bundle lives with the Python dashboard package at
-# ``<repo>/zicato/dashboard/static/``.
-STATIC_DIR = Path(__file__).resolve().parent.parent / "zicato" / "dashboard" / "static"
+# Locate the static directory via the installed ``zicato.dashboard``
+# package rather than a path walk from this test file — the package
+# moved under a ``src/`` root and resolving through the import keeps
+# this test layout-agnostic.
+import zicato.dashboard as _dashboard_pkg  # noqa: E402
+
+STATIC_DIR = Path(_dashboard_pkg.__file__).resolve().parent / "static"
 
 
 @pytest.fixture(scope="module")
