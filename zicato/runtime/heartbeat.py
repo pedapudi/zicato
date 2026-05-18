@@ -204,4 +204,114 @@ class HeartbeatBeater:
                 self._bump_to_disk()
 
 
-__all__ = ["HeartbeatBeater"]
+class RunHeartbeatBeater:
+    """Background thread that periodically bumps ``last_progress`` for one run.
+
+    Each board-entry worker subprocess (``zicato._tournament_worker``)
+    creates one of these on start.  The thread sleeps ``interval_s``
+    seconds between bumps and advances the ``last_progress`` timestamp on
+    the run's ``active_runs/<run_id>.json`` record.  Because blocking
+    network I/O (an LLM call) releases the GIL, this thread keeps beating
+    even when the asyncio event loop is parked waiting for a slow model
+    response — exactly the scenario that previously caused the supervisor
+    staleness watchdog to issue false-positive kill escalations.
+
+    Design rules mirror :class:`HeartbeatBeater`:
+
+    * **Thread-safe, GIL-friendly.** The hot path is
+      ``threading.Event.wait`` (a timed wait that releases the GIL) plus
+      one atomic JSON write via
+      :func:`zicato.runtime.state.touch_active_run_progress`.  No shared
+      mutable state, no explicit locks.
+    * **Daemon thread.** The thread is created as a daemon so it cannot
+      prevent the worker process from exiting if the main thread finishes
+      without calling :meth:`stop`.  A clean run calls :meth:`stop` which
+      sets the stop event and joins; a SIGKILLed run simply vanishes with
+      the process.
+    * **Crash-safe.** A write failure (e.g. the active-runs file was
+      already removed by a racing cleanup) is swallowed — the bump is
+      strictly best-effort and must never abort the run.
+    """
+
+    def __init__(
+        self,
+        workspace_root: Path,
+        run_id: str,
+        interval_s: float = 3.0,
+    ) -> None:
+        """Initialise. Does NOT start the background thread — call :meth:`start`.
+
+        Parameters
+        ----------
+        workspace_root:
+            The workspace root the run's ``active_runs/<run_id>.json``
+            lives under.
+        run_id:
+            The run identifier (``{generation_id}--{entry_id}``).
+        interval_s:
+            Seconds between progress bumps.  Default 3.0 — comfortably
+            shorter than any reasonable watchdog warn threshold and well
+            below any single LLM-call time that would trigger a false
+            stale escalation.
+        """
+        import threading  # noqa: PLC0415
+
+        self._workspace_root = workspace_root
+        self._run_id = run_id
+        self._interval_s = interval_s
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Spawn the bump-loop thread.
+
+        Writes one progress bump immediately (synchronously) so the
+        ``last_progress`` timestamp is fresh the moment the run starts
+        doing LLM work.  Calling :meth:`start` twice without a
+        :meth:`stop` raises :class:`RuntimeError`.
+        """
+        import threading  # noqa: PLC0415
+
+        if self._thread is not None and self._thread.is_alive():
+            raise RuntimeError("RunHeartbeatBeater already started")
+        # Immediate bump: the run is alive right now.
+        self._bump()
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._loop,
+            name=f"run-hb-{self._run_id}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Signal the bump thread to stop and block until it exits.
+
+        Idempotent — calling stop on an already-stopped beater is a
+        no-op.
+        """
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _bump(self) -> None:
+        """Advance ``last_progress`` on the run's state file, best-effort."""
+        try:
+            from zicato.runtime.state import touch_active_run_progress  # noqa: PLC0415
+
+            touch_active_run_progress(self._workspace_root, self._run_id)
+        except Exception:  # noqa: BLE001 — progress bump must never abort the run
+            pass
+
+    def _loop(self) -> None:
+        """Bump periodically until the stop event fires."""
+        while not self._stop_event.wait(timeout=self._interval_s):
+            self._bump()
+
+
+__all__ = ["HeartbeatBeater", "RunHeartbeatBeater"]

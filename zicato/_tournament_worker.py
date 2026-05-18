@@ -438,6 +438,21 @@ async def _run(args: dict[str, Any]) -> None:
     except Exception as exc:  # noqa: BLE001 — state write is best-effort
         log.warning("worker could not write active_run for %s: %s", run_id, exc)
 
+    # --- Start the per-run heartbeat thread. ---
+    # The thread bumps ``last_progress`` on the active-runs record every
+    # few seconds.  Because blocking network I/O (LLM calls) releases the
+    # GIL, the thread keeps beating even while the asyncio event loop is
+    # parked waiting for a slow model response.  This prevents the
+    # supervisor's staleness watchdog from issuing false-positive kill
+    # escalations on valid long-running LLM calls.
+    from zicato.runtime.heartbeat import RunHeartbeatBeater  # noqa: PLC0415
+
+    run_hb = RunHeartbeatBeater(workspace_root, run_id)
+    try:
+        run_hb.start()
+    except Exception as exc:  # noqa: BLE001 — heartbeat is best-effort
+        log.warning("worker could not start run heartbeat for %s: %s", run_id, exc)
+
     sinks = _build_sinks(events_path, harmonograf_url)
     adapter = _build_adapter(args["adapter"])
 
@@ -477,6 +492,12 @@ async def _run(args: dict[str, Any]) -> None:
                 abort_reason=WORKER_BUDGET_ABORT_REASON,
             )
     finally:
+        # Stop the heartbeat thread before closing sinks so the thread
+        # does not try to bump a run record that is about to be removed.
+        try:
+            run_hb.stop()
+        except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
+            log.debug("worker could not stop run heartbeat for %s: %s", run_id, exc)
         await _close_sinks(sinks)
 
     expectation_result = await _evaluate_expectation(entry, run_result, config)
