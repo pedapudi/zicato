@@ -179,6 +179,10 @@ class AppState {
     this.epoch = { id: '—', generation: '—', round: '—', startedAt: null };
     // full epoch-definition contract from GET /api/epoch (R8-A); may be null
     this.epochDef = null;
+    // Board entry whose conversation is shown inline in the Tournament
+    // detail panel. Set when the operator clicks a board card in the hall.
+    // Null means no inline conversation is open.
+    this.selectedEntry = null;
   }
 
   // Merge a heartbeat update into the current record rather than
@@ -2291,11 +2295,26 @@ function renderBoardResult(board) {
   return el('div', { class: 'board-result ' + cls }, [text]);
 }
 
-// Board card click → the Conversation view. A sibling agent owns the
-// route that renders it; this only sets the hash.
+// Board card click → show the conversation diff inline in the Tournament
+// detail panel. Sets the selected entry, kicks off the transcript fetch,
+// re-renders the detail panel, and scrolls it into view. The URL hash is
+// updated to #/tournament so the view does not change; the separate
+// #conversation/{id} deep-link route still works for direct navigation.
 function openBoardConversation(entryId) {
   if (entryId == null) return;
-  location.hash = 'conversation/' + encodeURIComponent(String(entryId));
+  state.selectedEntry = entryId;
+  // selectConversation manages the fetch and sets convEntryId / convData.
+  selectConversation(entryId);
+  renderMatchupDetail();
+  const section = $('tournament-detail-section');
+  if (section && section.scrollIntoView) {
+    section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  // Update the hash to record the open entry without leaving the tournament
+  // view. The `conv` kind segment is handled by applyRoute so reloading or
+  // sharing the URL restores the inline conversation. Deep-links using
+  // #conversation/{id} still work unchanged.
+  location.hash = '#/tournament/conv/' + encodeURIComponent(String(entryId));
 }
 
 // A discarded challenger card — dashed red, hung below its champion.
@@ -2621,6 +2640,16 @@ function renderMatchupDetail() {
   // --- Verdict
   wrap.appendChild(el('h3', null, ['Verdict']));
   wrap.appendChild(renderMatchupVerdict(decision, rejectionReason, isLive, live));
+
+  // --- Inline conversation diff
+  // Rendered when the operator clicked a board card in the hall. The
+  // transcript data lives in the conversation-view module vars (convEntryId,
+  // convData, convError) and is fetched by openBoardConversation via
+  // selectConversation. renderMatchupDetail is called again on every
+  // loadConversation completion so the columns grow live.
+  if (convEntryId) {
+    wrap.appendChild(renderInlineConversation());
+  }
 }
 
 // Parent-vs-child scalar with per-namespace component bars.
@@ -2714,6 +2743,81 @@ function renderMatchupVerdict(decision, rejectionReason, isLive, live) {
       rejectionReason || 'Failed to clear the scalar margin.',
     ]));
   }
+  return wrap;
+}
+
+// --- Inline conversation diff (rendered inside the tournament detail panel)
+//
+// Reuses the module-level conversation vars (convEntryId, convData,
+// convError) set by selectConversation / loadConversation. When a board
+// card is clicked openBoardConversation calls selectConversation(entryId)
+// and then renderMatchupDetail, which calls this function. loadConversation
+// re-calls renderMatchupDetail on completion so the columns populate without
+// a separate render path.
+
+function renderInlineConversation() {
+  const wrap = el('div', { class: 'inline-conversation' });
+
+  const entryId = convEntryId;
+  const conv = convData;
+
+  wrap.appendChild(el('h3', null, [
+    'Conversation diff ',
+    el('code', { class: 'mono' }, [entryId || '']),
+  ]));
+
+  if (convError) {
+    wrap.appendChild(el('p', { class: 'empty conversation-unavailable' }, [
+      'Conversation data unavailable — the transcript endpoint did not ' +
+      'respond. The runs may not have started yet.',
+    ]));
+    return wrap;
+  }
+
+  if (!conv) {
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'Loading conversation…',
+    ]));
+    return wrap;
+  }
+
+  const champion = conv && conv.champion;
+  const challenger = conv && conv.challenger;
+
+  const champGen = (champion && champion.generation_id) || '—';
+  const chalGen = (challenger && challenger.generation_id) || '—';
+  wrap.appendChild(el('div', { class: 'conversation-versus' }, [
+    el('span', { class: 'conversation-side-tag champion' }, [
+      'champion ', el('code', { class: 'mono' }, [champGen]),
+    ]),
+    el('span', { class: 'conversation-vs' }, ['vs']),
+    el('span', { class: 'conversation-side-tag challenger' }, [
+      'challenger ', el('code', { class: 'mono' }, [chalGen]),
+    ]),
+  ]));
+
+  wrap.appendChild(el('div', { class: 'conversation-columns' }, [
+    renderTranscriptColumn('champion', champion),
+    renderTranscriptColumn('challenger', challenger),
+  ]));
+
+  // Keep the live poll running: schedule a re-fetch while either side
+  // is still in progress. The poll targets renderMatchupDetail (which
+  // re-calls this function) instead of renderConversationView.
+  if (!state.mock && convInProgress(conv)) {
+    const since = Date.now() - convLastFetch;
+    if (since >= CONV_POLL_MS) {
+      loadConversation();
+    } else {
+      setTimeout(() => {
+        if (currentView === 'tournament' && convEntryId === entryId
+            && convInProgress(convData)) {
+          loadConversation();
+        }
+      }, CONV_POLL_MS - since);
+    }
+  }
+
   return wrap;
 }
 
@@ -3118,6 +3222,16 @@ function applyRoute() {
       kind = segs[1];
       id = decodeURIComponent(segs.slice(2).join('/'));
     }
+    // #/tournament/conv/{entry_id} — restore the inline conversation diff
+    // from a deep-link or a board-card click without switching views.
+    if (view === 'tournament' && kind === 'conv' && id) {
+      if (view !== currentView) showView(view);
+      else showViewClassesOnly(view);
+      state.selectedEntry = id;
+      selectConversation(id);
+      applyDrill(null, null);
+      return;
+    }
   } else if (['generation', 'entry', 'run'].includes(segs[0]) && segs.length >= 2) {
     // legacy drill form — keep current view
     kind = segs[0];
@@ -3405,7 +3519,12 @@ function selectConversation(entryId) {
     convLastFetch = 0;
   }
   convEntryId = entryId;
-  renderConversationView();
+  // Paint the relevant view immediately so loading state is visible.
+  if (currentView === 'conversation') {
+    renderConversationView();
+  } else if (currentView === 'tournament') {
+    renderMatchupDetail();
+  }
   if (changed || (convData == null && !convError)) {
     loadConversation();
   }
@@ -3423,6 +3542,7 @@ async function loadConversation() {
     convData = mockConversation(entryId);
     convError = false;
     if (currentView === 'conversation') renderConversationView();
+    if (currentView === 'tournament') renderMatchupDetail();
     return;
   }
   convInFlight = true;
@@ -3443,6 +3563,7 @@ async function loadConversation() {
     convInFlight = false;
   }
   if (currentView === 'conversation') renderConversationView();
+  if (currentView === 'tournament') renderMatchupDetail();
 }
 
 // True while either side's transcript is still being produced.

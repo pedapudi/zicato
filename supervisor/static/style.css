@@ -1565,3 +1565,16 @@ h4 {
     max-height: none;
   }
 }
+
+/* --- Inline conversation diff (rendered inside the tournament detail panel)
+   Shares the column / turn / annotation styles above; this wrapper adds
+   only the separator margin so the diff is visually distinct from the
+   A/B grid and scalar sections above it.                                  */
+.inline-conversation {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
