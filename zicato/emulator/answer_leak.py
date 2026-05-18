@@ -6,9 +6,19 @@ checker that scans every emulator turn before it is forwarded to the
 inner harness. If any pattern fires, the driver aborts the run with
 ``abort_reason='emulator_leak_detected'``.
 
-The patterns intentionally err toward false positives. False positives
-fail a run; false negatives let collusion-shaped content through. The
-asymmetry is deliberate.
+The patterns target genuine answer-shape content (JSON structures,
+code fences, explicit answer-disclosure phrases). They are intentionally
+specific enough to avoid false positives on benign model formatting —
+for example, a bracketed preface like ``[Considering your request]``
+is normal conversational output and must not be flagged.
+
+Design note on the JSON-array pattern: the original ``^\\s*\\[`` pattern
+matched any line starting with ``[``, including legitimate bracketed
+prefaces that reasoning models routinely produce (e.g. ``[Looking at
+this slide]``). The pattern is tightened to require that the opening
+bracket is followed by a JSON value starter (digit, ``-``, ``"``,
+``{``, ``[``, or the literal keywords ``true``/``false``/``null``) so
+that only actual JSON arrays are caught.
 """
 
 from __future__ import annotations
@@ -19,10 +29,19 @@ import re
 #:
 #: Compiled with ``re.IGNORECASE | re.MULTILINE`` in :func:`check_answer_leak`
 #: — patterns that anchor with ``^`` apply per-line, not per-string.
+#:
+#: Pattern notes:
+#:   ``^\\s*\\{`` — bare JSON object at line start; ``{`` rarely appears at
+#:     the start of natural prose, so the original broad pattern is kept.
+#:   ``^\\s*\\[…JSON-value-start…`` — JSON array at line start.  Tightened
+#:     from the original ``^\\s*\\[`` to require a JSON value starter
+#:     (digit, ``-``, ``"``, ``{``, ``[``, or ``true``/``false``/``null``)
+#:     immediately after the bracket.  This prevents false positives on
+#:     bracketed human prefaces such as ``[Looking at your draft] …``.
 LEAK_PATTERNS: tuple[str, ...] = (
-    r"```",              # code fence
-    r"^\s*\{",           # raw JSON object at line start
-    r"^\s*\[",           # raw JSON array at line start
+    r"```",  # code fence (also catches ```json)
+    r"^\s*\{",  # raw JSON object at line start
+    r'^\s*\[\s*(?:[-\d"\{\[]|true\b|false\b|null\b)',  # raw JSON array at line start
     r"the answer is",
     r"you should output",
     r"correct output is",
