@@ -23,16 +23,20 @@ without the caller pre-creating the directory tree.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
+from zicato.config import IntegrationConfig, load_config
 from zicato.core.workspace import events_jsonl_path
 
 log = logging.getLogger("zicato.telemetry.sink")
 
 #: Environment variable an operator sets to stream a run's telemetry to
-#: a live harmonograf server in addition to the on-disk JSONL.
+#: a live harmonograf server in addition to the on-disk JSONL. The
+#: variable is read by :func:`zicato.config.load_config` into
+#: :attr:`zicato.config.IntegrationConfig.harmonograf_url`; this module
+#: no longer reads it directly. The name is kept here for the tests and
+#: log messages that reference it.
 HARMONOGRAF_URL_ENV = "ZICATO_HARMONOGRAF_URL"
 
 
@@ -102,12 +106,17 @@ def make_run_sink(
     return JSONLPersistenceSink(path=path, mode="write")
 
 
-def resolve_harmonograf_url(workspace_config: dict[str, Any] | None = None) -> str:
+def resolve_harmonograf_url(
+    workspace_config: dict[str, Any] | None = None,
+    *,
+    config: IntegrationConfig | None = None,
+) -> str:
     """Return the configured harmonograf server URL, or ``""`` when unset.
 
     Resolution order, first non-empty wins:
 
-    1. The ``ZICATO_HARMONOGRAF_URL`` environment variable.
+    1. The ``ZICATO_HARMONOGRAF_URL`` environment variable — carried by
+       :attr:`config.harmonograf_url <zicato.config.IntegrationConfig>`.
     2. The ``harmonograf_url`` key of the workspace ``config.json``
        (passed in as ``workspace_config``).
 
@@ -115,8 +124,19 @@ def resolve_harmonograf_url(workspace_config: dict[str, Any] | None = None) -> s
     single run at a local harmonograf without editing the workspace
     config. Returns the empty string when neither source supplies a URL
     — callers treat that as "JSONL-only telemetry".
+
+    Parameters
+    ----------
+    workspace_config:
+        The workspace ``config.json`` as a dict, or ``None``.
+    config:
+        The :class:`~zicato.config.IntegrationConfig` carrying the
+        env-sourced ``harmonograf_url``. When ``None`` it is loaded via
+        :func:`zicato.config.load_config` — the single place the
+        environment is read.
     """
-    env = os.environ.get(HARMONOGRAF_URL_ENV, "").strip()
+    integration = config if config is not None else load_config().integration
+    env = integration.harmonograf_url.strip()
     if env:
         return env
     if workspace_config:

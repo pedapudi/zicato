@@ -14,117 +14,90 @@ detector and collects the findings into a :class:`LoopHealth` report.
 Thresholds
 ----------
 
-Every detector's tuning knob is a module-level constant overridable via
-an environment variable so an operator can re-tune between runs without
-editing code. Resolution happens at call time (no caching) — the same
-discipline as :mod:`zicato.aux_timeout`.
+Every detector's tuning knob is a typed field of
+:class:`zicato.config.HealthConfig`, with a default and a documented
+meaning. An operator re-tunes between runs by setting the matching
+``ZICATO_HEALTH_*`` environment variable (read once by
+:func:`zicato.config.load_config`) or, when embedding zicato, by
+constructing a :class:`~zicato.config.HealthConfig` directly. This
+module never reads ``os.environ`` itself — every detector takes the
+config as an optional parameter.
 
 ================================  =========================  =========
-Constant                          Environment variable        Default
+HealthConfig field                Environment variable        Default
 ================================  =========================  =========
-``DEGENERATE_SCORING_WINDOW``      ``ZICATO_HEALTH_SCORING_WINDOW``       3
-``DEGENERATE_SCORING_EPSILON``     ``ZICATO_HEALTH_SCORING_EPSILON``   1e-6
-``NO_EXPECTATIONS_FRACTION``       ``ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION``   0.5
-``STALLED_LOOP_REJECTS``           ``ZICATO_HEALTH_STALLED_REJECTS``      3
+``scoring_window``                ``ZICATO_HEALTH_SCORING_WINDOW``       3
+``scoring_epsilon``               ``ZICATO_HEALTH_SCORING_EPSILON``   1e-6
+``no_expectations_fraction``      ``ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION``   0.5
+``stalled_rejects``               ``ZICATO_HEALTH_STALLED_REJECTS``      3
 ================================  =========================  =========
 
-* ``DEGENERATE_SCORING_WINDOW`` — how many of the most-recent
-  tournaments :func:`detect_degenerate_scoring` inspects. The detector
-  fires only when *all* tournaments in the window are flat.
-* ``DEGENERATE_SCORING_EPSILON`` — the absolute ``scalar_score_delta``
-  below which a tournament counts as "produced no signal".
-* ``NO_EXPECTATIONS_FRACTION`` — :func:`detect_no_expectations` fires
+* ``scoring_window`` — how many of the most-recent tournaments
+  :func:`detect_degenerate_scoring` inspects. The detector fires only
+  when *all* tournaments in the window are flat.
+* ``scoring_epsilon`` — the absolute ``scalar_score_delta`` below which
+  a tournament counts as "produced no signal".
+* ``no_expectations_fraction`` — :func:`detect_no_expectations` fires
   when the fraction of board entries lacking an expectation is strictly
   greater than this value.
-* ``STALLED_LOOP_REJECTS`` — how many consecutive ``rejected``
-  generations :func:`detect_stalled_loop` treats as a stall.
+* ``stalled_rejects`` — how many consecutive ``rejected`` generations
+  :func:`detect_stalled_loop` treats as a stall.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
-import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from zicato.config import HealthConfig, load_config
 from zicato.core.types import BoardEntry, LossProfile
 
 # ---------------------------------------------------------------------------
 # Tunable thresholds
 # ---------------------------------------------------------------------------
+#
+# The detector thresholds now live as typed fields on
+# :class:`zicato.config.HealthConfig`. The module-level constants below
+# are kept as named defaults — they mirror that dataclass's field
+# defaults and remain importable for the tests and call sites that
+# reference them by name.
 
 #: Number of most-recent tournaments :func:`detect_degenerate_scoring`
-#: inspects. Override via ``ZICATO_HEALTH_SCORING_WINDOW``.
-DEGENERATE_SCORING_WINDOW: int = 3
+#: inspects. See :attr:`zicato.config.HealthConfig.scoring_window`.
+DEGENERATE_SCORING_WINDOW: int = HealthConfig().scoring_window
 
 #: Absolute ``scalar_score_delta`` below which a tournament counts as
-#: producing no optimization signal. Override via
-#: ``ZICATO_HEALTH_SCORING_EPSILON``.
-DEGENERATE_SCORING_EPSILON: float = 1e-6
+#: producing no optimization signal. See
+#: :attr:`zicato.config.HealthConfig.scoring_epsilon`.
+DEGENERATE_SCORING_EPSILON: float = HealthConfig().scoring_epsilon
 
 #: Fraction-of-board-entries-without-an-expectation threshold for
-#: :func:`detect_no_expectations`. The detector fires when the fraction
-#: is strictly greater than this. Override via
-#: ``ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION``.
-NO_EXPECTATIONS_FRACTION: float = 0.5
+#: :func:`detect_no_expectations`. See
+#: :attr:`zicato.config.HealthConfig.no_expectations_fraction`.
+NO_EXPECTATIONS_FRACTION: float = HealthConfig().no_expectations_fraction
 
 #: Consecutive ``rejected`` generations :func:`detect_stalled_loop`
-#: treats as a stall. Override via ``ZICATO_HEALTH_STALLED_REJECTS``.
-STALLED_LOOP_REJECTS: int = 3
+#: treats as a stall. See
+#: :attr:`zicato.config.HealthConfig.stalled_rejects`.
+STALLED_LOOP_REJECTS: int = HealthConfig().stalled_rejects
 
 #: Namespace prefix of drift-derived metrics in the unified metric view.
 _DRIFT_NAMESPACE = "drift:"
 
 
-def _env_int(name: str, default: int) -> int:
-    """Resolve a positive-int env override, falling back to ``default``.
+def _resolve_health_config(config: HealthConfig | None) -> HealthConfig:
+    """Return ``config`` if given, else load it from the environment once.
 
-    A missing, unparseable, or non-positive value yields ``default`` so
-    an operator cannot accidentally disable a detector by configuring a
-    zero window.
+    Detectors accept an optional :class:`~zicato.config.HealthConfig` so
+    a caller that already holds a loaded config threads it in. When a
+    caller passes nothing, :func:`zicato.config.load_config` supplies the
+    env-sourced configuration — the single place the environment is
+    read.
     """
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        parsed = int(raw)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
-def _env_float(name: str, default: float) -> float:
-    """Resolve a non-negative-float env override, falling back to ``default``.
-
-    A missing or unparseable value yields ``default``. A negative value
-    is treated as invalid (the default applies) — every threshold this
-    helper feeds is a magnitude or a fraction where negative is
-    meaningless.
-    """
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        parsed = float(raw)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed >= 0.0 else default
-
-
-def _scoring_window() -> int:
-    return _env_int("ZICATO_HEALTH_SCORING_WINDOW", DEGENERATE_SCORING_WINDOW)
-
-
-def _scoring_epsilon() -> float:
-    return _env_float("ZICATO_HEALTH_SCORING_EPSILON", DEGENERATE_SCORING_EPSILON)
-
-
-def _no_expectations_fraction() -> float:
-    return _env_float("ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION", NO_EXPECTATIONS_FRACTION)
-
-
-def _stalled_rejects() -> int:
-    return _env_int("ZICATO_HEALTH_STALLED_REJECTS", STALLED_LOOP_REJECTS)
+    if config is not None:
+        return config
+    return load_config().health
 
 
 # ---------------------------------------------------------------------------
@@ -223,25 +196,31 @@ def _attr_or_key(obj: Any, name: str) -> Any:
     return getattr(obj, name, None)
 
 
-def detect_degenerate_scoring(experiments: list[Any]) -> list[HealthFinding]:
+def detect_degenerate_scoring(
+    experiments: list[Any], config: HealthConfig | None = None
+) -> list[HealthFinding]:
     """Fire when the last K tournaments all produced no scoring signal.
 
-    Looks at the most-recent :data:`DEGENERATE_SCORING_WINDOW`
-    experiments that carry a tournament outcome. When *every* one of
-    them has ``|scalar_score_delta|`` below
-    :data:`DEGENERATE_SCORING_EPSILON`, the loop is spinning with a flat
-    loss surface — there is nothing for the proposer to optimize.
+    Looks at the most-recent ``config.scoring_window`` experiments that
+    carry a tournament outcome. When *every* one of them has
+    ``|scalar_score_delta|`` below ``config.scoring_epsilon``, the loop
+    is spinning with a flat loss surface — there is nothing for the
+    proposer to optimize.
 
     Severity is ``critical``: a degenerate scorer wastes every round's
     wall-clock and the operator must intervene (strengthen the board,
     re-weight scoring, fix the reducer).
 
-    Silent when fewer than ``DEGENERATE_SCORING_WINDOW`` evaluated
+    Silent when fewer than ``config.scoring_window`` evaluated
     experiments exist, or when any tournament in the window showed a
     real delta.
+
+    ``config`` defaults to the env-sourced
+    :class:`~zicato.config.HealthConfig` via :func:`load_config`.
     """
-    window = _scoring_window()
-    epsilon = _scoring_epsilon()
+    health = _resolve_health_config(config)
+    window = health.scoring_window
+    epsilon = health.scoring_epsilon
 
     evaluated: list[tuple[Any, float]] = []
     for exp in experiments:
@@ -380,25 +359,30 @@ def detect_flat_drift_signal(
     ]
 
 
-def detect_no_expectations(board_entries: list[BoardEntry]) -> list[HealthFinding]:
+def detect_no_expectations(
+    board_entries: list[BoardEntry], config: HealthConfig | None = None
+) -> list[HealthFinding]:
     """Report when most of the board carries no pass/fail expectation.
 
     Computes the fraction of board entries whose ``expectation`` is
     ``None``. When that fraction is strictly greater than
-    :data:`NO_EXPECTATIONS_FRACTION`, the pass/fail side of the loss is
-    mostly absent — the loop leans almost entirely on drift loss.
+    ``config.no_expectations_fraction``, the pass/fail side of the loss
+    is mostly absent — the loop leans almost entirely on drift loss.
 
     Severity is ``info``: a drift-only board is a legitimate operator
     choice, but it is worth surfacing because a flat-drift epoch on such
     a board has *no* signal at all.
 
     Silent on an empty board.
+
+    ``config`` defaults to the env-sourced
+    :class:`~zicato.config.HealthConfig` via :func:`load_config`.
     """
     total = len(board_entries)
     if total == 0:
         return []
 
-    threshold = _no_expectations_fraction()
+    threshold = _resolve_health_config(config).no_expectations_fraction
     without = [entry for entry in board_entries if entry.expectation is None]
     fraction = len(without) / total
     if fraction <= threshold:
@@ -423,12 +407,14 @@ def detect_no_expectations(board_entries: list[BoardEntry]) -> list[HealthFindin
     ]
 
 
-def detect_stalled_loop(experiments: list[Any]) -> list[HealthFinding]:
+def detect_stalled_loop(
+    experiments: list[Any], config: HealthConfig | None = None
+) -> list[HealthFinding]:
     """Fire when N generations in a row were rejected by the tournament.
 
     Scans the most-recent evaluated experiments and counts the trailing
     run of ``rejected`` tournament decisions. When that run reaches
-    :data:`STALLED_LOOP_REJECTS`, the proposer has not found an
+    ``config.stalled_rejects``, the proposer has not found an
     improvement in N consecutive rounds — the circuit breaker is about
     to (or already has) fired.
 
@@ -436,10 +422,13 @@ def detect_stalled_loop(experiments: list[Any]) -> list[HealthFinding]:
     still win — but it is the operator's cue that the proposer is stuck
     and the rubric or mutable surface may need attention.
 
-    Silent when fewer than ``STALLED_LOOP_REJECTS`` evaluated
+    Silent when fewer than ``config.stalled_rejects`` evaluated
     experiments exist or the trailing run is shorter than the threshold.
+
+    ``config`` defaults to the env-sourced
+    :class:`~zicato.config.HealthConfig` via :func:`load_config`.
     """
-    threshold = _stalled_rejects()
+    threshold = _resolve_health_config(config).stalled_rejects
 
     decisions: list[tuple[str, str]] = []
     for exp in experiments:
@@ -499,6 +488,7 @@ def assess_loop_health(
     experiments: list[Any],
     board_entries: list[BoardEntry],
     epoch_id: str,
+    config: HealthConfig | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -518,6 +508,12 @@ def assess_loop_health(
         The epoch's frozen board.
     epoch_id:
         The epoch the report describes.
+    config:
+        The :class:`~zicato.config.HealthConfig` carrying the detector
+        thresholds. Defaults to the env-sourced configuration via
+        :func:`zicato.config.load_config`; resolved once here and passed
+        to every threshold-using detector so the environment is read at
+        most once per assessment.
 
     Returns
     -------
@@ -525,12 +521,13 @@ def assess_loop_health(
         ``healthy`` is ``True`` iff no finding has ``"warning"`` or
         ``"critical"`` severity.
     """
+    health = _resolve_health_config(config)
     findings: list[HealthFinding] = []
-    findings.extend(detect_degenerate_scoring(experiments))
+    findings.extend(detect_degenerate_scoring(experiments, health))
     findings.extend(detect_non_differentiating_entry(losses_by_generation))
     findings.extend(detect_flat_drift_signal(losses_by_generation))
-    findings.extend(detect_no_expectations(board_entries))
-    findings.extend(detect_stalled_loop(experiments))
+    findings.extend(detect_no_expectations(board_entries, health))
+    findings.extend(detect_stalled_loop(experiments, health))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(

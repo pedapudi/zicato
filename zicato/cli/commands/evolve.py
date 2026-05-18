@@ -54,27 +54,39 @@ from typing import Any
 
 import click
 
+from zicato.config import IntegrationConfig, load_config
 
-def _resolve_supervisor_binary() -> Path | None:
+
+def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path | None:
     """Return the path to ``zicato-supervisor`` or ``None`` if unavailable.
 
     Resolution order:
 
-    1. Environment override ``ZICATO_SUPERVISOR_BINARY`` (useful for tests
-       that point at a sentinel script).
+    1. The ``supervisor_binary`` of
+       :class:`~zicato.config.IntegrationConfig`, sourced from the
+       ``ZICATO_SUPERVISOR_BINARY`` environment variable (useful for
+       tests that point at a sentinel script).
     2. The in-tree release build relative to this source file. This is
        the path produced by ``cargo build --release`` and is the default
        distribution mode for development checkouts.
     3. The system ``PATH`` (``zicato-supervisor`` installed globally).
+
+    Parameters
+    ----------
+    config:
+        The :class:`~zicato.config.IntegrationConfig` carrying the
+        env-sourced ``supervisor_binary``. When ``None`` it is loaded
+        via :func:`zicato.config.load_config` — the single place the
+        environment is read.
 
     Returns ``None`` when nothing resolves — the caller prints a warning
     and proceeds without a dashboard.
     """
     import os  # noqa: PLC0415
 
-    env_override = os.environ.get("ZICATO_SUPERVISOR_BINARY")
-    if env_override:
-        candidate = Path(env_override)
+    integration = config if config is not None else load_config().integration
+    if integration.supervisor_binary:
+        candidate = Path(integration.supervisor_binary)
         if candidate.exists() and os.access(candidate, os.X_OK):
             return candidate
 
