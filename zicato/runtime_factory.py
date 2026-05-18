@@ -109,6 +109,23 @@ def make_runtime_config(
     seed_raw = runtime_dict.get("seed")
     seed: int | None = int(seed_raw) if seed_raw is not None else None
 
+    # Resolve ``parallelism`` with three-tier precedence:
+    #   1. The workspace config's ``runtime`` block — the same place
+    #      ``instance_id`` and ``seed`` are read, so an explicit per-
+    #      workspace value wins.
+    #   2. The typed config tree's env-backed field
+    #      (:attr:`ZicatoConfig.runtime.parallelism`, bound to
+    #      ``ZICATO_PARALLELISM``).
+    #   3. The :class:`RuntimeConfig` default of 4.
+    # ``RuntimeConfig.__post_init__`` re-validates ``parallelism >= 1``.
+    parallelism_raw = runtime_dict.get("parallelism")
+    if parallelism_raw is not None:
+        parallelism = int(parallelism_raw)
+    else:
+        from zicato.config import load_config  # noqa: PLC0415 — avoid import cycle
+
+        parallelism = load_config().runtime.parallelism
+
     # Defense in depth — also re-checked by the runner.
     assert_distinct_callables(harness, aux)
 
@@ -118,6 +135,7 @@ def make_runtime_config(
         harness_call_llm=harness,
         auxiliary_call_llm=aux,
         seed=seed,
+        parallelism=parallelism,
     )
 
 

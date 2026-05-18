@@ -44,6 +44,51 @@ def test_runtime_config_seed_passes_through(tmp_path: Path) -> None:
     assert cfg.seed == 1234
 
 
+def test_runtime_config_parallelism_workspace_value_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit ``runtime.parallelism`` in the workspace config wins.
+
+    It must override even an env-backed ``ZICATO_PARALLELISM`` value.
+    """
+    monkeypatch.setenv("ZICATO_PARALLELISM", "7")
+    cfg = make_runtime_config(
+        {"runtime": {"parallelism": 3}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.parallelism == 3
+
+
+def test_runtime_config_parallelism_env_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no workspace value, the env-backed typed config supplies it."""
+    monkeypatch.setenv("ZICATO_PARALLELISM", "9")
+    cfg = make_runtime_config(
+        {"runtime": {}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.parallelism == 9
+
+
+def test_runtime_config_parallelism_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With neither a workspace value nor an env var, the default 4 holds."""
+    monkeypatch.delenv("ZICATO_PARALLELISM", raising=False)
+    cfg = make_runtime_config(
+        {},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.parallelism == 4
+
+
 def test_runtime_config_default_instance_id(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {},
