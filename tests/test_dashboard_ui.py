@@ -224,9 +224,9 @@ REQUIRED_IDS = (
         "drill-title",
         "drill-body",
         "drill-close",
-        "supervisor-version",
-        "supervisor-port",
-        "supervisor-build",
+        "dashboard-version",
+        "dashboard-port",
+        "dashboard-build",
     }
     | REQUIRED_VIEW_IDS
     | REQUIRED_NAV_IDS
@@ -329,12 +329,18 @@ def test_loop_health_panel_present(index_html: str) -> None:
     assert "health-panel" in p.all_ids, "loop-health panel container missing"
 
 
-def test_app_js_targets_r9_endpoints(app_js: str) -> None:
-    """app.js codes against the R9-5 bracket / health endpoint contract."""
+def test_app_js_targets_environment_api(app_js: str) -> None:
+    """app.js codes against the consolidated environment API.
+
+    The environment view is driven by /api/environment (the coalesced
+    read), the /events SSE stream, the run-log tail, and the per-matchup
+    detail endpoint. Drill-downs use the files and conversation APIs.
+    """
     for path in (
-        "/api/tournaments",
-        "/api/health-report",
-        "/api/active-tournament",
+        "/api/environment",
+        "/events",
+        "/api/run-log",
+        "/api/tournaments/",
     ):
         assert path in app_js, f"app.js does not reference endpoint {path}"
 
@@ -531,38 +537,53 @@ def test_footer_wired_from_health(app_js: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Global data loading — the cross-view live feeds
+# Global data loading — the single coalesced environment read
 # ---------------------------------------------------------------------------
 
 
-def test_loadfullstate_fetches_cross_view_feeds(app_js: str) -> None:
-    """loadFullState pulls the four cross-view feeds up front.
+def test_loads_consolidated_environment_endpoint(app_js: str) -> None:
+    """The dashboard reads the whole environment from /api/environment.
 
-    activeTournament / lineage / logTail / activeRuns must be loaded
-    eagerly so Overview and Epoch are live from the first paint rather
-    than falling back to a hardcoded 'queued'.
+    The redesign replaced the old per-section fan-out with a single
+    consolidated read — loadEnvironment() fetches /api/environment and
+    applyEnvironment() folds it into AppState.
     """
-    for path in (
-        "/api/active-tournament",
-        "/api/lineage",
-        "/api/run-log?limit=40",
-        "/api/active-runs",
-    ):
-        assert path in app_js, f"app.js does not fetch cross-view feed {path}"
-    assert "loadLiveFeeds" in app_js, "app.js missing the loadLiveFeeds helper"
+    assert "/api/environment" in app_js, "app.js does not fetch /api/environment"
+    assert "function loadEnvironment(" in app_js, "app.js missing loadEnvironment"
+    assert "function applyEnvironment(" in app_js, "app.js missing applyEnvironment"
 
 
-def test_refresh_after_event_refetches_live_feeds(app_js: str) -> None:
-    """A state_change tick re-fetches the live feeds every time.
+def test_refresh_after_event_is_debounced_single_fetch(app_js: str) -> None:
+    """A state_change tick coalesces into ONE debounced environment read.
 
-    refreshAfterEvent must call loadLiveFeeds for every non-'all' tag so
-    the whole dashboard stays live regardless of the named region.
+    The polling-storm fix: refreshAfterEvent must NOT fan out to many
+    endpoints per event. It debounces (REFRESH_DEBOUNCE_MS) and then
+    does a single loadEnvironment(), so a burst of SSE frames costs at
+    most one /api/environment fetch per window.
     """
     scrubbed = _strip_js_comments(app_js)
-    idx = scrubbed.find("async function refreshAfterEvent(")
+    idx = scrubbed.find("function refreshAfterEvent(")
     assert idx != -1, "refreshAfterEvent not found"
-    body = scrubbed[idx : idx + 1800]
-    assert "loadLiveFeeds(" in body, "refreshAfterEvent must call loadLiveFeeds"
+    body = scrubbed[idx : idx + 1200]
+    assert "REFRESH_DEBOUNCE_MS" in body, "refreshAfterEvent must debounce"
+    assert "loadEnvironment(" in body, "refreshAfterEvent must call loadEnvironment"
+    # The old fan-out helpers must be gone.
+    assert "loadLiveFeeds" not in scrubbed, "stale loadLiveFeeds fan-out still present"
+
+
+def test_log_tail_appends_rather_than_full_rerender(app_js: str) -> None:
+    """The run-log tail GROWS by appending rows, not by re-rendering.
+
+    appendLogTail() adds only the new rows; a `run_log` SSE frame drives
+    an append-only `?after=<cursor>` poll. This is what stops the log
+    tail flashing on every event.
+    """
+    assert "function appendLogTail(" in app_js, "app.js missing appendLogTail"
+    assert "?after=" in app_js, "app.js does not use the run-log ?after= cursor"
+    scrubbed = _strip_js_comments(app_js)
+    # The run_log SSE frame must drive an append, not a full refresh.
+    idx = scrubbed.find("'run_log'")
+    assert idx != -1, "app.js does not listen for the run_log SSE frame"
 
 
 def test_mock_state_carries_contract_shapes(app_js: str) -> None:
@@ -644,13 +665,13 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 250 KB uncompressed. Grew with the r14 fix wave and then the
-    # tournament-hall board grid + the side-by-side conversation view.
-    # It is a localhost-served vanilla bundle with no network cost; this
-    # guard exists only because the Rust supervisor embeds the bundle via
-    # include_dir!, and is slated for removal once the dashboard moves to
-    # the standalone Python service (which serves the files off disk).
-    assert total < 250_000, f"bundle is {total} bytes, exceeds 250_000 envelope"
+    # 270 KB uncompressed. Raised from 250 KB by the dashboard redesign:
+    # the consolidated environment-read client, the debounced refresh,
+    # the append-only log tail and the canonical entry-status helper add
+    # a few KB of JS. The dashboard is served off disk by the standalone
+    # Python service with no network cost; this guard only keeps the
+    # vanilla bundle from drifting unboundedly.
+    assert total < 270_000, f"bundle is {total} bytes, exceeds 270_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

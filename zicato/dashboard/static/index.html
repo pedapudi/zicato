@@ -4,13 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>zicato supervisor</title>
+  <title>zicato dashboard</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
-  <header id="header-bar" class="header-bar" role="banner" aria-label="Supervisor header">
+  <header id="header-bar" class="header-bar" role="banner" aria-label="Environment header">
     <div class="header-left">
       <h1 class="title">zicato</h1>
       <span id="epoch-id" class="meta mono" aria-label="Epoch identifier">epoch &middot; &mdash;</span>
@@ -19,7 +19,7 @@
     </div>
     <div class="header-right">
       <span id="elapsed" class="meta mono" aria-label="Elapsed time">00:00:00</span>
-      <span id="health-badge" class="badge pending" role="status" aria-label="Supervisor health">connecting</span>
+      <span id="health-badge" class="badge pending" role="status" aria-label="Dashboard connection status">connecting</span>
       <span id="mock-badge" class="badge deferred hidden" aria-label="Mock mode active">mock</span>
     </div>
   </header>
@@ -260,9 +260,9 @@
   </aside>
 
   <footer id="footer-bar" class="footer-bar" role="contentinfo">
-    <span id="supervisor-version" class="meta mono">supervisor &middot; &mdash;</span>
-    <span id="supervisor-port" class="meta mono">port &middot; &mdash;</span>
-    <span id="supervisor-build" class="meta mono">build &middot; &mdash;</span>
+    <span id="dashboard-version" class="meta mono">dashboard &middot; &mdash;</span>
+    <span id="dashboard-port" class="meta mono">port &middot; &mdash;</span>
+    <span id="dashboard-build" class="meta mono">build &middot; &mdash;</span>
   </footer>
 
   <script type="module" src="app.js"></script>
