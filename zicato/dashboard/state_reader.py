@@ -196,15 +196,90 @@ def read_lock_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
     return _read_json_value(paths.lock)
 
 
+# Canonical per-entry lifecycle vocabulary the dashboard renders. The
+# orchestrator writes ``ActiveTournamentEntry.status`` as one of
+# ``queued`` / ``running`` / ``completed`` / ``aborted`` (see
+# :class:`zicato.runtime.state.ActiveTournamentEntry`), and older /
+# adjacent producers have used ``complete`` / ``done`` / ``in_progress``
+# / ``active`` / ``error`` / ``fail``. The dashboard renders exactly four
+# buckets, so a finished run written as ``completed`` must NOT fall
+# through a ``status === 'done'`` comparison and paint as ``queued``.
+# Normalising here — at the single read site every endpoint funnels
+# through — means the queued mislabel cannot recur regardless of which
+# producer spelling lands on disk.
+_ENTRY_STATUS_CANONICAL = {
+    "queued": "queued",
+    "pending": "queued",
+    "running": "running",
+    "in_progress": "running",
+    "active": "running",
+    "done": "done",
+    "complete": "done",
+    "completed": "done",
+    "finished": "done",
+    "failed": "failed",
+    "fail": "failed",
+    "error": "failed",
+    "aborted": "failed",
+}
+
+
+def normalize_entry_status(raw: Any) -> str:
+    """Map any producer's entry-status spelling to a canonical bucket.
+
+    Returns one of ``queued`` / ``running`` / ``done`` / ``failed``. An
+    unknown or absent value degrades to ``queued`` (the safe pre-start
+    default), never raising.
+    """
+    if not isinstance(raw, str):
+        return "queued"
+    return _ENTRY_STATUS_CANONICAL.get(raw.strip().lower(), "queued")
+
+
+def _normalize_tournament_statuses(tournament: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a copy of an active-tournament dict with canonical statuses.
+
+    Each entry gains a ``status`` rewritten to the canonical bucket and a
+    ``status_raw`` preserving exactly what the producer wrote (so a
+    post-mortem can still see ``aborted`` vs ``error``). The tournament's
+    own ``phase`` is left untouched — it is a separate vocabulary.
+    """
+    if not isinstance(tournament, dict):
+        return tournament
+    entries = tournament.get("entries")
+    if not isinstance(entries, list):
+        return tournament
+    out = dict(tournament)
+    new_entries: list[Any] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            new_entries.append(entry)
+            continue
+        e = dict(entry)
+        raw = e.get("status")
+        e["status_raw"] = raw
+        e["status"] = normalize_entry_status(raw)
+        new_entries.append(e)
+    out["entries"] = new_entries
+    return out
+
+
 def read_active_tournament_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
-    """The active tournament as a plain dict, or ``None`` when absent."""
+    """The active tournament as a plain dict, or ``None`` when absent.
+
+    Per-entry ``status`` values are normalized to the canonical
+    ``queued`` / ``running`` / ``done`` / ``failed`` vocabulary so a run
+    the orchestrator finished (written as ``completed``) never renders as
+    ``queued`` in the dashboard. The producer's exact spelling is kept on
+    each entry as ``status_raw``.
+    """
     try:
         t = read_active_tournament(paths.root)
     except Exception:
         # Fall back to the raw file so a shape the typed reader rejects
         # still surfaces rather than vanishing.
-        return _read_json_value(paths.active_tournament)
-    return t.to_dict() if t is not None else None
+        return _normalize_tournament_statuses(_read_json_value(paths.active_tournament))
+    return _normalize_tournament_statuses(t.to_dict()) if t is not None else None
 
 
 def _parse_iso(value: Any) -> _dt.datetime | None:
@@ -776,11 +851,50 @@ def locate_events_file(paths: WorkspacePaths) -> Path | None:
     return _newest_epoch_events(paths)
 
 
-def build_run_log(paths: WorkspacePaths, limit: int) -> dict[str, Any]:
-    """``GET /api/run-log`` body — the last ``limit`` parseable events."""
+def _event_cursor(event: dict[str, Any], fallback_index: int) -> int:
+    """A monotone cursor for one run-log event.
+
+    Prefers the event's own ``sequence`` / ``seq``; an event with no
+    sequence falls back to its line index so the run-log tail can still
+    advance append-only against a producer that omits sequence numbers.
+    """
+    seq = _extract_seq(event)
+    return seq if seq is not None else fallback_index
+
+
+def build_run_log(paths: WorkspacePaths, limit: int, after: int | None = None) -> dict[str, Any]:
+    """``GET /api/run-log`` body — run-log events plus an append cursor.
+
+    Returns ``{"events": [...], "cursor": <int|None>, "events_path": str}``.
+
+    * With ``after`` ``None`` the body is the last ``limit`` parseable
+      events (the initial paint).
+    * With ``after`` set, only events whose cursor is strictly greater
+      than ``after`` are returned — the dashboard appends these to its
+      log tail rather than re-rendering the whole list, which is what
+      stops the visible flashing.
+
+    ``cursor`` is the largest cursor in the file (``None`` when empty);
+    the client passes it back as the next ``after``.
+    """
     path = locate_events_file(paths)
-    events = _tail_events(path, limit) if path is not None else []
-    return {"events": events}
+    all_events = _tail_events(path, RUN_LOG_MAX_LIMIT) if path is not None else []
+    cursor: int | None = None
+    if all_events:
+        cursor = max(_event_cursor(ev, i) for i, ev in enumerate(all_events))
+
+    if after is None:
+        events = all_events[-limit:] if len(all_events) > limit else all_events
+    else:
+        events = [ev for i, ev in enumerate(all_events) if _event_cursor(ev, i) > after]
+        if len(events) > limit:
+            events = events[-limit:]
+
+    return {
+        "events": events,
+        "cursor": cursor,
+        "events_path": str(path) if path is not None else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1215,3 +1329,44 @@ def find_generation_run(
             if ev.exists():
                 return (run_dir.name, ev)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Consolidated environment view — the single coalesced dashboard read
+# ---------------------------------------------------------------------------
+
+
+def build_environment(
+    paths: WorkspacePaths, run_log_limit: int = RUN_LOG_DEFAULT_LIMIT
+) -> dict[str, Any]:
+    """One coalesced snapshot of the whole instantiated zicato environment.
+
+    ``GET /api/environment`` returns this. It folds together every
+    cross-view feed the dashboard needs — the epoch contract, the live
+    and resolved tournaments, the generation lineage, active runs, loop
+    health, the heartbeat, and the run-log tail — so the front-end can
+    refresh the entire environment view with ONE request per change
+    instead of fanning out to six endpoints many times a second.
+
+    Every component degrades independently: a missing or unreadable
+    input becomes an empty / ``None`` value, never an exception, so this
+    function — like every reader here — cannot 500 an endpoint.
+    """
+    # ``health`` here is the dashboard *service* identity (version /
+    # port / build) and is supplied by the /api/health route handler,
+    # not this reader — it is intentionally absent from the environment
+    # payload. ``heartbeat`` is the orchestrator's runtime heartbeat.
+    return {
+        "workspace": str(paths.root),
+        "epoch_id": read_current_epoch(paths),
+        "epoch": build_epoch_view(paths),
+        "active_tournament": read_active_tournament_dict(paths),
+        "tournaments": build_bracket(paths),
+        "generations": build_lineage_view(paths),
+        "active_runs": read_active_runs_view(paths),
+        "health_report": build_health_report(paths),
+        "heartbeat": read_heartbeat_dict(paths),
+        "lock": read_lock_dict(paths),
+        "run_log": build_run_log(paths, run_log_limit),
+        "generated_at": _iso(_utc_now()),
+    }

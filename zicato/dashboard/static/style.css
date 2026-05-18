@@ -1,4 +1,4 @@
-/* zicato supervisor dashboard
+/* zicato dashboard
  * Palette and typography mirror analysis.html so the two artifacts read
  * as siblings.
  */
@@ -288,7 +288,8 @@ h4 {
 .entry-marker.done { color: var(--accent-promoted); }
 .entry-marker.running { color: var(--accent-running); }
 .entry-marker.queued { color: var(--text-muted); }
-.entry-marker.fail { color: var(--accent-rejected); }
+.entry-marker.fail,
+.entry-marker.failed { color: var(--accent-rejected); }
 
 .entry-id { font-weight: 600; }
 
@@ -963,7 +964,8 @@ h4 {
 }
 .bracket-dot.done { background: var(--accent-promoted); border-color: var(--accent-promoted); }
 .bracket-dot.running { background: var(--accent-running); border-color: var(--accent-running); }
-.bracket-dot.fail { background: var(--accent-rejected); border-color: var(--accent-rejected); }
+.bracket-dot.fail,
+.bracket-dot.failed { background: var(--accent-rejected); border-color: var(--accent-rejected); }
 .bracket-live-prog { font-size: 11px; }
 .bracket-live-verdict {
   margin-top: 6px; font-size: 11px; font-weight: 700;
@@ -1566,6 +1568,20 @@ h4 {
   }
 }
 
+/* --- Inline conversation diff (rendered inside the tournament detail panel)
+   Shares the column / turn / annotation styles above; this wrapper adds
+   only the separator margin so the diff is visually distinct from the
+   A/B grid and scalar sections above it.                                  */
+.inline-conversation {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+
 /* --- Files view: generation file-tree + content browser ------------ */
 .files-browser {
   display: grid;
@@ -1738,16 +1754,4 @@ h4 {
     grid-template-columns: 1fr;
   }
 }
-
-/* --- Inline conversation diff (rendered inside the tournament detail panel)
-   Shares the column / turn / annotation styles above; this wrapper adds
-   only the separator margin so the diff is visually distinct from the
-   A/B grid and scalar sections above it.                                  */
-.inline-conversation {
-  margin-top: 24px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }

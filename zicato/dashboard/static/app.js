@@ -1,14 +1,18 @@
-// zicato supervisor dashboard
+// zicato dashboard
 //
 // Single-page vanilla ES2022 app. No build step, no framework, no
-// external network. Talks to the supervisor's HTTP+SSE endpoints
-// served by the Rust binary.
+// external network. Presents the state of an instantiated zicato
+// environment — live and past tournaments, generations, experiments,
+// the epoch contract and the generation file tree — against the
+// dashboard service's HTTP + SSE endpoints.
 //
-// Architecture: AppState owns the current snapshot. SSE pushes a
-// "state_change" event whenever runtime files change; the client
-// re-fetches the relevant sub-endpoints and calls render() which
-// re-paints affected sections. The renders are idempotent — calling
-// them again with the same state must produce the same DOM.
+// Architecture: AppState owns the current environment snapshot. The
+// SSE stream pushes a coalesced "state_change" event when runtime
+// files change; the client answers with ONE coalesced /api/environment
+// fetch (debounced) and calls render() to re-paint affected sections.
+// The renders are idempotent — calling them again with the same state
+// must produce the same DOM. The log tail appends rather than
+// re-rendering.
 
 'use strict';
 
@@ -34,6 +38,18 @@ const DEFAULT_MARGIN = 0.05;
 
 const MAX_LOG_LINES = 20;
 const SSE_BACKOFF_MAX_MS = 30_000;
+
+// Rolling window the run-log tail keeps in memory. The tail grows by
+// appending `?after=<cursor>` batches; older events past this many
+// rows are dropped so the panel stays bounded.
+const RUN_LOG_WINDOW = 200;
+
+// Minimum gap between coalesced /api/environment refreshes. The SSE
+// stream already coalesces file-system bursts; this is a second client
+// -side floor so a flurry of state_change frames still collapses into
+// at most one environment fetch per window — no more hammering the API
+// from many connections many times a second.
+const REFRESH_DEBOUNCE_MS = 400;
 
 // --- Small helpers
 
@@ -120,7 +136,7 @@ function parseIso(value) {
   let s = value.trim();
   if (s.length === 0) return NaN;
   // A `Z` or numeric `±HH:MM` / `±HHMM` offset — `new Date` is
-  // reliable. Otherwise pin to UTC (the supervisor always emits UTC).
+  // reliable. Otherwise pin to UTC (zicato always emits UTC).
   // A bare date is left alone — Date already treats it as UTC.
   const hasZone = /([zZ]|[+-]\d{2}:?\d{2})$/.test(s);
   if (!hasZone && (s.indexOf('T') !== -1 || s.indexOf(' ') !== -1)) {
@@ -170,8 +186,13 @@ class AppState {
     // GET /api/run-log?limit=40 — the structured event tail.
     //   { events:[{ seq:int|null, kind:str, ts:str|null, summary:str }] }
     this.logTail = { events: [] };
-    this.supervisor = { version: '—', port: '—', build: '—' };
-    // GET /api/health — supervisor identity for the footer.
+    // Append cursor for the run-log tail: the largest event sequence
+    // seen, passed back as `?after=` so the next poll fetches only
+    // newer events. `logEventsPath` detects a run roll-over.
+    this.logCursor = null;
+    this.logEventsPath = null;
+    this.service = { version: '—', port: '—', build: '—' };
+    // GET /api/health — dashboard-service identity for the footer.
     //   { version, port, build, uptime_seconds, ... }
     this.health = null;
     this.scoring = { margin: DEFAULT_MARGIN };
@@ -223,17 +244,17 @@ class AppState {
     }
     if (snap.lineage) this.lineage = snap.lineage;
     if (snap.experiments) this.experiments = snap.experiments;
-    if (snap.supervisor) Object.assign(this.supervisor, snap.supervisor);
+    if (snap.service) Object.assign(this.service, snap.service);
     if (snap.health) this.setHealth(snap.health);
     // `run_log` (object or bare array) feeds the structured log tail.
     if (snap.run_log) this.setLogTail(snap.run_log);
     if (snap.scoring) Object.assign(this.scoring, snap.scoring);
     // The header epoch summary and the full epoch contract are distinct.
-    // /api/state carries an `epoch` key that is the full contract object
-    // (epoch_id, board, brief, ...). When it has an `epoch_id` field it
-    // is the contract; we also derive the header summary from it.
-    // `rubric` is accepted alongside `brief` so a snapshot from a
-    // pre-rename supervisor build is still recognized as a contract.
+    // The environment snapshot carries an `epoch` key that is the full
+    // contract object (epoch_id, board, brief, ...). When it has an
+    // `epoch_id` field it is the contract; we also derive the header
+    // summary from it. `rubric` is accepted alongside `brief` so a
+    // snapshot from a pre-rename build is still recognized as a contract.
     if (snap.epoch && typeof snap.epoch === 'object') {
       if (
         'epoch_id' in snap.epoch ||
@@ -267,26 +288,52 @@ class AppState {
     if (bracket && typeof bracket === 'object') this.bracket = bracket;
   }
 
-  // GET /api/health — the footer's supervisor identity. The endpoint
-  // returns { version, port, build, ... }; mirror those into the
-  // legacy `supervisor` record so renderFooter has one source.
+  // GET /api/health — the footer's dashboard-service identity. The
+  // endpoint returns { version, port, build, ... }; mirror those into
+  // the `service` record so renderFooter has one source.
   setHealth(health) {
     if (!health || typeof health !== 'object') return;
     this.health = health;
-    if (health.version != null) this.supervisor.version = health.version;
-    if (health.port != null) this.supervisor.port = health.port;
-    if (health.build != null) this.supervisor.build = health.build;
+    if (health.version != null) this.service.version = health.version;
+    if (health.port != null) this.service.port = health.port;
+    if (health.build != null) this.service.build = health.build;
   }
 
   // GET /api/run-log — the structured event tail. Normalise to the
   // { events: [...] } shape regardless of whether the server hands
-  // back a bare array or the wrapped object.
+  // back a bare array or the wrapped object. A `cursor` (the largest
+  // event sequence in the file) is captured so the next poll can ask
+  // for `?after=<cursor>` and append, rather than re-fetch the whole
+  // tail. `events_path` lets a tail reset when the run rolls over.
   setLogTail(tail) {
     if (Array.isArray(tail)) {
       this.logTail = { events: tail };
-    } else if (tail && Array.isArray(tail.events)) {
-      this.logTail = tail;
+      this.logCursor = null;
+      return;
     }
+    if (tail && Array.isArray(tail.events)) {
+      this.logTail = { events: tail.events };
+      this.logCursor = (tail.cursor != null) ? tail.cursor : this.logCursor;
+      if (tail.events_path != null) this.logEventsPath = tail.events_path;
+    }
+  }
+
+  // Merge a batch of newer log events (the `?after=<cursor>` response)
+  // into the existing tail, capped at the rolling window, and advance
+  // the cursor. A changed `events_path` (the run rolled over) resets
+  // the tail to the incoming batch instead of appending to a stale run.
+  // The DOM-side counterpart is the module-level appendLogTail().
+  mergeLogTail(tail) {
+    if (!tail || !Array.isArray(tail.events)) return;
+    if (tail.events_path != null && this.logEventsPath != null
+        && tail.events_path !== this.logEventsPath) {
+      this.logTail = { events: tail.events };
+    } else if (tail.events.length > 0) {
+      const merged = this.logTail.events.concat(tail.events);
+      this.logTail = { events: merged.slice(-RUN_LOG_WINDOW) };
+    }
+    if (tail.events_path != null) this.logEventsPath = tail.events_path;
+    if (tail.cursor != null) this.logCursor = tail.cursor;
   }
 
   setHealthReport(report) {
@@ -468,7 +515,7 @@ function predictedGateVerdict(tournament, margin) {
     return { verdict: 'tbd', reason: 'no entries yet', projection: null };
   }
 
-  const finished = entries.filter(e => e.status === 'done');
+  const finished = entries.filter(entryIsDone);
   const remaining = entries.length - finished.length;
 
   // Aggregate parent and child means over finished entries
@@ -634,19 +681,19 @@ function renderHeader() {
 
 function renderFooter() {
   // GET /api/health is the source of truth (version / port / build);
-  // state.supervisor mirrors it and stands in until /api/health lands.
+  // state.service mirrors it and stands in until /api/health lands.
   const h = state.health || {};
   const pick = (a, b) => {
     if (a != null && a !== '') return a;
     if (b != null && b !== '') return b;
     return '—';
   };
-  $('supervisor-version').textContent =
-    'supervisor · ' + pick(h.version, state.supervisor.version);
-  $('supervisor-port').textContent =
-    'port · ' + pick(h.port, state.supervisor.port);
-  $('supervisor-build').textContent =
-    'build · ' + pick(h.build, state.supervisor.build);
+  $('dashboard-version').textContent =
+    'dashboard · ' + pick(h.version, state.service.version);
+  $('dashboard-port').textContent =
+    'port · ' + pick(h.port, state.service.port);
+  $('dashboard-build').textContent =
+    'build · ' + pick(h.build, state.service.build);
 }
 
 // --- Render: active tournament
@@ -777,12 +824,14 @@ function renderActiveTournament() {
 }
 
 function renderEntryRow(entry) {
-  const status = entry.status || 'queued';
+  // Canonical bucket — never a raw producer spelling. A finished run
+  // written as 'completed' resolves to 'done' here, not 'queued'.
+  const status = entryStatus(entry);
   let markerCh = '○';
   let markerCls = 'queued';
   if (status === 'done') { markerCh = '✓'; markerCls = 'done'; }
   else if (status === 'running') { markerCh = '▶'; markerCls = 'running'; }
-  else if (status === 'fail') { markerCh = '✗'; markerCls = 'fail'; }
+  else if (status === 'failed') { markerCh = '✗'; markerCls = 'failed'; }
 
   const marker = el('div', { class: 'entry-marker ' + markerCls }, [markerCh]);
   const idCell = el('div', { class: 'entry-id mono' }, [entry.entry_id]);
@@ -873,7 +922,7 @@ function renderEntryRow(entry) {
         ]));
       }
     }
-  } else if (status === 'fail') {
+  } else if (status === 'failed') {
     childCell.appendChild(el('span', { class: 'mono' }, ['FAILED']));
     if (entry.fail_reason) {
       childCell.appendChild(el('div', null, [
@@ -903,7 +952,7 @@ function renderEntryRow(entry) {
 function renderAggregate(t) {
   const wrap = el('div', { class: 'aggregate' });
   wrap.appendChild(el('h4', null, [
-    `Partial aggregate (${(t.entries || []).filter(e => e.status === 'done').length} of ${t.entries ? t.entries.length : 0})`
+    `Partial aggregate (${(t.entries || []).filter(entryIsDone).length} of ${t.entries ? t.entries.length : 0})`
   ]));
   const tbl = el('table');
   const thead = el('thead', null, [
@@ -916,7 +965,7 @@ function renderAggregate(t) {
   tbl.appendChild(thead);
   const tbody = el('tbody');
 
-  const finished = (t.entries || []).filter(e => e.status === 'done');
+  const finished = (t.entries || []).filter(entryIsDone);
   let parentDriftSum = 0, parentPassSum = 0;
   let childDriftSum = 0, childPassSum = 0;
   for (const e of finished) {
@@ -1901,17 +1950,36 @@ function liveRoundLabel(t) {
   return String(r);
 }
 
-// A finished entry — `status === 'done'`, treating any of the
-// terminal-status spellings the producers emit as done.
+// Canonical lifecycle bucket for one tournament entry — the SINGLE
+// source of truth every status renderer reads. Returns one of
+// 'queued' | 'running' | 'done' | 'failed'.
+//
+// The dashboard service already normalizes entry statuses at the read
+// layer, but a producer's spelling can still vary (`completed`,
+// `complete`, `in_progress`, `aborted`, ...). Mapping every spelling
+// here too means a finished run can NEVER mislabel as queued just
+// because one renderer compared against a literal 'done' — which is
+// exactly the bug this collapses.
+const _ENTRY_STATUS_BUCKET = {
+  queued: 'queued', pending: 'queued',
+  running: 'running', in_progress: 'running', active: 'running',
+  done: 'done', complete: 'done', completed: 'done', finished: 'done',
+  failed: 'failed', fail: 'failed', error: 'failed', aborted: 'failed',
+};
+
+function entryStatus(e) {
+  const s = String((e && e.status) || '').trim().toLowerCase();
+  return _ENTRY_STATUS_BUCKET[s] || 'queued';
+}
+
+// A finished entry — treating any terminal-status spelling as done.
 function entryIsDone(e) {
-  const s = String((e && e.status) || '').toLowerCase();
-  return s === 'done' || s === 'complete' || s === 'completed';
+  return entryStatus(e) === 'done';
 }
 
 // A failed entry — distinct from done so the live card can surface it.
 function entryFailed(e) {
-  const s = String((e && e.status) || '').toLowerCase();
-  return s === 'fail' || s === 'failed' || s === 'error';
+  return entryStatus(e) === 'failed';
 }
 
 // The per-entry scalar, under whichever key the producer used.
@@ -2405,8 +2473,9 @@ function renderLiveCard(t, champId) {
 
   const dots = el('div', { class: 'bracket-live-dots', 'aria-hidden': 'true' });
   for (const e of entries) {
-    const st = String((e && e.status) || 'queued').toLowerCase();
-    dots.appendChild(el('span', { class: 'bracket-dot ' + st }, ['']));
+    // Canonical bucket — a 'completed' entry paints a done dot, not a
+    // queued one.
+    dots.appendChild(el('span', { class: 'bracket-dot ' + entryStatus(e) }, ['']));
   }
   card.appendChild(dots);
 
@@ -2934,7 +3003,7 @@ function renderEpochBrief(def) {
   wrap.classList.add('epoch-brief');
   // The epoch contract carries the proposer brief under `brief`;
   // `rubric` is the legacy key and is read as a fallback so a snapshot
-  // from a pre-rename supervisor build still renders.
+  // from a pre-rename build still renders.
   let brief = '';
   if (def && typeof def.brief === 'string') {
     brief = def.brief;
@@ -3113,60 +3182,96 @@ function fmtEventTime(ts) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function renderLogTail() {
-  const wrap = $('log-tail');
-  clearChildren(wrap);
-
-  // #7 — the log tail consumes the shared `state.logTail` contract:
-  //   { events: [{ seq, kind, ts, summary }] }
-  // Fall back to the legacy `state.logLines` shape so the panel works
-  // regardless of the merge order with the core/state branch.
-  let events = [];
+// Normalise the shared log-tail contract — { events:[{seq,kind,ts,
+// summary}] } — with a fallback to the legacy `state.logLines` shape.
+function _logTailEvents() {
   if (state.logTail && Array.isArray(state.logTail.events)) {
-    events = state.logTail.events.map((e) => ({
+    return state.logTail.events.map((e) => ({
       seq: e.seq != null ? e.seq : null,
       kind: e.kind || 'event',
       ts: e.ts || null,
       summary: e.summary != null ? e.summary : '',
     }));
-  } else if (Array.isArray(state.logLines)) {
-    events = state.logLines.map((line) => ({
+  }
+  if (Array.isArray(state.logLines)) {
+    return state.logLines.map((line) => ({
       seq: null,
       kind: (line.level || 'log'),
       ts: line.ts || null,
       summary: line.message != null ? line.message : (line.line || ''),
     }));
   }
+  return [];
+}
 
+// Build one log-line DOM node from a normalised event.
+function _logLineEl(ev) {
+  const lineEl = el('div', { class: 'log-line fade-in' });
+  if (ev.ts) {
+    lineEl.appendChild(el('span', {
+      class: 'ts', title: String(ev.ts),
+    }, [fmtEventTime(ev.ts)]));
+  }
+  const kind = String(ev.kind || 'event');
+  const kl = kind.toLowerCase();
+  const cls = (kl.indexOf('error') >= 0 || kl.indexOf('fail') >= 0) ? 'ev-error'
+    : (kl.indexOf('warn') >= 0) ? 'ev-warn'
+    : (kl.indexOf('ok') >= 0 || kl.indexOf('done') >= 0 || kl.indexOf('pass') >= 0) ? 'ev-ok'
+    : '';
+  lineEl.appendChild(el('span', { class: 'log-kind badge ' + cls }, [kind]));
+  lineEl.appendChild(el('span', { class: 'log-summary' }, [
+    String(ev.summary || ''),
+  ]));
+  return lineEl;
+}
+
+// Full paint of the log tail — used only on the first load / a hard
+// reset. Steady-state growth goes through appendLogTail(), which adds
+// only the new rows so the panel does not visibly flash.
+function renderLogTail() {
+  const wrap = $('log-tail');
+  clearChildren(wrap);
+  // Oldest-first so the freshest event lands at the bottom, next to
+  // the auto-scroll — the natural reading order for a streaming tail.
+  const events = _logTailEvents();
   if (events.length === 0) {
     wrap.appendChild(el('p', { class: 'empty' }, ['No events yet.']));
     return;
   }
-
-  // Oldest-first so the freshest event lands at the bottom, next to
-  // the auto-scroll — the natural reading order for a streaming tail.
-  for (const ev of events) {
-    const lineEl = el('div', { class: 'log-line fade-in' });
-    if (ev.ts) {
-      lineEl.appendChild(el('span', {
-        class: 'ts', title: String(ev.ts),
-      }, [fmtEventTime(ev.ts)]));
-    }
-    const kind = String(ev.kind || 'event');
-    const kl = kind.toLowerCase();
-    const cls = (kl.indexOf('error') >= 0 || kl.indexOf('fail') >= 0) ? 'ev-error'
-      : (kl.indexOf('warn') >= 0) ? 'ev-warn'
-      : (kl.indexOf('ok') >= 0 || kl.indexOf('done') >= 0 || kl.indexOf('pass') >= 0) ? 'ev-ok'
-      : '';
-    lineEl.appendChild(el('span', {
-      class: 'log-kind badge ' + cls,
-    }, [kind]));
-    lineEl.appendChild(el('span', { class: 'log-summary' }, [
-      String(ev.summary || ''),
-    ]));
-    wrap.appendChild(lineEl);
-  }
+  for (const ev of events) wrap.appendChild(_logLineEl(ev));
   wrap.scrollTop = wrap.scrollHeight;
+}
+
+// Append only the events newer than what is already painted. The DOM
+// is diffed by count against the normalised event list — the tail
+// grows by appending rows, never by clearing and re-rendering — so the
+// log panel stays stable instead of flashing on every poll.
+function appendLogTail() {
+  const wrap = $('log-tail');
+  const events = _logTailEvents();
+  if (events.length === 0) {
+    renderLogTail();
+    return;
+  }
+  // Count existing rendered log-line rows (skip an `.empty` placeholder).
+  const painted = wrap.querySelectorAll('.log-line').length;
+  if (painted === 0) {
+    renderLogTail();
+    return;
+  }
+  // If the tail shrank or rolled over, fall back to a full paint.
+  if (events.length < painted) {
+    renderLogTail();
+    return;
+  }
+  const wasAtBottom =
+    wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 24;
+  for (let i = painted; i < events.length; i += 1) {
+    wrap.appendChild(_logLineEl(events[i]));
+  }
+  // Keep the freshest event in view only if the operator was already
+  // parked at the bottom — never yank a scrolled-up reader down.
+  if (wasAtBottom) wrap.scrollTop = wrap.scrollHeight;
 }
 
 // --- Drill-down panels (hash router)
@@ -3904,7 +4009,7 @@ function renderConversationView() {
     wrap.appendChild(el('p', { class: 'empty conversation-unavailable' }, [
       'Conversation data unavailable — the matchup transcript ' +
       'endpoint did not respond. It may not be served by this ' +
-      'supervisor build, or the runs have not started.',
+      'dashboard build, or the runs have not started.',
     ]));
     return;
   }
@@ -4290,91 +4395,87 @@ async function postControl(action, body) {
       body: body == null ? null : JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await loadFullState();
+    await loadEnvironment();
   } catch (err) {
     alert(`control failed: ${err.message}`);
   }
 }
 
-async function loadFullState() {
+// GET /api/environment — the ONE coalesced read of the whole zicato
+// environment. This single request replaces the old fan-out across
+// /api/state + /api/epoch + /api/tournaments + /api/health-report +
+// /api/active-tournament + /api/lineage + /api/run-log + /api/active-
+// runs. Folding them server-side means a state change costs one
+// request, not eight — which is what stops the dashboard from
+// hammering the API from many connections many times a second.
+async function loadEnvironment() {
+  let env;
   try {
-    const snap = await fetchJson('/api/state');
-    state.setSnapshot(snap);
-    renderAll();
+    env = await fetchJson('/api/environment');
   } catch (err) {
-    // The server might be transient — surface gracefully.
-    console.warn('loadFullState failed:', err);
+    // The consolidated endpoint may be transient — surface gracefully
+    // and leave the last-known environment painted.
+    console.warn('loadEnvironment failed:', err);
+    return;
   }
-  // The epoch-definition endpoint (R8-A) is independent and may not
-  // exist on older servers; fetch it separately and tolerate failure.
-  // /api/state may already carry the epoch object — this just refreshes
-  // it / fills it in when the state snapshot omitted it.
-  try {
-    const epoch = await fetchJson('/api/epoch');
-    state.setEpochDef(epoch);
-    if (currentView === 'epoch') renderEpochView();
-  } catch (err) {
-    // No /api/epoch — fine, the Epoch view degrades to empty states.
-  }
-  // The bracket and health-report endpoints (R9-5) are likewise
-  // independent; fetch them in parallel and tolerate either being
-  // absent.
-  await Promise.all([loadBracket(), loadHealthReport()]);
-  // The keystone fix: the dashboard's live data must be loaded UP
-  // FRONT, not lazily when a view first renders. Previously
-  // `activeTournament` was only fetched when the Tournament view
-  // painted, so Overview and Epoch saw a null tournament and every
-  // board entry fell back to a hardcoded 'queued'. Pull the four
-  // cross-view feeds here so every view is live from the first paint.
-  await loadLiveFeeds();
-  // Repaint once the live feeds have landed — the earlier renderAll()
-  // ran before activeTournament / lineage / logTail / activeRuns were
-  // fetched, so without this the first paint stays stale.
+  applyEnvironment(env);
   renderAll();
 }
 
-// Fetch the cross-view live feeds — active tournament, lineage, the
-// run-log tail, health, and the active-runs list. Each is independent
-// and tolerates an absent endpoint. Re-rendering is left to the caller.
-async function loadLiveFeeds() {
-  await Promise.all([
-    fetchJson('/api/active-tournament')
-      .then((t) => { state.activeTournament = t; })
-      .catch(() => { /* no tournament endpoint — leave as-is */ }),
-    fetchJson('/api/lineage')
-      .then((l) => { if (l) state.lineage = l; })
-      .catch(() => { /* no lineage endpoint */ }),
-    fetchJson('/api/run-log?limit=40')
-      .then((log) => { state.setLogTail(log); })
-      .catch(() => { /* no run-log endpoint */ }),
-    fetchJson('/api/active-runs')
-      .then((r) => { if (Array.isArray(r)) state.activeRuns = r; })
-      .catch(() => { /* no active-runs endpoint */ }),
-    fetchJson('/api/health')
-      .then((h) => { state.setHealth(h); })
-      .catch(() => { /* no health endpoint */ }),
-  ]);
-}
-
-// GET /api/tournaments — the gauntlet bracket. Independent of /api/state.
-async function loadBracket() {
-  try {
-    const bracket = await fetchJson('/api/tournaments');
-    state.setBracket(bracket);
-    if (currentView === 'tournament') renderTournamentView();
-  } catch (err) {
-    // No /api/tournaments — the bracket degrades to its empty state.
+// Fold an /api/environment response into AppState. Each component
+// degrades independently — a missing key leaves the prior value.
+function applyEnvironment(env) {
+  if (!env || typeof env !== 'object') return;
+  if (env.heartbeat) state.setHeartbeat(env.heartbeat);
+  if ('active_tournament' in env) state.activeTournament = env.active_tournament;
+  if (env.tournaments && typeof env.tournaments === 'object') {
+    state.setBracket(env.tournaments);
+  }
+  if (env.generations && typeof env.generations === 'object') {
+    state.lineage = env.generations;
+  }
+  if (Array.isArray(env.active_runs)) state.activeRuns = env.active_runs;
+  if (env.health_report && typeof env.health_report === 'object') {
+    state.setHealthReport(env.health_report);
+  }
+  if (env.run_log) state.setLogTail(env.run_log);
+  if (env.epoch && typeof env.epoch === 'object') {
+    if ('epoch_id' in env.epoch || 'board' in env.epoch
+        || 'brief' in env.epoch || 'rubric' in env.epoch) {
+      state.setEpochDef(env.epoch);
+    }
   }
 }
 
-// GET /api/health-report — the loop-health panel.
-async function loadHealthReport() {
+// GET /api/health — the dashboard-service identity for the footer
+// (version / port / build). Fetched ONCE at bootstrap: these values
+// are fixed for the process lifetime, so polling them would be pure
+// waste. Tolerates an absent endpoint — the footer just shows dashes.
+async function loadServiceIdentity() {
   try {
-    const report = await fetchJson('/api/health-report');
-    state.setHealthReport(report);
-    if (currentView === 'overview') renderHealthPanel();
+    state.setHealth(await fetchJson('/api/health'));
+    renderFooter();
   } catch (err) {
-    // No /api/health-report — the panel degrades to its empty state.
+    // No /api/health — the footer degrades to its placeholder.
+  }
+}
+
+// Append-only run-log poll: ask for only the events past the cursor we
+// already have, merge them, and append the new rows to the DOM rather
+// than re-rendering the whole tail.
+async function pollLogTailAppend() {
+  if (state.mock) return;
+  const after = state.logCursor;
+  if (after == null) {
+    // No cursor yet — a full environment read will seed one.
+    return;
+  }
+  try {
+    const batch = await fetchJson('/api/run-log?after=' + encodeURIComponent(after));
+    state.mergeLogTail(batch);
+    appendLogTail();
+  } catch (err) {
+    // Run-log endpoint transient — the next event retries.
   }
 }
 
@@ -4406,55 +4507,31 @@ async function loadMatchupDetail(genId) {
   }
 }
 
-async function refreshAfterEvent(payload) {
-  // A state_change event names a region (legacy) or a kind. The R9
-  // contract emits `kind` of epoch / tournament / heartbeat; the older
-  // shape used `region`. Accept either; absent → refresh everything.
-  const tag = (payload && (payload.kind || payload.region)) || 'all';
-  try {
-    if (tag === 'all') {
-      await loadFullState();
-      return;
-    }
-    // Whatever the tag, the cross-view live feeds — the active
-    // tournament, the run-log tail and the active-runs list — are
-    // re-fetched on EVERY tick. They are what keep Overview/Epoch from
-    // going stale while the user is parked on another view; a tag of
-    // `epoch` still moves runs, and a `tournament` tag still moves the
-    // log. loadLiveFeeds also refreshes lineage + health cheaply.
-    const liveFeeds = loadLiveFeeds();
-    if (tag === 'tournament') {
-      // A tournament changed: also refresh the bracket and drop the
-      // cached detail for the moving matchup.
-      state.matchupDetail.clear();
-      await Promise.all([liveFeeds, loadBracket()]);
+// Debounce handle for the coalesced environment refresh.
+let refreshTimer = null;
+let refreshPending = false;
+
+// React to an SSE state_change frame. A burst of frames is coalesced
+// into AT MOST ONE /api/environment fetch per REFRESH_DEBOUNCE_MS — the
+// dashboard never fans a file change out into a wave of per-endpoint
+// polls. The frame's `kinds` (or legacy `kind`/`region`) is advisory
+// only; the single consolidated read always refreshes the whole view.
+function refreshAfterEvent(_payload) {
+  refreshPending = true;
+  if (refreshTimer != null) return;
+  refreshTimer = setTimeout(async () => {
+    refreshTimer = null;
+    if (!refreshPending) return;
+    refreshPending = false;
+    try {
+      await loadEnvironment();
+      // A tournament move can invalidate a cached matchup detail; the
+      // open one is re-fetched lazily on next render.
       if (state.selectedMatchup) loadMatchupDetail(state.selectedMatchup);
-    } else if (tag === 'heartbeat') {
-      try {
-        state.setHeartbeat(await fetchJson('/api/heartbeat'));
-      } catch (err) {
-        // No dedicated heartbeat endpoint — fall back to a full refresh.
-        await loadFullState();
-        return;
-      }
-      await liveFeeds;
-    } else if (tag === 'epoch') {
-      try {
-        const epoch = await fetchJson('/api/epoch');
-        state.setEpochDef(epoch);
-      } catch (err) { /* endpoint may be absent */ }
-      // An epoch transition can also move the bracket and the health
-      // report; refresh those too.
-      await Promise.all([liveFeeds, loadBracket(), loadHealthReport()]);
-    } else {
-      // `runs`, `lineage`, or any unknown tag: the live feeds already
-      // cover runs + lineage, so just await them.
-      await liveFeeds;
+    } catch (err) {
+      console.warn('refresh failed:', err);
     }
-    renderAll();
-  } catch (err) {
-    console.warn('refresh failed:', err);
-  }
+  }, REFRESH_DEBOUNCE_MS);
 }
 
 let sse = null;
@@ -4487,14 +4564,21 @@ function connectSSE() {
   sse.addEventListener('state_change', (ev) => {
     let payload = null;
     try { payload = JSON.parse(ev.data || '{}'); }
-    catch { /* fine, region defaults to all */ }
+    catch { /* coalesced refresh covers the whole view regardless */ }
     refreshAfterEvent(payload);
   });
+  // A `run_log` frame signals a run's events.jsonl grew. Answer with an
+  // append-only poll (`?after=<cursor>`) so the log tail GROWS rather
+  // than re-rendering — the panel no longer flashes on every event.
+  sse.addEventListener('run_log', () => {
+    pollLogTailAppend();
+  });
+  // Legacy `log` frame carrying a single line — append it in place.
   sse.addEventListener('log', (ev) => {
     try {
       const line = JSON.parse(ev.data);
       state.appendLog(line);
-      renderLogTail();
+      appendLogTail();
     } catch (err) {
       console.warn('bad log event:', err);
     }
@@ -4667,8 +4751,8 @@ function mockSnapshot() {
       // the deep-links.
       harmonograf_url: 'ht' + 'tp' + '://localhost:4180',
     },
-    supervisor: { version: '1.2.0', port: '7892', build: 'mock' },
-    // GET /api/health — supervisor identity for the footer.
+    service: { version: '1.2.0', port: '7892', build: 'mock' },
+    // GET /api/health — dashboard-service identity for the footer.
     health: {
       version: '0.1.0', port: 7892, build: '0.1.0+9feb5e8d3a16',
       uptime_seconds: 5_280,
@@ -4932,7 +5016,7 @@ function mockSnapshot() {
         { seq: 121, kind: 'score', ts: '2026-05-16T04:35:23Z',
           summary: 'parent v4 entry extract_invoice_002 pass' },
         { seq: null, kind: 'note', ts: null,
-          summary: 'supervisor watchdog tick — all workers responsive' },
+          summary: 'watchdog tick — all workers responsive' },
       ],
     },
   };
@@ -4987,7 +5071,8 @@ function init() {
   }
 
   renderAll();
-  loadFullState();
+  loadEnvironment();
+  loadServiceIdentity();
   connectSSE();
 }
 

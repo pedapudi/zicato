@@ -1,20 +1,23 @@
 # zicato-supervisor
 
-Single-binary watchdog and dashboard server for the zicato runtime
-state files. Auto-spawned by `zicato evolve`; can also be run standalone
-against an existing workspace for post-mortem inspection.
+Single-binary watchdog for the zicato runtime state files. Auto-spawned
+by `zicato evolve` (always with `--no-dashboard`); can also be run
+standalone against an existing workspace.
 
-The binary does two things:
+The binary is watchdog-only:
 
 1. **Watchdog.** Polls `.zicato/runtime/heartbeat.json` and the per-run
    files under `.zicato/runtime/active_runs/`. If the orchestrator's
    heartbeat or any run's `last_progress` goes stale past the configured
    thresholds, the supervisor sends SIGTERM, waits a grace period, and
    escalates to SIGKILL.
-2. **HTTP + SSE server.** Serves the dashboard UI (compiled in from
-   `supervisor/static/`), JSON endpoints under `/api/`, and a
-   Server-Sent-Events stream at `/events` that pushes `state_change`
-   events whenever a runtime file mutates.
+2. **`/statusz`.** A terse, self-contained operational page (and
+   `/statusz.json`) reporting the watchdog's own state. Always served.
+
+The dashboard UI is no longer the supervisor's concern — it is served
+by the standalone Python dashboard service (`zicato.dashboard`), which
+`zicato evolve` spawns separately. The legacy in-binary dashboard
+routes still compile but are never mounted under `--no-dashboard`.
 
 The watchdog path never invokes an LLM and never reads state from
 memory — every decision is a pure function of the on-disk files. The
@@ -109,11 +112,12 @@ id contains characters outside `[A-Za-z0-9._-]`.
 
 ## Dashboard UI
 
-The UI bundle is statically embedded at compile time from
-`supervisor/static/` via `include_dir!`. If the directory is empty when
-you compile, the binary still works — `/` returns a small placeholder
-and the JSON API is fully functional. Recompiling after the R3-D UI
-agent's branch is merged picks up the real bundle automatically.
+The dashboard UI lives with the standalone Python dashboard service at
+`zicato/dashboard/static/`, which serves it off disk. `supervisor/static/`
+is intentionally empty (a single `.gitkeep`) and is retained only so the
+`include_dir!` macro in `static_assets.rs` still compiles; under
+`--no-dashboard` — which `zicato evolve` always uses — the in-binary
+dashboard routes are not mounted at all.
 
 ## Tests
 

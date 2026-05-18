@@ -6,8 +6,8 @@ Covered:
 * ``zicato dashboard`` is discovered as a root subcommand with the
   ``--workspace`` / ``--host`` / ``--port`` options and the right
   defaults.
-* ``resolve_static_dir`` points at the bundled ``supervisor/static``
-  directory and honours the env override.
+* ``resolve_static_dir`` points at the bundled
+  ``zicato/dashboard/static`` directory and honours the env override.
 * ``zicato evolve`` spawns the watchdog supervisor with
   ``--no-dashboard`` and ALSO spawns the Python dashboard service.
 * ``zicato evolve --no-dashboard`` suppresses the dashboard spawn.
@@ -72,10 +72,10 @@ def test_dashboard_command_options_and_defaults() -> None:
 
 
 def test_resolve_static_dir_points_at_bundled_static() -> None:
-    """``resolve_static_dir`` resolves the in-tree supervisor/static dir."""
+    """``resolve_static_dir`` resolves the in-tree dashboard static dir."""
     static = resolve_static_dir()
     assert static.name == "static"
-    assert static.parent.name == "supervisor"
+    assert static.parent.name == "dashboard"
     # The bundle exists in the checkout.
     assert (static / "index.html").exists()
 

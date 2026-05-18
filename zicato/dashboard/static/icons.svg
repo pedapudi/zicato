@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
   <!--
-    Icon sprite for the zicato supervisor dashboard. Reference an icon
-    via <svg><use href="/static/icons.svg#icon-name"/></svg>. Kept here
-    so the JS module can <use> them without a network round-trip
-    (the supervisor binary serves this file from /static/icons.svg).
+    Icon sprite for the zicato dashboard. Reference an icon via
+    <svg><use href="/static/icons.svg#icon-name"/></svg>. Kept here so
+    the JS module can <use> them without a network round-trip (the
+    dashboard service serves this file from /static/icons.svg).
   -->
   <symbol id="icon-pause" viewBox="0 0 20 20">
     <rect x="5" y="4" width="3" height="12" rx="1" fill="currentColor"/>

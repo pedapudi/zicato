@@ -16,8 +16,9 @@ and exposes two entry points::
     run(workspace_root, host, port, static_dir) -> None
 
 This command resolves the bundled static asset directory and calls
-``run(...)``. The static bundle is the same one the Rust supervisor
-embeds — ``<repo_root>/supervisor/static/`` in a development checkout.
+``run(...)``. The static bundle is the dashboard's own — it lives next
+to the dashboard package at ``zicato/dashboard/static/`` and is served
+straight off disk.
 """
 
 from __future__ import annotations
@@ -33,9 +34,8 @@ def resolve_static_dir(config: DashboardConfig | None = None) -> Path:
     """Return the path to the bundled dashboard static asset directory.
 
     The dashboard front-end (``index.html`` / ``app.js`` / ``style.css``
-    / ``icons.svg``) is shared with the Rust supervisor, which embeds it
-    at compile time. For the Python dashboard we serve it straight off
-    disk.
+    / ``icons.svg``) is the dashboard package's own asset bundle. It
+    lives beside the package source and is served straight off disk.
 
     Resolution order:
 
@@ -43,10 +43,9 @@ def resolve_static_dir(config: DashboardConfig | None = None) -> Path:
        sourced from the ``ZICATO_DASHBOARD_STATIC_DIR`` environment
        variable — useful for tests and for installed wheels that
        relocate the bundle.
-    2. The in-tree ``supervisor/static`` directory, computed relative to
-       this source file. This file is at
+    2. The in-tree ``zicato/dashboard/static`` directory. This file is at
        ``zicato/cli/commands/dashboard.py``; the bundle lives at
-       ``<repo_root>/supervisor/static``.
+       ``zicato/dashboard/static`` under the same package root.
 
     Parameters
     ----------
@@ -63,9 +62,9 @@ def resolve_static_dir(config: DashboardConfig | None = None) -> Path:
     if dashboard.static_dir:
         return Path(dashboard.static_dir)
 
+    # zicato/cli/commands/dashboard.py -> zicato/dashboard/static
     here = Path(__file__).resolve()
-    # zicato/cli/commands/dashboard.py -> <repo_root>/supervisor/static
-    return here.parent.parent.parent.parent / "supervisor" / "static"
+    return here.parent.parent.parent / "dashboard" / "static"
 
 
 @click.command(
@@ -103,14 +102,14 @@ def dashboard_cmd(workspace: str, host: str, port: int) -> None:
     workspace_root = Path(workspace).resolve()
     static_dir = resolve_static_dir()
 
-    # Lazy import: the dashboard service pulls in Starlette and is owned
-    # by a parallel workstream. Importing it here (rather than at module
-    # top level) keeps `zicato --help` fast and means a not-yet-present
-    # ``zicato.dashboard.server`` does not break the rest of the CLI —
-    # the discovery layer would otherwise drop this whole command.
+    # Lazy import: the dashboard service pulls in Starlette. Importing it
+    # here (rather than at module top level) keeps `zicato --help` fast
+    # and means an environment without the dashboard's optional deps does
+    # not break the rest of the CLI — the discovery layer would otherwise
+    # drop this whole command.
     try:
         from zicato.dashboard import server as dashboard_server  # noqa: PLC0415
-    except ImportError as exc:  # pragma: no cover - depends on parallel work
+    except ImportError as exc:  # pragma: no cover - depends on optional deps
         raise click.ClickException(
             f"the dashboard service (zicato.dashboard.server) is not available in this build: {exc}"
         ) from exc
