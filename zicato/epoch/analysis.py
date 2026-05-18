@@ -1157,7 +1157,7 @@ async def generate_analysis(
             aux_call_llm(_SYSTEM_PROMPT, user_prompt, model),
             timeout=aux_call_timeout_s(),
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logging.getLogger(__name__).warning(
             "analysis pass timed out after %.1fs; substituting placeholder narrative",
             aux_call_timeout_s(),

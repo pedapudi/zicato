@@ -73,9 +73,9 @@ def test_system_prompt_signature_has_no_kwargs() -> None:
             "build_emulator_system_prompt must NOT accept **kwargs — "
             "sealed signature is the audit boundary"
         )
-        assert param.kind is not inspect.Parameter.VAR_POSITIONAL, (
-            "build_emulator_system_prompt must NOT accept *args"
-        )
+        assert (
+            param.kind is not inspect.Parameter.VAR_POSITIONAL
+        ), "build_emulator_system_prompt must NOT accept *args"
     assert list(sig.parameters) == ["persona"]
 
 

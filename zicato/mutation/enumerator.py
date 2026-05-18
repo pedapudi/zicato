@@ -75,9 +75,7 @@ def _resolve_span_for_marker(
     return best
 
 
-def _enumerate_file(
-    file_path: Path, source_root: Path
-) -> list[MutationPoint]:
+def _enumerate_file(file_path: Path, source_root: Path) -> list[MutationPoint]:
     """Enumerate mutation points within a single Python file."""
 
     try:

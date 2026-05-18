@@ -92,8 +92,7 @@ def resolve_adversarial_agent(spec: str) -> Any:
     """
     if not isinstance(spec, str) or not spec.strip():
         raise AdversarialResolutionError(
-            "adversarial agent spec must be a non-empty string, "
-            f"got {spec!r}"
+            "adversarial agent spec must be a non-empty string, " f"got {spec!r}"
         )
 
     spec = spec.strip()
@@ -180,7 +179,7 @@ def _final_output_from_outcome(outcome: Any) -> str:
         if isinstance(value, str) and value:
             return value
     transcript = getattr(outcome, "transcript", None)
-    if isinstance(transcript, (list, tuple)) and transcript:
+    if isinstance(transcript, list | tuple) and transcript:
         last = transcript[-1]
         if isinstance(last, str):
             return last
@@ -198,7 +197,7 @@ def _transcript_from_outcome(outcome: Any, fallback_final: str) -> tuple[str, ..
     documented on :class:`zicato.core.types.RunResult`.
     """
     transcript = getattr(outcome, "transcript", None)
-    if isinstance(transcript, (list, tuple)):
+    if isinstance(transcript, list | tuple):
         out: list[str] = []
         for turn in transcript:
             if isinstance(turn, str):
@@ -282,9 +281,7 @@ async def run_adversarial_entry(
             "expected 'synthetic_adversarial'"
         )
     if not entry.adversarial_agent_spec:
-        raise ValueError(
-            f"BoardEntry {entry.id!r}: adversarial_agent_spec is required"
-        )
+        raise ValueError(f"BoardEntry {entry.id!r}: adversarial_agent_spec is required")
     if entry.input is None:
         raise ValueError(f"BoardEntry {entry.id!r}: input is required")
 

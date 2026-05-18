@@ -8,7 +8,6 @@ from zicato.core.types import (
     Experiment,
     Generation,
     MetricMovementActual,
-    OutcomeRecord,
 )
 from zicato.epoch.analysis import (
     render_drift_kind_movement_table,

@@ -181,10 +181,8 @@ async def run_regression_suite(
         stderr=asyncio.subprocess.STDOUT,
     )
     try:
-        stdout_bytes, _ = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout_s
-        )
-    except asyncio.TimeoutError:
+        stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+    except TimeoutError:
         try:
             proc.kill()
         except ProcessLookupError:

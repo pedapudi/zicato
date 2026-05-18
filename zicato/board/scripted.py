@@ -118,13 +118,9 @@ class ScriptedMultiTurnDriver:
                 f"got {entry.kind!r} on {entry.id!r}"
             )
         if entry.turns is None or len(entry.turns) == 0:
-            raise ValueError(
-                f"ScriptedMultiTurnDriver: {entry.id!r} has no turns to play"
-            )
+            raise ValueError(f"ScriptedMultiTurnDriver: {entry.id!r} has no turns to play")
         if entry.max_turns is None or entry.max_turns <= 0:
-            raise ValueError(
-                f"ScriptedMultiTurnDriver: {entry.id!r} has no max_turns"
-            )
+            raise ValueError(f"ScriptedMultiTurnDriver: {entry.id!r} has no max_turns")
 
         run_id = uuid.uuid4().hex
         budget_seconds = entry.wall_clock_budget_seconds

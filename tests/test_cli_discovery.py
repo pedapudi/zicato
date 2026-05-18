@@ -22,9 +22,7 @@ from click.testing import CliRunner
 from zicato.cli.discovery import build_cli_root
 
 
-def _write_command_module(
-    pkg_dir: Path, filename: str, body: str
-) -> None:
+def _write_command_module(pkg_dir: Path, filename: str, body: str) -> None:
     """Write a python file under ``pkg_dir`` with ``body`` as its source."""
     (pkg_dir / filename).write_text(textwrap.dedent(body))
 
@@ -49,9 +47,7 @@ def _make_isolated_commands_pkg(
     # Evict any previously-imported synthetic modules so a second test
     # gets a fresh import.
     for name in list(sys.modules):
-        if name.startswith("zicato.cli.commands.") and not name.endswith(
-            (".init", ".register")
-        ):
+        if name.startswith("zicato.cli.commands.") and not name.endswith((".init", ".register")):
             sys.modules.pop(name, None)
     return pkg_dir
 
@@ -106,9 +102,7 @@ def test_discovery_picks_up_multiple_commands_per_module(
     assert "beta" in root.commands
 
 
-def test_discovery_accepts_subgroups(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_discovery_accepts_subgroups(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pkg_dir = _make_isolated_commands_pkg(tmp_path, monkeypatch)
     _write_command_module(
         pkg_dir,

@@ -27,9 +27,7 @@ def test_board_loads() -> None:
     path = EXAMPLE_DIR / "board.jsonl"
     assert path.exists(), f"board.jsonl missing at {path}"
 
-    entries = [
-        json.loads(line) for line in path.read_text().splitlines() if line.strip()
-    ]
+    entries = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     kinds = {e["kind"] for e in entries}
     assert "synthetic_adversarial" in kinds
     assert "synthetic_clean" in kinds
@@ -47,9 +45,7 @@ def test_board_loads() -> None:
 def test_predicates_module_imports() -> None:
     """The predicates module imports and exports the three documented hooks."""
 
-    mod = importlib.import_module(
-        "examples.target_2_goldfive_steering.predicates"
-    )
+    mod = importlib.import_module("examples.target_2_goldfive_steering.predicates")
     assert hasattr(mod, "required_drift_fired")
     assert hasattr(mod, "no_warning_or_critical_drift")
     assert hasattr(mod, "output_mentions_target_token")

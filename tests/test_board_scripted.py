@@ -200,9 +200,7 @@ async def test_drive_unwraps_final_output_attribute(
         max_turns=2,
     )
     driver = ScriptedMultiTurnDriver()
-    result = await driver.drive(
-        _FinalOutputHarness(), entry, sinks=[], config=runtime_config
-    )
+    result = await driver.drive(_FinalOutputHarness(), entry, sinks=[], config=runtime_config)
     assert result.transcript == ("wrapped: hi",)
     assert result.final_output == "wrapped: hi"
 
@@ -218,9 +216,7 @@ async def test_drive_rejects_non_scripted_entry(
     )
     driver = ScriptedMultiTurnDriver()
     with pytest.raises(ValueError, match="multi_turn_scripted"):
-        await driver.drive(
-            _RecordingHarness(), entry, sinks=[], config=runtime_config
-        )
+        await driver.drive(_RecordingHarness(), entry, sinks=[], config=runtime_config)
 
 
 async def test_drive_records_harness_error_as_abort(
@@ -238,9 +234,7 @@ async def test_drive_records_harness_error_as_abort(
         max_turns=2,
     )
     driver = ScriptedMultiTurnDriver()
-    result = await driver.drive(
-        _ExplodingHarness(), entry, sinks=[], config=runtime_config
-    )
+    result = await driver.drive(_ExplodingHarness(), entry, sinks=[], config=runtime_config)
     assert result.aborted is True
     assert "harness_error" in result.abort_reason
     assert "kaboom" in result.abort_reason

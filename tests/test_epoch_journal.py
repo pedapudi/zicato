@@ -159,9 +159,7 @@ def test_append_journal_entry_rejected_includes_reason(
     append_journal_entry(ws, eid, exp)
     text = read_journal(ws, eid)
     assert "**outcome**: rejected" in text
-    assert (
-        "**rejection_reason**: pass_rate_regression_on_summarise_short" in text
-    )
+    assert "**rejection_reason**: pass_rate_regression_on_summarise_short" in text
 
 
 def test_append_journal_entry_appends_multiple_sections(

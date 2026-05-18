@@ -300,9 +300,9 @@ def test_render_html_report_size_envelope() -> None:
         duration="14 days",
     )
     html = render_html_report(ctx)
-    assert len(html.encode("utf-8")) < 100_000, (
-        f"output exceeded 100 KB envelope: {len(html.encode('utf-8'))} bytes"
-    )
+    assert (
+        len(html.encode("utf-8")) < 100_000
+    ), f"output exceeded 100 KB envelope: {len(html.encode('utf-8'))} bytes"
     _assert_well_formed(html)
 
 

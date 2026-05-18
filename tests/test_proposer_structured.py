@@ -40,12 +40,8 @@ def _mp(
 
 _MUTATIONS = {
     "router__sp": _mp("router__sp"),
-    "planner__thresh": _mp(
-        "planner__thresh", metadata={"min": "0.0", "max": "1.0"}
-    ),
-    "router__strategy": _mp(
-        "router__strategy", metadata={"enum": "alpha, beta , gamma"}
-    ),
+    "planner__thresh": _mp("planner__thresh", metadata={"min": "0.0", "max": "1.0"}),
+    "router__strategy": _mp("router__strategy", metadata={"enum": "alpha, beta , gamma"}),
 }
 
 

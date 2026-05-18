@@ -79,9 +79,7 @@ def make_adapter_from_config(workspace_config: Mapping[str, Any]) -> Any:
 
     kind = adapter_dict.get("kind")
     if not kind or not isinstance(kind, str):
-        raise ValueError(
-            "workspace_config['adapter']['kind'] must be a non-empty string"
-        )
+        raise ValueError("workspace_config['adapter']['kind'] must be a non-empty string")
 
     if kind == "adk":
         return _build_adk(adapter_dict)
@@ -93,9 +91,7 @@ def _build_adk(adapter_dict: Mapping[str, Any]) -> Any:
     """Construct an :class:`ADKHarnessAdapter` from its config sub-dict."""
     entrypoint = adapter_dict.get("entrypoint")
     if not entrypoint or not isinstance(entrypoint, str):
-        raise ValueError(
-            "adapter kind='adk' requires a non-empty 'entrypoint' string"
-        )
+        raise ValueError("adapter kind='adk' requires a non-empty 'entrypoint' string")
     raw_trees = adapter_dict.get("mutable_trees", [])
     if raw_trees is None:
         trees: list[Path] | None = None

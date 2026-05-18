@@ -28,8 +28,7 @@ def workspace(tmp_path: Path) -> Path:
 def board_file(tmp_path: Path) -> Path:
     p = tmp_path / "board.jsonl"
     p.write_text(
-        '{"id": "e1", "kind": "single_turn", '
-        '"wall_clock_budget_seconds": 60, "input": "hi"}\n'
+        '{"id": "e1", "kind": "single_turn", ' '"wall_clock_budget_seconds": 60, "input": "hi"}\n'
     )
     return p
 
@@ -49,13 +48,9 @@ def rubric_file(tmp_path: Path) -> Path:
 async def test_generate_analysis_writes_file(
     workspace: Path, board_file: Path, rubric_file: Path
 ) -> None:
-    cfg = new_epoch(
-        workspace, "alpha", board_file, rubric_file, ScoringWeights()
-    )
+    cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
     # Seed a journal so the prompt has something to chew on.
-    journal_path(workspace, cfg.id).write_text(
-        "## v1 — Improve routing.\n**outcome**: promoted\n"
-    )
+    journal_path(workspace, cfg.id).write_text("## v1 — Improve routing.\n**outcome**: promoted\n")
 
     captured: dict[str, str] = {}
 
@@ -88,9 +83,7 @@ async def test_generate_analysis_writes_file(
 async def test_generate_analysis_inlines_experiments(
     workspace: Path, board_file: Path, rubric_file: Path
 ) -> None:
-    cfg = new_epoch(
-        workspace, "beta", board_file, rubric_file, ScoringWeights()
-    )
+    cfg = new_epoch(workspace, "beta", board_file, rubric_file, ScoringWeights())
     # Drop an experiment.json under generations/v1.
     epath = experiment_json_path(workspace, cfg.id, "v1")
     epath.parent.mkdir(parents=True, exist_ok=True)
@@ -126,9 +119,7 @@ async def test_generate_analysis_inlines_experiments(
 async def test_generate_analysis_handles_missing_journal(
     workspace: Path, board_file: Path, rubric_file: Path
 ) -> None:
-    cfg = new_epoch(
-        workspace, "gamma", board_file, rubric_file, ScoringWeights()
-    )
+    cfg = new_epoch(workspace, "gamma", board_file, rubric_file, ScoringWeights())
 
     seen: dict[str, str] = {}
 
@@ -144,14 +135,10 @@ async def test_generate_analysis_handles_missing_journal(
 async def test_generate_analysis_includes_patterns_when_present(
     workspace: Path, board_file: Path, rubric_file: Path
 ) -> None:
-    cfg = new_epoch(
-        workspace, "delta", board_file, rubric_file, ScoringWeights()
-    )
+    cfg = new_epoch(workspace, "delta", board_file, rubric_file, ScoringWeights())
     pdir = workspace / "epochs" / cfg.id / "patterns"
     pdir.mkdir()
-    (pdir / "round_001.json").write_text(
-        json.dumps([{"id": "p1", "kind": "drift_kind_frequency"}])
-    )
+    (pdir / "round_001.json").write_text(json.dumps([{"id": "p1", "kind": "drift_kind_frequency"}]))
 
     seen: dict[str, str] = {}
 
@@ -167,9 +154,7 @@ async def test_generate_analysis_includes_patterns_when_present(
 async def test_generate_analysis_propagates_model(
     workspace: Path, board_file: Path, rubric_file: Path
 ) -> None:
-    cfg = new_epoch(
-        workspace, "echo", board_file, rubric_file, ScoringWeights()
-    )
+    cfg = new_epoch(workspace, "echo", board_file, rubric_file, ScoringWeights())
 
     seen: dict[str, str] = {}
 

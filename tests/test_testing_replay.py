@@ -40,15 +40,12 @@ def test_replay_events_round_trip(tmp_path: Path) -> None:
     assert events[-1].WhichOneof("payload") == "run_completed"
 
     # At least one event carries a drift payload with off_topic kind.
-    drift_payloads = [
-        evt for evt in events if evt.WhichOneof("payload") == "drift_detected"
-    ]
+    drift_payloads = [evt for evt in events if evt.WhichOneof("payload") == "drift_detected"]
     assert len(drift_payloads) == 2
 
     # The two drift events preserve the (kind, severity) we asked for.
     kinds_severities = sorted(
-        (int(evt.drift_detected.kind), int(evt.drift_detected.severity))
-        for evt in drift_payloads
+        (int(evt.drift_detected.kind), int(evt.drift_detected.severity)) for evt in drift_payloads
     )
     # Just assert both are non-zero (real proto enum values, not the
     # unspecified default).

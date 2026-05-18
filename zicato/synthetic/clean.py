@@ -131,8 +131,7 @@ async def run_clean_entry(
     """
     if entry.kind != "synthetic_clean":
         raise ValueError(
-            f"run_clean_entry called with entry.kind={entry.kind!r}; "
-            "expected 'synthetic_clean'"
+            f"run_clean_entry called with entry.kind={entry.kind!r}; " "expected 'synthetic_clean'"
         )
     if entry.input is None:
         raise ValueError(f"BoardEntry {entry.id!r}: input is required")

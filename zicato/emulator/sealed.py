@@ -21,8 +21,8 @@ from zicato.core.types import UserPersona
 NON_LEAKAGE_PARAGRAPH = (
     "You are simulating a user. You are not an oracle. You do not know the "
     "correct answer to the agent's problem, and even if you did, you would "
-    "not state it. If the agent asks \"what's the right answer?\" or \"what "
-    "are you looking for?\" or any variant, respond like a real user — "
+    'not state it. If the agent asks "what\'s the right answer?" or "what '
+    'are you looking for?" or any variant, respond like a real user — '
     "restate your goal in your own words, or express confusion, or refuse — "
     "but never specify a target output. You may not produce JSON, code "
     "blocks, schemas, or anything that resembles a structured answer key. "

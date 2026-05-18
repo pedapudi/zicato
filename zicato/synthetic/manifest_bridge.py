@@ -45,7 +45,6 @@ from typing import Any
 from zicato.core.types import MutationPoint
 from zicato.mutation.enumerator import _content_hash
 
-
 # Conventional manifest locations relative to a candidate source root.
 # Listed in priority order; the first existing path wins.
 _MANIFEST_CANDIDATES: tuple[str, ...] = (
@@ -140,9 +139,7 @@ def _prompt_body_range(text: str) -> tuple[int, int, str]:
     return line_start, line_end, body_stripped
 
 
-def _prompt_mutation_point(
-    entry: dict[str, Any], source_root: Path
-) -> MutationPoint | None:
+def _prompt_mutation_point(entry: dict[str, Any], source_root: Path) -> MutationPoint | None:
     """Build a span-kind :class:`MutationPoint` for a ``kind="prompt"`` entry.
 
     Returns ``None`` if the entry's ``source`` field is malformed or
@@ -209,9 +206,7 @@ def _resolve_numeric_target(source_root: Path, source: str) -> Path | None:
     return target
 
 
-def _numeric_mutation_point(
-    entry: dict[str, Any], source_root: Path
-) -> MutationPoint | None:
+def _numeric_mutation_point(entry: dict[str, Any], source_root: Path) -> MutationPoint | None:
     """Build a span-kind :class:`MutationPoint` for a ``kind="numeric"`` entry.
 
     Numeric mutation points cover a single line (the attribute

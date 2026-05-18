@@ -68,9 +68,9 @@ def initialize_workspace(
     write_workspace_config(workspace_root, config)
 
     # Sanity check that the config file is actually on disk now.
-    assert workspace_is_initialized(workspace_root), (
-        f"post-condition failed: {CONFIG_FILENAME} not present after init"
-    )
+    assert workspace_is_initialized(
+        workspace_root
+    ), f"post-condition failed: {CONFIG_FILENAME} not present after init"
     return config
 
 

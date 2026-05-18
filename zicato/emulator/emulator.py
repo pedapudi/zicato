@@ -127,9 +127,7 @@ class EmulatedMultiTurnDriver:
         # same client in two distinct closures is the operator's
         # responsibility and passes this check.
         try:
-            assert_distinct_callables(
-                config.harness_call_llm, config.auxiliary_call_llm
-            )
+            assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
         except RuntimeError as exc:
             raise EmulationCollusionError(str(exc)) from exc
 
@@ -140,13 +138,11 @@ class EmulatedMultiTurnDriver:
             )
         if entry.user_persona is None:
             raise ValueError(
-                f"BoardEntry {entry.id!r}: multi_turn_emulated requires "
-                "'user_persona'"
+                f"BoardEntry {entry.id!r}: multi_turn_emulated requires " "'user_persona'"
             )
         if entry.max_turns is None or entry.max_turns <= 0:
             raise ValueError(
-                f"BoardEntry {entry.id!r}: multi_turn_emulated requires "
-                "'max_turns' > 0"
+                f"BoardEntry {entry.id!r}: multi_turn_emulated requires " "'max_turns' > 0"
             )
 
         self._audits = []
@@ -164,12 +160,10 @@ class EmulatedMultiTurnDriver:
             user_prompt = build_emulator_user_prompt(tuple(agent_transcript))
             try:
                 emulator_output = await asyncio.wait_for(
-                    config.auxiliary_call_llm(
-                        system_prompt, user_prompt, _DEFAULT_EMULATOR_MODEL
-                    ),
+                    config.auxiliary_call_llm(system_prompt, user_prompt, _DEFAULT_EMULATOR_MODEL),
                     timeout=aux_call_timeout_s(),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 aborted = True
                 abort_reason = "emulator_timeout"
                 _log.warning(
@@ -185,9 +179,7 @@ class EmulatedMultiTurnDriver:
             emit_audit_span(self._sink, audit)
 
             # Stop signal: <<END>> on a line by itself.
-            stripped_lines = [
-                line.strip() for line in emulator_output.splitlines()
-            ]
+            stripped_lines = [line.strip() for line in emulator_output.splitlines()]
             if END_TOKEN in stripped_lines:
                 break
 
@@ -196,9 +188,7 @@ class EmulatedMultiTurnDriver:
             if leak is not None:
                 aborted = True
                 abort_reason = "emulator_leak_detected"
-                _log.warning(
-                    "run %s aborted: %s (entry=%s)", run_id, leak, entry.id
-                )
+                _log.warning("run %s aborted: %s (entry=%s)", run_id, leak, entry.id)
                 break
 
             # Forward the clean user message to the inner harness.

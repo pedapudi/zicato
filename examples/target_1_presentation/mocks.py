@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # harness_llm — the inner harness's LLM surface
 # ---------------------------------------------------------------------------
@@ -90,9 +89,7 @@ _HARNESS_DEFAULT = (
 )
 
 
-async def harness_llm(
-    system: str, user: str, model: str, **_kwargs: Any
-) -> str:
+async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     """Return a canned response shaped like the agent's expected output.
 
     Dispatches on lowercase-substring matches in ``user``. The agent's
@@ -264,16 +261,12 @@ def _next_proposer_payload() -> dict[str, Any]:
 
 _EMULATOR_REPLIES: tuple[str, ...] = (
     "Could you sharpen slide 2 with concrete Q3 numbers?",
-    "Please revise the framing of the headline metric and add a "
-    "Q4 outlook bullet.",
-    "Looks closer — can you produce a final v2 that addresses my "
-    "previous notes end-to-end?",
+    "Please revise the framing of the headline metric and add a " "Q4 outlook bullet.",
+    "Looks closer — can you produce a final v2 that addresses my " "previous notes end-to-end?",
 )
 
 
-async def aux_llm(
-    system: str, user: str, model: str, **_kwargs: Any
-) -> str:
+async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     """Return canned auxiliary responses keyed off the system prompt.
 
     Dispatch order:
@@ -306,10 +299,7 @@ async def aux_llm(
     sys_lower = system.lower()
 
     # 1. Proposer.
-    if (
-        _PROPOSER_FINGERPRINT in sys_lower
-        or _PROPOSER_FINGERPRINT_FALLBACK.lower() in sys_lower
-    ):
+    if _PROPOSER_FINGERPRINT in sys_lower or _PROPOSER_FINGERPRINT_FALLBACK.lower() in sys_lower:
         payload = _next_proposer_payload()
         return json.dumps(payload)
 

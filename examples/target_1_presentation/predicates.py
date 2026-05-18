@@ -98,9 +98,7 @@ def has_structured_outline(result: Any) -> bool:
     numbered = sum(out.count(f"{i}.") for i in range(1, 4))
     if numbered >= 3:
         return True
-    bullet_lines = sum(
-        1 for line in out.splitlines() if line.lstrip().startswith(("-", "*"))
-    )
+    bullet_lines = sum(1 for line in out.splitlines() if line.lstrip().startswith(("-", "*")))
     return bullet_lines >= 3
 
 

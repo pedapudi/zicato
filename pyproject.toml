@@ -48,7 +48,10 @@ dashboard = [
 dev = [
     "pytest >= 8",
     "pytest-asyncio >= 0.23",
-    "ruff >= 0.5",
+    # Pinned to the exact version the pre-commit ruff hook uses
+    # (.pre-commit-config.yaml) so local lint/format and the hook
+    # never diverge.
+    "ruff == 0.5.7",
     "mypy >= 1.10",
     "types-jsonschema",
     "types-protobuf",

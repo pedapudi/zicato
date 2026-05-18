@@ -96,14 +96,8 @@ async def test_scripted_matches_by_substring() -> None:
         ]
     )
 
-    assert (
-        await llm("system: EMULATOR persona", "anything goes", "m")
-        == "emulator-said-hi"
-    )
-    assert (
-        await llm("system: HARNESS prompt", "what is the question?", "m")
-        == "harness-answer"
-    )
+    assert await llm("system: EMULATOR persona", "anything goes", "m") == "emulator-said-hi"
+    assert await llm("system: HARNESS prompt", "what is the question?", "m") == "harness-answer"
 
 
 async def test_scripted_first_match_wins() -> None:

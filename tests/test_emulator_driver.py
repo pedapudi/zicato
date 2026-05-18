@@ -220,7 +220,7 @@ async def test_drive_aborts_on_emulator_leak() -> None:
 
 
 async def test_drive_aborts_on_code_fence_leak() -> None:
-    aux = _make_canned_aux(["```json\n{\"x\": 1}\n```"])
+    aux = _make_canned_aux(['```json\n{"x": 1}\n```'])
     harness = _make_canned_harness([])
     driver = EmulatedMultiTurnDriver()
     result = await driver.drive(
@@ -249,9 +249,7 @@ async def test_drive_emits_audits_to_sink() -> None:
     aux = _make_canned_aux(["Hi.", "Done.\n<<END>>"])
     harness = _make_canned_harness(["Sure thing."])
     driver = EmulatedMultiTurnDriver(sink_emit_fn=sink)
-    await driver.drive(
-        run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux)
-    )
+    await driver.drive(run_harness_turn=harness, entry=_entry(max_turns=4), config=_config(aux))
     # Two emulator turns => two audit events.
     assert len(sink.events) == 2
     for event in sink.events:

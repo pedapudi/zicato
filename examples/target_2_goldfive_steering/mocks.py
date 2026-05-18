@@ -51,7 +51,6 @@ import json
 import uuid
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Harness LLM
 # ---------------------------------------------------------------------------
@@ -92,9 +91,7 @@ async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str
                 "goals": [
                     {
                         "id": "g1",
-                        "summary": (
-                            first_line[:160] or "Complete the requested task."
-                        ),
+                        "summary": (first_line[:160] or "Complete the requested task."),
                     }
                 ]
             }
@@ -116,9 +113,7 @@ async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str
                     {
                         "id": "t1",
                         "title": "complete_request",
-                        "description": (
-                            "Produce a one-sentence summary that answers the user."
-                        ),
+                        "description": ("Produce a one-sentence summary that answers the user."),
                     }
                 ],
                 "edges": [],
@@ -251,9 +246,7 @@ def _build_experiment_json(round_index: int) -> str:
         round_index % len(_PROPOSER_TARGETS)
     ]
     new_content = (
-        _REFINE_NEW_CONTENT
-        if target_id == "refine_system_prompt"
-        else _REASONING_JUDGE_NEW_CONTENT
+        _REFINE_NEW_CONTENT if target_id == "refine_system_prompt" else _REASONING_JUDGE_NEW_CONTENT
     )
     payload: dict[str, Any] = {
         "hypothesis": {

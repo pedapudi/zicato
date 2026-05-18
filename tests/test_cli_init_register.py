@@ -63,9 +63,7 @@ def test_init_refuses_to_overwrite(tmp_path: Path) -> None:
 def test_init_force_overwrites(tmp_path: Path) -> None:
     workspace = tmp_path / ".zicato"
     runner = CliRunner()
-    first = runner.invoke(
-        init_cmd, ["--workspace", str(workspace), "--instance-id", "first"]
-    )
+    first = runner.invoke(init_cmd, ["--workspace", str(workspace), "--instance-id", "first"])
     assert first.exit_code == 0
     assert json.loads((workspace / CONFIG_FILENAME).read_text())["instance_id"] == "first"
 
@@ -74,9 +72,7 @@ def test_init_force_overwrites(tmp_path: Path) -> None:
         ["--workspace", str(workspace), "--instance-id", "second", "--force"],
     )
     assert second.exit_code == 0, second.output
-    assert (
-        json.loads((workspace / CONFIG_FILENAME).read_text())["instance_id"] == "second"
-    )
+    assert json.loads((workspace / CONFIG_FILENAME).read_text())["instance_id"] == "second"
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +169,7 @@ def test_register_rejects_malformed_entrypoint(tmp_path: Path) -> None:
 def test_register_requires_adk_flag(tmp_path: Path) -> None:
     workspace = _init_workspace(tmp_path)
     runner = CliRunner()
-    result = runner.invoke(
-        register_cmd, ["--workspace", str(workspace)]
-    )
+    result = runner.invoke(register_cmd, ["--workspace", str(workspace)])
     assert result.exit_code != 0
 
 
