@@ -30,3 +30,8 @@ dependencies = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["zicato_examples"]
+
+# uv resolves `zicato` from the same workspace (the root pyproject.toml
+# declares examples/ as a member) rather than from an index.
+[tool.uv.sources]
+zicato = { workspace = true }
