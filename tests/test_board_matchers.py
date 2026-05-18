@@ -112,6 +112,35 @@ async def test_predicate_async_fail(predicate_module: str) -> None:
     assert res.passed is False
 
 
+async def test_predicate_colon_form_resolves(predicate_module: str) -> None:
+    """A ``module:attr`` colon-separated path resolves and passes correctly.
+
+    This is the regression test for the bug where the loader split on the
+    last dot instead of the colon, turning
+    ``examples.target_1_presentation.predicates:addressed_picky_feedback``
+    into module ``examples.target_1_presentation`` + attr
+    ``predicates:addressed_picky_feedback``, which then failed with
+    "module has no attribute 'predicates:addressed_picky_feedback'".
+    """
+    res = await evaluate_expectation(
+        Expectation(kind="predicate", spec=f"{predicate_module}:sync_pass"),
+        _result("the answer is ok"),
+    )
+    assert res.passed is True, f"colon-form predicate should pass, got detail={res.detail!r}"
+
+
+async def test_predicate_colon_form_missing_attr(predicate_module: str) -> None:
+    """A ``module:missing_attr`` colon path fails clearly — not with a confusing split error."""
+    res = await evaluate_expectation(
+        Expectation(kind="predicate", spec=f"{predicate_module}:no_such_attr"),
+        _result("x"),
+    )
+    assert res.passed is False
+    # The detail must name the missing attribute, not a malformed attr like
+    # 'predicate_module:no_such_attr'.
+    assert "no_such_attr" in res.detail
+
+
 async def test_predicate_import_error() -> None:
     res = await evaluate_expectation(
         Expectation(kind="predicate", spec="no.such.module.nope"),

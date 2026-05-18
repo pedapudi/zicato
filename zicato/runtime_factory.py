@@ -21,13 +21,13 @@ Resolution rules:
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from zicato.core.types import CallLLM, RuntimeConfig
 from zicato.core.workspace import assert_distinct_callables
+from zicato.import_path import import_dotted_path
 
 
 def make_runtime_config(
@@ -74,8 +74,7 @@ def make_runtime_config(
     runtime_dict = workspace_config.get("runtime", {}) or {}
     if not isinstance(runtime_dict, Mapping):
         raise ValueError(
-            f"workspace_config['runtime'] must be a mapping, got "
-            f"{type(runtime_dict).__name__}"
+            f"workspace_config['runtime'] must be a mapping, got " f"{type(runtime_dict).__name__}"
         )
 
     instance_id = str(runtime_dict.get("instance_id", "default"))
@@ -125,37 +124,14 @@ def make_runtime_config(
 def _import_callable(dotted: str, *, kind: str) -> CallLLM:
     """Resolve a ``pkg.mod:attr`` or ``pkg.mod.attr`` dotted path to a callable.
 
-    Both colon-separated (``pkg.mod:attr``) and dot-separated
-    (``pkg.mod.attr``) forms are accepted because operators paste
-    either depending on whether they're thinking in entry-points or
-    plain Python attribute paths. The function raises
-    :class:`ValueError` with the ``kind`` argument in the message so
-    operators can tell which side of the runtime config went bad.
+    Delegates to :func:`zicato.import_path.import_dotted_path` so both the
+    colon-separated (entry-point style) and dot-separated forms are handled
+    identically by the single shared implementation.
     """
-    if ":" in dotted:
-        module_path, _, attr = dotted.partition(":")
-    else:
-        module_path, _, attr = dotted.rpartition(".")
-    if not module_path or not attr:
-        raise ValueError(
-            f"{kind} dotted path {dotted!r} must be 'pkg.module.attr' or "
-            "'pkg.module:attr'"
-        )
-    try:
-        module = importlib.import_module(module_path)
-    except ImportError as exc:
-        raise ValueError(
-            f"{kind}: could not import module {module_path!r}: {exc}"
-        ) from exc
-    if not hasattr(module, attr):
-        raise ValueError(
-            f"{kind}: module {module_path!r} has no attribute {attr!r}"
-        )
-    result = getattr(module, attr)
+    result: Any = import_dotted_path(dotted, label=kind)
     if not callable(result):
         raise ValueError(
-            f"{kind}: {dotted!r} resolved to {type(result).__name__}, "
-            "expected a callable"
+            f"{kind}: {dotted!r} resolved to {type(result).__name__}, " "expected a callable"
         )
     # mypy can't narrow Any → CallLLM here, but the runner re-checks
     # the call shape on its first invocation.

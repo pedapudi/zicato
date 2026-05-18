@@ -50,7 +50,6 @@ schema-validation error path, rubric reasoning, etc.
 
 from __future__ import annotations
 
-import importlib
 import inspect
 import json
 import re
@@ -59,25 +58,12 @@ from collections.abc import Awaitable, Callable
 import jsonschema
 
 from zicato.core.types import Expectation, ExpectationKind, ExpectationResult, RunResult
-
-
-def _import_dotted(path: str) -> object:
-    """Import a dotted path like ``pkg.module.attr`` and return the attr."""
-    if "." not in path:
-        raise ValueError(f"dotted path {path!r} has no module component; expected 'pkg.mod.attr'")
-    module_path, _, attr_name = path.rpartition(".")
-    module = importlib.import_module(module_path)
-    try:
-        return getattr(module, attr_name)
-    except AttributeError as exc:
-        raise ValueError(
-            f"dotted path {path!r}: module {module_path!r} has no attribute {attr_name!r}"
-        ) from exc
+from zicato.import_path import import_dotted_path
 
 
 async def _eval_predicate(expectation: Expectation, result: RunResult) -> ExpectationResult:
     try:
-        fn = _import_dotted(expectation.spec)
+        fn = import_dotted_path(expectation.spec, label=f"dotted path {expectation.spec!r}")
     except (ImportError, ValueError) as exc:
         return ExpectationResult(
             kind=ExpectationKind.PREDICATE,

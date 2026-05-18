@@ -51,7 +51,6 @@ aborted-run outcome — that is precisely the supervisor-kill path.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import inspect
 import json
 import logging
@@ -71,6 +70,7 @@ from zicato.core import (
     ScoringWeights,
     validate_board_entry,
 )
+from zicato.import_path import import_dotted_path
 
 log = logging.getLogger("zicato._tournament_worker")
 
@@ -89,29 +89,11 @@ WORKER_BUDGET_ABORT_REASON = "wall_clock_budget"
 def _import_callable(dotted: str) -> Any:
     """Resolve a ``pkg.mod:attr`` or ``pkg.mod.attr`` dotted path to a callable.
 
-    Mirrors :func:`zicato.runtime_factory._import_callable` but kept
-    local so the worker has no import-time dependency surface beyond the
-    core types. Both the colon form (entry-point style) and the plain
-    dot form are accepted because the runner serialises whichever the
-    callable's ``__module__`` / ``__qualname__`` produced.
+    Delegates to :func:`zicato.import_path.import_dotted_path` so the
+    colon-separated (entry-point style) and dot-separated forms are handled
+    by the single shared implementation.
     """
-    if ":" in dotted:
-        module_path, _, attr = dotted.partition(":")
-    else:
-        module_path, _, attr = dotted.rpartition(".")
-    if not module_path or not attr:
-        raise ValueError(f"call_llm dotted path {dotted!r} must be 'pkg.module.attr'")
-    module = importlib.import_module(module_path)
-    obj: Any = module
-    # Support nested attribute access (``Class.method`` style qualnames),
-    # skipping any ``<locals>`` segments which are not importable.
-    for part in attr.split("."):
-        if part == "<locals>":
-            raise ValueError(
-                f"call_llm dotted path {dotted!r} refers to a closure-local "
-                "callable that cannot be re-imported in a worker subprocess"
-            )
-        obj = getattr(obj, part)
+    obj: Any = import_dotted_path(dotted, label="call_llm dotted path")
     if not callable(obj):
         raise ValueError(f"call_llm dotted path {dotted!r} did not resolve to a callable")
     return obj

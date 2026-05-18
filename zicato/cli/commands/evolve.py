@@ -46,7 +46,6 @@ runtime factory uses everywhere else in the tree.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
 import shutil
 from pathlib import Path
@@ -55,6 +54,7 @@ from typing import Any
 import click
 
 from zicato.config import IntegrationConfig, load_config
+from zicato.import_path import import_dotted_path
 
 
 def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path | None:
@@ -347,25 +347,14 @@ _terminate_supervisor = _terminate_child
 def _import_callable(dotted: str, *, kind: str) -> Any:
     """Resolve ``pkg.mod:attr`` or ``pkg.mod.attr`` to a callable.
 
-    Mirrors :func:`zicato.runtime_factory._import_callable`. Duplicated
-    here so this CLI module imports stay small (the runtime factory is
-    imported by the orchestrator anyway).
+    Delegates to :func:`zicato.import_path.import_dotted_path` and re-raises
+    any :class:`ValueError` as :class:`click.BadParameter` so the CLI surfaces
+    the error with Click's formatting rather than a raw traceback.
     """
-    if ":" in dotted:
-        module_path, _, attr = dotted.partition(":")
-    else:
-        module_path, _, attr = dotted.rpartition(".")
-    if not module_path or not attr:
-        raise click.BadParameter(
-            f"{kind} dotted path {dotted!r} must be 'pkg.module.attr' or 'pkg.module:attr'"
-        )
     try:
-        module = importlib.import_module(module_path)
-    except ImportError as exc:
-        raise click.BadParameter(f"{kind}: could not import module {module_path!r}: {exc}") from exc
-    if not hasattr(module, attr):
-        raise click.BadParameter(f"{kind}: module {module_path!r} has no attribute {attr!r}")
-    fn = getattr(module, attr)
+        fn: Any = import_dotted_path(dotted, label=kind)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
     if not callable(fn):
         raise click.BadParameter(
             f"{kind}: {dotted!r} resolved to {type(fn).__name__}, expected a callable"
