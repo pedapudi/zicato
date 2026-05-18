@@ -996,6 +996,24 @@ h4 {
 .ab-verdict-improved { background: var(--accent-promoted); }
 .ab-verdict-regressed { background: var(--accent-rejected); }
 .ab-verdict-flat { background: var(--accent-baseline); }
+
+/* Drift-kind movements — champion -> challenger per-kind deltas.
+   A worsened kind (more drift on the challenger) is the regression
+   colour; an improved kind the promotion colour; unchanged is neutral. */
+.drift-movements .drift-mv-worsened td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent-rejected);
+}
+.drift-movements .drift-mv-improved td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent-promoted);
+}
+.drift-dir {
+  display: inline-block; padding: 1px 8px; border-radius: 10px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: #ffffff;
+}
+.drift-dir-worsened { background: var(--accent-rejected); }
+.drift-dir-improved { background: var(--accent-promoted); }
+.drift-dir-unchanged { background: var(--accent-baseline); }
 .scalar-breakdown {
   background: var(--card-bg); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px 14px;

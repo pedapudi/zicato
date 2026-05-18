@@ -182,6 +182,15 @@ class AppState {
     this.healthReport = null;
     this.lineage = { generations: [], experiments: [] };
     this.experiments = [];
+    // GET /api/score-trajectory — the environment-wide evolution
+    // curve: one absolute-scalar point per generation, lineage order.
+    //   { epoch_id, points:[{generation_id, parent_generation_id,
+    //     promoted, scalar, entry_count, created_at}] }
+    this.scoreTrajectory = { points: [] };
+    // Per-generation drift-kind movements (champion -> challenger),
+    // cached by challenger generation id; lazily fetched from
+    // GET /api/drift-movements/:generation_id.
+    this.driftMovements = {};
     this.logLines = [];             // {ts, line, level}
     // GET /api/run-log?limit=40 — the structured event tail.
     //   { events:[{ seq:int|null, kind:str, ts:str|null, summary:str }] }
@@ -1499,34 +1508,42 @@ function renderTrajectory() {
   const svg = $('trajectory-svg');
   clearChildren(svg);
 
-  const gens = state.lineage.generations || [];
-  const exps = state.lineage.experiments || [];
-  const expByGen = new Map();
-  for (const e of exps) expByGen.set(e.generation_id, e);
+  // The environment-wide evolution curve: the ABSOLUTE per-generation
+  // scalar (drift-loss aggregate — lower is better), plotted in lineage
+  // order. Sourced from GET /api/score-trajectory, NOT from the
+  // per-round scalar_score_delta — a delta is not an evolution curve.
+  const points = (state.scoreTrajectory && state.scoreTrajectory.points) || [];
 
   const width = 720, height = 220;
   sizeSvg(svg, width, height);
-  if (gens.length === 0) {
+  if (points.length === 0) {
     svg.appendChild(svgEl('text', {
       class: 'svg-axis', x: width / 2, y: height / 2, 'text-anchor': 'middle',
     }, ['No generations to plot.']));
     return;
   }
 
-  const series = gens.map((g, i) => {
-    const id = genId(g);
-    const exp = expByGen.get(id);
-    if (!exp || !exp.outcome) {
-      return { i, id, decision: lineageDecision(g, exp), v: 0 };
-    }
-    return {
-      i, id,
-      decision: exp.outcome.tournament_decision,
-      v: exp.outcome.scalar_score_delta || 0,
-    };
-  });
+  // A generation with no scored runs yet carries scalar === null — it
+  // is kept on the x-axis (as a gap) so the lineage stays continuous.
+  const series = points.map((p, i) => ({
+    i,
+    id: p.generation_id,
+    decision: p.promoted === true ? 'promoted'
+      : p.promoted === false ? 'rejected'
+        : 'in_flight',
+    v: typeof p.scalar === 'number' ? p.scalar : null,
+    entryCount: p.entry_count || 0,
+  }));
 
-  const values = series.map(s => s.v);
+  const values = series.map(s => s.v).filter(v => v !== null);
+  if (values.length === 0) {
+    svg.appendChild(svgEl('text', {
+      class: 'svg-axis', x: width / 2, y: height / 2, 'text-anchor': 'middle',
+    }, ['No scored generations yet.']));
+    return;
+  }
+  // The scalar is a loss >= 0; anchor the axis at 0 so the curve's
+  // magnitude reads honestly.
   let vmin = Math.min(...values, 0);
   let vmax = Math.max(...values, 0);
   if (vmin === vmax) {
@@ -1554,22 +1571,12 @@ function renderTrajectory() {
       x2: marginL + plotW, y2: gy.toFixed(1),
       stroke: COLORS.grid, 'stroke-width': 0.5, 'stroke-opacity': 0.6,
     }));
+    // Absolute loss tick — no leading '+', this is a magnitude.
     const tickVal = vmax - (vmax - vmin) * k / 4;
     svg.appendChild(svgEl('text', {
       class: 'svg-axis',
       x: marginL - 6, y: (gy + 3).toFixed(1), 'text-anchor': 'end',
-    }, [tickVal >= 0 ? '+' + tickVal.toFixed(2) : tickVal.toFixed(2)]));
-  }
-
-  // zero line
-  if (vmin < 0 && 0 < vmax) {
-    const zy = toY(0);
-    svg.appendChild(svgEl('line', {
-      x1: marginL, y1: zy.toFixed(1),
-      x2: marginL + plotW, y2: zy.toFixed(1),
-      stroke: COLORS.baseline, 'stroke-width': 1, 'stroke-dasharray': '3 3',
-      'stroke-opacity': 0.8,
-    }));
+    }, [tickVal.toFixed(2)]));
   }
 
   // x-axis
@@ -1579,18 +1586,30 @@ function renderTrajectory() {
     stroke: COLORS.grid, 'stroke-width': 1,
   }));
 
-  // line connecting promoted
-  const promoted = series.filter(s => s.decision === 'promoted')
+  // The evolution curve: connect every SCORED generation in lineage
+  // order. A generation still being scored (scalar === null) is a gap
+  // — the line picks up again at the next scored point.
+  const scored = series.filter(s => s.v !== null)
     .map(s => [toX(s.i), toY(s.v)]);
-  if (promoted.length >= 2) {
-    const d = 'M ' + promoted.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L ');
+  if (scored.length >= 2) {
+    const d = 'M ' + scored.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L ');
     svg.appendChild(svgEl('path', {
-      d, fill: 'none', stroke: COLORS.promoted, 'stroke-width': 2,
+      d, fill: 'none', stroke: COLORS.baseline, 'stroke-width': 2,
     }));
   }
 
   for (const s of series) {
-    const cx = toX(s.i), cy = toY(s.v);
+    const cx = toX(s.i);
+    if (s.v === null) {
+      // Unscored generation — mark its x-axis slot, no data point.
+      svg.appendChild(svgEl('text', {
+        class: 'svg-axis',
+        x: cx.toFixed(1), y: (marginT + plotH + 14).toFixed(1),
+        'text-anchor': 'middle',
+      }, [s.id]));
+      continue;
+    }
+    const cy = toY(s.v);
     if (s.decision === 'promoted') {
       svg.appendChild(svgEl('circle', {
         cx: cx.toFixed(1), cy: cy.toFixed(1), r: 5,
@@ -1631,7 +1650,7 @@ function renderTrajectory() {
       class: 'svg-axis',
       x: cx.toFixed(1), y: (cy - 8).toFixed(1),
       'text-anchor': 'middle',
-    }, [fmtDelta(s.v)]));
+    }, [s.v.toFixed(2)]));
   }
 
   svg.appendChild(svgEl('text', {
@@ -1639,7 +1658,7 @@ function renderTrajectory() {
     x: marginL - 36, y: (marginT + plotH / 2).toFixed(1),
     'text-anchor': 'middle',
     transform: `rotate(-90 ${marginL - 36} ${(marginT + plotH / 2).toFixed(1)})`,
-  }, ['Δ scalar']));
+  }, ['scalar (loss)']));
 }
 
 // --- Render: drift heatmap
@@ -2521,6 +2540,51 @@ function matchupSummary(genId) {
   return matchups.find(m => m.challenger === genId) || null;
 }
 
+// Render the champion->challenger per-drift-kind movement table into
+// `wrap`. Data comes from GET /api/drift-movements/:gen (cached on
+// state.driftMovements). Each row names a drift kind, the champion's
+// and challenger's event counts, and the movement — "worsened" (more
+// drift on the challenger), "improved" (fewer), or "unchanged".
+function renderDriftMovements(wrap, genId, champ) {
+  const dm = state.driftMovements[genId];
+  if (!dm) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['Loading drift movements…']));
+    return;
+  }
+  const movements = Array.isArray(dm.movements) ? dm.movements : [];
+  if (movements.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      dm.note || 'No drift-kind movements recorded for this matchup.',
+    ]));
+    return;
+  }
+  const championLabel = dm.champion || champ || 'champion';
+  const challengerLabel = dm.challenger || genId || 'challenger';
+  const tbl = el('table', { class: 'data-table drift-movements' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['drift kind']),
+    el('th', null, [championLabel + ' (champion)']),
+    el('th', null, [challengerLabel + ' (challenger)']),
+    el('th', null, ['Δ']),
+    el('th', null, ['movement']),
+  ])]));
+  const tbody = el('tbody');
+  for (const mv of movements) {
+    const dir = String(mv.direction || 'unchanged');
+    const delta = Number(mv.delta || 0);
+    const deltaStr = delta > 0 ? '+' + delta : String(delta);
+    tbody.appendChild(el('tr', { class: 'drift-mv drift-mv-' + dir }, [
+      el('td', null, [el('code', { class: 'mono' }, [mv.kind || '—'])]),
+      el('td', { class: 'mono' }, [String(mv.champion_count != null ? mv.champion_count : 0)]),
+      el('td', { class: 'mono' }, [String(mv.challenger_count != null ? mv.challenger_count : 0)]),
+      el('td', { class: 'mono' }, [deltaStr]),
+      el('td', null, [el('span', { class: 'drift-dir drift-dir-' + dir }, [dir])]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+}
+
 function renderMatchupDetail() {
   const wrap = $('tournament-detail');
   if (!wrap) return;
@@ -2695,6 +2759,10 @@ function renderMatchupDetail() {
     tbl.appendChild(tbody);
     wrap.appendChild(tbl);
   }
+
+  // --- Drift-kind movements (champion -> challenger)
+  wrap.appendChild(el('h3', null, ['Drift-kind movements']));
+  renderDriftMovements(wrap, genId, champ);
 
   // --- Scalar breakdown
   wrap.appendChild(el('h3', null, ['Scalar breakdown']));
@@ -4683,6 +4751,10 @@ function applyEnvironment(env) {
   if (env.generations && typeof env.generations === 'object') {
     state.lineage = env.generations;
   }
+  if (env.score_trajectory && typeof env.score_trajectory === 'object'
+      && Array.isArray(env.score_trajectory.points)) {
+    state.scoreTrajectory = env.score_trajectory;
+  }
   if (Array.isArray(env.active_runs)) state.activeRuns = env.active_runs;
   if (env.health_report && typeof env.health_report === 'object') {
     state.setHealthReport(env.health_report);
@@ -4753,6 +4825,18 @@ async function loadMatchupDetail(genId) {
   } catch (err) {
     // Detail endpoint absent or 404 — renderMatchupDetail falls back to
     // the bracket summary record.
+  }
+  // Drift-kind movements: a separate endpoint, fetched alongside the
+  // matchup detail and cached by challenger id. A failure leaves the
+  // section showing "no movements" rather than breaking the panel.
+  try {
+    const dm = await fetchJson('/api/drift-movements/' + encodeURIComponent(genId));
+    state.driftMovements[genId] = dm;
+    if (currentView === 'tournament' && state.selectedMatchup === genId) {
+      renderMatchupDetail();
+    }
+  } catch (err) {
+    // Drift-movements endpoint unavailable — section degrades to empty.
   }
 }
 

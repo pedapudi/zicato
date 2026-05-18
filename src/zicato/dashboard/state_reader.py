@@ -1239,6 +1239,274 @@ def _latest_round_report(directory: Path) -> Path | None:
     return best[1] if best is not None else None
 
 
+# ---------------------------------------------------------------------------
+# Score trajectory — the environment-wide evolution curve
+# ---------------------------------------------------------------------------
+
+
+def _mean_drift_loss_per_generation(
+    conn: sqlite3.Connection, epoch_id: str | None, generation_id: str
+) -> tuple[float | None, int]:
+    """Return ``(mean_drift_loss, entry_count)`` for one generation.
+
+    A generation can appear in more than one tournament — it is
+    re-scored whenever it serves as a later round's champion — so the
+    index carries several ``loss_profiles`` rows for the same
+    ``(generation_id, entry_id)`` pair, and the index does not record a
+    usable per-run timestamp to order them by. To stay deterministic
+    regardless of row order, the aggregate is computed in two stages:
+
+    1. Per board entry, average that entry's ``drift_loss`` across every
+       run of it (so an entry run twice contributes its mean, not a
+       row-order-dependent pick).
+    2. The generation's scalar is the mean of those per-entry means.
+
+    Aborted runs ARE included: an aborted run carries a real,
+    definite worst-case ``drift_loss`` (the runner synthesises one),
+    and the tournament gate's scalar aggregates every entry — excluding
+    aborted runs would understate the curve and misrepresent the
+    evolution the gate actually saw.
+
+    Returns ``(None, 0)`` when the generation has no loss profiles.
+    """
+    rows = _query(
+        conn,
+        "SELECT entry_id, drift_loss FROM loss_profiles "
+        "WHERE generation_id = ? AND epoch_id = ?",
+        (generation_id, epoch_id),
+    )
+    per_entry: dict[str, list[float]] = {}
+    for r in rows:
+        if r["drift_loss"] is None:
+            continue
+        per_entry.setdefault(r["entry_id"], []).append(float(r["drift_loss"]))
+    if not per_entry:
+        return None, 0
+    entry_means = [sum(v) / len(v) for v in per_entry.values()]
+    return sum(entry_means) / len(entry_means), len(entry_means)
+
+
+def build_score_trajectory(paths: WorkspacePaths) -> dict[str, Any]:
+    """``GET /api/score-trajectory`` — the scalar across generations.
+
+    The environment-wide evolution curve: one point per generation, in
+    lineage (creation) order, plotting the generation's aggregate
+    drift-loss scalar (the dominant term of the tournament scalar — the
+    quantity the gate compares, lower is better).
+
+    The per-generation scalar is computed by
+    :func:`_mean_drift_loss_per_generation` — a deterministic,
+    row-order-independent mean of per-entry mean ``drift_loss`` that
+    includes aborted runs (they carry a real worst-case loss the gate
+    scalar uses). A generation with no loss profiles yet yields
+    ``scalar = None`` — still plotted as a gap rather than dropped, so
+    the x-axis stays continuous across the lineage.
+
+    Returns ``{"epoch_id", "points": [{generation_id, parent_generation_id,
+    promoted, scalar, entry_count, created_at}], "note"?}``. Degrades to
+    an empty ``points`` list (never raises) when the index is absent.
+    """
+    epoch_id = read_current_epoch(paths)
+    # Lineage order is authoritative for the x-axis — the index's
+    # ``generations`` rows can carry empty ``created_at`` strings.
+    lineage = build_lineage_view(paths)
+    ordered = [
+        g
+        for g in lineage.get("generations", [])
+        if epoch_id is None or g.get("epoch_id") == epoch_id
+    ]
+
+    try:
+        conn = _open_index(paths.index_db)
+    except _IndexAbsent:
+        return {
+            "epoch_id": epoch_id,
+            "points": [
+                {
+                    "generation_id": g["generation_id"],
+                    "parent_generation_id": g.get("parent_generation_id"),
+                    "promoted": g.get("promoted"),
+                    "scalar": None,
+                    "entry_count": 0,
+                    "created_at": g.get("created_at"),
+                }
+                for g in ordered
+            ],
+            "note": "index not built; run zicato reindex",
+        }
+    except sqlite3.Error:
+        return {"epoch_id": epoch_id, "points": []}
+
+    try:
+        points: list[dict[str, Any]] = []
+        for g in ordered:
+            gid = g["generation_id"]
+            scalar, entry_count = _mean_drift_loss_per_generation(conn, g.get("epoch_id"), gid)
+            points.append(
+                {
+                    "generation_id": gid,
+                    "parent_generation_id": g.get("parent_generation_id"),
+                    "promoted": g.get("promoted"),
+                    "scalar": scalar,
+                    "entry_count": entry_count,
+                    "created_at": g.get("created_at"),
+                }
+            )
+        return {"epoch_id": epoch_id, "points": points}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Drift-kind movements — champion -> challenger per-kind count deltas
+# ---------------------------------------------------------------------------
+
+
+def _drift_counts_for_generation(
+    conn: sqlite3.Connection, epoch_id: str | None, generation_id: str
+) -> dict[str, int]:
+    """Per-drift-kind event totals for one generation, averaged per entry.
+
+    Returns ``{drift_kind: total_count}`` where ``total_count`` is the
+    sum, over every board entry the generation ran, of that entry's
+    *mean* drift count for the kind (averaged across the entry's runs,
+    rounded). Averaging per entry — rather than summing raw rows — keeps
+    a generation that was re-scored across two tournaments (duplicate
+    ``loss_profiles`` rows) from double-counting its drift, exactly as
+    :func:`_mean_drift_loss_per_generation` does for the scalar. The
+    drift kind is the bare wire string (``metric_counts.name`` with the
+    ``"drift:"`` namespace prefix stripped, including ``custom:<judge>``
+    namespaced custom-judge kinds).
+
+    Aborted runs are included: a run that drifted and then aborted
+    still produced real drift events the movements view must reflect.
+    A generation with no drift events yields an empty mapping.
+    """
+    # entry_id -> run_id -> {kind: count}. Two index hops: which runs
+    # belong to the generation, then those runs' drift metric rows.
+    run_rows = _query(
+        conn,
+        "SELECT entry_id, run_id FROM loss_profiles " "WHERE generation_id = ? AND epoch_id = ?",
+        (generation_id, epoch_id),
+    )
+    runs_by_entry: dict[str, set[str]] = {}
+    for r in run_rows:
+        runs_by_entry.setdefault(r["entry_id"], set()).add(r["run_id"])
+    all_run_ids = {rid for rids in runs_by_entry.values() for rid in rids}
+    if not all_run_ids:
+        return {}
+
+    placeholders = ",".join("?" for _ in all_run_ids)
+    metric_rows = _query(
+        conn,
+        f"SELECT run_id, name, count FROM metric_counts "
+        f"WHERE namespace = 'drift' AND run_id IN ({placeholders})",
+        tuple(all_run_ids),
+    )
+    per_run: dict[str, dict[str, int]] = {}
+    for r in metric_rows:
+        name = str(r["name"] or "")
+        kind = name[len("drift:") :] if name.startswith("drift:") else name
+        if not kind:
+            continue
+        bucket = per_run.setdefault(r["run_id"], {})
+        bucket[kind] = bucket.get(kind, 0) + int(r["count"] or 0)
+
+    # Per entry: mean count per kind across the entry's runs; then sum
+    # those per-entry means across entries.
+    totals: dict[str, float] = {}
+    for run_ids in runs_by_entry.values():
+        entry_kind_sums: dict[str, int] = {}
+        for rid in run_ids:
+            for kind, cnt in per_run.get(rid, {}).items():
+                entry_kind_sums[kind] = entry_kind_sums.get(kind, 0) + cnt
+        n_runs = len(run_ids) or 1
+        for kind, total in entry_kind_sums.items():
+            totals[kind] = totals.get(kind, 0.0) + total / n_runs
+    return {kind: round(v) for kind, v in totals.items() if round(v) != 0}
+
+
+def build_drift_movements(paths: WorkspacePaths, generation_id: str) -> dict[str, Any]:
+    """``GET /api/drift-movements/:generation_id`` — champion->challenger drift deltas.
+
+    For the tournament that produced ``generation_id`` (the challenger),
+    compares the per-drift-kind event counts of the champion (parent)
+    against the challenger and reports the movement of each kind.
+
+    Returns ``{"epoch_id", "generation_id", "champion", "challenger",
+    "movements": [{kind, champion_count, challenger_count, delta,
+    direction}], "note"?}`` where ``direction`` is ``"worsened"`` (more
+    drift on the challenger), ``"improved"`` (fewer), or ``"unchanged"``.
+    Movements are sorted by descending ``|delta|`` so the biggest
+    regressions and improvements surface first. A kind absent from one
+    side counts as zero there.
+
+    Degrades to an empty ``movements`` list (never raises) when the
+    index, the tournament, or the parent generation cannot be resolved.
+    """
+    epoch_id = read_current_epoch(paths)
+    empty: dict[str, Any] = {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "champion": None,
+        "challenger": generation_id,
+        "movements": [],
+    }
+    try:
+        conn = _open_index(paths.index_db)
+    except _IndexAbsent:
+        return {**empty, "note": "index not built; run zicato reindex"}
+    except sqlite3.Error:
+        return empty
+
+    try:
+        tour = _query(
+            conn,
+            "SELECT parent_generation_id, child_generation_id FROM tournaments "
+            "WHERE child_generation_id = ? LIMIT 1",
+            (generation_id,),
+        )
+        if not tour:
+            return {**empty, "note": "no tournament found for this generation"}
+        parent_id = tour[0]["parent_generation_id"]
+        child_id = tour[0]["child_generation_id"]
+
+        champion_counts = _drift_counts_for_generation(conn, epoch_id, parent_id)
+        challenger_counts = _drift_counts_for_generation(conn, epoch_id, child_id)
+
+        movements: list[dict[str, Any]] = []
+        for kind in sorted(set(champion_counts) | set(challenger_counts)):
+            champ = champion_counts.get(kind, 0)
+            chall = challenger_counts.get(kind, 0)
+            delta = chall - champ
+            if delta > 0:
+                direction = "worsened"
+            elif delta < 0:
+                direction = "improved"
+            else:
+                direction = "unchanged"
+            movements.append(
+                {
+                    "kind": kind,
+                    "champion_count": champ,
+                    "challenger_count": chall,
+                    "delta": delta,
+                    "direction": direction,
+                }
+            )
+        # Biggest absolute movements first; ties broken alphabetically.
+        movements.sort(key=lambda m: (-abs(m["delta"]), m["kind"]))
+        return {
+            "epoch_id": epoch_id,
+            "generation_id": generation_id,
+            "champion": parent_id,
+            "challenger": child_id,
+            "movements": movements,
+        }
+    finally:
+        conn.close()
+
+
 def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:
     """``GET /api/health-report`` — the latest loop-health report."""
     epoch_id = read_current_epoch(paths)
@@ -1363,6 +1631,7 @@ def build_environment(
         "active_tournament": read_active_tournament_dict(paths),
         "tournaments": build_bracket(paths),
         "generations": build_lineage_view(paths),
+        "score_trajectory": build_score_trajectory(paths),
         "active_runs": read_active_runs_view(paths),
         "health_report": build_health_report(paths),
         "heartbeat": read_heartbeat_dict(paths),

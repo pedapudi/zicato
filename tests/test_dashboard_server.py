@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
-
 from zicato.dashboard.server import create_app
 
 # ---------------------------------------------------------------------------
@@ -257,6 +256,11 @@ def _build_index(path: Path, epoch_id: str) -> None:
             parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
             parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
             rejection_reason TEXT, ran_at TEXT);
+        CREATE TABLE runs(run_id TEXT, epoch_id TEXT, generation_id TEXT,
+            entry_id TEXT, started_at TEXT, ended_at TEXT, aborted INTEGER,
+            runtime_ms INTEGER);
+        CREATE TABLE metric_counts(run_id TEXT, namespace TEXT, name TEXT,
+            severity TEXT, count REAL);
         """
     )
     conn.executemany(
@@ -304,6 +308,25 @@ def _build_index(path: Path, epoch_id: str) -> None:
             "worse drift",
             "2026-05-16T04:30:00Z",
         ),
+    )
+    # runs feed the score-trajectory / drift-movements builders; one run
+    # per loss-profile row.
+    conn.executemany(
+        "INSERT INTO runs VALUES(?,?,?,?,?,?,?,?)",
+        [
+            ("r0", epoch_id, "v0", "waffles_single", "", "", 0, 100),
+            ("r1", epoch_id, "v1", "waffles_single", "", "", 0, 100),
+        ],
+    )
+    # metric_counts: champion (v0) has one off_topic drift; challenger
+    # (v1) has an off_topic AND a new tool_error — a clear worsening.
+    conn.executemany(
+        "INSERT INTO metric_counts VALUES(?,?,?,?,?)",
+        [
+            ("r0", "drift", "drift:off_topic", "warning", 1.0),
+            ("r1", "drift", "drift:off_topic", "warning", 1.0),
+            ("r1", "drift", "drift:tool_error", "critical", 2.0),
+        ],
     )
     conn.commit()
     conn.close()
@@ -592,6 +615,83 @@ def test_health_report(client: TestClient) -> None:
     assert body["healthy"] is False
     assert len(body["findings"]) == 1
     assert body["epoch_id"] == "2026-05-16_e0"
+
+
+# ---------------------------------------------------------------------------
+# Score trajectory — the environment-wide evolution curve
+# ---------------------------------------------------------------------------
+
+
+def test_score_trajectory_endpoint(client: TestClient) -> None:
+    """``/api/score-trajectory`` plots the absolute scalar per generation."""
+    r = client.get("/api/score-trajectory")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["epoch_id"] == "2026-05-16_e0"
+    points = {p["generation_id"]: p for p in body["points"]}
+    # Both fixture generations are plotted, in lineage order.
+    assert [p["generation_id"] for p in body["points"]] == ["v0", "v1"]
+    # The scalar is the mean drift_loss of the generation's runs:
+    # v0 had a single run at drift_loss 0.5; v1 at 0.2.
+    assert points["v0"]["scalar"] == pytest.approx(0.5)
+    assert points["v1"]["scalar"] == pytest.approx(0.2)
+    # v1's loss is LOWER than v0's — the curve shows an improvement.
+    assert points["v1"]["scalar"] < points["v0"]["scalar"]
+    assert points["v0"]["promoted"] is True
+    assert points["v1"]["promoted"] is False
+    assert points["v0"]["entry_count"] == 1
+
+
+def test_score_trajectory_in_environment_payload(client: TestClient) -> None:
+    """The consolidated /api/environment carries the score trajectory."""
+    r = client.get("/api/environment")
+    assert r.status_code == 200
+    body = r.json()
+    assert "score_trajectory" in body
+    assert isinstance(body["score_trajectory"]["points"], list)
+    assert len(body["score_trajectory"]["points"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Drift-kind movements — champion -> challenger per-kind deltas
+# ---------------------------------------------------------------------------
+
+
+def test_drift_movements_endpoint(client: TestClient) -> None:
+    """``/api/drift-movements/:gen`` reports champion->challenger drift deltas."""
+    r = client.get("/api/drift-movements/v1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["champion"] == "v0"
+    assert body["challenger"] == "v1"
+    moves = {m["kind"]: m for m in body["movements"]}
+    # off_topic: 1 on the champion, 1 on the challenger — unchanged.
+    assert moves["off_topic"]["champion_count"] == 1
+    assert moves["off_topic"]["challenger_count"] == 1
+    assert moves["off_topic"]["direction"] == "unchanged"
+    # tool_error: absent on the champion, 2 on the challenger — worsened.
+    assert moves["tool_error"]["champion_count"] == 0
+    assert moves["tool_error"]["challenger_count"] == 2
+    assert moves["tool_error"]["delta"] == 2
+    assert moves["tool_error"]["direction"] == "worsened"
+    # Biggest absolute movement first.
+    assert body["movements"][0]["kind"] == "tool_error"
+
+
+def test_drift_movements_unknown_generation(client: TestClient) -> None:
+    """A generation with no tournament degrades to an empty movement list."""
+    r = client.get("/api/drift-movements/v9")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["movements"] == []
+    assert body["champion"] is None
+
+
+def test_drift_movements_invalid_id(client: TestClient) -> None:
+    """A malformed generation id degrades to an empty matchup, no 500."""
+    r = client.get("/api/drift-movements/bad%20id")
+    assert r.status_code == 200
+    assert r.json()["movements"] == []
 
 
 # ---------------------------------------------------------------------------

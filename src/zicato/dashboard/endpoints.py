@@ -149,6 +149,24 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     async def api_health_report(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_health_report(paths))
 
+    async def api_score_trajectory(_request: Request) -> JSONResponse:
+        # The environment-wide evolution curve — scalar per generation.
+        return JSONResponse(state_reader.build_score_trajectory(paths))
+
+    async def api_drift_movements(request: Request) -> JSONResponse:
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(generation_id):
+            return JSONResponse(
+                {
+                    "epoch_id": state_reader.read_current_epoch(paths),
+                    "generation_id": generation_id,
+                    "champion": None,
+                    "challenger": generation_id,
+                    "movements": [],
+                }
+            )
+        return JSONResponse(state_reader.build_drift_movements(paths, generation_id))
+
     # -- file-tree / file-browser endpoints --------------------------
 
     async def api_files(_request: Request) -> JSONResponse:
@@ -367,6 +385,8 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_tournaments": api_tournaments,
         "api_tournament_detail": api_tournament_detail,
         "api_health_report": api_health_report,
+        "api_score_trajectory": api_score_trajectory,
+        "api_drift_movements": api_drift_movements,
         "api_files": api_files,
         "api_files_tree": api_files_tree,
         "api_files_content": api_files_content,

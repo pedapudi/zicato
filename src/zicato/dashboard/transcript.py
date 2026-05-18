@@ -346,8 +346,10 @@ def _judge_summary(kind: str, payload: dict[str, Any]) -> str:
 
 
 def _plan_summary(kind: str, payload: dict[str, Any]) -> str:
-    plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else {}
-    tasks = plan.get("tasks") if isinstance(plan.get("tasks"), list) else []
+    raw_plan = payload.get("plan")
+    plan: dict[str, Any] = raw_plan if isinstance(raw_plan, dict) else {}
+    raw_tasks = plan.get("tasks")
+    tasks: list[Any] = raw_tasks if isinstance(raw_tasks, list) else []
     titles = [str(t.get("title") or t.get("id") or "") for t in tasks if isinstance(t, dict)]
     rev = payload.get("revision_index")
     if rev is None and isinstance(plan, dict):
@@ -406,7 +408,7 @@ def _agent_of(payload: dict[str, Any]) -> str | None:
 
 def _conversation_event(
     kind: str, payload: dict[str, Any]
-) -> tuple[str, str, str, dict | None, dict | None] | None:
+) -> tuple[str, str, str, dict[str, Any] | None, dict[str, Any] | None] | None:
     """Map a conversation-bearing event to turn material.
 
     Returns ``(role, agent, text, tool_call, tool_result)`` or ``None``

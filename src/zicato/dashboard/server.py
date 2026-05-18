@@ -163,6 +163,11 @@ def create_app(
             handlers["api_tournament_detail"],
         ),
         Route("/api/health-report", handlers["api_health_report"]),
+        Route("/api/score-trajectory", handlers["api_score_trajectory"]),
+        Route(
+            "/api/drift-movements/{generation_id}",
+            handlers["api_drift_movements"],
+        ),
         Route("/api/files", handlers["api_files"]),
         Route(
             "/api/files/{epoch_id}/{generation_id}/tree",
