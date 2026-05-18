@@ -319,7 +319,15 @@ def test_reduce_loss_plan_revisions_and_task_ratio(tmp_path: Path) -> None:
 
 
 def test_reduce_loss_wall_clock_budget_exceeded_heavy_term(tmp_path: Path) -> None:
-    """When wall_clock_budget_exceeded is True, the loss carries a heavy term."""
+    """A budget-exceeded run carries the full not-completed penalty.
+
+    ``wall_clock_budget_exceeded`` is one non-success terminal state, so
+    it triggers the same penalty as any other: the heavy fixed term
+    ``not_completed_penalty`` PLUS the floored ``task_failure_ratio`` of
+    1.0 contributing ``_TASK_FAILURE_RATIO_MULTIPLIER`` inside
+    ``compute_drift_loss``. For the default weights that is
+    ``5.0 * 10.0 + 10.0 * 1.0 == 60.0`` over the clean baseline.
+    """
     p = tmp_path / "events.jsonl"
     _write_events_jsonl(p, [])
     weights = _default_weights()
@@ -344,8 +352,10 @@ def test_reduce_loss_wall_clock_budget_exceeded_heavy_term(tmp_path: Path) -> No
         weights=weights,
     )
     assert busted.wall_clock_budget_exceeded is True
-    # Heavy term = 5.0 * max(severity_weights.values()) = 5.0 * 10.0 = 50.0
-    assert busted.drift_loss - base.drift_loss == pytest.approx(50.0)
+    # Heavy term 5.0 * max(severity_weights) = 50.0, plus the floored
+    # task_failure_ratio of 1.0 * 10.0 = 10.0 → 60.0 total.
+    assert busted.drift_loss - base.drift_loss == pytest.approx(60.0)
+    assert busted.task_failure_ratio == pytest.approx(1.0)
 
 
 def test_reduce_loss_pass_fail_from_expectation_result(tmp_path: Path) -> None:
@@ -1053,3 +1063,274 @@ def test_reduce_loss_custom_drift_appears_in_metric_counts(tmp_path: Path) -> No
     # MetricCount.from_drift_count prefixes "drift:" — the judge identity
     # rides inside the kind segment.
     assert "drift:custom:slide_quality" in names
+
+
+# ---------------------------------------------------------------------------
+# camelCase payload keys — goldfive's plain-JSON wire form
+# ---------------------------------------------------------------------------
+#
+# Goldfive's persistence sink serialises event payloads via MessageToJson,
+# which renders proto field names in camelCase (``driftDetected``). When the
+# reducer falls back to plain-JSON reading (the strict proto-replay path is
+# not always usable — e.g. a JSONL that mixes camelCase and snake_case
+# envelope shapes), the dispatch in ``reduce_loss`` must still recognise
+# those keys. These tests exercise the camelCase wire form directly.
+
+
+def _camel_drift_event(kind: str, severity: str, seq: int) -> dict:
+    """A ``DriftDetected`` event in goldfive's camelCase MessageToJson form."""
+    return {
+        "eventId": f"e{seq}",
+        "runId": "run-camel",
+        "sequence": seq,
+        "driftDetected": {"kind": kind, "severity": severity, "detail": ""},
+    }
+
+
+def test_reduce_loss_folds_camelcase_drift_verdicts(tmp_path: Path) -> None:
+    """Drift events written in goldfive's camelCase wire form fold into drift_loss.
+
+    Regression for F1: goldfive's persistence sink emits ``driftDetected``
+    (camelCase), but the reducer dispatch keyed on the snake_case
+    ``drift_detected`` — so every in-run judge verdict was silently
+    dropped and the run scored ``drift_loss == 0.0``.
+    """
+    events = [
+        _camel_drift_event("DRIFT_KIND_CAPABILITY_MISMATCH", "DRIFT_SEVERITY_CRITICAL", 0),
+        _camel_drift_event("DRIFT_KIND_OFF_TOPIC", "DRIFT_SEVERITY_WARNING", 1),
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    assert by_key == {
+        ("capability_mismatch", "critical"): 1,
+        ("off_topic", "warning"): 1,
+    }
+    # Loss = 10*1 (critical) + 3*1 (warning) = 13, strictly > 0.
+    assert profile.drift_loss == pytest.approx(13.0)
+    assert profile.drift_loss > 0.0
+    # The run_id is read from the camelCase ``runId`` envelope key.
+    assert profile.run_id == "run-camel"
+
+
+def test_reduce_loss_camelcase_judgement_attributes_custom_drift(tmp_path: Path) -> None:
+    """A camelCase ``judgementEmitted`` pairs with the next camelCase drift.
+
+    Custom-judge attribution must work in the camelCase wire form too:
+    the paired ``judgeName`` is folded into the ``custom:<judge_name>``
+    drift kind exactly as in the snake_case path.
+    """
+    events = [
+        {
+            "eventId": "j0",
+            "runId": "run-camel",
+            "sequence": 0,
+            "judgementEmitted": {
+                "judgeName": "slide_quality",
+                "verdictKind": "drift",
+                "driftKind": "custom",
+                "severity": "warning",
+            },
+        },
+        _camel_drift_event("DRIFT_KIND_CUSTOM", "DRIFT_SEVERITY_WARNING", 1),
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
+    assert by_key == {("custom:slide_quality", "warning"): 1}
+    assert profile.drift_loss > 0.0
+
+
+def test_reduce_loss_camelcase_plan_revisions_and_llm_calls(tmp_path: Path) -> None:
+    """camelCase ``planRevised`` / ``goldfiveLlmCallEnd`` events are counted.
+
+    The camelCase-vs-snake_case bug dropped *every* event kind in
+    plain-JSON mode, not just drift — so plan-revision and llm-call
+    counts also silently zeroed. This pins the broader fix.
+    """
+    events = [
+        {"eventId": "r0", "runId": "run-camel", "sequence": 0, "planRevised": {"reason": "x"}},
+        {
+            "eventId": "l0",
+            "runId": "run-camel",
+            "sequence": 1,
+            "goldfiveLlmCallEnd": {"name": "step", "spanId": "s1"},
+        },
+        {
+            "eventId": "l1",
+            "runId": "run-camel",
+            "sequence": 2,
+            "goldfiveLlmCallEnd": {"name": "step", "spanId": "s2"},
+        },
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=0,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    assert profile.plan_revisions == 1
+    llm = {m.name: m.count for m in profile.metric_counts}
+    assert llm["cost:llm_calls"] == pytest.approx(2.0)
+    # plan_revision_weight default is 0.5 → loss reflects the revision.
+    assert profile.drift_loss == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# Not-completed penalty — F3: failure modes scored uniformly, never 0.0
+# ---------------------------------------------------------------------------
+
+
+def test_not_completed_penalty_keyed_off_severity_weights() -> None:
+    """``not_completed_penalty`` is ``5.0 * max(severity_weights)``."""
+    from zicato.telemetry.reducer import not_completed_penalty
+
+    w = ScoringWeights(severity_weights={"info": 1.0, "warning": 3.0, "critical": 10.0})
+    assert not_completed_penalty(w) == pytest.approx(50.0)
+    # An epoch with no severity weights still gets a non-trivial penalty.
+    w_empty = ScoringWeights(severity_weights={})
+    assert not_completed_penalty(w_empty) == pytest.approx(5.0)
+
+
+def test_reduce_loss_run_not_completed_penalises_crashed_run(tmp_path: Path) -> None:
+    """A crashed run (empty events, run_not_completed=True) is scored worst-case.
+
+    Regression for F3: a run that fails instantly by exception leaves an
+    empty events file. Without the not-completed penalty it would score
+    ``drift_loss == 0.0`` — the BEST possible score — letting a
+    challenger generation win a tournament by crashing fast.
+    """
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, [])
+    weights = _default_weights()
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=1,
+        wall_clock_budget_exceeded=False,
+        weights=weights,
+        run_not_completed=True,
+    )
+    # Heavy term 50.0 + floored task_failure_ratio 1.0 * 10.0 = 60.0.
+    assert profile.drift_loss == pytest.approx(60.0)
+    assert profile.drift_loss > 0.0
+    assert profile.task_failure_ratio == pytest.approx(1.0)
+
+
+def test_reduce_loss_killed_crashed_aborted_all_penalised(tmp_path: Path) -> None:
+    """Every non-success terminal state lands the SAME penalty — none 0.0.
+
+    Killed (wall_clock_budget_exceeded), crashed / aborted / errored
+    (run_not_completed) all score identically, so no failure mode is
+    cheaper than another and a fast crash cannot beat a slow kill.
+    """
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, [])
+    weights = _default_weights()
+
+    def _loss(*, budget: bool, not_completed: bool) -> LossProfile:
+        return reduce_loss(
+            events_jsonl_path=p,
+            entry=_single_turn_entry(),
+            generation_id="v0",
+            epoch_id="ep1",
+            expectation_result=None,
+            runtime_ms=1,
+            wall_clock_budget_exceeded=budget,
+            weights=weights,
+            run_not_completed=not_completed,
+        )
+
+    killed = _loss(budget=True, not_completed=False)
+    crashed = _loss(budget=False, not_completed=True)
+    both = _loss(budget=True, not_completed=True)
+    completed = _loss(budget=False, not_completed=False)
+
+    # None of the non-success states score the best-possible 0.0.
+    for label, prof in (("killed", killed), ("crashed", crashed), ("both", both)):
+        assert prof.drift_loss > 0.0, f"{label} run scored 0.0 drift_loss"
+    # All non-success states score IDENTICALLY — the penalty is applied
+    # exactly once even when both flags are set.
+    assert killed.drift_loss == pytest.approx(crashed.drift_loss)
+    assert both.drift_loss == pytest.approx(killed.drift_loss)
+    # The completed run is the only one that may score 0.0.
+    assert completed.drift_loss == pytest.approx(0.0)
+
+
+def test_reduce_loss_run_not_completed_with_drift_stacks(tmp_path: Path) -> None:
+    """A not-completed run that ALSO emitted drift stacks both contributions.
+
+    The not-completed penalty is additive on top of any drift the run
+    managed to emit before failing — it does not replace the drift loss.
+    """
+    events = [
+        _camel_drift_event("DRIFT_KIND_OFF_TOPIC", "DRIFT_SEVERITY_WARNING", 0),
+    ]
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, events)
+    weights = _default_weights()
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=1,
+        wall_clock_budget_exceeded=False,
+        weights=weights,
+        run_not_completed=True,
+    )
+    # drift 3.0 (warning) + heavy term 50.0 + task_failure 10.0 = 63.0.
+    assert profile.drift_loss == pytest.approx(63.0)
+
+
+def test_reduce_loss_completed_run_unaffected_by_default(tmp_path: Path) -> None:
+    """A run that completed cleanly is scored exactly as before.
+
+    ``run_not_completed`` defaults to False; a completed run with no
+    drift still scores ``drift_loss == 0.0`` — back-compat for every
+    existing caller.
+    """
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, [])
+    profile = reduce_loss(
+        events_jsonl_path=p,
+        entry=_single_turn_entry(),
+        generation_id="v0",
+        epoch_id="ep1",
+        expectation_result=None,
+        runtime_ms=100,
+        wall_clock_budget_exceeded=False,
+        weights=_default_weights(),
+    )
+    assert profile.drift_loss == pytest.approx(0.0)
+    assert profile.task_failure_ratio == pytest.approx(0.0)

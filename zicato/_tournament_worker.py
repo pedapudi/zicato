@@ -500,6 +500,17 @@ async def _run(args: dict[str, Any]) -> None:
 
     expectation_result = await _evaluate_expectation(entry, run_result, config)
 
+    # A run that did not complete successfully must be scored worst-case,
+    # never zero. The worker reaches this point only on a clean worker
+    # exit; the run ITSELF may still have failed. ``run_result.aborted``
+    # is the adapter's verdict — set for a harness exception (a crash),
+    # an emulator answer-leak abort, an unavailable scripted / emulated
+    # driver, or an unsupported entry kind. ``budget_exceeded`` already
+    # covers the wall-clock case and is passed separately. A ``None``
+    # ``run_result`` is the legacy stub path — a genuinely completed run
+    # with no RunResult — so it is NOT treated as not-completed.
+    run_not_completed = bool(run_result is not None and run_result.aborted)
+
     loss: LossProfile = reducer_mod.reduce_loss(
         events_path,
         entry,
@@ -509,6 +520,7 @@ async def _run(args: dict[str, Any]) -> None:
         runtime_ms,
         budget_exceeded,
         weights,
+        run_not_completed=run_not_completed,
     )
     reducer_mod.write_loss_profile(loss, loss_path)
 
