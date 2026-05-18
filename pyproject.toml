@@ -60,6 +60,12 @@ dev = [
     "uvicorn >= 0.30",
     "watchdog >= 4.0",
     "httpx >= 0.27",
+    # The vendored dogfood targets — a separate distribution under
+    # examples/, resolved as a uv workspace member (see
+    # [tool.uv.sources] below). The test_example_* smoke tests import
+    # it as `zicato_examples.*`. It is never shipped in the zicato
+    # wheel.
+    "zicato-examples",
 ]
 
 [project.scripts]
@@ -131,3 +137,14 @@ testpaths = ["tests"]
 # not see it. Pin the repo root explicitly so src-layout imports
 # resolve via the installed/editable package consistently.
 pythonpath = ["."]
+
+# uv workspace: the vendored dogfood targets under examples/ are a
+# distinct distribution (zicato-examples). Declaring examples/ as a
+# workspace member lets `uv sync --all-extras` install it editable
+# alongside zicato — no PYTHONPATH or symlink hacks. It is wired into
+# the `dev` extra above via the source mapping below.
+[tool.uv.workspace]
+members = ["examples"]
+
+[tool.uv.sources]
+zicato-examples = { workspace = true }

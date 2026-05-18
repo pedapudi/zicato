@@ -15,15 +15,18 @@ plumbing, not to produce a meaningful improvement signal.
 
 The smoke test exercises the full orchestrator path, which in turn
 imports goldfive (for the inner-harness runner) and the ADK SDK (for
-the agent tree). Both are optional extras; if your venv does not
-already have them, install them once:
+the agent tree). Install the repo with its dev extra — this pulls in
+goldfive, the ADK SDK, and the `zicato-examples` package (which makes
+`zicato_examples.*` importable from anywhere, no symlinks needed):
 
 ```bash
-VIRTUAL_ENV=/home/sunil/git/zicato/.venv uv pip install -e /home/sunil/git/goldfive
-VIRTUAL_ENV=/home/sunil/git/zicato/.venv uv pip install google-adk
+make install     # uv sync --all-extras, from a repo checkout
 ```
 
-(Adjust paths for your machine.)
+`make install` installs both `zicato` and `zicato-examples` editable
+into the environment. The example modules are then importable by
+their dotted path (`zicato_examples.target_1_presentation.*`) without
+any `PYTHONPATH` juggling.
 
 ## End-to-end loop
 
@@ -36,14 +39,19 @@ exactly there (the paths are recorded in `.zicato/config.json` under
 *and* publishes them to that canonical location, so the two stay in
 agreement and `evolve` finds the contract whichever way you reach it.
 
+The board / brief / scoring files referenced below live next to this
+RUN.md, under `examples/zicato_examples/target_1_presentation/` in a
+repo checkout. Adjust the absolute paths for your machine.
+
 ```bash
-# Pick a scratch workspace anywhere off the repo. Symlink the examples/
-# tree so the dotted imports resolve.
+# Pick a scratch workspace anywhere off the repo. Because zicato-examples
+# is installed (make install), zicato_examples.* imports resolve with
+# no symlink or PYTHONPATH hacks.
 rm -rf /tmp/zicato-smoke-t1
 mkdir -p /tmp/zicato-smoke-t1
 cd /tmp/zicato-smoke-t1
-ln -s /home/sunil/git/zicato/examples ./examples
 
+EX=/home/sunil/git/zicato/examples/zicato_examples/target_1_presentation
 PY=/home/sunil/git/zicato/.venv/bin/python
 
 # 1. Bootstrap the workspace.
@@ -51,28 +59,28 @@ $PY -m zicato.cli init --workspace .zicato
 
 # 2. Register the agent + the mutable source tree.
 $PY -m zicato.cli register --workspace .zicato \
-    --adk examples.target_1_presentation.agent.agent:root_agent \
-    --mutable-tree /home/sunil/git/zicato/examples/target_1_presentation/agent
+    --adk zicato_examples.target_1_presentation.agent.agent:root_agent \
+    --mutable-tree $EX/agent
 
 # 3. Open an epoch from the example's board / brief / scoring. epoch new
 #    freezes a per-epoch copy AND publishes these files as the live
 #    contract (here: /tmp/zicato-smoke-t1/board.jsonl, brief.md,
 #    scoring.json) so the evolve in step 5 resolves the same contract.
 $PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
-    --board   /home/sunil/git/zicato/examples/target_1_presentation/board.jsonl \
-    --brief   /home/sunil/git/zicato/examples/target_1_presentation/rubric.md \
-    --scoring /home/sunil/git/zicato/examples/target_1_presentation/scoring.json
+    --board   $EX/board.jsonl \
+    --brief   $EX/rubric.md \
+    --scoring $EX/scoring.json
 
 # 4. Inspect the mutation surface the proposer will see (9 ids).
 $PY -m zicato.cli mutations --workspace .zicato
 
-# 5. Run two evolve rounds. PYTHONPATH=. picks up the symlinked
-#    examples/ tree. evolve resolves the contract published in step 3,
-#    so it continues the t1_smoke epoch rather than rolling a new one.
-PYTHONPATH=. $PY -m zicato.cli evolve --workspace .zicato \
+# 5. Run two evolve rounds. evolve resolves the contract published in
+#    step 3, so it continues the t1_smoke epoch rather than rolling a
+#    new one.
+$PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full \
-    --harness-call-llm   examples.target_1_presentation.mocks:harness_llm \
-    --auxiliary-call-llm examples.target_1_presentation.mocks:aux_llm
+    --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
+    --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
 
 # 6. Close the epoch to produce analysis.md and analysis.html.
 $PY -m zicato.cli epoch close --workspace .zicato
@@ -94,17 +102,17 @@ first epoch:
 
 ```bash
 # After steps 1-2 above, with the contract files written next to the
-# workspace:
-cp /home/sunil/git/zicato/examples/target_1_presentation/board.jsonl  ./board.jsonl
-cp /home/sunil/git/zicato/examples/target_1_presentation/rubric.md    ./brief.md
-cp /home/sunil/git/zicato/examples/target_1_presentation/scoring.json ./scoring.json
+# workspace ($EX as defined earlier):
+cp $EX/board.jsonl  ./board.jsonl
+cp $EX/rubric.md    ./brief.md
+cp $EX/scoring.json ./scoring.json
 
 # evolve sees no current epoch, resolves the contract from the three
 # files above, and auto-opens epoch e0 before running the loop.
-PYTHONPATH=. $PY -m zicato.cli evolve --workspace .zicato \
+$PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full \
-    --harness-call-llm   examples.target_1_presentation.mocks:harness_llm \
-    --auxiliary-call-llm examples.target_1_presentation.mocks:aux_llm
+    --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
+    --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
 ```
 
 Editing any of those three files between `evolve` invocations changes

@@ -6,22 +6,26 @@ patches against goldfive's own prompt + threshold surface; the runner
 mounts a fresh goldfive snapshot per generation; the tournament scores
 the snapshots against an adversarial board.
 
-If `examples/target_1_presentation/RUN.md` is "drive a real ADK
-presentation agent end-to-end", this is "drive goldfive's own
+If `examples/zicato_examples/target_1_presentation/RUN.md` is "drive a
+real ADK presentation agent end-to-end", this is "drive goldfive's own
 steering layer end-to-end".
 
 ## 0. Prerequisites
 
 * Python 3.11+
-* `zicato` installed editable from this repo: `pip install -e .`
+* `zicato` + `zicato-examples` installed from a repo checkout:
+  `make install` (runs `uv sync --all-extras`). This installs the
+  `zicato-examples` package so `zicato_examples.*` is importable from
+  anywhere — no symlink or `PYTHONPATH` hacks.
 * `goldfive` installed editable from the worktree that ships the
   optimization manifest + adversarial testkit:
   ```
   pip install -e /home/sunil/git/goldfive-zicato-optimization-surface
   ```
-* The mock callables in `examples/target_2_goldfive_steering/mocks.py`
-  are byte-deterministic, so no LLM credentials are required for the
-  smoke run.
+* The mock callables in
+  `examples/zicato_examples/target_2_goldfive_steering/mocks.py` are
+  byte-deterministic, so no LLM credentials are required for the smoke
+  run.
 
 Sanity check:
 ```
@@ -36,13 +40,14 @@ name, and 31 mutations (the prompts + threshold knobs declared in
 
 ## 1. Workspace setup
 
-Pick a scratch directory. The smoke test uses `/tmp/zicato-smoke-t2/`
-and symlinks `examples` so the mock module is importable by its
-`examples.target_2_goldfive_steering.mocks:harness_llm` dotted path:
+Pick a scratch directory. The smoke test uses `/tmp/zicato-smoke-t2/`.
+Because `zicato-examples` is installed (`make install`), the mock
+module is importable by its
+`zicato_examples.target_2_goldfive_steering.mocks:harness_llm` dotted
+path with no symlink:
 
 ```
 mkdir -p /tmp/zicato-smoke-t2
-ln -snf /home/sunil/git/zicato/examples /tmp/zicato-smoke-t2/examples
 cd /tmp/zicato-smoke-t2
 ```
 
@@ -52,7 +57,7 @@ mutable tree:
 ```
 python -m zicato.cli init --workspace .zicato
 python -m zicato.cli register --workspace .zicato \
-    --adk examples.target_2_goldfive_steering.agent_under_test:agent \
+    --adk zicato_examples.target_2_goldfive_steering.agent_under_test:agent \
     --mutable-tree /home/sunil/git/goldfive-zicato-optimization-surface
 ```
 
@@ -82,11 +87,16 @@ and is invoked from `zicato.mutation.enumerator.enumerate_mutations`.
 
 ## 3. Create the epoch
 
+The board / rubric / scoring files live next to this RUN.md, under
+`examples/zicato_examples/target_2_goldfive_steering/` in a checkout
+(adjust the absolute paths for your machine):
+
 ```
+EX=/home/sunil/git/zicato/examples/zicato_examples/target_2_goldfive_steering
 python -m zicato.cli epoch new t2_smoke --workspace .zicato \
-    --board /home/sunil/git/zicato/examples/target_2_goldfive_steering/board.jsonl \
-    --rubric /home/sunil/git/zicato/examples/target_2_goldfive_steering/rubric.md \
-    --scoring /home/sunil/git/zicato/examples/target_2_goldfive_steering/scoring.json
+    --board   $EX/board.jsonl \
+    --rubric  $EX/rubric.md \
+    --scoring $EX/scoring.json
 ```
 
 The board ships 10 entries:
@@ -119,8 +129,8 @@ Two rounds against the seeded baseline:
 python -m zicato.cli evolve --workspace .zicato \
     --rounds 2 \
     --mode full \
-    --harness-call-llm examples.target_2_goldfive_steering.mocks:harness_llm \
-    --auxiliary-call-llm examples.target_2_goldfive_steering.mocks:aux_llm
+    --harness-call-llm zicato_examples.target_2_goldfive_steering.mocks:harness_llm \
+    --auxiliary-call-llm zicato_examples.target_2_goldfive_steering.mocks:aux_llm
 ```
 
 What happens, step by step:

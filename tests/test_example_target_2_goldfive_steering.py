@@ -13,7 +13,12 @@ import importlib
 import json
 from pathlib import Path
 
-EXAMPLE_DIR = Path(__file__).resolve().parent.parent / "examples" / "target_2_goldfive_steering"
+# Resolve the example directory through the installed
+# ``zicato_examples`` package so the test is independent of where the
+# examples distribution lives on disk.
+import zicato_examples.target_2_goldfive_steering as _t2_pkg  # noqa: E402
+
+EXAMPLE_DIR = Path(_t2_pkg.__file__).resolve().parent
 
 
 def test_board_loads() -> None:
@@ -45,7 +50,7 @@ def test_board_loads() -> None:
 def test_predicates_module_imports() -> None:
     """The predicates module imports and exports the three documented hooks."""
 
-    mod = importlib.import_module("examples.target_2_goldfive_steering.predicates")
+    mod = importlib.import_module("zicato_examples.target_2_goldfive_steering.predicates")
     assert hasattr(mod, "required_drift_fired")
     assert hasattr(mod, "no_warning_or_critical_drift")
     assert hasattr(mod, "output_mentions_target_token")

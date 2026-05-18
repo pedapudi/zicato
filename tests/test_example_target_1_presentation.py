@@ -16,7 +16,12 @@ from pathlib import Path
 
 import pytest
 
-EXAMPLE_DIR = Path(__file__).resolve().parent.parent / "examples" / "target_1_presentation"
+# Resolve the example directory through the installed
+# ``zicato_examples`` package so the test is independent of where the
+# examples distribution lives on disk.
+import zicato_examples.target_1_presentation as _t1_pkg  # noqa: E402
+
+EXAMPLE_DIR = Path(_t1_pkg.__file__).resolve().parent
 AGENT_DIR = EXAMPLE_DIR / "agent"
 BOARD_PATH = EXAMPLE_DIR / "board.jsonl"
 SCORING_PATH = EXAMPLE_DIR / "scoring.json"
@@ -34,7 +39,7 @@ def test_agent_module_imports() -> None:
     written so the bare import is side-effect free and ``build_agent_tree``
     is the only place that touches ``google.adk``.
     """
-    mod = importlib.import_module("examples.target_1_presentation.agent")
+    mod = importlib.import_module("zicato_examples.target_1_presentation.agent")
     assert hasattr(mod, "build_agent_tree")
     # ``root_agent`` is a PEP 562 lazy attribute — we don't materialise it
     # in this test because doing so requires google-adk to be installed.

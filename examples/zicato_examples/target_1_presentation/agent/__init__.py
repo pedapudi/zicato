@@ -41,7 +41,7 @@ def __getattr__(name: str) -> Any:
     """PEP 562 lazy attribute — forward ``root_agent`` to the submodule.
 
     Resolves ``root_agent`` lazily so that ``import
-    examples.target_1_presentation.agent`` is safe even when
+    zicato_examples.target_1_presentation.agent`` is safe even when
     ``google-adk`` is absent (e.g. static-tooling test runs). The
     actual build happens inside :mod:`.agent` on first access.
     """

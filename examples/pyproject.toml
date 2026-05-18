@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "zicato-examples"
+version = "0.3.0"
+description = "Vendored dogfood targets for the zicato self-improving harness."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Sunil Pedapudi" },
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Private :: Do Not Upload",
+]
+# The example targets exercise the full orchestrator path, which pulls
+# in goldfive (inner harness) and the ADK SDK (agent tree). Depending
+# on zicato itself keeps a single source of truth for those extras.
+dependencies = [
+    "zicato[adk]",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["zicato_examples"]

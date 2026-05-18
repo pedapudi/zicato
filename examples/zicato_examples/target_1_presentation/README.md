@@ -67,7 +67,7 @@ walks these markers and renders them in a table. Until that command is
 implemented you can preview the surface with:
 
 ```bash
-grep -n 'zicato:mutable' examples/target_1_presentation/agent/agent.py
+grep -n 'zicato:mutable' examples/zicato_examples/target_1_presentation/agent/agent.py
 ```
 
 The proposer's `Patch` objects address these ids by their stable
@@ -147,12 +147,12 @@ of zicato's runtime:
 
 ```bash
 # Mutation surface preview
-grep -n 'zicato:mutable' examples/target_1_presentation/agent/agent.py
+grep -n 'zicato:mutable' examples/zicato_examples/target_1_presentation/agent/agent.py
 
 # Board entries
 python -c "
 import json
-with open('examples/target_1_presentation/board.jsonl') as f:
+with open('examples/zicato_examples/target_1_presentation/board.jsonl') as f:
     for line in f:
         e = json.loads(line)
         print(e['kind'], e['id'], 'weight=', e.get('weight', 1.0))
@@ -162,7 +162,7 @@ with open('examples/target_1_presentation/board.jsonl') as f:
 python -c "
 import json
 from zicato.core.types import ScoringWeights
-with open('examples/target_1_presentation/scoring.json') as f:
+with open('examples/zicato_examples/target_1_presentation/scoring.json') as f:
     print(ScoringWeights(**json.load(f)))
 "
 ```
@@ -172,7 +172,7 @@ with open('examples/target_1_presentation/scoring.json') as f:
 The example ships a small companion test at
 `tests/test_example_target_1_presentation.py` that:
 
-- Imports `examples.target_1_presentation.agent` and asserts that
+- Imports `zicato_examples.target_1_presentation.agent` and asserts that
   `root_agent` can be obtained (lazily, via `build_agent_tree(...)`
   with a mock model when ADK is available; otherwise the test
   exercises the module-level import only).
@@ -197,10 +197,10 @@ will be (working names):
 ```bash
 # Create an epoch pinned to this directory's board / rubric / scoring
 zicato epoch new e0 \
-    --board examples/target_1_presentation/board.jsonl \
-    --rubric examples/target_1_presentation/rubric.md \
-    --scoring examples/target_1_presentation/scoring.json \
-    --target examples.target_1_presentation.agent
+    --board examples/zicato_examples/target_1_presentation/board.jsonl \
+    --rubric examples/zicato_examples/target_1_presentation/rubric.md \
+    --scoring examples/zicato_examples/target_1_presentation/scoring.json \
+    --target zicato_examples.target_1_presentation.agent
 
 # Inspect the mutation surface the proposer will see
 zicato mutations

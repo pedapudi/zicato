@@ -4,7 +4,7 @@ These are referenced from ``board.jsonl`` entries via the
 ``expectation`` block when the entry uses ``kind: "predicate"``. The
 dotted-path spec a board entry stores is, e.g.::
 
-    examples.target_1_presentation.predicates:has_slide_titles
+    zicato_examples.target_1_presentation.predicates:has_slide_titles
 
 Every predicate accepts a single :class:`zicato.core.types.RunResult`
 positional argument and returns ``bool``. They are intentionally

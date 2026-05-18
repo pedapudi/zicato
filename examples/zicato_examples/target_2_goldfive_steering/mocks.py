@@ -10,7 +10,7 @@ clean negative-control agents (CleanAgent), and a tiny ADK
 * :data:`harness_llm` — handed to ``goldfive.run`` / ``goldfive.wrap``.
   Goldfive's planner, goal-deriver, and reasoning judges all route
   through it. For NORMAL board entries the small ADK
-  :data:`examples.target_2_goldfive_steering.agent_under_test.agent`
+  :data:`zicato_examples.target_2_goldfive_steering.agent_under_test.agent`
   also calls it via the ADK plugin layer.
 
 * :data:`aux_llm` — used by zicato's auxiliary path (the proposer,

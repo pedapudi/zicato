@@ -8,7 +8,6 @@ import types
 from typing import Any
 
 import pytest
-
 from zicato.board.matchers import evaluate_expectation
 from zicato.core.types import Expectation, ExpectationKind, RunResult
 
@@ -117,8 +116,8 @@ async def test_predicate_colon_form_resolves(predicate_module: str) -> None:
 
     This is the regression test for the bug where the loader split on the
     last dot instead of the colon, turning
-    ``examples.target_1_presentation.predicates:addressed_picky_feedback``
-    into module ``examples.target_1_presentation`` + attr
+    ``zicato_examples.target_1_presentation.predicates:addressed_picky_feedback``
+    into module ``zicato_examples.target_1_presentation`` + attr
     ``predicates:addressed_picky_feedback``, which then failed with
     "module has no attribute 'predicates:addressed_picky_feedback'".
     """

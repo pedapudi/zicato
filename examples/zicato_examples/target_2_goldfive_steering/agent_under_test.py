@@ -18,7 +18,7 @@ Design notes:
 * Importing this module requires ``google.adk`` to be installed. If the
   user is scaffolding the example before installing the ADK, the file
   still parses (the imports execute lazily inside ``build_agent``) so
-  ``examples.target_2_goldfive_steering`` remains importable for tests
+  ``zicato_examples.target_2_goldfive_steering`` remains importable for tests
   that do not actually run the agent.
 
 Exports
@@ -26,7 +26,7 @@ Exports
 ``agent``
     Module-level :class:`google.adk.agents.LlmAgent` instance, built
     lazily on first attribute access. The runner imports
-    ``examples.target_2_goldfive_steering.agent_under_test:agent`` as
+    ``zicato_examples.target_2_goldfive_steering.agent_under_test:agent`` as
     its ADK entrypoint when executing this directory's normal board
     entries.
 """
@@ -90,7 +90,7 @@ def build_agent() -> Any:
 def __getattr__(name: str) -> Any:
     """Lazy module-level ``agent`` attribute.
 
-    Resolves ``examples.target_2_goldfive_steering.agent_under_test.agent``
+    Resolves ``zicato_examples.target_2_goldfive_steering.agent_under_test.agent``
     by calling :func:`build_agent` on first access. Subsequent accesses
     return the cached instance. Lets the scaffolding live in a tree
     where ``google.adk`` may or may not be importable at write time

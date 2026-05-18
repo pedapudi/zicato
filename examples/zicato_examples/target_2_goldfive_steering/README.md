@@ -79,7 +79,7 @@ in a different repo from the entrypoint" path. Use `--mutable-tree`:
 
 ```
 zicato register \
-  --adk examples.target_2_goldfive_steering.agent_under_test:agent \
+  --adk zicato_examples.target_2_goldfive_steering.agent_under_test:agent \
   --mutable-tree /home/sunil/git/goldfive
 ```
 
@@ -96,9 +96,9 @@ runs.
 
 ```
 zicato epoch new goldfive-steering-e0 \
-  --board examples/target_2_goldfive_steering/board.jsonl \
-  --rubric examples/target_2_goldfive_steering/rubric.md \
-  --scoring examples/target_2_goldfive_steering/scoring.json
+  --board examples/zicato_examples/target_2_goldfive_steering/board.jsonl \
+  --rubric examples/zicato_examples/target_2_goldfive_steering/rubric.md \
+  --scoring examples/zicato_examples/target_2_goldfive_steering/scoring.json
 
 zicato evolve
 ```

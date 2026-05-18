@@ -3,7 +3,7 @@
 Two callables are exported:
 
 * :func:`harness_llm` — stands in for the inner harness's LLM. The
-  multi-agent presentation tree under :mod:`examples.target_1_presentation.agent`
+  multi-agent presentation tree under :mod:`zicato_examples.target_1_presentation.agent`
   drives this via :mod:`goldfive`; ``harness_llm`` returns canned
   multi-line replies shaped to look like coordinator / researcher /
   writer turns.
