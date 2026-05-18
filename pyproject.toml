@@ -167,3 +167,11 @@ members = ["examples"]
 
 [tool.uv.sources]
 zicato-examples = { workspace = true }
+# goldfive is a co-developed sibling package, not yet published to a
+# public index, so it must be available locally. Point uv at the
+# sibling checkout so `uv sync` resolves it editable; when goldfive is
+# published this entry is dropped and the [project.dependencies] spec
+# resolves it from the index. (harmonograf is consumed as a service
+# over ZICATO_HARMONOGRAF_URL, not imported as a package, so it needs
+# no entry here — only a reachable running instance.)
+goldfive = { path = "../goldfive", editable = true }
