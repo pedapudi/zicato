@@ -318,11 +318,12 @@ class AppState {
     }
   }
 
-  // Append a batch of newer log events (the `?after=<cursor>` response)
-  // to the existing tail, capped at the rolling window, and advance the
-  // cursor. A changed `events_path` (the run rolled over) resets the
-  // tail to the incoming batch instead of appending to a stale run.
-  appendLogTail(tail) {
+  // Merge a batch of newer log events (the `?after=<cursor>` response)
+  // into the existing tail, capped at the rolling window, and advance
+  // the cursor. A changed `events_path` (the run rolled over) resets
+  // the tail to the incoming batch instead of appending to a stale run.
+  // The DOM-side counterpart is the module-level appendLogTail().
+  mergeLogTail(tail) {
     if (!tail || !Array.isArray(tail.events)) return;
     if (tail.events_path != null && this.logEventsPath != null
         && tail.events_path !== this.logEventsPath) {
@@ -4466,7 +4467,7 @@ async function pollLogTailAppend() {
   }
   try {
     const batch = await fetchJson('/api/run-log?after=' + encodeURIComponent(after));
-    state.appendLogTail(batch);
+    state.mergeLogTail(batch);
     appendLogTail();
   } catch (err) {
     // Run-log endpoint transient — the next event retries.
