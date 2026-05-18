@@ -26,8 +26,10 @@ from pathlib import Path
 
 import click
 
+from zicato.config import DashboardConfig, load_config
 
-def resolve_static_dir() -> Path:
+
+def resolve_static_dir(config: DashboardConfig | None = None) -> Path:
     """Return the path to the bundled dashboard static asset directory.
 
     The dashboard front-end (``index.html`` / ``app.js`` / ``style.css``
@@ -37,21 +39,29 @@ def resolve_static_dir() -> Path:
 
     Resolution order:
 
-    1. Environment override ``ZICATO_DASHBOARD_STATIC_DIR`` — useful for
-       tests and for installed wheels that relocate the bundle.
+    1. The ``static_dir`` of :class:`~zicato.config.DashboardConfig`,
+       sourced from the ``ZICATO_DASHBOARD_STATIC_DIR`` environment
+       variable — useful for tests and for installed wheels that
+       relocate the bundle.
     2. The in-tree ``supervisor/static`` directory, computed relative to
        this source file. This file is at
        ``zicato/cli/commands/dashboard.py``; the bundle lives at
        ``<repo_root>/supervisor/static``.
 
+    Parameters
+    ----------
+    config:
+        The :class:`~zicato.config.DashboardConfig` carrying the
+        env-sourced ``static_dir``. When ``None`` it is loaded via
+        :func:`zicato.config.load_config` — the single place the
+        environment is read.
+
     The path is returned even when it does not exist on disk — the
     dashboard service is responsible for reporting a missing bundle.
     """
-    import os  # noqa: PLC0415
-
-    env_override = os.environ.get("ZICATO_DASHBOARD_STATIC_DIR")
-    if env_override:
-        return Path(env_override)
+    dashboard = config if config is not None else load_config().dashboard
+    if dashboard.static_dir:
+        return Path(dashboard.static_dir)
 
     here = Path(__file__).resolve()
     # zicato/cli/commands/dashboard.py -> <repo_root>/supervisor/static
