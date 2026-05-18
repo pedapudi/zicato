@@ -59,6 +59,17 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.UTC).isoformat().replace("+00:00", "Z")
 
 
+def _int_query(request: Request, name: str) -> int | None:
+    """Parse an integer query parameter, or ``None`` if absent/invalid."""
+    raw = request.query_params.get(name)
+    if raw is None:
+        return None
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # GET endpoints
 # ---------------------------------------------------------------------------
@@ -93,14 +104,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         # refreshes the entire view from this single endpoint instead of
         # fanning out to six. ``?run-log-limit=`` is clamped like the
         # dedicated run-log endpoint.
-        raw = request.query_params.get("run-log-limit")
-        requested: int | None = None
-        if raw is not None:
-            try:
-                requested = int(raw.strip())
-            except ValueError:
-                requested = None
-        limit = state_reader.clamp_run_log_limit(requested)
+        limit = state_reader.clamp_run_log_limit(_int_query(request, "run-log-limit"))
         return JSONResponse(state_reader.build_environment(paths, run_log_limit=limit))
 
     async def api_epoch(_request: Request) -> JSONResponse:
@@ -110,23 +114,10 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         return JSONResponse(state_reader.build_lineage_view(paths))
 
     async def api_run_log(request: Request) -> JSONResponse:
-        raw = request.query_params.get("limit")
-        requested: int | None = None
-        if raw is not None:
-            try:
-                requested = int(raw.strip())
-            except ValueError:
-                requested = None
-        limit = state_reader.clamp_run_log_limit(requested)
+        limit = state_reader.clamp_run_log_limit(_int_query(request, "limit"))
         # ``?after=<cursor>`` requests only events past a cursor so the
         # dashboard appends to its log tail instead of re-rendering it.
-        after_raw = request.query_params.get("after")
-        after: int | None = None
-        if after_raw is not None:
-            try:
-                after = int(after_raw.strip())
-            except ValueError:
-                after = None
+        after = _int_query(request, "after")
         return JSONResponse(state_reader.build_run_log(paths, limit, after=after))
 
     async def api_active_runs(_request: Request) -> JSONResponse:

@@ -4395,7 +4395,7 @@ async function postControl(action, body) {
       body: body == null ? null : JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await loadFullState();
+    await loadEnvironment();
   } catch (err) {
     alert(`control failed: ${err.message}`);
   }
@@ -4405,8 +4405,8 @@ async function postControl(action, body) {
 // environment. This single request replaces the old fan-out across
 // /api/state + /api/epoch + /api/tournaments + /api/health-report +
 // /api/active-tournament + /api/lineage + /api/run-log + /api/active-
-// runs + /api/health. Folding them server-side means a state change
-// costs one request, not nine — which is what stops the dashboard from
+// runs. Folding them server-side means a state change costs one
+// request, not eight — which is what stops the dashboard from
 // hammering the API from many connections many times a second.
 async function loadEnvironment() {
   let env;
@@ -4435,7 +4435,6 @@ function applyEnvironment(env) {
     state.lineage = env.generations;
   }
   if (Array.isArray(env.active_runs)) state.activeRuns = env.active_runs;
-  if (env.health) state.setHealth(env.health);
   if (env.health_report && typeof env.health_report === 'object') {
     state.setHealthReport(env.health_report);
   }
@@ -4448,11 +4447,17 @@ function applyEnvironment(env) {
   }
 }
 
-// Back-compat shim: a few call sites (control posts, the initial
-// bootstrap) still call loadFullState(); route them through the single
-// consolidated read.
-async function loadFullState() {
-  await loadEnvironment();
+// GET /api/health — the dashboard-service identity for the footer
+// (version / port / build). Fetched ONCE at bootstrap: these values
+// are fixed for the process lifetime, so polling them would be pure
+// waste. Tolerates an absent endpoint — the footer just shows dashes.
+async function loadServiceIdentity() {
+  try {
+    state.setHealth(await fetchJson('/api/health'));
+    renderFooter();
+  } catch (err) {
+    // No /api/health — the footer degrades to its placeholder.
+  }
 }
 
 // Append-only run-log poll: ask for only the events past the cursor we
@@ -5066,7 +5071,8 @@ function init() {
   }
 
   renderAll();
-  loadFullState();
+  loadEnvironment();
+  loadServiceIdentity();
   connectSSE();
 }
 

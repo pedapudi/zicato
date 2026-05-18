@@ -1352,20 +1352,21 @@ def build_environment(
     input becomes an empty / ``None`` value, never an exception, so this
     function — like every reader here — cannot 500 an endpoint.
     """
-    epoch_id = read_current_epoch(paths)
-    run_log = build_run_log(paths, run_log_limit)
+    # ``health`` here is the dashboard *service* identity (version /
+    # port / build) and is supplied by the /api/health route handler,
+    # not this reader — it is intentionally absent from the environment
+    # payload. ``heartbeat`` is the orchestrator's runtime heartbeat.
     return {
         "workspace": str(paths.root),
-        "epoch_id": epoch_id,
+        "epoch_id": read_current_epoch(paths),
         "epoch": build_epoch_view(paths),
         "active_tournament": read_active_tournament_dict(paths),
         "tournaments": build_bracket(paths),
         "generations": build_lineage_view(paths),
         "active_runs": read_active_runs_view(paths),
-        "health": read_heartbeat_dict(paths),
         "health_report": build_health_report(paths),
         "heartbeat": read_heartbeat_dict(paths),
         "lock": read_lock_dict(paths),
-        "run_log": run_log,
+        "run_log": build_run_log(paths, run_log_limit),
         "generated_at": _iso(_utc_now()),
     }

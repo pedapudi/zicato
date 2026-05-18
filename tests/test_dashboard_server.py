@@ -494,7 +494,6 @@ def test_environment_endpoint_consolidates_feeds(client: TestClient) -> None:
         "tournaments",
         "generations",
         "active_runs",
-        "health",
         "health_report",
         "heartbeat",
         "run_log",
