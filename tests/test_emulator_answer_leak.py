@@ -1,8 +1,9 @@
 """Tests for the answer-leak heuristic.
 
-The heuristic is intentionally trigger-happy. These tests pin the
-patterns that MUST fire and a small set of clean-prose negatives that
-must not.
+The heuristic targets genuine answer-shape content (JSON structures,
+code fences, explicit answer-disclosure phrases).  It must NOT fire on
+benign formatting that reasoning models legitimately produce, such as
+bracketed prefaces (``[Thinking about this]``) or markdown lists.
 """
 
 from __future__ import annotations
@@ -25,10 +26,10 @@ from zicato.emulator.answer_leak import LEAK_PATTERNS, check_answer_leak
         "I expected output similar to this.",
         "The schema is { ... }.",
         "```\nprint('hi')\n```",
-        "```json\n{\"k\": 1}\n```",
+        '```json\n{"k": 1}\n```',
         '{"goal": "x"}',
         "[1, 2, 3]",
-        "  {\n  \"answer\": 1\n}",
+        '  {\n  "answer": 1\n}',
     ],
 )
 def test_check_answer_leak_flags_obvious_leakage(text: str) -> None:
@@ -45,6 +46,73 @@ def test_check_answer_leak_pattern_names_in_message() -> None:
     msg = check_answer_leak("the answer is 7")
     assert msg is not None
     assert "the answer is" in msg
+
+
+# ---------------------------------------------------------------------------
+# JSON-array leak: genuine JSON arrays MUST still be caught.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Numeric arrays — direct answer leakage
+        "[1, 2, 3]",
+        "  [42]",
+        "[-1, -2, -3]",
+        # String arrays — option lists or expected output
+        '["option_a", "option_b"]',
+        # Object arrays — structured answer keys
+        '[{"answer": "yes"}, {"answer": "no"}]',
+        # Boolean / null arrays
+        "[true, false]",
+        "[null]",
+        # Nested arrays
+        "[[1, 2], [3, 4]]",
+        # Array embedded after prose (multiline: array on its own line)
+        'Here is what you should return:\n["foo", "bar"]',
+    ],
+)
+def test_json_array_leak_still_caught(text: str) -> None:
+    """A genuine JSON-array-shaped line must still trigger the heuristic."""
+    result = check_answer_leak(text)
+    assert result is not None, f"expected leak detection for JSON array {text!r}"
+
+
+# ---------------------------------------------------------------------------
+# Bracketed-preface false-positive regression.
+#
+# Reasoning models commonly produce output that starts with a bracketed
+# phrase (e.g. "[Looking at this slide]") followed by normal prose.
+# The heuristic must NOT fire on these inputs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Picky-stakeholder persona — the specific case that caused the
+        # live-run false positive.
+        "[Looking at your latest draft] The framing on slide 3 feels too vague.",
+        "[Reviewing the deck] I need concrete Q3 revenue numbers, not estimates.",
+        "[Considering the metrics] Could you add the YoY comparison?",
+        # Generic bracketed prefaces a reasoning model might produce
+        "[Thinking through this carefully] I need more information first.",
+        "[Picky stakeholder] Could you be more specific about the KPIs?",
+        "[Polite but direct] That slide still doesn't address my earlier feedback.",
+        # Leading bracket that closes before end-of-line, all prose after
+        "[Note] The deck looks better now, but slide 5 still needs work.",
+        # Multi-line: bracketed preface on first line, no JSON anywhere
+        "[Reviewing] Slide 2 is good.\nSlide 3 still needs revision.\nPlease update.",
+    ],
+)
+def test_bracketed_preface_does_not_false_positive(text: str) -> None:
+    """Bracketed human-style prefaces must not trigger the leak heuristic."""
+    result = check_answer_leak(text)
+    assert result is None, (
+        f"false positive: heuristic incorrectly flagged a benign bracketed "
+        f"preface.\nInput: {text!r}\nResult: {result!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
