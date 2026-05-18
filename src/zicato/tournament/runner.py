@@ -3,19 +3,47 @@
 Two entry points:
 
 * :func:`run_tournament` (full mode) — runs every board entry under
-  BOTH parent and child generations. The parent/child phase boundary
-  stays strictly sequential: the whole parent board is scored before
-  the child board starts, because the gate compares two finished
-  aggregates. WITHIN one generation, though, the board entries play
-  concurrently — the "tournament hall" model, many boards in progress
-  at once — bounded by an :class:`asyncio.Semaphore` sized from
-  :attr:`RuntimeConfig.parallelism`. Concurrency is safe here because
-  every run is fully isolated: each board-entry run executes in its
-  OWN subprocess worker (see below) writing to a per-run
-  ``active_runs/{run_id}.json`` + ``events.jsonl`` + ``loss.json``,
-  keyed on a unique ``run_id`` of ``{generation_id}--{entry_id}``. Set
-  ``parallelism=1`` to recover the original strictly-sequential,
-  one-entry-at-a-time behaviour.
+  BOTH parent and child generations.
+
+Board-unit parallelism
+----------------------
+The unit of scheduling is a **board unit**: one per board entry. A
+board unit owns the runs for a single board entry and is the thing the
+:attr:`RuntimeConfig.parallelism` knob counts — ``parallelism`` is "how
+many boards run in parallel", NOT how many subprocesses run in parallel.
+
+* In **full mode** a board unit runs the **champion (parent)** run AND
+  the **challenger (child)** run **simultaneously**: both
+  :func:`_run_single` calls start together under one
+  :func:`asyncio.gather`, and the unit does not finish until both have.
+  The champion and challenger of the same entry therefore execute
+  concurrently — each in its OWN subprocess worker, each pointed at its
+  OWN per-run ephemeral snapshot copy, so there is no shared-state
+  collision between the two sides of one entry.
+* In **fast mode** a board unit runs **only the challenger (child)**.
+  The champion's cached aggregate (``gen_score.json``) is reused, so the
+  champion run is not executed at all. Fast mode degrades to a full
+  board unit for the rare entry-set with no cached champion aggregate —
+  but that fallback is decided by the caller (the orchestrator picks
+  :func:`run_tournament` vs :func:`run_fast_mode`), not inside a unit.
+
+The board units themselves play concurrently — the "tournament hall"
+model, many boards in progress at once — bounded by a single
+:class:`asyncio.Semaphore` sized from :attr:`RuntimeConfig.parallelism`.
+Concurrency is safe because every run is fully isolated: each
+board-entry run executes in its OWN subprocess worker (see below)
+writing to a per-run ``active_runs/{run_id}.json`` + ``events.jsonl`` +
+``loss.json``, keyed on a unique ``run_id`` of
+``{generation_id}--{entry_id}``.
+
+Set ``parallelism=1`` to run one board unit at a time. Note this is NOT
+the same as "one subprocess at a time": with ``parallelism=1`` in full
+mode a single board unit still spawns the champion and challenger
+subprocesses CONCURRENTLY (2 workers). In general, P board units in
+full mode means up to ``2 * P`` run subprocesses alive at once; in fast
+mode up to ``P`` (challenger-only). The real-world ceiling on
+``parallelism`` is almost always the LLM endpoint's own concurrency
+limit — size it against ``2 * parallelism`` for full mode.
 
 Per-run ephemeral working copies
 --------------------------------
@@ -437,8 +465,9 @@ def _make_ephemeral_snapshot(snapshot_root: Path, run_id: str) -> tuple[Path, Pa
 
     The copy is a plain :func:`shutil.copytree` filtered by the shared
     snapshot-scope ignore — code snapshots are KB-sized, so a copy per
-    run (even under ``parallelism``) is cheap. Both the working copy and
-    the scratch directory are created under a single
+    run (even when many board units run concurrently, and even with the
+    champion and challenger of one entry running at once) is cheap. Both
+    the working copy and the scratch directory are created under a single
     :func:`tempfile.mkdtemp` parent in the OS temp dir, deliberately
     OUTSIDE the workspace tree.
 
@@ -1030,55 +1059,170 @@ async def _run_single(
                 pass
 
 
-async def _run_generation(
+async def _run_full_board_unit(
     *,
     adapter: Any,
-    generation: Generation,
+    parent_gen: Generation,
+    child_gen: Generation,
+    entry: BoardEntry,
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+) -> tuple[LossProfile, LossProfile]:
+    """Run ONE board entry's champion + challenger concurrently.
+
+    A board unit in full mode owns both sides of a single board entry.
+    This launches the champion (``parent_gen``) run and the challenger
+    (``child_gen``) run **simultaneously** — two :func:`_run_single`
+    coroutines started together under one :func:`asyncio.gather` — and
+    does not return until BOTH have settled.
+
+    The two runs are safely concurrent: :func:`_run_single` spawns each
+    in its OWN subprocess worker, each pointed at its OWN per-run
+    ephemeral snapshot working copy (a distinct ``tempfile.mkdtemp``
+    tree, see :func:`_make_ephemeral_snapshot`) and writing to a
+    distinct ``run_id`` (``{generation_id}--{entry_id}``, and the two
+    generations differ). So nothing — snapshot copy, ``active_runs``
+    state file, ``loss.json`` — is shared between the champion and
+    challenger of the same entry.
+
+    ``return_exceptions=True`` keeps a failing side from cancelling its
+    in-flight sibling mid-subprocess (which would orphan a worker and
+    skip its ``finally`` cleanup); both sides are allowed to finish, and
+    only then is a champion-side failure (then a challenger-side one)
+    re-raised. Returns ``(parent_loss, child_loss)``.
+    """
+    parent_result, child_result = await asyncio.gather(
+        _run_single(
+            adapter=adapter,
+            generation=parent_gen,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            side="parent",
+        ),
+        _run_single(
+            adapter=adapter,
+            generation=child_gen,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            side="child",
+        ),
+        return_exceptions=True,
+    )
+    # Surface a champion-side failure first, then a challenger-side one —
+    # both runs have already settled (their workers + cleanup finished).
+    if isinstance(parent_result, BaseException):
+        raise parent_result
+    if isinstance(child_result, BaseException):
+        raise child_result
+    return parent_result, child_result
+
+
+async def _run_board_units_full(
+    *,
+    adapter: Any,
+    parent_gen: Generation,
+    child_gen: Generation,
     board: list[BoardEntry],
     weights: ScoringWeights,
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
-    side: str,
-) -> dict[str, LossProfile]:
-    """Run all board entries under one generation with bounded concurrency.
+) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
+    """Run every board entry as a full-mode board unit, bounded concurrency.
 
     The board entries are the "boards" of the tournament hall: up to
-    :attr:`RuntimeConfig.parallelism` of them play at once. Each
-    :func:`_run_single` call is wrapped in a shared
-    :class:`asyncio.Semaphore` sized from ``config.parallelism`` and the
-    whole set is driven by a single :func:`asyncio.gather`.
+    :attr:`RuntimeConfig.parallelism` BOARD UNITS play at once. The
+    semaphore counts board units, not subprocesses — in full mode each
+    admitted unit runs champion + challenger concurrently (see
+    :func:`_run_full_board_unit`), so ``parallelism`` board units mean up
+    to ``2 * parallelism`` run subprocesses alive at once.
 
-    ``parallelism == 1`` is byte-identical to the original
-    strictly-sequential runner: the semaphore admits exactly one run at
-    a time, the tasks are created in board order, and the semaphore is
-    fair (FIFO), so entry *k* fully finishes — its subprocess spawn,
-    wait, loss read-back AND its ``finally`` cleanup — before entry
-    *k+1*'s ``_run_single`` body advances past the acquire.
+    ``parallelism == 1`` admits exactly one board unit at a time, in
+    board order; the next entry's champion/challenger pair does not start
+    until the current entry's pair has fully settled (subprocess spawn,
+    wait, loss read-back, AND ``finally`` cleanup, on both sides). It is
+    NOT byte-identical to the historical generation-at-a-time runner
+    (which scored the whole parent board before the child board) — but
+    the gate still compares two fully-aggregated generations, so the
+    decision is unchanged.
 
-    Result ordering is independent of completion order: the
-    ``entry.id -> LossProfile`` mapping is rebuilt by zipping the board
-    (input order) with the gather results (which :func:`asyncio.gather`
-    returns in submission order, NOT completion order). So a slow entry
-    finishing last does not reorder anything.
+    Result ordering is independent of completion order: the two
+    ``entry.id -> LossProfile`` maps are rebuilt by zipping the board
+    (input order) with the gather results (:func:`asyncio.gather`
+    preserves submission order). Failure handling matches the historical
+    contract: a raising board unit does not cancel in-flight siblings,
+    and the first failure (board order) is re-raised after every sibling
+    has settled.
 
-    Failure handling matches the sequential path's contract — no
-    exception is swallowed. ``gather`` is run with
-    ``return_exceptions=True`` so that a raising run does NOT cancel its
-    in-flight siblings mid-subprocess (which would orphan a worker
-    process and skip its cleanup); every sibling run is allowed to
-    finish first, and only then is the FIRST exception (in board order)
-    re-raised to the caller, exactly as the sequential ``await`` chain
-    would have surfaced the first failure.
+    Returns ``(parent_losses, child_losses)`` — the per-entry champion
+    and challenger loss maps.
+    """
+    semaphore = asyncio.Semaphore(config.parallelism)
 
-    ``side`` (``"parent"`` / ``"child"``, or ``""`` outside a
-    tournament) identifies which side of the active tournament this
-    generation is. It is threaded straight through to
-    :func:`_run_single` so per-entry dashboard transitions land on the
-    correct ``(entry_id, side)`` row — the caller knows the side
-    unambiguously (it picked ``generation`` as the parent or the child),
-    so it is passed explicitly rather than re-derived from the state
-    file.
+    async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
+        async with semaphore:
+            return await _run_full_board_unit(
+                adapter=adapter,
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                entry=entry,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+            )
+
+    results = await asyncio.gather(
+        *(_bounded(entry) for entry in board),
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+
+    parent_losses: dict[str, LossProfile] = {}
+    child_losses: dict[str, LossProfile] = {}
+    for entry, result in zip(board, results, strict=True):
+        # Every result is a (parent, child) tuple here: the loop above
+        # already re-raised on the first BaseException.
+        parent_loss, child_loss = result  # type: ignore[misc]
+        parent_losses[entry.id] = parent_loss
+        child_losses[entry.id] = child_loss
+    return parent_losses, child_losses
+
+
+async def _run_board_units_fast(
+    *,
+    adapter: Any,
+    child_gen: Generation,
+    board: list[BoardEntry],
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+) -> dict[str, LossProfile]:
+    """Run every board entry as a fast-mode board unit, bounded concurrency.
+
+    A fast-mode board unit runs ONLY the challenger (child) — the
+    champion's cached ``gen_score.json`` aggregate is reused, so no
+    champion run is executed. Up to :attr:`RuntimeConfig.parallelism`
+    board units play at once; with one challenger run per unit, that is
+    up to ``parallelism`` run subprocesses alive at once (half the
+    full-mode ceiling).
+
+    ``parallelism == 1`` admits exactly one challenger run at a time, in
+    board order. Result ordering, failure surfacing (first failure in
+    board order, no sibling cancellation) match
+    :func:`_run_board_units_full`. Returns the per-entry challenger loss
+    map.
     """
     semaphore = asyncio.Semaphore(config.parallelism)
 
@@ -1086,33 +1230,28 @@ async def _run_generation(
         async with semaphore:
             return await _run_single(
                 adapter=adapter,
-                generation=generation,
+                generation=child_gen,
                 entry=entry,
                 weights=weights,
                 config=config,
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
-                side=side,
+                # Fast mode runs only the challenger; the side label is
+                # "child" for the rare case an ActiveTournament file does
+                # exist, and a benign no-op otherwise.
+                side="child",
             )
 
-    # gather preserves submission order in its result list regardless of
-    # which task finished first; return_exceptions keeps a failing run
-    # from cancelling siblings that are already mid-flight.
     results = await asyncio.gather(
         *(_bounded(entry) for entry in board),
         return_exceptions=True,
     )
-
-    # Surface the first failure (board order) the same way the old
-    # sequential ``await`` chain did — after every sibling has settled.
     for result in results:
         if isinstance(result, BaseException):
             raise result
 
     losses: dict[str, LossProfile] = {}
     for entry, result in zip(board, results, strict=True):
-        # Every result is a LossProfile here: the loop above already
-        # re-raised on the first BaseException.
         losses[entry.id] = result  # type: ignore[assignment]
     return losses
 
@@ -1253,25 +1392,20 @@ async def run_tournament(
             pass
 
     try:
-        parent_losses = await _run_generation(
+        # Board-unit scheduling: each board entry is one unit, and a
+        # full-mode unit runs its champion (parent) and challenger
+        # (child) runs CONCURRENTLY. ``config.parallelism`` bounds the
+        # number of board units in flight — up to 2*parallelism run
+        # subprocesses at once (champion + challenger per unit).
+        parent_losses, child_losses = await _run_board_units_full(
             adapter=adapter,
-            generation=parent_gen,
+            parent_gen=parent_gen,
+            child_gen=child_gen,
             board=board,
             weights=weights,
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            side="parent",
-        )
-        child_losses = await _run_generation(
-            adapter=adapter,
-            generation=child_gen,
-            board=board,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            side="child",
         )
     finally:
         if rt is not None:
@@ -1342,18 +1476,19 @@ async def run_fast_mode(
     # Same board-level disable_drift threading as the full A/B path.
     board = _stamp_disable_drift(board, disable_drift)
 
-    child_losses = await _run_generation(
+    # Board-unit scheduling: each board entry is one unit, and a
+    # fast-mode unit runs ONLY the challenger (child) — the champion's
+    # cached aggregate is reused. ``config.parallelism`` bounds the
+    # number of board units in flight — up to ``parallelism`` run
+    # subprocesses at once (one challenger run per unit).
+    child_losses = await _run_board_units_fast(
         adapter=adapter,
-        generation=child_gen,
+        child_gen=child_gen,
         board=board,
         weights=weights,
         config=config,
         workspace_root=workspace_root,
         epoch_id=epoch_id,
-        # Fast mode runs only the child and writes no ActiveTournament
-        # file; the side label is "child" for the rare case a tournament
-        # file does exist, and a benign no-op otherwise.
-        side="child",
     )
 
     child_agg = aggregate_generation_score(list(child_losses.values()), weights)

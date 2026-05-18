@@ -1721,17 +1721,23 @@ class RuntimeConfig:
         generators. Adapters may or may not honor it for the inner
         harness.
     parallelism:
-        Maximum number of board-entry runs the tournament runner keeps
-        in flight at once within a single generation. ``1`` is fully
-        sequential — one entry finishes before the next starts, which
-        reproduces the runner's pre-concurrency behaviour exactly.
+        Maximum number of **board units** the tournament runner keeps
+        in flight at once — i.e. "how many boards run in parallel". The
+        unit of scheduling is a board unit: one per board entry. In full
+        mode a board unit runs its champion (parent) and challenger
+        (child) runs CONCURRENTLY, so ``parallelism`` board units mean
+        up to ``2 * parallelism`` run subprocesses alive at once; in
+        fast mode a unit runs only the challenger, so up to
+        ``parallelism`` subprocesses. ``1`` admits one board unit at a
+        time (still two concurrent subprocesses per full-mode unit).
         Values above ``1`` let the runner play several "boards" of the
         tournament hall simultaneously, bounded by an
         :class:`asyncio.Semaphore`. The real-world ceiling is almost
         always the LLM endpoint's own concurrency limit, not this
-        number, so a modest default (``4``) is a safe starting point;
-        operators raise it only when the endpoint can absorb more
-        in-flight calls. Must be ``>= 1``.
+        number — size it against ``2 * parallelism`` for full mode — so
+        a modest default (``4``) is a safe starting point; operators
+        raise it only when the endpoint can absorb more in-flight calls.
+        Must be ``>= 1``.
 
     Construction-time validation
     ----------------------------

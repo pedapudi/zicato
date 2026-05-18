@@ -207,9 +207,13 @@ class RuntimeTuningConfig:
     Fields
     ------
     parallelism:
-        Maximum number of board-entry runs the tournament runner keeps
-        in flight at once within a single generation. ``1`` is fully
-        sequential. Must be ``>= 1``.
+        Maximum number of **board units** the tournament runner keeps in
+        flight at once — "how many boards run in parallel". One board
+        unit per board entry; in full mode a unit runs its champion and
+        challenger runs concurrently (so ``parallelism`` units mean up to
+        ``2 * parallelism`` subprocesses), in fast mode only the
+        challenger. ``1`` admits one board unit at a time. Must be
+        ``>= 1``.
     harness_call_timeout_ms:
         Per-LLM-call wall-clock budget, in milliseconds, for the *inner
         harness* agent's calls — distinct from

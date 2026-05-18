@@ -198,13 +198,16 @@ def test_run_tournament_iterates_board_for_both_generations(
         )
     )
 
-    # The runner drove all 4 (generation, entry) combinations, parent first.
-    assert call_log == [
+    # Board-unit scheduling: the runner drove all 4 (generation, entry)
+    # combinations — the champion (v0) and challenger (v1) of one entry
+    # in one board unit. Completion order across units / sides is not
+    # contractual, so assert on the set, not a sequence.
+    assert set(call_log) == {
         ("v0", "entry_a"),
         ("v0", "entry_b"),
         ("v1", "entry_a"),
         ("v1", "entry_b"),
-    ]
+    }
 
     # Result wires generation ids through.
     assert isinstance(result, TournamentResult)
@@ -459,6 +462,148 @@ def test_run_fast_mode_runs_only_child(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert result.outcome.decision == "promoted"
 
 
+def test_run_fast_mode_never_runs_the_champion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A fast-mode board unit runs ONLY the challenger — no champion run.
+
+    The champion's cached ``gen_score.json`` aggregate is reused, so the
+    champion (parent) generation must never be handed to ``_run_single``.
+    """
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(4)
+    canned = {
+        ("v1", e.id): _loss(generation_id="v1", entry_id=e.id, drift_loss=0.5, pass_fail=True)
+        for e in board
+    }
+    call_log = _stub_run_single(monkeypatch, canned=canned)
+
+    parent_historical = {
+        "drift_loss_mean": 2.0,
+        "pass_rate": 1.0,
+        "expectation_count": len(board),
+        "entry_count": len(board),
+        "scalar": 2.0,
+        "per_entry": {e.id: {"drift_loss": 2.0, "pass_fail": True} for e in board},
+        "generation_id": "v0",
+    }
+
+    config = _make_runtime_config(tmp_path)
+    asyncio.run(
+        run_fast_mode(
+            adapter=object(),
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            parent_historical_agg=parent_historical,
+        )
+    )
+
+    # Every dispatched run was a challenger run — the champion (v0) was
+    # never executed (its cached aggregate stood in for it).
+    assert all(gen == "v1" for gen, _ in call_log)
+    assert {entry for _, entry in call_log} == {e.id for e in board}
+    assert len(call_log) == len(board)
+
+
+def test_no_cache_first_round_runs_champion_via_full_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The no-cache-first-round fallback runs the champion (full path).
+
+    Fast mode reuses the champion's cached ``gen_score.json``; a fresh
+    epoch's first round has no cache, so the orchestrator degrades to
+    :func:`run_tournament` (the full path). This pins the runner-side
+    contract the fallback depends on: the full path DOES execute the
+    champion (parent) run for every entry — exactly what seeds the cache
+    that later fast rounds reuse — whereas fast mode never would.
+    """
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(3)
+    canned = {
+        (gen, e.id): _loss(generation_id=gen, entry_id=e.id, drift_loss=1.0, pass_fail=True)
+        for gen in ("v0", "v1")
+        for e in board
+    }
+    call_log = _stub_run_single(monkeypatch, canned=canned)
+
+    config = _make_runtime_config(tmp_path)
+    result = asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+    # The champion (v0) was run for every board entry — the full path's
+    # parent_agg is what _cache_gen_score persists for fast rounds.
+    champion_runs = {entry for gen, entry in call_log if gen == "v0"}
+    assert champion_runs == {e.id for e in board}
+    # And the result carries a real per-entry champion aggregate.
+    assert set(result.per_entry_losses) == {e.id for e in board}
+    assert result.parent_agg["entry_count"] == 3
+
+
+def test_run_fast_mode_respects_parallelism_bound(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fast mode keeps at most ``parallelism`` board units (challenger runs) in flight.
+
+    A fast-mode board unit runs ONLY the challenger, so the knob caps
+    the number of ``_run_single`` runs at exactly ``parallelism`` — half
+    the full-mode ceiling.
+    """
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(6)
+    canned = {
+        ("v1", e.id): _loss(generation_id="v1", entry_id=e.id, drift_loss=0.5, pass_fail=True)
+        for e in board
+    }
+    stub = _ConcurrencyStub(canned)
+    monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+
+    parent_historical = {
+        "drift_loss_mean": 2.0,
+        "pass_rate": 1.0,
+        "expectation_count": len(board),
+        "entry_count": len(board),
+        "scalar": 2.0,
+        "per_entry": {e.id: {"drift_loss": 2.0, "pass_fail": True} for e in board},
+        "generation_id": "v0",
+    }
+
+    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=3)
+    result = asyncio.run(
+        run_fast_mode(
+            adapter=object(),
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            parent_historical_agg=parent_historical,
+        )
+    )
+
+    # 3 board units, one challenger run each -> at most 3 runs in flight.
+    assert stub.peak == 3
+    # All 6 challenger runs executed (no champion runs).
+    assert len(stub.call_log) == 6
+    assert all(gen == "v1" for gen, _ in stub.call_log)
+    assert result.child_agg["entry_count"] == 6
+
+
 # ---------------------------------------------------------------------------
 # Serialization
 # ---------------------------------------------------------------------------
@@ -574,7 +719,12 @@ class _ConcurrencyStub:
 def test_run_generation_respects_parallelism_bound(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A board of 6 entries with ``parallelism=3`` never exceeds 3 in flight."""
+    """A 6-entry board with ``parallelism=3`` keeps 3 board units in flight.
+
+    The knob counts BOARD UNITS, not subprocesses. In full mode a board
+    unit runs its champion + challenger runs concurrently, so 3 board
+    units mean up to ``2 * 3 == 6`` ``_run_single`` runs alive at once.
+    """
     parent_gen = _make_generation(tmp_path, "v0", None)
     child_gen = _make_generation(tmp_path, "v1", "v0")
     board = _board_of(6)
@@ -600,13 +750,92 @@ def test_run_generation_respects_parallelism_bound(
         )
     )
 
-    # At most 3 runs were ever in flight at once — but more than one was
-    # (proving the runner actually parallelised rather than serialising).
-    assert stub.peak == 3
+    # 3 board units, each running champion + challenger concurrently ->
+    # at most 6 _run_single runs in flight at once, and that ceiling is
+    # actually reached (proving the runner parallelises board units).
+    assert stub.peak == 6
     # All 12 runs (6 entries x 2 generations) executed.
     assert len(stub.call_log) == 12
     # The result mapping is complete and order-independent.
     assert set(result.per_entry_losses) == {e.id for e in board}
+
+
+def test_run_tournament_runs_champion_and_challenger_concurrently(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A full-mode board unit runs its champion + challenger simultaneously.
+
+    With ``parallelism=1`` exactly ONE board unit is admitted at a time,
+    yet that unit must still have BOTH its champion (parent) and
+    challenger (child) runs in flight at once — a board unit is the
+    parent run AND the child run running together.
+    """
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(3)
+    canned = {
+        (gen, e.id): _loss(generation_id=gen, entry_id=e.id, drift_loss=1.0, pass_fail=True)
+        for gen in ("v0", "v1")
+        for e in board
+    }
+
+    # Track, per board entry, the widest set of sides seen in flight
+    # together at any single observation point.
+    class _SideOverlapStub:
+        def __init__(self) -> None:
+            self.in_flight: dict[str, set[str]] = {}
+            self.widest: dict[str, set[str]] = {}
+
+        async def run_single(
+            self,
+            *,
+            adapter: Any,
+            generation: Generation,
+            entry: BoardEntry,
+            weights: ScoringWeights,
+            config: RuntimeConfig,
+            workspace_root: Path,
+            epoch_id: str,
+            side: str,
+        ) -> LossProfile:
+            del adapter, weights, config, workspace_root, epoch_id
+            live = self.in_flight.setdefault(entry.id, set())
+            live.add(generation.id)
+            try:
+                for _ in range(5):
+                    # On every yield, snapshot how many sides of THIS
+                    # entry are concurrently in flight.
+                    seen = self.widest.setdefault(entry.id, set())
+                    if len(live) > len(seen):
+                        self.widest[entry.id] = set(live)
+                    await asyncio.sleep(0)
+                return canned[(generation.id, entry.id)]
+            finally:
+                live.discard(generation.id)
+
+    stub = _SideOverlapStub()
+    monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
+
+    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=1)
+    asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+    # For every board entry, the champion (v0) and the challenger (v1)
+    # were both in flight at the same moment — they ran concurrently
+    # within the one board unit even though parallelism=1.
+    assert stub.widest, "no runs were observed"
+    assert set(stub.widest) == {e.id for e in board}
+    assert all(sides == {"v0", "v1"} for sides in stub.widest.values())
 
 
 def test_run_generation_result_matches_sequential_under_parallelism(
@@ -656,10 +885,18 @@ def test_run_generation_result_matches_sequential_under_parallelism(
     assert sequential["entry_2"] == (2.0, 102.0)
 
 
-def test_run_generation_parallelism_one_is_strictly_sequential(
+def test_run_generation_parallelism_one_runs_one_board_unit_at_a_time(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``parallelism=1`` runs exactly one entry at a time, in board order."""
+    """``parallelism=1`` admits one board unit at a time, in board order.
+
+    A board unit is a board entry's champion + challenger pair. With
+    ``parallelism=1`` exactly one unit runs at a time — so at most 2
+    ``_run_single`` runs are in flight (the two sides of the one
+    admitted entry), and entry *k*'s pair fully settles before entry
+    *k+1*'s pair starts. The two sides of a single entry still run
+    concurrently within the unit.
+    """
     parent_gen = _make_generation(tmp_path, "v0", None)
     child_gen = _make_generation(tmp_path, "v1", "v0")
     board = _board_of(5)
@@ -685,14 +922,20 @@ def test_run_generation_parallelism_one_is_strictly_sequential(
         )
     )
 
-    # Never more than one run in flight — byte-identical to the old loop.
-    assert stub.peak == 1
-    # Parent board fully drained before the child board starts, each in
-    # board order — exactly the old ``for entry in board`` sequence.
-    expected = [("v0", e.id) for e in board] + [("v1", e.id) for e in board]
-    assert stub.call_log == expected
-    # Each run also COMPLETED before the next one started.
-    assert stub.completed == expected
+    # At most 2 runs in flight at once — one board unit's champion +
+    # challenger pair — never a third (the next unit is gated).
+    assert stub.peak == 2
+    # Board units start in board order; each unit's two runs are the
+    # champion + challenger of the SAME entry, and entry k's unit fully
+    # settles before entry k+1's unit starts. The call log is therefore
+    # entry-grouped, even though the two sides within a unit may start
+    # in either order.
+    grouped = [set(stub.call_log[i : i + 2]) for i in range(0, len(stub.call_log), 2)]
+    expected = [{("v0", e.id), ("v1", e.id)} for e in board]
+    assert grouped == expected
+    # Each board unit also fully COMPLETED before the next one started.
+    grouped_done = [set(stub.completed[i : i + 2]) for i in range(0, len(stub.completed), 2)]
+    assert grouped_done == expected
 
 
 def test_run_generation_surfaces_failure_under_concurrency(
