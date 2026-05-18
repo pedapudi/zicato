@@ -29,7 +29,17 @@ use tracing::{info, warn};
 pub struct Thresholds {
     pub heartbeat_stale_warn: Duration,
     pub heartbeat_stale_kill: Duration,
+    /// Warn threshold for per-run staleness (``last_progress`` not
+    /// advancing). With the per-run heartbeat thread beating every ~3s
+    /// this threshold is only reached when the thread itself is wedged,
+    /// not during a normal slow LLM call.
     pub run_stale_warn: Duration,
+    /// Kill threshold for per-run staleness. This is a **far backstop**
+    /// for a genuinely wedged process: the primary kill trigger is the
+    /// per-board wall-clock deadline (``decide_run_deadline``). When a
+    /// run's ``wall_clock_budget_seconds`` is known,
+    /// ``decide_run`` replaces this fixed threshold with 2x the budget;
+    /// this default covers runs whose budget field is absent.
     pub run_stale_kill: Duration,
     /// Grace between SIGTERM and SIGKILL for heartbeat/staleness kills.
     pub grace: Duration,
@@ -48,8 +58,12 @@ impl Default for Thresholds {
         Self {
             heartbeat_stale_warn: Duration::from_secs(30),
             heartbeat_stale_kill: Duration::from_secs(90),
-            run_stale_warn: Duration::from_secs(30),
-            run_stale_kill: Duration::from_secs(120),
+            // 120s warn: the per-run heartbeat thread beats every ~3s, so
+            // 120s of no progress means the worker thread itself is stuck.
+            run_stale_warn: Duration::from_secs(120),
+            // 600s backstop: used only when wall_clock_budget_seconds is
+            // absent; otherwise decide_run computes 2x the per-run budget.
+            run_stale_kill: Duration::from_secs(600),
             grace: Duration::from_secs(5),
             run_kill_grace: Duration::from_secs(5),
             run_deadline_kill_disabled: false,
@@ -103,6 +117,12 @@ pub enum RunAction {
 /// Run-staleness check: has `last_progress` (falling back to `started_at`)
 /// stopped advancing past the warn/kill thresholds? This is independent of
 /// the wall-clock deadline — see [`decide_run_deadline`].
+///
+/// Kill criterion: when the run record carries ``wall_clock_budget_seconds``
+/// the effective kill threshold is ``2 × budget`` (a genuinely wedged
+/// process that did not die at its own deadline and did not get caught by
+/// the deadline trigger). When the budget is absent the static
+/// ``t.run_stale_kill`` backstop applies.
 pub fn decide_run(run: &crate::state::ActiveRun, now: DateTime<Utc>, t: &Thresholds) -> RunAction {
     let reference = run.last_progress.or(run.started_at);
     let Some(reference) = reference else {
@@ -110,7 +130,16 @@ pub fn decide_run(run: &crate::state::ActiveRun, now: DateTime<Utc>, t: &Thresho
     };
     let age_secs = now.signed_duration_since(reference).num_seconds().max(0) as u64;
 
-    if age_secs >= t.run_stale_kill.as_secs() {
+    // Effective kill threshold: 2x the per-run budget when known, else the
+    // fixed backstop. This prevents a single slow LLM call from being
+    // mis-classified as stalled even when the per-run heartbeat thread is
+    // beating normally.
+    let effective_kill_secs = run
+        .wall_clock_budget_seconds
+        .map(|b| (2.0 * b).ceil() as u64)
+        .unwrap_or_else(|| t.run_stale_kill.as_secs());
+
+    if age_secs >= effective_kill_secs {
         if let Some(pid) = run.pid {
             return RunAction::Kill { pid };
         }
@@ -389,14 +418,16 @@ mod tests {
     use chrono::Duration as ChDuration;
 
     fn thresholds() -> Thresholds {
+        Thresholds::default()
+    }
+
+    /// Tight thresholds for tests that need to exercise warn/kill paths
+    /// without waiting hundreds of seconds.
+    fn tight_run_thresholds() -> Thresholds {
         Thresholds {
-            heartbeat_stale_warn: Duration::from_secs(30),
-            heartbeat_stale_kill: Duration::from_secs(90),
             run_stale_warn: Duration::from_secs(30),
             run_stale_kill: Duration::from_secs(120),
-            grace: Duration::from_secs(5),
-            run_kill_grace: Duration::from_secs(5),
-            run_deadline_kill_disabled: false,
+            ..Thresholds::default()
         }
     }
 
@@ -506,6 +537,9 @@ mod tests {
 
     #[test]
     fn stale_run_warns_then_kills() {
+        // Uses tight thresholds (warn=30s, kill=120s, no budget) to exercise
+        // the staleness path without needing 600s of elapsed time.
+        let t = tight_run_thresholds();
         let now = Utc::now();
         let mut run = ActiveRun {
             run_id: "r1".into(),
@@ -513,17 +547,71 @@ mod tests {
             last_progress: Some(now - ChDuration::seconds(45)),
             ..Default::default()
         };
-        assert_eq!(decide_run(&run, now, &thresholds()), RunAction::Warn);
+        assert_eq!(decide_run(&run, now, &t), RunAction::Warn);
 
         run.last_progress = Some(now - ChDuration::seconds(125));
+        assert_eq!(decide_run(&run, now, &t), RunAction::Kill { pid: 42 });
+    }
+
+    #[test]
+    fn stale_run_kill_uses_2x_budget_when_known() {
+        // When wall_clock_budget_seconds is set, the kill threshold is 2x
+        // the budget — not the static run_stale_kill backstop.
+        let now = Utc::now();
+        // budget = 60s => effective kill = 120s.
+        let mut run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(42),
+            wall_clock_budget_seconds: Some(60.0),
+            last_progress: Some(now - ChDuration::seconds(115)),
+            ..Default::default()
+        };
+        // 115s < 120s (2x budget) — not yet kill, may warn if past run_stale_warn.
+        let action = decide_run(&run, now, &thresholds());
+        assert_ne!(action, RunAction::Kill { pid: 42 }, "115s should not kill with 2x budget=120s");
+
+        // 121s >= 120s (2x budget) — should kill.
+        run.last_progress = Some(now - ChDuration::seconds(121));
         assert_eq!(
             decide_run(&run, now, &thresholds()),
-            RunAction::Kill { pid: 42 }
+            RunAction::Kill { pid: 42 },
+            "121s should kill when 2x budget = 120s",
+        );
+    }
+
+    #[test]
+    fn stale_run_kill_falls_back_to_backstop_without_budget() {
+        // No wall_clock_budget_seconds: the static run_stale_kill (600s default)
+        // is the kill threshold.
+        let now = Utc::now();
+        let mut run = ActiveRun {
+            run_id: "r1".into(),
+            pid: Some(42),
+            wall_clock_budget_seconds: None,
+            last_progress: Some(now - ChDuration::seconds(200)),
+            ..Default::default()
+        };
+        // 200s < 600s backstop — not killed.
+        assert_ne!(
+            decide_run(&run, now, &thresholds()),
+            RunAction::Kill { pid: 42 },
+            "200s should not kill without budget (backstop is 600s)",
+        );
+
+        // 601s >= 600s backstop — killed.
+        run.last_progress = Some(now - ChDuration::seconds(601));
+        assert_eq!(
+            decide_run(&run, now, &thresholds()),
+            RunAction::Kill { pid: 42 },
+            "601s should kill at the 600s backstop",
         );
     }
 
     #[test]
     fn run_without_pid_only_warns() {
+        // Uses tight thresholds so the test exercises the warn-only path
+        // within a normal age range.
+        let t = tight_run_thresholds();
         let now = Utc::now();
         let run = ActiveRun {
             run_id: "r1".into(),
@@ -531,7 +619,8 @@ mod tests {
             last_progress: Some(now - ChDuration::seconds(200)),
             ..Default::default()
         };
-        assert_eq!(decide_run(&run, now, &thresholds()), RunAction::Warn);
+        // 200s > tight kill (120s) but no pid, so only Warn.
+        assert_eq!(decide_run(&run, now, &t), RunAction::Warn);
     }
 
     #[test]
