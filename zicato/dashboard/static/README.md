@@ -1,8 +1,8 @@
-# supervisor/static — dashboard UI bundle
+# zicato/dashboard/static — dashboard UI bundle
 
-Vanilla HTML / CSS / JS source for the zicato supervisor dashboard.
-The Rust supervisor binary bundles these files at compile time via
-`include_dir!` and serves them from `/` and `/static/...`.
+Vanilla HTML / CSS / JS source for the zicato dashboard. The standalone
+Python dashboard service (`zicato.dashboard.server`) serves these files
+off disk from `/` and `/static/...`.
 
 No build step. No framework. No external network. Everything in this
 directory must remain self-contained — no Google Fonts, no CDN, no
@@ -26,80 +26,45 @@ dashboard read as siblings.
 - `icons.svg` — inline-able sprite. Reference via
   `<use href="/static/icons.svg#icon-name"/>`.
 
-## Server contract
+## Environment-view data flow
 
-The dashboard talks to the supervisor over these endpoints. Anything
-not listed must NOT be requested.
+The dashboard presents the state of an instantiated zicato environment.
+It reads the whole environment through ONE consolidated endpoint and
+refreshes it on a single coalesced poll — it does NOT fan out to many
+per-section endpoints, and it does NOT poll on a tight timer.
 
 ```
 GET  /                              — index.html
 GET  /static/{path}                 — style.css, app.js, icons.svg, ...
-GET  /api/state                     — full snapshot
-GET  /api/lineage                   — { generations, experiments }
-GET  /api/active-runs               — [ run, ... ]
-GET  /api/active-tournament         — current tournament or null
-GET  /events                        — SSE
-                                      events: snapshot, state_change, log, heartbeat
-POST /api/control/pause             — v1.3
-POST /api/control/skip-round        — v1.3
-POST /api/control/kill/{run_id}     — v1.3
-POST /api/control/promote/{gen_id}  — v1.3
-POST /api/control/reject/{gen_id}   — v1.3
-POST /api/control/brief             — v1.3 — body: new proposer brief text
+GET  /api/environment                — the consolidated environment read:
+                                       epoch contract, live + past
+                                       tournaments, generation lineage,
+                                       active runs, health, heartbeat,
+                                       run-log tail. ONE request.
+GET  /api/run-log?after=<cursor>     — append-only run-log tail batch
+GET  /api/tournaments/{gen_id}       — per-matchup detail (drill-down)
+GET  /api/files...                   — generation file tree + patches
+GET  /api/conversation/{run_id}      — reconstructed transcript
+GET  /api/matchup/{entry}/conversations — champion + challenger pair
+GET  /events                         — SSE: snapshot, coalesced
+                                       state_change, run_log, heartbeat
+POST /api/control/{pause,skip-round,kill,promote,reject,brief}
 ```
 
-For v1.2 the action buttons render but are disabled with a tooltip
-explaining they land in v1.3. The POST handlers are wired in
-`app.js#postControl` so the v1.3 change is "remove `disabled`".
-
-## Snapshot shape (consumed by `app.js`)
-
-```jsonc
-{
-  "epoch":      { "id": "initial", "generation": "v3", "round": "4",
-                  "startedAt": "2026-05-14T12:30:27Z" },
-  "heartbeat":  { "timestamp": "...", "pid": 12345, "instance_id": "..." },
-  "supervisor": { "version": "1.2.0", "port": "7892", "build": "..." },
-  "scoring":    { "margin": 0.05 },
-  "active_runs": [
-    { "run_id": "r-9c2a", "entry_id": "...", "generation_id": "v4",
-      "started_at": "...", "budget_seconds": 180, "percent": 23 }
-  ],
-  "active_tournament": {
-    "round": 4, "total_rounds": 5,
-    "parent_id": "v3", "child_id": "v4",
-    "elapsed_seconds": 263,
-    "hypothesis": { "core_idea": "...", "modulating": ["..."] },
-    "entries": [
-      { "entry_id": "...", "status": "done|running|queued|fail",
-        "parent": { "drift_loss": 0.23, "pass": true },
-        "child":  { "drift_loss": 0.18, "pass": true,
-                    "drift_kinds": { "off_topic": 2 } },
-        "runtime": { "elapsed_seconds": 42, "budget_seconds": 180, "percent": 23 },
-        "run_id": "r-9c2a" }
-    ]
-  },
-  "lineage": {
-    "generations": [{ "id": "v0", "parent_id": null }, ...],
-    "experiments": [{ "generation_id": "v1", "hypothesis": {...},
-                      "outcome": { "tournament_decision": "promoted",
-                                   "scalar_score_delta": -0.080,
-                                   "drift_movements": [
-                                     { "kind": "off_topic",
-                                       "from_rate": 0.4, "to_rate": 0.2 }
-                                   ]}}]
-  },
-  "experiments": [ /* full experiment objects with patches */ ],
-  "log_tail": [{ "ts": "12:34:50", "level": "info", "message": "..." }]
-}
-```
+On an SSE `state_change` frame the client debounces and performs ONE
+`/api/environment` fetch. On a `run_log` frame it performs an
+append-only `/api/run-log?after=<cursor>` poll so the log tail GROWS
+rather than re-rendering. The dedicated per-section endpoints
+(`/api/state`, `/api/epoch`, `/api/tournaments`, `/api/active-tournament`,
+`/api/lineage`, `/api/active-runs`, `/api/health-report`) remain served
+for compatibility but are not on the steady-state path.
 
 ## Mock mode
 
-For offline preview without a running supervisor:
+For offline preview without a running dashboard service:
 
 ```
-file:///path/to/supervisor/static/index.html?mock=1
+file:///path/to/zicato/dashboard/static/index.html?mock=1
 ```
 
 A hardcoded `mockSnapshot()` populates `AppState` and every panel
@@ -108,8 +73,11 @@ for the structural test in `tests/test_dashboard_ui.py`.
 
 ## Size envelope
 
-Total bundle (index.html + style.css + app.js + icons.svg) must stay
-under 80 KB uncompressed. The structural test enforces this.
+Total bundle (index.html + style.css + app.js + icons.svg) is held
+under an uncompressed envelope by the structural test in
+`tests/test_dashboard_ui.py`. It is a localhost-served vanilla bundle
+with no network cost; the guard exists only to keep the bundle from
+drifting unboundedly.
 
 ## Accessibility
 
