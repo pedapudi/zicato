@@ -184,6 +184,59 @@ def test_worker_runs_entry_end_to_end(tmp_path: Path) -> None:
     assert not active_run_path(workspace, run_id).exists()
 
 
+def test_worker_penalises_aborted_run_in_loss_json(tmp_path: Path) -> None:
+    """A run whose adapter returns an aborted RunResult is scored worst-case.
+
+    Regression for F3: a run that crashes (here, the adapter returns a
+    ``RunResult(aborted=True, abort_reason='harness_exception:...')``)
+    finishes near-instantly with an empty events file. The worker still
+    exits 0 with a clean result file, so the runner reads back the
+    ``loss.json`` it wrote. That ``loss.json`` must carry the
+    not-completed penalty — never ``drift_loss == 0.0`` — or a
+    challenger generation could win a tournament by crashing fast.
+    """
+    from zicato.telemetry.reducer import read_loss_profile
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = _generation(workspace)
+    entry = _entry()
+
+    args_path = tmp_path / "args.json"
+    result_path = tmp_path / "result.json"
+    _write_args_file(
+        args_path,
+        workspace=workspace,
+        generation=generation,
+        entry=entry,
+        result_path=result_path,
+        adapter_factory="tests._subprocess_worker_support:make_aborting_adapter",
+    )
+
+    proc = _spawn_worker_blocking(args_path)
+    # A crashed *run* is a clean *worker* exit — the worker caught the
+    # adapter's aborted RunResult and wrote loss.json + result file.
+    assert proc.returncode == 0, "an aborted-run worker still exits cleanly"
+
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    # The result-file ``aborted`` flag tracks the worker's *budget* abort
+    # only; a harness crash is not a budget abort, so it stays False. The
+    # run-level abort lives on the embedded RunResult.
+    assert result["aborted"] is False
+    assert result["run_result"]["aborted"] is True
+
+    loss_path = loss_profile_path(workspace, "e0", generation.id, entry.id)
+    assert loss_path.exists()
+    profile = read_loss_profile(loss_path)
+    # The crash is penalised, not rewarded: drift_loss is the worst-case
+    # not-completed magnitude, never 0.0.
+    assert profile.drift_loss > 0.0
+    # Heavy term 5.0 * max(severity_weights)=50.0 + floored
+    # task_failure_ratio 1.0 * 10.0 = 60.0 under the default weights.
+    assert profile.drift_loss == pytest.approx(60.0)
+    assert profile.task_failure_ratio == pytest.approx(1.0)
+
+
 def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
     """The active_runs file the worker writes carries the WORKER's pid.
 

@@ -240,6 +240,29 @@ def _load_events_as_dicts(events_jsonl_path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def _camel_to_snake(name: str) -> str:
+    """Convert a camelCase / PascalCase identifier to ``snake_case``.
+
+    Goldfive serialises its event payloads two different ways depending
+    on which reader path the reducer took (see :func:`_load_events_as_dicts`):
+
+    * The strict proto-replay path runs ``MessageToDict`` with
+      ``preserving_proto_field_name=True``, yielding snake_case keys
+      (``drift_detected``).
+    * The plain-JSON fallback path reads the JSONL exactly as goldfive's
+      persistence sink wrote it via ``MessageToJson``, which renders
+      proto field names in **camelCase** (``driftDetected``).
+
+    The reducer's event dispatch (:func:`reduce_loss`) keys on
+    snake_case literals, so the fallback path must be normalised or
+    every drift / judgement / plan-revision event is silently dropped.
+    This helper inserts an underscore before each interior uppercase
+    letter and lowercases the result; an already-snake_case string
+    passes through unchanged.
+    """
+    return re.sub(r"(?<!^)(?<!_)([A-Z])", r"_\1", name).lower()
+
+
 def _payload(event: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
     """Return ``(payload_key, payload_dict)`` for one event dict.
 
@@ -248,13 +271,32 @@ def _payload(event: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
     of the event dict. We scan the known payload keys, ignoring envelope
     keys (``event_id``, ``run_id``, ``sequence``, ``emitted_at``,
     ``session_id``).
+
+    The returned payload key is always normalised to ``snake_case`` via
+    :func:`_camel_to_snake`. Goldfive's persistence sink writes payload
+    keys in camelCase (``driftDetected``) when the reducer falls back to
+    plain-JSON reading; the strict proto-replay path already yields
+    snake_case. Normalising here means :func:`reduce_loss` can dispatch
+    on a single canonical (snake_case) key set regardless of which
+    reader path produced the event dict.
     """
-    envelope = {"event_id", "run_id", "sequence", "emitted_at", "session_id"}
+    envelope = {
+        "event_id",
+        "run_id",
+        "sequence",
+        "emitted_at",
+        "session_id",
+        # camelCase envelope keys — goldfive's MessageToJson wire form.
+        "eventId",
+        "runId",
+        "sessionId",
+        "emittedAt",
+    }
     for k, v in event.items():
         if k in envelope:
             continue
         if isinstance(v, dict):
-            return k, v
+            return _camel_to_snake(k), v
     return None, {}
 
 
@@ -268,6 +310,40 @@ def _payload(event: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
 # default — pure failures matter)". Kept as a module-level constant so
 # tests can introspect it and so the value lives somewhere greppable.
 _TASK_FAILURE_RATIO_MULTIPLIER: float = 10.0
+
+# Factor on ``max(severity_weights)`` for the heavy fixed-magnitude
+# not-completed penalty. Any run that did NOT complete successfully —
+# killed, crashed, harness-exception, emulator-leak-aborted, budget
+# exceeded — is scored worst-case by adding ``_NOT_COMPLETED_HEAVY_TERM_FACTOR
+# * max(severity_weights)`` to its drift loss AND flooring its
+# ``task_failure_ratio`` to 1.0. Keying the term off ``severity_weights``
+# keeps the penalty proportionate to the epoch's drift scale; the value
+# 5.0 mirrors the constant the runner's ``_aborted_loss_profile`` uses
+# for a SIGKILLed worker, so a crash and a watchdog kill score
+# identically. Without this a run that crashes instantly (empty events
+# file, zero drift counts) would earn ``drift_loss == 0.0`` — the BEST
+# possible score — and a challenger generation could win a tournament
+# by failing fast.
+_NOT_COMPLETED_HEAVY_TERM_FACTOR: float = 5.0
+
+
+def not_completed_penalty(weights: ScoringWeights) -> float:
+    """Heavy fixed-magnitude drift-loss term for a run that did not complete.
+
+    Returns ``_NOT_COMPLETED_HEAVY_TERM_FACTOR * max(severity_weights)``
+    — the penalty :func:`reduce_loss` adds for ANY non-success terminal
+    state (killed / crashed / errored / aborted / budget-exceeded). An
+    epoch with no configured severity weights falls back to a factor of
+    ``1.0`` so the penalty is still non-trivial.
+
+    Exposed (not underscore-private) so the tournament runner's
+    aborted-run synthesiser can compute the identical magnitude rather
+    than hard-coding it — single source of truth for "what a
+    not-completed run costs".
+    """
+    sev_vals = list(weights.severity_weights.values()) or [1.0]
+    return _NOT_COMPLETED_HEAVY_TERM_FACTOR * max(sev_vals)
+
 
 # The bare wire-canonical drift-kind string a custom judge emits. All
 # custom judges share this single ``DriftKind`` value — the per-judge
@@ -653,6 +729,7 @@ def reduce_loss(
     wall_clock_budget_exceeded: bool,
     weights: ScoringWeights,
     final_output: str | None = None,
+    run_not_completed: bool = False,
 ) -> LossProfile:
     """Build a :class:`LossProfile` for one run.
 
@@ -663,14 +740,31 @@ def reduce_loss(
     runs the memory-failure / context-loss heuristics over the
     best-effort transcript reconstruction.
 
-    When ``wall_clock_budget_exceeded`` is true, the reducer adds a
-    heavy fixed-magnitude term to the drift loss so a budget-exceeded
-    run is unambiguously worst-case relative to a budget-respecting
-    one. The magnitude is keyed off the configured ``severity_weights``
-    so an epoch that has dialled severities down still sees a
-    proportionally heavy penalty: we add
-    ``5.0 * max(severity_weights.values(), default=1.0)``. This keeps
-    the budget gate effective without burying the rest of the signal.
+    Not-completed penalty
+    ---------------------
+    A run that did **not** complete successfully is scored worst-case,
+    never zero. This covers every non-success terminal state:
+
+    * ``wall_clock_budget_exceeded`` — the run hit its wall-clock
+      budget and was force-aborted.
+    * ``run_not_completed`` — the run terminated abnormally for any
+      other reason: the harness raised an exception (a crash), the
+      emulator's answer-leak heuristic aborted it, the scripted /
+      emulated driver was unavailable, the adapter rejected the entry
+      kind, or the worker process was killed.
+
+    Either flag triggers the SAME penalty, applied exactly once even
+    when both are set: the reducer floors ``task_failure_ratio`` to
+    ``1.0`` (so the failure term inside :func:`compute_drift_loss`
+    contributes its maximum) and adds the heavy fixed-magnitude term
+    :func:`not_completed_penalty` keyed off ``severity_weights``. This
+    is deliberate: without it a run that crashes instantly leaves an
+    empty events file, the reducer counts zero drift, and the run earns
+    ``drift_loss == 0.0`` — the BEST possible score. A challenger
+    generation could then win a tournament simply by failing fast. The
+    floor + heavy term make any non-completing run unambiguously
+    worst-case, consistent with how a watchdog-killed run is already
+    scored by the runner's :func:`_aborted_loss_profile`.
 
     The ``run_id`` field on the returned profile is derived from the
     first event's ``run_id`` envelope field; when the events file is
@@ -708,6 +802,14 @@ def reduce_loss(
         ``output_chars`` is taken as its length; otherwise the reducer
         approximates from summed agent text payloads. Back-compat: the
         parameter is optional so existing callers don't need to change.
+    run_not_completed:
+        ``True`` when the run terminated abnormally for a reason other
+        than the wall-clock budget — a harness crash, an emulator
+        answer-leak abort, an unavailable driver, or a killed worker.
+        Triggers the same not-completed penalty as
+        ``wall_clock_budget_exceeded`` (see "Not-completed penalty"
+        above). Back-compat: optional, defaults to ``False`` so a run
+        that completed cleanly is scored exactly as before.
     """
     events: list[dict[str, Any]] = []
     if events_jsonl_path.exists():
@@ -821,6 +923,19 @@ def reduce_loss(
     # pathological event orderings).
     task_failure_ratio = max(0.0, min(1.0, task_failure_ratio))
 
+    # A run that did not complete successfully is scored worst-case.
+    # Floor ``task_failure_ratio`` to its maximum so the failure term
+    # inside ``compute_drift_loss`` contributes fully even when the run
+    # crashed before emitting a single ``task_failed`` event (the
+    # common case — an instant harness exception leaves an empty events
+    # file). The heavy fixed-magnitude term is added after the loss
+    # computation, below. Both ``wall_clock_budget_exceeded`` and
+    # ``run_not_completed`` are non-success terminal states; either one
+    # triggers the floor.
+    not_completed = bool(wall_clock_budget_exceeded or run_not_completed)
+    if not_completed:
+        task_failure_ratio = 1.0
+
     # --- 2. Multi-turn heuristics ---
 
     turns_completed: int | None = None
@@ -844,12 +959,14 @@ def reduce_loss(
         runtime_ms=runtime_ms,
         weights=weights,
     )
-    if wall_clock_budget_exceeded:
+    if not_completed:
         # Heavy fixed-magnitude term keyed off severity_weights so the
         # penalty stays meaningfully large relative to the rest of the
-        # scoring surface. See docstring for rationale.
-        sev_vals = list(weights.severity_weights.values()) or [1.0]
-        drift_loss += 5.0 * max(sev_vals)
+        # scoring surface. Applied exactly once for ANY non-success
+        # terminal state — budget exceeded OR any other abnormal
+        # termination — so a fast crash scores no better than a
+        # watchdog kill. See docstring for rationale.
+        drift_loss += not_completed_penalty(weights)
 
     # --- 4. Pass/fail derivation ---
 
@@ -1011,6 +1128,7 @@ def read_loss_profile(path: Path) -> LossProfile:
 __all__ = [
     "reduce_loss",
     "compute_drift_loss",
+    "not_completed_penalty",
     "split_judge_attributed_kind",
     "read_loss_profile",
     "write_loss_profile",

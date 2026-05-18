@@ -145,6 +145,51 @@ class CooperativeAdapter:
         return []
 
 
+class _AbortingSession:
+    """A session with the rich ``run(entry, sinks, config)`` shape that aborts.
+
+    Returns a :class:`~zicato.core.RunResult` with ``aborted=True`` and an
+    ``abort_reason`` mimicking a harness exception — exactly what the adk
+    adapter synthesises when the inner agent crashes. The run finishes
+    near-instantly with an empty events file, so without the reducer's
+    not-completed penalty it would score ``drift_loss == 0.0``.
+    """
+
+    async def run(self, entry: Any, sinks: Any, config: Any) -> Any:
+        del sinks, config
+        from zicato.core import RunResult  # noqa: PLC0415
+
+        return RunResult(
+            run_id=f"abort-{entry.id}",
+            entry_id=entry.id,
+            final_output="",
+            transcript=(),
+            runtime_ms=1,
+            aborted=True,
+            abort_reason="harness_exception:TypeError",
+        )
+
+
+class AbortingAdapter:
+    """Adapter whose session returns an aborted RunResult (a simulated crash)."""
+
+    name = "stub"
+
+    def load(self, generation_root: Path) -> _AbortingSession:
+        del generation_root
+        return _AbortingSession()
+
+    def mutation_points(self, source_roots: Any = None) -> list[Any]:
+        del source_roots
+        return []
+
+    def worker_spec(self) -> dict[str, Any]:
+        return {
+            "kind": "import",
+            "factory": "tests._subprocess_worker_support:make_aborting_adapter",
+        }
+
+
 class StubAdapter:
     """A minimal :class:`~zicato.adapters.base.HarnessAdapter`-shaped object.
 
@@ -227,6 +272,11 @@ def make_sigterm_ignoring_adapter() -> SleepingAdapter:
 def make_cooperative_adapter() -> CooperativeAdapter:
     """Factory for a worker that self-aborts on its own cooperative budget."""
     return CooperativeAdapter()
+
+
+def make_aborting_adapter() -> AbortingAdapter:
+    """Factory for the adapter whose session returns an aborted RunResult."""
+    return AbortingAdapter()
 
 
 def pid_marker_path() -> Path:
