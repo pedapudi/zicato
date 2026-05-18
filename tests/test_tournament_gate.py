@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from zicato.core import ScoringWeights
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 

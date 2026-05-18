@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from zicato.core.types import (
     BoardEntry,
     DriftCount,

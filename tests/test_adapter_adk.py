@@ -38,6 +38,7 @@ pytest.importorskip("goldfive")
 pytest.importorskip("google.adk")
 
 from google.adk.agents import LlmAgent  # noqa: E402
+
 from zicato.adapters.adk import (  # noqa: E402
     ADKHarnessAdapter,
     ADKRunnableHarness,
@@ -855,6 +856,7 @@ async def test_run_multi_turn_scripted_calls_goldfive_run_per_turn(
       turn — the two-callable collusion guard holds for scripted entries.
     """
     import goldfive
+
     from zicato.core import ScriptedTurn
 
     generation_root, entrypoint = inner_harness
@@ -953,6 +955,7 @@ async def test_run_multi_turn_emulated_calls_goldfive_run_per_turn(
     * The auxiliary_call_llm drives the emulator's user turns.
     """
     import goldfive
+
     from zicato.core import UserPersona
     from zicato.emulator.sealed import END_TOKEN
 
