@@ -658,11 +658,18 @@ def _judgement_judge_name(payload: dict[str, Any]) -> str | None:
     can distinguish "no pairing candidate" from "a drift judgement
     whose ``judge_name`` happens to be empty" (the latter still pairs,
     just at the default weight).
+
+    Both snake_case (``verdict_kind``, ``judge_name``) and camelCase
+    (``verdictKind``, ``judgeName``) keys are accepted. The proto-replay
+    path normalises to snake_case via ``MessageToDict``; the plain-JSON
+    fallback retains the camelCase wire form that goldfive's persistence
+    sink wrote. Checking both forms here mirrors the dual-key reads
+    already present in the :func:`reduce_loss` envelope loop.
     """
-    verdict_kind = str(payload.get("verdict_kind", "") or "")
+    verdict_kind = str(payload.get("verdict_kind", "") or payload.get("verdictKind", "") or "")
     if verdict_kind != "drift":
         return None
-    return str(payload.get("judge_name", "") or "")
+    return str(payload.get("judge_name", "") or payload.get("judgeName", "") or "")
 
 
 def _agent_and_user_turns_from_events(
