@@ -57,6 +57,7 @@ exception. Shape (as produced by `state_reader.build_environment`):
   "workspace": "/abs/path/.zicato",
   "epoch_id": "2026-05-18_presn" | null,
   "epoch": { ...epoch contract... },          // build_epoch_view
+  "epochs": [ { "epoch_id": str, "goal": str|null } ],  // per-epoch goal summary
   "active_tournament": { ...tournament... } | null,
   "tournaments": { "epoch_id", "champion_lineage":[genId], "matchups":[...] },
   "generations": { "generations":[...], "experiments":[...] },
@@ -72,6 +73,14 @@ exception. Shape (as produced by `state_reader.build_environment`):
   "generated_at": "ISO-8601 Z"
 }
 ```
+
+`epochs` is a lightweight per-epoch summary list — one
+`{ epoch_id, goal }` row per epoch directory on disk. `goal` is a
+one-line description distilled from that epoch's proposer brief (the
+`## Goal` section of `brief.md`), or `null` when the brief is absent or
+carries no goal. It lets the Overview's epochs table annotate each row
+with what the epoch is trying to accomplish without a per-epoch
+`/api/epoch` fetch. Folded into AppState as `state.epochs`.
 
 `GET /api/health` (separate, fetched ONCE) is the dashboard *service*
 identity: `{ status, version, port, build, uptime_seconds, read_only,
@@ -177,6 +186,7 @@ state.logTail         { events:[] }   logCursor   logEventsPath
 state.health                          — dashboard-service identity
 state.epoch           { id, generation, round, startedAt }
 state.epochDef        — full epoch contract
+state.epochs          — per-epoch goal summary [ { epoch_id, goal } ]
 state.scoring         { margin }
 state.workspace
 state.files / state.mutations         — Files-view scratch state
@@ -237,8 +247,11 @@ identity if a `key` is supplied.
   inner-harness, # mutation sites, # epochs); a loop-health line; a
   COMPACT live-activity card linking to the Tournament view (not the
   full board); the environment-wide score trajectory (reuse
-  `build_score_trajectory`); an epochs table; recent experiments;
-  aggregate stats.
+  `build_score_trajectory`); an epochs table — each row carries the
+  epoch's goal (from `state.epochs`) alongside its stats; recent
+  experiments — an unfinished experiment reads as `incomplete`, and the
+  "Full experiment log" link lands on the Epoch view's Experiments
+  section; aggregate stats.
 - **Lineage** (`views/lineage.js`, container `#view-tree`): the
   generation DAG, the navigation hub. Pan/zoom. Click a node → route to
   its experiment / matchup. Terminology: parent/child.
@@ -255,20 +268,28 @@ identity if a `key` is supplied.
   **Matchup-click MUST work** — handlers survive deltas via §4.
 - **Epoch** (`views/epoch.js`, container `#view-epoch`): the epoch's
   NARRATIVE. A header block — epoch id, open/closed status, and a stat
-  strip tallying experiments / promoted / rejected / net Δscalar. The
-  proposer brief rendered as a readable block, framed as the operator's
-  goal for the epoch. The **experiment narrative**: one card per
-  experiment, each told in four beats — *what* (the proposer's core idea
-  + generation id + lineage), *hypothesis* (the pre-run structured
+  strip tallying experiments / promoted / rejected / `incomplete` / net
+  Δscalar. The proposer brief rendered as a readable block, framed as
+  the operator's goal for the epoch. The **Experiments section** (one
+  merged section — the experiment narrative AND the epoch journal as a
+  single chronological per-round log; there is NO separate Journal
+  section): one entry per experiment, **terse by default** — a one-line
+  summary (round ordinal · generation id · core idea · verdict ·
+  Δscalar) — and **expandable** to the full four-beat detail: *what*
+  (core idea + lineage), *hypothesis* (the pre-run structured
   prediction: why, expected pass-rate move, predicted drift, risks,
   modulating sites), *change* (the patch summary, with an expandable
   line diff against the epoch baseline), and *outcome* (the tournament
   verdict — did the challenger beat the champion — the scalar Δ and its
-  components, the rejection reason, a jump to the Tournament view). The
-  card's left-edge accent is coloured by the decision so the
-  promoted/rejected/pending arc is scannable. Supporting context panels:
-  registered harness, board entries, scoring weights, mutation surface,
-  the epoch journal, and the analysis report.
+  components, the rejection reason, a jump to the Tournament view). A
+  journal round's free prose folds into the matching entry as a
+  *journal note*; a "view raw journal" link to the journal endpoint is
+  offered (not its own section). An experiment whose tournament never
+  reached a verdict is `incomplete` and STILL appears here (the raw
+  journal drops it). The entry's left-edge accent is coloured by the
+  decision so the promoted/rejected/incomplete arc is scannable.
+  Supporting context panels: registered harness, board entries, scoring
+  weights, mutation surface, and the analysis report.
 
   **Epoch data source.** Every field above comes from ONE read —
   `state.epochDef`, populated from `GET /api/epoch` and the `epoch` key

@@ -514,6 +514,7 @@ def test_environment_endpoint_consolidates_feeds(client: TestClient) -> None:
         "workspace",
         "epoch_id",
         "epoch",
+        "epochs",
         "active_tournament",
         "tournaments",
         "generations",
@@ -566,6 +567,100 @@ def test_epoch_view_brief_prefers_brief_md_over_legacy(workspace: Path) -> None:
 
     view = build_epoch_view(WorkspacePaths(workspace))
     assert view["brief"].startswith("# Proposer brief")
+
+
+def test_epoch_view_board_skips_board_meta_header(workspace: Path) -> None:
+    """The board's ``board_meta`` header line is not a board entry.
+
+    A board.jsonl whose first line is a ``board_meta`` object must not
+    surface that line as a spurious all-``—`` board row.
+    """
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write(
+        epoch_dir / "board.jsonl",
+        "\n".join(
+            [
+                json.dumps({"board_meta": True, "disable_drift": ["user_steer"]}),
+                json.dumps(
+                    {
+                        "id": "waffles_single",
+                        "kind": "single_turn",
+                        "input": "Make a presentation about waffles.",
+                        "wall_clock_budget_seconds": 180,
+                        "weight": 1.0,
+                        "tags": ["smoke"],
+                        "expectation": {"kind": "predicate"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+    )
+    view = build_epoch_view(WorkspacePaths(workspace))
+    # Only the real entry — the board_meta header is dropped.
+    assert len(view["board"]) == 1
+    assert view["board"][0]["id"] == "waffles_single"
+    assert all(e.get("board_meta") is not True for e in view["board"])
+
+
+# ---------------------------------------------------------------------------
+# Per-epoch goal summary — the Overview epochs-table annotation
+# ---------------------------------------------------------------------------
+
+
+def test_build_epochs_summary_distils_goal_from_brief(workspace: Path) -> None:
+    """build_epochs_summary distils a one-line goal from each epoch brief."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epochs_summary
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write(
+        epoch_dir / "brief.md",
+        "# Proposer brief\n\n## Goal\n\n"
+        "Produce coherent, structured presentation outputs from the tree.\n\n"
+        "- a bullet that must not be picked as the summary\n\n"
+        "## Preferred edits\n\nSomething else.\n",
+    )
+    summary = build_epochs_summary(WorkspacePaths(workspace))
+    assert len(summary) == 1
+    row = summary[0]
+    assert row["epoch_id"] == "2026-05-16_e0"
+    assert row["goal"] == "Produce coherent, structured presentation outputs from the tree."
+
+
+def test_build_epochs_summary_goal_none_when_no_goal_section(workspace: Path) -> None:
+    """A brief with no ``## Goal`` section yields a null goal, not an error."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epochs_summary
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write(epoch_dir / "brief.md", "# Proposer brief\n\n## Preferred edits\n\nNo goal here.\n")
+    summary = build_epochs_summary(WorkspacePaths(workspace))
+    assert summary[0]["goal"] is None
+
+
+def test_build_epochs_summary_reads_legacy_rubric_md(workspace: Path) -> None:
+    """The goal distillation falls back to the legacy ``rubric.md`` name."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epochs_summary
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    (epoch_dir / "brief.md").unlink()
+    _write(epoch_dir / "rubric.md", "# Epoch\n\n## Goal\n\nStabilise the schema.\n")
+    summary = build_epochs_summary(WorkspacePaths(workspace))
+    assert summary[0]["goal"] == "Stabilise the schema."
+
+
+def test_environment_includes_epochs_summary(client: TestClient) -> None:
+    """``/api/environment`` carries the per-epoch goal summary list."""
+    r = client.get("/api/environment")
+    assert r.status_code == 200
+    body = r.json()
+    assert "epochs" in body, "/api/environment must carry the epochs summary"
+    assert isinstance(body["epochs"], list)
+    ids = {e["epoch_id"] for e in body["epochs"]}
+    assert "2026-05-16_e0" in ids
+    for e in body["epochs"]:
+        assert "goal" in e, "each epochs-summary row carries a goal field"
 
 
 # ---------------------------------------------------------------------------

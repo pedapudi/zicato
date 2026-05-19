@@ -552,6 +552,11 @@ def _parse_board(path: Path) -> list[dict[str, Any]] | None:
             continue
         if not isinstance(obj, dict):
             continue
+        # The board's first JSONL line is a `board_meta` header object
+        # (it carries `disable_drift`, not an entry's fields). Skip it
+        # so it does not surface as a spurious all-`—` board row.
+        if obj.get("board_meta") is True:
+            continue
         expectation = obj.get("expectation")
         expectation_kind = expectation.get("kind") if isinstance(expectation, dict) else None
         budget = obj.get("wall_clock_budget_seconds")
@@ -631,6 +636,78 @@ def _read_text_best_effort(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError):
         return ""
+
+
+def _read_epoch_brief(epoch_dir: Path) -> str:
+    """The proposer brief text for an epoch.
+
+    ``brief.md`` post-rename; ``rubric.md`` is the legacy name and is
+    read as a fallback so pre-rename epochs still resolve. Any read
+    error degrades to an empty string.
+    """
+    for name in ("brief.md", "rubric.md"):
+        try:
+            return (epoch_dir / name).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        except OSError:
+            break
+    return ""
+
+
+def _distill_brief_goal(brief: str) -> str | None:
+    """Distil a one-line goal summary from a proposer brief.
+
+    The brief carries a ``## Goal`` section (see the dogfood targets'
+    ``brief.md``). The summary is the first non-empty prose line of that
+    section — the operator's one-line statement of what the epoch is
+    reaching for. A list-item or sub-heading line is skipped so the
+    summary is always a sentence. Returns ``None`` when the brief has no
+    ``Goal`` section or no prose line within it.
+    """
+    if not brief:
+        return None
+    lines = brief.replace("\r\n", "\n").split("\n")
+    in_goal = False
+    for raw in lines:
+        line = raw.strip()
+        heading = line.lstrip("#").strip() if line.startswith("#") else None
+        if heading is not None:
+            if in_goal:
+                # A later heading closes the Goal section.
+                break
+            if heading.lower() == "goal":
+                in_goal = True
+            continue
+        if not in_goal or not line:
+            continue
+        # Skip list items / blockquotes — the summary should read as a
+        # sentence, not a bullet fragment.
+        if line[0] in "-*>":
+            continue
+        return _preview(line)
+    return None
+
+
+def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:
+    """One row per epoch on disk: ``{epoch_id, goal}``.
+
+    ``goal`` is a one-line summary distilled from that epoch's proposer
+    brief (its ``## Goal`` section), or ``None`` when the brief is
+    absent or carries no goal. Epochs are listed in directory-name order
+    so the Overview's epochs table can annotate each row with what the
+    epoch is trying to accomplish without a per-epoch ``/api/epoch``
+    fetch.
+    """
+    out: list[dict[str, Any]] = []
+    if not paths.epochs.is_dir():
+        return out
+    for epoch_dir in sorted(paths.epochs.iterdir()):
+        if not epoch_dir.is_dir():
+            continue
+        goal = _distill_brief_goal(_read_epoch_brief(epoch_dir))
+        out.append({"epoch_id": epoch_dir.name, "goal": goal})
+    return out
 
 
 def _read_epoch_experiments(epoch_dir: Path) -> list[dict[str, Any]]:
@@ -720,17 +797,8 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
         view["board"] = board
 
     # Proposer brief: ``brief.md`` post-rename; ``rubric.md`` is the
-    # legacy name and is read as a fallback so pre-rename epochs still
-    # display. Any read error degrades to an empty string.
-    view["brief"] = ""
-    for name in ("brief.md", "rubric.md"):
-        try:
-            view["brief"] = (epoch_dir / name).read_text(encoding="utf-8")
-            break
-        except FileNotFoundError:
-            continue
-        except OSError:
-            break
+    # legacy name (read as a fallback). Any read error -> empty string.
+    view["brief"] = _read_epoch_brief(epoch_dir)
 
     scoring = _read_json_value(epoch_dir / "scoring.json")
     if scoring is not None:
@@ -1962,6 +2030,10 @@ def build_environment(
     refresh the entire environment view with ONE request per change
     instead of fanning out to six endpoints many times a second.
 
+    ``epochs`` is a lightweight per-epoch summary list -- ``{epoch_id,
+    goal}`` -- so the Overview's epochs table can show what each epoch
+    is trying to accomplish without a per-epoch ``/api/epoch`` fetch.
+
     Every component degrades independently: a missing or unreadable
     input becomes an empty / ``None`` value, never an exception, so this
     function — like every reader here — cannot 500 an endpoint.
@@ -1974,6 +2046,7 @@ def build_environment(
         "workspace": str(paths.root),
         "epoch_id": read_current_epoch(paths),
         "epoch": build_epoch_view(paths),
+        "epochs": build_epochs_summary(paths),
         "active_tournament": read_active_tournament_dict(paths),
         "tournaments": build_bracket(paths),
         "generations": build_lineage_view(paths),

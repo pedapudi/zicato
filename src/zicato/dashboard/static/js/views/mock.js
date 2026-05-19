@@ -126,6 +126,14 @@ function mockSnapshot() {
       round: '2',
       startedAt: new Date(Date.now() - 4 * 60_000 - 23_000).toISOString(),
     },
+    // Per-epoch goal summary — the `epochs` key on /api/environment.
+    // The Overview epochs table annotates each row with this.
+    epochs: [
+      { epoch_id: '2026-05-10_e0',
+        goal: 'Stabilise the extraction schema so invoice fields parse cleanly.' },
+      { epoch_id: '2026-05-15_e1',
+        goal: 'Cut off-topic drift by compressing verbose researcher tool docs.' },
+    ],
     heartbeat: {
       // The header reads generation_id / round_index straight off the
       // heartbeat; the elapsed clock is now − started_at; the stale

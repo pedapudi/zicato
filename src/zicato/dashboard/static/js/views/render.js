@@ -549,9 +549,12 @@ function renderOverviewTrajectory() {
 }
 
 // The epochs table — every epoch the lineage feed knows about, with its
-// generation count and how many were promoted. The current epoch is
-// flagged. Sourced from `state.lineage.generations` (build_lineage_view
-// walks every epoch) folded with the current `epoch_id`.
+// goal, generation count and how many were promoted. The current epoch
+// is flagged. Sourced from `state.lineage.generations`
+// (build_lineage_view walks every epoch) folded with the current
+// `epoch_id`; the per-epoch goal comes from `state.epochs` (the
+// /api/environment `epochs` summary), distilled from each epoch's
+// proposer brief.
 function renderEpochsPanel() {
   const wrap = $('epochs-panel');
   if (!wrap) return;
@@ -583,9 +586,20 @@ function renderEpochsPanel() {
     return;
   }
 
+  // Per-epoch goal summary, keyed by epoch id — distilled from each
+  // epoch's proposer brief by the backend (`/api/environment.epochs`).
+  const goalByEpoch = new Map();
+  const epochSummaries = Array.isArray(state.epochs) ? state.epochs : [];
+  for (const e of epochSummaries) {
+    if (e && e.epoch_id && typeof e.goal === 'string' && e.goal.trim()) {
+      goalByEpoch.set(String(e.epoch_id), e.goal.trim());
+    }
+  }
+
   const tbl = el('table', { class: 'data-table' });
   tbl.appendChild(el('thead', null, [el('tr', null, [
     el('th', null, ['epoch']),
+    el('th', null, ['goal']),
     el('th', null, ['generations']),
     el('th', null, ['promoted']),
     el('th', null, ['']),
@@ -595,8 +609,12 @@ function renderEpochsPanel() {
     const list = byEpoch.get(id) || [];
     const promoted = list.filter((g) => g && g.promoted === true).length;
     const isCurrent = id === currentEpoch;
+    const goal = goalByEpoch.get(id);
     tbody.appendChild(el('tr', { class: isCurrent ? 'epoch-row-current' : '' }, [
       el('td', { class: 'mono' }, [id]),
+      goal
+        ? el('td', { class: 'epochs-goal' }, [goal])
+        : el('td', { class: 'epochs-goal meta' }, ['—']),
       el('td', { class: 'mono' }, [String(list.length)]),
       el('td', { class: 'mono' }, [String(promoted)]),
       el('td', null, [
@@ -655,17 +673,34 @@ function renderRecentExperiments() {
             (typeof delta === 'number' && isFinite(delta)
               ? ' ' + (delta > 0 ? '+' : '') + delta.toFixed(3) : ''),
           ])
-        : el('span', { class: 'recent-exp-verdict badge pending' }, ['in progress']),
+        // No recorded verdict — the experiment is `incomplete` (its
+        // tournament was torn down or never reached a decision), not
+        // "in progress", which is reserved for a live, running run.
+        : el('span', { class: 'recent-exp-verdict badge pending' }, ['incomplete']),
     ]));
   }
   wrap.appendChild(list);
 
-  // A link through to the Epoch view's full experiment log.
-  wrap.appendChild(el('a', {
+  // A link through to the Epoch view's merged Experiments section.
+  // The hash router has no in-view anchor support, so the link routes
+  // to `#/epoch` and a click handler scrolls the Experiments section
+  // into view once the Epoch view has switched in — landing the reader
+  // on the section, not the top of the view.
+  const expLink = el('a', {
     class: 'live-link recent-exp-link',
     href: '#/epoch',
-    'aria-label': 'open the full experiment log in the Epoch view',
-  }, ['Full experiment log →']));
+    'aria-label': 'open the full Experiments log in the Epoch view',
+  }, ['Full experiment log →']);
+  expLink.addEventListener('click', () => {
+    // Defer past the route:changed render so the section exists.
+    setTimeout(() => {
+      const section = $('epoch-experiments-section');
+      if (section && typeof section.scrollIntoView === 'function') {
+        section.scrollIntoView({ block: 'start' });
+      }
+    }, 0);
+  });
+  wrap.appendChild(expLink);
 }
 
 // The Overview render entry point — paints every environment-home panel.
@@ -2743,16 +2778,27 @@ function renderInlineConversation() {
 // (`GET /api/epoch` / the `epoch` key on `/api/environment`); every
 // field is read defensively — any block may be absent on a fresh epoch.
 
+// The epoch id the Experiments section last rendered for. Switching
+// epochs resets the per-entry expansion state so a deep-link into a
+// different epoch starts with every entry terse.
+let _experimentsEpochId = null;
+
 function renderEpochView() {
   const def = state.epochDef;
+  const epochId = def && def.epoch_id ? def.epoch_id : null;
+  if (epochId !== _experimentsEpochId) {
+    _expandedEntries.clear();
+    _expandedExperiment = null;
+    _experimentBaseline = null;
+    _experimentsEpochId = epochId;
+  }
   renderEpochHeader(def);
   renderEpochBrief(def);
-  renderEpochExperimentLog(def);
+  renderEpochExperiments(def);
   renderEpochHarness(def);
   renderEpochBoard(def);
   renderEpochScoring(def);
   renderEpochMutations(def);
-  renderEpochJournal(def);
   renderEpochAnalysis(def);
 }
 
@@ -2849,7 +2895,10 @@ function renderEpochHeader(def) {
   stats.appendChild(stat(experiments.length, 'experiments'));
   stats.appendChild(stat(promoted, 'promoted', promoted > 0 ? 'good' : null));
   stats.appendChild(stat(rejected, 'rejected', rejected > 0 ? 'bad' : null));
-  if (pending > 0) stats.appendChild(stat(pending, 'in progress', 'pend'));
+  // An experiment with no recorded verdict is `incomplete` — its
+  // tournament was torn down or never reached a decision. "in progress"
+  // is reserved for a genuinely live, currently-running experiment.
+  if (pending > 0) stats.appendChild(stat(pending, 'incomplete', 'pend'));
   if (haveScalar) {
     // Net scalar: negative is improvement (loss went down).
     const cls = netScalar < 0 ? 'good' : (netScalar > 0 ? 'bad' : null);
@@ -2887,7 +2936,12 @@ function renderEpochHarness(def) {
 function renderEpochBoard(def) {
   const wrap = $('epoch-board');
   clearChildren(wrap);
-  const board = def && Array.isArray(def.board) ? def.board : [];
+  const rawBoard = def && Array.isArray(def.board) ? def.board : [];
+  // Drop the `board_meta` header row — an entry carrying neither an id
+  // nor a kind is the meta line, not a real board entry; rendered it
+  // would be a spurious leading row of all-`—` cells.
+  const board = rawBoard.filter(
+    (e) => e && (e.id != null || e.kind != null) && e.board_meta !== true);
   if (board.length === 0) {
     wrap.appendChild(el('p', { class: 'empty' }, ['No board entries.']));
     return;
@@ -3040,15 +3094,18 @@ function renderEpochScoring(def) {
 // Render a scoring weight value. Scalars render as plain text; an
 // object-valued weight (e.g. per_kind_weights, severity_weights)
 // renders as a nested key->value sub-list instead of stringifying to
-// the literal `[object Object]`.
+// the literal `[object Object]`. Each nested entry renders as an
+// explicit `key: value` row — without the separator the key and value
+// concatenate (e.g. `confabulation_risk2`, `critical10`).
 function scoringValueCell(v) {
   if (v != null && typeof v === 'object' && !Array.isArray(v)) {
     const entries = Object.entries(v);
     if (entries.length === 0) return el('span', { class: 'meta' }, ['{}']);
     const sub = el('ul', { class: 'scoring-subdict' });
     for (const [ik, iv] of entries) {
-      sub.appendChild(el('li', null, [
+      sub.appendChild(el('li', { class: 'scoring-subrow' }, [
         el('span', { class: 'scoring-subkey' }, [ik]),
+        el('span', { class: 'scoring-subsep' }, [': ']),
         el('span', { class: 'scoring-subval' }, [
           iv != null && typeof iv === 'object'
             ? scoringValueCell(iv)
@@ -3100,14 +3157,20 @@ function renderEpochMutations(def) {
   wrap.appendChild(tbl);
 }
 
-// --- Render: Epoch experiment log
+// --- Render: Epoch experiments
 //
-// The narrative core of the Epoch view. Each experiment (one generation
-// evaluated by a tournament) renders as a card told in four beats:
-// (1) WHAT — the proposer's core idea + generation id + lineage;
+// The narrative core of the Epoch view, AND the epoch's journal — one
+// merged chronological per-round log. Each entry is terse by default —
+// a single summary line (round ordinal · generation id · the core idea
+// · the verdict · Δscalar) — and expands on click to the full
+// four-beat detail: (1) WHAT — the proposer's core idea + lineage;
 // (2) HYPOTHESIS — the pre-run structured prediction; (3) CHANGE — the
-// patch set, with a line diff that expands on click; (4) OUTCOME — the
+// patch set, with a line diff that expands further; (4) OUTCOME — the
 // tournament verdict, scalar Δ, rejection reason, tournament jump.
+// This section IS the journal, well-rendered: an experiment whose
+// tournament never reached a verdict still appears here (it reads as
+// `incomplete`), where the raw journal.md would drop it. A small
+// "view raw journal" link is offered for the underlying markdown.
 // All story data is on `state.epochDef.experiments`; the baseline fetch
 // for the diff is lazy and only powers beat 3.
 
@@ -3208,10 +3271,11 @@ function _renderExperimentOutcome(outcome, decision, genId) {
   block.appendChild(el('div', { class: 'exp-beat-label' }, ['Outcome']));
   if (!outcome) {
     block.appendChild(el('p', { class: 'exp-beat-caption meta' }, [
-      'This experiment has not finished evaluating yet.',
+      'No tournament verdict was recorded — the tournament was torn '
+      + 'down or never reached a decision.',
     ]));
     block.appendChild(el('p', { class: 'exp-pending-line' }, [
-      el('span', { class: 'badge pending' }, ['in progress']),
+      el('span', { class: 'badge pending' }, ['incomplete']),
     ]));
     return block;
   }
@@ -3321,11 +3385,11 @@ function _renderExperimentChange(exp, genId, def) {
     // patch's `new_content` shown as an addition when no baseline is
     // cached yet. If the baseline has not been fetched, kick off the
     // lazy load and re-render once it lands so the diff fills in.
-    renderEpochExperimentLog(def);
+    renderEpochExperiments(def);
     if (_expandedExperiment === genId && epochId && !_experimentBaseline) {
       _loadBaselineContents(epochId).then((baseline) => {
         _experimentBaseline = baseline;
-        renderEpochExperimentLog(def);
+        renderEpochExperiments(def);
       }).catch(() => { /* keep the addition-only diff already shown */ });
     }
   };
@@ -3367,7 +3431,163 @@ function _renderExperimentChange(exp, genId, def) {
   return block;
 }
 
-function renderEpochExperimentLog(def) {
+// Which experiment entries are expanded to full four-beat detail
+// (a set of generation ids). Distinct from `_expandedExperiment`,
+// which tracks the diff toggle WITHIN an expanded entry.
+const _expandedEntries = new Set();
+
+// Split a journal blob into ordered `## heading` sections; the preamble
+// before the first heading (the `# Epoch journal` title) is dropped.
+// The merged Experiments section folds each section's free prose into
+// the matching experiment entry as a journal note.
+function _parseJournalSections(journal) {
+  const sections = [];
+  let current = null;
+  for (const raw of journal.replace(/\r\n/g, '\n').split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const h2 = line.match(/^##\s+(.*)$/);
+    if (h2) sections.push((current = { title: h2[1].trim(), body: [] }));
+    else if (current) current.body.push(line);
+  }
+  return sections;
+}
+
+// A `**label**: value` line -> `{ label, value }`, else null. Used to
+// strip the `**field**:` markers out of a journal section's prose so no
+// literal `**` reaches the page.
+function _journalFieldLine(line) {
+  const m = line.match(/^\*\*([^*]+)\*\*\s*:?\s*(.*)$/);
+  return m ? { label: m[1].trim(), value: m[2].trim() } : null;
+}
+
+// Reduce a journal section to its free-prose body — the `**field**:`
+// lines are dropped (the structured hypothesis / outcome beats already
+// carry that data) and only the human-written narrative remains.
+function _journalSectionProse(section) {
+  if (!section) return [];
+  const prose = [];
+  let buf = [];
+  const flush = () => { if (buf.length) { prose.push(buf.join(' ')); buf = []; } };
+  for (const line of section.body) {
+    if (line.trim() === '') { flush(); continue; }
+    if (_journalFieldLine(line) && prose.length === 0 && buf.length === 0) continue;
+    buf.push(line.trim());
+  }
+  flush();
+  return prose;
+}
+
+// Index journal sections by the generation id mentioned in their `## `
+// heading (the canonical form is `## v{N} — ...`). Lets the merged
+// Experiments log fold each round's narrative into its experiment.
+function _journalSectionsByGen(journal) {
+  const byGen = {};
+  for (const section of _parseJournalSections(journal)) {
+    const m = section.title.match(/(v[\w.]+)/i);
+    if (m) byGen[m[1]] = section;
+  }
+  return byGen;
+}
+
+// The one-line verdict label for an entry summary: the decision word,
+// or `incomplete` when no tournament verdict was recorded. "in
+// progress" is reserved for a genuinely live, running experiment.
+function _experimentVerdictLabel(decision) {
+  return decision || 'incomplete';
+}
+
+// Render ONE merged experiment entry — terse summary line, expandable
+// to the full four-beat detail. `journalSection` is the matching
+// journal.md round (or null); its free prose renders as a note.
+function _renderExperimentEntry(exp, idx, def, journalSection) {
+  const genId = exp.generation_id || '?';
+  const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
+    ? exp.hypothesis : {};
+  const outcome = (exp.outcome && typeof exp.outcome === 'object')
+    ? exp.outcome : null;
+  const decision = _epochDecision(outcome);
+  const decisionKind = _epochDecisionKind(decision);
+  const modulating = Array.isArray(hyp.modulating) ? hyp.modulating : [];
+  const coreIdea = (typeof hyp.core_idea === 'string' && hyp.core_idea.trim())
+    ? hyp.core_idea.trim() : 'No description recorded.';
+  const isOpen = _expandedEntries.has(genId);
+  const scalar = outcome && typeof outcome.scalar_score_delta === 'number'
+    ? outcome.scalar_score_delta : null;
+
+  // The entry carries an accent stripe coloured by the decision so the
+  // promoted / rejected / incomplete arc is scannable down the column.
+  const card = el('article', {
+    class: 'exp-card exp-card-' + decisionKind + (isOpen ? ' exp-card-open' : ''),
+    'data-genid': genId,
+  });
+
+  // -- The terse summary line — always visible, the whole row toggles.
+  const summary = el('button', {
+    type: 'button',
+    class: 'exp-summary',
+    'aria-expanded': isOpen ? 'true' : 'false',
+    'data-genid': genId,
+  });
+  summary.appendChild(el('span', { class: 'exp-summary-caret', 'aria-hidden': 'true' },
+    [isOpen ? '▾' : '▸']));
+  summary.appendChild(el('span', { class: 'exp-card-ordinal' }, ['#' + (idx + 1)]));
+  summary.appendChild(el('span', { class: 'exp-card-gen mono' }, [genId]));
+  summary.appendChild(el('span', { class: 'exp-summary-idea' },
+    [truncate(coreIdea, 92)]));
+  summary.appendChild(el('span', { class: 'badge ' + decisionKind },
+    [_experimentVerdictLabel(decision)]));
+  if (scalar != null) {
+    summary.appendChild(el('span', {
+      class: 'exp-card-delta mono '
+        + (scalar < 0 ? 'good' : (scalar > 0 ? 'bad' : '')),
+    }, ['Δscalar ' + _fmtSignedDelta(scalar)]));
+  }
+  summary.addEventListener('click', () => {
+    if (_expandedEntries.has(genId)) _expandedEntries.delete(genId);
+    else _expandedEntries.add(genId);
+    renderEpochExperiments(def);
+  });
+  card.appendChild(summary);
+
+  if (!isOpen) return card;
+
+  // -- Expanded: the full four-beat detail ------------------------
+  const head = el('header', { class: 'exp-card-head' });
+  head.appendChild(el('p', { class: 'exp-card-idea' }, [coreIdea]));
+  if (exp.parent_generation_id) {
+    head.appendChild(el('p', { class: 'exp-card-lineage meta mono' }, [
+      'challenger ' + genId + '   vs  champion ' + exp.parent_generation_id,
+    ]));
+  }
+  card.appendChild(head);
+
+  const body = el('div', { class: 'exp-card-body' });
+  body.appendChild(_renderExperimentHypothesis(hyp, modulating));
+  body.appendChild(_renderExperimentChange(exp, genId, def));
+  body.appendChild(_renderExperimentOutcome(outcome, decision, genId));
+
+  // The journal round's free prose, if any — the human-written note
+  // for this round, folded in from journal.md.
+  const prose = _journalSectionProse(journalSection);
+  if (prose.length > 0) {
+    const note = el('div', { class: 'exp-beat exp-beat-note' });
+    note.appendChild(el('div', { class: 'exp-beat-label' }, ['Journal note']));
+    for (const para of prose) {
+      note.appendChild(el('p', null, inlineMarkdown(para)));
+    }
+    body.appendChild(note);
+  }
+  card.appendChild(body);
+
+  return card;
+}
+
+// The merged Experiments section: the experiment narrative AND the
+// epoch journal as ONE chronological per-round log. Every experiment on
+// `def.experiments` renders — including any with no recorded verdict,
+// which read as `incomplete` (the raw journal.md drops those). Each
+// entry is terse by default and expands to the full detail.
+function renderEpochExperiments(def) {
   const wrap = $('epoch-experiment-log');
   if (!wrap) return;
   clearChildren(wrap);
@@ -3381,165 +3601,35 @@ function renderEpochExperimentLog(def) {
     return;
   }
 
-  const list = el('div', { class: 'exp-card-list' });
-
-  experiments.forEach((exp, idx) => {
-    const genId = exp.generation_id || '?';
-    const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
-      ? exp.hypothesis : {};
-    const outcome = (exp.outcome && typeof exp.outcome === 'object')
-      ? exp.outcome : null;
-    const decision = _epochDecision(outcome);
-    const modulating = Array.isArray(hyp.modulating) ? hyp.modulating : [];
-    const coreIdea = (typeof hyp.core_idea === 'string' && hyp.core_idea.trim())
-      ? hyp.core_idea.trim() : 'No description recorded.';
-
-    // The card carries an accent stripe coloured by the decision so the
-    // promoted / rejected / pending arc is scannable down the column.
-    const card = el('article', {
-      class: 'exp-card exp-card-' + _epochDecisionKind(decision),
-      'data-genid': genId,
-    });
-
-    // -- Beat 1: WHAT (the description / header) -------------------
-    const head = el('header', { class: 'exp-card-head' });
-    const titleRow = el('div', { class: 'exp-card-titlerow' }, [
-      el('span', { class: 'exp-card-ordinal' }, ['#' + (idx + 1)]),
-      el('span', { class: 'exp-card-gen mono' }, [genId]),
-      el('span', { class: 'badge ' + _epochDecisionKind(decision) },
-        [decision || 'in progress']),
-      (outcome && typeof outcome.scalar_score_delta === 'number')
-        ? el('span', {
-            class: 'exp-card-delta mono '
-              + (outcome.scalar_score_delta < 0 ? 'good'
-                : (outcome.scalar_score_delta > 0 ? 'bad' : '')),
-          }, ['Δscalar ' + _fmtSignedDelta(outcome.scalar_score_delta)])
-        : null,
-    ]);
-    head.appendChild(titleRow);
-    head.appendChild(el('p', { class: 'exp-card-idea' }, [coreIdea]));
-    if (exp.parent_generation_id) {
-      head.appendChild(el('p', { class: 'exp-card-lineage meta mono' }, [
-        'challenger ' + genId + '   vs  champion ' + exp.parent_generation_id,
-      ]));
-    }
-    card.appendChild(head);
-
-    // -- Beats 2-4: hypothesis · change · outcome ------------------
-    const body = el('div', { class: 'exp-card-body' });
-    body.appendChild(_renderExperimentHypothesis(hyp, modulating));
-    body.appendChild(_renderExperimentChange(exp, genId, def));
-    body.appendChild(_renderExperimentOutcome(outcome, decision, genId));
-    card.appendChild(body);
-
-    list.appendChild(card);
-  });
-
-  wrap.appendChild(list);
-}
-
-// --- Render: Epoch journal
-//
-// The journal is the epoch's round-by-round chronology. Each `## v{N}`
-// section is one experiment, written as `**field**: value` lines plus
-// free prose. The experiment cards above tell each one's full story, so
-// the journal renders as a DISTINCT compact timeline — terse labelled
-// key/value entries, never a second set of detail cards. The `**field**`
-// markers are parsed away; no literal `**` ever reaches the page.
-
-// Split a journal blob into ordered `## heading` sections; the preamble
-// before the first heading (the `# Epoch journal` title) is dropped.
-function _parseJournalSections(journal) {
-  const sections = [];
-  let current = null;
-  for (const raw of journal.replace(/\r\n/g, '\n').split('\n')) {
-    const line = raw.replace(/\s+$/, '');
-    const h2 = line.match(/^##\s+(.*)$/);
-    if (h2) sections.push((current = { title: h2[1].trim(), body: [] }));
-    else if (current) current.body.push(line);
-  }
-  return sections;
-}
-
-// A `**label**: value` line -> `{ label, value }`, else null.
-function _journalFieldLine(line) {
-  const m = line.match(/^\*\*([^*]+)\*\*\s*:?\s*(.*)$/);
-  return m ? { label: m[1].trim(), value: m[2].trim() } : null;
-}
-
-// Render one section as a timeline entry: a heading, the leading run of
-// `**field**:` lines as a labelled key/value grid, then any prose. A
-// field-shaped line buried in prose stays prose.
-function _renderJournalEntry(section) {
-  const entry = el('div', { class: 'journal-entry' });
-  entry.appendChild(el('h3', { class: 'journal-entry-title' },
-    inlineMarkdown(section.title)));
-
-  const fields = [];
-  const prose = [];
-  for (const line of section.body) {
-    if (line.trim() === '') { prose.push(''); continue; }
-    const field = _journalFieldLine(line);
-    if (field && prose.every((p) => p === '')) fields.push(field);
-    else prose.push(line);
-  }
-
-  if (fields.length > 0) {
-    const dl = el('dl', { class: 'journal-fields' });
-    for (const f of fields) {
-      dl.appendChild(el('dt', { class: 'journal-field-label' }, [f.label]));
-      dl.appendChild(el('dd', { class: 'journal-field-value' },
-        f.value ? inlineMarkdown(f.value) : [el('span', { class: 'meta' }, ['—'])]));
-    }
-    entry.appendChild(dl);
-  }
-
-  // Collapse the prose remainder into paragraphs (blank line = break).
-  const proseBlock = el('div', { class: 'journal-entry-prose' });
-  let buf = [];
-  const flush = () => {
-    if (buf.length) proseBlock.appendChild(el('p', null, inlineMarkdown(buf.join(' '))));
-    buf = [];
-  };
-  for (const line of prose) {
-    if (line.trim() === '') flush();
-    else buf.push(line.trim());
-  }
-  flush();
-  if (proseBlock.children.length > 0) entry.appendChild(proseBlock);
-
-  return entry;
-}
-
-function renderEpochJournal(def) {
-  const wrap = $('epoch-journal');
-  if (!wrap) return;
-  clearChildren(wrap);
-  wrap.classList.add('epoch-journal');
+  wrap.appendChild(el('p', { class: 'panel-subheader' }, [
+    'The epoch as it unfolded — one entry per round, terse by default. '
+    + 'Expand an entry for its hypothesis, change and outcome.',
+  ]));
 
   const journal = (def && typeof def.journal === 'string') ? def.journal : '';
-  if (!journal.trim()) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No journal recorded.']));
-    return;
-  }
+  const journalByGen = _journalSectionsByGen(journal);
 
-  const sections = _parseJournalSections(journal);
-  if (sections.length === 0) {
-    // No `##` sections — fall back to plain markdown rather than nothing.
-    const block = el('div', { class: 'brief-block' });
-    renderMinimalMarkdown(journal, block);
-    wrap.appendChild(block);
-    return;
-  }
+  const list = el('div', { class: 'exp-card-list' });
+  experiments.forEach((exp, idx) => {
+    const genId = exp.generation_id || '?';
+    list.appendChild(
+      _renderExperimentEntry(exp, idx, def, journalByGen[genId] || null));
+  });
+  wrap.appendChild(list);
 
-  wrap.appendChild(el('p', { class: 'panel-subheader' }, [
-    'The epoch as it unfolded — one terse entry per round.',
-  ]));
-  const timeline = el('div', { class: 'journal-timeline' });
-  for (const section of sections) {
-    timeline.appendChild(_renderJournalEntry(section));
+  // A small jump-off to the underlying raw journal.md — the merged log
+  // IS the journal well-rendered, but the raw markdown stays one click
+  // away via the journal endpoint. Offered only when the epoch actually
+  // has a journal.
+  if (journal.trim() && def && def.epoch_id) {
+    wrap.appendChild(el('a', {
+      class: 'live-link exp-journal-raw-link',
+      href: '/api/epoch/' + encodeURIComponent(def.epoch_id) + '/journal',
+      target: '_blank',
+      rel: 'noopener',
+      'aria-label': 'open the raw journal.md markdown',
+    }, ['View raw journal ↗']));
   }
-  wrap.appendChild(timeline);
 }
 
 // --- Render: Epoch analysis

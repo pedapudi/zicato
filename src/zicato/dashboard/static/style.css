@@ -2209,8 +2209,7 @@ h4 {
   margin-bottom: 0.2rem;
 }
 
-/* Journal and analysis panels reuse the brief-block readable column */
-.epoch-journal,
+/* The analysis panel reuses the brief-block readable column */
 .epoch-analysis {
   max-width: 100%;
 }
@@ -2319,6 +2318,28 @@ h4 {
 .epoch-row-current td {
   background: color-mix(in srgb, var(--accent-running) 7%, var(--bg-elev));
 }
+/* The per-epoch goal cell — a readable one-line description, not mono */
+.epochs-goal {
+  max-width: 26rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+/* Scoring table — a nested-dict weight (per_kind_weights /
+   severity_weights) renders as a `key: value` row list, one per line,
+   so the key and value never visually concatenate. */
+.scoring-subdict {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.scoring-subrow {
+  display: flex;
+  gap: 0;
+  line-height: 1.5;
+}
+.scoring-subkey { color: var(--text-muted); }
+.scoring-subsep { white-space: pre; }
 
 /* Recent experiments — a compact, read-only digest */
 .recent-exp-list {
@@ -2548,31 +2569,58 @@ h4 {
   .exp-card-body { grid-template-columns: 1fr; }
 }
 
-/* Epoch journal — the round-by-round timeline. Distinct from the
-   experiment cards above: terse labelled key/value entries. */
-.journal-timeline { display: flex; flex-direction: column; gap: 0.55rem; }
-.journal-entry {
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent-running);
-  border-radius: 5px;
+/* Merged Experiments section — the terse, expandable per-round log.
+   The summary line is the whole-row toggle; expanding reveals the
+   four-beat detail (head + body) below it. */
+.exp-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.55rem 0.85rem;
+  font-family: inherit;
+  text-align: left;
   background: var(--bg-elev);
-  padding: 0.55rem 0.75rem 0.6rem;
+  border: none;
+  cursor: pointer;
 }
-.journal-entry-title { margin: 0 0 0.35rem; font-size: 0.92rem; font-weight: 650; }
-.journal-fields {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.12rem 0.7rem;
-  margin: 0;
+.exp-summary:hover,
+.exp-summary:focus-visible {
+  background: color-mix(in srgb, var(--accent-running) 7%, var(--bg-elev));
+  outline: none;
+}
+.exp-card-open > .exp-summary { border-bottom: 1px solid var(--border); }
+.exp-summary-caret {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  width: 0.8rem;
+  flex: none;
+}
+.exp-summary-idea {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exp-summary .exp-card-delta { margin-left: 0; }
+/* The journal note beat — a round's free prose, folded into the
+   matching experiment entry. Spans the full body width. */
+.exp-beat-note { grid-column: 1 / -1; }
+.exp-beat-note p {
+  margin: 0.2rem 0 0;
   font-size: 0.8rem;
-  line-height: 1.45;
+  line-height: 1.5;
 }
-.journal-field-label { margin: 0; font-weight: 650; color: var(--text-muted); }
-.journal-field-value { margin: 0; word-break: break-word; }
-.journal-entry-prose { margin-top: 0.4rem; font-size: 0.8rem; line-height: 1.5; }
-.journal-entry-prose p { margin: 0.25rem 0 0; }
-.journal-entry-prose p:first-child { margin-top: 0; }
+.exp-beat-note p:first-of-type { margin-top: 0; }
+.exp-journal-raw-link {
+  display: inline-block;
+  margin-top: 0.6rem;
+  font-size: 0.76rem;
+}
 @media (max-width: 620px) {
-  .journal-fields { grid-template-columns: 1fr; gap: 0.05rem; }
-  .journal-field-value { margin-bottom: 0.25rem; }
+  .exp-summary { flex-wrap: wrap; }
+  .exp-summary-idea { white-space: normal; flex-basis: 100%; }
 }
