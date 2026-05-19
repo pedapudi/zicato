@@ -65,15 +65,24 @@ function init() {
   // is cheap and idempotent.
   setInterval(() => { renderHeader(); }, 1000);
 
-  // Resolve the initial route before the first paint.
-  router.start();
-
+  // Mock mode must be resolved BEFORE router.start(): it emits
+  // `route:changed` -> applyRoute(), which may kick off a route-driven
+  // load (e.g. the conversation diff for a `#/tournament/conv/{entry}`
+  // deep-link). With `state.mock` still false the load would hit the
+  // real (empty) endpoint and cache its degraded payload over the mock.
   const params = new URLSearchParams(window.location.search);
-  if (params.get('mock') === '1') {
+  const mock = params.get('mock') === '1';
+  if (mock) {
     state.mock = true;
     state.connected = false;
     state.connecting = false;
     state.applySnapshot(mockSnapshot());
+  }
+
+  // Resolve the initial route before the first paint.
+  router.start();
+
+  if (mock) {
     renderAll();
     return;
   }

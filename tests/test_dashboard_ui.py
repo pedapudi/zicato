@@ -802,16 +802,20 @@ def test_bundle_under_size_envelope(
     #     the duplicate Tree-view trajectory chart);
     #   * the Tournament view's scroll / conversation-diff fixes and the
     #     champion/challenger terminology rename.
-    # The single-branch caps measured each fix in isolation; the fully
-    # integrated bundle is larger than any of them, so the cap below was
-    # re-measured against the integrated bundle and set comfortably above
-    # it. The ``app_js`` fixture concatenates every shipped JS file, so
-    # this envelope covers the whole bundle. The dev-only JS test harness
+    # The single-branch caps measured each fix in isolation; the
+    # fully integrated bundle was re-measured directly and the cap
+    # below set comfortably above it. The ``app_js`` fixture
+    # concatenates every shipped JS file, so this envelope covers
+    # the whole bundle. The dev-only JS test harness
     # under ``static/test/`` is NOT shipped and is excluded. The
     # dashboard is served off disk by the standalone Python service with
     # no network cost; this guard only keeps the vanilla bundle from
     # drifting unboundedly.
-    assert total < 999_000, f"bundle is {total} bytes, exceeds 999_000 envelope"
+    # Measured integrated bundle (this branch): 366,465 bytes
+    # (index.html + style.css + icons.svg + the concatenated JS
+    # bundle). 380 KB leaves ~13 KB of headroom for incidental
+    # drift without re-licensing every minor edit.
+    assert total < 380_000, f"bundle is {total} bytes, exceeds 380_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

@@ -218,6 +218,15 @@ function mockSnapshot() {
         { kind: 'off_topic', from_rate: 0.18, to_rate: 0.12 },
         { kind: 'schema_violation', from_rate: 0.10, to_rate: 0.14 },
       ],
+      // The server-computed running partial aggregate — the runner
+      // rewrites these per board unit as the round runs. champion =
+      // the held generation, challenger = the proposed one.
+      partial_champion_agg: {
+        drift_loss_mean: 0.24, pass_rate: 0.92, scalar: 0.183, entry_count: 3,
+      },
+      partial_challenger_agg: {
+        drift_loss_mean: 0.31, pass_rate: 0.90, scalar: 0.214, entry_count: 3,
+      },
     },
     past_tournaments: [
       {

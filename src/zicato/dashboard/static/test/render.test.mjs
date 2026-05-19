@@ -19,7 +19,8 @@ const REQUIRED_IDS = [
   'round-id', 'elapsed', 'health-badge', 'mock-badge',
   'identity-panel', 'health-panel', 'live-activity', 'epochs-panel',
   'recent-experiments', 'tournament-bracket',
-  'tournament-detail', 'log-tail', 'drill-panel', 'drill-title',
+  'tournament-detail', 'tournament-detail-section',
+  'log-tail', 'drill-panel', 'drill-title',
   'drill-body', 'dashboard-version', 'dashboard-port', 'dashboard-build',
   'view-overview', 'view-tree', 'view-tournament', 'view-epoch', 'view-files',
   'view-conversation', 'nav-overview', 'nav-tree', 'nav-tournament', 'nav-epoch',
@@ -159,16 +160,16 @@ test('partial aggregate renders the server-side scalar — not a false 0.00', ()
   // rows (no e.parent / e.child sub-objects). The old renderAggregate
   // looked for e.parent/e.child and so always rendered drift_loss_mean
   // 0.00 even with finished boards. The runner now persists a running
-  // partial aggregate (partial_parent_agg / partial_child_agg) the
-  // instant each board unit settles; renderAggregate must consume it.
-  // The Tournament view's hall owns the active-tournament panel.
+  // partial aggregate (partial_champion_agg / partial_challenger_agg)
+  // the instant each board unit settles; renderAggregate must consume
+  // it. The Tournament view's hall owns the active-tournament panel.
   state.applySnapshot(mockSnapshot());
   state.activeTournament = {
     ...state.activeTournament,
     parent_id: 'v4',
     child_id: 'v5',
-    partial_parent_agg: { drift_loss_mean: 0.42, pass_rate: 0.80, scalar: 0.137, entry_count: 3 },
-    partial_child_agg: { drift_loss_mean: 0.31, pass_rate: 0.90, scalar: 0.041, entry_count: 3 },
+    partial_champion_agg: { drift_loss_mean: 0.42, pass_rate: 0.80, scalar: 0.137, entry_count: 3 },
+    partial_challenger_agg: { drift_loss_mean: 0.31, pass_rate: 0.90, scalar: 0.041, entry_count: 3 },
   };
   render.showView('tournament');
   const body = doc.getElementById('tournament-bracket').textContent;
@@ -178,18 +179,68 @@ test('partial aggregate renders the server-side scalar — not a false 0.00', ()
   assert(body.includes('-0.096'), `Δscalar must be child-parent scalar, got: ${body}`);
 });
 
+test('partial aggregate table labels its rows champion / challenger', () => {
+  // Terminology: tournament-framed UI uses champion/challenger, never
+  // parent/child. The partial-aggregate table's two rows are the two
+  // tournament sides. Falls back to those literal labels when the
+  // active-tournament record carries no generation ids.
+  state.applySnapshot(mockSnapshot());
+  state.activeTournament = {
+    ...state.activeTournament,
+    parent_id: '',
+    child_id: '',
+    partial_champion_agg: { drift_loss_mean: 0.42, pass_rate: 0.80, scalar: 0.137, entry_count: 3 },
+    partial_challenger_agg: { drift_loss_mean: 0.31, pass_rate: 0.90, scalar: 0.041, entry_count: 3 },
+  };
+  render.showView('tournament');
+  const body = doc.getElementById('tournament-bracket').textContent;
+  assert(body.includes('champion'), `partial aggregate must label a row "champion", got: ${body}`);
+  assert(body.includes('challenger'),
+    `partial aggregate must label a row "challenger", got: ${body}`);
+  assert(!/\bside\s+drift_loss_mean\s+pass_rate\s+parent\b/.test(body.replace(/\s+/g, ' ')),
+    `partial aggregate must NOT label a row "parent", got: ${body}`);
+});
+
 test('partial aggregate falls back to client derivation on a legacy record', () => {
   // A legacy active_tournament.json predates the incremental scorer —
   // no partial_*_agg fields. renderAggregate must still paint (the
   // client-side derivation path) rather than throwing.
   state.applySnapshot(mockSnapshot());
   const legacy = { ...state.activeTournament };
-  delete legacy.partial_parent_agg;
-  delete legacy.partial_child_agg;
+  delete legacy.partial_champion_agg;
+  delete legacy.partial_challenger_agg;
   state.activeTournament = legacy;
   render.showView('tournament');
   const body = doc.getElementById('tournament-bracket').textContent;
   assert(body.includes('Partial aggregate'), 'legacy record must still render the aggregate panel');
+});
+
+test('gauntlet live-card "running" count excludes queued board entries', () => {
+  // Regression: renderLiveCard derived `running` as total - done -
+  // failed, which folded QUEUED entries into the running tally — the
+  // card read "12 running" when 6 ran and 6 were queued. The count must
+  // come from dataQuality so running and queued stay distinct, matching
+  // the hall occupancy header.
+  state.applySnapshot(mockSnapshot());
+  state.activeTournament = {
+    ...state.activeTournament,
+    entries: [
+      { entry_id: 'a', side: 'parent', status: 'done' },
+      { entry_id: 'a', side: 'child', status: 'done' },
+      { entry_id: 'b', side: 'parent', status: 'running' },
+      { entry_id: 'b', side: 'child', status: 'running' },
+      { entry_id: 'c', side: 'parent', status: 'queued' },
+      { entry_id: 'c', side: 'child', status: 'queued' },
+    ],
+  };
+  render.showView('tournament');
+  const body = doc.getElementById('tournament-bracket').textContent;
+  assert(body.includes('2 running'),
+    `live-card must report only the 2 running entries, got: ${body}`);
+  assert(!body.includes('4 running'),
+    `live-card must NOT count queued entries as running, got: ${body}`);
+  assert(body.includes('2 queued'),
+    `live-card must report the 2 queued entries separately, got: ${body}`);
 });
 
 // Collect every descendant whose class attribute contains `cls`.
@@ -459,6 +510,65 @@ test('selecting a board matchup renders the Matchup detail, not the placeholder'
     'a multi-turn matchup must also render its detail');
   assert(textOf(multi).includes('multi_turn_picky'),
     'the panel must name the multi-turn board entry');
+});
+
+test('conversation diff survives a #/tournament/{gen} → conv route switch', () => {
+  // BUG 2: a #/tournament/{genId} deep-link sets state.selectedMatchup.
+  // renderMatchupDetail checks that FIRST, so a later board-card drill
+  // (#/tournament/conv/<entry>) used to render the stale gen-keyed panel
+  // and the conversation diff landed under the wrong matchup. Each
+  // tournament sub-route must clear the other's selection so the
+  // conversation diff renders against its own board entry.
+  state.mock = true;
+  state.applySnapshot(mockSnapshot());
+
+  // Open a matchup BY GENERATION first — this sets state.selectedMatchup.
+  globalThis.location.hash = '#/tournament/v1';
+  render.applyRoute();
+  assertEqual(state.selectedMatchup, 'v1',
+    'a #/tournament/{genId} deep-link must select that matchup');
+
+  // Now drill into a board card — the conv route must take over the
+  // detail panel, not leave it shadowed by the stale gen selection.
+  globalThis.location.hash = '#/tournament/conv/extract_invoice_001';
+  render.applyRoute();
+  assertEqual(state.selectedMatchup, null,
+    'the conv route must clear the stale matchup-by-gen selection');
+  const detail = doc.getElementById('tournament-detail');
+  assert(textOf(detail).includes('extract_invoice_001'),
+    'the detail panel must render the board entry the conv route names');
+  assert(!textOf(detail).includes('v1 vs'),
+    'the detail panel must NOT still show the stale v1 matchup heading');
+  // The conversation diff (mock transcripts) must actually populate —
+  // both sides carry a run, so neither column degrades to "no run".
+  assert(textOf(detail).includes('Conversation diff'),
+    'the board-entry detail must include the inline conversation diff');
+  assert(!textOf(detail).includes('the run has not started'),
+    'the conversation columns must show the mock transcripts, not "no run"');
+});
+
+test('a #/tournament/{gen} route does not yank the scroll on every render', () => {
+  // BUG 1: openMatchup() scrolled the detail panel into view, and
+  // applyRoute() re-runs openMatchup on EVERY render (each SSE delta) for
+  // a #/tournament/{genId} deep-link. Re-opening the SAME matchup must be
+  // idempotent — scrollIntoView fires only when the matchup changes.
+  state.mock = true;
+  state.applySnapshot(mockSnapshot());
+
+  let scrolls = 0;
+  const section = doc.getElementById('tournament-detail-section');
+  section.scrollIntoView = () => { scrolls += 1; };
+
+  globalThis.location.hash = '#/tournament/v1';
+  render.applyRoute();
+  assertEqual(scrolls, 1, 'opening a new matchup scrolls it into view once');
+
+  // Subsequent renders (SSE deltas) re-run applyRoute for the same route.
+  render.applyRoute();
+  render.applyRoute();
+  render.renderAll();
+  assertEqual(scrolls, 1,
+    're-rendering the same #/tournament/{genId} route must NOT re-scroll');
 });
 
 // -- Epoch view redesign ----------------------------------------------

@@ -1094,13 +1094,20 @@ class _IncrementalScorer:
     module — incremental scoring must never abort a run.
     """
 
-    __slots__ = ("_weights", "_workspace_root", "_parent", "_child", "_lock", "_state")
+    __slots__ = (
+        "_weights",
+        "_workspace_root",
+        "_champion",
+        "_challenger",
+        "_lock",
+        "_state",
+    )
 
     def __init__(self, weights: ScoringWeights, workspace_root: Path) -> None:
         self._weights = weights
         self._workspace_root = workspace_root
-        self._parent: list[LossProfile] = []
-        self._child: list[LossProfile] = []
+        self._champion: list[LossProfile] = []
+        self._challenger: list[LossProfile] = []
         self._lock = asyncio.Lock()
         # Resolve the runtime-state module once; ``None`` turns every
         # persist into a cheap no-op (no-runtime-state environment).
@@ -1110,29 +1117,29 @@ class _IncrementalScorer:
     async def record(
         self,
         *,
-        parent_loss: LossProfile | None = None,
-        child_loss: LossProfile | None = None,
+        champion_loss: LossProfile | None = None,
+        challenger_loss: LossProfile | None = None,
     ) -> None:
         """Fold one settled board unit's losses into the partial aggregate.
 
-        ``parent_loss`` is ``None`` for a fast-mode unit (challenger
+        ``champion_loss`` is ``None`` for a fast-mode unit (challenger
         only). Re-aggregates both sides over everything recorded so far
         and persists the running partial aggregate onto the
         ``ActiveTournament`` record.
         """
         async with self._lock:
-            if parent_loss is not None:
-                self._parent.append(parent_loss)
-            if child_loss is not None:
-                self._child.append(child_loss)
-            parent_agg = (
-                aggregate_generation_score(list(self._parent), self._weights)
-                if self._parent
+            if champion_loss is not None:
+                self._champion.append(champion_loss)
+            if challenger_loss is not None:
+                self._challenger.append(challenger_loss)
+            champion_agg = (
+                aggregate_generation_score(list(self._champion), self._weights)
+                if self._champion
                 else None
             )
-            child_agg = (
-                aggregate_generation_score(list(self._child), self._weights)
-                if self._child
+            challenger_agg = (
+                aggregate_generation_score(list(self._challenger), self._weights)
+                if self._challenger
                 else None
             )
             if self._state is None:
@@ -1140,8 +1147,8 @@ class _IncrementalScorer:
             try:
                 self._state.update_tournament_partial_aggregate(
                     self._workspace_root,
-                    parent_agg=parent_agg,
-                    child_agg=child_agg,
+                    champion_agg=champion_agg,
+                    challenger_agg=challenger_agg,
                 )
             except Exception as exc:  # noqa: BLE001 — partial scoring is best-effort
                 log.debug("partial-aggregate persist skipped: %s", exc)
@@ -1223,7 +1230,7 @@ async def _run_full_board_unit(
     # the sibling board units still running — so the dashboard's partial
     # aggregate reflects a finished board ASAP rather than at round end.
     if scorer is not None:
-        await scorer.record(parent_loss=parent_result, child_loss=child_result)
+        await scorer.record(champion_loss=parent_result, challenger_loss=child_result)
     return parent_result, child_result
 
 
@@ -1363,7 +1370,7 @@ async def _run_board_units_fast(
             )
             # Score this board unit the instant it settles — concurrently
             # with the sibling board units still running.
-            await scorer.record(child_loss=child_loss)
+            await scorer.record(challenger_loss=child_loss)
             return child_loss
 
     results = await asyncio.gather(

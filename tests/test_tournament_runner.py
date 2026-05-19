@@ -1281,8 +1281,8 @@ def test_partial_aggregate_is_written_as_each_board_unit_completes(
         assert t is not None
         counts.append(
             (
-                int(t.partial_parent_agg.get("entry_count", 0)),
-                int(t.partial_child_agg.get("entry_count", 0)),
+                int(t.partial_champion_agg.get("entry_count", 0)),
+                int(t.partial_challenger_agg.get("entry_count", 0)),
             )
         )
 
@@ -1384,7 +1384,7 @@ def test_partial_aggregate_is_visible_before_all_boards_finish(
                 await asyncio.sleep(0)
             t = read_active_tournament(tmp_path)
             assert t is not None
-            observed.append(int(t.partial_child_agg.get("entry_count", 0)))
+            observed.append(int(t.partial_challenger_agg.get("entry_count", 0)))
             assert not task.done(), "tournament finished before the last board released"
         # Release the final board so the tournament can complete.
         gates[board[-1].id].set()
@@ -1470,8 +1470,8 @@ def test_fast_mode_persists_running_partial_aggregate(
     assert t is not None
     # The running partial aggregate accumulated the challenger side; the
     # champion side never ran, so its partial aggregate stays empty.
-    assert t.partial_child_agg.get("entry_count") == 3
-    assert t.partial_parent_agg == {}
-    # The persisted partial child aggregate converges on the final
+    assert t.partial_challenger_agg.get("entry_count") == 3
+    assert t.partial_champion_agg == {}
+    # The persisted partial challenger aggregate converges on the final
     # fast-mode aggregate.
-    assert t.partial_child_agg.get("scalar") == result.child_agg["scalar"]
+    assert t.partial_challenger_agg.get("scalar") == result.child_agg["scalar"]

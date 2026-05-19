@@ -321,11 +321,11 @@ function renderLiveActivity() {
 
 // Pull (drift_loss_mean, pass_rate) for one side, preferring the
 // server-computed running partial aggregate. The runner rewrites
-// `partial_parent_agg` / `partial_child_agg` the instant each board
-// unit settles (see runner._IncrementalScorer), so this number climbs
-// as the tournament runs rather than sitting at 0.00 until round end.
-// `agg` is the aggregate_generation_score dict shape; missing fields
-// degrade to null so fmtRate renders an em-dash, not a false zero.
+// `partial_champion_agg` / `partial_challenger_agg` the instant each
+// board unit settles (see runner._IncrementalScorer), so this number
+// climbs as the tournament runs rather than sitting at 0.00 until round
+// end. `agg` is the aggregate_generation_score dict shape; missing
+// fields degrade to null so fmtRate renders an em-dash, not a false zero.
 function partialSide(agg) {
   if (!agg || typeof agg !== 'object') return null;
   const dm = agg.drift_loss_mean;
@@ -362,42 +362,42 @@ function renderAggregate(t) {
   // over the per-side entry rows only when the server fields are
   // absent (a legacy active_tournament.json written before the
   // incremental-scorer change).
-  const serverParent = partialSide(t.partial_parent_agg);
-  const serverChild = partialSide(t.partial_child_agg);
+  const serverChampion = partialSide(t.partial_champion_agg);
+  const serverChallenger = partialSide(t.partial_challenger_agg);
 
-  let parentDM, parentPR, childDM, childPR;
-  if (serverParent || serverChild) {
-    parentDM = serverParent ? serverParent.drift_loss_mean : null;
-    parentPR = serverParent ? serverParent.pass_rate : null;
-    childDM = serverChild ? serverChild.drift_loss_mean : null;
-    childPR = serverChild ? serverChild.pass_rate : null;
+  let championDM, championPR, challengerDM, challengerPR;
+  if (serverChampion || serverChallenger) {
+    championDM = serverChampion ? serverChampion.drift_loss_mean : null;
+    championPR = serverChampion ? serverChampion.pass_rate : null;
+    challengerDM = serverChallenger ? serverChallenger.drift_loss_mean : null;
+    challengerPR = serverChallenger ? serverChallenger.pass_rate : null;
   } else {
     const finished = (t.entries || []).filter(entryIsDone);
-    let parentDriftSum = 0, parentPassSum = 0;
-    let childDriftSum = 0, childPassSum = 0;
+    let championDriftSum = 0, championPassSum = 0;
+    let challengerDriftSum = 0, challengerPassSum = 0;
     for (const e of finished) {
-      if (e.parent) { parentDriftSum += e.parent.drift_loss || 0; parentPassSum += e.parent.pass ? 1 : 0; }
-      if (e.child)  { childDriftSum  += e.child.drift_loss || 0;  childPassSum  += e.child.pass  ? 1 : 0; }
+      if (e.parent) { championDriftSum += e.parent.drift_loss || 0; championPassSum += e.parent.pass ? 1 : 0; }
+      if (e.child)  { challengerDriftSum += e.child.drift_loss || 0; challengerPassSum += e.child.pass ? 1 : 0; }
     }
     const n = Math.max(1, finished.length);
-    parentDM = parentDriftSum / n;
-    parentPR = parentPassSum / n;
-    childDM = childDriftSum / n;
-    childPR = childPassSum / n;
+    championDM = championDriftSum / n;
+    championPR = championPassSum / n;
+    challengerDM = challengerDriftSum / n;
+    challengerPR = challengerPassSum / n;
   }
   const regression =
-    (typeof childPR === 'number' && typeof parentPR === 'number' && childPR < parentPR) ||
-    (typeof childDM === 'number' && typeof parentDM === 'number' && childDM > parentDM);
+    (typeof challengerPR === 'number' && typeof championPR === 'number' && challengerPR < championPR) ||
+    (typeof challengerDM === 'number' && typeof championDM === 'number' && challengerDM > championDM);
 
   tbody.appendChild(el('tr', null, [
-    el('td', null, [t.parent_id || 'parent']),
-    el('td', { class: 'mono' }, [fmtRate(parentDM)]),
-    el('td', { class: 'mono' }, [fmtRate(parentPR)]),
+    el('td', null, [t.parent_id || 'champion']),
+    el('td', { class: 'mono' }, [fmtRate(championDM)]),
+    el('td', { class: 'mono' }, [fmtRate(championPR)]),
   ]));
   tbody.appendChild(el('tr', { class: regression ? 'row-flag' : '' }, [
-    el('td', null, [t.child_id || 'child']),
-    el('td', { class: 'mono' }, [fmtRate(childDM)]),
-    el('td', { class: 'mono' }, [fmtRate(childPR) + (regression ? '  ← REGRESSING' : '')]),
+    el('td', null, [t.child_id || 'challenger']),
+    el('td', { class: 'mono' }, [fmtRate(challengerDM)]),
+    el('td', { class: 'mono' }, [fmtRate(challengerPR) + (regression ? '  ← REGRESSING' : '')]),
   ]));
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
@@ -406,12 +406,12 @@ function renderAggregate(t) {
   // carried them — they are the gate's exact scalar, not the
   // drift-minus-pass approximation. Fall back to the approximation
   // (legacy active_tournament.json with no partial aggregate).
-  const pScalar = (t.partial_parent_agg && typeof t.partial_parent_agg.scalar === 'number')
-    ? t.partial_parent_agg.scalar
-    : (typeof parentDM === 'number' && typeof parentPR === 'number') ? parentDM - parentPR : null;
-  const cScalar = (t.partial_child_agg && typeof t.partial_child_agg.scalar === 'number')
-    ? t.partial_child_agg.scalar
-    : (typeof childDM === 'number' && typeof childPR === 'number') ? childDM - childPR : null;
+  const pScalar = (t.partial_champion_agg && typeof t.partial_champion_agg.scalar === 'number')
+    ? t.partial_champion_agg.scalar
+    : (typeof championDM === 'number' && typeof championPR === 'number') ? championDM - championPR : null;
+  const cScalar = (t.partial_challenger_agg && typeof t.partial_challenger_agg.scalar === 'number')
+    ? t.partial_challenger_agg.scalar
+    : (typeof challengerDM === 'number' && typeof challengerPR === 'number') ? challengerDM - challengerPR : null;
   const dScalar = (typeof pScalar === 'number' && typeof cScalar === 'number')
     ? cScalar - pScalar
     : NaN;
@@ -1777,6 +1777,10 @@ function renderBoardResult(board) {
 // #conversation/{id} deep-link route still works for direct navigation.
 function openBoardConversation(entryId) {
   if (entryId == null) return;
+  // A board card opens a board-ENTRY detail; clear any matchup-by-gen
+  // selection so renderMatchupDetail (which prefers state.selectedMatchup)
+  // does not shadow it with a stale gen-keyed panel.
+  state.selectedMatchup = null;
   state.selectedEntry = entryId;
   // selectConversation manages the fetch and sets convEntryId / convData.
   selectConversation(entryId);
@@ -1873,10 +1877,17 @@ function renderLiveCard(t, champId) {
   ]));
 
   // Per-entry status dots + a done/running/failed breakdown.
+  // The census comes from dataQuality, the shared run-population helper:
+  // "running" counts ONLY running entries. The old `total - done -
+  // failed` formula folded QUEUED entries into running, so the card read
+  // "12 running" when 6 ran and 6 were queued. dataQuality keeps running
+  // and queued distinct, matching the hall occupancy header.
   const entries = Array.isArray(t.entries) ? t.entries : [];
-  const done = entries.filter(entryIsDone).length;
-  const failed = entries.filter(entryFailed).length;
-  const running = entries.length - done - failed;
+  const dq = dataQuality(entries);
+  const done = dq.completed;
+  const running = dq.running;
+  const failed = dq.failed;
+  const queued = dq.queued;
 
   const dots = el('div', { class: 'bracket-live-dots', 'aria-hidden': 'true' });
   for (const e of entries) {
@@ -1888,6 +1899,7 @@ function renderLiveCard(t, champId) {
 
   const progBits = [done + ' of ' + entries.length + ' board entries done'];
   if (running > 0) progBits.push(running + ' running');
+  if (queued > 0) progBits.push(queued + ' queued');
   if (failed > 0) progBits.push(failed + ' failed');
   card.appendChild(el('div', { class: 'bracket-live-prog meta' }, [
     progBits.join(' · '),
@@ -1910,14 +1922,22 @@ function renderLiveCard(t, champId) {
 
 // Navigate to a matchup's detail. The selection is held in state and
 // the detail endpoint is fetched lazily.
+//
+// applyRoute() re-runs openMatchup on every render (each SSE delta) for
+// a `#/tournament/{genId}` deep-link. Scrolling unconditionally yanked
+// the page back to the detail panel on every tick — the route's "broken
+// scrolling". The scroll therefore fires ONLY when the matchup changes.
 function openMatchup(genId) {
   if (!genId) return;
+  const changed = state.selectedMatchup !== genId;
   state.selectedMatchup = genId;
   renderMatchupDetail();
   loadMatchupDetail(genId);
-  const section = $('tournament-detail-section');
-  if (section && section.scrollIntoView) {
-    section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (changed) {
+    const section = $('tournament-detail-section');
+    if (section && section.scrollIntoView) {
+      section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   }
 }
 
@@ -3531,23 +3551,29 @@ function applyRoute() {
     }
     // #/tournament/conv/{entry_id} — restore the inline conversation diff
     // from a deep-link or a board-card click without switching views.
+    // renderMatchupDetail checks state.selectedMatchup FIRST, so a stale
+    // matchup selection (left by a prior #/tournament/{genId}) would
+    // shadow the board-entry detail and the conversation diff would
+    // render under the wrong matchup. Clear it so the entry route owns
+    // the detail panel.
     if (view === 'tournament' && kind === 'conv' && id) {
       if (view !== currentView) showView(view);
       else showViewClassesOnly(view);
+      state.selectedMatchup = null;
       state.selectedEntry = id;
       selectConversation(id);
       applyDrill(null, null);
       return;
     }
-    // #/tournament/{generation_id} — open the matchup detail directly
-    // (the router contract's tournament deep-link). A single trailing
-    // segment that is not the `conv` kind is a challenger generation id.
+    // #/tournament/{generation_id} — open the matchup detail directly.
+    // Clearing the conversation selection keeps the inverse symmetric: a
+    // gen deep-link must not trail an inline diff from a prior drill.
     if (view === 'tournament' && segs.length === 2 && segs[1] !== 'conv') {
       const genId = decodeURIComponent(segs[1]);
       if (view !== currentView) showView(view);
       else showViewClassesOnly(view);
-      // openMatchup sets state.selectedMatchup, lazily loads the detail
-      // and re-renders — the matchup panel opens from the deep-link.
+      state.selectedEntry = null;
+      selectConversation(null);
       openMatchup(genId);
       applyDrill(null, null);
       return;
@@ -3874,8 +3900,13 @@ async function loadConversation() {
     // Guard against the entry changing mid-flight (the operator drilled
     // to a different entry while this request was in the air).
     if (convEntryId !== entryId) return;
-    convData = (data && typeof data === 'object') ? data : null;
-    convError = !convData;
+    // The endpoint always answers 200 — a tournament with no transcripts
+    // degrades to `{champion:null, challenger:null}`, a truthy object.
+    // Caching it verbatim would wedge the view on an empty diff and block
+    // any later retry, so a payload with neither side is treated as "no
+    // data yet" (convData stays null) and the next select re-fetches.
+    convData = conversationPayloadHasData(data) ? data : null;
+    convError = false;
   } catch (err) {
     if (convEntryId !== entryId) return;
     // Endpoint absent (404 on this branch) or transient — degrade.
@@ -3886,6 +3917,14 @@ async function loadConversation() {
   }
   if (currentView === 'conversation') renderConversationView();
   if (currentView === 'tournament') renderMatchupDetail();
+}
+
+// True when a conversations payload carries at least one side's run.
+// The endpoint always answers 200; before either run starts it degrades
+// to `{champion:null, challenger:null}` — "no data yet", not a diff.
+function conversationPayloadHasData(data) {
+  if (!data || typeof data !== 'object') return false;
+  return !!(data.champion || data.challenger);
 }
 
 // True while either side's transcript is still being produced.
