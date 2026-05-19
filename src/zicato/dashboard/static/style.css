@@ -1916,4 +1916,124 @@ h4 {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================================
+   Epoch experiment log, journal, and analysis panels
+   ============================================================ */
+
+/* Experiment log — collapsible list of per-generation experiments */
+.exp-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.exp-log-row {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr 8rem 7rem;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  background: var(--surface);
+  transition: background 0.08s;
+}
+.exp-log-row:hover,
+.exp-log-row:focus-visible {
+  background: color-mix(in srgb, var(--accent-running) 8%, var(--surface));
+  outline: none;
+}
+.exp-log-row.expanded {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+.exp-log-gen {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.exp-log-idea {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exp-log-muts {
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.exp-log-verdict {
+  font-size: 0.74rem;
+  text-align: right;
+}
+
+/* Experiment detail — the expanded panel below the row */
+.exp-log-detail {
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 5px 5px;
+  padding: 0.75rem 0.75rem 0.6rem;
+  margin-bottom: 2px;
+  background: var(--surface);
+}
+
+/* Hypothesis block */
+.exp-hyp-block {
+  margin-bottom: 0.6rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.exp-hyp-block p {
+  margin: 4px 0;
+}
+
+/* Patch diff block */
+.exp-patch-block {
+  margin: 0.5rem 0;
+}
+.exp-patch-header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+.exp-patch-rationale {
+  font-size: 0.78rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Outcome block */
+.exp-outcome-block {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+}
+.exp-outcome-verdict {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.3rem;
+}
+.exp-tournament-link {
+  display: inline-block;
+  margin-top: 0.2rem;
+  font-size: 0.82rem;
+  color: var(--accent-running);
+  text-decoration: none;
+}
+.exp-tournament-link:hover { text-decoration: underline; }
+
+/* Journal and analysis panels reuse the brief-block readable column */
+.epoch-journal,
+.epoch-analysis {
+  max-width: 100%;
+}
+
+/* Analysis HTML link bar */
+.analysis-html-bar {
+  margin-bottom: 0.6rem;
 }

@@ -234,6 +234,60 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             return JSONResponse({"error": "invalid epoch or mutation id"}, status_code=400)
         return JSONResponse(mutations.build_mutation_detail(paths, epoch_id, mutation_id))
 
+    # -- epoch drill-down endpoints (journal / analysis) ---------
+
+    async def api_epoch_journal(request: Request) -> JSONResponse:
+        """Return the journal.md text for one epoch as ``{ epoch_id, journal }``."""
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse({"error": "invalid epoch id"}, status_code=400)
+        path = paths.epochs / epoch_id / "journal.md"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            text = ""
+        return JSONResponse({"epoch_id": epoch_id, "journal": text})
+
+    async def api_epoch_analysis(request: Request) -> JSONResponse:
+        """Return the analysis report for one epoch.
+
+        Returns ``{ epoch_id, analysis_md, analysis_html_available }`` so
+        the frontend can render the markdown inline and link the HTML file
+        via ``/api/epoch/{id}/analysis.html``.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse({"error": "invalid epoch id"}, status_code=400)
+        analysis_md_path = paths.epochs / epoch_id / "analysis.md"
+        analysis_html_path = paths.epochs / epoch_id / "analysis.html"
+        try:
+            analysis_md = analysis_md_path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            analysis_md = ""
+        return JSONResponse(
+            {
+                "epoch_id": epoch_id,
+                "analysis_md": analysis_md,
+                "analysis_html_available": analysis_html_path.is_file(),
+            }
+        )
+
+    async def api_epoch_analysis_html(request: Request) -> Response:
+        """Serve the raw ``analysis.html`` for an epoch.
+
+        Returns the self-contained HTML document so the frontend can
+        open it in a new tab or embed it. Returns 404 when absent.
+        """
+        from starlette.responses import HTMLResponse
+
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return PlainTextResponse("invalid epoch id", status_code=400)
+        html = state_reader.read_epoch_analysis_html(paths, epoch_id)
+        if html is None:
+            return PlainTextResponse("analysis.html not found for this epoch", status_code=404)
+        return HTMLResponse(html)
+
     # -- conversation endpoints --------------------------------------
 
     async def api_conversation(request: Request) -> Response:
@@ -393,6 +447,9 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_files_patches": api_files_patches,
         "api_mutations": api_mutations,
         "api_mutation_detail": api_mutation_detail,
+        "api_epoch_journal": api_epoch_journal,
+        "api_epoch_analysis": api_epoch_analysis,
+        "api_epoch_analysis_html": api_epoch_analysis_html,
         "api_conversation": api_conversation,
         "api_matchup_conversations": api_matchup_conversations,
         "control_pause": control_pause,

@@ -568,6 +568,173 @@ def test_epoch_view_brief_prefers_brief_md_over_legacy(workspace: Path) -> None:
     assert view["brief"].startswith("# Proposer brief")
 
 
+# ---------------------------------------------------------------------------
+# Epoch experiment log / journal / analysis — new in feat/epoch-experiment-log
+# ---------------------------------------------------------------------------
+
+
+def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> None:
+    """build_epoch_view now carries experiments, journal, and analysis fields."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+
+    epoch_id = "2026-05-16_e0"
+    epoch_dir = workspace / "epochs" / epoch_id
+    gen_dir = epoch_dir / "generations" / "v1"
+    patches_dir = gen_dir / "patches"
+    patches_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write a patch file for v1.
+    _write_json(
+        patches_dir / "p_abc.json",
+        {
+            "id": "p_abc",
+            "mutation_id": "m1",
+            "op": "replace",
+            "rationale": "tighten planner prompt",
+            "new_content": "new-content-here",
+        },
+    )
+    # Write journal and analysis markdown.
+    _write(epoch_dir / "journal.md", "# Journal\n\n## v1\nRejected.\n")
+    _write(epoch_dir / "analysis.md", "# Analysis\n\nTwo experiments.\n")
+
+    view = build_epoch_view(WorkspacePaths(workspace))
+
+    # Experiments: v1 has an experiment.json and one patch.
+    assert "experiments" in view
+    assert isinstance(view["experiments"], list)
+    exp_by_gen = {e["generation_id"]: e for e in view["experiments"]}
+    assert "v1" in exp_by_gen
+    v1 = exp_by_gen["v1"]
+    assert v1["patches"]["m1"]["op"] == "replace"
+    assert v1["patches"]["m1"]["new_content"] == "new-content-here"
+
+    # Journal.
+    assert "journal" in view
+    assert "v1" in view["journal"]
+
+    # Analysis.
+    assert "analysis_md" in view
+    assert "Two experiments" in view["analysis_md"]
+    assert "analysis_html_available" in view
+    assert view["analysis_html_available"] is False
+
+
+def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
+    """build_epoch_view yields an empty experiments list when no generation dirs exist."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+
+    # Remove all generation directories so the walker finds nothing.
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    import shutil
+
+    gens_dir = epoch_dir / "generations"
+    if gens_dir.is_dir():
+        shutil.rmtree(gens_dir)
+
+    view = build_epoch_view(WorkspacePaths(workspace))
+    assert view["experiments"] == []
+    assert view["journal"] == ""
+    assert view["analysis_md"] == ""
+    assert view["analysis_html_available"] is False
+
+
+def test_epoch_view_analysis_html_available_flag(workspace: Path) -> None:
+    """analysis_html_available is True when the HTML file exists."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write(epoch_dir / "analysis.html", "<html><body>report</body></html>")
+
+    view = build_epoch_view(WorkspacePaths(workspace))
+    assert view["analysis_html_available"] is True
+
+
+def test_epoch_journal_endpoint(client: TestClient, workspace: Path) -> None:
+    """GET /api/epoch/{id}/journal returns { epoch_id, journal }."""
+    epoch_id = "2026-05-16_e0"
+    epoch_dir = workspace / "epochs" / epoch_id
+    _write(epoch_dir / "journal.md", "# Journal\n\n## v1\nRejected.\n")
+
+    r = client.get(f"/api/epoch/{epoch_id}/journal")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["epoch_id"] == epoch_id
+    assert "v1" in body["journal"]
+
+
+def test_epoch_journal_endpoint_absent(client: TestClient) -> None:
+    """Journal endpoint degrades gracefully when journal.md is absent."""
+    r = client.get("/api/epoch/2026-05-16_e0/journal")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["epoch_id"] == "2026-05-16_e0"
+    assert body["journal"] == ""
+
+
+def test_epoch_journal_endpoint_invalid_id(client: TestClient) -> None:
+    """Journal endpoint rejects unsafe epoch ids."""
+    r = client.get("/api/epoch/../secrets/journal")
+    assert r.status_code in (400, 404)
+
+
+def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
+    """GET /api/epoch/{id}/analysis returns { epoch_id, analysis_md, analysis_html_available }."""
+    epoch_id = "2026-05-16_e0"
+    epoch_dir = workspace / "epochs" / epoch_id
+    _write(epoch_dir / "analysis.md", "# Analysis\n\nTwo experiments.\n")
+
+    r = client.get(f"/api/epoch/{epoch_id}/analysis")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["epoch_id"] == epoch_id
+    assert "Two experiments" in body["analysis_md"]
+    assert "analysis_html_available" in body
+    assert body["analysis_html_available"] is False
+
+
+def test_epoch_analysis_html_endpoint_present(client: TestClient, workspace: Path) -> None:
+    """GET /api/epoch/{id}/analysis.html serves the HTML when present."""
+    epoch_id = "2026-05-16_e0"
+    epoch_dir = workspace / "epochs" / epoch_id
+    _write(epoch_dir / "analysis.html", "<html><body>report</body></html>")
+
+    r = client.get(f"/api/epoch/{epoch_id}/analysis.html")
+    assert r.status_code == 200
+    assert "report" in r.text
+    assert "text/html" in r.headers["content-type"]
+
+
+def test_epoch_analysis_html_endpoint_absent(client: TestClient) -> None:
+    """GET /api/epoch/{id}/analysis.html returns 404 when absent."""
+    r = client.get("/api/epoch/2026-05-16_e0/analysis.html")
+    assert r.status_code == 404
+
+
+def test_epoch_analysis_html_endpoint_invalid_id(client: TestClient) -> None:
+    """Analysis HTML endpoint rejects unsafe epoch ids."""
+    r = client.get("/api/epoch/../secrets/analysis.html")
+    assert r.status_code in (400, 404)
+
+
+def test_environment_epoch_includes_new_fields(client: TestClient, workspace: Path) -> None:
+    """The consolidated /api/environment carries the new epoch fields."""
+    epoch_id = "2026-05-16_e0"
+    epoch_dir = workspace / "epochs" / epoch_id
+    _write(epoch_dir / "journal.md", "# Journal\n\n## round 1\n")
+    _write(epoch_dir / "analysis.md", "# Analysis\n\n## summary\n")
+
+    r = client.get("/api/environment")
+    assert r.status_code == 200
+    body = r.json()
+    epoch = body.get("epoch", {})
+    assert "experiments" in epoch, "epoch must include experiments list"
+    assert isinstance(epoch["experiments"], list)
+    assert "journal" in epoch, "epoch must include journal text"
+    assert "Analysis" in epoch.get("analysis_md", "")
+    assert "analysis_html_available" in epoch
+
+
 def test_tournaments_bracket(client: TestClient) -> None:
     r = client.get("/api/tournaments")
     assert r.status_code == 200

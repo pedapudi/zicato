@@ -199,6 +199,9 @@ REQUIRED_SECTIONS = {
     "epoch-brief-section",
     "epoch-scoring-section",
     "epoch-mutations-section",
+    "epoch-experiment-log-section",
+    "epoch-journal-section",
+    "epoch-analysis-section",
     "files-section",
     "files-patches-section",
     "mutations-section",
@@ -230,6 +233,9 @@ REQUIRED_EPOCH_IDS = {
     "epoch-brief",
     "epoch-scoring",
     "epoch-mutations",
+    "epoch-experiment-log",
+    "epoch-journal",
+    "epoch-analysis",
 }
 
 REQUIRED_IDS = (
@@ -749,6 +755,107 @@ def test_drill_panel_is_hidden_initially(index_html: str) -> None:
     # The drill side panel must start hidden so the first paint does
     # not flash a half-rendered detail view.
     assert 'aria-hidden="true"' in index_html
+
+
+# ---------------------------------------------------------------------------
+# Epoch experiment log / journal / analysis — new render functions
+# ---------------------------------------------------------------------------
+
+
+def test_epoch_experiment_log_render_function_present(app_js: str) -> None:
+    """The render layer exports a renderEpochExperimentLog function."""
+    assert "function renderEpochExperimentLog(" in app_js
+
+
+def test_epoch_journal_render_function_present(app_js: str) -> None:
+    """The render layer exports a renderEpochJournal function."""
+    assert "function renderEpochJournal(" in app_js
+
+
+def test_epoch_analysis_render_function_present(app_js: str) -> None:
+    """The render layer exports a renderEpochAnalysis function."""
+    assert "function renderEpochAnalysis(" in app_js
+
+
+def test_epoch_view_calls_all_new_sub_renderers(app_js: str) -> None:
+    """renderEpochView calls all three new sub-renderers."""
+    scrubbed = _strip_js_comments(app_js)
+    idx = scrubbed.find("function renderEpochView(")
+    assert idx != -1, "renderEpochView not found"
+    body = scrubbed[idx : idx + 600]
+    for fn in ("renderEpochExperimentLog(", "renderEpochJournal(", "renderEpochAnalysis("):
+        assert fn in body, f"renderEpochView must call {fn}"
+
+
+def test_experiment_log_uses_mutation_diff_renderer(app_js: str) -> None:
+    """The experiment log reuses the existing renderMutationDiff function."""
+    scrubbed = _strip_js_comments(app_js)
+    idx = scrubbed.find("function renderEpochExperimentLog(")
+    assert idx != -1, "renderEpochExperimentLog not found"
+    # The function is several hundred lines; use a large window.
+    body = scrubbed[idx : idx + 8000]
+    assert (
+        "renderMutationDiff(" in body
+    ), "renderEpochExperimentLog must reuse renderMutationDiff for patch diffs"
+
+
+def test_experiment_log_links_to_tournament_view(app_js: str) -> None:
+    """Each experiment row links to its tournament via #/tournament/{genId}."""
+    scrubbed = _strip_js_comments(app_js)
+    idx = scrubbed.find("function renderEpochExperimentLog(")
+    assert idx != -1
+    body = scrubbed[idx : idx + 8000]
+    assert (
+        "#/tournament/" in body
+    ), "renderEpochExperimentLog must link experiments to #/tournament/{genId}"
+
+
+def test_journal_uses_minimal_markdown_renderer(app_js: str) -> None:
+    """renderEpochJournal renders with renderMinimalMarkdown."""
+    scrubbed = _strip_js_comments(app_js)
+    idx = scrubbed.find("function renderEpochJournal(")
+    assert idx != -1, "renderEpochJournal not found"
+    body = scrubbed[idx : idx + 600]
+    assert "renderMinimalMarkdown(" in body, "renderEpochJournal must use renderMinimalMarkdown"
+
+
+def test_analysis_offers_html_link(app_js: str) -> None:
+    """renderEpochAnalysis links the analysis.html report when available."""
+    scrubbed = _strip_js_comments(app_js)
+    idx = scrubbed.find("function renderEpochAnalysis(")
+    assert idx != -1, "renderEpochAnalysis not found"
+    body = scrubbed[idx : idx + 1200]
+    assert (
+        "analysis_html_available" in body
+    ), "renderEpochAnalysis must check analysis_html_available"
+    assert "analysis.html" in body, "renderEpochAnalysis must link to the analysis.html endpoint"
+
+
+def test_mock_epoch_carries_experiment_log_fields(app_js: str) -> None:
+    """mockSnapshot includes experiments, journal, and analysis_md on the epoch."""
+    scrubbed = _strip_js_comments(app_js)
+    for key in ("experiments", "journal", "analysis_md", "analysis_html_available"):
+        assert key in scrubbed, f"mock epoch missing field: {key}"
+
+
+def test_epoch_experiment_log_section_in_required_sections() -> None:
+    """The three new epoch sections are in REQUIRED_SECTIONS."""
+    # This is a code-level assertion: the test file's own constant must
+    # include the new sections (verified by running the full suite).
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_test_dashboard_ui_check",
+        Path(__file__),
+    )
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    for sect in (
+        "epoch-experiment-log-section",
+        "epoch-journal-section",
+        "epoch-analysis-section",
+    ):
+        assert sect in mod.REQUIRED_SECTIONS, f"REQUIRED_SECTIONS missing {sect}"
 
 
 # ---------------------------------------------------------------------------

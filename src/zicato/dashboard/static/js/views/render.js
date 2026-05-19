@@ -2331,6 +2331,9 @@ function renderEpochView() {
   renderEpochBrief(def);
   renderEpochScoring(def);
   renderEpochMutations(def);
+  renderEpochExperimentLog(def);
+  renderEpochJournal(def);
+  renderEpochAnalysis(def);
 }
 
 function kv(label, value) {
@@ -2580,6 +2583,275 @@ function renderEpochMutations(def) {
   }
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+}
+
+// --- Render: Epoch experiment log
+//
+// Renders a list of per-generation experiments in the current epoch.
+// Each row shows the hypothesis one-liner, the mutation id(s) modulated,
+// and the verdict + Δscalar. Clicking a row expands a detail panel that
+// shows the full hypothesis, the patches rendered as diffs (reusing
+// renderMutationDiff / diffLines), and a link to the tournament view.
+
+// Cache for baseline mutation contents so we can diff without a fetch.
+// Key: epochId. Value: { mutation_id -> content }.
+const _baselineCache = {};
+
+// Fetch and cache the v0 baseline mutation contents for an epoch.
+// Resolves to { mutation_id -> content } (empty object on failure).
+async function _loadBaselineContents(epochId) {
+  if (_baselineCache[epochId]) return _baselineCache[epochId];
+  let result = {};
+  try {
+    const idx = await fetchJson('/api/mutations/' + encodeURIComponent(epochId));
+    const sites = (idx && idx.mutations) || [];
+    for (const site of sites) {
+      if (!site.mutation_id) continue;
+      try {
+        const detail = await fetchJson(
+          '/api/mutations/' + encodeURIComponent(epochId)
+          + '/' + encodeURIComponent(site.mutation_id)
+        );
+        if (detail && detail.baseline && detail.baseline.content != null) {
+          result[site.mutation_id] = detail.baseline.content;
+        }
+      } catch (_) { /* best-effort */ }
+    }
+  } catch (_) { /* best-effort */ }
+  _baselineCache[epochId] = result;
+  return result;
+}
+
+// Which experiment row is expanded (generation_id or null).
+let _expandedExperiment = null;
+// Baseline contents for the current epoch (loaded on first expand).
+let _experimentBaseline = null;
+
+function renderEpochExperimentLog(def) {
+  const wrap = $('epoch-experiment-log');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const experiments = def && Array.isArray(def.experiments) ? def.experiments : [];
+  if (experiments.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No experiments recorded this epoch.']));
+    return;
+  }
+
+  const epochId = def && def.epoch_id;
+  const list = el('div', { class: 'exp-log-list' });
+
+  for (const exp of experiments) {
+    const genId = exp.generation_id || '?';
+    const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
+      ? exp.hypothesis : {};
+    const coreIdea = hyp.core_idea || hyp.core_idea || '—';
+    const outcome = (exp.outcome && typeof exp.outcome === 'object')
+      ? exp.outcome : null;
+    const decision = outcome
+      ? (outcome.tournament_decision || outcome.decision || null)
+      : null;
+    const deltaScalar = outcome ? outcome.scalar_score_delta : null;
+    const modulating = Array.isArray(hyp.modulating) ? hyp.modulating : [];
+
+    const isExpanded = _expandedExperiment === genId;
+    const decisionClass = decision
+      ? (decision.toLowerCase().includes('promot') ? 'promoted' : 'rejected')
+      : 'pending';
+
+    // Summary row (always visible).
+    const summaryRow = el('div', {
+      class: 'exp-log-row' + (isExpanded ? ' expanded' : ''),
+      role: 'button',
+      tabindex: '0',
+      'data-genid': genId,
+    }, [
+      el('span', { class: 'exp-log-gen mono' }, [genId]),
+      el('span', { class: 'exp-log-idea' }, [coreIdea]),
+      el('span', { class: 'exp-log-muts meta' }, [modulating.join(', ') || '—']),
+      outcome
+        ? el('span', { class: 'exp-log-verdict badge ' + decisionClass }, [
+            decision || '?',
+            deltaScalar != null
+              ? ' ' + (deltaScalar > 0 ? '+' : '') + deltaScalar.toFixed(3)
+              : '',
+          ])
+        : el('span', { class: 'exp-log-verdict badge pending' }, ['in progress']),
+    ]);
+
+    const toggle = () => {
+      _expandedExperiment = (_expandedExperiment === genId) ? null : genId;
+      // Load baselines on first expand, then re-render.
+      if (_expandedExperiment === genId && epochId && !_experimentBaseline) {
+        _loadBaselineContents(epochId).then((baseline) => {
+          _experimentBaseline = baseline;
+          renderEpochExperimentLog(def);
+        }).catch(() => { renderEpochExperimentLog(def); });
+      } else {
+        renderEpochExperimentLog(def);
+      }
+    };
+    summaryRow.addEventListener('click', toggle);
+    summaryRow.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+
+    list.appendChild(summaryRow);
+
+    // Detail panel (only when expanded).
+    if (isExpanded) {
+      const detail = el('div', { class: 'exp-log-detail' });
+
+      // Full hypothesis block.
+      if (hyp.core_idea || hyp.why || hyp.risks) {
+        const hypBlock = el('div', { class: 'exp-hyp-block' });
+        if (hyp.core_idea) {
+          hypBlock.appendChild(el('p', null, [
+            el('strong', null, ['Hypothesis. ']), hyp.core_idea,
+          ]));
+        }
+        if (hyp.why) {
+          hypBlock.appendChild(el('p', null, [
+            el('strong', null, ['Why. ']), hyp.why,
+          ]));
+        }
+        if (hyp.risks) {
+          hypBlock.appendChild(el('p', null, [
+            el('strong', null, ['Risks. ']), hyp.risks,
+          ]));
+        }
+        if (modulating.length > 0) {
+          hypBlock.appendChild(el('p', null, [
+            el('strong', null, ['Modulating. ']),
+            el('span', { class: 'mono' }, [modulating.join(', ')]),
+          ]));
+        }
+        detail.appendChild(hypBlock);
+      }
+
+      // Per-patch diff block.
+      const patches = (exp.patches && typeof exp.patches === 'object')
+        ? Object.values(exp.patches) : [];
+      for (const patch of patches) {
+        const mutId = patch.mutation_id || '?';
+        const patchBlock = el('div', { class: 'exp-patch-block' });
+        patchBlock.appendChild(
+          el('div', { class: 'exp-patch-header' }, [
+            el('span', { class: 'mono' }, [mutId]),
+            patch.op ? el('span', { class: 'mutations-version-op' }, [patch.op]) : null,
+          ])
+        );
+        if (patch.rationale) {
+          patchBlock.appendChild(
+            el('div', { class: 'exp-patch-rationale meta' }, [patch.rationale])
+          );
+        }
+        // Render a diff: baseline content vs. new_content.
+        const baselineContent = (_experimentBaseline && _experimentBaseline[mutId]) || null;
+        const newContent = patch.new_content != null ? String(patch.new_content) : null;
+        if (baselineContent != null && newContent != null) {
+          patchBlock.appendChild(renderMutationDiff(baselineContent, newContent));
+        } else if (newContent != null) {
+          // No baseline available — show the new content as an addition.
+          patchBlock.appendChild(renderMutationDiff('', newContent));
+        } else {
+          patchBlock.appendChild(
+            el('p', { class: 'empty' }, ['Patch content not available.'])
+          );
+        }
+        detail.appendChild(patchBlock);
+      }
+
+      // Outcome + tournament link.
+      if (outcome) {
+        const outBlock = el('div', { class: 'exp-outcome-block' });
+        outBlock.appendChild(
+          el('div', { class: 'exp-outcome-verdict' }, [
+            el('span', { class: 'badge ' + decisionClass }, [decision || '?']),
+            deltaScalar != null
+              ? el('span', { class: 'mono' }, [
+                  '  Δscalar ' + (deltaScalar > 0 ? '+' : '') + deltaScalar.toFixed(4),
+                ])
+              : null,
+          ])
+        );
+        if (outcome.rejection_reason) {
+          outBlock.appendChild(
+            el('p', { class: 'meta' }, [outcome.rejection_reason])
+          );
+        }
+        outBlock.appendChild(
+          el('a', { href: '#/tournament/' + encodeURIComponent(genId),
+                    class: 'exp-tournament-link' },
+            ['→ tournament detail'])
+        );
+        detail.appendChild(outBlock);
+      }
+
+      list.appendChild(detail);
+    }
+  }
+
+  wrap.appendChild(list);
+}
+
+// --- Render: Epoch journal
+//
+// Renders the epoch's journal.md using renderMinimalMarkdown.
+// The journal is a round-by-round log of hypothesis + outcome entries.
+
+function renderEpochJournal(def) {
+  const wrap = $('epoch-journal');
+  if (!wrap) return;
+  clearChildren(wrap);
+  wrap.classList.add('epoch-journal');
+
+  const journal = (def && typeof def.journal === 'string') ? def.journal : '';
+  if (!journal.trim()) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No journal recorded.']));
+    return;
+  }
+  const block = el('div', { class: 'brief-block' });
+  renderMinimalMarkdown(journal, block);
+  wrap.appendChild(block);
+}
+
+// --- Render: Epoch analysis
+//
+// Renders the epoch's analysis.md and (if the HTML exists) offers a
+// link to open the self-contained analysis.html in a new tab.
+
+function renderEpochAnalysis(def) {
+  const wrap = $('epoch-analysis');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const md = (def && typeof def.analysis_md === 'string') ? def.analysis_md : '';
+  const htmlAvail = def && def.analysis_html_available;
+  const epochId = def && def.epoch_id;
+
+  if (!md.trim() && !htmlAvail) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No analysis recorded.']));
+    return;
+  }
+
+  if (htmlAvail && epochId) {
+    const bar = el('div', { class: 'analysis-html-bar' }, [
+      el('a', {
+        href: '/api/epoch/' + encodeURIComponent(epochId) + '/analysis.html',
+        target: '_blank',
+        rel: 'noopener',
+        class: 'harmonograf-link',
+      }, ['Open full analysis report ↗']),
+    ]);
+    wrap.appendChild(bar);
+  }
+
+  if (md.trim()) {
+    const block = el('div', { class: 'brief-block' });
+    renderMinimalMarkdown(md, block);
+    wrap.appendChild(block);
+  }
 }
 
 // Reduce an absolute snapshot path to a meaningful repo-relative path.

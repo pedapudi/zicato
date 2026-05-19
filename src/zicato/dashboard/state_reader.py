@@ -625,12 +625,75 @@ def _read_harness(paths: WorkspacePaths) -> dict[str, Any] | None:
     }
 
 
+def _read_text_best_effort(path: Path) -> str:
+    """Best-effort UTF-8 text read; any error -> empty string."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return ""
+
+
+def _read_epoch_experiments(epoch_dir: Path) -> list[dict[str, Any]]:
+    """Walk ``generations/*/experiment.json`` for the epoch.
+
+    Returns a list of experiment records, one per generation that has an
+    ``experiment.json``, sorted by generation id. Each record carries the
+    raw ``experiment.json`` fields plus a ``patch_content`` mapping from
+    mutation id to the raw patch dict (from ``patches/*.json``) so the
+    frontend can render diffs without a second round-trip.
+    """
+    gens_dir = epoch_dir / "generations"
+    if not gens_dir.is_dir():
+        return []
+    experiments: list[dict[str, Any]] = []
+    for gen_dir in sorted(gens_dir.iterdir()):
+        if not gen_dir.is_dir():
+            continue
+        exp = _read_json_value(gen_dir / "experiment.json")
+        if not isinstance(exp, dict):
+            continue
+        # Collect patches keyed by mutation_id so the render layer can
+        # display the diff alongside the hypothesis.
+        patches: dict[str, Any] = {}
+        patches_dir = gen_dir / "patches"
+        if patches_dir.is_dir():
+            for patch_file in sorted(patches_dir.iterdir()):
+                if patch_file.suffix != ".json":
+                    continue
+                patch = _read_json_value(patch_file)
+                if not isinstance(patch, dict):
+                    continue
+                mutation_id = patch.get("mutation_id")
+                if isinstance(mutation_id, str) and mutation_id:
+                    patches[mutation_id] = patch
+        record = dict(exp)
+        # Always stamp generation_id from the directory name so the
+        # frontend can key on it even when the JSON omits it.
+        record["generation_id"] = gen_dir.name
+        record["patches"] = patches
+        experiments.append(record)
+    return experiments
+
+
 def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
     """The current epoch's full evaluation contract.
 
     Matches the Rust ``epoch::build_epoch_view`` shape: no current epoch
     yields ``{"epoch_id": null}``; every other component degrades to
     empty / ``null``.
+
+    Extended fields (added for the experiment-log / journal / analysis
+    panels in the Epoch view):
+
+    * ``experiments`` — list of per-generation experiment records, each
+      carrying hypothesis, outcome, and inline patch content so the
+      frontend can render {hypothesis → exact change → outcome} in one
+      place without a second fetch.
+    * ``journal`` — ``journal.md`` text (empty string when absent).
+    * ``analysis_md`` — ``analysis.md`` text (empty string when absent).
+    * ``analysis_html_available`` — ``True`` when ``analysis.html``
+      exists on disk; the frontend can link directly to
+      ``/api/epoch/{id}/analysis.html``.
     """
     epoch_id = read_current_epoch(paths)
     if epoch_id is None:
@@ -676,7 +739,31 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
     # mutations.json is optional; absent -> empty list (never null).
     mutations = _parse_mutations(epoch_dir / "mutations.json")
     view["mutations"] = mutations if mutations is not None else []
+
+    # Experiment log: per-generation hypothesis + outcome + patch content.
+    view["experiments"] = _read_epoch_experiments(epoch_dir)
+
+    # Journal: epoch-level markdown log of hypothesis+outcome rounds.
+    view["journal"] = _read_text_best_effort(epoch_dir / "journal.md")
+
+    # Analysis: the post-epoch analysis report.
+    view["analysis_md"] = _read_text_best_effort(epoch_dir / "analysis.md")
+    view["analysis_html_available"] = (epoch_dir / "analysis.html").is_file()
+
     return view
+
+
+def read_epoch_analysis_html(paths: WorkspacePaths, epoch_id: str) -> str | None:
+    """Return the raw HTML of the analysis report, or ``None`` when absent.
+
+    Used by the ``GET /api/epoch/{id}/analysis.html`` endpoint so the
+    dashboard can embed or link the self-contained analysis report.
+    """
+    path = paths.epochs / epoch_id / "analysis.html"
+    try:
+        return path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return None
 
 
 # ---------------------------------------------------------------------------
