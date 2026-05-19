@@ -129,6 +129,18 @@ against a live model landed in this cycle.
   server-computed running aggregate (with a legacy fallback), so the
   scalar climbs as the tournament runs instead of sitting at 0.00.
 
+### Integration note
+- This release folds together six dashboard / runner / proposer fixes
+  developed in parallel: the route-driven Files view with a
+  side-by-side changed-files diff; the Overview rebuilt as the
+  environment home (with the queued-label fix); the Epoch view's
+  narrative redesign; the Tournament view's harmonograf jump-off links
+  (`adk_session_id`); incremental per-board scoring; and proposer/patch
+  resilience (post-apply validation retry, full proposer content,
+  surgical span apply). The partial-aggregate panel now lives in the
+  Tournament view's hall — the Overview no longer renders the full
+  board.
+
 ### Loop-health diagnostics
 - `zicato/health/` — detects a toothless evaluation loop: degenerate
   scoring (consecutive zero-Δ tournaments), non-differentiating board

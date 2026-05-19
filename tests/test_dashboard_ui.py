@@ -752,24 +752,29 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 330 KB uncompressed. Raised from 270 KB by the dashboard redesign:
+    # 360 KB uncompressed. Raised from 270 KB by the dashboard redesign:
     # the monolithic ``app.js`` was re-architected into ES modules — a
     # thin entry point plus the core spine (state / bus / router / api /
     # sse / dom / format / harmonograf), a shared component library and
     # the render layer. The module boundaries add per-file headers,
     # import statements and the documented contracts, costing a few tens
     # of KB; that cost buys the structural no-flash render spine and the
-    # zero-collision modular layout. The +10 KB step from 320 KB carries
-    # the route-driven Files view: its "What changed" section — a
-    # generation picker and a side-by-side split diff of every changed
-    # file — plus the shared `diff` component's split-mode CSS. The
-    # ``app_js`` fixture concatenates every shipped JS file, so this
-    # envelope covers the whole bundle. The dev-only JS test harness
-    # under ``static/test/`` is NOT shipped and is excluded. The
-    # dashboard is served off disk by the standalone Python service with
-    # no network cost; this guard only keeps the vanilla bundle from
-    # drifting unboundedly.
-    assert total < 330_000, f"bundle is {total} bytes, exceeds 330_000 envelope"
+    # zero-collision modular layout. Raised again by the route-driven
+    # Files view (its "What changed" section — a generation picker and a
+    # side-by-side split diff of every changed file — plus the shared
+    # `diff` component's split-mode CSS), the Overview environment-home
+    # rebuild (identity / live-activity / epochs / recent-experiments
+    # panels and the score-trajectory chart) and the Epoch-view redesign
+    # (the experiment narrative renders each experiment as a four-beat
+    # card — description / hypothesis / change / outcome — with a
+    # coloured-accent layout, partly offset by deleting the prior flat
+    # experiment-log markup). The ``app_js`` fixture concatenates every
+    # shipped JS file, so this envelope covers the whole bundle. The
+    # dev-only JS test harness under ``static/test/`` is NOT shipped and
+    # is excluded. The dashboard is served off disk by the standalone
+    # Python service with no network cost; this guard only keeps the
+    # vanilla bundle from drifting unboundedly.
+    assert total < 360_000, f"bundle is {total} bytes, exceeds 360_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
@@ -838,27 +843,40 @@ def test_epoch_view_calls_all_new_sub_renderers(app_js: str) -> None:
         assert fn in body, f"renderEpochView must call {fn}"
 
 
+def _epoch_experiment_log_region(scrubbed: str) -> str:
+    """Return the Epoch experiment-log render region.
+
+    The redesigned experiment log is built from a cluster of helper
+    functions (`_renderExperimentHypothesis`, `_renderExperimentChange`,
+    `_renderExperimentOutcome`) that `renderEpochExperimentLog` composes.
+    Behaviour these tests assert (the patch diff, the tournament link)
+    lives in those helpers, so the region spans the whole cluster — from
+    the first helper to the end of `renderEpochExperimentLog`.
+    """
+    start = scrubbed.find("function _renderExperimentHypothesis(")
+    if start == -1:
+        start = scrubbed.find("function renderEpochExperimentLog(")
+    assert start != -1, "epoch experiment-log render region not found"
+    end = scrubbed.find("function renderEpochJournal(", start)
+    if end == -1:
+        end = start + 12000
+    return scrubbed[start:end]
+
+
 def test_experiment_log_uses_mutation_diff_renderer(app_js: str) -> None:
     """The experiment log reuses the existing renderMutationDiff function."""
-    scrubbed = _strip_js_comments(app_js)
-    idx = scrubbed.find("function renderEpochExperimentLog(")
-    assert idx != -1, "renderEpochExperimentLog not found"
-    # The function is several hundred lines; use a large window.
-    body = scrubbed[idx : idx + 8000]
+    region = _epoch_experiment_log_region(_strip_js_comments(app_js))
     assert (
-        "renderMutationDiff(" in body
-    ), "renderEpochExperimentLog must reuse renderMutationDiff for patch diffs"
+        "renderMutationDiff(" in region
+    ), "the experiment log must reuse renderMutationDiff for patch diffs"
 
 
 def test_experiment_log_links_to_tournament_view(app_js: str) -> None:
-    """Each experiment row links to its tournament via #/tournament/{genId}."""
-    scrubbed = _strip_js_comments(app_js)
-    idx = scrubbed.find("function renderEpochExperimentLog(")
-    assert idx != -1
-    body = scrubbed[idx : idx + 8000]
+    """Each experiment card links to its tournament via #/tournament/{genId}."""
+    region = _epoch_experiment_log_region(_strip_js_comments(app_js))
     assert (
-        "#/tournament/" in body
-    ), "renderEpochExperimentLog must link experiments to #/tournament/{genId}"
+        "#/tournament/" in region
+    ), "the experiment log must link experiments to #/tournament/{genId}"
 
 
 def test_journal_uses_minimal_markdown_renderer(app_js: str) -> None:
@@ -935,6 +953,39 @@ def test_files_changes_section_in_required_sections() -> None:
     mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     assert "files-changes-section" in mod.REQUIRED_SECTIONS
+
+
+# ---------------------------------------------------------------------------
+# Epoch view — the epoch narrative redesign
+# ---------------------------------------------------------------------------
+
+
+def test_epoch_view_has_a_header_renderer(app_js: str) -> None:
+    """The redesigned Epoch view renders an identity + tally header."""
+    scrubbed = _strip_js_comments(app_js)
+    assert "function renderEpochHeader(" in scrubbed, "renderEpochHeader not found"
+    idx = scrubbed.find("function renderEpochView(")
+    assert idx != -1, "renderEpochView not found"
+    body = scrubbed[idx : idx + 600]
+    assert "renderEpochHeader(" in body, "renderEpochView must call renderEpochHeader"
+
+
+def test_experiment_log_renders_the_four_narrative_beats(app_js: str) -> None:
+    """Each experiment card tells the four-beat story.
+
+    The Epoch view's experiment narrative renders a description, the
+    pre-run hypothesis, the change/patch, and the post-run outcome — so
+    the redesign must emit the four-beat structure.
+    """
+    region = _epoch_experiment_log_region(_strip_js_comments(app_js))
+    # Hypothesis beat — the proposer's pre-run prediction.
+    assert "_renderExperimentHypothesis(" in region, "missing the hypothesis beat"
+    # Change beat — the concrete patch set.
+    assert "_renderExperimentChange(" in region, "missing the change beat"
+    # Outcome beat — the tournament verdict.
+    assert "_renderExperimentOutcome(" in region, "missing the outcome beat"
+    # The outcome distinguishes the challenger-beats-champion verdict.
+    assert "scalar_score_delta" in region, "the outcome must surface the scalar delta"
 
 
 def test_epoch_experiment_log_section_in_required_sections() -> None:

@@ -358,4 +358,102 @@ test('renderAll is idempotent — repeated calls do not throw or grow the DOM', 
     'idempotent renderAll must not duplicate log rows');
 });
 
+// -- Epoch view redesign ----------------------------------------------
+// The Epoch view is the epoch's narrative: identity + the operator's
+// brief, then one card per experiment telling its story in four beats
+// (description / hypothesis / change / outcome). These tests prove the
+// redesign renders that story from the mock epoch contract.
+
+test('epoch header shows the epoch id, status, and the experiment tally', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('epoch');
+  const header = doc.getElementById('epoch-overview');
+  const text = header.textContent;
+  // The mock epoch is `2026-05-15_e1`, open, with 3 experiments
+  // (2 decided — one promoted, one rejected — and 1 in progress).
+  assert(text.includes('2026-05-15_e1'), 'header must show the epoch id');
+  assert(text.includes('open'), 'an un-closed epoch shows the open status');
+  assert(text.includes('experiments'), 'the stat strip labels the experiment count');
+  assert(text.includes('promoted') && text.includes('rejected'),
+    'the stat strip tallies promoted and rejected experiments');
+  assert(text.includes('Δscalar'), 'the stat strip reports the net scalar movement');
+});
+
+test('proposer brief renders as a readable block, framed as the epoch goal', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('epoch');
+  const brief = doc.getElementById('epoch-brief');
+  assert(brief.children.length > 0, 'the brief panel must render content');
+  const text = brief.textContent;
+  assert(text.includes('goal handed to the proposer'),
+    'the brief is framed as the operator goal for the epoch');
+  // The mock brief markdown body must have rendered.
+  assert(text.includes('Forbidden edits'), 'the brief markdown body must render');
+});
+
+test('each experiment renders as a card with description, hypothesis and outcome', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('epoch');
+  const log = doc.getElementById('epoch-experiment-log');
+  const cards = log._descendants().filter((n) => n.classList.contains('exp-card'));
+  // The mock epoch carries three experiments (v1, v2, v5).
+  assertEqual(cards.length, 3, 'one card per experiment in the epoch');
+
+  // Every card tells the four-beat story: a description (core idea),
+  // a Hypothesis beat, a Change beat, and an Outcome beat.
+  for (const card of cards) {
+    const t = card.textContent;
+    assert(t.includes('Hypothesis'), 'every card has a Hypothesis beat');
+    assert(t.includes('Change'), 'every card has a Change beat');
+    assert(t.includes('Outcome'), 'every card has an Outcome beat');
+  }
+
+  // The first experiment (v1) was rejected — its card carries the
+  // rejected accent and surfaces the rejection reason.
+  const first = cards[0];
+  assert(first.classList.contains('exp-card-rejected'),
+    'a rejected experiment card carries the rejected accent');
+  assert(first.textContent.includes('Tighten the extraction schema'),
+    'the card shows the proposer core idea as the description');
+  assert(first.textContent.includes('pass-rate regression'),
+    'a rejected outcome surfaces the rejection reason');
+  assert(first.textContent.includes('Δscalar'),
+    'a decided outcome shows the scalar delta');
+
+  // The last experiment (v5) has no outcome yet — it reads as pending.
+  const last = cards[cards.length - 1];
+  assert(last.classList.contains('exp-card-pending'),
+    'an unfinished experiment card carries the pending accent');
+  assert(last.textContent.includes('in progress'),
+    'an unfinished experiment reads as in progress');
+});
+
+test('experiment card diff toggle expands the change without throwing', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('epoch');
+  const log = doc.getElementById('epoch-experiment-log');
+  const toggles = log._descendants().filter((n) => n.classList.contains('exp-diff-toggle'));
+  assert(toggles.length > 0, 'each experiment with a patch exposes a diff toggle');
+  // The diff is collapsed by default — clicking expands it.
+  assertEqual(toggles[0].getAttribute('aria-expanded'), 'false',
+    'the diff starts collapsed');
+  toggles[0].dispatchEvent(makeEvent('click'));
+  // After the toggle the log re-renders; a diff wrap must now exist.
+  const expanded = doc.getElementById('epoch-experiment-log')._descendants()
+    .filter((n) => n.classList.contains('exp-diff-wrap'));
+  assert(expanded.length > 0, 'clicking the toggle expands the patch diff');
+});
+
+test('epoch view renders cleanly when no epoch is loaded', () => {
+  state.epochDef = { epoch_id: null };
+  render.showView('epoch');
+  // No epoch -> a single muted empty line, no thrown error.
+  const header = doc.getElementById('epoch-overview');
+  assert(header.textContent.includes('No epoch loaded'),
+    'a null epoch degrades to a muted empty state');
+  const log = doc.getElementById('epoch-experiment-log');
+  assert(log.textContent.includes('No experiments recorded'),
+    'an epoch with no experiments shows an empty narrative');
+});
+
 await run();

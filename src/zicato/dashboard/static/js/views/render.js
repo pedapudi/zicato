@@ -2462,19 +2462,22 @@ function renderInlineConversation() {
 
 // --- Render: Epoch view
 //
-// Renders the epoch-definition contract from GET /api/epoch (or the
-// `epoch` key on /api/state). Every field is read defensively — the
-// contract is built by a sibling agent and any block may be absent.
+// The Epoch view is the epoch's NARRATIVE: the operator's goal (the
+// proposer brief) then the ordered story of every experiment — what it
+// tried, the hypothesis written BEFORE the run, the change it made, and
+// the outcome recorded AFTER. All data comes from `state.epochDef`
+// (`GET /api/epoch` / the `epoch` key on `/api/environment`); every
+// field is read defensively — any block may be absent on a fresh epoch.
 
 function renderEpochView() {
   const def = state.epochDef;
-  renderEpochOverview(def);
+  renderEpochHeader(def);
+  renderEpochBrief(def);
+  renderEpochExperimentLog(def);
   renderEpochHarness(def);
   renderEpochBoard(def);
-  renderEpochBrief(def);
   renderEpochScoring(def);
   renderEpochMutations(def);
-  renderEpochExperimentLog(def);
   renderEpochJournal(def);
   renderEpochAnalysis(def);
 }
@@ -2486,23 +2489,99 @@ function kv(label, value) {
   ]);
 }
 
-function renderEpochOverview(def) {
+// Normalise an experiment's outcome decision to one of the three
+// TournamentDecision values, or null when the experiment has not run.
+function _epochDecision(outcome) {
+  if (!outcome || typeof outcome !== 'object') return null;
+  const raw = outcome.tournament_decision || outcome.decision || '';
+  const d = String(raw).toLowerCase();
+  if (d.includes('promot')) return 'promoted';
+  if (d.includes('reject')) return 'rejected';
+  if (d.includes('defer')) return 'deferred';
+  return raw ? d : null;
+}
+
+// Map a decision to a badge kind class.
+function _epochDecisionKind(decision) {
+  if (decision === 'promoted') return 'promoted';
+  if (decision === 'rejected') return 'rejected';
+  if (decision === 'deferred') return 'deferred';
+  return 'pending';
+}
+
+// Format a signed scalar delta. Improvement is a negative loss delta.
+function _fmtSignedDelta(v, digits) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  const d = digits == null ? 3 : digits;
+  return (v > 0 ? '+' : '') + v.toFixed(d);
+}
+
+// The epoch header: identity, status, and a one-line tally of the
+// experiments — how many ran, how many were promoted / rejected, and
+// the net scalar movement across the epoch. This is the at-a-glance
+// summary that frames the narrative below it.
+function renderEpochHeader(def) {
   const wrap = $('epoch-overview');
   clearChildren(wrap);
-  if (!def) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No epoch contract loaded.']));
+  wrap.classList.add('epoch-header');
+  if (!def || !def.epoch_id) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No epoch loaded.']));
     return;
   }
-  wrap.appendChild(kv('epoch id', def.epoch_id || '—'));
-  const hash = def.contract_hash || '';
-  wrap.appendChild(kv('contract hash', hash ? truncate(hash, 12) : '—'));
-  wrap.appendChild(kv('created', def.created_at || '—'));
+
   const closed = def.closed === true;
-  wrap.appendChild(el('div', { class: 'kv' }, [
-    el('span', { class: 'kv-label' }, ['status']),
-    el('span', { class: 'badge ' + (closed ? 'rejected' : 'promoted') },
+  const experiments = Array.isArray(def.experiments) ? def.experiments : [];
+  let promoted = 0;
+  let rejected = 0;
+  let ran = 0;
+  let netScalar = 0;
+  let haveScalar = false;
+  for (const exp of experiments) {
+    const decision = _epochDecision(exp.outcome);
+    if (decision) {
+      ran += 1;
+      if (decision === 'promoted') promoted += 1;
+      else if (decision === 'rejected') rejected += 1;
+    }
+    const ds = exp.outcome && exp.outcome.scalar_score_delta;
+    if (typeof ds === 'number' && isFinite(ds)) { netScalar += ds; haveScalar = true; }
+  }
+  const pending = experiments.length - ran;
+
+  // Identity line — the epoch id large, status pill alongside.
+  const idLine = el('div', { class: 'epoch-header-id' }, [
+    el('h2', { class: 'epoch-header-name mono' }, [def.epoch_id]),
+    el('span', { class: 'badge ' + (closed ? 'muted' : 'promoted') },
       [closed ? 'closed' : 'open']),
-  ]));
+  ]);
+  wrap.appendChild(idLine);
+
+  // Sub-line — created timestamp + contract hash, muted.
+  const subBits = [];
+  if (def.created_at) subBits.push('created ' + def.created_at);
+  if (def.contract_hash) subBits.push('contract ' + truncate(def.contract_hash, 12));
+  if (subBits.length) {
+    wrap.appendChild(el('p', { class: 'epoch-header-sub meta mono' },
+      [subBits.join('  ·  ')]));
+  }
+
+  // Stat strip — the experiment tally.
+  const stats = el('div', { class: 'epoch-stat-strip' });
+  const stat = (value, label, cls) => el('div', { class: 'epoch-stat' }, [
+    el('span', { class: 'epoch-stat-value' + (cls ? ' ' + cls : '') },
+      [String(value)]),
+    el('span', { class: 'epoch-stat-label' }, [label]),
+  ]);
+  stats.appendChild(stat(experiments.length, 'experiments'));
+  stats.appendChild(stat(promoted, 'promoted', promoted > 0 ? 'good' : null));
+  stats.appendChild(stat(rejected, 'rejected', rejected > 0 ? 'bad' : null));
+  if (pending > 0) stats.appendChild(stat(pending, 'in progress', 'pend'));
+  if (haveScalar) {
+    // Net scalar: negative is improvement (loss went down).
+    const cls = netScalar < 0 ? 'good' : (netScalar > 0 ? 'bad' : null);
+    stats.appendChild(stat(_fmtSignedDelta(netScalar), 'net Δscalar', cls));
+  }
+  wrap.appendChild(stats);
 }
 
 function renderEpochHarness(def) {
@@ -2591,6 +2670,11 @@ function renderEpochBrief(def) {
     return;
   }
   const block = el('div', { class: 'brief-block' });
+  // A lead caption frames the brief as the operator's goal for the
+  // epoch — the thing every experiment below is reaching for.
+  block.appendChild(el('p', { class: 'epoch-brief-lead meta' }, [
+    'The operator’s goal handed to the proposer for this epoch.',
+  ]));
   renderMinimalMarkdown(brief, block);
   wrap.appendChild(block);
 }
@@ -2730,11 +2814,14 @@ function renderEpochMutations(def) {
 
 // --- Render: Epoch experiment log
 //
-// Renders a list of per-generation experiments in the current epoch.
-// Each row shows the hypothesis one-liner, the mutation id(s) modulated,
-// and the verdict + Δscalar. Clicking a row expands a detail panel that
-// shows the full hypothesis, the patches rendered as diffs (reusing
-// renderMutationDiff / diffLines), and a link to the tournament view.
+// The narrative core of the Epoch view. Each experiment (one generation
+// evaluated by a tournament) renders as a card told in four beats:
+// (1) WHAT — the proposer's core idea + generation id + lineage;
+// (2) HYPOTHESIS — the pre-run structured prediction; (3) CHANGE — the
+// patch set, with a line diff that expands on click; (4) OUTCOME — the
+// tournament verdict, scalar Δ, rejection reason, tournament jump.
+// All story data is on `state.epochDef.experiments`; the baseline fetch
+// for the diff is lazy and only powers beat 3.
 
 // Cache for baseline mutation contents so we can diff without a fetch.
 // Key: epochId. Value: { mutation_id -> content }.
@@ -2765,175 +2852,300 @@ async function _loadBaselineContents(epochId) {
   return result;
 }
 
-// Which experiment row is expanded (generation_id or null).
+// Which experiment card has its CHANGE (diff) section expanded
+// (generation_id or null).
 let _expandedExperiment = null;
 // Baseline contents for the current epoch (loaded on first expand).
 let _experimentBaseline = null;
+
+// A small labelled "field" line used inside the hypothesis / outcome
+// blocks — a bold lead word followed by a free-text value.
+function _expField(lead, value) {
+  if (value == null || value === '') return null;
+  return el('p', { class: 'exp-field' }, [
+    el('span', { class: 'exp-field-lead' }, [lead]),
+    String(value),
+  ]);
+}
+
+// Build the HYPOTHESIS beat — the proposer's pre-run prediction.
+function _renderExperimentHypothesis(hyp, modulating) {
+  const block = el('div', { class: 'exp-beat exp-beat-hypothesis' });
+  block.appendChild(el('div', { class: 'exp-beat-label' }, ['Hypothesis']));
+  block.appendChild(el('p', { class: 'exp-beat-caption meta' }, [
+    'Written before the run.',
+  ]));
+  let any = false;
+  const why = _expField('Why. ', hyp.why);
+  if (why) { block.appendChild(why); any = true; }
+  const exp = _expField('Expected. ', hyp.expected_pass_rate_delta);
+  if (exp) { block.appendChild(exp); any = true; }
+  // Expected drift movements — concise typed predictions.
+  const moves = Array.isArray(hyp.expected_drift_movements)
+    ? hyp.expected_drift_movements : [];
+  if (moves.length > 0) {
+    const items = moves
+      .map((m) => (m && m.kind)
+        ? `${m.kind} ${m.direction || '?'}${m.magnitude ? ' (' + m.magnitude + ')' : ''}`
+        : null)
+      .filter(Boolean);
+    if (items.length) {
+      block.appendChild(_expField('Predicted drift. ', items.join('; ')));
+      any = true;
+    }
+  }
+  const risks = _expField('Risks. ', hyp.risks);
+  if (risks) { block.appendChild(risks); any = true; }
+  if (modulating.length > 0) {
+    const sites = el('p', { class: 'exp-field' }, [
+      el('span', { class: 'exp-field-lead' }, ['Modulating. ']),
+    ]);
+    for (const m of modulating) {
+      sites.appendChild(el('code', { class: 'mono code-pill' }, [m]));
+    }
+    block.appendChild(sites);
+    any = true;
+  }
+  if (!any) {
+    block.appendChild(el('p', { class: 'meta' }, [
+      'No structured rationale recorded beyond the core idea.',
+    ]));
+  }
+  return block;
+}
+
+// Build the OUTCOME beat — the tournament's post-run verdict.
+function _renderExperimentOutcome(outcome, decision, genId) {
+  const block = el('div', { class: 'exp-beat exp-beat-outcome' });
+  block.appendChild(el('div', { class: 'exp-beat-label' }, ['Outcome']));
+  if (!outcome) {
+    block.appendChild(el('p', { class: 'exp-beat-caption meta' }, [
+      'This experiment has not finished evaluating yet.',
+    ]));
+    block.appendChild(el('p', { class: 'exp-pending-line' }, [
+      el('span', { class: 'badge pending' }, ['in progress']),
+    ]));
+    return block;
+  }
+  block.appendChild(el('p', { class: 'exp-beat-caption meta' }, [
+    'Recorded by the tournament after the run.',
+  ]));
+
+  // Verdict line: did the challenger beat the champion?
+  const won = decision === 'promoted';
+  const verdictText = won
+    ? 'Challenger beat the champion — promoted to the new lineage head.'
+    : (decision === 'rejected'
+      ? 'Challenger did not beat the champion — rejected.'
+      : (decision === 'deferred'
+        ? 'No decisive winner — kept for analysis, lineage head unchanged.'
+        : 'Decision recorded.'));
+  block.appendChild(el('p', { class: 'exp-verdict-line' }, [
+    el('span', { class: 'badge ' + _epochDecisionKind(decision) },
+      [decision || '?']),
+    el('span', { class: 'exp-verdict-text' }, [verdictText]),
+  ]));
+
+  // Scalar delta + its components, as a compact metric strip.
+  const metrics = el('div', { class: 'exp-metric-strip' });
+  const metric = (label, value, goodIsNeg) => {
+    let cls = '';
+    if (typeof value === 'number' && isFinite(value) && value !== 0) {
+      const good = goodIsNeg ? value < 0 : value > 0;
+      cls = good ? ' good' : ' bad';
+    }
+    return el('div', { class: 'exp-metric' }, [
+      el('span', { class: 'exp-metric-value mono' + cls },
+        [typeof value === 'number' ? _fmtSignedDelta(value) : '—']),
+      el('span', { class: 'exp-metric-label' }, [label]),
+    ]);
+  };
+  // Δscalar: negative is improvement (combined loss fell).
+  metrics.appendChild(metric('Δscalar', outcome.scalar_score_delta, true));
+  // Δpass rate: positive is improvement.
+  metrics.appendChild(metric('Δpass rate', outcome.pass_rate_delta, false));
+  // Δdrift loss: negative is improvement.
+  metrics.appendChild(metric('Δdrift loss', outcome.drift_loss_delta, true));
+  block.appendChild(metrics);
+
+  if (outcome.rejection_reason) {
+    block.appendChild(el('p', { class: 'exp-field exp-rejection' }, [
+      el('span', { class: 'exp-field-lead' }, ['Rejection reason. ']),
+      outcome.rejection_reason,
+    ]));
+  }
+  if (outcome.ran_at) {
+    block.appendChild(el('p', { class: 'meta mono exp-ran-at' }, [
+      'evaluated ' + outcome.ran_at,
+    ]));
+  }
+  block.appendChild(el('a', {
+    href: '#/tournament/' + encodeURIComponent(genId),
+    class: 'exp-tournament-link',
+  }, ['Open the full tournament for ' + genId + ' →']));
+  return block;
+}
+
+// Build the CHANGE beat — the concrete patch set, expandable to a diff.
+function _renderExperimentChange(exp, genId, def) {
+  const patches = (exp.patches && typeof exp.patches === 'object')
+    ? Object.values(exp.patches) : [];
+  const block = el('div', { class: 'exp-beat exp-beat-change' });
+  const isExpanded = _expandedExperiment === genId;
+
+  const header = el('div', { class: 'exp-beat-label exp-change-header' }, [
+    el('span', null, ['Change']),
+    el('span', { class: 'exp-change-count meta' },
+      [patches.length === 1 ? '1 patch' : patches.length + ' patches']),
+  ]);
+  block.appendChild(header);
+
+  if (patches.length === 0) {
+    block.appendChild(el('p', { class: 'meta' }, ['No patch recorded.']));
+    return block;
+  }
+
+  // A compact, always-visible summary of each patch (site + op).
+  for (const patch of patches) {
+    const mutId = patch.mutation_id || '?';
+    const row = el('div', { class: 'exp-patch-summary' }, [
+      el('code', { class: 'mono code-pill' }, [mutId]),
+      patch.op ? el('span', { class: 'mutations-version-op' }, [patch.op]) : null,
+      patch.rationale
+        ? el('span', { class: 'exp-patch-rationale-inline meta' }, [patch.rationale])
+        : null,
+    ]);
+    block.appendChild(row);
+  }
+
+  // The diff toggle — the diff can be long, so it expands on demand.
+  const toggleBtn = el('button', {
+    type: 'button',
+    class: 'exp-diff-toggle',
+    'aria-expanded': isExpanded ? 'true' : 'false',
+    'data-genid': genId,
+  }, [isExpanded ? 'Hide the diff' : 'Show the diff']);
+
+  const epochId = def && def.epoch_id;
+  const onToggle = () => {
+    _expandedExperiment = (_expandedExperiment === genId) ? null : genId;
+    // Re-render synchronously so the diff opens immediately — with the
+    // patch's `new_content` shown as an addition when no baseline is
+    // cached yet. If the baseline has not been fetched, kick off the
+    // lazy load and re-render once it lands so the diff fills in.
+    renderEpochExperimentLog(def);
+    if (_expandedExperiment === genId && epochId && !_experimentBaseline) {
+      _loadBaselineContents(epochId).then((baseline) => {
+        _experimentBaseline = baseline;
+        renderEpochExperimentLog(def);
+      }).catch(() => { /* keep the addition-only diff already shown */ });
+    }
+  };
+  toggleBtn.addEventListener('click', onToggle);
+  block.appendChild(toggleBtn);
+
+  if (isExpanded) {
+    const diffWrap = el('div', { class: 'exp-diff-wrap' });
+    for (const patch of patches) {
+      const mutId = patch.mutation_id || '?';
+      const patchBlock = el('div', { class: 'exp-patch-block' });
+      patchBlock.appendChild(el('div', { class: 'exp-patch-header' }, [
+        el('code', { class: 'mono code-pill' }, [mutId]),
+        patch.op ? el('span', { class: 'mutations-version-op' }, [patch.op]) : null,
+      ]));
+      const baselineContent = (_experimentBaseline && _experimentBaseline[mutId]) || null;
+      const newContent = patch.new_content != null ? String(patch.new_content) : null;
+      if (baselineContent != null && newContent != null) {
+        patchBlock.appendChild(renderMutationDiff(baselineContent, newContent));
+      } else if (newContent != null) {
+        patchBlock.appendChild(renderMutationDiff('', newContent));
+      } else if (patch.new_numeric != null) {
+        patchBlock.appendChild(el('p', { class: 'mono' }, [
+          'numeric → ' + String(patch.new_numeric),
+        ]));
+      } else if (patch.new_enum != null) {
+        patchBlock.appendChild(el('p', { class: 'mono' }, [
+          'enum → ' + String(patch.new_enum),
+        ]));
+      } else {
+        patchBlock.appendChild(el('p', { class: 'empty' }, [
+          'Patch content not available.',
+        ]));
+      }
+      diffWrap.appendChild(patchBlock);
+    }
+    block.appendChild(diffWrap);
+  }
+  return block;
+}
 
 function renderEpochExperimentLog(def) {
   const wrap = $('epoch-experiment-log');
   if (!wrap) return;
   clearChildren(wrap);
+  wrap.classList.add('exp-narrative');
 
   const experiments = def && Array.isArray(def.experiments) ? def.experiments : [];
   if (experiments.length === 0) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No experiments recorded this epoch.']));
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'No experiments recorded this epoch yet — the proposer has not run.',
+    ]));
     return;
   }
 
-  const epochId = def && def.epoch_id;
-  const list = el('div', { class: 'exp-log-list' });
+  const list = el('div', { class: 'exp-card-list' });
 
-  for (const exp of experiments) {
+  experiments.forEach((exp, idx) => {
     const genId = exp.generation_id || '?';
     const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
       ? exp.hypothesis : {};
-    const coreIdea = hyp.core_idea || hyp.core_idea || '—';
     const outcome = (exp.outcome && typeof exp.outcome === 'object')
       ? exp.outcome : null;
-    const decision = outcome
-      ? (outcome.tournament_decision || outcome.decision || null)
-      : null;
-    const deltaScalar = outcome ? outcome.scalar_score_delta : null;
+    const decision = _epochDecision(outcome);
     const modulating = Array.isArray(hyp.modulating) ? hyp.modulating : [];
+    const coreIdea = (typeof hyp.core_idea === 'string' && hyp.core_idea.trim())
+      ? hyp.core_idea.trim() : 'No description recorded.';
 
-    const isExpanded = _expandedExperiment === genId;
-    const decisionClass = decision
-      ? (decision.toLowerCase().includes('promot') ? 'promoted' : 'rejected')
-      : 'pending';
-
-    // Summary row (always visible).
-    const summaryRow = el('div', {
-      class: 'exp-log-row' + (isExpanded ? ' expanded' : ''),
-      role: 'button',
-      tabindex: '0',
+    // The card carries an accent stripe coloured by the decision so the
+    // promoted / rejected / pending arc is scannable down the column.
+    const card = el('article', {
+      class: 'exp-card exp-card-' + _epochDecisionKind(decision),
       'data-genid': genId,
-    }, [
-      el('span', { class: 'exp-log-gen mono' }, [genId]),
-      el('span', { class: 'exp-log-idea' }, [coreIdea]),
-      el('span', { class: 'exp-log-muts meta' }, [modulating.join(', ') || '—']),
-      outcome
-        ? el('span', { class: 'exp-log-verdict badge ' + decisionClass }, [
-            decision || '?',
-            deltaScalar != null
-              ? ' ' + (deltaScalar > 0 ? '+' : '') + deltaScalar.toFixed(3)
-              : '',
-          ])
-        : el('span', { class: 'exp-log-verdict badge pending' }, ['in progress']),
-    ]);
-
-    const toggle = () => {
-      _expandedExperiment = (_expandedExperiment === genId) ? null : genId;
-      // Load baselines on first expand, then re-render.
-      if (_expandedExperiment === genId && epochId && !_experimentBaseline) {
-        _loadBaselineContents(epochId).then((baseline) => {
-          _experimentBaseline = baseline;
-          renderEpochExperimentLog(def);
-        }).catch(() => { renderEpochExperimentLog(def); });
-      } else {
-        renderEpochExperimentLog(def);
-      }
-    };
-    summaryRow.addEventListener('click', toggle);
-    summaryRow.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
     });
 
-    list.appendChild(summaryRow);
-
-    // Detail panel (only when expanded).
-    if (isExpanded) {
-      const detail = el('div', { class: 'exp-log-detail' });
-
-      // Full hypothesis block.
-      if (hyp.core_idea || hyp.why || hyp.risks) {
-        const hypBlock = el('div', { class: 'exp-hyp-block' });
-        if (hyp.core_idea) {
-          hypBlock.appendChild(el('p', null, [
-            el('strong', null, ['Hypothesis. ']), hyp.core_idea,
-          ]));
-        }
-        if (hyp.why) {
-          hypBlock.appendChild(el('p', null, [
-            el('strong', null, ['Why. ']), hyp.why,
-          ]));
-        }
-        if (hyp.risks) {
-          hypBlock.appendChild(el('p', null, [
-            el('strong', null, ['Risks. ']), hyp.risks,
-          ]));
-        }
-        if (modulating.length > 0) {
-          hypBlock.appendChild(el('p', null, [
-            el('strong', null, ['Modulating. ']),
-            el('span', { class: 'mono' }, [modulating.join(', ')]),
-          ]));
-        }
-        detail.appendChild(hypBlock);
-      }
-
-      // Per-patch diff block.
-      const patches = (exp.patches && typeof exp.patches === 'object')
-        ? Object.values(exp.patches) : [];
-      for (const patch of patches) {
-        const mutId = patch.mutation_id || '?';
-        const patchBlock = el('div', { class: 'exp-patch-block' });
-        patchBlock.appendChild(
-          el('div', { class: 'exp-patch-header' }, [
-            el('span', { class: 'mono' }, [mutId]),
-            patch.op ? el('span', { class: 'mutations-version-op' }, [patch.op]) : null,
-          ])
-        );
-        if (patch.rationale) {
-          patchBlock.appendChild(
-            el('div', { class: 'exp-patch-rationale meta' }, [patch.rationale])
-          );
-        }
-        // Render a diff: baseline content vs. new_content.
-        const baselineContent = (_experimentBaseline && _experimentBaseline[mutId]) || null;
-        const newContent = patch.new_content != null ? String(patch.new_content) : null;
-        if (baselineContent != null && newContent != null) {
-          patchBlock.appendChild(renderMutationDiff(baselineContent, newContent));
-        } else if (newContent != null) {
-          // No baseline available — show the new content as an addition.
-          patchBlock.appendChild(renderMutationDiff('', newContent));
-        } else {
-          patchBlock.appendChild(
-            el('p', { class: 'empty' }, ['Patch content not available.'])
-          );
-        }
-        detail.appendChild(patchBlock);
-      }
-
-      // Outcome + tournament link.
-      if (outcome) {
-        const outBlock = el('div', { class: 'exp-outcome-block' });
-        outBlock.appendChild(
-          el('div', { class: 'exp-outcome-verdict' }, [
-            el('span', { class: 'badge ' + decisionClass }, [decision || '?']),
-            deltaScalar != null
-              ? el('span', { class: 'mono' }, [
-                  '  Δscalar ' + (deltaScalar > 0 ? '+' : '') + deltaScalar.toFixed(4),
-                ])
-              : null,
-          ])
-        );
-        if (outcome.rejection_reason) {
-          outBlock.appendChild(
-            el('p', { class: 'meta' }, [outcome.rejection_reason])
-          );
-        }
-        outBlock.appendChild(
-          el('a', { href: '#/tournament/' + encodeURIComponent(genId),
-                    class: 'exp-tournament-link' },
-            ['→ tournament detail'])
-        );
-        detail.appendChild(outBlock);
-      }
-
-      list.appendChild(detail);
+    // -- Beat 1: WHAT (the description / header) -------------------
+    const head = el('header', { class: 'exp-card-head' });
+    const titleRow = el('div', { class: 'exp-card-titlerow' }, [
+      el('span', { class: 'exp-card-ordinal' }, ['#' + (idx + 1)]),
+      el('span', { class: 'exp-card-gen mono' }, [genId]),
+      el('span', { class: 'badge ' + _epochDecisionKind(decision) },
+        [decision || 'in progress']),
+      (outcome && typeof outcome.scalar_score_delta === 'number')
+        ? el('span', {
+            class: 'exp-card-delta mono '
+              + (outcome.scalar_score_delta < 0 ? 'good'
+                : (outcome.scalar_score_delta > 0 ? 'bad' : '')),
+          }, ['Δscalar ' + _fmtSignedDelta(outcome.scalar_score_delta)])
+        : null,
+    ]);
+    head.appendChild(titleRow);
+    head.appendChild(el('p', { class: 'exp-card-idea' }, [coreIdea]));
+    if (exp.parent_generation_id) {
+      head.appendChild(el('p', { class: 'exp-card-lineage meta mono' }, [
+        'challenger ' + genId + '   vs  champion ' + exp.parent_generation_id,
+      ]));
     }
-  }
+    card.appendChild(head);
+
+    // -- Beats 2-4: hypothesis · change · outcome ------------------
+    const body = el('div', { class: 'exp-card-body' });
+    body.appendChild(_renderExperimentHypothesis(hyp, modulating));
+    body.appendChild(_renderExperimentChange(exp, genId, def));
+    body.appendChild(_renderExperimentOutcome(outcome, decision, genId));
+    card.appendChild(body);
+
+    list.appendChild(card);
+  });
 
   wrap.appendChild(list);
 }

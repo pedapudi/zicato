@@ -1313,6 +1313,8 @@ h4 {
   .hall-grid {
     grid-template-columns: 1fr;
   }
+}
+
 /* =================================================================
    Conversation view — side-by-side champion / challenger transcripts
    Appended block. A focused view (#conversation/{entry_id}) reached
@@ -2070,79 +2072,8 @@ h4 {
    Epoch experiment log, journal, and analysis panels
    ============================================================ */
 
-/* Experiment log — collapsible list of per-generation experiments */
-.exp-log-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.exp-log-row {
-  display: grid;
-  grid-template-columns: 3.5rem 1fr 8rem 7rem;
-  gap: 0.5rem;
-  align-items: center;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 0.85rem;
-  background: var(--surface);
-  transition: background 0.08s;
-}
-.exp-log-row:hover,
-.exp-log-row:focus-visible {
-  background: color-mix(in srgb, var(--accent-running) 8%, var(--surface));
-  outline: none;
-}
-.exp-log-row.expanded {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-  border-bottom-color: transparent;
-}
-.exp-log-gen {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-.exp-log-idea {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.exp-log-muts {
-  font-size: 0.74rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.exp-log-verdict {
-  font-size: 0.74rem;
-  text-align: right;
-}
-
-/* Experiment detail — the expanded panel below the row */
-.exp-log-detail {
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 5px 5px;
-  padding: 0.75rem 0.75rem 0.6rem;
-  margin-bottom: 2px;
-  background: var(--surface);
-}
-
-/* Hypothesis block */
-.exp-hyp-block {
-  margin-bottom: 0.6rem;
-  font-size: 0.85rem;
-  line-height: 1.5;
-}
-.exp-hyp-block p {
-  margin: 4px 0;
-}
-
-/* Patch diff block */
-.exp-patch-block {
-  margin: 0.5rem 0;
-}
+/* Patch diff block — shared by the experiment-card change beat */
+.exp-patch-block { margin: 0.5rem 0; }
 .exp-patch-header {
   display: flex;
   gap: 0.5rem;
@@ -2151,30 +2082,6 @@ h4 {
   font-weight: 600;
   margin-bottom: 0.2rem;
 }
-.exp-patch-rationale {
-  font-size: 0.78rem;
-  margin-bottom: 0.25rem;
-}
-
-/* Outcome block */
-.exp-outcome-block {
-  margin-top: 0.6rem;
-  font-size: 0.85rem;
-}
-.exp-outcome-verdict {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 0.3rem;
-}
-.exp-tournament-link {
-  display: inline-block;
-  margin-top: 0.2rem;
-  font-size: 0.82rem;
-  color: var(--accent-running);
-  text-decoration: none;
-}
-.exp-tournament-link:hover { text-decoration: underline; }
 
 /* Journal and analysis panels reuse the brief-block readable column */
 .epoch-journal,
@@ -2313,4 +2220,204 @@ h4 {
 .recent-exp-link {
   display: inline-block;
   margin-top: 0.5rem;
+}
+
+/* Epoch view redesign — narrative layout: identity + brief, then an
+   ordered run of experiment cards, each told in four beats. */
+
+/* Header — the container also carries `epoch-overview`; override the
+   legacy flex row so the stacked header lays out correctly. */
+.epoch-overview.epoch-header { display: block; }
+.epoch-header-id {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+.epoch-header-name {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.epoch-header-sub { margin: 0.3rem 0 0; font-size: 0.76rem; }
+.epoch-stat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.6rem;
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+}
+.epoch-stat { display: flex; flex-direction: column; gap: 1px; }
+.epoch-stat-value {
+  font-size: 1.35rem;
+  font-weight: 650;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.epoch-stat-value.good { color: var(--accent-promoted); }
+.epoch-stat-value.bad { color: var(--accent-rejected); }
+.epoch-stat-value.pend { color: var(--accent-running); }
+.epoch-stat-label,
+.exp-beat-label,
+.exp-metric-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.epoch-stat-label { font-size: 0.66rem; }
+.epoch-brief .epoch-brief-lead {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+/* Experiment narrative — the ordered run of cards */
+.exp-card-list { display: flex; flex-direction: column; gap: 0.85rem; }
+.exp-card {
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 7px;
+  background: var(--card-bg);
+  overflow: hidden;
+}
+.exp-card-promoted { border-left-color: var(--accent-promoted); }
+.exp-card-rejected { border-left-color: var(--accent-rejected); }
+.exp-card-deferred { border-left-color: var(--accent-deferred); }
+.exp-card-pending { border-left-color: var(--accent-running); }
+.exp-card-head {
+  padding: 0.7rem 0.9rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.exp-card-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.exp-card-ordinal { font-size: 0.74rem; font-weight: 700; color: var(--text-muted); }
+.exp-card-gen { font-size: 0.9rem; font-weight: 600; }
+.exp-card-delta {
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.exp-card-delta.good,
+.exp-metric-value.good { color: var(--accent-promoted); }
+.exp-card-delta.bad,
+.exp-metric-value.bad { color: var(--accent-rejected); }
+.exp-card-idea {
+  margin: 0.45rem 0 0;
+  font-size: 0.96rem;
+  line-height: 1.45;
+  font-weight: 500;
+}
+.exp-card-lineage { margin: 0.3rem 0 0; font-size: 0.72rem; }
+
+/* Card body — beats 2-4, three columns on wide screens */
+.exp-card-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+}
+.exp-beat { padding: 0.7rem 0.85rem 0.8rem; background: var(--card-bg); }
+.exp-beat-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.15rem;
+}
+.exp-beat-caption {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  font-style: italic;
+}
+.exp-field { margin: 0.3rem 0; font-size: 0.82rem; line-height: 1.5; }
+.exp-field-lead { font-weight: 650; }
+.exp-beat-hypothesis .code-pill,
+.exp-patch-summary .code-pill { margin: 0 0.15rem 0.15rem 0; }
+
+/* Change beat — patch summaries + the expandable diff */
+.exp-change-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.exp-change-count { font-size: 0.68rem; text-transform: none; letter-spacing: 0; }
+.exp-patch-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.35rem 0;
+  font-size: 0.8rem;
+}
+.exp-patch-rationale-inline { font-size: 0.75rem; line-height: 1.4; }
+.exp-diff-toggle {
+  margin-top: 0.4rem;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.74rem;
+  font-family: inherit;
+  color: var(--accent-running);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.exp-diff-toggle:hover,
+.exp-diff-toggle:focus-visible {
+  background: color-mix(in srgb, var(--accent-running) 8%, var(--card-bg));
+  outline: none;
+}
+.exp-diff-wrap { margin-top: 0.5rem; }
+.exp-diff-wrap .exp-patch-block { margin: 0.4rem 0; }
+.exp-diff-wrap .exp-patch-header {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  margin-bottom: 0.2rem;
+}
+
+/* Outcome beat — verdict + metric strip */
+.exp-verdict-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.25rem 0 0.55rem;
+}
+.exp-verdict-text { font-size: 0.8rem; line-height: 1.45; }
+.exp-metric-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.1rem;
+  margin: 0.4rem 0;
+}
+.exp-metric { display: flex; flex-direction: column; gap: 1px; }
+.exp-metric-value {
+  font-size: 0.95rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.exp-metric-label { font-size: 0.64rem; letter-spacing: 0.04em; }
+.exp-rejection { color: var(--accent-rejected); }
+.exp-ran-at { margin: 0.3rem 0 0; font-size: 0.7rem; }
+.exp-pending-line { margin: 0.3rem 0 0; }
+.exp-narrative .exp-tournament-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--accent-running);
+  text-decoration: none;
+}
+.exp-narrative .exp-tournament-link:hover { text-decoration: underline; }
+
+/* Narrow viewports — the three beats stack vertically. */
+@media (max-width: 860px) {
+  .exp-card-body { grid-template-columns: 1fr; }
 }

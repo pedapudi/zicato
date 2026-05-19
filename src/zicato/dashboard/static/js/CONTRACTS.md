@@ -221,9 +221,36 @@ identity if a `key` is supplied.
   row) — inline conversation diff + per-run loss breakdown + drift
   events + per-run harmonograf jumps. Past-tournament selector.
   **Matchup-click MUST work** — handlers survive deltas via §4.
-- **Epoch** (`views/epoch.js`, container `#view-epoch`): epoch selector;
-  the contract (board entries with expectations/judges, proposer brief
-  rendered, scoring weights); the journal; the analysis.
+- **Epoch** (`views/epoch.js`, container `#view-epoch`): the epoch's
+  NARRATIVE. A header block — epoch id, open/closed status, and a stat
+  strip tallying experiments / promoted / rejected / net Δscalar. The
+  proposer brief rendered as a readable block, framed as the operator's
+  goal for the epoch. The **experiment narrative**: one card per
+  experiment, each told in four beats — *what* (the proposer's core idea
+  + generation id + lineage), *hypothesis* (the pre-run structured
+  prediction: why, expected pass-rate move, predicted drift, risks,
+  modulating sites), *change* (the patch summary, with an expandable
+  line diff against the epoch baseline), and *outcome* (the tournament
+  verdict — did the challenger beat the champion — the scalar Δ and its
+  components, the rejection reason, a jump to the Tournament view). The
+  card's left-edge accent is coloured by the decision so the
+  promoted/rejected/pending arc is scannable. Supporting context panels:
+  registered harness, board entries, scoring weights, mutation surface,
+  the epoch journal, and the analysis report.
+
+  **Epoch data source.** Every field above comes from ONE read —
+  `state.epochDef`, populated from `GET /api/epoch` and the `epoch` key
+  on `/api/environment`. No new endpoint was needed: `build_epoch_view`
+  already exposes `experiments` (per-generation records carrying the
+  raw `hypothesis`, `outcome`, and `patches` keyed by mutation id),
+  `brief`, `journal`, `analysis_md`, and the contract blocks. An
+  experiment record's shape: `{ generation_id, parent_generation_id,
+  hypothesis:{core_idea, why, modulating[], expected_pass_rate_delta,
+  expected_drift_movements[], risks}, patches:{<mutId>:{mutation_id, op,
+  rationale, new_content|new_numeric|new_enum}}, outcome:{ran_at,
+  tournament_decision, scalar_score_delta, pass_rate_delta,
+  drift_loss_delta, rejection_reason} | null }`. The optional patch diff
+  reuses the lazy `/api/mutations/{epoch}/{site}` baseline read.
 - **Files** (`views/files.js`, container `#view-files`): route-driven
   (`#/files/{epoch}/{gen}`). A "What changed" section — a generation
   picker and a side-by-side (split) diff of every file the selected
