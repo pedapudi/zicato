@@ -1049,6 +1049,15 @@ async def _run_single(
                     entry_updates["drift_count_snapshot"] = (
                         state_mod.drift_count_snapshot_from_profile(final_loss)
                     )
+                    # Stamp the run's ADK/goldfive session id onto the
+                    # live active-tournament entry so the dashboard can
+                    # deep-link a finished board run into harmonograf
+                    # (/#/session/<adk_session_id>) WITHOUT the SSE hot
+                    # path ever opening events.jsonl. The LossProfile
+                    # carries it; empty string when the run had none.
+                    adk_sid = str(getattr(final_loss, "adk_session_id", "") or "")
+                    if adk_sid:
+                        entry_updates["adk_session_id"] = adk_sid
                 state_mod.update_tournament_entry(
                     workspace_root,
                     entry.id,

@@ -328,6 +328,15 @@ class ActiveTournamentEntry:
         Per-drift-kind total count for this entry (sum across
         severities). Same role as ``loss_summary`` for the drift-heatmap
         panel.
+    adk_session_id:
+        The ADK/goldfive session id for this entry's run — the
+        ``sessionId`` envelope field carried on every event in the run's
+        ``events.jsonl``. The runner stamps it here from the run's
+        :class:`~zicato.core.types.LossProfile` the instant the run
+        finishes, so the dashboard can deep-link a finished board run
+        into harmonograf (``/#/session/<adk_session_id>``) without the
+        SSE hot path ever having to open ``events.jsonl``. Empty string
+        until the run completes (or when the run carried no session id).
     """
 
     entry_id: str
@@ -337,6 +346,7 @@ class ActiveTournamentEntry:
     completed_at: str = ""
     loss_summary: dict[str, float] = field(default_factory=dict)
     drift_count_snapshot: dict[str, int] = field(default_factory=dict)
+    adk_session_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -347,6 +357,7 @@ class ActiveTournamentEntry:
             "completed_at": self.completed_at,
             "loss_summary": dict(self.loss_summary),
             "drift_count_snapshot": dict(self.drift_count_snapshot),
+            "adk_session_id": self.adk_session_id,
         }
 
     @classmethod
@@ -361,6 +372,7 @@ class ActiveTournamentEntry:
             drift_count_snapshot={
                 str(k): int(v) for k, v in d.get("drift_count_snapshot", {}).items()
             },
+            adk_session_id=str(d.get("adk_session_id", "") or ""),
         )
 
 

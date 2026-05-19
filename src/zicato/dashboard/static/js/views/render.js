@@ -1606,6 +1606,22 @@ function renderHallOccupancy(t, boards) {
   return head;
 }
 
+// The tournament-level harmonograf jump-off — a clearly-visible link
+// in the hall head that opens harmonograf for the tournament as a
+// whole. harmonograf has no per-tournament filter URL, so this lands on
+// the bare base; the challenger generation id scopes the aria-label.
+// Returns null when the heartbeat carries no harmonograf url at all.
+function tournamentHarmonografLink(childId) {
+  const base = harmonografBase();
+  if (!base) return null;
+  return el('a', {
+    class: 'harmonograf-link harmonograf-tournament',
+    href: base, target: '_blank', rel: 'noopener',
+    'aria-label': 'open harmonograf traces for the tournament'
+      + (childId ? ' challenging with ' + childId : ''),
+  }, ['Open tournament in harmonograf ↗']);
+}
+
 // The hall: occupancy header + the board-card grid.
 function renderHall(t) {
   const boards = hallBoards(t);
@@ -1613,8 +1629,14 @@ function renderHall(t) {
 
   const childId = liveChallengerId(t);
   const champId = liveChampionId(t);
-  hall.appendChild(el('div', { class: 'hall-head' }, [
+  const headTitle = el('div', { class: 'hall-head-title' }, [
     el('h3', { class: 'hall-title' }, ['Tournament hall']),
+  ]);
+  // Tournament-overall harmonograf jump-off, surfaced beside the title.
+  const tHg = tournamentHarmonografLink(childId);
+  if (tHg) headTitle.appendChild(tHg);
+  hall.appendChild(el('div', { class: 'hall-head' }, [
+    headTitle,
     el('p', { class: 'hall-sub meta' }, [
       el('strong', null, [childId || 'the challenger']),
       ' is challenging ',
@@ -1690,6 +1712,33 @@ function renderBoardCard(board, t, champId, childId) {
   return card;
 }
 
+// Resolve the harmonograf jump-off for one board side. The active-
+// tournament entry carries the run's real ADK session id once the run
+// finishes (the runner stamps `adk_session_id` from the LossProfile);
+// while the run is in flight we fall back to its active-run record.
+// Either way `harmonografRunUrl` resolves the deep-link, falling back
+// to the bare base when no session id is known yet — so the link is
+// always present whenever the heartbeat carries a harmonograf url.
+function boardSideHarmonografLink(entry, label, genId) {
+  if (harmonografBase() == null) return null;
+  // Prefer the entry itself — it carries `adk_session_id` post-run.
+  let target = entry;
+  if (!harmonografSessionId(entry)) {
+    // In flight: try the live active-run record for this side.
+    const run = findActiveRunForEntry(entry);
+    if (run && harmonografSessionId(run)) target = run;
+  }
+  const link = harmonografMini(target, 'harmonograf',
+    'open harmonograf trace for the ' + label + ' run of '
+      + ((entry && entry.entry_id) || 'this board')
+      + (genId ? ' (' + genId + ')' : ''));
+  if (!link) return null;
+  // The board card's own click opens the conversation diff; the
+  // harmonograf link must not also trigger it.
+  link.addEventListener('click', (ev) => ev.stopPropagation());
+  return link;
+}
+
 // One side row of a board card: a status pill, a budget-fraction
 // progress bar (for a running side), and the scalar once the side is
 // done. An over-deadline running side turns the bar red.
@@ -1701,6 +1750,12 @@ function renderBoardSide(label, side, entry, status, genId) {
     el('span', { class: 'board-side-gen mono' }, [genId || '—']),
     el('span', { class: 'pill pill-' + status }, [status]),
   ]);
+  // Per-board / per-run harmonograf jump-off — a clearly-distinct
+  // element on the side's header row, deep-linked by the run's ADK
+  // session id. Kept separate from the status pill (a sibling agent
+  // owns the per-entry status label) so a merge stays clean.
+  const sideHg = boardSideHarmonografLink(entry, label.toLowerCase(), genId);
+  if (sideHg) head.appendChild(sideHg);
   row.appendChild(head);
 
   if (status === 'running') {

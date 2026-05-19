@@ -1281,6 +1281,34 @@ h4 {
   color: var(--text-muted);
 }
 
+/* --- Tournament harmonograf jump-offs (Tournament view).
+   The tournament-overall link sits beside the hall title; the per-board
+   link rides each board side's header row. Both are clearly-visible
+   affordances, distinct from the dense A/B-grid mini links. */
+.hall-head-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 2px;
+}
+.harmonograf-tournament {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.12);
+}
+.harmonograf-tournament:hover {
+  text-decoration: none;
+  background: rgba(127, 127, 127, 0.22);
+}
+/* The per-side board link follows the status pill on the side header. */
+.board-side-head .harmonograf-mini {
+  margin-left: 6px;
+  flex: none;
+}
+
 @media (max-width: 720px) {
   .hall-grid {
     grid-template-columns: 1fr;

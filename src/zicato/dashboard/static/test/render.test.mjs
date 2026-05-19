@@ -182,6 +182,68 @@ test('partial aggregate falls back to client derivation on a legacy record', () 
   assert(body.includes('Partial aggregate'), 'legacy record must still render the aggregate panel');
 });
 
+// Collect every descendant whose class attribute contains `cls`.
+function byClass(root, cls) {
+  return root._descendants().filter((n) => {
+    const c = n.getAttribute && n.getAttribute('class');
+    return typeof c === 'string' && c.split(/\s+/).includes(cls);
+  });
+}
+
+test('tournament view surfaces harmonograf jump-off links', () => {
+  // The mock heartbeat carries a harmonograf_url, so every harmonograf
+  // link must render. Repaint the Tournament view from the mock data.
+  state.applySnapshot(mockSnapshot());
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  // (a) Exactly one tournament-overall jump-off link in the hall head.
+  const tLinks = byClass(bracket, 'harmonograf-tournament');
+  assertEqual(tLinks.length, 1, 'hall head must carry one tournament harmonograf link');
+  const href = tLinks[0].getAttribute('href');
+  assert(typeof href === 'string' && href.length > 0,
+    'tournament harmonograf link must have an href');
+  assert(tLinks[0].textContent.includes('↗'),
+    'tournament harmonograf link carries the ↗ affordance');
+
+  // (b) A per-board harmonograf link on each board side. The mock
+  // tournament has 10 per-side entries, so at least one mini link per
+  // running/finished side must be present on the board cards.
+  const sideHeads = byClass(bracket, 'board-side-head');
+  assert(sideHeads.length > 0, 'the hall must render board side rows');
+  let sideLinks = 0;
+  for (const head of sideHeads) {
+    sideLinks += byClass(head, 'harmonograf-mini').length;
+  }
+  assert(sideLinks >= sideHeads.length,
+    'every board side header must carry a harmonograf link');
+
+  // A finished side deep-links via its adk_session_id (mock data sets
+  // adk_session_id on the done entries).
+  const deep = byClass(bracket, 'harmonograf-mini')
+    .map((n) => n.getAttribute('href'))
+    .filter((h) => typeof h === 'string' && h.includes('/#/session/'));
+  assert(deep.length > 0,
+    'finished board sides must deep-link via /#/session/<adk_session_id>');
+  assert(deep.some((h) => h.includes('adk-')),
+    'the deep-link must use the entry adk_session_id from the contract');
+});
+
+test('the tournament view has no redundant active-runs duplication', () => {
+  // Issue 2: the champion/challenger hall board is the single source of
+  // truth for run state. The Tournament view container must NOT carry a
+  // second `runs-strip` / active-run-card list duplicating it.
+  render.showView('tournament');
+  const view = doc.getElementById('view-tournament');
+  const strips = byClass(view, 'runs-strip');
+  assertEqual(strips.length, 0,
+    'the Tournament view must not duplicate the Overview active-runs strip');
+  const runCards = byClass(view, 'run-card');
+  assertEqual(runCards.length, 0,
+    'the Tournament view must not render standalone active-run cards — '
+    + 'the hall board cards are the single source of run state');
+});
+
 test('renderAll is idempotent — repeated calls do not throw or grow the DOM', () => {
   render.showView('overview');
   render.renderAll();

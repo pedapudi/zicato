@@ -234,10 +234,22 @@ Built from `ZICATO_HARMONOGRAF_URL` surfaced on the heartbeat as
 
 harmonograf keys its session views by the **ADK session id** — the
 `sessionId` present on every goldfive event envelope. The backend
-surfaces this as `adk_session_id` on run-like records (active-run rows
-from `/api/environment`; `ab_grid` cells from `/api/tournaments/{gen}`).
+surfaces this as `adk_session_id` on run-like records:
+- active-run rows from `/api/environment`;
+- `ab_grid` cells from `/api/tournaments/{gen}` (`parent_adk_session_id`
+  / `child_adk_session_id`);
+- `active_tournament.entries[]` rows — the runner stamps the run's
+  `adk_session_id` onto the per-(entry × side) row the instant the run
+  finishes (read from the run's `LossProfile`, never from `events.jsonl`
+  in the SSE hot path). Empty string until the side's run completes.
+
 Session path: `/#/session/<adk_session_id>`. No harmonograf-side change
 is required — the integration is complete.
+
+The Tournament view surfaces these as visible jump-off links: one
+tournament-overall link in the hall head, and one per board side on the
+board card (deep-linked by that side's `adk_session_id`, falling back to
+the bare base while the run is still in flight).
 
 `harmonografSessionId(rec)` resolution order:
 1. `rec.adk_session_id` / `rec.child_adk_session_id` /

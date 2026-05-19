@@ -288,6 +288,79 @@ def test_active_tournament_entry_loss_summary_round_trips(tmp_path: Path) -> Non
     }
 
 
+def test_active_tournament_entry_adk_session_id_round_trips(tmp_path: Path) -> None:
+    """``adk_session_id`` survives the ActiveTournamentEntry JSON round-trip.
+
+    The runner stamps the run's ADK/goldfive session id onto the entry on
+    completion so the dashboard can deep-link a finished board run into
+    harmonograf without ever opening ``events.jsonl`` in the SSE hot path.
+    """
+    t = ActiveTournament(
+        tournament_id="t",
+        parent_generation_id="v1",
+        child_generation_id="v2",
+        epoch_id="e",
+        started_at="t",
+        entries=[
+            ActiveTournamentEntry(
+                entry_id="ea",
+                side="child",
+                status="completed",
+                adk_session_id="adk-sess-abc123",
+            )
+        ],
+    )
+    write_active_tournament(tmp_path, t)
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    assert got.entries[0].adk_session_id == "adk-sess-abc123"
+
+
+def test_active_tournament_entry_adk_session_id_back_compat(tmp_path: Path) -> None:
+    """An entry dict written before the field existed loads with ``""``."""
+    legacy = {
+        "entry_id": "ea",
+        "side": "parent",
+        "status": "queued",
+        "started_at": "",
+        "completed_at": "",
+        "loss_summary": {},
+        "drift_count_snapshot": {},
+        # adk_session_id intentionally absent — old on-disk shape.
+    }
+    entry = ActiveTournamentEntry.from_dict(legacy)
+    assert entry.adk_session_id == ""
+
+
+def test_update_tournament_entry_stamps_adk_session_id(tmp_path: Path) -> None:
+    """``update_tournament_entry`` accepts ``adk_session_id`` as an update.
+
+    Mirrors the runner's completion path, which folds the run's session
+    id into the live active-tournament entry alongside ``status`` and
+    ``loss_summary``.
+    """
+    t = ActiveTournament(
+        tournament_id="t",
+        parent_generation_id="v1",
+        child_generation_id="v2",
+        epoch_id="e",
+        started_at="t",
+        entries=[ActiveTournamentEntry(entry_id="entry_a", side="child", status="running")],
+    )
+    write_active_tournament(tmp_path, t)
+    update_tournament_entry(
+        tmp_path,
+        "entry_a",
+        "child",
+        status="completed",
+        adk_session_id="adk-sess-xyz789",
+    )
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    assert got.entries[0].status == "completed"
+    assert got.entries[0].adk_session_id == "adk-sess-xyz789"
+
+
 def test_update_tournament_entry_targets_child_side_only(tmp_path: Path) -> None:
     """A child-side update lands on the child row only; the parent row is untouched.
 

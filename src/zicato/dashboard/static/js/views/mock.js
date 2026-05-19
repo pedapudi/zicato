@@ -189,17 +189,20 @@ function mockSnapshot() {
       // Boards execute in parallel — several entries are `running` at
       // once. The hall grid renders that naturally, with an accent
       // border on every board that has a running side.
+      // Finished sides carry `adk_session_id` — the runner stamps the
+      // run's ADK/goldfive session id onto the entry on completion, so
+      // the per-board harmonograf link deep-links into the run's trace.
       entries: [
         { entry_id: 'extract_invoice_001', side: 'parent', status: 'done',
-          scalar_score: 0.23 },
+          scalar_score: 0.23, adk_session_id: 'adk-inv001-parent' },
         { entry_id: 'extract_invoice_001', side: 'child', status: 'done',
-          scalar_score: 0.18 },
+          scalar_score: 0.18, adk_session_id: 'adk-inv001-child' },
         { entry_id: 'extract_invoice_002', side: 'parent', status: 'done',
-          scalar_score: 0.31 },
+          scalar_score: 0.31, adk_session_id: 'adk-inv002-parent' },
         { entry_id: 'extract_invoice_002', side: 'child', status: 'done',
-          scalar_score: 0.45 },
+          scalar_score: 0.45, adk_session_id: 'adk-inv002-child' },
         { entry_id: 'research_topic_q3', side: 'parent', status: 'done',
-          scalar_score: 0.19 },
+          scalar_score: 0.19, adk_session_id: 'adk-q3-parent' },
         { entry_id: 'research_topic_q3', side: 'child', status: 'running',
           run_id: 'r-9c2a' },
         { entry_id: 'multi_turn_picky', side: 'parent', status: 'done',
