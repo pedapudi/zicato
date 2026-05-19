@@ -183,11 +183,18 @@ class _SectionCollector(HTMLParser):
 
 
 # Sections that must exist somewhere in the page (now spread across the
-# four views rather than one flat scroll).
+# four views rather than one flat scroll). The Overview is the
+# environment home — an identity block, the loop-health line, a COMPACT
+# live-activity card, the score trajectory, the epochs table and the
+# recent-experiments digest. The full champion/challenger tournament
+# board lives ONLY in the Tournament view, never duplicated here.
 REQUIRED_SECTIONS = {
+    "identity-section",
     "health-section",
-    "tournament-section",
-    "runs-section",
+    "live-activity-section",
+    "overview-trajectory-section",
+    "epochs-section",
+    "recent-experiments-section",
     "lineage-section",
     "trajectory-section",
     "tournament-bracket-section",
@@ -239,6 +246,18 @@ REQUIRED_EPOCH_IDS = {
     "epoch-analysis",
 }
 
+# Overview-view panel containers app.js renders the environment home
+# into. The compact live-activity card replaces the old full-board
+# duplicate; the identity / epochs / recent-experiments panels are new.
+REQUIRED_OVERVIEW_IDS = {
+    "identity-panel",
+    "health-panel",
+    "live-activity",
+    "epochs-panel",
+    "recent-experiments",
+    "log-tail",
+}
+
 REQUIRED_IDS = (
     {
         "header-bar",
@@ -249,14 +268,8 @@ REQUIRED_IDS = (
         "round-id",
         "elapsed",
         "health-badge",
-        "tournament-title",
-        "tournament-body",
-        "tournament-elapsed",
-        "health-panel",
         "tournament-bracket",
         "tournament-detail",
-        "active-runs",
-        "log-tail",
         "drill-panel",
         "drill-title",
         "drill-body",
@@ -265,6 +278,7 @@ REQUIRED_IDS = (
         "dashboard-port",
         "dashboard-build",
     }
+    | REQUIRED_OVERVIEW_IDS
     | REQUIRED_VIEW_IDS
     | REQUIRED_NAV_IDS
     | REQUIRED_EPOCH_IDS
@@ -273,6 +287,7 @@ REQUIRED_IDS = (
 REQUIRED_SVG_IDS = {
     "lineage-svg",
     "trajectory-svg",
+    "overview-trajectory-svg",
     "heatmap-svg",
 }
 
@@ -364,6 +379,37 @@ def test_loop_health_panel_present(index_html: str) -> None:
     p.feed(index_html)
     assert "health-section" in set(p.section_ids), "loop-health section missing"
     assert "health-panel" in p.all_ids, "loop-health panel container missing"
+
+
+def test_overview_is_the_environment_home(index_html: str) -> None:
+    """The Overview is a one-glance environment home, not a board clone.
+
+    It carries the identity block, the loop-health line, a COMPACT
+    live-activity card, the score trajectory, the epochs table and the
+    recent-experiments digest. The full champion/challenger tournament
+    board is NOT duplicated here — it lives only in the Tournament view.
+    """
+    p = _SectionCollector()
+    p.feed(index_html)
+    sections = set(p.section_ids)
+    for sec in (
+        "identity-section",
+        "live-activity-section",
+        "overview-trajectory-section",
+        "epochs-section",
+        "recent-experiments-section",
+    ):
+        assert sec in sections, f"Overview missing environment-home section: {sec}"
+    for panel in ("identity-panel", "live-activity", "epochs-panel", "recent-experiments"):
+        assert panel in p.all_ids, f"Overview missing panel container: {panel}"
+    # The full-board duplicate is gone: the Overview no longer carries
+    # the tournament-board section or the active-runs strip.
+    assert (
+        "tournament-section" not in sections
+    ), "the Overview must not duplicate the full tournament board"
+    assert "runs-section" not in sections, "the Overview must not carry the full active-runs strip"
+    # The bracket / matchup board belongs to the Tournament view only.
+    assert "tournament-bracket-section" in sections
 
 
 def test_app_js_targets_environment_api(app_js: str) -> None:

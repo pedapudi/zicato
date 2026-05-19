@@ -456,6 +456,24 @@ function mockSnapshot() {
       analysis_md: '# Epoch analysis\n\n## Summary\n\nTwo experiments ran this epoch. One was promoted (`v2`), one was rejected (`v1`).\n\n## Key findings\n\n- Schema enforcement alone (v1) increased scalar by +0.022 — the strict schema rejected valid borderline responses.\n- Moving validation earlier (v2) improved scalar by −0.040; schema_violation drift dropped from 0.25 to 0.10.\n\n## Recommendation\n\nThe next epoch should focus on the rubric_judge entries, which still show high spread.\n',
       analysis_html_available: false,
     },
+    // GET /api/score-trajectory — the environment-wide evolution curve.
+    // The Overview's score-trajectory chart paints the per-generation
+    // scalar across every generation; `promoted` colours each marker.
+    score_trajectory: {
+      epoch_id: '2026-05-15_e1',
+      points: [
+        { generation_id: 'v0', parent_generation_id: null, promoted: true,
+          scalar: 0.49, entry_count: 5, created_at: '2026-05-10T09:00:00Z' },
+        { generation_id: 'v1', parent_generation_id: 'v0', promoted: false,
+          scalar: 0.51, entry_count: 5, created_at: '2026-05-10T10:00:00Z' },
+        { generation_id: 'v2', parent_generation_id: 'v1', promoted: true,
+          scalar: 0.43, entry_count: 5, created_at: '2026-05-10T11:30:00Z' },
+        { generation_id: 'v4', parent_generation_id: 'v2', promoted: true,
+          scalar: 0.38, entry_count: 5, created_at: '2026-05-15T09:20:00Z' },
+        { generation_id: 'v5', parent_generation_id: 'v4', promoted: null,
+          scalar: null, entry_count: 0, created_at: '2026-05-15T09:50:00Z' },
+      ],
+    },
     log_tail: [
       { ts: '12:34:50', level: 'info', message: 'tournament r2 entry research_topic_q3 started (run r-9c2a)' },
       { ts: '12:35:01', level: 'info', message: 'goldfive driver: tool researcher_search invoked' },

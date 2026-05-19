@@ -2186,3 +2186,131 @@ h4 {
 .analysis-html-bar {
   margin-bottom: 0.6rem;
 }
+
+/* ============================================================
+   Overview — the environment home
+   ============================================================ */
+
+/* Identity block — workspace / epoch / generation / harness / counts */
+.identity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.4rem 1.2rem;
+}
+.identity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.25rem 0;
+}
+.identity-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.identity-value {
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+
+/* Compact live-activity card — a SMALL summary of the active round */
+.live-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  padding: 0.7rem 0.85rem;
+  box-shadow: var(--shadow);
+}
+.live-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.live-card-title {
+  margin: 0;
+  font-size: 1rem;
+}
+.live-card-census { color: var(--text-muted); }
+.live-card-hyp {
+  margin: 0.3rem 0 0.5rem;
+  font-size: 0.85rem;
+}
+.live-matchup {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.live-side {
+  flex: 1 1 12rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev);
+}
+.live-side-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.live-side-gen { font-size: 0.85rem; }
+.live-side-score { font-size: 0.82rem; color: var(--text-muted); }
+.live-vs {
+  align-self: center;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.live-aggregate {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+.live-link {
+  color: var(--accent-running);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+.live-link:hover { text-decoration: underline; }
+.live-card-link {
+  display: inline-block;
+  margin-top: 0.55rem;
+}
+
+/* Epochs table — the current epoch is flagged */
+.epoch-row-current td {
+  background: color-mix(in srgb, var(--accent-running) 7%, var(--bg-elev));
+}
+
+/* Recent experiments — a compact, read-only digest */
+.recent-exp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.recent-exp-row {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr 9rem;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.32rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev);
+  font-size: 0.85rem;
+}
+.recent-exp-idea {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-exp-verdict { justify-self: end; }
+.recent-exp-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+}

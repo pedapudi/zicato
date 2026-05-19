@@ -37,7 +37,7 @@ import { fetchJson, loadMatchupDetail } from '../core/api.js';
 import { diff as splitDiff } from '../components/index.js';
 import {
   predictedGateVerdict, tournamentVerdict, dataQuality,
-  entryStatus, entryIsDone, entryFailed, entryScalar,
+  entryStatus, entryIsDone, entryFailed,
   liveChampionId, liveChallengerId, liveRoundLabel,
 } from './shared.js';
 import { mockConversation } from './mock.js';
@@ -142,240 +142,181 @@ function findActiveRunForEntry(entry) {
   }) || null;
 }
 
-function renderActiveTournament() {
-  const sec = $('tournament-section');
-  const body = $('tournament-body');
-  const title = $('tournament-title');
-  const tElapsed = $('tournament-elapsed');
-  clearChildren(body);
+// --- Render: Overview — the environment home
+//
+// The Overview is a one-glance home for the whole zicato environment.
+// It is NOT the Tournament board: the full champion/challenger board
+// lives ONLY in the Tournament view. The Overview carries the identity
+// block, the loop-health line, a COMPACT live-activity card (a small
+// summary of the active round with a link through to the Tournament
+// view), the score trajectory, an epochs table and recent experiments.
+
+// Resolve a board-entry's scalar across every producer shape. The live
+// runtime `ActiveTournamentEntry` carries `loss_summary.drift_loss`;
+// the contract / mock shape uses `scalar_score`; older shapes used a
+// bare `score` or a nested `child.drift_loss`. Reading all of them
+// means a finished entry shows its score rather than a bare "done".
+function boardEntryScalar(e) {
+  if (!e) return null;
+  let v = null;
+  if (e.scalar_score != null) v = e.scalar_score;
+  else if (e.score != null) v = e.score;
+  else if (e.loss_summary && typeof e.loss_summary === 'object'
+           && typeof e.loss_summary.drift_loss === 'number') {
+    v = e.loss_summary.drift_loss;
+  } else if (e.child && typeof e.child.drift_loss === 'number') {
+    v = e.child.drift_loss;
+  }
+  return (typeof v === 'number' && isFinite(v)) ? v : null;
+}
+
+// The Overview's identity block — workspace, epoch id, current
+// generation, registered inner-harness entrypoint, mutation-site count
+// and epoch count. Every field degrades to an em-dash when absent.
+function renderIdentityPanel() {
+  const wrap = $('identity-panel');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const hb = state.heartbeat || {};
+  const def = state.epochDef || {};
+  const epochId = state.epoch.id && state.epoch.id !== '—'
+    ? state.epoch.id : (def.epoch_id || null);
+  const genId = hb.generation_id || state.epoch.generation;
+  const harness = (def.harness && typeof def.harness === 'object')
+    ? def.harness : null;
+  const mutationCount = Array.isArray(def.mutations) ? def.mutations.length : null;
+  const gens = (state.lineage && Array.isArray(state.lineage.generations))
+    ? state.lineage.generations : [];
+  const epochIds = new Set();
+  for (const g of gens) { if (g && g.epoch_id) epochIds.add(g.epoch_id); }
+  if (epochId) epochIds.add(epochId);
+
+  const grid = el('div', { class: 'identity-grid' });
+  const row = (label, value) => {
+    grid.appendChild(el('div', { class: 'identity-row' }, [
+      el('span', { class: 'identity-label' }, [label]),
+      el('span', { class: 'identity-value mono' }, [
+        value != null && value !== '' ? String(value) : '—',
+      ]),
+    ]));
+  };
+  row('workspace', state.workspace);
+  row('epoch', epochId);
+  row('generation', genId != null && genId !== '' ? genId : null);
+  row('inner harness', harness ? harness.entrypoint : null);
+  row('mutation sites', mutationCount != null ? String(mutationCount) : null);
+  row('epochs', epochIds.size > 0 ? String(epochIds.size) : null);
+  wrap.appendChild(grid);
+}
+
+// A compact summary of one tournament side — champion or challenger —
+// for the live-activity card: a status pill plus the scalar once done.
+function liveActivitySide(label, genId, side) {
+  const st = sideStatus(side);
+  const sc = boardEntryScalar(side);
+  return el('div', { class: 'live-side st-' + st }, [
+    el('span', { class: 'live-side-label' }, [label]),
+    el('span', { class: 'live-side-gen mono' }, [genId || '—']),
+    el('span', { class: 'pill pill-' + st }, [st]),
+    sc != null
+      ? el('span', { class: 'live-side-score mono' }, ['scalar ' + fmtRate(sc)])
+      : null,
+  ]);
+}
+
+// The compact live-activity card — a SMALL one-glance summary of the
+// active tournament: round, champion vs challenger, N of total runs
+// done, the current aggregate scalar, and a link through to the full
+// Tournament view. The full board is NOT rendered here.
+function renderLiveActivity() {
+  const wrap = $('live-activity');
+  if (!wrap) return;
+  clearChildren(wrap);
 
   const t = state.activeTournament;
-  if (!t || !t.entries || t.entries.length === 0) {
-    title.textContent = 'Tournament';
-    tElapsed.textContent = '';
-    body.appendChild(el('p', { class: 'empty' }, ['No active tournament.']));
+  if (!t || !Array.isArray(t.entries) || t.entries.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'No active tournament. ',
+      el('a', { class: 'live-link', href: '#/tournament' }, ['Open the Tournament view']),
+      ' for the bracket history.',
+    ]));
     return;
   }
 
-  // #4 — read the real round + generation ids from the shared
-  // AppState contract. Prefer the contract field names; fall back to
-  // the legacy runtime keys so the panel works regardless of the
-  // merge order between this branch and the core/state branches.
-  const roundIndex = t.round_index != null ? t.round_index : t.round;
-  const parentGen = t.parent_generation_id || t.parent_id;
-  const childGen = t.child_generation_id || t.child_id || t.generation_id;
+  const roundLabel = liveRoundLabel(t);
+  const champId = liveChampionId(t);
+  const childId = liveChallengerId(t);
+  const dq = dataQuality(t.entries);
 
-  title.textContent =
-    roundIndex != null ? `Tournament — round ${roundIndex}` : 'Tournament';
+  const card = el('div', { class: 'live-card' });
 
-  const subheader = el('p', { class: 'panel-subheader' }, [
-    el('strong', null, [
-      `${parentGen || '?'} (champion) vs ${childGen || '?'} (proposed)`,
+  // Head — round label + a one-line run census.
+  const census = `${dq.completed} of ${dq.total} runs done` +
+    (dq.running > 0 ? ` · ${dq.running} running` : '') +
+    (dq.failed > 0 ? ` · ${dq.failed} failed` : '');
+  card.appendChild(el('div', { class: 'live-card-head' }, [
+    el('h3', { class: 'live-card-title' }, [
+      roundLabel != null ? 'Round ' + roundLabel : 'Active round',
     ]),
-  ]);
-  body.appendChild(subheader);
+    el('span', { class: 'live-card-census meta mono' }, [census]),
+  ]));
 
-  if (t.elapsed_seconds != null) {
-    tElapsed.textContent = 'Elapsed ' + fmtDuration(t.elapsed_seconds);
-  } else {
-    tElapsed.textContent = '';
-  }
-
-  // Hypothesis / modulating
-  if (t.hypothesis) {
-    const hyp = el('p', null, [
-      el('strong', null, ['Hypothesis. ']),
-      t.hypothesis.core_idea || '',
-    ]);
-    body.appendChild(hyp);
-  }
-  if (t.hypothesis && Array.isArray(t.hypothesis.modulating) && t.hypothesis.modulating.length > 0) {
-    const modsLine = el('p', null);
-    modsLine.appendChild(el('strong', null, ['Modulating. ']));
-    t.hypothesis.modulating.forEach((m, i) => {
-      modsLine.appendChild(el('code', { class: 'mono code-pill' }, [m]));
-      if (i < t.hypothesis.modulating.length - 1) {
-        modsLine.appendChild(document.createTextNode(', '));
-      }
-    });
-    body.appendChild(modsLine);
-  }
-
-  // #5 — entry rows, grouped by `side` with a header per group.
-  // Each side ("parent"/"child") gets its own labelled block; an entry
-  // with no side falls into an "unassigned" bucket so nothing is lost.
-  const entriesWrap = el('div', { class: 'entries', role: 'list' });
-  const parentEntries = [];
-  const childEntries = [];
-  const otherEntries = [];
-  for (const e of t.entries) {
-    const side = String(e.side || '').toLowerCase();
-    if (side === 'parent') parentEntries.push(e);
-    else if (side === 'child') childEntries.push(e);
-    else otherEntries.push(e);
-  }
-
-  const appendGroup = (label, genId, items) => {
-    if (items.length === 0) return;
-    const header = el('div', { class: 'entry-group-header' }, [
-      el('span', { class: 'entry-group-label' }, [label]),
-    ]);
-    if (genId) {
-      header.appendChild(
-        el('code', { class: 'mono entry-group-gen' }, [genId]));
-    }
-    header.appendChild(
-      el('span', { class: 'meta entry-group-count' }, [`${items.length} board`]));
-    entriesWrap.appendChild(header);
-    for (const e of items) entriesWrap.appendChild(renderEntryRow(e));
-  };
-
-  // If `side` is present on at least one entry, render labelled
-  // groups. Otherwise (legacy un-stamped entries) render a flat list.
-  if (parentEntries.length > 0 || childEntries.length > 0) {
-    appendGroup('Champion', parentGen, parentEntries);
-    appendGroup('Challenger', childGen, childEntries);
-    appendGroup('Unassigned', null, otherEntries);
-  } else {
-    for (const e of t.entries) entriesWrap.appendChild(renderEntryRow(e));
-  }
-  body.appendChild(entriesWrap);
-
-  // Aggregate
-  body.appendChild(renderAggregate(t));
-
-  // Verdict
-  const verdict = predictedGateVerdict(t, state.scoring.margin);
-  if (verdict) body.appendChild(renderVerdict(verdict));
-
-  // Buttons
-  body.appendChild(renderTournamentButtons());
-}
-
-function renderEntryRow(entry) {
-  // Canonical bucket — never a raw producer spelling. A finished run
-  // written as 'completed' resolves to 'done' here, not 'queued'.
-  const status = entryStatus(entry);
-  let markerCh = '○';
-  let markerCls = 'queued';
-  if (status === 'done') { markerCh = '✓'; markerCls = 'done'; }
-  else if (status === 'running') { markerCh = '▶'; markerCls = 'running'; }
-  else if (status === 'failed') { markerCh = '✗'; markerCls = 'failed'; }
-
-  const marker = el('div', { class: 'entry-marker ' + markerCls }, [markerCh]);
-  const idCell = el('div', { class: 'entry-id mono' }, [entry.entry_id]);
-
-  // Parent cell
-  let parentCell;
-  if (entry.parent) {
-    parentCell = el('div', { class: 'entry-cell' }, [
-      el('span', { class: 'label' }, ['parent.']),
-      el('span', { class: 'mono' }, [
-        `loss ${fmtRate(entry.parent.drift_loss)} ${entry.parent.pass ? 'pass' : 'fail'}`,
-      ]),
-    ]);
-  } else if (status === 'queued') {
-    parentCell = el('div', { class: 'entry-cell' }, [
-      el('span', { class: 'meta' }, ['queued']),
-    ]);
-  } else {
-    parentCell = el('div', { class: 'entry-cell' }, [
-      el('span', { class: 'meta' }, ['—']),
-    ]);
-  }
-
-  // Child cell — may include progress + drift kinds
-  const childCell = el('div', { class: 'entry-cell' });
-  if (status === 'done' && entry.child) {
-    const passOk = entry.child.pass === true;
-    const regression = entry.parent && entry.parent.pass === true && entry.child.pass === false;
-    if (regression) childCell.classList.add('regression');
-    childCell.appendChild(el('span', { class: 'label' }, ['child.']));
-    childCell.appendChild(el('span', { class: 'mono' }, [
-      `loss ${fmtRate(entry.child.drift_loss)} ${passOk ? '✓' : '✗'}`,
+  // Hypothesis core idea — a single line of context, truncated.
+  if (t.hypothesis && typeof t.hypothesis.core_idea === 'string'
+      && t.hypothesis.core_idea.trim() !== '') {
+    card.appendChild(el('p', { class: 'live-card-hyp meta' }, [
+      truncate(t.hypothesis.core_idea, 140),
     ]));
-    if (regression) {
-      childCell.appendChild(el('br'));
-      childCell.appendChild(el('span', null, ['regression']));
-    }
-  } else if (status === 'running') {
-    // #6 — a running entry's progress comes from the matching
-    // active-run record (matched on entry_id), NOT from a per-entry
-    // `runtime` blob. The fraction is an elapsed-vs-budget deadline
-    // fraction, not a true task-completion percentage — label it as
-    // such. When no active-run matches, show a neutral placeholder.
-    const run = findActiveRunForEntry(entry);
-    const drift = entry.child && entry.child.drift_kinds
-      ? Object.entries(entry.child.drift_kinds).map(([k, v]) => `${v} ${k}`).join(', ')
-      : '';
-    if (run) {
-      const frac = typeof run.progress === 'number' && isFinite(run.progress)
-        ? Math.max(0, Math.min(1, run.progress)) : null;
-      const pct = frac != null ? Math.round(frac * 100) : 0;
-      const elapsed = run.elapsed_seconds != null
-        ? fmtDuration(run.elapsed_seconds) : '—';
-      const budget = run.budget_seconds != null
-        ? fmtDuration(run.budget_seconds) : '—';
-      childCell.appendChild(el('span', { class: 'mono' }, [
-        `RUNNING ${elapsed}/${budget}`,
-      ]));
-      childCell.appendChild(el('span', { class: 'meta' }, [' elapsed/budget']));
-      if (drift) {
-        childCell.appendChild(el('div', null, [
-          el('span', { class: 'meta' }, [`drift: ${drift}`]),
-        ]));
-      }
-      const prog = el('div', { class: 'progress', role: 'progressbar',
-                   'aria-valuemin': '0', 'aria-valuemax': '100',
-                   'aria-valuenow': String(pct),
-                   'aria-label': 'elapsed fraction of wall-clock budget' });
-      prog.appendChild(el('div', { class: 'bar', style: `width:${pct}%` }));
-      childCell.appendChild(prog);
-      childCell.appendChild(el('span', { class: 'meta' }, [
-        frac != null ? ` ${pct}% of budget` : ' budget —',
-      ]));
-      // #17 — deep-link the running board entry into its harmonograf
-      // trace when the heartbeat carries a harmonograf url.
-      const hg = harmonografMini(run, 'harmonograf',
-        `open harmonograf trace for ${entry.entry_id}`);
-      if (hg) {
-        hg.addEventListener('click', (ev) => ev.stopPropagation());
-        childCell.appendChild(el('div', { class: 'entry-hg' }, [hg]));
-      }
-    } else {
-      childCell.appendChild(el('span', { class: 'mono' }, ['RUNNING']));
-      childCell.appendChild(el('span', { class: 'meta' }, [' —']));
-      if (drift) {
-        childCell.appendChild(el('div', null, [
-          el('span', { class: 'meta' }, [`drift: ${drift}`]),
-        ]));
-      }
-    }
-  } else if (status === 'failed') {
-    childCell.appendChild(el('span', { class: 'mono' }, ['FAILED']));
-    if (entry.fail_reason) {
-      childCell.appendChild(el('div', null, [
-        el('span', { class: 'meta' }, [entry.fail_reason]),
-      ]));
-    }
-  } else {
-    childCell.appendChild(el('span', { class: 'meta' }, ['queued']));
   }
 
-  const row = el('div', {
-    class: 'entry-row',
-    role: 'listitem',
-    tabindex: '0',
-    'aria-label': `entry ${entry.entry_id} status ${status}`,
-    onClick: () => openDrillForEntry(entry),
-    onKeydown: (ev) => {
-      if (ev.key === 'Enter' || ev.key === ' ') {
-        ev.preventDefault();
-        openDrillForEntry(entry);
-      }
-    },
-  }, [marker, idCell, parentCell, childCell]);
-  return row;
+  // Champion vs challenger — one compact row each. The board entries
+  // are summed per side to a representative top-line, not enumerated.
+  const champSides = t.entries.filter((e) => {
+    const s = String(e && e.side || '').toLowerCase();
+    return s === 'parent' || s === 'champion' || s === '';
+  });
+  const childSides = t.entries.filter((e) => {
+    const s = String(e && e.side || '').toLowerCase();
+    return s === 'child' || s === 'challenger';
+  });
+  const repr = (sides) => {
+    // Prefer a finished side (carries a scalar); else the first.
+    return sides.find(entryIsDone) || sides.find((e) => sideStatus(e) === 'running')
+      || sides[0] || null;
+  };
+  const matchup = el('div', { class: 'live-matchup' }, [
+    liveActivitySide('Champion', champId, repr(champSides)),
+    el('span', { class: 'live-vs', 'aria-hidden': 'true' }, ['vs']),
+    liveActivitySide('Challenger', childId, repr(childSides)),
+  ]);
+  card.appendChild(matchup);
+
+  // Current aggregate scalar — the mean drift-loss scalar across every
+  // finished challenger-side entry (lower is better). Shown only when
+  // at least one challenger run has finished.
+  const finishedChild = childSides.filter(entryIsDone);
+  const childScalars = finishedChild
+    .map(boardEntryScalar).filter((v) => v != null);
+  if (childScalars.length > 0) {
+    const agg = childScalars.reduce((a, b) => a + b, 0) / childScalars.length;
+    card.appendChild(el('div', { class: 'live-aggregate mono' }, [
+      el('span', { class: 'meta' }, ['aggregate scalar ']),
+      fmtRate(agg),
+      el('span', { class: 'meta' }, [
+        ` · ${childScalars.length} of ${childSides.length} challenger runs scored`,
+      ]),
+    ]));
+  }
+
+  // Link through to the full Tournament view — the board belongs there.
+  card.appendChild(el('a', {
+    class: 'live-link live-card-link',
+    href: '#/tournament',
+    'aria-label': 'open the full Tournament view',
+  }, ['View the full tournament board →']));
+
+  wrap.appendChild(card);
 }
 
 // Pull (drift_loss_mean, pass_rate) for one side, preferring the
@@ -396,6 +337,10 @@ function partialSide(agg) {
   };
 }
 
+// The partial aggregate panel for the in-progress tournament — the
+// running scalar the gate will decide on. It belongs to the Tournament
+// view's hall (the Overview is a compact environment home and does not
+// render the full board).
 function renderAggregate(t) {
   const wrap = el('div', { class: 'aggregate' });
   wrap.appendChild(el('h4', null, [
@@ -476,133 +421,217 @@ function renderAggregate(t) {
   return wrap;
 }
 
-function renderVerdict(v) {
-  const cls = 'verdict ' + (v.verdict === 'promote' ? 'promote'
-               : v.verdict === 'reject' ? 'reject' : 'tbd');
-  const line = v.verdict === 'promote' ? 'Predicted gate: PROMOTE'
-        :  v.verdict === 'reject'  ? 'Predicted gate: REJECT'
-        :  'Predicted gate: TBD';
-  const wrap = el('div', { class: cls, role: 'status' });
-  wrap.appendChild(el('div', { class: 'verdict-line' }, [line]));
-  wrap.appendChild(el('div', { class: 'verdict-reason' }, [v.reason]));
+// The Overview score trajectory — the scalar across every generation,
+// sourced from `state.scoreTrajectory.points` (build_score_trajectory).
+// Painted into its own #overview-trajectory-svg so it never collides
+// with the Tree view's trajectory chart.
+function renderOverviewTrajectory() {
+  const svg = $('overview-trajectory-svg');
+  if (!svg) return;
+  clearChildren(svg);
 
-  if (v.projection) {
-    const p = v.projection;
-    const detail = el('p', { class: 'mono meta' }, [
-      `parent ${fmtRate(p.parent_scalar)} | child best ${fmtRate(p.child_best)} | child worst ${fmtRate(p.child_worst)} | margin ${fmtRate(p.margin)} | remaining ${p.remaining}`,
-    ]);
-    wrap.appendChild(detail);
-  }
-  return wrap;
-}
+  const width = 720, height = 220;
+  sizeSvg(svg, width, height);
 
-function renderTournamentButtons() {
-  // #8 — these controls are PROVISIONAL. The orchestrator's
-  // control-file consumer does not exist until v1.3, so an enabled
-  // button would silently do nothing. Render them disabled, with a
-  // tooltip naming the gap and a visible "preview" tag, so an
-  // operator never mistakes them for live controls.
-  const tip = 'control channel — v1.3';
-  const buttons = [
-    { label: 'Pause epoch' },
-    { label: 'Skip round' },
-    { label: 'Force-kill running', cls: 'danger' },
-    { label: 'Override' },
-  ];
-  const row = el('div', {
-    class: 'button-row provisional',
-    role: 'toolbar',
-    'aria-label': 'Tournament controls (preview — not yet wired)',
-  });
-  for (const b of buttons) {
-    const btn = el('button', {
-      type: 'button',
-      class: 'btn provisional ' + (b.cls || ''),
-      disabled: 'disabled',
-      'aria-disabled': 'true',
-      title: tip,
-      'aria-label': b.label + ' (' + tip + ')',
-    }, [
-      b.label,
-      el('span', { class: 'preview-tag', 'aria-hidden': 'true' }, ['preview']),
-    ]);
-    row.appendChild(btn);
-  }
-  return row;
-}
+  const points = (state.scoreTrajectory && Array.isArray(state.scoreTrajectory.points))
+    ? state.scoreTrajectory.points : [];
+  const scored = points
+    .map((p) => ({
+      id: p.generation_id,
+      v: typeof p.scalar === 'number' && isFinite(p.scalar) ? p.scalar : null,
+      promoted: p.promoted,
+    }))
+    .filter((p) => p.v != null);
 
-// --- Render: active runs strip
-
-function renderActiveRuns() {
-  const wrap = $('active-runs');
-  clearChildren(wrap);
-  if (!state.activeRuns || state.activeRuns.length === 0) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No active runs.']));
+  if (scored.length === 0) {
+    svg.appendChild(svgEl('text', {
+      class: 'svg-axis', x: width / 2, y: height / 2, 'text-anchor': 'middle',
+    }, ['No scored generations yet.']));
     return;
   }
-  for (const r of state.activeRuns) {
-    const card = el('div', {
-      class: 'run-card active fade-in',
-      role: 'listitem',
-      tabindex: '0',
-      'aria-label': `run ${r.run_id} entry ${r.entry_id || '?'}`,
-      onClick: () => openDrillForRun(r),
-      onKeydown: (ev) => {
-        if (ev.key === 'Enter' || ev.key === ' ') {
-          ev.preventDefault();
-          openDrillForRun(r);
-        }
-      },
-    });
-    card.appendChild(el('div', { class: 'run-head' }, [
-      el('span', { class: 'run-id mono' }, [r.run_id]),
-      el('span', { class: 'badge running' }, ['running']),
-    ]));
-    card.appendChild(el('div', { class: 'run-meta' }, [
-      `${r.entry_id || '?'} / ${r.generation_id || '?'}`,
-    ]));
-    // #6 — the bar is the run's elapsed-vs-budget deadline fraction
-    // from the shared contract (`progress` 0..1). When the run has no
-    // progress value the bar reads empty rather than a fake 0%.
-    const frac = typeof r.progress === 'number' && isFinite(r.progress)
-      ? Math.max(0, Math.min(1, r.progress)) : null;
-    const pct = frac != null ? Math.round(frac * 100) : 0;
-    const prog = el('div', { class: 'progress', role: 'progressbar',
-                 'aria-valuemin': '0', 'aria-valuemax': '100',
-                 'aria-valuenow': String(pct),
-                 'aria-label': 'elapsed fraction of wall-clock budget' });
-    prog.appendChild(el('div', { class: 'bar', style: `width:${pct}%` }));
-    card.appendChild(prog);
 
-    // Elapsed / budget line — prefer the contract's `elapsed_seconds`,
-    // fall back to deriving elapsed from `started_at`. Labelled as a
-    // budget fraction, not task progress.
-    let elapsedSecs = null;
-    if (r.elapsed_seconds != null && isFinite(r.elapsed_seconds)) {
-      elapsedSecs = r.elapsed_seconds;
-    } else if (r.started_at) {
-      elapsedSecs = (Date.now() - new Date(r.started_at).getTime()) / 1000;
-    }
-    if (elapsedSecs != null || r.budget_seconds != null) {
-      const elapsedTxt = elapsedSecs != null ? fmtDuration(elapsedSecs) : '—';
-      const budgetTxt = r.budget_seconds != null
-        ? fmtDuration(r.budget_seconds) : '—';
-      card.appendChild(el('div', { class: 'run-meta mono' }, [
-        `${elapsedTxt} / ${budgetTxt}`,
-        el('span', { class: 'meta' }, [' elapsed/budget']),
-      ]));
-    }
-
-    // #17 — deep-link the run card into its harmonograf trace.
-    const hg = harmonografMini(r, 'Open in harmonograf',
-      `open harmonograf trace for run ${r.run_id || r.entry_id || ''}`);
-    if (hg) {
-      // Stop the card's click handler from also firing.
-      hg.addEventListener('click', (ev) => ev.stopPropagation());
-      card.appendChild(el('div', { class: 'run-meta' }, [hg]));
-    }
-    wrap.appendChild(card);
+  const values = scored.map((s) => s.v);
+  let vmin = Math.min(...values, 0);
+  let vmax = Math.max(...values, 0);
+  if (vmin === vmax) {
+    const pad = Math.max(0.1, Math.abs(vmin) * 0.2 || 0.1);
+    vmin -= pad; vmax += pad;
+  } else {
+    const pad = (vmax - vmin) * 0.1;
+    vmin -= pad; vmax += pad;
   }
+
+  const marginL = 50, marginR = 18, marginT = 22, marginB = 36;
+  const plotW = width - marginL - marginR;
+  const plotH = height - marginT - marginB;
+  const n = scored.length;
+  const xStep = n > 1 ? plotW / (n - 1) : 0;
+  const toX = (i) => (n === 1 ? marginL + plotW / 2 : marginL + i * xStep);
+  const toY = (v) => marginT + (vmax - v) / (vmax - vmin) * plotH;
+
+  // axes
+  svg.appendChild(svgEl('line', {
+    class: 'svg-axis', x1: marginL, y1: marginT + plotH,
+    x2: marginL + plotW, y2: marginT + plotH,
+    stroke: COLORS.grid, 'stroke-width': '1',
+  }));
+  svg.appendChild(svgEl('line', {
+    class: 'svg-axis', x1: marginL, y1: marginT,
+    x2: marginL, y2: marginT + plotH,
+    stroke: COLORS.grid, 'stroke-width': '1',
+  }));
+
+  // the curve
+  const d = scored.map((s, i) =>
+    `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(s.v).toFixed(1)}`).join(' ');
+  svg.appendChild(svgEl('path', {
+    d, fill: 'none', stroke: COLORS.running, 'stroke-width': '2',
+  }));
+
+  // markers, coloured by verdict
+  scored.forEach((s, i) => {
+    const fill = s.promoted === true ? COLORS.promoted
+      : s.promoted === false ? COLORS.rejected
+        : COLORS.running;
+    svg.appendChild(svgEl('circle', {
+      cx: toX(i).toFixed(1), cy: toY(s.v).toFixed(1), r: '3.5', fill,
+    }));
+    svg.appendChild(svgEl('text', {
+      class: 'svg-axis', x: toX(i).toFixed(1), y: (marginT + plotH + 16).toFixed(1),
+      'text-anchor': 'middle',
+    }, [String(s.id || '')]));
+  });
+}
+
+// The epochs table — every epoch the lineage feed knows about, with its
+// generation count and how many were promoted. The current epoch is
+// flagged. Sourced from `state.lineage.generations` (build_lineage_view
+// walks every epoch) folded with the current `epoch_id`.
+function renderEpochsPanel() {
+  const wrap = $('epochs-panel');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const gens = (state.lineage && Array.isArray(state.lineage.generations))
+    ? state.lineage.generations : [];
+  const currentEpoch = state.epoch.id && state.epoch.id !== '—'
+    ? state.epoch.id
+    : (state.epochDef && state.epochDef.epoch_id) || null;
+
+  // Group generations into epoch buckets, preserving first-seen order.
+  const order = [];
+  const byEpoch = new Map();
+  for (const g of gens) {
+    if (!g || !g.epoch_id) continue;
+    const id = String(g.epoch_id);
+    if (!byEpoch.has(id)) { byEpoch.set(id, []); order.push(id); }
+    byEpoch.get(id).push(g);
+  }
+  // The current epoch may have no generation directory yet — still list it.
+  if (currentEpoch && !byEpoch.has(currentEpoch)) {
+    byEpoch.set(currentEpoch, []);
+    order.push(currentEpoch);
+  }
+
+  if (order.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, ['No epochs recorded yet.']));
+    return;
+  }
+
+  const tbl = el('table', { class: 'data-table' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['epoch']),
+    el('th', null, ['generations']),
+    el('th', null, ['promoted']),
+    el('th', null, ['']),
+  ])]));
+  const tbody = el('tbody');
+  for (const id of order) {
+    const list = byEpoch.get(id) || [];
+    const promoted = list.filter((g) => g && g.promoted === true).length;
+    const isCurrent = id === currentEpoch;
+    tbody.appendChild(el('tr', { class: isCurrent ? 'epoch-row-current' : '' }, [
+      el('td', { class: 'mono' }, [id]),
+      el('td', { class: 'mono' }, [String(list.length)]),
+      el('td', { class: 'mono' }, [String(promoted)]),
+      el('td', null, [
+        isCurrent
+          ? el('span', { class: 'badge running' }, ['current'])
+          : el('a', { class: 'live-link', href: '#/epoch/' + encodeURIComponent(id) },
+              ['view']),
+      ]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  wrap.appendChild(tbl);
+}
+
+// Recent experiments — the same per-generation experiment records the
+// Epoch view's experiment log renders (`state.epochDef.experiments`).
+// The Overview shows a compact, read-only digest of the most recent
+// few, each with its hypothesis core-idea and tournament outcome.
+function renderRecentExperiments() {
+  const wrap = $('recent-experiments');
+  if (!wrap) return;
+  clearChildren(wrap);
+
+  const def = state.epochDef;
+  const experiments = (def && Array.isArray(def.experiments)) ? def.experiments : [];
+  if (experiments.length === 0) {
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'No experiments recorded yet.',
+    ]));
+    return;
+  }
+
+  // Most-recent-first; cap at six so the Overview stays a digest.
+  const recent = experiments.slice(-6).reverse();
+  const list = el('div', { class: 'recent-exp-list' });
+  for (const exp of recent) {
+    const genId = exp.generation_id || '?';
+    const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
+      ? exp.hypothesis : {};
+    const coreIdea = hyp.core_idea || '—';
+    const outcome = (exp.outcome && typeof exp.outcome === 'object')
+      ? exp.outcome : null;
+    const decision = outcome
+      ? (outcome.tournament_decision || outcome.decision || null) : null;
+    const delta = outcome ? outcome.scalar_score_delta : null;
+    const decisionClass = decision
+      ? (String(decision).toLowerCase().includes('promot') ? 'promoted' : 'rejected')
+      : 'pending';
+
+    list.appendChild(el('div', { class: 'recent-exp-row' }, [
+      el('span', { class: 'recent-exp-gen mono' }, [genId]),
+      el('span', { class: 'recent-exp-idea' }, [truncate(coreIdea, 110)]),
+      outcome
+        ? el('span', { class: 'recent-exp-verdict badge ' + decisionClass }, [
+            (decision || '?') +
+            (typeof delta === 'number' && isFinite(delta)
+              ? ' ' + (delta > 0 ? '+' : '') + delta.toFixed(3) : ''),
+          ])
+        : el('span', { class: 'recent-exp-verdict badge pending' }, ['in progress']),
+    ]));
+  }
+  wrap.appendChild(list);
+
+  // A link through to the Epoch view's full experiment log.
+  wrap.appendChild(el('a', {
+    class: 'live-link recent-exp-link',
+    href: '#/epoch',
+    'aria-label': 'open the full experiment log in the Epoch view',
+  }, ['Full experiment log →']));
+}
+
+// The Overview render entry point — paints every environment-home panel.
+function renderOverview() {
+  renderIdentityPanel();
+  renderHealthPanel();
+  renderLiveActivity();
+  renderOverviewTrajectory();
+  renderEpochsPanel();
+  renderRecentExperiments();
+  renderLogTail();
 }
 
 // --- Render: cross-epoch lineage graph (Tree view)
@@ -1659,6 +1688,10 @@ function renderHall(t) {
     grid.appendChild(renderBoardCard(board, t, champId, childId));
   }
   hall.appendChild(grid);
+
+  // The running partial aggregate — the scalar the gate will decide on,
+  // folded per board unit as each settles (runner._IncrementalScorer).
+  hall.appendChild(renderAggregate(t));
   return hall;
 }
 
@@ -1804,9 +1837,15 @@ function renderBoardSide(label, side, entry, status, genId) {
       row.appendChild(el('div', { class: 'board-side-meta meta' }, ['running…']));
     }
   } else if (status === 'done') {
-    const sc = entryScalar(entry);
+    // A finished side shows the canonical "done" status plus its
+    // scalar. boardEntryScalar reads every producer shape — the live
+    // runtime's `loss_summary.drift_loss`, the contract `scalar_score`,
+    // a bare `score`, or a nested `child.drift_loss` — so a completed
+    // run is never mislabelled or shown bare just because the producer
+    // wrote the score under a different key.
+    const sc = boardEntryScalar(entry);
     row.appendChild(el('div', { class: 'board-side-score mono' }, [
-      sc != null ? 'scalar ' + fmtRate(sc) : 'done',
+      sc != null ? 'done · scalar ' + fmtRate(sc) : 'done',
     ]));
   } else if (status === 'failed') {
     row.appendChild(el('div', { class: 'board-side-meta board-fail' }, [
@@ -1821,8 +1860,8 @@ function renderBoardSide(label, side, entry, status, genId) {
 // The result strip — shown once both sides of a board finish. States
 // which side won (lower scalar wins) and the scalar delta between them.
 function renderBoardResult(board) {
-  const champSc = entryScalar(board.parent);
-  const childSc = entryScalar(board.child);
+  const champSc = boardEntryScalar(board.parent);
+  const childSc = boardEntryScalar(board.child);
 
   if (typeof champSc !== 'number' || typeof childSc !== 'number') {
     return el('div', { class: 'board-result board-result-tbd' }, [
@@ -3318,8 +3357,10 @@ function applyDrill(kind, id) {
         ]));
       }
     }
-    // The entry's scalar score — under whichever key the producer used.
-    const sc = entryScalar(entry);
+    // The entry's scalar score — under whichever key the producer used
+    // (`loss_summary.drift_loss` for a live runtime entry, `scalar_score`
+    // for the contract shape, a bare `score`, or a nested side object).
+    const sc = boardEntryScalar(entry);
     if (sc != null) {
       body.appendChild(el('p', { class: 'mono' }, [
         'scalar score ' + fmtRate(sc),
@@ -4538,10 +4579,7 @@ function showView(view) {
 // footer and log tail (Overview) are cheap and always kept fresh.
 function renderActiveView() {
   if (currentView === 'overview') {
-    renderHealthPanel();
-    renderActiveTournament();
-    renderActiveRuns();
-    renderLogTail();
+    renderOverview();
   } else if (currentView === 'tree') {
     renderLineage();
     renderTrajectory();
