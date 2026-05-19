@@ -205,8 +205,10 @@ REQUIRED_SECTIONS = {
     "epoch-brief-section",
     "epoch-scoring-section",
     "epoch-mutations-section",
-    "epoch-experiment-log-section",
-    "epoch-journal-section",
+    # The Experiment-log and Journal panels are merged into one
+    # chronological "Experiments" section — there is no separate
+    # Journal section.
+    "epoch-experiments-section",
     "epoch-analysis-section",
     "files-changes-section",
     "files-section",
@@ -232,7 +234,9 @@ REQUIRED_NAV_IDS = {
     "nav-files",
 }
 
-# Epoch-view panel containers app.js renders into.
+# Epoch-view panel containers app.js renders into. The merged
+# Experiments section (experiment log + journal) renders into the
+# single `epoch-experiment-log` panel; there is no `epoch-journal`.
 REQUIRED_EPOCH_IDS = {
     "epoch-overview",
     "epoch-harness",
@@ -241,7 +245,6 @@ REQUIRED_EPOCH_IDS = {
     "epoch-scoring",
     "epoch-mutations",
     "epoch-experiment-log",
-    "epoch-journal",
     "epoch-analysis",
 }
 
@@ -531,10 +534,13 @@ def test_ab_grid_has_harmonograf_trace_links(app_js: str) -> None:
     assert "ab-trace" in app_js, "A/B grid missing the ab-trace cell"
     # Both sides resolve a run-like record for harmonografMini. The
     # render block lives between the A/B-grid header and the scalar
-    # breakdown header.
+    # breakdown header. The window is sized generously: the grid now
+    # carries per-entry Δ and "won by" columns (the completed-tournament
+    # outcomes reconstructed from the persisted loss files), which pushes
+    # the harmonografMini call further down the render block.
     idx = app_js.find("Per-entry A/B grid")
     assert idx != -1, "A/B grid render block not found"
-    block = app_js[idx : idx + 3000]
+    block = app_js[idx : idx + 4600]
     assert "harmonografMini(" in block, "A/B grid does not call harmonografMini"
     assert (
         "parentRun" in block and "childRun" in block
@@ -811,11 +817,30 @@ def test_bundle_under_size_envelope(
     # dashboard is served off disk by the standalone Python service with
     # no network cost; this guard only keeps the vanilla bundle from
     # drifting unboundedly.
-    # Measured integrated bundle (this branch): 366,465 bytes
-    # (index.html + style.css + icons.svg + the concatenated JS
-    # bundle). 380 KB leaves ~13 KB of headroom for incidental
-    # drift without re-licensing every minor edit.
-    assert total < 380_000, f"bundle is {total} bytes, exceeds 380_000 envelope"
+    # Raised again by the dashboard IA / analysis integration, which
+    # folds in three further dashboard fixes on top of the redesign:
+    #   * the Files-view folding split-diff — the "What changed" diff
+    #     gained a folding split-diff renderer (foldDiffOps +
+    #     renderFoldingSplitDiff: long unchanged runs collapse to a
+    #     click-to-expand marker so a small change is not buried under a
+    #     wall of identical source), the mutation-site viewer and
+    #     file-content pane route through the keyed reconcile spine
+    #     (swapIfChanged) so an SSE repaint keeps their horizontal scroll
+    #     position, plus Files-view soft-wrap / working-scroll CSS;
+    #   * the completed-tournament A/B matchup grid + scalar breakdown
+    #     (a new /api/matchup-grid endpoint and its render path);
+    #   * the Epoch-view / Overview information-architecture redesign —
+    #     the Epoch view's "Experiment log" and "Journal" panels are
+    #     merged into one chronological "Experiments" section with
+    #     progressive disclosure, and the Overview epochs table gains a
+    #     per-epoch goal column fed by a new `/api/environment.epochs`
+    #     summary.
+    # The single-branch caps (410 KB / 385 KB) each measured one fix in
+    # isolation; the fully integrated bundle was re-measured directly
+    # (index.html + style.css + icons.svg + the concatenated JS bundle)
+    # at 399,681 bytes. A 440 KB cap leaves ~40 KB of headroom for
+    # incidental drift without re-licensing every minor edit.
+    assert total < 440_000, f"bundle is {total} bytes, exceeds 440_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
@@ -855,18 +880,26 @@ def test_drill_panel_is_hidden_initially(index_html: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Epoch experiment log / journal / analysis — new render functions
+# Epoch Experiments (merged log + journal) / analysis — render functions
 # ---------------------------------------------------------------------------
 
 
-def test_epoch_experiment_log_render_function_present(app_js: str) -> None:
-    """The render layer exports a renderEpochExperimentLog function."""
-    assert "function renderEpochExperimentLog(" in app_js
+def test_epoch_experiments_render_function_present(app_js: str) -> None:
+    """The render layer exports a renderEpochExperiments function.
+
+    The Experiment-log and Journal panels are merged into one
+    chronological Experiments section rendered by `renderEpochExperiments`.
+    """
+    assert "function renderEpochExperiments(" in app_js
 
 
-def test_epoch_journal_render_function_present(app_js: str) -> None:
-    """The render layer exports a renderEpochJournal function."""
-    assert "function renderEpochJournal(" in app_js
+def test_epoch_journal_render_function_removed(app_js: str) -> None:
+    """The standalone renderEpochJournal function is gone.
+
+    The journal is merged into the Experiments section — there is no
+    separate journal renderer or journal panel.
+    """
+    assert "function renderEpochJournal(" not in app_js
 
 
 def test_epoch_analysis_render_function_present(app_js: str) -> None:
@@ -874,59 +907,66 @@ def test_epoch_analysis_render_function_present(app_js: str) -> None:
     assert "function renderEpochAnalysis(" in app_js
 
 
-def test_epoch_view_calls_all_new_sub_renderers(app_js: str) -> None:
-    """renderEpochView calls all three new sub-renderers."""
+def test_epoch_view_calls_all_sub_renderers(app_js: str) -> None:
+    """renderEpochView calls the merged Experiments + analysis renderers."""
     scrubbed = _strip_js_comments(app_js)
     idx = scrubbed.find("function renderEpochView(")
     assert idx != -1, "renderEpochView not found"
-    body = scrubbed[idx : idx + 600]
-    for fn in ("renderEpochExperimentLog(", "renderEpochJournal(", "renderEpochAnalysis("):
+    body = scrubbed[idx : idx + 700]
+    for fn in ("renderEpochExperiments(", "renderEpochAnalysis("):
         assert fn in body, f"renderEpochView must call {fn}"
+    assert (
+        "renderEpochJournal(" not in body
+    ), "renderEpochView must not call a separate journal renderer"
 
 
 def _epoch_experiment_log_region(scrubbed: str) -> str:
-    """Return the Epoch experiment-log render region.
+    """Return the Epoch Experiments render region.
 
-    The redesigned experiment log is built from a cluster of helper
+    The merged Experiments section is built from a cluster of helper
     functions (`_renderExperimentHypothesis`, `_renderExperimentChange`,
-    `_renderExperimentOutcome`) that `renderEpochExperimentLog` composes.
-    Behaviour these tests assert (the patch diff, the tournament link)
-    lives in those helpers, so the region spans the whole cluster — from
-    the first helper to the end of `renderEpochExperimentLog`.
+    `_renderExperimentOutcome`, `_renderExperimentEntry`) that
+    `renderEpochExperiments` composes. Behaviour these tests assert (the
+    patch diff, the tournament link) lives in those helpers, so the
+    region spans the whole cluster — from the first helper to the end of
+    `renderEpochExperiments`.
     """
     start = scrubbed.find("function _renderExperimentHypothesis(")
     if start == -1:
-        start = scrubbed.find("function renderEpochExperimentLog(")
-    assert start != -1, "epoch experiment-log render region not found"
-    end = scrubbed.find("function renderEpochJournal(", start)
+        start = scrubbed.find("function renderEpochExperiments(")
+    assert start != -1, "epoch Experiments render region not found"
+    end = scrubbed.find("function renderEpochAnalysis(", start)
     if end == -1:
-        end = start + 12000
+        end = start + 14000
     return scrubbed[start:end]
 
 
 def test_experiment_log_uses_mutation_diff_renderer(app_js: str) -> None:
-    """The experiment log reuses the existing renderMutationDiff function."""
+    """The Experiments section reuses the existing renderMutationDiff function."""
     region = _epoch_experiment_log_region(_strip_js_comments(app_js))
     assert (
         "renderMutationDiff(" in region
-    ), "the experiment log must reuse renderMutationDiff for patch diffs"
+    ), "the Experiments section must reuse renderMutationDiff for patch diffs"
 
 
 def test_experiment_log_links_to_tournament_view(app_js: str) -> None:
-    """Each experiment card links to its tournament via #/tournament/{genId}."""
+    """Each experiment entry links to its tournament via #/tournament/{genId}."""
     region = _epoch_experiment_log_region(_strip_js_comments(app_js))
     assert (
         "#/tournament/" in region
-    ), "the experiment log must link experiments to #/tournament/{genId}"
+    ), "the Experiments section must link experiments to #/tournament/{genId}"
 
 
-def test_journal_uses_minimal_markdown_renderer(app_js: str) -> None:
-    """renderEpochJournal renders with renderMinimalMarkdown."""
-    scrubbed = _strip_js_comments(app_js)
-    idx = scrubbed.find("function renderEpochJournal(")
-    assert idx != -1, "renderEpochJournal not found"
-    body = scrubbed[idx : idx + 600]
-    assert "renderMinimalMarkdown(" in body, "renderEpochJournal must use renderMinimalMarkdown"
+def test_experiments_section_offers_raw_journal_link(app_js: str) -> None:
+    """The merged Experiments section offers a 'view raw journal' link.
+
+    The journal is no longer its own section, but the raw markdown stays
+    one click away via the journal endpoint.
+    """
+    region = _epoch_experiment_log_region(_strip_js_comments(app_js))
+    assert (
+        "/api/epoch/" in region and "/journal" in region
+    ), "the Experiments section must link to the raw journal endpoint"
 
 
 def test_analysis_offers_html_link(app_js: str) -> None:
@@ -973,14 +1013,21 @@ def test_files_view_renders_split_diff_of_changes(app_js: str) -> None:
     """The Files view shows a side-by-side (split) diff of what changed.
 
     It fetches the per-generation diff endpoint and renders each changed
-    file through the shared ``diff`` component in ``mode:'split'``.
+    file as a folding split diff: old on the left, new on the right,
+    with long unchanged runs collapsed to a click-to-expand marker so a
+    small change is not buried under a wall of identical source.
     """
     scrubbed = _strip_js_comments(app_js)
     assert "/diff" in scrubbed, "Files view must fetch the per-generation /diff endpoint"
     assert "renderFilesChanges" in scrubbed, "Files view missing the changes renderer"
+    # The folding split-diff renderer lays out two side panes — old
+    # (left) and new (right) — and collapses unchanged regions.
+    assert "renderFoldingSplitDiff" in scrubbed, "Files view missing the split-diff renderer"
+    assert "diff-split" in scrubbed, "the changed-files diff must render in split mode"
     assert (
-        "mode: 'split'" in scrubbed or 'mode: "split"' in scrubbed
-    ), "the changed-files diff must render in split mode"
+        "diff-old" in scrubbed and "diff-new" in scrubbed
+    ), "the split diff must have an old (left) and a new (right) side"
+    assert "diff-fold" in scrubbed, "the diff must fold unchanged regions into a collapse marker"
 
 
 def test_files_changes_section_in_required_sections() -> None:
@@ -1029,10 +1076,15 @@ def test_experiment_log_renders_the_four_narrative_beats(app_js: str) -> None:
     assert "scalar_score_delta" in region, "the outcome must surface the scalar delta"
 
 
-def test_epoch_experiment_log_section_in_required_sections() -> None:
-    """The three new epoch sections are in REQUIRED_SECTIONS."""
+def test_epoch_experiments_section_in_required_sections() -> None:
+    """The merged Experiments section is in REQUIRED_SECTIONS.
+
+    The Experiment-log and Journal panels are merged into one
+    `epoch-experiments-section`; the separate `epoch-journal-section`
+    is gone.
+    """
     # This is a code-level assertion: the test file's own constant must
-    # include the new sections (verified by running the full suite).
+    # include the merged section (verified by running the full suite).
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
@@ -1042,11 +1094,13 @@ def test_epoch_experiment_log_section_in_required_sections() -> None:
     mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     for sect in (
-        "epoch-experiment-log-section",
-        "epoch-journal-section",
+        "epoch-experiments-section",
         "epoch-analysis-section",
     ):
         assert sect in mod.REQUIRED_SECTIONS, f"REQUIRED_SECTIONS missing {sect}"
+    assert (
+        "epoch-journal-section" not in mod.REQUIRED_SECTIONS
+    ), "the separate epoch-journal-section must be gone"
 
 
 # ---------------------------------------------------------------------------

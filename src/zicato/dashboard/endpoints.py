@@ -146,6 +146,35 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             )
         return JSONResponse(state_reader.build_matchup_detail(paths, generation_id))
 
+    async def api_matchup_grid(request: Request) -> JSONResponse:
+        # Per-entry A/B grid read straight off the persisted per-run
+        # loss.json files (and the gen_score.json aggregates) — the read
+        # path a *completed* tournament's matchup-detail panel uses when
+        # the SQLite index was never built. Given an epoch + champion gen
+        # + challenger gen, returns the champion-vs-challenger comparison.
+        epoch_id = request.path_params["epoch_id"]
+        champion_id = request.path_params["champion_id"]
+        challenger_id = request.path_params["challenger_id"]
+        if (
+            not _is_safe_id(epoch_id)
+            or not _is_safe_id(champion_id)
+            or not _is_safe_id(challenger_id)
+        ):
+            # A malformed coordinate degrades to "no grid" rather than 500.
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "champion": champion_id,
+                    "challenger": challenger_id,
+                    "entry_grid": [],
+                    "scalar": None,
+                    "source": "loss_files",
+                }
+            )
+        return JSONResponse(
+            state_reader.build_matchup_grid(paths, epoch_id, champion_id, challenger_id)
+        )
+
     async def api_health_report(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_health_report(paths))
 
@@ -450,6 +479,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_heartbeat": api_heartbeat,
         "api_tournaments": api_tournaments,
         "api_tournament_detail": api_tournament_detail,
+        "api_matchup_grid": api_matchup_grid,
         "api_health_report": api_health_report,
         "api_score_trajectory": api_score_trajectory,
         "api_drift_movements": api_drift_movements,

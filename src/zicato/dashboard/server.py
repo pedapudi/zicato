@@ -162,6 +162,10 @@ def create_app(
             "/api/tournaments/{generation_id}",
             handlers["api_tournament_detail"],
         ),
+        Route(
+            "/api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}",
+            handlers["api_matchup_grid"],
+        ),
         Route("/api/health-report", handlers["api_health_report"]),
         Route("/api/score-trajectory", handlers["api_score_trajectory"]),
         Route(

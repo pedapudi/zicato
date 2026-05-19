@@ -26,7 +26,11 @@ const REQUIRED_IDS = [
   'view-conversation', 'nav-overview', 'nav-tree', 'nav-tournament', 'nav-epoch',
   'nav-files', 'epoch-overview', 'epoch-harness', 'epoch-board', 'epoch-brief',
   'epoch-scoring', 'epoch-mutations',
-  'epoch-experiment-log', 'epoch-journal', 'epoch-analysis',
+  // The Experiment-log and Journal panels are MERGED into one
+  // `epoch-experiment-log` panel — there is no longer an
+  // `epoch-journal` panel. `epoch-experiments-section` is the named
+  // section wrapper the merged log lives in.
+  'epoch-experiments-section', 'epoch-experiment-log', 'epoch-analysis',
   'lineage-svg', 'overview-trajectory-svg',
   'heatmap-svg', 'conversation-panel', 'files-tree-pane', 'files-content-pane',
   'files-patches', 'mutations-list-pane', 'mutations-detail-pane',
@@ -495,6 +499,40 @@ test('Overview is the environment home, NOT a duplicate tournament board', () =>
   );
 });
 
+test('the Overview epochs table shows each epoch goal', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('overview');
+  const panel = doc.getElementById('epochs-panel');
+  // The header row carries a `goal` column.
+  const headers = panel._descendants()
+    .filter((n) => n.localName === 'th')
+    .map((n) => n.textContent);
+  assert(headers.includes('goal'),
+    `the epochs table must carry a goal column, got ${JSON.stringify(headers)}`);
+  // Each epoch's distilled goal text renders in its row.
+  const text = textOf(panel);
+  assert(text.includes('Stabilise the extraction schema'),
+    'the e0 epoch row shows its distilled goal');
+  assert(text.includes('Cut off-topic drift'),
+    'the e1 epoch row shows its distilled goal');
+});
+
+test('Recent experiments call an unfinished experiment incomplete, not in progress', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('overview');
+  const wrap = doc.getElementById('recent-experiments');
+  const text = textOf(wrap);
+  // The mock epoch's v5 has no outcome — it must read as `incomplete`.
+  assert(text.includes('incomplete'),
+    'an unfinished experiment reads as incomplete on the Overview');
+  assert(!text.toLowerCase().includes('in progress'),
+    'an unfinished experiment never reads as "in progress" on the Overview');
+  // The "Full experiment log" link targets the Epoch view.
+  const link = wrap._descendants().find(
+    (n) => n.getAttribute && n.getAttribute('href') === '#/epoch');
+  assert(link, 'the recent-experiments digest links through to the Epoch view');
+});
+
 test('the Tree view is purely the lineage DAG — no score-trajectory chart', () => {
   // The score trajectory lives ONLY on the Overview. The Tree view
   // renders the lineage graph and nothing else trajectory-shaped: the
@@ -727,49 +765,95 @@ test('proposer brief renders as a readable block, framed as the epoch goal', () 
   assert(text.includes('Forbidden edits'), 'the brief markdown body must render');
 });
 
-test('each experiment renders as a card with description, hypothesis and outcome', () => {
+test('each experiment renders as a terse entry that expands to the four beats', () => {
   state.applySnapshot(mockSnapshot());
   render.showView('epoch');
   const log = doc.getElementById('epoch-experiment-log');
   const cards = log._descendants().filter((n) => n.classList.contains('exp-card'));
   // The mock epoch carries three experiments (v1, v2, v5).
-  assertEqual(cards.length, 3, 'one card per experiment in the epoch');
+  assertEqual(cards.length, 3, 'one entry per experiment in the epoch');
 
-  // Every card tells the four-beat story: a description (core idea),
-  // a Hypothesis beat, a Change beat, and an Outcome beat.
-  for (const card of cards) {
-    const t = card.textContent;
-    assert(t.includes('Hypothesis'), 'every card has a Hypothesis beat');
-    assert(t.includes('Change'), 'every card has a Change beat');
-    assert(t.includes('Outcome'), 'every card has an Outcome beat');
-  }
+  // Terse by default — the one-line summary shows the gen id, the core
+  // idea, and the verdict, but NOT the full Hypothesis / Outcome beats.
+  const firstSummary = cards[0]._descendants()
+    .find((n) => n.classList.contains('exp-summary'));
+  assert(firstSummary, 'each entry exposes a terse summary line');
+  assert(firstSummary.textContent.includes('v1'),
+    'the summary shows the generation id');
+  assert(firstSummary.textContent.includes('Tighten the extraction schema'),
+    'the summary shows the proposer core idea');
+  assert(!cards[0].textContent.includes('Hypothesis'),
+    'a collapsed entry does not show the Hypothesis beat');
 
-  // The first experiment (v1) was rejected — its card carries the
-  // rejected accent and surfaces the rejection reason.
-  const first = cards[0];
-  assert(first.classList.contains('exp-card-rejected'),
-    'a rejected experiment card carries the rejected accent');
-  assert(first.textContent.includes('Tighten the extraction schema'),
-    'the card shows the proposer core idea as the description');
-  assert(first.textContent.includes('pass-rate regression'),
+  // Expanding an entry reveals the full four-beat detail.
+  firstSummary.dispatchEvent(makeEvent('click'));
+  const expanded = doc.getElementById('epoch-experiment-log')._descendants()
+    .filter((n) => n.classList.contains('exp-card'))[0];
+  const t = expanded.textContent;
+  assert(t.includes('Hypothesis'), 'an expanded entry shows the Hypothesis beat');
+  assert(t.includes('Change'), 'an expanded entry shows the Change beat');
+  assert(t.includes('Outcome'), 'an expanded entry shows the Outcome beat');
+
+  // The first experiment (v1) was rejected — its entry carries the
+  // rejected accent and surfaces the rejection reason once expanded.
+  assert(expanded.classList.contains('exp-card-rejected'),
+    'a rejected experiment entry carries the rejected accent');
+  assert(t.includes('pass-rate regression'),
     'a rejected outcome surfaces the rejection reason');
-  assert(first.textContent.includes('Δscalar'),
-    'a decided outcome shows the scalar delta');
-
-  // The last experiment (v5) has no outcome yet — it reads as pending.
-  const last = cards[cards.length - 1];
-  assert(last.classList.contains('exp-card-pending'),
-    'an unfinished experiment card carries the pending accent');
-  assert(last.textContent.includes('in progress'),
-    'an unfinished experiment reads as in progress');
+  assert(t.includes('Δscalar'), 'a decided outcome shows the scalar delta');
 });
 
-test('experiment card diff toggle expands the change without throwing', () => {
+test('the merged Experiments section includes the incomplete experiment', () => {
   state.applySnapshot(mockSnapshot());
   render.showView('epoch');
   const log = doc.getElementById('epoch-experiment-log');
+  const cards = log._descendants().filter((n) => n.classList.contains('exp-card'));
+  // v5 has no outcome — its tournament never reached a verdict. The raw
+  // journal drops it; the merged Experiments section MUST include it.
+  const v5 = cards.find((c) => c.getAttribute('data-genid') === 'v5');
+  assert(v5, 'an experiment with no verdict still appears in the log');
+  assert(v5.classList.contains('exp-card-pending'),
+    'an incomplete experiment carries the pending accent');
+  // Canonical term: `incomplete`, never "in progress".
+  assert(v5.textContent.includes('incomplete'),
+    'an unfinished experiment reads as incomplete');
+  assert(!v5.textContent.toLowerCase().includes('in progress'),
+    'an unfinished experiment never reads as "in progress"');
+});
+
+test('the Epoch view has no separate Journal section', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('epoch');
+  // The Journal section is merged into Experiments — it must not exist
+  // as its own section any more.
+  assert(!doc.getElementById('epoch-journal'),
+    'the standalone Journal panel is removed');
+  assert(!doc.getElementById('epoch-journal-section'),
+    'the standalone Journal section is removed');
+  // The merged section is named "Experiments".
+  const section = doc.getElementById('epoch-experiments-section');
+  assert(section, 'the merged section is `epoch-experiments-section`');
+  // A raw-journal jump-off link is still offered (not its own section).
+  const log = doc.getElementById('epoch-experiment-log');
+  const rawLink = log._descendants()
+    .find((n) => n.classList && n.classList.contains('exp-journal-raw-link'));
+  assert(rawLink, 'a "view raw journal" link is offered');
+});
+
+test('experiment entry diff toggle expands the change without throwing', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('epoch');
+  // Expand the first entry so its Change beat (and diff toggle) render.
+  // `aria-expanded` is checked first so the test is order-independent
+  // (a prior test may have left this entry expanded).
+  const summary = doc.getElementById('epoch-experiment-log')._descendants()
+    .find((n) => n.classList.contains('exp-summary'));
+  if (summary.getAttribute('aria-expanded') !== 'true') {
+    summary.dispatchEvent(makeEvent('click'));
+  }
+  const log = doc.getElementById('epoch-experiment-log');
   const toggles = log._descendants().filter((n) => n.classList.contains('exp-diff-toggle'));
-  assert(toggles.length > 0, 'each experiment with a patch exposes a diff toggle');
+  assert(toggles.length > 0, 'an expanded entry with a patch exposes a diff toggle');
   // The diff is collapsed by default — clicking expands it.
   assertEqual(toggles[0].getAttribute('aria-expanded'), 'false',
     'the diff starts collapsed');
@@ -792,55 +876,150 @@ test('epoch view renders cleanly when no epoch is loaded', () => {
     'an epoch with no experiments shows an empty narrative');
 });
 
-// -- Epoch journal ----------------------------------------------------
-// The journal renders the epoch's round-by-round markdown narrative.
-// The bug being guarded: the markdown was emitted verbatim, so the
-// `**field**:` markers showed as literal asterisks on the page. The
-// journal must now render as a clean labelled timeline — no raw `**`.
+// -- Merged Experiments section — the journal, well-rendered ----------
+// The journal is no longer its own section: it is folded into the
+// chronological per-round Experiments log. A journal round's free prose
+// renders as a "Journal note" beat inside the matching expanded entry,
+// with no literal `**` markdown markers leaking onto the page.
 
-test('epoch journal renders without any literal ** markdown markers', () => {
+test('a journal round prose renders as a note inside the matching entry', () => {
   state.applySnapshot(mockSnapshot());
   render.showView('epoch');
-  const journal = doc.getElementById('epoch-journal');
-  assert(journal.children.length > 0, 'the journal panel must render content');
-  const text = journal.textContent;
-  // The defect: raw markdown bold markers leaking onto the page.
-  assert(!text.includes('**'),
-    'no literal ** markers — the journal markdown must be rendered');
-  // The journal field labels must survive as readable text (stripped
-  // of their `**` fence), not vanish.
-  assert(text.includes('proposed_at') && text.includes('modulating')
-    && text.includes('why') && text.includes('outcome'),
-    'the journal field labels must render as labelled key/value rows');
-  // The prose body of an entry must also render.
+  // Expand v2 — its journal section carries the prose "Validate-before-
+  // emit cleared the dominant schema_violation drift."
+  const v2 = doc.getElementById('epoch-experiment-log')._descendants()
+    .find((n) => n.classList.contains('exp-card')
+      && n.getAttribute('data-genid') === 'v2');
+  const summary = v2._descendants()
+    .find((n) => n.classList.contains('exp-summary'));
+  summary.dispatchEvent(makeEvent('click'));
+  const expanded = doc.getElementById('epoch-experiment-log')._descendants()
+    .find((n) => n.classList.contains('exp-card')
+      && n.getAttribute('data-genid') === 'v2');
+  const text = expanded.textContent;
+  // The free prose from the journal round renders as a note.
   assert(text.includes('Validate-before-emit cleared'),
-    'free prose in a journal entry must render');
+    'a journal round prose renders inside the matching experiment entry');
+  // No literal markdown bold markers leak onto the page.
+  assert(!text.includes('**'),
+    'the merged log carries no literal ** markdown markers');
 });
 
-test('epoch journal renders one timeline entry per round section', () => {
+test('epoch experiments degrade to a muted empty line when absent', () => {
+  state.epochDef = { epoch_id: '2026-05-15_e1', experiments: [], journal: '' };
+  render.showView('epoch');
+  const log = doc.getElementById('epoch-experiment-log');
+  assert(log.textContent.includes('No experiments recorded'),
+    'an epoch with no experiments shows a muted empty state');
+});
+
+// -- Completed-tournament per-entry outcomes --------------------------
+// A completed (non-live) matchup must show its per-board outcomes: the
+// matchup-detail panel populates the Per-entry A/B grid and the Scalar
+// breakdown rather than rendering "No per-entry grid recorded".
+
+test('completed matchup grid populates from the index ab_grid shape', () => {
+  // The /api/tournaments/{gen} endpoint sources its grid from the
+  // SQLite index as `ab_grid`, whose cells carry `parent_pass_fail` /
+  // `child_pass_fail`. The matchup-detail panel must fold that shape
+  // into the rendered grid — not drop it on "No per-entry grid".
+  state.mock = true;
   state.applySnapshot(mockSnapshot());
-  render.showView('epoch');
-  const journal = doc.getElementById('epoch-journal');
-  const entries = journal._descendants()
-    .filter((n) => n.classList.contains('journal-entry'));
-  // The mock journal carries two `## v{N}` sections.
-  assertEqual(entries.length, 2, 'one timeline entry per journal section');
-  // Each entry surfaces its heading and a key/value field list.
-  assert(entries[0].textContent.includes('v1'), 'an entry shows its round heading');
-  const labels = journal._descendants()
-    .filter((n) => n.classList.contains('journal-field-label'));
-  assert(labels.length > 0, 'field lines render as labelled key/value rows');
-  // The rejected entry surfaces its rejection_reason field.
-  assert(journal.textContent.includes('rejection_reason'),
-    'a rejected round surfaces its rejection_reason field');
+  // Seed the detail cache with a backend (index) shaped payload for the
+  // already-completed v1 matchup.
+  state.matchupDetail.set('v1', {
+    epoch_id: '2026-05-15_e1',
+    generation_id: 'v1',
+    champion: 'v0',
+    decision: 'rejected',
+    rejection_reason: 'pass-rate regression on schema_response',
+    patches: [],
+    ab_grid: [
+      { entry_id: 'extract_invoice_001', parent_drift_loss: 0.30,
+        child_drift_loss: 0.21, parent_pass_fail: true, child_pass_fail: true,
+        verdict: 'improved' },
+      { entry_id: 'schema_response', parent_drift_loss: 0.12,
+        child_drift_loss: 0.34, parent_pass_fail: true, child_pass_fail: false,
+        verdict: 'regressed' },
+    ],
+  });
+  globalThis.location.hash = '#/tournament/v1';
+  render.applyRoute();
+  const detail = doc.getElementById('tournament-detail');
+  const text = textOf(detail);
+  assert(!text.includes('No per-entry grid recorded'),
+    'a completed matchup with an index ab_grid must NOT show the empty grid');
+  assert(text.includes('extract_invoice_001') && text.includes('schema_response'),
+    'every board entry must appear in the per-entry grid');
+  // The grid carries the per-entry Δ and "won by" columns.
+  const grid = detail._descendants().find(
+    (n) => n.classList && n.classList.contains('ab-grid'));
+  assert(grid, 'the per-entry A/B grid table must render');
+  const wonCells = grid._descendants().filter(
+    (n) => n.classList && n.classList.contains('ab-won'));
+  assert(wonCells.length === 2, 'each board row shows which side won it');
+  // extract_invoice_001 improved -> challenger v1 won; schema_response
+  // regressed -> champion v0 won.
+  const wonText = wonCells.map((n) => n.textContent);
+  assert(wonText.includes('v1') && wonText.includes('v0'),
+    'the won-by column names the winning generation per board');
 });
 
-test('epoch journal degrades to a muted empty line when absent', () => {
-  state.epochDef = { epoch_id: '2026-05-15_e1', journal: '' };
-  render.showView('epoch');
-  const journal = doc.getElementById('epoch-journal');
-  assert(journal.textContent.includes('No journal recorded'),
-    'an epoch with no journal shows a muted empty state');
+test('completed matchup grid falls back to the persisted loss-file endpoint', async () => {
+  // When the index-sourced detail carries NO grid (an empty ab_grid —
+  // the index was never built for this finished tournament) the panel
+  // must fetch /api/matchup-grid and render the per-entry outcomes the
+  // persisted loss.json files hold.
+  state.applySnapshot(mockSnapshot());
+  state.mock = false;   // loadMatchupGrid only fetches for a real workspace
+  const requested = [];
+  const gridPayload = {
+    epoch_id: '2026-05-15_e1', champion: 'v0', challenger: 'v1',
+    source: 'loss_files',
+    entry_grid: [
+      { entry_id: 'extract_invoice_001', parent_drift_loss: 0.30,
+        child_drift_loss: 0.21, parent_pass: true, child_pass: true,
+        delta: -0.09, verdict: 'improved', won_by: 'v1' },
+      { entry_id: 'schema_response', parent_drift_loss: 0.12,
+        child_drift_loss: 0.34, parent_pass: true, child_pass: false,
+        delta: 0.22, verdict: 'regressed', won_by: 'v0' },
+    ],
+    scalar: { parent: 0.41, child: 0.43, delta: 0.022,
+      components: { drift: -0.04, cost: 0.01 } },
+  };
+  globalThis.fetch = async (path) => {
+    requested.push(path);
+    // The detail / drift-movements drill-downs keep their empty index
+    // shapes — only the matchup-grid endpoint returns the loss-file grid.
+    let body = { ab_grid: [], entry_grid: [], movements: [] };
+    if (String(path).includes('/api/matchup-grid/')) body = gridPayload;
+    return { ok: true, json: async () => body };
+  };
+  // The detail endpoint answered, but with an EMPTY index grid.
+  state.matchupDetail.set('v1', {
+    epoch_id: '2026-05-15_e1', generation_id: 'v1', champion: 'v0',
+    decision: 'rejected', patches: [], ab_grid: [],
+  });
+  globalThis.location.hash = '#/tournament/v1';
+  render.applyRoute();
+  // The fetch is async — let the loadMatchupGrid promise settle, then
+  // it re-renders the detail panel itself.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const gridReq = requested.find((p) => String(p).includes('/api/matchup-grid/'));
+  assert(gridReq, 'an empty index grid must trigger the persisted-loss-file fetch');
+  assert(gridReq.includes('2026-05-15_e1') && gridReq.includes('/v0/') &&
+    gridReq.endsWith('/v1'),
+    'the matchup-grid request carries the epoch, champion and challenger');
+  const detail = doc.getElementById('tournament-detail');
+  const text = textOf(detail);
+  assert(!text.includes('No per-entry grid recorded'),
+    'the persisted loss files must populate the grid for a completed matchup');
+  assert(!text.includes('No scalar breakdown recorded'),
+    'the persisted gen_score aggregates must populate the scalar breakdown');
+  assert(text.includes('extract_invoice_001') && text.includes('schema_response'),
+    'the persisted grid lists every board entry');
+  state.mock = true;
+  delete globalThis.fetch;
 });
 
 await run();

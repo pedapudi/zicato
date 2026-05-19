@@ -514,6 +514,7 @@ def test_environment_endpoint_consolidates_feeds(client: TestClient) -> None:
         "workspace",
         "epoch_id",
         "epoch",
+        "epochs",
         "active_tournament",
         "tournaments",
         "generations",
@@ -566,6 +567,100 @@ def test_epoch_view_brief_prefers_brief_md_over_legacy(workspace: Path) -> None:
 
     view = build_epoch_view(WorkspacePaths(workspace))
     assert view["brief"].startswith("# Proposer brief")
+
+
+def test_epoch_view_board_skips_board_meta_header(workspace: Path) -> None:
+    """The board's ``board_meta`` header line is not a board entry.
+
+    A board.jsonl whose first line is a ``board_meta`` object must not
+    surface that line as a spurious all-``—`` board row.
+    """
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write(
+        epoch_dir / "board.jsonl",
+        "\n".join(
+            [
+                json.dumps({"board_meta": True, "disable_drift": ["user_steer"]}),
+                json.dumps(
+                    {
+                        "id": "waffles_single",
+                        "kind": "single_turn",
+                        "input": "Make a presentation about waffles.",
+                        "wall_clock_budget_seconds": 180,
+                        "weight": 1.0,
+                        "tags": ["smoke"],
+                        "expectation": {"kind": "predicate"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+    )
+    view = build_epoch_view(WorkspacePaths(workspace))
+    # Only the real entry — the board_meta header is dropped.
+    assert len(view["board"]) == 1
+    assert view["board"][0]["id"] == "waffles_single"
+    assert all(e.get("board_meta") is not True for e in view["board"])
+
+
+# ---------------------------------------------------------------------------
+# Per-epoch goal summary — the Overview epochs-table annotation
+# ---------------------------------------------------------------------------
+
+
+def test_build_epochs_summary_distils_goal_from_brief(workspace: Path) -> None:
+    """build_epochs_summary distils a one-line goal from each epoch brief."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epochs_summary
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write(
+        epoch_dir / "brief.md",
+        "# Proposer brief\n\n## Goal\n\n"
+        "Produce coherent, structured presentation outputs from the tree.\n\n"
+        "- a bullet that must not be picked as the summary\n\n"
+        "## Preferred edits\n\nSomething else.\n",
+    )
+    summary = build_epochs_summary(WorkspacePaths(workspace))
+    assert len(summary) == 1
+    row = summary[0]
+    assert row["epoch_id"] == "2026-05-16_e0"
+    assert row["goal"] == "Produce coherent, structured presentation outputs from the tree."
+
+
+def test_build_epochs_summary_goal_none_when_no_goal_section(workspace: Path) -> None:
+    """A brief with no ``## Goal`` section yields a null goal, not an error."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epochs_summary
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write(epoch_dir / "brief.md", "# Proposer brief\n\n## Preferred edits\n\nNo goal here.\n")
+    summary = build_epochs_summary(WorkspacePaths(workspace))
+    assert summary[0]["goal"] is None
+
+
+def test_build_epochs_summary_reads_legacy_rubric_md(workspace: Path) -> None:
+    """The goal distillation falls back to the legacy ``rubric.md`` name."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epochs_summary
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    (epoch_dir / "brief.md").unlink()
+    _write(epoch_dir / "rubric.md", "# Epoch\n\n## Goal\n\nStabilise the schema.\n")
+    summary = build_epochs_summary(WorkspacePaths(workspace))
+    assert summary[0]["goal"] == "Stabilise the schema."
+
+
+def test_environment_includes_epochs_summary(client: TestClient) -> None:
+    """``/api/environment`` carries the per-epoch goal summary list."""
+    r = client.get("/api/environment")
+    assert r.status_code == 200
+    body = r.json()
+    assert "epochs" in body, "/api/environment must carry the epochs summary"
+    assert isinstance(body["epochs"], list)
+    ids = {e["epoch_id"] for e in body["epochs"]}
+    assert "2026-05-16_e0" in ids
+    for e in body["epochs"]:
+        assert "goal" in e, "each epochs-summary row carries a goal field"
 
 
 # ---------------------------------------------------------------------------
@@ -830,6 +925,211 @@ def test_health_report(client: TestClient) -> None:
     assert body["healthy"] is False
     assert len(body["findings"]) == 1
     assert body["epoch_id"] == "2026-05-16_e0"
+
+
+# ---------------------------------------------------------------------------
+# /api/matchup-grid — completed-tournament per-entry outcomes read from the
+# persisted per-run loss.json files (NOT the SQLite index).
+# ---------------------------------------------------------------------------
+
+
+def _seed_loss_files(workspace: Path) -> None:
+    """Write per-run ``loss.json`` + ``gen_score.json`` for v0 and v1.
+
+    Mirrors the on-disk layout a real run produces under
+    ``epochs/{id}/generations/{gen}/runs/{entry}/loss.json``. The
+    champion (v0) and challenger (v1) each ran two board entries; on
+    ``extract_invoice`` the challenger improved, on ``schema_response``
+    it regressed — a clear mixed outcome.
+    """
+    epoch_id = "2026-05-16_e0"
+    gens = epoch_id  # readability alias
+    layout: dict[str, dict[str, dict[str, object]]] = {
+        "v0": {
+            "extract_invoice": {"drift_loss": 0.30, "pass_fail": True},
+            "schema_response": {"drift_loss": 0.12, "pass_fail": True},
+        },
+        "v1": {
+            "extract_invoice": {"drift_loss": 0.21, "pass_fail": True},
+            "schema_response": {"drift_loss": 0.34, "pass_fail": False},
+        },
+    }
+    for gen, entries in layout.items():
+        for entry, fields in entries.items():
+            loss = {
+                "run_id": f"{gen}--{entry}",
+                "entry_id": entry,
+                "generation_id": gen,
+                "epoch_id": gens,
+                "drift_counts": [],
+                "plan_revisions": 0,
+                "task_failure_ratio": 0.0,
+                "runtime_ms": 1000,
+                "wall_clock_budget_exceeded": False,
+                "expectation_result": None,
+                "adk_session_id": f"session-{gen}-{entry}",
+                **fields,
+            }
+            _write_json(
+                workspace
+                / "epochs"
+                / epoch_id
+                / "generations"
+                / gen
+                / "runs"
+                / entry
+                / "loss.json",
+                loss,
+            )
+    # gen_score.json aggregates — the orchestrator's cached per-generation
+    # score (drift mean + scalar + the per-component composition).
+    _write_json(
+        workspace / "epochs" / epoch_id / "generations" / "v0" / "gen_score.json",
+        {
+            "generation_id": "v0",
+            "drift_loss_mean": 0.21,
+            "pass_rate": 1.0,
+            "scalar": 0.21,
+            "scalar_components": {"drift": 0.21, "pass": 0.0},
+        },
+    )
+    _write_json(
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "gen_score.json",
+        {
+            "generation_id": "v1",
+            "drift_loss_mean": 0.275,
+            "pass_rate": 0.5,
+            "scalar": 0.375,
+            "scalar_components": {"drift": 0.275, "pass": 0.10},
+        },
+    )
+
+
+def test_matchup_grid_reads_persisted_loss_files(workspace: Path) -> None:
+    """``/api/matchup-grid`` reconstructs the per-entry A/B grid from
+    the on-disk ``loss.json`` files — no SQLite index involved."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+
+    _seed_loss_files(workspace)
+    paths = WorkspacePaths(workspace)
+    grid = build_matchup_grid(paths, "2026-05-16_e0", "v0", "v1")
+
+    assert grid["champion"] == "v0"
+    assert grid["challenger"] == "v1"
+    assert grid["source"] == "loss_files"
+    rows = {r["entry_id"]: r for r in grid["entry_grid"]}
+    assert set(rows) == {"extract_invoice", "schema_response"}
+
+    # extract_invoice: champion 0.30 -> challenger 0.21 — an improvement.
+    win = rows["extract_invoice"]
+    assert win["parent_drift_loss"] == 0.30
+    assert win["child_drift_loss"] == 0.21
+    assert win["parent_pass"] is True and win["child_pass"] is True
+    assert win["delta"] == pytest.approx(-0.09)
+    assert win["verdict"] == "improved"
+    assert win["won_by"] == "v1"
+
+    # schema_response: champion 0.12 -> challenger 0.34 — a regression.
+    lose = rows["schema_response"]
+    assert lose["delta"] == pytest.approx(0.22)
+    assert lose["verdict"] == "regressed"
+    assert lose["won_by"] == "v0"
+    assert lose["child_pass"] is False
+
+    # The per-run adk_session_id surfaces for the harmonograf jump-offs.
+    assert win["parent_session_id"] == "session-v0-extract_invoice"
+    assert win["child_session_id"] == "session-v1-extract_invoice"
+
+
+def test_matchup_grid_scalar_breakdown_from_gen_scores(workspace: Path) -> None:
+    """The scalar block composes from the two ``gen_score.json`` aggregates;
+    ``components`` is the challenger-minus-champion delta of each term."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+
+    _seed_loss_files(workspace)
+    paths = WorkspacePaths(workspace)
+    grid = build_matchup_grid(paths, "2026-05-16_e0", "v0", "v1")
+
+    scalar = grid["scalar"]
+    assert scalar is not None
+    assert scalar["parent"] == pytest.approx(0.21)
+    assert scalar["child"] == pytest.approx(0.375)
+    assert scalar["delta"] == pytest.approx(0.165)
+    # drift: 0.275 - 0.21 = +0.065 ; pass: 0.10 - 0.0 = +0.10
+    assert scalar["components"]["drift"] == pytest.approx(0.065)
+    assert scalar["components"]["pass"] == pytest.approx(0.10)
+
+
+def test_matchup_grid_endpoint(client: TestClient, workspace: Path) -> None:
+    """The ``/api/matchup-grid/{epoch}/{champion}/{challenger}`` route
+    serves the persisted-loss-file grid as JSON."""
+    _seed_loss_files(workspace)
+    r = client.get("/api/matchup-grid/2026-05-16_e0/v0/v1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "loss_files"
+    assert len(body["entry_grid"]) == 2
+    assert body["scalar"]["delta"] == pytest.approx(0.165)
+
+
+def test_matchup_grid_endpoint_no_files(client: TestClient) -> None:
+    """A matchup with no persisted loss files degrades to an empty grid
+    (HTTP 200) — not a 500."""
+    r = client.get("/api/matchup-grid/2026-05-16_e0/v0/v1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["entry_grid"] == []
+    assert body["scalar"] is None
+
+
+def test_matchup_grid_endpoint_invalid_id(client: TestClient) -> None:
+    """A malformed coordinate degrades to an empty grid rather than 500."""
+    r = client.get("/api/matchup-grid/2026-05-16_e0/bad%20id/v1")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["entry_grid"] == []
+    assert body["scalar"] is None
+
+
+def test_matchup_grid_one_sided(workspace: Path) -> None:
+    """An entry that ran on only one side still appears, with the missing
+    side's loss reported as ``null``."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_grid
+
+    _seed_loss_files(workspace)
+    # The challenger ran an extra entry the champion never did.
+    _write_json(
+        workspace
+        / "epochs"
+        / "2026-05-16_e0"
+        / "generations"
+        / "v1"
+        / "runs"
+        / "extra_entry"
+        / "loss.json",
+        {
+            "run_id": "v1--extra_entry",
+            "entry_id": "extra_entry",
+            "generation_id": "v1",
+            "epoch_id": "2026-05-16_e0",
+            "drift_counts": [],
+            "plan_revisions": 0,
+            "task_failure_ratio": 0.0,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": False,
+            "expectation_result": None,
+            "drift_loss": 0.4,
+            "pass_fail": False,
+        },
+    )
+    paths = WorkspacePaths(workspace)
+    grid = build_matchup_grid(paths, "2026-05-16_e0", "v0", "v1")
+    rows = {r["entry_id"]: r for r in grid["entry_grid"]}
+    assert "extra_entry" in rows
+    assert rows["extra_entry"]["parent_drift_loss"] is None
+    assert rows["extra_entry"]["child_drift_loss"] == 0.4
+    assert rows["extra_entry"]["verdict"] == "flat"
+    assert rows["extra_entry"]["won_by"] is None
 
 
 # ---------------------------------------------------------------------------

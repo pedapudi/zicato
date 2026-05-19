@@ -34,7 +34,7 @@ import {
   harmonografLink, harmonografMini, harmonografGenLink,
 } from '../core/harmonograf.js';
 import { fetchJson, loadMatchupDetail } from '../core/api.js';
-import { diff as splitDiff } from '../components/index.js';
+import { lcsDiff } from '../components/index.js';
 import {
   predictedGateVerdict, tournamentVerdict, dataQuality,
   entryStatus, entryIsDone, entryFailed,
@@ -549,9 +549,12 @@ function renderOverviewTrajectory() {
 }
 
 // The epochs table — every epoch the lineage feed knows about, with its
-// generation count and how many were promoted. The current epoch is
-// flagged. Sourced from `state.lineage.generations` (build_lineage_view
-// walks every epoch) folded with the current `epoch_id`.
+// goal, generation count and how many were promoted. The current epoch
+// is flagged. Sourced from `state.lineage.generations`
+// (build_lineage_view walks every epoch) folded with the current
+// `epoch_id`; the per-epoch goal comes from `state.epochs` (the
+// /api/environment `epochs` summary), distilled from each epoch's
+// proposer brief.
 function renderEpochsPanel() {
   const wrap = $('epochs-panel');
   if (!wrap) return;
@@ -583,9 +586,20 @@ function renderEpochsPanel() {
     return;
   }
 
+  // Per-epoch goal summary, keyed by epoch id — distilled from each
+  // epoch's proposer brief by the backend (`/api/environment.epochs`).
+  const goalByEpoch = new Map();
+  const epochSummaries = Array.isArray(state.epochs) ? state.epochs : [];
+  for (const e of epochSummaries) {
+    if (e && e.epoch_id && typeof e.goal === 'string' && e.goal.trim()) {
+      goalByEpoch.set(String(e.epoch_id), e.goal.trim());
+    }
+  }
+
   const tbl = el('table', { class: 'data-table' });
   tbl.appendChild(el('thead', null, [el('tr', null, [
     el('th', null, ['epoch']),
+    el('th', null, ['goal']),
     el('th', null, ['generations']),
     el('th', null, ['promoted']),
     el('th', null, ['']),
@@ -595,8 +609,12 @@ function renderEpochsPanel() {
     const list = byEpoch.get(id) || [];
     const promoted = list.filter((g) => g && g.promoted === true).length;
     const isCurrent = id === currentEpoch;
+    const goal = goalByEpoch.get(id);
     tbody.appendChild(el('tr', { class: isCurrent ? 'epoch-row-current' : '' }, [
       el('td', { class: 'mono' }, [id]),
+      goal
+        ? el('td', { class: 'epochs-goal' }, [goal])
+        : el('td', { class: 'epochs-goal meta' }, ['—']),
       el('td', { class: 'mono' }, [String(list.length)]),
       el('td', { class: 'mono' }, [String(promoted)]),
       el('td', null, [
@@ -655,17 +673,34 @@ function renderRecentExperiments() {
             (typeof delta === 'number' && isFinite(delta)
               ? ' ' + (delta > 0 ? '+' : '') + delta.toFixed(3) : ''),
           ])
-        : el('span', { class: 'recent-exp-verdict badge pending' }, ['in progress']),
+        // No recorded verdict — the experiment is `incomplete` (its
+        // tournament was torn down or never reached a decision), not
+        // "in progress", which is reserved for a live, running run.
+        : el('span', { class: 'recent-exp-verdict badge pending' }, ['incomplete']),
     ]));
   }
   wrap.appendChild(list);
 
-  // A link through to the Epoch view's full experiment log.
-  wrap.appendChild(el('a', {
+  // A link through to the Epoch view's merged Experiments section.
+  // The hash router has no in-view anchor support, so the link routes
+  // to `#/epoch` and a click handler scrolls the Experiments section
+  // into view once the Epoch view has switched in — landing the reader
+  // on the section, not the top of the view.
+  const expLink = el('a', {
     class: 'live-link recent-exp-link',
     href: '#/epoch',
-    'aria-label': 'open the full experiment log in the Epoch view',
-  }, ['Full experiment log →']));
+    'aria-label': 'open the full Experiments log in the Epoch view',
+  }, ['Full experiment log →']);
+  expLink.addEventListener('click', () => {
+    // Defer past the route:changed render so the section exists.
+    setTimeout(() => {
+      const section = $('epoch-experiments-section');
+      if (section && typeof section.scrollIntoView === 'function') {
+        section.scrollIntoView({ block: 'start' });
+      }
+    }, 0);
+  });
+  wrap.appendChild(expLink);
 }
 
 // The Overview render entry point — paints every environment-home panel.
@@ -2239,6 +2274,46 @@ function renderBoardEntryDetail(wrap, entryId) {
   wrap.appendChild(renderInlineConversation());
 }
 
+// --- Completed-matchup per-entry grid (read from persisted loss files)
+//
+// `loadMatchupDetail` (/api/tournaments/:gen) sources the matchup
+// detail from the SQLite analytical index. That index is a best-effort
+// dual-write: a *completed* tournament whose index was never (re)built
+// carries no per-entry rows, so the matchup-detail panel renders "No
+// per-entry grid recorded" and "No scalar breakdown recorded" — a
+// finished tournament loses its per-board outcomes.
+//
+// The per-board telemetry is always on disk, though: each board run
+// writes generations/{gen}/runs/{entry}/loss.json and the orchestrator
+// caches a generations/{gen}/gen_score.json aggregate. The
+// /api/matchup-grid/{epoch}/{champion}/{challenger} endpoint reads
+// those files back and returns the champion-vs-challenger comparison.
+// We fetch it lazily for a completed matchup and cache it by challenger
+// generation id; renderMatchupDetail folds it in as the `entry_grid` /
+// `scalar` fallback when the index-sourced detail has neither.
+const matchupGrids = new Map();   // challenger genId -> grid payload | 'pending'
+
+// Fetch the persisted per-entry grid for a completed matchup. Keyed by
+// challenger generation id so a re-render does not re-fetch; a failure
+// caches nothing so the next render retries. Re-renders the detail
+// panel on completion so the grid populates without a separate path.
+async function loadMatchupGrid(epochId, champId, genId) {
+  if (!epochId || !champId || !genId || state.mock) return;
+  if (matchupGrids.has(genId)) return;   // cached or in flight
+  matchupGrids.set(genId, 'pending');
+  try {
+    const grid = await fetchJson(
+      '/api/matchup-grid/' + encodeURIComponent(epochId) + '/' +
+      encodeURIComponent(champId) + '/' + encodeURIComponent(genId));
+    matchupGrids.set(genId, grid);
+  } catch (err) {
+    // Endpoint absent / failed — drop the pending marker so a later
+    // render retries; the panel keeps its index-sourced fallback text.
+    matchupGrids.delete(genId);
+  }
+  if (currentView === 'tournament') renderMatchupDetail();
+}
+
 function renderMatchupDetail() {
   const wrap = $('tournament-detail');
   if (!wrap) return;
@@ -2288,14 +2363,54 @@ function renderMatchupDetail() {
     (summary && summary.hypothesis_core_idea
       ? { core_idea: summary.hypothesis_core_idea } : null);
   const patches = (detail && Array.isArray(detail.patches)) ? detail.patches : [];
-  const entryGrid = (detail && Array.isArray(detail.entry_grid))
-    ? detail.entry_grid : [];
-  const scalar = detail && detail.scalar;
   const decision = (detail && detail.decision)
     || (summary && summary.decision)
     || (isLive ? 'in_progress' : null);
   const rejectionReason = (detail && detail.rejection_reason)
     || (summary && summary.rejection_reason) || null;
+
+  // --- A/B-grid + scalar-breakdown source resolution.
+  //
+  // Three sources, in priority order:
+  //   1. detail.entry_grid / detail.scalar — the shape mock mode and
+  //      a fully-shaped detail endpoint produce.
+  //   2. detail.ab_grid — the live SQLite-index shape: cells carry
+  //      `parent_pass_fail` / `child_pass_fail`, mapped to the grid's
+  //      `parent_pass` / `child_pass`.
+  //   3. /api/matchup-grid — the persisted per-run loss.json files.
+  //      This is the read path a *completed* tournament needs: the
+  //      index dual-write is best-effort, so a finished matchup may
+  //      have an empty ab_grid while loss.json is on disk for both
+  //      generations. Fetched lazily for a non-live matchup.
+  let entryGrid = (detail && Array.isArray(detail.entry_grid))
+    ? detail.entry_grid : [];
+  let scalar = (detail && detail.scalar) || null;
+  if (entryGrid.length === 0 && detail && Array.isArray(detail.ab_grid)
+      && detail.ab_grid.length > 0) {
+    entryGrid = detail.ab_grid.map((c) => ({
+      ...c,
+      parent_pass: (c.parent_pass != null) ? c.parent_pass : c.parent_pass_fail,
+      child_pass: (c.child_pass != null) ? c.child_pass : c.child_pass_fail,
+      parent_session_id: c.parent_session_id || c.parent_adk_session_id || null,
+      child_session_id: c.child_session_id || c.child_adk_session_id || null,
+    }));
+  }
+  // For a completed matchup with no usable grid yet, pull the persisted
+  // per-run loss files. The fetch caches by genId and re-renders on
+  // completion; until it lands the grid keeps the index-derived state.
+  if (!isLive && (entryGrid.length === 0 || !scalar)) {
+    const epochId = (detail && detail.epoch_id) || state.epoch.id;
+    if (champ && champ !== '?' && epochId && epochId !== '—') {
+      loadMatchupGrid(epochId, champ, genId);
+    }
+    const grid = matchupGrids.get(genId);
+    if (grid && grid !== 'pending') {
+      if (entryGrid.length === 0 && Array.isArray(grid.entry_grid)) {
+        entryGrid = grid.entry_grid;
+      }
+      if (!scalar && grid.scalar) scalar = grid.scalar;
+    }
+  }
 
   // --- What was tested
   wrap.appendChild(el('h3', null, ['What was tested']));
@@ -2351,10 +2466,13 @@ function renderMatchupDetail() {
   // --- Per-entry A/B grid
   wrap.appendChild(el('h3', null, ['Per-entry A/B grid']));
   if (entryGrid.length === 0) {
+    const gridPending = !isLive && matchupGrids.get(genId) === 'pending';
     wrap.appendChild(el('p', { class: 'empty' }, [
       isLive
         ? 'Tournament still in progress — per-entry grid lands on completion.'
-        : 'No per-entry grid recorded.',
+        : gridPending
+          ? 'Reading per-entry outcomes from the persisted loss files…'
+          : 'No per-entry grid recorded.',
     ]));
   } else {
     const regressions = entryGrid.filter(
@@ -2374,7 +2492,9 @@ function renderMatchupDetail() {
       el('th', null, ['board entry']),
       el('th', null, [champ + ' loss']),
       el('th', null, [genId + ' loss']),
+      el('th', null, ['Δ']),
       el('th', null, ['pass A→B']),
+      el('th', null, ['won by']),
       el('th', null, ['verdict']),
     ];
     if (hgOn) headCells.push(el('th', null, ['trace']));
@@ -2383,13 +2503,35 @@ function renderMatchupDetail() {
     const tbody = el('tbody');
     for (const row of entryGrid) {
       const verdict = String(row.verdict || 'flat').toLowerCase();
+      // Per-entry Δ — challenger minus champion drift loss. The grid
+      // row carries an explicit `delta` from the persisted loss-file
+      // read; fall back to the subtraction for index-sourced rows.
+      const pl = row.parent_drift_loss;
+      const cl = row.child_drift_loss;
+      const delta = (typeof row.delta === 'number') ? row.delta
+        : (typeof pl === 'number' && typeof cl === 'number') ? cl - pl : null;
+      // Which side won this board — lower drift loss wins. The persisted
+      // grid carries an explicit `won_by` (a generation id); otherwise
+      // derive it from the verdict.
+      let wonBy = '—';
+      if (row.won_by === genId || verdict === 'improved') wonBy = genId;
+      else if (row.won_by === champ || verdict === 'regressed') wonBy = champ;
+      const wonCls = wonBy === genId ? 'ab-won-challenger'
+        : wonBy === champ ? 'ab-won-champion' : 'ab-won-tie';
       const cells = [
         el('td', { class: 'mono' }, [row.entry_id || '—']),
         el('td', { class: 'mono' }, [fmtRate(row.parent_drift_loss)]),
         el('td', { class: 'mono' }, [fmtRate(row.child_drift_loss)]),
+        el('td', {
+          class: 'mono ' + (delta != null && delta < 0 ? 'good'
+            : delta != null && delta > 0 ? 'bad' : ''),
+        }, [delta != null ? fmtDelta(delta) : '—']),
         el('td', { class: 'mono' }, [
           (row.parent_pass ? '✓' : '✗') + ' → ' +
           (row.child_pass ? '✓' : '✗'),
+        ]),
+        el('td', null, [
+          el('span', { class: 'ab-won ' + wonCls }, [wonBy]),
         ]),
         el('td', null, [
           el('span', { class: 'ab-verdict ab-verdict-' + verdict }, [verdict]),
@@ -2433,8 +2575,11 @@ function renderMatchupDetail() {
   // --- Scalar breakdown
   wrap.appendChild(el('h3', null, ['Scalar breakdown']));
   if (!scalar) {
+    const scalarPending = !isLive && matchupGrids.get(genId) === 'pending';
     wrap.appendChild(el('p', { class: 'empty' }, [
-      'No scalar breakdown recorded.',
+      scalarPending
+        ? 'Composing the scalar breakdown from the persisted aggregates…'
+        : 'No scalar breakdown recorded.',
     ]));
   } else {
     wrap.appendChild(renderScalarBreakdown(scalar, champ, genId));
@@ -2633,16 +2778,27 @@ function renderInlineConversation() {
 // (`GET /api/epoch` / the `epoch` key on `/api/environment`); every
 // field is read defensively — any block may be absent on a fresh epoch.
 
+// The epoch id the Experiments section last rendered for. Switching
+// epochs resets the per-entry expansion state so a deep-link into a
+// different epoch starts with every entry terse.
+let _experimentsEpochId = null;
+
 function renderEpochView() {
   const def = state.epochDef;
+  const epochId = def && def.epoch_id ? def.epoch_id : null;
+  if (epochId !== _experimentsEpochId) {
+    _expandedEntries.clear();
+    _expandedExperiment = null;
+    _experimentBaseline = null;
+    _experimentsEpochId = epochId;
+  }
   renderEpochHeader(def);
   renderEpochBrief(def);
-  renderEpochExperimentLog(def);
+  renderEpochExperiments(def);
   renderEpochHarness(def);
   renderEpochBoard(def);
   renderEpochScoring(def);
   renderEpochMutations(def);
-  renderEpochJournal(def);
   renderEpochAnalysis(def);
 }
 
@@ -2739,7 +2895,10 @@ function renderEpochHeader(def) {
   stats.appendChild(stat(experiments.length, 'experiments'));
   stats.appendChild(stat(promoted, 'promoted', promoted > 0 ? 'good' : null));
   stats.appendChild(stat(rejected, 'rejected', rejected > 0 ? 'bad' : null));
-  if (pending > 0) stats.appendChild(stat(pending, 'in progress', 'pend'));
+  // An experiment with no recorded verdict is `incomplete` — its
+  // tournament was torn down or never reached a decision. "in progress"
+  // is reserved for a genuinely live, currently-running experiment.
+  if (pending > 0) stats.appendChild(stat(pending, 'incomplete', 'pend'));
   if (haveScalar) {
     // Net scalar: negative is improvement (loss went down).
     const cls = netScalar < 0 ? 'good' : (netScalar > 0 ? 'bad' : null);
@@ -2777,7 +2936,12 @@ function renderEpochHarness(def) {
 function renderEpochBoard(def) {
   const wrap = $('epoch-board');
   clearChildren(wrap);
-  const board = def && Array.isArray(def.board) ? def.board : [];
+  const rawBoard = def && Array.isArray(def.board) ? def.board : [];
+  // Drop the `board_meta` header row — an entry carrying neither an id
+  // nor a kind is the meta line, not a real board entry; rendered it
+  // would be a spurious leading row of all-`—` cells.
+  const board = rawBoard.filter(
+    (e) => e && (e.id != null || e.kind != null) && e.board_meta !== true);
   if (board.length === 0) {
     wrap.appendChild(el('p', { class: 'empty' }, ['No board entries.']));
     return;
@@ -2930,15 +3094,18 @@ function renderEpochScoring(def) {
 // Render a scoring weight value. Scalars render as plain text; an
 // object-valued weight (e.g. per_kind_weights, severity_weights)
 // renders as a nested key->value sub-list instead of stringifying to
-// the literal `[object Object]`.
+// the literal `[object Object]`. Each nested entry renders as an
+// explicit `key: value` row — without the separator the key and value
+// concatenate (e.g. `confabulation_risk2`, `critical10`).
 function scoringValueCell(v) {
   if (v != null && typeof v === 'object' && !Array.isArray(v)) {
     const entries = Object.entries(v);
     if (entries.length === 0) return el('span', { class: 'meta' }, ['{}']);
     const sub = el('ul', { class: 'scoring-subdict' });
     for (const [ik, iv] of entries) {
-      sub.appendChild(el('li', null, [
+      sub.appendChild(el('li', { class: 'scoring-subrow' }, [
         el('span', { class: 'scoring-subkey' }, [ik]),
+        el('span', { class: 'scoring-subsep' }, [': ']),
         el('span', { class: 'scoring-subval' }, [
           iv != null && typeof iv === 'object'
             ? scoringValueCell(iv)
@@ -2990,14 +3157,20 @@ function renderEpochMutations(def) {
   wrap.appendChild(tbl);
 }
 
-// --- Render: Epoch experiment log
+// --- Render: Epoch experiments
 //
-// The narrative core of the Epoch view. Each experiment (one generation
-// evaluated by a tournament) renders as a card told in four beats:
-// (1) WHAT — the proposer's core idea + generation id + lineage;
+// The narrative core of the Epoch view, AND the epoch's journal — one
+// merged chronological per-round log. Each entry is terse by default —
+// a single summary line (round ordinal · generation id · the core idea
+// · the verdict · Δscalar) — and expands on click to the full
+// four-beat detail: (1) WHAT — the proposer's core idea + lineage;
 // (2) HYPOTHESIS — the pre-run structured prediction; (3) CHANGE — the
-// patch set, with a line diff that expands on click; (4) OUTCOME — the
+// patch set, with a line diff that expands further; (4) OUTCOME — the
 // tournament verdict, scalar Δ, rejection reason, tournament jump.
+// This section IS the journal, well-rendered: an experiment whose
+// tournament never reached a verdict still appears here (it reads as
+// `incomplete`), where the raw journal.md would drop it. A small
+// "view raw journal" link is offered for the underlying markdown.
 // All story data is on `state.epochDef.experiments`; the baseline fetch
 // for the diff is lazy and only powers beat 3.
 
@@ -3098,10 +3271,11 @@ function _renderExperimentOutcome(outcome, decision, genId) {
   block.appendChild(el('div', { class: 'exp-beat-label' }, ['Outcome']));
   if (!outcome) {
     block.appendChild(el('p', { class: 'exp-beat-caption meta' }, [
-      'This experiment has not finished evaluating yet.',
+      'No tournament verdict was recorded — the tournament was torn '
+      + 'down or never reached a decision.',
     ]));
     block.appendChild(el('p', { class: 'exp-pending-line' }, [
-      el('span', { class: 'badge pending' }, ['in progress']),
+      el('span', { class: 'badge pending' }, ['incomplete']),
     ]));
     return block;
   }
@@ -3211,11 +3385,11 @@ function _renderExperimentChange(exp, genId, def) {
     // patch's `new_content` shown as an addition when no baseline is
     // cached yet. If the baseline has not been fetched, kick off the
     // lazy load and re-render once it lands so the diff fills in.
-    renderEpochExperimentLog(def);
+    renderEpochExperiments(def);
     if (_expandedExperiment === genId && epochId && !_experimentBaseline) {
       _loadBaselineContents(epochId).then((baseline) => {
         _experimentBaseline = baseline;
-        renderEpochExperimentLog(def);
+        renderEpochExperiments(def);
       }).catch(() => { /* keep the addition-only diff already shown */ });
     }
   };
@@ -3257,7 +3431,163 @@ function _renderExperimentChange(exp, genId, def) {
   return block;
 }
 
-function renderEpochExperimentLog(def) {
+// Which experiment entries are expanded to full four-beat detail
+// (a set of generation ids). Distinct from `_expandedExperiment`,
+// which tracks the diff toggle WITHIN an expanded entry.
+const _expandedEntries = new Set();
+
+// Split a journal blob into ordered `## heading` sections; the preamble
+// before the first heading (the `# Epoch journal` title) is dropped.
+// The merged Experiments section folds each section's free prose into
+// the matching experiment entry as a journal note.
+function _parseJournalSections(journal) {
+  const sections = [];
+  let current = null;
+  for (const raw of journal.replace(/\r\n/g, '\n').split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const h2 = line.match(/^##\s+(.*)$/);
+    if (h2) sections.push((current = { title: h2[1].trim(), body: [] }));
+    else if (current) current.body.push(line);
+  }
+  return sections;
+}
+
+// A `**label**: value` line -> `{ label, value }`, else null. Used to
+// strip the `**field**:` markers out of a journal section's prose so no
+// literal `**` reaches the page.
+function _journalFieldLine(line) {
+  const m = line.match(/^\*\*([^*]+)\*\*\s*:?\s*(.*)$/);
+  return m ? { label: m[1].trim(), value: m[2].trim() } : null;
+}
+
+// Reduce a journal section to its free-prose body — the `**field**:`
+// lines are dropped (the structured hypothesis / outcome beats already
+// carry that data) and only the human-written narrative remains.
+function _journalSectionProse(section) {
+  if (!section) return [];
+  const prose = [];
+  let buf = [];
+  const flush = () => { if (buf.length) { prose.push(buf.join(' ')); buf = []; } };
+  for (const line of section.body) {
+    if (line.trim() === '') { flush(); continue; }
+    if (_journalFieldLine(line) && prose.length === 0 && buf.length === 0) continue;
+    buf.push(line.trim());
+  }
+  flush();
+  return prose;
+}
+
+// Index journal sections by the generation id mentioned in their `## `
+// heading (the canonical form is `## v{N} — ...`). Lets the merged
+// Experiments log fold each round's narrative into its experiment.
+function _journalSectionsByGen(journal) {
+  const byGen = {};
+  for (const section of _parseJournalSections(journal)) {
+    const m = section.title.match(/(v[\w.]+)/i);
+    if (m) byGen[m[1]] = section;
+  }
+  return byGen;
+}
+
+// The one-line verdict label for an entry summary: the decision word,
+// or `incomplete` when no tournament verdict was recorded. "in
+// progress" is reserved for a genuinely live, running experiment.
+function _experimentVerdictLabel(decision) {
+  return decision || 'incomplete';
+}
+
+// Render ONE merged experiment entry — terse summary line, expandable
+// to the full four-beat detail. `journalSection` is the matching
+// journal.md round (or null); its free prose renders as a note.
+function _renderExperimentEntry(exp, idx, def, journalSection) {
+  const genId = exp.generation_id || '?';
+  const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
+    ? exp.hypothesis : {};
+  const outcome = (exp.outcome && typeof exp.outcome === 'object')
+    ? exp.outcome : null;
+  const decision = _epochDecision(outcome);
+  const decisionKind = _epochDecisionKind(decision);
+  const modulating = Array.isArray(hyp.modulating) ? hyp.modulating : [];
+  const coreIdea = (typeof hyp.core_idea === 'string' && hyp.core_idea.trim())
+    ? hyp.core_idea.trim() : 'No description recorded.';
+  const isOpen = _expandedEntries.has(genId);
+  const scalar = outcome && typeof outcome.scalar_score_delta === 'number'
+    ? outcome.scalar_score_delta : null;
+
+  // The entry carries an accent stripe coloured by the decision so the
+  // promoted / rejected / incomplete arc is scannable down the column.
+  const card = el('article', {
+    class: 'exp-card exp-card-' + decisionKind + (isOpen ? ' exp-card-open' : ''),
+    'data-genid': genId,
+  });
+
+  // -- The terse summary line — always visible, the whole row toggles.
+  const summary = el('button', {
+    type: 'button',
+    class: 'exp-summary',
+    'aria-expanded': isOpen ? 'true' : 'false',
+    'data-genid': genId,
+  });
+  summary.appendChild(el('span', { class: 'exp-summary-caret', 'aria-hidden': 'true' },
+    [isOpen ? '▾' : '▸']));
+  summary.appendChild(el('span', { class: 'exp-card-ordinal' }, ['#' + (idx + 1)]));
+  summary.appendChild(el('span', { class: 'exp-card-gen mono' }, [genId]));
+  summary.appendChild(el('span', { class: 'exp-summary-idea' },
+    [truncate(coreIdea, 92)]));
+  summary.appendChild(el('span', { class: 'badge ' + decisionKind },
+    [_experimentVerdictLabel(decision)]));
+  if (scalar != null) {
+    summary.appendChild(el('span', {
+      class: 'exp-card-delta mono '
+        + (scalar < 0 ? 'good' : (scalar > 0 ? 'bad' : '')),
+    }, ['Δscalar ' + _fmtSignedDelta(scalar)]));
+  }
+  summary.addEventListener('click', () => {
+    if (_expandedEntries.has(genId)) _expandedEntries.delete(genId);
+    else _expandedEntries.add(genId);
+    renderEpochExperiments(def);
+  });
+  card.appendChild(summary);
+
+  if (!isOpen) return card;
+
+  // -- Expanded: the full four-beat detail ------------------------
+  const head = el('header', { class: 'exp-card-head' });
+  head.appendChild(el('p', { class: 'exp-card-idea' }, [coreIdea]));
+  if (exp.parent_generation_id) {
+    head.appendChild(el('p', { class: 'exp-card-lineage meta mono' }, [
+      'challenger ' + genId + '   vs  champion ' + exp.parent_generation_id,
+    ]));
+  }
+  card.appendChild(head);
+
+  const body = el('div', { class: 'exp-card-body' });
+  body.appendChild(_renderExperimentHypothesis(hyp, modulating));
+  body.appendChild(_renderExperimentChange(exp, genId, def));
+  body.appendChild(_renderExperimentOutcome(outcome, decision, genId));
+
+  // The journal round's free prose, if any — the human-written note
+  // for this round, folded in from journal.md.
+  const prose = _journalSectionProse(journalSection);
+  if (prose.length > 0) {
+    const note = el('div', { class: 'exp-beat exp-beat-note' });
+    note.appendChild(el('div', { class: 'exp-beat-label' }, ['Journal note']));
+    for (const para of prose) {
+      note.appendChild(el('p', null, inlineMarkdown(para)));
+    }
+    body.appendChild(note);
+  }
+  card.appendChild(body);
+
+  return card;
+}
+
+// The merged Experiments section: the experiment narrative AND the
+// epoch journal as ONE chronological per-round log. Every experiment on
+// `def.experiments` renders — including any with no recorded verdict,
+// which read as `incomplete` (the raw journal.md drops those). Each
+// entry is terse by default and expands to the full detail.
+function renderEpochExperiments(def) {
   const wrap = $('epoch-experiment-log');
   if (!wrap) return;
   clearChildren(wrap);
@@ -3271,165 +3601,35 @@ function renderEpochExperimentLog(def) {
     return;
   }
 
-  const list = el('div', { class: 'exp-card-list' });
-
-  experiments.forEach((exp, idx) => {
-    const genId = exp.generation_id || '?';
-    const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
-      ? exp.hypothesis : {};
-    const outcome = (exp.outcome && typeof exp.outcome === 'object')
-      ? exp.outcome : null;
-    const decision = _epochDecision(outcome);
-    const modulating = Array.isArray(hyp.modulating) ? hyp.modulating : [];
-    const coreIdea = (typeof hyp.core_idea === 'string' && hyp.core_idea.trim())
-      ? hyp.core_idea.trim() : 'No description recorded.';
-
-    // The card carries an accent stripe coloured by the decision so the
-    // promoted / rejected / pending arc is scannable down the column.
-    const card = el('article', {
-      class: 'exp-card exp-card-' + _epochDecisionKind(decision),
-      'data-genid': genId,
-    });
-
-    // -- Beat 1: WHAT (the description / header) -------------------
-    const head = el('header', { class: 'exp-card-head' });
-    const titleRow = el('div', { class: 'exp-card-titlerow' }, [
-      el('span', { class: 'exp-card-ordinal' }, ['#' + (idx + 1)]),
-      el('span', { class: 'exp-card-gen mono' }, [genId]),
-      el('span', { class: 'badge ' + _epochDecisionKind(decision) },
-        [decision || 'in progress']),
-      (outcome && typeof outcome.scalar_score_delta === 'number')
-        ? el('span', {
-            class: 'exp-card-delta mono '
-              + (outcome.scalar_score_delta < 0 ? 'good'
-                : (outcome.scalar_score_delta > 0 ? 'bad' : '')),
-          }, ['Δscalar ' + _fmtSignedDelta(outcome.scalar_score_delta)])
-        : null,
-    ]);
-    head.appendChild(titleRow);
-    head.appendChild(el('p', { class: 'exp-card-idea' }, [coreIdea]));
-    if (exp.parent_generation_id) {
-      head.appendChild(el('p', { class: 'exp-card-lineage meta mono' }, [
-        'challenger ' + genId + '   vs  champion ' + exp.parent_generation_id,
-      ]));
-    }
-    card.appendChild(head);
-
-    // -- Beats 2-4: hypothesis · change · outcome ------------------
-    const body = el('div', { class: 'exp-card-body' });
-    body.appendChild(_renderExperimentHypothesis(hyp, modulating));
-    body.appendChild(_renderExperimentChange(exp, genId, def));
-    body.appendChild(_renderExperimentOutcome(outcome, decision, genId));
-    card.appendChild(body);
-
-    list.appendChild(card);
-  });
-
-  wrap.appendChild(list);
-}
-
-// --- Render: Epoch journal
-//
-// The journal is the epoch's round-by-round chronology. Each `## v{N}`
-// section is one experiment, written as `**field**: value` lines plus
-// free prose. The experiment cards above tell each one's full story, so
-// the journal renders as a DISTINCT compact timeline — terse labelled
-// key/value entries, never a second set of detail cards. The `**field**`
-// markers are parsed away; no literal `**` ever reaches the page.
-
-// Split a journal blob into ordered `## heading` sections; the preamble
-// before the first heading (the `# Epoch journal` title) is dropped.
-function _parseJournalSections(journal) {
-  const sections = [];
-  let current = null;
-  for (const raw of journal.replace(/\r\n/g, '\n').split('\n')) {
-    const line = raw.replace(/\s+$/, '');
-    const h2 = line.match(/^##\s+(.*)$/);
-    if (h2) sections.push((current = { title: h2[1].trim(), body: [] }));
-    else if (current) current.body.push(line);
-  }
-  return sections;
-}
-
-// A `**label**: value` line -> `{ label, value }`, else null.
-function _journalFieldLine(line) {
-  const m = line.match(/^\*\*([^*]+)\*\*\s*:?\s*(.*)$/);
-  return m ? { label: m[1].trim(), value: m[2].trim() } : null;
-}
-
-// Render one section as a timeline entry: a heading, the leading run of
-// `**field**:` lines as a labelled key/value grid, then any prose. A
-// field-shaped line buried in prose stays prose.
-function _renderJournalEntry(section) {
-  const entry = el('div', { class: 'journal-entry' });
-  entry.appendChild(el('h3', { class: 'journal-entry-title' },
-    inlineMarkdown(section.title)));
-
-  const fields = [];
-  const prose = [];
-  for (const line of section.body) {
-    if (line.trim() === '') { prose.push(''); continue; }
-    const field = _journalFieldLine(line);
-    if (field && prose.every((p) => p === '')) fields.push(field);
-    else prose.push(line);
-  }
-
-  if (fields.length > 0) {
-    const dl = el('dl', { class: 'journal-fields' });
-    for (const f of fields) {
-      dl.appendChild(el('dt', { class: 'journal-field-label' }, [f.label]));
-      dl.appendChild(el('dd', { class: 'journal-field-value' },
-        f.value ? inlineMarkdown(f.value) : [el('span', { class: 'meta' }, ['—'])]));
-    }
-    entry.appendChild(dl);
-  }
-
-  // Collapse the prose remainder into paragraphs (blank line = break).
-  const proseBlock = el('div', { class: 'journal-entry-prose' });
-  let buf = [];
-  const flush = () => {
-    if (buf.length) proseBlock.appendChild(el('p', null, inlineMarkdown(buf.join(' '))));
-    buf = [];
-  };
-  for (const line of prose) {
-    if (line.trim() === '') flush();
-    else buf.push(line.trim());
-  }
-  flush();
-  if (proseBlock.children.length > 0) entry.appendChild(proseBlock);
-
-  return entry;
-}
-
-function renderEpochJournal(def) {
-  const wrap = $('epoch-journal');
-  if (!wrap) return;
-  clearChildren(wrap);
-  wrap.classList.add('epoch-journal');
+  wrap.appendChild(el('p', { class: 'panel-subheader' }, [
+    'The epoch as it unfolded — one entry per round, terse by default. '
+    + 'Expand an entry for its hypothesis, change and outcome.',
+  ]));
 
   const journal = (def && typeof def.journal === 'string') ? def.journal : '';
-  if (!journal.trim()) {
-    wrap.appendChild(el('p', { class: 'empty' }, ['No journal recorded.']));
-    return;
-  }
+  const journalByGen = _journalSectionsByGen(journal);
 
-  const sections = _parseJournalSections(journal);
-  if (sections.length === 0) {
-    // No `##` sections — fall back to plain markdown rather than nothing.
-    const block = el('div', { class: 'brief-block' });
-    renderMinimalMarkdown(journal, block);
-    wrap.appendChild(block);
-    return;
-  }
+  const list = el('div', { class: 'exp-card-list' });
+  experiments.forEach((exp, idx) => {
+    const genId = exp.generation_id || '?';
+    list.appendChild(
+      _renderExperimentEntry(exp, idx, def, journalByGen[genId] || null));
+  });
+  wrap.appendChild(list);
 
-  wrap.appendChild(el('p', { class: 'panel-subheader' }, [
-    'The epoch as it unfolded — one terse entry per round.',
-  ]));
-  const timeline = el('div', { class: 'journal-timeline' });
-  for (const section of sections) {
-    timeline.appendChild(_renderJournalEntry(section));
+  // A small jump-off to the underlying raw journal.md — the merged log
+  // IS the journal well-rendered, but the raw markdown stays one click
+  // away via the journal endpoint. Offered only when the epoch actually
+  // has a journal.
+  if (journal.trim() && def && def.epoch_id) {
+    wrap.appendChild(el('a', {
+      class: 'live-link exp-journal-raw-link',
+      href: '/api/epoch/' + encodeURIComponent(def.epoch_id) + '/journal',
+      target: '_blank',
+      rel: 'noopener',
+      'aria-label': 'open the raw journal.md markdown',
+    }, ['View raw journal ↗']));
   }
-  wrap.appendChild(timeline);
 }
 
 // --- Render: Epoch analysis
@@ -4390,35 +4590,209 @@ function renderFilesChangesControls() {
   reconcileFilesPicker(pane.firstChild);
 }
 
-// The side-by-side diff: one split diff per file the generation changed.
-function renderFilesChangesDiff() {
-  const pane = $('files-changes-diff');
-  if (!pane) return;
-  clearChildren(pane);
+// How many lines of unchanged context to keep on either side of a
+// changed hunk. A run of equal lines longer than 2x this is folded into
+// a single "… N unchanged lines …" marker.
+const DIFF_CONTEXT_LINES = 3;
 
-  if (!filesState.selectedGen) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, ['Select a generation to see what it changed.'])
+// Group a flat list of LCS ops into a fold plan. The result is a list of
+// segments, each either:
+//   { kind: 'rows', ops: [...] }  — changed lines + their context, shown
+//   { kind: 'fold', count: N, ops: [...] } — a long unchanged run, hidden
+// Equal runs short enough to be entirely context are merged into the
+// adjacent 'rows' segment; only the genuinely-redundant middle of a long
+// run is collapsed. This is what stops a two-line change painting a
+// 9,000px-tall identical wall of source.
+function foldDiffOps(ops, context = DIFF_CONTEXT_LINES) {
+  // Index of every changed op.
+  const changedAt = [];
+  for (let i = 0; i < ops.length; i++) {
+    if (ops[i].kind !== 'equal') changedAt.push(i);
+  }
+  // No changes at all — nothing to fold, render the whole thing as one
+  // shown segment (a same-content file should not reach here, but be
+  // defensive).
+  if (changedAt.length === 0) {
+    return ops.length ? [{ kind: 'rows', ops: ops.slice() }] : [];
+  }
+  // Mark which op indices are "shown": every changed line, plus `context`
+  // equal lines on each side of every changed line.
+  const shown = new Array(ops.length).fill(false);
+  for (const idx of changedAt) {
+    const lo = Math.max(0, idx - context);
+    const hi = Math.min(ops.length - 1, idx + context);
+    for (let i = lo; i <= hi; i++) shown[i] = true;
+  }
+  // Walk the op list, emitting shown runs as 'rows' and hidden runs as
+  // 'fold' segments.
+  const segments = [];
+  let i = 0;
+  while (i < ops.length) {
+    const isShown = shown[i];
+    let j = i;
+    while (j < ops.length && shown[j] === isShown) j++;
+    const slice = ops.slice(i, j);
+    if (isShown) {
+      segments.push({ kind: 'rows', ops: slice });
+    } else {
+      segments.push({ kind: 'fold', count: slice.length, ops: slice });
+    }
+    i = j;
+  }
+  return segments;
+}
+
+// Build one diff line cell for a side. `kind` ∈ equal|del|add|pad.
+function diffSideLine(text, kind) {
+  const sign = { del: '-', add: '+', equal: ' ', pad: '' }[kind] || ' ';
+  return el('div', { class: `diff-line diff-${kind}` }, [
+    el('span', { class: 'diff-gutter' }, [sign]),
+    el('span', { class: 'diff-text' }, [text == null || text === '' ? ' ' : text]),
+  ]);
+}
+
+// Append the rows of a segment of LCS ops to the old/new side columns.
+// An 'equal' op fills both sides; a 'del' marks the old side and pads the
+// new; an 'add' pads the old side and marks the new — keeping the two
+// columns line-aligned. A 'del' immediately followed by an 'add' is a
+// modified line: both sides carry a `diff-mod` accent so the operator
+// reads it as a change-in-place, not an unrelated delete + insert.
+function appendDiffOpRows(left, right, ops) {
+  for (let k = 0; k < ops.length; k++) {
+    const op = ops[k];
+    if (op.kind === 'equal') {
+      left.appendChild(diffSideLine(op.a, 'equal'));
+      right.appendChild(diffSideLine(op.b, 'equal'));
+    } else if (op.kind === 'del') {
+      const next = ops[k + 1];
+      if (next && next.kind === 'add') {
+        // A delete paired with the next insert — render as a modified
+        // line on both sides and consume the paired 'add'.
+        const lo = diffSideLine(op.a, 'del');
+        const ro = diffSideLine(next.b, 'add');
+        lo.classList.add('diff-mod');
+        ro.classList.add('diff-mod');
+        left.appendChild(lo);
+        right.appendChild(ro);
+        k += 1;
+      } else {
+        left.appendChild(diffSideLine(op.a, 'del'));
+        right.appendChild(diffSideLine('', 'pad'));
+      }
+    } else {
+      left.appendChild(diffSideLine('', 'pad'));
+      right.appendChild(diffSideLine(op.b, 'add'));
+    }
+  }
+}
+
+// A folded-region marker, present in BOTH columns at the same row index
+// so the side-by-side layout stays aligned. Clicking either marker
+// expands the hidden run in place: the segment's equal rows are spliced
+// in where the markers stand, then both markers are removed.
+function appendDiffFoldMarker(left, right, segment) {
+  const label = `… ${segment.count} unchanged `
+    + `line${segment.count === 1 ? '' : 's'} — click to expand`;
+  let expanded = false;
+  const leftMarker = el('button', {
+    type: 'button',
+    class: 'diff-fold',
+    title: 'Show the unchanged lines hidden here',
+  }, [label]);
+  const rightMarker = el('button', {
+    type: 'button',
+    class: 'diff-fold',
+    title: 'Show the unchanged lines hidden here',
+  }, [label]);
+  const expand = () => {
+    if (expanded) return;
+    expanded = true;
+    const leftRows = el('div');
+    const rightRows = el('div');
+    appendDiffOpRows(leftRows, rightRows, segment.ops);
+    while (leftRows.firstChild) {
+      left.insertBefore(leftRows.firstChild, leftMarker);
+    }
+    while (rightRows.firstChild) {
+      right.insertBefore(rightRows.firstChild, rightMarker);
+    }
+    if (leftMarker.parentNode) leftMarker.parentNode.removeChild(leftMarker);
+    if (rightMarker.parentNode) rightMarker.parentNode.removeChild(rightMarker);
+  };
+  leftMarker.addEventListener('click', expand);
+  rightMarker.addEventListener('click', expand);
+  left.appendChild(leftMarker);
+  right.appendChild(rightMarker);
+}
+
+// Render a folding side-by-side diff: old content on the left, new on
+// the right, with long unchanged runs collapsed to a click-to-expand
+// marker and every changed hunk shown with a few lines of context.
+function renderFoldingSplitDiff(oldText, newText) {
+  const a = String(oldText == null ? '' : oldText).split('\n');
+  const b = String(newText == null ? '' : newText).split('\n');
+  const ops = lcsDiff(a, b);
+  const wrap = el('div', { class: 'diff diff-split diff-folding' });
+  const left = el('div', { class: 'diff-side diff-old' });
+  const right = el('div', { class: 'diff-side diff-new' });
+  const segments = foldDiffOps(ops);
+  for (const seg of segments) {
+    if (seg.kind === 'fold') {
+      appendDiffFoldMarker(left, right, seg);
+    } else {
+      appendDiffOpRows(left, right, seg.ops);
+    }
+  }
+  wrap.appendChild(left);
+  wrap.appendChild(right);
+  return wrap;
+}
+
+// A stable digest of the changes payload. swapIfChanged uses it so a
+// no-op SSE repaint leaves the diff subtree untouched — folds the
+// operator manually expanded, and the horizontal scroll position of
+// every diff pane, survive the repaint.
+function filesChangesKey() {
+  if (!filesState.selectedGen) return 'none';
+  const changes = filesState.changes || { files: [] };
+  if (changes.error) return 'error:' + changes.error;
+  const parts = [
+    'changes',
+    filesState.selectedGen.generation_id || '',
+    changes.parent_generation_id || '',
+  ];
+  for (const f of changes.files || []) {
+    parts.push(
+      f.path || '', f.status || '',
+      'o:' + (f.old_binary ? 'b' : String((f.old_content || '').length)),
+      'n:' + (f.new_binary ? 'b' : String((f.new_content || '').length)),
     );
-    return;
+  }
+  return parts.join('|');
+}
+
+// Build the "What changed" diff subtree — pure, no DOM lookups.
+function buildFilesChangesDiff() {
+  if (!filesState.selectedGen) {
+    return el('p', { class: 'empty' }, ['Select a generation to see what it changed.']);
   }
   const changes = filesState.changes || { files: [] };
-  if (changes.error) {
-    pane.appendChild(el('p', { class: 'empty' }, [changes.error]));
-    return;
-  }
+  if (changes.error) return el('p', { class: 'empty' }, [changes.error]);
+
   const parent = changes.parent_generation_id;
-  pane.appendChild(el('div', { class: 'files-changes-summary' }, [
-    parent
-      ? `${filesState.selectedGen.generation_id} vs ${parent}`
-      : `${filesState.selectedGen.generation_id} (seed — every file is new)`,
-  ]));
+  const wrap = el('div', { class: 'files-changes-diff-body' }, [
+    el('div', { class: 'files-changes-summary' }, [
+      parent
+        ? `${filesState.selectedGen.generation_id} vs ${parent}`
+        : `${filesState.selectedGen.generation_id} (seed — every file is new)`,
+    ]),
+  ]);
   const files = changes.files || [];
   if (files.length === 0) {
-    pane.appendChild(
+    wrap.appendChild(
       el('p', { class: 'empty' }, ['No file changes for this generation.'])
     );
-    return;
+    return wrap;
   }
   for (const f of files) {
     const oldLabel = parent ? `${parent} · old` : 'baseline';
@@ -4438,12 +4812,23 @@ function renderFilesChangesDiff() {
         el('div', { class: 'files-change-col-label' }, [oldLabel]),
         el('div', { class: 'files-change-col-label' }, [newLabel]),
       ]));
-      // The shared diff component in split mode: old on the left, new
-      // on the right.
-      block.appendChild(splitDiff(f.old_content, f.new_content, { mode: 'split' }));
+      // A folding split diff: old on the left, new on the right, with
+      // long unchanged runs collapsed so a small change is not buried
+      // under a wall of identical source.
+      block.appendChild(renderFoldingSplitDiff(f.old_content, f.new_content));
     }
-    pane.appendChild(block);
+    wrap.appendChild(block);
   }
+  return wrap;
+}
+
+// The side-by-side diff: one split diff per file the generation changed.
+// Routed through swapIfChanged so a no-op SSE repaint preserves the
+// diff subtree (expanded folds + horizontal scroll position).
+function renderFilesChangesDiff() {
+  const pane = $('files-changes-diff');
+  if (!pane) return;
+  swapIfChanged(pane, filesChangesKey(), buildFilesChangesDiff);
 }
 
 // Left pane top: the epoch -> generation picker, then the file tree.
@@ -4547,42 +4932,58 @@ async function openFilesFile(relPath) {
   renderFilesContent();
 }
 
-// The right pane: the open file's content.
-function renderFilesContent() {
-  const pane = $('files-content-pane');
-  if (!pane) return;
-  clearChildren(pane);
+// A stable digest of what renderFilesContent draws — see
+// mutationsDetailKey: identical key -> the content subtree (and its
+// scrollable <pre>'s horizontal scroll position) survives a no-op
+// SSE-driven repaint untouched.
+function filesContentKey() {
+  const payload = filesState._content;
+  if (!filesState.openFile || !payload) return 'none';
+  if (payload.error) return 'error:' + filesState.openFile + ':' + payload.error;
+  if (payload.binary) return 'binary:' + filesState.openFile;
+  return 'content:' + filesState.openFile
+    + ':' + (payload.truncated ? 't' : 'f')
+    + ':' + (payload.size || 0)
+    + ':' + String(payload.content || '').length;
+}
 
+// Build the open file's content subtree — pure, no DOM lookups.
+function buildFilesContent() {
   const payload = filesState._content;
   if (!filesState.openFile || !payload) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, ['Select a file to view its contents.'])
-    );
-    return;
+    return el('p', { class: 'empty' }, ['Select a file to view its contents.']);
   }
-  pane.appendChild(
-    el('div', { class: 'files-content-header' }, [filesState.openFile])
-  );
+  const body = el('div', { class: 'files-content-wrap' }, [
+    el('div', { class: 'files-content-header' }, [filesState.openFile]),
+  ]);
   if (payload.error) {
-    pane.appendChild(el('p', { class: 'empty' }, [payload.error]));
-    return;
+    body.appendChild(el('p', { class: 'empty' }, [payload.error]));
+    return body;
   }
   if (payload.binary) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, ['Binary file — not shown.'])
-    );
-    return;
+    body.appendChild(el('p', { class: 'empty' }, ['Binary file — not shown.']));
+    return body;
   }
   if (payload.truncated) {
-    pane.appendChild(
+    body.appendChild(
       el('div', { class: 'files-content-note' }, [
         `Truncated — showing the first part of a ${fmtFileSize(payload.size)} file.`,
       ])
     );
   }
-  pane.appendChild(
+  body.appendChild(
     el('pre', { class: 'files-content-body' }, [payload.content || ''])
   );
+  return body;
+}
+
+// The right pane: the open file's content. Routed through swapIfChanged
+// so a no-op SSE repaint leaves the <pre> node — and its horizontal
+// scroll position — untouched.
+function renderFilesContent() {
+  const pane = $('files-content-pane');
+  if (!pane) return;
+  swapIfChanged(pane, filesContentKey(), buildFilesContent);
 }
 
 // The patch-set section: the patches that derived the selected
@@ -4842,30 +5243,48 @@ async function selectMutationSite(mutationId) {
   renderMutationsDetail();
 }
 
-// Right pane: the selected site's baseline content and, per patching
-// generation, a line-level diff of baseline vs patched content.
-function renderMutationsDetail() {
-  const pane = $('mutations-detail-pane');
-  if (!pane) return;
-  clearChildren(pane);
-
-  if (!mutationsState.selectedId) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, ['Select a mutation site to view its diff.'])
+// A cheap, stable digest of everything renderMutationsDetail draws for
+// the currently-selected site. swapIfChanged compares it against the
+// previously-rendered key: identical -> the whole detail subtree (and
+// the horizontal scroll position of every diff pane in it) is left
+// untouched; different -> the detail is rebuilt. This is the
+// mutation-site analogue of the tournament openMatchup scroll-fight fix
+// (#/files/{epoch}/{gen} repaints on every SSE tick): a no-op repaint
+// must not reset the viewer's scrollLeft.
+function mutationsDetailKey() {
+  const id = mutationsState.selectedId;
+  if (!id) return 'none';
+  const detail = mutationsState.detail;
+  if (!detail) return 'loading:' + id;
+  if (detail.error) return 'error:' + id + ':' + detail.error;
+  const baseline = detail.baseline || {};
+  const parts = [
+    'detail', id,
+    baseline.role || '', baseline.file || '',
+    baseline.line_start || '', baseline.line_end || '',
+    'b:' + (baseline.content || '').length,
+  ];
+  for (const v of detail.versions || []) {
+    parts.push(
+      'v:' + (v.generation_id || '?'),
+      v.op || '', v.rationale || '', v.error || '',
+      'c:' + (v.content == null ? 'null' : String(v.content).length),
     );
-    return;
+  }
+  return parts.join('');
+}
+
+// Build the detail subtree for the selected site — pure, no DOM lookups.
+function buildMutationsDetail() {
+  if (!mutationsState.selectedId) {
+    return el('p', { class: 'empty' }, ['Select a mutation site to view its diff.']);
   }
   const detail = mutationsState.detail;
-  if (!detail) {
-    pane.appendChild(el('p', { class: 'empty' }, ['Loading…']));
-    return;
-  }
-  if (detail.error) {
-    pane.appendChild(el('p', { class: 'empty' }, [detail.error]));
-    return;
-  }
+  if (!detail) return el('p', { class: 'empty' }, ['Loading…']);
+  if (detail.error) return el('p', { class: 'empty' }, [detail.error]);
+
   const baseline = detail.baseline || {};
-  pane.appendChild(
+  const body = el('div', { class: 'mutations-detail-body' }, [
     el('div', { class: 'mutations-detail-header' }, [
       el('span', { class: 'mutations-detail-id' }, [detail.mutation_id || '']),
       el('span', { class: 'mutations-detail-loc' }, [
@@ -4875,25 +5294,25 @@ function renderMutationsDetail() {
               ? ':' + baseline.line_start + '-' + baseline.line_end
               : ''),
       ]),
-    ])
-  );
+    ]),
+  ]);
 
   const versions = detail.versions || [];
   if (versions.length === 0) {
     // No patch ever touched this site — show the baseline content as-is.
-    pane.appendChild(
+    body.appendChild(
       el('div', { class: 'mutations-version-label' }, [
         'v0 baseline — no patch has touched this site',
       ])
     );
-    pane.appendChild(
+    body.appendChild(
       el('pre', { class: 'files-content-body' }, [baseline.content || ''])
     );
-    return;
+    return body;
   }
   // One diff block per generation whose patch touched this id.
   for (const version of versions) {
-    pane.appendChild(
+    body.appendChild(
       el('div', { class: 'mutations-version-label' }, [
         el('span', {}, ['v0 → ' + (version.generation_id || '?')]),
         version.op
@@ -4902,20 +5321,34 @@ function renderMutationsDetail() {
       ])
     );
     if (version.rationale) {
-      pane.appendChild(
+      body.appendChild(
         el('div', { class: 'mutations-version-rationale' }, [version.rationale])
       );
     }
     if (version.error || version.content == null) {
-      pane.appendChild(
+      body.appendChild(
         el('p', { class: 'empty' }, [
           version.error || 'No patched content available for this generation.',
         ])
       );
       continue;
     }
-    pane.appendChild(renderMutationDiff(baseline.content || '', version.content));
+    body.appendChild(renderMutationDiff(baseline.content || '', version.content));
   }
+  return body;
+}
+
+// Right pane: the selected site's baseline content and, per patching
+// generation, a line-level diff of baseline vs patched content.
+//
+// Routed through swapIfChanged (the keyed reconcile spine) so an
+// SSE-driven repaint with unchanged detail data is a pure no-op: the
+// detail subtree keeps its node identity, and the horizontal scroll
+// position of every diff pane in it survives the repaint.
+function renderMutationsDetail() {
+  const pane = $('mutations-detail-pane');
+  if (!pane) return;
+  swapIfChanged(pane, mutationsDetailKey(), buildMutationsDetail);
 }
 
 // Render a unified line-level diff of baseline vs patched span content.
@@ -5277,6 +5710,7 @@ export {
   applyRoute, setupLineageInteractions, closeDrill,
   renderLogTail, appendLogTail,
   // Files view — exported for the JS test harness (the route-driven
-  // entry point and the scratch state it resolves into).
-  applyFilesRoute, filesState,
+  // entry point, the scratch state it resolves into, and the
+  // mutation-site browser's selection entry point + its state).
+  applyFilesRoute, filesState, selectMutationSite, mutationsState,
 };

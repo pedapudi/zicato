@@ -66,6 +66,11 @@ export class AppState {
     // header epoch summary + full epoch contract.
     this.epoch = { id: '—', generation: '—', round: '—', startedAt: null };
     this.epochDef = null;
+    // Lightweight per-epoch summary list — [{ epoch_id, goal }] — from
+    // the /api/environment `epochs` key. Lets the Overview's epochs
+    // table annotate each row with the epoch's goal without a
+    // per-epoch /api/epoch fetch.
+    this.epochs = [];
 
     this.workspace = null;
 
@@ -122,6 +127,7 @@ export class AppState {
     if (snap.run_log) this.setLogTail(snap.run_log);
     if (snap.scoring) Object.assign(this.scoring, snap.scoring);
     if (snap.workspace) this.workspace = snap.workspace;
+    if (Array.isArray(snap.epochs)) this.epochs = snap.epochs;
     this._foldEpoch(snap.epoch);
     if (snap.epoch_summary && typeof snap.epoch_summary === 'object') {
       Object.assign(this.epoch, snap.epoch_summary);
@@ -153,6 +159,7 @@ export class AppState {
     }
     if (env.run_log) this.setLogTail(env.run_log);
     if (env.workspace) this.workspace = env.workspace;
+    if (Array.isArray(env.epochs)) this.epochs = env.epochs;
     this._foldEpoch(env.epoch);
     this._changed();
   }
