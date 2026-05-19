@@ -899,6 +899,14 @@ class LossProfile:
         scalars and their MetricCount mirror entries
         (``"cost:tokens_spent"``, ``"output:chars"``, ``"schema:failures"``)
         agree.
+    adk_session_id:
+        The ADK/goldfive session id for this run — the ``sessionId``
+        envelope field present on every event in the run's
+        ``events.jsonl``. goldfive keys its session views by this id;
+        the harmonograf deep-link route is ``/#/session/<adk_session_id>``.
+        Empty string when the events file is absent or carries no
+        envelope ``sessionId``. Back-compat default: ``""`` so profiles
+        written before this field was added load cleanly.
     """
 
     run_id: str
@@ -923,6 +931,10 @@ class LossProfile:
     tokens_spent: int = 0
     output_chars: int = 0
     schema_failures: int = 0
+    # ADK/goldfive session id — carried on every event envelope; the
+    # harmonograf deep-link route is /#/session/<adk_session_id>.
+    # Back-compat default: "" so old profiles load without change.
+    adk_session_id: str = ""
 
     def unified_metrics(self) -> tuple[MetricCount, ...]:
         """Return the merged metric view across drift_counts + metric_counts.

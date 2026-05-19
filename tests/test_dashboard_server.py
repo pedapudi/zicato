@@ -599,6 +599,53 @@ def test_tournament_detail(client: TestClient) -> None:
     assert cell["verdict"] == "improved"
 
 
+def test_tournament_detail_surfaces_adk_session_ids(workspace: Path) -> None:
+    """``ab_grid`` cells carry ``parent_adk_session_id`` / ``child_adk_session_id``
+    when the ``loss_json`` column stores a matching ``adk_session_id``."""
+    import json as _json
+
+    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_detail
+
+    # Patch the index to include real adk_session_id in loss_json.
+    index_path = workspace / "index.db"
+    conn = sqlite3.connect(index_path)
+    parent_lj = _json.dumps({"adk_session_id": "session-parent-aaa"})
+    child_lj = _json.dumps({"adk_session_id": "session-child-bbb"})
+    conn.execute(
+        "UPDATE loss_profiles SET loss_json = ?"
+        " WHERE generation_id = 'v0' AND entry_id = 'waffles_single'",
+        (parent_lj,),
+    )
+    conn.execute(
+        "UPDATE loss_profiles SET loss_json = ?"
+        " WHERE generation_id = 'v1' AND entry_id = 'waffles_single'",
+        (child_lj,),
+    )
+    conn.commit()
+    conn.close()
+
+    paths = WorkspacePaths(workspace)
+    detail = build_matchup_detail(paths, "v1")
+    assert len(detail["ab_grid"]) == 1
+    cell = detail["ab_grid"][0]
+    assert cell.get("parent_adk_session_id") == "session-parent-aaa"
+    assert cell.get("child_adk_session_id") == "session-child-bbb"
+
+
+def test_tournament_detail_ab_grid_omits_absent_adk_session_id(workspace: Path) -> None:
+    """An ``ab_grid`` cell without a valid ``adk_session_id`` in ``loss_json``
+    simply omits the key — the cell is not malformed."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_matchup_detail
+
+    # The fixture index has loss_json = '{}' — no adk_session_id.
+    paths = WorkspacePaths(workspace)
+    detail = build_matchup_detail(paths, "v1")
+    assert len(detail["ab_grid"]) == 1
+    cell = detail["ab_grid"][0]
+    assert "parent_adk_session_id" not in cell
+    assert "child_adk_session_id" not in cell
+
+
 def test_tournament_detail_invalid_id(client: TestClient) -> None:
     # An id the validator rejects (a space) degrades to an empty matchup
     # rather than erroring.
@@ -1019,3 +1066,55 @@ def test_empty_workspace_endpoints_do_not_500(tmp_path: Path, static_dir: Path) 
             "/api/health-report",
         ):
             assert c.get(path).status_code == 200, path
+
+
+# ---------------------------------------------------------------------------
+# ADK session id utility — read_adk_session_id_from_events
+# ---------------------------------------------------------------------------
+
+
+def test_read_adk_session_id_from_events_camel(tmp_path: Path) -> None:
+    """Reads ``sessionId`` (camelCase) from the first line of an events.jsonl."""
+    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+
+    p = tmp_path / "events.jsonl"
+    _write(
+        p,
+        json.dumps({"eventId": "e0", "runId": "r0", "sessionId": "sid-camel-xyz"}) + "\n",
+    )
+    assert read_adk_session_id_from_events(str(p)) == "sid-camel-xyz"
+
+
+def test_read_adk_session_id_from_events_snake(tmp_path: Path) -> None:
+    """Reads ``session_id`` (snake_case) when ``sessionId`` is absent."""
+    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+
+    p = tmp_path / "events.jsonl"
+    _write(
+        p,
+        json.dumps({"event_id": "e0", "run_id": "r0", "session_id": "sid-snake-abc"}) + "\n",
+    )
+    assert read_adk_session_id_from_events(str(p)) == "sid-snake-abc"
+
+
+def test_read_adk_session_id_from_events_missing_file(tmp_path: Path) -> None:
+    """A missing file degrades to ``""``."""
+    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+
+    assert read_adk_session_id_from_events(str(tmp_path / "no-such-file.jsonl")) == ""
+
+
+def test_read_adk_session_id_from_events_none_path() -> None:
+    """A ``None`` path degrades to ``""``."""
+    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+
+    assert read_adk_session_id_from_events(None) == ""
+
+
+def test_read_adk_session_id_from_events_no_session_field(tmp_path: Path) -> None:
+    """An events.jsonl with no session envelope key degrades to ``""``."""
+    from zicato.dashboard.state_reader import read_adk_session_id_from_events
+
+    p = tmp_path / "events.jsonl"
+    _write(p, json.dumps({"event_id": "e0", "run_id": "r0"}) + "\n")
+    assert read_adk_session_id_from_events(str(p)) == ""

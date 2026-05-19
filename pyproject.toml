@@ -80,6 +80,14 @@ Issues = "https://github.com/pedapudi/zicato/issues"
 # prefix so the wheel still ships top-level `zicato/`.
 packages = ["src/zicato"]
 
+# The dashboard's JS test harness under static/test/ is a developer
+# tool — it runs the frontend behaviour tests under `node` and is
+# exercised by tests/test_dashboard_js.py. It is NOT part of the
+# shipped dashboard bundle, so it is excluded from the wheel.
+exclude = [
+    "src/zicato/dashboard/static/test",
+]
+
 # Custom build hook (hatch_build.py): compiles the Rust supervisor
 # crate and bundles the binary at zicato/_bin/zicato-supervisor so it
 # ships inside the wheel. Best-effort — see hatch_build.py.
