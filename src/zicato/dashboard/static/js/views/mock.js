@@ -218,6 +218,15 @@ function mockSnapshot() {
         { kind: 'off_topic', from_rate: 0.18, to_rate: 0.12 },
         { kind: 'schema_violation', from_rate: 0.10, to_rate: 0.14 },
       ],
+      // The server-computed running partial aggregate — the runner
+      // rewrites these per board unit as the round runs. champion =
+      // the held generation, challenger = the proposed one.
+      partial_champion_agg: {
+        drift_loss_mean: 0.24, pass_rate: 0.92, scalar: 0.183, entry_count: 3,
+      },
+      partial_challenger_agg: {
+        drift_loss_mean: 0.31, pass_rate: 0.90, scalar: 0.214, entry_count: 3,
+      },
     },
     past_tournaments: [
       {
@@ -450,8 +459,9 @@ function mockSnapshot() {
           outcome: null,
         },
       ],
-      // Journal: epoch-level markdown log of round outcomes.
-      journal: '# Epoch journal\n\n## v1 — Tighten extraction schema\n\n**outcome**: rejected (Δscalar=+0.022)\n\nThe strict schema rejected a valid borderline response on `schema_response`. The pass-rate regression outweighed the drift improvement.\n\n## v2 — Move JSON validation earlier\n\n**outcome**: promoted (Δscalar=-0.040)\n\nValidate-before-emit cleared the dominant schema_violation drift. Pass rate improved by 5 pp.\n',
+      // Journal: the canonical per-experiment section shape journal.py
+      // writes — a `## v{N}` heading then `**field**: value` lines.
+      journal: '# Epoch journal\n\n## v1 — Tighten extraction schema\n\n**proposed_at**: 2026-05-15T09:05:00Z\n**modulating**: researcher.schema\n**why**: Schema drift was the dominant kind in v0.\n**outcome**: rejected (Δscalar=+0.022, Δpass_rate=-0.050)\n**rejection_reason**: pass-rate regression on `schema_response`\n\n## v2 — Move JSON validation earlier\n\n**proposed_at**: 2026-05-15T09:30:00Z\n**modulating**: pipeline.order\n**outcome**: promoted (Δscalar=-0.040, Δpass_rate=+0.050)\n\nValidate-before-emit cleared the dominant schema_violation drift.\n',
       // Analysis report: post-epoch summary.
       analysis_md: '# Epoch analysis\n\n## Summary\n\nTwo experiments ran this epoch. One was promoted (`v2`), one was rejected (`v1`).\n\n## Key findings\n\n- Schema enforcement alone (v1) increased scalar by +0.022 — the strict schema rejected valid borderline responses.\n- Moving validation earlier (v2) improved scalar by −0.040; schema_violation drift dropped from 0.25 to 0.10.\n\n## Recommendation\n\nThe next epoch should focus on the rubric_judge entries, which still show high spread.\n',
       analysis_html_available: false,

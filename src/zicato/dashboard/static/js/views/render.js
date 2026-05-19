@@ -321,11 +321,11 @@ function renderLiveActivity() {
 
 // Pull (drift_loss_mean, pass_rate) for one side, preferring the
 // server-computed running partial aggregate. The runner rewrites
-// `partial_parent_agg` / `partial_child_agg` the instant each board
-// unit settles (see runner._IncrementalScorer), so this number climbs
-// as the tournament runs rather than sitting at 0.00 until round end.
-// `agg` is the aggregate_generation_score dict shape; missing fields
-// degrade to null so fmtRate renders an em-dash, not a false zero.
+// `partial_champion_agg` / `partial_challenger_agg` the instant each
+// board unit settles (see runner._IncrementalScorer), so this number
+// climbs as the tournament runs rather than sitting at 0.00 until round
+// end. `agg` is the aggregate_generation_score dict shape; missing
+// fields degrade to null so fmtRate renders an em-dash, not a false zero.
 function partialSide(agg) {
   if (!agg || typeof agg !== 'object') return null;
   const dm = agg.drift_loss_mean;
@@ -362,42 +362,42 @@ function renderAggregate(t) {
   // over the per-side entry rows only when the server fields are
   // absent (a legacy active_tournament.json written before the
   // incremental-scorer change).
-  const serverParent = partialSide(t.partial_parent_agg);
-  const serverChild = partialSide(t.partial_child_agg);
+  const serverChampion = partialSide(t.partial_champion_agg);
+  const serverChallenger = partialSide(t.partial_challenger_agg);
 
-  let parentDM, parentPR, childDM, childPR;
-  if (serverParent || serverChild) {
-    parentDM = serverParent ? serverParent.drift_loss_mean : null;
-    parentPR = serverParent ? serverParent.pass_rate : null;
-    childDM = serverChild ? serverChild.drift_loss_mean : null;
-    childPR = serverChild ? serverChild.pass_rate : null;
+  let championDM, championPR, challengerDM, challengerPR;
+  if (serverChampion || serverChallenger) {
+    championDM = serverChampion ? serverChampion.drift_loss_mean : null;
+    championPR = serverChampion ? serverChampion.pass_rate : null;
+    challengerDM = serverChallenger ? serverChallenger.drift_loss_mean : null;
+    challengerPR = serverChallenger ? serverChallenger.pass_rate : null;
   } else {
     const finished = (t.entries || []).filter(entryIsDone);
-    let parentDriftSum = 0, parentPassSum = 0;
-    let childDriftSum = 0, childPassSum = 0;
+    let championDriftSum = 0, championPassSum = 0;
+    let challengerDriftSum = 0, challengerPassSum = 0;
     for (const e of finished) {
-      if (e.parent) { parentDriftSum += e.parent.drift_loss || 0; parentPassSum += e.parent.pass ? 1 : 0; }
-      if (e.child)  { childDriftSum  += e.child.drift_loss || 0;  childPassSum  += e.child.pass  ? 1 : 0; }
+      if (e.parent) { championDriftSum += e.parent.drift_loss || 0; championPassSum += e.parent.pass ? 1 : 0; }
+      if (e.child)  { challengerDriftSum += e.child.drift_loss || 0; challengerPassSum += e.child.pass ? 1 : 0; }
     }
     const n = Math.max(1, finished.length);
-    parentDM = parentDriftSum / n;
-    parentPR = parentPassSum / n;
-    childDM = childDriftSum / n;
-    childPR = childPassSum / n;
+    championDM = championDriftSum / n;
+    championPR = championPassSum / n;
+    challengerDM = challengerDriftSum / n;
+    challengerPR = challengerPassSum / n;
   }
   const regression =
-    (typeof childPR === 'number' && typeof parentPR === 'number' && childPR < parentPR) ||
-    (typeof childDM === 'number' && typeof parentDM === 'number' && childDM > parentDM);
+    (typeof challengerPR === 'number' && typeof championPR === 'number' && challengerPR < championPR) ||
+    (typeof challengerDM === 'number' && typeof championDM === 'number' && challengerDM > championDM);
 
   tbody.appendChild(el('tr', null, [
-    el('td', null, [t.parent_id || 'parent']),
-    el('td', { class: 'mono' }, [fmtRate(parentDM)]),
-    el('td', { class: 'mono' }, [fmtRate(parentPR)]),
+    el('td', null, [t.parent_id || 'champion']),
+    el('td', { class: 'mono' }, [fmtRate(championDM)]),
+    el('td', { class: 'mono' }, [fmtRate(championPR)]),
   ]));
   tbody.appendChild(el('tr', { class: regression ? 'row-flag' : '' }, [
-    el('td', null, [t.child_id || 'child']),
-    el('td', { class: 'mono' }, [fmtRate(childDM)]),
-    el('td', { class: 'mono' }, [fmtRate(childPR) + (regression ? '  ← REGRESSING' : '')]),
+    el('td', null, [t.child_id || 'challenger']),
+    el('td', { class: 'mono' }, [fmtRate(challengerDM)]),
+    el('td', { class: 'mono' }, [fmtRate(challengerPR) + (regression ? '  ← REGRESSING' : '')]),
   ]));
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
@@ -406,12 +406,12 @@ function renderAggregate(t) {
   // carried them — they are the gate's exact scalar, not the
   // drift-minus-pass approximation. Fall back to the approximation
   // (legacy active_tournament.json with no partial aggregate).
-  const pScalar = (t.partial_parent_agg && typeof t.partial_parent_agg.scalar === 'number')
-    ? t.partial_parent_agg.scalar
-    : (typeof parentDM === 'number' && typeof parentPR === 'number') ? parentDM - parentPR : null;
-  const cScalar = (t.partial_child_agg && typeof t.partial_child_agg.scalar === 'number')
-    ? t.partial_child_agg.scalar
-    : (typeof childDM === 'number' && typeof childPR === 'number') ? childDM - childPR : null;
+  const pScalar = (t.partial_champion_agg && typeof t.partial_champion_agg.scalar === 'number')
+    ? t.partial_champion_agg.scalar
+    : (typeof championDM === 'number' && typeof championPR === 'number') ? championDM - championPR : null;
+  const cScalar = (t.partial_challenger_agg && typeof t.partial_challenger_agg.scalar === 'number')
+    ? t.partial_challenger_agg.scalar
+    : (typeof challengerDM === 'number' && typeof challengerPR === 'number') ? challengerDM - challengerPR : null;
   const dScalar = (typeof pScalar === 'number' && typeof cScalar === 'number')
     ? cScalar - pScalar
     : NaN;
@@ -423,14 +423,20 @@ function renderAggregate(t) {
 
 // The Overview score trajectory — the scalar across every generation,
 // sourced from `state.scoreTrajectory.points` (build_score_trajectory).
-// Painted into its own #overview-trajectory-svg so it never collides
-// with the Tree view's trajectory chart.
+// Painted into its own #overview-trajectory-svg. This is the dashboard's
+// ONLY score-trajectory chart — the Tree view is purely the lineage DAG.
+//
+// The scalar is a drift-loss aggregate: lower is better. The chart is
+// fully labelled so a reader can tell which generation and what loss
+// each point is — a y-axis of scalar values with gridline ticks, an
+// x-axis of generation ids, and a per-point value label above each
+// marker.
 function renderOverviewTrajectory() {
   const svg = $('overview-trajectory-svg');
   if (!svg) return;
   clearChildren(svg);
 
-  const width = 720, height = 220;
+  const width = 720, height = 240;
   sizeSvg(svg, width, height);
 
   const points = (state.scoreTrajectory && Array.isArray(state.scoreTrajectory.points))
@@ -451,6 +457,8 @@ function renderOverviewTrajectory() {
   }
 
   const values = scored.map((s) => s.v);
+  // The scalar is a loss >= 0; anchor the axis at 0 so the curve's
+  // magnitude — and the lower-is-better trend — reads honestly.
   let vmin = Math.min(...values, 0);
   let vmax = Math.max(...values, 0);
   if (vmin === vmax) {
@@ -461,13 +469,29 @@ function renderOverviewTrajectory() {
     vmin -= pad; vmax += pad;
   }
 
-  const marginL = 50, marginR = 18, marginT = 22, marginB = 36;
+  const marginL = 58, marginR = 20, marginT = 26, marginB = 48;
   const plotW = width - marginL - marginR;
   const plotH = height - marginT - marginB;
   const n = scored.length;
   const xStep = n > 1 ? plotW / (n - 1) : 0;
   const toX = (i) => (n === 1 ? marginL + plotW / 2 : marginL + i * xStep);
   const toY = (v) => marginT + (vmax - v) / (vmax - vmin) * plotH;
+
+  // Horizontal gridlines with y-axis scalar ticks — five evenly-spaced
+  // levels so the curve's height maps to a readable loss value.
+  for (let k = 0; k < 5; k++) {
+    const gy = marginT + plotH * k / 4;
+    svg.appendChild(svgEl('line', {
+      x1: marginL, y1: gy.toFixed(1),
+      x2: marginL + plotW, y2: gy.toFixed(1),
+      stroke: COLORS.grid, 'stroke-width': '0.5', 'stroke-opacity': '0.6',
+    }));
+    const tickVal = vmax - (vmax - vmin) * k / 4;
+    svg.appendChild(svgEl('text', {
+      class: 'svg-axis', x: marginL - 8, y: (gy + 3).toFixed(1),
+      'text-anchor': 'end',
+    }, [tickVal.toFixed(2)]));
+  }
 
   // axes
   svg.appendChild(svgEl('line', {
@@ -481,6 +505,19 @@ function renderOverviewTrajectory() {
     stroke: COLORS.grid, 'stroke-width': '1',
   }));
 
+  // y-axis title — rotated, names the plotted quantity.
+  svg.appendChild(svgEl('text', {
+    class: 'svg-label', x: 14, y: (marginT + plotH / 2).toFixed(1),
+    'text-anchor': 'middle',
+    transform: `rotate(-90 14 ${(marginT + plotH / 2).toFixed(1)})`,
+  }, ['scalar (loss — lower is better)']));
+
+  // x-axis title — names the per-point dimension.
+  svg.appendChild(svgEl('text', {
+    class: 'svg-label', x: (marginL + plotW / 2).toFixed(1),
+    y: (height - 8).toFixed(1), 'text-anchor': 'middle',
+  }, ['generation']));
+
   // the curve
   const d = scored.map((s, i) =>
     `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(s.v).toFixed(1)}`).join(' ');
@@ -488,16 +525,24 @@ function renderOverviewTrajectory() {
     d, fill: 'none', stroke: COLORS.running, 'stroke-width': '2',
   }));
 
-  // markers, coloured by verdict
+  // markers, coloured by verdict; each labelled with its generation id
+  // (x-axis) and its scalar value (above the marker).
   scored.forEach((s, i) => {
     const fill = s.promoted === true ? COLORS.promoted
       : s.promoted === false ? COLORS.rejected
         : COLORS.running;
+    const cx = toX(i), cy = toY(s.v);
     svg.appendChild(svgEl('circle', {
-      cx: toX(i).toFixed(1), cy: toY(s.v).toFixed(1), r: '3.5', fill,
+      cx: cx.toFixed(1), cy: cy.toFixed(1), r: '3.5', fill,
     }));
+    // Per-point scalar value, placed above the marker.
     svg.appendChild(svgEl('text', {
-      class: 'svg-axis', x: toX(i).toFixed(1), y: (marginT + plotH + 16).toFixed(1),
+      class: 'svg-axis', x: cx.toFixed(1), y: (cy - 8).toFixed(1),
+      'text-anchor': 'middle',
+    }, [s.v.toFixed(2)]));
+    // Generation id, on the x-axis.
+    svg.appendChild(svgEl('text', {
+      class: 'svg-axis', x: cx.toFixed(1), y: (marginT + plotH + 16).toFixed(1),
       'text-anchor': 'middle',
     }, [String(s.id || '')]));
   });
@@ -997,165 +1042,6 @@ function setupLineageInteractions() {
   $('lineage-zoom-in').addEventListener('click', () => zoomBy(1.2));
   $('lineage-zoom-out').addEventListener('click', () => zoomBy(1 / 1.2));
   $('lineage-zoom-reset').addEventListener('click', resetLineageTransform);
-}
-
-// --- Render: score trajectory
-
-function renderTrajectory() {
-  const svg = $('trajectory-svg');
-  clearChildren(svg);
-
-  // The environment-wide evolution curve: the ABSOLUTE per-generation
-  // scalar (drift-loss aggregate — lower is better), plotted in lineage
-  // order. Sourced from GET /api/score-trajectory, NOT from the
-  // per-round scalar_score_delta — a delta is not an evolution curve.
-  const points = (state.scoreTrajectory && state.scoreTrajectory.points) || [];
-
-  const width = 720, height = 220;
-  sizeSvg(svg, width, height);
-  if (points.length === 0) {
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis', x: width / 2, y: height / 2, 'text-anchor': 'middle',
-    }, ['No generations to plot.']));
-    return;
-  }
-
-  // A generation with no scored runs yet carries scalar === null — it
-  // is kept on the x-axis (as a gap) so the lineage stays continuous.
-  const series = points.map((p, i) => ({
-    i,
-    id: p.generation_id,
-    decision: p.promoted === true ? 'promoted'
-      : p.promoted === false ? 'rejected'
-        : 'in_flight',
-    v: typeof p.scalar === 'number' ? p.scalar : null,
-    entryCount: p.entry_count || 0,
-  }));
-
-  const values = series.map(s => s.v).filter(v => v !== null);
-  if (values.length === 0) {
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis', x: width / 2, y: height / 2, 'text-anchor': 'middle',
-    }, ['No scored generations yet.']));
-    return;
-  }
-  // The scalar is a loss >= 0; anchor the axis at 0 so the curve's
-  // magnitude reads honestly.
-  let vmin = Math.min(...values, 0);
-  let vmax = Math.max(...values, 0);
-  if (vmin === vmax) {
-    const pad = Math.max(0.1, Math.abs(vmin) * 0.2 || 0.1);
-    vmin -= pad; vmax += pad;
-  } else {
-    const pad = (vmax - vmin) * 0.1;
-    vmin -= pad; vmax += pad;
-  }
-
-  const marginL = 50, marginR = 18, marginT = 22, marginB = 36;
-  const plotW = width - marginL - marginR;
-  const plotH = height - marginT - marginB;
-  const n = series.length;
-  const xStep = n > 1 ? plotW / (n - 1) : 0;
-
-  const toX = (i) => n === 1 ? marginL + plotW / 2 : marginL + i * xStep;
-  const toY = (v) => marginT + (vmax - v) / (vmax - vmin) * plotH;
-
-  // grid
-  for (let k = 0; k < 5; k++) {
-    const gy = marginT + plotH * k / 4;
-    svg.appendChild(svgEl('line', {
-      x1: marginL, y1: gy.toFixed(1),
-      x2: marginL + plotW, y2: gy.toFixed(1),
-      stroke: COLORS.grid, 'stroke-width': 0.5, 'stroke-opacity': 0.6,
-    }));
-    // Absolute loss tick — no leading '+', this is a magnitude.
-    const tickVal = vmax - (vmax - vmin) * k / 4;
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis',
-      x: marginL - 6, y: (gy + 3).toFixed(1), 'text-anchor': 'end',
-    }, [tickVal.toFixed(2)]));
-  }
-
-  // x-axis
-  svg.appendChild(svgEl('line', {
-    x1: marginL, y1: (marginT + plotH).toFixed(1),
-    x2: marginL + plotW, y2: (marginT + plotH).toFixed(1),
-    stroke: COLORS.grid, 'stroke-width': 1,
-  }));
-
-  // The evolution curve: connect every SCORED generation in lineage
-  // order. A generation still being scored (scalar === null) is a gap
-  // — the line picks up again at the next scored point.
-  const scored = series.filter(s => s.v !== null)
-    .map(s => [toX(s.i), toY(s.v)]);
-  if (scored.length >= 2) {
-    const d = 'M ' + scored.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L ');
-    svg.appendChild(svgEl('path', {
-      d, fill: 'none', stroke: COLORS.baseline, 'stroke-width': 2,
-    }));
-  }
-
-  for (const s of series) {
-    const cx = toX(s.i);
-    if (s.v === null) {
-      // Unscored generation — mark its x-axis slot, no data point.
-      svg.appendChild(svgEl('text', {
-        class: 'svg-axis',
-        x: cx.toFixed(1), y: (marginT + plotH + 14).toFixed(1),
-        'text-anchor': 'middle',
-      }, [s.id]));
-      continue;
-    }
-    const cy = toY(s.v);
-    if (s.decision === 'promoted') {
-      svg.appendChild(svgEl('circle', {
-        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 5,
-        fill: COLORS.promoted, stroke: COLORS.promoted, 'stroke-width': 1.5,
-      }));
-    } else if (s.decision === 'rejected') {
-      const sz = 4.5;
-      svg.appendChild(svgEl('rect', {
-        x: (cx - sz).toFixed(1), y: (cy - sz).toFixed(1),
-        width: 2 * sz, height: 2 * sz,
-        fill: 'none', stroke: COLORS.rejected, 'stroke-width': 1.6,
-      }));
-    } else if (s.decision === 'deferred') {
-      svg.appendChild(svgEl('circle', {
-        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4.5,
-        fill: 'none', stroke: COLORS.deferred, 'stroke-width': 1.6,
-        'stroke-dasharray': '2 2',
-      }));
-    } else if (s.decision === 'in_flight') {
-      // Still running — no verdict, drawn hollow in the running blue.
-      svg.appendChild(svgEl('circle', {
-        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4.5,
-        fill: 'none', stroke: COLORS.running, 'stroke-width': 1.6,
-        'stroke-dasharray': '3 2',
-      }));
-    } else {
-      svg.appendChild(svgEl('circle', {
-        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4,
-        fill: 'none', stroke: COLORS.baseline, 'stroke-width': 1.4,
-      }));
-    }
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis',
-      x: cx.toFixed(1), y: (marginT + plotH + 14).toFixed(1),
-      'text-anchor': 'middle',
-    }, [s.id]));
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis',
-      x: cx.toFixed(1), y: (cy - 8).toFixed(1),
-      'text-anchor': 'middle',
-    }, [s.v.toFixed(2)]));
-  }
-
-  svg.appendChild(svgEl('text', {
-    class: 'svg-axis',
-    x: marginL - 36, y: (marginT + plotH / 2).toFixed(1),
-    'text-anchor': 'middle',
-    transform: `rotate(-90 ${marginL - 36} ${(marginT + plotH / 2).toFixed(1)})`,
-  }, ['scalar (loss)']));
 }
 
 // --- Render: drift heatmap
@@ -1891,6 +1777,10 @@ function renderBoardResult(board) {
 // #conversation/{id} deep-link route still works for direct navigation.
 function openBoardConversation(entryId) {
   if (entryId == null) return;
+  // A board card opens a board-ENTRY detail; clear any matchup-by-gen
+  // selection so renderMatchupDetail (which prefers state.selectedMatchup)
+  // does not shadow it with a stale gen-keyed panel.
+  state.selectedMatchup = null;
   state.selectedEntry = entryId;
   // selectConversation manages the fetch and sets convEntryId / convData.
   selectConversation(entryId);
@@ -1987,10 +1877,17 @@ function renderLiveCard(t, champId) {
   ]));
 
   // Per-entry status dots + a done/running/failed breakdown.
+  // The census comes from dataQuality, the shared run-population helper:
+  // "running" counts ONLY running entries. The old `total - done -
+  // failed` formula folded QUEUED entries into running, so the card read
+  // "12 running" when 6 ran and 6 were queued. dataQuality keeps running
+  // and queued distinct, matching the hall occupancy header.
   const entries = Array.isArray(t.entries) ? t.entries : [];
-  const done = entries.filter(entryIsDone).length;
-  const failed = entries.filter(entryFailed).length;
-  const running = entries.length - done - failed;
+  const dq = dataQuality(entries);
+  const done = dq.completed;
+  const running = dq.running;
+  const failed = dq.failed;
+  const queued = dq.queued;
 
   const dots = el('div', { class: 'bracket-live-dots', 'aria-hidden': 'true' });
   for (const e of entries) {
@@ -2002,6 +1899,7 @@ function renderLiveCard(t, champId) {
 
   const progBits = [done + ' of ' + entries.length + ' board entries done'];
   if (running > 0) progBits.push(running + ' running');
+  if (queued > 0) progBits.push(queued + ' queued');
   if (failed > 0) progBits.push(failed + ' failed');
   card.appendChild(el('div', { class: 'bracket-live-prog meta' }, [
     progBits.join(' · '),
@@ -2024,14 +1922,22 @@ function renderLiveCard(t, champId) {
 
 // Navigate to a matchup's detail. The selection is held in state and
 // the detail endpoint is fetched lazily.
+//
+// applyRoute() re-runs openMatchup on every render (each SSE delta) for
+// a `#/tournament/{genId}` deep-link. Scrolling unconditionally yanked
+// the page back to the detail panel on every tick — the route's "broken
+// scrolling". The scroll therefore fires ONLY when the matchup changes.
 function openMatchup(genId) {
   if (!genId) return;
+  const changed = state.selectedMatchup !== genId;
   state.selectedMatchup = genId;
   renderMatchupDetail();
   loadMatchupDetail(genId);
-  const section = $('tournament-detail-section');
-  if (section && section.scrollIntoView) {
-    section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (changed) {
+    const section = $('tournament-detail-section');
+    if (section && section.scrollIntoView) {
+      section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   }
 }
 
@@ -2852,18 +2758,32 @@ function renderMinimalMarkdown(src, container) {
   flushList();
 }
 
-// Split a line on backtick-delimited inline code spans.
+// Split a line into inline spans: backtick `code` and `**bold**`.
+// Everything else passes through as a plain (escaped) text node. An
+// unclosed delimiter stays literal rather than swallowing the line.
 function inlineMarkdown(text) {
   const parts = [];
   let i = 0;
   while (i < text.length) {
     const tick = text.indexOf('`', i);
-    if (tick === -1) { parts.push(text.slice(i)); break; }
-    const end = text.indexOf('`', tick + 1);
-    if (end === -1) { parts.push(text.slice(i)); break; }
-    if (tick > i) parts.push(text.slice(i, tick));
-    parts.push(el('code', null, [text.slice(tick + 1, end)]));
-    i = end + 1;
+    const bold = text.indexOf('**', i);
+    let next = (tick !== -1 && bold !== -1) ? Math.min(tick, bold)
+      : (tick !== -1 ? tick : bold);
+    if (next === -1) { parts.push(text.slice(i)); break; }
+    if (next === tick) {
+      const end = text.indexOf('`', tick + 1);
+      if (end === -1) { parts.push(text.slice(i)); break; }
+      if (tick > i) parts.push(text.slice(i, tick));
+      parts.push(el('code', null, [text.slice(tick + 1, end)]));
+      i = end + 1;
+    } else {
+      const end = text.indexOf('**', bold + 2);
+      if (end === -1 || end === bold + 2) { parts.push(text.slice(i)); break; }
+      if (bold > i) parts.push(text.slice(i, bold));
+      // Recurse so `code` nested inside bold still renders.
+      parts.push(el('strong', null, inlineMarkdown(text.slice(bold + 2, end))));
+      i = end + 2;
+    }
   }
   return parts;
 }
@@ -3296,8 +3216,76 @@ function renderEpochExperimentLog(def) {
 
 // --- Render: Epoch journal
 //
-// Renders the epoch's journal.md using renderMinimalMarkdown.
-// The journal is a round-by-round log of hypothesis + outcome entries.
+// The journal is the epoch's round-by-round chronology. Each `## v{N}`
+// section is one experiment, written as `**field**: value` lines plus
+// free prose. The experiment cards above tell each one's full story, so
+// the journal renders as a DISTINCT compact timeline — terse labelled
+// key/value entries, never a second set of detail cards. The `**field**`
+// markers are parsed away; no literal `**` ever reaches the page.
+
+// Split a journal blob into ordered `## heading` sections; the preamble
+// before the first heading (the `# Epoch journal` title) is dropped.
+function _parseJournalSections(journal) {
+  const sections = [];
+  let current = null;
+  for (const raw of journal.replace(/\r\n/g, '\n').split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const h2 = line.match(/^##\s+(.*)$/);
+    if (h2) sections.push((current = { title: h2[1].trim(), body: [] }));
+    else if (current) current.body.push(line);
+  }
+  return sections;
+}
+
+// A `**label**: value` line -> `{ label, value }`, else null.
+function _journalFieldLine(line) {
+  const m = line.match(/^\*\*([^*]+)\*\*\s*:?\s*(.*)$/);
+  return m ? { label: m[1].trim(), value: m[2].trim() } : null;
+}
+
+// Render one section as a timeline entry: a heading, the leading run of
+// `**field**:` lines as a labelled key/value grid, then any prose. A
+// field-shaped line buried in prose stays prose.
+function _renderJournalEntry(section) {
+  const entry = el('div', { class: 'journal-entry' });
+  entry.appendChild(el('h3', { class: 'journal-entry-title' },
+    inlineMarkdown(section.title)));
+
+  const fields = [];
+  const prose = [];
+  for (const line of section.body) {
+    if (line.trim() === '') { prose.push(''); continue; }
+    const field = _journalFieldLine(line);
+    if (field && prose.every((p) => p === '')) fields.push(field);
+    else prose.push(line);
+  }
+
+  if (fields.length > 0) {
+    const dl = el('dl', { class: 'journal-fields' });
+    for (const f of fields) {
+      dl.appendChild(el('dt', { class: 'journal-field-label' }, [f.label]));
+      dl.appendChild(el('dd', { class: 'journal-field-value' },
+        f.value ? inlineMarkdown(f.value) : [el('span', { class: 'meta' }, ['—'])]));
+    }
+    entry.appendChild(dl);
+  }
+
+  // Collapse the prose remainder into paragraphs (blank line = break).
+  const proseBlock = el('div', { class: 'journal-entry-prose' });
+  let buf = [];
+  const flush = () => {
+    if (buf.length) proseBlock.appendChild(el('p', null, inlineMarkdown(buf.join(' '))));
+    buf = [];
+  };
+  for (const line of prose) {
+    if (line.trim() === '') flush();
+    else buf.push(line.trim());
+  }
+  flush();
+  if (proseBlock.children.length > 0) entry.appendChild(proseBlock);
+
+  return entry;
+}
 
 function renderEpochJournal(def) {
   const wrap = $('epoch-journal');
@@ -3310,9 +3298,24 @@ function renderEpochJournal(def) {
     wrap.appendChild(el('p', { class: 'empty' }, ['No journal recorded.']));
     return;
   }
-  const block = el('div', { class: 'brief-block' });
-  renderMinimalMarkdown(journal, block);
-  wrap.appendChild(block);
+
+  const sections = _parseJournalSections(journal);
+  if (sections.length === 0) {
+    // No `##` sections — fall back to plain markdown rather than nothing.
+    const block = el('div', { class: 'brief-block' });
+    renderMinimalMarkdown(journal, block);
+    wrap.appendChild(block);
+    return;
+  }
+
+  wrap.appendChild(el('p', { class: 'panel-subheader' }, [
+    'The epoch as it unfolded — one terse entry per round.',
+  ]));
+  const timeline = el('div', { class: 'journal-timeline' });
+  for (const section of sections) {
+    timeline.appendChild(_renderJournalEntry(section));
+  }
+  wrap.appendChild(timeline);
 }
 
 // --- Render: Epoch analysis
@@ -3548,23 +3551,29 @@ function applyRoute() {
     }
     // #/tournament/conv/{entry_id} — restore the inline conversation diff
     // from a deep-link or a board-card click without switching views.
+    // renderMatchupDetail checks state.selectedMatchup FIRST, so a stale
+    // matchup selection (left by a prior #/tournament/{genId}) would
+    // shadow the board-entry detail and the conversation diff would
+    // render under the wrong matchup. Clear it so the entry route owns
+    // the detail panel.
     if (view === 'tournament' && kind === 'conv' && id) {
       if (view !== currentView) showView(view);
       else showViewClassesOnly(view);
+      state.selectedMatchup = null;
       state.selectedEntry = id;
       selectConversation(id);
       applyDrill(null, null);
       return;
     }
-    // #/tournament/{generation_id} — open the matchup detail directly
-    // (the router contract's tournament deep-link). A single trailing
-    // segment that is not the `conv` kind is a challenger generation id.
+    // #/tournament/{generation_id} — open the matchup detail directly.
+    // Clearing the conversation selection keeps the inverse symmetric: a
+    // gen deep-link must not trail an inline diff from a prior drill.
     if (view === 'tournament' && segs.length === 2 && segs[1] !== 'conv') {
       const genId = decodeURIComponent(segs[1]);
       if (view !== currentView) showView(view);
       else showViewClassesOnly(view);
-      // openMatchup sets state.selectedMatchup, lazily loads the detail
-      // and re-renders — the matchup panel opens from the deep-link.
+      state.selectedEntry = null;
+      selectConversation(null);
       openMatchup(genId);
       applyDrill(null, null);
       return;
@@ -3891,8 +3900,13 @@ async function loadConversation() {
     // Guard against the entry changing mid-flight (the operator drilled
     // to a different entry while this request was in the air).
     if (convEntryId !== entryId) return;
-    convData = (data && typeof data === 'object') ? data : null;
-    convError = !convData;
+    // The endpoint always answers 200 — a tournament with no transcripts
+    // degrades to `{champion:null, challenger:null}`, a truthy object.
+    // Caching it verbatim would wedge the view on an empty diff and block
+    // any later retry, so a payload with neither side is treated as "no
+    // data yet" (convData stays null) and the next select re-fetches.
+    convData = conversationPayloadHasData(data) ? data : null;
+    convError = false;
   } catch (err) {
     if (convEntryId !== entryId) return;
     // Endpoint absent (404 on this branch) or transient — degrade.
@@ -3903,6 +3917,14 @@ async function loadConversation() {
   }
   if (currentView === 'conversation') renderConversationView();
   if (currentView === 'tournament') renderMatchupDetail();
+}
+
+// True when a conversations payload carries at least one side's run.
+// The endpoint always answers 200; before either run starts it degrades
+// to `{champion:null, challenger:null}` — "no data yet", not a diff.
+function conversationPayloadHasData(data) {
+  if (!data || typeof data !== 'object') return false;
+  return !!(data.champion || data.challenger);
 }
 
 // True while either side's transcript is still being produced.
@@ -3950,7 +3972,27 @@ const filesState = {
   changesKey: null,   // epoch/generation the cached `changes` belongs to
   patches: null,      // { patches: [...] } applied-patch payload
   patchesKey: null,   // epoch/generation the cached `patches` belongs to
+  // Live-refresh bookkeeping. The /api/files index is a load-time
+  // snapshot; liveGensKey is a digest of the generation set in live
+  // AppState — when it changes the index is re-fetched so a generation
+  // created mid-run reaches the picker without a page reload.
+  liveGensKey: null,  // digest of state.lineage's generation set
+  refreshing: false,  // a background /api/files re-fetch is in flight
 };
+
+// A cheap digest of every generation id in live AppState (the lineage
+// feed). Used to detect that a new generation landed since the Files
+// index was last fetched.
+function liveGenerationsDigest() {
+  const gens = (state.lineage && state.lineage.generations) || [];
+  const ids = [];
+  for (const g of gens) {
+    const id = g && (g.generation_id != null ? g.generation_id : g.id);
+    if (id != null) ids.push(String(id));
+  }
+  ids.sort();
+  return ids.join('|');
+}
 
 function fmtFileSize(bytes) {
   if (typeof bytes !== 'number' || bytes < 0) return '';
@@ -3965,6 +4007,19 @@ function fmtFileSize(bytes) {
 function latestGenerationOf(epochEntry) {
   const gens = (epochEntry && epochEntry.generations) || [];
   return gens.length ? gens[gens.length - 1].generation_id : null;
+}
+
+// The seed generation id for the epoch the mutation surface belongs to.
+// An unpatched mutation site still carries the seed generation's
+// content, so it is tagged with this id — a generation id, consistent
+// with the v1/v2 ids patched sites show. The index lists generations in
+// store order, so the first element is the seed; `v0` is the fallback
+// when the index is not yet loaded.
+function baselineGenerationId() {
+  const epochs = (filesState.index && filesState.index.epochs) || [];
+  const epoch = epochs.find((e) => e.epoch_id === mutationsState.epochId);
+  const gens = (epoch && epoch.generations) || [];
+  return gens.length ? gens[0].generation_id : 'v0';
 }
 
 // Resolve the route's (epoch, generation) against the loaded index,
@@ -4000,6 +4055,11 @@ async function applyFilesRoute(routeEpoch, routeGen) {
     } catch (err) {
       filesState.index = { epochs: [] };
     }
+    filesState.liveGensKey = liveGenerationsDigest();
+  } else {
+    // The index is a load-time snapshot — on every SSE-driven repaint,
+    // re-fetch it when live AppState shows a generation it lacks (Bug 1).
+    await refreshFilesIndexIfStale();
   }
   const target = resolveFilesTarget(routeEpoch, routeGen);
   if (!target) {
@@ -4030,6 +4090,31 @@ async function renderFilesView() {
     filesState.selectedGen ? filesState.selectedGen.epoch_id : null,
     filesState.selectedGen ? filesState.selectedGen.generation_id : null,
   );
+}
+
+// Live-refresh the generation index. Called on every SSE-driven repaint
+// while the Files view is open. A digest of the live lineage generation
+// set gates the re-fetch: unchanged -> pure no-op (no fetch, no DOM
+// write); a new generation -> re-fetch and repaint the pickers through
+// the keyed reconcile spine, adding only the genuinely-new row.
+async function refreshFilesIndexIfStale() {
+  const digest = liveGenerationsDigest();
+  if (digest === filesState.liveGensKey) return;
+  if (filesState.refreshing) return;
+  filesState.refreshing = true;
+  try {
+    const fresh = await fetchJson('/api/files');
+    filesState.index = fresh || { epochs: [] };
+  } catch (err) {
+    // A failed refresh leaves the previous index in place; retried next
+    // tick — the digest is recorded only after a successful fetch.
+    return;
+  } finally {
+    filesState.refreshing = false;
+  }
+  filesState.liveGensKey = digest;
+  renderFilesChangesControls();
+  renderFilesIndex();
 }
 
 // Load a generation's tree + changed-files diff and paint every Files
@@ -4100,40 +4185,95 @@ function renderFilesChanges() {
   renderFilesChangesDiff();
 }
 
-// The generation picker for the changes section.
+// Flatten the Files index into ordered picker rows: an epoch-label row
+// per epoch, then a generation-button row per generation. Each row's
+// STABLE reconcile key lets reconcileList leave a surviving row (and its
+// listener) untouched and only add the row for a new generation — this
+// is what keeps a live index refresh jitter-free.
+function filesPickerRows() {
+  const epochs = (filesState.index && filesState.index.epochs) || [];
+  const rows = [];
+  for (const epoch of epochs) {
+    rows.push({ kind: 'epoch', key: 'epoch:' + epoch.epoch_id, epoch });
+    for (const gen of epoch.generations || []) {
+      rows.push({
+        kind: 'gen',
+        key: 'gen:' + epoch.epoch_id + '/' + gen.generation_id,
+        epochId: epoch.epoch_id,
+        gen,
+      });
+    }
+  }
+  return rows;
+}
+
+// Whether a picker row is the currently-selected generation.
+function filesRowSelected(row) {
+  const sel = filesState.selectedGen;
+  return row.kind === 'gen' && sel
+    && sel.epoch_id === row.epochId
+    && sel.generation_id === row.gen.generation_id;
+}
+
+// Build a fresh picker row (epoch label or generation button).
+function buildFilesPickerRow(row) {
+  if (row.kind === 'epoch') {
+    return el('div', { class: 'files-epoch-label' }, [row.epoch.epoch_id]);
+  }
+  const gen = row.gen;
+  return el('button', {
+    type: 'button',
+    class: 'files-gen-button' + (filesRowSelected(row) ? ' active' : ''),
+    onclick: () => selectFilesGeneration(row.epochId, gen.generation_id),
+  }, [
+    el('span', { class: 'files-gen-id' }, [gen.generation_id]),
+    el('span', { class: 'files-gen-meta' }, [
+      `${gen.file_count} files · ${gen.patch_count} patches`,
+    ]),
+  ]);
+}
+
+// Update an existing picker row in place — only the metadata text and
+// selected-state class change between renders; patch* writes only on a
+// genuine change, so a no-op refresh touches nothing.
+function updateFilesPickerRow(node, row) {
+  if (row.kind === 'epoch') {
+    patchText(node, row.epoch.epoch_id);
+    return;
+  }
+  const gen = row.gen;
+  patchClass(node, 'active', filesRowSelected(row));
+  patchText(node.children[0], gen.generation_id);
+  patchText(node.children[1],
+    `${gen.file_count} files · ${gen.patch_count} patches`);
+}
+
+// Paint a generation picker, reconciling its rows by a stable key.
+function reconcileFilesPicker(picker) {
+  reconcileList(
+    picker,
+    filesPickerRows(),
+    (row) => row.key,
+    buildFilesPickerRow,
+    updateFilesPickerRow,
+  );
+}
+
+// The generation picker for the changes section. Routed through the
+// keyed reconcile spine so an SSE-driven live index refresh adds a new
+// generation's row without churning the rows already on screen.
 function renderFilesChangesControls() {
   const pane = $('files-changes-controls');
   if (!pane) return;
-  clearChildren(pane);
 
   const epochs = (filesState.index && filesState.index.epochs) || [];
   if (epochs.length === 0) {
-    pane.appendChild(el('p', { class: 'empty' }, ['No generations yet.']));
+    swapIfChanged(pane, 'empty', () =>
+      el('p', { class: 'empty' }, ['No generations yet.']));
     return;
   }
-  const sel = filesState.selectedGen;
-  const picker = el('div', { class: 'files-gen-picker' });
-  for (const epoch of epochs) {
-    picker.appendChild(
-      el('div', { class: 'files-epoch-label' }, [epoch.epoch_id])
-    );
-    for (const gen of epoch.generations || []) {
-      const selected = sel
-        && sel.epoch_id === epoch.epoch_id
-        && sel.generation_id === gen.generation_id;
-      picker.appendChild(el('button', {
-        type: 'button',
-        class: 'files-gen-button' + (selected ? ' active' : ''),
-        onclick: () => selectFilesGeneration(epoch.epoch_id, gen.generation_id),
-      }, [
-        el('span', { class: 'files-gen-id' }, [gen.generation_id]),
-        el('span', { class: 'files-gen-meta' }, [
-          `${gen.file_count} files · ${gen.patch_count} patches`,
-        ]),
-      ]));
-    }
-  }
-  pane.appendChild(picker);
+  swapIfChanged(pane, 'picker', () => el('div', { class: 'files-gen-picker' }));
+  reconcileFilesPicker(pane.firstChild);
 }
 
 // The side-by-side diff: one split diff per file the generation changed.
@@ -4193,44 +4333,29 @@ function renderFilesChangesDiff() {
 }
 
 // Left pane top: the epoch -> generation picker, then the file tree.
+// The picker routes through the keyed reconcile spine, and the
+// tree-root child is kept as a stable node, so an SSE-driven live index
+// refresh adds a new generation's button without rebuilding the picker
+// or wiping the file tree already painted below it.
 function renderFilesIndex() {
   const pane = $('files-tree-pane');
   if (!pane) return;
-  clearChildren(pane);
 
   const index = filesState.index || { epochs: [] };
   const epochs = index.epochs || [];
   if (epochs.length === 0) {
-    pane.appendChild(el('p', { class: 'empty' }, ['No generations yet.']));
+    swapIfChanged(pane, 'empty', () =>
+      el('p', { class: 'empty' }, ['No generations yet.']));
     return;
   }
-
-  const picker = el('div', { class: 'files-gen-picker' });
-  for (const epoch of epochs) {
-    picker.appendChild(
-      el('div', { class: 'files-epoch-label' }, [epoch.epoch_id])
-    );
-    for (const gen of epoch.generations || []) {
-      const selected = filesState.selectedGen
-        && filesState.selectedGen.epoch_id === epoch.epoch_id
-        && filesState.selectedGen.generation_id === gen.generation_id;
-      const btn = el('button', {
-        type: 'button',
-        class: 'files-gen-button' + (selected ? ' active' : ''),
-        onclick: () => selectFilesGeneration(epoch.epoch_id, gen.generation_id),
-      }, [
-        el('span', { class: 'files-gen-id' }, [gen.generation_id]),
-        el('span', { class: 'files-gen-meta' }, [
-          `${gen.file_count} files · ${gen.patch_count} patches`,
-        ]),
-      ]);
-      picker.appendChild(btn);
-    }
-  }
-  pane.appendChild(picker);
-
-  // The file tree of the selected generation, below the picker.
-  pane.appendChild(el('div', { id: 'files-tree-root', class: 'files-tree-root' }));
+  // Populated shell: a picker followed by a persistent tree-root. The
+  // shell is built once (swapIfChanged) so the tree-root node — and the
+  // tree renderFilesTree painted into it — survives every later refresh.
+  swapIfChanged(pane, 'shell', () => [
+    el('div', { class: 'files-gen-picker' }),
+    el('div', { id: 'files-tree-root', class: 'files-tree-root' }),
+  ]);
+  reconcileFilesPicker(pane.firstChild);
 }
 
 // The selected generation's source tree, rendered from the flat entry
@@ -4556,7 +4681,13 @@ function renderMutationsList() {
             ? el('span', { class: 'mutations-site-badge' }, [
                 site.patched_generation_ids.join(', '),
               ])
-            : el('span', { class: 'mutations-site-badge unpatched' }, ['baseline']),
+            // An unpatched site still carries the seed generation's
+            // content, so it is tagged with that generation id (v0) —
+            // consistent with the v1/v2 ids patched sites show. The
+            // `unpatched` class keeps the "untouched" signal readable
+            // via muted styling; the tag VALUE is a generation id.
+            : el('span', { class: 'mutations-site-badge unpatched' },
+                [baselineGenerationId()]),
         ]),
       ]);
     },
@@ -4575,7 +4706,7 @@ function renderMutationsList() {
       if (badge) {
         patchText(badge, patched
           ? site.patched_generation_ids.join(', ')
-          : 'baseline');
+          : baselineGenerationId());
         patchClass(badge, 'unpatched', !patched);
       }
     },
@@ -5006,7 +5137,6 @@ function renderActiveView() {
     renderOverview();
   } else if (currentView === 'tree') {
     renderLineage();
-    renderTrajectory();
   } else if (currentView === 'tournament') {
     renderTournamentView();
   } else if (currentView === 'epoch') {

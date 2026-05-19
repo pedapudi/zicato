@@ -196,7 +196,6 @@ REQUIRED_SECTIONS = {
     "epochs-section",
     "recent-experiments-section",
     "lineage-section",
-    "trajectory-section",
     "tournament-bracket-section",
     "tournament-detail-section",
     "heatmap-section",
@@ -286,7 +285,6 @@ REQUIRED_IDS = (
 
 REQUIRED_SVG_IDS = {
     "lineage-svg",
-    "trajectory-svg",
     "overview-trajectory-svg",
     "heatmap-svg",
 }
@@ -410,6 +408,27 @@ def test_overview_is_the_environment_home(index_html: str) -> None:
     assert "runs-section" not in sections, "the Overview must not carry the full active-runs strip"
     # The bracket / matchup board belongs to the Tournament view only.
     assert "tournament-bracket-section" in sections
+
+
+def test_tree_view_is_purely_the_lineage_dag(index_html: str) -> None:
+    """The Tree view is the lineage DAG and nothing else.
+
+    The score-trajectory chart lives ONLY on the Overview
+    (#overview-trajectory-section). The Tree view's duplicate
+    #trajectory-section / #trajectory-svg has been removed; only the
+    lineage section remains.
+    """
+    p = _SectionCollector()
+    p.feed(index_html)
+    sections = set(p.section_ids)
+    assert "lineage-section" in sections, "the Tree view must keep its lineage section"
+    assert (
+        "trajectory-section" not in sections
+    ), "the Tree view must not carry a duplicate score-trajectory section"
+    assert "trajectory-svg" not in p.svg_ids, "the duplicate #trajectory-svg must be removed"
+    # The single surviving trajectory chart is the Overview's.
+    assert "overview-trajectory-section" in sections
+    assert "overview-trajectory-svg" in p.svg_ids
 
 
 def test_app_js_targets_environment_api(app_js: str) -> None:
@@ -752,7 +771,7 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 360 KB uncompressed. Raised from 270 KB by the dashboard redesign:
+    # Raised from 270 KB by the dashboard redesign:
     # the monolithic ``app.js`` was re-architected into ES modules — a
     # thin entry point plus the core spine (state / bus / router / api /
     # sse / dom / format / harmonograf), a shared component library and
@@ -768,13 +787,35 @@ def test_bundle_under_size_envelope(
     # (the experiment narrative renders each experiment as a four-beat
     # card — description / hypothesis / change / outcome — with a
     # coloured-accent layout, partly offset by deleting the prior flat
-    # experiment-log markup). The ``app_js`` fixture concatenates every
-    # shipped JS file, so this envelope covers the whole bundle. The
-    # dev-only JS test harness under ``static/test/`` is NOT shipped and
-    # is excluded. The dashboard is served off disk by the standalone
-    # Python service with no network cost; this guard only keeps the
-    # vanilla bundle from drifting unboundedly.
-    assert total < 360_000, f"bundle is {total} bytes, exceeds 360_000 envelope"
+    # experiment-log markup). Raised again by the dashboard-hardening
+    # integration, which folds in four independent dashboard fixes:
+    #   * the Files-view live-refresh fix — the generation picker routes
+    #     through the keyed reconcile spine (so a generation created
+    #     mid-run appears without a reload and without DOM churn) via a
+    #     flattened picker-row model;
+    #   * the Epoch-view journal renderer — the journal markdown is
+    #     parsed into a labelled round-by-round timeline instead of being
+    #     emitted verbatim (which had leaked literal ``**`` markers onto
+    #     the page), plus the ``inlineMarkdown`` splitter gaining
+    #     `**bold**` support and the timeline's CSS;
+    #   * the Overview score-trajectory axis labels (offset by deleting
+    #     the duplicate Tree-view trajectory chart);
+    #   * the Tournament view's scroll / conversation-diff fixes and the
+    #     champion/challenger terminology rename.
+    # The single-branch caps measured each fix in isolation; the
+    # fully integrated bundle was re-measured directly and the cap
+    # below set comfortably above it. The ``app_js`` fixture
+    # concatenates every shipped JS file, so this envelope covers
+    # the whole bundle. The dev-only JS test harness
+    # under ``static/test/`` is NOT shipped and is excluded. The
+    # dashboard is served off disk by the standalone Python service with
+    # no network cost; this guard only keeps the vanilla bundle from
+    # drifting unboundedly.
+    # Measured integrated bundle (this branch): 366,465 bytes
+    # (index.html + style.css + icons.svg + the concatenated JS
+    # bundle). 380 KB leaves ~13 KB of headroom for incidental
+    # drift without re-licensing every minor edit.
+    assert total < 380_000, f"bundle is {total} bytes, exceeds 380_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

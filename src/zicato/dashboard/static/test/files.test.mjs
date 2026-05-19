@@ -22,7 +22,7 @@ const REQUIRED_IDS = [
   'view-conversation', 'nav-overview', 'nav-tree', 'nav-tournament', 'nav-epoch',
   'nav-files', 'epoch-overview', 'epoch-harness', 'epoch-board', 'epoch-brief',
   'epoch-scoring', 'epoch-mutations', 'epoch-experiment-log', 'epoch-journal',
-  'epoch-analysis', 'lineage-svg', 'trajectory-svg', 'heatmap-svg',
+  'epoch-analysis', 'lineage-svg', 'heatmap-svg',
   'conversation-panel', 'files-changes-controls', 'files-changes-diff',
   'files-tree-pane', 'files-content-pane', 'files-patches', 'mutations-list-pane',
   'mutations-detail-pane', 'lineage-stage', 'lineage-viewport', 'lineage-zoom-in',
@@ -88,16 +88,24 @@ const FIXTURE = {
   },
 };
 
+// /api/files is served from a SEPARATE mutable holder so a test can
+// simulate a new generation landing mid-run (Bug 1, live refresh).
+let filesIndexResponse = FIXTURE['/api/files'];
+
 function seedDom() {
   const doc = installDom();
   globalThis.location = globalThis.window.location;
   globalThis.URLSearchParams = URLSearchParams;
   globalThis.EventSource = class { addEventListener() {} close() {} };
-  // The Files view fetches /api/files*; serve the fixture.
-  globalThis.fetch = async (path) => ({
-    ok: true,
-    json: async () => FIXTURE[String(path).split('?')[0]] ?? {},
-  });
+  // The Files view fetches /api/files*; serve the fixture. The
+  // generation index is served from the mutable holder above.
+  globalThis.fetch = async (path) => {
+    const clean = String(path).split('?')[0];
+    if (clean === '/api/files') {
+      return { ok: true, json: async () => filesIndexResponse };
+    }
+    return { ok: true, json: async () => FIXTURE[clean] ?? {} };
+  };
   for (const id of REQUIRED_IDS) {
     const tag = id.endsWith('-svg') ? 'svg' : 'div';
     const n = doc.createElement(tag);
@@ -293,6 +301,140 @@ test('a no-op repaint produces zero churn in the mutation-site section', async (
   }
   assertEqual(pane.innerHTMLWriteCount(), 0,
     'a repaint must never touch innerHTML in the mutation-site section');
+});
+
+// --- Bug 1: the generation picker live-updates -----------------------
+//
+// The Files index is a load-time snapshot. A generation created while
+// the tab is open (a new challenger v2 produced mid-run) must appear in
+// the picker without a page reload — and a no-op refresh must not churn
+// the rows already on screen.
+
+// The generation-button rows in the "What changed" section's picker.
+function genButtons() {
+  const pane = doc.getElementById('files-changes-controls');
+  return pane._descendants().filter(
+    (n) => n.classList && n.classList.contains('files-gen-button'));
+}
+
+test('a generation added to live state appears in the picker — no reload', async () => {
+  // Start with an index that knows only v0 and v1.
+  filesIndexResponse = {
+    epochs: [{
+      epoch_id: 'ep1',
+      generations: [
+        { generation_id: 'v0', file_count: 2, patch_count: 0 },
+        { generation_id: 'v1', file_count: 2, patch_count: 1 },
+      ],
+    }],
+  };
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  state.lineage = {
+    generations: [{ generation_id: 'v0' }, { generation_id: 'v1' }],
+    experiments: [],
+  };
+
+  window.location.hash = '#/files/ep1/v1';
+  await render.applyFilesRoute('ep1', 'v1');
+  assertEqual(genButtons().length, 2,
+    'the picker starts with the two known generations');
+
+  // A new challenger v2 lands while the tab is open: live AppState gains
+  // the generation, and the server-side index now lists it too.
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0' }, { generation_id: 'v1' },
+      { generation_id: 'v2' },
+    ],
+    experiments: [],
+  };
+  filesIndexResponse = FIXTURE['/api/files'];  // the full three-gen index
+
+  // An SSE-driven repaint re-enters the route — no navigation, no reload.
+  await render.applyFilesRoute('ep1', 'v1');
+  await render.applyFilesRoute('ep1', 'v1');  // settle the async refresh
+
+  const ids = genButtons().map(
+    (b) => b._descendants().find(
+      (n) => n.classList && n.classList.contains('files-gen-id')).textContent);
+  assertEqual(genButtons().length, 3,
+    'the new generation v2 must appear in the picker without a reload');
+  assert(ids.includes('v2'), 'the picker must list the new generation v2');
+});
+
+test('a no-op live refresh produces zero churn in the generation picker', async () => {
+  // The index and live state already agree (three generations).
+  filesIndexResponse = FIXTURE['/api/files'];
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0' }, { generation_id: 'v1' },
+      { generation_id: 'v2' },
+    ],
+    experiments: [],
+  };
+
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+
+  const pane = doc.getElementById('files-changes-controls');
+  const before = genButtons();
+  assertEqual(before.length, 3, 'three generation buttons before the repaint');
+  const beforePicker = pane.firstChild;
+
+  // A repaint with an unchanged generation set: the digest gate skips
+  // the re-fetch entirely, so every row keeps its node identity.
+  await render.applyFilesRoute('ep1', 'v2');
+  await render.applyFilesRoute('ep1', 'v2');
+
+  const after = genButtons();
+  assertEqual(after.length, 3, 'still three generation buttons after the repaint');
+  assert(pane.firstChild === beforePicker,
+    'the picker shell must be the SAME node — not cleared and rebuilt');
+  for (let i = 0; i < before.length; i++) {
+    assert(before[i] === after[i],
+      `generation button ${i} must keep its node identity on a no-op refresh`);
+  }
+  assertEqual(pane.innerHTMLWriteCount(), 0,
+    'a no-op refresh must never touch innerHTML in the picker');
+});
+
+// --- Bug 2: unpatched mutation sites tag as a generation id ----------
+
+test('an unpatched mutation site is tagged v0, not the word BASELINE', async () => {
+  filesIndexResponse = FIXTURE['/api/files'];
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0' }, { generation_id: 'v1' },
+      { generation_id: 'v2' },
+    ],
+    experiments: [],
+  };
+
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+
+  const pane = doc.getElementById('mutations-list-pane');
+  const badges = pane._descendants().filter(
+    (n) => n.classList && n.classList.contains('mutations-site-badge'));
+  assertEqual(badges.length, 2, 'one badge per mutation site');
+
+  // site_one is patched in v2; site_two is unpatched. The unpatched
+  // badge's VALUE must be a generation id (the seed generation v0) —
+  // consistent with the v1/v2 ids patched sites carry — never a word.
+  const patched = badges.find((b) => !b.classList.contains('unpatched'));
+  const unpatched = badges.find((b) => b.classList.contains('unpatched'));
+  assert(patched && patched.textContent.includes('v2'),
+    'the patched site must be tagged with its patching generation id');
+  assert(unpatched, 'the unpatched site must still carry a badge');
+  assertEqual(unpatched.textContent, 'v0',
+    'an unpatched site must be tagged with the seed generation id v0');
+  assert(!unpatched.textContent.toLowerCase().includes('baseline'),
+    'the tag must be a generation id, never the word BASELINE');
 });
 
 await run();

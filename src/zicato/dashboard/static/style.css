@@ -2421,3 +2421,32 @@ h4 {
 @media (max-width: 860px) {
   .exp-card-body { grid-template-columns: 1fr; }
 }
+
+/* Epoch journal — the round-by-round timeline. Distinct from the
+   experiment cards above: terse labelled key/value entries. */
+.journal-timeline { display: flex; flex-direction: column; gap: 0.55rem; }
+.journal-entry {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-running);
+  border-radius: 5px;
+  background: var(--bg-elev);
+  padding: 0.55rem 0.75rem 0.6rem;
+}
+.journal-entry-title { margin: 0 0 0.35rem; font-size: 0.92rem; font-weight: 650; }
+.journal-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.12rem 0.7rem;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.journal-field-label { margin: 0; font-weight: 650; color: var(--text-muted); }
+.journal-field-value { margin: 0; word-break: break-word; }
+.journal-entry-prose { margin-top: 0.4rem; font-size: 0.8rem; line-height: 1.5; }
+.journal-entry-prose p { margin: 0.25rem 0 0; }
+.journal-entry-prose p:first-child { margin-top: 0; }
+@media (max-width: 620px) {
+  .journal-fields { grid-template-columns: 1fr; gap: 0.05rem; }
+  .journal-field-value { margin-bottom: 0.25rem; }
+}
