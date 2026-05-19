@@ -51,7 +51,13 @@ const FIXTURE = {
       old_binary: false, new_binary: false,
     }],
   },
-  '/api/files/ep1/v2/patches': { patches: [] },
+  '/api/files/ep1/v2/patches': {
+    epoch_id: 'ep1', generation_id: 'v2',
+    patches: [
+      { id: 'p-aaa', op: 'REPLACE', mutation_id: 'site_one', rationale: 'tighten' },
+      { id: 'p-bbb', op: 'REPLACE', mutation_id: 'site_two', rationale: 'expand' },
+    ],
+  },
   '/api/files/ep1/v1/tree': { entries: [{ path: 'a.py', is_dir: false, size: 10 }] },
   '/api/files/ep1/v1/diff': {
     epoch_id: 'ep1', generation_id: 'v1', parent_generation_id: 'v0',
@@ -61,8 +67,25 @@ const FIXTURE = {
       old_binary: false, new_binary: false,
     }],
   },
-  '/api/files/ep1/v1/patches': { patches: [] },
-  '/api/mutations/ep1': { mutations: [] },
+  // v1 has EXACTLY ONE patch — the live-reported duplication case.
+  '/api/files/ep1/v1/patches': {
+    epoch_id: 'ep1', generation_id: 'v1',
+    patches: [
+      {
+        id: 'a4521cb4280446ce81738773b0a53bee',
+        op: 'REPLACE', mutation_id: 'web_developer_instruction',
+        rationale: 'sharpen the brief',
+      },
+    ],
+  },
+  '/api/mutations/ep1': {
+    mutations: [
+      { mutation_id: 'site_one', role: 'instruction', file: 'agent.py',
+        patched_generation_ids: ['v2'] },
+      { mutation_id: 'site_two', role: 'instruction', file: 'agent.py',
+        patched_generation_ids: [] },
+    ],
+  },
 };
 
 function seedDom() {
@@ -161,6 +184,115 @@ test('switching the routed generation re-renders the diff', async () => {
   const diffPane = doc.getElementById('files-changes-diff');
   assert(diffPane.textContent.includes('v1 vs v0'),
     'the diff must follow the routed generation');
+});
+
+// --- Bug 2: a generation's applied patches render exactly once --------
+
+// The applied-patch <li> rows currently in the patches pane.
+function patchRows() {
+  const pane = doc.getElementById('files-patches');
+  return pane._descendants().filter(
+    (n) => n.classList && n.classList.contains('files-patch-item'));
+}
+
+test('a generation with N patches renders exactly N applied-patch rows', async () => {
+  // v1 has exactly one patch — the live-reported duplication case.
+  window.location.hash = '#/files/ep1/v1';
+  await render.applyFilesRoute('ep1', 'v1');
+
+  let rows = patchRows();
+  assertEqual(rows.length, 1,
+    'a one-patch generation must render exactly ONE applied-patch row');
+  assert(rows[0].textContent.includes('a4521cb4280446ce81738773b0a53bee'),
+    'the patch id must be shown');
+
+  // v2 has two distinct patches — they render as exactly two rows.
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+  rows = patchRows();
+  assertEqual(rows.length, 2,
+    'a two-patch generation must render exactly TWO applied-patch rows');
+});
+
+test('a re-render of the same generation does not duplicate patch rows', async () => {
+  window.location.hash = '#/files/ep1/v1';
+  await render.applyFilesRoute('ep1', 'v1');
+  assertEqual(patchRows().length, 1, 'one patch row after the first render');
+
+  // An SSE-driven repaint: re-enter the route for the same generation.
+  await render.applyFilesRoute('ep1', 'v1');
+  await render.applyFilesRoute('ep1', 'v1');
+  assertEqual(patchRows().length, 1,
+    'repeated repaints must NOT append duplicate patch rows');
+});
+
+test('concurrent repaints of the same generation do not duplicate patches', async () => {
+  // Force a fresh selection so the load path runs its async fetch.
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+  render.filesState.selectedGen = null;
+
+  // Two repaints raced before either resolves — this is the SSE-tick
+  // pattern that previously double-cleared then double-appended.
+  await Promise.all([
+    render.applyFilesRoute('ep1', 'v1'),
+    render.applyFilesRoute('ep1', 'v1'),
+  ]);
+  assertEqual(patchRows().length, 1,
+    'racing repaints must still render exactly one patch row');
+});
+
+// --- Bug 1: no DOM churn / layout jump on a no-op repaint -------------
+
+test('a no-op repaint produces zero churn in the patches section', async () => {
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+
+  const pane = doc.getElementById('files-patches');
+  const before = patchRows();
+  assertEqual(before.length, 2, 'two patch rows before the repaint');
+  const beforeUl = pane.firstChild;
+
+  // Repaint with identical data — the keyed reconcile must leave every
+  // node identity intact, so listeners survive and the browser repaints
+  // nothing (no layout shift).
+  await render.applyFilesRoute('ep1', 'v2');
+
+  const after = patchRows();
+  assertEqual(after.length, 2, 'still two patch rows after the repaint');
+  assert(pane.firstChild === beforeUl,
+    'the <ul> shell must be the SAME node — not cleared and rebuilt');
+  for (let i = 0; i < before.length; i++) {
+    assert(before[i] === after[i],
+      `patch row ${i} must keep its node identity across a no-op repaint`);
+  }
+  assertEqual(pane.innerHTMLWriteCount(), 0,
+    'a repaint must never touch innerHTML in the patches section');
+});
+
+test('a no-op repaint produces zero churn in the mutation-site section', async () => {
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+
+  const pane = doc.getElementById('mutations-list-pane');
+  const itemsOf = () => pane._descendants().filter(
+    (n) => n.classList && n.classList.contains('mutations-list-item'));
+  const before = itemsOf();
+  assertEqual(before.length, 2, 'two mutation-site rows before the repaint');
+  const beforeUl = pane.firstChild;
+
+  await render.applyFilesRoute('ep1', 'v2');
+
+  const after = itemsOf();
+  assertEqual(after.length, 2, 'still two mutation-site rows after the repaint');
+  assert(pane.firstChild === beforeUl,
+    'the mutation-site <ul> must be the SAME node — not rebuilt');
+  for (let i = 0; i < before.length; i++) {
+    assert(before[i] === after[i],
+      `mutation-site row ${i} must keep its node identity across a no-op repaint`);
+  }
+  assertEqual(pane.innerHTMLWriteCount(), 0,
+    'a repaint must never touch innerHTML in the mutation-site section');
 });
 
 await run();
