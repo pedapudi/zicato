@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from zicato.core.types import MutationPoint, Pattern
+from zicato.core.types import Experiment, MutationPoint, Pattern
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
 from zicato.proposer.proposer import ProposerError, propose_experiment
+from zicato.proposer.structured import PostApplyValidationError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -236,6 +237,142 @@ async def test_propose_experiment_handles_llm_exception_as_retryable() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Post-apply validation hook — destructive patches are a retryable class
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_propose_experiment_retries_on_post_apply_validation_failure() -> None:
+    """A destructive patch (caught post-apply) triggers a bounded retry.
+
+    The first proposer response parses cleanly but its patch set breaks
+    the snapshot; the validation hook returns concrete error strings.
+    The proposer must feed those back as feedback and re-propose — the
+    second response is accepted.
+    """
+    seen_experiments: list[Experiment] = []
+
+    async def validate(exp: Experiment) -> list[str]:
+        seen_experiments.append(exp)
+        # Reject the first applied patch set; accept any later one.
+        if len(seen_experiments) == 1:
+            return [
+                "Post-apply file agent.py dropped top-level imports: import os",
+                "mutation_id 'router__sp' no longer resolves in target_root",
+            ]
+        return []
+
+    stub = _StubLLM([_valid_response(), _valid_response()])
+    exp = await propose_experiment(
+        epoch_id="e1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=stub,
+        max_retries=2,
+        validate_experiment=validate,
+    )
+    assert exp.hypothesis.core_idea == "tighten router preamble"
+    # Two LLM calls: the destructive attempt and the accepted retry.
+    assert len(stub.calls) == 2
+    assert len(seen_experiments) == 2
+    # The retry's user prompt carries the concrete validator findings.
+    _, retry_user, _ = stub.calls[1]
+    assert "Previous attempt was rejected" in retry_user
+    assert "dropped top-level imports" in retry_user
+    assert "no longer resolves" in retry_user
+
+
+@pytest.mark.asyncio
+async def test_propose_experiment_post_apply_failure_is_bounded() -> None:
+    """A proposer that keeps emitting destructive patches gives up bounded.
+
+    The validation hook rejects every attempt; the proposer must exhaust
+    exactly ``max_retries + 1`` attempts and then raise — the retry
+    budget is honoured, so the per-run wall-clock budget cannot blow.
+    """
+    call_count = {"n": 0}
+
+    async def always_reject(exp: Experiment) -> list[str]:
+        del exp
+        call_count["n"] += 1
+        return ["Post-apply syntax error in agent.py: unexpected EOF"]
+
+    stub = _StubLLM([_valid_response(), _valid_response(), _valid_response()])
+    with pytest.raises(ProposerError) as exc_info:
+        await propose_experiment(
+            epoch_id="e1",
+            parent_generation_id="v0",
+            new_generation_id="v1",
+            patterns=[],
+            mutations=_MUTATIONS,
+            brief_text="",
+            current_loss_summary="",
+            aux_call_llm=stub,
+            max_retries=2,
+            validate_experiment=always_reject,
+        )
+    # Bounded: exactly max_retries + 1 attempts, no more.
+    assert len(stub.calls) == 3
+    assert call_count["n"] == 3
+    assert len(exc_info.value.attempts) == 3
+    assert all("post-apply" in a.lower() for a in exc_info.value.attempts)
+
+
+@pytest.mark.asyncio
+async def test_propose_experiment_post_apply_accepts_raised_error() -> None:
+    """The hook may signal failure by raising PostApplyValidationError."""
+    state = {"n": 0}
+
+    async def validate(exp: Experiment) -> list[str]:
+        del exp
+        state["n"] += 1
+        if state["n"] == 1:
+            raise PostApplyValidationError(["mutation_id 'x' no longer resolves"])
+        return []
+
+    stub = _StubLLM([_valid_response(), _valid_response()])
+    exp = await propose_experiment(
+        epoch_id="e1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=stub,
+        max_retries=2,
+        validate_experiment=validate,
+    )
+    assert exp.id == "exp_e1_v1"
+    assert len(stub.calls) == 2
+    _, retry_user, _ = stub.calls[1]
+    assert "no longer resolves" in retry_user
+
+
+@pytest.mark.asyncio
+async def test_propose_experiment_no_hook_skips_post_apply_validation() -> None:
+    """Without a validation hook the proposer behaves exactly as before."""
+    stub = _StubLLM([_valid_response()])
+    exp = await propose_experiment(
+        epoch_id="e1",
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=[],
+        mutations=_MUTATIONS,
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=stub,
+        max_retries=2,
+    )
+    assert exp.id == "exp_e1_v1"
+    assert len(stub.calls) == 1
+
+
+# ---------------------------------------------------------------------------
 # Forbidden-id enforcement
 # ---------------------------------------------------------------------------
 
@@ -335,6 +472,79 @@ def test_render_user_prompt_renders_patterns_block_for_empty_list() -> None:
         mutations=_MUTATIONS,
     )
     assert "no patterns" in rendered.lower()
+
+
+def test_render_mutation_block_shows_full_content_for_replace_target() -> None:
+    """A replace target must be shown in full — never truncated.
+
+    A proposer asked to ``op: replace`` a span has to faithfully
+    reproduce every part it is not changing (imports, markers,
+    indentation). A truncated preview is exactly how those parts get
+    dropped, so the mutation block renders the whole content verbatim.
+    """
+    from zicato.proposer.prompts import render_mutation_block
+
+    # A long docstring-style span — well past any historical preview cap.
+    long_body = (
+        '    """Read the generated presentation files and return contents.\n\n'
+        + "\n".join(f"    line {i}: detailed guidance about the slug format" for i in range(40))
+        + '\n    """\n'
+    )
+    assert len(long_body) > 240  # would have been truncated under the old cap
+    mp = _mp("read_files__doc")
+    mp = MutationPoint(
+        id=mp.id,
+        kind="span",
+        file=mp.file,
+        source_root=mp.source_root,
+        line_start=10,
+        line_end=52,
+        content=long_body,
+        content_hash="abc",
+        metadata={},
+    )
+    rendered = render_mutation_block([mp])
+    # Every line of the span survives into the rendered block.
+    assert "line 0: detailed guidance" in rendered
+    assert "line 39: detailed guidance" in rendered
+    # No truncation ellipsis was inserted.
+    assert "…" not in rendered
+    assert "truncated" not in rendered.lower()
+    # The lead-in tells the proposer this is the full span.
+    assert "full" in rendered.lower()
+
+
+def test_render_mutation_block_caps_only_a_runaway_span() -> None:
+    """A pathologically large span is trimmed, and the trim is annotated."""
+    from zicato.proposer.prompts import _MUTATION_CONTENT_LIMIT_CHARS, render_mutation_block
+
+    huge = "x" * (_MUTATION_CONTENT_LIMIT_CHARS + 5000)
+    mp = MutationPoint(
+        id="runaway",
+        kind="span",
+        file=Path("/src/runaway.py"),
+        source_root=Path("/src"),
+        line_start=1,
+        line_end=999,
+        content=huge,
+        content_hash="abc",
+        metadata={},
+    )
+    rendered = render_mutation_block([mp])
+    assert "truncated" in rendered.lower()
+    # The trim is far more generous than the old 240-char preview.
+    assert _MUTATION_CONTENT_LIMIT_CHARS >= 4000
+
+
+def test_system_prompt_warns_against_restating_surrounding_code() -> None:
+    """The system prompt tells the proposer to emit ONLY the span text."""
+    rendered = render_system_prompt("brief")
+    lowered = rendered.lower()
+    assert "zicato:mutable" in rendered
+    assert "marker" in lowered
+    assert "import" in lowered
+    # It must explicitly say the replacement is only the inner text.
+    assert "only the replacement text" in lowered or "only the inner text" in lowered
 
 
 def test_render_user_prompt_mentions_mutation_metadata() -> None:

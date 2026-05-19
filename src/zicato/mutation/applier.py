@@ -180,6 +180,39 @@ def _leading_indent(text: str) -> str:
     return ""
 
 
+def _reindent_python_literal(literal: str, indent: str) -> str:
+    """Re-anchor a Python string-literal span to ``indent``.
+
+    A ``span`` replace targets a string literal that sits at a fixed
+    syntactic position — a function-body docstring, a kwarg value, a
+    parenthesised concat. The literal's *first* line must carry exactly
+    the original span's leading indent; emitting it at any other indent
+    produces an ``IndentationError`` (a docstring one level too deep, a
+    dedented continuation line, etc.). A proposer working from a
+    truncated preview cannot reliably reproduce that indent, so the
+    applier owns it: the literal is dedented to a common baseline and
+    re-anchored to ``indent``.
+
+    The transform is whitespace-only and idempotent — re-applying it to
+    an already-correctly-indented literal is a no-op. Lines that are
+    blank (after stripping) are emitted empty so trailing whitespace is
+    not introduced inside the literal body.
+    """
+
+    raw_lines = literal.splitlines(keepends=True)
+    if not raw_lines:
+        return literal
+    # Strip the existing leading whitespace from the first line; the
+    # common indent of the *continuation* lines is preserved verbatim so
+    # the literal's own internal structure (a deliberately indented
+    # docstring body, say) is not flattened.
+    first = raw_lines[0]
+    first_stripped = first.lstrip(" \t")
+    out = [indent + first_stripped]
+    out.extend(raw_lines[1:])
+    return "".join(out)
+
+
 def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     """Replace a span point's content with ``new_content``.
 
@@ -209,11 +242,19 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     after = "".join(lines[point.line_end :])
 
     if point.file.suffix == ".py":
+        # The original span's first-line indent is the syntactic anchor
+        # the replacement MUST sit at — the enumerator bound the span to
+        # a string-literal node, so its first line opens a statement (a
+        # docstring) or an expression at a fixed column. The proposer
+        # may emit ``new_content`` at the wrong indent (working from a
+        # preview, it cannot see the surrounding suite); the applier
+        # re-anchors it so a span replace can never shift the literal
+        # off its column and break the enclosing block's indentation.
+        original_span = "".join(lines[point.line_start - 1 : point.line_end])
+        indent = _leading_indent(original_span)
         if _looks_like_python_string_literal(new_content):
-            middle = new_content
+            middle = _reindent_python_literal(new_content, indent)
         else:
-            original_span = "".join(lines[point.line_start - 1 : point.line_end])
-            indent = _leading_indent(original_span)
             middle = _quote_as_python_string(new_content, indent)
     else:
         # Non-Python span: write the content verbatim. The enumerator

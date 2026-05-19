@@ -1281,10 +1281,40 @@ h4 {
   color: var(--text-muted);
 }
 
+/* --- Tournament harmonograf jump-offs (Tournament view).
+   The tournament-overall link sits beside the hall title; the per-board
+   link rides each board side's header row. Both are clearly-visible
+   affordances, distinct from the dense A/B-grid mini links. */
+.hall-head-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 2px;
+}
+.harmonograf-tournament {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.12);
+}
+.harmonograf-tournament:hover {
+  text-decoration: none;
+  background: rgba(127, 127, 127, 0.22);
+}
+/* The per-side board link follows the status pill on the side header. */
+.board-side-head .harmonograf-mini {
+  margin-left: 6px;
+  flex: none;
+}
+
 @media (max-width: 720px) {
   .hall-grid {
     grid-template-columns: 1fr;
   }
+}
+
 /* =================================================================
    Conversation view — side-by-side champion / challenger transcripts
    Appended block. A focused view (#conversation/{entry_id}) reached
@@ -1908,11 +1938,132 @@ h4 {
   color: var(--accent-rejected);
 }
 
+/* --- Files view: "What changed" section ---------------------------
+   A generation picker, then a side-by-side (split) diff of every file
+   the selected generation changed relative to its parent generation
+   (or the v0 baseline). The split diff is rendered by the shared
+   components/index.js `diff` component in `mode: 'split'`.           */
+.files-changes-controls {
+  margin-bottom: 0.75rem;
+}
+.files-changes-summary {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+.files-change-block {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+.files-change-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+.files-change-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+.files-change-status {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: var(--text-muted);
+}
+.files-change-status.status-added {
+  color: var(--accent-promoted);
+  background: color-mix(in srgb, var(--accent-promoted) 16%, transparent);
+}
+.files-change-status.status-removed {
+  color: var(--accent-rejected);
+  background: color-mix(in srgb, var(--accent-rejected) 16%, transparent);
+}
+.files-change-status.status-modified {
+  color: var(--accent-baseline);
+  background: color-mix(in srgb, var(--accent-baseline) 16%, transparent);
+}
+.files-change-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.files-change-col-label {
+  padding: 0.25rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.files-change-col-label:first-child {
+  border-right: 1px solid var(--border);
+}
+
+/* --- Shared `diff` component (components/index.js) -----------------
+   The line diff renderer. `mode: 'split'` lays out two side panes —
+   old on the left, new on the right.                                 */
+.diff {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.diff-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.diff-side {
+  min-width: 0;
+}
+.diff-old {
+  border-right: 1px solid var(--border);
+}
+.diff-line {
+  display: flex;
+  white-space: pre;
+}
+.diff-gutter {
+  width: 1.2rem;
+  flex: none;
+  text-align: center;
+  color: var(--text-muted);
+  user-select: none;
+}
+.diff-text {
+  flex: 1;
+  padding-right: 0.5rem;
+}
+.diff-line.diff-add {
+  background: color-mix(in srgb, var(--accent-promoted) 16%, transparent);
+}
+.diff-line.diff-add .diff-gutter {
+  color: var(--accent-promoted);
+}
+.diff-line.diff-del {
+  background: color-mix(in srgb, var(--accent-rejected) 16%, transparent);
+}
+.diff-line.diff-del .diff-gutter {
+  color: var(--accent-rejected);
+}
+.diff-line.diff-pad {
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+}
+
 @media (max-width: 720px) {
   .files-browser {
     grid-template-columns: 1fr;
   }
   .mutations-browser {
+    grid-template-columns: 1fr;
+  }
+  .diff-split {
     grid-template-columns: 1fr;
   }
 }
@@ -1921,79 +2072,8 @@ h4 {
    Epoch experiment log, journal, and analysis panels
    ============================================================ */
 
-/* Experiment log — collapsible list of per-generation experiments */
-.exp-log-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.exp-log-row {
-  display: grid;
-  grid-template-columns: 3.5rem 1fr 8rem 7rem;
-  gap: 0.5rem;
-  align-items: center;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 0.85rem;
-  background: var(--surface);
-  transition: background 0.08s;
-}
-.exp-log-row:hover,
-.exp-log-row:focus-visible {
-  background: color-mix(in srgb, var(--accent-running) 8%, var(--surface));
-  outline: none;
-}
-.exp-log-row.expanded {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-  border-bottom-color: transparent;
-}
-.exp-log-gen {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-.exp-log-idea {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.exp-log-muts {
-  font-size: 0.74rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.exp-log-verdict {
-  font-size: 0.74rem;
-  text-align: right;
-}
-
-/* Experiment detail — the expanded panel below the row */
-.exp-log-detail {
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 5px 5px;
-  padding: 0.75rem 0.75rem 0.6rem;
-  margin-bottom: 2px;
-  background: var(--surface);
-}
-
-/* Hypothesis block */
-.exp-hyp-block {
-  margin-bottom: 0.6rem;
-  font-size: 0.85rem;
-  line-height: 1.5;
-}
-.exp-hyp-block p {
-  margin: 4px 0;
-}
-
-/* Patch diff block */
-.exp-patch-block {
-  margin: 0.5rem 0;
-}
+/* Patch diff block — shared by the experiment-card change beat */
+.exp-patch-block { margin: 0.5rem 0; }
 .exp-patch-header {
   display: flex;
   gap: 0.5rem;
@@ -2002,30 +2082,6 @@ h4 {
   font-weight: 600;
   margin-bottom: 0.2rem;
 }
-.exp-patch-rationale {
-  font-size: 0.78rem;
-  margin-bottom: 0.25rem;
-}
-
-/* Outcome block */
-.exp-outcome-block {
-  margin-top: 0.6rem;
-  font-size: 0.85rem;
-}
-.exp-outcome-verdict {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 0.3rem;
-}
-.exp-tournament-link {
-  display: inline-block;
-  margin-top: 0.2rem;
-  font-size: 0.82rem;
-  color: var(--accent-running);
-  text-decoration: none;
-}
-.exp-tournament-link:hover { text-decoration: underline; }
 
 /* Journal and analysis panels reuse the brief-block readable column */
 .epoch-journal,
@@ -2036,4 +2092,332 @@ h4 {
 /* Analysis HTML link bar */
 .analysis-html-bar {
   margin-bottom: 0.6rem;
+}
+
+/* ============================================================
+   Overview — the environment home
+   ============================================================ */
+
+/* Identity block — workspace / epoch / generation / harness / counts */
+.identity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.4rem 1.2rem;
+}
+.identity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.25rem 0;
+}
+.identity-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.identity-value {
+  font-size: 0.9rem;
+  word-break: break-all;
+}
+
+/* Compact live-activity card — a SMALL summary of the active round */
+.live-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  padding: 0.7rem 0.85rem;
+  box-shadow: var(--shadow);
+}
+.live-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.live-card-title {
+  margin: 0;
+  font-size: 1rem;
+}
+.live-card-census { color: var(--text-muted); }
+.live-card-hyp {
+  margin: 0.3rem 0 0.5rem;
+  font-size: 0.85rem;
+}
+.live-matchup {
+  display: flex;
+  align-items: stretch;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.live-side {
+  flex: 1 1 12rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev);
+}
+.live-side-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.live-side-gen { font-size: 0.85rem; }
+.live-side-score { font-size: 0.82rem; color: var(--text-muted); }
+.live-vs {
+  align-self: center;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.live-aggregate {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+.live-link {
+  color: var(--accent-running);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+.live-link:hover { text-decoration: underline; }
+.live-card-link {
+  display: inline-block;
+  margin-top: 0.55rem;
+}
+
+/* Epochs table — the current epoch is flagged */
+.epoch-row-current td {
+  background: color-mix(in srgb, var(--accent-running) 7%, var(--bg-elev));
+}
+
+/* Recent experiments — a compact, read-only digest */
+.recent-exp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.recent-exp-row {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr 9rem;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.32rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-elev);
+  font-size: 0.85rem;
+}
+.recent-exp-idea {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-exp-verdict { justify-self: end; }
+.recent-exp-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+}
+
+/* Epoch view redesign — narrative layout: identity + brief, then an
+   ordered run of experiment cards, each told in four beats. */
+
+/* Header — the container also carries `epoch-overview`; override the
+   legacy flex row so the stacked header lays out correctly. */
+.epoch-overview.epoch-header { display: block; }
+.epoch-header-id {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+.epoch-header-name {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.epoch-header-sub { margin: 0.3rem 0 0; font-size: 0.76rem; }
+.epoch-stat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.6rem;
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+}
+.epoch-stat { display: flex; flex-direction: column; gap: 1px; }
+.epoch-stat-value {
+  font-size: 1.35rem;
+  font-weight: 650;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.epoch-stat-value.good { color: var(--accent-promoted); }
+.epoch-stat-value.bad { color: var(--accent-rejected); }
+.epoch-stat-value.pend { color: var(--accent-running); }
+.epoch-stat-label,
+.exp-beat-label,
+.exp-metric-label {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.epoch-stat-label { font-size: 0.66rem; }
+.epoch-brief .epoch-brief-lead {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+/* Experiment narrative — the ordered run of cards */
+.exp-card-list { display: flex; flex-direction: column; gap: 0.85rem; }
+.exp-card {
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 7px;
+  background: var(--card-bg);
+  overflow: hidden;
+}
+.exp-card-promoted { border-left-color: var(--accent-promoted); }
+.exp-card-rejected { border-left-color: var(--accent-rejected); }
+.exp-card-deferred { border-left-color: var(--accent-deferred); }
+.exp-card-pending { border-left-color: var(--accent-running); }
+.exp-card-head {
+  padding: 0.7rem 0.9rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.exp-card-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.exp-card-ordinal { font-size: 0.74rem; font-weight: 700; color: var(--text-muted); }
+.exp-card-gen { font-size: 0.9rem; font-weight: 600; }
+.exp-card-delta {
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.exp-card-delta.good,
+.exp-metric-value.good { color: var(--accent-promoted); }
+.exp-card-delta.bad,
+.exp-metric-value.bad { color: var(--accent-rejected); }
+.exp-card-idea {
+  margin: 0.45rem 0 0;
+  font-size: 0.96rem;
+  line-height: 1.45;
+  font-weight: 500;
+}
+.exp-card-lineage { margin: 0.3rem 0 0; font-size: 0.72rem; }
+
+/* Card body — beats 2-4, three columns on wide screens */
+.exp-card-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+}
+.exp-beat { padding: 0.7rem 0.85rem 0.8rem; background: var(--card-bg); }
+.exp-beat-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.15rem;
+}
+.exp-beat-caption {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+  font-style: italic;
+}
+.exp-field { margin: 0.3rem 0; font-size: 0.82rem; line-height: 1.5; }
+.exp-field-lead { font-weight: 650; }
+.exp-beat-hypothesis .code-pill,
+.exp-patch-summary .code-pill { margin: 0 0.15rem 0.15rem 0; }
+
+/* Change beat — patch summaries + the expandable diff */
+.exp-change-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.exp-change-count { font-size: 0.68rem; text-transform: none; letter-spacing: 0; }
+.exp-patch-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.35rem 0;
+  font-size: 0.8rem;
+}
+.exp-patch-rationale-inline { font-size: 0.75rem; line-height: 1.4; }
+.exp-diff-toggle {
+  margin-top: 0.4rem;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.74rem;
+  font-family: inherit;
+  color: var(--accent-running);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.exp-diff-toggle:hover,
+.exp-diff-toggle:focus-visible {
+  background: color-mix(in srgb, var(--accent-running) 8%, var(--card-bg));
+  outline: none;
+}
+.exp-diff-wrap { margin-top: 0.5rem; }
+.exp-diff-wrap .exp-patch-block { margin: 0.4rem 0; }
+.exp-diff-wrap .exp-patch-header {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  margin-bottom: 0.2rem;
+}
+
+/* Outcome beat — verdict + metric strip */
+.exp-verdict-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.25rem 0 0.55rem;
+}
+.exp-verdict-text { font-size: 0.8rem; line-height: 1.45; }
+.exp-metric-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.1rem;
+  margin: 0.4rem 0;
+}
+.exp-metric { display: flex; flex-direction: column; gap: 1px; }
+.exp-metric-value {
+  font-size: 0.95rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.exp-metric-label { font-size: 0.64rem; letter-spacing: 0.04em; }
+.exp-rejection { color: var(--accent-rejected); }
+.exp-ran-at { margin: 0.3rem 0 0; font-size: 0.7rem; }
+.exp-pending-line { margin: 0.3rem 0 0; }
+.exp-narrative .exp-tournament-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--accent-running);
+  text-decoration: none;
+}
+.exp-narrative .exp-tournament-link:hover { text-decoration: underline; }
+
+/* Narrow viewports — the three beats stack vertically. */
+@media (max-width: 860px) {
+  .exp-card-body { grid-template-columns: 1fr; }
 }

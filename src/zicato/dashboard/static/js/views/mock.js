@@ -189,17 +189,20 @@ function mockSnapshot() {
       // Boards execute in parallel — several entries are `running` at
       // once. The hall grid renders that naturally, with an accent
       // border on every board that has a running side.
+      // Finished sides carry `adk_session_id` — the runner stamps the
+      // run's ADK/goldfive session id onto the entry on completion, so
+      // the per-board harmonograf link deep-links into the run's trace.
       entries: [
         { entry_id: 'extract_invoice_001', side: 'parent', status: 'done',
-          scalar_score: 0.23 },
+          scalar_score: 0.23, adk_session_id: 'adk-inv001-parent' },
         { entry_id: 'extract_invoice_001', side: 'child', status: 'done',
-          scalar_score: 0.18 },
+          scalar_score: 0.18, adk_session_id: 'adk-inv001-child' },
         { entry_id: 'extract_invoice_002', side: 'parent', status: 'done',
-          scalar_score: 0.31 },
+          scalar_score: 0.31, adk_session_id: 'adk-inv002-parent' },
         { entry_id: 'extract_invoice_002', side: 'child', status: 'done',
-          scalar_score: 0.45 },
+          scalar_score: 0.45, adk_session_id: 'adk-inv002-child' },
         { entry_id: 'research_topic_q3', side: 'parent', status: 'done',
-          scalar_score: 0.19 },
+          scalar_score: 0.19, adk_session_id: 'adk-q3-parent' },
         { entry_id: 'research_topic_q3', side: 'child', status: 'running',
           run_id: 'r-9c2a' },
         { entry_id: 'multi_turn_picky', side: 'parent', status: 'done',
@@ -452,6 +455,24 @@ function mockSnapshot() {
       // Analysis report: post-epoch summary.
       analysis_md: '# Epoch analysis\n\n## Summary\n\nTwo experiments ran this epoch. One was promoted (`v2`), one was rejected (`v1`).\n\n## Key findings\n\n- Schema enforcement alone (v1) increased scalar by +0.022 — the strict schema rejected valid borderline responses.\n- Moving validation earlier (v2) improved scalar by −0.040; schema_violation drift dropped from 0.25 to 0.10.\n\n## Recommendation\n\nThe next epoch should focus on the rubric_judge entries, which still show high spread.\n',
       analysis_html_available: false,
+    },
+    // GET /api/score-trajectory — the environment-wide evolution curve.
+    // The Overview's score-trajectory chart paints the per-generation
+    // scalar across every generation; `promoted` colours each marker.
+    score_trajectory: {
+      epoch_id: '2026-05-15_e1',
+      points: [
+        { generation_id: 'v0', parent_generation_id: null, promoted: true,
+          scalar: 0.49, entry_count: 5, created_at: '2026-05-10T09:00:00Z' },
+        { generation_id: 'v1', parent_generation_id: 'v0', promoted: false,
+          scalar: 0.51, entry_count: 5, created_at: '2026-05-10T10:00:00Z' },
+        { generation_id: 'v2', parent_generation_id: 'v1', promoted: true,
+          scalar: 0.43, entry_count: 5, created_at: '2026-05-10T11:30:00Z' },
+        { generation_id: 'v4', parent_generation_id: 'v2', promoted: true,
+          scalar: 0.38, entry_count: 5, created_at: '2026-05-15T09:20:00Z' },
+        { generation_id: 'v5', parent_generation_id: 'v4', promoted: null,
+          scalar: null, entry_count: 0, created_at: '2026-05-15T09:50:00Z' },
+      ],
     },
     log_tail: [
       { ts: '12:34:50', level: 'info', message: 'tournament r2 entry research_topic_q3 started (run r-9c2a)' },

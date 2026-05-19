@@ -11,9 +11,13 @@ The function in this module:
    :func:`zicato.proposer.structured.parse_experiment_json`.
 4. Enforces the proposer brief's forbidden-id list against the emitted
    patches.
-5. On parse failure or forbidden-id violation, appends the error to the
-   next user prompt and retries up to ``max_retries`` times.
-6. Raises :class:`ProposerError` after all retries are exhausted.
+5. Optionally runs a caller-supplied post-parse validation hook against
+   the typed experiment (the orchestrator uses this to apply the patch
+   set and run the post-apply validator).
+6. On parse failure, forbidden-id violation, or a non-empty finding
+   list from the validation hook, appends the error to the next user
+   prompt and retries up to ``max_retries`` times.
+7. Raises :class:`ProposerError` after all retries are exhausted.
 
 The orchestrator does NOT write the resulting :class:`Experiment` to
 disk — that is the CLI's job (see ``zicato.cli.commands.propose``).
@@ -34,8 +38,21 @@ from zicato.proposer.brief import enforce_forbidden
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
 from zicato.proposer.structured import (
     ExperimentParseError,
+    PostApplyValidationError,
     parse_experiment_json,
 )
+
+#: An optional post-parse validation hook. The proposer calls it with a
+#: fully-parsed, forbidden-id-clean :class:`Experiment` and expects back
+#: a list of human-readable error strings — empty when the experiment is
+#: acceptable. A non-empty list is treated as a *retryable* failure: the
+#: errors are fed back to the proposer as concrete feedback and the next
+#: attempt re-proposes, exactly as a parse error would. The orchestrator
+#: supplies a hook that applies the patch set to a child snapshot and
+#: runs :func:`zicato.mutation.validator.validate_post_apply`, so a
+#: destructive patch (a dropped import, a vanished marker) costs one
+#: retry instead of a wasted tournament round.
+ExperimentValidator = Callable[[Experiment], Awaitable[list[str]]]
 
 
 class ProposerError(RuntimeError):
@@ -68,6 +85,7 @@ async def propose_experiment(
     max_retries: int = 2,
     forbidden_ids: tuple[str, ...] = (),
     workspace_root: Path | None = None,
+    validate_experiment: ExperimentValidator | None = None,
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -119,6 +137,23 @@ async def propose_experiment(
         to the user prompt under a ``## Recent telemetry insights``
         heading. When omitted, the proposer behaves exactly as before —
         callers that pre-date the analyzer surface keep working.
+    validate_experiment:
+        Optional post-parse validation hook (see
+        :data:`ExperimentValidator`). Runs *after* the response parses
+        and clears the forbidden-id check, on the fully-typed
+        :class:`Experiment`. When it returns a non-empty list of error
+        strings the attempt is treated as a *retryable* failure — the
+        errors are appended to the next user prompt as feedback and the
+        proposer re-proposes, exactly as it does for a parse error.
+        This is how a destructive patch (one that breaks the snapshot
+        post-apply) costs a single bounded retry instead of a wasted
+        tournament round. The orchestrator supplies a hook that applies
+        the patch set and runs
+        :func:`zicato.mutation.validator.validate_post_apply`. The
+        retry budget is shared with parse-error retries — at most
+        ``max_retries + 1`` LLM calls total, so the per-run wall-clock
+        budget is still honoured. When omitted, no post-parse validation
+        runs and the proposer behaves exactly as before.
 
     Returns
     -------
@@ -130,8 +165,9 @@ async def propose_experiment(
     ------
     ProposerError
         When the proposer fails to emit a schema-valid response after
-        ``max_retries`` retries. The exception carries the per-attempt
-        error messages for diagnostics.
+        ``max_retries`` retries, or when every attempt produces an
+        experiment that ``validate_experiment`` rejects. The exception
+        carries the per-attempt error messages for diagnostics.
     """
 
     mutations_list = list(mutations)
@@ -203,12 +239,30 @@ async def propose_experiment(
                 feedback = err
                 continue
 
+        # Post-parse validation hook — the experiment is well-formed and
+        # forbidden-id-clean, but its patches may still break the child
+        # snapshot once applied (a dropped import, a syntax error, a
+        # vanished marker). Treat a non-empty finding list exactly like
+        # a parse error: feed the concrete validator strings back and
+        # retry, within the same bounded budget.
+        if validate_experiment is not None:
+            try:
+                post_apply_errors = await validate_experiment(experiment)
+            except PostApplyValidationError as exc:
+                post_apply_errors = exc.errors
+            if post_apply_errors:
+                err = "patches failed post-apply validation: " + "; ".join(post_apply_errors)
+                attempt_errors.append(err)
+                feedback = err
+                continue
+
         return experiment
 
     raise ProposerError(attempt_errors)
 
 
 __all__ = [
+    "ExperimentValidator",
     "ProposerError",
     "propose_experiment",
 ]

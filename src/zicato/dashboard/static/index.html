@@ -52,7 +52,19 @@
     <main id="main-content" role="main">
 
       <!-- ============ OVERVIEW VIEW ============ -->
+      <!-- The environment home: a one-glance view of the whole zicato
+           environment — identity, loop health, a COMPACT live-activity
+           card (the full champion/challenger board lives only in the
+           Tournament view), the score trajectory, the epochs table and
+           recent experiments. Every panel degrades independently. -->
       <div id="view-overview" class="view" data-view="overview">
+
+        <section id="identity-section" aria-label="Environment identity">
+          <h2>Environment</h2>
+          <div id="identity-panel" class="identity-panel">
+            <p class="empty">No environment loaded.</p>
+          </div>
+        </section>
 
         <section id="health-section" aria-label="Loop health">
           <h2>Loop health</h2>
@@ -61,22 +73,33 @@
           </div>
         </section>
 
-        <section id="tournament-section" class="tournament-section panel" aria-label="Active tournament">
-          <div class="panel-header">
-            <h2 id="tournament-title">Tournament</h2>
-            <div class="panel-header-meta">
-              <span id="tournament-elapsed" class="meta mono" aria-label="Tournament elapsed">00:00</span>
-            </div>
-          </div>
-          <div id="tournament-body" class="panel-body">
+        <section id="live-activity-section" aria-label="Live activity">
+          <h2>Live activity</h2>
+          <div id="live-activity" class="live-activity">
             <p class="empty">No active tournament.</p>
           </div>
         </section>
 
-        <section id="runs-section" aria-label="Active runs">
-          <h2>Active runs</h2>
-          <div id="active-runs" class="runs-strip" role="list">
-            <p class="empty">No active runs.</p>
+        <section id="overview-trajectory-section" aria-label="Score trajectory">
+          <h2>Score trajectory</h2>
+          <div class="diagram">
+            <svg id="overview-trajectory-svg" xmlns="http://www.w3.org/2000/svg"
+               viewBox="0 0 720 220" role="img"
+               aria-label="Scalar score trajectory across generations"></svg>
+          </div>
+        </section>
+
+        <section id="epochs-section" aria-label="Epochs">
+          <h2>Epochs</h2>
+          <div id="epochs-panel" class="epochs-panel">
+            <p class="empty">No epochs recorded yet.</p>
+          </div>
+        </section>
+
+        <section id="recent-experiments-section" aria-label="Recent experiments">
+          <h2>Recent experiments</h2>
+          <div id="recent-experiments" class="recent-experiments">
+            <p class="empty">No experiments recorded yet.</p>
           </div>
         </section>
 
@@ -241,6 +264,20 @@
            the GenerationStore seam, so directory snapshots and the git
            backend render identically here. -->
       <div id="view-files" class="view hidden" data-view="files">
+
+        <!-- What a generation changed: a generation picker, then a
+             side-by-side (split) diff of every file the selected
+             generation changed relative to its parent generation (or
+             the v0 baseline). Route-driven: #/files/{epoch}/{gen}. -->
+        <section id="files-changes-section" aria-label="Generation changes">
+          <h2>What changed</h2>
+          <div id="files-changes-controls" class="files-changes-controls">
+            <p class="empty">No generations yet.</p>
+          </div>
+          <div id="files-changes-diff" class="files-changes-diff">
+            <p class="empty">Select a generation to see what it changed.</p>
+          </div>
+        </section>
 
         <section id="files-section" aria-label="Generation file browser">
           <h2>Generation files</h2>

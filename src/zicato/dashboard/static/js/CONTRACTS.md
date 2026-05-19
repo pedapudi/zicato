@@ -85,6 +85,26 @@ The drill-down / lazy endpoints (unchanged):
 - `GET /api/files...`, `GET /api/mutations/...` — Files view.
 - `GET /api/conversation/{run}`, `GET /api/matchup/{entry}/conversations`.
 
+The Files-view endpoints in full:
+- `GET /api/files` — `{ epochs:[{ epoch_id, generations:[{ generation_id,
+  file_count, patch_count }] }] }`. Generations are listed in store
+  order; the last element is the latest generation.
+- `GET /api/files/{epoch}/{gen}/tree` — `{ epoch_id, generation_id,
+  entries:[{ path, is_dir, size }], error? }`.
+- `GET /api/files/{epoch}/{gen}/content?path=` — one file's content.
+- `GET /api/files/{epoch}/{gen}/patches` — the applied patch set.
+- `GET /api/files/{epoch}/{gen}/diff` — the files the generation
+  CHANGED relative to its parent (the parent recorded in
+  `experiment.json`, else the `v(N-1)` / `v0` fallback). Shape:
+  `{ epoch_id, generation_id, parent_generation_id:str|null,
+  files:[{ path, status:"added"|"modified"|"removed", old_content,
+  new_content, old_binary, new_binary }], error? }`. `files` lists
+  only files that differ, sorted by path; a seed generation
+  (`parent_generation_id == null`) reads every file as `added`. The
+  Files view renders each entry as a side-by-side split diff
+  (`old_content` left, `new_content` right) via the `diff` component
+  in `mode:'split'`.
+
 ## 2. SSE delta types
 
 `GET /events` yields, in order:
@@ -201,12 +221,43 @@ identity if a `key` is supplied.
   row) — inline conversation diff + per-run loss breakdown + drift
   events + per-run harmonograf jumps. Past-tournament selector.
   **Matchup-click MUST work** — handlers survive deltas via §4.
-- **Epoch** (`views/epoch.js`, container `#view-epoch`): epoch selector;
-  the contract (board entries with expectations/judges, proposer brief
-  rendered, scoring weights); the journal; the analysis.
-- **Files** (`views/files.js`, container `#view-files`): file-tree of
-  generation snapshots + patches; the mutation-site browser (build on
-  the existing one); run-artifact viewer with diff mode.
+- **Epoch** (`views/epoch.js`, container `#view-epoch`): the epoch's
+  NARRATIVE. A header block — epoch id, open/closed status, and a stat
+  strip tallying experiments / promoted / rejected / net Δscalar. The
+  proposer brief rendered as a readable block, framed as the operator's
+  goal for the epoch. The **experiment narrative**: one card per
+  experiment, each told in four beats — *what* (the proposer's core idea
+  + generation id + lineage), *hypothesis* (the pre-run structured
+  prediction: why, expected pass-rate move, predicted drift, risks,
+  modulating sites), *change* (the patch summary, with an expandable
+  line diff against the epoch baseline), and *outcome* (the tournament
+  verdict — did the challenger beat the champion — the scalar Δ and its
+  components, the rejection reason, a jump to the Tournament view). The
+  card's left-edge accent is coloured by the decision so the
+  promoted/rejected/pending arc is scannable. Supporting context panels:
+  registered harness, board entries, scoring weights, mutation surface,
+  the epoch journal, and the analysis report.
+
+  **Epoch data source.** Every field above comes from ONE read —
+  `state.epochDef`, populated from `GET /api/epoch` and the `epoch` key
+  on `/api/environment`. No new endpoint was needed: `build_epoch_view`
+  already exposes `experiments` (per-generation records carrying the
+  raw `hypothesis`, `outcome`, and `patches` keyed by mutation id),
+  `brief`, `journal`, `analysis_md`, and the contract blocks. An
+  experiment record's shape: `{ generation_id, parent_generation_id,
+  hypothesis:{core_idea, why, modulating[], expected_pass_rate_delta,
+  expected_drift_movements[], risks}, patches:{<mutId>:{mutation_id, op,
+  rationale, new_content|new_numeric|new_enum}}, outcome:{ran_at,
+  tournament_decision, scalar_score_delta, pass_rate_delta,
+  drift_loss_delta, rejection_reason} | null }`. The optional patch diff
+  reuses the lazy `/api/mutations/{epoch}/{site}` baseline read.
+- **Files** (`views/files.js`, container `#view-files`): route-driven
+  (`#/files/{epoch}/{gen}`). A "What changed" section — a generation
+  picker and a side-by-side (split) diff of every file the selected
+  generation changed vs its parent (or the `v0` baseline), via the
+  `diff` component in `mode:'split'`; the file-tree of the selected
+  generation's snapshot + its applied patches; the mutation-site
+  browser. Defaults to the current epoch's latest generation.
 - **Chrome** (`views/chrome.js`): persistent header (context: epoch /
   generation / round / elapsed / connection); the collapsible,
   append-only activity-log drawer; the route shell (nav rail active
@@ -222,6 +273,13 @@ Hash routes; `#/overview` is default. Each is deep-linkable:
 - `#/files`  ·  `#/files/{epochId}/{genId}`
 - `#/conversation/{entryId}` (focused conversation diff)
 
+The Files route is **route-driven**: the selected epoch + generation
+live in the hash. Bare `#/files` resolves to a default — the current
+epoch (`environment.epoch`) and that epoch's latest generation — and is
+canonicalised in place into `#/files/{epochId}/{genId}` so a reload or
+a shared link lands on the same generation. The Files view never falls
+through to Overview.
+
 `router.current()` → `{ view, params:{...} }`. `router.go(hash)`
 navigates. The router emits `route:changed` on the bus.
 
@@ -234,10 +292,22 @@ Built from `ZICATO_HARMONOGRAF_URL` surfaced on the heartbeat as
 
 harmonograf keys its session views by the **ADK session id** — the
 `sessionId` present on every goldfive event envelope. The backend
-surfaces this as `adk_session_id` on run-like records (active-run rows
-from `/api/environment`; `ab_grid` cells from `/api/tournaments/{gen}`).
+surfaces this as `adk_session_id` on run-like records:
+- active-run rows from `/api/environment`;
+- `ab_grid` cells from `/api/tournaments/{gen}` (`parent_adk_session_id`
+  / `child_adk_session_id`);
+- `active_tournament.entries[]` rows — the runner stamps the run's
+  `adk_session_id` onto the per-(entry × side) row the instant the run
+  finishes (read from the run's `LossProfile`, never from `events.jsonl`
+  in the SSE hot path). Empty string until the side's run completes.
+
 Session path: `/#/session/<adk_session_id>`. No harmonograf-side change
 is required — the integration is complete.
+
+The Tournament view surfaces these as visible jump-off links: one
+tournament-overall link in the hall head, and one per board side on the
+board card (deep-linked by that side's `adk_session_id`, falling back to
+the bare base while the run is still in flight).
 
 `harmonografSessionId(rec)` resolution order:
 1. `rec.adk_session_id` / `rec.child_adk_session_id` /

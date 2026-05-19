@@ -35,9 +35,10 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from zicato.core.types import (
+    Experiment,
     Generation,
     OutcomeRecord,
 )
@@ -47,6 +48,12 @@ from zicato.core.workspace import (
 )
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
+
+if TYPE_CHECKING:
+    # Annotation-only — the proposer module is imported lazily inside
+    # ``evolve_once`` (see the module docstring on lazy imports), so its
+    # exception type is referenced here purely for type annotations.
+    from zicato.proposer.proposer import ProposerError
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -442,7 +449,7 @@ async def evolve_once(
         DetectorInput,
         detect_patterns,
     )
-    from zicato.proposer.proposer import propose_experiment  # noqa: PLC0415
+    from zicato.proposer.proposer import ProposerError, propose_experiment  # noqa: PLC0415
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
     from zicato.tournament.runner import (  # noqa: PLC0415
         run_fast_mode,
@@ -533,66 +540,132 @@ async def evolve_once(
         round_index=round_index,
         phase=f"proposing:round_{round_index}:{next_id}",
     )
-    experiment = await propose_experiment(
-        epoch_id=resolved_epoch_id,
-        parent_generation_id=parent_id,
-        new_generation_id=next_id,
-        patterns=patterns,
-        mutations=mutations,
-        brief_text=brief.text,
-        current_loss_summary=loss_summary,
-        aux_call_llm=auxiliary_call_llm,
-        model=str(workspace_config.get("auxiliary_model", "")),
-        max_retries=max_proposer_retries,
-        forbidden_ids=brief.forbidden_ids,
-        workspace_root=workspace_root,
-    )
-
-    # --- 7. Validate patch set against the manifest ---
-    mutations_by_id = {m.id: m for m in mutations}
-    for patch in experiment.patches:
-        if patch.mutation_id not in mutations_by_id:
-            raise RuntimeError(
-                f"proposer-emitted patch {patch.id!r} targets unknown "
-                f"mutation_id {patch.mutation_id!r}"
-            )
-    forbidden_violations = check_forbidden_ids(list(experiment.patches), list(brief.forbidden_ids))
-    if forbidden_violations:
-        raise RuntimeError(
-            "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
-        )
-
-    # --- 8. Apply patches into the child snapshot ---
-    _beat(
-        beater,
-        epoch_id=resolved_epoch_id,
-        generation_id=next_id,
-        round_index=round_index,
-        phase=f"applying:round_{round_index}:{next_id}",
-    )
-    # Materialise the child generation through the GenerationStore seam.
-    # derive_generation is the generation-level transaction boundary: it
-    # copies the parent's source tree, applies the patch set
-    # all-or-nothing, clears any stale child tree from a failed round,
-    # and returns the child snapshot root. The directory backend does
-    # exactly the copytree + apply_patches the orchestrator used to do
-    # inline; a git backend would commit instead. See
-    # docs/design/STORAGE.md §4-§5.
+    # The mutation-applier seam: the patch set is applied here so the
+    # post-apply validator can see the real child tree. Materialised
+    # once, reused for the tournament if validation passes.
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
 
-    child_snapshot = default_generation_store(workspace_root).derive_generation(
-        epoch_id=resolved_epoch_id,
-        parent_generation_id=parent_id,
-        child_generation_id=next_id,
-        patches=list(experiment.patches),
-    )
+    genstore = default_generation_store(workspace_root)
 
-    # --- 9. Validate post-apply ---
-    validation_errors = validate_post_apply(child_snapshot, list(experiment.patches), mutations)
+    # --- 6a. Post-apply validation hook ---
+    # A destructive proposer patch (one that drops imports, breaks
+    # Python syntax, or removes a ``# zicato:mutable`` marker) used to
+    # cost an entire wasted tournament round: the orchestrator applied
+    # the patch, ran the validator, and rejected with no retry. Instead
+    # we hand the proposer a validation hook so a post-apply failure is
+    # a *retryable* feedback class — the proposer re-proposes with the
+    # concrete validator strings in its prompt, within the same bounded
+    # ``max_proposer_retries`` budget the parse-error retries already
+    # share, so the per-run wall-clock budget is still honoured.
+    #
+    # The hook applies the candidate patch set into the child snapshot
+    # and runs :func:`validate_post_apply`. ``last_child_snapshot``
+    # captures the child tree of the last attempt — when the proposer
+    # returns successfully it is the validated tree the tournament
+    # mounts; no second apply is needed.
+    last_child_snapshot: dict[str, Path] = {}
+
+    async def _validate_experiment_post_apply(candidate: Experiment) -> list[str]:
+        _beat(
+            beater,
+            epoch_id=resolved_epoch_id,
+            generation_id=next_id,
+            round_index=round_index,
+            phase=f"applying:round_{round_index}:{next_id}",
+        )
+        # derive_generation is the generation-level transaction boundary:
+        # it copies the parent tree, applies the patch set all-or-nothing,
+        # and clears any stale child tree from a prior attempt — so a
+        # retry re-derives cleanly. See docs/design/STORAGE.md §4-§5.
+        child = genstore.derive_generation(
+            epoch_id=resolved_epoch_id,
+            parent_generation_id=parent_id,
+            child_generation_id=next_id,
+            patches=list(candidate.patches),
+        )
+        last_child_snapshot["path"] = child
+        return validate_post_apply(child, list(candidate.patches), mutations)
+
+    proposer_validation_failed: ProposerError | None = None
+    try:
+        experiment = await propose_experiment(
+            epoch_id=resolved_epoch_id,
+            parent_generation_id=parent_id,
+            new_generation_id=next_id,
+            patterns=patterns,
+            mutations=mutations,
+            brief_text=brief.text,
+            current_loss_summary=loss_summary,
+            aux_call_llm=auxiliary_call_llm,
+            model=str(workspace_config.get("auxiliary_model", "")),
+            max_retries=max_proposer_retries,
+            forbidden_ids=brief.forbidden_ids,
+            workspace_root=workspace_root,
+            validate_experiment=_validate_experiment_post_apply,
+        )
+    except ProposerError as exc:
+        # The proposer exhausted its bounded retries without producing a
+        # patch set that survives post-apply validation (or parsing).
+        # Fall through to the rejected-outcome path rather than crashing
+        # the round — the round still produces a clean ``rejected``
+        # journal entry, and the loop continues.
+        proposer_validation_failed = exc
+        experiment = None
+
+    # --- 7. Validate patch set against the manifest ---
+    if experiment is not None:
+        mutations_by_id = {m.id: m for m in mutations}
+        for patch in experiment.patches:
+            if patch.mutation_id not in mutations_by_id:
+                raise RuntimeError(
+                    f"proposer-emitted patch {patch.id!r} targets unknown "
+                    f"mutation_id {patch.mutation_id!r}"
+                )
+        forbidden_violations = check_forbidden_ids(
+            list(experiment.patches), list(brief.forbidden_ids)
+        )
+        if forbidden_violations:
+            raise RuntimeError(
+                "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
+            )
+
+    # --- 8 + 9. Apply + post-apply validation ---
+    # The proposer's validation hook already applied the (final,
+    # validated) patch set and ran :func:`validate_post_apply`. When the
+    # proposer exhausted its bounded retries without producing a patch
+    # set that survives post-apply validation, ``proposer_validation_failed``
+    # carries the accumulated per-attempt errors and there is no
+    # surviving experiment to score — record a rejection so a
+    # destructive-proposer round still leaves a clean, append-only
+    # journal entry instead of crashing the loop.
+    if proposer_validation_failed is not None:
+        experiment = _rejected_proposer_experiment(
+            resolved_epoch_id, parent_id, next_id, proposer_validation_failed
+        )
+        validation_errors = list(proposer_validation_failed.attempts)
+        child_snapshot = last_child_snapshot.get(
+            "path", _snapshot_root(workspace_root, resolved_epoch_id, next_id)
+        )
+    else:
+        assert experiment is not None  # narrowed: no ProposerError above
+        # The hook stores the validated child tree; it always runs at
+        # least once before a successful return.
+        child_snapshot = last_child_snapshot["path"]
+        validation_errors = []
+
+    # --- 9. Act on validation outcome ---
     if validation_errors:
         # Persist the experiment with a rejected outcome describing
-        # the validator findings, then abort.
+        # the validator findings, then abort. Two distinct symbolic
+        # reasons: ``validation_failed`` when a single applied patch set
+        # failed post-apply validation; ``proposer_retries_exhausted``
+        # when the proposer could not produce a patch set that survives
+        # validation within its bounded retry budget.
         write_experiment(workspace_root, resolved_epoch_id, next_id, experiment)
+        if proposer_validation_failed is not None:
+            rejection_reason = "proposer_retries_exhausted: " + "; ".join(validation_errors)
+        else:
+            rejection_reason = "validation_failed: " + "; ".join(validation_errors)
         rejected_outcome = OutcomeRecord(
             ran_at=_now_iso(),
             drift_movements=(),
@@ -600,7 +673,7 @@ async def evolve_once(
             drift_loss_delta=0.0,
             scalar_score_delta=0.0,
             tournament_decision="rejected",
-            rejection_reason="validation_failed: " + "; ".join(validation_errors),
+            rejection_reason=rejection_reason,
         )
         finalised = update_experiment_outcome(
             workspace_root, resolved_epoch_id, next_id, rejected_outcome
@@ -835,6 +908,49 @@ async def evolve_once(
 #: could be a transient (e.g. a single degenerate tournament), but two
 #: in a row means the loop is genuinely producing no signal.
 _DEGENERATE_HEALTH_STOP_THRESHOLD = 2
+
+
+def _rejected_proposer_experiment(
+    epoch_id: str,
+    parent_generation_id: str,
+    generation_id: str,
+    error: ProposerError,
+) -> Experiment:
+    """Build a placeholder experiment for a proposer that exhausted retries.
+
+    When the proposer cannot produce a patch set that survives post-apply
+    validation within its bounded retry budget, there is no real
+    :class:`Experiment` to journal — but the round must still leave an
+    append-only record. This synthesises a minimal experiment whose
+    hypothesis carries the per-attempt failure trail and whose patch
+    tuple is empty (nothing was successfully applied). The orchestrator
+    stamps the rejected :class:`OutcomeRecord` onto it exactly as it
+    does for a validator rejection.
+    """
+
+    from zicato.core.types import HypothesisSpec  # noqa: PLC0415
+
+    return Experiment(
+        id=f"exp_{epoch_id}_{generation_id}",
+        epoch_id=epoch_id,
+        generation_id=generation_id,
+        parent_generation_id=parent_generation_id,
+        proposed_at=_now_iso(),
+        hypothesis=HypothesisSpec(
+            core_idea="proposer exhausted retries without a valid patch set",
+            modulating=(),
+            why=(
+                "Every proposer attempt this round failed parsing or "
+                "post-apply validation; see the rejected outcome for the "
+                "per-attempt error trail."
+            ),
+            expected_drift_movements=(),
+            expected_pass_rate_delta="0.0",
+            risks="; ".join(error.attempts),
+        ),
+        patches=(),
+        outcome=None,
+    )
 
 
 def _budget_aborted_outcome(parent_generation_id: str, budget_s: int) -> EvolveRoundOutcome:

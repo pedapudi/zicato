@@ -311,6 +311,38 @@ def _valid_proposer_response() -> str:
     )
 
 
+def _destructive_proposer_response() -> str:
+    """A schema-valid response whose patch breaks the snapshot post-apply.
+
+    The patch parses fine but its ``new_content`` is an unterminated
+    string literal — applying it produces a Python syntax error that
+    :func:`validate_post_apply` catches.
+    """
+    return json.dumps(
+        {
+            "hypothesis": {
+                "core_idea": "swap the greeting string",
+                "modulating": ["greeting"],
+                "why": "Exercising the destructive-patch retry path.",
+                "expected_drift_movements": [
+                    {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
+                ],
+                "expected_pass_rate_delta": "+0.0 to +0.1",
+                "risks": "destructive on purpose",
+            },
+            "patches": [
+                {
+                    "mutation_id": "greeting",
+                    "op": "replace",
+                    # Unterminated string literal — breaks Python syntax.
+                    "new_content": '"unterminated',
+                    "rationale": "destructive patch under test",
+                }
+            ],
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -442,6 +474,101 @@ def test_evolve_once_rejects_when_child_regresses(
     v1_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
     body = json.loads((v1_dir / "experiment.json").read_text())
     assert body["outcome"]["tournament_decision"] == "rejected"
+
+
+def test_evolve_once_retries_destructive_patch_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A destructive proposer patch triggers a bounded retry, not a reject.
+
+    The proposer's first response parses cleanly but its patch breaks
+    the child snapshot post-apply. The orchestrator must NOT waste the
+    round — it feeds the post-apply validator findings back to the
+    proposer, which re-proposes a clean patch, and the round proceeds to
+    a real tournament decision.
+    """
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    # First response is destructive; the retry is clean.
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_destructive_proposer_response(), _valid_proposer_response()]
+            ),
+        )
+    )
+
+    # The round was NOT wasted — it reached a real tournament decision.
+    assert outcome.tournament_decision == "promoted"
+    assert outcome.proposed_generation_id == "v1"
+
+    # The child snapshot carries the CLEAN retry's patch, not the
+    # destructive one — and it still parses.
+    import ast
+
+    snap_text = (
+        workspace / "epochs" / epoch_id / "generations" / "v1" / "snapshot" / "agent.py"
+    ).read_text()
+    ast.parse(snap_text)
+    assert '"world"' in snap_text
+    assert "unterminated" not in snap_text
+
+
+def test_evolve_once_rejects_when_destructive_patches_exhaust_retries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When every proposer attempt is destructive the round rejects cleanly.
+
+    The retry budget is bounded — once exhausted the orchestrator emits
+    a ``rejected`` outcome whose reason names the post-apply findings,
+    rather than crashing the evolve loop.
+    """
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    # Every attempt destructive; max_proposer_retries=2 → 3 attempts.
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_destructive_proposer_response() for _ in range(3)]
+            ),
+            max_proposer_retries=2,
+        )
+    )
+
+    assert outcome.tournament_decision == "rejected"
+    # The reason names the bounded-retry exhaustion and the validator
+    # findings, so a journal reader can see what the proposer broke.
+    assert "proposer_retries_exhausted" in outcome.rejection_reason
+    assert "post-apply" in outcome.rejection_reason.lower()
+
+    # A clean, append-only journal entry was still written.
+    v1_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
+    body = json.loads((v1_dir / "experiment.json").read_text())
+    assert body["outcome"]["tournament_decision"] == "rejected"
+    journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
+    assert journal.strip()  # non-empty — the round left a record
 
 
 def test_evolve_n_rounds_stops_on_consecutive_rejections(

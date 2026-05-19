@@ -179,3 +179,55 @@ def test_files_patches_seed_is_empty(client: TestClient) -> None:
     resp = client.get("/api/files/e1/v0/patches")
     assert resp.status_code == 200
     assert resp.json()["patches"] == []
+
+
+# ---------------------------------------------------------------------------
+# /api/files/{epoch}/{gen}/diff — the per-generation changed-files diff
+# ---------------------------------------------------------------------------
+
+
+def test_files_diff_reports_modified_file(client: TestClient) -> None:
+    """v1's diff vs its v0 parent lists only the file the patch changed."""
+    resp = client.get("/api/files/e1/v1/diff")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["generation_id"] == "v1"
+    # The parent is resolved — either from experiment.json or the v(N-1)
+    # / v0 fallback. For this fixture it is the v0 seed.
+    assert body["parent_generation_id"] == "v0"
+    changed = {f["path"]: f for f in body["files"]}
+    # Only prompts.py was rewritten; the untouched util.py is NOT listed.
+    assert set(changed) == {"agent/prompts.py"}
+    diff = changed["agent/prompts.py"]
+    assert diff["status"] == "modified"
+    assert "original" in diff["old_content"]
+    assert "rewritten" in diff["new_content"]
+    assert diff["old_binary"] is False
+    assert diff["new_binary"] is False
+
+
+def test_files_diff_seed_lists_every_file_as_added(client: TestClient) -> None:
+    """The v0 seed has no parent — every file reads as added."""
+    resp = client.get("/api/files/e1/v0/diff")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["parent_generation_id"] is None
+    statuses = {f["path"]: f["status"] for f in body["files"]}
+    assert statuses == {"agent/prompts.py": "added", "agent/lib/util.py": "added"}
+    # An added file has empty old content and non-empty new content.
+    for f in body["files"]:
+        assert f["old_content"] == ""
+        assert f["new_content"] != ""
+
+
+def test_files_diff_missing_generation_degrades(client: TestClient) -> None:
+    resp = client.get("/api/files/e1/v99/diff")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["files"] == []
+    assert "error" in body
+
+
+def test_files_diff_rejects_unsafe_id(client: TestClient) -> None:
+    resp = client.get("/api/files/e1/..%2f..%2fetc/diff")
+    assert resp.status_code in (400, 404)

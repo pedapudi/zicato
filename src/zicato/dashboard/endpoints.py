@@ -212,6 +212,18 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             )
         return JSONResponse(filetree.build_generation_patches(paths, epoch_id, generation_id))
 
+    async def api_files_diff(request: Request) -> JSONResponse:
+        from zicato.dashboard import filetree
+
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse(
+                {"error": "invalid epoch or generation id", "files": []},
+                status_code=400,
+            )
+        return JSONResponse(filetree.build_generation_diff(paths, epoch_id, generation_id))
+
     # -- mutation-site browser endpoints -----------------------------
 
     async def api_mutations(request: Request) -> JSONResponse:
@@ -445,6 +457,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_files_tree": api_files_tree,
         "api_files_content": api_files_content,
         "api_files_patches": api_files_patches,
+        "api_files_diff": api_files_diff,
         "api_mutations": api_mutations,
         "api_mutation_detail": api_mutation_detail,
         "api_epoch_journal": api_epoch_journal,
