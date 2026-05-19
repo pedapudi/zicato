@@ -154,6 +154,26 @@ class ExperimentParseError(ValueError):
     """
 
 
+class PostApplyValidationError(ValueError):
+    """Raised when a parsed experiment's patches break the snapshot.
+
+    Unlike :class:`ExperimentParseError`, the proposer response was a
+    well-formed :class:`Experiment` — the failure surfaced only *after*
+    the patch set was applied to the child snapshot (a dropped import, a
+    syntax error, a vanished ``# zicato:mutable`` marker). The validator
+    findings are carried verbatim so the proposer-retry path can feed
+    them back as concrete, actionable feedback alongside parse errors.
+
+    The :attr:`errors` attribute is the raw per-problem string list from
+    :func:`zicato.mutation.validator.validate_post_apply`; the exception
+    message joins them for human display.
+    """
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = list(errors)
+        super().__init__("; ".join(self.errors))
+
+
 #: Markdown code-fence stripping. Some models wrap their JSON in
 #: ```` ```json ... ``` ```` despite explicit instructions; we strip the
 #: outer fence before handing the body to :func:`json.loads`. The regex
@@ -446,5 +466,6 @@ def parse_experiment_json(
 __all__ = [
     "EXPERIMENT_JSON_SCHEMA",
     "ExperimentParseError",
+    "PostApplyValidationError",
     "parse_experiment_json",
 ]

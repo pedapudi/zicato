@@ -12,7 +12,9 @@ The public surface is intentionally narrow:
 * :func:`propose_experiment` — orchestration entry point that prompts an
   auxiliary LLM, parses its response, and validates against the live
   mutation manifest. Retries on schema failure with the parse error fed
-  back to the model.
+  back to the model; a caller-supplied :data:`ExperimentValidator` hook
+  extends the retry surface so post-apply validation failures (a
+  destructive patch) feed back as retry feedback too.
 * :class:`ProposerError` — raised when the proposer exhausts retries
   without producing a schema-valid response.
 * :class:`ProposerBrief` / :func:`load_brief` / :func:`enforce_forbidden`
@@ -40,14 +42,20 @@ from zicato.proposer.prompts import (
     render_system_prompt,
     render_user_prompt,
 )
-from zicato.proposer.proposer import ProposerError, propose_experiment
+from zicato.proposer.proposer import (
+    ExperimentValidator,
+    ProposerError,
+    propose_experiment,
+)
 from zicato.proposer.structured import (
     EXPERIMENT_JSON_SCHEMA,
     ExperimentParseError,
+    PostApplyValidationError,
     parse_experiment_json,
 )
 
 __all__ = [
+    "ExperimentValidator",
     "ProposerError",
     "propose_experiment",
     "SYSTEM_PROMPT_TEMPLATE",
@@ -61,5 +69,6 @@ __all__ = [
     "enforce_forbidden",
     "EXPERIMENT_JSON_SCHEMA",
     "ExperimentParseError",
+    "PostApplyValidationError",
     "parse_experiment_json",
 ]

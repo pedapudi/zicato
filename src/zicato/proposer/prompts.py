@@ -34,7 +34,14 @@ from collections.abc import Iterable
 
 from zicato.core.types import MutationPoint, Pattern
 
-_MUTATION_PREVIEW_CHARS = 240
+#: Hard ceiling on a single mutation point's rendered content. A
+#: ``replace`` patch MUST faithfully reproduce every part of the span it
+#: is not changing — imports, markers, indentation — so the proposer
+#: needs the *full* current content, never a truncated preview. This
+#: ceiling exists only as a runaway-context guard for a pathologically
+#: large span; it is generous enough that every real mutation point
+#: (a prompt body, a docstring, a kwarg literal) is shown in full.
+_MUTATION_CONTENT_LIMIT_CHARS = 8000
 
 
 SYSTEM_PROMPT_TEMPLATE = """\
@@ -98,7 +105,17 @@ has:
   brief's forbidden-edits list.
 - "op" — one of "replace", "set_numeric", "set_enum".
 - "new_content" (string): required when op is "replace"; forbidden
-  otherwise.
+  otherwise. A "span" point is a single string literal (a prompt body,
+  a tool docstring, a kwarg value). For an op="replace" on a span,
+  "new_content" MUST be ONLY the replacement text for that one string
+  literal — the prose / docstring body itself. Do NOT restate the
+  surrounding code: no function signature, no ``import`` lines, no
+  ``# zicato:mutable`` marker comment, no other mutation points. The
+  harness owns the literal's quoting and indentation; you only supply
+  the inner text. Emitting surrounding code here will drop imports and
+  markers and the patch will be rejected. The mutation point's "current
+  content" block shows you the full span you are replacing — match its
+  scope exactly.
 - "new_numeric" (number): required when op is "set_numeric"; forbidden
   otherwise. Must fall inside any numeric range declared in the
   mutation point's metadata ("min" / "max" keys).
@@ -184,17 +201,30 @@ def render_pattern_block(patterns: Iterable[Pattern]) -> str:
     return "\n".join(lines)
 
 
-def _preview_content(content: str) -> str:
-    """Trim long mutation-point content for the prompt block.
+def _render_content(content: str) -> str:
+    """Render a mutation point's current content for the prompt block.
 
-    Multi-line content keeps its line breaks but is truncated to
-    :data:`_MUTATION_PREVIEW_CHARS`. The model gets enough surface to
-    reason about the edit without bloating the context.
+    The full content is shown verbatim: a ``replace`` patch has to
+    reproduce every byte of the span it is not editing — the surrounding
+    imports stay imports, the ``# zicato:mutable`` marker stays put, the
+    indentation is unchanged — and a truncated preview is exactly how a
+    proposer ends up dropping the parts it cannot see.
+
+    Only a pathologically large span (well past any real prompt body or
+    docstring) is trimmed, and then only to keep one runaway point from
+    swallowing the whole context window. The trim is annotated so the
+    proposer knows it is NOT seeing the full span and must not emit a
+    ``replace`` blindly.
     """
 
-    if len(content) <= _MUTATION_PREVIEW_CHARS:
+    if len(content) <= _MUTATION_CONTENT_LIMIT_CHARS:
         return content
-    return content[: _MUTATION_PREVIEW_CHARS - 1].rstrip() + "…"
+    head = content[:_MUTATION_CONTENT_LIMIT_CHARS].rstrip()
+    return (
+        f"{head}\n"
+        f"[... truncated: span exceeds {_MUTATION_CONTENT_LIMIT_CHARS} chars; "
+        "do not emit a `replace` for this point without the full content ...]"
+    )
 
 
 def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
@@ -207,14 +237,16 @@ def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
     for mp in items:
         meta_keys = sorted(mp.metadata.keys())
         meta_render = "; ".join(f"{k}={mp.metadata[k]}" for k in meta_keys) if meta_keys else "—"
-        snippet = _preview_content(mp.content)
-        # Indent multi-line content under a "content:" lead-in.
-        indented = textwrap.indent(snippet, "    ")
+        content = _render_content(mp.content)
+        # Indent the full content under a "current content:" lead-in so
+        # the model can see exactly what it is replacing.
+        indented = textwrap.indent(content, "    ")
         lines.append(
             f"- id={mp.id} kind={mp.kind} file={mp.file} "
             f"lines={mp.line_start}-{mp.line_end}\n"
             f"  metadata: {meta_render}\n"
-            f"  content:\n{indented}"
+            f"  current content (full — a `replace` MUST preserve every part "
+            f"you are not changing):\n{indented}"
         )
     return "\n".join(lines)
 

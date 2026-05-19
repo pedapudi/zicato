@@ -379,3 +379,142 @@ def test_apply_unchecked_one_bad_patch_leaves_earlier_applied(tmp_path: Path) ->
     # The unchecked path applied p1 before p2 raised — half-applied tree.
     assert tgt.exists()
     assert "changed" in (tgt / "a.py").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Surgical span replacement — a span replace must never break the file
+# ---------------------------------------------------------------------------
+
+
+def test_span_replace_reindents_docstring_to_match_suite(tmp_path: Path) -> None:
+    """A docstring span replace at the wrong indent is re-anchored.
+
+    A proposer working from a preview can emit ``new_content`` at the
+    wrong indentation. The applier owns the literal's syntactic anchor:
+    a docstring replacement must open at the function-body indent, not
+    wherever the proposer put it — otherwise the suite below it dedents
+    into thin air. The file must still parse, the marker must survive,
+    and the top-level imports must be untouched.
+    """
+    import ast
+
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    file_path = src / "agent.py"
+    _write(
+        file_path,
+        '''
+        from __future__ import annotations
+
+        import os
+        from typing import Any
+
+
+        def read_files(topic: str) -> dict[str, Any]:
+            # zicato:mutable id="read_files__doc"
+            """Read the files for the given topic."""
+            return {topic: os.getcwd()}
+    ''',
+    )
+    # The proposer emits the docstring indented EIGHT spaces — one level
+    # too deep for a function-body docstring (which sits at four).
+    over_indented = (
+        '        """Read the generated files.\n\n'
+        "        Pass the bare topic slug.\n"
+        '        """'
+    )
+    patches = [
+        _patch(
+            pid="p1",
+            mutation_id="read_files__doc",
+            op="replace",
+            new_content=over_indented,
+        )
+    ]
+    apply_patches(src, patches, tgt)
+
+    out = (tgt / "agent.py").read_text(encoding="utf-8")
+    # The patched file still parses — the docstring was re-anchored.
+    ast.parse(out)
+    # The new docstring landed.
+    assert "Read the generated files." in out
+    # The marker comment survived verbatim.
+    assert '# zicato:mutable id="read_files__doc"' in out
+    # Top-level imports are untouched.
+    assert "from __future__ import annotations" in out
+    assert "import os" in out
+    assert "from typing import Any" in out
+    # Re-enumeration still resolves the mutation id.
+    points = enumerate_mutations([tgt])
+    assert any(p.id == "read_files__doc" for p in points)
+
+
+def test_span_replace_prose_at_wrong_indent_stays_surgical(tmp_path: Path) -> None:
+    """A prose (unwrapped) replacement is also anchored to the span indent."""
+    import ast
+
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    file_path = src / "agent.py"
+    _write(
+        file_path,
+        '''
+        import os
+
+
+        def tool() -> str:
+            # zicato:mutable id="tool__doc"
+            """Original docstring."""
+            return os.getcwd()
+    ''',
+    )
+    # Raw prose — no quotes; the applier wraps AND anchors it.
+    patches = [
+        _patch(
+            pid="p1",
+            mutation_id="tool__doc",
+            op="replace",
+            new_content="A rewritten description of the tool.",
+        )
+    ]
+    apply_patches(src, patches, tgt)
+    out = (tgt / "agent.py").read_text(encoding="utf-8")
+    ast.parse(out)
+    assert "A rewritten description of the tool." in out
+    assert "import os" in out
+    assert '# zicato:mutable id="tool__doc"' in out
+
+
+def test_span_replace_already_correct_indent_is_idempotent(tmp_path: Path) -> None:
+    """Re-anchoring a correctly-indented literal is a no-op."""
+    import ast
+
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    file_path = src / "agent.py"
+    _write(
+        file_path,
+        '''
+        import os
+
+
+        def tool() -> str:
+            # zicato:mutable id="tool__doc"
+            """Original."""
+            return os.getcwd()
+    ''',
+    )
+    # Correctly indented four-space docstring — the common case.
+    patches = [
+        _patch(
+            pid="p1",
+            mutation_id="tool__doc",
+            op="replace",
+            new_content='    """Rewritten docstring."""',
+        )
+    ]
+    apply_patches(src, patches, tgt)
+    out = (tgt / "agent.py").read_text(encoding="utf-8")
+    ast.parse(out)
+    assert "Rewritten docstring." in out
+    assert "import os" in out
