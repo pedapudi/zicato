@@ -186,6 +186,12 @@ def create_app(
             "/api/mutations/{epoch_id}/{mutation_id}",
             handlers["api_mutation_detail"],
         ),
+        Route("/api/epoch/{epoch_id}/journal", handlers["api_epoch_journal"]),
+        Route("/api/epoch/{epoch_id}/analysis", handlers["api_epoch_analysis"]),
+        Route(
+            "/api/epoch/{epoch_id}/analysis.html",
+            handlers["api_epoch_analysis_html"],
+        ),
         Route("/api/conversation/{run_id}", handlers["api_conversation"]),
         Route(
             "/api/matchup/{entry_id}/conversations",

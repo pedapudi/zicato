@@ -393,6 +393,65 @@ function mockSnapshot() {
           file: 'myagent/prompts/researcher.md', lines: '1-120',
           preview: 'You are a careful research assistant...' },
       ],
+      // Experiment log: per-generation hypothesis + outcome + patch content.
+      experiments: [
+        { generation_id: 'v1',
+          hypothesis: {
+            core_idea: 'Tighten the extraction schema to reject loose types.',
+            why: 'Schema drift was the dominant kind in v0.',
+            risks: 'May reject borderline-valid responses.',
+            modulating: ['researcher.schema'],
+          },
+          patches: {
+            'researcher.schema': {
+              mutation_id: 'researcher.schema', op: 'replace',
+              rationale: 'narrow allowed types to the strict invoice contract',
+              new_content: 'SCHEMA = {"type": "object", "required": ["total", "due_date"]}',
+            },
+          },
+          outcome: { tournament_decision: 'rejected', scalar_score_delta: 0.022,
+            drift_loss_delta: 0.01, pass_rate_delta: -0.05,
+            rejection_reason: 'pass-rate regression on schema_response' },
+        },
+        { generation_id: 'v2',
+          hypothesis: {
+            core_idea: 'Move JSON validation earlier in the pipeline.',
+            why: 'Pipeline ordering issue — validating before emit catches malformed output.',
+            risks: '',
+            modulating: ['pipeline.order'],
+          },
+          patches: {
+            'pipeline.order': {
+              mutation_id: 'pipeline.order', op: 'reorder',
+              rationale: 'validate-before-emit so a bad response never reaches scoring',
+              new_content: 'steps = ["validate", "emit", "score"]',
+            },
+          },
+          outcome: { tournament_decision: 'promoted', scalar_score_delta: -0.040,
+            drift_loss_delta: -0.04, pass_rate_delta: 0.05 },
+        },
+        { generation_id: 'v5',
+          hypothesis: {
+            core_idea: 'Compress researcher tool descriptions to under 80 tokens each.',
+            why: 'Round 1 drift was dominated by off_topic when context filled with verbose tool docs.',
+            risks: 'Over-compression could drop a tool argument hint.',
+            modulating: ['researcher_tool_descriptions'],
+          },
+          patches: {
+            'researcher_tool_descriptions': {
+              mutation_id: 'researcher_tool_descriptions', op: 'replace',
+              rationale: 'compress to <80 tokens',
+              new_content: 'TOOL_DESCRIPTIONS = {"search": "Search.", "write": "Write."}',
+            },
+          },
+          outcome: null,
+        },
+      ],
+      // Journal: epoch-level markdown log of round outcomes.
+      journal: '# Epoch journal\n\n## v1 — Tighten extraction schema\n\n**outcome**: rejected (Δscalar=+0.022)\n\nThe strict schema rejected a valid borderline response on `schema_response`. The pass-rate regression outweighed the drift improvement.\n\n## v2 — Move JSON validation earlier\n\n**outcome**: promoted (Δscalar=-0.040)\n\nValidate-before-emit cleared the dominant schema_violation drift. Pass rate improved by 5 pp.\n',
+      // Analysis report: post-epoch summary.
+      analysis_md: '# Epoch analysis\n\n## Summary\n\nTwo experiments ran this epoch. One was promoted (`v2`), one was rejected (`v1`).\n\n## Key findings\n\n- Schema enforcement alone (v1) increased scalar by +0.022 — the strict schema rejected valid borderline responses.\n- Moving validation earlier (v2) improved scalar by −0.040; schema_violation drift dropped from 0.25 to 0.10.\n\n## Recommendation\n\nThe next epoch should focus on the rubric_judge entries, which still show high spread.\n',
+      analysis_html_available: false,
     },
     log_tail: [
       { ts: '12:34:50', level: 'info', message: 'tournament r2 entry research_topic_q3 started (run r-9c2a)' },
