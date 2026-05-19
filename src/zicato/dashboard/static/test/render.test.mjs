@@ -658,6 +658,52 @@ test('applyRoute switches to the Epoch view when the experiments anchor is in th
     'the experiments section must be present in the DOM after applyRoute');
 });
 
+test('a #/epoch/experiments route does not yank the scroll on every render', async () => {
+  // BUG: applyRoute() called scrollEpochSectionIntoView unconditionally
+  // on the experiments anchor, and applyRoute re-runs on EVERY render
+  // (each SSE delta). Re-applying the SAME anchor must be idempotent —
+  // scrollIntoView fires only on route TRANSITION. Mirrors the
+  // openMatchup gating fix on state.selectedMatchup.
+  state.applySnapshot(mockSnapshot());
+
+  let scrolls = 0;
+  const section = doc.getElementById('epoch-experiments-section');
+  section.scrollIntoView = () => { scrolls += 1; };
+
+  // First entry into #/epoch/experiments — must scroll exactly once.
+  // The handler defers the scroll via setTimeout(0) when rAF is absent
+  // (the test harness has no rAF), so flush the timer queue before
+  // counting.
+  globalThis.location.hash = '#/epoch/experiments';
+  render.applyRoute();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertEqual(scrolls, 1, 'opening the experiments anchor scrolls it into view once');
+
+  // Subsequent renders (SSE deltas) re-run applyRoute for the SAME
+  // route — must NOT re-scroll. Three more applyRoute calls and a
+  // full renderAll should not bump the count.
+  render.applyRoute();
+  render.applyRoute();
+  render.applyRoute();
+  render.renderAll();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertEqual(scrolls, 1,
+    're-rendering the same #/epoch/experiments route must NOT re-scroll');
+
+  // Leaving the anchor (e.g. #/epoch) and returning is a fresh
+  // transition — the latch resets and the next entry scrolls again.
+  globalThis.location.hash = '#/epoch';
+  render.applyRoute();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertEqual(scrolls, 1, 'navigating away from the anchor must not scroll');
+
+  globalThis.location.hash = '#/epoch/experiments';
+  render.applyRoute();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assertEqual(scrolls, 2,
+    'returning to the experiments anchor counts as a fresh transition and scrolls again');
+});
+
 test('the Tree view is purely the lineage DAG — no score-trajectory chart', () => {
   // The score trajectory lives ONLY on the Overview. The Tree view
   // renders the lineage graph and nothing else trajectory-shaped: the
