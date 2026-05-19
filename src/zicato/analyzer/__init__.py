@@ -1,23 +1,33 @@
-"""Decision-telemetry analyzer.
+"""Decision-telemetry analyzer and the epoch analysis report.
 
-The analyzer reads goldfive's decision-telemetry events from the
-``events.jsonl`` files an epoch has accumulated and produces an
-LLM-generated insight summary. The output is persisted under
-``epochs/{epoch}/insights/`` and is read back by the proposer the next
-round so the orchestrator's evolve loop closes a feedback loop between
-goldfive's silent-decision telemetry and the proposer's next move.
+The analyzer has two outputs, both regenerated as the evolve loop runs:
+
+* **Per-round insights** — the analyzer reads goldfive's
+  decision-telemetry events from the ``events.jsonl`` files an epoch has
+  accumulated and produces an LLM-generated insight summary, persisted
+  under ``epochs/{epoch}/insights/round_{N}.md`` and read back by the
+  proposer the next round. This closes a feedback loop between
+  goldfive's silent-decision telemetry and the proposer's next move.
+
+* **The epoch analysis report** — a comprehensive, academic-paper-style
+  narrative of the whole improvement campaign, regenerated after every
+  generation and persisted as ``epochs/{epoch}/analysis.md`` plus a
+  rendered ``analysis.html``. Its data-bearing sections are templated
+  exactly from the structured workspace; its prose sections are written
+  by one bounded auxiliary-LLM call.
 
 Public surface:
 
 * :class:`DecisionEventSummary` — frozen dataclass holding the
   aggregated counts the analyzer ships to the LLM.
 * :func:`aggregate_decision_events` — JSONL replay + count aggregation.
-* :func:`analyze_epoch_telemetry` — main entry point. Builds the
-  summary, renders the analysis prompt, calls the auxiliary LLM with a
-  bounded timeout, writes the resulting markdown to
-  ``insights/round_{N}.md``.
+* :func:`analyze_epoch_telemetry` — per-round insights entry point.
 * :func:`load_latest_insights` — concatenate every insights file in
   chronological order for embedding in the proposer prompt.
+* :func:`generate_epoch_report` — regenerate the comprehensive epoch
+  analysis report (``analysis.md`` + ``analysis.html``).
+* :class:`EpochReportData` / :func:`gather_epoch_report_data` — the
+  deterministic structured view the report is templated from.
 """
 
 from __future__ import annotations
@@ -27,10 +37,15 @@ from zicato.analyzer.aggregator import (
     aggregate_decision_events,
 )
 from zicato.analyzer.insights import analyze_epoch_telemetry, load_latest_insights
+from zicato.analyzer.report import generate_epoch_report
+from zicato.analyzer.report_data import EpochReportData, gather_epoch_report_data
 
 __all__ = [
     "DecisionEventSummary",
     "aggregate_decision_events",
     "analyze_epoch_telemetry",
     "load_latest_insights",
+    "generate_epoch_report",
+    "EpochReportData",
+    "gather_epoch_report_data",
 ]

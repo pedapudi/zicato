@@ -746,3 +746,115 @@ def test_evolve_n_rounds_populates_heartbeat_metadata(
     assert hb.phase  # descriptive, non-empty
     # The harmonograf_url field round-trips (empty when unconfigured).
     assert hb.harmonograf_url == ""
+
+
+# ---------------------------------------------------------------------------
+# Epoch analysis report regeneration (orchestrator wiring)
+# ---------------------------------------------------------------------------
+
+
+def _report_response() -> str:
+    """A valid four-block prose response for the epoch analysis report."""
+    return (
+        "===ABSTRACT===\n"
+        "The epoch is exercising the orchestrator under test.\n"
+        "===INTRODUCTION===\n"
+        "The inner harness is a stub agent used by the test suite.\n"
+        "===ANALYSIS===\n"
+        "Generation v1 was evaluated against the champion.\n"
+        "===CONCLUSION===\n"
+        "Continue with the next mutation.\n"
+    )
+
+
+def test_evolve_once_regenerates_analysis_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After a round, the comprehensive analysis report is regenerated."""
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    # The aux responder serves the proposer first, then the report's
+    # one prose call. The decision-telemetry analyzer makes no LLM call
+    # here because the stub telemetry emits no decision events.
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_valid_proposer_response(), _report_response()]
+            ),
+        )
+    )
+    assert outcome.tournament_decision == "promoted"
+
+    # The report landed as analysis.md + analysis.html under the epoch.
+    epoch_dir = workspace / "epochs" / epoch_id
+    md = epoch_dir / "analysis.md"
+    html = epoch_dir / "analysis.html"
+    assert md.is_file()
+    assert html.is_file()
+
+    md_text = md.read_text()
+    # The academic-paper section skeleton is present.
+    for section in (
+        "# Epoch Analysis Report",
+        "## Abstract",
+        "## 1. Introduction",
+        "## 2. Methodology",
+        "## 4. Experimental Results",
+        "## 7. Conclusion & Next Directions",
+    ):
+        assert section in md_text, section
+    # The LLM prose and the deterministic per-generation data both landed.
+    assert "exercising the orchestrator" in md_text
+    assert "v1" in md_text
+    assert html.read_text().startswith("<!DOCTYPE html>")
+
+    # The per-round insights artifact remains a separate, untouched path.
+    insights = epoch_dir / "insights"
+    assert insights.is_dir()
+
+
+def test_evolve_once_survives_report_generation_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A crash inside report generation never aborts the round."""
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    # Make the report generator raise unconditionally — the orchestrator's
+    # best-effort wrapper must swallow it.
+    import zicato.analyzer as _analyzer_pkg
+
+    async def _boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("report generation exploded")
+
+    monkeypatch.setattr(_analyzer_pkg, "generate_epoch_report", _boom)
+
+    from zicato.orchestrator import evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+        )
+    )
+    # The round still produced its real verdict despite the report crash.
+    assert outcome.tournament_decision == "promoted"
+    assert outcome.proposed_generation_id == "v1"

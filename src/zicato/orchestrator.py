@@ -690,6 +690,15 @@ async def evolve_once(
         )
         if health_critical:
             _warn_loop_no_signal(resolved_epoch_id, round_n, health_summary)
+        # Regenerate the comprehensive epoch analysis report even on an
+        # early validator rejection — the round still wrote an
+        # experiment + journal entry, so the report should reflect it.
+        await _regenerate_epoch_report(
+            workspace_root,
+            resolved_epoch_id,
+            auxiliary_call_llm,
+            str(workspace_config.get("auxiliary_model", "")),
+        )
         _beat(
             beater,
             epoch_id=resolved_epoch_id,
@@ -875,6 +884,14 @@ async def evolve_once(
         )
     except Exception as exc:  # noqa: BLE001 — analyser is best-effort
         log.debug("decision telemetry analyzer skipped: %s", exc)
+
+    # --- 16. Best-effort epoch analysis report regeneration ---
+    await _regenerate_epoch_report(
+        workspace_root,
+        resolved_epoch_id,
+        auxiliary_call_llm,
+        str(workspace_config.get("auxiliary_model", "")),
+    )
 
     _beat(
         beater,
@@ -1487,6 +1504,40 @@ def _render_loss_summary(losses: list[Any]) -> str:
     else:
         pass_part = ""
     return f"drift_loss_mean={drift_mean:.3f} over {len(losses)} runs" + pass_part
+
+
+async def _regenerate_epoch_report(
+    workspace_root: Path,
+    epoch_id: str,
+    auxiliary_call_llm: CallLLM,
+    auxiliary_model: str,
+) -> None:
+    """Regenerate the comprehensive epoch analysis report — best-effort.
+
+    The academic-paper-style epoch report is rebuilt in full after every
+    round so it is always current; by epoch close it reads as a complete
+    write-up. Its data-bearing sections are templated exactly from the
+    structured workspace artifacts; one bounded auxiliary-LLM call writes
+    the prose sections. The report is persisted as
+    ``epochs/{epoch}/analysis.md`` plus a rendered ``analysis.html``
+    (served by the existing dashboard endpoint).
+
+    Strictly best-effort: any failure is swallowed and logged at debug
+    level so a wedge here cannot abort the round or the loop. This is a
+    separate artifact from the per-round ``insights/round_{N}.md``
+    proposer-feedback files.
+    """
+    try:
+        from zicato.analyzer import generate_epoch_report  # noqa: PLC0415
+
+        await generate_epoch_report(
+            workspace_root,
+            epoch_id,
+            auxiliary_call_llm,
+            model=auxiliary_model,
+        )
+    except Exception as exc:  # noqa: BLE001 — report is best-effort
+        log.debug("epoch analysis report regeneration skipped: %s", exc)
 
 
 def _cache_gen_score(
