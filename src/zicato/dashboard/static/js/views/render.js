@@ -21,7 +21,7 @@
 
 import {
   $, el, svgEl, clearChildren, mount, patchText, patchAttr, patchClass,
-  reconcileList, appendRows, trimRows,
+  reconcileList, appendRows, trimRows, swapIfChanged,
 } from '../core/dom.js';
 import {
   SVG_NS, COLORS, DEFAULT_MARGIN, fmtDelta, fmtRate, fmtDuration,
@@ -3948,6 +3948,8 @@ const filesState = {
   openFile: null,     // rel path of the file shown in the content pane
   changes: null,      // { parent_generation_id, files: [...] } diff payload
   changesKey: null,   // epoch/generation the cached `changes` belongs to
+  patches: null,      // { patches: [...] } applied-patch payload
+  patchesKey: null,   // epoch/generation the cached `patches` belongs to
 };
 
 function fmtFileSize(bytes) {
@@ -4044,6 +4046,8 @@ async function loadFilesGeneration(epochId, generationId) {
     filesState.tree = null;
     filesState.changes = null;
     filesState.changesKey = `${epochId}/${generationId}`;
+    filesState.patches = null;
+    filesState.patchesKey = `${epochId}/${generationId}`;
     const base = `/api/files/${encodeURIComponent(epochId)}/${encodeURIComponent(generationId)}`;
     try {
       filesState.tree = await fetchJson(base + '/tree');
@@ -4054,6 +4058,15 @@ async function loadFilesGeneration(epochId, generationId) {
       filesState.changes = await fetchJson(base + '/diff');
     } catch (err) {
       filesState.changes = { files: [], error: String(err) };
+    }
+    // Fetch the applied-patch set ONCE per genuine selection change and
+    // cache it. The render pass below (and every later SSE-driven
+    // repaint) is then a pure, synchronous reconcile against this cached
+    // payload — no fetch races, no append-into-a-stale-pane duplication.
+    try {
+      filesState.patches = await fetchJson(base + '/patches');
+    } catch (err) {
+      filesState.patches = { patches: [], error: String(err) };
     }
     // The mutation surface is per-epoch; a generation switch within the
     // same epoch reuses the cached index, a switch to a new epoch reloads.
@@ -4333,53 +4346,87 @@ function renderFilesContent() {
   );
 }
 
-// The patch-set section: the patches that derived the selected generation.
-async function renderFilesPatches() {
+// The patch-set section: the patches that derived the selected
+// generation. This is a PURE, SYNCHRONOUS render — the patch payload is
+// fetched once per selection by loadFilesGeneration and cached on
+// filesState.patches. Routing the list through reconcileList means a
+// no-op SSE repaint touches zero DOM nodes (no layout jump) and there is
+// no fetch race that could append the same patch twice.
+function renderFilesPatches() {
   const pane = $('files-patches');
   if (!pane) return;
-  clearChildren(pane);
 
+  // Coarse state: empty / error / populated. swapIfChanged only rebuilds
+  // the pane shell when that bucket changes — so the <ul> survives every
+  // tick and the keyed reconcile inside it is what runs steady-state.
   if (!filesState.selectedGen) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, ['Select a generation to view its patches.'])
-    );
+    swapIfChanged(pane, 'no-selection', () =>
+      el('p', { class: 'empty' }, ['Select a generation to view its patches.']));
     return;
   }
-  const { epoch_id, generation_id } = filesState.selectedGen;
-  const base = `/api/files/${encodeURIComponent(epoch_id)}/${encodeURIComponent(generation_id)}`;
-  let payload;
-  try {
-    payload = await fetchJson(base + '/patches');
-  } catch (err) {
-    payload = { patches: [], error: String(err) };
+  const payload = filesState.patches || { patches: [] };
+  // Assign each patch a stable reconcile key and de-duplicate by it: a
+  // patch set is keyed by its patch/commit id, so two rows with the same
+  // key are the same patch. This guards against any upstream payload (or
+  // a fetch race) that lists a patch twice. An id-less patch falls back
+  // to its mutation target, then to its position.
+  const seen = new Set();
+  const patches = [];
+  let idx = 0;
+  for (const patch of payload.patches || []) {
+    const key = (patch && patch.id)
+      || (patch && patch.mutation_id)
+      || `#${idx}`;
+    idx += 1;
+    if (seen.has(String(key))) continue;
+    seen.add(String(key));
+    patches.push({ patch, key: String(key) });
   }
-  const patches = payload.patches || [];
   if (patches.length === 0) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, [
-        payload.error || 'No patches — this is a seed generation.',
-      ])
-    );
+    const msg = payload.error || 'No patches — this is a seed generation.';
+    swapIfChanged(pane, 'empty:' + msg, () =>
+      el('p', { class: 'empty' }, [msg]));
     return;
   }
-  const list = el('ul', { class: 'files-patch-list' });
-  for (const patch of patches) {
-    list.appendChild(
-      el('li', { class: 'files-patch-item' }, [
-        el('div', { class: 'files-patch-head' }, [
-          el('span', { class: 'files-patch-id' }, [patch.id || '?']),
-          el('span', { class: 'files-patch-op' }, [patch.op || '']),
-          el('span', { class: 'files-patch-target' }, [
-            patch.mutation_id || '',
-          ]),
+  // Populated: ensure the <ul> shell exists, then reconcile its rows by
+  // a stable per-patch key so unchanged rows are left untouched.
+  swapIfChanged(pane, 'list', () => el('ul', { class: 'files-patch-list' }));
+  const list = pane.firstChild;
+  reconcileList(
+    list,
+    patches,
+    (row) => row.key,
+    ({ patch }) => el('li', { class: 'files-patch-item' }, [
+      el('div', { class: 'files-patch-head' }, [
+        el('span', { class: 'files-patch-id' }, [patch.id || '?']),
+        el('span', { class: 'files-patch-op' }, [patch.op || '']),
+        el('span', { class: 'files-patch-target' }, [
+          patch.mutation_id || '',
         ]),
-        patch.rationale
-          ? el('div', { class: 'files-patch-rationale' }, [patch.rationale])
-          : null,
-      ])
-    );
-  }
-  pane.appendChild(list);
+      ]),
+      patch.rationale
+        ? el('div', { class: 'files-patch-rationale' }, [patch.rationale])
+        : null,
+    ]),
+    (row, { patch }) => {
+      // Update an existing row in place — patch* only writes on change.
+      const head = row.firstChild;
+      if (head) {
+        patchText(head.children[0], patch.id || '?');
+        patchText(head.children[1], patch.op || '');
+        patchText(head.children[2], patch.mutation_id || '');
+      }
+      // The rationale block may appear/disappear between renders.
+      const rat = row.children[1] || null;
+      if (patch.rationale) {
+        if (rat) patchText(rat, patch.rationale);
+        else row.appendChild(
+          el('div', { class: 'files-patch-rationale' }, [patch.rationale]));
+      } else if (rat) {
+        row.removeChild(rat);
+      }
+    },
+  );
 }
 
 // --- Mutation-site browser (Files view) ----------------------------
@@ -4472,27 +4519,30 @@ async function renderMutationsView() {
 }
 
 // Left pane: the list of mutation sites for the epoch's baseline.
+// Routed through reconcileList so an SSE-driven repaint with unchanged
+// mutation data touches zero DOM nodes — the section does not jump.
 function renderMutationsList() {
   const pane = $('mutations-list-pane');
   if (!pane) return;
-  clearChildren(pane);
 
   const index = mutationsState.index || { mutations: [] };
   const sites = index.mutations || [];
   if (sites.length === 0) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, [
-        index.error || 'No mutation sites in this epoch.',
-      ])
-    );
+    const msg = index.error || 'No mutation sites in this epoch.';
+    swapIfChanged(pane, 'empty:' + msg, () =>
+      el('p', { class: 'empty' }, [msg]));
     return;
   }
-  const list = el('ul', { class: 'mutations-list' });
-  for (const site of sites) {
-    const selected = mutationsState.selectedId === site.mutation_id;
-    const patched = (site.patched_generation_ids || []).length > 0;
-    list.appendChild(
-      el('li', { class: 'mutations-list-item' }, [
+  swapIfChanged(pane, 'list', () => el('ul', { class: 'mutations-list' }));
+  const list = pane.firstChild;
+  reconcileList(
+    list,
+    sites,
+    (site) => site.mutation_id,
+    (site) => {
+      const selected = mutationsState.selectedId === site.mutation_id;
+      const patched = (site.patched_generation_ids || []).length > 0;
+      return el('li', { class: 'mutations-list-item' }, [
         el('button', {
           type: 'button',
           class: 'mutations-site-button' + (selected ? ' active' : ''),
@@ -4508,10 +4558,28 @@ function renderMutationsList() {
               ])
             : el('span', { class: 'mutations-site-badge unpatched' }, ['baseline']),
         ]),
-      ])
-    );
-  }
-  pane.appendChild(list);
+      ]);
+    },
+    (row, site) => {
+      // Update in place — the selected-state class and the patched
+      // badge are the only things that change between renders.
+      const btn = row.firstChild;
+      if (!btn) return;
+      const selected = mutationsState.selectedId === site.mutation_id;
+      patchClass(btn, 'active', selected);
+      patchText(btn.children[0], site.mutation_id);
+      patchText(btn.children[1],
+        (site.role || site.kind || '') + ' · ' + (site.file || ''));
+      const badge = btn.children[2];
+      const patched = (site.patched_generation_ids || []).length > 0;
+      if (badge) {
+        patchText(badge, patched
+          ? site.patched_generation_ids.join(', ')
+          : 'baseline');
+        patchClass(badge, 'unpatched', !patched);
+      }
+    },
+  );
 }
 
 async function selectMutationSite(mutationId) {
