@@ -961,12 +961,15 @@ def test_experiments_section_offers_raw_journal_link(app_js: str) -> None:
     """The merged Experiments section offers a 'view raw journal' link.
 
     The journal is no longer its own section, but the raw markdown stays
-    one click away via the journal endpoint.
+    one click away via the dedicated ``journal.md`` endpoint
+    (``text/markdown``) — NOT the JSON-envelope ``/journal`` endpoint
+    that wraps the file in ``{ epoch_id, journal }`` (hard to read in a
+    browser tab).
     """
     region = _epoch_experiment_log_region(_strip_js_comments(app_js))
     assert (
-        "/api/epoch/" in region and "/journal" in region
-    ), "the Experiments section must link to the raw journal endpoint"
+        "/api/epoch/" in region and "/journal.md" in region
+    ), "the Experiments section must link to the raw journal.md endpoint"
 
 
 def test_analysis_offers_html_link(app_js: str) -> None:

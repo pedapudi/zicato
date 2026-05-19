@@ -454,6 +454,32 @@ def test_render_system_prompt_handles_empty_brief() -> None:
     assert "(empty)" in rendered
 
 
+def test_render_system_prompt_carries_style_section_for_new_content() -> None:
+    """The Style section instructs the proposer to break long ``new_content``.
+
+    The dashboard's mutation-diff view rendered emitted prompts as one
+    unbroken line, making the diff column unreadable. The Style section
+    is the content-formatting expectation that pushes the proposer to
+    emit ``new_content`` with sensible line breaks (~80-100 chars per
+    line) — the patch applier handles indentation re-anchoring already,
+    so the proposer only needs to insert newlines.
+    """
+    rendered = render_system_prompt("")
+    assert "Style" in rendered, "the Style section must be present"
+    # The expectation names the field, the line-length target, and the
+    # newline-escape encoding so the proposer cannot misread it.
+    assert "new_content" in rendered
+    # The line-length window is named explicitly so the model has a
+    # concrete target (not a vague "keep lines short").
+    assert (
+        "80-100" in rendered or "80 to 100" in rendered.lower()
+    ), "the Style section must name the 80-100 character per-line window"
+    # The one-shot example reflects the style: its router prompt is now
+    # multi-line via `\\n` inside the JSON string literal.
+    assert "Do not include preambles" in rendered
+    assert "\\n" in rendered, "the one-shot example must demonstrate the `\\n` line-break encoding"
+
+
 def test_render_user_prompt_includes_feedback_when_present() -> None:
     rendered = render_user_prompt(
         current_loss_summary="loss=1.0",

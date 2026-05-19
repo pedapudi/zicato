@@ -195,6 +195,10 @@ def create_app(
             handlers["api_mutation_detail"],
         ),
         Route("/api/epoch/{epoch_id}/journal", handlers["api_epoch_journal"]),
+        Route(
+            "/api/epoch/{epoch_id}/journal.md",
+            handlers["api_epoch_journal_md"],
+        ),
         Route("/api/epoch/{epoch_id}/analysis", handlers["api_epoch_analysis"]),
         Route(
             "/api/epoch/{epoch_id}/analysis.html",
