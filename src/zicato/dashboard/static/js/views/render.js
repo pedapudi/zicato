@@ -46,6 +46,16 @@ import { mockConversation } from './mock.js';
 // and DEFAULT_VIEW are pinned by the router contract.
 let currentView = DEFAULT_VIEW;
 
+// Last Epoch-view section anchor that was actually scrolled into view.
+// applyRoute() re-runs on every render (each SSE delta), so the
+// section-anchor scroll for `#/epoch/experiments` must fire only on
+// route TRANSITION — when the parsed anchor differs from the last one
+// applied. Re-applying the same anchor is a no-op; otherwise every tick
+// yanks the page back to the section. Mirrors the openMatchup gating on
+// state.selectedMatchup. Cleared to null when the Epoch view leaves the
+// anchored route (no `experiments` segment) so the next entry scrolls.
+let lastEpochSectionAnchor = null;
+
 // --- Render: header + footer + connection
 
 // How long since the last heartbeat before the run is considered
@@ -3840,6 +3850,17 @@ function applyRoute() {
   const hash = location.hash || '';
   const segs = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
 
+  // Drop the Epoch section-anchor latch when the route is NOT the
+  // experiments anchor — so a subsequent return to #/epoch/experiments
+  // counts as a fresh transition and re-scrolls the section. The latch
+  // is set further below in the matching branch.
+  const isEpochExperimentsRoute = segs[0] === 'epoch'
+    && (segs[1] === 'experiments'
+      || (segs.length >= 3 && segs[2] === 'experiments'));
+  if (!isEpochExperimentsRoute) {
+    lastEpochSectionAnchor = null;
+  }
+
   let view = currentView;
   let kind = null;
   let id = null;
@@ -3886,13 +3907,23 @@ function applyRoute() {
     // it lands AFTER renderEpochView paints. Robust on direct URL access,
     // refresh, and bookmark — the anchor is part of the URL, not a click
     // handler.
+    //
+    // applyRoute re-runs on every render (each SSE delta), so the scroll
+    // fires ONLY when the parsed section anchor newly applies. Re-applying
+    // the same anchor across renders is a no-op — otherwise the page is
+    // yanked to the section on every state change. Mirrors the openMatchup
+    // gating on state.selectedMatchup.
     if (view === 'epoch'
       && (segs[1] === 'experiments'
         || (segs.length >= 3 && segs[2] === 'experiments'))) {
       if (view !== currentView) showView(view);
       else showViewClassesOnly(view);
       applyDrill(null, null);
-      scrollEpochSectionIntoView('epoch-experiments-section');
+      const anchor = 'epoch-experiments-section';
+      if (lastEpochSectionAnchor !== anchor) {
+        lastEpochSectionAnchor = anchor;
+        scrollEpochSectionIntoView(anchor);
+      }
       return;
     }
     // #/tournament/conv/{entry_id} — restore the inline conversation diff
