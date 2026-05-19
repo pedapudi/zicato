@@ -358,6 +358,59 @@ test('renderAll is idempotent — repeated calls do not throw or grow the DOM', 
     'idempotent renderAll must not duplicate log rows');
 });
 
+test('selecting a board matchup renders the Matchup detail, not the placeholder', () => {
+  // Regression: clicking a board card routes to #/tournament/conv/<entry>
+  // and selects a board ENTRY (never state.selectedMatchup). The detail
+  // panel must render that entry's champion-vs-challenger head-to-head —
+  // it used to silently stay on the "Select a matchup above." placeholder
+  // because renderMatchupDetail only keyed off state.selectedMatchup.
+  state.mock = true;
+  state.applySnapshot(mockSnapshot());
+  state.selectedMatchup = null;
+  // Clear any board-entry selection leaked from an earlier test — a
+  // bare #/conversation routes to selectConversation(null).
+  globalThis.location.hash = '#/conversation';
+  render.applyRoute();
+  render.showView('tournament');
+  const detail = doc.getElementById('tournament-detail');
+
+  // Bare #/tournament with nothing selected keeps the placeholder.
+  globalThis.location.hash = '#/tournament';
+  render.applyRoute();
+  assert(textOf(detail).includes('Select a matchup above'),
+    'a bare #/tournament must keep the placeholder');
+
+  // A #/tournament/conv/<entry> route must render the matchup detail —
+  // exercise a single-turn-style board entry first.
+  globalThis.location.hash = '#/tournament/conv/extract_invoice_001';
+  render.applyRoute();
+  const single = doc.getElementById('tournament-detail');
+  assert(!textOf(single).includes('Select a matchup above'),
+    'a selected matchup must NOT show the placeholder');
+  assert(textOf(single).includes('Matchup detail'),
+    'the panel must render a Matchup detail heading');
+  assert(textOf(single).includes('extract_invoice_001'),
+    'the panel must name the selected board entry');
+  assert(textOf(single).includes('Champion vs challenger'),
+    'the panel must render the champion-vs-challenger sides');
+  assert(textOf(single).includes('Verdict'),
+    'the panel must render the per-matchup verdict');
+  // extract_invoice_001 has both sides scored in the mock (champion
+  // 0.23 vs challenger 0.18) — the verdict line resolves a winner.
+  assert(/Challenger leads|Champion holds|Flat/.test(textOf(single)),
+    'a both-sides-done matchup must render a resolved verdict line');
+
+  // The same path for a multi-turn board entry (the cards emit the
+  // `conv` kind for both — the entry id distinguishes them).
+  globalThis.location.hash = '#/tournament/conv/multi_turn_picky';
+  render.applyRoute();
+  const multi = doc.getElementById('tournament-detail');
+  assert(!textOf(multi).includes('Select a matchup above'),
+    'a multi-turn matchup must also render its detail');
+  assert(textOf(multi).includes('multi_turn_picky'),
+    'the panel must name the multi-turn board entry');
+});
+
 // -- Epoch view redesign ----------------------------------------------
 // The Epoch view is the epoch's narrative: identity + the operator's
 // brief, then one card per experiment telling its story in four beats
