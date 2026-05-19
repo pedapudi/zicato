@@ -3836,7 +3836,27 @@ const filesState = {
   changesKey: null,   // epoch/generation the cached `changes` belongs to
   patches: null,      // { patches: [...] } applied-patch payload
   patchesKey: null,   // epoch/generation the cached `patches` belongs to
+  // Live-refresh bookkeeping. The /api/files index is a load-time
+  // snapshot; liveGensKey is a digest of the generation set in live
+  // AppState — when it changes the index is re-fetched so a generation
+  // created mid-run reaches the picker without a page reload.
+  liveGensKey: null,  // digest of state.lineage's generation set
+  refreshing: false,  // a background /api/files re-fetch is in flight
 };
+
+// A cheap digest of every generation id in live AppState (the lineage
+// feed). Used to detect that a new generation landed since the Files
+// index was last fetched.
+function liveGenerationsDigest() {
+  const gens = (state.lineage && state.lineage.generations) || [];
+  const ids = [];
+  for (const g of gens) {
+    const id = g && (g.generation_id != null ? g.generation_id : g.id);
+    if (id != null) ids.push(String(id));
+  }
+  ids.sort();
+  return ids.join('|');
+}
 
 function fmtFileSize(bytes) {
   if (typeof bytes !== 'number' || bytes < 0) return '';
@@ -3851,6 +3871,19 @@ function fmtFileSize(bytes) {
 function latestGenerationOf(epochEntry) {
   const gens = (epochEntry && epochEntry.generations) || [];
   return gens.length ? gens[gens.length - 1].generation_id : null;
+}
+
+// The seed generation id for the epoch the mutation surface belongs to.
+// An unpatched mutation site still carries the seed generation's
+// content, so it is tagged with this id — a generation id, consistent
+// with the v1/v2 ids patched sites show. The index lists generations in
+// store order, so the first element is the seed; `v0` is the fallback
+// when the index is not yet loaded.
+function baselineGenerationId() {
+  const epochs = (filesState.index && filesState.index.epochs) || [];
+  const epoch = epochs.find((e) => e.epoch_id === mutationsState.epochId);
+  const gens = (epoch && epoch.generations) || [];
+  return gens.length ? gens[0].generation_id : 'v0';
 }
 
 // Resolve the route's (epoch, generation) against the loaded index,
@@ -3886,6 +3919,11 @@ async function applyFilesRoute(routeEpoch, routeGen) {
     } catch (err) {
       filesState.index = { epochs: [] };
     }
+    filesState.liveGensKey = liveGenerationsDigest();
+  } else {
+    // The index is a load-time snapshot — on every SSE-driven repaint,
+    // re-fetch it when live AppState shows a generation it lacks (Bug 1).
+    await refreshFilesIndexIfStale();
   }
   const target = resolveFilesTarget(routeEpoch, routeGen);
   if (!target) {
@@ -3916,6 +3954,31 @@ async function renderFilesView() {
     filesState.selectedGen ? filesState.selectedGen.epoch_id : null,
     filesState.selectedGen ? filesState.selectedGen.generation_id : null,
   );
+}
+
+// Live-refresh the generation index. Called on every SSE-driven repaint
+// while the Files view is open. A digest of the live lineage generation
+// set gates the re-fetch: unchanged -> pure no-op (no fetch, no DOM
+// write); a new generation -> re-fetch and repaint the pickers through
+// the keyed reconcile spine, adding only the genuinely-new row.
+async function refreshFilesIndexIfStale() {
+  const digest = liveGenerationsDigest();
+  if (digest === filesState.liveGensKey) return;
+  if (filesState.refreshing) return;
+  filesState.refreshing = true;
+  try {
+    const fresh = await fetchJson('/api/files');
+    filesState.index = fresh || { epochs: [] };
+  } catch (err) {
+    // A failed refresh leaves the previous index in place; retried next
+    // tick — the digest is recorded only after a successful fetch.
+    return;
+  } finally {
+    filesState.refreshing = false;
+  }
+  filesState.liveGensKey = digest;
+  renderFilesChangesControls();
+  renderFilesIndex();
 }
 
 // Load a generation's tree + changed-files diff and paint every Files
@@ -3986,40 +4049,95 @@ function renderFilesChanges() {
   renderFilesChangesDiff();
 }
 
-// The generation picker for the changes section.
+// Flatten the Files index into ordered picker rows: an epoch-label row
+// per epoch, then a generation-button row per generation. Each row's
+// STABLE reconcile key lets reconcileList leave a surviving row (and its
+// listener) untouched and only add the row for a new generation — this
+// is what keeps a live index refresh jitter-free.
+function filesPickerRows() {
+  const epochs = (filesState.index && filesState.index.epochs) || [];
+  const rows = [];
+  for (const epoch of epochs) {
+    rows.push({ kind: 'epoch', key: 'epoch:' + epoch.epoch_id, epoch });
+    for (const gen of epoch.generations || []) {
+      rows.push({
+        kind: 'gen',
+        key: 'gen:' + epoch.epoch_id + '/' + gen.generation_id,
+        epochId: epoch.epoch_id,
+        gen,
+      });
+    }
+  }
+  return rows;
+}
+
+// Whether a picker row is the currently-selected generation.
+function filesRowSelected(row) {
+  const sel = filesState.selectedGen;
+  return row.kind === 'gen' && sel
+    && sel.epoch_id === row.epochId
+    && sel.generation_id === row.gen.generation_id;
+}
+
+// Build a fresh picker row (epoch label or generation button).
+function buildFilesPickerRow(row) {
+  if (row.kind === 'epoch') {
+    return el('div', { class: 'files-epoch-label' }, [row.epoch.epoch_id]);
+  }
+  const gen = row.gen;
+  return el('button', {
+    type: 'button',
+    class: 'files-gen-button' + (filesRowSelected(row) ? ' active' : ''),
+    onclick: () => selectFilesGeneration(row.epochId, gen.generation_id),
+  }, [
+    el('span', { class: 'files-gen-id' }, [gen.generation_id]),
+    el('span', { class: 'files-gen-meta' }, [
+      `${gen.file_count} files · ${gen.patch_count} patches`,
+    ]),
+  ]);
+}
+
+// Update an existing picker row in place — only the metadata text and
+// selected-state class change between renders; patch* writes only on a
+// genuine change, so a no-op refresh touches nothing.
+function updateFilesPickerRow(node, row) {
+  if (row.kind === 'epoch') {
+    patchText(node, row.epoch.epoch_id);
+    return;
+  }
+  const gen = row.gen;
+  patchClass(node, 'active', filesRowSelected(row));
+  patchText(node.children[0], gen.generation_id);
+  patchText(node.children[1],
+    `${gen.file_count} files · ${gen.patch_count} patches`);
+}
+
+// Paint a generation picker, reconciling its rows by a stable key.
+function reconcileFilesPicker(picker) {
+  reconcileList(
+    picker,
+    filesPickerRows(),
+    (row) => row.key,
+    buildFilesPickerRow,
+    updateFilesPickerRow,
+  );
+}
+
+// The generation picker for the changes section. Routed through the
+// keyed reconcile spine so an SSE-driven live index refresh adds a new
+// generation's row without churning the rows already on screen.
 function renderFilesChangesControls() {
   const pane = $('files-changes-controls');
   if (!pane) return;
-  clearChildren(pane);
 
   const epochs = (filesState.index && filesState.index.epochs) || [];
   if (epochs.length === 0) {
-    pane.appendChild(el('p', { class: 'empty' }, ['No generations yet.']));
+    swapIfChanged(pane, 'empty', () =>
+      el('p', { class: 'empty' }, ['No generations yet.']));
     return;
   }
-  const sel = filesState.selectedGen;
-  const picker = el('div', { class: 'files-gen-picker' });
-  for (const epoch of epochs) {
-    picker.appendChild(
-      el('div', { class: 'files-epoch-label' }, [epoch.epoch_id])
-    );
-    for (const gen of epoch.generations || []) {
-      const selected = sel
-        && sel.epoch_id === epoch.epoch_id
-        && sel.generation_id === gen.generation_id;
-      picker.appendChild(el('button', {
-        type: 'button',
-        class: 'files-gen-button' + (selected ? ' active' : ''),
-        onclick: () => selectFilesGeneration(epoch.epoch_id, gen.generation_id),
-      }, [
-        el('span', { class: 'files-gen-id' }, [gen.generation_id]),
-        el('span', { class: 'files-gen-meta' }, [
-          `${gen.file_count} files · ${gen.patch_count} patches`,
-        ]),
-      ]));
-    }
-  }
-  pane.appendChild(picker);
+  swapIfChanged(pane, 'picker', () => el('div', { class: 'files-gen-picker' }));
+  reconcileFilesPicker(pane.firstChild);
 }
 
 // The side-by-side diff: one split diff per file the generation changed.
@@ -4079,44 +4197,29 @@ function renderFilesChangesDiff() {
 }
 
 // Left pane top: the epoch -> generation picker, then the file tree.
+// The picker routes through the keyed reconcile spine, and the
+// tree-root child is kept as a stable node, so an SSE-driven live index
+// refresh adds a new generation's button without rebuilding the picker
+// or wiping the file tree already painted below it.
 function renderFilesIndex() {
   const pane = $('files-tree-pane');
   if (!pane) return;
-  clearChildren(pane);
 
   const index = filesState.index || { epochs: [] };
   const epochs = index.epochs || [];
   if (epochs.length === 0) {
-    pane.appendChild(el('p', { class: 'empty' }, ['No generations yet.']));
+    swapIfChanged(pane, 'empty', () =>
+      el('p', { class: 'empty' }, ['No generations yet.']));
     return;
   }
-
-  const picker = el('div', { class: 'files-gen-picker' });
-  for (const epoch of epochs) {
-    picker.appendChild(
-      el('div', { class: 'files-epoch-label' }, [epoch.epoch_id])
-    );
-    for (const gen of epoch.generations || []) {
-      const selected = filesState.selectedGen
-        && filesState.selectedGen.epoch_id === epoch.epoch_id
-        && filesState.selectedGen.generation_id === gen.generation_id;
-      const btn = el('button', {
-        type: 'button',
-        class: 'files-gen-button' + (selected ? ' active' : ''),
-        onclick: () => selectFilesGeneration(epoch.epoch_id, gen.generation_id),
-      }, [
-        el('span', { class: 'files-gen-id' }, [gen.generation_id]),
-        el('span', { class: 'files-gen-meta' }, [
-          `${gen.file_count} files · ${gen.patch_count} patches`,
-        ]),
-      ]);
-      picker.appendChild(btn);
-    }
-  }
-  pane.appendChild(picker);
-
-  // The file tree of the selected generation, below the picker.
-  pane.appendChild(el('div', { id: 'files-tree-root', class: 'files-tree-root' }));
+  // Populated shell: a picker followed by a persistent tree-root. The
+  // shell is built once (swapIfChanged) so the tree-root node — and the
+  // tree renderFilesTree painted into it — survives every later refresh.
+  swapIfChanged(pane, 'shell', () => [
+    el('div', { class: 'files-gen-picker' }),
+    el('div', { id: 'files-tree-root', class: 'files-tree-root' }),
+  ]);
+  reconcileFilesPicker(pane.firstChild);
 }
 
 // The selected generation's source tree, rendered from the flat entry
@@ -4442,7 +4545,13 @@ function renderMutationsList() {
             ? el('span', { class: 'mutations-site-badge' }, [
                 site.patched_generation_ids.join(', '),
               ])
-            : el('span', { class: 'mutations-site-badge unpatched' }, ['baseline']),
+            // An unpatched site still carries the seed generation's
+            // content, so it is tagged with that generation id (v0) —
+            // consistent with the v1/v2 ids patched sites show. The
+            // `unpatched` class keeps the "untouched" signal readable
+            // via muted styling; the tag VALUE is a generation id.
+            : el('span', { class: 'mutations-site-badge unpatched' },
+                [baselineGenerationId()]),
         ]),
       ]);
     },
@@ -4461,7 +4570,7 @@ function renderMutationsList() {
       if (badge) {
         patchText(badge, patched
           ? site.patched_generation_ids.join(', ')
-          : 'baseline');
+          : baselineGenerationId());
         patchClass(badge, 'unpatched', !patched);
       }
     },
