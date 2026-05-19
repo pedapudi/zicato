@@ -2087,6 +2087,138 @@ function renderDriftMovements(wrap, genId, champ) {
   wrap.appendChild(tbl);
 }
 
+// --- Per-board-entry matchup detail
+//
+// A board card in the tournament hall is a single board entry run on
+// both sides — once under the champion generation, once under the
+// challenger. Clicking the card selects that ENTRY (not a challenger
+// generation), so the gen-keyed renderMatchupDetail path does not
+// apply. This renders the entry's champion-vs-challenger head-to-head:
+// each side's run status + scalar, the per-matchup verdict, the
+// per-drift-kind movements, and the inline conversation diff.
+//
+// `convEntryId` is the selected board entry. Its sides come from the
+// active tournament's flat per-side `entries` list (hallBoards groups
+// them); the conversation transcript — which carries the per-side
+// in-run judge annotations — comes from `convData`.
+function renderBoardEntryDetail(wrap, entryId) {
+  const t = liveMatchup();
+  const boards = hallBoards(t);
+  const board = boards.find((b) => String(b.entry_id) === String(entryId)) || null;
+  const champId = liveChampionId(t);
+  const childId = liveChallengerId(t);
+
+  // Header line — the entry under test, framed as a head-to-head.
+  wrap.appendChild(el('h3', null, [
+    'Matchup detail · ',
+    el('code', { class: 'mono' }, [String(entryId)]),
+  ]));
+
+  if (!board) {
+    // The entry is selected (deep-link or a stale card) but not in the
+    // active tournament — keep the conversation diff if one loaded.
+    wrap.appendChild(el('p', { class: 'empty' }, [
+      'This board entry is not part of the active tournament. It may ' +
+      'belong to a finished round, or its tournament has not started.',
+    ]));
+    if (convEntryId) wrap.appendChild(renderInlineConversation());
+    return;
+  }
+
+  const champSt = sideStatus(board.parent);
+  const childSt = sideStatus(board.child);
+  const champSc = boardEntryScalar(board.parent);
+  const childSc = boardEntryScalar(board.child);
+
+  // --- Champion vs challenger sides
+  wrap.appendChild(el('h3', null, ['Champion vs challenger']));
+  const sideRow = (label, genId, st, sc) => el('div', {
+    class: 'matchup-side st-' + st,
+  }, [
+    el('span', { class: 'matchup-side-label' }, [label]),
+    el('span', { class: 'matchup-side-gen mono' }, [genId || '—']),
+    el('span', { class: 'pill pill-' + st }, [st]),
+    el('span', { class: 'matchup-side-score mono' }, [
+      sc != null ? 'scalar ' + fmtRate(sc) : '—',
+    ]),
+  ]);
+  wrap.appendChild(el('div', { class: 'matchup-sides' }, [
+    sideRow('Champion', champId, champSt, champSc),
+    el('span', { class: 'matchup-vs', 'aria-hidden': 'true' }, ['vs']),
+    sideRow('Challenger', childId, childSt, childSc),
+  ]));
+
+  // --- Verdict — once both sides finish, which side won + the delta.
+  // Lower scalar (drift-derived loss) wins.
+  wrap.appendChild(el('h3', null, ['Verdict']));
+  const bothDone = (champSt === 'done' || champSt === 'failed') &&
+    (childSt === 'done' || childSt === 'failed');
+  if (typeof champSc === 'number' && typeof childSc === 'number') {
+    const delta = childSc - champSc;
+    let cls, line;
+    if (delta < 0) {
+      cls = 'promote';
+      line = 'Challenger leads · Δ ' + fmtDelta(delta);
+    } else if (delta > 0) {
+      cls = 'reject';
+      line = 'Champion holds · Δ ' + fmtDelta(delta);
+    } else {
+      cls = 'tbd';
+      line = 'Flat · Δ ' + fmtDelta(delta);
+    }
+    const vWrap = el('div', { class: 'verdict ' + cls, role: 'status' });
+    vWrap.appendChild(el('div', { class: 'verdict-line' }, [line]));
+    vWrap.appendChild(el('div', { class: 'verdict-reason' }, [
+      'Lower drift-derived loss wins this board.',
+    ]));
+    wrap.appendChild(vWrap);
+  } else {
+    wrap.appendChild(el('div', { class: 'verdict tbd', role: 'status' }, [
+      el('div', { class: 'verdict-line' }, [
+        bothDone
+          ? 'Both sides finished — no scalar recorded for this board.'
+          : 'In progress — verdict lands when both sides finish.',
+      ]),
+    ]));
+  }
+
+  // --- Drift-kind movements (champion -> challenger) for this matchup.
+  // The active tournament carries challenger-level movements; show
+  // them here so the operator sees what moved without leaving the panel.
+  const movements = Array.isArray(t && t.drift_movements)
+    ? t.drift_movements : [];
+  if (movements.length > 0) {
+    wrap.appendChild(el('h3', null, ['Drift-kind movements']));
+    const tbl = el('table', { class: 'data-table drift-movements' });
+    tbl.appendChild(el('thead', null, [el('tr', null, [
+      el('th', null, ['drift kind']),
+      el('th', null, ['champion']),
+      el('th', null, ['challenger']),
+      el('th', null, ['movement']),
+    ])]));
+    const tbody = el('tbody');
+    for (const mv of movements) {
+      const from = Number(mv.from_rate != null ? mv.from_rate : 0);
+      const to = Number(mv.to_rate != null ? mv.to_rate : 0);
+      const dir = to < from ? 'improved' : to > from ? 'worsened' : 'unchanged';
+      tbody.appendChild(el('tr', { class: 'drift-mv drift-mv-' + dir }, [
+        el('td', null, [el('code', { class: 'mono' }, [mv.kind || '—'])]),
+        el('td', { class: 'mono' }, [fmtRate(from)]),
+        el('td', { class: 'mono' }, [fmtRate(to)]),
+        el('td', null, [el('span', { class: 'drift-dir drift-dir-' + dir }, [dir])]),
+      ]));
+    }
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+  }
+
+  // --- Inline conversation diff — both sides' run transcripts, with
+  // their in-run judge annotations. selectConversation kicked off the
+  // fetch; loadConversation re-calls renderMatchupDetail on completion
+  // so the columns (and their judge notes) grow live.
+  wrap.appendChild(renderInlineConversation());
+}
+
 function renderMatchupDetail() {
   const wrap = $('tournament-detail');
   if (!wrap) return;
@@ -2094,6 +2226,18 @@ function renderMatchupDetail() {
 
   const genId = state.selectedMatchup;
   if (!genId) {
+    // A board card in the hall was clicked — the route is
+    // #/tournament/conv/<entry>. Every board card (single-turn and
+    // multi-turn alike) emits the `conv` kind; the entry id itself
+    // identifies the matchup. The selection is held as a board ENTRY
+    // id, not a challenger generation id, so it never sets
+    // state.selectedMatchup. Render that board entry's
+    // champion-vs-challenger head-to-head detail rather than dropping
+    // it on the placeholder.
+    if (convEntryId) {
+      renderBoardEntryDetail(wrap, convEntryId);
+      return;
+    }
     wrap.appendChild(el('p', { class: 'empty' }, ['Select a matchup above.']));
     return;
   }
