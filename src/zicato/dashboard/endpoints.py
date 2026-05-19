@@ -289,6 +289,33 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             text = ""
         return JSONResponse({"epoch_id": epoch_id, "journal": text})
 
+    async def api_epoch_journal_md(request: Request) -> Response:
+        """Serve the raw ``journal.md`` markdown for one epoch.
+
+        The Epoch view's "View raw journal" link points at this endpoint so
+        a fresh tab renders the human-readable markdown directly — not the
+        JSON envelope ``api_epoch_journal`` wraps it in (which is hard to
+        skim). Served as ``text/markdown`` with UTF-8 charset; browsers
+        that do not have a registered markdown handler treat it as
+        ``text/plain`` and render the prose unchanged. Returns 404 when
+        the file is absent so the link's failure mode is unambiguous.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return PlainTextResponse("invalid epoch id", status_code=400)
+        path = paths.epochs / epoch_id / "journal.md"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError):
+            return PlainTextResponse(
+                f"journal.md not found for epoch {epoch_id}",
+                status_code=404,
+            )
+        return Response(
+            content=text,
+            media_type="text/markdown; charset=utf-8",
+        )
+
     async def api_epoch_analysis(request: Request) -> JSONResponse:
         """Return the analysis report for one epoch.
 
@@ -491,6 +518,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_mutations": api_mutations,
         "api_mutation_detail": api_mutation_detail,
         "api_epoch_journal": api_epoch_journal,
+        "api_epoch_journal_md": api_epoch_journal_md,
         "api_epoch_analysis": api_epoch_analysis,
         "api_epoch_analysis_html": api_epoch_analysis_html,
         "api_conversation": api_conversation,

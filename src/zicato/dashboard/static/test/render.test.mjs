@@ -432,6 +432,70 @@ test('gauntlet: a challenger that ran with no matchup row still appears', () => 
     `the synthesized node names the torn-down challenger, got "${aborted[0].textContent}"`);
 });
 
+test('gauntlet: 2026-05-19_presn shape — v0 spine, v1 discarded, v2 incomplete', () => {
+  // Mirrors the live `2026-05-19_presn` epoch:
+  //   * v0 is the seed AND the reigning champion (lineage = ['v0']);
+  //   * v1 ran and was rejected (matchup row carries decision='rejected');
+  //   * v2 ran but no tournament row was written (outcome=null on its
+  //     experiment — surfaces from the lineage feed as an aborted node).
+  // The gauntlet must render: v0 as a green spine node, v1 as a red
+  // discarded card hanging below v0, and v2 as an amber incomplete
+  // card also hanging below v0.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: '2026-05-19_presn',
+    champion_lineage: ['v0'],
+    matchups: [
+      { champion: 'v0', challenger: 'v1', decision: 'rejected',
+        delta_scalar: 0.91, rejection_reason: 'loss rose',
+        ran_at: '2026-05-19T02:02:28Z' },
+    ],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, promoted: true },
+      { generation_id: 'v1', parent_generation_id: 'v0', promoted: false },
+      { generation_id: 'v2', parent_generation_id: 'v0', promoted: null },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = null;
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  // v0 — one green spine node, tagged both seed and champion.
+  const spineNodes = byClass(bracket, 'is-spine');
+  assertEqual(spineNodes.length, 1,
+    `v0 is the only spine node, got ${spineNodes.length}`);
+  const v0cls = spineNodes[0].getAttribute('class').split(/\s+/);
+  assert(v0cls.includes('is-seed') && v0cls.includes('is-current'),
+    'v0 is both the seed and the reigning champion');
+  assert(spineNodes[0].textContent.includes('v0'),
+    `the spine node names v0, got "${spineNodes[0].textContent}"`);
+
+  // v1 — a red discarded card under v0.
+  const discarded = byClass(bracket, 'bracket-loser')
+    .filter((n) => !n.getAttribute('class').split(/\s+/).includes('bracket-aborted'));
+  assertEqual(discarded.length, 1,
+    `v1 is the only discarded card, got ${discarded.length}`);
+  assert(discarded[0].textContent.includes('v1'),
+    `the discarded card names v1, got "${discarded[0].textContent}"`);
+  assert(discarded[0].textContent.toLowerCase().includes('discarded'),
+    `v1 reads as discarded, got "${discarded[0].textContent}"`);
+
+  // v2 — an amber incomplete card under v0, surfaced from the lineage
+  // feed (no matchup row was written for it).
+  const aborted = byClass(bracket, 'bracket-aborted');
+  assertEqual(aborted.length, 1,
+    `v2 is the only incomplete card, got ${aborted.length}`);
+  assert(aborted[0].textContent.includes('v2'),
+    `the incomplete card names v2, got "${aborted[0].textContent}"`);
+  assert(aborted[0].textContent.toLowerCase().includes('incomplete'),
+    `v2 reads as incomplete (not discarded), got "${aborted[0].textContent}"`);
+  assert(!aborted[0].textContent.toLowerCase().includes('discarded'),
+    'v2 must NOT read as discarded — it is an aborted / in-progress node');
+});
+
 test('Overview is the environment home, NOT a duplicate tournament board', () => {
   state.applySnapshot(mockSnapshot());
   render.showView('overview');
@@ -527,10 +591,71 @@ test('Recent experiments call an unfinished experiment incomplete, not in progre
     'an unfinished experiment reads as incomplete on the Overview');
   assert(!text.toLowerCase().includes('in progress'),
     'an unfinished experiment never reads as "in progress" on the Overview');
-  // The "Full experiment log" link targets the Epoch view.
+  // The "Full experiment log" link targets the Epoch view's
+  // Experiments section directly via the `experiments` section anchor
+  // — applyRoute scrolls the section into view AFTER the Epoch render
+  // lands. Click-handler-only scrolling was the prior approach; it was
+  // fragile on direct URL access / reload / bookmark, so the anchor is
+  // baked into the URL instead.
   const link = wrap._descendants().find(
-    (n) => n.getAttribute && n.getAttribute('href') === '#/epoch');
-  assert(link, 'the recent-experiments digest links through to the Epoch view');
+    (n) => n.getAttribute && n.getAttribute('href') === '#/epoch/experiments');
+  assert(link, 'the recent-experiments digest links through to the Experiments section');
+});
+
+test('router resolves the Epoch view experiments section anchor', async () => {
+  // #/epoch/experiments  and  #/epoch/{id}/experiments  are recognised
+  // by the router as a section anchor on the Epoch view; applyRoute is
+  // expected to scroll the named section into view. The router's parse
+  // step is what we verify here — the scroll itself is a side effect
+  // the harness has no DOM-layout backing for.
+  const { router } = await import('../js/core/router.js');
+
+  globalThis.location.hash = '#/epoch/experiments';
+  const a = router.resolve();
+  assertEqual(a.view, 'epoch',
+    `#/epoch/experiments resolves to the Epoch view, got ${a.view}`);
+  assertEqual(a.params.section, 'experiments',
+    `the section anchor is 'experiments', got ${a.params.section}`);
+  assert(a.params.epochId == null,
+    'the bare section anchor has no epoch id');
+
+  globalThis.location.hash = '#/epoch/2026-05-19_presn/experiments';
+  const b = router.resolve();
+  assertEqual(b.view, 'epoch',
+    '#/epoch/{id}/experiments resolves to the Epoch view');
+  assertEqual(b.params.epochId, '2026-05-19_presn',
+    `the epoch id is parsed out, got ${b.params.epochId}`);
+  assertEqual(b.params.section, 'experiments',
+    `the section anchor still resolves alongside the epoch id, got ${b.params.section}`);
+
+  // A normal #/epoch route carries no section anchor.
+  globalThis.location.hash = '#/epoch';
+  const c = router.resolve();
+  assertEqual(c.view, 'epoch', 'bare #/epoch is still the Epoch view');
+  assert(c.params.section == null,
+    'a bare #/epoch route carries no section anchor');
+});
+
+test('applyRoute switches to the Epoch view when the experiments anchor is in the URL', () => {
+  // The route-extension approach: applyRoute recognises
+  // `#/epoch/experiments` and `#/epoch/{id}/experiments`, switches in
+  // the Epoch view, and (in the browser) scrolls the section into view
+  // via a double-rAF. The harness has no rAF / layout, so we verify
+  // the view-switch side of the contract — proof that the route is
+  // wired through end-to-end, not only handled at click time.
+  state.applySnapshot(mockSnapshot());
+  globalThis.location.hash = '#/epoch/experiments';
+  render.applyRoute();
+  // The Epoch view is the active view.
+  const epochView = doc.getElementById('view-epoch');
+  assert(!epochView.classList.contains('hidden'),
+    'applyRoute(#/epoch/experiments) must show the Epoch view');
+  // And the experiments section exists in the DOM (so the scroll
+  // target is reachable — the bug was a click-handler approach
+  // running before the Epoch view's render had painted the section).
+  const section = doc.getElementById('epoch-experiments-section');
+  assert(section != null,
+    'the experiments section must be present in the DOM after applyRoute');
 });
 
 test('the Tree view is purely the lineage DAG — no score-trajectory chart', () => {
@@ -838,6 +963,12 @@ test('the Epoch view has no separate Journal section', () => {
   const rawLink = log._descendants()
     .find((n) => n.classList && n.classList.contains('exp-journal-raw-link'));
   assert(rawLink, 'a "view raw journal" link is offered');
+  // The link MUST target the markdown endpoint (text/markdown), NOT the
+  // JSON-envelope endpoint that wraps the file in `{ epoch_id, journal }`
+  // — the user-facing expectation is human-readable content.
+  const href = rawLink.getAttribute('href');
+  assert(href && /\/journal\.md(?:$|\?)/.test(href),
+    `"View raw journal" must link to journal.md, got "${href}"`);
 });
 
 test('experiment entry diff toggle expands the change without throwing', () => {

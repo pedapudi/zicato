@@ -773,6 +773,54 @@ def test_epoch_journal_endpoint_invalid_id(client: TestClient) -> None:
     assert r.status_code in (400, 404)
 
 
+def test_epoch_journal_md_endpoint(client: TestClient, workspace: Path) -> None:
+    """GET /api/epoch/{id}/journal.md serves journal.md raw as text/markdown.
+
+    The "View raw journal" link on the merged Experiments section points
+    at this endpoint so a fresh tab renders the human-readable markdown
+    directly — not the JSON envelope ``/journal`` wraps it in.
+    """
+    epoch_id = "2026-05-16_e0"
+    epoch_dir = workspace / "epochs" / epoch_id
+    body_text = "# Journal\n\n## v1\nRejected: loss rose.\n"
+    _write(epoch_dir / "journal.md", body_text)
+
+    r = client.get(f"/api/epoch/{epoch_id}/journal.md")
+    assert r.status_code == 200
+    # Body is the raw markdown bytes — no JSON envelope.
+    assert r.text == body_text
+    # Content-type is text/markdown (not application/json).
+    ct = r.headers.get("content-type", "")
+    assert ct.startswith("text/markdown"), f"unexpected content-type: {ct!r}"
+    # And specifically not the JSON envelope shape — try to parse and
+    # fail. (Just to prove we are not serving the wrong shape here.)
+    import json as _json
+
+    try:
+        _json.loads(r.text)
+        raise AssertionError("journal.md endpoint must not return JSON")
+    except _json.JSONDecodeError:
+        pass
+
+
+def test_epoch_journal_md_endpoint_absent(client: TestClient) -> None:
+    """journal.md endpoint returns 404 when the file is absent.
+
+    Unlike the JSON ``/journal`` endpoint (which degrades to an empty
+    string so the SPA can render a "no journal yet" empty state), the
+    ``.md`` endpoint is opened in a fresh browser tab by the user, so a
+    404 is the right signal — there is nothing to read.
+    """
+    r = client.get("/api/epoch/2026-05-16_e0/journal.md")
+    assert r.status_code == 404
+
+
+def test_epoch_journal_md_endpoint_invalid_id(client: TestClient) -> None:
+    """journal.md endpoint rejects unsafe epoch ids."""
+    r = client.get("/api/epoch/../secrets/journal.md")
+    assert r.status_code in (400, 404)
+
+
 def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
     """GET /api/epoch/{id}/analysis returns { epoch_id, analysis_md, analysis_html_available }."""
     epoch_id = "2026-05-16_e0"

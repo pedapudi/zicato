@@ -682,24 +682,16 @@ function renderRecentExperiments() {
   wrap.appendChild(list);
 
   // A link through to the Epoch view's merged Experiments section.
-  // The hash router has no in-view anchor support, so the link routes
-  // to `#/epoch` and a click handler scrolls the Experiments section
-  // into view once the Epoch view has switched in — landing the reader
-  // on the section, not the top of the view.
+  // The router recognises the `experiments` sub-segment as a section
+  // anchor on the Epoch view (see router.js); applyRoute scrolls the
+  // matching section into view after the Epoch view's render lands.
+  // The route is robust on direct URL access, bookmarks, and refresh —
+  // not just a click — because the anchor is part of the URL.
   const expLink = el('a', {
     class: 'live-link recent-exp-link',
-    href: '#/epoch',
+    href: '#/epoch/experiments',
     'aria-label': 'open the full Experiments log in the Epoch view',
   }, ['Full experiment log →']);
-  expLink.addEventListener('click', () => {
-    // Defer past the route:changed render so the section exists.
-    setTimeout(() => {
-      const section = $('epoch-experiments-section');
-      if (section && typeof section.scrollIntoView === 'function') {
-        section.scrollIntoView({ block: 'start' });
-      }
-    }, 0);
-  });
   wrap.appendChild(expLink);
 }
 
@@ -3619,12 +3611,15 @@ function renderEpochExperiments(def) {
 
   // A small jump-off to the underlying raw journal.md — the merged log
   // IS the journal well-rendered, but the raw markdown stays one click
-  // away via the journal endpoint. Offered only when the epoch actually
-  // has a journal.
+  // away via the journal.md endpoint (text/markdown). The older
+  // `/journal` endpoint wraps the file in a JSON envelope; that is the
+  // wrong response for a human-facing "View raw journal" link, so the
+  // link points at the dedicated `.md` route instead. Offered only when
+  // the epoch actually has a journal.
   if (journal.trim() && def && def.epoch_id) {
     wrap.appendChild(el('a', {
       class: 'live-link exp-journal-raw-link',
-      href: '/api/epoch/' + encodeURIComponent(def.epoch_id) + '/journal',
+      href: '/api/epoch/' + encodeURIComponent(def.epoch_id) + '/journal.md',
       target: '_blank',
       rel: 'noopener',
       'aria-label': 'open the raw journal.md markdown',
@@ -3815,6 +3810,28 @@ function closeDrill() {
 }
 
 // Single hash router: resolves the view AND any drill-down. Fragment
+// Scroll a section element into view after the active view has finished
+// painting. Used by route-driven section anchors (e.g. `#/epoch/
+// experiments`) so a direct URL, a reload, or a bookmark lands on the
+// named section rather than the top of the view. Wrapped in a
+// double-rAF so the scroll runs AFTER the showView render pass — a
+// single-rAF defer sometimes ran before the heavier sections (Board /
+// Scoring tables) finished laying out and the scroll target moved
+// after the call landed.
+function scrollEpochSectionIntoView(sectionId) {
+  const run = () => {
+    const section = $(sectionId);
+    if (section && typeof section.scrollIntoView === 'function') {
+      section.scrollIntoView({ block: 'start' });
+    }
+  };
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => requestAnimationFrame(run));
+  } else {
+    setTimeout(run, 0);
+  }
+}
+
 // forms understood:
 //   #/<view>
 //   #/<view>/<kind>/<id>
@@ -3862,6 +3879,21 @@ function applyRoute() {
     if (segs.length >= 3) {
       kind = segs[1];
       id = decodeURIComponent(segs.slice(2).join('/'));
+    }
+    // #/epoch/experiments  ·  #/epoch/{epochId}/experiments — section
+    // anchor. Switch to the Epoch view (so the section is present in the
+    // DOM), then scroll the named section into view on the next frame so
+    // it lands AFTER renderEpochView paints. Robust on direct URL access,
+    // refresh, and bookmark — the anchor is part of the URL, not a click
+    // handler.
+    if (view === 'epoch'
+      && (segs[1] === 'experiments'
+        || (segs.length >= 3 && segs[2] === 'experiments'))) {
+      if (view !== currentView) showView(view);
+      else showViewClassesOnly(view);
+      applyDrill(null, null);
+      scrollEpochSectionIntoView('epoch-experiments-section');
+      return;
     }
     // #/tournament/conv/{entry_id} — restore the inline conversation diff
     // from a deep-link or a board-card click without switching views.

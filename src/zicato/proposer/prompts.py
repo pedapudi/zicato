@@ -126,6 +126,22 @@ has:
   is being applied. Joined with the broader hypothesis in the journal
   but stored per-patch.
 
+Style — formatting expectations for "new_content":
+- Break "new_content" prose into lines of roughly 80-100 characters
+  using real newline characters (encoded as "\\n" inside the JSON
+  string). Long unbroken single-line prompts are unreadable in the
+  patch-diff view and are a known reviewer-friction point.
+- Break at natural boundaries — sentence ends, clause boundaries
+  before conjunctions, after a colon introducing a list — not in the
+  middle of a placeholder like ``{{agent_list}}`` or an identifier.
+- Do NOT add a leading or trailing blank line. Do NOT indent the
+  lines — the harness re-anchors indentation when it splices the
+  replacement back into the surrounding code. You only supply the
+  inner text of the span.
+- This style applies to any op="replace" patch whose "new_content" is
+  longer than ~120 characters of prose. Short prompts (a one-line
+  instruction, an enum value, a short docstring) stay on one line.
+
 A response that is NOT a single JSON object matching this schema will
 be rejected and you will be asked to retry. Do not wrap the JSON in
 markdown code fences. Do not preface the JSON with prose. The first
@@ -149,7 +165,7 @@ One-shot example of a valid response:
     {{
       "mutation_id": "router__system_prompt",
       "op": "replace",
-      "new_content": "You are the router. Route the user message to one of {{agent_list}}. Do not include preambles, greetings, or explanations.",
+      "new_content": "You are the router. Route the user message to one of {{agent_list}}.\\nDo not include preambles, greetings, or explanations.\\nRespond with only the chosen agent name.",
       "rationale": "Removing preamble license should cut off_topic events at their most common entry point."
     }}
   ]

@@ -11,8 +11,14 @@
 //   #/tree                       Lineage
 //   #/tournament                 ·  #/tournament/{genId}
 //   #/epoch                      ·  #/epoch/{epochId}
+//                                ·  #/epoch/experiments
+//                                ·  #/epoch/{epochId}/experiments
 //   #/files                      ·  #/files/{epochId}/{genId}
 //   #/conversation/{entryId}     focused conversation diff
+//
+// The `experiments` sub-segment on `#/epoch` is a section anchor: when
+// present, views land the page on the merged Experiments section instead
+// of the top. Resolved as `params.section = "experiments"`.
 
 import { bus } from './bus.js';
 
@@ -37,7 +43,16 @@ function parse(hash) {
       if (rest[0]) params.generationId = rest[0];
       break;
     case 'epoch':
-      if (rest[0]) params.epochId = rest[0];
+      // `#/epoch/experiments` is a section anchor with no epoch id; the
+      // longer `#/epoch/{epochId}/experiments` selects an epoch AND
+      // anchors to its Experiments section. Anything else after the
+      // epoch id is ignored.
+      if (rest[0] === 'experiments') {
+        params.section = 'experiments';
+      } else if (rest[0]) {
+        params.epochId = rest[0];
+        if (rest[1] === 'experiments') params.section = 'experiments';
+      }
       break;
     case 'files':
       if (rest[0]) params.epochId = rest[0];

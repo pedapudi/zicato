@@ -1852,7 +1852,11 @@ h4 {
    view's two-column / elevated-panel idiom.                          */
 .mutations-browser {
   display: grid;
-  grid-template-columns: 18rem 1fr;
+  /* `minmax(0, 1fr)` lets the detail track shrink past the intrinsic
+     content size of its `.mutations-diff` (whose lines are width:
+     max-content). Without the lower bound at 0 the diff pushes the
+     whole grid wider than its container and trails off-screen. */
+  grid-template-columns: 18rem minmax(0, 1fr);
   gap: 0.75rem;
   min-height: 0;
 }
@@ -1864,6 +1868,10 @@ h4 {
   padding: 0.5rem;
   overflow: auto;
   max-height: 32rem;
+  /* min-width:0 is the flex/grid escape hatch — without it the inner
+     `.mutations-diff` overflow-x scrollbar never engages because the
+     pane sizes to its content rather than its track. */
+  min-width: 0;
 }
 .mutations-list {
   list-style: none;
@@ -2464,14 +2472,22 @@ h4 {
 }
 .exp-card-lineage { margin: 0.3rem 0 0; font-size: 0.72rem; }
 
-/* Card body — beats 2-4, three columns on wide screens */
+/* Card body — beats 2-4, three columns on wide screens. Grid tracks
+   default to `minmax(auto, 1fr)`, so a child wider than the column
+   (the mutation diff's `width:max-content` lines) blows the column out
+   and the diff trails off-screen. Pinning every track's lower bound to
+   0 lets the column shrink to the card and its inner `overflow-x:auto`
+   actually engages — no unreachable content. */
 .exp-card-body {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
   gap: 1px;
   background: var(--border);
 }
-.exp-beat { padding: 0.7rem 0.85rem 0.8rem; background: var(--card-bg); }
+/* min-width:0 on the beat so the grid track can shrink past its
+   intrinsic content size. Without this the inner mutation-diff's
+   max-content lines push the column wider than the card. */
+.exp-beat { padding: 0.7rem 0.85rem 0.8rem; background: var(--card-bg); min-width: 0; }
 .exp-beat-label {
   font-size: 0.68rem;
   font-weight: 700;
@@ -2521,8 +2537,13 @@ h4 {
   background: color-mix(in srgb, var(--accent-running) 8%, var(--card-bg));
   outline: none;
 }
-.exp-diff-wrap { margin-top: 0.5rem; }
-.exp-diff-wrap .exp-patch-block { margin: 0.4rem 0; }
+/* The expanded diff under a change beat. min-width:0 lets these flex /
+   grid children shrink past their intrinsic content size so the inner
+   `.mutations-diff` overflow-x scrollbar actually constrains the diff
+   to the column — otherwise the max-content diff lines push the wrapper
+   wider than the card and trail off-screen with nothing reachable. */
+.exp-diff-wrap { margin-top: 0.5rem; min-width: 0; }
+.exp-diff-wrap .exp-patch-block { margin: 0.4rem 0; min-width: 0; }
 .exp-diff-wrap .exp-patch-header {
   display: flex;
   gap: 0.4rem;
