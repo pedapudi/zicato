@@ -559,4 +559,55 @@ test('epoch view renders cleanly when no epoch is loaded', () => {
     'an epoch with no experiments shows an empty narrative');
 });
 
+// -- Epoch journal ----------------------------------------------------
+// The journal renders the epoch's round-by-round markdown narrative.
+// The bug being guarded: the markdown was emitted verbatim, so the
+// `**field**:` markers showed as literal asterisks on the page. The
+// journal must now render as a clean labelled timeline — no raw `**`.
+
+test('epoch journal renders without any literal ** markdown markers', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('epoch');
+  const journal = doc.getElementById('epoch-journal');
+  assert(journal.children.length > 0, 'the journal panel must render content');
+  const text = journal.textContent;
+  // The defect: raw markdown bold markers leaking onto the page.
+  assert(!text.includes('**'),
+    'no literal ** markers — the journal markdown must be rendered');
+  // The journal field labels must survive as readable text (stripped
+  // of their `**` fence), not vanish.
+  assert(text.includes('proposed_at') && text.includes('modulating')
+    && text.includes('why') && text.includes('outcome'),
+    'the journal field labels must render as labelled key/value rows');
+  // The prose body of an entry must also render.
+  assert(text.includes('Validate-before-emit cleared'),
+    'free prose in a journal entry must render');
+});
+
+test('epoch journal renders one timeline entry per round section', () => {
+  state.applySnapshot(mockSnapshot());
+  render.showView('epoch');
+  const journal = doc.getElementById('epoch-journal');
+  const entries = journal._descendants()
+    .filter((n) => n.classList.contains('journal-entry'));
+  // The mock journal carries two `## v{N}` sections.
+  assertEqual(entries.length, 2, 'one timeline entry per journal section');
+  // Each entry surfaces its heading and a key/value field list.
+  assert(entries[0].textContent.includes('v1'), 'an entry shows its round heading');
+  const labels = journal._descendants()
+    .filter((n) => n.classList.contains('journal-field-label'));
+  assert(labels.length > 0, 'field lines render as labelled key/value rows');
+  // The rejected entry surfaces its rejection_reason field.
+  assert(journal.textContent.includes('rejection_reason'),
+    'a rejected round surfaces its rejection_reason field');
+});
+
+test('epoch journal degrades to a muted empty line when absent', () => {
+  state.epochDef = { epoch_id: '2026-05-15_e1', journal: '' };
+  render.showView('epoch');
+  const journal = doc.getElementById('epoch-journal');
+  assert(journal.textContent.includes('No journal recorded'),
+    'an epoch with no journal shows a muted empty state');
+});
+
 await run();

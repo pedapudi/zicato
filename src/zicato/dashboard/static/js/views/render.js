@@ -2738,18 +2738,32 @@ function renderMinimalMarkdown(src, container) {
   flushList();
 }
 
-// Split a line on backtick-delimited inline code spans.
+// Split a line into inline spans: backtick `code` and `**bold**`.
+// Everything else passes through as a plain (escaped) text node. An
+// unclosed delimiter stays literal rather than swallowing the line.
 function inlineMarkdown(text) {
   const parts = [];
   let i = 0;
   while (i < text.length) {
     const tick = text.indexOf('`', i);
-    if (tick === -1) { parts.push(text.slice(i)); break; }
-    const end = text.indexOf('`', tick + 1);
-    if (end === -1) { parts.push(text.slice(i)); break; }
-    if (tick > i) parts.push(text.slice(i, tick));
-    parts.push(el('code', null, [text.slice(tick + 1, end)]));
-    i = end + 1;
+    const bold = text.indexOf('**', i);
+    let next = (tick !== -1 && bold !== -1) ? Math.min(tick, bold)
+      : (tick !== -1 ? tick : bold);
+    if (next === -1) { parts.push(text.slice(i)); break; }
+    if (next === tick) {
+      const end = text.indexOf('`', tick + 1);
+      if (end === -1) { parts.push(text.slice(i)); break; }
+      if (tick > i) parts.push(text.slice(i, tick));
+      parts.push(el('code', null, [text.slice(tick + 1, end)]));
+      i = end + 1;
+    } else {
+      const end = text.indexOf('**', bold + 2);
+      if (end === -1 || end === bold + 2) { parts.push(text.slice(i)); break; }
+      if (bold > i) parts.push(text.slice(i, bold));
+      // Recurse so `code` nested inside bold still renders.
+      parts.push(el('strong', null, inlineMarkdown(text.slice(bold + 2, end))));
+      i = end + 2;
+    }
   }
   return parts;
 }
@@ -3182,8 +3196,76 @@ function renderEpochExperimentLog(def) {
 
 // --- Render: Epoch journal
 //
-// Renders the epoch's journal.md using renderMinimalMarkdown.
-// The journal is a round-by-round log of hypothesis + outcome entries.
+// The journal is the epoch's round-by-round chronology. Each `## v{N}`
+// section is one experiment, written as `**field**: value` lines plus
+// free prose. The experiment cards above tell each one's full story, so
+// the journal renders as a DISTINCT compact timeline — terse labelled
+// key/value entries, never a second set of detail cards. The `**field**`
+// markers are parsed away; no literal `**` ever reaches the page.
+
+// Split a journal blob into ordered `## heading` sections; the preamble
+// before the first heading (the `# Epoch journal` title) is dropped.
+function _parseJournalSections(journal) {
+  const sections = [];
+  let current = null;
+  for (const raw of journal.replace(/\r\n/g, '\n').split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const h2 = line.match(/^##\s+(.*)$/);
+    if (h2) sections.push((current = { title: h2[1].trim(), body: [] }));
+    else if (current) current.body.push(line);
+  }
+  return sections;
+}
+
+// A `**label**: value` line -> `{ label, value }`, else null.
+function _journalFieldLine(line) {
+  const m = line.match(/^\*\*([^*]+)\*\*\s*:?\s*(.*)$/);
+  return m ? { label: m[1].trim(), value: m[2].trim() } : null;
+}
+
+// Render one section as a timeline entry: a heading, the leading run of
+// `**field**:` lines as a labelled key/value grid, then any prose. A
+// field-shaped line buried in prose stays prose.
+function _renderJournalEntry(section) {
+  const entry = el('div', { class: 'journal-entry' });
+  entry.appendChild(el('h3', { class: 'journal-entry-title' },
+    inlineMarkdown(section.title)));
+
+  const fields = [];
+  const prose = [];
+  for (const line of section.body) {
+    if (line.trim() === '') { prose.push(''); continue; }
+    const field = _journalFieldLine(line);
+    if (field && prose.every((p) => p === '')) fields.push(field);
+    else prose.push(line);
+  }
+
+  if (fields.length > 0) {
+    const dl = el('dl', { class: 'journal-fields' });
+    for (const f of fields) {
+      dl.appendChild(el('dt', { class: 'journal-field-label' }, [f.label]));
+      dl.appendChild(el('dd', { class: 'journal-field-value' },
+        f.value ? inlineMarkdown(f.value) : [el('span', { class: 'meta' }, ['—'])]));
+    }
+    entry.appendChild(dl);
+  }
+
+  // Collapse the prose remainder into paragraphs (blank line = break).
+  const proseBlock = el('div', { class: 'journal-entry-prose' });
+  let buf = [];
+  const flush = () => {
+    if (buf.length) proseBlock.appendChild(el('p', null, inlineMarkdown(buf.join(' '))));
+    buf = [];
+  };
+  for (const line of prose) {
+    if (line.trim() === '') flush();
+    else buf.push(line.trim());
+  }
+  flush();
+  if (proseBlock.children.length > 0) entry.appendChild(proseBlock);
+
+  return entry;
+}
 
 function renderEpochJournal(def) {
   const wrap = $('epoch-journal');
@@ -3196,9 +3278,24 @@ function renderEpochJournal(def) {
     wrap.appendChild(el('p', { class: 'empty' }, ['No journal recorded.']));
     return;
   }
-  const block = el('div', { class: 'brief-block' });
-  renderMinimalMarkdown(journal, block);
-  wrap.appendChild(block);
+
+  const sections = _parseJournalSections(journal);
+  if (sections.length === 0) {
+    // No `##` sections — fall back to plain markdown rather than nothing.
+    const block = el('div', { class: 'brief-block' });
+    renderMinimalMarkdown(journal, block);
+    wrap.appendChild(block);
+    return;
+  }
+
+  wrap.appendChild(el('p', { class: 'panel-subheader' }, [
+    'The epoch as it unfolded — one terse entry per round.',
+  ]));
+  const timeline = el('div', { class: 'journal-timeline' });
+  for (const section of sections) {
+    timeline.appendChild(_renderJournalEntry(section));
+  }
+  wrap.appendChild(timeline);
 }
 
 // --- Render: Epoch analysis
