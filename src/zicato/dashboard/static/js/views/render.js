@@ -2239,6 +2239,46 @@ function renderBoardEntryDetail(wrap, entryId) {
   wrap.appendChild(renderInlineConversation());
 }
 
+// --- Completed-matchup per-entry grid (read from persisted loss files)
+//
+// `loadMatchupDetail` (/api/tournaments/:gen) sources the matchup
+// detail from the SQLite analytical index. That index is a best-effort
+// dual-write: a *completed* tournament whose index was never (re)built
+// carries no per-entry rows, so the matchup-detail panel renders "No
+// per-entry grid recorded" and "No scalar breakdown recorded" — a
+// finished tournament loses its per-board outcomes.
+//
+// The per-board telemetry is always on disk, though: each board run
+// writes generations/{gen}/runs/{entry}/loss.json and the orchestrator
+// caches a generations/{gen}/gen_score.json aggregate. The
+// /api/matchup-grid/{epoch}/{champion}/{challenger} endpoint reads
+// those files back and returns the champion-vs-challenger comparison.
+// We fetch it lazily for a completed matchup and cache it by challenger
+// generation id; renderMatchupDetail folds it in as the `entry_grid` /
+// `scalar` fallback when the index-sourced detail has neither.
+const matchupGrids = new Map();   // challenger genId -> grid payload | 'pending'
+
+// Fetch the persisted per-entry grid for a completed matchup. Keyed by
+// challenger generation id so a re-render does not re-fetch; a failure
+// caches nothing so the next render retries. Re-renders the detail
+// panel on completion so the grid populates without a separate path.
+async function loadMatchupGrid(epochId, champId, genId) {
+  if (!epochId || !champId || !genId || state.mock) return;
+  if (matchupGrids.has(genId)) return;   // cached or in flight
+  matchupGrids.set(genId, 'pending');
+  try {
+    const grid = await fetchJson(
+      '/api/matchup-grid/' + encodeURIComponent(epochId) + '/' +
+      encodeURIComponent(champId) + '/' + encodeURIComponent(genId));
+    matchupGrids.set(genId, grid);
+  } catch (err) {
+    // Endpoint absent / failed — drop the pending marker so a later
+    // render retries; the panel keeps its index-sourced fallback text.
+    matchupGrids.delete(genId);
+  }
+  if (currentView === 'tournament') renderMatchupDetail();
+}
+
 function renderMatchupDetail() {
   const wrap = $('tournament-detail');
   if (!wrap) return;
@@ -2288,14 +2328,54 @@ function renderMatchupDetail() {
     (summary && summary.hypothesis_core_idea
       ? { core_idea: summary.hypothesis_core_idea } : null);
   const patches = (detail && Array.isArray(detail.patches)) ? detail.patches : [];
-  const entryGrid = (detail && Array.isArray(detail.entry_grid))
-    ? detail.entry_grid : [];
-  const scalar = detail && detail.scalar;
   const decision = (detail && detail.decision)
     || (summary && summary.decision)
     || (isLive ? 'in_progress' : null);
   const rejectionReason = (detail && detail.rejection_reason)
     || (summary && summary.rejection_reason) || null;
+
+  // --- A/B-grid + scalar-breakdown source resolution.
+  //
+  // Three sources, in priority order:
+  //   1. detail.entry_grid / detail.scalar — the shape mock mode and
+  //      a fully-shaped detail endpoint produce.
+  //   2. detail.ab_grid — the live SQLite-index shape: cells carry
+  //      `parent_pass_fail` / `child_pass_fail`, mapped to the grid's
+  //      `parent_pass` / `child_pass`.
+  //   3. /api/matchup-grid — the persisted per-run loss.json files.
+  //      This is the read path a *completed* tournament needs: the
+  //      index dual-write is best-effort, so a finished matchup may
+  //      have an empty ab_grid while loss.json is on disk for both
+  //      generations. Fetched lazily for a non-live matchup.
+  let entryGrid = (detail && Array.isArray(detail.entry_grid))
+    ? detail.entry_grid : [];
+  let scalar = (detail && detail.scalar) || null;
+  if (entryGrid.length === 0 && detail && Array.isArray(detail.ab_grid)
+      && detail.ab_grid.length > 0) {
+    entryGrid = detail.ab_grid.map((c) => ({
+      ...c,
+      parent_pass: (c.parent_pass != null) ? c.parent_pass : c.parent_pass_fail,
+      child_pass: (c.child_pass != null) ? c.child_pass : c.child_pass_fail,
+      parent_session_id: c.parent_session_id || c.parent_adk_session_id || null,
+      child_session_id: c.child_session_id || c.child_adk_session_id || null,
+    }));
+  }
+  // For a completed matchup with no usable grid yet, pull the persisted
+  // per-run loss files. The fetch caches by genId and re-renders on
+  // completion; until it lands the grid keeps the index-derived state.
+  if (!isLive && (entryGrid.length === 0 || !scalar)) {
+    const epochId = (detail && detail.epoch_id) || state.epoch.id;
+    if (champ && champ !== '?' && epochId && epochId !== '—') {
+      loadMatchupGrid(epochId, champ, genId);
+    }
+    const grid = matchupGrids.get(genId);
+    if (grid && grid !== 'pending') {
+      if (entryGrid.length === 0 && Array.isArray(grid.entry_grid)) {
+        entryGrid = grid.entry_grid;
+      }
+      if (!scalar && grid.scalar) scalar = grid.scalar;
+    }
+  }
 
   // --- What was tested
   wrap.appendChild(el('h3', null, ['What was tested']));
@@ -2351,10 +2431,13 @@ function renderMatchupDetail() {
   // --- Per-entry A/B grid
   wrap.appendChild(el('h3', null, ['Per-entry A/B grid']));
   if (entryGrid.length === 0) {
+    const gridPending = !isLive && matchupGrids.get(genId) === 'pending';
     wrap.appendChild(el('p', { class: 'empty' }, [
       isLive
         ? 'Tournament still in progress — per-entry grid lands on completion.'
-        : 'No per-entry grid recorded.',
+        : gridPending
+          ? 'Reading per-entry outcomes from the persisted loss files…'
+          : 'No per-entry grid recorded.',
     ]));
   } else {
     const regressions = entryGrid.filter(
@@ -2374,7 +2457,9 @@ function renderMatchupDetail() {
       el('th', null, ['board entry']),
       el('th', null, [champ + ' loss']),
       el('th', null, [genId + ' loss']),
+      el('th', null, ['Δ']),
       el('th', null, ['pass A→B']),
+      el('th', null, ['won by']),
       el('th', null, ['verdict']),
     ];
     if (hgOn) headCells.push(el('th', null, ['trace']));
@@ -2383,13 +2468,35 @@ function renderMatchupDetail() {
     const tbody = el('tbody');
     for (const row of entryGrid) {
       const verdict = String(row.verdict || 'flat').toLowerCase();
+      // Per-entry Δ — challenger minus champion drift loss. The grid
+      // row carries an explicit `delta` from the persisted loss-file
+      // read; fall back to the subtraction for index-sourced rows.
+      const pl = row.parent_drift_loss;
+      const cl = row.child_drift_loss;
+      const delta = (typeof row.delta === 'number') ? row.delta
+        : (typeof pl === 'number' && typeof cl === 'number') ? cl - pl : null;
+      // Which side won this board — lower drift loss wins. The persisted
+      // grid carries an explicit `won_by` (a generation id); otherwise
+      // derive it from the verdict.
+      let wonBy = '—';
+      if (row.won_by === genId || verdict === 'improved') wonBy = genId;
+      else if (row.won_by === champ || verdict === 'regressed') wonBy = champ;
+      const wonCls = wonBy === genId ? 'ab-won-challenger'
+        : wonBy === champ ? 'ab-won-champion' : 'ab-won-tie';
       const cells = [
         el('td', { class: 'mono' }, [row.entry_id || '—']),
         el('td', { class: 'mono' }, [fmtRate(row.parent_drift_loss)]),
         el('td', { class: 'mono' }, [fmtRate(row.child_drift_loss)]),
+        el('td', {
+          class: 'mono ' + (delta != null && delta < 0 ? 'good'
+            : delta != null && delta > 0 ? 'bad' : ''),
+        }, [delta != null ? fmtDelta(delta) : '—']),
         el('td', { class: 'mono' }, [
           (row.parent_pass ? '✓' : '✗') + ' → ' +
           (row.child_pass ? '✓' : '✗'),
+        ]),
+        el('td', null, [
+          el('span', { class: 'ab-won ' + wonCls }, [wonBy]),
         ]),
         el('td', null, [
           el('span', { class: 'ab-verdict ab-verdict-' + verdict }, [verdict]),
@@ -2433,8 +2540,11 @@ function renderMatchupDetail() {
   // --- Scalar breakdown
   wrap.appendChild(el('h3', null, ['Scalar breakdown']));
   if (!scalar) {
+    const scalarPending = !isLive && matchupGrids.get(genId) === 'pending';
     wrap.appendChild(el('p', { class: 'empty' }, [
-      'No scalar breakdown recorded.',
+      scalarPending
+        ? 'Composing the scalar breakdown from the persisted aggregates…'
+        : 'No scalar breakdown recorded.',
     ]));
   } else {
     wrap.appendChild(renderScalarBreakdown(scalar, champ, genId));

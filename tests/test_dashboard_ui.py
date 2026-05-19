@@ -531,10 +531,13 @@ def test_ab_grid_has_harmonograf_trace_links(app_js: str) -> None:
     assert "ab-trace" in app_js, "A/B grid missing the ab-trace cell"
     # Both sides resolve a run-like record for harmonografMini. The
     # render block lives between the A/B-grid header and the scalar
-    # breakdown header.
+    # breakdown header. The window is sized generously: the grid now
+    # carries per-entry Δ and "won by" columns (the completed-tournament
+    # outcomes reconstructed from the persisted loss files), which pushes
+    # the harmonografMini call further down the render block.
     idx = app_js.find("Per-entry A/B grid")
     assert idx != -1, "A/B grid render block not found"
-    block = app_js[idx : idx + 3000]
+    block = app_js[idx : idx + 4600]
     assert "harmonografMini(" in block, "A/B grid does not call harmonografMini"
     assert (
         "parentRun" in block and "childRun" in block

@@ -1010,6 +1010,17 @@ h4 {
 .ab-verdict-improved { background: var(--accent-promoted); }
 .ab-verdict-regressed { background: var(--accent-rejected); }
 .ab-verdict-flat { background: var(--accent-baseline); }
+/* Per-entry Δ cell + "won by" pill — completed-tournament outcomes
+   reconstructed from the persisted per-run loss files. */
+.ab-grid td.good { color: var(--accent-promoted); }
+.ab-grid td.bad { color: var(--accent-rejected); }
+.ab-won {
+  display: inline-block; padding: 1px 7px; border-radius: 9px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.03em;
+}
+.ab-won-challenger { background: rgba(40, 167, 69, 0.16); color: var(--accent-promoted); }
+.ab-won-champion { background: rgba(215, 58, 73, 0.14); color: var(--accent-rejected); }
+.ab-won-tie { color: var(--text-muted); }
 
 /* Drift-kind movements — champion -> challenger per-kind deltas.
    A worsened kind (more drift on the challenger) is the regression

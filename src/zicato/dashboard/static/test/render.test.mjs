@@ -843,4 +843,113 @@ test('epoch journal degrades to a muted empty line when absent', () => {
     'an epoch with no journal shows a muted empty state');
 });
 
+// -- Completed-tournament per-entry outcomes --------------------------
+// A completed (non-live) matchup must show its per-board outcomes: the
+// matchup-detail panel populates the Per-entry A/B grid and the Scalar
+// breakdown rather than rendering "No per-entry grid recorded".
+
+test('completed matchup grid populates from the index ab_grid shape', () => {
+  // The /api/tournaments/{gen} endpoint sources its grid from the
+  // SQLite index as `ab_grid`, whose cells carry `parent_pass_fail` /
+  // `child_pass_fail`. The matchup-detail panel must fold that shape
+  // into the rendered grid — not drop it on "No per-entry grid".
+  state.mock = true;
+  state.applySnapshot(mockSnapshot());
+  // Seed the detail cache with a backend (index) shaped payload for the
+  // already-completed v1 matchup.
+  state.matchupDetail.set('v1', {
+    epoch_id: '2026-05-15_e1',
+    generation_id: 'v1',
+    champion: 'v0',
+    decision: 'rejected',
+    rejection_reason: 'pass-rate regression on schema_response',
+    patches: [],
+    ab_grid: [
+      { entry_id: 'extract_invoice_001', parent_drift_loss: 0.30,
+        child_drift_loss: 0.21, parent_pass_fail: true, child_pass_fail: true,
+        verdict: 'improved' },
+      { entry_id: 'schema_response', parent_drift_loss: 0.12,
+        child_drift_loss: 0.34, parent_pass_fail: true, child_pass_fail: false,
+        verdict: 'regressed' },
+    ],
+  });
+  globalThis.location.hash = '#/tournament/v1';
+  render.applyRoute();
+  const detail = doc.getElementById('tournament-detail');
+  const text = textOf(detail);
+  assert(!text.includes('No per-entry grid recorded'),
+    'a completed matchup with an index ab_grid must NOT show the empty grid');
+  assert(text.includes('extract_invoice_001') && text.includes('schema_response'),
+    'every board entry must appear in the per-entry grid');
+  // The grid carries the per-entry Δ and "won by" columns.
+  const grid = detail._descendants().find(
+    (n) => n.classList && n.classList.contains('ab-grid'));
+  assert(grid, 'the per-entry A/B grid table must render');
+  const wonCells = grid._descendants().filter(
+    (n) => n.classList && n.classList.contains('ab-won'));
+  assert(wonCells.length === 2, 'each board row shows which side won it');
+  // extract_invoice_001 improved -> challenger v1 won; schema_response
+  // regressed -> champion v0 won.
+  const wonText = wonCells.map((n) => n.textContent);
+  assert(wonText.includes('v1') && wonText.includes('v0'),
+    'the won-by column names the winning generation per board');
+});
+
+test('completed matchup grid falls back to the persisted loss-file endpoint', async () => {
+  // When the index-sourced detail carries NO grid (an empty ab_grid —
+  // the index was never built for this finished tournament) the panel
+  // must fetch /api/matchup-grid and render the per-entry outcomes the
+  // persisted loss.json files hold.
+  state.applySnapshot(mockSnapshot());
+  state.mock = false;   // loadMatchupGrid only fetches for a real workspace
+  const requested = [];
+  const gridPayload = {
+    epoch_id: '2026-05-15_e1', champion: 'v0', challenger: 'v1',
+    source: 'loss_files',
+    entry_grid: [
+      { entry_id: 'extract_invoice_001', parent_drift_loss: 0.30,
+        child_drift_loss: 0.21, parent_pass: true, child_pass: true,
+        delta: -0.09, verdict: 'improved', won_by: 'v1' },
+      { entry_id: 'schema_response', parent_drift_loss: 0.12,
+        child_drift_loss: 0.34, parent_pass: true, child_pass: false,
+        delta: 0.22, verdict: 'regressed', won_by: 'v0' },
+    ],
+    scalar: { parent: 0.41, child: 0.43, delta: 0.022,
+      components: { drift: -0.04, cost: 0.01 } },
+  };
+  globalThis.fetch = async (path) => {
+    requested.push(path);
+    // The detail / drift-movements drill-downs keep their empty index
+    // shapes — only the matchup-grid endpoint returns the loss-file grid.
+    let body = { ab_grid: [], entry_grid: [], movements: [] };
+    if (String(path).includes('/api/matchup-grid/')) body = gridPayload;
+    return { ok: true, json: async () => body };
+  };
+  // The detail endpoint answered, but with an EMPTY index grid.
+  state.matchupDetail.set('v1', {
+    epoch_id: '2026-05-15_e1', generation_id: 'v1', champion: 'v0',
+    decision: 'rejected', patches: [], ab_grid: [],
+  });
+  globalThis.location.hash = '#/tournament/v1';
+  render.applyRoute();
+  // The fetch is async — let the loadMatchupGrid promise settle, then
+  // it re-renders the detail panel itself.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const gridReq = requested.find((p) => String(p).includes('/api/matchup-grid/'));
+  assert(gridReq, 'an empty index grid must trigger the persisted-loss-file fetch');
+  assert(gridReq.includes('2026-05-15_e1') && gridReq.includes('/v0/') &&
+    gridReq.endsWith('/v1'),
+    'the matchup-grid request carries the epoch, champion and challenger');
+  const detail = doc.getElementById('tournament-detail');
+  const text = textOf(detail);
+  assert(!text.includes('No per-entry grid recorded'),
+    'the persisted loss files must populate the grid for a completed matchup');
+  assert(!text.includes('No scalar breakdown recorded'),
+    'the persisted gen_score aggregates must populate the scalar breakdown');
+  assert(text.includes('extract_invoice_001') && text.includes('schema_response'),
+    'the persisted grid lists every board entry');
+  state.mock = true;
+  delete globalThis.fetch;
+});
+
 await run();

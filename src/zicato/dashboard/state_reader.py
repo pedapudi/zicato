@@ -1368,6 +1368,205 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Per-entry A/B grid — read straight off the persisted per-run loss files
+# ---------------------------------------------------------------------------
+#
+# ``build_matchup_detail`` above sources its ``ab_grid`` from the SQLite
+# analytical index. That index is a best-effort dual-write: a completed
+# tournament whose index was never (re)built — or a workspace inspected
+# before ``zicato reindex`` ran — carries no ``loss_profiles`` rows, so
+# the matchup-detail panel renders "No per-entry grid recorded" and a
+# finished tournament loses its per-board outcomes.
+#
+# The per-board telemetry is, however, always on disk: every board run
+# writes ``generations/{gen}/runs/{entry}/loss.json`` (the reducer's
+# :class:`~zicato.core.LossProfile`), and the orchestrator caches a
+# ``generations/{gen}/gen_score.json`` aggregate. ``build_matchup_grid``
+# reconstructs the champion-vs-challenger comparison directly from those
+# files so a completed tournament's outcomes survive without the index.
+
+
+def _read_run_loss_files(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str
+) -> dict[str, dict[str, Any]]:
+    """Read every ``runs/{entry}/loss.json`` under one generation.
+
+    Returns ``{entry_id: {drift_loss, pass_fail, adk_session_id, run_id}}``.
+    The entry id keys on the run directory name (the canonical board-run
+    layout) and is overridden by the ``entry_id`` field inside the
+    ``loss.json`` payload when present. Missing / malformed files are
+    skipped silently — a generation with no telemetry yet yields ``{}``.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    runs_dir = paths.epochs / epoch_id / "generations" / generation_id / "runs"
+    if not runs_dir.is_dir():
+        return out
+    for run_dir in sorted(runs_dir.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        loss = _read_json_value(run_dir / "loss.json")
+        if not isinstance(loss, dict):
+            continue
+        entry_id = loss.get("entry_id")
+        if not isinstance(entry_id, str) or not entry_id:
+            entry_id = run_dir.name
+        drift = loss.get("drift_loss")
+        cell: dict[str, Any] = {
+            "entry_id": entry_id,
+            "drift_loss": drift if isinstance(drift, int | float) else None,
+            "pass_fail": loss.get("pass_fail"),
+            "run_id": loss.get("run_id") if isinstance(loss.get("run_id"), str) else run_dir.name,
+        }
+        sid = loss.get("adk_session_id")
+        if isinstance(sid, str) and sid:
+            cell["adk_session_id"] = sid
+        out[entry_id] = cell
+    return out
+
+
+def _read_gen_score(paths: WorkspacePaths, epoch_id: str, generation_id: str) -> dict[str, Any]:
+    """Read a generation's cached ``gen_score.json`` aggregate.
+
+    Returns the raw aggregate dict (``scalar`` / ``drift_loss_mean`` /
+    ``pass_rate`` / ``scalar_components`` / ...), or ``{}`` when the
+    file is absent or malformed.
+    """
+    score = _read_json_value(
+        paths.epochs / epoch_id / "generations" / generation_id / "gen_score.json"
+    )
+    return score if isinstance(score, dict) else {}
+
+
+def _grid_won_by(
+    parent: float | None, child: float | None, champion: str, challenger: str
+) -> str | None:
+    """Which side won one board entry — lower drift loss wins.
+
+    Returns the challenger id when it beat the champion on this entry,
+    the champion id when it lost, ``None`` on a tie or missing data.
+    """
+    if parent is None or child is None:
+        return None
+    if child < parent:
+        return challenger
+    if child > parent:
+        return champion
+    return None
+
+
+def build_matchup_grid(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    champion_id: str,
+    challenger_id: str,
+) -> dict[str, Any]:
+    """Per-entry A/B grid for a matchup, read from the persisted loss files.
+
+    ``GET /api/matchup-grid/{epoch_id}/{champion}/{challenger}``. Unlike
+    :func:`build_matchup_detail` this never touches the SQLite index — it
+    reads ``generations/{gen}/runs/{entry}/loss.json`` for both the
+    champion and the challenger generation and the two
+    ``gen_score.json`` aggregates, so a *completed* tournament's
+    per-board outcomes are recoverable even when the index was never
+    built.
+
+    Returns::
+
+        {
+          "epoch_id", "champion", "challenger",
+          "entry_grid": [ { entry_id, parent_drift_loss, child_drift_loss,
+                            parent_pass, child_pass, delta, verdict,
+                            won_by, parent_session_id?, child_session_id? } ],
+          "scalar": { parent, child, delta, components } | null,
+          "source": "loss_files"
+        }
+
+    ``entry_grid`` rows are sorted by entry id; an entry that only ran on
+    one side still appears (the missing side is ``null``). The ``scalar``
+    block is composed from the ``gen_score.json`` aggregates — its
+    ``components`` is the challenger-minus-champion delta of each
+    ``scalar_components`` term so the breakdown shows what moved.
+    """
+    base: dict[str, Any] = {
+        "epoch_id": epoch_id,
+        "champion": champion_id,
+        "challenger": challenger_id,
+        "entry_grid": [],
+        "scalar": None,
+        "source": "loss_files",
+    }
+    if not epoch_id or not challenger_id:
+        return base
+
+    parent_losses = _read_run_loss_files(paths, epoch_id, champion_id) if champion_id else {}
+    child_losses = _read_run_loss_files(paths, epoch_id, challenger_id)
+
+    entry_grid: list[dict[str, Any]] = []
+    for entry_id in sorted(set(parent_losses) | set(child_losses)):
+        p = parent_losses.get(entry_id)
+        c = child_losses.get(entry_id)
+        parent_drift = p.get("drift_loss") if p else None
+        child_drift = c.get("drift_loss") if c else None
+        delta = (
+            child_drift - parent_drift
+            if isinstance(parent_drift, int | float) and isinstance(child_drift, int | float)
+            else None
+        )
+        row: dict[str, Any] = {
+            "entry_id": entry_id,
+            "parent_drift_loss": parent_drift,
+            "child_drift_loss": child_drift,
+            "parent_pass": p.get("pass_fail") if p else None,
+            "child_pass": c.get("pass_fail") if c else None,
+            "delta": delta,
+            "verdict": _verdict(parent_drift, child_drift),
+            "won_by": _grid_won_by(parent_drift, child_drift, champion_id, challenger_id),
+        }
+        if p and p.get("adk_session_id"):
+            row["parent_session_id"] = p["adk_session_id"]
+        if c and c.get("adk_session_id"):
+            row["child_session_id"] = c["adk_session_id"]
+        entry_grid.append(row)
+    base["entry_grid"] = entry_grid
+
+    parent_score = _read_gen_score(paths, epoch_id, champion_id) if champion_id else {}
+    child_score = _read_gen_score(paths, epoch_id, challenger_id)
+    parent_scalar = parent_score.get("scalar")
+    child_scalar = child_score.get("scalar")
+    if isinstance(parent_scalar, int | float) or isinstance(child_scalar, int | float):
+        p_scalar = parent_scalar if isinstance(parent_scalar, int | float) else None
+        c_scalar = child_scalar if isinstance(child_scalar, int | float) else None
+        scalar: dict[str, Any] = {
+            "parent": p_scalar,
+            "child": c_scalar,
+            "delta": (
+                c_scalar - p_scalar if p_scalar is not None and c_scalar is not None else None
+            ),
+        }
+        parent_components = parent_score.get("scalar_components")
+        child_components = child_score.get("scalar_components")
+        # The breakdown bars are the per-component CHANGE champion ->
+        # challenger: a negative bar is a component that improved.
+        components: dict[str, float] = {}
+        names: set[str] = set()
+        if isinstance(parent_components, dict):
+            names |= set(parent_components)
+        if isinstance(child_components, dict):
+            names |= set(child_components)
+        for name in names:
+            pv = parent_components.get(name) if isinstance(parent_components, dict) else None
+            cv = child_components.get(name) if isinstance(child_components, dict) else None
+            pv = pv if isinstance(pv, int | float) else 0.0
+            cv = cv if isinstance(cv, int | float) else 0.0
+            components[name] = cv - pv
+        if components:
+            scalar["components"] = components
+        base["scalar"] = scalar
+
+    return base
+
+
 def _latest_round_report(directory: Path) -> Path | None:
     if not directory.is_dir():
         return None

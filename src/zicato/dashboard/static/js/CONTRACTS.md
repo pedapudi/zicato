@@ -84,6 +84,38 @@ The drill-down / lazy endpoints (unchanged):
 - `GET /api/score-trajectory` — same shape as `environment.score_trajectory`.
 - `GET /api/files...`, `GET /api/mutations/...` — Files view.
 - `GET /api/conversation/{run}`, `GET /api/matchup/{entry}/conversations`.
+- `GET /api/matchup-grid/{epoch}/{champion}/{challenger}` — the
+  per-entry A/B grid for a **completed** matchup, read straight off the
+  persisted per-run loss files (NOT the SQLite index). `/api/tournaments/{gen}`
+  sources its `ab_grid` from the analytical index, a best-effort
+  dual-write; a finished tournament whose index was never (re)built
+  carries an empty `ab_grid`, so the Tournament matchup-detail panel
+  loses its per-board outcomes. This endpoint reconstructs them from
+  `generations/{gen}/runs/{entry}/loss.json` (the reducer's `LossProfile`)
+  for both generations plus the `generations/{gen}/gen_score.json`
+  aggregates. Shape:
+  ```jsonc
+  {
+    "epoch_id", "champion", "challenger",
+    "entry_grid": [ { "entry_id",
+        "parent_drift_loss":num|null, "child_drift_loss":num|null,
+        "parent_pass":bool|null, "child_pass":bool|null,
+        "delta":num|null,                       // child − champion drift loss
+        "verdict": "improved"|"regressed"|"flat",
+        "won_by": <genId>|null,                 // lower drift loss wins
+        "parent_session_id"?, "child_session_id"? } ],
+    "scalar": { "parent":num|null, "child":num|null, "delta":num|null,
+        "components": { <component>: num } } | null,  // delta of each
+                                                      // scalar_components term
+    "source": "loss_files"
+  }
+  ```
+  `entry_grid` rows are sorted by entry id; an entry that ran on only
+  one side still appears (the absent side is `null`). The Tournament
+  view fetches this lazily for a non-live matchup and folds it into the
+  matchup-detail panel as the `entry_grid` / `scalar` fallback when the
+  index-sourced detail has neither. A malformed coordinate degrades to
+  an empty grid (HTTP 200), never a 500.
 
 The Files-view endpoints in full:
 - `GET /api/files` — `{ epochs:[{ epoch_id, generations:[{ generation_id,
