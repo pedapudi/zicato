@@ -26,7 +26,7 @@ const REQUIRED_IDS = [
   'nav-files', 'epoch-overview', 'epoch-harness', 'epoch-board', 'epoch-brief',
   'epoch-scoring', 'epoch-mutations',
   'epoch-experiment-log', 'epoch-journal', 'epoch-analysis',
-  'lineage-svg', 'trajectory-svg', 'overview-trajectory-svg',
+  'lineage-svg', 'overview-trajectory-svg',
   'heatmap-svg', 'conversation-panel', 'files-tree-pane', 'files-content-pane',
   'files-patches', 'mutations-list-pane', 'mutations-detail-pane',
   'lineage-stage', 'lineage-viewport', 'lineage-zoom-in', 'lineage-zoom-out',
@@ -294,6 +294,56 @@ test('Overview is the environment home, NOT a duplicate tournament board', () =>
   const traj = doc.getElementById('overview-trajectory-svg');
   const paths = traj._descendants().filter((n) => n.localName === 'path');
   assert(paths.length > 0, 'the score trajectory must paint a curve');
+
+  // The chart must be LABELLED: a reader can tell which generation and
+  // what loss each point is. The x-axis carries the generation ids, the
+  // y-axis carries scalar tick values, and each axis is titled.
+  const trajText = traj._descendants()
+    .filter((n) => n.localName === 'text')
+    .map((n) => n.textContent);
+  assert(
+    ['v0', 'v1', 'v2', 'v4'].every((id) => trajText.includes(id)),
+    `the trajectory x-axis must label every scored generation, got ${JSON.stringify(trajText)}`,
+  );
+  assert(
+    trajText.some((t) => /loss/i.test(t)),
+    'the trajectory must carry a y-axis title naming the scalar as a loss',
+  );
+  assert(
+    trajText.some((t) => /generation/i.test(t)),
+    'the trajectory must carry an x-axis title naming the generation dimension',
+  );
+  // Per-point scalar value labels — the mock points carry 0.49 / 0.51 /
+  // 0.43 / 0.38, each formatted to two decimals.
+  assert(
+    ['0.49', '0.51', '0.43', '0.38'].every((v) => trajText.includes(v)),
+    `each trajectory point must show its scalar value, got ${JSON.stringify(trajText)}`,
+  );
+});
+
+test('the Tree view is purely the lineage DAG — no score-trajectory chart', () => {
+  // The score trajectory lives ONLY on the Overview. The Tree view
+  // renders the lineage graph and nothing else trajectory-shaped: the
+  // duplicate #trajectory-svg / #trajectory-section is gone, and the
+  // render layer no longer paints into one.
+  state.applySnapshot(mockSnapshot());
+  render.showView('tree');
+
+  assert(
+    doc.getElementById('trajectory-svg') == null,
+    'the Tree view must not carry a #trajectory-svg score-trajectory chart',
+  );
+  assert(
+    doc.getElementById('trajectory-section') == null,
+    'the duplicate #trajectory-section must be removed from the Tree view',
+  );
+  // The lineage graph itself still renders.
+  const lineage = doc.getElementById('lineage-svg');
+  assert(lineage != null, 'the Tree view must still render the lineage graph');
+  assert(
+    lineage._descendants().length > 0,
+    'the Tree view lineage graph must paint its DAG',
+  );
 });
 
 test('Overview degrades to empty states when the environment is bare', async () => {

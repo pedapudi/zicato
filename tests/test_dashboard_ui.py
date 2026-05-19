@@ -196,7 +196,6 @@ REQUIRED_SECTIONS = {
     "epochs-section",
     "recent-experiments-section",
     "lineage-section",
-    "trajectory-section",
     "tournament-bracket-section",
     "tournament-detail-section",
     "heatmap-section",
@@ -286,7 +285,6 @@ REQUIRED_IDS = (
 
 REQUIRED_SVG_IDS = {
     "lineage-svg",
-    "trajectory-svg",
     "overview-trajectory-svg",
     "heatmap-svg",
 }
@@ -410,6 +408,27 @@ def test_overview_is_the_environment_home(index_html: str) -> None:
     assert "runs-section" not in sections, "the Overview must not carry the full active-runs strip"
     # The bracket / matchup board belongs to the Tournament view only.
     assert "tournament-bracket-section" in sections
+
+
+def test_tree_view_is_purely_the_lineage_dag(index_html: str) -> None:
+    """The Tree view is the lineage DAG and nothing else.
+
+    The score-trajectory chart lives ONLY on the Overview
+    (#overview-trajectory-section). The Tree view's duplicate
+    #trajectory-section / #trajectory-svg has been removed; only the
+    lineage section remains.
+    """
+    p = _SectionCollector()
+    p.feed(index_html)
+    sections = set(p.section_ids)
+    assert "lineage-section" in sections, "the Tree view must keep its lineage section"
+    assert (
+        "trajectory-section" not in sections
+    ), "the Tree view must not carry a duplicate score-trajectory section"
+    assert "trajectory-svg" not in p.svg_ids, "the duplicate #trajectory-svg must be removed"
+    # The single surviving trajectory chart is the Overview's.
+    assert "overview-trajectory-section" in sections
+    assert "overview-trajectory-svg" in p.svg_ids
 
 
 def test_app_js_targets_environment_api(app_js: str) -> None:

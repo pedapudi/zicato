@@ -22,7 +22,7 @@ const REQUIRED_IDS = [
   'view-conversation', 'nav-overview', 'nav-tree', 'nav-tournament', 'nav-epoch',
   'nav-files', 'epoch-overview', 'epoch-harness', 'epoch-board', 'epoch-brief',
   'epoch-scoring', 'epoch-mutations', 'epoch-experiment-log', 'epoch-journal',
-  'epoch-analysis', 'lineage-svg', 'trajectory-svg', 'heatmap-svg',
+  'epoch-analysis', 'lineage-svg', 'heatmap-svg',
   'conversation-panel', 'files-changes-controls', 'files-changes-diff',
   'files-tree-pane', 'files-content-pane', 'files-patches', 'mutations-list-pane',
   'mutations-detail-pane', 'lineage-stage', 'lineage-viewport', 'lineage-zoom-in',

@@ -423,14 +423,20 @@ function renderAggregate(t) {
 
 // The Overview score trajectory — the scalar across every generation,
 // sourced from `state.scoreTrajectory.points` (build_score_trajectory).
-// Painted into its own #overview-trajectory-svg so it never collides
-// with the Tree view's trajectory chart.
+// Painted into its own #overview-trajectory-svg. This is the dashboard's
+// ONLY score-trajectory chart — the Tree view is purely the lineage DAG.
+//
+// The scalar is a drift-loss aggregate: lower is better. The chart is
+// fully labelled so a reader can tell which generation and what loss
+// each point is — a y-axis of scalar values with gridline ticks, an
+// x-axis of generation ids, and a per-point value label above each
+// marker.
 function renderOverviewTrajectory() {
   const svg = $('overview-trajectory-svg');
   if (!svg) return;
   clearChildren(svg);
 
-  const width = 720, height = 220;
+  const width = 720, height = 240;
   sizeSvg(svg, width, height);
 
   const points = (state.scoreTrajectory && Array.isArray(state.scoreTrajectory.points))
@@ -451,6 +457,8 @@ function renderOverviewTrajectory() {
   }
 
   const values = scored.map((s) => s.v);
+  // The scalar is a loss >= 0; anchor the axis at 0 so the curve's
+  // magnitude — and the lower-is-better trend — reads honestly.
   let vmin = Math.min(...values, 0);
   let vmax = Math.max(...values, 0);
   if (vmin === vmax) {
@@ -461,13 +469,29 @@ function renderOverviewTrajectory() {
     vmin -= pad; vmax += pad;
   }
 
-  const marginL = 50, marginR = 18, marginT = 22, marginB = 36;
+  const marginL = 58, marginR = 20, marginT = 26, marginB = 48;
   const plotW = width - marginL - marginR;
   const plotH = height - marginT - marginB;
   const n = scored.length;
   const xStep = n > 1 ? plotW / (n - 1) : 0;
   const toX = (i) => (n === 1 ? marginL + plotW / 2 : marginL + i * xStep);
   const toY = (v) => marginT + (vmax - v) / (vmax - vmin) * plotH;
+
+  // Horizontal gridlines with y-axis scalar ticks — five evenly-spaced
+  // levels so the curve's height maps to a readable loss value.
+  for (let k = 0; k < 5; k++) {
+    const gy = marginT + plotH * k / 4;
+    svg.appendChild(svgEl('line', {
+      x1: marginL, y1: gy.toFixed(1),
+      x2: marginL + plotW, y2: gy.toFixed(1),
+      stroke: COLORS.grid, 'stroke-width': '0.5', 'stroke-opacity': '0.6',
+    }));
+    const tickVal = vmax - (vmax - vmin) * k / 4;
+    svg.appendChild(svgEl('text', {
+      class: 'svg-axis', x: marginL - 8, y: (gy + 3).toFixed(1),
+      'text-anchor': 'end',
+    }, [tickVal.toFixed(2)]));
+  }
 
   // axes
   svg.appendChild(svgEl('line', {
@@ -481,6 +505,19 @@ function renderOverviewTrajectory() {
     stroke: COLORS.grid, 'stroke-width': '1',
   }));
 
+  // y-axis title — rotated, names the plotted quantity.
+  svg.appendChild(svgEl('text', {
+    class: 'svg-label', x: 14, y: (marginT + plotH / 2).toFixed(1),
+    'text-anchor': 'middle',
+    transform: `rotate(-90 14 ${(marginT + plotH / 2).toFixed(1)})`,
+  }, ['scalar (loss — lower is better)']));
+
+  // x-axis title — names the per-point dimension.
+  svg.appendChild(svgEl('text', {
+    class: 'svg-label', x: (marginL + plotW / 2).toFixed(1),
+    y: (height - 8).toFixed(1), 'text-anchor': 'middle',
+  }, ['generation']));
+
   // the curve
   const d = scored.map((s, i) =>
     `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(s.v).toFixed(1)}`).join(' ');
@@ -488,16 +525,24 @@ function renderOverviewTrajectory() {
     d, fill: 'none', stroke: COLORS.running, 'stroke-width': '2',
   }));
 
-  // markers, coloured by verdict
+  // markers, coloured by verdict; each labelled with its generation id
+  // (x-axis) and its scalar value (above the marker).
   scored.forEach((s, i) => {
     const fill = s.promoted === true ? COLORS.promoted
       : s.promoted === false ? COLORS.rejected
         : COLORS.running;
+    const cx = toX(i), cy = toY(s.v);
     svg.appendChild(svgEl('circle', {
-      cx: toX(i).toFixed(1), cy: toY(s.v).toFixed(1), r: '3.5', fill,
+      cx: cx.toFixed(1), cy: cy.toFixed(1), r: '3.5', fill,
     }));
+    // Per-point scalar value, placed above the marker.
     svg.appendChild(svgEl('text', {
-      class: 'svg-axis', x: toX(i).toFixed(1), y: (marginT + plotH + 16).toFixed(1),
+      class: 'svg-axis', x: cx.toFixed(1), y: (cy - 8).toFixed(1),
+      'text-anchor': 'middle',
+    }, [s.v.toFixed(2)]));
+    // Generation id, on the x-axis.
+    svg.appendChild(svgEl('text', {
+      class: 'svg-axis', x: cx.toFixed(1), y: (marginT + plotH + 16).toFixed(1),
       'text-anchor': 'middle',
     }, [String(s.id || '')]));
   });
@@ -997,165 +1042,6 @@ function setupLineageInteractions() {
   $('lineage-zoom-in').addEventListener('click', () => zoomBy(1.2));
   $('lineage-zoom-out').addEventListener('click', () => zoomBy(1 / 1.2));
   $('lineage-zoom-reset').addEventListener('click', resetLineageTransform);
-}
-
-// --- Render: score trajectory
-
-function renderTrajectory() {
-  const svg = $('trajectory-svg');
-  clearChildren(svg);
-
-  // The environment-wide evolution curve: the ABSOLUTE per-generation
-  // scalar (drift-loss aggregate — lower is better), plotted in lineage
-  // order. Sourced from GET /api/score-trajectory, NOT from the
-  // per-round scalar_score_delta — a delta is not an evolution curve.
-  const points = (state.scoreTrajectory && state.scoreTrajectory.points) || [];
-
-  const width = 720, height = 220;
-  sizeSvg(svg, width, height);
-  if (points.length === 0) {
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis', x: width / 2, y: height / 2, 'text-anchor': 'middle',
-    }, ['No generations to plot.']));
-    return;
-  }
-
-  // A generation with no scored runs yet carries scalar === null — it
-  // is kept on the x-axis (as a gap) so the lineage stays continuous.
-  const series = points.map((p, i) => ({
-    i,
-    id: p.generation_id,
-    decision: p.promoted === true ? 'promoted'
-      : p.promoted === false ? 'rejected'
-        : 'in_flight',
-    v: typeof p.scalar === 'number' ? p.scalar : null,
-    entryCount: p.entry_count || 0,
-  }));
-
-  const values = series.map(s => s.v).filter(v => v !== null);
-  if (values.length === 0) {
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis', x: width / 2, y: height / 2, 'text-anchor': 'middle',
-    }, ['No scored generations yet.']));
-    return;
-  }
-  // The scalar is a loss >= 0; anchor the axis at 0 so the curve's
-  // magnitude reads honestly.
-  let vmin = Math.min(...values, 0);
-  let vmax = Math.max(...values, 0);
-  if (vmin === vmax) {
-    const pad = Math.max(0.1, Math.abs(vmin) * 0.2 || 0.1);
-    vmin -= pad; vmax += pad;
-  } else {
-    const pad = (vmax - vmin) * 0.1;
-    vmin -= pad; vmax += pad;
-  }
-
-  const marginL = 50, marginR = 18, marginT = 22, marginB = 36;
-  const plotW = width - marginL - marginR;
-  const plotH = height - marginT - marginB;
-  const n = series.length;
-  const xStep = n > 1 ? plotW / (n - 1) : 0;
-
-  const toX = (i) => n === 1 ? marginL + plotW / 2 : marginL + i * xStep;
-  const toY = (v) => marginT + (vmax - v) / (vmax - vmin) * plotH;
-
-  // grid
-  for (let k = 0; k < 5; k++) {
-    const gy = marginT + plotH * k / 4;
-    svg.appendChild(svgEl('line', {
-      x1: marginL, y1: gy.toFixed(1),
-      x2: marginL + plotW, y2: gy.toFixed(1),
-      stroke: COLORS.grid, 'stroke-width': 0.5, 'stroke-opacity': 0.6,
-    }));
-    // Absolute loss tick — no leading '+', this is a magnitude.
-    const tickVal = vmax - (vmax - vmin) * k / 4;
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis',
-      x: marginL - 6, y: (gy + 3).toFixed(1), 'text-anchor': 'end',
-    }, [tickVal.toFixed(2)]));
-  }
-
-  // x-axis
-  svg.appendChild(svgEl('line', {
-    x1: marginL, y1: (marginT + plotH).toFixed(1),
-    x2: marginL + plotW, y2: (marginT + plotH).toFixed(1),
-    stroke: COLORS.grid, 'stroke-width': 1,
-  }));
-
-  // The evolution curve: connect every SCORED generation in lineage
-  // order. A generation still being scored (scalar === null) is a gap
-  // — the line picks up again at the next scored point.
-  const scored = series.filter(s => s.v !== null)
-    .map(s => [toX(s.i), toY(s.v)]);
-  if (scored.length >= 2) {
-    const d = 'M ' + scored.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L ');
-    svg.appendChild(svgEl('path', {
-      d, fill: 'none', stroke: COLORS.baseline, 'stroke-width': 2,
-    }));
-  }
-
-  for (const s of series) {
-    const cx = toX(s.i);
-    if (s.v === null) {
-      // Unscored generation — mark its x-axis slot, no data point.
-      svg.appendChild(svgEl('text', {
-        class: 'svg-axis',
-        x: cx.toFixed(1), y: (marginT + plotH + 14).toFixed(1),
-        'text-anchor': 'middle',
-      }, [s.id]));
-      continue;
-    }
-    const cy = toY(s.v);
-    if (s.decision === 'promoted') {
-      svg.appendChild(svgEl('circle', {
-        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 5,
-        fill: COLORS.promoted, stroke: COLORS.promoted, 'stroke-width': 1.5,
-      }));
-    } else if (s.decision === 'rejected') {
-      const sz = 4.5;
-      svg.appendChild(svgEl('rect', {
-        x: (cx - sz).toFixed(1), y: (cy - sz).toFixed(1),
-        width: 2 * sz, height: 2 * sz,
-        fill: 'none', stroke: COLORS.rejected, 'stroke-width': 1.6,
-      }));
-    } else if (s.decision === 'deferred') {
-      svg.appendChild(svgEl('circle', {
-        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4.5,
-        fill: 'none', stroke: COLORS.deferred, 'stroke-width': 1.6,
-        'stroke-dasharray': '2 2',
-      }));
-    } else if (s.decision === 'in_flight') {
-      // Still running — no verdict, drawn hollow in the running blue.
-      svg.appendChild(svgEl('circle', {
-        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4.5,
-        fill: 'none', stroke: COLORS.running, 'stroke-width': 1.6,
-        'stroke-dasharray': '3 2',
-      }));
-    } else {
-      svg.appendChild(svgEl('circle', {
-        cx: cx.toFixed(1), cy: cy.toFixed(1), r: 4,
-        fill: 'none', stroke: COLORS.baseline, 'stroke-width': 1.4,
-      }));
-    }
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis',
-      x: cx.toFixed(1), y: (marginT + plotH + 14).toFixed(1),
-      'text-anchor': 'middle',
-    }, [s.id]));
-    svg.appendChild(svgEl('text', {
-      class: 'svg-axis',
-      x: cx.toFixed(1), y: (cy - 8).toFixed(1),
-      'text-anchor': 'middle',
-    }, [s.v.toFixed(2)]));
-  }
-
-  svg.appendChild(svgEl('text', {
-    class: 'svg-axis',
-    x: marginL - 36, y: (marginT + plotH / 2).toFixed(1),
-    'text-anchor': 'middle',
-    transform: `rotate(-90 ${marginL - 36} ${(marginT + plotH / 2).toFixed(1)})`,
-  }, ['scalar (loss)']));
 }
 
 // --- Render: drift heatmap
@@ -5006,7 +4892,6 @@ function renderActiveView() {
     renderOverview();
   } else if (currentView === 'tree') {
     renderLineage();
-    renderTrajectory();
   } else if (currentView === 'tournament') {
     renderTournamentView();
   } else if (currentView === 'epoch') {
