@@ -8,7 +8,9 @@
 //   * the view renders a side-by-side (split) diff of every file the
 //     selected generation changed relative to its parent.
 
-import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import {
+  installDom, test, run, assert, assertEqual, makeEvent,
+} from './harness.mjs';
 
 // The element ids the render layer's Files view needs, plus the shell
 // ids renderAll touches.
@@ -84,6 +86,22 @@ const FIXTURE = {
         patched_generation_ids: ['v2'] },
       { mutation_id: 'site_two', role: 'instruction', file: 'agent.py',
         patched_generation_ids: [] },
+    ],
+  },
+  // site_one is patched in v2 — its detail carries a version with patched
+  // content, so the detail pane renders a `.mutations-diff` block (the
+  // horizontally-scrollable viewer the scroll-preservation fix guards).
+  '/api/mutations/ep1/site_one': {
+    mutation_id: 'site_one',
+    baseline: {
+      role: 'instruction', file: 'agent.py', line_start: 10, line_end: 12,
+      content: 'be concise\n',
+    },
+    versions: [
+      {
+        generation_id: 'v2', op: 'REPLACE', rationale: 'sharpen',
+        content: 'be concise and cite a source for every claim you make\n',
+      },
     ],
   },
 };
@@ -435,6 +453,225 @@ test('an unpatched mutation site is tagged v0, not the word BASELINE', async () 
     'an unpatched site must be tagged with the seed generation id v0');
   assert(!unpatched.textContent.toLowerCase().includes('baseline'),
     'the tag must be a generation id, never the word BASELINE');
+});
+
+// --- "What changed" diff folds unchanged regions ---------------------
+//
+// A generation that changed only a couple of lines must NOT render the
+// whole file in both columns: long runs of unchanged lines collapse to
+// a single "… N unchanged lines …" click-to-expand marker, and each
+// changed hunk shows with a few lines of surrounding context.
+
+// A file with a long identical middle and ONE changed line near the
+// end — the case where the old renderer painted a ~9,000px wall.
+const FOLD_OLD = Array.from({ length: 60 }, (_, i) => `line ${i}`).join('\n');
+const FOLD_NEW = FOLD_OLD.split('\n')
+  .map((l, i) => (i === 40 ? 'line 40 CHANGED' : l)).join('\n');
+
+// A four-generation index whose v3 carries the big folding diff. Served
+// from the mutable holder so it does not perturb the three-gen tests.
+const FOLD_INDEX = {
+  epochs: [{
+    epoch_id: 'ep1',
+    generations: [
+      { generation_id: 'v0', file_count: 2, patch_count: 0 },
+      { generation_id: 'v1', file_count: 2, patch_count: 1 },
+      { generation_id: 'v2', file_count: 2, patch_count: 1 },
+      { generation_id: 'v3', file_count: 2, patch_count: 1 },
+    ],
+  }],
+};
+FIXTURE['/api/files/ep1/v3/tree'] = {
+  entries: [{ path: 'big.py', is_dir: false, size: 600 }],
+};
+FIXTURE['/api/files/ep1/v3/diff'] = {
+  epoch_id: 'ep1', generation_id: 'v3', parent_generation_id: 'v2',
+  files: [{
+    path: 'big.py', status: 'modified',
+    old_content: FOLD_OLD, new_content: FOLD_NEW,
+    old_binary: false, new_binary: false,
+  }],
+};
+FIXTURE['/api/files/ep1/v3/patches'] = {
+  epoch_id: 'ep1', generation_id: 'v3', patches: [],
+};
+
+function diffLinesIn(pane) {
+  return pane._descendants().filter(
+    (n) => n.classList && n.classList.contains('diff-line'));
+}
+
+test('the "What changed" diff folds unchanged regions', async () => {
+  filesIndexResponse = FOLD_INDEX;
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0' }, { generation_id: 'v1' },
+      { generation_id: 'v2' }, { generation_id: 'v3' },
+    ],
+    experiments: [],
+  };
+
+  window.location.hash = '#/files/ep1/v3';
+  await render.applyFilesRoute('ep1', 'v3');
+
+  const diffPane = doc.getElementById('files-changes-diff');
+
+  // The diff must NOT render all 60 lines in each column — long
+  // unchanged runs are collapsed. With one change near line 40 and a
+  // few context lines, far fewer than 60 old-side lines are shown.
+  const oldSide = diffPane._descendants().find(
+    (n) => n.classList && n.classList.contains('diff-old'));
+  assert(oldSide, 'a split diff old-side column must render');
+  const oldLines = oldSide._descendants().filter(
+    (n) => n.classList && n.classList.contains('diff-line'));
+  assert(oldLines.length < 30,
+    `the diff must fold unchanged lines — got ${oldLines.length} shown lines `
+      + 'of a 60-line file, expected far fewer');
+
+  // A fold marker is present, labelled with how many lines it hides.
+  const folds = diffPane._descendants().filter(
+    (n) => n.classList && n.classList.contains('diff-fold'));
+  assert(folds.length > 0, 'a "… N unchanged lines …" fold marker must render');
+  assert(/\d+\s+unchanged line/.test(folds[0].textContent),
+    'the fold marker must say how many unchanged lines it hides');
+
+  // The actual change is visibly marked — both an added and a removed
+  // (here: modified) line carry a change class, never plain equal.
+  const changed = diffLinesIn(diffPane).filter(
+    (n) => n.classList.contains('diff-add') || n.classList.contains('diff-del'));
+  assert(changed.length > 0, 'the changed line must be visually marked');
+  assert(diffPane.textContent.includes('line 40 CHANGED'),
+    'the changed content must be shown — never hidden inside a fold');
+});
+
+test('clicking a fold marker expands the hidden unchanged lines', async () => {
+  filesIndexResponse = FOLD_INDEX;
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  window.location.hash = '#/files/ep1/v3';
+  await render.applyFilesRoute('ep1', 'v3');
+
+  const diffPane = doc.getElementById('files-changes-diff');
+  const before = diffLinesIn(diffPane).length;
+  const fold = diffPane._descendants().find(
+    (n) => n.classList && n.classList.contains('diff-fold'));
+  assert(fold, 'a fold marker must be present to expand');
+
+  // Clicking the marker splices the hidden lines back in.
+  fold.dispatchEvent(makeEvent('click'));
+  const after = diffLinesIn(diffPane).length;
+  assert(after > before,
+    'expanding a fold must reveal the hidden unchanged lines');
+});
+
+// --- The mutation-site viewer preserves horizontal scroll ------------
+//
+// The mutation-site detail pane is a horizontally-scrollable viewer.
+// An SSE-driven repaint must NOT reset its scrollLeft — the same class
+// of bug as the tournament openMatchup scroll-fight. The detail is
+// routed through the keyed reconcile spine (swapIfChanged), so a no-op
+// repaint leaves the scroll container's node identity intact.
+
+test('a no-op repaint preserves the mutation-site viewer scroll position', async () => {
+  filesIndexResponse = FIXTURE['/api/files'];
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0' }, { generation_id: 'v1' },
+      { generation_id: 'v2' },
+    ],
+    experiments: [],
+  };
+
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+
+  // Open a patched mutation site — its detail renders a `.mutations-diff`
+  // block, the horizontally-scrollable viewer.
+  await render.selectMutationSite('site_one');
+  const pane = doc.getElementById('mutations-detail-pane');
+  const diffOf = () => pane._descendants().find(
+    (n) => n.classList && n.classList.contains('mutations-diff'));
+  const before = diffOf();
+  assert(before, 'the patched site must render a `.mutations-diff` viewer');
+
+  // The operator scrolls the viewer to the right.
+  before.scrollLeft = 240;
+
+  // An SSE-driven repaint re-enters the route with unchanged data.
+  await render.applyFilesRoute('ep1', 'v2');
+  await render.applyFilesRoute('ep1', 'v2');
+
+  const after = diffOf();
+  assert(after === before,
+    'the mutation-site viewer must keep its node identity across a no-op '
+      + 'repaint — that is what preserves scrollLeft');
+  assertEqual(after.scrollLeft, 240,
+    'a no-op repaint must NOT reset the viewer horizontal scroll position');
+  assertEqual(pane.innerHTMLWriteCount(), 0,
+    'a no-op repaint must never touch innerHTML in the mutation-site detail');
+});
+
+test('switching the mutation site rebuilds the detail viewer', async () => {
+  filesIndexResponse = FIXTURE['/api/files'];
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+
+  await render.selectMutationSite('site_one');
+  const pane = doc.getElementById('mutations-detail-pane');
+  const first = pane._descendants().find(
+    (n) => n.classList && n.classList.contains('mutations-diff'));
+  assert(first, 'site_one renders a diff viewer');
+
+  // A genuine selection change must rebuild the detail — site_two is
+  // unpatched, so it shows the baseline content instead of a diff.
+  await render.selectMutationSite('site_two');
+  assert(pane.textContent.includes('no patch has touched this site'),
+    'switching to an unpatched site must rebuild the detail pane');
+});
+
+// --- Long lines stay reachable — no off-screen overflow --------------
+//
+// The diff must never drop content: a >100-char line is rendered in
+// full, reachable by wrapping (diff) or by scroll (mutation viewer).
+
+test('a long diff line is rendered in full — no content is truncated', async () => {
+  const longOld = 'short\n';
+  const longNew = 'short\n' + 'x'.repeat(400) + '\n';
+  FIXTURE['/api/files/ep1/v3/diff'] = {
+    epoch_id: 'ep1', generation_id: 'v3', parent_generation_id: 'v2',
+    files: [{
+      path: 'big.py', status: 'modified',
+      old_content: longOld, new_content: longNew,
+      old_binary: false, new_binary: false,
+    }],
+  };
+  filesIndexResponse = FOLD_INDEX;
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  render.filesState.selectedGen = null;
+  window.location.hash = '#/files/ep1/v3';
+  await render.applyFilesRoute('ep1', 'v3');
+
+  const diffPane = doc.getElementById('files-changes-diff');
+  assert(diffPane.textContent.includes('x'.repeat(400)),
+    'the full long line must be present in the DOM — never truncated; '
+      + 'CSS soft-wraps it so it stays reachable on screen');
+
+  // Restore the folding-diff fixture for any later use.
+  FIXTURE['/api/files/ep1/v3/diff'] = {
+    epoch_id: 'ep1', generation_id: 'v3', parent_generation_id: 'v2',
+    files: [{
+      path: 'big.py', status: 'modified',
+      old_content: FOLD_OLD, new_content: FOLD_NEW,
+      old_binary: false, new_binary: false,
+    }],
+  };
 });
 
 await run();

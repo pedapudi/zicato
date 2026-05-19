@@ -34,7 +34,7 @@ import {
   harmonografLink, harmonografMini, harmonografGenLink,
 } from '../core/harmonograf.js';
 import { fetchJson, loadMatchupDetail } from '../core/api.js';
-import { diff as splitDiff } from '../components/index.js';
+import { lcsDiff } from '../components/index.js';
 import {
   predictedGateVerdict, tournamentVerdict, dataQuality,
   entryStatus, entryIsDone, entryFailed,
@@ -4500,35 +4500,209 @@ function renderFilesChangesControls() {
   reconcileFilesPicker(pane.firstChild);
 }
 
-// The side-by-side diff: one split diff per file the generation changed.
-function renderFilesChangesDiff() {
-  const pane = $('files-changes-diff');
-  if (!pane) return;
-  clearChildren(pane);
+// How many lines of unchanged context to keep on either side of a
+// changed hunk. A run of equal lines longer than 2x this is folded into
+// a single "… N unchanged lines …" marker.
+const DIFF_CONTEXT_LINES = 3;
 
-  if (!filesState.selectedGen) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, ['Select a generation to see what it changed.'])
+// Group a flat list of LCS ops into a fold plan. The result is a list of
+// segments, each either:
+//   { kind: 'rows', ops: [...] }  — changed lines + their context, shown
+//   { kind: 'fold', count: N, ops: [...] } — a long unchanged run, hidden
+// Equal runs short enough to be entirely context are merged into the
+// adjacent 'rows' segment; only the genuinely-redundant middle of a long
+// run is collapsed. This is what stops a two-line change painting a
+// 9,000px-tall identical wall of source.
+function foldDiffOps(ops, context = DIFF_CONTEXT_LINES) {
+  // Index of every changed op.
+  const changedAt = [];
+  for (let i = 0; i < ops.length; i++) {
+    if (ops[i].kind !== 'equal') changedAt.push(i);
+  }
+  // No changes at all — nothing to fold, render the whole thing as one
+  // shown segment (a same-content file should not reach here, but be
+  // defensive).
+  if (changedAt.length === 0) {
+    return ops.length ? [{ kind: 'rows', ops: ops.slice() }] : [];
+  }
+  // Mark which op indices are "shown": every changed line, plus `context`
+  // equal lines on each side of every changed line.
+  const shown = new Array(ops.length).fill(false);
+  for (const idx of changedAt) {
+    const lo = Math.max(0, idx - context);
+    const hi = Math.min(ops.length - 1, idx + context);
+    for (let i = lo; i <= hi; i++) shown[i] = true;
+  }
+  // Walk the op list, emitting shown runs as 'rows' and hidden runs as
+  // 'fold' segments.
+  const segments = [];
+  let i = 0;
+  while (i < ops.length) {
+    const isShown = shown[i];
+    let j = i;
+    while (j < ops.length && shown[j] === isShown) j++;
+    const slice = ops.slice(i, j);
+    if (isShown) {
+      segments.push({ kind: 'rows', ops: slice });
+    } else {
+      segments.push({ kind: 'fold', count: slice.length, ops: slice });
+    }
+    i = j;
+  }
+  return segments;
+}
+
+// Build one diff line cell for a side. `kind` ∈ equal|del|add|pad.
+function diffSideLine(text, kind) {
+  const sign = { del: '-', add: '+', equal: ' ', pad: '' }[kind] || ' ';
+  return el('div', { class: `diff-line diff-${kind}` }, [
+    el('span', { class: 'diff-gutter' }, [sign]),
+    el('span', { class: 'diff-text' }, [text == null || text === '' ? ' ' : text]),
+  ]);
+}
+
+// Append the rows of a segment of LCS ops to the old/new side columns.
+// An 'equal' op fills both sides; a 'del' marks the old side and pads the
+// new; an 'add' pads the old side and marks the new — keeping the two
+// columns line-aligned. A 'del' immediately followed by an 'add' is a
+// modified line: both sides carry a `diff-mod` accent so the operator
+// reads it as a change-in-place, not an unrelated delete + insert.
+function appendDiffOpRows(left, right, ops) {
+  for (let k = 0; k < ops.length; k++) {
+    const op = ops[k];
+    if (op.kind === 'equal') {
+      left.appendChild(diffSideLine(op.a, 'equal'));
+      right.appendChild(diffSideLine(op.b, 'equal'));
+    } else if (op.kind === 'del') {
+      const next = ops[k + 1];
+      if (next && next.kind === 'add') {
+        // A delete paired with the next insert — render as a modified
+        // line on both sides and consume the paired 'add'.
+        const lo = diffSideLine(op.a, 'del');
+        const ro = diffSideLine(next.b, 'add');
+        lo.classList.add('diff-mod');
+        ro.classList.add('diff-mod');
+        left.appendChild(lo);
+        right.appendChild(ro);
+        k += 1;
+      } else {
+        left.appendChild(diffSideLine(op.a, 'del'));
+        right.appendChild(diffSideLine('', 'pad'));
+      }
+    } else {
+      left.appendChild(diffSideLine('', 'pad'));
+      right.appendChild(diffSideLine(op.b, 'add'));
+    }
+  }
+}
+
+// A folded-region marker, present in BOTH columns at the same row index
+// so the side-by-side layout stays aligned. Clicking either marker
+// expands the hidden run in place: the segment's equal rows are spliced
+// in where the markers stand, then both markers are removed.
+function appendDiffFoldMarker(left, right, segment) {
+  const label = `… ${segment.count} unchanged `
+    + `line${segment.count === 1 ? '' : 's'} — click to expand`;
+  let expanded = false;
+  const leftMarker = el('button', {
+    type: 'button',
+    class: 'diff-fold',
+    title: 'Show the unchanged lines hidden here',
+  }, [label]);
+  const rightMarker = el('button', {
+    type: 'button',
+    class: 'diff-fold',
+    title: 'Show the unchanged lines hidden here',
+  }, [label]);
+  const expand = () => {
+    if (expanded) return;
+    expanded = true;
+    const leftRows = el('div');
+    const rightRows = el('div');
+    appendDiffOpRows(leftRows, rightRows, segment.ops);
+    while (leftRows.firstChild) {
+      left.insertBefore(leftRows.firstChild, leftMarker);
+    }
+    while (rightRows.firstChild) {
+      right.insertBefore(rightRows.firstChild, rightMarker);
+    }
+    if (leftMarker.parentNode) leftMarker.parentNode.removeChild(leftMarker);
+    if (rightMarker.parentNode) rightMarker.parentNode.removeChild(rightMarker);
+  };
+  leftMarker.addEventListener('click', expand);
+  rightMarker.addEventListener('click', expand);
+  left.appendChild(leftMarker);
+  right.appendChild(rightMarker);
+}
+
+// Render a folding side-by-side diff: old content on the left, new on
+// the right, with long unchanged runs collapsed to a click-to-expand
+// marker and every changed hunk shown with a few lines of context.
+function renderFoldingSplitDiff(oldText, newText) {
+  const a = String(oldText == null ? '' : oldText).split('\n');
+  const b = String(newText == null ? '' : newText).split('\n');
+  const ops = lcsDiff(a, b);
+  const wrap = el('div', { class: 'diff diff-split diff-folding' });
+  const left = el('div', { class: 'diff-side diff-old' });
+  const right = el('div', { class: 'diff-side diff-new' });
+  const segments = foldDiffOps(ops);
+  for (const seg of segments) {
+    if (seg.kind === 'fold') {
+      appendDiffFoldMarker(left, right, seg);
+    } else {
+      appendDiffOpRows(left, right, seg.ops);
+    }
+  }
+  wrap.appendChild(left);
+  wrap.appendChild(right);
+  return wrap;
+}
+
+// A stable digest of the changes payload. swapIfChanged uses it so a
+// no-op SSE repaint leaves the diff subtree untouched — folds the
+// operator manually expanded, and the horizontal scroll position of
+// every diff pane, survive the repaint.
+function filesChangesKey() {
+  if (!filesState.selectedGen) return 'none';
+  const changes = filesState.changes || { files: [] };
+  if (changes.error) return 'error:' + changes.error;
+  const parts = [
+    'changes',
+    filesState.selectedGen.generation_id || '',
+    changes.parent_generation_id || '',
+  ];
+  for (const f of changes.files || []) {
+    parts.push(
+      f.path || '', f.status || '',
+      'o:' + (f.old_binary ? 'b' : String((f.old_content || '').length)),
+      'n:' + (f.new_binary ? 'b' : String((f.new_content || '').length)),
     );
-    return;
+  }
+  return parts.join('|');
+}
+
+// Build the "What changed" diff subtree — pure, no DOM lookups.
+function buildFilesChangesDiff() {
+  if (!filesState.selectedGen) {
+    return el('p', { class: 'empty' }, ['Select a generation to see what it changed.']);
   }
   const changes = filesState.changes || { files: [] };
-  if (changes.error) {
-    pane.appendChild(el('p', { class: 'empty' }, [changes.error]));
-    return;
-  }
+  if (changes.error) return el('p', { class: 'empty' }, [changes.error]);
+
   const parent = changes.parent_generation_id;
-  pane.appendChild(el('div', { class: 'files-changes-summary' }, [
-    parent
-      ? `${filesState.selectedGen.generation_id} vs ${parent}`
-      : `${filesState.selectedGen.generation_id} (seed — every file is new)`,
-  ]));
+  const wrap = el('div', { class: 'files-changes-diff-body' }, [
+    el('div', { class: 'files-changes-summary' }, [
+      parent
+        ? `${filesState.selectedGen.generation_id} vs ${parent}`
+        : `${filesState.selectedGen.generation_id} (seed — every file is new)`,
+    ]),
+  ]);
   const files = changes.files || [];
   if (files.length === 0) {
-    pane.appendChild(
+    wrap.appendChild(
       el('p', { class: 'empty' }, ['No file changes for this generation.'])
     );
-    return;
+    return wrap;
   }
   for (const f of files) {
     const oldLabel = parent ? `${parent} · old` : 'baseline';
@@ -4548,12 +4722,23 @@ function renderFilesChangesDiff() {
         el('div', { class: 'files-change-col-label' }, [oldLabel]),
         el('div', { class: 'files-change-col-label' }, [newLabel]),
       ]));
-      // The shared diff component in split mode: old on the left, new
-      // on the right.
-      block.appendChild(splitDiff(f.old_content, f.new_content, { mode: 'split' }));
+      // A folding split diff: old on the left, new on the right, with
+      // long unchanged runs collapsed so a small change is not buried
+      // under a wall of identical source.
+      block.appendChild(renderFoldingSplitDiff(f.old_content, f.new_content));
     }
-    pane.appendChild(block);
+    wrap.appendChild(block);
   }
+  return wrap;
+}
+
+// The side-by-side diff: one split diff per file the generation changed.
+// Routed through swapIfChanged so a no-op SSE repaint preserves the
+// diff subtree (expanded folds + horizontal scroll position).
+function renderFilesChangesDiff() {
+  const pane = $('files-changes-diff');
+  if (!pane) return;
+  swapIfChanged(pane, filesChangesKey(), buildFilesChangesDiff);
 }
 
 // Left pane top: the epoch -> generation picker, then the file tree.
@@ -4657,42 +4842,58 @@ async function openFilesFile(relPath) {
   renderFilesContent();
 }
 
-// The right pane: the open file's content.
-function renderFilesContent() {
-  const pane = $('files-content-pane');
-  if (!pane) return;
-  clearChildren(pane);
+// A stable digest of what renderFilesContent draws — see
+// mutationsDetailKey: identical key -> the content subtree (and its
+// scrollable <pre>'s horizontal scroll position) survives a no-op
+// SSE-driven repaint untouched.
+function filesContentKey() {
+  const payload = filesState._content;
+  if (!filesState.openFile || !payload) return 'none';
+  if (payload.error) return 'error:' + filesState.openFile + ':' + payload.error;
+  if (payload.binary) return 'binary:' + filesState.openFile;
+  return 'content:' + filesState.openFile
+    + ':' + (payload.truncated ? 't' : 'f')
+    + ':' + (payload.size || 0)
+    + ':' + String(payload.content || '').length;
+}
 
+// Build the open file's content subtree — pure, no DOM lookups.
+function buildFilesContent() {
   const payload = filesState._content;
   if (!filesState.openFile || !payload) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, ['Select a file to view its contents.'])
-    );
-    return;
+    return el('p', { class: 'empty' }, ['Select a file to view its contents.']);
   }
-  pane.appendChild(
-    el('div', { class: 'files-content-header' }, [filesState.openFile])
-  );
+  const body = el('div', { class: 'files-content-wrap' }, [
+    el('div', { class: 'files-content-header' }, [filesState.openFile]),
+  ]);
   if (payload.error) {
-    pane.appendChild(el('p', { class: 'empty' }, [payload.error]));
-    return;
+    body.appendChild(el('p', { class: 'empty' }, [payload.error]));
+    return body;
   }
   if (payload.binary) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, ['Binary file — not shown.'])
-    );
-    return;
+    body.appendChild(el('p', { class: 'empty' }, ['Binary file — not shown.']));
+    return body;
   }
   if (payload.truncated) {
-    pane.appendChild(
+    body.appendChild(
       el('div', { class: 'files-content-note' }, [
         `Truncated — showing the first part of a ${fmtFileSize(payload.size)} file.`,
       ])
     );
   }
-  pane.appendChild(
+  body.appendChild(
     el('pre', { class: 'files-content-body' }, [payload.content || ''])
   );
+  return body;
+}
+
+// The right pane: the open file's content. Routed through swapIfChanged
+// so a no-op SSE repaint leaves the <pre> node — and its horizontal
+// scroll position — untouched.
+function renderFilesContent() {
+  const pane = $('files-content-pane');
+  if (!pane) return;
+  swapIfChanged(pane, filesContentKey(), buildFilesContent);
 }
 
 // The patch-set section: the patches that derived the selected
@@ -4952,30 +5153,48 @@ async function selectMutationSite(mutationId) {
   renderMutationsDetail();
 }
 
-// Right pane: the selected site's baseline content and, per patching
-// generation, a line-level diff of baseline vs patched content.
-function renderMutationsDetail() {
-  const pane = $('mutations-detail-pane');
-  if (!pane) return;
-  clearChildren(pane);
-
-  if (!mutationsState.selectedId) {
-    pane.appendChild(
-      el('p', { class: 'empty' }, ['Select a mutation site to view its diff.'])
+// A cheap, stable digest of everything renderMutationsDetail draws for
+// the currently-selected site. swapIfChanged compares it against the
+// previously-rendered key: identical -> the whole detail subtree (and
+// the horizontal scroll position of every diff pane in it) is left
+// untouched; different -> the detail is rebuilt. This is the
+// mutation-site analogue of the tournament openMatchup scroll-fight fix
+// (#/files/{epoch}/{gen} repaints on every SSE tick): a no-op repaint
+// must not reset the viewer's scrollLeft.
+function mutationsDetailKey() {
+  const id = mutationsState.selectedId;
+  if (!id) return 'none';
+  const detail = mutationsState.detail;
+  if (!detail) return 'loading:' + id;
+  if (detail.error) return 'error:' + id + ':' + detail.error;
+  const baseline = detail.baseline || {};
+  const parts = [
+    'detail', id,
+    baseline.role || '', baseline.file || '',
+    baseline.line_start || '', baseline.line_end || '',
+    'b:' + (baseline.content || '').length,
+  ];
+  for (const v of detail.versions || []) {
+    parts.push(
+      'v:' + (v.generation_id || '?'),
+      v.op || '', v.rationale || '', v.error || '',
+      'c:' + (v.content == null ? 'null' : String(v.content).length),
     );
-    return;
+  }
+  return parts.join('');
+}
+
+// Build the detail subtree for the selected site — pure, no DOM lookups.
+function buildMutationsDetail() {
+  if (!mutationsState.selectedId) {
+    return el('p', { class: 'empty' }, ['Select a mutation site to view its diff.']);
   }
   const detail = mutationsState.detail;
-  if (!detail) {
-    pane.appendChild(el('p', { class: 'empty' }, ['Loading…']));
-    return;
-  }
-  if (detail.error) {
-    pane.appendChild(el('p', { class: 'empty' }, [detail.error]));
-    return;
-  }
+  if (!detail) return el('p', { class: 'empty' }, ['Loading…']);
+  if (detail.error) return el('p', { class: 'empty' }, [detail.error]);
+
   const baseline = detail.baseline || {};
-  pane.appendChild(
+  const body = el('div', { class: 'mutations-detail-body' }, [
     el('div', { class: 'mutations-detail-header' }, [
       el('span', { class: 'mutations-detail-id' }, [detail.mutation_id || '']),
       el('span', { class: 'mutations-detail-loc' }, [
@@ -4985,25 +5204,25 @@ function renderMutationsDetail() {
               ? ':' + baseline.line_start + '-' + baseline.line_end
               : ''),
       ]),
-    ])
-  );
+    ]),
+  ]);
 
   const versions = detail.versions || [];
   if (versions.length === 0) {
     // No patch ever touched this site — show the baseline content as-is.
-    pane.appendChild(
+    body.appendChild(
       el('div', { class: 'mutations-version-label' }, [
         'v0 baseline — no patch has touched this site',
       ])
     );
-    pane.appendChild(
+    body.appendChild(
       el('pre', { class: 'files-content-body' }, [baseline.content || ''])
     );
-    return;
+    return body;
   }
   // One diff block per generation whose patch touched this id.
   for (const version of versions) {
-    pane.appendChild(
+    body.appendChild(
       el('div', { class: 'mutations-version-label' }, [
         el('span', {}, ['v0 → ' + (version.generation_id || '?')]),
         version.op
@@ -5012,20 +5231,34 @@ function renderMutationsDetail() {
       ])
     );
     if (version.rationale) {
-      pane.appendChild(
+      body.appendChild(
         el('div', { class: 'mutations-version-rationale' }, [version.rationale])
       );
     }
     if (version.error || version.content == null) {
-      pane.appendChild(
+      body.appendChild(
         el('p', { class: 'empty' }, [
           version.error || 'No patched content available for this generation.',
         ])
       );
       continue;
     }
-    pane.appendChild(renderMutationDiff(baseline.content || '', version.content));
+    body.appendChild(renderMutationDiff(baseline.content || '', version.content));
   }
+  return body;
+}
+
+// Right pane: the selected site's baseline content and, per patching
+// generation, a line-level diff of baseline vs patched content.
+//
+// Routed through swapIfChanged (the keyed reconcile spine) so an
+// SSE-driven repaint with unchanged detail data is a pure no-op: the
+// detail subtree keeps its node identity, and the horizontal scroll
+// position of every diff pane in it survives the repaint.
+function renderMutationsDetail() {
+  const pane = $('mutations-detail-pane');
+  if (!pane) return;
+  swapIfChanged(pane, mutationsDetailKey(), buildMutationsDetail);
 }
 
 // Render a unified line-level diff of baseline vs patched span content.
@@ -5387,6 +5620,7 @@ export {
   applyRoute, setupLineageInteractions, closeDrill,
   renderLogTail, appendLogTail,
   // Files view — exported for the JS test harness (the route-driven
-  // entry point and the scratch state it resolves into).
-  applyFilesRoute, filesState,
+  // entry point, the scratch state it resolves into, and the
+  // mutation-site browser's selection entry point + its state).
+  applyFilesRoute, filesState, selectMutationSite, mutationsState,
 };

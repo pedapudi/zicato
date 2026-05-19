@@ -1713,10 +1713,14 @@ h4 {
 }
 .files-gen-id {
   font-weight: 600;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 .files-gen-meta {
   font-size: 0.72rem;
   color: var(--accent-baseline);
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 .files-tree-root {
   border-top: 1px solid var(--border);
@@ -1731,6 +1735,8 @@ h4 {
 .files-tree-dir {
   color: var(--accent-baseline);
   padding: 0.1rem 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 .files-tree-file {
   padding: 0;
@@ -1755,9 +1761,17 @@ h4 {
   background: var(--bg);
   font-weight: 600;
 }
+.files-tree-file-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
 .files-tree-file-size {
   color: var(--accent-baseline);
   font-size: 0.72rem;
+  /* The size never collapses away under a long file name. */
+  flex: none;
+  white-space: nowrap;
 }
 .files-content-header {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1767,11 +1781,15 @@ h4 {
   background: var(--bg);
   position: sticky;
   top: 0;
+  /* A long file path wraps inside the header rather than overflowing. */
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 .files-content-note {
   font-size: 0.75rem;
   color: var(--accent-deferred);
   padding: 0.3rem 0.6rem;
+  overflow-wrap: anywhere;
 }
 .files-content-body {
   margin: 0;
@@ -1798,6 +1816,7 @@ h4 {
 }
 .files-patch-head {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.6rem;
   align-items: baseline;
   font-size: 0.82rem;
@@ -1805,6 +1824,7 @@ h4 {
 .files-patch-id {
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
 }
 .files-patch-op {
   color: var(--accent-running);
@@ -1815,11 +1835,15 @@ h4 {
   color: var(--accent-baseline);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.78rem;
+  overflow-wrap: anywhere;
 }
 .files-patch-rationale {
   margin-top: 0.25rem;
   font-size: 0.8rem;
   color: var(--text);
+  /* Prose wraps at a readable measure — never overflows the card. */
+  overflow-wrap: anywhere;
+  max-width: 70ch;
 }
 
 /* --- Files view: mutation-site browser ----------------------------
@@ -1877,10 +1901,14 @@ h4 {
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.82rem;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 .mutations-site-meta {
   font-size: 0.72rem;
   color: var(--accent-baseline);
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 .mutations-site-badge {
   font-size: 0.68rem;
@@ -1903,11 +1931,13 @@ h4 {
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 .mutations-detail-loc {
   font-size: 0.74rem;
   color: var(--accent-baseline);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
 }
 .mutations-version-label {
   display: flex;
@@ -1926,7 +1956,18 @@ h4 {
   font-size: 0.78rem;
   color: var(--text);
   margin-bottom: 0.3rem;
+  /* Prose wraps at a readable measure — never overflows the pane. */
+  overflow-wrap: anywhere;
+  max-width: 70ch;
 }
+/* The mutation-site / experiment-card line diff (renderMutationDiff).
+   It sits in a single wide pane, so it keeps a horizontal scrollbar
+   rather than wrapping: `overflow-x: auto` on the container plus each
+   line sized to `max-content` so the scroll area is genuinely wider
+   than the pane and the bar works. Nothing is unreachable — the
+   operator scrolls to any column. The scroll position itself is
+   preserved across SSE repaints by routing the viewer through the
+   keyed reconcile spine (renderMutationsDetail / swapIfChanged). */
 .mutations-diff {
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -1938,6 +1979,10 @@ h4 {
 .mutations-diff-line {
   display: flex;
   white-space: pre;
+  /* max-content so a line longer than the pane widens the scroll area
+     instead of being clipped — that is what makes the bar usable. */
+  width: max-content;
+  min-width: 100%;
 }
 .mutations-diff-sign {
   width: 1.2rem;
@@ -1947,7 +1992,7 @@ h4 {
   user-select: none;
 }
 .mutations-diff-text {
-  flex: 1;
+  flex: 1 0 auto;
   padding-right: 0.5rem;
 }
 .mutations-diff-line.add {
@@ -1966,8 +2011,10 @@ h4 {
 /* --- Files view: "What changed" section ---------------------------
    A generation picker, then a side-by-side (split) diff of every file
    the selected generation changed relative to its parent generation
-   (or the v0 baseline). The split diff is rendered by the shared
-   components/index.js `diff` component in `mode: 'split'`.           */
+   (or the v0 baseline). The split diff is the folding renderer in
+   render.js (renderFoldingSplitDiff): long unchanged runs collapse to
+   a click-to-expand marker so a small change is not buried under a
+   wall of identical source. See the `.diff*` block below.            */
 .files-changes-controls {
   margin-bottom: 0.75rem;
 }
@@ -1976,6 +2023,7 @@ h4 {
   font-size: 0.8rem;
   color: var(--text-muted);
   margin-bottom: 0.5rem;
+  overflow-wrap: anywhere;
 }
 .files-change-block {
   border: 1px solid var(--border);
@@ -1995,6 +2043,11 @@ h4 {
 .files-change-path {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8rem;
+  /* A long path wraps/breaks rather than pushing the status badge
+     off-screen; min-width:0 lets the flex child shrink to do so. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 .files-change-status {
   font-size: 0.7rem;
@@ -2003,6 +2056,9 @@ h4 {
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
   color: var(--text-muted);
+  /* Never let the status pill be squeezed away by a long path. */
+  flex: none;
+  white-space: nowrap;
 }
 .files-change-status.status-added {
   color: var(--accent-promoted);
@@ -2031,20 +2087,28 @@ h4 {
   border-right: 1px solid var(--border);
 }
 
-/* --- Shared `diff` component (components/index.js) -----------------
-   The line diff renderer. `mode: 'split'` lays out two side panes —
-   old on the left, new on the right.                                 */
+/* --- Files view: folding side-by-side diff ------------------------
+   The "What changed" diff (renderFoldingSplitDiff in render.js).
+   `diff-split` lays out two side panes — old on the left, new on the
+   right. Long unchanged runs collapse to a `diff-fold` marker; changed
+   lines are accented. Lines SOFT-WRAP (white-space: pre-wrap +
+   overflow-wrap) so no content ever falls off-screen and becomes
+   unreachable — the dashboard's job is to display the source
+   faithfully, not to truncate it.                                    */
 .diff {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.74rem;
   line-height: 1.5;
-  overflow-x: auto;
+  /* No clipping — wrapped lines stay inside the pane. */
+  overflow-x: hidden;
 }
 .diff-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
 }
 .diff-side {
+  /* min-width:0 lets the grid column shrink so its lines wrap rather
+     than push the column wider than the pane (the off-screen bug). */
   min-width: 0;
 }
 .diff-old {
@@ -2052,7 +2116,12 @@ h4 {
 }
 .diff-line {
   display: flex;
-  white-space: pre;
+  align-items: flex-start;
+  /* Soft-wrap long lines instead of letting them overflow unreachably.
+     overflow-wrap:anywhere breaks an unbroken >100ch token if needed. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .diff-gutter {
   width: 1.2rem;
@@ -2062,7 +2131,11 @@ h4 {
   user-select: none;
 }
 .diff-text {
-  flex: 1;
+  /* flex:1 + min-width:0 — the text cell shrinks to the column and the
+     content wraps inside it; without min-width:0 a flex child refuses
+     to shrink below its content and the line overflows. */
+  flex: 1 1 auto;
+  min-width: 0;
   padding-right: 0.5rem;
 }
 .diff-line.diff-add {
@@ -2079,6 +2152,34 @@ h4 {
 }
 .diff-line.diff-pad {
   background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+}
+/* A modified line — a delete paired with the next insert. The accent
+   sits a touch stronger than a plain add/del so it reads as a
+   change-in-place rather than two unrelated edits. */
+.diff-line.diff-mod.diff-del {
+  background: color-mix(in srgb, var(--accent-rejected) 22%, transparent);
+}
+.diff-line.diff-mod.diff-add {
+  background: color-mix(in srgb, var(--accent-promoted) 22%, transparent);
+}
+/* The collapsed-region marker — one per column, click to expand. */
+.diff-fold {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  border: none;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+.diff-fold:hover,
+.diff-fold:focus-visible {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
 }
 
 @media (max-width: 720px) {

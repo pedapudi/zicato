@@ -814,11 +814,19 @@ def test_bundle_under_size_envelope(
     # dashboard is served off disk by the standalone Python service with
     # no network cost; this guard only keeps the vanilla bundle from
     # drifting unboundedly.
-    # Measured integrated bundle (this branch): 366,465 bytes
-    # (index.html + style.css + icons.svg + the concatenated JS
-    # bundle). 380 KB leaves ~13 KB of headroom for incidental
-    # drift without re-licensing every minor edit.
-    assert total < 380_000, f"bundle is {total} bytes, exceeds 380_000 envelope"
+    # Raised from 380 KB to 410 KB by the Files-view diff / text-display
+    # fix: the "What changed" diff gained a folding split-diff renderer
+    # (foldDiffOps + renderFoldingSplitDiff — long unchanged runs collapse
+    # to a click-to-expand marker so a small change is not buried under a
+    # ~9,000px wall of identical source), the mutation-site viewer and
+    # file-content pane were rerouted through the keyed reconcile spine
+    # (swapIfChanged) so an SSE-driven repaint preserves their horizontal
+    # scroll position, and the Files-view CSS gained soft-wrap /
+    # working-scroll rules so no line falls off-screen unreachably. The
+    # prior 380 KB cap left only ~6 KB over the measured 374,031-byte
+    # baseline — too thin for a multi-view fan-out; 410 KB restores
+    # comfortable headroom without re-licensing every minor edit.
+    assert total < 410_000, f"bundle is {total} bytes, exceeds 410_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
@@ -976,14 +984,21 @@ def test_files_view_renders_split_diff_of_changes(app_js: str) -> None:
     """The Files view shows a side-by-side (split) diff of what changed.
 
     It fetches the per-generation diff endpoint and renders each changed
-    file through the shared ``diff`` component in ``mode:'split'``.
+    file as a folding split diff: old on the left, new on the right,
+    with long unchanged runs collapsed to a click-to-expand marker so a
+    small change is not buried under a wall of identical source.
     """
     scrubbed = _strip_js_comments(app_js)
     assert "/diff" in scrubbed, "Files view must fetch the per-generation /diff endpoint"
     assert "renderFilesChanges" in scrubbed, "Files view missing the changes renderer"
+    # The folding split-diff renderer lays out two side panes — old
+    # (left) and new (right) — and collapses unchanged regions.
+    assert "renderFoldingSplitDiff" in scrubbed, "Files view missing the split-diff renderer"
+    assert "diff-split" in scrubbed, "the changed-files diff must render in split mode"
     assert (
-        "mode: 'split'" in scrubbed or 'mode: "split"' in scrubbed
-    ), "the changed-files diff must render in split mode"
+        "diff-old" in scrubbed and "diff-new" in scrubbed
+    ), "the split diff must have an old (left) and a new (right) side"
+    assert "diff-fold" in scrubbed, "the diff must fold unchanged regions into a collapse marker"
 
 
 def test_files_changes_section_in_required_sections() -> None:
