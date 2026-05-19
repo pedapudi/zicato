@@ -896,18 +896,24 @@ h4 {
 }
 .bracket-spine { display: flex; align-items: flex-start; min-width: min-content; }
 .bracket-col { display: flex; flex-direction: column; align-items: center; flex: 0 0 auto; }
+/* The champion lineage IS the green spine — the caption's promise.
+   Every node on the lineage (the seed and every promoted generation)
+   renders as a green spine node. The seed carries only the "seed" tag;
+   it is not styled apart from the spine. The reigning (tail) champion
+   gets a brighter fill so the current holder reads at a glance. */
 .bracket-champ {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   background: rgba(46, 160, 67, 0.14); border: 2px solid var(--accent-promoted);
   border-radius: 8px; padding: 10px 16px; min-width: 96px;
 }
-.bracket-champ.is-seed {
-  background: rgba(110, 118, 129, 0.14); border-color: var(--accent-baseline);
+.bracket-champ.is-current {
+  background: rgba(46, 160, 67, 0.26);
+  box-shadow: 0 0 0 3px rgba(46, 160, 67, 0.22);
 }
 .bracket-champ-id { font-weight: 700; font-size: 15px; }
 .bracket-champ-tag {
   font-size: 10px; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--text-muted);
+  letter-spacing: 0.06em; color: var(--accent-promoted);
 }
 .bracket-connector { display: flex; align-items: center; gap: 6px; padding: 14px 10px; }
 .bracket-conn-arrow { font-size: 16px; letter-spacing: -1px; }
@@ -942,6 +948,14 @@ h4 {
 .bracket-loser-id { font-weight: 600; font-size: 13px; }
 .bracket-loser-delta { margin-top: 4px; font-size: 12px; color: var(--accent-rejected); }
 .bracket-loser-reason { margin-top: 3px; font-size: 12px; }
+/* An aborted / in-progress challenger — ran, but no final verdict.
+   Distinct from the red discarded node: dashed amber, never red. */
+.bracket-loser.bracket-aborted {
+  background: rgba(210, 153, 34, 0.10); border-color: var(--accent-deferred);
+}
+.bracket-loser.bracket-aborted:hover {
+  background: rgba(210, 153, 34, 0.18);
+}
 .bracket-col-live { margin-left: 4px; }
 .bracket-live {
   background: rgba(31, 111, 235, 0.10); border: 2px solid var(--accent-running);
