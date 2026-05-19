@@ -1293,28 +1293,85 @@ function renderTournamentView() {
   renderHeatmap();
 }
 
+// Classify a matchup's decision into one of three buckets:
+//   'promoted' — the challenger won and became the next champion;
+//   'rejected' — the challenger ran, lost, and was discarded;
+//   'aborted'  — the challenger ran but the tournament never reached a
+//                final verdict (the run was torn down mid-tournament,
+//                or the matchup is still in progress).
+// A matchup with no decision, or a non-terminal one, is `aborted` — it
+// must still surface on the gauntlet so the visualization reflects what
+// actually happened.
+function matchupOutcome(m) {
+  const decision = String((m && m.decision) || '').toLowerCase();
+  if (decision === 'promoted' || decision === 'promote') return 'promoted';
+  if (decision === 'rejected' || decision === 'reject'
+    || decision === 'discarded') return 'rejected';
+  return 'aborted';
+}
+
 // Index the bracket: a champion-spine list and, per champion, the set
-// of challengers that lost to it.
+// of challengers that lost to — or never finished against — it.
 function bracketModel() {
   const b = state.bracket || {};
   const lineage = Array.isArray(b.champion_lineage) ? b.champion_lineage.slice() : [];
   const matchups = Array.isArray(b.matchups) ? b.matchups : [];
 
-  // Every promoted challenger becomes the next champion; every rejected
-  // one is hung below the champion it challenged.
+  // Every promoted challenger becomes the next champion; a rejected one
+  // is hung below the champion it challenged; an aborted / in-progress
+  // one is hung below too, as a distinct (not-discarded) node.
   const promotedBy = new Map();   // champion genId -> matchup that promoted past it
   const rejectedBy = new Map();   // champion genId -> [rejected matchup, ...]
+  const abortedBy = new Map();    // champion genId -> [aborted matchup, ...]
+  // Every challenger that already has a matchup record — used to avoid
+  // double-rendering a challenger that is also surfaced via the lineage
+  // feed below.
+  const knownChallengers = new Set();
   for (const m of matchups) {
     const champ = m.champion || '?';
-    const decision = String(m.decision || '').toLowerCase();
-    if (decision === 'promoted' || decision === 'promote') {
+    if (m.challenger) knownChallengers.add(String(m.challenger));
+    const outcome = matchupOutcome(m);
+    if (outcome === 'promoted') {
       promotedBy.set(champ, m);
-    } else {
+    } else if (outcome === 'rejected') {
       if (!rejectedBy.has(champ)) rejectedBy.set(champ, []);
       rejectedBy.get(champ).push(m);
+    } else {
+      if (!abortedBy.has(champ)) abortedBy.set(champ, []);
+      abortedBy.get(champ).push(m);
     }
   }
-  return { lineage, matchups, promotedBy, rejectedBy };
+
+  // A challenger can run and have its tournament torn down before any
+  // verdict row is written — it then exists as a generation but appears
+  // in no matchup. Surface it from the lineage feed so the gauntlet
+  // still shows it: a non-baseline, not-promoted generation whose parent
+  // is a champion-lineage node, and which no matchup already covers. The
+  // live challenger is drawn at the head of the bracket, so it is NOT
+  // also hung below as an aborted node.
+  const lineageSet = new Set(lineage);
+  const liveChild = (() => {
+    const t = state.activeTournament;
+    const id = t ? liveChallengerId(t) : null;
+    return id ? String(id) : null;
+  })();
+  const gens = (state.lineage && Array.isArray(state.lineage.generations))
+    ? state.lineage.generations : [];
+  for (const g of gens) {
+    const id = genId(g);
+    if (!id || knownChallengers.has(String(id))) continue;
+    if (String(id) === liveChild) continue;          // drawn live at the head
+    if (lineageSet.has(String(id))) continue;        // it is a champion node
+    if (g.promoted === true) continue;               // promoted -> a spine node
+    const parent = genParentId(g);
+    if (parent == null) continue;                    // a seed, not a challenger
+    if (!lineageSet.has(String(parent))) continue;   // not challenging the spine
+    knownChallengers.add(String(id));
+    if (!abortedBy.has(parent)) abortedBy.set(parent, []);
+    abortedBy.get(parent).push({ champion: parent, challenger: id, decision: null });
+  }
+
+  return { lineage, matchups, promotedBy, rejectedBy, abortedBy };
 }
 
 // The matchup record for an active (in-progress) tournament, derived
@@ -1340,7 +1397,7 @@ function renderBracket() {
   if (!wrap) return;
   clearChildren(wrap);
 
-  const { lineage, matchups, promotedBy, rejectedBy } = bracketModel();
+  const { lineage, matchups, promotedBy, rejectedBy, abortedBy } = bracketModel();
   const live = liveMatchup();
 
   if (lineage.length === 0 && matchups.length === 0 && !live) {
@@ -1356,20 +1413,34 @@ function renderBracket() {
     wrap.appendChild(renderHall(live));
   }
 
-  // The spine: champion v0 ═> v2 ═> v6. Each champion node carries the
-  // challengers it defended against hung below it.
+  // The spine: champion v0 ═> v2 ═> v6. Every node on the champion
+  // lineage IS the green spine — the seed (when it is, or once was, a
+  // champion) and every promoted generation. The tail node is the
+  // reigning champion. Each champion node carries the challengers it
+  // defended against hung below it.
   const spine = el('div', { class: 'bracket-spine' });
   lineage.forEach((champId, i) => {
     const col = el('div', { class: 'bracket-col' });
 
+    const isSeed = i === 0;
+    const isReigning = i === lineage.length - 1;
     const champIdSpan = el('span', { class: 'bracket-champ-id mono' }, [champId]);
     const champHg = harmonografGenLink(champId);
     if (champHg) champIdSpan.appendChild(champHg);
+    // Every lineage node is a green spine node. `is-seed` only carries
+    // the seed tag; `is-current` marks the reigning champion.
     const champNode = el('div', {
-      class: 'bracket-champ' + (i === 0 ? ' is-seed' : ''),
+      class: 'bracket-champ is-spine'
+        + (isSeed ? ' is-seed' : '')
+        + (isReigning ? ' is-current' : ''),
     }, [
       champIdSpan,
-      el('span', { class: 'bracket-champ-tag' }, [i === 0 ? 'seed' : 'champion']),
+      el('span', { class: 'bracket-champ-tag' }, [
+        isSeed && isReigning ? 'seed · champion'
+          : isSeed ? 'seed'
+            : isReigning ? 'champion'
+              : 'past champion',
+      ]),
     ]);
     col.appendChild(champNode);
 
@@ -1389,12 +1460,18 @@ function renderBracket() {
       col.appendChild(conn);
     }
 
-    // Discarded challengers hung below.
+    // Challengers hung below: discarded ones (a decided rejection) and
+    // aborted / in-progress ones (ran, but no final verdict). Both hang
+    // off the champion they failed to beat.
     const losers = rejectedBy.get(champId) || [];
-    if (losers.length > 0) {
+    const aborted = abortedBy.get(champId) || [];
+    if (losers.length > 0 || aborted.length > 0) {
       const drop = el('div', { class: 'bracket-drop' });
       for (const m of losers) {
         drop.appendChild(renderChallengerCard(m, champId));
+      }
+      for (const m of aborted) {
+        drop.appendChild(renderAbortedCard(m, champId));
       }
       col.appendChild(drop);
     }
@@ -1418,14 +1495,17 @@ function renderBracket() {
     // #12 — when there is no resolved lineage yet (the very first
     // tournament of an epoch, or a fresh workspace), the champion has
     // no spine node of its own. Draw one here so the bracket always
-    // shows the baseline the challenger branches off.
+    // shows the baseline the challenger branches off. It is the
+    // reigning champion, so it joins the green spine.
     if (lineage.length === 0 && champId) {
       const champIdSpan = el('span', { class: 'bracket-champ-id mono' }, [champId]);
       const champHg = harmonografGenLink(champId);
       if (champHg) champIdSpan.appendChild(champHg);
-      headCol.appendChild(el('div', { class: 'bracket-champ is-seed' }, [
+      headCol.appendChild(el('div', {
+        class: 'bracket-champ is-spine is-seed is-current',
+      }, [
         champIdSpan,
-        el('span', { class: 'bracket-champ-tag' }, ['champion']),
+        el('span', { class: 'bracket-champ-tag' }, ['seed · champion']),
       ]));
     }
 
@@ -1829,6 +1909,40 @@ function renderChallengerCard(m, champId) {
   if (reason) {
     card.appendChild(el('div', { class: 'bracket-loser-reason meta' }, [reason]));
   }
+  return card;
+}
+
+// An aborted / in-progress challenger card — dashed amber, hung below
+// the champion it was challenging. A challenger that ran but whose
+// tournament never reached a final verdict (the run was torn down
+// mid-tournament, or it is still in flight) gets its own distinct node
+// so the gauntlet reflects what actually happened — it is NOT a
+// discarded (rejected) node and must not read as one.
+function renderAbortedCard(m, champId) {
+  const card = el('div', {
+    class: 'bracket-loser bracket-aborted',
+    role: 'listitem',
+    tabindex: '0',
+    'aria-label': 'incomplete challenger ' + (m.challenger || '?') +
+      ' — ran without a final verdict versus ' + champId,
+    onClick: () => openMatchup(m.challenger),
+    onKeydown: (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        openMatchup(m.challenger);
+      }
+    },
+  });
+  const idSpan = el('span', { class: 'bracket-loser-id mono' }, [m.challenger || '?']);
+  const hg = harmonografGenLink(m.challenger);
+  if (hg) idSpan.appendChild(hg);
+  card.appendChild(el('div', { class: 'bracket-loser-head' }, [
+    idSpan,
+    el('span', { class: 'badge deferred' }, ['incomplete']),
+  ]));
+  card.appendChild(el('div', { class: 'bracket-loser-reason meta' }, [
+    'Ran without a final verdict — tournament aborted or still in progress.',
+  ]));
   return card;
 }
 

@@ -250,8 +250,9 @@ function mockSnapshot() {
       },
     ],
     // GET /api/tournaments — the gauntlet bracket. The champion lineage
-    // is the promoted spine; matchups carry both promoted and rejected
-    // challenges so the bracket can hang the discards below.
+    // is the green spine; matchups carry promoted, rejected AND aborted
+    // challenges so the bracket can hang the discards and the
+    // ran-but-undecided challengers below the champion each faced.
     bracket: {
       epoch_id: '2026-05-15_e1',
       champion_lineage: ['v0', 'v2', 'v4'],
@@ -270,6 +271,13 @@ function mockSnapshot() {
           rejection_reason: 'pass-rate regression on schema_response',
           hypothesis_core_idea: 'Inline the validator instead of reordering the pipeline.',
           ran_at: '2026-05-10T13:05:00Z' },
+        // An aborted challenger — it ran, but the tournament was torn
+        // down before a verdict was decided. `decision` is null. It
+        // must surface on the gauntlet as a distinct (not discarded)
+        // node hanging below the champion it was challenging.
+        { champion: 'v2', challenger: 'v3x', decision: null,
+          hypothesis_core_idea: 'Batch the validator over the whole response.',
+          ran_at: '2026-05-12T16:00:00Z' },
         { champion: 'v2', challenger: 'v4', decision: 'promoted',
           delta_scalar: -0.030,
           hypothesis_core_idea: 'Carry the picky retry pass into the new epoch baseline.',

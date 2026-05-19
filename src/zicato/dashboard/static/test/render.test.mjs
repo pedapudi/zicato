@@ -305,6 +305,129 @@ test('the tournament view has no redundant active-runs duplication', () => {
     + 'the hall board cards are the single source of run state');
 });
 
+test('gauntlet: the champion lineage renders as a green spine', () => {
+  // Regression: the caption promises "Champion lineage runs the green
+  // spine". Every node on the champion lineage — the seed and every
+  // promoted generation — must render as a green spine node
+  // (`bracket-champ.is-spine`). The seed must NOT be styled as a
+  // neutral gray box; the seed tag is a label, not a different node.
+  state.applySnapshot(mockSnapshot());
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  const spineNodes = byClass(bracket, 'is-spine');
+  // The mock lineage is [v0, v2, v4] — three green spine nodes.
+  assertEqual(spineNodes.length, 3,
+    `every champion-lineage node must be a green spine node, got ${spineNodes.length}`);
+  // Each spine node is a champion box (the green-styled class).
+  for (const n of spineNodes) {
+    assert(n.getAttribute('class').split(/\s+/).includes('bracket-champ'),
+      'a spine node must carry the green bracket-champ class');
+  }
+  // The reigning (tail) champion is marked is-current.
+  const current = byClass(bracket, 'is-current');
+  assertEqual(current.length, 1, 'exactly one node is the reigning champion');
+
+  // The seed must still be present and still labelled "seed" — but it
+  // is a spine node, never a bare gray seed box.
+  const seeds = byClass(bracket, 'is-seed');
+  assertEqual(seeds.length, 1, 'the lineage has one seed node');
+  assert(seeds[0].getAttribute('class').split(/\s+/).includes('is-spine'),
+    'the seed must be ON the green spine — not a neutral gray box');
+});
+
+test('gauntlet: a seed that is also the reigning champion is a green spine', () => {
+  // The live bug: v0 is both the seed AND the reigning champion
+  // (nothing promoted past it). It must render green — a single green
+  // spine node — not a neutral gray "SEED" box.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = { epoch_id: 'e', champion_lineage: ['v0'], matchups: [] };
+  state.lineage = { generations: [], experiments: [] };
+  state.activeTournament = null;
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  const champs = byClass(bracket, 'bracket-champ');
+  assertEqual(champs.length, 1, 'a single-node lineage draws one champion box');
+  const cls = champs[0].getAttribute('class').split(/\s+/);
+  assert(cls.includes('is-spine'),
+    'the lone seed-champion must be a green spine node');
+  assert(cls.includes('is-current'),
+    'the lone seed-champion is the reigning champion');
+  // It is tagged as both seed and champion so the role is unambiguous.
+  assert(champs[0].textContent.toLowerCase().includes('champion'),
+    `the seed-champion node must read as the champion, got "${champs[0].textContent}"`);
+});
+
+test('gauntlet: an aborted challenger (no decided verdict) renders as its own node', () => {
+  // Regression: a challenger that ran but never reached a final verdict
+  // — the run torn down mid-tournament, or still in progress — was
+  // omitted entirely. It must surface on the gauntlet as a distinct
+  // node (bracket-aborted), NOT as a red discarded node, hanging below
+  // the champion it was challenging.
+  state.applySnapshot(mockSnapshot());
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  // The mock bracket carries challenger v3x with decision:null.
+  const aborted = byClass(bracket, 'bracket-aborted');
+  assert(aborted.length >= 1,
+    `an aborted challenger must render its own node, got ${aborted.length}`);
+  const node = aborted[0];
+  // It is distinct from a discarded node — it must NOT be a red
+  // "discarded" node.
+  assert(!node.textContent.toLowerCase().includes('discarded'),
+    'an aborted challenger must not read as a discarded (rejected) node');
+  assert(node.textContent.toLowerCase().includes('incomplete'),
+    `an aborted challenger carries a distinct status, got "${node.textContent}"`);
+  assert(node.textContent.includes('v3x'),
+    `the aborted node names the challenger, got "${node.textContent}"`);
+  // It is clickable — it routes to the matchup like any other node.
+  assert(node._listeners && (node._listeners.click || node._listeners.keydown),
+    'the aborted challenger node must be clickable');
+
+  // The red discarded rendering is NOT regressed — v1 / v2x still
+  // render as discarded nodes.
+  const body = bracket.textContent.toLowerCase();
+  assert(body.includes('discarded'),
+    'decided rejections must still render as discarded nodes');
+});
+
+test('gauntlet: a challenger that ran with no matchup row still appears', () => {
+  // The torn-down case proper: a challenger generation that ran but has
+  // NO matchup record at all (the verdict row was never written). It is
+  // synthesized onto the gauntlet from the lineage feed — a non-promoted
+  // generation whose parent is a champion-lineage node.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: 'e',
+    champion_lineage: ['v0', 'v1'],
+    matchups: [
+      { champion: 'v0', challenger: 'v1', decision: 'promoted',
+        delta_scalar: -0.05, ran_at: '2026-05-10T10:00:00Z' },
+    ],
+  };
+  // v2 ran against champion v1; the run was torn down before any
+  // tournament row was written — it exists only in the lineage feed.
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, promoted: true },
+      { generation_id: 'v1', parent_generation_id: 'v0', promoted: true },
+      { generation_id: 'v2', parent_generation_id: 'v1', promoted: false },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = null;
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  const aborted = byClass(bracket, 'bracket-aborted');
+  assertEqual(aborted.length, 1,
+    `a torn-down challenger must surface from the lineage feed, got ${aborted.length}`);
+  assert(aborted[0].textContent.includes('v2'),
+    `the synthesized node names the torn-down challenger, got "${aborted[0].textContent}"`);
+});
+
 test('Overview is the environment home, NOT a duplicate tournament board', () => {
   state.applySnapshot(mockSnapshot());
   render.showView('overview');
