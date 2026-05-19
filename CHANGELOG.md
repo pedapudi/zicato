@@ -116,6 +116,19 @@ against a live model landed in this cycle.
   temporal trace of one run); the zicato dashboard owns the *competition
   view*. A per-run drill-down links the two.
 
+### Incremental board scoring
+- The tournament runner now scores each board unit the instant its
+  run(s) settle — on the same concurrency fan-out as the runs, not
+  batched after every board finishes. As each unit completes its
+  per-entry losses fold into a running partial aggregate
+  (`_IncrementalScorer`) which is rewritten onto the live
+  `ActiveTournament` (`partial_parent_agg` / `partial_child_agg`).
+- A finished board's score is therefore available ASAP — while the
+  sibling boards are still running — rather than only at round end.
+  The dashboard's Partial aggregate panel now consumes the
+  server-computed running aggregate (with a legacy fallback), so the
+  scalar climbs as the tournament runs instead of sitting at 0.00.
+
 ### Loop-health diagnostics
 - `zicato/health/` — detects a toothless evaluation loop: degenerate
   scoring (consecutive zero-Δ tournaments), non-differentiating board

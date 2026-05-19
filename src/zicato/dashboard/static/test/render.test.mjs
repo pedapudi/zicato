@@ -144,6 +144,44 @@ test('overview renders when a health finding detail is an OBJECT, not a string',
     'the log tail must render — renderHealthPanel must not abort the view');
 });
 
+test('partial aggregate renders the server-side scalar — not a false 0.00', () => {
+  // Regression: the runtime active_tournament carries per-SIDE entry
+  // rows (no e.parent / e.child sub-objects). The old renderAggregate
+  // looked for e.parent/e.child and so always rendered drift_loss_mean
+  // 0.00 even with finished boards. The runner now persists a running
+  // partial aggregate (partial_parent_agg / partial_child_agg) the
+  // instant each board unit settles; renderAggregate must consume it.
+  // The Overview view owns the active-tournament panel.
+  state.applySnapshot(mockSnapshot());
+  state.activeTournament = {
+    ...state.activeTournament,
+    parent_id: 'v4',
+    child_id: 'v5',
+    partial_parent_agg: { drift_loss_mean: 0.42, pass_rate: 0.80, scalar: 0.137, entry_count: 3 },
+    partial_child_agg: { drift_loss_mean: 0.31, pass_rate: 0.90, scalar: 0.041, entry_count: 3 },
+  };
+  render.showView('overview');
+  const body = doc.getElementById('tournament-body').textContent;
+  assert(body.includes('0.42'), `champion drift_loss_mean must show 0.42, got: ${body}`);
+  assert(body.includes('0.31'), `challenger drift_loss_mean must show 0.31, got: ${body}`);
+  // The Δscalar is the gate's exact scalar delta, not the approximation.
+  assert(body.includes('-0.096'), `Δscalar must be child-parent scalar, got: ${body}`);
+});
+
+test('partial aggregate falls back to client derivation on a legacy record', () => {
+  // A legacy active_tournament.json predates the incremental scorer —
+  // no partial_*_agg fields. renderAggregate must still paint (the
+  // client-side derivation path) rather than throwing.
+  state.applySnapshot(mockSnapshot());
+  const legacy = { ...state.activeTournament };
+  delete legacy.partial_parent_agg;
+  delete legacy.partial_child_agg;
+  state.activeTournament = legacy;
+  render.showView('overview');
+  const body = doc.getElementById('tournament-body').textContent;
+  assert(body.includes('Partial aggregate'), 'legacy record must still render the aggregate panel');
+});
+
 test('renderAll is idempotent — repeated calls do not throw or grow the DOM', () => {
   render.showView('overview');
   render.renderAll();

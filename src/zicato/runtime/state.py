@@ -469,6 +469,17 @@ class ActiveTournament:
         Total number of evolve rounds requested for the current
         invocation. The "M" in "round N of M". Defaults to 0 (unknown);
         old readers ignore the field.
+    partial_parent_agg, partial_child_agg:
+        The **running partial aggregate** for each side — the same dict
+        shape :func:`zicato.tournament.scoring.aggregate_generation_score`
+        produces (``scalar`` / ``drift_loss_mean`` / ``pass_rate`` /
+        ``entry_count`` / ``per_entry`` / ...), but computed only over
+        the board units that have finished SO FAR. The runner rewrites
+        these the instant each board unit settles, so a reader (the
+        dashboard) sees a real server-side scalar climb as the
+        tournament runs rather than 0.00 until the round ends. Empty
+        dict before the first board unit completes; old readers ignore
+        the fields.
     """
 
     tournament_id: str
@@ -480,6 +491,8 @@ class ActiveTournament:
     phase: str = "running"
     round_index: int = 0
     total_rounds: int = 0
+    partial_parent_agg: dict[str, Any] = field(default_factory=dict)
+    partial_child_agg: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -492,10 +505,14 @@ class ActiveTournament:
             "round_index": self.round_index,
             "total_rounds": self.total_rounds,
             "entries": [e.to_dict() for e in self.entries],
+            "partial_parent_agg": dict(self.partial_parent_agg),
+            "partial_child_agg": dict(self.partial_child_agg),
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ActiveTournament:
+        raw_parent = d.get("partial_parent_agg")
+        raw_child = d.get("partial_child_agg")
         return cls(
             tournament_id=str(d["tournament_id"]),
             parent_generation_id=str(d["parent_generation_id"]),
@@ -506,6 +523,8 @@ class ActiveTournament:
             round_index=int(d.get("round_index", 0)),
             total_rounds=int(d.get("total_rounds", 0)),
             entries=[ActiveTournamentEntry.from_dict(e) for e in d.get("entries", [])],
+            partial_parent_agg=dict(raw_parent) if isinstance(raw_parent, dict) else {},
+            partial_child_agg=dict(raw_child) if isinstance(raw_child, dict) else {},
         )
 
 
@@ -560,6 +579,40 @@ def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **up
     write_active_tournament(workspace_root, new)
 
 
+def update_tournament_partial_aggregate(
+    workspace_root: Path,
+    *,
+    parent_agg: dict[str, Any] | None = None,
+    child_agg: dict[str, Any] | None = None,
+) -> None:
+    """Rewrite the active tournament's running partial-aggregate dicts.
+
+    Called by the runner the instant a board unit settles, so a reader
+    (the dashboard) sees a real server-side ``scalar`` accumulate as the
+    tournament runs — rather than 0.00 until the whole round ends.
+
+    Reads the current tournament JSON, replaces only the
+    :attr:`ActiveTournament.partial_parent_agg` /
+    :attr:`ActiveTournament.partial_child_agg` fields with whichever
+    side(s) were supplied, and atomically writes the result. The
+    per-entry status rows are untouched — this writer and
+    :func:`update_tournament_entry` only ever read-modify-write the same
+    file from the single orchestrator process, so the two never race.
+    If no tournament file exists, the call is a no-op.
+    """
+    current = read_active_tournament(workspace_root)
+    if current is None:
+        return
+    updates: dict[str, Any] = {}
+    if parent_agg is not None:
+        updates["partial_parent_agg"] = dict(parent_agg)
+    if child_agg is not None:
+        updates["partial_child_agg"] = dict(child_agg)
+    if not updates:
+        return
+    write_active_tournament(workspace_root, replace(current, **updates))
+
+
 def clear_active_tournament(workspace_root: Path) -> None:
     """Remove the active-tournament JSON. Idempotent."""
     backend_for(workspace_root).delete(active_tournament_key())
@@ -579,6 +632,7 @@ __all__ = [
     "read_active_tournament",
     "write_active_tournament",
     "update_tournament_entry",
+    "update_tournament_partial_aggregate",
     "clear_active_tournament",
     "loss_summary_from_profile",
     "drift_count_snapshot_from_profile",

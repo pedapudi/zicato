@@ -1233,3 +1233,245 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
     assert "tool_error" not in names
     # Every other built-in stays default-on.
     assert names == full - {"tool_error"}
+
+
+# ---------------------------------------------------------------------------
+# Incremental per-board scoring — a board's score is available ASAP
+# ---------------------------------------------------------------------------
+#
+# A board unit's run(s) are reduced/scored the instant that unit settles
+# — concurrently with the sibling board units still running — and the
+# running partial aggregate is persisted onto the live ActiveTournament
+# so a reader (the dashboard) sees the scalar climb as the tournament
+# runs, rather than 0.00 until the round ends.
+
+
+def test_partial_aggregate_is_written_as_each_board_unit_completes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Full mode persists a running partial aggregate per finished board unit.
+
+    A 4-entry board scored at ``parallelism=1`` (one board unit at a
+    time) must leave the active-tournament record carrying a
+    ``partial_*_agg`` whose ``entry_count`` grows by exactly one per
+    settled board unit — proving the runner scores each board the
+    instant its runs finish, not in a batch at round end.
+    """
+    import zicato.runtime.state as state_mod
+    from zicato.runtime.state import read_active_tournament
+
+    _real_update = state_mod.update_tournament_partial_aggregate
+
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(4)
+    canned = {
+        (gen, e.id): _loss(generation_id=gen, entry_id=e.id, drift_loss=2.0, pass_fail=True)
+        for gen in ("v0", "v1")
+        for e in board
+    }
+    _stub_run_single(monkeypatch, canned=canned)
+
+    # Snapshot the running partial aggregate after every persist.
+    counts: list[tuple[int, int]] = []
+
+    def _capturing_update(workspace_root: Path, **kw: Any) -> None:
+        _real_update(workspace_root, **kw)
+        t = read_active_tournament(workspace_root)
+        assert t is not None
+        counts.append(
+            (
+                int(t.partial_parent_agg.get("entry_count", 0)),
+                int(t.partial_child_agg.get("entry_count", 0)),
+            )
+        )
+
+    monkeypatch.setattr(state_mod, "update_tournament_partial_aggregate", _capturing_update)
+
+    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=1)
+    result = asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+    # One persist per board unit: the entry counts climb 1,2,3,4 on each
+    # side as each board unit settles — incremental, not a single
+    # round-end batch.
+    assert counts == [(1, 1), (2, 2), (3, 3), (4, 4)]
+    # The last partial aggregate equals the full TournamentResult
+    # aggregate — incremental scoring converges on the same number the
+    # gate decides on.
+    assert result.child_agg["entry_count"] == 4
+
+
+def test_partial_aggregate_is_visible_before_all_boards_finish(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A finished board's score is readable while sibling boards still run.
+
+    With ``parallelism=4`` all four board units run concurrently, but
+    they are released to settle one at a time via a controlled gate. As
+    EACH board unit settles, the runner must persist its score — so a
+    reader observes a non-empty partial aggregate while the remaining
+    boards are still in flight, not only after the last one finishes.
+    """
+    from zicato.runtime.state import read_active_tournament
+
+    parent_gen = _make_generation(tmp_path, "v0", None)
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(4)
+    canned = {
+        (gen, e.id): _loss(generation_id=gen, entry_id=e.id, drift_loss=1.0, pass_fail=True)
+        for gen in ("v0", "v1")
+        for e in board
+    }
+
+    # Per-entry gates: a board unit's two runs may only finish once the
+    # entry's gate is set. The test releases entries in board order and
+    # snapshots the partial aggregate between releases.
+    gates: dict[str, asyncio.Event] = {e.id: asyncio.Event() for e in board}
+
+    async def gated_run_single(
+        *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+    ) -> LossProfile:
+        del adapter, weights, config, workspace_root, epoch_id, side
+        await gates[entry.id].wait()
+        return canned[(generation.id, entry.id)]
+
+    monkeypatch.setattr(runner_mod, "_run_single", gated_run_single)
+
+    observed: list[int] = []
+
+    async def _driver() -> TournamentResult:
+        config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=4)
+        task = asyncio.ensure_future(
+            run_tournament(
+                adapter=object(),
+                parent_gen=parent_gen,
+                child_gen=child_gen,
+                board=board,
+                weights=ScoringWeights(),
+                config=config,
+                workspace_root=tmp_path,
+                epoch_id="e0",
+            )
+        )
+        # Let the tournament reach the point where all four board units
+        # are parked on their gates.
+        for _ in range(10):
+            await asyncio.sleep(0)
+        # Release the boards one at a time; between releases the partial
+        # aggregate must reflect exactly the boards settled so far.
+        for e in board[:-1]:
+            gates[e.id].set()
+            for _ in range(20):
+                await asyncio.sleep(0)
+            t = read_active_tournament(tmp_path)
+            assert t is not None
+            observed.append(int(t.partial_child_agg.get("entry_count", 0)))
+            assert not task.done(), "tournament finished before the last board released"
+        # Release the final board so the tournament can complete.
+        gates[board[-1].id].set()
+        return await task
+
+    result = asyncio.run(_driver())
+
+    # The partial aggregate was visible mid-tournament: after releasing
+    # 1, 2, 3 boards (with one still in flight) the running child-side
+    # entry_count read 1, 2, 3 — a finished board's score was available
+    # ASAP, not deferred to round end.
+    assert observed == [1, 2, 3]
+    assert result.child_agg["entry_count"] == 4
+
+
+def test_fast_mode_persists_running_partial_aggregate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fast mode scores each challenger-only board unit as it settles.
+
+    Fast mode runs only the challenger, so the partial aggregate carries
+    the child side only. The runner writes an ActiveTournament record
+    first so the per-board partial persist has a file to land on; the
+    final partial child aggregate must match the fast-mode
+    ``TournamentResult.child_agg``.
+    """
+    from zicato.runtime.state import (
+        ActiveTournament,
+        ActiveTournamentEntry,
+        read_active_tournament,
+        write_active_tournament,
+    )
+
+    child_gen = _make_generation(tmp_path, "v1", "v0")
+    board = _board_of(3)
+    canned = {
+        ("v1", e.id): _loss(generation_id="v1", entry_id=e.id, drift_loss=1.5, pass_fail=True)
+        for e in board
+    }
+    _stub_run_single(monkeypatch, canned=canned)
+
+    # Fast mode does not itself publish an ActiveTournament; seed one so
+    # the per-board partial persist has a target file.
+    write_active_tournament(
+        tmp_path,
+        ActiveTournament(
+            tournament_id="t-fast",
+            parent_generation_id="v0",
+            child_generation_id="v1",
+            epoch_id="e0",
+            started_at="2026-05-18T00:00:00Z",
+            entries=[
+                ActiveTournamentEntry(entry_id=e.id, side="child", status="queued") for e in board
+            ],
+        ),
+    )
+
+    parent_historical = {
+        "drift_loss_mean": 3.0,
+        "pass_rate": 1.0,
+        "scalar": 3.0,
+        "entry_count": 3,
+        "expectation_count": 3,
+        "per_entry": {},
+        "namespace_aggregates": {},
+        "scalar_components": {},
+    }
+    config = _make_runtime_config(tmp_path)
+    result = asyncio.run(
+        run_fast_mode(
+            adapter=object(),
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            parent_historical_agg=parent_historical,
+        )
+    )
+
+    t = read_active_tournament(tmp_path)
+    assert t is not None
+    # The running partial aggregate accumulated the challenger side; the
+    # champion side never ran, so its partial aggregate stays empty.
+    assert t.partial_child_agg.get("entry_count") == 3
+    assert t.partial_parent_agg == {}
+    # The persisted partial child aggregate converges on the final
+    # fast-mode aggregate.
+    assert t.partial_child_agg.get("scalar") == result.child_agg["scalar"]

@@ -1059,6 +1059,85 @@ async def _run_single(
                 pass
 
 
+class _IncrementalScorer:
+    """Folds a board unit's losses into a running partial aggregate ASAP.
+
+    Each board unit (champion + challenger in full mode, challenger-only
+    in fast mode) calls :meth:`record` the instant its run(s) settle —
+    on the SAME concurrency fan-out as the runs themselves, NOT batched
+    after every board has finished. ``record`` accumulates that unit's
+    per-entry :class:`LossProfile` instances, re-runs
+    :func:`aggregate_generation_score` over everything seen so far, and
+    rewrites the running partial aggregate onto the live
+    :class:`~zicato.runtime.state.ActiveTournament` record. A reader (the
+    dashboard) therefore sees a real server-side ``scalar`` climb as the
+    tournament runs rather than 0.00 until the round ends.
+
+    The accumulators are plain lists guarded by an :class:`asyncio.Lock`.
+    The lock is not strictly required while the runner stays
+    single-threaded — a coroutine body runs uninterrupted between
+    ``await`` points — but it makes the read-modify-recompute-persist
+    sequence an explicit critical section, so a future move of any part
+    of it onto a thread (or an interleaving ``await`` added inside
+    ``record``) cannot corrupt the running aggregate. The state write is
+    strictly best-effort: a missing runtime-state module or an I/O error
+    is swallowed, exactly as every other dashboard-facing write in this
+    module — incremental scoring must never abort a run.
+    """
+
+    __slots__ = ("_weights", "_workspace_root", "_parent", "_child", "_lock", "_state")
+
+    def __init__(self, weights: ScoringWeights, workspace_root: Path) -> None:
+        self._weights = weights
+        self._workspace_root = workspace_root
+        self._parent: list[LossProfile] = []
+        self._child: list[LossProfile] = []
+        self._lock = asyncio.Lock()
+        # Resolve the runtime-state module once; ``None`` turns every
+        # persist into a cheap no-op (no-runtime-state environment).
+        rt = _runtime_state()
+        self._state: Any = rt[0] if rt is not None else None
+
+    async def record(
+        self,
+        *,
+        parent_loss: LossProfile | None = None,
+        child_loss: LossProfile | None = None,
+    ) -> None:
+        """Fold one settled board unit's losses into the partial aggregate.
+
+        ``parent_loss`` is ``None`` for a fast-mode unit (challenger
+        only). Re-aggregates both sides over everything recorded so far
+        and persists the running partial aggregate onto the
+        ``ActiveTournament`` record.
+        """
+        async with self._lock:
+            if parent_loss is not None:
+                self._parent.append(parent_loss)
+            if child_loss is not None:
+                self._child.append(child_loss)
+            parent_agg = (
+                aggregate_generation_score(list(self._parent), self._weights)
+                if self._parent
+                else None
+            )
+            child_agg = (
+                aggregate_generation_score(list(self._child), self._weights)
+                if self._child
+                else None
+            )
+            if self._state is None:
+                return
+            try:
+                self._state.update_tournament_partial_aggregate(
+                    self._workspace_root,
+                    parent_agg=parent_agg,
+                    child_agg=child_agg,
+                )
+            except Exception as exc:  # noqa: BLE001 — partial scoring is best-effort
+                log.debug("partial-aggregate persist skipped: %s", exc)
+
+
 async def _run_full_board_unit(
     *,
     adapter: Any,
@@ -1069,6 +1148,7 @@ async def _run_full_board_unit(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    scorer: _IncrementalScorer | None = None,
 ) -> tuple[LossProfile, LossProfile]:
     """Run ONE board entry's champion + challenger concurrently.
 
@@ -1092,6 +1172,14 @@ async def _run_full_board_unit(
     skip its ``finally`` cleanup); both sides are allowed to finish, and
     only then is a champion-side failure (then a challenger-side one)
     re-raised. Returns ``(parent_loss, child_loss)``.
+
+    ``scorer`` — when supplied — is folded the instant THIS unit's two
+    runs settle, BEFORE the unit returns. Scoring therefore happens on
+    the same concurrency fan-out as the runs: a finished board's score
+    materialises while sibling boards are still running, rather than
+    being batched after every board completes. Folding is skipped only
+    when a side raised — the failing unit is re-raised to the caller
+    instead, which treats it as a hard tournament error.
     """
     parent_result, child_result = await asyncio.gather(
         _run_single(
@@ -1122,6 +1210,11 @@ async def _run_full_board_unit(
         raise parent_result
     if isinstance(child_result, BaseException):
         raise child_result
+    # Score this board unit the instant it settles — concurrently with
+    # the sibling board units still running — so the dashboard's partial
+    # aggregate reflects a finished board ASAP rather than at round end.
+    if scorer is not None:
+        await scorer.record(parent_loss=parent_result, child_loss=child_result)
     return parent_result, child_result
 
 
@@ -1162,10 +1255,19 @@ async def _run_board_units_full(
     and the first failure (board order) is re-raised after every sibling
     has settled.
 
+    Each board unit is scored the instant its champion + challenger
+    runs settle — see :class:`_IncrementalScorer`. The running partial
+    aggregate is rewritten onto the live
+    :class:`~zicato.runtime.state.ActiveTournament` as every unit
+    finishes, so a reader (the dashboard) watches the server-side
+    ``scalar`` accumulate concurrently with the boards still in flight,
+    rather than seeing 0.00 until the whole round ends.
+
     Returns ``(parent_losses, child_losses)`` — the per-entry champion
     and challenger loss maps.
     """
     semaphore = asyncio.Semaphore(config.parallelism)
+    scorer = _IncrementalScorer(weights, workspace_root)
 
     async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
         async with semaphore:
@@ -1178,6 +1280,7 @@ async def _run_board_units_full(
                 config=config,
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
+                scorer=scorer,
             )
 
     results = await asyncio.gather(
@@ -1223,12 +1326,20 @@ async def _run_board_units_fast(
     board order, no sibling cancellation) match
     :func:`_run_board_units_full`. Returns the per-entry challenger loss
     map.
+
+    As in full mode, each board unit is scored the instant its
+    challenger run settles — see :class:`_IncrementalScorer` — so the
+    running partial aggregate (challenger side only; fast mode has no
+    champion run) is rewritten onto any live
+    :class:`~zicato.runtime.state.ActiveTournament` as every unit
+    finishes, concurrently with the boards still in flight.
     """
     semaphore = asyncio.Semaphore(config.parallelism)
+    scorer = _IncrementalScorer(weights, workspace_root)
 
     async def _bounded(entry: BoardEntry) -> LossProfile:
         async with semaphore:
-            return await _run_single(
+            child_loss = await _run_single(
                 adapter=adapter,
                 generation=child_gen,
                 entry=entry,
@@ -1241,6 +1352,10 @@ async def _run_board_units_fast(
                 # exist, and a benign no-op otherwise.
                 side="child",
             )
+            # Score this board unit the instant it settles — concurrently
+            # with the sibling board units still running.
+            await scorer.record(child_loss=child_loss)
+            return child_loss
 
     results = await asyncio.gather(
         *(_bounded(entry) for entry in board),

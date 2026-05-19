@@ -377,6 +377,24 @@ function renderEntryRow(entry) {
   return row;
 }
 
+// Pull (drift_loss_mean, pass_rate) for one side, preferring the
+// server-computed running partial aggregate. The runner rewrites
+// `partial_parent_agg` / `partial_child_agg` the instant each board
+// unit settles (see runner._IncrementalScorer), so this number climbs
+// as the tournament runs rather than sitting at 0.00 until round end.
+// `agg` is the aggregate_generation_score dict shape; missing fields
+// degrade to null so fmtRate renders an em-dash, not a false zero.
+function partialSide(agg) {
+  if (!agg || typeof agg !== 'object') return null;
+  const dm = agg.drift_loss_mean;
+  const pr = agg.pass_rate;
+  return {
+    drift_loss_mean: (typeof dm === 'number' && isFinite(dm)) ? dm : null,
+    pass_rate: (typeof pr === 'number' && isFinite(pr)) ? pr : null,
+    entry_count: (typeof agg.entry_count === 'number') ? agg.entry_count : 0,
+  };
+}
+
 function renderAggregate(t) {
   const wrap = el('div', { class: 'aggregate' });
   wrap.appendChild(el('h4', null, [
@@ -393,19 +411,37 @@ function renderAggregate(t) {
   tbl.appendChild(thead);
   const tbody = el('tbody');
 
-  const finished = (t.entries || []).filter(entryIsDone);
-  let parentDriftSum = 0, parentPassSum = 0;
-  let childDriftSum = 0, childPassSum = 0;
-  for (const e of finished) {
-    if (e.parent) { parentDriftSum += e.parent.drift_loss || 0; parentPassSum += e.parent.pass ? 1 : 0; }
-    if (e.child)  { childDriftSum  += e.child.drift_loss || 0;  childPassSum  += e.child.pass  ? 1 : 0; }
+  // Prefer the server-side running partial aggregate the runner
+  // persists per board unit. Fall back to a client-side derivation
+  // over the per-side entry rows only when the server fields are
+  // absent (a legacy active_tournament.json written before the
+  // incremental-scorer change).
+  const serverParent = partialSide(t.partial_parent_agg);
+  const serverChild = partialSide(t.partial_child_agg);
+
+  let parentDM, parentPR, childDM, childPR;
+  if (serverParent || serverChild) {
+    parentDM = serverParent ? serverParent.drift_loss_mean : null;
+    parentPR = serverParent ? serverParent.pass_rate : null;
+    childDM = serverChild ? serverChild.drift_loss_mean : null;
+    childPR = serverChild ? serverChild.pass_rate : null;
+  } else {
+    const finished = (t.entries || []).filter(entryIsDone);
+    let parentDriftSum = 0, parentPassSum = 0;
+    let childDriftSum = 0, childPassSum = 0;
+    for (const e of finished) {
+      if (e.parent) { parentDriftSum += e.parent.drift_loss || 0; parentPassSum += e.parent.pass ? 1 : 0; }
+      if (e.child)  { childDriftSum  += e.child.drift_loss || 0;  childPassSum  += e.child.pass  ? 1 : 0; }
+    }
+    const n = Math.max(1, finished.length);
+    parentDM = parentDriftSum / n;
+    parentPR = parentPassSum / n;
+    childDM = childDriftSum / n;
+    childPR = childPassSum / n;
   }
-  const n = Math.max(1, finished.length);
-  const parentDM = parentDriftSum / n;
-  const parentPR = parentPassSum / n;
-  const childDM  = childDriftSum / n;
-  const childPR  = childPassSum / n;
-  const regression = (childPR < parentPR) || (childDM > parentDM);
+  const regression =
+    (typeof childPR === 'number' && typeof parentPR === 'number' && childPR < parentPR) ||
+    (typeof childDM === 'number' && typeof parentDM === 'number' && childDM > parentDM);
 
   tbody.appendChild(el('tr', null, [
     el('td', null, [t.parent_id || 'parent']),
@@ -420,7 +456,19 @@ function renderAggregate(t) {
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
 
-  const dScalar = (childDM - childPR) - (parentDM - parentPR);
+  // Prefer the server-side scalars when the running partial aggregate
+  // carried them — they are the gate's exact scalar, not the
+  // drift-minus-pass approximation. Fall back to the approximation
+  // (legacy active_tournament.json with no partial aggregate).
+  const pScalar = (t.partial_parent_agg && typeof t.partial_parent_agg.scalar === 'number')
+    ? t.partial_parent_agg.scalar
+    : (typeof parentDM === 'number' && typeof parentPR === 'number') ? parentDM - parentPR : null;
+  const cScalar = (t.partial_child_agg && typeof t.partial_child_agg.scalar === 'number')
+    ? t.partial_child_agg.scalar
+    : (typeof childDM === 'number' && typeof childPR === 'number') ? childDM - childPR : null;
+  const dScalar = (typeof pScalar === 'number' && typeof cScalar === 'number')
+    ? cScalar - pScalar
+    : NaN;
   wrap.appendChild(el('p', { class: 'mono' }, [
     `Δscalar ${fmtDelta(dScalar)}`,
   ]));

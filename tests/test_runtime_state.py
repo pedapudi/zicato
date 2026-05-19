@@ -29,6 +29,7 @@ from zicato.runtime.state import (
     remove_active_run,
     touch_active_run_progress,
     update_tournament_entry,
+    update_tournament_partial_aggregate,
     write_active_run,
     write_active_tournament,
     write_heartbeat,
@@ -368,6 +369,76 @@ def test_update_tournament_entry_tolerates_duplicate_pairs(tmp_path: Path) -> No
 def test_update_tournament_entry_no_op_without_file(tmp_path: Path) -> None:
     # Must not raise; just a no-op.
     update_tournament_entry(tmp_path, "anything", "parent", status="running")
+    assert read_active_tournament(tmp_path) is None
+
+
+def test_active_tournament_round_trips_partial_aggregates(tmp_path: Path) -> None:
+    """The running partial-aggregate dicts survive the JSON round-trip."""
+    parent_agg = {"drift_loss_mean": 0.4, "pass_rate": 0.9, "scalar": 0.11, "entry_count": 2}
+    child_agg = {"drift_loss_mean": 0.3, "pass_rate": 1.0, "scalar": 0.03, "entry_count": 2}
+    t = ActiveTournament(
+        tournament_id="t",
+        parent_generation_id="v1",
+        child_generation_id="v2",
+        epoch_id="e",
+        started_at="2026-05-18T10:00:00Z",
+        entries=[ActiveTournamentEntry(entry_id="entry_a", side="child", status="done")],
+        partial_parent_agg=parent_agg,
+        partial_child_agg=child_agg,
+    )
+    write_active_tournament(tmp_path, t)
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    assert got.partial_parent_agg == parent_agg
+    assert got.partial_child_agg == child_agg
+
+
+def test_active_tournament_partial_aggregates_default_empty(tmp_path: Path) -> None:
+    """A tournament written without partial aggregates reads back empty dicts.
+
+    Back-compat: an active_tournament.json from before the
+    incremental-scorer change has no ``partial_*_agg`` keys; the reader
+    must default both to ``{}`` rather than failing.
+    """
+    write_active_tournament(tmp_path, _sample_tournament())
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    assert got.partial_parent_agg == {}
+    assert got.partial_child_agg == {}
+
+
+def test_update_tournament_partial_aggregate_writes_only_supplied_side(
+    tmp_path: Path,
+) -> None:
+    """The partial-aggregate writer touches only the side(s) handed to it.
+
+    A child-only update leaves the parent's running aggregate intact and
+    never perturbs the per-entry status rows — the incremental scorer
+    and the per-entry status writer share the file safely.
+    """
+    write_active_tournament(tmp_path, _sample_tournament())
+    update_tournament_entry(tmp_path, "entry_a", "child", status="running")
+
+    update_tournament_partial_aggregate(tmp_path, child_agg={"scalar": 0.5, "entry_count": 1})
+    got = read_active_tournament(tmp_path)
+    assert got is not None
+    assert got.partial_child_agg == {"scalar": 0.5, "entry_count": 1}
+    assert got.partial_parent_agg == {}
+    # The per-entry status row set by update_tournament_entry survived.
+    by_pair = {(e.entry_id, e.side): e.status for e in got.entries}
+    assert by_pair[("entry_a", "child")] == "running"
+
+    # A later parent-side update leaves the child aggregate untouched.
+    update_tournament_partial_aggregate(tmp_path, parent_agg={"scalar": 0.7, "entry_count": 1})
+    got2 = read_active_tournament(tmp_path)
+    assert got2 is not None
+    assert got2.partial_parent_agg == {"scalar": 0.7, "entry_count": 1}
+    assert got2.partial_child_agg == {"scalar": 0.5, "entry_count": 1}
+
+
+def test_update_tournament_partial_aggregate_no_op_without_file(tmp_path: Path) -> None:
+    """No active tournament file -> the partial-aggregate write is a no-op."""
+    update_tournament_partial_aggregate(tmp_path, child_agg={"scalar": 1.0})
     assert read_active_tournament(tmp_path) is None
 
 
