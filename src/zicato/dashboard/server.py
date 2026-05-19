@@ -181,6 +181,10 @@ def create_app(
             "/api/files/{epoch_id}/{generation_id}/patches",
             handlers["api_files_patches"],
         ),
+        Route(
+            "/api/files/{epoch_id}/{generation_id}/diff",
+            handlers["api_files_diff"],
+        ),
         Route("/api/mutations/{epoch_id}", handlers["api_mutations"]),
         Route(
             "/api/mutations/{epoch_id}/{mutation_id}",

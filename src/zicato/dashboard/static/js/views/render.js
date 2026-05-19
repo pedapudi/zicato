@@ -34,6 +34,7 @@ import {
   harmonografLink, harmonografMini, harmonografGenLink,
 } from '../core/harmonograf.js';
 import { fetchJson, loadMatchupDetail } from '../core/api.js';
+import { diff as splitDiff } from '../components/index.js';
 import {
   predictedGateVerdict, tournamentVerdict, dataQuality,
   entryStatus, entryIsDone, entryFailed, entryScalar,
@@ -3129,6 +3130,21 @@ function applyRoute() {
     applyDrill(null, null);
     selectConversation(entryId);
     return;
+  } else if (segs[0] === 'files') {
+    // Files view — #/files  ·  #/files/{epoch_id}/{generation_id}.
+    // The epoch + generation are real route segments (NOT a drill-down
+    // kind/id pair): the view is route-driven, so a reload or a shared
+    // link lands on the same generation. Bare #/files resolves to a
+    // sensible default — the current epoch and its latest generation —
+    // which is then written back into the hash as a deep link.
+    view = 'files';
+    const routeEpoch = segs[1] ? decodeURIComponent(segs[1]) : null;
+    const routeGen = segs[2] ? decodeURIComponent(segs[2]) : null;
+    if (view !== currentView) showView(view);
+    else showViewClassesOnly(view);
+    applyDrill(null, null);
+    applyFilesRoute(routeEpoch, routeGen);
+    return;
   } else if (VIEWS.includes(segs[0])) {
     view = segs[0];
     if (segs.length >= 3) {
@@ -3515,20 +3531,26 @@ function transcriptAnnotations(side) {
 
 // --- Files view -----------------------------------------------------
 //
-// The Files view browses every generation's source tree and applied
-// patch set. It reads through /api/files* — the server resolves those
-// through the GenerationStore seam, so this works identically for the
+// The Files view browses a generation's source tree and applied patch
+// set, AND shows a side-by-side (split) diff of the files the
+// generation changed relative to its parent (or the v0 baseline). It
+// reads through /api/files* — the server resolves those through the
+// GenerationStore seam, so this works identically for the
 // directory-snapshot and git storage backends.
 //
-// State is local to the view: which generation is selected, its tree,
-// and which file is open. The view lazily fetches a generation's tree
-// only on selection so the index stays cheap.
+// The view is ROUTE-DRIVEN: the selected epoch + generation live in the
+// hash (#/files/{epoch}/{generation}), so a reload or a shared link
+// lands on the same generation. Bare #/files resolves to a sensible
+// default — the current epoch and its latest generation — written back
+// into the hash by applyFilesRoute as a deep link.
 
 const filesState = {
   index: null,        // { epochs: [{ epoch_id, generations: [...] }] }
-  selectedGen: null,  // { epoch_id, generation_id }
+  selectedGen: null,  // { epoch_id, generation_id } — driven by the route
   tree: null,         // { entries: [{ path, is_dir, size }] }
   openFile: null,     // rel path of the file shown in the content pane
+  changes: null,      // { parent_generation_id, files: [...] } diff payload
+  changesKey: null,   // epoch/generation the cached `changes` belongs to
 };
 
 function fmtFileSize(bytes) {
@@ -3538,8 +3560,41 @@ function fmtFileSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-async function renderFilesView() {
-  // Load the epoch/generation index once; SSE-driven re-renders reuse it.
+// The last generation in an epoch index entry — the picker's default.
+// The /api/files index lists generations in store order (v0, v1, ...),
+// so the final element is the latest.
+function latestGenerationOf(epochEntry) {
+  const gens = (epochEntry && epochEntry.generations) || [];
+  return gens.length ? gens[gens.length - 1].generation_id : null;
+}
+
+// Resolve the route's (epoch, generation) against the loaded index,
+// filling in defaults: the current epoch (or the last epoch in the
+// index) and that epoch's latest generation. Returns null when there
+// is no generation to show at all.
+function resolveFilesTarget(routeEpoch, routeGen) {
+  const epochs = (filesState.index && filesState.index.epochs) || [];
+  if (epochs.length === 0) return null;
+  // Prefer the routed epoch, then the live current epoch, then the last
+  // epoch in the index — but always one that actually exists.
+  const byId = (id) => epochs.find((e) => e.epoch_id === id) || null;
+  let epoch = (routeEpoch && byId(routeEpoch))
+    || (state.epoch && byId(state.epoch.id))
+    || epochs[epochs.length - 1];
+  if (!epoch) return null;
+  const gens = (epoch.generations || []).map((g) => g.generation_id);
+  if (gens.length === 0) return null;
+  const generationId = (routeGen && gens.includes(routeGen))
+    ? routeGen
+    : latestGenerationOf(epoch);
+  return { epoch_id: epoch.epoch_id, generation_id: generationId };
+}
+
+// Route entry point for the Files view. Called by applyRoute with the
+// raw hash segments; resolves them to a concrete (epoch, generation),
+// rewrites the hash as a canonical deep link when it was bare or stale,
+// and loads the selected generation.
+async function applyFilesRoute(routeEpoch, routeGen) {
   if (filesState.index == null) {
     try {
       filesState.index = await fetchJson('/api/files');
@@ -3547,11 +3602,184 @@ async function renderFilesView() {
       filesState.index = { epochs: [] };
     }
   }
+  const target = resolveFilesTarget(routeEpoch, routeGen);
+  if (!target) {
+    // Nothing to show — paint the empty states and stop.
+    filesState.selectedGen = null;
+    renderFilesView();
+    return;
+  }
+  // Canonicalise the hash: a bare #/files, or one whose epoch/generation
+  // did not resolve exactly, becomes #/files/{epoch}/{generation} so the
+  // link is deep-linkable and the nav highlight stays stable. The hash
+  // is updated in place; the load runs unconditionally below (it is a
+  // no-op when the selection is unchanged), so it does not depend on a
+  // hashchange re-entry.
+  const wantHash = `#/files/${encodeURIComponent(target.epoch_id)}`
+    + `/${encodeURIComponent(target.generation_id)}`;
+  if (location.hash !== wantHash) {
+    location.hash = wantHash;
+  }
+  await loadFilesGeneration(target.epoch_id, target.generation_id);
+}
+
+async function renderFilesView() {
+  // Re-render entry point used by SSE-driven repaints. Re-resolve the
+  // current hash so a state delta keeps the view consistent without a
+  // re-fetch when the selection is unchanged.
+  await applyFilesRoute(
+    filesState.selectedGen ? filesState.selectedGen.epoch_id : null,
+    filesState.selectedGen ? filesState.selectedGen.generation_id : null,
+  );
+}
+
+// Load a generation's tree + changed-files diff and paint every Files
+// panel. Cheap when the selection is unchanged — the tree and diff are
+// cached, keyed by epoch/generation.
+async function loadFilesGeneration(epochId, generationId) {
+  const changed = !filesState.selectedGen
+    || filesState.selectedGen.epoch_id !== epochId
+    || filesState.selectedGen.generation_id !== generationId;
+  if (changed) {
+    filesState.selectedGen = { epoch_id: epochId, generation_id: generationId };
+    filesState.openFile = null;
+    filesState._content = null;
+    filesState.tree = null;
+    filesState.changes = null;
+    filesState.changesKey = `${epochId}/${generationId}`;
+    const base = `/api/files/${encodeURIComponent(epochId)}/${encodeURIComponent(generationId)}`;
+    try {
+      filesState.tree = await fetchJson(base + '/tree');
+    } catch (err) {
+      filesState.tree = { entries: [], error: String(err) };
+    }
+    try {
+      filesState.changes = await fetchJson(base + '/diff');
+    } catch (err) {
+      filesState.changes = { files: [], error: String(err) };
+    }
+    // The mutation surface is per-epoch; a generation switch within the
+    // same epoch reuses the cached index, a switch to a new epoch reloads.
+    if (mutationsState.epochId !== epochId) {
+      mutationsState.epochId = epochId;
+      mutationsState.index = null;
+      mutationsState.selectedId = null;
+      mutationsState.detail = null;
+    }
+  }
+  renderFilesChanges();
   renderFilesIndex();
   renderFilesTree();
   renderFilesContent();
   renderFilesPatches();
   renderMutationsView();
+}
+
+// Navigate the picker by hash — the view is route-driven, so a click
+// just changes the fragment and applyRoute re-enters applyFilesRoute.
+function selectFilesGeneration(epochId, generationId) {
+  location.hash = `#/files/${encodeURIComponent(epochId)}`
+    + `/${encodeURIComponent(generationId)}`;
+}
+
+// The "What changed" section: a generation picker, then a side-by-side
+// (split) diff of every file the selected generation changed relative
+// to its parent generation (or the v0 baseline).
+function renderFilesChanges() {
+  renderFilesChangesControls();
+  renderFilesChangesDiff();
+}
+
+// The generation picker for the changes section.
+function renderFilesChangesControls() {
+  const pane = $('files-changes-controls');
+  if (!pane) return;
+  clearChildren(pane);
+
+  const epochs = (filesState.index && filesState.index.epochs) || [];
+  if (epochs.length === 0) {
+    pane.appendChild(el('p', { class: 'empty' }, ['No generations yet.']));
+    return;
+  }
+  const sel = filesState.selectedGen;
+  const picker = el('div', { class: 'files-gen-picker' });
+  for (const epoch of epochs) {
+    picker.appendChild(
+      el('div', { class: 'files-epoch-label' }, [epoch.epoch_id])
+    );
+    for (const gen of epoch.generations || []) {
+      const selected = sel
+        && sel.epoch_id === epoch.epoch_id
+        && sel.generation_id === gen.generation_id;
+      picker.appendChild(el('button', {
+        type: 'button',
+        class: 'files-gen-button' + (selected ? ' active' : ''),
+        onclick: () => selectFilesGeneration(epoch.epoch_id, gen.generation_id),
+      }, [
+        el('span', { class: 'files-gen-id' }, [gen.generation_id]),
+        el('span', { class: 'files-gen-meta' }, [
+          `${gen.file_count} files · ${gen.patch_count} patches`,
+        ]),
+      ]));
+    }
+  }
+  pane.appendChild(picker);
+}
+
+// The side-by-side diff: one split diff per file the generation changed.
+function renderFilesChangesDiff() {
+  const pane = $('files-changes-diff');
+  if (!pane) return;
+  clearChildren(pane);
+
+  if (!filesState.selectedGen) {
+    pane.appendChild(
+      el('p', { class: 'empty' }, ['Select a generation to see what it changed.'])
+    );
+    return;
+  }
+  const changes = filesState.changes || { files: [] };
+  if (changes.error) {
+    pane.appendChild(el('p', { class: 'empty' }, [changes.error]));
+    return;
+  }
+  const parent = changes.parent_generation_id;
+  pane.appendChild(el('div', { class: 'files-changes-summary' }, [
+    parent
+      ? `${filesState.selectedGen.generation_id} vs ${parent}`
+      : `${filesState.selectedGen.generation_id} (seed — every file is new)`,
+  ]));
+  const files = changes.files || [];
+  if (files.length === 0) {
+    pane.appendChild(
+      el('p', { class: 'empty' }, ['No file changes for this generation.'])
+    );
+    return;
+  }
+  for (const f of files) {
+    const oldLabel = parent ? `${parent} · old` : 'baseline';
+    const newLabel = `${filesState.selectedGen.generation_id} · new`;
+    const block = el('div', { class: 'files-change-block' }, [
+      el('div', { class: 'files-change-head' }, [
+        el('span', { class: 'files-change-path' }, [f.path]),
+        el('span', { class: `files-change-status status-${f.status}` }, [f.status]),
+      ]),
+    ]);
+    if (f.old_binary || f.new_binary) {
+      block.appendChild(
+        el('p', { class: 'empty' }, ['Binary file — diff not shown.'])
+      );
+    } else {
+      block.appendChild(el('div', { class: 'files-change-cols' }, [
+        el('div', { class: 'files-change-col-label' }, [oldLabel]),
+        el('div', { class: 'files-change-col-label' }, [newLabel]),
+      ]));
+      // The shared diff component in split mode: old on the left, new
+      // on the right.
+      block.appendChild(splitDiff(f.old_content, f.new_content, { mode: 'split' }));
+    }
+    pane.appendChild(block);
+  }
 }
 
 // Left pane top: the epoch -> generation picker, then the file tree.
@@ -3593,32 +3821,6 @@ function renderFilesIndex() {
 
   // The file tree of the selected generation, below the picker.
   pane.appendChild(el('div', { id: 'files-tree-root', class: 'files-tree-root' }));
-}
-
-async function selectFilesGeneration(epochId, generationId) {
-  filesState.selectedGen = { epoch_id: epochId, generation_id: generationId };
-  filesState.openFile = null;
-  filesState.tree = null;
-  // Fetch the tree + patches for the newly selected generation.
-  const base = `/api/files/${encodeURIComponent(epochId)}/${encodeURIComponent(generationId)}`;
-  try {
-    filesState.tree = await fetchJson(base + '/tree');
-  } catch (err) {
-    filesState.tree = { entries: [], error: String(err) };
-  }
-  // The mutation surface is per-epoch; a generation switch within the
-  // same epoch reuses the cached index, a switch to a new epoch reloads.
-  if (mutationsState.epochId !== epochId) {
-    mutationsState.epochId = epochId;
-    mutationsState.index = null;
-    mutationsState.selectedId = null;
-    mutationsState.detail = null;
-  }
-  renderFilesIndex();
-  renderFilesTree();
-  renderFilesContent();
-  renderFilesPatches();
-  renderMutationsView();
 }
 
 // The selected generation's source tree, rendered from the flat entry
@@ -4368,4 +4570,7 @@ export {
   renderAll, renderActiveView, renderHeader, renderFooter, showView,
   applyRoute, setupLineageInteractions, closeDrill,
   renderLogTail, appendLogTail,
+  // Files view — exported for the JS test harness (the route-driven
+  // entry point and the scratch state it resolves into).
+  applyFilesRoute, filesState,
 };

@@ -85,6 +85,26 @@ The drill-down / lazy endpoints (unchanged):
 - `GET /api/files...`, `GET /api/mutations/...` — Files view.
 - `GET /api/conversation/{run}`, `GET /api/matchup/{entry}/conversations`.
 
+The Files-view endpoints in full:
+- `GET /api/files` — `{ epochs:[{ epoch_id, generations:[{ generation_id,
+  file_count, patch_count }] }] }`. Generations are listed in store
+  order; the last element is the latest generation.
+- `GET /api/files/{epoch}/{gen}/tree` — `{ epoch_id, generation_id,
+  entries:[{ path, is_dir, size }], error? }`.
+- `GET /api/files/{epoch}/{gen}/content?path=` — one file's content.
+- `GET /api/files/{epoch}/{gen}/patches` — the applied patch set.
+- `GET /api/files/{epoch}/{gen}/diff` — the files the generation
+  CHANGED relative to its parent (the parent recorded in
+  `experiment.json`, else the `v(N-1)` / `v0` fallback). Shape:
+  `{ epoch_id, generation_id, parent_generation_id:str|null,
+  files:[{ path, status:"added"|"modified"|"removed", old_content,
+  new_content, old_binary, new_binary }], error? }`. `files` lists
+  only files that differ, sorted by path; a seed generation
+  (`parent_generation_id == null`) reads every file as `added`. The
+  Files view renders each entry as a side-by-side split diff
+  (`old_content` left, `new_content` right) via the `diff` component
+  in `mode:'split'`.
+
 ## 2. SSE delta types
 
 `GET /events` yields, in order:
@@ -204,9 +224,13 @@ identity if a `key` is supplied.
 - **Epoch** (`views/epoch.js`, container `#view-epoch`): epoch selector;
   the contract (board entries with expectations/judges, proposer brief
   rendered, scoring weights); the journal; the analysis.
-- **Files** (`views/files.js`, container `#view-files`): file-tree of
-  generation snapshots + patches; the mutation-site browser (build on
-  the existing one); run-artifact viewer with diff mode.
+- **Files** (`views/files.js`, container `#view-files`): route-driven
+  (`#/files/{epoch}/{gen}`). A "What changed" section — a generation
+  picker and a side-by-side (split) diff of every file the selected
+  generation changed vs its parent (or the `v0` baseline), via the
+  `diff` component in `mode:'split'`; the file-tree of the selected
+  generation's snapshot + its applied patches; the mutation-site
+  browser. Defaults to the current epoch's latest generation.
 - **Chrome** (`views/chrome.js`): persistent header (context: epoch /
   generation / round / elapsed / connection); the collapsible,
   append-only activity-log drawer; the route shell (nav rail active
@@ -221,6 +245,13 @@ Hash routes; `#/overview` is default. Each is deep-linkable:
 - `#/epoch`  ·  `#/epoch/{epochId}`
 - `#/files`  ·  `#/files/{epochId}/{genId}`
 - `#/conversation/{entryId}` (focused conversation diff)
+
+The Files route is **route-driven**: the selected epoch + generation
+live in the hash. Bare `#/files` resolves to a default — the current
+epoch (`environment.epoch`) and that epoch's latest generation — and is
+canonicalised in place into `#/files/{epochId}/{genId}` so a reload or
+a shared link lands on the same generation. The Files view never falls
+through to Overview.
 
 `router.current()` → `{ view, params:{...} }`. `router.go(hash)`
 navigates. The router emits `route:changed` on the bus.

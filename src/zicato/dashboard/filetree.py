@@ -28,10 +28,15 @@ Endpoints (wired in :mod:`zicato.dashboard.server`)
   :func:`read_generation_file` — one file's content.
 * ``GET /api/files/{epoch}/{generation}/patches`` →
   :func:`build_generation_patches` — the applied patch set.
+* ``GET /api/files/{epoch}/{generation}/diff`` →
+  :func:`build_generation_diff` — the files a generation changed
+  relative to its parent (or the ``v0`` baseline), each with the old
+  and new content for a side-by-side diff.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from typing import Any
 
@@ -220,9 +225,171 @@ def build_generation_patches(
     }
 
 
+#: A generation id of the form ``v<N>`` — used to fall back to the
+#: numerically-preceding generation when no parent is recorded.
+_VERSION_RE = re.compile(r"^v(\d+)$")
+
+
+def _resolve_parent_generation(
+    paths: WorkspacePaths,
+    store: GenerationStore,
+    epoch_id: str,
+    generation_id: str,
+) -> str | None:
+    """Resolve the generation a diff should be taken against.
+
+    The diff of "what a generation changed" is taken relative to the
+    generation it was derived from. Resolution order:
+
+    1. The ``parent_generation_id`` recorded in the generation's
+       ``experiment.json`` (the authoritative lineage edge).
+    2. For a ``v<N>`` id with ``N > 0``, the numerically-preceding
+       generation ``v<N-1>`` when that generation has a source tree.
+    3. The ``v0`` baseline, when it exists and is not the generation
+       itself.
+
+    Returns ``None`` when no parent can be resolved — a seed generation,
+    or a workspace with only the one generation. The caller then treats
+    every file as added.
+    """
+    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+
+    try:
+        experiment = read_experiment(paths.root, epoch_id, generation_id)
+        recorded = (experiment.parent_generation_id or "").strip()
+        if recorded and recorded != generation_id:
+            if store.has_generation(epoch_id, recorded):
+                return recorded
+    except (FileNotFoundError, OSError, ValueError):
+        pass
+
+    match = _VERSION_RE.match(generation_id)
+    if match is not None:
+        index = int(match.group(1))
+        if index > 0:
+            candidate = f"v{index - 1}"
+            if store.has_generation(epoch_id, candidate):
+                return candidate
+
+    if generation_id != "v0" and store.has_generation(epoch_id, "v0"):
+        return "v0"
+    return None
+
+
+def _read_text(
+    store: GenerationStore, epoch_id: str, generation_id: str, rel_path: str
+) -> tuple[str, bool]:
+    """Read a tree file as text. Returns ``(text, binary)``.
+
+    A file that does not decode as UTF-8 comes back ``binary=True`` with
+    a best-effort replacement-decoded body; a missing file comes back as
+    an empty string (so a side-only file diffs cleanly against "").
+    """
+    try:
+        raw = store.read_file(epoch_id, generation_id, rel_path)
+    except (FileNotFoundError, OSError, ValueError):
+        return "", False
+    try:
+        return raw.decode("utf-8"), False
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", _DECODE_ERRORS), True
+
+
+def _file_paths(store: GenerationStore, epoch_id: str, generation_id: str) -> set[str]:
+    """Return the set of (non-directory) file paths in a generation tree."""
+    try:
+        return {e.path for e in store.list_tree(epoch_id, generation_id) if not e.is_dir}
+    except (FileNotFoundError, OSError, ValueError):
+        return set()
+
+
+def build_generation_diff(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str
+) -> dict[str, Any]:
+    """Return the files a generation changed relative to its parent.
+
+    The diff is taken against the generation's parent (see
+    :func:`_resolve_parent_generation`); a seed generation with no
+    parent diffs against the empty tree, so every file reads as added.
+
+    The response shape::
+
+        {
+          "epoch_id", "generation_id",
+          "parent_generation_id": str | null,
+          "files": [
+            { "path", "status": "added"|"modified"|"removed",
+              "old_content", "new_content",
+              "old_binary", "new_binary" },
+            ...
+          ],
+          "error"?: str
+        }
+
+    ``files`` lists only files that differ, sorted by path. Each carries
+    the old and new content so the dashboard can render a side-by-side
+    split diff without a second round trip. The store seam keeps this
+    backend-neutral — it works for the directory-snapshot and the
+    git-backed workspace identically.
+    """
+    store = _store(paths)
+    if not store.has_generation(epoch_id, generation_id):
+        return {
+            "epoch_id": epoch_id,
+            "generation_id": generation_id,
+            "parent_generation_id": None,
+            "files": [],
+            "error": f"no source tree for {epoch_id}/{generation_id}",
+        }
+
+    parent_id = _resolve_parent_generation(paths, store, epoch_id, generation_id)
+    new_paths = _file_paths(store, epoch_id, generation_id)
+    old_paths = _file_paths(store, epoch_id, parent_id) if parent_id is not None else set()
+
+    files: list[dict[str, Any]] = []
+    for rel_path in sorted(new_paths | old_paths):
+        in_new = rel_path in new_paths
+        in_old = rel_path in old_paths
+        new_text, new_binary = (
+            _read_text(store, epoch_id, generation_id, rel_path) if in_new else ("", False)
+        )
+        old_text, old_binary = (
+            _read_text(store, epoch_id, parent_id, rel_path)
+            if in_old and parent_id is not None
+            else ("", False)
+        )
+        if in_new and not in_old:
+            status = "added"
+        elif in_old and not in_new:
+            status = "removed"
+        elif old_text == new_text:
+            # Present on both sides with identical content — unchanged.
+            continue
+        else:
+            status = "modified"
+        files.append(
+            {
+                "path": rel_path,
+                "status": status,
+                "old_content": old_text,
+                "new_content": new_text,
+                "old_binary": old_binary,
+                "new_binary": new_binary,
+            }
+        )
+
+    return {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "parent_generation_id": parent_id,
+        "files": files,
+    }
+
+
 __all__ = [
     "build_file_index",
     "build_generation_tree",
     "read_generation_file",
     "build_generation_patches",
+    "build_generation_diff",
 ]

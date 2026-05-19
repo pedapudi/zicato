@@ -1936,11 +1936,132 @@ h4 {
   color: var(--accent-rejected);
 }
 
+/* --- Files view: "What changed" section ---------------------------
+   A generation picker, then a side-by-side (split) diff of every file
+   the selected generation changed relative to its parent generation
+   (or the v0 baseline). The split diff is rendered by the shared
+   components/index.js `diff` component in `mode: 'split'`.           */
+.files-changes-controls {
+  margin-bottom: 0.75rem;
+}
+.files-changes-summary {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+.files-change-block {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+.files-change-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+.files-change-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+.files-change-status {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  color: var(--text-muted);
+}
+.files-change-status.status-added {
+  color: var(--accent-promoted);
+  background: color-mix(in srgb, var(--accent-promoted) 16%, transparent);
+}
+.files-change-status.status-removed {
+  color: var(--accent-rejected);
+  background: color-mix(in srgb, var(--accent-rejected) 16%, transparent);
+}
+.files-change-status.status-modified {
+  color: var(--accent-baseline);
+  background: color-mix(in srgb, var(--accent-baseline) 16%, transparent);
+}
+.files-change-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.files-change-col-label {
+  padding: 0.25rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.files-change-col-label:first-child {
+  border-right: 1px solid var(--border);
+}
+
+/* --- Shared `diff` component (components/index.js) -----------------
+   The line diff renderer. `mode: 'split'` lays out two side panes —
+   old on the left, new on the right.                                 */
+.diff {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.diff-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.diff-side {
+  min-width: 0;
+}
+.diff-old {
+  border-right: 1px solid var(--border);
+}
+.diff-line {
+  display: flex;
+  white-space: pre;
+}
+.diff-gutter {
+  width: 1.2rem;
+  flex: none;
+  text-align: center;
+  color: var(--text-muted);
+  user-select: none;
+}
+.diff-text {
+  flex: 1;
+  padding-right: 0.5rem;
+}
+.diff-line.diff-add {
+  background: color-mix(in srgb, var(--accent-promoted) 16%, transparent);
+}
+.diff-line.diff-add .diff-gutter {
+  color: var(--accent-promoted);
+}
+.diff-line.diff-del {
+  background: color-mix(in srgb, var(--accent-rejected) 16%, transparent);
+}
+.diff-line.diff-del .diff-gutter {
+  color: var(--accent-rejected);
+}
+.diff-line.diff-pad {
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+}
+
 @media (max-width: 720px) {
   .files-browser {
     grid-template-columns: 1fr;
   }
   .mutations-browser {
+    grid-template-columns: 1fr;
+  }
+  .diff-split {
     grid-template-columns: 1fr;
   }
 }

@@ -202,6 +202,7 @@ REQUIRED_SECTIONS = {
     "epoch-experiment-log-section",
     "epoch-journal-section",
     "epoch-analysis-section",
+    "files-changes-section",
     "files-section",
     "files-patches-section",
     "mutations-section",
@@ -705,20 +706,24 @@ def test_bundle_under_size_envelope(
     index_html: str, style_css: str, app_js: str, icons_svg: str
 ) -> None:
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    # 320 KB uncompressed. Raised from 270 KB by the dashboard redesign:
+    # 330 KB uncompressed. Raised from 270 KB by the dashboard redesign:
     # the monolithic ``app.js`` was re-architected into ES modules — a
     # thin entry point plus the core spine (state / bus / router / api /
     # sse / dom / format / harmonograf), a shared component library and
     # the render layer. The module boundaries add per-file headers,
     # import statements and the documented contracts, costing a few tens
     # of KB; that cost buys the structural no-flash render spine and the
-    # zero-collision modular layout. The ``app_js`` fixture concatenates
-    # every shipped JS file, so this envelope covers the whole bundle.
-    # The dev-only JS test harness under ``static/test/`` is NOT shipped
-    # and is excluded. The dashboard is served off disk by the
-    # standalone Python service with no network cost; this guard only
-    # keeps the vanilla bundle from drifting unboundedly.
-    assert total < 320_000, f"bundle is {total} bytes, exceeds 320_000 envelope"
+    # zero-collision modular layout. The +10 KB step from 320 KB carries
+    # the route-driven Files view: its "What changed" section — a
+    # generation picker and a side-by-side split diff of every changed
+    # file — plus the shared `diff` component's split-mode CSS. The
+    # ``app_js`` fixture concatenates every shipped JS file, so this
+    # envelope covers the whole bundle. The dev-only JS test harness
+    # under ``static/test/`` is NOT shipped and is excluded. The
+    # dashboard is served off disk by the standalone Python service with
+    # no network cost; this guard only keeps the vanilla bundle from
+    # drifting unboundedly.
+    assert total < 330_000, f"bundle is {total} bytes, exceeds 330_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
@@ -836,6 +841,54 @@ def test_mock_epoch_carries_experiment_log_fields(app_js: str) -> None:
     scrubbed = _strip_js_comments(app_js)
     for key in ("experiments", "journal", "analysis_md", "analysis_html_available"):
         assert key in scrubbed, f"mock epoch missing field: {key}"
+
+
+# ---------------------------------------------------------------------------
+# Files view — route-driven, side-by-side changed-files diff
+# ---------------------------------------------------------------------------
+
+
+def test_files_view_is_route_driven(app_js: str) -> None:
+    """The Files view resolves the route to a default and is reachable.
+
+    Bare ``#/files`` must not fall through to Overview: the bundle
+    carries the ``applyFilesRoute`` route entry point, which resolves a
+    default epoch + generation and canonicalises the hash.
+    """
+    scrubbed = _strip_js_comments(app_js)
+    assert (
+        "function applyFilesRoute(" in scrubbed
+    ), "bundle missing applyFilesRoute — the Files view route entry point"
+    # The router branch must consume #/files explicitly so the
+    # epoch/generation segments are real route params, not a drill.
+    assert "'files'" in scrubbed, "applyRoute must branch on the files view"
+
+
+def test_files_view_renders_split_diff_of_changes(app_js: str) -> None:
+    """The Files view shows a side-by-side (split) diff of what changed.
+
+    It fetches the per-generation diff endpoint and renders each changed
+    file through the shared ``diff`` component in ``mode:'split'``.
+    """
+    scrubbed = _strip_js_comments(app_js)
+    assert "/diff" in scrubbed, "Files view must fetch the per-generation /diff endpoint"
+    assert "renderFilesChanges" in scrubbed, "Files view missing the changes renderer"
+    assert (
+        "mode: 'split'" in scrubbed or 'mode: "split"' in scrubbed
+    ), "the changed-files diff must render in split mode"
+
+
+def test_files_changes_section_in_required_sections() -> None:
+    """The Files-view 'What changed' section is in REQUIRED_SECTIONS."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_test_dashboard_ui_files_check",
+        Path(__file__),
+    )
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    assert "files-changes-section" in mod.REQUIRED_SECTIONS
 
 
 def test_epoch_experiment_log_section_in_required_sections() -> None:

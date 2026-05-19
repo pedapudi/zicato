@@ -242,6 +242,20 @@
            backend render identically here. -->
       <div id="view-files" class="view hidden" data-view="files">
 
+        <!-- What a generation changed: a generation picker, then a
+             side-by-side (split) diff of every file the selected
+             generation changed relative to its parent generation (or
+             the v0 baseline). Route-driven: #/files/{epoch}/{gen}. -->
+        <section id="files-changes-section" aria-label="Generation changes">
+          <h2>What changed</h2>
+          <div id="files-changes-controls" class="files-changes-controls">
+            <p class="empty">No generations yet.</p>
+          </div>
+          <div id="files-changes-diff" class="files-changes-diff">
+            <p class="empty">Select a generation to see what it changed.</p>
+          </div>
+        </section>
+
         <section id="files-section" aria-label="Generation file browser">
           <h2>Generation files</h2>
           <div id="files-browser" class="files-browser">
