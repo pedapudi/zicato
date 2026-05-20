@@ -865,6 +865,172 @@ test('gauntlet: a live fast-mode challenger reads as live, NOT incomplete', () =
     `at least one cached side must surface "cached" copy, got ${cachedScores.length}`);
 });
 
+test('gauntlet: discarded card truncates a long rejection reason — full text on title', () => {
+  // Bug #168: the rejection-reason annotation on a discarded card had no
+  // max-width and no text truncation, so a multi-line gate verdict
+  // (e.g. the t6 round-1 prose "challenger regressed: loss rose by
+  // 10.122619 ...") stretched its column to ~950 px and pushed every
+  // node downstream off the right edge of the viewport. The reason now
+  // renders truncated (CSS ellipsis on a fixed-width card) with the
+  // FULL text retained on the `title` attribute so the operator can
+  // hover-inspect it without losing layout.
+  state.applySnapshot(mockSnapshot());
+  const longReason = 'challenger regressed: loss rose by 10.122619 '
+    + '(champion 47.580429 -> challenger 57.703048); a promotion needs '
+    + 'the loss to drop by at least 0.010000';
+  state.bracket = {
+    epoch_id: 'e-long',
+    champion_lineage: ['v0', 'v1', 'v3'],
+    matchups: [
+      { champion: 'v0', challenger: 'v1', decision: 'promoted',
+        delta_scalar: -0.2 },
+      { champion: 'v1', challenger: 'v2', decision: 'rejected',
+        delta_scalar: 10.12, rejection_reason: longReason },
+      { champion: 'v1', challenger: 'v3', decision: 'promoted',
+        delta_scalar: -0.3 },
+    ],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, promoted: true },
+      { generation_id: 'v1', parent_generation_id: 'v0', promoted: true },
+      { generation_id: 'v2', parent_generation_id: 'v1', promoted: false },
+      { generation_id: 'v3', parent_generation_id: 'v1', promoted: true },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = null;
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  const reasons = byClass(bracket, 'bracket-loser-reason');
+  assert(reasons.length >= 1, 'at least one discarded card must render a reason line');
+  // Every truncated reason carries the full message on `title` so the
+  // operator can hover-read it. A non-empty `title` is the contract.
+  for (const r of reasons) {
+    const title = r.getAttribute('title');
+    assert(title != null && title.length > 0,
+      `discarded card reason must carry a non-empty title attribute, got "${title}"`);
+  }
+  // The long-reason card carries the full prose on its title — proves
+  // the title is the full untruncated text, not a re-truncation.
+  const longTitled = reasons.filter(
+    (r) => (r.getAttribute('title') || '').includes('10.122619'),
+  );
+  assertEqual(longTitled.length, 1,
+    `the long-reason card must carry the full untruncated reason on title, `
+      + `got ${longTitled.length} matching cards`);
+});
+
+test('gauntlet: t6 round-1 shape — live node scrolls into view on first render', () => {
+  // Bug #168: with 4 spine nodes + 3 discarded children, the live
+  // challenger (v6) rendered entirely off-screen at the right of a
+  // wide gauntlet container. The fix is two-fold: cap the discarded
+  // card width (covered by the title/truncation test above) AND
+  // auto-scroll the container so the live node lands in view on
+  // first render. This test mirrors the t6 round-1 shape.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: 't6-round1',
+    champion_lineage: ['v0', 'v1', 'v3'],
+    matchups: [
+      { champion: 'v0', challenger: 'v1', decision: 'promoted',
+        delta_scalar: -0.2 },
+      { champion: 'v1', challenger: 'v2', decision: 'rejected',
+        delta_scalar: 10.12, rejection_reason: 'long reason A' },
+      { champion: 'v1', challenger: 'v3', decision: 'promoted',
+        delta_scalar: -0.3 },
+      { champion: 'v3', challenger: 'v4', decision: 'rejected',
+        delta_scalar: 5.0, rejection_reason: 'long reason B' },
+      { champion: 'v3', challenger: 'v5', decision: 'rejected',
+        delta_scalar: 7.0, rejection_reason: 'long reason C' },
+    ],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, promoted: true },
+      { generation_id: 'v1', parent_generation_id: 'v0', promoted: true },
+      { generation_id: 'v2', parent_generation_id: 'v1', promoted: false },
+      { generation_id: 'v3', parent_generation_id: 'v1', promoted: true },
+      { generation_id: 'v4', parent_generation_id: 'v3', promoted: false },
+      { generation_id: 'v5', parent_generation_id: 'v3', promoted: false },
+      { generation_id: 'v6', parent_generation_id: 'v3', promoted: null },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = {
+    tournament_id: 'tour-v3-vs-v6',
+    parent_generation_id: 'v3',
+    child_generation_id: 'v6',
+    epoch_id: 't6-round1',
+    started_at: '2026-05-19T05:00:00Z',
+    round_index: 1, total_rounds: 3, phase: 'running',
+    entries: [
+      { entry_id: 'a', side: 'parent', status: 'done' },
+      { entry_id: 'a', side: 'child', status: 'running' },
+    ],
+  };
+
+  // Shim the layout properties the auto-scroll path reads. The minimal
+  // harness has no real layout engine, so we attach a fake scrollWidth /
+  // clientWidth pair representing a spine wider than the viewport.
+  const wrap = doc.getElementById('tournament-bracket');
+  wrap.scrollWidth = 1500;
+  wrap.clientWidth = 800;
+  wrap.scrollLeft = 0;
+
+  // Pass 1 — first render. The live id (v6) is new, so the auto-scroll
+  // path executes. No descendant carries `scrollIntoView` (the harness
+  // doesn't implement it), so the renderer falls back to setting
+  // wrap.scrollLeft = scrollWidth - clientWidth — the live node lands
+  // flush with the right edge of the container.
+  render.showView('tournament');
+  assertEqual(wrap.scrollLeft, 1500 - 800,
+    `on first render the live node must be in view — gauntlet scrollLeft `
+      + `should land at scrollWidth - clientWidth = 700, got ${wrap.scrollLeft}`);
+
+  // The DOM is correct — every spine node + the live card exists. (The
+  // bug was layout only.)
+  const spineNodes = byClass(wrap, 'is-spine');
+  assertEqual(spineNodes.length, 3,
+    `the spine must carry v0, v1, v3 — got ${spineNodes.length} nodes`);
+  const liveCards = byClass(wrap, 'bracket-live');
+  assertEqual(liveCards.length, 1,
+    `exactly one live card (v6) must render, got ${liveCards.length}`);
+  assert(liveCards[0].textContent.includes('v6'),
+    `the live card names v6, got "${liveCards[0].textContent}"`);
+
+  // Pass 2 — an SSE tick repaints with the SAME live id. The operator
+  // has scrolled left to inspect history; that scrollLeft must survive
+  // the re-render (a digest-changed but live-id-unchanged tick).
+  wrap.scrollLeft = 120;
+  render.renderBracket();
+  assertEqual(wrap.scrollLeft, 120,
+    `a re-render with the same live id must preserve the operator's `
+      + `scrollLeft, got ${wrap.scrollLeft}`);
+
+  // Pass 3 — a NEW live challenger replaces v6 with v7. The auto-scroll
+  // path executes again, snapping the gauntlet to the right edge so the
+  // new live node is in view.
+  state.activeTournament = {
+    ...state.activeTournament,
+    tournament_id: 'tour-v3-vs-v7',
+    child_generation_id: 'v7',
+  };
+  state.lineage = {
+    ...state.lineage,
+    generations: [
+      ...state.lineage.generations,
+      { generation_id: 'v7', parent_generation_id: 'v3', promoted: null },
+    ],
+  };
+  wrap.scrollLeft = 0;
+  render.renderBracket();
+  assertEqual(wrap.scrollLeft, 1500 - 800,
+    `a new live id must scroll the container so the live node is in view, `
+      + `got scrollLeft=${wrap.scrollLeft}`);
+});
+
 test('Overview is the environment home, NOT a duplicate tournament board', () => {
   state.applySnapshot(mockSnapshot());
   render.showView('overview');

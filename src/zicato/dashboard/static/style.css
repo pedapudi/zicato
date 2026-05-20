@@ -936,7 +936,14 @@ h4 {
 }
 .bracket-loser {
   background: rgba(215, 58, 73, 0.08); border: 1px dashed var(--accent-rejected);
-  border-radius: 8px; padding: 9px 12px; cursor: pointer; min-width: 200px;
+  border-radius: 8px; padding: 9px 12px; cursor: pointer;
+  /* Cap the discarded card to a fixed compact width regardless of the
+     rejection-reason length. A long reason once stretched its column to
+     ~950px and pushed the live challenger entirely off-screen; the
+     reason now ellipses on a single line and the full text lives on the
+     `title` attribute so an operator can hover-inspect it. */
+  width: 220px; min-width: 220px; max-width: 220px;
+  box-sizing: border-box;
 }
 .bracket-loser:hover { background: rgba(215, 58, 73, 0.14); }
 .bracket-loser:focus-visible {
@@ -947,7 +954,15 @@ h4 {
 }
 .bracket-loser-id { font-weight: 600; font-size: 13px; }
 .bracket-loser-delta { margin-top: 4px; font-size: 12px; color: var(--accent-rejected); }
-.bracket-loser-reason { margin-top: 3px; font-size: 12px; }
+.bracket-loser-reason {
+  margin-top: 3px; font-size: 12px;
+  /* Single-line ellipsis — the full reason is on the `title` attribute.
+     Without this cap, a multi-line gate verdict (e.g. "challenger
+     regressed: loss rose by 10.122 ...") would inflate the column
+     width past the viewport. */
+  max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 /* An aborted / in-progress challenger — ran, but no final verdict.
    Distinct from the red discarded node: dashed amber, never red. */
 .bracket-loser.bracket-aborted {

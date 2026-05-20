@@ -1527,9 +1527,26 @@ function liveMatchup() {
 // never renders a `?` placeholder when the data is actually present.
 
 
+// The last live-challenger id seen by renderBracket — used to decide
+// whether to auto-scroll the gauntlet container on the next render. When
+// the live id changes (a fresh tournament started, a promotion happened,
+// or this is the first render), the bracket auto-scrolls so the live /
+// rightmost node is in view. When it has NOT changed across renders we
+// preserve the operator's scrollLeft so an SSE tick does not snap them
+// back to the left edge mid-inspection.
+let _lastBracketLiveId = null;
+let _lastBracketLineageTail = null;
+
 function renderBracket() {
   const wrap = $('tournament-bracket');
   if (!wrap) return;
+
+  // Preserve scroll position across the clearChildren + re-render. The
+  // operator may have scrolled left to inspect history; a no-op SSE tick
+  // must not reset that. swapIfChanged already short-circuits true
+  // no-ops; this is for digest-changed renders where the spine itself
+  // hasn't grown a new node.
+  const priorScrollLeft = wrap.scrollLeft || 0;
   clearChildren(wrap);
 
   const { lineage, matchups, promotedBy, rejectedBy, abortedBy } = bracketModel();
@@ -1537,6 +1554,8 @@ function renderBracket() {
 
   if (lineage.length === 0 && matchups.length === 0 && !live) {
     wrap.appendChild(el('p', { class: 'empty' }, ['No tournaments recorded yet.']));
+    _lastBracketLiveId = null;
+    _lastBracketLineageTail = null;
     return;
   }
 
@@ -1618,6 +1637,8 @@ function renderBracket() {
   // The hall grid renders the in-progress round in full; the spine
   // only needs a connector node so the resolved lineage visibly
   // continues into the live challenge.
+  let liveHeadCol = null;
+  const currentLiveId = live ? liveChallengerId(live) : null;
   if (live) {
     const headCol = el('div', { class: 'bracket-col bracket-col-live' });
 
@@ -1651,9 +1672,67 @@ function renderBracket() {
     }
     headCol.appendChild(renderLiveCard(live, champId));
     spine.appendChild(headCol);
+    liveHeadCol = headCol;
   }
 
   wrap.appendChild(spine);
+
+  // Fix B — when the rightmost-action node has changed (new live
+  // challenger / new tournament / a freshly promoted spine tail / the
+  // very first render), scroll the gauntlet container so it lands in
+  // view. Otherwise restore the operator's prior scrollLeft so an SSE
+  // tick that re-renders without growing the spine does NOT snap the
+  // viewport back to the left edge.
+  //
+  // The "rightmost-action" key is the live challenger id when there is
+  // a live tournament, else the lineage tail (the reigning champion).
+  // The CSS .tournament-bracket carries overflow-x:auto, so scrolling
+  // is meaningful only when the inner spine exceeds the container.
+  const lineageTail = lineage.length ? lineage[lineage.length - 1] : null;
+  const rightmostKey = currentLiveId
+    ? 'live:' + currentLiveId
+    : (lineageTail != null ? 'champ:' + lineageTail : null);
+  const priorKey = _lastBracketLiveId
+    ? 'live:' + _lastBracketLiveId
+    : (_lastBracketLineageTail != null ? 'champ:' + _lastBracketLineageTail : null);
+  const keyChanged = rightmostKey !== priorKey;
+
+  if (keyChanged && rightmostKey) {
+    // Scroll the rightmost node into view. Prefer the live head column
+    // when there is one; otherwise the tail spine column.
+    const target = liveHeadCol
+      || (spine.children.length ? spine.children[spine.children.length - 1] : null);
+    if (target && typeof target.scrollIntoView === 'function') {
+      // `inline:'end'` puts the node flush with the container's right
+      // edge — the most operator-relevant position. `block:'nearest'`
+      // avoids any unrelated vertical scroll.
+      try {
+        target.scrollIntoView({
+          behavior: 'auto', inline: 'end', block: 'nearest',
+        });
+      } catch (_e) {
+        // Older browsers reject the options bag — fall back to
+        // explicit scrollLeft to the right edge.
+        if (typeof wrap.scrollWidth === 'number'
+            && typeof wrap.clientWidth === 'number') {
+          wrap.scrollLeft = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+        }
+      }
+    } else if (typeof wrap.scrollWidth === 'number'
+               && typeof wrap.clientWidth === 'number') {
+      // No scrollIntoView (test harness, very old DOM) — snap to the
+      // right edge directly. The test harness exposes scrollWidth /
+      // clientWidth and lets us prove the container scrolled.
+      wrap.scrollLeft = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+    }
+  } else if (priorScrollLeft > 0) {
+    // The live / tail key is unchanged — preserve the operator's
+    // scrollLeft across the clearChildren + re-append.
+    wrap.scrollLeft = priorScrollLeft;
+  }
+
+  _lastBracketLiveId = currentLiveId;
+  _lastBracketLineageTail = lineageTail;
 }
 
 // --- Tournament hall
@@ -2050,10 +2129,21 @@ function renderChallengerCard(m, champId) {
       'Δ scalar ' + fmtDelta(m.delta_scalar),
     ]));
   }
-  const reason = m.rejection_reason || (m.hypothesis_core_idea
-    ? truncate(m.hypothesis_core_idea, 70) : '');
-  if (reason) {
-    card.appendChild(el('div', { class: 'bracket-loser-reason meta' }, [reason]));
+  // Two reason sources: a rejection_reason string (the gate verdict's
+  // prose explanation — often a full paragraph with numerics) or the
+  // proposer's hypothesis core idea. The full text goes into a `title`
+  // attribute so the operator can hover-inspect it; the rendered text is
+  // capped (CSS `text-overflow: ellipsis` on `.bracket-loser-reason`),
+  // which keeps the discarded card a fixed compact width regardless of
+  // message length. The old layout had no cap and let a long reason
+  // stretch its column to ~950px, pushing the live node off-screen.
+  const reasonFull = m.rejection_reason
+    || (m.hypothesis_core_idea ? String(m.hypothesis_core_idea) : '');
+  if (reasonFull) {
+    card.appendChild(el('div', {
+      class: 'bracket-loser-reason meta',
+      title: reasonFull,
+    }, [reasonFull]));
   }
   return card;
 }
@@ -2086,9 +2176,11 @@ function renderAbortedCard(m, champId) {
     idSpan,
     el('span', { class: 'badge deferred' }, ['incomplete']),
   ]));
-  card.appendChild(el('div', { class: 'bracket-loser-reason meta' }, [
-    'Ran without a final verdict — tournament aborted or still in progress.',
-  ]));
+  const abortedReason = 'Ran without a final verdict — tournament aborted or still in progress.';
+  card.appendChild(el('div', {
+    class: 'bracket-loser-reason meta',
+    title: abortedReason,
+  }, [abortedReason]));
   return card;
 }
 
@@ -6387,4 +6479,8 @@ export {
   // the zero-turn complete-run panel can be asserted without driving
   // the whole conversation route.
   renderTranscriptColumn, matchupDetailKey,
+  // Bracket renderer — exported for the JS test harness so the
+  // gauntlet auto-scroll memoization can be exercised across multiple
+  // renders without driving the whole view switch each time.
+  renderBracket,
 };
