@@ -564,11 +564,23 @@ def _ingest_experiment_into(
     epoch_id: str,
     generation_id: str,
 ) -> bool:
-    """Ingest one experiment (+ patches + tournament) into an open connection.
+    """Ingest one experiment (+ patches + tournament + generation row).
 
     Returns ``True`` when an ``experiment.json`` was found and
     ingested, ``False`` when the generation has no experiment yet
     (``v0`` seed generations have no proposer experiment).
+
+    The generation row's ``parent_generation_id`` and ``promoted`` flag
+    are re-derived from the experiment itself: ``experiment.json`` is
+    the canonical journal entry for a generation and carries both the
+    parent it challenged (``parent_generation_id``) and the tournament
+    verdict (``outcome.tournament_decision``). This is the
+    source-of-truth the dashboard lineage walker uses (see
+    ``state_reader._champion_lineage``), so writing it from here keeps
+    the index aligned with disk even when the live dual-write fires
+    BEFORE ``lineage.json`` is updated (the orchestrator writes
+    experiment.json first, then appends to lineage — so a
+    lineage-only read at dual-write time is stale).
     """
     from zicato.epoch.journal import read_experiment  # noqa: PLC0415
 
@@ -578,7 +590,66 @@ def _ingest_experiment_into(
         return False
     _upsert_experiment(conn, experiment)
     _upsert_tournament(conn, experiment)
+    _upsert_generation_from_experiment(conn, experiment)
     return True
+
+
+def _upsert_generation_from_experiment(
+    conn: sqlite3.Connection,
+    experiment: Experiment,
+) -> None:
+    """Refresh ``parent_generation_id`` + ``promoted`` from the experiment.
+
+    The experiment's ``parent_generation_id`` is authoritative — the
+    proposer attached it at hypothesis-emission time, and it survives
+    the tournament unchanged. The ``promoted`` flag is true exactly
+    when the resolved outcome's ``tournament_decision`` is
+    ``"promoted"``; an unresolved experiment (outcome ``None``) is left
+    as ``promoted=False`` since the verdict isn't in yet.
+
+    Only the two columns the experiment owns authoritatively are
+    written here — ``created_at`` is left to the lineage-driven
+    :func:`_upsert_owning_epoch_generation`, which has the real
+    creation timestamp. A targeted ``UPDATE`` (rather than the full
+    upsert) ensures idempotency: re-running against the same
+    experiment after lineage has caught up does not clobber the
+    timestamp.
+
+    Inserts a thin row when none exists yet (the orchestrator can call
+    this before ``_upsert_owning_epoch_generation`` lands a row);
+    falls back to the experiment's ``proposed_at`` for ``created_at``
+    in that edge case.
+    """
+    promoted = (
+        experiment.outcome is not None and experiment.outcome.tournament_decision == "promoted"
+    )
+    parent = experiment.parent_generation_id or None
+    # First try a targeted UPDATE so we never touch created_at on an
+    # existing row. SQLite's ``execute`` returns a cursor whose
+    # ``rowcount`` we can inspect to see whether the row existed.
+    cur = conn.execute(
+        "UPDATE generations SET parent_generation_id = ?, promoted = ? "
+        "WHERE epoch_id = ? AND generation_id = ?",
+        (
+            parent,
+            1 if promoted else 0,
+            experiment.epoch_id,
+            experiment.generation_id,
+        ),
+    )
+    if cur.rowcount > 0:
+        return
+    # No row yet — fall back to the full upsert so the row exists. The
+    # lineage-driven upsert will overwrite the (fallback) created_at
+    # on the next pass with the lineage value.
+    _upsert_generation(
+        conn,
+        epoch_id=experiment.epoch_id,
+        generation_id=experiment.generation_id,
+        parent_generation_id=parent,
+        promoted=promoted,
+        created_at=experiment.proposed_at,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -866,8 +937,131 @@ def _upsert_owning_epoch_generation(
     )
 
 
+# ---------------------------------------------------------------------------
+# Backfill helper
+# ---------------------------------------------------------------------------
+
+
+def backfill_generations(
+    workspace_root: Path,
+    db_path: Path | None = None,
+) -> dict[str, int]:
+    """Reconcile the ``generations`` table against the on-disk source-of-truth.
+
+    Targeted repair for workspaces whose ``generations`` rows were
+    written by a buggy dual-write path (parent NULL, promoted clamped
+    to 0). Walks every epoch in ``lineage.json`` and every per-
+    generation ``experiment.json`` and rewrites each row's
+    ``parent_generation_id`` and ``promoted`` flag from those canonical
+    sources — same precedence the dashboard's lineage walker uses
+    (experiment.json wins where it disagrees with lineage.json).
+
+    Read-only against the disk files; the database is the only thing
+    mutated. Idempotent: running it twice produces the same rows.
+
+    The fix at the writer (``_ingest_experiment_into`` now refreshes
+    the generation row whenever an experiment is ingested) keeps new
+    workspaces from needing this. The backfill exists to repair the
+    historical workspaces written before the fix.
+
+    Parameters
+    ----------
+    workspace_root:
+        The ``.zicato/`` directory to reconcile.
+    db_path:
+        Where the index lives. Defaults to ``{workspace_root}/index.db``.
+
+    Returns
+    -------
+    dict
+        ``{"updated": N, "scanned": M}`` — how many rows were rewritten
+        and how many generations were scanned. ``M - N`` is the number
+        already correct (or seed rows whose lineage row already
+        matches disk).
+    """
+    target = db_path if db_path is not None else _default_db_path(workspace_root)
+    if not target.exists():
+        return {"updated": 0, "scanned": 0}
+
+    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+
+    scanned = 0
+    updated = 0
+    conn = sqlite3.connect(str(target))
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        lineage = load_lineage(workspace_root)
+        for entry in lineage.get("epochs", []):
+            epoch_id = entry.get("id")
+            if not isinstance(epoch_id, str):
+                continue
+            for g in entry.get("generations", []):
+                gid = g.get("id")
+                if not isinstance(gid, str):
+                    continue
+                scanned += 1
+                # Prefer experiment.json (authoritative for non-seed
+                # generations); fall back to lineage's own fields for
+                # the seed (which has no experiment).
+                parent: str | None
+                promoted: bool
+                try:
+                    exp = read_experiment(workspace_root, epoch_id, gid)
+                    parent = exp.parent_generation_id or None
+                    promoted = (
+                        exp.outcome is not None and exp.outcome.tournament_decision == "promoted"
+                    )
+                except (FileNotFoundError, json.JSONDecodeError, KeyError):
+                    raw_parent = g.get("parent_id")
+                    parent = raw_parent if isinstance(raw_parent, str) else None
+                    promoted = bool(g.get("promoted", False))
+
+                # Read what the DB currently has so we only count a real
+                # rewrite, not a no-op upsert.
+                cur = conn.execute(
+                    "SELECT parent_generation_id, promoted, created_at "
+                    "FROM generations WHERE epoch_id = ? AND generation_id = ?",
+                    (epoch_id, gid),
+                )
+                row = cur.fetchone()
+                created_at = ""
+                cur_parent: str | None = None
+                cur_promoted = 0
+                if row is not None:
+                    cur_parent = row[0] if row[0] is not None else None
+                    cur_promoted = int(row[1] or 0)
+                    created_at = row[2] if row[2] else ""
+                # Prefer the existing created_at; fall back to lineage's,
+                # then to the empty string (matches the live writer's
+                # behaviour when timestamps are unavailable).
+                if not created_at:
+                    created_at = str(g.get("created_at", ""))
+
+                if (
+                    row is not None
+                    and cur_parent == parent
+                    and cur_promoted == (1 if promoted else 0)
+                ):
+                    continue
+                _upsert_generation(
+                    conn,
+                    epoch_id=epoch_id,
+                    generation_id=gid,
+                    parent_generation_id=parent,
+                    promoted=promoted,
+                    created_at=created_at,
+                )
+                updated += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"updated": updated, "scanned": scanned}
+
+
 __all__ = [
     "rebuild_index",
     "ingest_run",
     "ingest_experiment",
+    "backfill_generations",
 ]

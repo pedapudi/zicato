@@ -29,7 +29,7 @@ from pathlib import Path
 
 import click
 
-from zicato.index.ingest import rebuild_index
+from zicato.index.ingest import backfill_generations, rebuild_index
 from zicato.index.query import index_counts
 
 
@@ -68,4 +68,37 @@ def reindex_cmd(workspace: str) -> None:
     )
 
 
-__all__ = ["reindex_cmd"]
+@click.command(
+    name="reindex-generations",
+    short_help=(
+        "Advanced: reconcile the index `generations` table against disk " "(parent + promoted)."
+    ),
+)
+@click.option(
+    "--workspace",
+    default=".zicato",
+    show_default=True,
+    help="Path to the zicato workspace directory.",
+)
+def reindex_generations_cmd(workspace: str) -> None:
+    """Advanced: reconcile only the `generations` table from disk.
+
+    Off the happy path. Targeted repair for workspaces whose
+    `generations` rows were written by a buggy live dual-write
+    (parent_generation_id NULL, promoted clamped to 0 on every row
+    except the seed). Walks lineage.json + every experiment.json and
+    rewrites only the parent_generation_id and promoted flag of each
+    `generations` row. The rest of the index is left alone — use
+    `zicato reindex` for a full rebuild.
+
+    Idempotent. Read-only against workspace files.
+    """
+    ws = Path(workspace).resolve()
+    result = backfill_generations(ws)
+    click.echo(
+        f"Reconciled generations table at {ws / 'index.db'}: "
+        f"{result['updated']} updated of {result['scanned']} scanned."
+    )
+
+
+__all__ = ["reindex_cmd", "reindex_generations_cmd"]

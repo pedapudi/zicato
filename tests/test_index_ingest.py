@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,9 +16,15 @@ from zicato.core.workspace import events_jsonl_path, loss_profile_path
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
 from zicato.epoch.lineage import append_to_lineage
-from zicato.index.ingest import ingest_experiment, ingest_run, rebuild_index
+from zicato.index.ingest import (
+    backfill_generations,
+    ingest_experiment,
+    ingest_run,
+    rebuild_index,
+)
 from zicato.index.query import (
     experiments_for_epoch,
+    generations_for_epoch,
     index_counts,
     loss_profiles_for_generation,
     metric_counts_for_run,
@@ -30,6 +37,7 @@ from zicato.testing.fixtures import (
     make_experiment,
     make_loss_profile,
     make_outcome_record,
+    make_patch,
     make_synthetic_events_jsonl,
 )
 
@@ -406,3 +414,319 @@ def test_incremental_ingest_matches_full_rebuild(tmp_path: Path) -> None:
     assert inc_counts["patches"] == rebuilt_counts["patches"]
     assert inc_counts["tournaments"] == rebuilt_counts["tournaments"]
     assert inc_counts["metric_counts"] == rebuilt_counts["metric_counts"]
+
+
+# ---------------------------------------------------------------------------
+# generations table — parent + promoted flags from the experiment
+# ---------------------------------------------------------------------------
+
+
+def _row_dict(row: Any) -> dict[str, Any]:
+    """Convert a :class:`sqlite3.Row` to a plain dict for ergonomic asserts."""
+    return {k: row[k] for k in row.keys()}
+
+
+def _build_chain_workspace(tmp_path: Path) -> tuple[Path, str]:
+    """Build a workspace mirroring the t6 chain: v0 seed, v1 promoted, v2 rejected, v3 promoted.
+
+    The lineage row for v0 is the only one seeded ahead of the
+    per-generation ingests — v1/v2/v3 land via ``ingest_experiment``
+    BEFORE ``append_to_lineage`` runs (the live orchestrator ordering
+    that originally produced the broken rows). This exercises the
+    fixed dual-write path: the experiment is the authoritative source
+    of the generation's parent + promoted flag.
+    """
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", ' '"wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# rubric\n", encoding="utf-8")
+
+    cfg = new_epoch(ws, "presn", board, rubric, ScoringWeights())
+    eid = cfg.id
+
+    # The seed v0 is registered in lineage (no experiment); the dual-
+    # write path for v0 only sees lineage. Calling ingest_experiment on
+    # v0 is the orchestrator's idiom for the seed — the experiment file
+    # is absent so it's a no-op for the experiments table, but the
+    # owning epoch + generation rows still land.
+    g0 = Generation(
+        id="v0",
+        epoch_id=eid,
+        parent_id=None,
+        snapshot_root=Path("/tmp/snap/v0"),
+        created_at="2026-05-20T00:00:00Z",
+        promoted=True,
+    )
+    append_to_lineage(ws, eid, g0, None)
+    ingest_experiment(ws, None, eid, "v0")
+
+    # v1 — promoted challenger of v0. Write the experiment FIRST,
+    # ingest it, THEN append to lineage — mirrors orchestrator order.
+    exp_v1 = make_experiment(
+        epoch_id=eid,
+        generation_id="v1",
+        parent_generation_id="v0",
+        proposed_at="2026-05-20T00:01:00Z",
+        patches=(make_patch(id="patch_v1"),),
+        outcome=make_outcome_record(tournament_decision="promoted"),
+    )
+    write_experiment(ws, eid, "v1", exp_v1)
+    ingest_experiment(ws, None, eid, "v1")
+    g1 = Generation(
+        id="v1",
+        epoch_id=eid,
+        parent_id="v0",
+        snapshot_root=Path("/tmp/snap/v1"),
+        created_at="2026-05-20T00:02:00Z",
+        promoted=True,
+    )
+    append_to_lineage(ws, eid, g1, "v0")
+
+    # v2 — rejected challenger of v1.
+    exp_v2 = make_experiment(
+        epoch_id=eid,
+        generation_id="v2",
+        parent_generation_id="v1",
+        proposed_at="2026-05-20T00:03:00Z",
+        patches=(make_patch(id="patch_v2"),),
+        outcome=make_outcome_record(
+            tournament_decision="rejected",
+            rejection_reason="scalar regressed",
+            scalar_score_delta=-0.04,
+        ),
+    )
+    write_experiment(ws, eid, "v2", exp_v2)
+    ingest_experiment(ws, None, eid, "v2")
+    g2 = Generation(
+        id="v2",
+        epoch_id=eid,
+        parent_id="v1",
+        snapshot_root=Path("/tmp/snap/v2"),
+        created_at="2026-05-20T00:04:00Z",
+        promoted=False,
+    )
+    append_to_lineage(ws, eid, g2, "v1")
+
+    # v3 — promoted challenger of v1 (the surviving champion).
+    exp_v3 = make_experiment(
+        epoch_id=eid,
+        generation_id="v3",
+        parent_generation_id="v1",
+        proposed_at="2026-05-20T00:05:00Z",
+        patches=(make_patch(id="patch_v3"),),
+        outcome=make_outcome_record(tournament_decision="promoted"),
+    )
+    write_experiment(ws, eid, "v3", exp_v3)
+    ingest_experiment(ws, None, eid, "v3")
+    g3 = Generation(
+        id="v3",
+        epoch_id=eid,
+        parent_id="v1",
+        snapshot_root=Path("/tmp/snap/v3"),
+        created_at="2026-05-20T00:06:00Z",
+        promoted=True,
+    )
+    append_to_lineage(ws, eid, g3, "v1")
+
+    return ws, eid
+
+
+def test_ingest_experiment_writes_parent_and_promoted_from_experiment(
+    tmp_path: Path,
+) -> None:
+    """The live dual-write must carry parent + promoted, even when lineage is stale.
+
+    Reproduces the t6 ordering: ``experiment.json`` is written and
+    ingested BEFORE ``append_to_lineage`` runs, so the lineage-only
+    read at dual-write time misses the row. The experiment itself is
+    authoritative for the generation's parent + verdict, so the index
+    must use it.
+    """
+    ws, eid = _build_chain_workspace(tmp_path)
+    rows = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(ws / "index.db", eid)}
+
+    # v0 — seeded via lineage only, no experiment.
+    assert rows["v0"]["parent_generation_id"] is None
+    assert rows["v0"]["promoted"] == 1
+
+    # v1 — promoted challenger of v0.
+    assert rows["v1"]["parent_generation_id"] == "v0"
+    assert rows["v1"]["promoted"] == 1
+
+    # v2 — rejected challenger of v1: parent is recorded, promoted=0.
+    assert rows["v2"]["parent_generation_id"] == "v1"
+    assert rows["v2"]["promoted"] == 0
+
+    # v3 — promoted challenger of v1 (NOT v2, which was rejected).
+    assert rows["v3"]["parent_generation_id"] == "v1"
+    assert rows["v3"]["promoted"] == 1
+
+
+def test_ingest_experiment_generation_row_is_idempotent(tmp_path: Path) -> None:
+    """Re-running ingest_experiment must not flip the parent / promoted flag.
+
+    The chain builder mirrors the orchestrator's order (ingest fires
+    before lineage is appended), so the first ingest writes empty
+    ``created_at`` values; a re-ingest after lineage has caught up
+    fills them in. Compare only the two columns the experiment owns
+    authoritatively — the parent + the verdict — which are exactly
+    what was broken on t6.
+    """
+    ws, eid = _build_chain_workspace(tmp_path)
+
+    def _critical_cols() -> dict[str, tuple[Any, int]]:
+        return {
+            r["generation_id"]: (r["parent_generation_id"], int(r["promoted"]))
+            for r in generations_for_epoch(ws / "index.db", eid)
+        }
+
+    first = _critical_cols()
+    for gid in ("v1", "v2", "v3"):
+        ingest_experiment(ws, None, eid, gid)
+    second = _critical_cols()
+    assert first == second
+    # And a third pass is still identical — true idempotency.
+    for gid in ("v1", "v2", "v3"):
+        ingest_experiment(ws, None, eid, gid)
+    assert _critical_cols() == second
+
+
+def test_ingest_experiment_unresolved_outcome_leaves_promoted_unset(
+    tmp_path: Path,
+) -> None:
+    """A proposer-side experiment (outcome=None) writes promoted=0 and parent set."""
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# r\n", encoding="utf-8")
+    cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
+    eid = cfg.id
+    # Note: NO lineage row for v1 yet — the proposer-side write fires
+    # before lineage is updated.
+    exp = make_experiment(
+        epoch_id=eid,
+        generation_id="v1",
+        parent_generation_id="v0",
+        outcome=None,
+    )
+    write_experiment(ws, eid, "v1", exp)
+    ingest_experiment(ws, None, eid, "v1")
+
+    rows = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(ws / "index.db", eid)}
+    assert rows["v1"]["parent_generation_id"] == "v0"
+    assert rows["v1"]["promoted"] == 0
+
+
+# ---------------------------------------------------------------------------
+# backfill_generations
+# ---------------------------------------------------------------------------
+
+
+def _corrupt_generations_table(db_path: Path) -> None:
+    """Mimic the t6 symptom: parent NULL on every row, promoted=0 except v0."""
+    import sqlite3 as _sqlite3
+
+    conn = _sqlite3.connect(str(db_path))
+    try:
+        conn.execute("UPDATE generations SET parent_generation_id = NULL")
+        conn.execute(
+            "UPDATE generations SET promoted = CASE WHEN generation_id = 'v0' " "THEN 1 ELSE 0 END"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_backfill_repairs_broken_generations_table(tmp_path: Path) -> None:
+    """Build the chain, corrupt the index rows, then run the backfill.
+
+    The disk files (lineage.json + per-generation experiment.json) are
+    left correct; only the SQLite rows are mangled to match the t6
+    symptom. After ``backfill_generations`` the rows should agree with
+    disk.
+    """
+    ws, eid = _build_chain_workspace(tmp_path)
+    db = ws / "index.db"
+    _corrupt_generations_table(db)
+    # Sanity-check the corruption matched the t6 symptom.
+    corrupted = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}
+    assert corrupted["v0"]["promoted"] == 1
+    assert corrupted["v1"]["promoted"] == 0
+    assert corrupted["v3"]["promoted"] == 0
+    for gid in ("v0", "v1", "v2", "v3"):
+        assert corrupted[gid]["parent_generation_id"] is None
+
+    result = backfill_generations(ws)
+    assert result["scanned"] == 4
+    # v0 was already correct (promoted=1, parent NULL is right for the
+    # seed); v1, v2, v3 needed a rewrite.
+    assert result["updated"] == 3
+
+    repaired = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}
+    assert repaired["v0"]["parent_generation_id"] is None
+    assert repaired["v0"]["promoted"] == 1
+    assert repaired["v1"]["parent_generation_id"] == "v0"
+    assert repaired["v1"]["promoted"] == 1
+    assert repaired["v2"]["parent_generation_id"] == "v1"
+    assert repaired["v2"]["promoted"] == 0
+    assert repaired["v3"]["parent_generation_id"] == "v1"
+    assert repaired["v3"]["promoted"] == 1
+
+
+def test_backfill_is_idempotent(tmp_path: Path) -> None:
+    """A second backfill against a healthy index is a no-op."""
+    ws, eid = _build_chain_workspace(tmp_path)
+    db = ws / "index.db"
+    _corrupt_generations_table(db)
+    backfill_generations(ws)
+    second = backfill_generations(ws)
+    assert second["updated"] == 0
+    assert second["scanned"] == 4
+    # The table still matches disk.
+    rows = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}
+    assert rows["v3"]["parent_generation_id"] == "v1"
+    assert rows["v3"]["promoted"] == 1
+
+
+def test_backfill_handles_missing_db(tmp_path: Path) -> None:
+    """A workspace with no index.db yields a clean no-op result."""
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    result = backfill_generations(ws)
+    assert result == {"updated": 0, "scanned": 0}
+
+
+def test_backfill_recovers_champion_lineage_for_t6_chain(tmp_path: Path) -> None:
+    """The dashboard's champion-lineage walker recovers v0 -> v1 -> v3 after backfill.
+
+    Uses the canonical :func:`_champion_lineage` from the dashboard so
+    the test exercises the exact same logic the gauntlet's API surface
+    runs. Before the backfill (or before the writer fix) the rows lie
+    and the spine collapses to just ``v0``. After the backfill the
+    spine is the full champion chain.
+    """
+    from zicato.dashboard.state_reader import (  # noqa: PLC0415
+        _champion_lineage,  # type: ignore[attr-defined]
+    )
+
+    ws, eid = _build_chain_workspace(tmp_path)
+    db = ws / "index.db"
+    _corrupt_generations_table(db)
+
+    def _spine() -> list[str]:
+        rows = generations_for_epoch(db, eid)
+        return _champion_lineage([_row_dict(r) for r in rows])
+
+    # Before the backfill the spine collapses (the symptom on t6).
+    assert _spine() == ["v0"]
+    backfill_generations(ws)
+    # After the backfill the full champion chain is recoverable.
+    assert _spine() == ["v0", "v1", "v3"]

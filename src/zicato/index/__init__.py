@@ -31,7 +31,12 @@ read it concurrently while the orchestrator dual-writes new rows via
 
 from __future__ import annotations
 
-from zicato.index.ingest import ingest_experiment, ingest_run, rebuild_index
+from zicato.index.ingest import (
+    backfill_generations,
+    ingest_experiment,
+    ingest_run,
+    rebuild_index,
+)
 from zicato.index.query import open_index
 from zicato.index.schema import SCHEMA_VERSION
 
@@ -40,5 +45,6 @@ __all__ = [
     "rebuild_index",
     "ingest_run",
     "ingest_experiment",
+    "backfill_generations",
     "open_index",
 ]
