@@ -713,6 +713,10 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
     assert "Two experiments" in view["analysis_md"]
     assert "analysis_html_available" in view
     assert view["analysis_html_available"] is False
+    # The inline paper-styled HTML fragment ships alongside the markdown
+    # so the Epoch view can render the report as a paper card inline.
+    assert "analysis_html_inline" in view
+    assert "paper paper-card" in view["analysis_html_inline"]
 
 
 def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
@@ -732,6 +736,8 @@ def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:
     assert view["journal"] == ""
     assert view["analysis_md"] == ""
     assert view["analysis_html_available"] is False
+    # No analysis -> no inline fragment (empty string, not missing key).
+    assert view["analysis_html_inline"] == ""
 
 
 def test_epoch_view_analysis_html_available_flag(workspace: Path) -> None:
@@ -834,6 +840,18 @@ def test_epoch_analysis_endpoint(client: TestClient, workspace: Path) -> None:
     assert "Two experiments" in body["analysis_md"]
     assert "analysis_html_available" in body
     assert body["analysis_html_available"] is False
+    # The endpoint also returns a paper-styled inline HTML fragment so
+    # the Epoch view's Analysis section can render the report as a
+    # paper card inline (same renderer as the standalone analysis.html).
+    assert "analysis_html_inline" in body
+    assert "paper paper-card" in body["analysis_html_inline"]
+    # Inline fragment must be a fragment (no DOCTYPE), self-contained
+    # (carries its own scoped CSS) and free of external resources.
+    inline = body["analysis_html_inline"]
+    assert not inline.startswith("<!DOCTYPE")
+    assert "<style>" in inline
+    assert 'href="http' not in inline
+    assert 'src="http' not in inline
 
 
 def test_epoch_analysis_html_endpoint_present(client: TestClient, workspace: Path) -> None:

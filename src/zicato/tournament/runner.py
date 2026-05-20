@@ -1583,6 +1583,8 @@ async def run_fast_mode(
     epoch_id: str,
     parent_historical_agg: dict[str, Any],
     disable_drift: tuple[Any, ...] = (),
+    round_index: int = 0,
+    total_rounds: int = 0,
 ) -> TournamentResult:
     """Inline keep/discard against a historical aggregate.
 
@@ -1599,6 +1601,26 @@ async def run_fast_mode(
     ``disable_drift`` is the board-level drift-suppression set, stamped
     onto each board entry's context exactly as in :func:`run_tournament`;
     an empty tuple (the default) leaves the board entries untouched.
+
+    ``round_index`` / ``total_rounds`` are threaded through from the
+    orchestrator's evolve loop purely so the published
+    :class:`~zicato.runtime.state.ActiveTournament` can tell the
+    dashboard "round N of M". They default to ``0`` for callers (older
+    tests, ad-hoc invocations) that do not run inside the multi-round
+    loop; the runner's behaviour does not otherwise depend on them.
+
+    Mirrors :func:`run_tournament` in publishing an
+    :class:`~zicato.runtime.state.ActiveTournament` to the runtime
+    state before kicking off any runs and clearing it on exit, so the
+    dashboard's Tournament hall renders the live board entries for a
+    fast round (otherwise the hall would stay blank). Champion-side
+    rows are pre-filled from the cached ``parent_historical_agg["per_entry"]``
+    with ``status="cached"`` and the cached per-entry scalar in
+    ``loss_summary`` — they had no live run this round, but the
+    dashboard can still render the head-to-head delta against the
+    challenger's live result. ``partial_champion_agg`` is seeded with
+    the cached aggregate so the running partial table is meaningful
+    from the first frame.
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
@@ -1607,20 +1629,94 @@ async def run_fast_mode(
     # Same board-level disable_drift threading as the full A/B path.
     board = _stamp_disable_drift(board, disable_drift)
 
-    # Board-unit scheduling: each board entry is one unit, and a
-    # fast-mode unit runs ONLY the challenger (child) — the champion's
-    # cached aggregate is reused. ``config.parallelism`` bounds the
-    # number of board units in flight — up to ``parallelism`` run
-    # subprocesses at once (one challenger run per unit).
-    child_losses = await _run_board_units_fast(
-        adapter=adapter,
-        child_gen=child_gen,
-        board=board,
-        weights=weights,
-        config=config,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-    )
+    # Best-effort tournament-state publication for the live dashboard.
+    # Fast mode pre-fills both sides: the challenger rows are queued
+    # (they progress to running/completed via _run_single's existing
+    # update_tournament_entry calls), and the champion rows are stamped
+    # "cached" with the per-entry scalar already known from the cached
+    # aggregate. The dashboard hall renders the head-to-head delta the
+    # instant each challenger run settles, rather than staying blank
+    # until round end.
+    rt = _runtime_state()
+    parent_gen_id = str(parent_historical_agg.get("generation_id", ""))
+    if rt is not None:
+        state_mod, _ = rt
+        try:
+            from zicato.runtime.state import (  # noqa: PLC0415
+                ActiveTournament,
+                ActiveTournamentEntry,
+            )
+
+            now = _now_iso_utc()
+            cached_per_entry = parent_historical_agg.get("per_entry") or {}
+            child_entries = [
+                ActiveTournamentEntry(entry_id=e.id, side="child", status="queued") for e in board
+            ]
+            parent_entries: list[ActiveTournamentEntry] = []
+            for e in board:
+                cached = cached_per_entry.get(e.id) if isinstance(cached_per_entry, dict) else None
+                loss_summary: dict[str, float] = {}
+                if isinstance(cached, dict):
+                    drift = cached.get("drift_loss")
+                    if isinstance(drift, int | float):
+                        loss_summary["drift_loss"] = float(drift)
+                    pf = cached.get("pass_fail")
+                    if pf is not None:
+                        loss_summary["pass_fail"] = 1.0 if pf else 0.0
+                parent_entries.append(
+                    ActiveTournamentEntry(
+                        entry_id=e.id,
+                        side="parent",
+                        status="cached",
+                        completed_at=now,
+                        loss_summary=loss_summary,
+                    )
+                )
+            state_mod.write_active_tournament(
+                workspace_root,
+                ActiveTournament(
+                    tournament_id=f"tour-{parent_gen_id}-vs-{child_gen.id}-{now}",
+                    parent_generation_id=parent_gen_id,
+                    child_generation_id=child_gen.id,
+                    epoch_id=epoch_id,
+                    started_at=now,
+                    entries=parent_entries + child_entries,
+                    phase="running",
+                    round_index=round_index,
+                    total_rounds=total_rounds,
+                    # Seed the champion-side partial aggregate with the
+                    # cached aggregate so the running partial table is
+                    # meaningful from the first frame; the challenger
+                    # side fills in as boards settle (_IncrementalScorer).
+                    partial_champion_agg=dict(parent_historical_agg),
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    try:
+        # Board-unit scheduling: each board entry is one unit, and a
+        # fast-mode unit runs ONLY the challenger (child) — the
+        # champion's cached aggregate is reused. ``config.parallelism``
+        # bounds the number of board units in flight — up to
+        # ``parallelism`` run subprocesses at once (one challenger run
+        # per unit).
+        child_losses = await _run_board_units_fast(
+            adapter=adapter,
+            child_gen=child_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+        )
+    finally:
+        if rt is not None:
+            state_mod, _ = rt
+            try:
+                state_mod.clear_active_tournament(workspace_root)
+            except Exception:  # noqa: BLE001
+                pass
 
     child_agg = aggregate_generation_score(list(child_losses.values()), weights)
     outcome = await _gate_with_regression(
@@ -1634,7 +1730,7 @@ async def run_fast_mode(
     # Downstream code that wants to render per-entry deltas falls back
     # to the child losses inside ``child_agg["per_entry"]``.
     return TournamentResult(
-        parent_generation_id=str(parent_historical_agg.get("generation_id", "")),
+        parent_generation_id=parent_gen_id,
         child_generation_id=child_gen.id,
         parent_agg=parent_historical_agg,
         child_agg=child_agg,

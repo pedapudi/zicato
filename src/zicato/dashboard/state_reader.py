@@ -217,6 +217,12 @@ _ENTRY_STATUS_CANONICAL = {
     "complete": "done",
     "completed": "done",
     "finished": "done",
+    # Fast-mode champion rows: the run was not executed this round —
+    # the cached aggregate's per-entry scalar is reused. The dashboard
+    # buckets it with ``done`` (it is a settled side with a known
+    # scalar) but the producer's ``cached`` spelling is preserved on
+    # ``status_raw`` so the renderer can surface a distinct label.
+    "cached": "done",
     "failed": "failed",
     "fail": "failed",
     "error": "failed",
@@ -768,6 +774,10 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
       place without a second fetch.
     * ``journal`` — ``journal.md`` text (empty string when absent).
     * ``analysis_md`` — ``analysis.md`` text (empty string when absent).
+    * ``analysis_html_inline`` — paper-styled HTML fragment for the
+      Epoch view's inline Analysis section (empty string when no
+      report yet). Same renderer as the standalone ``analysis.html``
+      so both surfaces read as a paper.
     * ``analysis_html_available`` — ``True`` when ``analysis.html``
       exists on disk; the frontend can link directly to
       ``/api/epoch/{id}/analysis.html``.
@@ -815,8 +825,24 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
     view["journal"] = _read_text_best_effort(epoch_dir / "journal.md")
 
     # Analysis: the post-epoch analysis report.
-    view["analysis_md"] = _read_text_best_effort(epoch_dir / "analysis.md")
+    analysis_md = _read_text_best_effort(epoch_dir / "analysis.md")
+    view["analysis_md"] = analysis_md
     view["analysis_html_available"] = (epoch_dir / "analysis.html").is_file()
+    # Inline paper-styled HTML fragment so the Epoch view's Analysis
+    # section reads as a paper inline; best-effort — empty string if
+    # render fails or the analysis is not yet written.
+    view["analysis_html_inline"] = ""
+    if analysis_md.strip():
+        try:
+            from zicato.analyzer.report import render_report_html_fragment
+            from zicato.analyzer.report_data import gather_epoch_report_data
+
+            data = gather_epoch_report_data(paths.root, epoch_id)
+            view["analysis_html_inline"] = render_report_html_fragment(
+                epoch_id, analysis_md, data=data
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            view["analysis_html_inline"] = ""
 
     return view
 

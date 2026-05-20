@@ -20,6 +20,11 @@ test('entryStatus maps every terminal spelling to done', () => {
   assertEqual(entryStatus({ status: 'COMPLETED' }), 'done', 'case-insensitive');
   assertEqual(entryStatus({ status: 'in_progress' }), 'running');
   assertEqual(entryStatus({ status: 'aborted' }), 'failed');
+  // A fast-mode champion side carries `cached` — the cached
+  // per-entry scalar is reused; it buckets with `done` (settled, with
+  // a known scalar) even though no run executed this round.
+  assertEqual(entryStatus({ status: 'cached' }), 'done',
+    'cached buckets with done');
   assertEqual(entryStatus({}), 'queued', 'absent status falls back to queued');
 });
 

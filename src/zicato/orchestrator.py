@@ -770,6 +770,8 @@ async def evolve_once(
             epoch_id=resolved_epoch_id,
             parent_historical_agg=parent_historical,
             disable_drift=disable_drift,
+            round_index=round_index,
+            total_rounds=total_rounds,
         )
     else:
         tournament_result = await run_tournament(

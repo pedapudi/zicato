@@ -496,6 +496,85 @@ test('gauntlet: 2026-05-19_presn shape — v0 spine, v1 discarded, v2 incomplete
     'v2 must NOT read as discarded — it is an aborted / in-progress node');
 });
 
+test('gauntlet: a live fast-mode challenger reads as live, NOT incomplete', () => {
+  // Regression: a fast-mode tournament round did not publish an
+  // ActiveTournament; the gauntlet then synthesized a torn-down node
+  // for the actively-running challenger (a non-baseline,
+  // not-yet-promoted generation whose parent is the champion). The
+  // runner now publishes the record, so the live challenger surfaces
+  // at the head of the bracket — NOT as an amber incomplete node.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: '2026-05-19_presn',
+    champion_lineage: ['v0'],
+    matchups: [],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, promoted: true },
+      // v2 ran (or is running) but has no matchup row yet — the only
+      // distinguishing signal that it is LIVE, not torn down, is the
+      // active-tournament record.
+      { generation_id: 'v2', parent_generation_id: 'v0', promoted: null },
+    ],
+    experiments: [],
+  };
+  // The fast-mode active-tournament shape the runner now publishes:
+  // both sides present, champion entries cached, child entries live.
+  state.activeTournament = {
+    tournament_id: 'tour-v0-vs-v2',
+    parent_generation_id: 'v0',
+    child_generation_id: 'v2',
+    epoch_id: '2026-05-19_presn',
+    started_at: '2026-05-19T05:00:00Z',
+    round_index: 1,
+    total_rounds: 3,
+    phase: 'running',
+    entries: [
+      { entry_id: 'a', side: 'parent', status: 'done',
+        status_raw: 'cached', loss_summary: { drift_loss: 2.2, pass_fail: 1.0 } },
+      { entry_id: 'b', side: 'parent', status: 'done',
+        status_raw: 'cached', loss_summary: { drift_loss: 1.8, pass_fail: 0.0 } },
+      { entry_id: 'a', side: 'child', status: 'running', status_raw: 'running' },
+      { entry_id: 'b', side: 'child', status: 'queued', status_raw: 'queued' },
+    ],
+    partial_champion_agg: { drift_loss_mean: 2.0, pass_rate: 0.5,
+      scalar: 2.0, entry_count: 2 },
+    partial_challenger_agg: {},
+  };
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  // The hall renders the per-board cards — the dashboard is no longer
+  // blank for the fast round.
+  const cards = byClass(bracket, 'board-card');
+  assertEqual(cards.length, 2,
+    `the hall must render one card per board entry, got ${cards.length}`);
+
+  // The live challenger is NOT also synthesised as an aborted node:
+  // bracketModel's liveChild guard skips v2 when it is the active
+  // tournament's challenger.
+  const aborted = byClass(bracket, 'bracket-aborted');
+  for (const node of aborted) {
+    assert(!node.textContent.includes('v2'),
+      `v2 must NOT render as an incomplete/aborted node — it is the live `
+        + `challenger. Got "${node.textContent}"`);
+  }
+
+  // The champion side reads as "cached" (the raw status), not bare
+  // "done", so the operator can tell the score is from the cache.
+  const cachedPills = byClass(bracket, 'pill-cached');
+  assertEqual(cachedPills.length, 2,
+    `every champion side must carry a cached pill, got ${cachedPills.length}`);
+  // The cached side surfaces the cached scalar in its score row.
+  const sideScores = byClass(bracket, 'board-side-score');
+  const cachedScores = sideScores.filter(
+    (n) => n.textContent.toLowerCase().includes('cached'),
+  );
+  assert(cachedScores.length >= 1,
+    `at least one cached side must surface "cached" copy, got ${cachedScores.length}`);
+});
+
 test('Overview is the environment home, NOT a duplicate tournament board', () => {
   state.applySnapshot(mockSnapshot());
   render.showView('overview');

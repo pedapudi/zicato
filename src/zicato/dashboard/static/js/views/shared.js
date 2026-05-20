@@ -17,6 +17,11 @@ const _ENTRY_STATUS_BUCKET = {
   queued: 'queued', pending: 'queued',
   running: 'running', in_progress: 'running', active: 'running',
   done: 'done', complete: 'done', completed: 'done', finished: 'done',
+  // Fast-mode champion rows: the run was not executed this round; the
+  // cached per-entry scalar is reused. Bucket with `done` (it has a
+  // known scalar) but the producer's `cached` spelling survives on
+  // status_raw, so a renderer can show a distinct label if it wants.
+  cached: 'done',
   failed: 'failed', fail: 'failed', error: 'failed', aborted: 'failed',
 };
 
