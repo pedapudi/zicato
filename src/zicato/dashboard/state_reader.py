@@ -217,6 +217,12 @@ _ENTRY_STATUS_CANONICAL = {
     "complete": "done",
     "completed": "done",
     "finished": "done",
+    # Fast-mode champion rows: the run was not executed this round —
+    # the cached aggregate's per-entry scalar is reused. The dashboard
+    # buckets it with ``done`` (it is a settled side with a known
+    # scalar) but the producer's ``cached`` spelling is preserved on
+    # ``status_raw`` so the renderer can surface a distinct label.
+    "cached": "done",
     "failed": "failed",
     "fail": "failed",
     "error": "failed",

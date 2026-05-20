@@ -1405,18 +1405,16 @@ def test_fast_mode_persists_running_partial_aggregate(
 ) -> None:
     """Fast mode scores each challenger-only board unit as it settles.
 
-    Fast mode runs only the challenger, so the partial aggregate carries
-    the child side only. The runner writes an ActiveTournament record
-    first so the per-board partial persist has a file to land on; the
-    final partial child aggregate must match the fast-mode
-    ``TournamentResult.child_agg``.
+    Fast mode publishes its OWN ActiveTournament before running (so the
+    dashboard's Tournament hall renders the live board entries instead
+    of staying blank). Each challenger-only board unit's loss folds into
+    the running partial-challenger aggregate via _IncrementalScorer; the
+    partial-champion aggregate is pre-seeded with the cached
+    parent_historical_agg so the dashboard's running partial table is
+    meaningful from the first frame. The tournament is cleared on
+    ``finally`` exit — capture it right before the clear runs.
     """
-    from zicato.runtime.state import (
-        ActiveTournament,
-        ActiveTournamentEntry,
-        read_active_tournament,
-        write_active_tournament,
-    )
+    from zicato.runtime.state import read_active_tournament
 
     child_gen = _make_generation(tmp_path, "v1", "v0")
     board = _board_of(3)
@@ -1426,32 +1424,33 @@ def test_fast_mode_persists_running_partial_aggregate(
     }
     _stub_run_single(monkeypatch, canned=canned)
 
-    # Fast mode does not itself publish an ActiveTournament; seed one so
-    # the per-board partial persist has a target file.
-    write_active_tournament(
-        tmp_path,
-        ActiveTournament(
-            tournament_id="t-fast",
-            parent_generation_id="v0",
-            child_generation_id="v1",
-            epoch_id="e0",
-            started_at="2026-05-18T00:00:00Z",
-            entries=[
-                ActiveTournamentEntry(entry_id=e.id, side="child", status="queued") for e in board
-            ],
-        ),
-    )
-
     parent_historical = {
         "drift_loss_mean": 3.0,
         "pass_rate": 1.0,
         "scalar": 3.0,
         "entry_count": 3,
         "expectation_count": 3,
-        "per_entry": {},
+        "per_entry": {e.id: {"drift_loss": 3.0, "pass_fail": True} for e in board},
         "namespace_aggregates": {},
         "scalar_components": {},
+        "generation_id": "v0",
     }
+
+    # The runner clears the active tournament on ``finally`` exit;
+    # monkeypatch clear_active_tournament to snapshot the final state.
+    captured: dict[str, Any] = {}
+    import zicato.runtime.state as _state_mod
+
+    real_clear = _state_mod.clear_active_tournament
+
+    def capturing_clear(workspace_root: Path) -> None:
+        snap = read_active_tournament(workspace_root)
+        if snap is not None:
+            captured["tournament"] = snap
+        real_clear(workspace_root)
+
+    monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
+
     config = _make_runtime_config(tmp_path)
     result = asyncio.run(
         run_fast_mode(
@@ -1466,12 +1465,220 @@ def test_fast_mode_persists_running_partial_aggregate(
         )
     )
 
-    t = read_active_tournament(tmp_path)
-    assert t is not None
+    t = captured["tournament"]
     # The running partial aggregate accumulated the challenger side; the
-    # champion side never ran, so its partial aggregate stays empty.
+    # champion side was pre-seeded from the cached historical aggregate.
     assert t.partial_challenger_agg.get("entry_count") == 3
-    assert t.partial_champion_agg == {}
+    assert t.partial_champion_agg.get("entry_count") == 3
+    assert t.partial_champion_agg.get("scalar") == 3.0
     # The persisted partial challenger aggregate converges on the final
     # fast-mode aggregate.
     assert t.partial_challenger_agg.get("scalar") == result.child_agg["scalar"]
+
+
+# ---------------------------------------------------------------------------
+# Fast-mode ActiveTournament publication (regression: a fast round must
+# not leave the dashboard's Tournament hall blank).
+# ---------------------------------------------------------------------------
+
+
+def test_run_fast_mode_publishes_active_tournament(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fast mode publishes an ActiveTournament for the dashboard.
+
+    Regression: ``_run_board_units_fast`` did not seed
+    :class:`~zicato.runtime.state.ActiveTournament`, so the dashboard's
+    Tournament hall stayed blank during a fast round and the gauntlet
+    mislabelled the actively-running challenger as ``INCOMPLETE``. The
+    runner now mirrors :func:`run_tournament`: it writes the record
+    before the first run and clears it on ``finally`` exit. The
+    challenger side is queued at start (the existing ``_run_single``
+    transitions drive it to ``running``/``completed``); the champion
+    side is stamped ``cached`` with the per-entry scalar already known
+    from ``parent_historical_agg["per_entry"]``.
+    """
+    from zicato.runtime.state import read_active_tournament, update_tournament_entry
+
+    child_gen = _make_generation(tmp_path, "v2", "v0")
+    board = _board_of(2)
+    canned = {
+        ("v2", e.id): _loss(generation_id="v2", entry_id=e.id, drift_loss=0.4, pass_fail=True)
+        for e in board
+    }
+
+    # Spy on ``_run_single``: record the ActiveTournament shape just
+    # after the challenger has gone "running" — i.e. mid-round, with at
+    # least one challenger entry actively running. This is the exact
+    # shape the dashboard's /api/environment would observe live.
+    midflight: dict[str, Any] = {}
+
+    async def fake_run_single(
+        *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+    ) -> LossProfile:
+        del adapter, weights, config, epoch_id
+        # Mirror the real ``_run_single``'s state writes.
+        update_tournament_entry(workspace_root, entry.id, side, status="running")
+        if "snapshot" not in midflight:
+            snap = read_active_tournament(workspace_root)
+            if snap is not None:
+                midflight["snapshot"] = snap
+        update_tournament_entry(workspace_root, entry.id, side, status="completed")
+        return canned[(generation.id, entry.id)]
+
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+
+    parent_historical = {
+        "drift_loss_mean": 2.0,
+        "pass_rate": 1.0,
+        "scalar": 2.0,
+        "entry_count": 2,
+        "expectation_count": 2,
+        "per_entry": {
+            board[0].id: {"drift_loss": 2.2, "pass_fail": True},
+            board[1].id: {"drift_loss": 1.8, "pass_fail": False},
+        },
+        "namespace_aggregates": {},
+        "scalar_components": {},
+        "generation_id": "v0",
+    }
+
+    config = _make_runtime_config(tmp_path)
+    asyncio.run(
+        run_fast_mode(
+            adapter=object(),
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            parent_historical_agg=parent_historical,
+            round_index=1,
+            total_rounds=3,
+        )
+    )
+
+    # An ActiveTournament was visible while at least one challenger run
+    # was running — the dashboard's Tournament hall has data to render.
+    assert (
+        "snapshot" in midflight
+    ), "fast-mode must publish ActiveTournament before any challenger run"
+    snap = midflight["snapshot"]
+    assert snap.parent_generation_id == "v0"
+    assert snap.child_generation_id == "v2"
+    assert snap.round_index == 1
+    assert snap.total_rounds == 3
+    # Both sides populated: 2 parent (cached) + 2 child rows.
+    parents = [e for e in snap.entries if e.side == "parent"]
+    children = [e for e in snap.entries if e.side == "child"]
+    assert {e.entry_id for e in parents} == {e.id for e in board}
+    assert {e.entry_id for e in children} == {e.id for e in board}
+    # Champion-side rows are cached with the per-entry scalar surfaced
+    # in ``loss_summary`` — the dashboard renders a head-to-head delta
+    # against the live challenger result without re-running the parent.
+    assert all(e.status == "cached" for e in parents)
+    by_id = {e.entry_id: e for e in parents}
+    assert by_id[board[0].id].loss_summary.get("drift_loss") == 2.2
+    assert by_id[board[0].id].loss_summary.get("pass_fail") == 1.0
+    assert by_id[board[1].id].loss_summary.get("drift_loss") == 1.8
+    assert by_id[board[1].id].loss_summary.get("pass_fail") == 0.0
+    # At least one challenger row is actively running mid-flight.
+    assert any(
+        e.status == "running" for e in children
+    ), "mid-flight snapshot must capture a running challenger row"
+
+    # The tournament is cleared on exit — the runner owns the lifecycle.
+    assert read_active_tournament(tmp_path) is None
+
+
+def test_run_fast_mode_challenger_progresses_through_running_then_completed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A fast-mode challenger row reaches `completed` by the time the
+    round finishes — and the live ``update_tournament_entry`` calls
+    succeed because the runner published the record up-front.
+    """
+    from zicato.runtime.state import read_active_tournament, update_tournament_entry
+
+    child_gen = _make_generation(tmp_path, "v2", "v0")
+    board = _board_of(2)
+    canned = {
+        ("v2", e.id): _loss(generation_id="v2", entry_id=e.id, drift_loss=0.4, pass_fail=True)
+        for e in board
+    }
+
+    async def fake_run_single(
+        *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+    ) -> LossProfile:
+        del adapter, weights, config, epoch_id
+        # The runner published the record up-front — these updates land.
+        update_tournament_entry(workspace_root, entry.id, side, status="running")
+        update_tournament_entry(workspace_root, entry.id, side, status="completed")
+        return canned[(generation.id, entry.id)]
+
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+
+    # Snapshot the tournament right before clear runs.
+    captured: dict[str, Any] = {}
+    import zicato.runtime.state as _state_mod
+
+    real_clear = _state_mod.clear_active_tournament
+
+    def capturing_clear(workspace_root: Path) -> None:
+        snap = read_active_tournament(workspace_root)
+        if snap is not None:
+            captured["tournament"] = snap
+        real_clear(workspace_root)
+
+    monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
+
+    parent_historical = {
+        "drift_loss_mean": 2.0,
+        "pass_rate": 1.0,
+        "scalar": 2.0,
+        "entry_count": 2,
+        "expectation_count": 2,
+        "per_entry": {e.id: {"drift_loss": 2.0, "pass_fail": True} for e in board},
+        "namespace_aggregates": {},
+        "scalar_components": {},
+        "generation_id": "v0",
+    }
+
+    config = _make_runtime_config(tmp_path)
+    asyncio.run(
+        run_fast_mode(
+            adapter=object(),
+            child_gen=child_gen,
+            board=board,
+            weights=ScoringWeights(),
+            config=config,
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            parent_historical_agg=parent_historical,
+        )
+    )
+
+    t = captured["tournament"]
+    children = [e for e in t.entries if e.side == "child"]
+    parents = [e for e in t.entries if e.side == "parent"]
+    # Every challenger row reached "completed"; every champion row stays
+    # "cached" — the runner only ever updates child rows in fast mode.
+    assert all(e.status == "completed" for e in children)
+    assert all(e.status == "cached" for e in parents)

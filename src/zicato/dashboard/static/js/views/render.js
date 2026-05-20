@@ -1795,12 +1795,22 @@ function boardSideHarmonografLink(entry, label, genId) {
 // progress bar (for a running side), and the scalar once the side is
 // done. An over-deadline running side turns the bar red.
 function renderBoardSide(label, side, entry, status, genId) {
-  const row = el('div', { class: 'board-side board-side-' + side + ' st-' + status });
+  // A fast-mode champion side was not executed this round — the
+  // cached per-entry scalar is reused. The status bucket is `done`
+  // (so it counts as settled), but the producer's `cached` spelling
+  // survives on entry.status_raw and we surface it as a distinct pill
+  // label so the operator can see "this number is from the cache".
+  const isCached = !!(entry && entry.status_raw && String(entry.status_raw).toLowerCase() === 'cached');
+  const pillLabel = isCached ? 'cached' : status;
+  const row = el('div', {
+    class: 'board-side board-side-' + side + ' st-' + status
+      + (isCached ? ' is-cached' : ''),
+  });
 
   const head = el('div', { class: 'board-side-head' }, [
     el('span', { class: 'board-side-label' }, [label]),
     el('span', { class: 'board-side-gen mono' }, [genId || '—']),
-    el('span', { class: 'pill pill-' + status }, [status]),
+    el('span', { class: 'pill pill-' + status + (isCached ? ' pill-cached' : '') }, [pillLabel]),
   ]);
   // Per-board / per-run harmonograf jump-off — a clearly-distinct
   // element on the side's header row, deep-linked by the run's ADK
@@ -1862,8 +1872,9 @@ function renderBoardSide(label, side, entry, status, genId) {
     // run is never mislabelled or shown bare just because the producer
     // wrote the score under a different key.
     const sc = boardEntryScalar(entry);
+    const leader = isCached ? 'cached' : 'done';
     row.appendChild(el('div', { class: 'board-side-score mono' }, [
-      sc != null ? 'done · scalar ' + fmtRate(sc) : 'done',
+      sc != null ? leader + ' · scalar ' + fmtRate(sc) : leader,
     ]));
   } else if (status === 'failed') {
     row.appendChild(el('div', { class: 'board-side-meta board-fail' }, [
