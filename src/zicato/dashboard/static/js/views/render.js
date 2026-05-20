@@ -68,12 +68,18 @@ function renderHeader() {
   const hb = state.heartbeat || {};
   // Generation + round come straight off the heartbeat — `generation_id`
   // ("v2") and `round_index` (an int). Fall back to the legacy header
-  // summary, then the em-dash placeholder.
+  // summary, then the em-dash placeholder. Every text write routes
+  // through patchText so the once-per-second header tick (independent of
+  // SSE deltas) never replaces a text node whose content has not
+  // changed — text selection inside the header, and unchanged downstream
+  // layout, survive each tick.
   const genId = hb.generation_id || state.epoch.generation;
   const roundIdx = (hb.round_index != null) ? hb.round_index : state.epoch.round;
-  $('epoch-id').textContent = 'epoch · ' + (state.epoch.id || '—');
-  $('generation-id').textContent = 'gen · ' + (genId != null && genId !== '' ? genId : '—');
-  $('round-id').textContent = 'round · ' + (roundIdx != null && roundIdx !== '' ? roundIdx : '—');
+  patchText($('epoch-id'), 'epoch · ' + (state.epoch.id || '—'));
+  patchText($('generation-id'),
+    'gen · ' + (genId != null && genId !== '' ? genId : '—'));
+  patchText($('round-id'),
+    'round · ' + (roundIdx != null && roundIdx !== '' ? roundIdx : '—'));
 
   // Elapsed = now − started_at. The heartbeat's `started_at` is the
   // run's start; `round_started_at` and the legacy `epoch_started_at`
@@ -83,16 +89,17 @@ function renderHeader() {
     || hb.round_started_at || hb.epoch_started_at;
   const startedMs = parseIso(startedRaw);
   if (isFinite(startedMs)) {
-    $('elapsed').textContent = fmtDuration((nowMs() - startedMs) / 1000);
+    patchText($('elapsed'), fmtDuration((nowMs() - startedMs) / 1000));
   } else {
-    $('elapsed').textContent = '—';
+    patchText($('elapsed'), '—');
   }
 
   const badge = $('health-badge');
-  badge.classList.remove('ok', 'warn', 'error', 'pending');
+  let badgeText = '';
+  let badgeKind = '';
   if (state.connecting) {
-    badge.classList.add('pending');
-    badge.textContent = 'connecting';
+    badgeKind = 'pending';
+    badgeText = 'connecting';
   } else if (state.connected) {
     // Stale = the last heartbeat is older than STALE_HEARTBEAT_MS.
     // `last_heartbeat` is the canonical field; `timestamp` is the
@@ -102,37 +109,45 @@ function renderHeader() {
     const hbMs = parseIso(hb.last_heartbeat != null ? hb.last_heartbeat : hb.timestamp);
     const stale = isFinite(hbMs) && (nowMs() - hbMs) > STALE_HEARTBEAT_MS;
     if (stale) {
-      badge.classList.add('warn');
-      badge.textContent = 'stale heartbeat';
+      badgeKind = 'warn';
+      badgeText = 'stale heartbeat';
     } else {
-      badge.classList.add('ok');
-      badge.textContent = 'healthy';
+      badgeKind = 'ok';
+      badgeText = 'healthy';
     }
   } else {
-    badge.classList.add('error');
-    badge.textContent = 'disconnected';
+    badgeKind = 'error';
+    badgeText = 'disconnected';
   }
+  // patchClass writes only when the presence must change — a steady
+  // 'ok' badge is left untouched across every 1Hz tick.
+  patchClass(badge, 'ok', badgeKind === 'ok');
+  patchClass(badge, 'warn', badgeKind === 'warn');
+  patchClass(badge, 'error', badgeKind === 'error');
+  patchClass(badge, 'pending', badgeKind === 'pending');
+  patchText(badge, badgeText);
 
   const mockBadge = $('mock-badge');
-  if (state.mock) mockBadge.classList.remove('hidden');
-  else mockBadge.classList.add('hidden');
+  patchClass(mockBadge, 'hidden', !state.mock);
 }
 
 function renderFooter() {
   // GET /api/health is the source of truth (version / port / build);
   // state.service mirrors it and stands in until /api/health lands.
+  // Every write goes through patchText so a no-op refresh (the common
+  // case once /api/health has landed) writes zero DOM nodes.
   const h = state.health || {};
   const pick = (a, b) => {
     if (a != null && a !== '') return a;
     if (b != null && b !== '') return b;
     return '—';
   };
-  $('dashboard-version').textContent =
-    'dashboard · ' + pick(h.version, state.service.version);
-  $('dashboard-port').textContent =
-    'port · ' + pick(h.port, state.service.port);
-  $('dashboard-build').textContent =
-    'build · ' + pick(h.build, state.service.build);
+  patchText($('dashboard-version'),
+    'dashboard · ' + pick(h.version, state.service.version));
+  patchText($('dashboard-port'),
+    'port · ' + pick(h.port, state.service.port));
+  patchText($('dashboard-build'),
+    'build · ' + pick(h.build, state.service.build));
 }
 
 // --- Render: active tournament
@@ -2316,11 +2331,86 @@ async function loadMatchupGrid(epochId, champId, genId) {
   if (currentView === 'tournament') renderMatchupDetail();
 }
 
+// A stable digest of every input that drives the matchup-detail panel.
+// Includes the selection, the live conversation data (so the inline
+// transcript columns grow when a turn lands) and the structural shape of
+// the matchup detail / drift movements / persisted grid. EXCLUDES purely
+// timestamp churn so an SSE tick with no real change leaves the subtree
+// — and its inner scroll position — untouched.
+function matchupDetailKey() {
+  const genId = state.selectedMatchup;
+  const live = liveMatchup();
+  const lc = live ? (liveChallengerId(live) || '') : '';
+  const champ = live ? (liveChampionId(live) || '') : '';
+  const detail = genId ? state.matchupDetail.get(genId) : null;
+  const dm = genId ? state.driftMovements[genId] : null;
+  const grid = genId ? matchupGrids.get(genId) : null;
+  const summary = genId ? matchupSummary(genId) : null;
+  const sig = [
+    'sel:' + (genId || ''),
+    'conv:' + (convEntryId || ''),
+    'convHas:' + (convData ? '1' : '0'),
+    'convErr:' + (convError ? '1' : '0'),
+    'live:' + lc + '/' + champ,
+    'liveEntries:' + (live && Array.isArray(live.entries) ? live.entries.length : 0),
+    'detail:' + (detail
+      ? (detail.decision || '') + '|' + (Array.isArray(detail.entry_grid)
+        ? detail.entry_grid.length : 0)
+        + '|' + (Array.isArray(detail.ab_grid) ? detail.ab_grid.length : 0)
+        + '|' + (Array.isArray(detail.patches) ? detail.patches.length : 0)
+        + '|' + (detail.scalar ? '1' : '0')
+      : ''),
+    'summary:' + (summary
+      ? (summary.decision || '') + '|' + (summary.delta_scalar != null
+        ? summary.delta_scalar : '')
+      : ''),
+    'drift:' + (dm && Array.isArray(dm.movements) ? dm.movements.length : ''),
+    'grid:' + (grid === 'pending' ? 'pending'
+      : grid && Array.isArray(grid.entry_grid)
+        ? 'g' + grid.entry_grid.length : ''),
+    // The transcript shape: turn counts per side. A real new turn flips
+    // the count; a no-op repaint does not. The exact text content stays
+    // out — turns array length is the structural shape.
+    'champTurns:' + (convData && convData.champion
+      && convData.champion.transcript
+      && Array.isArray(convData.champion.transcript.turns)
+        ? convData.champion.transcript.turns.length : ''),
+    'chalTurns:' + (convData && convData.challenger
+      && convData.challenger.transcript
+      && Array.isArray(convData.challenger.transcript.turns)
+        ? convData.challenger.transcript.turns.length : ''),
+    'champComplete:' + (convData && convData.champion
+      && convData.champion.transcript
+      && convData.champion.transcript.complete ? '1' : '0'),
+    'chalComplete:' + (convData && convData.challenger
+      && convData.challenger.transcript
+      && convData.challenger.transcript.complete ? '1' : '0'),
+  ];
+  return sig.join('|');
+}
+
 function renderMatchupDetail() {
   const wrap = $('tournament-detail');
   if (!wrap) return;
-  clearChildren(wrap);
+  // The panel is routed through swapIfChanged: a no-op SSE repaint with
+  // the same key leaves the whole subtree alone — and with it, the
+  // user's scroll position inside the conversation diff, any text
+  // selection, focus and hover state. The build path below is identical
+  // to what the prior clear-and-rebuild did; only the gate is new.
+  swapIfChanged(wrap, matchupDetailKey(), () => {
+    const frag = document.createElement('div');
+    frag.setAttribute('class', 'matchup-detail-host');
+    _populateMatchupDetail(frag);
+    // Return the children, not the wrapper itself — swapIfChanged
+    // accepts an array of nodes for a multi-child swap, which keeps the
+    // visible layout identical to the prior direct-append version.
+    return [...frag.childNodes];
+  });
+}
 
+// Build the matchup-detail panel's contents into `wrap`. Pure builder —
+// no swapIfChanged gating; the caller is responsible for that.
+function _populateMatchupDetail(wrap) {
   const genId = state.selectedMatchup;
   if (!genId) {
     // A board card in the hall was clicked — the route is
@@ -5430,15 +5520,66 @@ function renderMutationDiff(baselineText, patchedText) {
   return block;
 }
 
+// A stable digest of every input that drives the Conversation view.
+// Mirrors matchupDetailKey: identical key -> the whole subtree (and the
+// vertical scroll position of the transcript columns) is left alone.
+function conversationViewKey() {
+  const entryId = convEntryId;
+  if (!entryId) return 'none';
+  if (convError) return 'err:' + entryId;
+  const conv = convData;
+  if (!conv) return 'loading:' + entryId;
+  const c = conv.champion && conv.champion.transcript;
+  const d = conv.challenger && conv.challenger.transcript;
+  return 'conv:' + entryId
+    + '|champTurns:' + (c && Array.isArray(c.turns) ? c.turns.length : '')
+    + '|champComplete:' + (c && c.complete ? '1' : '0')
+    + '|chalTurns:' + (d && Array.isArray(d.turns) ? d.turns.length : '')
+    + '|chalComplete:' + (d && d.complete ? '1' : '0');
+}
+
 // Render the Conversation view: a header, then two transcript columns.
 // While a run is still in progress this also schedules the next live
 // re-fetch — renderConversationView is reached on every SSE-driven
 // renderAll(), so this is the view's live loop.
+//
+// Routed through swapIfChanged so a no-op SSE repaint with no new turn
+// leaves the subtree — and the user's scroll position inside the
+// transcript columns — untouched. The live-poll scheduling runs whether
+// or not the build path runs; the throttle inside loadConversation is
+// what guards against fan-out.
 function renderConversationView() {
   const wrap = $('conversation-panel');
   if (!wrap) return;
-  clearChildren(wrap);
 
+  swapIfChanged(wrap, conversationViewKey(), () => {
+    const frag = document.createElement('div');
+    _populateConversationView(frag);
+    return [...frag.childNodes];
+  });
+
+  // Live loop runs OUTSIDE swapIfChanged — a no-op DOM render must still
+  // schedule the next fetch so a new turn lands.
+  const entryId = convEntryId;
+  const conv = convData;
+  if (entryId && conv && !state.mock && convInProgress(conv)) {
+    const since = Date.now() - convLastFetch;
+    if (since >= CONV_POLL_MS) {
+      loadConversation();
+    } else {
+      setTimeout(() => {
+        if (currentView === 'conversation' && convEntryId === entryId
+            && convInProgress(convData)) {
+          loadConversation();
+        }
+      }, CONV_POLL_MS - since);
+    }
+  }
+}
+
+// Pure builder for the Conversation view's contents — called from
+// renderConversationView under a swapIfChanged gate.
+function _populateConversationView(wrap) {
   const entryId = convEntryId;
 
   // The back link always returns to the Tournament view — the
@@ -5504,24 +5645,6 @@ function renderConversationView() {
     renderTranscriptColumn('challenger', challenger),
   ]);
   wrap.appendChild(cols);
-
-  // --- Live loop: while a run is still producing turns, schedule the
-  // next re-fetch. renderAll() (SSE-driven) re-enters this function and
-  // keeps the poll alive; the throttle keeps it from hammering when
-  // state_change ticks arrive fast.
-  if (!state.mock && convInProgress(conv)) {
-    const since = Date.now() - convLastFetch;
-    if (since >= CONV_POLL_MS) {
-      loadConversation();
-    } else {
-      setTimeout(() => {
-        if (currentView === 'conversation' && convEntryId === entryId
-            && convInProgress(convData)) {
-          loadConversation();
-        }
-      }, CONV_POLL_MS - since);
-    }
-  }
 }
 
 // Render one transcript column for a side ({ run_id, generation_id,
@@ -5759,8 +5882,249 @@ function renderActiveView() {
 }
 
 // --- Top-level render
+//
+// The SSE feed fires a `state:changed` event roughly every second (a
+// heartbeat tick, a `checked_at` refresh, an event timestamp on the run
+// log, etc.). Many of those mutations do not change anything the user is
+// actually looking at — the header clock ticks once per second already,
+// independently of the SSE feed, and stale `checked_at` timestamps churn
+// regardless of whether a finding moved. Re-running the whole render
+// tree on every tick is what was clearing text selection and resetting
+// inner scroll containers (most visibly the matchup-detail conversation
+// diff) ~1Hz across the whole UI.
+//
+// The fix is structural: compute a STABLE digest of every state field
+// that legitimately drives what the view paints — but exclude purely-
+// timestamp churn — and short-circuit renderAll when the digest has not
+// changed. The header is still re-painted (its 1Hz elapsed-clock tick
+// runs through a separate setInterval and routes through patchText, so
+// an unchanged value writes nothing). A no-op SSE repaint then touches
+// ZERO DOM nodes — selection, scroll position, focus, hover all survive.
+//
+// A genuine state change always passes the gate.
+
+let _lastRenderDigest = null;
+
+// Build a stable digest of every state field that legitimately changes
+// what the dashboard paints. Excludes:
+//   * heartbeat.last_heartbeat / .timestamp — re-stamped each tick; the
+//     header reads stale-ness from them but a 1Hz independent renderHeader
+//     handles that.
+//   * heartbeat.harmonograf_url — included (legitimately moves view).
+//   * healthReport.checked_at — re-stamped each report.
+//   * run-log per-event timestamps — included only via logCursor, so a
+//     new event triggers a render but a timestamp-only refresh does not.
+//
+// The digest is order-stable JSON over the relevant fields. The cost is
+// O(state size) once per SSE tick — negligible compared to a full repaint.
+function _relevantStateDigest() {
+  const hb = state.heartbeat || {};
+  // Drop the churning timestamp fields; keep the structural ones.
+  const hbDigest = {
+    generation_id: hb.generation_id || null,
+    round_index: hb.round_index != null ? hb.round_index : null,
+    started_at: hb.started_at || null,
+    round_started_at: hb.round_started_at || null,
+    epoch_started_at: hb.epoch_started_at || null,
+    harmonograf_url: hb.harmonograf_url || null,
+    parallelism: typeof hb.parallelism === 'number' ? hb.parallelism : null,
+  };
+  // Health report sans `checked_at`; findings are the structural content.
+  const hr = state.healthReport;
+  const hrDigest = hr && typeof hr === 'object'
+    ? {
+      epoch_id: hr.epoch_id || null,
+      healthy: hr.healthy === true ? true : hr.healthy === false ? false : null,
+      findings: Array.isArray(hr.findings)
+        ? hr.findings.map((f) => ({
+          code: f && f.code || null,
+          severity: f && f.severity || null,
+          summary: f && f.summary || null,
+          // detail may be a string or object; either stringifies stably
+          detail: f && f.detail != null
+            ? (typeof f.detail === 'string' ? f.detail
+              : (() => {
+                try { return JSON.stringify(f.detail); }
+                catch { return String(f.detail); }
+              })())
+            : null,
+        }))
+        : null,
+    }
+    : null;
+  // Active tournament: identity, entries' status + score shape — never
+  // serializes a deep transcript. A finished entry shape is what drives
+  // re-render.
+  const at = state.activeTournament;
+  const atDigest = at && typeof at === 'object'
+    ? {
+      parent_id: at.parent_id || at.parent_generation_id || null,
+      child_id: at.child_id || at.child_generation_id || null,
+      round: at.round != null ? at.round : null,
+      entry_count: Array.isArray(at.entries) ? at.entries.length : 0,
+      // Per-entry shape that drives rendering (status + score), no ts.
+      entries: Array.isArray(at.entries)
+        ? at.entries.map((e) => ({
+          entry_id: e && e.entry_id || null,
+          side: e && e.side || null,
+          status: e && e.status || null,
+          score: boardEntryScalar(e),
+          adk_session_id: e && e.adk_session_id || null,
+        }))
+        : null,
+      partial_champion_agg: at.partial_champion_agg || null,
+      partial_challenger_agg: at.partial_challenger_agg || null,
+      hypothesis_core: at.hypothesis && at.hypothesis.core_idea || null,
+    }
+    : null;
+  // Lineage feed identity — generation list + their decision states.
+  const ln = state.lineage || {};
+  const lnGens = Array.isArray(ln.generations) ? ln.generations.map((g) => ({
+    id: genId(g), parent: genParentId(g),
+    epoch: g.epoch_id || g.epoch || null,
+    promoted: g.promoted,
+  })) : null;
+  const lnExps = Array.isArray(ln.experiments) ? ln.experiments.map((e) => ({
+    id: e.generation_id || null,
+    decision: e.outcome && (e.outcome.tournament_decision || e.outcome.decision) || null,
+    ds: e.outcome && e.outcome.scalar_score_delta != null
+      ? e.outcome.scalar_score_delta : null,
+  })) : null;
+  // Score trajectory points — every painted point.
+  const traj = state.scoreTrajectory && Array.isArray(state.scoreTrajectory.points)
+    ? state.scoreTrajectory.points.map((p) => ({
+      id: p.generation_id, v: p.scalar, promoted: p.promoted,
+    }))
+    : null;
+  // Bracket — champion lineage + matchup decisions.
+  const br = state.bracket || {};
+  const brDigest = {
+    epoch_id: br.epoch_id || null,
+    champion_lineage: Array.isArray(br.champion_lineage)
+      ? br.champion_lineage.slice() : null,
+    matchups: Array.isArray(br.matchups)
+      ? br.matchups.map((m) => ({
+        champion: m.champion || null,
+        challenger: m.challenger || null,
+        decision: m.decision || null,
+        delta_scalar: m.delta_scalar != null ? m.delta_scalar : null,
+      }))
+      : null,
+  };
+  // Matchup detail cache — per-gen identity + decision. The detail
+  // object's structural content (entry_grid length, scalar shape)
+  // becomes part of the digest so loading the detail re-renders, but a
+  // subsequent timestamp tick does not.
+  const mdArr = [];
+  for (const [g, d] of state.matchupDetail.entries()) {
+    mdArr.push({
+      g,
+      decision: d && d.decision || null,
+      grid: d && Array.isArray(d.entry_grid) ? d.entry_grid.length : 0,
+      abGrid: d && Array.isArray(d.ab_grid) ? d.ab_grid.length : 0,
+      hasScalar: !!(d && d.scalar),
+    });
+  }
+  mdArr.sort((a, b) => String(a.g).localeCompare(String(b.g)));
+  // Run-log: include cursor + event count + path. The per-event
+  // timestamps churn but the cursor + path + count is the structural
+  // identity the renderer uses.
+  const logEvents = state.logTail && Array.isArray(state.logTail.events)
+    ? state.logTail.events : [];
+  // Epoch definition — identity + size of the experiment list. The
+  // per-experiment outcome decision drives the renderer; collect those
+  // explicitly so a verdict landing on an experiment re-renders.
+  const def = state.epochDef;
+  const defDigest = def && typeof def === 'object' ? {
+    epoch_id: def.epoch_id || null,
+    closed: def.closed === true,
+    experiments: Array.isArray(def.experiments)
+      ? def.experiments.map((e) => ({
+        id: e.generation_id || null,
+        decision: e.outcome
+          && (e.outcome.tournament_decision || e.outcome.decision) || null,
+        ds: e.outcome && e.outcome.scalar_score_delta != null
+          ? e.outcome.scalar_score_delta : null,
+      }))
+      : null,
+    has_brief: !!(def.brief || def.rubric),
+    has_analysis: !!def.analysis_md,
+    analysis_html_available: !!def.analysis_html_available,
+    journal_len: def && typeof def.journal === 'string' ? def.journal.length : 0,
+  } : null;
+  // Files-view scratch + mutation-site scratch — selection drives renders.
+  const files = state.files || {};
+  const filesDigest = {
+    selected: files.selected || null,
+    openFile: files.openFile || null,
+    indexLen: files.index && Array.isArray(files.index.epochs)
+      ? files.index.epochs.length : 0,
+  };
+  const muts = state.mutations || {};
+  const mutDigest = {
+    epoch: muts.epochId || null,
+    selected: muts.selectedId || null,
+    has_index: !!muts.index,
+    has_detail: !!muts.detail,
+  };
+  // Selection + drill-down state.
+  const sel = {
+    view: currentView,
+    matchup: state.selectedMatchup || null,
+    entry: state.selectedEntry || null,
+    tournament: state.selectedTournament || null,
+    conv: convEntryId || null,
+    convHas: !!convData,
+    convErr: !!convError,
+  };
+  // Connection state — disconnected / connecting must paint a header.
+  const conn = {
+    connected: !!state.connected,
+    connecting: !!state.connecting,
+    mock: !!state.mock,
+  };
+  const driftKeys = Object.keys(state.driftMovements || {}).sort();
+  // Service identity — surfaces in the footer.
+  const svc = {
+    version: state.service.version, port: state.service.port, build: state.service.build,
+    health_version: state.health && state.health.version || null,
+    health_port: state.health && state.health.port || null,
+    health_build: state.health && state.health.build || null,
+  };
+  const payload = {
+    hb: hbDigest, hr: hrDigest, at: atDigest,
+    lnGens, lnExps, traj, br: brDigest, md: mdArr,
+    logCursor: state.logCursor != null ? state.logCursor : null,
+    logPath: state.logEventsPath || null,
+    logCount: logEvents.length,
+    def: defDigest, files: filesDigest, mut: mutDigest,
+    sel, conn, drift: driftKeys,
+    epoch: state.epoch && state.epoch.id || null,
+    epochs: Array.isArray(state.epochs) ? state.epochs.map(
+      (e) => ({ id: e && e.epoch_id || null, goal: e && e.goal || null })) : null,
+    svc,
+    route: typeof location !== 'undefined' && location && location.hash || '',
+  };
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    // A circular reference is impossible with the shapes above; fall
+    // back to a sentinel that always reads as "changed" so the gate
+    // never silently masks a real update.
+    return String(Math.random());
+  }
+}
 
 function renderAll() {
+  const digest = _relevantStateDigest();
+  if (digest === _lastRenderDigest) {
+    // Same data — skip the heavy panel render. The header's elapsed
+    // clock is ticked by its own 1Hz interval and routes through
+    // patchText, so a no-op SSE repaint produces ZERO DOM writes. Text
+    // selection, scroll position, focus and hover all survive.
+    return;
+  }
+  _lastRenderDigest = digest;
   renderHeader();
   renderFooter();
   renderActiveView();
