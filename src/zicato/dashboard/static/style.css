@@ -2192,18 +2192,23 @@ h4 {
   --paper-muted: var(--text-muted);
   --paper-rule: var(--border);
   --paper-soft-rule: var(--border);
+  --paper-hairline: var(--border);
   --paper-code-bg: var(--code-bg);
   --paper-accent: var(--accent-running);
   --paper-promoted: var(--accent-promoted);
   --paper-rejected: var(--accent-rejected);
   --paper-deferred: var(--accent-deferred);
+  --paper-incomplete: var(--accent-deferred);
   --paper-baseline: var(--accent-baseline);
   --paper-neutral: var(--text-muted);
+  --paper-predicted: var(--accent-baseline);
   --paper-figure-bg: var(--bg-elev);
   --paper-figure-grid: var(--border);
   --paper-figure-stripe-bg: var(--bg-elev);
   --paper-figure-near-zero: var(--bg-elev);
   --paper-table-zebra: rgba(255, 255, 255, 0.04);
+  --paper-callout-bg: rgba(255, 255, 255, 0.04);
+  --paper-callout-rule: var(--accent-running);
 }
 /* The fragment's .paper-article reserves its own padding; the card's
    role is only to provide the paper-tone surround. Shrink the

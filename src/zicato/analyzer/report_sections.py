@@ -56,23 +56,35 @@ def _fmt_num(value: float) -> str:
 
 
 def render_title_block(data: EpochReportData) -> str:
-    """Render the report title plus the paper-style metadata block.
+    """Render the report title plus the paper-style masthead block.
 
-    The title names the epoch; the metadata enumerates the contract
-    coordinates (epoch id, contract hash, generation span, status). The
-    HTML renderer turns the labelled list into a centred metadata
-    block beneath the title, in the style of an academic-paper masthead.
+    The masthead reads like an academic-paper cover: a small-caps eyebrow
+    naming the artifact, the epoch as the title, a thin rule, then a
+    structured metadata row covering the contract coordinates (epoch id,
+    contract hash, generation span, status, attempt counts). The HTML
+    renderer turns the structured metadata into a multi-column block
+    beneath the title via the ``<!-- META -->`` marker; each labelled
+    pair becomes one stacked label/value cell so the cover reads as a
+    real paper masthead rather than a flat sentence.
     """
     lines: list[str] = []
-    lines.append(f"# Epoch Analysis Report: {data.epoch_name}")
+    # The eyebrow marker tells the HTML renderer to emit a small-caps
+    # label above the title. Invisible in the markdown source.
+    lines.append("<!-- EYEBROW -->")
+    lines.append("Zicato improvement campaign · epoch analysis report")
+    lines.append("")
+    lines.append(f"# {data.epoch_name}")
     lines.append("")
     status = "closed" if data.closed else "in progress"
+    # The masthead metadata is rendered as labelled cells (one per
+    # entry). Each entry is written as a ``**Label**: value`` pair on
+    # its own line — the renderer splits these into stacked
+    # label-over-value cells inside a CSS-grid metadata block.
     meta_bits: list[str] = [
         f"**Epoch id**: `{data.epoch_id}`",
         f"**Status**: {status}",
-        f"**Generations attempted**: {data.attempted}",
-        f"**Promoted**: {data.promoted}",
-        f"**Rejected**: {data.rejected}",
+        f"**Generations**: {data.attempted} attempted · "
+        f"{data.promoted} promoted · {data.rejected} rejected",
     ]
     if data.deferred:
         meta_bits.append(f"**Deferred**: {data.deferred}")
@@ -277,6 +289,24 @@ def render_approach_section(data: EpochReportData) -> str:
     parts.append("Caption: Mutation surface — full enumeration.")
     parts.append("")
     parts.append(_render_mutation_surface_table(data.mutation_surface))
+    parts.append("")
+    parts.append("### Mutation-impact matrix")
+    parts.append("")
+    parts.append(
+        "The impact matrix shows which mutation sites each challenger "
+        "touched and the tournament outcome of that round. Rows are "
+        "mutation sites the campaign has actually addressed (untouched "
+        "sites are dropped); columns are challenger generations in lineage "
+        "order. A filled cell marks a patch at that site; the cell colour "
+        "is the round's outcome — promoted, rejected, or incomplete."
+    )
+    parts.append("")
+    parts.append(
+        "Caption: Mutation-impact matrix — exploration pattern across the "
+        "campaign, by site × generation × outcome."
+    )
+    parts.append("")
+    parts.append("<!-- FIGURE:mutation-impact-matrix -->")
     parts.append("")
     parts.append("### Lineage diagram")
     parts.append("")
@@ -536,6 +566,32 @@ def render_results_section(data: EpochReportData) -> str:
     parts.append("")
     parts.append(render_score_sparkline(data))
     parts.append("")
+    callout = _render_campaign_callout(data)
+    if callout:
+        parts.append(callout)
+        parts.append("")
+    parts.append("### Hypothesis vs outcome")
+    parts.append("")
+    parts.append(
+        "For every completed challenger, the figure pairs the proposer's "
+        "PREDICTED Δ (outlined, dashed) with the tournament's ACTUAL Δ "
+        "(filled, decision-coloured) on both pass rate and drift loss. "
+        "Predictions are projected onto the same axis the realised Δ "
+        "occupies: a textual `expected_pass_rate_delta` like "
+        '`"+0.05 to +0.15"` becomes its midpoint; an '
+        "`expected_drift_movements` entry's direction and magnitude bucket "
+        '(e.g. "decrease / moderate") becomes a signed magnitude on the '
+        "drift axis. The proposer's hit rate is the share of pairs that "
+        "point the same direction with comparable magnitude."
+    )
+    parts.append("")
+    parts.append(
+        "Caption: Proposer hypothesis vs tournament outcome — pass-rate "
+        "and drift-loss Δ, predicted (outlined) vs actual (filled)."
+    )
+    parts.append("")
+    parts.append("<!-- FIGURE:hypothesis-vs-outcome -->")
+    parts.append("")
     parts.append("### Drift-kind movements")
     parts.append("")
     parts.append(
@@ -587,6 +643,34 @@ def _coerce_float(value: object) -> float:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0.0
+
+
+def _render_campaign_callout(data: EpochReportData) -> str:
+    """Render a one-line deterministic callout summarising the campaign.
+
+    The callout sits in the Experimental Results section after the score
+    trajectory and highlights the headline number the operator cares
+    about: the cumulative scalar so far, and the promoted/attempted
+    ratio. It uses the ``<!-- CALLOUT:LABEL -->`` marker the HTML
+    renderer turns into a sidenote-style block.
+
+    Conservative: emits the empty string when there are no challengers
+    yet (no story to tell).
+    """
+    if data.attempted == 0:
+        return ""
+    final = data.final_scalar
+    direction = "improved" if final < 0 else ("regressed" if final > 0 else "held")
+    bits: list[str] = []
+    bits.append("<!-- CALLOUT:KEY OBSERVATION -->")
+    bits.append(
+        f"The promoted lineage's cumulative scalar has {direction} to "
+        f"`{final:+.3f}` after {data.attempted} challenger "
+        f"{'generation' if data.attempted == 1 else 'generations'} "
+        f"({data.promoted} promoted, {data.rejected} rejected). "
+        f"A lower scalar is better; the trajectory figure plots the path."
+    )
+    return "\n".join(bits)
 
 
 # ---------------------------------------------------------------------------

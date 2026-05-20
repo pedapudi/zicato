@@ -185,6 +185,9 @@ def _deterministic_sections(data: EpochReportData) -> str:
 _FIGURE_MARKER_PREFIX = "<!-- FIGURE:"
 _FIGURE_MARKER_SUFFIX = "-->"
 _META_MARKER = "<!-- META -->"
+_EYEBROW_MARKER = "<!-- EYEBROW -->"
+_CALLOUT_MARKER_PREFIX = "<!-- CALLOUT:"
+_CALLOUT_MARKER_SUFFIX = "-->"
 
 # A caption line precedes a figure or table block. The line is the
 # literal string ``Caption: <text>`` (or ``**Caption.** <text>``); the
@@ -309,7 +312,19 @@ def _render_md_table(rows: list[str], caption_html: str | None) -> str:
         parts.append(f"<th{cls}>{_inline_md_to_html(cell)}</th>")
     parts.append("</tr></thead><tbody>")
     for r in body_rows:
-        parts.append("<tr>")
+        # Decision-row highlight: any row whose cells include a bare
+        # ``promoted`` / ``rejected`` / ``deferred`` / ``baseline`` token
+        # picks up a matching ``row-*`` class so the same palette token
+        # used everywhere else paints a thin coloured edge on the row.
+        row_cls = ""
+        cell_values = {c.strip().lower() for c in r}
+        if "promoted" in cell_values:
+            row_cls = ' class="row-promoted"'
+        elif "rejected" in cell_values:
+            row_cls = ' class="row-rejected"'
+        elif "deferred" in cell_values:
+            row_cls = ' class="row-deferred"'
+        parts.append(f"<tr{row_cls}>")
         for ci in range(n_cols):
             cell = r[ci] if ci < len(r) else ""
             cls = ' class="num"' if align_right[ci] else ""
@@ -379,16 +394,74 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
         return c
 
     pending_meta = False  # next paragraph is the masthead metadata block
+    pending_eyebrow = False  # next paragraph is the masthead eyebrow line
+    masthead_open = False  # we have emitted an open <header class="paper-masthead">
+
+    def _open_masthead() -> None:
+        nonlocal masthead_open
+        if not masthead_open:
+            out.append('<header class="paper-masthead">')
+            masthead_open = True
+
+    def _close_masthead() -> None:
+        nonlocal masthead_open
+        if masthead_open:
+            out.append("</header>")
+            masthead_open = False
 
     while i < n:
         line = lines[i]
         stripped = line.strip()
+
+        # Eyebrow marker — small-caps line above the title.
+        if stripped == _EYEBROW_MARKER:
+            _close_list()
+            pending_eyebrow = True
+            i += 1
+            continue
 
         # Meta marker — the next paragraph is the masthead metadata.
         if stripped == _META_MARKER:
             _close_list()
             pending_meta = True
             i += 1
+            continue
+
+        # Callout marker: a one-paragraph margin pull-quote. The marker
+        # carries a short label like ``KEY FINDING``; the next paragraph
+        # is the quote body.
+        if stripped.startswith(_CALLOUT_MARKER_PREFIX) and stripped.endswith(
+            _CALLOUT_MARKER_SUFFIX
+        ):
+            _close_list()
+            label = stripped[len(_CALLOUT_MARKER_PREFIX) : -len(_CALLOUT_MARKER_SUFFIX)].strip()
+            # Consume the next non-blank paragraph as the callout body.
+            i += 1
+            while i < n and not lines[i].strip():
+                i += 1
+            body_lines: list[str] = []
+            while i < n:
+                nxt = lines[i].strip()
+                if (
+                    not nxt
+                    or nxt.startswith(("#", "- ", "* ", "```", "---", "***", "___"))
+                    or nxt.startswith(_FIGURE_MARKER_PREFIX)
+                    or nxt == _META_MARKER
+                    or nxt == _EYEBROW_MARKER
+                    or nxt.startswith(_CALLOUT_MARKER_PREFIX)
+                    or _is_caption_line(nxt)
+                    or "|" in nxt
+                ):
+                    break
+                body_lines.append(nxt)
+                i += 1
+            body_html = " ".join(_inline_md_to_html(p) for p in body_lines)
+            label_html = (
+                f'<span class="callout-label">{_inline_md_to_html(label)}</span>' if label else ""
+            )
+            out.append(
+                f'<aside class="paper-callout" role="note">' f"{label_html}{body_html}</aside>"
+            )
             continue
 
         # Figure marker — substitute inline SVG.
@@ -490,14 +563,18 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
             # for h2 / h3 / h4 — only sections inside the body get
             # numbered.
             if level == 1:
+                _open_masthead()
                 out.append(f"<h1>{_inline_md_to_html(content)}</h1>")
             elif level == 2 and content.strip().lower() == "abstract":
+                _close_masthead()
                 out.append(f'<h2 class="unnumbered">{_inline_md_to_html(content)}</h2>')
             elif 2 <= level <= 4:
+                _close_masthead()
                 num = _section_numbering_label(h_counters, level)
                 num_span = f'<span class="secnum">{num}</span> ' if num else ""
                 out.append(f"<h{level}>{num_span}{_inline_md_to_html(content)}</h{level}>")
             else:
+                _close_masthead()
                 out.append(f"<h{level}>{_inline_md_to_html(content)}</h{level}>")
             i += 1
             continue
@@ -522,26 +599,67 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
                 or nxt.startswith(("#", "- ", "* ", "```", "---", "***", "___"))
                 or nxt.startswith(_FIGURE_MARKER_PREFIX)
                 or nxt == _META_MARKER
+                or nxt == _EYEBROW_MARKER
+                or nxt.startswith(_CALLOUT_MARKER_PREFIX)
                 or _is_caption_line(nxt)
                 or "|" in nxt
             ):
                 break
             para.append(nxt)
             i += 1
-        if pending_meta:
-            # The masthead metadata block renders centred under the
-            # title, with line-broken labelled bits.
-            pending_meta = False
+        if pending_eyebrow:
+            # Small-caps eyebrow line above the title (set by render_title_block).
+            pending_eyebrow = False
+            _open_masthead()
             out.append(
-                '<div class="paper-meta">'
-                + "<br/>".join(_inline_md_to_html(p) for p in para)
+                '<div class="paper-eyebrow">'
+                + " ".join(_inline_md_to_html(p) for p in para)
                 + "</div>"
             )
+        elif pending_meta:
+            # The masthead metadata block: each paragraph-line of the
+            # form ``**Label**: value`` becomes a stacked label/value
+            # cell inside a CSS-grid metadata row.
+            pending_meta = False
+            _open_masthead()
+            cells: list[str] = []
+            for raw in para:
+                cells.append(_format_meta_cell(raw))
+            out.append('<div class="paper-meta">' + "".join(cells) + "</div>")
         else:
             out.append("<p>" + "<br/>".join(_inline_md_to_html(p) for p in para) + "</p>")
 
     _close_list()
+    _close_masthead()
     return "\n".join(out)
+
+
+def _format_meta_cell(raw: str) -> str:
+    """Render one ``**Label**: value`` masthead-metadata line as a labelled cell.
+
+    The masthead's metadata block lays out each labelled bit as a small
+    label-over-value cell (label in small caps muted, value in the body
+    colour). The renderer accepts the same ``**Label**: value`` markdown
+    the deterministic section emits and produces the structured cell —
+    on a parse miss the line falls back to a single inline span so the
+    masthead never loses information.
+    """
+    text = raw.strip()
+    # Strip the leading ``**Label**: `` if present.
+    if text.startswith("**"):
+        end = text.find("**", 2)
+        if end != -1:
+            label = text[2:end].strip()
+            rest = text[end + 2 :].lstrip(": \t")
+            label_html = _inline_md_to_html(label)
+            value_html = _inline_md_to_html(rest)
+            return (
+                f'<span class="meta-row">'
+                f"<strong>{label_html}</strong>"
+                f'<span class="meta-value">{value_html}</span>'
+                f"</span>"
+            )
+    return f'<span class="meta-row">{_inline_md_to_html(text)}</span>'
 
 
 # --- Academic-paper CSS ---------------------------------------------------
@@ -581,17 +699,28 @@ _PAPER_VARS = """
   --paper-muted: #5a5d63;
   --paper-rule: #c8cacd;
   --paper-soft-rule: #e6e7e9;
+  --paper-hairline: #d8d6cf;
   --paper-code-bg: #eeede7;
   --paper-accent: #2b4f7a;
   --paper-promoted: #2ea043;
   --paper-rejected: #d73a49;
   --paper-deferred: #bf8700;
+  --paper-incomplete: #bf8700;
   --paper-baseline: #6e7681;
   --paper-neutral: #8a8d91;
+  --paper-predicted: #6e7681;
   --paper-figure-bg: transparent;
   --paper-figure-grid: #d0d7de;
   --paper-figure-stripe-bg: #eef0f3;
-  --paper-table-zebra: rgba(0, 0, 0, 0.02);
+  --paper-table-zebra: rgba(0, 0, 0, 0.022);
+  --paper-callout-bg: rgba(43, 79, 122, 0.06);
+  --paper-callout-rule: var(--paper-accent);
+  --paper-font-body: 'Source Serif Pro', 'Source Serif 4', 'Charter',
+    'Iowan Old Style', 'Cambria', Georgia, 'Times New Roman', serif;
+  --paper-font-display: 'Inter', 'IBM Plex Sans', 'Helvetica Neue',
+    Helvetica, 'Segoe UI', Arial, sans-serif;
+  --paper-font-mono: 'JetBrains Mono', 'Source Code Pro', ui-monospace,
+    SFMono-Regular, Menlo, Consolas, monospace;
 }
 """.strip()
 
@@ -600,80 +729,136 @@ _PAPER_TYPOGRAPHY = """
 .paper {
   background: var(--paper-bg);
   color: var(--paper-text);
-  font-family: Georgia, 'Source Serif Pro', 'Cambria', 'Times New Roman', serif;
-  line-height: 1.55;
+  font-family: var(--paper-font-body);
+  line-height: 1.58;
   font-size: 16px;
   text-rendering: optimizeLegibility;
-  font-feature-settings: "kern" 1, "liga" 1;
+  font-feature-settings: "kern" 1, "liga" 1, "onum" 1;
   -webkit-font-smoothing: antialiased;
 }
 .paper-article {
   max-width: 760px;
   margin: 0 auto;
-  padding: 48px 36px 72px;
+  padding: 56px 44px 72px;
   text-align: justify;
   hyphens: auto;
 }
 .paper h1, .paper h2, .paper h3, .paper h4 {
-  font-family: 'Helvetica Neue', Helvetica, 'Inter', 'Segoe UI', Arial, sans-serif;
+  font-family: var(--paper-font-display);
   color: var(--paper-text);
   text-align: left;
-  line-height: 1.25;
+  line-height: 1.22;
+  font-feature-settings: "kern" 1, "liga" 1, "ss01" 1, "tnum" 1;
+}
+
+/* --- Masthead: title + metadata block ----------------------------------- */
+/* Multi-line composition: a small caps eyebrow naming the artifact, the
+   epoch name as the title, a thin rule, then the structured metadata
+   row. Reads as an actual paper cover rather than a flat heading. */
+.paper .paper-masthead {
+  margin: 0 0 28px;
+  padding: 0 0 18px;
+  border-bottom: 1px solid var(--paper-rule);
+  text-align: left;
+}
+.paper .paper-masthead .paper-eyebrow {
+  font-family: var(--paper-font-display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--paper-muted);
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-top: 1px solid var(--paper-hairline);
+  padding-top: 14px;
 }
 .paper h1 {
-  font-size: 28px;
-  margin: 0 0 6px 0;
+  font-size: 30px;
+  margin: 0 0 10px 0;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
+  line-height: 1.15;
 }
 .paper h2 {
-  font-size: 20px;
-  margin: 32px 0 10px 0;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--paper-soft-rule);
+  font-size: 19px;
+  margin: 36px 0 8px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--paper-hairline);
   font-weight: 600;
+  letter-spacing: -0.005em;
 }
 .paper h2.unnumbered {
   text-align: center;
   border-bottom: none;
   margin-top: 28px;
-  font-size: 14px;
-  letter-spacing: 0.18em;
+  font-size: 12px;
+  letter-spacing: 0.24em;
   text-transform: uppercase;
   color: var(--paper-muted);
   font-weight: 600;
 }
 .paper h3 {
-  font-size: 16px;
-  margin: 22px 0 8px 0;
-  font-weight: 600;
+  font-size: 12px;
+  margin: 22px 0 6px 0;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--paper-muted);
 }
 .paper h4 {
   font-size: 14px;
   margin: 18px 0 6px 0;
   font-weight: 600;
-  color: var(--paper-muted);
-  font-style: italic;
+  color: var(--paper-text);
+  font-style: normal;
+  letter-spacing: 0;
 }
 .paper h2 .secnum, .paper h3 .secnum, .paper h4 .secnum {
   display: inline-block;
-  min-width: 2.6em;
+  min-width: 2.4em;
   margin-right: 0.5em;
   color: var(--paper-muted);
   font-weight: 500;
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
+.paper h3 .secnum { color: var(--paper-baseline); }
 .paper p {
   margin: 10px 0;
   orphans: 2;
   widows: 2;
 }
+/* Abstract section: indented, italic, single drop cap. The drop-cap is
+   conservatively scoped to the FIRST paragraph after the unnumbered
+   Abstract heading, never beyond. */
+.paper h2.unnumbered + p {
+  margin: 14px auto 18px;
+  max-width: 92%;
+  text-indent: 0;
+  font-size: 15.5px;
+  line-height: 1.62;
+  color: var(--paper-text);
+}
+.paper h2.unnumbered + p::first-letter {
+  float: left;
+  font-family: var(--paper-font-display);
+  font-size: 3.4em;
+  line-height: 0.92;
+  font-weight: 700;
+  padding: 4px 8px 0 0;
+  color: var(--paper-accent);
+}
+/* Section openers — the first paragraph after a numbered h2 keeps a
+   generous lead-in and resets text-indent so the structured layout
+   reads cleanly even after a centred figure. */
+.paper h2 + p { margin-top: 12px; }
+
 .paper ul { margin: 10px 0; padding-left: 22px; text-align: left; }
 .paper li { margin: 4px 0; }
 .paper a { color: var(--paper-accent); text-decoration: none; }
 .paper a:hover { text-decoration: underline; }
 .paper code {
-  font-family: 'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--paper-font-mono);
   font-size: 0.86em;
   background: var(--paper-code-bg);
   padding: 1px 5px;
@@ -687,7 +872,7 @@ _PAPER_TYPOGRAPHY = """
   padding: 10px 14px;
   overflow-x: auto;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.45;
   text-align: left;
 }
 .paper pre code { background: none; padding: 0; }
@@ -699,52 +884,88 @@ _PAPER_TYPOGRAPHY = """
   margin: 28px 0;
 }
 
-/* --- Masthead: title + metadata block ----------------------------------- */
+/* --- Masthead metadata row ---------------------------------------------- */
 .paper .paper-meta {
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-family: var(--paper-font-display);
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--paper-muted);
-  text-align: center;
-  margin: 4px auto 26px;
-  padding: 8px 0 14px;
-  border-bottom: 1px solid var(--paper-soft-rule);
+  text-align: left;
+  margin: 0;
+  padding: 6px 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 4px 24px;
+  font-feature-settings: "tnum" 1, "lnum" 1;
 }
-.paper .paper-meta strong { color: var(--paper-text); }
+.paper .paper-meta strong {
+  color: var(--paper-text);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  display: block;
+  color: var(--paper-muted);
+}
+.paper .paper-meta .meta-row {
+  display: block;
+  padding: 4px 0;
+}
+.paper .paper-meta .meta-value {
+  display: block;
+  color: var(--paper-text);
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.paper .paper-meta code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.92em;
+  color: var(--paper-text);
+}
 
 /* --- Tables (paper style: thin top + bottom rules, no chunky borders) --- */
 .paper figure.paper-table {
-  margin: 16px 0 18px;
+  margin: 16px 0 22px;
   padding: 0;
   text-align: left;
 }
 .paper figure.paper-table > figcaption {
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  font-size: 12.5px;
+  font-family: var(--paper-font-display);
+  font-size: 12px;
   color: var(--paper-muted);
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   text-align: left;
+  letter-spacing: 0.01em;
 }
 .paper table {
   border-collapse: collapse;
   width: 100%;
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-family: var(--paper-font-display);
   font-size: 12.5px;
   margin: 0;
   text-align: left;
-  border-top: 1.2px solid var(--paper-text);
-  border-bottom: 1.2px solid var(--paper-text);
+  border-top: 1.3px solid var(--paper-text);
+  border-bottom: 1.3px solid var(--paper-text);
 }
-.paper table thead tr { border-bottom: 0.8px solid var(--paper-text); }
+.paper table thead tr { border-bottom: 0.7px solid var(--paper-text); }
 .paper table th, .paper table td {
-  padding: 5px 10px;
+  padding: 6px 11px;
   border: none;
   vertical-align: top;
+  line-height: 1.45;
 }
 .paper table th {
   font-weight: 600;
   text-align: left;
   background: transparent;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--paper-muted);
+  padding-top: 4px;
+  padding-bottom: 6px;
 }
 .paper table th.num, .paper table td.num {
   text-align: right;
@@ -754,10 +975,23 @@ _PAPER_TYPOGRAPHY = """
 .paper table tbody tr:nth-child(even) {
   background: var(--paper-table-zebra);
 }
+/* Table cell highlights for decision-coloured rows. Marker classes are
+   emitted by the section renderers; the paint flows from the same
+   palette tokens every figure uses, so a row reads as "promoted" or
+   "rejected" in one hue across the whole document. */
+.paper table td.cell-promoted, .paper table tbody tr.row-promoted td {
+  box-shadow: inset 3px 0 0 0 var(--paper-promoted);
+}
+.paper table td.cell-rejected, .paper table tbody tr.row-rejected td {
+  box-shadow: inset 3px 0 0 0 var(--paper-rejected);
+}
+.paper table td.cell-deferred, .paper table tbody tr.row-deferred td {
+  box-shadow: inset 3px 0 0 0 var(--paper-deferred);
+}
 
-/* --- Figures (inline SVG, caption below) ------------------------------- */
+/* --- Figures (inline SVG, caption below; borderless, consistent) ------- */
 .paper figure.paper-figure {
-  margin: 18px 0 20px;
+  margin: 22px 0 24px;
   padding: 0;
   text-align: center;
 }
@@ -768,19 +1002,49 @@ _PAPER_TYPOGRAPHY = """
   margin: 0 auto;
 }
 .paper figure.paper-figure > figcaption {
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  font-size: 12.5px;
+  font-family: var(--paper-font-display);
+  font-size: 12px;
   color: var(--paper-muted);
-  margin-top: 6px;
-  text-align: center;
+  margin-top: 8px;
+  text-align: left;
+  padding: 0 6%;
+  line-height: 1.5;
 }
-.paper .figlabel { font-weight: 600; color: var(--paper-text); }
+.paper .figlabel {
+  font-weight: 600;
+  color: var(--paper-text);
+  letter-spacing: 0.02em;
+}
 .paper .figure-placeholder {
   border: 1px dashed var(--paper-rule);
   padding: 18px;
   font-style: italic;
   color: var(--paper-muted);
   text-align: center;
+}
+
+/* --- Callout / pull-quote (one per Analysis section, conservative) ----- */
+.paper .paper-callout {
+  margin: 18px 0;
+  padding: 12px 16px 12px 18px;
+  background: var(--paper-callout-bg);
+  border-left: 3px solid var(--paper-callout-rule);
+  font-family: var(--paper-font-display);
+  font-size: 13.5px;
+  font-style: italic;
+  color: var(--paper-text);
+  line-height: 1.5;
+  border-radius: 0 3px 3px 0;
+}
+.paper .paper-callout .callout-label {
+  display: block;
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--paper-muted);
+  margin-bottom: 4px;
 }
 
 /* --- SVG defaults inside the paper -------------------------------------- */
@@ -793,23 +1057,43 @@ _PAPER_TYPOGRAPHY = """
   color: var(--paper-text);
 }
 .paper svg .svg-axis {
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-family: var(--paper-font-display);
   font-size: 10.5px;
   fill: var(--paper-muted);
 }
-.paper svg .svg-axislabel { font-size: 11px; }
+.paper svg .svg-axislabel {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--paper-text);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 .paper svg .svg-value {
   font-weight: 600;
   fill: var(--paper-text);
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
 .paper svg .svg-label {
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-family: var(--paper-font-display);
   font-size: 11px;
   fill: var(--paper-text);
 }
+.paper svg .svg-legend {
+  font-family: var(--paper-font-display);
+  font-size: 10px;
+  fill: var(--paper-muted);
+  letter-spacing: 0.03em;
+}
+.paper svg .svg-title {
+  font-family: var(--paper-font-display);
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--paper-text);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .paper svg .svg-mono {
-  font-family: 'Source Code Pro', ui-monospace, Menlo, monospace;
+  font-family: var(--paper-font-mono);
   font-size: 10.5px;
 }
 /* Decision colour tokens for SVG strokes/fills. Figures emit
@@ -821,10 +1105,14 @@ _PAPER_TYPOGRAPHY = """
 .paper svg .svg-rejected-fill   { fill: var(--paper-rejected); }
 .paper svg .svg-deferred-stroke { stroke: var(--paper-deferred); }
 .paper svg .svg-deferred-fill   { fill: var(--paper-deferred); }
+.paper svg .svg-incomplete-stroke { stroke: var(--paper-incomplete); }
+.paper svg .svg-incomplete-fill   { fill: var(--paper-incomplete); }
 .paper svg .svg-baseline-stroke { stroke: var(--paper-baseline); }
 .paper svg .svg-baseline-fill   { fill: var(--paper-baseline); }
 .paper svg .svg-neutral-stroke  { stroke: var(--paper-neutral); }
 .paper svg .svg-neutral-fill    { fill: var(--paper-neutral); }
+.paper svg .svg-predicted-stroke { stroke: var(--paper-predicted); }
+.paper svg .svg-predicted-fill   { fill: var(--paper-predicted); }
 .paper svg .svg-grid-stroke     { stroke: var(--paper-figure-grid); }
 .paper svg .svg-grid-fill       { fill: var(--paper-figure-grid); }
 .paper svg .svg-stripe-bg       { fill: var(--paper-figure-stripe-bg); }
@@ -838,12 +1126,14 @@ html, body { margin: 0; padding: 0; }
 body {
   background: #e9e7e1;
   min-height: 100vh;
-  padding: 24px 0;
+  padding: 32px 0 48px;
 }
 body > .paper {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08),
-              0 8px 24px rgba(0, 0, 0, 0.06);
+              0 12px 32px rgba(0, 0, 0, 0.07);
   border-radius: 2px;
+  max-width: 824px;
+  margin: 0 auto;
 }
 """.strip()
 

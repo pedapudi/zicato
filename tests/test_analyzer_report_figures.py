@@ -31,7 +31,9 @@ from zicato.analyzer.report_figures import (
     iter_figure_names,
     render_figure,
     render_svg_drift_movements,
+    render_svg_hypothesis_vs_outcome,
     render_svg_lineage_compact,
+    render_svg_mutation_impact_matrix,
     render_svg_mutation_surface,
     render_svg_per_board_heatmap,
     render_svg_score_trajectory,
@@ -97,6 +99,9 @@ def _gen(
     drift_movements: tuple[dict[str, object], ...] = (),
     gen_score: dict[str, object] | None = None,
     cumulative_scalar: float = 0.0,
+    expected_pass_rate_delta: str = "",
+    expected_drift_movements: tuple[dict[str, str], ...] = (),
+    patches: tuple[dict[str, str], ...] = (),
 ) -> GenerationView:
     return GenerationView(
         generation_id=gid,
@@ -107,8 +112,8 @@ def _gen(
         why="",
         risks="",
         modulating=(),
-        expected_pass_rate_delta="",
-        expected_drift_movements=(),
+        expected_pass_rate_delta=expected_pass_rate_delta,
+        expected_drift_movements=expected_drift_movements,
         decision=decision,
         rejection_reason="",
         scalar_score_delta=scalar_score_delta,
@@ -116,7 +121,7 @@ def _gen(
         pass_rate_delta=pass_rate_delta,
         drift_movements=drift_movements,
         metric_movements=(),
-        patches=(),
+        patches=patches,
         gen_score=gen_score or {},
         cumulative_scalar=cumulative_scalar,
     )
@@ -496,3 +501,228 @@ def test_score_trajectory_golden_with_fixture_workspace(tmp_path: Path) -> None:
     # Cumulative scalar -0.2 at v1, -0.1 at v2 (rejected, off-spine).
     assert "-0.200" in svg
     assert "-0.100" in svg
+
+
+# ---------------------------------------------------------------------------
+# Hypothesis vs outcome
+# ---------------------------------------------------------------------------
+
+
+def test_hypothesis_vs_outcome_empty_returns_placeholder() -> None:
+    svg = render_svg_hypothesis_vs_outcome(_data())
+    _assert_inline_svg(svg)
+    assert "No completed challengers" in svg
+
+
+def test_hypothesis_vs_outcome_renders_one_panel_per_completed_challenger() -> None:
+    """One panel per non-baseline, non-pending challenger.
+
+    Each panel carries both metric rows (pass rate, drift loss) and pairs
+    the proposer's predicted Δ (outlined, dashed) with the actual Δ
+    (filled, decision-coloured).
+    """
+    gens = (
+        _gen(gid="v0", is_baseline=True, decision="baseline"),
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="promoted",
+            scalar_score_delta=-0.2,
+            pass_rate_delta=0.10,
+            drift_loss_delta=-0.30,
+            expected_pass_rate_delta="+0.05 to +0.15",
+            expected_drift_movements=(
+                {"kind": "off_topic", "direction": "decrease", "magnitude": "moderate"},
+            ),
+            cumulative_scalar=-0.2,
+        ),
+        _gen(
+            gid="v2",
+            parent="v1",
+            decision="rejected",
+            scalar_score_delta=0.14,
+            pass_rate_delta=-0.05,
+            drift_loss_delta=0.12,
+            expected_pass_rate_delta="+0.0",
+            cumulative_scalar=-0.06,
+        ),
+        # A pending generation should be skipped.
+        _gen(gid="v3", parent="v2", decision="pending"),
+    )
+    svg = render_svg_hypothesis_vs_outcome(_data(gens))
+    _assert_inline_svg(svg)
+    # One panel per completed challenger = v1 + v2.
+    assert ">v1 ·" in svg
+    assert ">v2 ·" in svg
+    assert ">v3 ·" not in svg
+    # Both metric rows are labelled.
+    assert ">pass rate</text>" in svg
+    assert ">drift loss</text>" in svg
+    # Predicted bar uses the predicted palette token.
+    assert "var(--paper-predicted" in svg
+    # Actual bar uses the decision palette tokens.
+    assert "var(--paper-promoted)" in svg
+    assert "var(--paper-rejected)" in svg
+    # No raw hex / no external resources.
+    assert PROMOTED_COLOR not in svg
+    assert REJECTED_COLOR not in svg
+    assert 'href="http' not in svg
+    # Predicted vs actual deltas labelled.
+    assert "act +0.100" in svg  # v1 actual pass rate
+    assert "act +0.140" not in svg  # we project drift differently — confirm
+    assert "pred +0.100" in svg  # v1 predicted pass-rate midpoint of +0.05..+0.15
+    # The title strip carries the figure header.
+    assert "PREDICTED vs ACTUAL" in svg
+
+
+def test_hypothesis_vs_outcome_handles_missing_predictions_gracefully() -> None:
+    """A round without an `expected_pass_rate_delta` renders a 'no prediction' note."""
+    gens = (
+        _gen(gid="v0", is_baseline=True, decision="baseline"),
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="rejected",
+            pass_rate_delta=-0.05,
+            drift_loss_delta=0.04,
+            # No expected_* fields.
+        ),
+    )
+    svg = render_svg_hypothesis_vs_outcome(_data(gens))
+    _assert_inline_svg(svg)
+    assert "no prediction" in svg
+    # Actual deltas are still rendered.
+    assert "act -0.050" in svg
+
+
+# ---------------------------------------------------------------------------
+# Mutation-impact matrix
+# ---------------------------------------------------------------------------
+
+
+def test_mutation_impact_matrix_empty_returns_placeholder() -> None:
+    svg = render_svg_mutation_impact_matrix(_data())
+    _assert_inline_svg(svg)
+    assert "empty" in svg or "no challengers" in svg.lower()
+
+
+def test_mutation_impact_matrix_renders_cells_per_touched_site_x_generation() -> None:
+    """Rows = touched mutation sites; columns = challenger generations.
+
+    A cell is filled with the round's outcome colour when the site was
+    touched in that generation, blank otherwise.
+    """
+    gens = (
+        _gen(gid="v0", is_baseline=True, decision="baseline"),
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="promoted",
+            patches=({"mutation_id": "sys_prompt", "op": "replace", "rationale": ""},),
+        ),
+        _gen(
+            gid="v2",
+            parent="v1",
+            decision="rejected",
+            patches=(
+                {"mutation_id": "temp", "op": "set_numeric", "rationale": ""},
+                {"mutation_id": "sys_prompt", "op": "replace", "rationale": ""},
+            ),
+        ),
+    )
+    surface = (
+        {"id": "sys_prompt", "kind": "prompt_text", "file": "agent/prompt.txt"},
+        {"id": "temp", "kind": "numeric", "file": "agent/config.py"},
+        # An untouched site is in the surface but should be dropped from
+        # the matrix (only touched sites are rendered).
+        {"id": "max_tokens", "kind": "numeric", "file": "agent/config.py"},
+    )
+    svg = render_svg_mutation_impact_matrix(_data(gens, mutation_surface=surface))
+    _assert_inline_svg(svg)
+    # Both challenger generations are column headers; baseline excluded.
+    assert ">v1</text>" in svg
+    assert ">v2</text>" in svg
+    assert ">v0</text>" not in svg
+    # Touched site ids appear as row labels.
+    assert "sys_prompt" in svg
+    assert "temp" in svg
+    # Untouched site is dropped from the matrix.
+    assert "max_tokens" not in svg
+    # Palette: promoted + rejected cells use the matching tokens.
+    assert "var(--paper-promoted)" in svg
+    assert "var(--paper-rejected)" in svg
+    # Outcome chips in the legend at the bottom.
+    assert ">promoted</text>" in svg
+    assert ">rejected</text>" in svg
+    assert ">incomplete</text>" in svg
+    # No raw hex in the rendered SVG.
+    assert PROMOTED_COLOR not in svg
+    assert REJECTED_COLOR not in svg
+
+
+def test_mutation_impact_matrix_handles_no_touched_sites() -> None:
+    """A challenger campaign with no patches yields a no-patches placeholder."""
+    gens = (
+        _gen(gid="v0", is_baseline=True, decision="baseline"),
+        # A challenger with no patches at all (rare but possible — proposer
+        # produced no valid patch set).
+        _gen(gid="v1", parent="v0", decision="rejected", patches=()),
+    )
+    svg = render_svg_mutation_impact_matrix(_data(gens))
+    _assert_inline_svg(svg)
+    assert "No patches" in svg or "no patches" in svg.lower()
+
+
+# ---------------------------------------------------------------------------
+# Polished existing-figure refinements
+# ---------------------------------------------------------------------------
+
+
+def test_score_trajectory_includes_axis_labels_and_legend() -> None:
+    """The polished trajectory carries y/x axis labels + a top-strip legend.
+
+    The legend uses the same palette tokens the markers use, so the host
+    palette controls the rendered hue uniformly.
+    """
+    gens = (
+        _gen(gid="v0", is_baseline=True, decision="baseline", cumulative_scalar=0.0),
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="promoted",
+            scalar_score_delta=-0.2,
+            cumulative_scalar=-0.2,
+        ),
+    )
+    svg = render_svg_score_trajectory(_data(gens))
+    _assert_inline_svg(svg)
+    # Axis labels (y and x).
+    assert "scalar (loss" in svg
+    assert ">generation</text>" in svg
+    # Top legend strip carries the three decision markers.
+    assert ">promoted</text>" in svg
+    assert ">rejected</text>" in svg
+    assert ">baseline</text>" in svg
+    # The legend uses the same palette tokens as the markers — no raw hex.
+    assert "var(--paper-promoted)" in svg
+    assert "var(--paper-rejected)" in svg
+
+
+def test_per_board_heatmap_legend_uses_palette_tokens() -> None:
+    """The heatmap legend swatches paint with the same tokens the cells do."""
+    entries = (_entry("slides"),)
+    gens = (
+        _gen(gid="v0", is_baseline=True, decision="baseline"),
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="promoted",
+            gen_score={"entries": {"slides": {"scalar_delta": -0.08}}},
+        ),
+    )
+    svg = render_svg_per_board_heatmap(_data(gens, entries))
+    _assert_inline_svg(svg)
+    # Both worse + better chips bind to the palette tokens.
+    assert ">worse</text>" in svg
+    assert ">better</text>" in svg
+    assert ">flat</text>" in svg

@@ -805,9 +805,12 @@ def test_evolve_once_regenerates_analysis_report(
 
     md_text = md.read_text()
     # The academic-paper section skeleton is present — headings carry NO
-    # explicit number; the HTML renderer auto-numbers them.
+    # explicit number; the HTML renderer auto-numbers them. The masthead's
+    # H1 is now the epoch name; the eyebrow line above it names the
+    # artifact.
+    assert "epoch analysis report" in md_text.lower()
+    assert "<!-- EYEBROW -->" in md_text
     for section in (
-        "# Epoch Analysis Report",
         "## Abstract",
         "## Introduction",
         "## Methodology",

@@ -294,9 +294,13 @@ async def test_generate_report_full_document(epoch_workspace: tuple[Path, str]) 
     md = out.read_text(encoding="utf-8")
 
     # Every required section is present, in order — headings carry NO
-    # explicit number; the HTML renderer numbers them.
+    # explicit number; the HTML renderer numbers them. The masthead's
+    # H1 is now the epoch name on its own; the eyebrow line above it
+    # names the artifact.
+    assert "epoch analysis report" in md.lower()
+    assert "<!-- EYEBROW -->" in md
+    assert "# Demo Presentation Agent" in md
     for section in (
-        "# Epoch Analysis Report",
         "## Abstract",
         "## Introduction",
         "## Methodology",
@@ -420,7 +424,10 @@ async def test_empty_epoch_still_generates(tmp_path: Path) -> None:
 
     out = await generate_epoch_report(ws, epoch, fake_aux)
     md = out.read_text(encoding="utf-8")
-    assert "# Epoch Analysis Report" in md
+    # The masthead's H1 is the epoch name; the eyebrow line above it
+    # names the artifact ("epoch analysis report").
+    assert "# fresh" in md
+    assert "epoch analysis report" in md.lower()
     assert "## Experimental Results" in md
     assert "No generations" in md
 
@@ -637,7 +644,10 @@ def test_render_report_html_fragment_omits_doctype_but_carries_paper_css() -> No
     fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
     assert not fragment.startswith("<!DOCTYPE")
     assert "<html" not in fragment
-    assert "<head" not in fragment
+    # Look for the head shell explicitly; bare ``<head`` would clash with
+    # the legitimate masthead ``<header>`` block.
+    assert "<head>" not in fragment
+    assert "<head " not in fragment
     # Carries the paper class on the article wrapper and a paper-card
     # modifier so the dashboard can style the card chrome.
     assert 'class="paper paper-card"' in fragment
@@ -674,12 +684,14 @@ def test_full_document_includes_every_required_figure(
         "Per-board entry outcomes heatmap",
         "Lineage diagram",
         "Mutation surface",
+        "Proposer hypothesis vs tournament outcome",
+        "Mutation impact matrix",
     ):
         assert aria in html, aria
     # Every figure is wrapped in a paper-figure block with a caption.
-    assert html.count('<figure class="paper-figure">') >= 5
+    assert html.count('<figure class="paper-figure">') >= 7
     assert "Figure 1:" in html
-    assert "Figure 5:" in html
+    assert "Figure 7:" in html
 
 
 def test_paper_table_caption_lands_above_table(
@@ -847,6 +859,13 @@ def test_inline_fragment_carries_light_defaults_dashboard_overrides_them() -> No
         "--paper-promoted: var(",
         "--paper-rejected: var(",
         "--paper-figure-grid: var(",
+        # New palette tokens added by the visual-polish pass: the dark
+        # surface must rebind them too so the new figures + callout pick
+        # up dashboard-tinted hues.
+        "--paper-incomplete: var(",
+        "--paper-predicted: var(",
+        "--paper-callout-bg",
+        "--paper-callout-rule",
     ):
         assert rebind in css, rebind
     # The legacy hard-coded cream paint on the wrapper is gone — the
@@ -998,3 +1017,218 @@ def test_inline_figures_use_theme_aware_colors() -> None:
         "#fafaf7",
     ):
         assert hard_coded not in combined, hard_coded
+
+
+# ---------------------------------------------------------------------------
+# Refined masthead + section openers + table-row decision highlights
+# ---------------------------------------------------------------------------
+
+
+def test_masthead_carries_eyebrow_title_and_structured_metadata(
+    epoch_workspace: tuple[Path, str],
+) -> None:
+    """The masthead is a structured cover, not a flat metadata block.
+
+    Composition: a small-caps eyebrow line naming the artifact, the
+    epoch name as the title (h1), then a grid of labelled metadata
+    cells. The whole block sits inside a ``<header class="paper-masthead">``
+    so the standalone CSS + the dark dashboard CSS can both reach it
+    via one stable hook.
+    """
+    import asyncio
+
+    ws, epoch = epoch_workspace
+
+    async def fake_aux(s: str, u: str, m: str) -> str:
+        return "===ABSTRACT===\nA\n===INTRODUCTION===\nI\n===ANALYSIS===\nAn\n===CONCLUSION===\nC\n"
+
+    out = asyncio.run(generate_epoch_report(ws, epoch, fake_aux))
+    html = out.with_suffix(".html").read_text(encoding="utf-8")
+
+    # The masthead block wraps the eyebrow, h1, and meta together.
+    assert '<header class="paper-masthead">' in html
+    assert "</header>" in html
+    # Eyebrow line above the title — small-caps treatment.
+    assert '<div class="paper-eyebrow">' in html
+    # Title is the epoch name as h1.
+    assert "<h1>Demo Presentation Agent</h1>" in html
+    # Metadata renders as structured label/value cells, not a flat <p>.
+    assert '<div class="paper-meta">' in html
+    assert 'class="meta-row"' in html
+    assert 'class="meta-value"' in html
+
+
+def test_section_openers_use_small_caps_via_h3(epoch_workspace: tuple[Path, str]) -> None:
+    """H3 section openers (subsections) are emitted with small-caps styling.
+
+    The CSS applies the small-caps treatment via ``.paper h3`` (uppercase,
+    letter-spaced, muted colour). The test checks the structural
+    pre-condition: the h3 headings carry an auto-numbered ``secnum`` span
+    so the renderer's auto-numbering pipeline drives the small-caps
+    label rather than free-floating uppercase text inside the body.
+    """
+    import asyncio
+
+    ws, epoch = epoch_workspace
+
+    async def fake_aux(s: str, u: str, m: str) -> str:
+        return "===ABSTRACT===\nA\n===INTRODUCTION===\nI\n===ANALYSIS===\nAn\n===CONCLUSION===\nC\n"
+
+    out = asyncio.run(generate_epoch_report(ws, epoch, fake_aux))
+    html = out.with_suffix(".html").read_text(encoding="utf-8")
+
+    # Multiple h3 subsections appear with secnums — one each for the
+    # evaluation board, scoring model, tournament protocol, mutation
+    # surface, lineage diagram, hypothesis vs outcome, drift movements,
+    # per-board outcomes, etc.
+    assert html.count("<h3>") >= 5
+    assert '<h3><span class="secnum">' in html
+
+
+def test_decision_row_highlight_classes_emitted_in_score_table() -> None:
+    """The score-trajectory table marks promoted/rejected rows.
+
+    A row whose cells include a bare ``promoted`` / ``rejected`` token
+    picks up the matching ``row-*`` class. The host CSS paints a thin
+    coloured edge on the row in the same hue every figure uses for that
+    decision, so the same hue means the same thing across the document.
+    """
+    md = (
+        "| gen | scalar | decision |\n"
+        "| --- | --- | --- |\n"
+        "| v0 | +0.000 | baseline |\n"
+        "| v1 | -0.250 | promoted |\n"
+        "| v2 | -0.110 | rejected |\n"
+    )
+    html = markdown_to_html(md)
+    assert '<tr class="row-promoted">' in html
+    assert '<tr class="row-rejected">' in html
+    # Baseline gets no decision-row class today (it would conflict with
+    # the "baseline" row's neutral styling).
+    assert '<tr class="row-baseline">' not in html
+
+
+def test_callout_marker_renders_pull_quote_aside() -> None:
+    """The CALLOUT marker yields a margin-pull-quote aside.
+
+    The deterministic sections drop one callout in the Experimental
+    Results section summarising the campaign's headline number. The
+    renderer maps the marker to an ``<aside class="paper-callout">`` so
+    a CSS host can paint it as a sidenote / pull quote without a markup
+    change.
+    """
+    md = (
+        "## Section\n\n"
+        "<!-- CALLOUT:KEY OBSERVATION -->\n"
+        "The cumulative scalar fell from baseline.\n\n"
+        "Body paragraph follows.\n"
+    )
+    html = markdown_to_html(md)
+    assert '<aside class="paper-callout"' in html
+    assert "KEY OBSERVATION" in html
+    assert "cumulative scalar fell" in html
+    # The next paragraph is a sibling — not absorbed into the callout.
+    assert "<p>Body paragraph follows.</p>" in html
+
+
+def test_callout_in_results_section_summarises_campaign(
+    epoch_workspace: tuple[Path, str],
+) -> None:
+    """The deterministic Results section emits one campaign-summary callout.
+
+    The fixture has 2 attempted, 1 promoted, 1 rejected — the callout
+    text mentions those figures verbatim from the data view.
+    """
+    import asyncio
+
+    ws, epoch = epoch_workspace
+
+    async def fake_aux(s: str, u: str, m: str) -> str:
+        return "===ABSTRACT===\nA\n===INTRODUCTION===\nI\n===ANALYSIS===\nAn\n===CONCLUSION===\nC\n"
+
+    out = asyncio.run(generate_epoch_report(ws, epoch, fake_aux))
+    md = out.read_text(encoding="utf-8")
+    html = out.with_suffix(".html").read_text(encoding="utf-8")
+    # The callout marker is in the markdown source; the rendered HTML
+    # contains the aside block.
+    assert "<!-- CALLOUT:KEY OBSERVATION -->" in md
+    assert "paper-callout" in html
+    # The summary text uses the data view's figures.
+    assert "2 challenger generations" in html
+    assert "1 promoted, 1 rejected" in html
+
+
+# ---------------------------------------------------------------------------
+# Refined typography surface — font pair + drop cap + palette additions
+# ---------------------------------------------------------------------------
+
+
+def test_paper_font_pair_is_serif_body_sans_display() -> None:
+    """Typography uses a serif body + sans-serif display pair.
+
+    The body uses Source Serif (with a Charter / Iowan Old Style /
+    Georgia fall-back chain); the display heads use Inter / IBM Plex
+    Sans / Helvetica Neue. The fragment must expose both stacks via
+    ``--paper-font-body`` / ``--paper-font-display`` so a host can
+    override either independently.
+    """
+    fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
+    assert "--paper-font-body" in fragment
+    assert "--paper-font-display" in fragment
+    # Source Serif heads the body chain; Inter heads the display chain.
+    assert "Source Serif" in fragment
+    assert "Inter" in fragment
+
+
+def test_abstract_first_paragraph_takes_a_drop_cap() -> None:
+    """The Abstract's first paragraph gets a single drop-cap via CSS.
+
+    The drop cap is applied to ``.paper h2.unnumbered + p::first-letter``
+    so it only ever affects the FIRST paragraph after the Abstract — no
+    other paragraph in the document gets a drop cap.
+    """
+    html = render_report_html("e1", "## Abstract\n\nbody\n\n## Section\n\nbody2\n")
+    # The selector targets the abstract paragraph specifically.
+    assert "h2.unnumbered + p::first-letter" in html
+
+
+def test_paper_palette_exposes_incomplete_and_predicted_tokens() -> None:
+    """The palette grew two tokens for the new figures.
+
+    ``--paper-incomplete`` colours pending/incomplete generations in the
+    mutation-impact matrix; ``--paper-predicted`` outlines the proposer's
+    predicted bar in the hypothesis-vs-outcome figure. Both expose CSS
+    variables so a dark host can re-tint without touching figure markup.
+    """
+    fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
+    assert "--paper-incomplete" in fragment
+    assert "--paper-predicted" in fragment
+
+
+def test_table_header_uses_small_caps_treatment() -> None:
+    """Tables get the academic small-caps header treatment.
+
+    The CSS lifts the ``.paper table th`` rule to uppercase + letter-
+    spaced + muted-colour. The test confirms the header CSS rule is
+    present and the body table rendering still emits a real ``<th>``
+    so the header cells inherit the rule.
+    """
+    fragment = render_report_html_fragment("e1", "| name | value |\n| --- | --- |\n| alpha | 1 |\n")
+    # Header treatment is set via the CSS rules in the fragment.
+    assert ".paper table th" in fragment
+    assert "text-transform: uppercase" in fragment
+    # Non-numeric "name" header stays as a default <th>; the value column
+    # picks up class="num" for right-alignment.
+    assert "<th>name</th>" in fragment
+    assert '<th class="num">value</th>' in fragment
+
+
+def test_inline_fragment_carries_callout_css() -> None:
+    """The callout block has its own scoped CSS in the fragment.
+
+    The host needs no extra CSS to render the callout — the fragment
+    ships the ``.paper-callout`` rule so a standalone analysis.html
+    paints the callout correctly.
+    """
+    fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
+    assert ".paper-callout" in fragment

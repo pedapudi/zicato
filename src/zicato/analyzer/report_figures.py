@@ -66,7 +66,9 @@ _VAR_PROMOTED = "var(--paper-promoted)"
 _VAR_REJECTED = "var(--paper-rejected)"
 _VAR_BASELINE = "var(--paper-baseline)"
 _VAR_DEFERRED = "var(--paper-deferred)"
+_VAR_INCOMPLETE = "var(--paper-incomplete, var(--paper-deferred))"
 _VAR_NEUTRAL = "var(--paper-neutral)"
+_VAR_PREDICTED = "var(--paper-predicted, var(--paper-baseline))"
 _VAR_GRID = "var(--paper-figure-grid)"
 _VAR_STRIPE_BG = "var(--paper-figure-stripe-bg)"
 _VAR_NEAR_ZERO = "var(--paper-figure-near-zero, #dde2e7)"
@@ -159,7 +161,7 @@ def render_svg_score_trajectory(
     data: EpochReportData,
     *,
     width: int = 720,
-    height: int = 240,
+    height: int = 260,
 ) -> str:
     """Inline SVG of the cumulative scalar across generations.
 
@@ -175,7 +177,7 @@ def render_svg_score_trajectory(
     if not gens:
         return _empty_svg(width, height, "No generations to plot.")
 
-    margin_l, margin_r, margin_t, margin_b = 56, 22, 28, 42
+    margin_l, margin_r, margin_t, margin_b = 56, 22, 36, 58
     plot_w = width - margin_l - margin_r
     plot_h = height - margin_t - margin_b
 
@@ -299,10 +301,34 @@ def render_svg_score_trajectory(
 
     # y-axis label.
     parts.append(
-        f'<text class="svg-axis svg-axislabel" x="{margin_l - 42}" '
+        f'<text class="svg-axislabel" x="{margin_l - 42}" '
         f'y="{margin_t + plot_h / 2:.1f}" text-anchor="middle" '
         f'transform="rotate(-90 {margin_l - 42} {margin_t + plot_h / 2:.1f})">'
         f"scalar (loss — lower is better)</text>"
+    )
+    # x-axis label.
+    parts.append(
+        f'<text class="svg-axislabel" x="{margin_l + plot_w / 2:.1f}" '
+        f'y="{height - 4:.1f}" text-anchor="middle">'
+        f"generation</text>"
+    )
+    # Legend strip at top-right: promoted ⏺  rejected ▢  baseline ⏺.
+    legend_y = margin_t - 12
+    legend_x = margin_l + plot_w - 200
+    parts.append(
+        f'<circle cx="{legend_x:.1f}" cy="{legend_y:.1f}" r="3.5" '
+        f'style="fill: {_VAR_PROMOTED}"/>'
+        f'<text class="svg-legend" x="{legend_x + 7:.1f}" '
+        f'y="{legend_y + 3.5:.1f}">promoted</text>'
+        f'<rect x="{legend_x + 64:.1f}" y="{legend_y - 3.5:.1f}" '
+        f'width="7" height="7" fill="none" '
+        f'style="stroke: {_VAR_REJECTED}" stroke-width="1.4"/>'
+        f'<text class="svg-legend" x="{legend_x + 75:.1f}" '
+        f'y="{legend_y + 3.5:.1f}">rejected</text>'
+        f'<circle cx="{legend_x + 130:.1f}" cy="{legend_y:.1f}" r="3" '
+        f'style="fill: {_VAR_BASELINE}"/>'
+        f'<text class="svg-legend" x="{legend_x + 137:.1f}" '
+        f'y="{legend_y + 3.5:.1f}">baseline</text>'
     )
     parts.append("</svg>")
     return "".join(parts)
@@ -459,9 +485,9 @@ def render_svg_drift_movements(
 
         # Footer: "from -> to" legend.
         parts.append(
-            f'<text class="svg-axis" x="{ox + 12:.1f}" '
-            f'y="{oy + panel_h - 10:.1f}" fill-opacity="0.7">'
-            f"top: from  ·  bottom: to</text>"
+            f'<text class="svg-legend" x="{ox + 12:.1f}" '
+            f'y="{oy + panel_h - 10:.1f}">'
+            f"top: from-rate  ·  bottom: to-rate</text>"
         )
 
     parts.append("</svg>")
@@ -677,13 +703,24 @@ def render_svg_per_board_heatmap(
                 f'text-anchor="middle">{_fmt_delta(v)}</text>'
             )
 
-    # Legend (bottom).
-    legend_y = height - 6
+    # Legend (bottom): three small chips paired with their meaning,
+    # painted with the same palette tokens the cells use so the legend
+    # cannot drift from the figure.
+    legend_y = height - 8
+    legend_x = label_w
     parts.append(
-        f'<text class="svg-axis" x="{label_w:.1f}" y="{legend_y:.1f}" '
-        f'fill-opacity="0.7">'
-        f"red = worse  ·  grey = flat  ·  green = better"
-        f"</text>"
+        f'<rect x="{legend_x:.1f}" y="{legend_y - 8:.1f}" width="10" '
+        f'height="10" style="fill: {_VAR_REJECTED}; fill-opacity: 0.6"/>'
+        f'<text class="svg-legend" x="{legend_x + 14:.1f}" '
+        f'y="{legend_y:.1f}">worse</text>'
+        f'<rect x="{legend_x + 56:.1f}" y="{legend_y - 8:.1f}" width="10" '
+        f'height="10" style="fill: {_VAR_NEAR_ZERO}"/>'
+        f'<text class="svg-legend" x="{legend_x + 70:.1f}" '
+        f'y="{legend_y:.1f}">flat</text>'
+        f'<rect x="{legend_x + 100:.1f}" y="{legend_y - 8:.1f}" width="10" '
+        f'height="10" style="fill: {_VAR_PROMOTED}; fill-opacity: 0.6"/>'
+        f'<text class="svg-legend" x="{legend_x + 114:.1f}" '
+        f'y="{legend_y:.1f}">better</text>'
     )
     parts.append("</svg>")
     return "".join(parts)
@@ -891,6 +928,451 @@ def render_svg_mutation_surface(
 
 
 # ---------------------------------------------------------------------------
+# Figure: hypothesis-vs-outcome — per-generation predicted Δ vs actual Δ
+# ---------------------------------------------------------------------------
+
+
+# Magnitude tokens the proposer uses when writing an `expected_drift_movements`
+# direction/magnitude pair. Used to project a categorical prediction onto the
+# same axis we plot the realised Δ on, so the two bars are comparable.
+_MAGNITUDE_MAP: dict[str, float] = {
+    "tiny": 0.02,
+    "small": 0.05,
+    "minor": 0.05,
+    "modest": 0.08,
+    "moderate": 0.10,
+    "large": 0.20,
+    "major": 0.20,
+    "big": 0.20,
+}
+
+
+def _parse_expected_pass_rate_delta(text: str) -> float | None:
+    """Coerce a textual ``expected_pass_rate_delta`` to a midpoint float.
+
+    The proposer writes free-form predictions like ``"+0.05 to +0.15"`` or
+    ``"-0.10"`` or ``"+0.0"``. This reducer accepts a single signed number,
+    a range ``a to b`` (returns the midpoint), or returns ``None`` when
+    nothing parseable is found. The numeric magnitude side is the same axis
+    the realised Δ pass rate uses, so the predicted/actual pair plot
+    directly against one another.
+    """
+    if not text or not isinstance(text, str):
+        return None
+    import re
+
+    # Match each signed-decimal token.
+    nums = re.findall(r"[+-]?\d+\.\d+|[+-]?\d+", text)
+    if not nums:
+        return None
+    try:
+        values = [float(n) for n in nums]
+    except ValueError:
+        return None
+    if len(values) >= 2:
+        return (values[0] + values[1]) / 2.0
+    return values[0]
+
+
+def _direction_sign(direction: str) -> int:
+    """Map a textual direction to a sign for projecting magnitude onto Δ."""
+    d = (direction or "").strip().lower()
+    if d in ("decrease", "down", "lower", "drop", "fall"):
+        return -1
+    if d in ("increase", "up", "higher", "rise"):
+        return +1
+    return 0
+
+
+def _predicted_drift_delta_sum(g: GenerationView) -> float | None:
+    """Project the proposer's expected drift movements to a single Δ scalar.
+
+    Sums signed magnitude predictions across drift kinds: a "decrease /
+    moderate" movement contributes -0.10, an "increase / small" +0.05, and
+    so on, mirroring the units the realised ``drift_loss_delta`` reads in.
+    Returns ``None`` when the proposer recorded no movements at all (so the
+    figure can mark the bar as "no prediction").
+    """
+    if not g.expected_drift_movements:
+        return None
+    total = 0.0
+    seen = False
+    for mv in g.expected_drift_movements:
+        sign = _direction_sign(str(mv.get("direction", "")))
+        mag = str(mv.get("magnitude", "")).strip().lower()
+        if not mag:
+            continue
+        # Accept a free-form ``magnitude`` like "small" / "moderate" /
+        # "large"; default to the moderate bucket when unrecognised.
+        amount = _MAGNITUDE_MAP.get(mag)
+        if amount is None:
+            # tolerate a raw numeric in the magnitude slot.
+            try:
+                amount = abs(float(mag))
+            except ValueError:
+                amount = 0.0
+        if sign == 0 or amount == 0.0:
+            continue
+        total += sign * amount
+        seen = True
+    return total if seen else None
+
+
+def _render_hvo_bar(
+    value: float | None,
+    y: float,
+    *,
+    predicted: bool,
+    zero_x: float,
+    bar_w_max: float,
+    vmax: float,
+    decision_var: str,
+) -> str:
+    """Render one bar (or 'no prediction' label) in the hypothesis-vs-outcome figure.
+
+    Pulled out of the figure renderer so closure-capture of loop-locals
+    can't trip up the linter; the bar's geometry is fully parameterised.
+    """
+    if value is None:
+        return (
+            f'<text class="svg-legend" x="{zero_x + 6:.1f}" '
+            f'y="{y + 7:.1f}">no prediction</text>'
+            if predicted
+            else ""
+        )
+    w = bar_w_max * min(1.0, abs(value) / vmax)
+    x_start = zero_x if value >= 0 else zero_x - w
+    if predicted:
+        return (
+            f'<rect x="{x_start:.1f}" y="{y:.1f}" '
+            f'width="{w:.1f}" height="9" fill="none" '
+            f'style="stroke: {_VAR_PREDICTED}" stroke-width="1.2" '
+            f'stroke-dasharray="3 2"/>'
+        )
+    return (
+        f'<rect x="{x_start:.1f}" y="{y:.1f}" '
+        f'width="{w:.1f}" height="9" '
+        f'style="fill: {decision_var}; fill-opacity: 0.85"/>'
+    )
+
+
+def render_svg_hypothesis_vs_outcome(
+    data: EpochReportData,
+    *,
+    panel_w: int = 240,
+    panel_h: int = 170,
+    cols: int = 3,
+) -> str:
+    """Inline SVG: per-generation predicted Δ vs actual Δ panels.
+
+    For every completed (non-baseline, non-pending) challenger, this
+    renders one small panel with two paired horizontal bar pairs:
+
+    * **pass rate** — predicted (light, outlined) and actual (filled,
+      theme-coloured by the round's decision).
+    * **drift loss** — same pair, projected from the proposer's recorded
+      ``expected_drift_movements`` (sum of signed magnitudes) and the
+      tournament's ``drift_loss_delta``.
+
+    The proposer's hit-rate jumps out at a glance: when the two bars in a
+    pair point the same direction and have similar lengths, the
+    prediction was confirmed; when they diverge, it wasn't. A small
+    legend at the foot calls out the pattern.
+
+    Returns a placeholder SVG when no challenger has produced an outcome
+    yet (the figure isn't useful with zero pairs).
+    """
+    rounds: list[tuple[GenerationView, float | None, float, float | None, float]] = []
+    for g in data.generations:
+        if g.is_baseline or g.decision in ("pending", "baseline", ""):
+            continue
+        pred_pass = _parse_expected_pass_rate_delta(g.expected_pass_rate_delta)
+        pred_drift = _predicted_drift_delta_sum(g)
+        rounds.append((g, pred_pass, g.pass_rate_delta, pred_drift, g.drift_loss_delta))
+
+    if not rounds:
+        return _empty_svg(
+            panel_w * cols, panel_h, "No completed challengers to compare against predictions."
+        )
+
+    n = len(rounds)
+    actual_cols = min(cols, n)
+    n_rows = (n + actual_cols - 1) // actual_cols
+    width = panel_w * actual_cols
+    height = panel_h * n_rows + 18  # leave space for a top title strip
+
+    # Symmetric magnitude across every value in every panel so bars are
+    # comparable round-to-round.
+    all_vals: list[float] = []
+    for _, pp, ap, pd, ad in rounds:
+        for v in (pp, ap, pd, ad):
+            if v is not None:
+                all_vals.append(abs(v))
+    vmax = max(all_vals) if all_vals else 0.1
+    if vmax < 0.05:
+        vmax = 0.05
+
+    parts: list[str] = []
+    parts.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
+        f'role="img" aria-label="Proposer hypothesis vs tournament outcome">'
+    )
+    # Top legend strip.
+    parts.append(
+        '<text class="svg-title" x="12" y="14">'
+        "PREDICTED vs ACTUAL  ·  pass-rate and drift-loss Δ"
+        "</text>"
+    )
+    legend_x = width - 220
+    parts.append(
+        f'<rect x="{legend_x:.1f}" y="6" width="10" height="9" '
+        f'fill="none" style="stroke: {_VAR_PREDICTED}" stroke-width="1.2" '
+        f'stroke-dasharray="2 2"/>'
+        f'<text class="svg-legend" x="{legend_x + 14:.1f}" y="14">'
+        f"predicted</text>"
+        f'<rect x="{legend_x + 82:.1f}" y="6" width="10" height="9" '
+        f'style="fill: {_VAR_BASELINE}; fill-opacity: 0.85"/>'
+        f'<text class="svg-legend" x="{legend_x + 96:.1f}" y="14">'
+        f"actual (filled, decision-coloured)</text>"
+    )
+
+    for idx, (g, pred_pass, act_pass, pred_drift, act_drift) in enumerate(rounds):
+        col = idx % actual_cols
+        row = idx // actual_cols
+        ox = col * panel_w
+        oy = 24 + row * panel_h
+
+        # Title row.
+        parts.append(
+            f'<text class="svg-label" x="{ox + 12:.1f}" y="{oy + 14:.1f}" '
+            f'font-weight="600">{_esc(g.generation_id)} '
+            f"· {_esc(g.decision)}</text>"
+        )
+
+        # Two metric rows. Each metric row carries a label, a centered
+        # zero axis, predicted bar (outlined) above the actual bar
+        # (filled, decision-coloured). Bars extend left for negative Δ
+        # and right for positive Δ.
+        decision_var = _generation_decision_var(g)
+        zero_x: float = ox + 92.0
+        bar_w_max = panel_w - 100 - 18
+        metric_specs: tuple[tuple[str, float | None, float], ...] = (
+            ("pass rate", pred_pass, act_pass),
+            ("drift loss", pred_drift, act_drift),
+        )
+        for j, (metric_name, pred_v, act_v) in enumerate(metric_specs):
+            base_y = oy + 30 + j * 58
+            # Label.
+            parts.append(
+                f'<text class="svg-axis" x="{ox + 12:.1f}" '
+                f'y="{base_y + 10:.1f}">{_esc(metric_name)}</text>'
+            )
+            # Zero axis.
+            parts.append(
+                f'<line x1="{zero_x:.1f}" y1="{base_y - 6:.1f}" '
+                f'x2="{zero_x:.1f}" y2="{base_y + 30:.1f}" '
+                f'style="stroke: {_VAR_GRID}" stroke-width="0.6"/>'
+            )
+            parts.append(
+                _render_hvo_bar(
+                    pred_v,
+                    base_y,
+                    predicted=True,
+                    zero_x=zero_x,
+                    bar_w_max=bar_w_max,
+                    vmax=vmax,
+                    decision_var=decision_var,
+                )
+            )
+            parts.append(
+                _render_hvo_bar(
+                    act_v,
+                    base_y + 12,
+                    predicted=False,
+                    zero_x=zero_x,
+                    bar_w_max=bar_w_max,
+                    vmax=vmax,
+                    decision_var=decision_var,
+                )
+            )
+            # Numeric annotations.
+            if pred_v is not None:
+                parts.append(
+                    f'<text class="svg-legend" x="{ox + panel_w - 8:.1f}" '
+                    f'y="{base_y + 7:.1f}" text-anchor="end">'
+                    f"pred {_fmt_delta(pred_v)}</text>"
+                )
+            parts.append(
+                f'<text class="svg-axis svg-value" '
+                f'x="{ox + panel_w - 8:.1f}" '
+                f'y="{base_y + 19:.1f}" text-anchor="end">'
+                f"act {_fmt_delta(act_v)}</text>"
+            )
+
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Figure: mutation-impact matrix — rows = mutation sites, cols = generations
+# ---------------------------------------------------------------------------
+
+
+def _generation_outcome_var(g: GenerationView) -> str:
+    """Map a generation to its outcome palette token for impact-matrix cells.
+
+    Promoted → promoted, rejected → rejected, deferred / pending →
+    incomplete. The baseline never appears in this matrix (it isn't a
+    challenger), and its column is dropped upstream.
+    """
+    if g.decision == "promoted":
+        return _VAR_PROMOTED
+    if g.decision == "rejected":
+        return _VAR_REJECTED
+    return _VAR_INCOMPLETE
+
+
+def _touched_mutation_ids(g: GenerationView) -> set[str]:
+    """Set of mutation ids the generation's patches addressed."""
+    return {str(p.get("mutation_id", "")) for p in g.patches if p.get("mutation_id")}
+
+
+def render_svg_mutation_impact_matrix(
+    data: EpochReportData,
+    *,
+    cell_w: int = 50,
+    cell_h: int = 22,
+    label_w: int = 160,
+) -> str:
+    """Inline SVG: rows = mutation sites, cols = generations.
+
+    Each cell is filled with the outcome colour of the generation when
+    that site was touched in that generation, otherwise empty (a thin
+    grid stroke marks the empty position). The matrix shows the
+    campaign's exploration pattern at a glance: which sites were tried
+    in which generations and with what result.
+
+    Sites that were never touched by any challenger are dropped; the
+    matrix focuses on the active region of the surface. The baseline is
+    excluded from the columns since it never carries a patch.
+    """
+    challengers = [g for g in data.generations if not g.is_baseline]
+    if not challengers:
+        return _empty_svg(
+            max(360, cell_w * 4 + label_w),
+            max(120, cell_h * 4),
+            "No challengers yet — mutation-impact matrix is empty.",
+        )
+
+    # Collect every site referenced by a patch across the campaign,
+    # plus the canonical mutation-surface label / file when available.
+    surface_label: dict[str, str] = {}
+    for m in data.mutation_surface:
+        mid = str(m.get("id", ""))
+        if mid:
+            kind = str(m.get("kind", ""))
+            surface_label[mid] = f"{mid}  ·  {kind}" if kind else mid
+
+    touched_ids: list[str] = []
+    seen: set[str] = set()
+    for g in challengers:
+        for mid in _touched_mutation_ids(g):
+            if mid and mid not in seen:
+                seen.add(mid)
+                touched_ids.append(mid)
+
+    if not touched_ids:
+        return _empty_svg(
+            max(360, cell_w * len(challengers) + label_w),
+            max(120, cell_h * 4),
+            "No patches touched the mutation surface yet.",
+        )
+
+    header_h = 40
+    width = label_w + cell_w * len(challengers) + 18
+    height = header_h + cell_h * len(touched_ids) + 36
+
+    parts: list[str] = []
+    parts.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
+        f'role="img" aria-label="Mutation impact matrix">'
+    )
+
+    # Column headers — generation ids.
+    for ci, g in enumerate(challengers):
+        x = label_w + ci * cell_w + cell_w / 2
+        parts.append(
+            f'<text class="svg-label" x="{x:.1f}" y="{header_h - 22:.1f}" '
+            f'text-anchor="middle" font-weight="600">{_esc(g.generation_id)}</text>'
+        )
+        # Tag the column with the outcome word so colour-blind viewers can
+        # still parse the matrix.
+        decision_text = (
+            "promoted"
+            if g.decision == "promoted"
+            else ("rejected" if g.decision == "rejected" else g.decision or "pending")
+        )
+        parts.append(
+            f'<text class="svg-legend" x="{x:.1f}" y="{header_h - 8:.1f}" '
+            f'text-anchor="middle">{_esc(decision_text)}</text>'
+        )
+
+    # Row labels.
+    for ri, mid in enumerate(touched_ids):
+        y = header_h + ri * cell_h + cell_h / 2 + 4
+        text = surface_label.get(mid, mid)
+        parts.append(
+            f'<text class="svg-axis svg-mono" x="{label_w - 8:.1f}" '
+            f'y="{y:.1f}" text-anchor="end">{_esc(_truncate(text, 22))}</text>'
+        )
+
+    # Cells.
+    for ri, mid in enumerate(touched_ids):
+        for ci, g in enumerate(challengers):
+            x = label_w + ci * cell_w + 2
+            y = header_h + ri * cell_h + 2
+            w = cell_w - 4
+            h = cell_h - 4
+            touched = mid in _touched_mutation_ids(g)
+            if not touched:
+                # Empty cell: a faint grid square so the matrix reads as
+                # a grid even where no patch landed.
+                parts.append(
+                    f'<rect x="{x:.1f}" y="{y:.1f}" width="{w}" height="{h}" '
+                    f'fill="none" style="stroke: {_VAR_GRID}" stroke-width="0.5"/>'
+                )
+                continue
+            fill_var = _generation_outcome_var(g)
+            parts.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{w}" height="{h}" '
+                f'style="fill: {fill_var}; fill-opacity: 0.7; '
+                f'stroke: {fill_var}" stroke-width="0.6"/>'
+            )
+
+    # Legend (bottom): three chips with palette + word, painted with the
+    # same tokens the matrix cells use.
+    legend_y = height - 8
+    legend_x = label_w
+    parts.append(
+        f'<rect x="{legend_x:.1f}" y="{legend_y - 8:.1f}" width="10" '
+        f'height="10" style="fill: {_VAR_PROMOTED}; fill-opacity: 0.7"/>'
+        f'<text class="svg-legend" x="{legend_x + 14:.1f}" y="{legend_y:.1f}">'
+        f"promoted</text>"
+        f'<rect x="{legend_x + 76:.1f}" y="{legend_y - 8:.1f}" width="10" '
+        f'height="10" style="fill: {_VAR_REJECTED}; fill-opacity: 0.7"/>'
+        f'<text class="svg-legend" x="{legend_x + 90:.1f}" y="{legend_y:.1f}">'
+        f"rejected</text>"
+        f'<rect x="{legend_x + 146:.1f}" y="{legend_y - 8:.1f}" width="10" '
+        f'height="10" style="fill: {_VAR_INCOMPLETE}; fill-opacity: 0.7"/>'
+        f'<text class="svg-legend" x="{legend_x + 160:.1f}" y="{legend_y:.1f}">'
+        f"incomplete</text>"
+    )
+
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -905,6 +1387,8 @@ FIGURE_RENDERERS: dict[str, str] = {
     "per-board-heatmap": "render_svg_per_board_heatmap",
     "lineage": "render_svg_lineage_compact",
     "mutation-surface": "render_svg_mutation_surface",
+    "hypothesis-vs-outcome": "render_svg_hypothesis_vs_outcome",
+    "mutation-impact-matrix": "render_svg_mutation_impact_matrix",
 }
 
 
@@ -920,6 +1404,10 @@ def render_figure(name: str, data: EpochReportData) -> str:
         return render_svg_lineage_compact(data)
     if name == "mutation-surface":
         return render_svg_mutation_surface(data)
+    if name == "hypothesis-vs-outcome":
+        return render_svg_hypothesis_vs_outcome(data)
+    if name == "mutation-impact-matrix":
+        return render_svg_mutation_impact_matrix(data)
     return ""
 
 
@@ -940,6 +1428,8 @@ __all__ = [
     "render_svg_per_board_heatmap",
     "render_svg_lineage_compact",
     "render_svg_mutation_surface",
+    "render_svg_hypothesis_vs_outcome",
+    "render_svg_mutation_impact_matrix",
     "render_figure",
     "iter_figure_names",
 ]
