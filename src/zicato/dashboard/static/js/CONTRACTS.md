@@ -131,9 +131,15 @@ The Files-view endpoints in full:
   file_count, patch_count }] }] }`. Generations are listed in store
   order; the last element is the latest generation.
 - `GET /api/files/{epoch}/{gen}/tree` — `{ epoch_id, generation_id,
-  entries:[{ path, is_dir, size }], error? }`.
+  entries:[{ path, is_dir, size }], error? }`. Still served by the
+  server (and exercised by tests) but no longer consumed by the
+  dashboard — the per-generation file browser was removed in favour of
+  the What-changed diff + the mutation-site browser. Reserved for
+  external clients / future tooling.
 - `GET /api/files/{epoch}/{gen}/content?path=` — one file's content.
-- `GET /api/files/{epoch}/{gen}/patches` — the applied patch set.
+  Same reserved-for-external-use status as `/tree`.
+- `GET /api/files/{epoch}/{gen}/patches` — the applied patch set for a
+  SINGLE generation (parent -> selected).
 - `GET /api/files/{epoch}/{gen}/diff` — the files the generation
   CHANGED relative to its parent (the parent recorded in
   `experiment.json`, else the `v(N-1)` / `v0` fallback). Shape:
@@ -145,6 +151,14 @@ The Files-view endpoints in full:
   Files view renders each entry as a side-by-side split diff
   (`old_content` left, `new_content` right) via the `diff` component
   in `mode:'split'`.
+
+The Files view's CUMULATIVE patch chain ("Patches applied to reach
+v{N}") is derived ON THE CLIENT — no new endpoint. The walk follows
+`parent_generation_id` through `state.lineage.generations` from the
+selected generation back to the seed, then fetches each ancestor's
+`/api/files/{epoch}/{gen}/patches` (cached in
+`filesState.patchCache`). Only the lineage path is on the chain;
+rejected sibling generations that share a parent edge are NOT walked.
 
 ## 2. SSE delta types
 

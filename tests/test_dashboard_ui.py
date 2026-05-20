@@ -211,8 +211,11 @@ REQUIRED_SECTIONS = {
     "epoch-experiments-section",
     "epoch-analysis-section",
     "files-changes-section",
-    "files-section",
+    # files-section ("Generation files" per-gen file browser) was
+    # removed: the What-changed diff + mutation-site browser cover the
+    # useful workflows, the file browser duplicated the picker.
     "files-patches-section",
+    "files-cumulative-section",
     "mutations-section",
 }
 

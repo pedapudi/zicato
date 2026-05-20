@@ -4452,12 +4452,21 @@ function transcriptAnnotations(side) {
 const filesState = {
   index: null,        // { epochs: [{ epoch_id, generations: [...] }] }
   selectedGen: null,  // { epoch_id, generation_id } — driven by the route
-  tree: null,         // { entries: [{ path, is_dir, size }] }
-  openFile: null,     // rel path of the file shown in the content pane
   changes: null,      // { parent_generation_id, files: [...] } diff payload
   changesKey: null,   // epoch/generation the cached `changes` belongs to
   patches: null,      // { patches: [...] } applied-patch payload
   patchesKey: null,   // epoch/generation the cached `patches` belongs to
+  // Cumulative champion-lineage chain for the selected generation: an
+  // ordered list of { generation_id, patches:[...] } from the seed up to
+  // (and including) the selected generation. Derived on the client by
+  // walking parent_generation_id through state.lineage and fetching each
+  // ancestor's /patches endpoint once per chain. Rejected siblings are
+  // NOT on the chain.
+  chain: null,        // [{ generation_id, patches:[...] }, ...]
+  chainKey: null,     // epoch/generation the cached `chain` belongs to
+  // Per-generation patch-payload cache reused across chain rebuilds, so
+  // navigating up and down the lineage does not re-fetch ancestors.
+  patchCache: {},     // { "<epoch>/<gen>": { patches:[...] } }
   // Live-refresh bookkeeping. The /api/files index is a load-time
   // snapshot; liveGensKey is a digest of the generation set in live
   // AppState — when it changes the index is re-fetched so a generation
@@ -4478,13 +4487,6 @@ function liveGenerationsDigest() {
   }
   ids.sort();
   return ids.join('|');
-}
-
-function fmtFileSize(bytes) {
-  if (typeof bytes !== 'number' || bytes < 0) return '';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 // The last generation in an epoch index entry — the picker's default.
@@ -4600,31 +4602,28 @@ async function refreshFilesIndexIfStale() {
   }
   filesState.liveGensKey = digest;
   renderFilesChangesControls();
-  renderFilesIndex();
 }
 
-// Load a generation's tree + changed-files diff and paint every Files
-// panel. Cheap when the selection is unchanged — the tree and diff are
-// cached, keyed by epoch/generation.
+// Load a generation's changed-files diff + applied patches + lineage
+// chain and paint every Files panel. Cheap when the selection is
+// unchanged — the diff, patches and chain are cached, keyed by
+// epoch/generation. The per-generation source-tree fetch (the old
+// "Generation files" file browser) was removed: the What-changed diff
+// above covers reading what a generation produced, the mutation-site
+// browser below covers reading the surface itself.
 async function loadFilesGeneration(epochId, generationId) {
   const changed = !filesState.selectedGen
     || filesState.selectedGen.epoch_id !== epochId
     || filesState.selectedGen.generation_id !== generationId;
   if (changed) {
     filesState.selectedGen = { epoch_id: epochId, generation_id: generationId };
-    filesState.openFile = null;
-    filesState._content = null;
-    filesState.tree = null;
     filesState.changes = null;
     filesState.changesKey = `${epochId}/${generationId}`;
     filesState.patches = null;
     filesState.patchesKey = `${epochId}/${generationId}`;
+    filesState.chain = null;
+    filesState.chainKey = `${epochId}/${generationId}`;
     const base = `/api/files/${encodeURIComponent(epochId)}/${encodeURIComponent(generationId)}`;
-    try {
-      filesState.tree = await fetchJson(base + '/tree');
-    } catch (err) {
-      filesState.tree = { entries: [], error: String(err) };
-    }
     try {
       filesState.changes = await fetchJson(base + '/diff');
     } catch (err) {
@@ -4639,6 +4638,15 @@ async function loadFilesGeneration(epochId, generationId) {
     } catch (err) {
       filesState.patches = { patches: [], error: String(err) };
     }
+    // Cache the just-fetched patches keyed by epoch/gen so the
+    // cumulative-chain walk below reuses it without a second round trip.
+    filesState.patchCache[`${epochId}/${generationId}`] = filesState.patches;
+    // Build the cumulative champion-lineage chain: walk
+    // parent_generation_id back through live AppState to the seed,
+    // fetching each ancestor's patches once (cached). Rejected siblings
+    // are NOT on the chain — the walk follows the recorded parent edges
+    // only.
+    filesState.chain = await buildLineageChain(epochId, generationId);
     // The mutation surface is per-epoch; a generation switch within the
     // same epoch reuses the cached index, a switch to a new epoch reloads.
     if (mutationsState.epochId !== epochId) {
@@ -4649,11 +4657,68 @@ async function loadFilesGeneration(epochId, generationId) {
     }
   }
   renderFilesChanges();
-  renderFilesIndex();
-  renderFilesTree();
-  renderFilesContent();
   renderFilesPatches();
+  renderFilesCumulative();
   renderMutationsView();
+}
+
+// Walk parent_generation_id from `generationId` back to the seed
+// through live AppState (state.lineage.generations), fetching each
+// ancestor's patches via /api/files/{epoch}/{gen}/patches and reusing
+// filesState.patchCache. Returns an ordered list (seed -> selected) of
+// { generation_id, patches:[...] }. A missing parent link terminates
+// the walk; rejected siblings are not on the chain because they share
+// the parent edge but are not ON it. A cycle guard caps the walk
+// length at the number of known generations.
+async function buildLineageChain(epochId, generationId) {
+  const gens = (state.lineage && state.lineage.generations) || [];
+  const byId = new Map();
+  for (const g of gens) {
+    const gid = g && (g.generation_id != null ? g.generation_id : g.id);
+    if (gid != null && (!g.epoch_id || g.epoch_id === epochId)) {
+      byId.set(String(gid), g);
+    }
+  }
+  // Walk from selected -> seed. Stop on a missing record (the lineage
+  // feed has not yet reported the ancestor) or on a cycle.
+  const order = [];
+  const seen = new Set();
+  let cursor = String(generationId);
+  const maxSteps = byId.size + 1;
+  for (let i = 0; i < maxSteps; i++) {
+    if (seen.has(cursor)) break;
+    seen.add(cursor);
+    order.push(cursor);
+    const rec = byId.get(cursor);
+    if (!rec) break;
+    const parent = rec.parent_generation_id;
+    if (!parent) break;  // seed reached
+    cursor = String(parent);
+  }
+  order.reverse();  // seed first, selected last
+
+  // Fetch each ancestor's patches (cached). The selected generation's
+  // patches were just cached by loadFilesGeneration; ancestors are
+  // typically already cached after the operator has clicked through.
+  const chain = [];
+  for (const gid of order) {
+    const key = `${epochId}/${gid}`;
+    let payload = filesState.patchCache[key];
+    if (payload == null) {
+      const base = `/api/files/${encodeURIComponent(epochId)}/${encodeURIComponent(gid)}`;
+      try {
+        payload = await fetchJson(base + '/patches');
+      } catch (err) {
+        payload = { patches: [], error: String(err) };
+      }
+      filesState.patchCache[key] = payload;
+    }
+    chain.push({
+      generation_id: gid,
+      patches: (payload && payload.patches) || [],
+    });
+  }
+  return chain;
 }
 
 // Navigate the picker by hash — the view is route-driven, so a click
@@ -5003,170 +5068,27 @@ function renderFilesChangesDiff() {
   swapIfChanged(pane, filesChangesKey(), buildFilesChangesDiff);
 }
 
-// Left pane top: the epoch -> generation picker, then the file tree.
-// The picker routes through the keyed reconcile spine, and the
-// tree-root child is kept as a stable node, so an SSE-driven live index
-// refresh adds a new generation's button without rebuilding the picker
-// or wiping the file tree already painted below it.
-function renderFilesIndex() {
-  const pane = $('files-tree-pane');
-  if (!pane) return;
-
-  const index = filesState.index || { epochs: [] };
-  const epochs = index.epochs || [];
-  if (epochs.length === 0) {
-    swapIfChanged(pane, 'empty', () =>
-      el('p', { class: 'empty' }, ['No generations yet.']));
-    return;
-  }
-  // Populated shell: a picker followed by a persistent tree-root. The
-  // shell is built once (swapIfChanged) so the tree-root node — and the
-  // tree renderFilesTree painted into it — survives every later refresh.
-  swapIfChanged(pane, 'shell', () => [
-    el('div', { class: 'files-gen-picker' }),
-    el('div', { id: 'files-tree-root', class: 'files-tree-root' }),
-  ]);
-  reconcileFilesPicker(pane.firstChild);
-}
-
-// The selected generation's source tree, rendered from the flat entry
-// list the server returns (paths are '/'-separated; we group by dir).
-function renderFilesTree() {
-  const root = $('files-tree-root');
-  if (!root) return;
-  clearChildren(root);
-
-  if (!filesState.selectedGen) {
-    root.appendChild(
-      el('p', { class: 'empty' }, ['Select a generation.'])
-    );
-    return;
-  }
-  const tree = filesState.tree || { entries: [] };
-  if (tree.error) {
-    root.appendChild(el('p', { class: 'empty' }, [tree.error]));
-    return;
-  }
-  const entries = tree.entries || [];
-  if (entries.length === 0) {
-    root.appendChild(el('p', { class: 'empty' }, ['Empty tree.']));
-    return;
-  }
-  const list = el('ul', { class: 'files-tree-list' });
-  for (const entry of entries) {
-    const depth = entry.path.split('/').length - 1;
-    const name = entry.path.split('/').pop();
-    if (entry.is_dir) {
-      list.appendChild(
-        el('li', {
-          class: 'files-tree-dir',
-          style: `padding-left:${depth * 12}px`,
-        }, [name + '/'])
-      );
-    } else {
-      const open = filesState.openFile === entry.path;
-      list.appendChild(
-        el('li', {
-          class: 'files-tree-file' + (open ? ' active' : ''),
-          style: `padding-left:${depth * 12}px`,
-        }, [
-          el('button', {
-            type: 'button',
-            class: 'files-tree-file-button',
-            onclick: () => openFilesFile(entry.path),
-          }, [
-            el('span', { class: 'files-tree-file-name' }, [name]),
-            el('span', { class: 'files-tree-file-size' }, [
-              fmtFileSize(entry.size),
-            ]),
-          ]),
-        ])
-      );
-    }
-  }
-  root.appendChild(list);
-}
-
-async function openFilesFile(relPath) {
-  if (!filesState.selectedGen) return;
-  const { epoch_id, generation_id } = filesState.selectedGen;
-  const base = `/api/files/${encodeURIComponent(epoch_id)}/${encodeURIComponent(generation_id)}`;
-  const url = base + '/content?path=' + encodeURIComponent(relPath);
-  filesState.openFile = relPath;
-  let payload;
-  try {
-    payload = await fetchJson(url);
-  } catch (err) {
-    payload = { path: relPath, error: String(err) };
-  }
-  filesState._content = payload;
-  renderFilesTree();
-  renderFilesContent();
-}
-
-// A stable digest of what renderFilesContent draws — see
-// mutationsDetailKey: identical key -> the content subtree (and its
-// scrollable <pre>'s horizontal scroll position) survives a no-op
-// SSE-driven repaint untouched.
-function filesContentKey() {
-  const payload = filesState._content;
-  if (!filesState.openFile || !payload) return 'none';
-  if (payload.error) return 'error:' + filesState.openFile + ':' + payload.error;
-  if (payload.binary) return 'binary:' + filesState.openFile;
-  return 'content:' + filesState.openFile
-    + ':' + (payload.truncated ? 't' : 'f')
-    + ':' + (payload.size || 0)
-    + ':' + String(payload.content || '').length;
-}
-
-// Build the open file's content subtree — pure, no DOM lookups.
-function buildFilesContent() {
-  const payload = filesState._content;
-  if (!filesState.openFile || !payload) {
-    return el('p', { class: 'empty' }, ['Select a file to view its contents.']);
-  }
-  const body = el('div', { class: 'files-content-wrap' }, [
-    el('div', { class: 'files-content-header' }, [filesState.openFile]),
-  ]);
-  if (payload.error) {
-    body.appendChild(el('p', { class: 'empty' }, [payload.error]));
-    return body;
-  }
-  if (payload.binary) {
-    body.appendChild(el('p', { class: 'empty' }, ['Binary file — not shown.']));
-    return body;
-  }
-  if (payload.truncated) {
-    body.appendChild(
-      el('div', { class: 'files-content-note' }, [
-        `Truncated — showing the first part of a ${fmtFileSize(payload.size)} file.`,
-      ])
-    );
-  }
-  body.appendChild(
-    el('pre', { class: 'files-content-body' }, [payload.content || ''])
-  );
-  return body;
-}
-
-// The right pane: the open file's content. Routed through swapIfChanged
-// so a no-op SSE repaint leaves the <pre> node — and its horizontal
-// scroll position — untouched.
-function renderFilesContent() {
-  const pane = $('files-content-pane');
-  if (!pane) return;
-  swapIfChanged(pane, filesContentKey(), buildFilesContent);
-}
-
-// The patch-set section: the patches that derived the selected
-// generation. This is a PURE, SYNCHRONOUS render — the patch payload is
-// fetched once per selection by loadFilesGeneration and cached on
+// The per-generation patch-set section: the patches that derived the
+// selected generation in this single step (parent -> selected). The
+// section heading is rewritten in place to carry the selected
+// generation id so the per-generation scope is obvious — contrast with
+// the cumulative section below which walks the lineage to the seed.
+//
+// This is a PURE, SYNCHRONOUS render — the patch payload is fetched
+// once per selection by loadFilesGeneration and cached on
 // filesState.patches. Routing the list through reconcileList means a
-// no-op SSE repaint touches zero DOM nodes (no layout jump) and there is
-// no fetch race that could append the same patch twice.
+// no-op SSE repaint touches zero DOM nodes (no layout jump) and there
+// is no fetch race that could append the same patch twice.
 function renderFilesPatches() {
   const pane = $('files-patches');
   if (!pane) return;
+
+  // Update the section heading to name the selected generation.
+  const title = $('files-patches-title');
+  if (title) {
+    const gen = filesState.selectedGen && filesState.selectedGen.generation_id;
+    patchText(title, gen ? `Patches in ${gen}` : 'Patches in this generation');
+  }
 
   // Coarse state: empty / error / populated. swapIfChanged only rebuilds
   // the pane shell when that bucket changes — so the <ul> survives every
@@ -5239,6 +5161,117 @@ function renderFilesPatches() {
       }
     },
   );
+}
+
+// A stable digest of the cumulative-chain payload. swapIfChanged uses
+// it so a no-op repaint leaves the section subtree untouched: a chain
+// is keyed by its ordered (generation, patch-id) pairs, so an unchanged
+// chain re-renders to zero DOM writes.
+function filesCumulativeKey() {
+  if (!filesState.selectedGen) return 'none';
+  const chain = filesState.chain || [];
+  const parts = [
+    'chain',
+    filesState.selectedGen.epoch_id || '',
+    filesState.selectedGen.generation_id || '',
+  ];
+  for (const step of chain) {
+    parts.push('g:' + step.generation_id);
+    for (const p of step.patches || []) {
+      parts.push((p && p.id) || (p && p.mutation_id) || '?');
+    }
+  }
+  return parts.join('|');
+}
+
+// Build the cumulative-chain subtree — pure, no DOM lookups. A flat
+// ordered list grouped by generation: a small heading per generation,
+// the patches under it. The seed (which contributes zero patches) is
+// rendered as a "(seed — no patches)" heading so the chain's start is
+// visible.
+function buildFilesCumulative() {
+  if (!filesState.selectedGen) {
+    return el('p', { class: 'empty' }, [
+      'Select a generation to view its lineage chain.',
+    ]);
+  }
+  const chain = filesState.chain || [];
+  if (chain.length === 0) {
+    return el('p', { class: 'empty' }, [
+      'No lineage chain — the parent edges have not been reported yet.',
+    ]);
+  }
+  // Count patches across the whole chain so the operator sees the total
+  // applied surface area at a glance.
+  let totalPatches = 0;
+  for (const step of chain) totalPatches += (step.patches || []).length;
+  const selGen = filesState.selectedGen.generation_id;
+
+  const wrap = el('div', { class: 'files-cumulative-body' }, [
+    el('div', { class: 'files-cumulative-summary' }, [
+      `${chain.length} generation${chain.length === 1 ? '' : 's'} `
+        + `on the lineage chain · `
+        + `${totalPatches} cumulative patch${totalPatches === 1 ? '' : 'es'} `
+        + `applied to reach ${selGen}`,
+    ]),
+  ]);
+  // Render seed-first so the operator reads the patch-application order
+  // top to bottom (seed at the top, the selected generation at the
+  // bottom). One small heading per generation, the patches as a list.
+  for (const step of chain) {
+    const group = el('div', { class: 'files-cumulative-group' }, [
+      el('div', { class: 'files-cumulative-heading' }, [step.generation_id]),
+    ]);
+    const patches = step.patches || [];
+    if (patches.length === 0) {
+      // The seed contributes no patches; any other gen with no patches
+      // is unusual but degrades cleanly.
+      group.appendChild(el('p', { class: 'empty files-cumulative-empty' }, [
+        step.generation_id === chain[0].generation_id
+          ? '(seed — no patches)'
+          : '(no patches)',
+      ]));
+      wrap.appendChild(group);
+      continue;
+    }
+    const list = el('ul', { class: 'files-patch-list' });
+    for (const patch of patches) {
+      list.appendChild(el('li', { class: 'files-patch-item' }, [
+        el('div', { class: 'files-patch-head' }, [
+          el('span', { class: 'files-patch-id' }, [(patch && patch.id) || '?']),
+          el('span', { class: 'files-patch-op' }, [(patch && patch.op) || '']),
+          el('span', { class: 'files-patch-target' }, [
+            (patch && patch.mutation_id) || '',
+          ]),
+        ]),
+        patch && patch.rationale
+          ? el('div', { class: 'files-patch-rationale' }, [patch.rationale])
+          : null,
+      ]));
+    }
+    group.appendChild(list);
+    wrap.appendChild(group);
+  }
+  return wrap;
+}
+
+// The cumulative-chain section: every patch on the champion lineage
+// from the seed up to the selected generation. Updates the heading in
+// place with the selected generation id and swaps the body subtree
+// only when the chain payload genuinely changes — a no-op repaint
+// touches zero DOM.
+function renderFilesCumulative() {
+  const pane = $('files-cumulative');
+  if (!pane) return;
+
+  const title = $('files-cumulative-title');
+  if (title) {
+    const gen = filesState.selectedGen && filesState.selectedGen.generation_id;
+    patchText(title,
+      gen ? `Patches applied to reach ${gen}`
+          : 'Patches applied to reach this generation');
+  }
+  swapIfChanged(pane, filesCumulativeKey(), buildFilesCumulative);
 }
 
 // --- Mutation-site browser (Files view) ----------------------------

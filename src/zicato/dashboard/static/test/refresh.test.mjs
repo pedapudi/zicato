@@ -30,8 +30,10 @@ const REQUIRED_IDS = [
   'epoch-scoring', 'epoch-mutations',
   'epoch-experiments-section', 'epoch-experiment-log', 'epoch-analysis',
   'lineage-svg', 'overview-trajectory-svg',
-  'heatmap-svg', 'conversation-panel', 'files-tree-pane', 'files-content-pane',
-  'files-patches', 'mutations-list-pane', 'mutations-detail-pane',
+  'heatmap-svg', 'conversation-panel',
+  'files-patches', 'files-patches-title',
+  'files-cumulative', 'files-cumulative-title',
+  'mutations-list-pane', 'mutations-detail-pane',
   'lineage-stage', 'lineage-viewport', 'lineage-zoom-in', 'lineage-zoom-out',
   'lineage-zoom-reset',
 ];

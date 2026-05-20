@@ -264,22 +264,26 @@
           </div>
         </section>
 
-        <section id="files-section" aria-label="Generation file browser">
-          <h2>Generation files</h2>
-          <div id="files-browser" class="files-browser">
-            <div id="files-tree-pane" class="files-tree-pane">
-              <p class="empty">No generations yet.</p>
-            </div>
-            <div id="files-content-pane" class="files-content-pane">
-              <p class="empty">Select a file to view its contents.</p>
-            </div>
+        <!-- Patches applied in this single generation. The "in v{N}"
+             label makes the per-generation scope obvious — contrast with
+             the cumulative section below, which walks the champion
+             lineage back to the seed. -->
+        <section id="files-patches-section" aria-label="Patches in this generation">
+          <h2 id="files-patches-title">Patches in this generation</h2>
+          <div id="files-patches" class="files-patches">
+            <p class="empty">Select a generation to view its patches.</p>
           </div>
         </section>
 
-        <section id="files-patches-section" aria-label="Generation patch set">
-          <h2>Applied patches</h2>
-          <div id="files-patches" class="files-patches">
-            <p class="empty">Select a generation to view its patches.</p>
+        <!-- The CUMULATIVE patch chain: every patch on the champion
+             lineage from the seed to the selected generation. Walks
+             parent_generation_id back through live AppState; rejected
+             siblings are NOT on the chain. Empty when only the seed
+             generation is selected. -->
+        <section id="files-cumulative-section" aria-label="Patches applied to reach this generation">
+          <h2 id="files-cumulative-title">Patches applied to reach this generation</h2>
+          <div id="files-cumulative" class="files-cumulative">
+            <p class="empty">Select a generation to view its lineage chain.</p>
           </div>
         </section>
 

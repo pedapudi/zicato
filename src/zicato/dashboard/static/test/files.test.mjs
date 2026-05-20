@@ -26,7 +26,9 @@ const REQUIRED_IDS = [
   'epoch-scoring', 'epoch-mutations', 'epoch-experiment-log', 'epoch-journal',
   'epoch-analysis', 'lineage-svg', 'heatmap-svg',
   'conversation-panel', 'files-changes-controls', 'files-changes-diff',
-  'files-tree-pane', 'files-content-pane', 'files-patches', 'mutations-list-pane',
+  'files-patches', 'files-patches-title',
+  'files-cumulative', 'files-cumulative-title',
+  'mutations-list-pane',
   'mutations-detail-pane', 'lineage-stage', 'lineage-viewport', 'lineage-zoom-in',
   'lineage-zoom-out', 'lineage-zoom-reset',
 ];
@@ -673,5 +675,256 @@ test('a long diff line is rendered in full — no content is truncated', async (
     }],
   };
 });
+
+// --- Generation-files section is gone ---------------------------------
+//
+// The per-generation file-browser was removed: the What-changed diff
+// covers reading what a generation produced, and the mutation-site
+// browser covers the surface itself. The DOM ids the browser used
+// (files-section, files-browser, files-tree-pane, files-content-pane,
+// files-tree-root) must NOT be reachable in the Files view.
+
+test('the "Generation files" section is gone — no file-tree DOM remains', async () => {
+  filesIndexResponse = FIXTURE['/api/files'];
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null },
+      { generation_id: 'v1', parent_generation_id: 'v0' },
+      { generation_id: 'v2', parent_generation_id: 'v1' },
+    ],
+    experiments: [],
+  };
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+
+  // None of the Generation-files DOM ids are reachable.
+  for (const id of [
+    'files-section', 'files-browser', 'files-tree-pane',
+    'files-content-pane', 'files-tree-root',
+  ]) {
+    assertEqual(doc.getElementById(id), null,
+      `the "Generation files" section is gone — #${id} must not exist`);
+  }
+  // Sanity: the surrounding sections that survive are still wired.
+  assert(doc.getElementById('files-changes-diff'),
+    'the What-changed diff section must remain');
+  assert(doc.getElementById('files-patches'),
+    'the per-generation patches section must remain');
+  assert(doc.getElementById('files-cumulative'),
+    'the new cumulative-chain section must be present');
+  assert(doc.getElementById('mutations-list-pane'),
+    'the mutation-site browser must remain');
+});
+
+// --- "Patches in v{N}" — section title names the generation ------------
+
+test('the per-generation patches title names the selected generation', async () => {
+  filesIndexResponse = FIXTURE['/api/files'];
+  render.filesState.index = null;
+  render.filesState.liveGensKey = null;
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null },
+      { generation_id: 'v1', parent_generation_id: 'v0' },
+      { generation_id: 'v2', parent_generation_id: 'v1' },
+    ],
+    experiments: [],
+  };
+
+  window.location.hash = '#/files/ep1/v1';
+  await render.applyFilesRoute('ep1', 'v1');
+  let title = doc.getElementById('files-patches-title');
+  assertEqual(title.textContent, 'Patches in v1',
+    'the heading must include the selected generation id (v1)');
+
+  window.location.hash = '#/files/ep1/v2';
+  await render.applyFilesRoute('ep1', 'v2');
+  title = doc.getElementById('files-patches-title');
+  assertEqual(title.textContent, 'Patches in v2',
+    'the heading must update when the generation changes');
+});
+
+// --- "Patches applied to reach v{N}" — cumulative lineage chain --------
+//
+// The cumulative section walks parent_generation_id from the selected
+// generation back to the seed and lists every patch along the way. A
+// rejected sibling shares a parent edge but is NOT on the chain. The
+// chain ONLY follows the parent_generation_id pointer of the selected
+// generation, then of its parent, and so on.
+
+// A four-generation fixture matching the t6-style live data:
+//   v0 (seed)  -> v1 (parent v0, web_developer_instruction)
+//              -> v2 (parent v1, REJECTED — sibling of v3)
+//              -> v3 (parent v1, researcher_instruction)
+// v3's chain back to the seed is: v0 -> v1 -> v3 — two cumulative
+// patches. v2's patches must NOT appear in v3's chain.
+const CHAIN_INDEX = {
+  epochs: [{
+    epoch_id: 'ep1',
+    generations: [
+      { generation_id: 'v0', file_count: 2, patch_count: 0 },
+      { generation_id: 'v1', file_count: 2, patch_count: 1 },
+      { generation_id: 'v2', file_count: 2, patch_count: 1 },
+      { generation_id: 'v3', file_count: 2, patch_count: 1 },
+    ],
+  }],
+};
+// Per-generation patch/diff overrides for the chain tests, applied
+// INSIDE the test setup (and restored afterwards) so they do not
+// perturb the fold tests above — which also pin v3's diff fixture.
+const CHAIN_OVERRIDES = {
+  '/api/files/ep1/v0/diff': {
+    epoch_id: 'ep1', generation_id: 'v0', parent_generation_id: null, files: [],
+  },
+  '/api/files/ep1/v0/patches': {
+    epoch_id: 'ep1', generation_id: 'v0', patches: [],
+  },
+  '/api/files/ep1/v3/patches': {
+    epoch_id: 'ep1', generation_id: 'v3',
+    patches: [
+      { id: 'patch-v3', op: 'REPLACE',
+        mutation_id: 'researcher_instruction', rationale: 'cite more' },
+    ],
+  },
+  '/api/files/ep1/v3/diff': {
+    epoch_id: 'ep1', generation_id: 'v3', parent_generation_id: 'v1',
+    files: [{
+      path: 'a.py', status: 'modified',
+      old_content: 'x = 1\n', new_content: 'x = 3\n',
+      old_binary: false, new_binary: false,
+    }],
+  },
+};
+function applyChainOverrides() {
+  const saved = {};
+  for (const [k, v] of Object.entries(CHAIN_OVERRIDES)) {
+    saved[k] = FIXTURE[k];
+    FIXTURE[k] = v;
+  }
+  return saved;
+}
+function restoreChainOverrides(saved) {
+  for (const [k, v] of Object.entries(saved)) {
+    if (v === undefined) delete FIXTURE[k];
+    else FIXTURE[k] = v;
+  }
+}
+// v2 is the REJECTED sibling — its patches are already in FIXTURE
+// (p-aaa, p-bbb, set up at the top of the file). The chain walk from
+// v3 must NOT include them.
+
+function cumulativeGroups() {
+  const pane = doc.getElementById('files-cumulative');
+  return pane._descendants().filter(
+    (n) => n.classList && n.classList.contains('files-cumulative-group'));
+}
+function cumulativePatchIds() {
+  const pane = doc.getElementById('files-cumulative');
+  const items = pane._descendants().filter(
+    (n) => n.classList && n.classList.contains('files-patch-item'));
+  return items.map((it) => {
+    const idNode = it._descendants().find(
+      (n) => n.classList && n.classList.contains('files-patch-id'));
+    return idNode ? idNode.textContent : null;
+  });
+}
+
+test('cumulative chain walks v0 -> v1 -> v3, skipping the rejected v2 sibling',
+  async () => {
+    const saved = applyChainOverrides();
+    try {
+      filesIndexResponse = CHAIN_INDEX;
+      render.filesState.index = null;
+      render.filesState.liveGensKey = null;
+      render.filesState.patchCache = {};
+      render.filesState.selectedGen = null;
+      // v3's parent is v1 — NOT v2. v2 is a sibling that shares v1 as
+      // parent but is rejected; its patches must not reach v3's chain.
+      state.lineage = {
+        generations: [
+          { generation_id: 'v0', parent_generation_id: null },
+          { generation_id: 'v1', parent_generation_id: 'v0' },
+          { generation_id: 'v2', parent_generation_id: 'v1' },
+          { generation_id: 'v3', parent_generation_id: 'v1' },
+        ],
+        experiments: [],
+      };
+
+      window.location.hash = '#/files/ep1/v3';
+      await render.applyFilesRoute('ep1', 'v3');
+
+      // The cumulative title names the selected generation.
+      const title = doc.getElementById('files-cumulative-title');
+      assertEqual(title.textContent, 'Patches applied to reach v3',
+        'the cumulative title must name the selected generation');
+
+      // The chain has THREE generation groups: v0 (seed), v1, v3.
+      const groups = cumulativeGroups();
+      assertEqual(groups.length, 3,
+        'the chain must have three generations on the lineage path');
+      const headings = groups.map(
+        (g) => g._descendants().find(
+          (n) => n.classList
+            && n.classList.contains('files-cumulative-heading')).textContent);
+      // Seed first, selected last — the order patches were applied.
+      assertEqual(headings[0], 'v0', 'seed v0 is the first link');
+      assertEqual(headings[1], 'v1', 'v1 is the second link');
+      assertEqual(headings[2], 'v3', 'the selected generation is the last link');
+      assert(!headings.includes('v2'),
+        'the rejected v2 sibling must NOT appear on the chain');
+
+      // The chain lists v1's patch and v3's patch — exactly two cumulative
+      // patches — and NOT v2's rejected patch.
+      const ids = cumulativePatchIds();
+      assertEqual(ids.length, 2,
+        'two cumulative patches: v1 web_developer_instruction + v3 researcher_instruction');
+      assert(ids.includes('a4521cb4280446ce81738773b0a53bee'),
+        'v1 web_developer_instruction patch must be on the chain');
+      assert(ids.includes('patch-v3'),
+        'v3 researcher_instruction patch must be on the chain');
+      // v2's actual patches (p-aaa, p-bbb) are the rejected sibling — they
+      // must NOT appear in v3's chain even though v2 shares v1 as parent.
+      assert(!ids.includes('p-aaa') && !ids.includes('p-bbb'),
+        'the rejected v2 sibling patches must NOT be on the chain');
+    } finally {
+      restoreChainOverrides(saved);
+    }
+  });
+
+test('cumulative chain for a seed (v0) renders an empty-patches group',
+  async () => {
+    const saved = applyChainOverrides();
+    try {
+      filesIndexResponse = CHAIN_INDEX;
+      render.filesState.index = null;
+      render.filesState.liveGensKey = null;
+      render.filesState.patchCache = {};
+      render.filesState.selectedGen = null;
+      state.lineage = {
+        generations: [
+          { generation_id: 'v0', parent_generation_id: null },
+          { generation_id: 'v1', parent_generation_id: 'v0' },
+        ],
+        experiments: [],
+      };
+
+      window.location.hash = '#/files/ep1/v0';
+      await render.applyFilesRoute('ep1', 'v0');
+
+      const groups = cumulativeGroups();
+      assertEqual(groups.length, 1,
+        'a seed has a single-element chain (itself)');
+      const heading = groups[0]._descendants().find(
+        (n) => n.classList
+          && n.classList.contains('files-cumulative-heading')).textContent;
+      assertEqual(heading, 'v0', 'the seed is its own (only) link');
+      assertEqual(cumulativePatchIds().length, 0,
+        'a seed contributes zero patches');
+    } finally {
+      restoreChainOverrides(saved);
+    }
+  });
 
 await run();
