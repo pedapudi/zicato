@@ -498,6 +498,294 @@ test('gauntlet: 2026-05-19_presn shape — v0 spine, v1 discarded, v2 incomplete
     'v2 must NOT read as discarded — it is an aborted / in-progress node');
 });
 
+test('gauntlet: the full epoch lineage walks past a stale bracket payload', () => {
+  // Live bug `2026-05-20_presn`: the bracket payload's `champion_lineage`
+  // lagged the runtime — the index DB carried only `v0` as promoted with
+  // null `parent_generation_id` on every row, even though v1 and v3 had
+  // been promoted between rounds. The gauntlet still drew `v0 (SEED ·
+  // CHAMPION) → v4 (LIVE)`, hiding the entire v0 → v1 → v3 spine and the
+  // discarded v2 between them. With the lineage feed as the source of
+  // truth, the spine must rebuild to its full length.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: '2026-05-20_presn',
+    // The lagging payload: only the seed is on the index-DB spine.
+    champion_lineage: ['v0'],
+    matchups: [
+      { champion: 'v0', challenger: 'v1', decision: 'promoted',
+        delta_scalar: -0.10, ran_at: '2026-05-20T01:12:42Z' },
+      { champion: 'v1', challenger: 'v2', decision: 'rejected',
+        delta_scalar: 0.04,
+        rejection_reason: 'pass-rate regression',
+        ran_at: '2026-05-20T01:19:47Z' },
+      { champion: 'v1', challenger: 'v3', decision: 'promoted',
+        delta_scalar: -0.08, ran_at: '2026-05-20T02:00:19Z' },
+    ],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null,
+        epoch_id: '2026-05-20_presn', promoted: true,
+        created_at: '2026-05-20T01:11:18Z' },
+      { generation_id: 'v1', parent_generation_id: 'v0',
+        epoch_id: '2026-05-20_presn', promoted: true,
+        created_at: '2026-05-20T01:12:42Z' },
+      { generation_id: 'v2', parent_generation_id: 'v1',
+        epoch_id: '2026-05-20_presn', promoted: false,
+        created_at: '2026-05-20T01:19:47Z' },
+      { generation_id: 'v3', parent_generation_id: 'v1',
+        epoch_id: '2026-05-20_presn', promoted: true,
+        created_at: '2026-05-20T02:00:19Z' },
+      { generation_id: 'v4', parent_generation_id: 'v3',
+        epoch_id: '2026-05-20_presn', promoted: null,
+        created_at: '2026-05-20T02:07:39Z' },
+    ],
+    experiments: [],
+  };
+  // The live tournament — v4 challenging v3.
+  state.activeTournament = {
+    tournament_id: 'tour-v3-vs-v4',
+    parent_generation_id: 'v3',
+    child_generation_id: 'v4',
+    epoch_id: '2026-05-20_presn',
+    started_at: '2026-05-20T02:07:39Z',
+    round_index: 1,
+    total_rounds: 3,
+    phase: 'running',
+    entries: [
+      { entry_id: 'a', side: 'parent', status: 'done' },
+      { entry_id: 'a', side: 'child', status: 'running' },
+    ],
+  };
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  // The full spine must rebuild — v0, v1 and v3 are all green spine
+  // nodes. The bracket payload alone says only v0; the lineage feed
+  // promotes the walk past the stale tail.
+  const spineNodes = byClass(bracket, 'is-spine');
+  const spineText = spineNodes.map((n) => n.textContent);
+  assert(spineText.some((t) => t.includes('v0')),
+    `v0 must be a spine node, got ${JSON.stringify(spineText)}`);
+  assert(spineText.some((t) => t.includes('v1')),
+    `v1 must be a spine node — bracket payload lagged, lineage feed promoted it. `
+      + `got ${JSON.stringify(spineText)}`);
+  assert(spineText.some((t) => t.includes('v3')),
+    `v3 must be a spine node — the current champion. got ${JSON.stringify(spineText)}`);
+  assertEqual(spineNodes.length, 3,
+    `the spine has exactly three promoted nodes (v0, v1, v3), got ${spineNodes.length}`);
+
+  // The CHAMPION badge moves to the LATEST promoted generation (v3), NOT
+  // the seed v0. The seed keeps its "seed" label but `is-current` lives
+  // only on v3. This is the regression: `seed · champion` was glued to
+  // v0 even when the spine had multiple promotions.
+  const current = byClass(bracket, 'is-current');
+  assertEqual(current.length, 1,
+    'exactly one spine node is the reigning champion');
+  assert(current[0].textContent.includes('v3'),
+    `the CHAMPION badge sits on v3, not on v0. got "${current[0].textContent}"`);
+  const seeds = byClass(bracket, 'is-seed');
+  assertEqual(seeds.length, 1, 'exactly one spine node carries the seed tag');
+  assert(seeds[0].textContent.includes('v0'),
+    `the SEED tag sits on v0. got "${seeds[0].textContent}"`);
+  // The seed must NOT also be marked as the reigning champion when a
+  // later generation has been promoted past it.
+  const v0cls = seeds[0].getAttribute('class').split(/\s+/);
+  assert(!v0cls.includes('is-current'),
+    'v0 must NOT carry the reigning-champion class when v1/v3 have been promoted');
+  // The seed tag reads as just "seed", not "seed · champion", once the
+  // spine has at least one promotion past the seed.
+  assert(!seeds[0].textContent.toLowerCase().includes('champion'),
+    `v0 reads as the seed only — "seed · champion" must move with the badge. `
+      + `got "${seeds[0].textContent}"`);
+
+  // v2 is a red discarded card hanging off v1 (the champion it failed
+  // to beat) — NOT off v0. The rejected challenger between two
+  // promotions must not pollute the spine.
+  const discarded = byClass(bracket, 'bracket-loser')
+    .filter((n) => !n.getAttribute('class').split(/\s+/).includes('bracket-aborted'));
+  const v2card = discarded.find((n) => n.textContent.includes('v2'));
+  assert(v2card, `v2 must render as a discarded card. got ${discarded.length} discarded`);
+  // Walk up to find the spine column v2 lives in — it must contain v1.
+  let col = v2card;
+  while (col && !(col.getAttribute && col.getAttribute('class')
+    && col.getAttribute('class').split(/\s+/).includes('bracket-col'))) {
+    col = col.parentNode;
+  }
+  assert(col, 'the v2 card must live inside a bracket-col');
+  // The column's spine node names v1 (the champion v2 challenged).
+  const colSpine = col._descendants()
+    .filter((n) => {
+      const c = n.getAttribute && n.getAttribute('class');
+      return typeof c === 'string' && c.split(/\s+/).includes('is-spine');
+    });
+  assert(colSpine.length === 1 && colSpine[0].textContent.includes('v1'),
+    `v2 hangs off v1, not v0. got column spine `
+      + `${JSON.stringify(colSpine.map((n) => n.textContent))}`);
+
+  // The live challenger v4 hangs off the CURRENT champion v3 — the
+  // matchup-headline names v3 AND v4 is visually grouped with v3, not
+  // with the seed v0.
+  const liveCol = byClass(bracket, 'bracket-col-live')[0];
+  assert(liveCol, 'the live challenger sits in a bracket-col-live column');
+  const liveText = liveCol.textContent;
+  assert(liveText.includes('v4'),
+    `the live column names v4. got "${liveText}"`);
+  assert(liveText.includes('v3'),
+    `the live column references v3 — the champion v4 is challenging. got "${liveText}"`);
+});
+
+test('gauntlet: CHAMPION badge moves to the latest promoted spine node', () => {
+  // Regression: previously the `seed · champion` label was stuck on the
+  // seed v0 even when v1 / v2 had been promoted past it. This test pins
+  // the contract: the CHAMPION badge follows the LATEST promoted node.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: 'e',
+    champion_lineage: ['v0', 'v1', 'v2'],
+    matchups: [
+      { champion: 'v0', challenger: 'v1', decision: 'promoted',
+        delta_scalar: -0.05, ran_at: '2026-05-10T10:00:00Z' },
+      { champion: 'v1', challenger: 'v2', decision: 'promoted',
+        delta_scalar: -0.04, ran_at: '2026-05-10T11:00:00Z' },
+    ],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, epoch_id: 'e',
+        promoted: true, created_at: '2026-05-10T09:00:00Z' },
+      { generation_id: 'v1', parent_generation_id: 'v0', epoch_id: 'e',
+        promoted: true, created_at: '2026-05-10T10:00:00Z' },
+      { generation_id: 'v2', parent_generation_id: 'v1', epoch_id: 'e',
+        promoted: true, created_at: '2026-05-10T11:00:00Z' },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = null;
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  const current = byClass(bracket, 'is-current');
+  assertEqual(current.length, 1,
+    'exactly one spine node is the reigning champion');
+  assert(current[0].textContent.includes('v2'),
+    `the CHAMPION badge sits on v2 (the latest promoted), got "${current[0].textContent}"`);
+  // v0 keeps "seed" but loses "champion" — both `is-seed` and
+  // `is-current` cannot live on the same node here.
+  const seeds = byClass(bracket, 'is-seed');
+  assertEqual(seeds.length, 1, 'one spine node is the seed');
+  assert(seeds[0].textContent.includes('v0'),
+    `the seed tag is on v0, got "${seeds[0].textContent}"`);
+  const seedCls = seeds[0].getAttribute('class').split(/\s+/);
+  assert(!seedCls.includes('is-current'),
+    'v0 must not be the reigning champion when later spine nodes exist');
+});
+
+test('gauntlet: a sole-seed epoch keeps SEED · CHAMPION (no promotions yet)', () => {
+  // When the spine has only the seed — no promotions yet — the seed is
+  // both the seed and the reigning champion. This is the ONLY case where
+  // `seed · champion` is correct (the very first tournament of an epoch).
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: 'e',
+    champion_lineage: ['v0'],
+    matchups: [],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, epoch_id: 'e',
+        promoted: true, created_at: '2026-05-10T09:00:00Z' },
+      { generation_id: 'v1', parent_generation_id: 'v0', epoch_id: 'e',
+        promoted: null, created_at: '2026-05-10T10:00:00Z' },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = {
+    tournament_id: 'tour-v0-vs-v1',
+    parent_generation_id: 'v0',
+    child_generation_id: 'v1',
+    epoch_id: 'e',
+    started_at: '2026-05-10T10:00:00Z',
+    round_index: 1,
+    total_rounds: 3,
+    phase: 'running',
+    entries: [
+      { entry_id: 'a', side: 'parent', status: 'done' },
+      { entry_id: 'a', side: 'child', status: 'running' },
+    ],
+  };
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  const spineNodes = byClass(bracket, 'is-spine');
+  assertEqual(spineNodes.length, 1,
+    `single-seed spine has one node, got ${spineNodes.length}`);
+  const seedCls = spineNodes[0].getAttribute('class').split(/\s+/);
+  assert(seedCls.includes('is-seed') && seedCls.includes('is-current'),
+    'the lone seed is both the seed and the reigning champion');
+  // The label reads "seed · champion" — both roles fused on one node.
+  assert(spineNodes[0].textContent.toLowerCase().includes('seed'),
+    `the lone seed-champion reads as "seed", got "${spineNodes[0].textContent}"`);
+  assert(spineNodes[0].textContent.toLowerCase().includes('champion'),
+    `the lone seed-champion reads as "champion", got "${spineNodes[0].textContent}"`);
+
+  // v1 hangs off v0 as the live challenger.
+  const liveCol = byClass(bracket, 'bracket-col-live')[0];
+  assert(liveCol, 'the live challenger is rendered in a bracket-col-live column');
+  assert(liveCol.textContent.includes('v1'),
+    `the live column names v1, got "${liveCol.textContent}"`);
+});
+
+test('gauntlet: a rejected challenger between two promotions stays off the spine', () => {
+  // Regression: when v2 is rejected between two promoted generations
+  // (v1 and v3), it must hang off v1 (the champion it failed to beat),
+  // not pollute the spine. This is the live `2026-05-20_presn` shape in
+  // miniature, without the live-tournament noise.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: 'e',
+    champion_lineage: ['v0', 'v1', 'v3'],
+    matchups: [
+      { champion: 'v0', challenger: 'v1', decision: 'promoted',
+        delta_scalar: -0.10, ran_at: '2026-05-20T01:00:00Z' },
+      { champion: 'v1', challenger: 'v2', decision: 'rejected',
+        delta_scalar: 0.04, ran_at: '2026-05-20T02:00:00Z' },
+      { champion: 'v1', challenger: 'v3', decision: 'promoted',
+        delta_scalar: -0.08, ran_at: '2026-05-20T03:00:00Z' },
+    ],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, epoch_id: 'e',
+        promoted: true, created_at: '2026-05-20T00:00:00Z' },
+      { generation_id: 'v1', parent_generation_id: 'v0', epoch_id: 'e',
+        promoted: true, created_at: '2026-05-20T01:00:00Z' },
+      { generation_id: 'v2', parent_generation_id: 'v1', epoch_id: 'e',
+        promoted: false, created_at: '2026-05-20T02:00:00Z' },
+      { generation_id: 'v3', parent_generation_id: 'v1', epoch_id: 'e',
+        promoted: true, created_at: '2026-05-20T03:00:00Z' },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = null;
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  // Spine has v0, v1, v3 — not v2.
+  const spineNodes = byClass(bracket, 'is-spine');
+  assertEqual(spineNodes.length, 3,
+    `the spine has v0, v1 and v3 — three nodes, got ${spineNodes.length}`);
+  for (const n of spineNodes) {
+    assert(!n.textContent.includes('v2'),
+      `v2 must NOT be a spine node — it was rejected. got "${n.textContent}"`);
+  }
+  // v2 is a red discarded card.
+  const discarded = byClass(bracket, 'bracket-loser')
+    .filter((n) => !n.getAttribute('class').split(/\s+/).includes('bracket-aborted'));
+  const v2card = discarded.find((n) => n.textContent.includes('v2'));
+  assert(v2card, `v2 must render as a discarded card. got ${discarded.length} discarded`);
+});
+
 test('gauntlet: a live fast-mode challenger reads as live, NOT incomplete', () => {
   // Regression: a fast-mode tournament round did not publish an
   // ActiveTournament; the gauntlet then synthesized a torn-down node

@@ -1362,11 +1362,94 @@ function matchupOutcome(m) {
   return 'aborted';
 }
 
+// Walk the FULL champion lineage chain across the current epoch. The
+// `/api/tournaments` bracket payload publishes a `champion_lineage`, but
+// it derives from the index DB's `generations` table — which can lag the
+// runtime (live-observed: `2026-05-20_presn` carried only `v0` as
+// promoted with null parent_generation_id on every row, even though v1
+// and v3 had been promoted, leaving the gauntlet stuck at a single-seed
+// spine). The `/api/lineage` feed is rebuilt from `lineage.json` +
+// `experiment.json` and never falls behind, so it is the authoritative
+// signal for which generations have been promoted.
+//
+// Strategy: take the bracket payload's `champion_lineage` as the
+// baseline (it correctly carries cross-epoch ancestry — a fresh epoch's
+// seed remembers the prior epoch's promoted head) and EXTEND it forward
+// by walking the `state.lineage.generations` feed from the tail,
+// following each champion's promoted children. The walk stops when the
+// reigning champion has no further promoted descendants in the feed.
+function epochChampionLineage() {
+  const b = state.bracket || {};
+  const baseline = Array.isArray(b.champion_lineage) ? b.champion_lineage.slice() : [];
+  const gens = (state.lineage && Array.isArray(state.lineage.generations))
+    ? state.lineage.generations : [];
+  if (gens.length === 0) return baseline;
+
+  // Index children by parent id. A non-baseline generation's
+  // `parent_generation_id` points at the champion it was proposed
+  // against; the children listing gathers every challenger for that
+  // champion in one place.
+  const childrenOf = new Map();   // parent id -> [generation, ...]
+  for (const g of gens) {
+    const id = genId(g);
+    if (id == null) continue;
+    const parent = genParentId(g);
+    if (parent == null) continue;
+    const key = String(parent);
+    if (!childrenOf.has(key)) childrenOf.set(key, []);
+    childrenOf.get(key).push(g);
+  }
+
+  // Determine where to start the forward walk. If the bracket payload
+  // already carries a spine, extend from its tail; otherwise start from
+  // the seed surfaced by the lineage feed (a generation with no parent).
+  // If neither source agrees on a seed, return the bracket's view —
+  // there is no champion lineage to extend.
+  const chain = baseline.slice();
+  const seen = new Set(chain.map(String));
+  if (chain.length === 0) {
+    let seed = null;
+    for (const g of gens) {
+      if (genParentId(g) == null && genId(g) != null) { seed = g; break; }
+    }
+    if (seed == null) return baseline;
+    const seedId = String(genId(seed));
+    chain.push(seedId);
+    seen.add(seedId);
+  }
+
+  // Guard against pathological cycles — cap the walk at the total
+  // generation count. The feed is external data.
+  let cur = String(chain[chain.length - 1]);
+  for (let step = 0; step < gens.length; step += 1) {
+    const kids = childrenOf.get(cur) || [];
+    const promoted = kids.filter((k) => k && k.promoted === true);
+    if (promoted.length === 0) break;
+    // If multiple children of the same champion both claim promoted (it
+    // happens on stale feeds), prefer the latest-created one — the
+    // runner only promotes one descendant per champion.
+    promoted.sort((x, y) => {
+      const tx = x && x.created_at ? String(x.created_at) : '';
+      const ty = y && y.created_at ? String(y.created_at) : '';
+      if (tx < ty) return -1;
+      if (tx > ty) return 1;
+      return 0;
+    });
+    const next = promoted[promoted.length - 1];
+    const nextId = String(genId(next));
+    if (seen.has(nextId)) break;
+    chain.push(nextId);
+    seen.add(nextId);
+    cur = nextId;
+  }
+  return chain;
+}
+
 // Index the bracket: a champion-spine list and, per champion, the set
 // of challengers that lost to — or never finished against — it.
 function bracketModel() {
   const b = state.bracket || {};
-  const lineage = Array.isArray(b.champion_lineage) ? b.champion_lineage.slice() : [];
+  const lineage = epochChampionLineage();
   const matchups = Array.isArray(b.matchups) ? b.matchups : [];
 
   // Every promoted challenger becomes the next champion; a rejected one
