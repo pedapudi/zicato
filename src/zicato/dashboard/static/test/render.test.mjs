@@ -1278,4 +1278,91 @@ test('completed matchup grid falls back to the persisted loss-file endpoint', as
   delete globalThis.fetch;
 });
 
+test('conversation view renders "conversation started" first and the rest in order',
+async () => {
+  // The server-side transcript reconstructor (see
+  // tests/test_dashboard_transcript.py) places the synthetic
+  // ``conversation_started`` turn FIRST. The conversation view here is
+  // a thin renderer over the transcript's `turns` array, so the
+  // assertion is that the view paints the turns in the order it
+  // received them — turn 0 ("conversation started") first, the real
+  // user / agent / system turns following in their natural order.
+  state.applySnapshot(mockSnapshot());
+  state.mock = false;   // selectConversation only fetches in non-mock mode
+
+  const transcript = {
+    run_id: 'r-conv',
+    event_count: 5,
+    complete: true,
+    turns: [
+      { seq: null, ts: '2026-05-19T00:00:00.000Z', agent: '', role: 'system',
+        kind: 'conversation_started', text: 'conversation started' },
+      { seq: 1, ts: '2026-05-19T00:00:00.100Z', agent: '', role: 'user',
+        kind: 'run_started', text: 'first user prompt' },
+      { seq: 2, ts: '2026-05-19T00:00:01Z', agent: 'alpha', role: 'agent',
+        kind: 'goldfive_llm_call_end', text: 'first assistant reply' },
+      { seq: 3, ts: '2026-05-19T00:00:02Z', agent: 'alpha', role: 'agent',
+        kind: 'goldfive_llm_call_end', text: 'final assistant reply' },
+      { seq: 4, ts: '2026-05-19T00:00:03Z', agent: '', role: 'system',
+        kind: 'run_completed', text: 'done' },
+    ],
+    annotations: [],
+  };
+  const payload = {
+    champion: { run_id: 'r-conv', generation_id: 'v0', transcript },
+    challenger: null,
+  };
+  globalThis.fetch = async (path) => {
+    if (String(path).includes('/api/matchup/')
+        && String(path).includes('/conversations')) {
+      return { ok: true, json: async () => payload };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+
+  globalThis.location.hash = '#/conversation/turn_order_demo';
+  render.applyRoute();
+  // selectConversation kicks off the fetch; let it settle, then the
+  // resolver re-renders the conversation view itself.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  const panel = doc.getElementById('conversation-panel');
+  const turns = panel._descendants().filter(
+    (n) => n.classList && n.classList.contains('conversation-turn'));
+  assert(turns.length === 5,
+    `expected 5 rendered turns, got ${turns.length}`);
+  const turnTexts = turns.map((n) => n.textContent);
+
+  // The synthetic "conversation started" turn is rendered FIRST — not
+  // last (the bug) and not somewhere in the middle.
+  assert(turnTexts[0].includes('conversation started'),
+    `expected the first rendered turn to be "conversation started", ` +
+    `got: ${turnTexts[0]}`);
+  // The real turns follow in their input order.
+  assert(turnTexts[1].includes('first user prompt'),
+    `expected the second turn to be the user prompt, got: ${turnTexts[1]}`);
+  assert(turnTexts[2].includes('first assistant reply'),
+    `expected the third turn to be the first assistant reply, got: ${turnTexts[2]}`);
+  assert(turnTexts[3].includes('final assistant reply'),
+    `expected the fourth turn to be the final assistant reply, got: ${turnTexts[3]}`);
+  assert(turnTexts[4].includes('done'),
+    `expected the fifth turn to be the run_completed marker, got: ${turnTexts[4]}`);
+  // And the run_completed terminal is rendered AFTER "conversation
+  // started" — the bug had run_completed before the conversation
+  // frame.
+  const startedAt = turnTexts.findIndex((t) => t.includes('conversation started'));
+  const completedAt = turnTexts.findIndex((t) => t.includes('done'));
+  assert(startedAt >= 0 && completedAt >= 0,
+    'both the conversation_started and run_completed turns must render');
+  assert(startedAt < completedAt,
+    `"conversation started" must render before "done"; ` +
+    `got positions ${startedAt} and ${completedAt}`);
+
+  delete globalThis.fetch;
+  state.mock = true;
+  // Reset conversation state so a later test isn't held on this entry.
+  globalThis.location.hash = '#/conversation';
+  render.applyRoute();
+});
+
 await run();

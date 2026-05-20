@@ -512,8 +512,13 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
     Notes
     -----
     The function never raises on malformed input — a bad line is skipped.
-    Ordering is by ``sequence`` then ``emitted_at``; events missing both
-    sort last in stable encounter order.
+    Ordering is primarily by ``sequence``; events missing a ``sequence``
+    sort FIRST in timestamp order. This is what places the sink-emitted
+    ``conversation_started`` frame (goldfive's persistence sink emits it
+    OUTSIDE the per-run sequence stream — it has only an ``emitted_at``)
+    at the START of the transcript rather than the end. ``emitted_at``
+    breaks ties among same-sequence events; insertion order is the final
+    fallback for events missing both fields.
     """
 
     path = Path(events_path)
@@ -527,8 +532,13 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
         transcript.complete = False
         return transcript
 
-    # Stable sort: sequence first, then timestamp. Events with neither
-    # keep their encounter order (Python's sort is stable).
+    # Stable sort. Events without a ``sequence`` sort BEFORE all
+    # sequenced events (bucket 0), ordered amongst themselves by
+    # timestamp then insertion order — this is the slot for goldfive's
+    # sink-emitted ``conversation_started`` lifecycle frame, which has
+    # no ``sequence`` but a timestamp that precedes the first numbered
+    # event. Sequenced events follow in ``sequence`` order, with
+    # ``emitted_at`` breaking sequence ties.
     indexed = list(enumerate(events))
 
     def sort_key(item: tuple[int, dict[str, Any]]) -> tuple[int, int, str, int]:
@@ -536,7 +546,7 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
         seq = _seq_of(event)
         ts = _norm_ts(event.get("emitted_at")) or ""
         return (
-            0 if seq is not None else 1,
+            0 if seq is None else 1,
             seq if seq is not None else 0,
             ts,
             idx,

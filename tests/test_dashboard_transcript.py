@@ -146,6 +146,122 @@ def test_agent_messages_and_turn_ordering(tmp_path: Path) -> None:
     assert seqs == sorted(seqs)
 
 
+def test_conversation_started_without_sequence_sorts_first(tmp_path: Path) -> None:
+    # goldfive's persistence sink emits ``conversation_started`` OUTSIDE
+    # the per-run sequence stream: the event carries only an
+    # ``emittedAt`` timestamp and no ``sequence`` field. The reconstructed
+    # transcript must surface that synthetic "conversation started" turn
+    # at the START of the rendered order (chronological), not the END
+    # (which is what a naïve sequence-first / sequence-less-sorts-last
+    # ordering produces). The downstream conversation view in
+    # ``static/js/views/render.js`` renders turns in the order this
+    # module yields them, so this is the authoritative test for the
+    # invariant.
+    lines = [
+        # The real sink writes conversation_started with no `sequence`
+        # field — modelled exactly here.
+        _camel(
+            "conversationStarted",
+            {"conversationId": "c1"},
+            runId="r",
+            emittedAt="2026-05-16T00:00:00.000Z",
+        ),
+        _camel(
+            "runStarted",
+            {"goalSummary": "build a thing"},
+            runId="r",
+            sequence="1",
+            emittedAt="2026-05-16T00:00:00.100Z",
+        ),
+        _camel(
+            "goldfiveLlmCallStart",
+            {"name": "judge_reasoning", "inputPreview": "first thought", "targetAgentId": "alpha"},
+            runId="r",
+            sequence="2",
+            emittedAt="2026-05-16T00:00:01Z",
+        ),
+        _camel(
+            "goldfiveLlmCallEnd",
+            {
+                "name": "judge_reasoning",
+                "decisionSummary": "final thought",
+                "targetAgentId": "alpha",
+            },
+            runId="r",
+            sequence="3",
+            emittedAt="2026-05-16T00:00:02Z",
+        ),
+        _camel(
+            "runCompleted",
+            {"outcomeSummary": "done"},
+            runId="r",
+            sequence="4",
+            emittedAt="2026-05-16T00:00:03Z",
+        ),
+    ]
+    t = reconstruct_transcript(_write(tmp_path, lines))
+
+    # The synthetic "conversation started" turn sits FIRST in the
+    # transcript — not at the tail. The rest of the events follow in
+    # their natural chronological order.
+    assert t.turns, "transcript must produce at least one turn"
+    first = t.turns[0]
+    assert first.role == "system"
+    assert first.text == "conversation started", (
+        f"expected the synthetic conversation_started turn first, "
+        f"got role={first.role!r} kind={first.kind!r} text={first.text!r}"
+    )
+
+    # Real-event order is preserved after the synthetic frame.
+    roles = [turn.role for turn in t.turns]
+    assert roles == [
+        "system",
+        "user",
+        "agent",
+        "system",
+    ], f"expected [system, user, agent, system] but got {roles}"
+    # The agent turn carries content from the two consecutive llm-call
+    # events, in their emitted order.
+    agent_text = t.turns[2].text
+    assert "first thought" in agent_text and "final thought" in agent_text
+    assert agent_text.index("first thought") < agent_text.index("final thought")
+    # The terminal run_completed turn sits LAST, not the conversation
+    # frame.
+    assert t.turns[-1].text == "done"
+
+
+def test_conversation_started_first_even_when_listed_late(tmp_path: Path) -> None:
+    # Same as above but with the conversation_started line appearing in
+    # the MIDDLE of the file (an unlikely append order, but a robust
+    # test). The reconstructor must still float it to the top because
+    # its timestamp precedes every numbered event.
+    lines = [
+        _camel(
+            "runStarted",
+            {"goalSummary": "g"},
+            runId="r",
+            sequence="1",
+            emittedAt="2026-05-16T00:00:00.500Z",
+        ),
+        _camel(
+            "conversationStarted",
+            {"conversationId": "c1"},
+            runId="r",
+            emittedAt="2026-05-16T00:00:00.100Z",
+        ),
+        _camel(
+            "runCompleted",
+            {"outcomeSummary": "ok"},
+            runId="r",
+            sequence="2",
+            emittedAt="2026-05-16T00:00:01Z",
+        ),
+    ]
+    t = reconstruct_transcript(_write(tmp_path, lines))
+    assert t.turns[0].text == "conversation started"
+    assert t.turns[-1].text == "ok"
+
+
 def test_ordering_by_sequence_not_file_order(tmp_path: Path) -> None:
     # Lines written out of sequence order; reconstruction reorders by seq.
     lines = [
