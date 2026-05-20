@@ -840,7 +840,24 @@ def test_bundle_under_size_envelope(
     # (index.html + style.css + icons.svg + the concatenated JS bundle)
     # at 399,681 bytes. A 440 KB cap leaves ~40 KB of headroom for
     # incidental drift without re-licensing every minor edit.
-    assert total < 440_000, f"bundle is {total} bytes, exceeds 440_000 envelope"
+    # Raised again by the dashboard-refresh / fast-mode / paper-style
+    # integration, which folds in three further surfaces:
+    #   * the renderAll-level digest gate (a no-op SSE tick now yields
+    #     zero DOM writes), the renderHeader/renderFooter rewrites onto
+    #     patchText/patchClass, and the matchup-detail + conversation-view
+    #     split onto key + populate + swapIfChanged;
+    #   * the fast-mode champion-side `cached` pill (a tiny addition in
+    #     renderBoardSide and the cached -> done bucket in state_reader
+    #     + shared.js);
+    #   * the ACM-style paper analysis report — a substantial addition
+    #     under src/zicato/analyzer/ that does not ship in the bundle, but
+    #     the inline-fragment epoch view path (analysis_html_inline +
+    #     .analysis-paper-card) and the .paper CSS rules do.
+    # The single-branch caps (421,859 / 403,909, the latter shipped
+    # alone) each measured one fix in isolation; the fully integrated
+    # bundle was re-measured directly at 423,713 bytes. A 460 KB cap
+    # leaves ~36 KB of headroom for incidental drift.
+    assert total < 460_000, f"bundle is {total} bytes, exceeds 460_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
