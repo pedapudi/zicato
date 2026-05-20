@@ -1521,6 +1521,141 @@ test('renderTranscriptColumn shows the timed-out panel for a complete zero-turn 
     'the misleading "in progress" cue must NOT render for a complete run');
 });
 
+test('renderTranscriptColumn emits a run-boundary separator between groups of a multi_turn_emulated transcript', () => {
+  // Regression for bug #172. A ``multi_turn_emulated`` board entry
+  // spawns N goldfive runs (one per emulated user turn). Each run owns
+  // its own ``conversation_started`` lifecycle frame. The pre-fix
+  // renderer painted all N "conversation started" turns stacked at the
+  // top followed by interleaved per-run bodies. The reconstructor now
+  // groups events by ``run_id`` and stamps each turn with a 1-based
+  // ``run_index``; the renderer paints a visible
+  // ``conversation-run-separator`` between groups.
+  const side = {
+    run_id: 'run_a',
+    generation_id: 'v3',
+    transcript: {
+      run_id: 'run_a',
+      event_count: 12,
+      complete: true,
+      turns: [
+        // Run 1 — 3 turns.
+        { seq: null, ts: 'T0.0', agent: '', role: 'system',
+          kind: 'conversation_started', text: 'conversation started',
+          run_id: 'run_a', run_index: 1 },
+        { seq: 0, ts: 'T0.1', agent: '', role: 'user',
+          kind: 'run_started', text: 'prompt A', run_id: 'run_a',
+          run_index: 1 },
+        { seq: 1, ts: 'T0.5', agent: 'alpha', role: 'agent',
+          kind: 'goldfive_llm_call_end', text: 'reply A',
+          run_id: 'run_a', run_index: 1 },
+        // Run 2 — 3 turns.
+        { seq: null, ts: 'T10.0', agent: '', role: 'system',
+          kind: 'conversation_started', text: 'conversation started',
+          run_id: 'run_b', run_index: 2 },
+        { seq: 0, ts: 'T10.1', agent: '', role: 'user',
+          kind: 'run_started', text: 'prompt B', run_id: 'run_b',
+          run_index: 2 },
+        { seq: 1, ts: 'T10.5', agent: 'alpha', role: 'agent',
+          kind: 'goldfive_llm_call_end', text: 'reply B',
+          run_id: 'run_b', run_index: 2 },
+        // Run 3 — 3 turns.
+        { seq: null, ts: 'T20.0', agent: '', role: 'system',
+          kind: 'conversation_started', text: 'conversation started',
+          run_id: 'run_c', run_index: 3 },
+        { seq: 0, ts: 'T20.1', agent: '', role: 'user',
+          kind: 'run_started', text: 'prompt C', run_id: 'run_c',
+          run_index: 3 },
+        { seq: 1, ts: 'T20.5', agent: 'alpha', role: 'agent',
+          kind: 'goldfive_llm_call_end', text: 'reply C',
+          run_id: 'run_c', run_index: 3 },
+      ],
+      annotations: [],
+    },
+  };
+
+  const col = render.renderTranscriptColumn('champion', side);
+
+  // Two separators appear (between runs 1↔2 and 2↔3) — NOT three
+  // "conversation started" lines stacked at the top.
+  const separators = col._descendants().filter(
+    (n) => n.classList && n.classList.contains('conversation-run-separator'));
+  assert(separators.length === 2,
+    `expected 2 run-boundary separators (one between each pair of runs), ` +
+    `got ${separators.length}`);
+
+  // Each separator's text references the run index it opens.
+  const sepTexts = separators.map((n) => n.textContent);
+  assert(sepTexts[0].includes('Turn 2'),
+    `first separator must reference Turn 2, got: ${sepTexts[0]}`);
+  assert(sepTexts[1].includes('Turn 3'),
+    `second separator must reference Turn 3, got: ${sepTexts[1]}`);
+  // And the run_id badge appears alongside each label.
+  assert(sepTexts[0].includes('run_b'),
+    `first separator must surface the run_b id, got: ${sepTexts[0]}`);
+  assert(sepTexts[1].includes('run_c'),
+    `second separator must surface the run_c id, got: ${sepTexts[1]}`);
+
+  // All three "conversation started" turns render — NOT stacked at
+  // the top but each one inside its own group, in the document order:
+  // [cs1, prompt A, reply A, SEP, cs2, prompt B, reply B, SEP, cs3, ...].
+  const turnNodes = col._descendants().filter(
+    (n) => n.classList && n.classList.contains('conversation-turn'));
+  assert(turnNodes.length === 9,
+    `expected 9 rendered turns, got ${turnNodes.length}`);
+  const turnTexts = turnNodes.map((n) => n.textContent);
+  // The three "conversation started" frames sit at positions 0, 3, 6
+  // (one per group), not 0, 1, 2 (the broken pre-fix output).
+  const csIndices = turnTexts
+    .map((t, i) => (t.includes('conversation started') ? i : -1))
+    .filter((i) => i >= 0);
+  assert(JSON.stringify(csIndices) === JSON.stringify([0, 3, 6]),
+    `conversation_started turns must be distributed across run groups ` +
+    `(positions [0, 3, 6]), not stacked at the top — got ${JSON.stringify(csIndices)}`);
+
+  // The user prompts of the three runs appear contiguously inside
+  // their OWN groups, not interleaved.
+  assert(turnTexts[1].includes('prompt A'),
+    `position 1 must be run 1's user prompt, got: ${turnTexts[1]}`);
+  assert(turnTexts[2].includes('reply A'),
+    `position 2 must be run 1's agent reply, got: ${turnTexts[2]}`);
+  assert(turnTexts[4].includes('prompt B'),
+    `position 4 must be run 2's user prompt, got: ${turnTexts[4]}`);
+  assert(turnTexts[5].includes('reply B'),
+    `position 5 must be run 2's agent reply, got: ${turnTexts[5]}`);
+});
+
+test('renderTranscriptColumn emits NO run-boundary separator for a single-run transcript', () => {
+  // Single-run transcripts (the common case) must NOT paint the
+  // separator — the bug-fix only adds a boundary where one exists.
+  const side = {
+    run_id: 'r-solo',
+    generation_id: 'v0',
+    transcript: {
+      run_id: 'r-solo',
+      event_count: 3,
+      complete: true,
+      turns: [
+        { seq: null, ts: 'T0', agent: '', role: 'system',
+          kind: 'conversation_started', text: 'conversation started',
+          run_id: 'r-solo', run_index: 1 },
+        { seq: 0, ts: 'T1', agent: '', role: 'user',
+          kind: 'run_started', text: 'solo prompt', run_id: 'r-solo',
+          run_index: 1 },
+        { seq: 1, ts: 'T2', agent: 'alpha', role: 'agent',
+          kind: 'goldfive_llm_call_end', text: 'solo reply',
+          run_id: 'r-solo', run_index: 1 },
+      ],
+      annotations: [],
+    },
+  };
+
+  const col = render.renderTranscriptColumn('champion', side);
+  const separators = col._descendants().filter(
+    (n) => n.classList && n.classList.contains('conversation-run-separator'));
+  assert(separators.length === 0,
+    `single-run transcript must paint zero separators, got ${separators.length}`);
+});
+
 test('renderTranscriptColumn falls back to the bland message for a complete zero-turn run with NO result block', () => {
   const side = {
     run_id: 'r-zero',

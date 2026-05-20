@@ -293,6 +293,224 @@ def test_ordering_by_sequence_not_file_order(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Multi-run grouping (multi_turn_emulated board entries)
+# ---------------------------------------------------------------------------
+
+
+def _run_group(run_id: str, base_secs: int, prompt: str, reply: str) -> list[str]:
+    """Synthesize the canonical 4-event shape of one goldfive run.
+
+    ``conversation_started`` (no ``sequence``, lifecycle frame from the
+    persistence sink) + ``run_started`` (seq=0) + a single
+    ``goldfive_llm_call_end`` (seq=1, the agent's reply) +
+    ``run_completed`` (seq=2). The four events all carry the same
+    ``runId``. The base second offsets the lifecycle timestamps so the
+    test can build groups with interleaved-yet-distinct chronologies.
+    """
+
+    def _ts(offset: float) -> str:
+        secs = base_secs + offset
+        whole = int(secs)
+        frac = secs - whole
+        if frac > 0:
+            return f"2026-05-19T00:00:{whole:02d}.{int(frac * 1000):03d}Z"
+        return f"2026-05-19T00:00:{whole:02d}Z"
+
+    return [
+        _camel(
+            "conversationStarted",
+            {"conversationId": f"c-{run_id}"},
+            runId=run_id,
+            emittedAt=_ts(0.0),
+        ),
+        _camel(
+            "runStarted",
+            {"goalSummary": prompt},
+            runId=run_id,
+            sequence="0",
+            emittedAt=_ts(0.1),
+        ),
+        _camel(
+            "goldfiveLlmCallEnd",
+            {"decisionSummary": reply, "targetAgentId": "alpha"},
+            runId=run_id,
+            sequence="1",
+            emittedAt=_ts(0.5),
+        ),
+        _camel(
+            "runCompleted",
+            {"outcomeSummary": f"run {run_id} done"},
+            runId=run_id,
+            sequence="2",
+            emittedAt=_ts(0.9),
+        ),
+    ]
+
+
+def test_multi_run_events_group_per_run_id_and_sort_by_min_emitted_at(
+    tmp_path: Path,
+) -> None:
+    # Bug #172: a ``multi_turn_emulated`` board entry writes N goldfive
+    # runs (one per emulated user turn) into one events file. Each run
+    # has its own ``conversation_started`` lifecycle frame (no
+    # sequence). A flat sort lifted ALL of them to the top, then
+    # interleaved the sequenced events. The fix groups events by
+    # ``run_id`` first, then sorts groups by min-emittedAt, then within
+    # each group applies the original "seq=None first, then by sequence"
+    # ordering.
+    #
+    # Three runs, written deliberately OUT OF chronological order in
+    # the file: run_b begins at T=10, run_a begins at T=0, run_c begins
+    # at T=20. The grouping logic must reorder the GROUPS so the
+    # rendered output reads run_a → run_b → run_c.
+    lines = (
+        _run_group("run_b", base_secs=10, prompt="prompt B", reply="reply B")
+        + _run_group("run_a", base_secs=0, prompt="prompt A", reply="reply A")
+        + _run_group("run_c", base_secs=20, prompt="prompt C", reply="reply C")
+    )
+    t = reconstruct_transcript(_write(tmp_path, lines))
+
+    # Three lifecycle "conversation started" turns appear — one per
+    # run — NOT three stacked at the top followed by interleaved bodies.
+    cs_turns = [turn for turn in t.turns if turn.text == "conversation started"]
+    assert len(cs_turns) == 3, (
+        f"expected exactly 3 conversation_started turns (one per run), " f"got {len(cs_turns)}"
+    )
+
+    # The flat ``turns`` list groups each run's turns CONTIGUOUSLY, in
+    # chronological run order. Every turn carries the 1-based
+    # ``run_index`` of its group.
+    indices = [turn.run_index for turn in t.turns]
+    assert indices == sorted(indices), (
+        f"run_index must be non-decreasing across the flat turn list, " f"got {indices}"
+    )
+    # Specifically: 1,1,1,1, 2,2,2,2, 3,3,3,3 (four turns per group:
+    # conversation_started + run_started + agent reply + run_completed).
+    assert (
+        indices == [1] * 4 + [2] * 4 + [3] * 4
+    ), f"expected four turns per run group in run-index order, got {indices}"
+
+    # Each run group starts with its own conversation_started frame.
+    assert t.turns[0].text == "conversation started"
+    assert t.turns[4].text == "conversation started"
+    assert t.turns[8].text == "conversation started"
+
+    # And each group's run_id is the one of the goldfive run that owns it.
+    assert t.turns[0].run_id == "run_a"
+    assert t.turns[4].run_id == "run_b"
+    assert t.turns[8].run_id == "run_c"
+
+    # The user prompts appear in run order (A, then B, then C),
+    # interleaved CORRECTLY with the agent replies, not scrambled.
+    user_prompts = [turn.text for turn in t.turns if turn.role == "user"]
+    assert user_prompts == [
+        "prompt A",
+        "prompt B",
+        "prompt C",
+    ], f"user prompts must appear in chronological run order, got {user_prompts}"
+    agent_replies = [
+        turn.text for turn in t.turns if turn.role == "agent" and turn.text.startswith("reply")
+    ]
+    assert agent_replies == ["reply A", "reply B", "reply C"]
+
+    # The transcript-level run_id picks the chronologically earliest run.
+    assert t.run_id == "run_a"
+
+
+def test_single_run_events_emit_run_index_one_on_every_turn(tmp_path: Path) -> None:
+    # Single-run files (the common case) must collapse to a single
+    # group; every turn carries ``run_index == 1`` and the prior
+    # "conversation_started first" invariant holds verbatim.
+    lines = _run_group("only_run", base_secs=0, prompt="hi", reply="hello")
+    t = reconstruct_transcript(_write(tmp_path, lines))
+
+    assert t.run_id == "only_run"
+    assert all(turn.run_index == 1 for turn in t.turns), (
+        f"single-run transcript must stamp run_index=1 on every turn, "
+        f"got {[turn.run_index for turn in t.turns]}"
+    )
+    assert all(turn.run_id == "only_run" for turn in t.turns)
+    # And the "conversation started" frame is FIRST, same as before.
+    assert t.turns[0].text == "conversation started"
+
+
+def test_multi_run_delegation_does_not_leak_across_run_boundaries(
+    tmp_path: Path,
+) -> None:
+    # A delegation in run 1 must never match an
+    # ``agent_invocation_completed`` from run 2: a multi-run grouping
+    # that left state shared across runs would scramble tool-call
+    # pairing too. Construct two runs where each has its own
+    # coordinator → worker delegation and assert the calls pair within
+    # their OWN run.
+    def _delegating_run(run_id: str, base_secs: int, work: str) -> list[str]:
+        def _ts(offset: float) -> str:
+            secs = base_secs + offset
+            whole = int(secs)
+            return f"2026-05-19T00:00:{whole:02d}Z"
+
+        return [
+            _camel(
+                "conversationStarted",
+                {"conversationId": f"c-{run_id}"},
+                runId=run_id,
+                emittedAt=_ts(0),
+            ),
+            _camel(
+                "runStarted",
+                {"goalSummary": f"goal {run_id}"},
+                runId=run_id,
+                sequence="0",
+                emittedAt=_ts(1),
+            ),
+            _camel(
+                "delegationObserved",
+                {
+                    "fromAgent": "coordinator",
+                    "toAgent": "worker",
+                    "taskId": f"task-{run_id}",
+                    "toolArgsJson": json.dumps({"work": work}),
+                },
+                runId=run_id,
+                sequence="1",
+                emittedAt=_ts(2),
+            ),
+            _camel(
+                "agentInvocationCompleted",
+                {
+                    "agentName": "worker",
+                    "summary": f"done {work}",
+                    "taskId": f"task-{run_id}",
+                },
+                runId=run_id,
+                sequence="2",
+                emittedAt=_ts(3),
+            ),
+            _camel(
+                "runCompleted",
+                {"outcomeSummary": f"{run_id} ok"},
+                runId=run_id,
+                sequence="3",
+                emittedAt=_ts(4),
+            ),
+        ]
+
+    lines = _delegating_run("r1", base_secs=0, work="alpha") + _delegating_run(
+        "r2", base_secs=10, work="beta"
+    )
+    t = reconstruct_transcript(_write(tmp_path, lines))
+
+    # The coordinator turn for r1 has a tool-result paired to its OWN
+    # work ("done alpha"), not r2's "done beta".
+    r1_coord = next(turn for turn in t.turns if turn.run_index == 1 and turn.agent == "coordinator")
+    r2_coord = next(turn for turn in t.turns if turn.run_index == 2 and turn.agent == "coordinator")
+    assert len(r1_coord.tool_results) == 1
+    assert r1_coord.tool_results[0]["result"] == "done alpha"
+    assert len(r2_coord.tool_results) == 1
+    assert r2_coord.tool_results[0]["result"] == "done beta"
+
+
+# ---------------------------------------------------------------------------
 # Tool call + result pairing
 # ---------------------------------------------------------------------------
 
@@ -693,7 +911,18 @@ def test_to_dict_is_json_serializable(tmp_path: Path) -> None:
     assert isinstance(decoded["annotations"], list)
 
     # Turn / Annotation shapes match the documented contract.
-    turn_keys = {"seq", "ts", "agent", "role", "kind", "text", "tool_calls", "tool_results"}
+    turn_keys = {
+        "seq",
+        "ts",
+        "agent",
+        "role",
+        "kind",
+        "text",
+        "tool_calls",
+        "tool_results",
+        "run_id",
+        "run_index",
+    }
     for turn in decoded["turns"]:
         assert set(turn.keys()) == turn_keys
     ann_keys = {"kind", "ts", "summary", "anchor_seq", "detail"}

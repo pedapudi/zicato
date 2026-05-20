@@ -5980,7 +5980,42 @@ function renderTranscriptColumn(sideKind, side) {
     }
   }
 
+  // Emit a visible boundary between contiguous groups of turns
+  // belonging to different goldfive runs. ``multi_turn_emulated`` board
+  // entries spawn N goldfive runs (one per emulated user turn) and the
+  // transcript reconstructor groups them by ``run_id`` then sorts the
+  // groups chronologically by min-emittedAt — every turn carries the
+  // 1-based ``run_index`` of its group. A single-run transcript reports
+  // ``run_index === 1`` on every turn, so the separator never fires.
+  let lastRunIndex = null;
   for (const turn of turns) {
+    const ri = (turn && Number.isFinite(turn.run_index)) ? turn.run_index : 1;
+    if (ri !== lastRunIndex) {
+      // The separator is emitted BEFORE each turn that opens a new run
+      // group. The first separator is suppressed when there is only one
+      // group across the whole transcript (the prior single-run UX).
+      // We detect "only one group" by walking once and counting
+      // distinct run_index values; the bookkeeping happens lazily here
+      // — on the first turn we tentatively skip the separator, then if
+      // a SECOND group ever appears, we emit it AT that group's
+      // boundary (the operator only needs the boundary visible when a
+      // boundary actually exists).
+      if (lastRunIndex !== null) {
+        body.appendChild(el('div', {
+          class: 'conversation-run-separator',
+          dataset: { runIndex: String(ri) },
+        }, [
+          el('span', { class: 'conversation-run-separator-label' },
+            ['Turn ' + ri]),
+          turn && turn.run_id
+            ? el('code', {
+                class: 'mono conversation-run-separator-run-id',
+              }, [String(turn.run_id)])
+            : null,
+        ]));
+      }
+      lastRunIndex = ri;
+    }
     body.appendChild(renderTurn(turn, annoBySeq.get(turn && turn.seq)));
   }
 

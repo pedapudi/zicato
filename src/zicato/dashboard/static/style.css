@@ -1631,6 +1631,33 @@ h4 {
   color: var(--accent-running);
 }
 
+/* --- Per-run boundary inside a multi_turn_emulated transcript.
+   A ``multi_turn_emulated`` board entry spawns N goldfive runs (one
+   per emulated user turn). The reconstructor groups events by run_id
+   and the renderer emits this separator at each group boundary so the
+   operator sees the run structure rather than a flat interleaved
+   stream. Single-run transcripts never paint this element. */
+.conversation-run-separator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 2px;
+  padding: 4px 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.conversation-run-separator-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.conversation-run-separator-run-id {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 /* --- Trailing live cue */
 .conversation-tail-live {
   display: flex;

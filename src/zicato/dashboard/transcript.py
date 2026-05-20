@@ -197,6 +197,17 @@ class Turn:
     Consecutive raw events attributed to the same agent collapse into a
     single turn; a tool call and its matching result land in the same
     turn's ``tool_calls`` / ``tool_results`` lists.
+
+    ``run_index`` is the 1-based ordinal of the goldfive run this turn
+    belongs to within a multi-run events file. ``multi_turn_emulated``
+    board entries spawn N goldfive runs (one per emulated user turn) and
+    write them into a single events stream; every run has a distinct
+    ``runId``. The reconstructor groups events by ``runId`` first, then
+    sorts the groups chronologically (by min ``emittedAt`` of each
+    group). The 1-based ordinal lets the renderer emit a visible
+    boundary between groups so the operator can see "turn 2 of a
+    multi-turn entry" at a glance. Single-run files emit
+    ``run_index == 1`` for every turn (no boundary fires).
     """
 
     seq: int | None = None
@@ -207,6 +218,8 @@ class Turn:
     text: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_results: list[dict[str, Any]] = field(default_factory=list)
+    run_id: str | None = None
+    run_index: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -218,6 +231,8 @@ class Turn:
             "text": self.text,
             "tool_calls": [dict(tc) for tc in self.tool_calls],
             "tool_results": [dict(tr) for tr in self.tool_results],
+            "run_id": self.run_id,
+            "run_index": self.run_index,
         }
 
 
@@ -512,13 +527,23 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
     Notes
     -----
     The function never raises on malformed input — a bad line is skipped.
-    Ordering is primarily by ``sequence``; events missing a ``sequence``
-    sort FIRST in timestamp order. This is what places the sink-emitted
-    ``conversation_started`` frame (goldfive's persistence sink emits it
-    OUTSIDE the per-run sequence stream — it has only an ``emitted_at``)
-    at the START of the transcript rather than the end. ``emitted_at``
-    breaks ties among same-sequence events; insertion order is the final
-    fallback for events missing both fields.
+
+    Multi-run files (``multi_turn_emulated`` board entries spawn N
+    goldfive runs into one events stream) are grouped by ``runId``
+    BEFORE the within-run sort. The groups are ordered by the minimum
+    ``emittedAt`` across each group — earliest run first, chronologically
+    — and then within each group events without ``sequence`` (the
+    sink-emitted ``conversation_started`` lifecycle frame) sort FIRST in
+    timestamp order, with the sequenced events following in ``sequence``
+    order. ``emitted_at`` breaks ties among same-sequence events;
+    insertion order is the final fallback for events missing both
+    fields. Every emitted :class:`Turn` carries the 1-based ``run_index``
+    of its group, which lets the renderer paint a visible boundary
+    between runs in a multi-run transcript.
+
+    Single-run files (the common case) collapse to a single group with
+    ``run_index == 1`` on every turn; the per-run-id grouping is a no-op
+    relative to the prior single-stream behaviour.
     """
 
     path = Path(events_path)
@@ -532,16 +557,51 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
         transcript.complete = False
         return transcript
 
-    # Stable sort. Events without a ``sequence`` sort BEFORE all
-    # sequenced events (bucket 0), ordered amongst themselves by
-    # timestamp then insertion order — this is the slot for goldfive's
-    # sink-emitted ``conversation_started`` lifecycle frame, which has
-    # no ``sequence`` but a timestamp that precedes the first numbered
-    # event. Sequenced events follow in ``sequence`` order, with
-    # ``emitted_at`` breaking sequence ties.
-    indexed = list(enumerate(events))
+    # --- group events by run_id -----------------------------------------
+    # ``multi_turn_emulated`` board entries spawn one goldfive run per
+    # emulated user turn and write them into one events file. Each run
+    # owns its own ``runId`` and its own ``conversation_started`` /
+    # ``run_completed`` lifecycle frames; the per-run sequence numbering
+    # restarts at 0 inside each group. A flat sort over the merged stream
+    # would interleave the runs (and lift every ``conversation_started``
+    # frame to the top — see bug #172). Grouping first preserves
+    # per-run-id contiguity in the rendered transcript.
+    #
+    # Events without a ``run_id`` (a malformed line, or a future stream
+    # variant) fall into a single anonymous group keyed on ``None`` so
+    # they still render in chronological order.
+    groups: dict[str | None, list[tuple[int, dict[str, Any]]]] = {}
+    insertion_order: list[str | None] = []
+    for idx, event in enumerate(events):
+        rid_raw = event.get("run_id")
+        rid: str | None = rid_raw if isinstance(rid_raw, str) and rid_raw else None
+        bucket = groups.get(rid)
+        if bucket is None:
+            bucket = []
+            groups[rid] = bucket
+            insertion_order.append(rid)
+        bucket.append((idx, event))
 
-    def sort_key(item: tuple[int, dict[str, Any]]) -> tuple[int, int, str, int]:
+    def _min_ts_of(bucket: list[tuple[int, dict[str, Any]]]) -> str:
+        # The group's chronological anchor is the earliest emitted_at
+        # across all of its events. Missing timestamps sort last within a
+        # group but never relocate the group itself.
+        best: str | None = None
+        for _idx, event in bucket:
+            ts = _norm_ts(event.get("emitted_at"))
+            if ts is None:
+                continue
+            if best is None or ts < best:
+                best = ts
+        return best or ""
+
+    def _within_group_key(
+        item: tuple[int, dict[str, Any]],
+    ) -> tuple[int, int, str, int]:
+        # Same shape as the prior flat sort key, applied per-group:
+        # events without ``sequence`` (the lifecycle ``conversation_started``
+        # frame) sort FIRST in timestamp order; sequenced events follow
+        # in sequence order with emitted_at breaking ties.
         idx, event = item
         seq = _seq_of(event)
         ts = _norm_ts(event.get("emitted_at")) or ""
@@ -552,130 +612,157 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
             idx,
         )
 
-    indexed.sort(key=sort_key)
-    ordered = [event for _, event in indexed]
+    # Order the groups by their min-emittedAt anchor. Ties (a tied
+    # min-ts is vanishingly rare in practice — distinct goldfive runs
+    # write distinct lifecycle timestamps) fall back to first-seen
+    # insertion order for stability.
+    insertion_index: dict[str | None, int] = {rid: i for i, rid in enumerate(insertion_order)}
+    ordered_run_ids: list[str | None] = sorted(
+        groups.keys(),
+        key=lambda rid: (_min_ts_of(groups[rid]), insertion_index[rid]),
+    )
 
+    # The transcript-level run_id is the FIRST group's run id (matches
+    # the single-run case verbatim; for a multi-run stream it surfaces
+    # the chronologically earliest run, which is the natural "primary"
+    # label for the column header).
     transcript.run_id = next(
-        (str(e["run_id"]) for e in ordered if isinstance(e.get("run_id"), str) and e.get("run_id")),
+        (rid for rid in ordered_run_ids if rid is not None),
         None,
     )
 
     saw_terminal = False
-    current: Turn | None = None
     last_turn_seq: int | None = None
     # Pending tool calls keyed by sub-agent name so a completion can be
     # matched back to the delegating turn that called it.
     pending_calls: dict[str, Turn] = {}
 
-    def flush() -> None:
-        nonlocal current
-        if current is not None:
-            transcript.turns.append(current)
-            current = None
+    # Walk each group in chronological order. The grouping state (current
+    # open turn, pending tool-call map) is RESET at each group boundary —
+    # a delegation in run 1 is never matched against an
+    # ``agent_invocation_completed`` from run 2, and run 2's first event
+    # always opens a fresh turn rather than extending run 1's last.
+    for run_index, rid in enumerate(ordered_run_ids, start=1):
+        bucket = sorted(groups[rid], key=_within_group_key)
+        ordered = [event for _, event in bucket]
 
-    for event in ordered:
-        kind, payload = _kind_and_payload(event)
-        if not kind:
-            continue
-        seq = _seq_of(event)
-        ts = _norm_ts(event.get("emitted_at"))
+        current: Turn | None = None
+        pending_calls.clear()
 
-        if kind in _TERMINAL_KINDS:
-            saw_terminal = True
+        def _flush() -> None:
+            nonlocal current
+            if current is not None:
+                transcript.turns.append(current)
+                current = None
 
-        # --- annotations -------------------------------------------------
-        if kind in _ANNOTATION_KINDS:
-            transcript.annotations.append(
-                Annotation(
-                    kind=_ANNOTATION_KINDS[kind],
+        for event in ordered:
+            kind, payload = _kind_and_payload(event)
+            if not kind:
+                continue
+            seq = _seq_of(event)
+            ts = _norm_ts(event.get("emitted_at"))
+
+            if kind in _TERMINAL_KINDS:
+                saw_terminal = True
+
+            # --- annotations -------------------------------------------
+            if kind in _ANNOTATION_KINDS:
+                transcript.annotations.append(
+                    Annotation(
+                        kind=_ANNOTATION_KINDS[kind],
+                        ts=ts,
+                        summary=_clip(_annotation_summary(kind, payload), 1200),
+                        anchor_seq=last_turn_seq,
+                        detail={"event_kind": kind, **payload},
+                    )
+                )
+                continue
+
+            # --- conversation turns ------------------------------------
+            mapped = _conversation_event(kind, payload)
+            if mapped is None:
+                # Boundary / lifecycle bookkeeping events with no content
+                # (agent_invocation_started, invocation_boundary_*,
+                # task_started, task_transitioned, ...) are not turns.
+                # They still update the agent context for following
+                # content.
+                continue
+
+            role, agent_hint, text, tool_call, tool_result = mapped
+            agent = agent_hint or _agent_of(payload)
+
+            # A delegation result: try to attach to the calling turn.
+            if kind == "agent_invocation_completed" and agent:
+                caller = pending_calls.pop(agent, None)
+                if caller is not None:
+                    caller.tool_results.append(
+                        {
+                            "name": agent,
+                            "result": text,
+                            "task_id": payload.get("task_id"),
+                        }
+                    )
+                    # The sub-agent's own summary still deserves a turn
+                    # so the side-by-side view shows what it produced.
+                    if not text:
+                        continue
+
+            # Decide whether this extends the current turn or opens a
+            # new one.
+            same_turn = (
+                current is not None
+                and current.role == role
+                and (current.agent or None) == (agent or None)
+                and role not in _SYSTEM_KINDS  # system turns never merge
+                and kind not in _SYSTEM_KINDS
+            )
+
+            if not same_turn:
+                _flush()
+                current = Turn(
+                    seq=seq,
                     ts=ts,
-                    summary=_clip(_annotation_summary(kind, payload), 1200),
-                    anchor_seq=last_turn_seq,
-                    detail={"event_kind": kind, **payload},
+                    agent=agent,
+                    role=role,
+                    kind=kind,
+                    run_id=rid,
+                    run_index=run_index,
                 )
-            )
-            continue
+            else:
+                assert current is not None
+                # Keep the earliest seq/ts as the turn's anchor.
+                if current.seq is None:
+                    current.seq = seq
+                if current.ts is None:
+                    current.ts = ts
+                if not current.agent and agent:
+                    current.agent = agent
 
-        # --- conversation turns -----------------------------------------
-        mapped = _conversation_event(kind, payload)
-        if mapped is None:
-            # Boundary / lifecycle bookkeeping events with no content
-            # (agent_invocation_started, invocation_boundary_*,
-            # task_started, task_transitioned, ...) are not turns. They
-            # still update the agent context for following content.
-            continue
-
-        role, agent_hint, text, tool_call, tool_result = mapped
-        agent = agent_hint or _agent_of(payload)
-
-        # A delegation result: try to attach to the calling turn.
-        if kind == "agent_invocation_completed" and agent:
-            caller = pending_calls.pop(agent, None)
-            if caller is not None:
-                caller.tool_results.append(
-                    {
-                        "name": agent,
-                        "result": text,
-                        "task_id": payload.get("task_id"),
-                    }
-                )
-                # The sub-agent's own summary still deserves a turn so the
-                # side-by-side view shows what it produced.
-                if not text:
-                    continue
-
-        # Decide whether this extends the current turn or opens a new one.
-        same_turn = (
-            current is not None
-            and current.role == role
-            and (current.agent or None) == (agent or None)
-            and role not in _SYSTEM_KINDS  # system turns never merge
-            and kind not in _SYSTEM_KINDS
-        )
-
-        if not same_turn:
-            flush()
-            current = Turn(
-                seq=seq,
-                ts=ts,
-                agent=agent,
-                role=role,
-                kind=kind,
-            )
-        else:
             assert current is not None
-            # Keep the earliest seq/ts as the turn's anchor.
-            if current.seq is None:
-                current.seq = seq
-            if current.ts is None:
-                current.ts = ts
-            if not current.agent and agent:
-                current.agent = agent
+            if text:
+                current.text = _clip((current.text + "\n\n" + text) if current.text else text)
+                current.kind = kind
+            if tool_call is not None:
+                current.tool_calls.append(tool_call)
+                current.kind = kind
+                sub = str(tool_call.get("name") or "")
+                if sub:
+                    pending_calls[sub] = current
+            if tool_result is not None:
+                current.tool_results.append(tool_result)
 
-        assert current is not None
-        if text:
-            current.text = _clip((current.text + "\n\n" + text) if current.text else text)
-            current.kind = kind
-        if tool_call is not None:
-            current.tool_calls.append(tool_call)
-            current.kind = kind
-            sub = str(tool_call.get("name") or "")
-            if sub:
-                pending_calls[sub] = current
-        if tool_result is not None:
-            current.tool_results.append(tool_result)
+            if current.seq is not None:
+                last_turn_seq = current.seq
 
-        if current.seq is not None:
-            last_turn_seq = current.seq
+        _flush()
 
-    flush()
-
-    # Drop content-free turns (a delegation that produced no text and was
-    # fully absorbed into a caller's tool_results leaves an empty shell).
+    # Drop content-free turns (a delegation that produced no text and
+    # was fully absorbed into a caller's tool_results leaves an empty
+    # shell).
     transcript.turns = [t for t in transcript.turns if t.text or t.tool_calls or t.tool_results]
 
-    # Re-anchor annotations whose anchor was minted before any turn: pin
-    # them to the first turn instead of leaving a dangling None.
+    # Re-anchor annotations whose anchor was minted before any turn:
+    # pin them to the first turn instead of leaving a dangling None.
     if transcript.turns:
         first_seq = transcript.turns[0].seq
         for ann in transcript.annotations:
@@ -685,10 +772,10 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
     if saw_terminal:
         transcript.complete = True
     else:
-        # No terminal event: the run looks in progress. A truncated final
-        # line reinforces that. ``partial_ok`` does not change the verdict
-        # (the transcript is still returned either way) — it documents
-        # that the caller expects and tolerates this state.
+        # No terminal event: the run looks in progress. A truncated
+        # final line reinforces that. ``partial_ok`` does not change the
+        # verdict (the transcript is still returned either way) — it
+        # documents that the caller expects and tolerates this state.
         transcript.complete = False
     if not last_line_ok:
         transcript.complete = False
