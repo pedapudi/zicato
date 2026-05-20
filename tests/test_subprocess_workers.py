@@ -52,6 +52,30 @@ from zicato.runtime.state import ActiveRun
 from zicato.tournament.runner import _run_single
 
 # ---------------------------------------------------------------------------
+# Hermeticity fixture
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_tempdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect ``tempfile.tempdir`` into this test's ``tmp_path``.
+
+    Several tests in this file glob ``tempfile.gettempdir()`` for leaked
+    ``ztw-snap-<run_id>-*`` working copies. Two of them use the same
+    ``run_id`` (``v0--entry_a``), so a leak from one — e.g. the
+    SIGTERM->SIGKILL escalation path under load — pollutes the system
+    ``/tmp`` and fails the next run on the *next* pytest invocation.
+    Patching ``tempfile.tempdir`` redirects every ``mkdtemp`` /
+    ``mkstemp`` call (including the runner's) AND every
+    ``gettempdir()`` lookup the assertions perform into this test's own
+    ``tmp_path``, so each test starts from an empty, private temp root.
+    """
+    isolated = tmp_path / "ztw-tmp"
+    isolated.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(isolated))
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
