@@ -66,16 +66,28 @@ const STALE_HEARTBEAT_MS = 90_000;
 
 function renderHeader() {
   const hb = state.heartbeat || {};
-  // Generation + round come straight off the heartbeat — `generation_id`
-  // ("v2") and `round_index` (an int). Fall back to the legacy header
-  // summary, then the em-dash placeholder. Every text write routes
+  // Epoch + generation + round come straight off the heartbeat —
+  // `epoch_id`, `generation_id` ("v2"), and `round_index` (an int) — the
+  // single source of truth the orchestrator stamps each tick. The
+  // legacy header summary (state.epoch.{id,generation,round}, seeded
+  // from the initial snapshot) is the fallback. Every text write routes
   // through patchText so the once-per-second header tick (independent of
   // SSE deltas) never replaces a text node whose content has not
   // changed — text selection inside the header, and unchanged downstream
   // layout, survive each tick.
+  //
+  // The heartbeat-first read pairs with _relevantStateDigest's hbDigest
+  // (which captures generation_id / round_index / epoch_id) so that an
+  // SSE state_change that lands ONLY a heartbeat field — gen v5→v6 or
+  // round 0→1 between tournament transitions — still flips the digest
+  // gate, runs renderHeader, and repaints the top bar. Without that
+  // coupling the body's gauntlet cards moved while the top bar stayed
+  // stale until a route change forced a redigest.
+  const epochId = hb.epoch_id || state.epoch.id;
   const genId = hb.generation_id || state.epoch.generation;
   const roundIdx = (hb.round_index != null) ? hb.round_index : state.epoch.round;
-  patchText($('epoch-id'), 'epoch · ' + (state.epoch.id || '—'));
+  patchText($('epoch-id'),
+    'epoch · ' + (epochId != null && epochId !== '' ? epochId : '—'));
   patchText($('generation-id'),
     'gen · ' + (genId != null && genId !== '' ? genId : '—'));
   patchText($('round-id'),
@@ -6397,8 +6409,13 @@ let _lastRenderDigest = null;
 // O(state size) once per SSE tick — negligible compared to a full repaint.
 function _relevantStateDigest() {
   const hb = state.heartbeat || {};
-  // Drop the churning timestamp fields; keep the structural ones.
+  // Drop the churning timestamp fields; keep the structural ones. The
+  // top bar (renderHeader) reads epoch_id / generation_id / round_index
+  // straight off the heartbeat, so each must be in the digest — a tick
+  // that bumps gen v5→v6 between body changes still has to flip the
+  // gate and run renderHeader, otherwise the top bar lags the body.
   const hbDigest = {
+    epoch_id: hb.epoch_id || null,
     generation_id: hb.generation_id || null,
     round_index: hb.round_index != null ? hb.round_index : null,
     started_at: hb.started_at || null,

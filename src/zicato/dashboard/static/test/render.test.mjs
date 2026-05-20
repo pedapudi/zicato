@@ -78,6 +78,83 @@ test('the render layer paints every view from the mock snapshot', () => {
   assert(ver.includes('dashboard'), 'footer must render');
 });
 
+test('top bar tracks heartbeat changes between SSE ticks', () => {
+  // Regression (bug #170): the dashboard top bar — epoch / gen / round —
+  // stayed stale between SSE ticks. The body of the page kept updating
+  // (gauntlet cards, partial-aggregates, board scalars) but the top-bar
+  // nodes only refreshed when a route change forced a redigest. The fix:
+  //   * renderHeader reads epoch / gen / round straight off state.heartbeat;
+  //   * _relevantStateDigest's hbDigest captures epoch_id / generation_id /
+  //     round_index so a heartbeat-only delta still flips the gate and
+  //     re-runs renderHeader.
+  state.mock = true;
+  state.heartbeat = {
+    epoch_id: '2026-05-20_presn',
+    generation_id: 'v5',
+    round_index: 0,
+    last_heartbeat: '2026-05-19T00:00:00Z',
+    started_at: '2026-05-19T00:00:00Z',
+  };
+  // Drop state.epoch.* so we prove the top bar reads from the heartbeat
+  // and not from the legacy snapshot summary.
+  state.epoch = { id: '—', generation: '—', round: '—', startedAt: null };
+  render.renderAll();
+  assert(
+    doc.getElementById('epoch-id').textContent.includes('2026-05-20_presn'),
+    `top-bar epoch should show 2026-05-20_presn, got "${doc.getElementById('epoch-id').textContent}"`,
+  );
+  assert(
+    doc.getElementById('generation-id').textContent.includes('v5'),
+    `top-bar generation should show v5, got "${doc.getElementById('generation-id').textContent}"`,
+  );
+  assert(
+    doc.getElementById('round-id').textContent.includes('· 0'),
+    `top-bar round should show 0, got "${doc.getElementById('round-id').textContent}"`,
+  );
+
+  // The orchestrator transitions to round 1 / generation v6 — the
+  // heartbeat is the same delta a `state_change` SSE event eventually
+  // folds in via applyEnvironment + setHeartbeat. The top bar must
+  // re-render through renderAll's digest gate without a route change.
+  state.heartbeat = {
+    epoch_id: '2026-05-20_presn',
+    generation_id: 'v6',
+    round_index: 1,
+    last_heartbeat: '2026-05-19T00:00:30Z',
+    started_at: '2026-05-19T00:00:00Z',
+  };
+  render.renderAll();
+  assert(
+    doc.getElementById('generation-id').textContent.includes('v6'),
+    `top-bar generation must update to v6, got "${doc.getElementById('generation-id').textContent}"`,
+  );
+  assert(
+    doc.getElementById('round-id').textContent.includes('· 1'),
+    `top-bar round must update to 1, got "${doc.getElementById('round-id').textContent}"`,
+  );
+  assert(
+    !doc.getElementById('generation-id').textContent.includes('v5'),
+    `top-bar must not carry the stale v5, got "${doc.getElementById('generation-id').textContent}"`,
+  );
+
+  // A heartbeat that bumps ONLY the epoch_id — without touching gen or
+  // round — must still flip the digest gate. This pins the regression:
+  // before the fix, hbDigest omitted epoch_id, so a heartbeat-only epoch
+  // change could not break through the gate at all.
+  state.heartbeat = {
+    epoch_id: '2026-05-21_followup',
+    generation_id: 'v6',
+    round_index: 1,
+    last_heartbeat: '2026-05-19T00:01:00Z',
+    started_at: '2026-05-19T00:00:00Z',
+  };
+  render.renderAll();
+  assert(
+    doc.getElementById('epoch-id').textContent.includes('2026-05-21_followup'),
+    `top-bar epoch must update from heartbeat alone, got "${doc.getElementById('epoch-id').textContent}"`,
+  );
+});
+
 test('log tail GROWS by appending keyed rows — no clear-and-rebuild', () => {
   const wrap = doc.getElementById('log-tail');
   render.renderLogTail();
