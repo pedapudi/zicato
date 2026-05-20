@@ -25,6 +25,23 @@ The canonical layout these helpers produce::
 The two-callable invariant from :class:`zicato.core.types.RuntimeConfig`
 is enforced here by :func:`assert_distinct_callables`; the dataclass
 itself stays purely declarative.
+
+Convention drift — outer vs inner workspace root
+-------------------------------------------------
+
+``workspace_root`` is, by convention, the inner ``.zicato`` directory
+itself: ``epochs/``, ``runtime/``, etc. hang directly off it. Some
+callers historically pass the *outer* project directory (the parent that
+holds ``.zicato/``) — when that happens the helpers below
+transparently descend into ``.zicato/`` when the inner layout exists.
+This is the single I/O exception in this module: a best-effort
+``Path.is_dir()`` probe that lets the report regenerator + dashboard
+read the right tree even when the caller hands us the outer dir.
+
+The descent only fires when the outer form does NOT carry an
+``epochs/`` directory but the inner ``.zicato/`` does; legacy callers
+that already pass the inner dir, and tests that build a synthetic
+``{ws}/epochs/`` tree, are untouched.
 """
 
 from __future__ import annotations
@@ -34,8 +51,35 @@ from pathlib import Path
 from typing import Any
 
 
+def _normalise_workspace_root(workspace_root: Path) -> Path:
+    """Resolve ``workspace_root`` to the inner ``.zicato/`` dir when needed.
+
+    The path helpers treat ``workspace_root`` as the inner ``.zicato``
+    directory; epoch artifacts live at
+    ``workspace_root / "epochs" / {epoch_id}``. Some callers — historic
+    or convenience wrappers — pass the *outer* project dir instead. To
+    keep those callers working without surprise, this normaliser
+    descends into ``workspace_root / ".zicato"`` when:
+
+    * the outer form does NOT carry an ``epochs/`` directory, AND
+    * the inner form DOES carry one.
+
+    Otherwise the path is returned unchanged. The behaviour is
+    deliberately conservative: legacy layouts where ``{ws}/epochs/``
+    already exists are never overridden, and tests that build a
+    synthetic ``{tmp}/epochs/`` tree don't accidentally redirect.
+    """
+    root = Path(workspace_root)
+    if (root / "epochs").is_dir():
+        return root
+    inner = root / ".zicato"
+    if (inner / "epochs").is_dir():
+        return inner
+    return root
+
+
 def _epoch_root(workspace_root: Path, epoch_id: str) -> Path:
-    return workspace_root / "epochs" / epoch_id
+    return _normalise_workspace_root(workspace_root) / "epochs" / epoch_id
 
 
 def _generation_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
@@ -137,7 +181,7 @@ def analysis_path(workspace_root: Path, epoch_id: str) -> Path:
 
 def lineage_path(workspace_root: Path) -> Path:
     """Path to the workspace-level cross-cutting lineage DAG."""
-    return workspace_root / "lineage.json"
+    return _normalise_workspace_root(workspace_root) / "lineage.json"
 
 
 def rubric_path(workspace_root: Path, epoch_id: str) -> Path:

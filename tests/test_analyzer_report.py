@@ -266,6 +266,74 @@ def test_results_no_invented_numbers(epoch_workspace: tuple[Path, str]) -> None:
     assert "0.900" in results  # v1 pass_rate
 
 
+def test_gather_accepts_outer_workspace_dir(epoch_workspace: tuple[Path, str]) -> None:
+    """`gather_epoch_report_data` resolves an outer-dir workspace correctly.
+
+    Regression test for the workspace-root mis-rooting bug: an older
+    orchestrator path passed the *outer* project dir (the parent of
+    ``.zicato/``) to ``gather_epoch_report_data`` and got back an empty
+    view because ``epoch_dir`` resolved to ``{outer}/epochs/...`` (which
+    didn't exist). The deterministic sections then rendered placeholders
+    on a workspace whose data was perfectly intact, just one level
+    down.
+
+    The fixture's ``ws`` is the inner ``.zicato/`` dir. The outer dir
+    is its parent, which should now resolve identically thanks to the
+    descent normalisation in :mod:`zicato.core.workspace`.
+    """
+    ws, epoch = epoch_workspace
+    outer = ws.parent  # the project root holding ``.zicato/``
+
+    # Inner form (canonical) — same call shape every caller uses.
+    inner_data = gather_epoch_report_data(ws, epoch)
+
+    # Outer form — historically returned an empty view; must now match
+    # the inner form's data exactly.
+    outer_data = gather_epoch_report_data(outer, epoch)
+
+    # All three generations resolve in both forms; an empty
+    # generations tuple is the symptom the original bug surfaced as.
+    assert len(outer_data.generations) == len(inner_data.generations) == 3
+    assert outer_data.epoch_id == inner_data.epoch_id == epoch
+    assert outer_data.epoch_name == inner_data.epoch_name
+    assert outer_data.attempted == inner_data.attempted
+    assert outer_data.promoted == inner_data.promoted
+    assert outer_data.rejected == inner_data.rejected
+
+    # Per-generation gen_score must round-trip too — that's the bag of
+    # data the per-board outcomes + aggregate scores sections read.
+    outer_scores = {
+        g.generation_id: dict(g.gen_score) for g in outer_data.generations if g.gen_score
+    }
+    inner_scores = {
+        g.generation_id: dict(g.gen_score) for g in inner_data.generations if g.gen_score
+    }
+    assert outer_scores == inner_scores
+    assert "v1" in outer_scores
+    assert outer_scores["v1"]["scalar"] == pytest.approx(0.550)
+
+
+def test_gather_does_not_descend_when_outer_layout_exists(tmp_path: Path) -> None:
+    """A legacy workspace laid out directly under ``{ws}/epochs/`` is preserved.
+
+    Some tests + a couple of legacy workspaces build the epoch tree
+    directly under the dir they pass, with no ``.zicato/`` wrapper. The
+    descent normaliser must skip when ``{ws}/epochs/`` already exists,
+    so those workspaces keep loading exactly as they always have.
+    """
+    epoch = "e0"
+    (tmp_path / "epochs" / epoch).mkdir(parents=True)
+    _write(
+        tmp_path / "epochs" / epoch / "config.json",
+        {"id": epoch, "name": "Legacy", "created_at": "", "contract_hash": "", "closed": False},
+    )
+    (tmp_path / "epochs" / epoch / "board.jsonl").write_text("", encoding="utf-8")
+    # No descent — gather should resolve to the path we built.
+    data = gather_epoch_report_data(tmp_path, epoch)
+    assert data.epoch_id == epoch
+    assert data.epoch_name == "Legacy"
+
+
 # ---------------------------------------------------------------------------
 # LLM-narrative path
 # ---------------------------------------------------------------------------
@@ -411,6 +479,48 @@ async def test_llm_timeout_still_writes_report(
     md = out.read_text(encoding="utf-8")
     assert "## Experimental Results" in md
     assert "prose section unavailable" in md
+
+
+async def test_generate_epoch_report_accepts_outer_workspace_dir(
+    epoch_workspace: tuple[Path, str],
+) -> None:
+    """`generate_epoch_report` works when handed the outer project dir.
+
+    Regression test for the orchestrator's ``_regenerate_epoch_report``
+    path. The orchestrator passes ``workspace_root`` straight through;
+    if a caller hands it the *outer* project dir (the parent of
+    ``.zicato/``), the report must still:
+
+    1. Walk the right tree (the inner ``.zicato/`` layout).
+    2. Write ``analysis.md`` to the inner dir, never to a phantom
+       ``{outer}/epochs/...`` path.
+
+    Both behaviours depend on the workspace-root descent normalisation
+    in :mod:`zicato.core.workspace`.
+    """
+    ws, epoch = epoch_workspace
+    outer = ws.parent  # The project dir holding ``.zicato/``.
+
+    async def fake_aux(_system: str, _user: str, _model: str) -> str:
+        return (
+            "===ABSTRACT===\na\n===INTRODUCTION===\nb\n" "===ANALYSIS===\nc\n===CONCLUSION===\nd\n"
+        )
+
+    out = await generate_epoch_report(outer, epoch, fake_aux)
+
+    # Written to the inner layout, NOT a phantom ``{outer}/epochs/`` tree.
+    assert out == ws / "epochs" / epoch / "analysis.md"
+    assert out.is_file()
+    assert not (outer / "epochs" / epoch / "analysis.md").exists()
+
+    md = out.read_text(encoding="utf-8")
+    # Deterministic data sections carry the fixture's real numbers — the
+    # symptom of the original mis-rooting bug was that these sections
+    # rendered as empty placeholders. A populated `-0.250` (v1 Δscalar)
+    # confirms `gather_epoch_report_data` walked the right tree.
+    assert "-0.250" in md
+    assert "promoted" in md
+    assert "rejected" in md
 
 
 async def test_empty_epoch_still_generates(tmp_path: Path) -> None:
