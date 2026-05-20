@@ -1,10 +1,11 @@
 ROOT := $(shell pwd)
 
-.PHONY: help install test lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
+.PHONY: help install install-hooks test lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
 
 help:
 	@echo "zicato Makefile targets:"
 	@echo "  install            Install package + all optional dependencies via uv"
+	@echo "  install-hooks      Install the pre-commit git hook into .git/hooks/"
 	@echo "  test               Run pytest"
 	@echo "  lint               Run ruff check"
 	@echo "  format             Run ruff format"
@@ -18,6 +19,9 @@ help:
 
 install:
 	@cd $(ROOT) && uv sync --all-extras
+
+install-hooks:
+	@cd $(ROOT) && uv run pre-commit install
 
 test:
 	@cd $(ROOT) && uv run pytest tests/

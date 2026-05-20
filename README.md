@@ -49,6 +49,18 @@ zicato calls LLMs only through a narrow `call_llm(system, user, model) -> str`
 callable supplied by the caller. No vendor SDK is imported by the library
 itself; bring whatever model you want.
 
+## Development setup
+
+```sh
+uv sync --all-extras   # install package + dev tooling (ruff, mypy, pytest, pre-commit, ...)
+make install-hooks     # equivalent to `uv run pre-commit install`
+```
+
+`uv sync --all-extras` always — bare `uv sync` will drop the dev extras from
+`.venv/`. `make install-hooks` writes a `.git/hooks/pre-commit` shim that runs
+the project's own pre-commit (from `.venv/`) so `git commit` checks match
+`uv run pre-commit run --all-files`.
+
 ## Design docs
 
 The full design lives under [`docs/design/`](docs/design/). Read

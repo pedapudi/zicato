@@ -59,6 +59,14 @@ dashboard = [
 dev = [
     "pytest >= 8",
     "pytest-asyncio >= 0.23",
+    # The pre-commit framework itself, installed into .venv/bin/ via
+    # `uv sync --all-extras`. The shared `.git/hooks/pre-commit` shim
+    # (installed by `uv run pre-commit install`) execs
+    # `.venv/bin/python -m pre_commit ...`, so pre-commit must live in
+    # the project venv — not in a global pipx / uv-tool location — for
+    # `git commit` to run the same checks contributors test with via
+    # `uv run pre-commit run --all-files`.
+    "pre-commit >= 4",
     # Pinned to the exact version the pre-commit ruff hook uses
     # (.pre-commit-config.yaml) so local lint/format and the hook
     # never diverge.
