@@ -268,3 +268,69 @@ def test_resolve_harmonograf_url_env_beats_config(
     # Env wins over config.
     monkeypatch.setenv(HARMONOGRAF_URL_ENV, "env-host:9999")
     assert resolve_harmonograf_url({"harmonograf_url": "cfg-host:1234"}) == "env-host:9999"
+
+
+# ---------------------------------------------------------------------------
+# Vendored-dependency smoke tests
+#
+# harmonograf_client is wired in via [tool.uv.sources] (git + subdirectory)
+# so the lazy import inside zicato.telemetry.sink resolves automatically
+# in every standard install. These tests guard that wiring: if the
+# dependency is dropped, mistyped, or the upstream layout shifts, they
+# fail with a clear message rather than the sink silently degrading to
+# JSONL-only at runtime.
+# ---------------------------------------------------------------------------
+
+
+def test_harmonograf_client_importable() -> None:
+    """harmonograf_client must resolve in the test venv.
+
+    The package is now a hard dependency (declared in pyproject.toml +
+    pinned via [tool.uv.sources]). The lazy import in
+    zicato.telemetry.sink keeps a try/except around it for defensive
+    reasons, but the standard `uv sync` install must produce a venv where
+    `from harmonograf_client import Client, HarmonografSink` succeeds.
+    Treat any drop of that wiring as a test failure.
+    """
+    # Importing the symbols the lazy import in sink.py reaches for —
+    # this is the contract that matters, not a generic `import
+    # harmonograf_client`.
+    from harmonograf_client import Client, HarmonografSink  # noqa: F401
+
+
+def test_make_run_sinks_uses_real_harmonograf_client_when_available(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With harmonograf_client installed for real, make_run_sinks attaches it.
+
+    The other "attaches harmonograf when env set" test stubs
+    `harmonograf_client` in `sys.modules` so it can run even on a venv
+    without the package. This test exercises the real install — the
+    sink list ends with a `harmonograf_client.HarmonografSink`
+    instance, not a stub. If the dependency wiring breaks (uv.lock
+    drift, upstream rename), this test fails.
+    """
+    pytest.importorskip("goldfive")
+    pytest.importorskip("harmonograf_client")
+
+    from harmonograf_client import HarmonografSink  # type: ignore[import-not-found]
+
+    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+
+    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "127.0.0.1:7531")
+    sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
+
+    # The list is [JSONL sink, HarmonografSink] when both are available.
+    assert len(sinks) == 2
+    assert isinstance(sinks[1], HarmonografSink)
+
+    # Tear down each sink to avoid leaving orphan gRPC tasks from the
+    # harmonograf client's background recv loop (no server is listening
+    # at 127.0.0.1:7531 in tests).
+    for s in sinks:
+        close = getattr(s, "close", None)
+        if close is not None:
+            try:
+                asyncio.run(close())
+            except Exception:  # noqa: BLE001 — best-effort cleanup
+                pass

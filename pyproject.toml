@@ -32,6 +32,17 @@ classifiers = [
 dependencies = [
     # Core is intentionally light; storage / telemetry / LLMs are pluggable.
     "goldfive",
+    # harmonograf_client ships the live-streaming sink the telemetry
+    # layer attaches to every inner-harness run when
+    # ZICATO_HARMONOGRAF_URL is set. It is imported lazily (see
+    # telemetry/sink.py) so the package is still import-safe without it
+    # installed; declaring it here ensures the sink resolves
+    # automatically in every standard install — operators no longer need
+    # a separate "install harmonograf-client" step to get the live view.
+    # (zicato's meta-loop activity is surfaced through heartbeats +
+    # journal/lineage + the post-run reducer, not goldfive Events; the
+    # harmonograf view stays the per-run execution view by design.)
+    "harmonograf-client",
     "click >= 8.1",
     "jsonschema >= 4.20",
 ]
@@ -140,9 +151,12 @@ warn_unused_ignores = true
 # dependencies; their stubs are not on PyPI and the modules may not be
 # importable in the typecheck environment. Treat references as untyped
 # rather than erroring at import time so the typecheck still covers the
-# rest of the tree. (harmonograf_client is imported lazily inside a
-# guarded try/except in zicato.telemetry.sink — telemetry falls back to
-# JSONL-only when it is absent.)
+# rest of the tree. (harmonograf_client is now a hard runtime dependency
+# via [tool.uv.sources] — pinned to a specific commit of
+# github.com/pedapudi/harmonograf, subdirectory "client" — so the live-
+# streaming sink resolves automatically; the lazy import inside a
+# guarded try/except in zicato.telemetry.sink remains, both to keep the
+# module import-safe in degraded installs and to tolerate API drift.)
 #
 # zicato.index / zicato.health are sibling subsystems the orchestrator
 # and tournament runner import lazily and best-effort — a round runs
@@ -186,6 +200,24 @@ pythonpath = ["."]
 [tool.uv.workspace]
 members = ["examples"]
 
+# The harmonograf-client subdirectory dep transitively requires goldfive
+# (its sibling subpackage in the harmonograf monorepo). Harmonograf's
+# parent pyproject pins goldfive via `path = "third_party/goldfive"`,
+# which uv rewrites to a git+subdirectory URL when zicato pulls
+# harmonograf-client over git. Zicato itself pins goldfive directly via
+# its own [tool.uv.sources] entry — uv treats the two URL forms as
+# distinct sources and refuses to resolve. Both forms resolve to the
+# same commit (harmonograf's `third_party/goldfive` is itself pinned at
+# the goldfive rev zicato wants), so `override-dependencies` forces a
+# single canonical goldfive across the graph: harmonograf-client uses
+# zicato's [tool.uv.sources] goldfive entry, eliminating the duplicate
+# URL split. Bump this in lock-step with the `[tool.uv.sources]`
+# goldfive rev above.
+[tool.uv]
+override-dependencies = [
+    "goldfive",
+]
+
 [tool.uv.sources]
 zicato-examples = { workspace = true }
 # goldfive is a co-developed sibling package, not yet published to a
@@ -196,7 +228,16 @@ zicato-examples = { workspace = true }
 # The rev is pinned so `uv.lock` is reproducible; bump it when zicato
 # needs a newer goldfive. When goldfive is eventually published to an
 # index, this entry is dropped and the [project.dependencies] spec
-# resolves it from there. (harmonograf is consumed as a service over
-# ZICATO_HARMONOGRAF_URL, not imported as a package, so it needs no
-# entry here — only a reachable running instance.)
+# resolves it from there. (The harmonograf-client entry below mirrors
+# this pattern for the live-streaming sink.)
 goldfive = { git = "https://github.com/pedapudi/goldfive.git", rev = "ed44eaaf93215a5d4ae122293c39fbd04ff204d6" }
+# harmonograf is a monorepo whose `harmonograf-client` subpackage lives
+# under `client/` — so the git source pins a rev AND a subdirectory.
+# `harmonograf_client` is the package the lazy import in
+# telemetry/sink.py resolves; declaring the dependency here means every
+# zicato install gets the live-streaming sink wire-attached
+# automatically (no separate "install harmonograf-client" step). The
+# rev is pinned for reproducibility; bump it when zicato needs a newer
+# harmonograf-client. The repo is public on GitHub, so this resolves
+# both locally and in CI with the default token — no secret required.
+harmonograf-client = { git = "https://github.com/pedapudi/harmonograf.git", subdirectory = "client", rev = "bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" }
