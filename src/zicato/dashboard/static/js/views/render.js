@@ -3769,7 +3769,15 @@ function renderEpochAnalysis(def) {
     wrap.appendChild(bar);
   }
 
-  if (md.trim()) {
+  const inline = (def && typeof def.analysis_html_inline === 'string') ? def.analysis_html_inline : '';
+  if (inline.trim()) {
+    // Paper-styled HTML fragment from the report renderer — drop it
+    // verbatim into a paper-card wrapper. Same renderer as the standalone
+    // analysis.html so both surfaces read as a paper.
+    const block = el('div', { class: 'analysis-paper-card' });
+    block.innerHTML = inline;
+    wrap.appendChild(block);
+  } else if (md.trim()) {
     const block = el('div', { class: 'brief-block' });
     renderMinimalMarkdown(md, block);
     wrap.appendChild(block);

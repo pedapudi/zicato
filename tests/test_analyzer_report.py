@@ -23,6 +23,7 @@ from zicato.analyzer.report import (
     generate_epoch_report,
     markdown_to_html,
     render_report_html,
+    render_report_html_fragment,
 )
 from zicato.analyzer.report_data import gather_epoch_report_data
 from zicato.analyzer.report_prompts import parse_prose_blocks
@@ -292,19 +293,35 @@ async def test_generate_report_full_document(epoch_workspace: tuple[Path, str]) 
     assert out == analysis_path(ws, epoch)
     md = out.read_text(encoding="utf-8")
 
-    # Every required section is present, in order.
+    # Every required section is present, in order — headings carry NO
+    # explicit number; the HTML renderer numbers them.
     for section in (
         "# Epoch Analysis Report",
         "## Abstract",
-        "## 1. Introduction",
-        "## 2. Methodology",
-        "## 3. Approach & Implementation",
-        "## 4. Experimental Results",
-        "## 5. Analysis — What Worked and What Didn't",
-        "## 6. Threats to Validity & Limitations",
-        "## 7. Conclusion & Next Directions",
+        "## Introduction",
+        "## Methodology",
+        "## Approach & Implementation",
+        "## Experimental Results",
+        "## Analysis — What Worked and What Didn't",
+        "## Threats to Validity & Limitations",
+        "## Conclusion & Next Directions",
     ):
         assert section in md, section
+    # And the markdown source must NOT carry hard-coded section numbers
+    # (a regression here would double-number in the rendered HTML).
+    for forbidden in (
+        "## 1. ",
+        "## 2. ",
+        "## 3. ",
+        "## 4. ",
+        "## 5. ",
+        "## 6. ",
+        "## 7. ",
+        "### 2.1 ",
+        "### 3.1 ",
+        "### 4.1 ",
+    ):
+        assert forbidden not in md, f"unexpected hard-coded number {forbidden!r}"
 
     # The LLM prose landed in the right sections.
     assert "tightened the agent's system prompt" in md
@@ -323,6 +340,16 @@ async def test_generate_report_full_document(epoch_workspace: tuple[Path, str]) 
     html = html_path.read_text(encoding="utf-8")
     assert html.startswith("<!DOCTYPE html>")
     assert 'src="http' not in html and 'href="http' not in html
+    # Renderer auto-numbered the sections: every numbered h2 carries a
+    # ``.secnum`` span, and the introduction / methodology / results
+    # heads come out as ``1.`` / ``2.`` / ``...`` in order.
+    assert '<span class="secnum">1</span>' in html
+    assert '<span class="secnum">2</span>' in html
+    assert '<span class="secnum">3</span>' in html
+    # The HTML carries the paper article wrapper and the inline SVG of
+    # the score-trajectory figure (figures are inline, no external refs).
+    assert 'class="paper"' in html
+    assert "<svg" in html
 
 
 async def test_missing_prose_block_degrades_to_placeholder(
@@ -337,8 +364,8 @@ async def test_missing_prose_block_degrades_to_placeholder(
 
     out = await generate_epoch_report(ws, epoch, partial_aux)
     md = out.read_text(encoding="utf-8")
-    assert "## 5. Analysis — What Worked and What Didn't" in md
-    assert "## 7. Conclusion & Next Directions" in md
+    assert "## Analysis — What Worked and What Didn't" in md
+    assert "## Conclusion & Next Directions" in md
     # The omitted sections carry the placeholder.
     assert "prose section unavailable" in md
 
@@ -354,8 +381,8 @@ async def test_llm_failure_still_writes_report(epoch_workspace: tuple[Path, str]
     assert out.is_file()
     md = out.read_text(encoding="utf-8")
     # Deterministic sections survive a failed LLM call.
-    assert "## 2. Methodology" in md
-    assert "## 4. Experimental Results" in md
+    assert "## Methodology" in md
+    assert "## Experimental Results" in md
     assert "-0.250" in md
     # Prose is the placeholder.
     assert "prose section unavailable" in md
@@ -378,7 +405,7 @@ async def test_llm_timeout_still_writes_report(
 
     out = await generate_epoch_report(ws, epoch, slow_aux)
     md = out.read_text(encoding="utf-8")
-    assert "## 4. Experimental Results" in md
+    assert "## Experimental Results" in md
     assert "prose section unavailable" in md
 
 
@@ -394,7 +421,7 @@ async def test_empty_epoch_still_generates(tmp_path: Path) -> None:
     out = await generate_epoch_report(ws, epoch, fake_aux)
     md = out.read_text(encoding="utf-8")
     assert "# Epoch Analysis Report" in md
-    assert "## 4. Experimental Results" in md
+    assert "## Experimental Results" in md
     assert "No generations" in md
 
 
@@ -426,19 +453,297 @@ def test_markdown_to_html_covers_report_subset() -> None:
     )
     html = markdown_to_html(md)
     assert "<h1>Title</h1>" in html
-    assert "<h2>Section</h2>" in html
+    # h2 carries an auto-numbered prefix span (1, 2, ...).
+    assert '<span class="secnum">1</span>' in html
+    assert "Section</h2>" in html
     assert "<strong>bold</strong>" in html
     assert "<code>code</code>" in html
     assert "<ul>" in html and "<li>bullet one</li>" in html
-    assert "<table>" in html and "<th>a</th>" in html and "<td>1</td>" in html
+    assert "<table>" in html and ">a</th>" in html
+    # Numeric column auto-detected as right-aligned.
+    assert '<td class="num">1</td>' in html
+    assert '<th class="num">a</th>' in html
     assert "<pre><code>code block</code></pre>" in html
-    assert "<hr/>" in html
+    # Paper hr class.
+    assert '<hr class="paper-rule"/>' in html
 
 
 def test_render_report_html_is_self_contained() -> None:
     html = render_report_html("e1", "# Hello\n\nworld\n")
     assert html.startswith("<!DOCTYPE html>")
     assert "<style>" in html  # inline CSS, no external link
-    assert "prefers-color-scheme: dark" in html  # dark-mode aware
+    # Paper styling — serif body, paper-tone background.
+    assert "Georgia" in html or "Source Serif Pro" in html
+    assert ".paper" in html
+    # No external font fetches, no external resources.
     assert 'href="http' not in html
     assert 'src="http' not in html
+    assert "fonts.googleapis" not in html
+    assert "<link " not in html
+
+
+# ---------------------------------------------------------------------------
+# Paper-style renderer — auto-numbering, captions, figures
+# ---------------------------------------------------------------------------
+
+
+def test_h2_h3_h4_get_dotted_section_numbers() -> None:
+    md = (
+        "## First\n\n"
+        "### First A\n\n"
+        "### First B\n\n"
+        "#### Deep\n\n"
+        "## Second\n\n"
+        "### Second A\n"
+    )
+    html = markdown_to_html(md)
+    # Auto-numbering: 1, 1.1, 1.2, 1.2.1, 2, 2.1.
+    assert '<span class="secnum">1</span>' in html
+    assert '<span class="secnum">1.1</span>' in html
+    assert '<span class="secnum">1.2</span>' in html
+    assert '<span class="secnum">1.2.1</span>' in html
+    assert '<span class="secnum">2</span>' in html
+    assert '<span class="secnum">2.1</span>' in html
+
+
+def test_abstract_h2_is_unnumbered() -> None:
+    # The Abstract is academic-paper convention — unnumbered. Other h2s
+    # following it continue numbering from 1.
+    md = "## Abstract\n\nbody\n\n## Introduction\n\nintro\n"
+    html = markdown_to_html(md)
+    assert 'class="unnumbered"' in html
+    # The first numbered h2 is the Introduction with secnum 1.
+    assert '<span class="secnum">1</span> Introduction' in html
+
+
+def test_explicit_section_numbers_in_md_double_number() -> None:
+    """Belt-and-braces: explicit "1." in markdown WOULD double-number.
+
+    This is the regression we guard against — the section sources have
+    been stripped of explicit "1./2./..." prefixes. If a future edit
+    re-adds one to the markdown, the renderer would emit it alongside
+    the auto-prefix; this test documents that contract explicitly so a
+    drift back to hard-coded numbering trips a test.
+    """
+    md = "## 1. Introduction\n"
+    html = markdown_to_html(md)
+    # Both the auto-number AND the literal "1." would show.
+    assert '<span class="secnum">1</span>' in html
+    assert "1. Introduction" in html
+
+
+def test_caption_line_attaches_to_next_table_as_table_n_caption() -> None:
+    md = "Caption: First table caption.\n\n" "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
+    html = markdown_to_html(md)
+    assert '<figure class="paper-table">' in html
+    assert "<figcaption>" in html
+    assert '<span class="figlabel">Table 1:</span> First table caption.' in html
+
+
+def test_figure_marker_substitutes_inline_svg_with_caption() -> None:
+    """A figure marker becomes a <figure> with inline SVG and 'Figure N:' caption.
+
+    The renderer dispatches to :func:`render_figure` — when ``data`` is
+    supplied, a real SVG lands in the figure; without ``data`` (the
+    renderer-only path) a placeholder div lands.
+    """
+    md = "Caption: Score trajectory across generations.\n\n" "<!-- FIGURE:score-trajectory -->\n"
+    # Without data — placeholder.
+    html_no_data = markdown_to_html(md)
+    assert '<figure class="paper-figure">' in html_no_data
+    assert '<span class="figlabel">Figure 1:</span>' in html_no_data
+    assert "figure-placeholder" in html_no_data
+
+    # With data — real inline SVG.
+    from zicato.analyzer.report_data import EpochReportData
+
+    data = EpochReportData(
+        epoch_id="e1",
+        epoch_name="e1",
+        contract_hash="",
+        created_at="",
+        closed=False,
+        closed_at="",
+        brief_text="",
+        journal_text="",
+        board_entries=(),
+        disable_drift=(),
+        scoring={},
+        mutation_surface=(),
+        generations=(),
+        span_start="",
+        span_end="",
+    )
+    html_with_data = markdown_to_html(md, data=data)
+    assert "<svg" in html_with_data
+    assert "</svg>" in html_with_data
+
+
+def test_figure_and_table_counters_are_independent() -> None:
+    md = (
+        "Caption: First table.\n\n"
+        "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n"
+        "Caption: First figure.\n\n"
+        "<!-- FIGURE:score-trajectory -->\n\n"
+        "Caption: Second table.\n\n"
+        "| c | d |\n| --- | --- |\n| 3 | 4 |\n\n"
+        "Caption: Second figure.\n\n"
+        "<!-- FIGURE:lineage -->\n"
+    )
+    html = markdown_to_html(md)
+    # Figure / Table counters are independent: each starts at 1 in its
+    # own series.
+    assert "Figure 1:" in html
+    assert "Figure 2:" in html
+    assert "Table 1:" in html
+    assert "Table 2:" in html
+
+
+def test_numeric_table_columns_are_right_aligned() -> None:
+    md = "| gen | scalar |\n| --- | --- |\n" "| v0 | +0.000 |\n" "| v1 | -0.250 |\n"
+    html = markdown_to_html(md)
+    # The "scalar" column is numeric — header and cells both class="num".
+    assert '<th class="num">scalar</th>' in html
+    assert '<td class="num">+0.000</td>' in html
+    # "gen" column carries non-numeric ids — not right-aligned.
+    assert "<th>gen</th>" in html
+    assert "<td>v0</td>" in html
+
+
+def test_metadata_marker_emits_paper_meta_block() -> None:
+    md = "# Title\n\n<!-- META -->\n**Epoch id**: `e1`  \n**Status**: closed\n"
+    html = markdown_to_html(md)
+    assert '<div class="paper-meta">' in html
+    assert "<strong>Epoch id</strong>" in html
+
+
+def test_render_report_html_wraps_in_paper_article() -> None:
+    html = render_report_html("e1", "# T\n\nhello\n")
+    assert '<article class="paper">' in html
+    assert '<div class="paper-article">' in html
+    # Paper CSS variables ride along.
+    assert "--paper-bg" in html
+    # The standalone document carries the page-level body background.
+    assert "background: #e9e7e1" in html
+
+
+def test_render_report_html_fragment_omits_doctype_but_carries_paper_css() -> None:
+    """Inline fragment is a paper-card embedded inside the dashboard.
+
+    It must NOT be a full HTML document — no doctype, no html/head/body
+    shell — but it must carry its own scoped paper CSS so the dashboard
+    embedding cannot leak typography into surrounding chrome.
+    """
+    fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
+    assert not fragment.startswith("<!DOCTYPE")
+    assert "<html" not in fragment
+    assert "<head" not in fragment
+    # Carries the paper class on the article wrapper and a paper-card
+    # modifier so the dashboard can style the card chrome.
+    assert 'class="paper paper-card"' in fragment
+    # Brings its own inline CSS scoped to .paper.
+    assert "<style>" in fragment
+    assert ".paper" in fragment
+    # No external resources.
+    assert 'href="http' not in fragment
+    assert 'src="http' not in fragment
+
+
+def test_full_document_includes_every_required_figure(
+    epoch_workspace: tuple[Path, str],
+) -> None:
+    """The generated HTML carries every required figure type inline.
+
+    Requirements: score trajectory, drift-kind movements, per-board
+    heatmap, lineage, and the mutation-surface compact figure.
+    """
+    import asyncio
+
+    ws, epoch = epoch_workspace
+
+    async def fake_aux(system: str, user: str, model: str) -> str:
+        return "===ABSTRACT===\nA\n===INTRODUCTION===\nI\n===ANALYSIS===\nAn\n===CONCLUSION===\nC\n"
+
+    out = asyncio.run(generate_epoch_report(ws, epoch, fake_aux))
+    html = out.with_suffix(".html").read_text(encoding="utf-8")
+
+    # Each figure carries a distinct aria-label set by its renderer.
+    for aria in (
+        "Score trajectory across generations",
+        "Drift-kind rate movements per generation",
+        "Per-board entry outcomes heatmap",
+        "Lineage diagram",
+        "Mutation surface",
+    ):
+        assert aria in html, aria
+    # Every figure is wrapped in a paper-figure block with a caption.
+    assert html.count('<figure class="paper-figure">') >= 5
+    assert "Figure 1:" in html
+    assert "Figure 5:" in html
+
+
+def test_paper_table_caption_lands_above_table(
+    epoch_workspace: tuple[Path, str],
+) -> None:
+    """Captions sit ABOVE the table per academic convention.
+
+    Inside one ``figure.paper-table``, the figcaption comes before the
+    table element. Use a single matching block to assert ordering.
+    """
+    import asyncio
+
+    ws, epoch = epoch_workspace
+
+    async def fake_aux(s: str, u: str, m: str) -> str:
+        return "===ABSTRACT===\nA\n===INTRODUCTION===\nI\n===ANALYSIS===\nAn\n===CONCLUSION===\nC\n"
+
+    out = asyncio.run(generate_epoch_report(ws, epoch, fake_aux))
+    html = out.with_suffix(".html").read_text(encoding="utf-8")
+    # The first paper-table figure carries figcaption before <table>.
+    idx_fig = html.find('<figure class="paper-table">')
+    idx_cap = html.find("<figcaption>", idx_fig)
+    idx_tbl = html.find("<table>", idx_fig)
+    assert 0 <= idx_fig < idx_cap < idx_tbl
+
+
+def test_fragment_can_be_concatenated_into_dashboard_chrome() -> None:
+    """The inline fragment is safe to drop inside a host div.
+
+    No `<html>`, `<head>`, `<body>` tags — and the CSS is scoped to
+    `.paper` so it cannot bleed onto surrounding markup.
+    """
+    fragment = render_report_html_fragment("e1", "## Section\n\nbody.\n")
+    # Concatenate into a host wrapper — the result should be balanced HTML.
+    composite = '<div id="host">' + fragment + "</div>"
+    # html.parser-based well-formedness check.
+    from html.parser import HTMLParser
+
+    class _S(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.stack: list[str] = []
+            self.unbalanced: list[str] = []
+            self._void = {"path", "rect", "circle", "line", "br", "hr", "meta", "link"}
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag in self._void:
+                return
+            self.stack.append(tag)
+
+        def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            return
+
+        def handle_endtag(self, tag: str) -> None:
+            if not self.stack:
+                self.unbalanced.append(f"close without open: {tag}")
+                return
+            if self.stack[-1] == tag:
+                self.stack.pop()
+                return
+            self.unbalanced.append(f"mismatched: expected </{self.stack[-1]}> got </{tag}>")
+
+    parser = _S()
+    parser.feed(composite)
+    parser.close()
+    assert not parser.unbalanced, parser.unbalanced[:3]
+    assert not parser.stack, parser.stack

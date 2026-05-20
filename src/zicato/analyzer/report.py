@@ -11,13 +11,18 @@ Report structure (the section vocabulary an operator can rely on):
 
 * Title + metadata
 * Abstract
-* 1. Introduction
-* 2. Methodology
-* 3. Approach & Implementation
-* 4. Experimental Results
-* 5. Analysis — What Worked and What Didn't
-* 6. Threats to Validity & Limitations
-* 7. Conclusion & Next Directions
+* Introduction
+* Methodology
+* Approach & Implementation
+* Experimental Results
+* Analysis — What Worked and What Didn't
+* Threats to Validity & Limitations
+* Conclusion & Next Directions
+
+The markdown source carries headings WITHOUT explicit section numbers;
+the HTML renderer auto-numbers ``h2 / h3 / h4`` (1, 1.1, 1.1.1) so the
+report is consistently numbered regardless of which sections happen to
+be present. Tables and figures are auto-numbered the same way.
 
 Hybrid generation, for correctness:
 
@@ -25,6 +30,11 @@ Hybrid generation, for correctness:
   Experimental Results table, the score trajectory, Threats) are
   templated directly from the structured workspace data by
   :mod:`zicato.analyzer.report_sections` — exact by construction.
+* The figures (inline SVG: score trajectory, drift-kind movements,
+  per-board heatmap, lineage diagram, mutation surface) are produced
+  by :mod:`zicato.analyzer.report_figures` from the same structured
+  view; the deterministic sections drop ``<!-- FIGURE:NAME -->``
+  markers and the HTML renderer substitutes the SVG at render time.
 * The prose sections (Abstract, Introduction, the Analysis
   interpretation, Conclusion) are written by ONE bounded auxiliary-LLM
   call, given the structured data and the deterministic sections as
@@ -55,6 +65,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from zicato.analyzer.report_data import EpochReportData, gather_epoch_report_data
+from zicato.analyzer.report_figures import render_figure
 from zicato.analyzer.report_prompts import (
     PROSE_BLOCK_LABELS,
     REPORT_SYSTEM_PROMPT,
@@ -115,19 +126,19 @@ def assemble_report_markdown(
     parts.append("")
     parts.append(abstract)
     parts.append("")
-    parts.append("## 1. Introduction")
+    parts.append("## Introduction")
     parts.append("")
     parts.append(introduction)
     parts.append("")
     parts.append(deterministic_sections.strip())
     parts.append("")
-    parts.append("## 5. Analysis — What Worked and What Didn't")
+    parts.append("## Analysis — What Worked and What Didn't")
     parts.append("")
     parts.append(analysis)
     parts.append("")
     parts.append(render_threats_section(data))
     parts.append("")
-    parts.append("## 7. Conclusion & Next Directions")
+    parts.append("## Conclusion & Next Directions")
     parts.append("")
     parts.append(conclusion)
     parts.append("")
@@ -139,7 +150,8 @@ def assemble_report_markdown(
         f"`mutations.json`, `generations/*/experiment.json`, and `journal.md` "
         f"under epoch `{data.epoch_id}`. The data-bearing sections are "
         f"templated exactly from those artifacts; the prose sections are "
-        f"LLM-authored._"
+        f"LLM-authored. Section, table, and figure numbers are assigned by "
+        f"the renderer._"
     )
     parts.append("")
     return "\n".join(parts)
@@ -162,12 +174,40 @@ def _deterministic_sections(data: EpochReportData) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Minimal, dependency-free Markdown -> HTML
+# Minimal, dependency-free Markdown -> paper-styled HTML
 # ---------------------------------------------------------------------------
 
 
+# A marker the deterministic sections emit at the point a figure should
+# appear. The renderer substitutes the inline SVG (produced by
+# :mod:`zicato.analyzer.report_figures`) wrapped in a ``<figure>`` with
+# an auto-numbered caption.
+_FIGURE_MARKER_PREFIX = "<!-- FIGURE:"
+_FIGURE_MARKER_SUFFIX = "-->"
+_META_MARKER = "<!-- META -->"
+
+# A caption line precedes a figure or table block. The line is the
+# literal string ``Caption: <text>`` (or ``**Caption.** <text>``); the
+# renderer auto-numbers it (``Figure 3: ...`` / ``Table 5: ...``)
+# according to whether the next block is a figure or a table.
+_CAPTION_PREFIXES = ("Caption: ", "Caption:")
+
+
+def _is_caption_line(text: str) -> bool:
+    return text.startswith("Caption:")
+
+
+def _strip_caption(text: str) -> str:
+    """Strip the ``Caption: `` prefix off a caption line."""
+    if text.startswith("Caption: "):
+        return text[len("Caption: ") :]
+    if text.startswith("Caption:"):
+        return text[len("Caption:") :]
+    return text
+
+
 def _inline_md_to_html(text: str) -> str:
-    """Convert inline markdown (bold, code, arrows) within one line to HTML.
+    """Convert inline markdown (bold, code) within one line to HTML.
 
     Deliberately small — the report markdown only uses ``**bold**`` and
     backtick ``code`` spans inline. Everything else is HTML-escaped.
@@ -197,46 +237,134 @@ def _inline_md_to_html(text: str) -> str:
     return "".join(out)
 
 
-def _render_md_table(rows: list[str]) -> str:
-    """Render a contiguous block of markdown table lines as an HTML table."""
+def _table_cells(line: str) -> list[str]:
+    """Split one markdown pipe-table row into cell text values."""
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [c.strip() for c in stripped.split("|")]
+
+
+def _cell_is_numeric(text: str) -> bool:
+    """Heuristic — does a table cell look like a numeric value?
+
+    Numeric cells get right-aligned in paper style. The check is
+    deliberately liberal — backtick-wrapped numbers (e.g. ``1.5``), and
+    signed deltas (``+0.080`` / ``-0.250``) both count. Empty / "—" /
+    "(seed)" do not, so missing values are left default-aligned.
+    """
+    stripped = text.strip().strip("`").strip()
+    if not stripped or stripped in ("—", "-"):
+        return False
+    if stripped.startswith(("+", "-")):
+        stripped = stripped[1:]
+    if not stripped:
+        return False
+    # accept digits, dots, commas, percent signs
+    cleaned = stripped.replace(".", "").replace(",", "").replace("%", "")
+    return cleaned.isdigit()
+
+
+def _render_md_table(rows: list[str], caption_html: str | None) -> str:
+    """Render a contiguous block of markdown table lines as a paper-style table.
+
+    The first row is treated as the header, the second row's alignment
+    column is ignored (we infer per-column numeric alignment from the
+    body cells), the remainder is the body. ``caption_html`` is the
+    pre-rendered, auto-numbered caption fragment (``<figcaption>`` body)
+    — passed in by the caller because numbering is sequential across
+    the document.
+    """
     if len(rows) < 2:
         return ""
 
-    def _cells(line: str) -> list[str]:
-        stripped = line.strip()
-        if stripped.startswith("|"):
-            stripped = stripped[1:]
-        if stripped.endswith("|"):
-            stripped = stripped[:-1]
-        return [c.strip() for c in stripped.split("|")]
+    header = _table_cells(rows[0])
+    body_rows = [_table_cells(r) for r in rows[2:]]
+    n_cols = len(header)
+    # Decide per-column alignment: a column is numeric when most non-
+    # empty body cells look like numbers.
+    align_right = [False] * n_cols
+    for ci in range(n_cols):
+        numeric = 0
+        non_empty = 0
+        for r in body_rows:
+            if ci >= len(r):
+                continue
+            cell = r[ci]
+            if cell:
+                non_empty += 1
+                if _cell_is_numeric(cell):
+                    numeric += 1
+        if non_empty and numeric >= max(1, non_empty // 2):
+            align_right[ci] = True
 
-    header = _cells(rows[0])
-    body = rows[2:]
-    parts: list[str] = ["<table><thead><tr>"]
-    parts.extend(f"<th>{_inline_md_to_html(c)}</th>" for c in header)
+    parts: list[str] = ['<figure class="paper-table">']
+    if caption_html:
+        parts.append(f"<figcaption>{caption_html}</figcaption>")
+    parts.append("<table><thead><tr>")
+    for ci, cell in enumerate(header):
+        cls = ' class="num"' if align_right[ci] else ""
+        parts.append(f"<th{cls}>{_inline_md_to_html(cell)}</th>")
     parts.append("</tr></thead><tbody>")
-    for line in body:
+    for r in body_rows:
         parts.append("<tr>")
-        parts.extend(f"<td>{_inline_md_to_html(c)}</td>" for c in _cells(line))
+        for ci in range(n_cols):
+            cell = r[ci] if ci < len(r) else ""
+            cls = ' class="num"' if align_right[ci] else ""
+            parts.append(f"<td{cls}>{_inline_md_to_html(cell)}</td>")
         parts.append("</tr>")
-    parts.append("</tbody></table>")
+    parts.append("</tbody></table></figure>")
     return "".join(parts)
 
 
-def markdown_to_html(md: str) -> str:
-    """Convert the report markdown to an HTML fragment (no dependencies).
+def _section_numbering_label(counters: list[int], level: int) -> str:
+    """Compute the dotted prefix (e.g. ``2.1.3``) for a given h-level."""
+    # counters[0] is for h2, counters[1] for h3, counters[2] for h4.
+    idx = level - 2
+    if idx < 0:
+        return ""
+    # advance the counter at this level, reset deeper counters.
+    counters[idx] += 1
+    for k in range(idx + 1, len(counters)):
+        counters[k] = 0
+    return ".".join(str(c) for c in counters[: idx + 1] if c > 0)
+
+
+def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
+    """Convert the report markdown to a paper-styled HTML fragment.
 
     Supports the subset the report uses: ATX headings (``#``..``####``),
     bullet lists, fenced code blocks, pipe tables, horizontal rules,
-    bold + code inline spans, and paragraphs. Anything unrecognised is
-    rendered as an escaped paragraph. The output is a fragment; the
-    document shell is supplied by :func:`render_report_html`.
+    bold + code inline spans, paragraphs, ``<!-- FIGURE:NAME -->``
+    figure markers, and ``Caption: ...`` caption lines preceding a
+    figure or table.
+
+    Auto-numbering:
+
+    * ``h2`` → ``1.`` ``2.`` ...
+    * ``h3`` → ``1.1`` ``1.2`` ...
+    * ``h4`` → ``1.1.1`` ...
+    * Tables → ``Table N:`` (across the whole document)
+    * Figures → ``Figure N:`` (across the whole document)
+
+    ``data`` is the structured epoch view. When supplied, figure markers
+    are substituted with inline SVG; when absent (e.g. tests of the
+    renderer alone) the markers render as empty placeholders.
     """
     lines = md.splitlines()
     out: list[str] = []
     i = 0
     n = len(lines)
     in_list = False
+    # counters: [h2, h3, h4]
+    h_counters = [0, 0, 0]
+    table_counter = 0
+    figure_counter = 0
+    # The most recent caption text, awaiting attachment to the next
+    # figure or table block.
+    pending_caption: str | None = None
 
     def _close_list() -> None:
         nonlocal in_list
@@ -244,9 +372,53 @@ def markdown_to_html(md: str) -> str:
             out.append("</ul>")
             in_list = False
 
+    def _consume_caption() -> str | None:
+        nonlocal pending_caption
+        c = pending_caption
+        pending_caption = None
+        return c
+
+    pending_meta = False  # next paragraph is the masthead metadata block
+
     while i < n:
         line = lines[i]
         stripped = line.strip()
+
+        # Meta marker — the next paragraph is the masthead metadata.
+        if stripped == _META_MARKER:
+            _close_list()
+            pending_meta = True
+            i += 1
+            continue
+
+        # Figure marker — substitute inline SVG.
+        if stripped.startswith(_FIGURE_MARKER_PREFIX) and stripped.endswith(_FIGURE_MARKER_SUFFIX):
+            _close_list()
+            inner = stripped[len(_FIGURE_MARKER_PREFIX) : -len(_FIGURE_MARKER_SUFFIX)].strip()
+            figure_counter += 1
+            svg = render_figure(inner, data) if data is not None else ""
+            caption_text = _consume_caption()
+            caption_html = ""
+            if caption_text:
+                caption_html = (
+                    f'<span class="figlabel">Figure {figure_counter}:</span> '
+                    + _inline_md_to_html(caption_text)
+                )
+            elif inner:
+                caption_html = (
+                    f'<span class="figlabel">Figure {figure_counter}:</span> '
+                    f"<em>{_html.escape(inner)}</em>"
+                )
+            out.append('<figure class="paper-figure">')
+            if svg:
+                out.append(svg)
+            else:
+                out.append(f'<div class="figure-placeholder">[figure: {_html.escape(inner)}]</div>')
+            if caption_html:
+                out.append(f"<figcaption>{caption_html}</figcaption>")
+            out.append("</figure>")
+            i += 1
+            continue
 
         # Fenced code block.
         if stripped.startswith("```"):
@@ -273,7 +445,15 @@ def markdown_to_html(md: str) -> str:
             while i < n and "|" in lines[i].strip():
                 table_rows.append(lines[i])
                 i += 1
-            out.append(_render_md_table(table_rows))
+            table_counter += 1
+            caption_text = _consume_caption()
+            caption_html = ""
+            if caption_text:
+                caption_html = (
+                    f'<span class="figlabel">Table {table_counter}:</span> '
+                    + _inline_md_to_html(caption_text)
+                )
+            out.append(_render_md_table(table_rows, caption_html or None))
             continue
 
         if not stripped:
@@ -281,10 +461,21 @@ def markdown_to_html(md: str) -> str:
             i += 1
             continue
 
+        # Caption line preceding a figure / table.
+        if _is_caption_line(stripped):
+            # Note: do not _close_list here — a caption is a structural
+            # marker; if there is a hanging list it should still close
+            # at the next non-list line. Captions never appear inside a
+            # list in the deterministic sections.
+            _close_list()
+            pending_caption = _strip_caption(stripped)
+            i += 1
+            continue
+
         # Horizontal rule.
         if stripped in ("---", "***", "___"):
             _close_list()
-            out.append("<hr/>")
+            out.append('<hr class="paper-rule"/>')
             i += 1
             continue
 
@@ -294,7 +485,20 @@ def markdown_to_html(md: str) -> str:
             level = len(stripped) - len(stripped.lstrip("#"))
             level = min(max(level, 1), 6)
             content = stripped[level:].strip()
-            out.append(f"<h{level}>{_inline_md_to_html(content)}</h{level}>")
+            # The Abstract is not numbered (academic convention); only
+            # h2's that are NOT 'Abstract' get a number. Same convention
+            # for h2 / h3 / h4 — only sections inside the body get
+            # numbered.
+            if level == 1:
+                out.append(f"<h1>{_inline_md_to_html(content)}</h1>")
+            elif level == 2 and content.strip().lower() == "abstract":
+                out.append(f'<h2 class="unnumbered">{_inline_md_to_html(content)}</h2>')
+            elif 2 <= level <= 4:
+                num = _section_numbering_label(h_counters, level)
+                num_span = f'<span class="secnum">{num}</span> ' if num else ""
+                out.append(f"<h{level}>{num_span}{_inline_md_to_html(content)}</h{level}>")
+            else:
+                out.append(f"<h{level}>{_inline_md_to_html(content)}</h{level}>")
             i += 1
             continue
 
@@ -316,84 +520,360 @@ def markdown_to_html(md: str) -> str:
             if (
                 not nxt
                 or nxt.startswith(("#", "- ", "* ", "```", "---", "***", "___"))
+                or nxt.startswith(_FIGURE_MARKER_PREFIX)
+                or nxt == _META_MARKER
+                or _is_caption_line(nxt)
                 or "|" in nxt
             ):
                 break
             para.append(nxt)
             i += 1
-        out.append("<p>" + "<br/>".join(_inline_md_to_html(p) for p in para) + "</p>")
+        if pending_meta:
+            # The masthead metadata block renders centred under the
+            # title, with line-broken labelled bits.
+            pending_meta = False
+            out.append(
+                '<div class="paper-meta">'
+                + "<br/>".join(_inline_md_to_html(p) for p in para)
+                + "</div>"
+            )
+        else:
+            out.append("<p>" + "<br/>".join(_inline_md_to_html(p) for p in para) + "</p>")
 
     _close_list()
     return "\n".join(out)
 
 
-_HTML_CSS = """
-:root {
-  --bg: #ffffff; --text: #24292f; --muted: #57606a; --border: #d0d7de;
-  --code-bg: #f6f8fa; --accent: #0969da;
+# --- Academic-paper CSS ---------------------------------------------------
+#
+# All paper styling is scoped to ``.paper`` so the same fragment renders
+# the standalone ``analysis.html`` AND, when embedded inside the dark
+# dashboard chrome, the inline Analysis-section card. Two property
+# blocks: paper variables (light, paper-tone) and the scoped typography
+# / table / figure rules.
+_PAPER_VARS = """
+.paper {
+  --paper-bg: #fafaf7;
+  --paper-text: #1e1f22;
+  --paper-muted: #5a5d63;
+  --paper-rule: #c8cacd;
+  --paper-soft-rule: #e6e7e9;
+  --paper-code-bg: #eeede7;
+  --paper-accent: #2b4f7a;
+  --paper-promoted: #2ea043;
+  --paper-rejected: #d73a49;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1a1a1a; --text: #e0e0e0; --muted: #9d9d9d; --border: #444;
-    --code-bg: #2d2d2d; --accent: #58a6ff;
-  }
+""".strip()
+
+_PAPER_TYPOGRAPHY = """
+.paper, .paper * { box-sizing: border-box; }
+.paper {
+  background: var(--paper-bg);
+  color: var(--paper-text);
+  font-family: Georgia, 'Source Serif Pro', 'Cambria', 'Times New Roman', serif;
+  line-height: 1.55;
+  font-size: 16px;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1, "liga" 1;
+  -webkit-font-smoothing: antialiased;
 }
-* { box-sizing: border-box; }
-html, body {
-  margin: 0; padding: 0; background: var(--bg); color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  line-height: 1.6; font-size: 16px;
+.paper-article {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 48px 36px 72px;
+  text-align: justify;
+  hyphens: auto;
 }
-main { max-width: 880px; margin: 0 auto; padding: 40px 32px 80px 32px; }
-h1 { font-size: 28px; margin: 0 0 8px 0; }
-h2 {
-  font-size: 21px; margin: 36px 0 12px 0; padding-bottom: 6px;
-  border-bottom: 1px solid var(--border);
+.paper h1, .paper h2, .paper h3, .paper h4 {
+  font-family: 'Helvetica Neue', Helvetica, 'Inter', 'Segoe UI', Arial, sans-serif;
+  color: var(--paper-text);
+  text-align: left;
+  line-height: 1.25;
 }
-h3 { font-size: 17px; margin: 24px 0 8px 0; }
-h4 { font-size: 15px; margin: 18px 0 6px 0; color: var(--muted); }
-p { margin: 10px 0; }
-ul { margin: 10px 0; padding-left: 24px; }
-li { margin: 4px 0; }
-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.9em; background: var(--code-bg); padding: 1px 5px;
+.paper h1 {
+  font-size: 28px;
+  margin: 0 0 6px 0;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.paper h2 {
+  font-size: 20px;
+  margin: 32px 0 10px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--paper-soft-rule);
+  font-weight: 600;
+}
+.paper h2.unnumbered {
+  text-align: center;
+  border-bottom: none;
+  margin-top: 28px;
+  font-size: 14px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--paper-muted);
+  font-weight: 600;
+}
+.paper h3 {
+  font-size: 16px;
+  margin: 22px 0 8px 0;
+  font-weight: 600;
+}
+.paper h4 {
+  font-size: 14px;
+  margin: 18px 0 6px 0;
+  font-weight: 600;
+  color: var(--paper-muted);
+  font-style: italic;
+}
+.paper h2 .secnum, .paper h3 .secnum, .paper h4 .secnum {
+  display: inline-block;
+  min-width: 2.6em;
+  margin-right: 0.5em;
+  color: var(--paper-muted);
+  font-weight: 500;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+.paper p {
+  margin: 10px 0;
+  orphans: 2;
+  widows: 2;
+}
+.paper ul { margin: 10px 0; padding-left: 22px; text-align: left; }
+.paper li { margin: 4px 0; }
+.paper a { color: var(--paper-accent); text-decoration: none; }
+.paper a:hover { text-decoration: underline; }
+.paper code {
+  font-family: 'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86em;
+  background: var(--paper-code-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--paper-text);
+}
+.paper pre {
+  background: var(--paper-code-bg);
+  border: 1px solid var(--paper-soft-rule);
   border-radius: 4px;
+  padding: 10px 14px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
 }
-pre {
-  background: var(--code-bg); border: 1px solid var(--border);
-  border-radius: 6px; padding: 12px 14px; overflow-x: auto; font-size: 13px;
+.paper pre code { background: none; padding: 0; }
+.paper strong { font-weight: 600; }
+.paper em { font-style: italic; }
+.paper hr.paper-rule {
+  border: none;
+  border-top: 1px solid var(--paper-soft-rule);
+  margin: 28px 0;
 }
-pre code { background: none; padding: 0; }
-table {
-  border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px;
+
+/* --- Masthead: title + metadata block ----------------------------------- */
+.paper .paper-meta {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--paper-muted);
+  text-align: center;
+  margin: 4px auto 26px;
+  padding: 8px 0 14px;
+  border-bottom: 1px solid var(--paper-soft-rule);
 }
-th, td {
-  border: 1px solid var(--border); padding: 6px 10px; text-align: left;
+.paper .paper-meta strong { color: var(--paper-text); }
+
+/* --- Tables (paper style: thin top + bottom rules, no chunky borders) --- */
+.paper figure.paper-table {
+  margin: 16px 0 18px;
+  padding: 0;
+  text-align: left;
 }
-th { background: var(--code-bg); }
-hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+.paper figure.paper-table > figcaption {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 12.5px;
+  color: var(--paper-muted);
+  margin: 0 0 4px;
+  text-align: left;
+}
+.paper table {
+  border-collapse: collapse;
+  width: 100%;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 12.5px;
+  margin: 0;
+  text-align: left;
+  border-top: 1.2px solid var(--paper-text);
+  border-bottom: 1.2px solid var(--paper-text);
+}
+.paper table thead tr { border-bottom: 0.8px solid var(--paper-text); }
+.paper table th, .paper table td {
+  padding: 5px 10px;
+  border: none;
+  vertical-align: top;
+}
+.paper table th {
+  font-weight: 600;
+  text-align: left;
+  background: transparent;
+}
+.paper table th.num, .paper table td.num {
+  text-align: right;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  white-space: nowrap;
+}
+.paper table tbody tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* --- Figures (inline SVG, caption below) ------------------------------- */
+.paper figure.paper-figure {
+  margin: 18px 0 20px;
+  padding: 0;
+  text-align: center;
+}
+.paper figure.paper-figure > svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+.paper figure.paper-figure > figcaption {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 12.5px;
+  color: var(--paper-muted);
+  margin-top: 6px;
+  text-align: center;
+}
+.paper .figlabel { font-weight: 600; color: var(--paper-text); }
+.paper .figure-placeholder {
+  border: 1px dashed var(--paper-rule);
+  padding: 18px;
+  font-style: italic;
+  color: var(--paper-muted);
+  text-align: center;
+}
+
+/* --- SVG defaults inside the paper -------------------------------------- */
+.paper svg .svg-axis {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 10.5px;
+  fill: var(--paper-muted);
+}
+.paper svg .svg-axislabel { font-size: 11px; }
+.paper svg .svg-value {
+  font-weight: 600;
+  fill: var(--paper-text);
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+.paper svg .svg-label {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 11px;
+  fill: var(--paper-text);
+}
+.paper svg .svg-mono {
+  font-family: 'Source Code Pro', ui-monospace, Menlo, monospace;
+  font-size: 10.5px;
+}
+""".strip()
+
+# The standalone HTML's full page background uses a darker margin tone
+# so the centred .paper-article reads as a real sheet sitting on a
+# muted desk.
+_STANDALONE_PAGE = """
+html, body { margin: 0; padding: 0; }
+body {
+  background: #e9e7e1;
+  min-height: 100vh;
+  padding: 24px 0;
+}
+body > .paper {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08),
+              0 8px 24px rgba(0, 0, 0, 0.06);
+  border-radius: 2px;
+}
 """.strip()
 
 
-def render_report_html(epoch_id: str, report_md: str) -> str:
-    """Render the report markdown into a self-contained HTML document.
+def _paper_css(*, standalone: bool) -> str:
+    """Assemble the paper CSS for one rendering surface.
 
-    Zero external resources — inline CSS only, dark-mode aware — so the
-    file renders identically over ``file://`` and through the dashboard.
+    The fragment used inline by the dashboard omits the page-level body
+    background — it embeds inside the dashboard chrome, which already
+    paints the surround.
     """
-    body = markdown_to_html(report_md)
+    parts = [_PAPER_VARS, _PAPER_TYPOGRAPHY]
+    if standalone:
+        parts.append(_STANDALONE_PAGE)
+    return "\n".join(parts)
+
+
+def render_report_html(
+    epoch_id: str,
+    report_md: str,
+    *,
+    data: EpochReportData | None = None,
+) -> str:
+    """Render the report markdown into a self-contained, paper-styled HTML document.
+
+    Zero external resources — inline CSS, inline SVG, no web-font
+    fetches — so the file renders identically over ``file://`` as it
+    does through the dashboard endpoint. The standalone document reads
+    as a single page with the centred paper-article block; the same
+    fragment also embeds inline in the dashboard via
+    :func:`render_report_html_fragment`.
+
+    ``data`` carries the structured epoch view from which inline figure
+    SVGs are produced. When absent (e.g. a renderer-only test), figure
+    markers degrade to small placeholders so the structural envelope is
+    still well-formed.
+    """
+    body = markdown_to_html(report_md, data=data)
     title = f"zicato — epoch {_html.escape(epoch_id)} analysis report"
+    css = _paper_css(standalone=True)
     return (
         "<!DOCTYPE html>"
         '<html lang="en"><head>'
         '<meta charset="utf-8" />'
         '<meta name="viewport" content="width=device-width, initial-scale=1" />'
         f"<title>{title}</title>"
-        f"<style>{_HTML_CSS}</style>"
-        "</head><body><main>"
+        f"<style>{css}</style>"
+        "</head><body>"
+        '<article class="paper"><div class="paper-article">'
         f"{body}"
-        "</main></body></html>"
+        "</div></article>"
+        "</body></html>"
+    )
+
+
+def render_report_html_fragment(
+    epoch_id: str,
+    report_md: str,
+    *,
+    data: EpochReportData | None = None,
+) -> str:
+    """Render the report as a self-contained HTML fragment for inline embedding.
+
+    Used by the dashboard's Epoch view to drop the paper-styled report
+    inline (inside the dark dashboard chrome) without iframe-ing the
+    standalone document. The fragment carries its own ``<style>`` block
+    scoped to ``.paper`` so it cannot leak typography into the
+    dashboard's surrounding chrome. The dashboard wraps this fragment
+    in a paper card; the fragment itself is the article body.
+
+    ``epoch_id`` is accepted for parity with :func:`render_report_html`
+    (and for future use, e.g. anchor ids) — it is not embedded today.
+    """
+    body = markdown_to_html(report_md, data=data)
+    css = _paper_css(standalone=False)
+    # The ``data-epoch`` attribute is informational; the dashboard does
+    # not parse it but it eases debugging the rendered fragment.
+    epoch_attr = _html.escape(epoch_id, quote=True)
+    return (
+        f"<style>{css}</style>"
+        f'<article class="paper paper-card" data-epoch="{epoch_attr}">'
+        '<div class="paper-article">'
+        f"{body}"
+        "</div></article>"
     )
 
 
@@ -485,7 +965,10 @@ async def generate_epoch_report(
     # serves the HTML, so a render failure must not lose the markdown.
     try:
         html_path = md_path.with_suffix(".html")
-        html_path.write_text(render_report_html(epoch_id, report_md), encoding="utf-8")
+        html_path.write_text(
+            render_report_html(epoch_id, report_md, data=data),
+            encoding="utf-8",
+        )
     except Exception as exc:  # noqa: BLE001 — HTML is non-critical
         log.debug("epoch report: analysis.html render skipped (%s)", exc)
 
@@ -497,4 +980,5 @@ __all__ = [
     "assemble_report_markdown",
     "markdown_to_html",
     "render_report_html",
+    "render_report_html_fragment",
 ]

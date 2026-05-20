@@ -804,14 +804,15 @@ def test_evolve_once_regenerates_analysis_report(
     assert html.is_file()
 
     md_text = md.read_text()
-    # The academic-paper section skeleton is present.
+    # The academic-paper section skeleton is present — headings carry NO
+    # explicit number; the HTML renderer auto-numbers them.
     for section in (
         "# Epoch Analysis Report",
         "## Abstract",
-        "## 1. Introduction",
-        "## 2. Methodology",
-        "## 4. Experimental Results",
-        "## 7. Conclusion & Next Directions",
+        "## Introduction",
+        "## Methodology",
+        "## Experimental Results",
+        "## Conclusion & Next Directions",
     ):
         assert section in md_text, section
     # The LLM prose and the deterministic per-generation data both landed.

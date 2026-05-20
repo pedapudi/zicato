@@ -17,6 +17,13 @@ here too.
 
 The renderers are pure: identical inputs yield byte-identical output,
 which keeps the report diffable round-to-round and the tests stable.
+
+Section numbers and table / figure numbers are NOT written here:
+headings emit only their textual title, table captions use the
+``Caption:`` marker and figures use the ``<!-- FIGURE:name -->``
+anchor. The HTML renderer (:mod:`zicato.analyzer.report`) auto-numbers
+``h2 / h3 / h4``, tables, and figures so a section's number is always
+its absolute position in the assembled document.
 """
 
 from __future__ import annotations
@@ -49,13 +56,12 @@ def _fmt_num(value: float) -> str:
 
 
 def render_title_block(data: EpochReportData) -> str:
-    """Render the report title plus the metadata line.
+    """Render the report title plus the paper-style metadata block.
 
     The title names the epoch; the metadata enumerates the contract
-    coordinates (epoch id, the inner harness under improvement, the
-    generation tally, the date span). The "inner harness" line reads
-    the epoch name — zicato improves whatever multi-agent harness the
-    operator registered as the epoch's target.
+    coordinates (epoch id, contract hash, generation span, status). The
+    HTML renderer turns the labelled list into a centred metadata
+    block beneath the title, in the style of an academic-paper masthead.
     """
     lines: list[str] = []
     lines.append(f"# Epoch Analysis Report: {data.epoch_name}")
@@ -80,6 +86,10 @@ def render_title_block(data: EpochReportData) -> str:
         meta_bits.append(f"**Generation span**: {data.span_start}")
     if data.closed and data.closed_at:
         meta_bits.append(f"**Closed**: {data.closed_at}")
+    # The ``<!-- META -->`` marker tells the HTML renderer to wrap the
+    # following paragraph in a paper-style masthead block instead of an
+    # ordinary ``<p>``. The marker is invisible in the markdown source.
+    lines.append("<!-- META -->")
     lines.append("  \n".join(meta_bits))
     return "\n".join(lines)
 
@@ -147,18 +157,22 @@ def _render_scoring_block(scoring: dict[str, object]) -> str:
 
 
 def render_methodology_section(data: EpochReportData) -> str:
-    """Render the full ``## 2. Methodology`` section.
+    """Render the full ``## Methodology`` section.
 
     Deterministic throughout: the evaluation board, the scoring model,
     and the tournament protocol are all templated directly from
     ``board.jsonl`` / ``scoring.json``. The tournament-protocol prose is
     fixed text describing zicato's champion-vs-challenger contract,
     parameterised only by the recorded promotion margin.
+
+    Section numbers are not emitted here — the HTML renderer
+    auto-numbers ``h2 / h3`` so the report reads as one consistently
+    numbered document regardless of which sections happen to be present.
     """
     parts: list[str] = []
-    parts.append("## 2. Methodology")
+    parts.append("## Methodology")
     parts.append("")
-    parts.append("### 2.1 Evaluation board")
+    parts.append("### Evaluation board")
     parts.append("")
     n_entries = len(data.board_entries)
     n_judged = sum(1 for e in data.board_entries if e.judges)
@@ -177,9 +191,11 @@ def render_methodology_section(data: EpochReportData) -> str:
             + "."
         )
     parts.append("")
+    parts.append("Caption: Evaluation board entries — kinds, weights, expectations and judges.")
+    parts.append("")
     parts.append(_render_board_table(data.board_entries))
     parts.append("")
-    parts.append("### 2.2 Scoring model")
+    parts.append("### Scoring model")
     parts.append("")
     parts.append(
         "The tournament reduces each generation to a single scalar: a "
@@ -189,9 +205,11 @@ def render_methodology_section(data: EpochReportData) -> str:
         "scalar is better."
     )
     parts.append("")
+    parts.append("Caption: Scoring model weights and gates frozen for the epoch.")
+    parts.append("")
     parts.append(_render_scoring_block(data.scoring))
     parts.append("")
-    parts.append("### 2.3 Tournament protocol")
+    parts.append("### Tournament protocol")
     parts.append("")
     margin = data.scoring.get("promote_margin", 0.01)
     parts.append(
@@ -229,17 +247,19 @@ def _render_mutation_surface_table(surface: tuple[dict[str, object], ...]) -> st
 
 
 def render_approach_section(data: EpochReportData) -> str:
-    """Render the deterministic half of ``## 3. Approach & Implementation``.
+    """Render the deterministic half of ``## Approach & Implementation``.
 
     Covers the mutation surface (the editable points the proposer was
     offered) and a per-generation log of the proposer's hypothesis and
     the patch it applied. The interpretive prose is left to the LLM
-    layer; this is the factual record.
+    layer; this is the factual record. The HTML renderer auto-numbers
+    sections and figures, so this writer only emits the textual heading
+    plus the figure / table anchors.
     """
     parts: list[str] = []
-    parts.append("## 3. Approach & Implementation")
+    parts.append("## Approach & Implementation")
     parts.append("")
-    parts.append("### 3.1 Mutation surface")
+    parts.append("### Mutation surface")
     parts.append("")
     n_mut = len(data.mutation_surface)
     parts.append(
@@ -250,16 +270,34 @@ def render_approach_section(data: EpochReportData) -> str:
         "an id drawn from this surface."
     )
     parts.append("")
+    parts.append("Caption: Editable mutation points the proposer was offered this round.")
+    parts.append("")
+    parts.append("<!-- FIGURE:mutation-surface -->")
+    parts.append("")
+    parts.append("Caption: Mutation surface — full enumeration.")
+    parts.append("")
     parts.append(_render_mutation_surface_table(data.mutation_surface))
     parts.append("")
-    parts.append("### 3.2 Per-generation hypotheses and patches")
+    parts.append("### Lineage diagram")
+    parts.append("")
+    parts.append(
+        "The lineage diagram tracks one champion-vs-challenger lineage. "
+        "The promoted spine runs across the centerline; rejected and "
+        "deferred branches sit below."
+    )
+    parts.append("")
+    parts.append("Caption: Lineage diagram — promoted spine, rejected and deferred branches.")
+    parts.append("")
+    parts.append("<!-- FIGURE:lineage -->")
+    parts.append("")
+    parts.append("### Per-generation hypotheses and patches")
     parts.append("")
     challengers = [g for g in data.generations if not g.is_baseline]
     if not challengers:
         parts.append("_No challenger generations have been proposed yet._")
         return "\n".join(parts)
     for g in challengers:
-        parts.append(f"#### Generation `{g.generation_id}`")
+        parts.append(f"#### Generation {g.generation_id}")
         parts.append("")
         core = g.core_idea.strip() or "(no core idea recorded)"
         parts.append(f"**Hypothesis.** {core}")
@@ -464,17 +502,18 @@ def render_per_board_outcomes(data: EpochReportData) -> str:
 
 
 def render_results_section(data: EpochReportData) -> str:
-    """Render the full ``## 4. Experimental Results`` section.
+    """Render the full ``## Experimental Results`` section.
 
-    Entirely deterministic — every figure is templated from the
-    structured workspace data. Sub-sections: the scalar trajectory
-    table, the ASCII sparkline, the drift-movement table, and the
-    cached aggregate generation scores.
+    Entirely deterministic — every table and figure is templated from
+    the structured workspace data. Sub-sections: the scalar trajectory
+    (figure + table), the per-generation drift-kind movements (figure +
+    table), the per-board outcomes heatmap, and the cached aggregate
+    generation scores. The HTML renderer auto-numbers everything.
     """
     parts: list[str] = []
-    parts.append("## 4. Experimental Results")
+    parts.append("## Experimental Results")
     parts.append("")
-    parts.append("### 4.1 Score trajectory")
+    parts.append("### Score trajectory")
     parts.append("")
     parts.append(
         "Each row is one generation. The scalar is cumulative — seeded "
@@ -483,15 +522,60 @@ def render_results_section(data: EpochReportData) -> str:
         "improvement (lower loss)."
     )
     parts.append("")
+    parts.append(
+        "Caption: Scalar (loss — lower is better) across generations. "
+        "Promoted points connect along the promoted spine; rejected "
+        "points sit off-spine."
+    )
+    parts.append("")
+    parts.append("<!-- FIGURE:score-trajectory -->")
+    parts.append("")
+    parts.append("Caption: Per-generation scalar deltas with proposer's one-line idea.")
+    parts.append("")
     parts.append(render_score_trajectory_table(data))
     parts.append("")
     parts.append(render_score_sparkline(data))
     parts.append("")
-    parts.append("### 4.2 Drift-kind movements (promoted lineage)")
+    parts.append("### Drift-kind movements")
+    parts.append("")
+    parts.append(
+        "For every challenger round that produced drift movements, the "
+        "figure pairs the from-rate (top, light) with the to-rate "
+        "(bottom, solid) for each drift kind and labels the signed "
+        "rate Δ. The accompanying table threads the per-kind rates "
+        "along the promoted lineage."
+    )
+    parts.append("")
+    parts.append(
+        "Caption: Per-generation drift-kind rate movements. "
+        "Each panel pairs from-rate vs. to-rate for one challenger."
+    )
+    parts.append("")
+    parts.append("<!-- FIGURE:drift-movements -->")
+    parts.append("")
+    parts.append("Caption: Per-drift-kind rate movements along the promoted lineage.")
     parts.append("")
     parts.append(render_drift_movement_table(data))
     parts.append("")
-    parts.append("### 4.3 Aggregate generation scores")
+    parts.append("### Per-board outcomes")
+    parts.append("")
+    parts.append(
+        "Each cell encodes the per-entry Δ scalar of the challenger "
+        "against the round's champion (red = worse, grey = ~flat, "
+        "green = better). Columns marked 'cached' reused the previous "
+        "champion's evaluation rather than re-running it."
+    )
+    parts.append("")
+    parts.append(
+        "Caption: Per-board entry Δ scalar across challenger generations. "
+        "Hatched cells mark entries with no per-entry breakdown recorded."
+    )
+    parts.append("")
+    parts.append("<!-- FIGURE:per-board-heatmap -->")
+    parts.append("")
+    parts.append("### Aggregate generation scores")
+    parts.append("")
+    parts.append("Caption: Aggregate generation scores cached by the tournament runner.")
     parts.append("")
     parts.append(render_per_board_outcomes(data))
     return "\n".join(parts)
@@ -511,17 +595,18 @@ def _coerce_float(value: object) -> float:
 
 
 def render_threats_section(data: EpochReportData) -> str:
-    """Render ``## 6. Threats to Validity & Limitations``.
+    """Render ``## Threats to Validity & Limitations``.
 
     Parameterised by the epoch's measurable scale — board size,
     generation count, judge coverage — so the caveats reflect the
-    actual run rather than boilerplate.
+    actual run rather than boilerplate. Section numbers are added by
+    the HTML renderer's auto-numbering pass.
     """
     n_entries = len(data.board_entries)
     n_judged = sum(1 for e in data.board_entries if e.judges)
     attempted = data.attempted
     parts: list[str] = []
-    parts.append("## 6. Threats to Validity & Limitations")
+    parts.append("## Threats to Validity & Limitations")
     parts.append("")
     bullets: list[str] = []
     bullets.append(
