@@ -549,8 +549,31 @@ def markdown_to_html(md: str, *, data: EpochReportData | None = None) -> str:
 # All paper styling is scoped to ``.paper`` so the same fragment renders
 # the standalone ``analysis.html`` AND, when embedded inside the dark
 # dashboard chrome, the inline Analysis-section card. Two property
-# blocks: paper variables (light, paper-tone) and the scoped typography
-# / table / figure rules.
+# blocks: paper variables (light, paper-tone defaults) and the scoped
+# typography / table / figure rules.
+#
+# The palette is exposed via CSS custom properties on ``.paper`` so a
+# downstream host can override the palette without touching typography.
+# The dashboard's ``.analysis-paper-card`` wrapper uses this to render
+# the same fragment in a dashboard-dark palette while preserving every
+# aspect of the paper typography (serif body, justified text, table
+# rules, figure layout). The variable surface is structured into:
+#
+#   * surface tones — ``--paper-bg``, ``--paper-text``, ``--paper-muted``
+#   * rules — ``--paper-rule``, ``--paper-soft-rule``
+#   * code surfaces — ``--paper-code-bg``
+#   * link accent — ``--paper-accent``
+#   * figure surface — ``--paper-figure-bg``, ``--paper-figure-grid``,
+#     ``--paper-figure-stripe-bg``
+#   * decision palette (shared with the dashboard's accent tokens) —
+#     ``--paper-promoted``, ``--paper-rejected``, ``--paper-deferred``,
+#     ``--paper-baseline``, ``--paper-neutral``
+#   * table zebra striping — ``--paper-table-zebra``
+#
+# All SVG figures consume the decision palette / grid tokens via CSS
+# variables (see :mod:`zicato.analyzer.report_figures`), and use
+# ``currentColor`` for axis text — so a dark host palette flips the
+# figure rendering with no SVG-source changes.
 _PAPER_VARS = """
 .paper {
   --paper-bg: #fafaf7;
@@ -562,6 +585,13 @@ _PAPER_VARS = """
   --paper-accent: #2b4f7a;
   --paper-promoted: #2ea043;
   --paper-rejected: #d73a49;
+  --paper-deferred: #bf8700;
+  --paper-baseline: #6e7681;
+  --paper-neutral: #8a8d91;
+  --paper-figure-bg: transparent;
+  --paper-figure-grid: #d0d7de;
+  --paper-figure-stripe-bg: #eef0f3;
+  --paper-table-zebra: rgba(0, 0, 0, 0.02);
 }
 """.strip()
 
@@ -722,7 +752,7 @@ _PAPER_TYPOGRAPHY = """
   white-space: nowrap;
 }
 .paper table tbody tr:nth-child(even) {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--paper-table-zebra);
 }
 
 /* --- Figures (inline SVG, caption below) ------------------------------- */
@@ -754,6 +784,14 @@ _PAPER_TYPOGRAPHY = """
 }
 
 /* --- SVG defaults inside the paper -------------------------------------- */
+/* Figures inherit the host's foreground colour via currentColor, so a
+   dark wrapper flips axis text/values to the dark-palette foreground
+   automatically. Decision-coloured strokes/fills bind to the palette
+   variables (``--paper-promoted`` etc.) declared above so themes can
+   re-tint them too. */
+.paper svg {
+  color: var(--paper-text);
+}
 .paper svg .svg-axis {
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 10.5px;
@@ -774,6 +812,22 @@ _PAPER_TYPOGRAPHY = """
   font-family: 'Source Code Pro', ui-monospace, Menlo, monospace;
   font-size: 10.5px;
 }
+/* Decision colour tokens for SVG strokes/fills. Figures emit
+   ``class="svg-promoted"`` (etc.) on the elements that should pick up
+   the decision palette; the host paints them via these CSS vars. */
+.paper svg .svg-promoted-stroke { stroke: var(--paper-promoted); }
+.paper svg .svg-promoted-fill   { fill: var(--paper-promoted); }
+.paper svg .svg-rejected-stroke { stroke: var(--paper-rejected); }
+.paper svg .svg-rejected-fill   { fill: var(--paper-rejected); }
+.paper svg .svg-deferred-stroke { stroke: var(--paper-deferred); }
+.paper svg .svg-deferred-fill   { fill: var(--paper-deferred); }
+.paper svg .svg-baseline-stroke { stroke: var(--paper-baseline); }
+.paper svg .svg-baseline-fill   { fill: var(--paper-baseline); }
+.paper svg .svg-neutral-stroke  { stroke: var(--paper-neutral); }
+.paper svg .svg-neutral-fill    { fill: var(--paper-neutral); }
+.paper svg .svg-grid-stroke     { stroke: var(--paper-figure-grid); }
+.paper svg .svg-grid-fill       { fill: var(--paper-figure-grid); }
+.paper svg .svg-stripe-bg       { fill: var(--paper-figure-stripe-bg); }
 """.strip()
 
 # The standalone HTML's full page background uses a darker margin tone

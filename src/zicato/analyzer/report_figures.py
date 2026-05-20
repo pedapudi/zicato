@@ -44,12 +44,45 @@ from zicato.analyzer.report_data import EpochReportData, GenerationView
 # report and the standalone epoch HTML carry one visual language across
 # the dashboard surfaces. Hard-coded (not imported) so the analyzer does
 # not depend on the epoch HTML module.
+#
+# Figures emit these as CSS-variable references in a ``style=""``
+# attribute on each SVG element so a host palette (the dashboard's
+# dark ``.analysis-paper-card``, say) can flip the figure rendering
+# without re-rendering the SVG. The bare hex constants are retained
+# for tests and for callers that want the canonical decision colour
+# directly.
 PROMOTED_COLOR = "#2ea043"
 REJECTED_COLOR = "#d73a49"
 BASELINE_COLOR = "#6e7681"
 DEFERRED_COLOR = "#bf8700"
 GRID_COLOR = "#d0d7de"
 NEUTRAL_COLOR = "#8a8d91"
+
+# CSS-variable references that match the palette tokens declared by
+# :mod:`zicato.analyzer.report` (``--paper-promoted`` &c). Emitting
+# ``var(--paper-promoted)`` in the SVG ``style=""`` attribute means a
+# downstream host can override the token and the figure re-tints.
+_VAR_PROMOTED = "var(--paper-promoted)"
+_VAR_REJECTED = "var(--paper-rejected)"
+_VAR_BASELINE = "var(--paper-baseline)"
+_VAR_DEFERRED = "var(--paper-deferred)"
+_VAR_NEUTRAL = "var(--paper-neutral)"
+_VAR_GRID = "var(--paper-figure-grid)"
+_VAR_STRIPE_BG = "var(--paper-figure-stripe-bg)"
+_VAR_NEAR_ZERO = "var(--paper-figure-near-zero, #dde2e7)"
+
+
+def _decision_var(decision: str, *, is_baseline: bool = False) -> str:
+    """Return the CSS-variable reference for a decision colour."""
+    if is_baseline:
+        return _VAR_BASELINE
+    if decision == "promoted":
+        return _VAR_PROMOTED
+    if decision == "rejected":
+        return _VAR_REJECTED
+    if decision == "deferred":
+        return _VAR_DEFERRED
+    return _VAR_NEUTRAL
 
 
 def _esc(text: str) -> str:
@@ -82,15 +115,30 @@ def _empty_svg(width: int, height: int, label: str) -> str:
         f'viewBox="0 0 {width} {height}" role="img" '
         f'aria-label="{_esc(label)}">'
         f'<rect x="0.5" y="0.5" width="{width - 1}" height="{height - 1}" '
-        f'fill="none" stroke="{GRID_COLOR}" stroke-dasharray="4 3"/>'
+        f'fill="none" style="stroke: {_VAR_GRID}" stroke-dasharray="4 3"/>'
         f'<text class="svg-axis" x="{width / 2}" y="{height / 2}" '
         f'text-anchor="middle" dominant-baseline="middle">{_esc(label)}</text>'
         f"</svg>"
     )
 
 
+def _generation_decision_var(g: GenerationView) -> str:
+    """Map a generation's decision to its CSS-variable reference.
+
+    The figures emit this in a ``style=""`` attribute so the host
+    palette (light paper-tone standalone, or dark dashboard inline)
+    controls the actual rendered colour.
+    """
+    return _decision_var(g.decision, is_baseline=g.is_baseline)
+
+
 def _generation_decision_color(g: GenerationView) -> str:
-    """Map a generation's decision to its palette colour."""
+    """Map a generation's decision to its palette hex colour.
+
+    Retained for tests / callers that need a literal hex; figures
+    themselves emit :func:`_generation_decision_var` so the host
+    palette can re-tint them.
+    """
     if g.is_baseline:
         return BASELINE_COLOR
     if g.decision == "promoted":
@@ -166,7 +214,7 @@ def render_svg_score_trajectory(
         gy = margin_t + plot_h * k / 4
         parts.append(
             f'<line x1="{margin_l}" y1="{gy:.1f}" x2="{margin_l + plot_w}" '
-            f'y2="{gy:.1f}" stroke="{GRID_COLOR}" stroke-width="0.5" '
+            f'y2="{gy:.1f}" style="stroke: {_VAR_GRID}" stroke-width="0.5" '
             f'stroke-opacity="0.7"/>'
         )
         tick_val = vmax - (vmax - vmin) * k / 4
@@ -180,7 +228,7 @@ def render_svg_score_trajectory(
         zy = to_y(0.0)
         parts.append(
             f'<line x1="{margin_l}" y1="{zy:.1f}" x2="{margin_l + plot_w}" '
-            f'y2="{zy:.1f}" stroke="{BASELINE_COLOR}" stroke-width="1" '
+            f'y2="{zy:.1f}" style="stroke: {_VAR_BASELINE}" stroke-width="1" '
             f'stroke-dasharray="3 3" stroke-opacity="0.85"/>'
         )
 
@@ -188,7 +236,7 @@ def render_svg_score_trajectory(
     parts.append(
         f'<line x1="{margin_l}" y1="{margin_t + plot_h:.1f}" '
         f'x2="{margin_l + plot_w}" y2="{margin_t + plot_h:.1f}" '
-        f'stroke="{GRID_COLOR}" stroke-width="1"/>'
+        f'style="stroke: {_VAR_GRID}" stroke-width="1"/>'
     )
 
     # Promoted spine — connect baseline + every promoted point in order.
@@ -199,7 +247,7 @@ def render_svg_score_trajectory(
     if len(spine_pts) >= 2:
         path = "M " + " L ".join(f"{x:.1f} {y:.1f}" for x, y in spine_pts)
         parts.append(
-            f'<path d="{path}" fill="none" stroke="{PROMOTED_COLOR}" ' f'stroke-width="2"/>'
+            f'<path d="{path}" fill="none" style="stroke: {_VAR_PROMOTED}" ' f'stroke-width="2"/>'
         )
 
     # Per-point markers + labels.
@@ -209,32 +257,32 @@ def render_svg_score_trajectory(
         if g.is_baseline:
             parts.append(
                 f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="4.5" '
-                f'fill="{BASELINE_COLOR}" stroke="{BASELINE_COLOR}" '
+                f'style="fill: {_VAR_BASELINE}; stroke: {_VAR_BASELINE}" '
                 f'stroke-width="1.2"/>'
             )
         elif g.decision == "promoted":
             parts.append(
                 f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5" '
-                f'fill="{PROMOTED_COLOR}" stroke="{PROMOTED_COLOR}" '
+                f'style="fill: {_VAR_PROMOTED}; stroke: {_VAR_PROMOTED}" '
                 f'stroke-width="1.4"/>'
             )
         elif g.decision == "rejected":
             s = 4.5
             parts.append(
                 f'<rect x="{cx - s:.1f}" y="{cy - s:.1f}" width="{2 * s}" '
-                f'height="{2 * s}" fill="none" stroke="{REJECTED_COLOR}" '
-                f'stroke-width="1.6"/>'
+                f'height="{2 * s}" fill="none" '
+                f'style="stroke: {_VAR_REJECTED}" stroke-width="1.6"/>'
             )
         elif g.decision == "deferred":
             parts.append(
                 f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="4.5" fill="none" '
-                f'stroke="{DEFERRED_COLOR}" stroke-width="1.6" '
+                f'style="stroke: {_VAR_DEFERRED}" stroke-width="1.6" '
                 f'stroke-dasharray="2 2"/>'
             )
         else:
             parts.append(
                 f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="4" fill="none" '
-                f'stroke="{NEUTRAL_COLOR}" stroke-width="1.3"/>'
+                f'style="stroke: {_VAR_NEUTRAL}" stroke-width="1.3"/>'
             )
         # x-axis label — generation id.
         parts.append(
@@ -348,11 +396,12 @@ def render_svg_drift_movements(
         ox = col * panel_w
         oy = row * panel_h
 
-        border = _generation_decision_color(g)
+        border_var = _generation_decision_var(g)
         parts.append(
             f'<rect x="{ox + 4:.1f}" y="{oy + 4:.1f}" '
             f'width="{panel_w - 8}" height="{panel_h - 8}" '
-            f'rx="6" ry="6" fill="none" stroke="{border}" '
+            f'rx="6" ry="6" fill="none" '
+            f'style="stroke: {border_var}" '
             f'stroke-width="1.2" stroke-opacity="0.85"/>'
         )
 
@@ -385,15 +434,14 @@ def render_svg_drift_movements(
                 parts.append(
                     f'<rect x="{inner_l:.1f}" y="{band_y + 2:.1f}" '
                     f'width="{w_from:.1f}" height="{half_h:.1f}" '
-                    f'fill="{GRID_COLOR}" fill-opacity="0.85"/>'
+                    f'style="fill: {_VAR_GRID}" fill-opacity="0.85"/>'
                 )
             if to is not None:
                 w_to = bar_w * min(1.0, to / rmax)
-                fill = border
                 parts.append(
                     f'<rect x="{inner_l:.1f}" y="{band_y + 2 + half_h:.1f}" '
                     f'width="{w_to:.1f}" height="{half_h:.1f}" '
-                    f'fill="{fill}" fill-opacity="0.85"/>'
+                    f'style="fill: {border_var}" fill-opacity="0.85"/>'
                 )
             # Δ value.
             delta_txt = ""
@@ -466,6 +514,11 @@ def _heatmap_color(value: float, vmax: float) -> str:
     ``vmax`` is the symmetric magnitude used to normalise; a delta of
     ``+vmax`` saturates to red (worse), ``-vmax`` to green (better),
     zero is neutral grey. Lower scalar is better, hence the sign mapping.
+
+    Returns a literal CSS colour string — retained for tests that still
+    exercise the canonical hex/rgba palette directly. The figure
+    renderer itself uses :func:`_heatmap_cell_style` so the cell picks
+    up the host's decision palette via CSS variables.
     """
     if vmax <= 0:
         return GRID_COLOR
@@ -479,6 +532,31 @@ def _heatmap_color(value: float, vmax: float) -> str:
     # green — better
     a = 0.25 + 0.55 * (-t)
     return f"rgba(46, 160, 67, {a:.3f})"
+
+
+def _heatmap_cell_style(value: float, vmax: float) -> str:
+    """Theme-aware fill style for one heatmap cell.
+
+    The fill colour binds to a host CSS variable (``--paper-rejected``
+    for the worse half, ``--paper-promoted`` for the better half,
+    ``--paper-figure-grid`` for zero / unset). The signed magnitude
+    drives ``fill-opacity`` independently so a dark host can re-tint
+    the red/green hues without rewriting the SVG.
+    """
+    if vmax <= 0:
+        return f"fill: {_VAR_GRID}"
+    t = max(-1.0, min(1.0, value / vmax))
+    if abs(t) < 0.04:
+        # near-zero — render as the near-zero token (falls back to a
+        # neutral grey when the host does not define it).
+        return f"fill: {_VAR_NEAR_ZERO}"
+    if t > 0:
+        # red — worse
+        a = 0.25 + 0.55 * t
+        return f"fill: {_VAR_REJECTED}; fill-opacity: {a:.3f}"
+    # green — better
+    a = 0.25 + 0.55 * (-t)
+    return f"fill: {_VAR_PROMOTED}; fill-opacity: {a:.3f}"
 
 
 def render_svg_per_board_heatmap(
@@ -531,12 +609,15 @@ def render_svg_per_board_heatmap(
         f'role="img" aria-label="Per-board entry outcomes heatmap">'
     )
 
-    # Defs: stripe pattern for "no data" cells.
+    # Defs: stripe pattern for "no data" cells. The background tile and
+    # the diagonal stroke both bind to host palette variables so the
+    # pattern reads correctly in both light and dark surrounds.
     parts.append(
         '<defs><pattern id="nodata-stripes" patternUnits="userSpaceOnUse" '
         'width="6" height="6">'
-        '<rect width="6" height="6" fill="#eef0f3"/>'
-        f'<path d="M -1 7 L 7 -1" stroke="{GRID_COLOR}" stroke-width="1"/>'
+        f'<rect width="6" height="6" style="fill: {_VAR_STRIPE_BG}"/>'
+        f'<path d="M -1 7 L 7 -1" style="stroke: {_VAR_GRID}" '
+        'stroke-width="1"/>'
         "</pattern></defs>"
     )
 
@@ -581,13 +662,13 @@ def render_svg_per_board_heatmap(
                 parts.append(
                     f'<rect x="{x:.1f}" y="{y:.1f}" width="{w}" '
                     f'height="{h}" fill="url(#nodata-stripes)" '
-                    f'stroke="{GRID_COLOR}" stroke-width="0.5"/>'
+                    f'style="stroke: {_VAR_GRID}" stroke-width="0.5"/>'
                 )
                 continue
-            colour = _heatmap_color(v, vmax)
+            cell_style = _heatmap_cell_style(v, vmax)
             parts.append(
                 f'<rect x="{x:.1f}" y="{y:.1f}" width="{w}" '
-                f'height="{h}" fill="{colour}" stroke="{GRID_COLOR}" '
+                f'height="{h}" style="{cell_style}; stroke: {_VAR_GRID}" '
                 f'stroke-width="0.5"/>'
             )
             parts.append(
@@ -668,42 +749,47 @@ def render_svg_lineage_compact(
         mid_x1 = x1 + (x2 - x1) * 0.45
         mid_x2 = x1 + (x2 - x1) * 0.55
         if g.decision == "promoted":
-            stroke, sw, dash = PROMOTED_COLOR, 2.0, ""
+            stroke_var, sw, dash = _VAR_PROMOTED, 2.0, ""
         elif g.decision == "rejected":
-            stroke, sw, dash = REJECTED_COLOR, 1.3, ' stroke-dasharray="5 4"'
+            stroke_var, sw, dash = _VAR_REJECTED, 1.3, ' stroke-dasharray="5 4"'
         elif g.decision == "deferred":
-            stroke, sw, dash = DEFERRED_COLOR, 1.4, ' stroke-dasharray="2 3"'
+            stroke_var, sw, dash = _VAR_DEFERRED, 1.4, ' stroke-dasharray="2 3"'
         else:
-            stroke, sw, dash = BASELINE_COLOR, 1.2, ' stroke-dasharray="3 4"'
+            stroke_var, sw, dash = _VAR_BASELINE, 1.2, ' stroke-dasharray="3 4"'
         parts.append(
             f'<path d="M {x1:.1f} {y1:.1f} C {mid_x1:.1f} {y1:.1f}, '
             f'{mid_x2:.1f} {y2:.1f}, {x2:.1f} {y2:.1f}" '
-            f'fill="none" stroke="{stroke}" stroke-width="{sw}"{dash}/>'
+            f'fill="none" style="stroke: {stroke_var}" '
+            f'stroke-width="{sw}"{dash}/>'
         )
 
-    # Nodes.
+    # Nodes — fill is the decision-coloured palette token at low alpha;
+    # stroke is the same token at full strength. The host palette flips
+    # both via the ``--paper-*`` variables.
     for g in gens:
         x, y = positions[g.generation_id]
-        colour = _generation_decision_color(g)
+        stroke_var = _generation_decision_var(g)
         if g.decision == "rejected":
             dash_attr = ' stroke-dasharray="5 4"'
         elif g.decision == "deferred":
             dash_attr = ' stroke-dasharray="2 3"'
         else:
             dash_attr = ""
-        fill_attr = "rgba(255,255,255,0.0)"
         if g.is_baseline:
-            fill_attr = "rgba(110, 118, 129, 0.10)"
+            fill_var, fill_alpha = _VAR_BASELINE, 0.10
         elif g.decision == "promoted":
-            fill_attr = "rgba(46, 160, 67, 0.14)"
+            fill_var, fill_alpha = _VAR_PROMOTED, 0.14
         elif g.decision == "rejected":
-            fill_attr = "rgba(215, 58, 73, 0.10)"
+            fill_var, fill_alpha = _VAR_REJECTED, 0.10
         elif g.decision == "deferred":
-            fill_attr = "rgba(191, 135, 0, 0.12)"
+            fill_var, fill_alpha = _VAR_DEFERRED, 0.12
+        else:
+            fill_var, fill_alpha = _VAR_NEUTRAL, 0.0
         parts.append(
             f'<rect x="{x:.1f}" y="{y:.1f}" width="{node_w}" '
-            f'height="{node_h}" rx="6" ry="6" fill="{fill_attr}" '
-            f'stroke="{colour}" stroke-width="1.4"{dash_attr}/>'
+            f'height="{node_h}" rx="6" ry="6" '
+            f'style="fill: {fill_var}; fill-opacity: {fill_alpha}; '
+            f'stroke: {stroke_var}" stroke-width="1.4"{dash_attr}/>'
         )
         parts.append(
             f'<text class="svg-label" x="{x + node_w / 2:.1f}" '
@@ -760,7 +846,8 @@ def render_svg_mutation_surface(
     )
     parts.append(
         f'<line x1="0" y1="{header_h - 4}" x2="{width}" '
-        f'y2="{header_h - 4}" stroke="{GRID_COLOR}" stroke-width="0.8"/>'
+        f'y2="{header_h - 4}" style="stroke: {_VAR_GRID}" '
+        f'stroke-width="0.8"/>'
     )
     parts.append(
         f'<text class="svg-label" x="{col_id}" y="{header_h - 8}" '

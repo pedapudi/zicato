@@ -2228,21 +2228,52 @@ h4 {
 }
 
 /* Inline paper-card wrapper — when the analysis renderer ships a
-   paper-styled HTML fragment, it lands inside this card so the
-   light paper-tone reads cleanly against the dark dashboard chrome.
-   The fragment itself carries all paper typography scoped to .paper
-   (serif body, justified text, thin table rules, inline SVG figures);
-   the card only paints the surround. */
+   paper-styled HTML fragment, it lands inside this card so it reads
+   cleanly against the dark dashboard chrome. The fragment carries all
+   paper typography scoped to .paper (serif body, justified text, thin
+   table rules, inline SVG figures); the card overrides only the
+   palette tokens so the typography stays paper but the colour scheme
+   is dashboard-dark.
+
+   The override surface mirrors the variable structure declared by
+   :mod:`zicato.analyzer.report` — every paper-* token is re-bound to a
+   dashboard-appropriate value here. The standalone analysis.html on
+   its own page is NOT affected (the inline-fragment carries the
+   light defaults; only this wrapper rebinds them). */
 .analysis-paper-card {
-  background: #fafaf7;
-  color: #1e1f22;
   border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35),
-              0 8px 24px rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-elev);
   padding: 0;
   margin-bottom: 1rem;
   overflow: hidden;
+  /* Paint the card surround in the dashboard's elevated surface tone
+     — the .paper article inside picks up its own (overridden) bg. */
+  background: var(--card-bg);
+}
+/* Rebind every paper palette token so the paper fragment renders with
+   dashboard-dark surfaces while keeping its paper typography intact.
+   The .paper .paper-article child rule is what actually paints the
+   sheet; we set the variables on .paper so the SVG figures inside the
+   sheet (which read the same tokens) pick them up too. */
+.analysis-paper-card .paper {
+  --paper-bg: var(--card-bg);
+  --paper-text: var(--text);
+  --paper-muted: var(--text-muted);
+  --paper-rule: var(--border);
+  --paper-soft-rule: var(--border);
+  --paper-code-bg: var(--code-bg);
+  --paper-accent: var(--accent-running);
+  --paper-promoted: var(--accent-promoted);
+  --paper-rejected: var(--accent-rejected);
+  --paper-deferred: var(--accent-deferred);
+  --paper-baseline: var(--accent-baseline);
+  --paper-neutral: var(--text-muted);
+  --paper-figure-bg: var(--bg-elev);
+  --paper-figure-grid: var(--border);
+  --paper-figure-stripe-bg: var(--bg-elev);
+  --paper-figure-near-zero: var(--bg-elev);
+  --paper-table-zebra: rgba(255, 255, 255, 0.04);
 }
 /* The fragment's .paper-article reserves its own padding; the card's
    role is only to provide the paper-tone surround. Shrink the

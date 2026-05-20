@@ -747,3 +747,254 @@ def test_fragment_can_be_concatenated_into_dashboard_chrome() -> None:
     parser.close()
     assert not parser.unbalanced, parser.unbalanced[:3]
     assert not parser.stack, parser.stack
+
+
+# ---------------------------------------------------------------------------
+# Dark-mode-friendly inline paper card
+# ---------------------------------------------------------------------------
+#
+# The standalone analysis.html document is paper-toned (cream sheet on a
+# muted-grey desk); the SAME fragment, when embedded inline inside the
+# dashboard, lands inside a ``.analysis-paper-card`` wrapper that rebinds
+# the paper palette to dashboard-dark values. The fragment's CSS exposes
+# every paper colour via CSS custom properties so the wrapper can re-tint
+# without touching typography.
+
+
+def test_paper_palette_exposed_via_css_variables() -> None:
+    """Every paper colour is bound through a CSS custom property.
+
+    The defaults are the paper-tone palette; a downstream host can
+    override any of them to retheme the surface without changing the
+    fragment's typography or HTML structure.
+    """
+    fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
+    # The full surface — text, muted, rule, code, accent, figure tones —
+    # is exposed via --paper-* variables so a host can retheme.
+    for token in (
+        "--paper-bg",
+        "--paper-text",
+        "--paper-muted",
+        "--paper-rule",
+        "--paper-soft-rule",
+        "--paper-code-bg",
+        "--paper-accent",
+        # Decision palette (shared with the dashboard's accent tokens).
+        "--paper-promoted",
+        "--paper-rejected",
+        "--paper-deferred",
+        "--paper-baseline",
+        # Figure-specific tones (grid, no-data stripe, near-zero).
+        "--paper-figure-grid",
+        "--paper-figure-stripe-bg",
+        # Table zebra striping.
+        "--paper-table-zebra",
+    ):
+        assert token in fragment, token
+
+
+def test_standalone_html_keeps_light_paper_palette() -> None:
+    """The standalone analysis.html still defines the cream-paper defaults.
+
+    The dark-mode overrides live on the dashboard's ``.analysis-paper-card``
+    wrapper; the standalone document carries the original paper-tone
+    defaults unchanged.
+    """
+    html = render_report_html("e1", "# Title\n\nbody\n")
+    # The paper-tone defaults are still declared on .paper.
+    assert "--paper-bg: #fafaf7" in html
+    assert "--paper-text: #1e1f22" in html
+    # The standalone page-background tone (the "desk" the sheet sits on)
+    # is unchanged.
+    assert "background: #e9e7e1" in html
+    # And the standalone document does NOT carry the analysis-paper-card
+    # wrapper (that lives in the dashboard CSS).
+    assert "analysis-paper-card" not in html
+
+
+def test_inline_fragment_carries_light_defaults_dashboard_overrides_them() -> None:
+    """The fragment ships the paper-tone defaults; the dashboard re-tints.
+
+    The fragment's own inline ``<style>`` keeps the paper-tone defaults
+    so the standalone analysis.html (which reuses the same renderer) is
+    unaffected. The dashboard's ``.analysis-paper-card .paper`` selector
+    overrides the variables for the inline surface — that override
+    lives in ``src/zicato/dashboard/static/style.css``.
+    """
+    fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
+    # Fragment carries the paper-tone defaults.
+    assert "--paper-bg: #fafaf7" in fragment
+    # The dashboard stylesheet rebinds every paper-* token inside the
+    # card wrapper.
+    css_path = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "zicato"
+        / "dashboard"
+        / "static"
+        / "style.css"
+    )
+    css = css_path.read_text(encoding="utf-8")
+    # The wrapper exists.
+    assert ".analysis-paper-card" in css
+    # And it rebinds every paper-* token so the inline surface goes dark.
+    for rebind in (
+        "--paper-bg: var(",
+        "--paper-text: var(",
+        "--paper-muted: var(",
+        "--paper-rule: var(",
+        "--paper-code-bg: var(",
+        "--paper-promoted: var(",
+        "--paper-rejected: var(",
+        "--paper-figure-grid: var(",
+    ):
+        assert rebind in css, rebind
+    # The legacy hard-coded cream paint on the wrapper is gone — the
+    # wrapper now picks up the dashboard's card surface instead so it
+    # does not clash with surrounding chrome.
+    assert "background: #fafaf7" not in css
+
+
+def test_inline_figures_use_theme_aware_colors() -> None:
+    """Inline SVG figures bind colours to CSS variables, not hard-coded hex.
+
+    A dark host palette must be able to retint every figure without
+    re-rendering the SVG — so promoted/rejected/baseline/deferred fills
+    and strokes, plus the grid rule, all read from ``--paper-*``
+    variables in the emitted SVG.
+    """
+    # Use the figures module directly with a tiny synthetic data view so
+    # we exercise the real renderer path (rather than re-rendering the
+    # whole document).
+    from zicato.analyzer.report_data import BoardEntryView, EpochReportData, GenerationView
+    from zicato.analyzer.report_figures import (
+        render_svg_drift_movements,
+        render_svg_lineage_compact,
+        render_svg_per_board_heatmap,
+        render_svg_score_trajectory,
+    )
+
+    entry = BoardEntryView(
+        id="b1",
+        kind="single_turn",
+        weight=1.0,
+        tags=(),
+        expectation_kind="predicate",
+        expectation_spec="",
+        judges=(),
+        wall_clock_budget_seconds=60,
+    )
+
+    def _gen(
+        gid: str,
+        *,
+        parent: str = "",
+        is_baseline: bool = False,
+        decision: str = "",
+        scalar: float = 0.0,
+        cumulative: float = 0.0,
+        drift: tuple[dict[str, object], ...] = (),
+        gen_score: dict[str, object] | None = None,
+    ) -> GenerationView:
+        return GenerationView(
+            generation_id=gid,
+            parent_generation_id=parent,
+            is_baseline=is_baseline,
+            proposed_at="2026-05-19T01:00:00Z",
+            core_idea="",
+            why="",
+            risks="",
+            modulating=(),
+            expected_pass_rate_delta="",
+            expected_drift_movements=(),
+            decision=decision,
+            rejection_reason="",
+            scalar_score_delta=scalar,
+            drift_loss_delta=0.0,
+            pass_rate_delta=0.0,
+            drift_movements=drift,
+            metric_movements=(),
+            patches=(),
+            gen_score=gen_score or {},
+            cumulative_scalar=cumulative,
+        )
+
+    data = EpochReportData(
+        epoch_id="e1",
+        epoch_name="e1",
+        contract_hash="",
+        created_at="",
+        closed=False,
+        closed_at="",
+        brief_text="",
+        journal_text="",
+        board_entries=(entry,),
+        disable_drift=(),
+        scoring={},
+        mutation_surface=(),
+        generations=(
+            _gen("v0", is_baseline=True),
+            _gen(
+                "v1",
+                parent="v0",
+                decision="promoted",
+                scalar=-0.25,
+                cumulative=-0.25,
+                drift=({"kind": "off_topic", "from_rate": 0.4, "to_rate": 0.1},),
+                gen_score={"entries": {"b1": {"scalar_delta": -0.1}}},
+            ),
+            _gen(
+                "v2",
+                parent="v1",
+                decision="rejected",
+                scalar=0.14,
+                cumulative=-0.11,
+                drift=({"kind": "verbose", "from_rate": 0.2, "to_rate": 0.5},),
+                gen_score={"entries": {"b1": {"scalar_delta": 0.05}}},
+            ),
+        ),
+        span_start="",
+        span_end="",
+    )
+
+    score = render_svg_score_trajectory(data)
+    drift_svg = render_svg_drift_movements(data)
+    heat = render_svg_per_board_heatmap(data)
+    lineage = render_svg_lineage_compact(data)
+    combined = score + drift_svg + heat + lineage
+
+    # The figures emit decision palette references via CSS variables —
+    # the host palette controls the actual hue.
+    assert "var(--paper-promoted)" in combined
+    assert "var(--paper-rejected)" in combined
+    assert "var(--paper-baseline)" in combined
+    assert "var(--paper-figure-grid)" in combined
+
+    # Hard-coded decision hex values are gone from the rendered SVG —
+    # the legacy palette constants now flow exclusively through CSS
+    # vars so a dark host retints them. (The figures module returns
+    # only the SVG fragment, no CSS, so any hex here would render
+    # literally.)
+    for hard_coded in (
+        'stroke="#2ea043"',
+        'stroke="#d73a49"',
+        'stroke="#6e7681"',
+        'stroke="#bf8700"',
+        'stroke="#d0d7de"',
+        'fill="#2ea043"',
+        'fill="#d73a49"',
+        'fill="#6e7681"',
+        # The heatmap previously emitted rgba(R, G, B, a) for the
+        # red/green saturation — those are now ``var(--paper-rejected)``
+        # / ``var(--paper-promoted)`` with fill-opacity.
+        "rgba(215, 58, 73",
+        "rgba(46, 160, 67",
+        # The lineage previously emitted explicit rgba node fills — now
+        # the decision-coloured token + a fill-opacity.
+        "rgba(110, 118, 129",
+        "rgba(191, 135, 0",
+        # The paper-tone cream is a host palette default, never baked
+        # into figure markup.
+        "#fafaf7",
+    ):
+        assert hard_coded not in combined, hard_coded

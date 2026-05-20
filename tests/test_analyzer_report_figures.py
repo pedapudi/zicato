@@ -197,19 +197,25 @@ def test_score_trajectory_marks_promoted_and_rejected_points() -> None:
     )
     svg = render_svg_score_trajectory(_data(gens))
     _assert_inline_svg(svg)
-    # Promoted points use the promoted colour, rejected use the rejected.
-    assert PROMOTED_COLOR in svg
-    assert REJECTED_COLOR in svg
+    # Promoted points use the promoted colour token, rejected use the
+    # rejected token. Figures bind colours via CSS variables so a dark
+    # host can re-tint without re-rendering the SVG.
+    assert "var(--paper-promoted)" in svg
+    assert "var(--paper-rejected)" in svg
     # The y-axis title labels the unit.
     assert "scalar (loss" in svg
     # Every generation id is plotted as an x-axis label.
     for gid in ("v0", "v1", "v2", "v3"):
         assert f">{gid}<" in svg
     # Promoted spine connects baseline + promoted generations — at least
-    # one <path> with the promoted colour is present.
-    assert f'stroke="{PROMOTED_COLOR}"' in svg
+    # one <path> styled with the promoted token is present.
+    assert "stroke: var(--paper-promoted)" in svg
     # Per-point value labels (cumulative scalars) appear.
     assert "-0.250" in svg  # v3 cumulative
+    # No raw hex hue should appear in figure markup — palette flows
+    # exclusively via CSS vars.
+    assert PROMOTED_COLOR not in svg
+    assert REJECTED_COLOR not in svg
 
 
 def test_score_trajectory_value_labels_use_fixed_3dp() -> None:
@@ -362,12 +368,16 @@ def test_lineage_compact_renders_node_per_generation() -> None:
     _assert_inline_svg(svg)
     # One rect per generation = 3 rects total.
     assert svg.count("<rect") == 3
-    # Both promoted and rejected palette colours appear.
-    assert PROMOTED_COLOR in svg
-    assert REJECTED_COLOR in svg
+    # Promoted and rejected palette tokens appear — figures bind colour
+    # via CSS vars so a dark host can re-tint.
+    assert "var(--paper-promoted)" in svg
+    assert "var(--paper-rejected)" in svg
     # Every generation id is rendered.
     for gid in ("v0", "v1", "v2"):
         assert f">{gid}</text>" in svg
+    # No raw hex hue should appear in lineage figure markup.
+    assert PROMOTED_COLOR not in svg
+    assert REJECTED_COLOR not in svg
 
 
 # ---------------------------------------------------------------------------
