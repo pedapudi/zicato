@@ -145,6 +145,61 @@ class CooperativeAdapter:
         return []
 
 
+class _EmittingThenSleepingSession:
+    """Rich ``run(entry, sinks, config)`` session: emit one frame then sleep.
+
+    The session pushes a single ``run_started`` event through the goldfive
+    sink list (so the worker's :class:`SequenceTrackingSink` observes a
+    run_id + sequence on the wire), then awaits a cancellable
+    :func:`asyncio.sleep`. The worker's cooperative budget fires, the
+    ``goldfive.run``-equivalent task is cancelled, and the terminal-event
+    fix is the only thing that can leave a ``run_aborted`` frame on disk.
+    """
+
+    async def run(self, entry: Any, sinks: Any, config: Any) -> Any:
+        import asyncio  # noqa: PLC0415
+
+        from goldfive.events import emit, run_started_event  # noqa: PLC0415
+
+        from zicato.core import RunResult  # noqa: PLC0415
+
+        del config
+        run_id = "test-emitting-run"
+        evt = run_started_event(run_id=run_id, sequence=1, goal_summary="t")
+        await emit(list(sinks), evt)
+        await asyncio.sleep(3600.0)
+        # Unreachable: the worker's cooperative wait_for cancels us.
+        return RunResult(
+            run_id=run_id,
+            entry_id=entry.id,
+            final_output="",
+            transcript=(),
+            runtime_ms=0,
+            aborted=False,
+            abort_reason="",
+        )
+
+
+class EmittingThenSleepingAdapter:
+    """Adapter whose rich-shape session emits a frame then sleeps to cancel."""
+
+    name = "stub"
+
+    def load(self, generation_root: Path) -> _EmittingThenSleepingSession:
+        del generation_root
+        return _EmittingThenSleepingSession()
+
+    def mutation_points(self, source_roots: Any = None) -> list[Any]:
+        del source_roots
+        return []
+
+    def worker_spec(self) -> dict[str, Any]:
+        return {
+            "kind": "import",
+            "factory": "tests._subprocess_worker_support:make_emitting_then_sleeping_adapter",
+        }
+
+
 class _AbortingSession:
     """A session with the rich ``run(entry, sinks, config)`` shape that aborts.
 
@@ -272,6 +327,11 @@ def make_sigterm_ignoring_adapter() -> SleepingAdapter:
 def make_cooperative_adapter() -> CooperativeAdapter:
     """Factory for a worker that self-aborts on its own cooperative budget."""
     return CooperativeAdapter()
+
+
+def make_emitting_then_sleeping_adapter() -> EmittingThenSleepingAdapter:
+    """Factory for the emit-one-frame-then-sleep adapter."""
+    return EmittingThenSleepingAdapter()
 
 
 def make_aborting_adapter() -> AbortingAdapter:

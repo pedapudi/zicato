@@ -1561,7 +1561,76 @@ def test_matchup_conversations_endpoint(
         for side in ("champion", "challenger"):
             assert "run_id" in body[side]
             assert "transcript" in body[side]
+            # The result block is part of the contract: present (None
+            # when no sibling loss.json) on every side.
+            assert "result" in body[side]
         assert body["challenger"]["transcript"]["event_count"] == 3
+
+
+def test_matchup_conversations_carries_loss_json_result_block(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sibling ``loss.json`` projects into the side's ``result`` block.
+
+    Regression for the "v1 waffles_single timed out at 180s but the
+    dashboard showed an empty in-progress column" bug: the API now
+    carries the loss.json verdict so the frontend can render an honest
+    "timed out" panel for a zero-turn complete run.
+    """
+    _install_stub_transcript(monkeypatch)
+
+    # Drop a loss.json next to the challenger's events.jsonl carrying the
+    # exact projection the dashboard needs.
+    challenger_run_dir = (
+        workspace / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "runs" / "waffles_single"
+    )
+    _write_json(
+        challenger_run_dir / "loss.json",
+        {
+            "run_id": "r1",
+            "entry_id": "waffles_single",
+            "generation_id": "v1",
+            "epoch_id": "2026-05-16_e0",
+            "drift_counts": [],
+            "plan_revisions": 1,
+            "task_failure_ratio": 1.0,
+            "runtime_ms": 180000,
+            "wall_clock_budget_exceeded": True,
+            "drift_loss": 60.5,
+            "pass_fail": False,
+            "expectation_result": {
+                "kind": "predicate",
+                "passed": False,
+                "detail": "predicate returned False",
+            },
+            "metric_counts": [
+                {"name": "cost:llm_calls", "severity": "", "count": 8.0},
+                {"name": "output:chars", "severity": "", "count": 7349.0},
+            ],
+        },
+    )
+
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        r = c.get("/api/matchup/waffles_single/conversations")
+        assert r.status_code == 200
+        body = r.json()
+
+    result = body["challenger"]["result"]
+    assert result is not None, "the challenger side must carry a result block"
+    assert result["wall_clock_budget_exceeded"] is True
+    assert result["runtime_ms"] == 180000
+    assert result["pass_fail"] is False
+    assert result["expectation_result"]["kind"] == "predicate"
+    assert result["expectation_result"]["passed"] is False
+    assert result["expectation_result"]["detail"] == "predicate returned False"
+
+    metric_names = {m["name"]: m["count"] for m in result["metric_counts"]}
+    assert metric_names == {"cost:llm_calls": 8.0, "output:chars": 7349.0}
+
+    # The champion side has no loss.json — its result must be None
+    # (the frontend then falls back to the existing zero-turn message).
+    assert body["champion"]["result"] is None
 
 
 def test_conversation_unavailable_without_transcript_module(

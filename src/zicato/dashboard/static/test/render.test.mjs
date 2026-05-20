@@ -1295,6 +1295,148 @@ test('conversation view champion column renders cached transcript turns, not the
     'when the API returns a non-empty cached transcript');
 });
 
+// -- Zero-turn complete-run "what actually happened" panel ----------
+// Regression for the dashboard reading "Waiting for the first turn… ●
+// run in progress — more turns will stream in" for a v1 run that
+// actually finished by hitting its wall-clock budget. Once the runner
+// emits a `run_aborted` terminal frame and the API surfaces the
+// sibling loss.json on the side's `result` block, the column must
+// render an honest "timed out" panel.
+
+test('renderTranscriptColumn shows the timed-out panel for a complete zero-turn run with a result block', () => {
+  const side = {
+    run_id: 'r-timed-out',
+    generation_id: 'v1',
+    transcript: {
+      run_id: 'r-timed-out',
+      event_count: 2,
+      complete: true,
+      turns: [],
+      annotations: [],
+    },
+    result: {
+      wall_clock_budget_exceeded: true,
+      runtime_ms: 180000,
+      pass_fail: false,
+      expectation_result: {
+        kind: 'predicate',
+        passed: false,
+        detail: 'predicate returned False',
+      },
+      metric_counts: [
+        { name: 'cost:llm_calls', count: 8.0, severity: '' },
+        { name: 'output:chars', count: 7349.0, severity: '' },
+      ],
+    },
+  };
+
+  const col = render.renderTranscriptColumn('challenger', side);
+  const text = textOf(col);
+
+  // The honest "timed out" panel renders — not the bland "no transcript
+  // turns" fallback and not the misleading "in progress" cue.
+  assert(text.includes('Run terminated without structured turn events'),
+    'the zero-turn complete-run panel headline must render, got: ' + text);
+  assert(text.includes('timed out'),
+    'the panel must say the run timed out');
+  assert(text.includes('180'),
+    'the panel must surface the runtime in seconds');
+  assert(text.includes('8') && text.includes('LLM calls'),
+    'the panel must surface the LLM-call count');
+  assert(text.includes('7,349') || text.includes('7349'),
+    'the panel must surface the output char count');
+  assert(text.includes('predicate') && text.includes('failed'),
+    'the panel must surface the expectation verdict');
+  assert(!text.includes('This run produced no transcript turns'),
+    'the bland fallback must NOT render when a result is present');
+  assert(!text.includes('Waiting for the first turn'),
+    'the in-progress placeholder must NOT render for a complete run');
+  assert(!text.includes('run in progress'),
+    'the misleading "in progress" cue must NOT render for a complete run');
+});
+
+test('renderTranscriptColumn falls back to the bland message for a complete zero-turn run with NO result block', () => {
+  const side = {
+    run_id: 'r-zero',
+    generation_id: 'v1',
+    transcript: {
+      run_id: 'r-zero',
+      event_count: 0,
+      complete: true,
+      turns: [],
+      annotations: [],
+    },
+    result: null,
+  };
+
+  const col = render.renderTranscriptColumn('challenger', side);
+  const text = textOf(col);
+
+  assert(text.includes('This run produced no transcript turns'),
+    'the bland fallback renders when no result block is available');
+  assert(!text.includes('Run terminated without structured turn events'),
+    'the timed-out panel must NOT render without a result block');
+});
+
+test('matchupDetailKey includes champion / challenger result digest tokens', () => {
+  // Drive the mock-mode conversation path so convData is seeded with the
+  // standard mock shape (no result block — the mock's default state).
+  state.mock = true;
+  state.applySnapshot(mockSnapshot());
+  globalThis.location.hash = '#/conversation/extract_invoice_001';
+  render.applyRoute();
+
+  const key = render.matchupDetailKey();
+  // The new digest tokens must be present so a late-arriving loss.json
+  // (which adds a `result` block to a side) re-keys the matchup-detail
+  // subtree and the panel gets re-rendered. Without these tokens, a
+  // result arriving after the transcript turns count stabilised would
+  // be filtered out by swapIfChanged.
+  assert(key.includes('champResult:'),
+    'matchupDetailKey must include the champion result digest token');
+  assert(key.includes('chalResult:'),
+    'matchupDetailKey must include the challenger result digest token');
+
+  // A repeated render of the same selection produces the same digest.
+  const key2 = render.matchupDetailKey();
+  assertEqual(key, key2,
+    'a repeated render of the same selection must produce the same digest');
+});
+
+test('a result block changes the rendered column text — the digest is therefore load-bearing', () => {
+  // Direct proof of why the digest must fold result into the key: the
+  // rendered output depends on whether a side has a result block. The
+  // digest contribution is what gates swapIfChanged into rebuilding.
+  const sideNoResult = {
+    run_id: 'r1',
+    generation_id: 'v1',
+    transcript: { event_count: 2, complete: true, turns: [], annotations: [] },
+    result: null,
+  };
+  const sideWithResult = {
+    run_id: 'r1',
+    generation_id: 'v1',
+    transcript: { event_count: 2, complete: true, turns: [], annotations: [] },
+    result: {
+      wall_clock_budget_exceeded: true,
+      runtime_ms: 180000,
+      pass_fail: false,
+      expectation_result: { kind: 'predicate', passed: false, detail: '' },
+      metric_counts: [
+        { name: 'cost:llm_calls', count: 8.0, severity: '' },
+      ],
+    },
+  };
+  const t1 = textOf(render.renderTranscriptColumn('challenger', sideNoResult));
+  const t2 = textOf(render.renderTranscriptColumn('challenger', sideWithResult));
+  assert(t1 !== t2,
+    'a result block must change the rendered column text — the digest must therefore include it');
+  assert(t1.includes('This run produced no transcript turns'),
+    'no-result column renders the bland fallback');
+  assert(t2.includes('Run terminated without structured turn events'),
+    'with-result column renders the timed-out panel');
+});
+
 test('a #/tournament/{gen} route does not yank the scroll on every render', () => {
   // BUG 1: openMatchup() scrolled the detail panel into view, and
   // applyRoute() re-runs openMatchup on EVERY render (each SSE delta) for

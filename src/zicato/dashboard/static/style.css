@@ -1631,6 +1631,42 @@ h4 {
   color: var(--accent-running);
 }
 
+/* --- Zero-turn complete-run "what actually happened" panel.
+   Rendered when a run finished (transcript.complete=true) but produced
+   no transcript turns AND the API returned a loss.json projection on
+   the side's ``result`` block — the canonical case is a wall-clock
+   timeout that left no structured turn events. The panel is honest
+   about WHY the column is empty so the operator doesn't read it as an
+   in-progress run. */
+.conversation-no-turns-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-rejected);
+  background: var(--bg-elev);
+  font-size: 12px;
+  color: var(--text-default);
+}
+.conversation-no-turns-panel .conversation-no-turns-headline {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--accent-rejected);
+  letter-spacing: 0.02em;
+}
+.conversation-no-turns-panel .conversation-no-turns-fact {
+  color: var(--text-muted);
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+.conversation-no-turns-panel.timed-out {
+  border-color: var(--accent-deferred);
+}
+.conversation-no-turns-panel.timed-out .conversation-no-turns-headline {
+  color: var(--accent-deferred);
+}
+
 /* --- Narrow screens — stack the two columns */
 @media (max-width: 720px) {
   .conversation-columns {

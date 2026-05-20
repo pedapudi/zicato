@@ -627,6 +627,7 @@ def _build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[s
                 "run_id": None,
                 "generation_id": generation_id,
                 "transcript": None,
+                "result": None,
             }
         run_id, events_path = located
         transcript: Any = None
@@ -635,10 +636,17 @@ def _build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[s
                 transcript = reconstruct_transcript(events_path, partial_ok=True).to_dict()
             except Exception as exc:
                 transcript = {"error": f"transcript failed: {exc}"}
+        # Surface a small projection of the sibling ``loss.json`` so the
+        # frontend can render an honest "timed out" panel for a run that
+        # produced no transcript turns. Without this the dashboard's
+        # zero-turn complete-run path falls back to "This run produced
+        # no transcript turns" — accurate but useless to the operator.
+        result = _read_run_result(events_path.parent)
         return {
             "run_id": run_id,
             "generation_id": generation_id,
             "transcript": transcript,
+            "result": result,
         }
 
     champion_gen = _resolve_generation_id("parent", tournament_parent_gen)
@@ -646,3 +654,75 @@ def _build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[s
     result["champion"] = _side("parent", champion_gen)
     result["challenger"] = _side("child", challenger_gen)
     return result
+
+
+def _read_run_result(run_dir: Path) -> dict[str, Any] | None:
+    """Project a sibling ``loss.json`` into a small dashboard-friendly shape.
+
+    The frontend needs enough to render an honest "what happened" panel
+    for a zero-turn complete run — wall-clock budget exceeded, runtime,
+    pass/fail verdict, expectation outcome, and the user-visible metric
+    counts (LLM calls, output chars, anything else loss.json already
+    publicly exposes). The full ``LossProfile`` would leak internal
+    fields (the drift scalar's weight breakdown, schema versioning, the
+    canonical adk session id) that the dashboard does not render today;
+    project to the subset that matters.
+
+    Returns ``None`` when the run directory has no readable
+    ``loss.json`` — the frontend then falls back to the existing
+    "This run produced no transcript turns" message.
+    """
+    if not isinstance(run_dir, Path):
+        return None
+    loss_path = run_dir / "loss.json"
+    if not loss_path.exists():
+        return None
+    try:
+        with open(loss_path, encoding="utf-8") as f:
+            loss = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(loss, dict):
+        return None
+
+    expectation: dict[str, Any] | None = None
+    raw_exp = loss.get("expectation_result")
+    if isinstance(raw_exp, dict):
+        expectation = {
+            "kind": str(raw_exp.get("kind") or ""),
+            "passed": bool(raw_exp.get("passed", False)),
+            "detail": str(raw_exp.get("detail") or ""),
+        }
+
+    metric_counts: list[dict[str, Any]] = []
+    raw_metrics = loss.get("metric_counts")
+    if isinstance(raw_metrics, list):
+        for m in raw_metrics:
+            if not isinstance(m, dict):
+                continue
+            name = m.get("name")
+            count = m.get("count")
+            if not isinstance(name, str) or count is None:
+                continue
+            try:
+                count_f = float(count)
+            except (TypeError, ValueError):
+                continue
+            metric_counts.append(
+                {
+                    "name": name,
+                    "count": count_f,
+                    "severity": str(m.get("severity") or ""),
+                }
+            )
+
+    return {
+        "wall_clock_budget_exceeded": bool(loss.get("wall_clock_budget_exceeded", False)),
+        "runtime_ms": int(loss.get("runtime_ms") or 0),
+        "pass_fail": loss.get("pass_fail"),
+        "expectation_result": expectation,
+        "metric_counts": metric_counts,
+        "drift_loss": (
+            float(loss["drift_loss"]) if isinstance(loss.get("drift_loss"), int | float) else None
+        ),
+    }

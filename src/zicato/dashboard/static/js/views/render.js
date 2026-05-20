@@ -2479,8 +2479,36 @@ function matchupDetailKey() {
     'chalComplete:' + (convData && convData.challenger
       && convData.challenger.transcript
       && convData.challenger.transcript.complete ? '1' : '0'),
+    // The ``result`` block (a projection of the sibling loss.json)
+    // drives the zero-turn complete-run panel. Folding a digest of
+    // its outcome shape into the key means a late-arriving loss.json
+    // — common during a live run when the events file already
+    // streamed but the loss profile lands a beat later — retriggers
+    // a column render. Without this the panel would stay stuck on
+    // the bland "no transcript turns" fallback.
+    'champResult:' + resultDigest(convData && convData.champion
+      && convData.champion.result),
+    'chalResult:' + resultDigest(convData && convData.challenger
+      && convData.challenger.result),
   ];
   return sig.join('|');
+}
+
+// Compact digest of a side's `result` block — drives the matchupDetailKey
+// so a late-arriving loss.json retriggers a column render. Stays scalar
+// so an SSE tick with no real change leaves the key untouched.
+function resultDigest(result) {
+  if (!result) return '';
+  const wall = result.wall_clock_budget_exceeded ? '1' : '0';
+  const rt = result.runtime_ms != null ? String(result.runtime_ms) : '';
+  const pf = result.pass_fail == null ? '' : (result.pass_fail ? '1' : '0');
+  const exp = result.expectation_result
+    ? (result.expectation_result.kind || '') + '/'
+      + (result.expectation_result.passed ? '1' : '0')
+    : '';
+  const metricCount = Array.isArray(result.metric_counts)
+    ? result.metric_counts.length : 0;
+  return wall + '|' + rt + '|' + pf + '|' + exp + '|' + metricCount;
 }
 
 function renderMatchupDetail() {
@@ -5843,9 +5871,21 @@ function renderTranscriptColumn(sideKind, side) {
       'Waiting for the first turn…',
     ]));
   } else if (turns.length === 0) {
-    body.appendChild(el('p', { class: 'empty' }, [
-      'This run produced no transcript turns.',
-    ]));
+    // The run finished but produced no structured turn events. The
+    // canonical case is a wall-clock cancellation that left only
+    // ``goldfiveLlmCallEnd`` frames with ``CancelledError`` and the
+    // worker / parent's appended ``run_aborted`` terminal. The
+    // server's ``result`` block is a projection of the sibling
+    // ``loss.json``; when it is present we render a clear "what
+    // actually happened" panel instead of the bland fallback.
+    const result = side && side.result;
+    if (result) {
+      body.appendChild(renderNoTurnsResultPanel(result));
+    } else {
+      body.appendChild(el('p', { class: 'empty' }, [
+        'This run produced no transcript turns.',
+      ]));
+    }
   }
 
   for (const turn of turns) {
@@ -5863,6 +5903,74 @@ function renderTranscriptColumn(sideKind, side) {
 
   col.appendChild(body);
   return col;
+}
+
+// Render the "what actually happened" panel for a zero-turn complete
+// run. The server projects the sibling loss.json onto the side's
+// `result` block — wall-clock budget exceeded, runtime, the expectation
+// verdict, and the user-visible metric counts. The panel uses honest
+// vocabulary so the operator does not read an empty column as
+// "in-progress".
+function renderNoTurnsResultPanel(result) {
+  const timedOut = !!(result && result.wall_clock_budget_exceeded);
+  const cls = 'conversation-no-turns-panel' + (timedOut ? ' timed-out' : '');
+  const panel = el('div', { class: cls });
+
+  panel.appendChild(el('div', {
+    class: 'conversation-no-turns-headline',
+  }, ['Run terminated without structured turn events']));
+
+  // Headline reason — a wall-clock timeout is the canonical case; an
+  // un-flagged loss.json still renders the same panel with a softer lead.
+  const runtimeMs = result && result.runtime_ms;
+  if (timedOut) {
+    const seconds = runtimeMs != null
+      ? (Math.round(runtimeMs / 100) / 10) + ' s'
+      : 'wall-clock budget exceeded';
+    panel.appendChild(el('div', {
+      class: 'conversation-no-turns-fact',
+    }, ['timed out at ' + seconds + ' (wall-clock budget exceeded)']));
+  } else if (runtimeMs != null) {
+    panel.appendChild(el('div', {
+      class: 'conversation-no-turns-fact',
+    }, ['ran for ' + Math.round(runtimeMs / 100) / 10 + ' s']));
+  }
+
+  // Metric counts the operator cares about.
+  const metrics = (result && Array.isArray(result.metric_counts))
+    ? result.metric_counts : [];
+  const pretty = (name, count) => {
+    const c = Number(count) || 0;
+    const cstr = (Number.isInteger(c) ? c : c.toFixed(2)).toLocaleString();
+    if (name === 'cost:llm_calls') return cstr + ' LLM calls';
+    if (name === 'output:chars') return cstr + ' chars emitted';
+    return cstr + ' ' + name;
+  };
+  const metricLines = metrics.filter((m) => m && m.name).map(
+    (m) => pretty(m.name, m.count),
+  );
+  if (metricLines.length > 0) {
+    panel.appendChild(el('div', {
+      class: 'conversation-no-turns-fact',
+    }, [metricLines.join(' · ')]));
+  }
+
+  // Expectation verdict — the pass/fail story for this entry.
+  const exp = result && result.expectation_result;
+  if (exp) {
+    const verdict = exp.passed ? 'passed' : 'failed';
+    const kind = String(exp.kind || 'expectation');
+    const detail = exp.detail ? ' — ' + String(exp.detail) : '';
+    panel.appendChild(el('div', {
+      class: 'conversation-no-turns-fact',
+    }, ['expectation: ' + kind + ' ' + verdict + detail]));
+  } else if (result && result.pass_fail === false) {
+    panel.appendChild(el('div', {
+      class: 'conversation-no-turns-fact',
+    }, ['expectation: failed']));
+  }
+
+  return panel;
 }
 
 // Render a single transcript turn. `seq` is set as a data attribute so
@@ -6275,4 +6383,8 @@ export {
   // entry point, the scratch state it resolves into, and the
   // mutation-site browser's selection entry point + its state).
   applyFilesRoute, filesState, selectMutationSite, mutationsState,
+  // Transcript column rendering — exported for the JS test harness so
+  // the zero-turn complete-run panel can be asserted without driving
+  // the whole conversation route.
+  renderTranscriptColumn, matchupDetailKey,
 };

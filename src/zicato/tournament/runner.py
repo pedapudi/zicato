@@ -974,6 +974,23 @@ async def _run_single(
                     run_id,
                     proc.returncode,
                 )
+            # Terminal-event invariant: the worker is dead and the
+            # events.jsonl on disk most likely lacks a terminal
+            # lifecycle frame (the worker was SIGKILLed before it could
+            # emit one, or crashed mid-call). Append a ``run_aborted``
+            # line directly so the downstream transcript reconstructor
+            # can flip ``complete=True`` and the dashboard renders an
+            # honest "timed out" panel rather than a misleading "in
+            # progress" cue. No-op when a terminal frame is already
+            # present (the worker's own cooperative path beat us to it).
+            try:
+                from zicato.telemetry.terminal_event import (  # noqa: PLC0415
+                    ensure_run_aborted_event,
+                )
+
+                ensure_run_aborted_event(sink_path)
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                log.debug("run %s: terminal-event append failed: %s", run_id, exc)
             final_loss = _aborted_loss_profile(
                 run_id=run_id,
                 entry=entry,

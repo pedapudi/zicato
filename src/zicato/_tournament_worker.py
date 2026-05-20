@@ -81,6 +81,14 @@ log = logging.getLogger("zicato._tournament_worker")
 WORKER_BUDGET_ABORT_REASON = "wall_clock_budget"
 
 
+#: Reason string the worker stamps onto the synthesised ``run_aborted``
+#: telemetry frame it emits when its cooperative budget fires. Aligned
+#: with :attr:`zicato.core.LossProfile.wall_clock_budget_exceeded` so a
+#: downstream consumer can correlate the loss profile and the event
+#: stream without string surgery.
+TERMINAL_REASON_WALL_CLOCK = "wall_clock_budget_exceeded"
+
+
 # ---------------------------------------------------------------------------
 # Args / result file shapes
 # ---------------------------------------------------------------------------
@@ -183,19 +191,34 @@ def _build_adapter(spec: dict[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _build_sinks(events_path: Path, harmonograf_url: str) -> list[Any]:
+def _build_sinks(events_path: Path, harmonograf_url: str) -> tuple[list[Any], Any]:
     """Build the per-run sink list: canonical JSONL plus optional harmonograf.
 
-    Returns an empty list when goldfive is not installed — matching the
-    runner's pre-existing tolerance for a no-goldfive environment.
+    Returns ``(sinks, tracker)`` where ``tracker`` is the
+    :class:`~zicato.telemetry.terminal_event.SequenceTrackingSink`
+    decorating the canonical JSONL sink (or ``None`` when goldfive is
+    not installed and no sinks were attached). The tracker holds the
+    last ``run_id`` and the max ``sequence`` that flowed through, so
+    the worker can synthesise a ``run_aborted`` lifecycle frame on a
+    wall-clock cancellation — the goldfive runner's own
+    ``_emit_run_aborted`` is unreachable when ``asyncio.wait_for``
+    cancels the inner task, leaving the events file without a
+    terminal frame and the downstream transcript reconstructor unable
+    to flip ``complete=True``.
+
+    Returns ``([], None)`` when goldfive is not installed — matching
+    the runner's pre-existing tolerance for a no-goldfive environment.
     """
     try:
         from goldfive.sinks.persistence import JSONLPersistenceSink  # noqa: PLC0415
     except ModuleNotFoundError:
-        return []
+        return [], None
+
+    from zicato.telemetry.terminal_event import SequenceTrackingSink  # noqa: PLC0415
 
     events_path.parent.mkdir(parents=True, exist_ok=True)
-    sinks: list[Any] = [JSONLPersistenceSink(path=events_path, mode="write")]
+    tracker = SequenceTrackingSink(JSONLPersistenceSink(path=events_path, mode="write"))
+    sinks: list[Any] = [tracker]
 
     if harmonograf_url:
         try:
@@ -206,7 +229,7 @@ def _build_sinks(events_path: Path, harmonograf_url: str) -> list[Any]:
                 sinks.append(extra)
         except Exception as exc:  # noqa: BLE001 — harmonograf is additive only
             log.warning("worker could not attach harmonograf sink: %s", exc)
-    return sinks
+    return sinks, tracker
 
 
 async def _close_sinks(sinks: list[Any]) -> None:
@@ -216,6 +239,53 @@ async def _close_sinks(sinks: list[Any]) -> None:
             await s.close()
         except Exception as exc:  # noqa: BLE001 — never fail a run on sink close
             log.debug("worker sink close failed: %s", exc)
+
+
+async def _emit_worker_abort(
+    *,
+    sinks: list[Any],
+    tracker: Any,
+    reason: str,
+) -> None:
+    """Emit a ``run_aborted`` lifecycle frame through the open sinks.
+
+    Called from the worker's ``finally`` block on the cooperative
+    wall-clock cancellation path, *before* sinks are closed. Goldfive's
+    own ``_emit_run_aborted`` is unreachable when ``asyncio.wait_for``
+    cancels the inner task — :class:`CancelledError` propagates through
+    every ``try`` / ``except Exception`` inside ``goldfive.run``. The
+    worker therefore takes responsibility for the terminal frame.
+
+    ``tracker`` is the :class:`SequenceTrackingSink` decorating the
+    canonical sink; ``last_run_id`` / ``max_sequence`` were captured
+    from the in-flight event stream and are the only correct values to
+    stamp onto the synthesised envelope — the worker's ``run_id`` does
+    not match the goldfive ``run_id`` (the adapter mints its own
+    uuid4 per ``goldfive.run`` call).
+
+    Best-effort: any failure is logged and swallowed; the worker still
+    falls back to :func:`ensure_run_aborted_event` to write the line
+    directly to disk after sinks close.
+    """
+    if not sinks or tracker is None:
+        return
+    try:
+        from goldfive.events import emit, run_aborted_event  # noqa: PLC0415
+    except ModuleNotFoundError:
+        return
+    run_id = str(getattr(tracker, "last_run_id", "") or "")
+    if not run_id:
+        # We never observed a runId on any event — there is no event
+        # stream to terminate. The on-disk fallback handles this case.
+        return
+    seq = int(getattr(tracker, "max_sequence", -1)) + 1
+    if seq <= 0:
+        seq = 1
+    try:
+        evt = run_aborted_event(run_id=run_id, sequence=seq, reason=reason)
+        await emit(sinks, evt)
+    except Exception as exc:  # noqa: BLE001 — emit must never fail the worker
+        log.warning("worker could not emit run_aborted on budget cancel: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +521,7 @@ async def _run(args: dict[str, Any]) -> None:
     except Exception as exc:  # noqa: BLE001 — heartbeat is best-effort
         log.warning("worker could not start run heartbeat for %s: %s", run_id, exc)
 
-    sinks = _build_sinks(events_path, harmonograf_url)
+    sinks, tracker = _build_sinks(events_path, harmonograf_url)
     adapter = _build_adapter(args["adapter"])
 
     run_result: RunResult | None = None
@@ -496,7 +566,35 @@ async def _run(args: dict[str, Any]) -> None:
             run_hb.stop()
         except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
             log.debug("worker could not stop run heartbeat for %s: %s", run_id, exc)
+        # Terminal-event invariant: when the cooperative wait_for
+        # cancelled the inner goldfive task, goldfive could not reach
+        # its own ``_emit_run_aborted`` path (CancelledError propagated
+        # through). Emit one here so the events file always ends with a
+        # lifecycle frame — without it the dashboard transcript stays
+        # ``complete: False`` and the column renders a misleading "in
+        # progress" cue. See zicato.telemetry.terminal_event.
+        if budget_exceeded and tracker is not None and sinks:
+            await _emit_worker_abort(
+                sinks=sinks,
+                tracker=tracker,
+                reason=TERMINAL_REASON_WALL_CLOCK,
+            )
         await _close_sinks(sinks)
+        # Defensive fallback: if the in-process emit could not land
+        # (e.g. the sink raised) the events file still lacks a terminal
+        # frame on disk. Append one directly so the invariant holds.
+        if budget_exceeded:
+            try:
+                from zicato.telemetry.terminal_event import (  # noqa: PLC0415
+                    ensure_run_aborted_event,
+                )
+
+                ensure_run_aborted_event(
+                    events_path,
+                    reason=TERMINAL_REASON_WALL_CLOCK,
+                )
+            except Exception as exc:  # noqa: BLE001 — never fail the run on this
+                log.debug("worker terminal-event fallback failed: %s", exc)
 
     expectation_result = await _evaluate_expectation(entry, run_result, config)
 
