@@ -1781,6 +1781,174 @@ test('epoch header shows the epoch id, status, and the experiment tally', () => 
   assert(text.includes('promoted') && text.includes('rejected'),
     'the stat strip tallies promoted and rejected experiments');
   assert(text.includes('Δscalar'), 'the stat strip reports the net scalar movement');
+  // bug #169: the headline Δscalar tile is framed as the champion-spine
+  // net (the meta-loop's actual progress), not the all-experiments
+  // gross — the gross is kept alongside as a secondary signal.
+  assert(text.includes('champion spine'),
+    'the headline Δscalar tile names the champion spine');
+  assert(text.includes('all experiments'),
+    'the secondary Δscalar tile carries the all-experiments sum');
+});
+
+test('epoch header — champion-spine Δscalar tile is the headline (bug #169)', () => {
+  // The t6 run-#8 shape: 5 experiments, 2 promoted, 3 rejected. The
+  // spine net (sum across promoted hops) is `-14.429 + -24.331 =
+  // -38.760` and reads as an improvement (green). The gross net sums
+  // every experiment and lands at `+19.482` — informative but the
+  // *wrong* number to lead with. The fix splits the old single tile
+  // into a primary spine tile + a secondary gross tile.
+  state.epochDef = {
+    epoch_id: '2026-05-20_presn',
+    closed: false,
+    experiments: [
+      { generation_id: 'v1', parent_generation_id: 'v0',
+        outcome: { tournament_decision: 'promoted', scalar_score_delta: -14.429 } },
+      { generation_id: 'v2', parent_generation_id: 'v1',
+        outcome: { tournament_decision: 'rejected', scalar_score_delta: 10.123 } },
+      { generation_id: 'v3', parent_generation_id: 'v1',
+        outcome: { tournament_decision: 'promoted', scalar_score_delta: -24.331 } },
+      { generation_id: 'v4', parent_generation_id: 'v3',
+        outcome: { tournament_decision: 'rejected', scalar_score_delta: 42.405 } },
+      { generation_id: 'v5', parent_generation_id: 'v3',
+        outcome: { tournament_decision: 'rejected', scalar_score_delta: 5.714 } },
+    ],
+  };
+  render.showView('epoch');
+  const header = doc.getElementById('epoch-overview');
+  const tiles = header._descendants().filter(
+    (n) => n.classList && n.classList.contains('epoch-stat'));
+  const tileByLabel = new Map();
+  for (const t of tiles) {
+    const label = t._descendants()
+      .find((n) => n.classList && n.classList.contains('epoch-stat-label'));
+    const value = t._descendants()
+      .find((n) => n.classList && n.classList.contains('epoch-stat-value'));
+    if (label && value) tileByLabel.set(label.textContent.trim(), { tile: t, value });
+  }
+
+  // The headline tile renders the spine net as `-38.760` and is green
+  // (a negative loss delta is an improvement).
+  const spine = tileByLabel.get('net Δscalar (champion spine)');
+  assert(spine, 'the headline tile is labelled "net Δscalar (champion spine)"');
+  assertEqual(spine.value.textContent, '-38.760',
+    'spine net = sum of promoted hops only');
+  assert(spine.value.classList.contains('good'),
+    'a negative spine net (improvement) is coloured green');
+  assert(!spine.value.classList.contains('bad'),
+    'an improving spine must NOT carry the red `bad` class');
+  // The headline tile carries the headline class so CSS can render it
+  // larger / more prominently than the secondary tile.
+  assert(spine.tile.classList.contains('epoch-stat-headline'),
+    'the spine tile carries the `epoch-stat-headline` class for prominence');
+
+  // The secondary tile renders the all-experiments gross at `+19.482`
+  // and is NOT colour-coded — a rising gross can coexist with a
+  // falling spine, which is exactly the bug-#169 misframing.
+  const gross = tileByLabel.get('gross Δscalar (all experiments)');
+  assert(gross, 'the secondary tile is labelled "gross Δscalar (all experiments)"');
+  assertEqual(gross.value.textContent, '+19.482',
+    'gross net = sum across every experiment, promoted or not');
+  assert(!gross.value.classList.contains('good')
+      && !gross.value.classList.contains('bad'),
+    'the gross tile is neutral — not colour-coded by sign');
+  assert(gross.tile.classList.contains('epoch-stat-secondary'),
+    'the gross tile carries the `epoch-stat-secondary` class for de-emphasis');
+});
+
+test('epoch header — spine tile reads "—" when fewer than two promotions', () => {
+  // A single promoted generation is the default first-tournament
+  // outcome (baseline → first child). The meta-loop has not yet
+  // chained two promotions, so the spine tile reads "—" rather than
+  // misleadingly framing one tournament as the spine.
+  state.epochDef = {
+    epoch_id: '2026-05-20_solo',
+    closed: false,
+    experiments: [
+      { generation_id: 'v1', parent_generation_id: 'v0',
+        outcome: { tournament_decision: 'promoted', scalar_score_delta: -2.0 } },
+      { generation_id: 'v2', parent_generation_id: 'v1',
+        outcome: { tournament_decision: 'rejected', scalar_score_delta: 1.5 } },
+    ],
+  };
+  render.showView('epoch');
+  const header = doc.getElementById('epoch-overview');
+  const tiles = header._descendants().filter(
+    (n) => n.classList && n.classList.contains('epoch-stat'));
+  const spine = tiles.find((t) => {
+    const lbl = t._descendants()
+      .find((n) => n.classList && n.classList.contains('epoch-stat-label'));
+    return lbl && lbl.textContent.includes('champion spine');
+  });
+  assert(spine, 'the spine tile is rendered even when "—"');
+  const value = spine._descendants()
+    .find((n) => n.classList && n.classList.contains('epoch-stat-value'));
+  assertEqual(value.textContent, '—',
+    'one promotion = no spine comparison yet -> "—"');
+  assert(!value.classList.contains('good')
+      && !value.classList.contains('bad'),
+    'a "—" spine tile is neutral — not coloured');
+});
+
+test('epoch header — spine/gross helper pins the exact t6 numbers', () => {
+  // The pure helper is exported so a test can pin it directly without
+  // routing through the DOM. Same fixture as the rendering test
+  // above; matches the Python helper's t6 pin one-to-one.
+  const summary = render.computeEpochDeltaScalarSummary([
+    { generation_id: 'v1', parent_generation_id: 'v0',
+      outcome: { tournament_decision: 'promoted', scalar_score_delta: -14.429 } },
+    { generation_id: 'v2', parent_generation_id: 'v1',
+      outcome: { tournament_decision: 'rejected', scalar_score_delta: 10.123 } },
+    { generation_id: 'v3', parent_generation_id: 'v1',
+      outcome: { tournament_decision: 'promoted', scalar_score_delta: -24.331 } },
+    { generation_id: 'v4', parent_generation_id: 'v3',
+      outcome: { tournament_decision: 'rejected', scalar_score_delta: 42.405 } },
+    { generation_id: 'v5', parent_generation_id: 'v3',
+      outcome: { tournament_decision: 'rejected', scalar_score_delta: 5.714 } },
+  ]);
+  // Use a tight tolerance: the operator caught this calc by inspection,
+  // so the test must match to three decimals.
+  assert(Math.abs(summary.champion_spine - (-38.760)) < 1e-6,
+    `spine net must be -38.760, got ${summary.champion_spine}`);
+  assert(Math.abs(summary.gross - 19.482) < 1e-6,
+    `gross net must be +19.482, got ${summary.gross}`);
+});
+
+test('epoch header — backend-provided summary wins over client fallback', () => {
+  // When the backend hands `delta_scalar_summary` down, the renderer
+  // MUST use that — re-deriving from `experiments` is the fallback,
+  // not the primary path. This pins the integration contract.
+  state.epochDef = {
+    epoch_id: '2026-05-20_be',
+    closed: false,
+    // The experiments deliberately disagree with the summary so the
+    // test fails if the renderer re-derives client-side.
+    experiments: [
+      { generation_id: 'v1', parent_generation_id: 'v0',
+        outcome: { tournament_decision: 'promoted', scalar_score_delta: -999.0 } },
+    ],
+    delta_scalar_summary: {
+      champion_spine: -1.234,
+      gross: -1.234,
+    },
+  };
+  render.showView('epoch');
+  const header = doc.getElementById('epoch-overview');
+  const tiles = header._descendants().filter(
+    (n) => n.classList && n.classList.contains('epoch-stat'));
+  const findValue = (labelSubstr) => {
+    const tile = tiles.find((t) => {
+      const lbl = t._descendants()
+        .find((n) => n.classList && n.classList.contains('epoch-stat-label'));
+      return lbl && lbl.textContent.includes(labelSubstr);
+    });
+    if (!tile) return null;
+    return tile._descendants()
+      .find((n) => n.classList && n.classList.contains('epoch-stat-value'));
+  };
+  assertEqual(findValue('champion spine').textContent, '-1.234',
+    'the spine tile reflects the backend-provided summary');
+  assertEqual(findValue('all experiments').textContent, '-1.234',
+    'the gross tile reflects the backend-provided summary');
 });
 
 test('proposer brief renders as a readable block, framed as the epoch goal', () => {

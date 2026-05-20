@@ -782,6 +782,114 @@ def _read_epoch_experiments(epoch_dir: Path) -> list[dict[str, Any]]:
     return experiments
 
 
+def compute_epoch_delta_summary(
+    experiments: list[dict[str, Any]],
+) -> dict[str, float | None]:
+    """Aggregate per-experiment ``scalar_score_delta`` for the Epoch view.
+
+    Two numbers fall out of one walk over the per-generation experiment
+    records:
+
+    * ``champion_spine`` — the sum of ``scalar_score_delta`` across the
+      promoted lineage only, i.e. the meta-loop's actual progress.
+      Computed by walking the parent → child chain through promoted
+      generations (the same shape :func:`_champion_lineage` and the
+      analyzer's ``_promoted_lineage`` build). ``None`` when the spine
+      has fewer than two promoted generations — a single promotion is
+      the default first-tournament outcome and does not yet read as
+      meta-loop progress, so the caller renders it as a "—" tile.
+    * ``gross`` — the sum across **every** experiment that carries a
+      finite delta, promoted or not. This is the historical "net" tile
+      and is kept as a secondary signal. ``None`` when no experiment
+      carries a finite delta.
+
+    Both fields are best-effort: a malformed entry (non-dict outcome,
+    non-numeric delta, missing ids) is silently skipped, never raised.
+    The meta-loop's progress is the spine sum; ``gross`` includes
+    rejected experiments and is therefore the wrong headline for
+    framing whether the epoch is moving the loss in the right direction.
+    """
+    # Per-generation deltas + a parent → child map confined to promoted
+    # generations. We use the experiment record's `parent_generation_id`
+    # for the edge so the walk does not depend on the SQLite index being
+    # rebuilt (the analyzer's `_promoted_lineage` reads the same field).
+    by_gen: dict[str, dict[str, Any]] = {}
+    promoted_set: set[str] = set()
+    gross_total = 0.0
+    gross_have = False
+    for exp in experiments:
+        if not isinstance(exp, dict):
+            continue
+        gid = exp.get("generation_id")
+        if not isinstance(gid, str) or not gid:
+            continue
+        by_gen[gid] = exp
+        outcome = exp.get("outcome")
+        if isinstance(outcome, dict):
+            ds = outcome.get("scalar_score_delta")
+            if isinstance(ds, int | float) and _is_finite(ds):
+                gross_total += float(ds)
+                gross_have = True
+            decision = _experiment_decision(exp)
+            if decision is not None and decision.strip().lower() in _PROMOTED_DECISIONS:
+                promoted_set.add(gid)
+
+    # Edges among promoted generations only. A promoted child whose
+    # parent is *not* promoted (or is missing) is a spine root.
+    child_of: dict[str, str] = {}
+    roots: list[str] = []
+    for gid in promoted_set:
+        exp = by_gen[gid]
+        parent = exp.get("parent_generation_id")
+        if isinstance(parent, str) and parent in promoted_set:
+            # First-wins so a duplicated edge does not push later
+            # promotions off the chain.
+            child_of.setdefault(parent, gid)
+        else:
+            roots.append(gid)
+
+    # Walk one spine. When the workspace records multiple promotion
+    # roots (e.g. a re-seeded epoch), the sorted-first id is the spine
+    # we report on — matching :func:`_champion_lineage`. The total is
+    # the sum of `scalar_score_delta` for every promoted hop the spine
+    # walks. The tile reads "—" when the spine has zero or one promoted
+    # generation: a single promotion is the default first-tournament
+    # outcome (parent → first child), not yet meta-loop progress.
+    chain: list[str] = []
+    if roots:
+        chain = [sorted(roots)[0]]
+        seen = {chain[0]}
+        cur = chain[0]
+        while cur in child_of:
+            nxt = child_of[cur]
+            if nxt in seen:
+                break
+            chain.append(nxt)
+            seen.add(nxt)
+            cur = nxt
+    spine_total = 0.0
+    if len(chain) >= 2:
+        for gid in chain:
+            outcome = by_gen[gid].get("outcome")
+            if not isinstance(outcome, dict):
+                continue
+            ds = outcome.get("scalar_score_delta")
+            if isinstance(ds, int | float) and _is_finite(ds):
+                spine_total += float(ds)
+
+    return {
+        "champion_spine": spine_total if len(chain) >= 2 else None,
+        "gross": gross_total if gross_have else None,
+    }
+
+
+def _is_finite(value: float) -> bool:
+    try:
+        return value == value and value not in (float("inf"), float("-inf"))
+    except TypeError:
+        return False
+
+
 def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
     """The current epoch's full evaluation contract.
 
@@ -796,6 +904,12 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
       carrying hypothesis, outcome, and inline patch content so the
       frontend can render {hypothesis → exact change → outcome} in one
       place without a second fetch.
+    * ``delta_scalar_summary`` — ``{champion_spine, gross}`` aggregates
+      over the per-experiment ``scalar_score_delta``. The spine number
+      is the meta-loop's actual progress (sum across promoted hops);
+      the gross number sums every experiment and is the wrong headline
+      for framing meta-loop direction. Either field is ``None`` when
+      no experiment of the relevant kind carries a finite delta.
     * ``journal`` — ``journal.md`` text (empty string when absent).
     * ``analysis_md`` — ``analysis.md`` text (empty string when absent).
     * ``analysis_html_inline`` — paper-styled HTML fragment for the
@@ -844,6 +958,13 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
 
     # Experiment log: per-generation hypothesis + outcome + patch content.
     view["experiments"] = _read_epoch_experiments(epoch_dir)
+
+    # Δscalar aggregates — the Epoch header's headline number. The
+    # champion-spine sum frames meta-loop progress (promoted hops only);
+    # the gross sum across *every* experiment is kept as a secondary
+    # signal but is the wrong number to lead with (it includes rejected
+    # challengers, which never enter the lineage).
+    view["delta_scalar_summary"] = compute_epoch_delta_summary(view["experiments"])
 
     # Journal: epoch-level markdown log of hypothesis+outcome rounds.
     view["journal"] = _read_text_best_effort(epoch_dir / "journal.md")

@@ -3160,8 +3160,6 @@ function renderEpochHeader(def) {
   let promoted = 0;
   let rejected = 0;
   let ran = 0;
-  let netScalar = 0;
-  let haveScalar = false;
   for (const exp of experiments) {
     const decision = _epochDecision(exp.outcome);
     if (decision) {
@@ -3169,10 +3167,13 @@ function renderEpochHeader(def) {
       if (decision === 'promoted') promoted += 1;
       else if (decision === 'rejected') rejected += 1;
     }
-    const ds = exp.outcome && exp.outcome.scalar_score_delta;
-    if (typeof ds === 'number' && isFinite(ds)) { netScalar += ds; haveScalar = true; }
   }
   const pending = experiments.length - ran;
+  // The Δscalar aggregates — champion-spine (meta-loop progress, the
+  // headline) and gross (all experiments, the legacy view). The backend
+  // pre-computes both as `delta_scalar_summary`; the local fallback
+  // covers mock snapshots and any pre-update epoch payload.
+  const summary = _epochDeltaScalarSummary(def);
 
   // Identity line — the epoch id large, status pill alongside.
   const idLine = el('div', { class: 'epoch-header-id' }, [
@@ -3193,11 +3194,12 @@ function renderEpochHeader(def) {
 
   // Stat strip — the experiment tally.
   const stats = el('div', { class: 'epoch-stat-strip' });
-  const stat = (value, label, cls) => el('div', { class: 'epoch-stat' }, [
-    el('span', { class: 'epoch-stat-value' + (cls ? ' ' + cls : '') },
-      [String(value)]),
-    el('span', { class: 'epoch-stat-label' }, [label]),
-  ]);
+  const stat = (value, label, cls, extraCls) => el('div',
+    { class: 'epoch-stat' + (extraCls ? ' ' + extraCls : '') }, [
+      el('span', { class: 'epoch-stat-value' + (cls ? ' ' + cls : '') },
+        [String(value)]),
+      el('span', { class: 'epoch-stat-label' }, [label]),
+    ]);
   stats.appendChild(stat(experiments.length, 'experiments'));
   stats.appendChild(stat(promoted, 'promoted', promoted > 0 ? 'good' : null));
   stats.appendChild(stat(rejected, 'rejected', rejected > 0 ? 'bad' : null));
@@ -3205,12 +3207,118 @@ function renderEpochHeader(def) {
   // tournament was torn down or never reached a decision. "in progress"
   // is reserved for a genuinely live, currently-running experiment.
   if (pending > 0) stats.appendChild(stat(pending, 'incomplete', 'pend'));
-  if (haveScalar) {
-    // Net scalar: negative is improvement (loss went down).
-    const cls = netScalar < 0 ? 'good' : (netScalar > 0 ? 'bad' : null);
-    stats.appendChild(stat(_fmtSignedDelta(netScalar), 'net Δscalar', cls));
-  }
+
+  // Net Δscalar (champion spine) — the headline number. Negative is
+  // improvement (loss fell), so green-on-negative / red-on-positive.
+  // A spine with fewer than two promoted generations reads "—" (no
+  // comparison possible yet) rather than a misleading 0.000.
+  const spine = summary.champion_spine;
+  const spineHave = typeof spine === 'number' && isFinite(spine);
+  const spineCls = !spineHave
+    ? null
+    : (spine < 0 ? 'good' : (spine > 0 ? 'bad' : null));
+  stats.appendChild(stat(
+    spineHave ? _fmtSignedDelta(spine) : '—',
+    'net Δscalar (champion spine)',
+    spineCls,
+    'epoch-stat-headline',
+  ));
+
+  // Gross Δscalar (all experiments) — the legacy "net" tile, kept as a
+  // secondary, neutral-colour signal. Includes rejected challengers so
+  // it must NOT be coloured (a rising gross can coexist with a falling
+  // spine, which is the bug-#169 framing this fix addresses).
+  const gross = summary.gross;
+  const grossHave = typeof gross === 'number' && isFinite(gross);
+  stats.appendChild(stat(
+    grossHave ? _fmtSignedDelta(gross) : '—',
+    'gross Δscalar (all experiments)',
+    null,
+    'epoch-stat-secondary',
+  ));
   wrap.appendChild(stats);
+}
+
+// Champion-spine vs gross Δscalar aggregates for the Epoch header.
+//
+// The backend's ``build_epoch_view`` pre-computes both numbers as
+// ``delta_scalar_summary``; we read that first. For mock snapshots and
+// any pre-update payload that does not carry the field, we re-derive
+// it client-side from ``def.experiments`` using the same parent → child
+// promoted-only walker.
+function _epochDeltaScalarSummary(def) {
+  if (def && def.delta_scalar_summary
+      && typeof def.delta_scalar_summary === 'object') {
+    const s = def.delta_scalar_summary;
+    return {
+      champion_spine: typeof s.champion_spine === 'number'
+        && isFinite(s.champion_spine) ? s.champion_spine : null,
+      gross: typeof s.gross === 'number'
+        && isFinite(s.gross) ? s.gross : null,
+    };
+  }
+  const experiments = def && Array.isArray(def.experiments) ? def.experiments : [];
+  return _computeEpochDeltaScalarSummary(experiments);
+}
+
+// Pure helper — the client-side mirror of
+// ``zicato.dashboard.state_reader.compute_epoch_delta_summary``. Kept
+// separate so the test suite can pin it directly against the t6 shape.
+function _computeEpochDeltaScalarSummary(experiments) {
+  const byGen = new Map();
+  const promotedSet = new Set();
+  let grossTotal = 0;
+  let grossHave = false;
+  for (const exp of experiments || []) {
+    if (!exp || typeof exp !== 'object') continue;
+    const gid = exp.generation_id;
+    if (typeof gid !== 'string' || !gid) continue;
+    byGen.set(gid, exp);
+    const ds = exp.outcome && exp.outcome.scalar_score_delta;
+    if (typeof ds === 'number' && isFinite(ds)) {
+      grossTotal += ds;
+      grossHave = true;
+    }
+    const decision = _epochDecision(exp.outcome);
+    if (decision === 'promoted') promotedSet.add(gid);
+  }
+  // Edges and roots — promoted gens only.
+  const childOf = new Map();
+  const roots = [];
+  for (const gid of promotedSet) {
+    const parent = byGen.get(gid).parent_generation_id;
+    if (typeof parent === 'string' && promotedSet.has(parent)) {
+      if (!childOf.has(parent)) childOf.set(parent, gid);
+    } else {
+      roots.push(gid);
+    }
+  }
+  let chain = [];
+  if (roots.length > 0) {
+    roots.sort();
+    chain = [roots[0]];
+    const seen = new Set(chain);
+    let cur = roots[0];
+    while (childOf.has(cur)) {
+      const nxt = childOf.get(cur);
+      if (seen.has(nxt)) break;
+      chain.push(nxt);
+      seen.add(nxt);
+      cur = nxt;
+    }
+  }
+  let spineTotal = 0;
+  if (chain.length >= 2) {
+    for (const gid of chain) {
+      const ds = byGen.get(gid).outcome
+        && byGen.get(gid).outcome.scalar_score_delta;
+      if (typeof ds === 'number' && isFinite(ds)) spineTotal += ds;
+    }
+  }
+  return {
+    champion_spine: chain.length >= 2 ? spineTotal : null,
+    gross: grossHave ? grossTotal : null,
+  };
 }
 
 function renderEpochHarness(def) {
@@ -6518,4 +6626,7 @@ export {
   // gauntlet auto-scroll memoization can be exercised across multiple
   // renders without driving the whole view switch each time.
   renderBracket,
+  // Epoch-header Δscalar aggregates — exported so the test harness can
+  // pin both the spine/gross calculation and the rendered tile shape.
+  _computeEpochDeltaScalarSummary as computeEpochDeltaScalarSummary,
 };

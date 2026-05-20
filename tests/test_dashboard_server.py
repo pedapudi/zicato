@@ -751,6 +751,193 @@ def test_epoch_view_analysis_html_available_flag(workspace: Path) -> None:
     assert view["analysis_html_available"] is True
 
 
+# ---------------------------------------------------------------------------
+# Δscalar aggregates — champion spine vs gross (bug #169)
+# ---------------------------------------------------------------------------
+#
+# The Epoch header's "NET Δscalar" tile used to sum every experiment's
+# delta — including the rejected challengers that never enter the
+# lineage. That number misframes meta-loop progress: only the promoted
+# spine moves the loss forward. The backend now hands the frontend both
+# numbers as ``delta_scalar_summary = {champion_spine, gross}``.
+
+
+def _exp(
+    *,
+    gen: str,
+    parent: str | None,
+    decision: str | None,
+    delta: float | None,
+) -> dict[str, object]:
+    """Compact factory for fixture experiment dicts."""
+    outcome: dict[str, object] | None = None
+    if decision is not None or delta is not None:
+        outcome = {}
+        if decision is not None:
+            outcome["tournament_decision"] = decision
+        if delta is not None:
+            outcome["scalar_score_delta"] = delta
+    rec: dict[str, object] = {
+        "generation_id": gen,
+        "parent_generation_id": parent,
+    }
+    if outcome is not None:
+        rec["outcome"] = outcome
+    return rec
+
+
+def test_compute_epoch_delta_summary_champion_spine_vs_gross() -> None:
+    """The canonical t6-shape fixture pins both numbers (bug #169).
+
+    Chain: ``v0 → v1(promoted,-10) → v2(rejected,+5) → v3(promoted,-15)
+    → v4(rejected,+20)``. v0 has no delta (it is the baseline; the
+    proposer never ran against it). The champion-spine net is the sum
+    across the promoted hops — ``-10 + -15 = -25``. The gross net sums
+    every recorded delta, promoted or not — ``-10 + 5 + -15 + 20 = 0``.
+    """
+    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+
+    experiments = [
+        # v0 is the baseline — no outcome, no delta.
+        {"generation_id": "v0", "parent_generation_id": None},
+        _exp(gen="v1", parent="v0", decision="promoted", delta=-10.0),
+        _exp(gen="v2", parent="v1", decision="rejected", delta=5.0),
+        _exp(gen="v3", parent="v1", decision="promoted", delta=-15.0),
+        _exp(gen="v4", parent="v3", decision="rejected", delta=20.0),
+    ]
+    summary = compute_epoch_delta_summary(experiments)
+    assert summary["champion_spine"] == pytest.approx(-25.0)
+    assert summary["gross"] == pytest.approx(0.0)
+
+
+def test_compute_epoch_delta_summary_t6_run8_shape() -> None:
+    """Pin the exact numbers from the bug report (t6 run #8).
+
+    Five experiments, two promoted (v1, v3) and three rejected
+    (v2, v4, v5). Champion-spine net = ``-14.429 + -24.331 = -38.760``;
+    gross = sum of all five = ``+19.482`` — exactly the discrepancy the
+    operator caught on the Epoch header.
+    """
+    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+
+    experiments = [
+        _exp(gen="v1", parent="v0", decision="promoted", delta=-14.429),
+        _exp(gen="v2", parent="v1", decision="rejected", delta=10.123),
+        _exp(gen="v3", parent="v1", decision="promoted", delta=-24.331),
+        _exp(gen="v4", parent="v3", decision="rejected", delta=42.405),
+        _exp(gen="v5", parent="v3", decision="rejected", delta=5.714),
+    ]
+    summary = compute_epoch_delta_summary(experiments)
+    assert summary["champion_spine"] == pytest.approx(-38.760)
+    assert summary["gross"] == pytest.approx(19.482)
+
+
+def test_compute_epoch_delta_summary_empty_and_lone_promotion() -> None:
+    """No promoted generations -> spine is None; gross still sums.
+
+    A single promotion is the default first-tournament outcome (parent
+    → first promoted child) and is *not* yet meta-loop progress: the
+    spine reads "—" until a second promotion lands. The gross figure
+    still sums every recorded delta — it is the all-experiments view.
+    """
+    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+
+    # An epoch with no promoted experiments at all.
+    only_rejected = [
+        _exp(gen="v1", parent="v0", decision="rejected", delta=1.0),
+        _exp(gen="v2", parent="v0", decision="rejected", delta=2.0),
+    ]
+    summary = compute_epoch_delta_summary(only_rejected)
+    assert summary["champion_spine"] is None
+    assert summary["gross"] == pytest.approx(3.0)
+
+    # A single promoted generation: spine reads "—" (None) per the
+    # bug-#169 spec — the meta-loop has not yet chained two promotions.
+    one_promoted = [
+        _exp(gen="v1", parent="v0", decision="promoted", delta=-7.5),
+    ]
+    summary = compute_epoch_delta_summary(one_promoted)
+    assert summary["champion_spine"] is None
+    assert summary["gross"] == pytest.approx(-7.5)
+
+    # Two promoted generations chain into a real spine net.
+    two_promoted = [
+        _exp(gen="v1", parent="v0", decision="promoted", delta=-7.5),
+        _exp(gen="v2", parent="v1", decision="promoted", delta=-2.5),
+    ]
+    summary = compute_epoch_delta_summary(two_promoted)
+    assert summary["champion_spine"] == pytest.approx(-10.0)
+    assert summary["gross"] == pytest.approx(-10.0)
+
+
+def test_compute_epoch_delta_summary_no_deltas_returns_none() -> None:
+    """An epoch with no finite deltas yields None for both fields.
+
+    A common in-flight shape: experiments exist but no tournament has
+    written an outcome yet. Neither tile should read "0.000" — both
+    must read "—" (no comparison possible yet).
+    """
+    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+
+    experiments = [
+        {"generation_id": "v0", "parent_generation_id": None},
+        {"generation_id": "v1", "parent_generation_id": "v0"},
+    ]
+    summary = compute_epoch_delta_summary(experiments)
+    assert summary["champion_spine"] is None
+    assert summary["gross"] is None
+
+
+def test_compute_epoch_delta_summary_skips_malformed_entries() -> None:
+    """Best-effort: non-dicts, missing ids, non-finite deltas are skipped."""
+    from zicato.dashboard.state_reader import compute_epoch_delta_summary
+
+    experiments: list[dict[str, object]] = [
+        # Wrong types — silently skipped.
+        "not a dict",  # type: ignore[list-item]
+        {"generation_id": None, "outcome": {"scalar_score_delta": -1.0}},
+        {"generation_id": "vNaN", "outcome": {"scalar_score_delta": float("nan")}},
+        {"generation_id": "vInf", "outcome": {"scalar_score_delta": float("inf")}},
+        _exp(gen="v1", parent="v0", decision="promoted", delta=-2.0),
+        _exp(gen="v2", parent="v1", decision="promoted", delta=-1.0),
+    ]
+    summary = compute_epoch_delta_summary(experiments)
+    assert summary["champion_spine"] == pytest.approx(-3.0)
+    assert summary["gross"] == pytest.approx(-3.0)
+
+
+def test_build_epoch_view_carries_delta_scalar_summary(workspace: Path) -> None:
+    """build_epoch_view surfaces the spine/gross aggregates so the SPA
+    can render the headline without re-walking experiments client-side.
+    """
+    from zicato.dashboard.state_reader import WorkspacePaths, build_epoch_view
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    # Three generations: one promoted, one rejected, one promoted —
+    # spine = -3 + -2 = -5; gross = -3 + 4 + -2 = -1.
+    for gid, parent, decision, delta in [
+        ("v1", "v0", "promoted", -3.0),
+        ("v2", "v1", "rejected", 4.0),
+        ("v3", "v1", "promoted", -2.0),
+    ]:
+        _write_json(
+            epoch_dir / "generations" / gid / "experiment.json",
+            {
+                "generation_id": gid,
+                "parent_generation_id": parent,
+                "outcome": {
+                    "tournament_decision": decision,
+                    "scalar_score_delta": delta,
+                },
+            },
+        )
+
+    view = build_epoch_view(WorkspacePaths(workspace))
+    summary = view["delta_scalar_summary"]
+    assert summary["champion_spine"] == pytest.approx(-5.0)
+    assert summary["gross"] == pytest.approx(-1.0)
+
+
 def test_epoch_journal_endpoint(client: TestClient, workspace: Path) -> None:
     """GET /api/epoch/{id}/journal returns { epoch_id, journal }."""
     epoch_id = "2026-05-16_e0"

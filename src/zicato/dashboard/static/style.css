@@ -2492,6 +2492,17 @@ h4 {
   color: var(--text-muted);
 }
 .epoch-stat-label { font-size: 0.66rem; }
+/* The Epoch header carries TWO Δscalar tiles: the headline tile frames
+ * meta-loop progress (the champion-spine net, sum across promoted hops
+ * only) and is rendered larger; the secondary tile keeps the legacy
+ * "all experiments" sum visible but de-emphasised so it cannot be
+ * mistaken for the loop's actual direction. (bug #169.) */
+.epoch-stat-headline .epoch-stat-value { font-size: 1.6rem; }
+.epoch-stat-secondary .epoch-stat-value {
+  font-size: 1.05rem;
+  color: var(--text-muted);
+}
+.epoch-stat-secondary .epoch-stat-label { opacity: 0.85; }
 .epoch-brief .epoch-brief-lead {
   margin: 0 0 0.4rem;
   font-size: 0.78rem;
