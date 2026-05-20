@@ -569,16 +569,56 @@ def _build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[s
     each ran the entry once. This finds both runs' ``events.jsonl`` files
     and reconstructs both transcripts so the UI can render them side by
     side.
+
+    Fast-mode caveat: in a fast-mode round the champion side is NOT
+    actually executed — its ``status_raw`` is ``"cached"`` and the per-
+    entry scalar is reused from the cached aggregate. The matching
+    transcript on disk is the one this generation produced when it was
+    the live challenger in its *original* tournament, persisted under
+    its own generation directory. The active-tournament's per-entry
+    ``generation_id`` (stamped by :func:`_normalize_tournament_statuses`
+    from the tournament-level parent / child fields) is the correct
+    lookup key — using it routes cached sides through the cached
+    generation's own runs directory, and live sides through the
+    in-progress round's runs directory, in one uniform code path.
     """
     result: dict[str, Any] = {"champion": None, "challenger": None}
     tournament = state_reader.read_active_tournament_dict(paths)
     if not isinstance(tournament, dict):
         return result
 
-    parent_gen = tournament.get("parent_generation_id")
-    child_gen = tournament.get("child_generation_id")
+    # Index per-(entry, side) so the side resolver can read both the
+    # generation_id and the producer's status spelling. The normalizer
+    # has already stamped a generation_id on every entry — but we keep a
+    # tournament-level fallback for older payloads (or a producer that
+    # writes only the tournament-level fields).
+    entries_index: dict[tuple[str, str], dict[str, Any]] = {}
+    raw_entries = tournament.get("entries")
+    if isinstance(raw_entries, list):
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                continue
+            eid = entry.get("entry_id")
+            side = entry.get("side")
+            if isinstance(eid, str) and isinstance(side, str):
+                entries_index[(eid, side)] = entry
 
-    def _side(generation_id: Any) -> dict[str, Any] | None:
+    tournament_parent_gen = tournament.get("parent_generation_id")
+    tournament_child_gen = tournament.get("child_generation_id")
+
+    def _resolve_generation_id(side: str, fallback: Any) -> Any:
+        # Prefer the per-entry generation_id (stamped explicitly so a
+        # cached row can carry a generation distinct from the current
+        # round's champion-of-this-round id, if those ever differ). Fall
+        # back to the tournament-level field for legacy payloads.
+        entry = entries_index.get((entry_id, side))
+        if entry is not None:
+            gen_id = entry.get("generation_id")
+            if isinstance(gen_id, str) and gen_id:
+                return gen_id
+        return fallback
+
+    def _side(side: str, generation_id: Any) -> dict[str, Any] | None:
         if not isinstance(generation_id, str) or not generation_id:
             return None
         located = state_reader.find_generation_run(paths, generation_id, entry_id)
@@ -601,6 +641,8 @@ def _build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[s
             "transcript": transcript,
         }
 
-    result["champion"] = _side(parent_gen)
-    result["challenger"] = _side(child_gen)
+    champion_gen = _resolve_generation_id("parent", tournament_parent_gen)
+    challenger_gen = _resolve_generation_id("child", tournament_child_gen)
+    result["champion"] = _side("parent", champion_gen)
+    result["challenger"] = _side("child", challenger_gen)
     return result

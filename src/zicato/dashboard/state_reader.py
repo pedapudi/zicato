@@ -247,8 +247,17 @@ def _normalize_tournament_statuses(tournament: dict[str, Any] | None) -> dict[st
 
     Each entry gains a ``status`` rewritten to the canonical bucket and a
     ``status_raw`` preserving exactly what the producer wrote (so a
-    post-mortem can still see ``aborted`` vs ``error``). The tournament's
-    own ``phase`` is left untouched — it is a separate vocabulary.
+    post-mortem can still see ``aborted`` vs ``error``). Each entry is
+    also stamped with an explicit ``generation_id`` — derived from the
+    tournament's ``parent_generation_id`` / ``child_generation_id`` by
+    the entry's ``side`` — so consumers (the matchup-conversations
+    fetcher) can look up the run's events directly per-entry. For a
+    fast-mode champion row this is the *cached* source generation
+    (``status_raw == "cached"``); v1's events on disk live under that
+    same generation directory, NOT under the current round's challenger
+    generation, so a per-entry generation_id is the right lookup key.
+    The tournament's own ``phase`` is left untouched — it is a separate
+    vocabulary.
     """
     if not isinstance(tournament, dict):
         return tournament
@@ -256,6 +265,8 @@ def _normalize_tournament_statuses(tournament: dict[str, Any] | None) -> dict[st
     if not isinstance(entries, list):
         return tournament
     out = dict(tournament)
+    parent_gen = tournament.get("parent_generation_id")
+    child_gen = tournament.get("child_generation_id")
     new_entries: list[Any] = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -265,6 +276,19 @@ def _normalize_tournament_statuses(tournament: dict[str, Any] | None) -> dict[st
         raw = e.get("status")
         e["status_raw"] = raw
         e["status"] = normalize_entry_status(raw)
+        # Stamp an explicit per-entry generation_id so the matchup-
+        # conversations fetcher can resolve to the correct events.jsonl
+        # without having to guess from the tournament-level fields. A
+        # producer that already wrote a non-empty generation_id is
+        # respected (covers a hypothetical multi-source future where the
+        # cached side's gen differs from the tournament's parent_id).
+        existing_gen = e.get("generation_id")
+        if not isinstance(existing_gen, str) or not existing_gen:
+            side = e.get("side")
+            if side == "parent" and isinstance(parent_gen, str) and parent_gen:
+                e["generation_id"] = parent_gen
+            elif side == "child" and isinstance(child_gen, str) and child_gen:
+                e["generation_id"] = child_gen
         new_entries.append(e)
     out["entries"] = new_entries
     return out

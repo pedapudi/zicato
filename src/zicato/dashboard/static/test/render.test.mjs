@@ -958,6 +958,53 @@ test('conversation diff survives a #/tournament/{gen} → conv route switch', ()
     'the conversation columns must show the mock transcripts, not "no run"');
 });
 
+test('conversation view champion column renders cached transcript turns, not the "waiting" placeholder', () => {
+  // BUG (live-verified, run #6 round 1): a fast-mode round's CACHED
+  // champion side has events persisted on disk under its OWN generation
+  // directory (the round it ran live as a challenger), but the
+  // matchup-conversations fetcher was looking under the current round's
+  // champion-of-this-round directory and finding an empty / missing
+  // events.jsonl — so the conversation view painted the champion column
+  // as "Waiting for the first turn… — run in progress — more turns will
+  // stream in" for a generation that finished hours earlier.
+  //
+  // This test exercises the JS render path with a payload that mimics
+  // the FIXED server response: champion side carries a populated
+  // (non-empty) transcript. The render must show the turn content and
+  // MUST NOT print the in-progress "Waiting for the first turn…"
+  // placeholder for the cached side.
+  state.mock = true;
+  state.applySnapshot(mockSnapshot());
+
+  // Drill into a board entry — selectConversation seeds convData from
+  // mockConversation, which gives the champion side a non-empty
+  // transcript (the post-fix server payload for a cached side that has
+  // its persisted events on disk).
+  globalThis.location.hash = '#/conversation/extract_invoice_001';
+  render.applyRoute();
+
+  const panel = doc.getElementById('conversation-panel');
+  const text = textOf(panel);
+  assert(text.includes('Conversation diff'),
+    'the conversation view must render its header');
+  // The champion column must show actual transcript content — the mock
+  // champion transcript carries a turn with the goal text.
+  assert(text.includes('Extract the invoice total'),
+    'the champion column must render the cached transcript turns');
+  // Critically: the in-progress placeholder must NOT appear for a side
+  // whose transcript carries turns. ("Waiting for the first turn…" is
+  // the exact failure mode the live bug showed for the cached side.)
+  const champCol = panel.querySelector
+    ? panel.querySelector('.conversation-column.champion')
+    : null;
+  // Fall back to the panel text scan when querySelector is unavailable
+  // in the harness — the assertion is the same either way.
+  const champText = champCol ? textOf(champCol) : text;
+  assert(!champText.includes('Waiting for the first turn'),
+    'the champion column must not render the in-progress placeholder ' +
+    'when the API returns a non-empty cached transcript');
+});
+
 test('a #/tournament/{gen} route does not yank the scroll on every render', () => {
   // BUG 1: openMatchup() scrolled the detail panel into view, and
   // applyRoute() re-runs openMatchup on EVERY render (each SSE delta) for

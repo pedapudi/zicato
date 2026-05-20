@@ -1576,6 +1576,282 @@ def test_conversation_unavailable_without_transcript_module(
 
 
 # ---------------------------------------------------------------------------
+# Fast-mode cached-champion transcript fetch
+# ---------------------------------------------------------------------------
+# When a fast-mode round runs, the champion side is NOT executed live —
+# its ``status_raw`` is ``"cached"`` and the events on disk live under
+# the cached generation's own runs directory (the round in which it was
+# the live challenger). The matchup-conversations fetcher must route
+# cached sides through THAT directory, not the in-progress round's, or
+# the conversation view paints "Waiting for the first turn…" for an
+# entry that actually completed several rounds ago.
+
+
+def _populate_fast_mode_cached_workspace(
+    tmp_path: Path,
+    *,
+    epoch_id: str = "2026-05-18_fastmode",
+    entry_id: str = "waffles_single",
+    cached_gen: str = "v1",
+    challenger_gen: str = "v2",
+    cached_events: list[str] | None = None,
+    challenger_events: list[str] | None = None,
+    champion_status: str = "cached",
+    challenger_status: str = "running",
+) -> Path:
+    """Build a workspace mimicking a fast-mode round in progress.
+
+    The cached champion side has a populated events.jsonl under its own
+    generation directory (left over from when it ran live as a
+    challenger); the live challenger writes a fresh events.jsonl under
+    the in-progress generation directory.
+    """
+    ws = tmp_path / ".zicato"
+    runtime = ws / "runtime"
+    (runtime / "active_runs").mkdir(parents=True)
+    (runtime / "control").mkdir(parents=True)
+    _write(ws / "current_epoch", epoch_id)
+
+    _write_json(
+        runtime / "heartbeat.json",
+        {
+            "pid": 4242,
+            "instance_id": "default",
+            "started_at": "2026-05-18T04:00:00Z",
+            "last_heartbeat": "2026-05-18T04:30:00Z",
+            "epoch_id": epoch_id,
+            "generation_id": challenger_gen,
+            "phase": "tournament",
+            "round_index": 1,
+            "round_started_at": "2026-05-18T04:25:00Z",
+        },
+    )
+
+    _write_json(
+        runtime / "active_tournament.json",
+        {
+            "tournament_id": f"tourn_{epoch_id}_{challenger_gen}",
+            "parent_generation_id": cached_gen,
+            "child_generation_id": challenger_gen,
+            "epoch_id": epoch_id,
+            "started_at": "2026-05-18T04:25:00Z",
+            "phase": "running",
+            "round_index": 1,
+            "total_rounds": 3,
+            "entries": [
+                {"entry_id": entry_id, "side": "parent", "status": champion_status},
+                {"entry_id": entry_id, "side": "child", "status": challenger_status},
+            ],
+            "partial_champion_agg": {"generation_id": cached_gen},
+            "partial_challenger_agg": {},
+        },
+    )
+
+    # Cached champion events: persisted from the original round in which
+    # this generation was the live challenger. Path is the canonical
+    # ``epochs/{epoch}/generations/{cached_gen}/runs/{entry}/events.jsonl``.
+    cached_events_path = (
+        ws / "epochs" / epoch_id / "generations" / cached_gen / "runs" / entry_id / "events.jsonl"
+    )
+    cached_events_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = (
+        cached_events
+        if cached_events is not None
+        else [
+            json.dumps(
+                {
+                    "emittedAt": "2026-05-17T10:00:01Z",
+                    "eventId": "cached:0:a",
+                    "runId": "cached-run-v1",
+                    "sequence": "0",
+                    "runStarted": {"goalSummary": "Make a deck about waffles."},
+                }
+            ),
+            json.dumps(
+                {
+                    "emittedAt": "2026-05-17T10:01:02Z",
+                    "eventId": "cached:1:b",
+                    "runId": "cached-run-v1",
+                    "sequence": "1",
+                    "runCompleted": {"outcomeSummary": "deck produced"},
+                }
+            ),
+        ]
+    )
+    cached_events_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # The live challenger's events file — may be empty (just started)
+    # or partially populated. Callers control via ``challenger_events``.
+    if challenger_events is not None:
+        challenger_path = (
+            ws
+            / "epochs"
+            / epoch_id
+            / "generations"
+            / challenger_gen
+            / "runs"
+            / entry_id
+            / "events.jsonl"
+        )
+        challenger_path.parent.mkdir(parents=True, exist_ok=True)
+        challenger_path.write_text(
+            ("\n".join(challenger_events) + "\n") if challenger_events else "",
+            encoding="utf-8",
+        )
+
+    return ws
+
+
+def test_matchup_conversations_cached_champion_reads_cached_generation(
+    tmp_path: Path,
+    static_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cached champion side reads events from its cached source generation.
+
+    The on-disk events.jsonl for the cached side lives under its OWN
+    generation directory (the round it ran live). The fetcher must
+    resolve the champion side's generation_id to that directory — not
+    leave the column empty just because the cached side did not run
+    this round.
+    """
+    ws = _populate_fast_mode_cached_workspace(tmp_path)
+    _install_stub_transcript(monkeypatch)
+    app = create_app(ws, tmp_path / "static", read_only=True)
+    (tmp_path / "static").mkdir(exist_ok=True)
+    with TestClient(app) as c:
+        r = c.get("/api/matchup/waffles_single/conversations")
+        assert r.status_code == 200
+        body = r.json()
+        # Cached champion side resolves to the cached generation id.
+        assert body["champion"] is not None
+        assert body["champion"]["generation_id"] == "v1"
+        # The transcript came from the cached gen's persisted events
+        # (the stub reports event_count = number of non-blank lines).
+        assert body["champion"]["transcript"] is not None
+        assert body["champion"]["transcript"]["event_count"] == 2
+        # Sanity: challenger side still resolves to the in-progress gen.
+        assert body["challenger"]["generation_id"] == "v2"
+
+
+def test_matchup_conversations_running_challenger_in_progress_placeholder(
+    tmp_path: Path,
+    static_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A running side with no events yet keeps the in-progress placeholder.
+
+    The fetcher must NOT pretend the run is complete when its events
+    file is missing or empty — the JS rendering path keys "Waiting for
+    the first turn…" off ``turns.length === 0 && !complete``, so the
+    transcript must report empty turns and ``complete: False``.
+    """
+    ws = _populate_fast_mode_cached_workspace(
+        tmp_path,
+        challenger_events=[],  # write an empty events.jsonl
+    )
+    # Use the REAL transcript reconstructor here so the empty / not-
+    # complete state is what the live dashboard would actually see.
+    app = create_app(ws, tmp_path / "static", read_only=True)
+    (tmp_path / "static").mkdir(exist_ok=True)
+    with TestClient(app) as c:
+        r = c.get("/api/matchup/waffles_single/conversations")
+        assert r.status_code == 200
+        body = r.json()
+        # Cached champion still resolves with its real cached events.
+        assert body["champion"] is not None
+        assert body["champion"]["generation_id"] == "v1"
+        # Challenger side resolved to a run path but the events are
+        # empty — transcript reports zero turns and not complete.
+        assert body["challenger"] is not None
+        assert body["challenger"]["generation_id"] == "v2"
+        challenger_transcript = body["challenger"]["transcript"]
+        assert challenger_transcript is not None
+        # The transcript is present but empty — the JS placeholder
+        # ("Waiting for the first turn…") fires off this exact shape.
+        assert challenger_transcript.get("turns") == []
+        assert challenger_transcript.get("complete") is False
+
+
+def test_matchup_conversations_full_mode_both_sides_live(
+    tmp_path: Path,
+    static_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: full-mode (both sides ran live this round) still works.
+
+    The legacy path — both ``parent`` and ``child`` entries with
+    ``status="completed"`` and events under their respective generation
+    directories — must keep resolving via the per-entry generation_id.
+    """
+    ws = _populate_fast_mode_cached_workspace(
+        tmp_path,
+        champion_status="completed",
+        challenger_status="completed",
+        challenger_events=[
+            json.dumps(
+                {
+                    "emittedAt": "2026-05-18T04:25:01Z",
+                    "eventId": "live:0:a",
+                    "runId": "live-run-v2",
+                    "sequence": "0",
+                    "runStarted": {"goalSummary": "Make a deck about waffles."},
+                }
+            ),
+            json.dumps(
+                {
+                    "emittedAt": "2026-05-18T04:25:02Z",
+                    "eventId": "live:1:b",
+                    "runId": "live-run-v2",
+                    "sequence": "1",
+                    "runCompleted": {"outcomeSummary": "deck produced"},
+                }
+            ),
+        ],
+    )
+    _install_stub_transcript(monkeypatch)
+    app = create_app(ws, tmp_path / "static", read_only=True)
+    (tmp_path / "static").mkdir(exist_ok=True)
+    with TestClient(app) as c:
+        r = c.get("/api/matchup/waffles_single/conversations")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["champion"]["generation_id"] == "v1"
+        assert body["challenger"]["generation_id"] == "v2"
+        # Both sides have populated event files.
+        assert body["champion"]["transcript"]["event_count"] == 2
+        assert body["challenger"]["transcript"]["event_count"] == 2
+
+
+def test_active_tournament_entries_carry_generation_id(
+    tmp_path: Path,
+) -> None:
+    """``read_active_tournament_dict`` stamps generation_id on every entry.
+
+    Without this stamp, the matchup-conversations fetcher cannot route
+    cached entries to the right events file (the cached generation id
+    is implicit in the tournament-level ``parent_generation_id`` but a
+    consumer should not have to re-derive it per-entry).
+    """
+    from zicato.dashboard.state_reader import (
+        WorkspacePaths,
+        read_active_tournament_dict,
+    )
+
+    ws = _populate_fast_mode_cached_workspace(tmp_path)
+    paths = WorkspacePaths(ws)
+    t = read_active_tournament_dict(paths)
+    assert t is not None
+    entries_by_side = {e["side"]: e for e in t["entries"]}
+    assert entries_by_side["parent"]["generation_id"] == "v1"
+    assert entries_by_side["parent"]["status_raw"] == "cached"
+    assert entries_by_side["parent"]["status"] == "done"
+    assert entries_by_side["child"]["generation_id"] == "v2"
+    assert entries_by_side["child"]["status_raw"] == "running"
+    assert entries_by_side["child"]["status"] == "running"
+
+
+# ---------------------------------------------------------------------------
 # Degraded workspaces — endpoints never 500
 # ---------------------------------------------------------------------------
 
