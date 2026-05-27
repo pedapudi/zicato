@@ -511,15 +511,15 @@ def test_score_trajectory_golden_with_fixture_workspace(tmp_path: Path) -> None:
 def test_hypothesis_vs_outcome_empty_returns_placeholder() -> None:
     svg = render_svg_hypothesis_vs_outcome(_data())
     _assert_inline_svg(svg)
-    assert "No completed challengers" in svg
+    assert "No scored generations" in svg
 
 
-def test_hypothesis_vs_outcome_renders_one_panel_per_completed_challenger() -> None:
-    """One panel per non-baseline, non-pending challenger.
+def test_hypothesis_vs_outcome_renders_row_per_scored_generation() -> None:
+    """One row per non-pending generation — promoted AND rejected.
 
-    Each panel carries both metric rows (pass rate, drift loss) and pairs
-    the proposer's predicted Δ (outlined, dashed) with the actual Δ
-    (filled, decision-coloured).
+    Rejected rounds still made a prediction; the figure renders the
+    pair so the proposer's hit-rate covers the full campaign, not
+    only the promoted spine.
     """
     gens = (
         _gen(gid="v0", is_baseline=True, decision="baseline"),
@@ -551,34 +551,109 @@ def test_hypothesis_vs_outcome_renders_one_panel_per_completed_challenger() -> N
     )
     svg = render_svg_hypothesis_vs_outcome(_data(gens))
     _assert_inline_svg(svg)
-    # One panel per completed challenger = v1 + v2.
-    assert ">v1 ·" in svg
-    assert ">v2 ·" in svg
-    assert ">v3 ·" not in svg
-    # Both metric rows are labelled.
-    assert ">pass rate</text>" in svg
-    assert ">drift loss</text>" in svg
-    # Predicted bar uses the predicted palette token.
+    # Every scored generation gets a row, including the baseline so
+    # the lineage stays anchored visually. The pending v3 is skipped.
+    assert ">v0</text>" in svg
+    assert ">v1</text>" in svg
+    assert ">v2</text>" in svg
+    assert ">v3</text>" not in svg
+    # Both lane headers are labelled with per-lane extents.
+    assert ">pass rate Δ " in svg
+    assert ">drift loss Δ " in svg
+    # Predicted marker uses the predicted palette token; actual bar
+    # uses the per-row decision token.
     assert "var(--paper-predicted" in svg
-    # Actual bar uses the decision palette tokens.
     assert "var(--paper-promoted)" in svg
     assert "var(--paper-rejected)" in svg
     # No raw hex / no external resources.
     assert PROMOTED_COLOR not in svg
     assert REJECTED_COLOR not in svg
     assert 'href="http' not in svg
-    # Predicted vs actual deltas labelled.
+    # Pred/act numeric labels appear for each scored generation.
     assert "act +0.100" in svg  # v1 actual pass rate
-    assert "act +0.140" not in svg  # we project drift differently — confirm
+    assert "act -0.050" in svg  # v2 actual pass rate (rejected, still rendered)
     assert "pred +0.100" in svg  # v1 predicted pass-rate midpoint of +0.05..+0.15
+    # Decision pills present on the rendered rows.
+    assert ">promoted</text>" in svg
+    assert ">rejected</text>" in svg
+    assert ">baseline</text>" in svg
     # The title strip carries the figure header.
     assert "PREDICTED vs ACTUAL" in svg
 
 
-def test_hypothesis_vs_outcome_handles_missing_predictions_gracefully() -> None:
-    """A round without an `expected_pass_rate_delta` renders a 'no prediction' note."""
+def test_hypothesis_vs_outcome_lanes_have_independent_extents() -> None:
+    """Each metric lane sets its own symmetric extent.
+
+    Drift-loss Δ lives on a much larger scale than pass-rate Δ; a
+    shared axis squashes pass-rate predictions to invisible slivers.
+    The lane headers expose the per-lane extent so a reader can
+    see both metrics at readable magnitudes.
+    """
     gens = (
         _gen(gid="v0", is_baseline=True, decision="baseline"),
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="promoted",
+            pass_rate_delta=0.33,  # small absolute number
+            drift_loss_delta=-24.0,  # large absolute number
+            expected_pass_rate_delta="+0.10 to +0.25",
+            expected_drift_movements=(
+                {"kind": "off_topic", "direction": "decrease", "magnitude": "medium"},
+            ),
+        ),
+    )
+    svg = render_svg_hypothesis_vs_outcome(_data(gens))
+    _assert_inline_svg(svg)
+    # Pass-rate lane extent reflects the small ±0.33 scale.
+    assert "(lane ±0.33)" in svg
+    # Drift-loss lane extent reflects the large ±24.00 scale.
+    assert "(lane ±24.00)" in svg
+    # The realised drift_loss_delta is still labelled at full precision.
+    assert "act -24.000" in svg
+    # The "medium" magnitude token resolves to a real prediction on the
+    # v1 row rather than silently dropping to no-prediction (the
+    # original bug). The baseline row v0 still shows no-prediction
+    # because the baseline carries no hypothesis.
+    # Rows render in lineage order (v0 then v1), so the substring AFTER
+    # the v1 row marker is the v1 row + footer only.
+    v1_segment = svg.split(">v1</text>")[1]
+    assert "(no prediction)" not in v1_segment
+
+
+def test_hypothesis_vs_outcome_renders_hit_and_miss_glyphs() -> None:
+    """Each lane gets a hit/miss glyph summarising the pair."""
+    gens = (
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="promoted",
+            pass_rate_delta=0.10,
+            drift_loss_delta=-0.30,
+            expected_pass_rate_delta="+0.05 to +0.15",
+            expected_drift_movements=(
+                {"kind": "off_topic", "direction": "decrease", "magnitude": "moderate"},
+            ),
+        ),
+        _gen(
+            gid="v2",
+            parent="v1",
+            decision="rejected",
+            # Proposer predicted pass-rate up; outcome dropped it.
+            pass_rate_delta=-0.05,
+            drift_loss_delta=0.12,
+            expected_pass_rate_delta="+0.10",
+        ),
+    )
+    svg = render_svg_hypothesis_vs_outcome(_data(gens))
+    _assert_inline_svg(svg)
+    assert ">hit</text>" in svg
+    assert ">miss</text>" in svg
+
+
+def test_hypothesis_vs_outcome_handles_missing_predictions_gracefully() -> None:
+    """A round without `expected_*` fields renders ``(no prediction)`` + actual."""
+    gens = (
         _gen(
             gid="v1",
             parent="v0",
@@ -590,9 +665,253 @@ def test_hypothesis_vs_outcome_handles_missing_predictions_gracefully() -> None:
     )
     svg = render_svg_hypothesis_vs_outcome(_data(gens))
     _assert_inline_svg(svg)
-    assert "no prediction" in svg
-    # Actual deltas are still rendered.
+    assert "(no prediction)" in svg
+    # Actual deltas are still rendered with the per-row decision token.
     assert "act -0.050" in svg
+    assert "act +0.040" in svg
+
+
+def test_hypothesis_vs_outcome_renders_from_workspace_fixture(tmp_path: Path) -> None:
+    """End-to-end: gather a real workspace view then render the figure.
+
+    Mirrors the live experiment.json shape (with the textual
+    ``expected_pass_rate_delta`` ranges + ``magnitude`` words the
+    proposer actually writes) so the figure regresses cleanly when the
+    field-name contract changes.
+    """
+    from zicato.analyzer.report_data import gather_epoch_report_data
+
+    ws = tmp_path / ".zicato"
+    epoch = "ep"
+    edir = ws / "epochs" / epoch
+    edir.mkdir(parents=True)
+    import json
+
+    (edir / "config.json").write_text(json.dumps({"name": "ep"}))
+    (edir / "board.jsonl").write_text("")
+    (edir / "scoring.json").write_text(json.dumps({}))
+
+    rounds = (
+        ("v0", "", "baseline", None, {}),
+        (
+            "v1",
+            "v0",
+            "promoted",
+            {
+                "tournament_decision": "promoted",
+                "scalar_score_delta": -14.4,
+                "drift_loss_delta": -13.7,
+                "pass_rate_delta": 0.0,
+                "drift_movements": [],
+            },
+            {
+                "core_idea": "Tighten the web developer's slide-structure instructions.",
+                "expected_pass_rate_delta": "+0.10 to +0.20",
+                "expected_drift_movements": [],
+            },
+        ),
+        (
+            "v2",
+            "v1",
+            "rejected",
+            {
+                "tournament_decision": "rejected",
+                "scalar_score_delta": 10.1,
+                "drift_loss_delta": 9.6,
+                "pass_rate_delta": 0.17,
+                "drift_movements": [],
+            },
+            {
+                "core_idea": "Tighten researcher topical constraints.",
+                "expected_pass_rate_delta": "+0.05 to +0.15",
+                "expected_drift_movements": [
+                    {
+                        "direction": "decrease",
+                        "kind": "off_topic",
+                        "magnitude": "medium",
+                    },
+                ],
+            },
+        ),
+    )
+    for gen, parent, _, outcome, hypothesis in rounds:
+        gd = edir / "generations" / gen
+        gd.mkdir(parents=True)
+        payload: dict[str, object] = {
+            "generation_id": gen,
+            "parent_generation_id": parent,
+            "hypothesis": hypothesis or {"core_idea": "baseline"},
+        }
+        if outcome:
+            payload["outcome"] = outcome
+        (gd / "experiment.json").write_text(json.dumps(payload))
+
+    data = gather_epoch_report_data(ws, epoch)
+    svg = render_svg_hypothesis_vs_outcome(data)
+    _assert_inline_svg(svg)
+    # Every generation gets a row, including the baseline.
+    assert ">v0</text>" in svg
+    assert ">v1</text>" in svg
+    assert ">v2</text>" in svg
+    # The proposer's textual prediction is parsed and labelled —
+    # v1's "+0.10 to +0.20" midpoint = +0.15.
+    assert "pred +0.150" in svg
+    # The realised pass-rate Δ for v2 (+0.17) appears with the actual prefix.
+    assert "act +0.170" in svg
+    # The "medium" magnitude resolves to a non-empty drift prediction
+    # rather than silently dropping the bar (the previous bug). v2 is
+    # the last row, so the substring after its marker contains only
+    # v2's content + the footer.
+    assert "(no prediction)" not in svg.split(">v2</text>")[1]
+    # The core_idea snippet is surfaced in the row gutter so the
+    # reader can scan WHAT was proposed alongside the prediction.
+    # The snippet is truncated, so we look for an early-portion match.
+    assert "Tighten the web developer" in svg
+
+
+def test_hypothesis_vs_outcome_baseline_row_suppresses_lane_bars() -> None:
+    """The v0 baseline row anchors the lineage but draws no lane bars.
+
+    The baseline carries no proposer prediction AND no outcome delta;
+    rendering "predicted zero / actual zero" would mislead the reader
+    into thinking the baseline made a (correct) zero forecast. The row
+    is still present (so v0 is visible in lineage order) but both
+    lanes read ``(no prediction) / act —``.
+    """
+    gens = (
+        _gen(gid="v0", is_baseline=True, decision="baseline"),
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="promoted",
+            pass_rate_delta=0.10,
+            drift_loss_delta=-0.30,
+            expected_pass_rate_delta="+0.05 to +0.15",
+        ),
+    )
+    svg = render_svg_hypothesis_vs_outcome(_data(gens))
+    _assert_inline_svg(svg)
+    # The v0 row is rendered (gen id + decision pill).
+    assert ">v0</text>" in svg
+    assert ">baseline</text>" in svg
+    # The baseline lanes carry the "act —" sentinel rather than
+    # "act +0.000" — the row anchors lineage without faking a forecast.
+    # Find the v0 row's segment (between v0 and v1 markers).
+    v0_segment = svg.split(">v0</text>")[1].split(">v1</text>")[0]
+    assert "act —" in v0_segment
+    assert "(no prediction)" in v0_segment
+
+
+def test_predicted_drift_delta_sum_accepts_medium_magnitude() -> None:
+    """Direct unit test for the magnitude vocabulary the proposer writes.
+
+    Live workspaces routinely include ``magnitude: "medium"`` in their
+    expected_drift_movements entries; previously this token wasn't in
+    the ``_MAGNITUDE_MAP`` so the figure silently rendered ``(no
+    prediction)`` even when the proposer DID record a forecast.
+    """
+    from zicato.analyzer.report_figures import _predicted_drift_delta_sum
+
+    g = _gen(
+        gid="vX",
+        parent="vP",
+        decision="promoted",
+        expected_drift_movements=(
+            {
+                "direction": "decrease",
+                "kind": "off_topic",
+                "magnitude": "medium",
+            },
+        ),
+    )
+    result = _predicted_drift_delta_sum(g)
+    assert result is not None, "medium magnitude must resolve to a numeric prediction"
+    assert result < 0.0, "decrease direction must produce a negative signed magnitude"
+
+
+def test_parse_expected_pass_rate_delta_handles_range_and_single_value() -> None:
+    """The proposer writes free-form pass-rate predictions.
+
+    Ranges parse to their midpoint; bare signed numbers parse to that
+    number; unparseable text falls through to ``None`` so the figure
+    renders ``(no prediction)`` rather than a fake zero.
+    """
+    from zicato.analyzer.report_figures import _parse_expected_pass_rate_delta
+
+    # Range — midpoint of [+0.05, +0.15] is +0.10.
+    assert _parse_expected_pass_rate_delta("+0.05 to +0.15") == pytest.approx(0.10)
+    # Single value.
+    assert _parse_expected_pass_rate_delta("+0.10") == pytest.approx(0.10)
+    # Negative range.
+    assert _parse_expected_pass_rate_delta("-0.20 to -0.10") == pytest.approx(-0.15)
+    # Unparseable.
+    assert _parse_expected_pass_rate_delta("") is None
+    assert _parse_expected_pass_rate_delta("unknown") is None
+
+
+def test_hvo_hit_glyph_categorises_pairs_correctly() -> None:
+    """The hit/miss glyph reflects directional agreement, not magnitude."""
+    from zicato.analyzer.report_figures import _hvo_hit_glyph
+
+    # Same direction (both positive) — hit, even if magnitudes differ.
+    assert _hvo_hit_glyph(0.05, 0.50) == "hit"
+    # Same direction (both negative) — hit.
+    assert _hvo_hit_glyph(-0.05, -0.50) == "hit"
+    # Opposite directions — miss.
+    assert _hvo_hit_glyph(0.05, -0.50) == "miss"
+    # Both ~zero — hit (the proposer correctly predicted no movement).
+    assert _hvo_hit_glyph(0.0, 0.0) == "hit"
+    # No prediction or no outcome — empty glyph.
+    assert _hvo_hit_glyph(None, 0.10) == ""
+    assert _hvo_hit_glyph(0.10, None) == ""
+
+
+def test_hypothesis_vs_outcome_lane_extent_floors_with_only_baseline() -> None:
+    """When only the baseline is scored, lane extents fall back to their floor.
+
+    A degenerate input — every value is None or zero — must not produce
+    a divide-by-zero or a zero-width lane. The lane extents floor at a
+    sensible minimum so the lanes still render legibly.
+    """
+    gens = (_gen(gid="v0", is_baseline=True, decision="baseline"),)
+    svg = render_svg_hypothesis_vs_outcome(_data(gens))
+    _assert_inline_svg(svg)
+    # The pass-rate lane floor is 0.05; drift-loss lane floor is 0.10.
+    # Each lane header carries its extent.
+    assert "(lane ±0.05)" in svg
+    assert "(lane ±0.10)" in svg
+
+
+def test_hypothesis_vs_outcome_handles_single_rejected_challenger() -> None:
+    """A campaign with only a rejected challenger still renders cleanly.
+
+    Edge case: when every challenger was rejected, the figure should
+    still render the proposer's prediction vs the realised outcome
+    instead of dropping into the "no scored generations" placeholder.
+    """
+    gens = (
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="rejected",
+            pass_rate_delta=-0.05,
+            drift_loss_delta=0.10,
+            expected_pass_rate_delta="+0.05",
+            expected_drift_movements=(
+                {"kind": "off_topic", "direction": "decrease", "magnitude": "small"},
+            ),
+        ),
+    )
+    svg = render_svg_hypothesis_vs_outcome(_data(gens))
+    _assert_inline_svg(svg)
+    assert "No scored generations" not in svg
+    assert ">v1</text>" in svg
+    assert ">rejected</text>" in svg
+    assert "pred +0.050" in svg
+    assert "act -0.050" in svg
+    # The proposer predicted pass-rate up; outcome dropped it — the
+    # lane is a miss.
+    assert ">miss</text>" in svg
 
 
 # ---------------------------------------------------------------------------
