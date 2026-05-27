@@ -245,6 +245,66 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
     )
 
 
+def write_seed_experiment(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str = "v0",
+    *,
+    proposed_at: str = "",
+) -> bool:
+    """Idempotently write a synthetic ``experiment.json`` for the seed generation.
+
+    The v0 seed is not a proposer experiment — it is the initial workspace
+    snapshot the epoch starts from. Downstream consumers (the analyzer
+    report data loader, the index dual-write, the dashboard lineage
+    walker) all expect every generation directory to carry an
+    ``experiment.json``. A seed-shaped marker keeps the on-disk shape
+    uniform without inventing tournament numbers.
+
+    Marker shape:
+      * ``id``: ``"exp_{epoch}_{generation}"`` — same convention as a
+        proposer experiment.
+      * ``parent_generation_id``: ``""`` — the seed has no parent within
+        the epoch (cross-epoch lineage lives in ``lineage.json``).
+      * ``hypothesis.core_idea``: ``"baseline seed"`` — terse and stable.
+      * ``outcome``: ``None`` — the seed never ran a tournament round, so
+        no realised deltas exist. Loaders detect this and render the
+        baseline row with empty deltas + decision ``"baseline"``.
+
+    The write is idempotent: if ``experiment.json`` already exists at the
+    target path, the helper returns ``False`` without rewriting. Returns
+    ``True`` when a new marker is written.
+
+    ``proposed_at`` defaults to empty; callers that have a meaningful
+    timestamp (e.g. the workspace ``create_at``, or the epoch's
+    ``created_at``) pass it through verbatim.
+    """
+    backend = backend_for(workspace_root)
+    key = experiment_key(epoch_id, generation_id)
+    if backend.read_text(key) is not None:
+        return False
+
+    seed = Experiment(
+        id=f"exp_{epoch_id}_{generation_id}",
+        epoch_id=epoch_id,
+        generation_id=generation_id,
+        parent_generation_id="",
+        proposed_at=proposed_at,
+        hypothesis=HypothesisSpec(
+            core_idea="baseline seed",
+            modulating=(),
+            why="",
+            expected_drift_movements=(),
+            expected_pass_rate_delta="",
+            risks="",
+        ),
+        patches=(),
+        outcome=None,
+    )
+    write_experiment(workspace_root, epoch_id, generation_id, seed)
+    return True
+
+
 def write_experiment(
     workspace_root: Path,
     epoch_id: str,
@@ -402,6 +462,7 @@ __all__ = [
     "append_journal_entry",
     "read_journal",
     "write_experiment",
+    "write_seed_experiment",
     "read_experiment",
     "update_experiment_outcome",
 ]

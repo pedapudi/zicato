@@ -1994,6 +1994,22 @@ def _ensure_baseline_snapshot(
     append_to_lineage(workspace_root, epoch_id, baseline_gen, parent_id=None)
     _set_current_generation(workspace_root, epoch_id, "v0")
 
+    # Synthetic ``experiment.json`` for v0 so every downstream consumer
+    # (the analyzer report data loader, the index dual-write, the
+    # dashboard lineage walker) sees a uniform on-disk shape. The seed is
+    # not a proposer experiment; the marker carries a "baseline seed"
+    # hypothesis and a null outcome (no tournament round produced it).
+    # Idempotent — safe to call again on a workspace whose v0 already
+    # has the marker.
+    from zicato.epoch.journal import write_seed_experiment  # noqa: PLC0415
+
+    write_seed_experiment(
+        workspace_root,
+        epoch_id,
+        "v0",
+        proposed_at=baseline_gen.created_at,
+    )
+
 
 def _load_historical_aggregate(
     workspace_root: Path, epoch_id: str, generation_id: str
