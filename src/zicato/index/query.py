@@ -171,6 +171,77 @@ def metric_counts_for_run(db_path: Path, run_id: str) -> list[sqlite3.Row]:
     )
 
 
+def judge_losses_for_run(db_path: Path, run_id: str) -> list[sqlite3.Row]:
+    """Return every per-judge loss row recorded for one run.
+
+    Rows carry ``run_id`` + ``judge_name`` + ``weighted_loss`` /
+    ``raw_loss`` / ``weight``. Ordered by ``judge_name`` so the iteration
+    order is deterministic; an empty list means the run had no
+    custom-judge drift attributable to any judge.
+    """
+    return _select(
+        db_path,
+        "SELECT run_id, judge_name, weighted_loss, raw_loss, weight "
+        "FROM judge_losses WHERE run_id = ? ORDER BY judge_name",
+        (run_id,),
+    )
+
+
+def judge_losses_for_generation(
+    db_path: Path, epoch_id: str, generation_id: str
+) -> list[sqlite3.Row]:
+    """Return per-judge totals across every run under one generation.
+
+    Sums ``weighted_loss`` / ``raw_loss`` over every ``judge_losses``
+    row belonging to a run that landed under ``(epoch_id,
+    generation_id)``. The returned rows carry ``judge_name``,
+    ``total_weighted_loss``, ``total_raw_loss``, ``run_count`` (number
+    of distinct runs the judge fired on), and ``weight`` (the most-
+    recently-observed weight for the judge — judges keep a stable
+    weight within an epoch so this is unambiguous in practice).
+    Ordered so the noisiest judge appears first.
+    """
+    return _select(
+        db_path,
+        "SELECT jl.judge_name, "
+        "SUM(jl.weighted_loss) AS total_weighted_loss, "
+        "SUM(jl.raw_loss) AS total_raw_loss, "
+        "COUNT(DISTINCT jl.run_id) AS run_count, "
+        "MAX(jl.weight) AS weight "
+        "FROM judge_losses AS jl "
+        "JOIN runs AS r ON r.run_id = jl.run_id "
+        "WHERE r.epoch_id = ? AND r.generation_id = ? "
+        "GROUP BY jl.judge_name "
+        "ORDER BY total_weighted_loss DESC, jl.judge_name",
+        (epoch_id, generation_id),
+    )
+
+
+def judge_loss_trend(db_path: Path, epoch_id: str, judge_name: str) -> list[sqlite3.Row]:
+    """Return one judge's per-generation totals along an epoch's timeline.
+
+    For every generation under ``epoch_id`` where ``judge_name`` fired,
+    returns one row: ``generation_id``, ``total_weighted_loss``,
+    ``total_raw_loss``, ``run_count``. Rows are ordered by
+    ``generation_id`` so the caller can plot the trend along the
+    promoted spine. A judge that never fired in the epoch yields an
+    empty list.
+    """
+    return _select(
+        db_path,
+        "SELECT r.generation_id, "
+        "SUM(jl.weighted_loss) AS total_weighted_loss, "
+        "SUM(jl.raw_loss) AS total_raw_loss, "
+        "COUNT(DISTINCT jl.run_id) AS run_count "
+        "FROM judge_losses AS jl "
+        "JOIN runs AS r ON r.run_id = jl.run_id "
+        "WHERE r.epoch_id = ? AND jl.judge_name = ? "
+        "GROUP BY r.generation_id "
+        "ORDER BY r.generation_id",
+        (epoch_id, judge_name),
+    )
+
+
 def experiments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     """Return every experiment row under ``epoch_id``."""
     return _select(
@@ -210,6 +281,7 @@ def index_counts(db_path: Path) -> dict[str, int]:
         "loss_profiles",
         "metric_counts",
         "tournaments",
+        "judge_losses",
     )
     out: dict[str, int] = dict.fromkeys(tables, 0)
     try:
@@ -234,6 +306,9 @@ __all__ = [
     "runs_for_generation",
     "loss_profiles_for_generation",
     "metric_counts_for_run",
+    "judge_losses_for_run",
+    "judge_losses_for_generation",
+    "judge_loss_trend",
     "experiments_for_epoch",
     "tournaments_for_epoch",
     "index_counts",

@@ -164,6 +164,16 @@ def _scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     severity_kwarg: dict[str, Any] = {}
     if raw_sev:
         severity_kwarg["severity_weights"] = {str(k): float(v) for k, v in raw_sev.items()}
+    judge_kwargs: dict[str, Any] = {}
+    raw_per_judge = d.get("per_judge_weights")
+    if isinstance(raw_per_judge, dict) and raw_per_judge:
+        # Per-judge weighting is optional — only forward the kwarg when
+        # the on-disk scoring.json carries a non-empty mapping so a
+        # legacy file with no per_judge surface still loads at the
+        # dataclass default.
+        judge_kwargs["per_judge_weights"] = {str(k): float(v) for k, v in raw_per_judge.items()}
+    if "default_judge_weight" in d:
+        judge_kwargs["default_judge_weight"] = float(d["default_judge_weight"])
     return ScoringWeights(
         drift_weight=float(d.get("drift_weight", 1.0)),
         pass_weight=float(d.get("pass_weight", 1.0)),
@@ -173,6 +183,7 @@ def _scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
         promote_margin=float(d.get("promote_margin", 0.01)),
         pass_rate_monotonicity=bool(d.get("pass_rate_monotonicity", True)),
         **severity_kwarg,
+        **judge_kwargs,
     )
 
 

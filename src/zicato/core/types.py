@@ -788,6 +788,55 @@ class MetricCount:
 
 
 @dataclass(frozen=True, slots=True)
+class JudgeLoss:
+    """Per-judge loss attribution for one run.
+
+    A custom in-run process judge fires a :class:`DriftDetected` of kind
+    ``custom`` for each adverse verdict, paired with a
+    ``JudgementEmitted`` carrying the judge's stable ``judge_name``. The
+    reducer attributes each such drift to its authoring judge via
+    :func:`zicato.telemetry.reducer._judge_attributed_kind` (folded into
+    ``DriftCount.kind`` as ``"custom:<judge_name>"``). The aggregate
+    drift_loss term that lives on :class:`LossProfile.drift_loss` already
+    includes the per-judge contributions, but it does NOT preserve the
+    per-judge attribution — every judge's contribution is summed into one
+    scalar. :class:`JudgeLoss` carries that attribution out of the reducer
+    so downstream consumers (the analyzer's per-judge drift-attribution
+    section, the analytical index's ``judge_losses`` table) can answer
+    "which judges drove this run's loss" without re-walking ``events.jsonl``.
+
+    Fields
+    ------
+    judge_name:
+        Stable per-judge identity (the ``name`` attribute of a
+        :class:`zicato.board.judges.Judge`). Mirrors the key under
+        :attr:`ScoringWeights.per_judge_weights`. The bare ``""``
+        (empty string) names the catch-all bucket for unattributed
+        ``custom``-kind drifts the reducer could not pair with a
+        ``JudgementEmitted``.
+    raw_loss:
+        The judge's unweighted drift contribution — the
+        severity-weighted sum of the judge's ``custom`` drift counts:
+        ``sum(severity_weights[c.severity] * c.count for c in
+        judge_drifts)``. Comparable across judges within the same epoch.
+    weight:
+        The judge's multiplier (:attr:`ScoringWeights.per_judge_weights`
+        value, falling back to :attr:`ScoringWeights.default_judge_weight`).
+        Preserved on the profile so the ingest path does not have to
+        re-read scoring.json to recover the multiplier.
+    weighted_loss:
+        ``raw_loss * weight`` — the per-judge contribution that the
+        aggregate ``drift_loss`` already sums in. Stored explicitly so a
+        round-trip through JSON does not lose precision.
+    """
+
+    judge_name: str
+    raw_loss: float
+    weight: float
+    weighted_loss: float
+
+
+@dataclass(frozen=True, slots=True)
 class ExpectationResult:
     """The outcome of evaluating a :class:`BoardEntry`'s expectation.
 
@@ -935,6 +984,15 @@ class LossProfile:
     # harmonograf deep-link route is /#/session/<adk_session_id>.
     # Back-compat default: "" so old profiles load without change.
     adk_session_id: str = ""
+    # Per-judge loss attribution — empty tuple when no custom judge fired
+    # against this run. The reducer sums each judge's ``custom``-kind
+    # drift contributions (already attributed via ``custom:<judge_name>``)
+    # and multiplies by the judge's weight; the aggregate ``drift_loss``
+    # field already includes these contributions so this tuple is purely
+    # the per-judge breakdown for downstream attribution. Back-compat
+    # default: ``()`` so profiles written before this field was added
+    # load cleanly.
+    per_judge_loss: tuple[JudgeLoss, ...] = ()
 
     def unified_metrics(self) -> tuple[MetricCount, ...]:
         """Return the merged metric view across drift_counts + metric_counts.
@@ -1819,6 +1877,7 @@ __all__ = [
     "DriftCount",
     "MetricCount",
     "MetricSeverity",
+    "JudgeLoss",
     "ExpectationResult",
     "LossProfile",
     # Run record / lineage

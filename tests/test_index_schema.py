@@ -22,12 +22,14 @@ _EXPECTED_TABLES = {
     "loss_profiles",
     "metric_counts",
     "tournaments",
+    "judge_losses",
 }
 
 _EXPECTED_INDEXES = {
     "idx_runs_gen",
     "idx_loss_gen",
     "idx_metric_run",
+    "idx_judge_losses_run",
 }
 
 

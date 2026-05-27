@@ -61,6 +61,7 @@ from zicato.core import (
     BoardEntry,
     DriftCount,
     ExpectationResult,
+    JudgeLoss,
     LossProfile,
     MetricCount,
     ScoringWeights,
@@ -429,6 +430,64 @@ def _kind_multiplier(kind: str, weights: ScoringWeights) -> float:
     if is_custom:
         return weights.per_judge_weights.get(judge_name, weights.default_judge_weight)
     return weights.per_kind_weights.get(kind, 1.0)
+
+
+def compute_per_judge_loss(
+    drift_counts: tuple[DriftCount, ...],
+    weights: ScoringWeights,
+) -> tuple[JudgeLoss, ...]:
+    """Group ``drift_counts`` into per-judge loss attributions.
+
+    Walks the run's drift counts, picks out every ``custom`` /
+    ``custom:<judge_name>`` entry, sums the severity-weighted counts
+    per ``judge_name``, multiplies by the judge's
+    :attr:`ScoringWeights.per_judge_weights` value (falling back to
+    :attr:`ScoringWeights.default_judge_weight` for unconfigured
+    judges), and returns one :class:`JudgeLoss` per attributed judge.
+
+    Mirrors the per-judge half of :func:`compute_drift_loss`: the
+    weighted_loss values returned here sum exactly to the
+    custom-attributed portion of the aggregate drift_loss term, so
+    downstream consumers can split the drift_loss between first-class
+    drift kinds and custom-judge contributions without re-walking the
+    events file.
+
+    A run with no custom-kind drift returns the empty tuple. Drifts
+    whose attribution is empty (the unattributed bare ``custom`` kind)
+    are accumulated under the ``""`` judge_name, mirroring the catch-
+    all bucket :func:`_kind_multiplier` already routes through
+    :attr:`default_judge_weight`.
+
+    The returned tuple is sorted by ``judge_name`` so the order is
+    deterministic across runs of the same reducer; that makes diffs
+    against the persisted ``loss.json`` stable.
+    """
+    sev_w = weights.severity_weights
+    raw_by_judge: dict[str, float] = {}
+    for c in drift_counts:
+        is_custom, judge_name = split_judge_attributed_kind(c.kind)
+        if not is_custom:
+            continue
+        sev_mult = sev_w.get(c.severity, 0.0)
+        raw_by_judge[judge_name] = raw_by_judge.get(judge_name, 0.0) + sev_mult * c.count
+
+    out: list[JudgeLoss] = []
+    for judge_name in sorted(raw_by_judge.keys()):
+        raw_loss = raw_by_judge[judge_name]
+        # Mirror _kind_multiplier's per-judge resolution: a judge listed
+        # in per_judge_weights wins, an unlisted judge (or the bare
+        # unattributed bucket "") falls back to default_judge_weight.
+        weight = weights.per_judge_weights.get(judge_name, weights.default_judge_weight)
+        weighted_loss = raw_loss * weight
+        out.append(
+            JudgeLoss(
+                judge_name=judge_name,
+                raw_loss=float(raw_loss),
+                weight=float(weight),
+                weighted_loss=float(weighted_loss),
+            )
+        )
+    return tuple(out)
 
 
 def compute_drift_loss(
@@ -1011,6 +1070,8 @@ def reduce_loss(
             MetricCount(name="schema:failures", severity="", count=float(schema_failures))
         )
 
+    per_judge_loss = compute_per_judge_loss(drift_counts, weights)
+
     return LossProfile(
         run_id=run_id,
         entry_id=entry.id,
@@ -1032,6 +1093,7 @@ def reduce_loss(
         output_chars=output_chars,
         schema_failures=schema_failures,
         adk_session_id=adk_session_id,
+        per_judge_loss=per_judge_loss,
     )
 
 
@@ -1103,6 +1165,16 @@ def read_loss_profile(path: Path) -> LossProfile:
         for m in d.get("metric_counts", ())
         if isinstance(m, dict) and m.get("name")
     )
+    per_judge_loss = tuple(
+        JudgeLoss(
+            judge_name=str(j.get("judge_name", "")),
+            raw_loss=float(j.get("raw_loss", 0.0) or 0.0),
+            weight=float(j.get("weight", 0.0) or 0.0),
+            weighted_loss=float(j.get("weighted_loss", 0.0) or 0.0),
+        )
+        for j in d.get("per_judge_loss", ())
+        if isinstance(j, dict)
+    )
     exp = d.get("expectation_result")
     expectation_result: ExpectationResult | None
     if exp is None:
@@ -1134,12 +1206,14 @@ def read_loss_profile(path: Path) -> LossProfile:
         output_chars=int(d.get("output_chars", 0) or 0),
         schema_failures=int(d.get("schema_failures", 0) or 0),
         adk_session_id=str(d.get("adk_session_id", "") or ""),
+        per_judge_loss=per_judge_loss,
     )
 
 
 __all__ = [
     "reduce_loss",
     "compute_drift_loss",
+    "compute_per_judge_loss",
     "not_completed_penalty",
     "split_judge_attributed_kind",
     "read_loss_profile",

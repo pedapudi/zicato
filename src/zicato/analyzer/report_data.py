@@ -104,6 +104,14 @@ class GenerationView:
     # along the promoted lineage). Deterministic — see
     # :func:`_cumulate_scalar`.
     cumulative_scalar: float = 0.0
+    # Per-judge weighted-loss totals across every run under this
+    # generation, sorted by judge_name. The reducer's
+    # :attr:`LossProfile.per_judge_loss` is summed across each board
+    # entry's run — this gives the analyzer the "which judges drove
+    # this round's loss" view without reopening the index DB. Empty
+    # tuple when no custom judge fired (or no loss profiles were
+    # readable).
+    per_judge_loss_totals: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +368,7 @@ def _load_one_generation(
     patches = _load_patches(gen_dir, exp_raw)
     gen_score = _read_json(gen_dir / "gen_score.json")
     gen_score = gen_score if isinstance(gen_score, dict) else {}
+    per_judge_totals = _load_per_judge_totals(gen_dir)
 
     return GenerationView(
         generation_id=gen_id,
@@ -381,7 +390,47 @@ def _load_one_generation(
         metric_movements=metric_movements,
         patches=patches,
         gen_score=gen_score,
+        per_judge_loss_totals=per_judge_totals,
     )
+
+
+def _load_per_judge_totals(gen_dir: Path) -> tuple[tuple[str, float], ...]:
+    """Sum ``per_judge_loss`` across every ``loss.json`` under one generation.
+
+    Walks ``runs/*/loss.json`` directly and pulls the ``per_judge_loss``
+    array off each profile (the reducer's per-judge weighted-loss
+    attribution). Tolerant of missing / unparseable files — a run with
+    no loss.json contributes nothing. Returns the totals sorted by
+    judge_name so the analyzer's table iteration is deterministic.
+
+    Returns the empty tuple when no judge fired (or no runs landed) —
+    a no-custom-judge board produces no rows under this section.
+    """
+    runs_root = gen_dir / "runs"
+    if not runs_root.is_dir():
+        return ()
+    totals: dict[str, float] = {}
+    for entry_dir in sorted(runs_root.iterdir()):
+        if not entry_dir.is_dir():
+            continue
+        loss_path = entry_dir / "loss.json"
+        raw = _read_json(loss_path)
+        if not isinstance(raw, dict):
+            continue
+        per_judge = raw.get("per_judge_loss")
+        if not isinstance(per_judge, list):
+            continue
+        for j in per_judge:
+            if not isinstance(j, dict):
+                continue
+            name = str(j.get("judge_name", "") or "")
+            # Promote the unattributed bucket to a stable display label
+            # so the table's row order stays deterministic and the cell
+            # is recognisable.
+            display = name if name else "(unattributed)"
+            weighted = _as_float(j.get("weighted_loss", 0.0))
+            totals[display] = totals.get(display, 0.0) + weighted
+    return tuple(sorted(totals.items()))
 
 
 def _load_patches(gen_dir: Path, exp_raw: dict[str, Any]) -> tuple[dict[str, str], ...]:

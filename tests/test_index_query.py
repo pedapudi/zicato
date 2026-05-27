@@ -227,6 +227,7 @@ def test_index_counts_tolerates_missing_db(tmp_path: Path) -> None:
         "loss_profiles",
         "metric_counts",
         "tournaments",
+        "judge_losses",
     }
 
 

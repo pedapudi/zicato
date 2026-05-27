@@ -33,6 +33,7 @@ from zicato.core.types import (
     Experiment,
     Generation,
     HypothesisSpec,
+    JudgeLoss,
     JudgeMode,
     JudgeSpec,
     LossProfile,
@@ -96,6 +97,7 @@ __all__ = [
     "DriftCount",
     "MetricCount",
     "MetricSeverity",
+    "JudgeLoss",
     "ExpectationResult",
     "LossProfile",
     # run record / lineage

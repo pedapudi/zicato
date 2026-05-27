@@ -144,6 +144,16 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       ran_at TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS judge_losses (
+      run_id TEXT,
+      judge_name TEXT,
+      weighted_loss REAL,
+      raw_loss REAL,
+      weight REAL,
+      PRIMARY KEY (run_id, judge_name)
+    )
+    """,
 )
 
 
@@ -152,6 +162,7 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_runs_gen ON runs(epoch_id, generation_id)",
     "CREATE INDEX IF NOT EXISTS idx_loss_gen ON loss_profiles(epoch_id, generation_id)",
     "CREATE INDEX IF NOT EXISTS idx_metric_run ON metric_counts(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_judge_losses_run ON judge_losses(run_id)",
 )
 
 

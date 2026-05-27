@@ -512,6 +512,63 @@ def render_drift_movement_table(data: EpochReportData) -> str:
     return "\n".join(lines)
 
 
+def render_per_judge_attribution_table(data: EpochReportData) -> str:
+    """Render a judge_name x generation_id table of weighted loss.
+
+    Each row is one in-run process judge that fired at least once
+    across the epoch's generations; each column is one generation in
+    lineage order. Cells carry the judge's per-generation weighted
+    loss total (the sum across every board entry's run under that
+    generation). A blank cell means the judge did not fire (or the
+    generation produced no readable loss profiles). The final column
+    sums the row across generations so the operator can rank judges
+    by total cost-of-drift in one read.
+
+    Answers the meta-loop question "which judges drove the drift
+    change between v1 and v3?" — a judge whose weighted loss climbs
+    or falls along the row is the proximate driver of the per-
+    generation scalar movement.
+
+    A no-custom-judge epoch (no judge fired in any generation)
+    short-circuits to a single-line italic notice rather than
+    rendering an empty table.
+    """
+    gens = list(data.generations)
+    if not gens:
+        return "_No generations have been recorded for this epoch._"
+    # Per (judge_name, generation_index) → weighted_loss. Tracking the
+    # set of seen judges lets us decide whether to render the table at
+    # all.
+    judge_names: set[str] = set()
+    by_cell: dict[tuple[str, int], float] = {}
+    for idx, g in enumerate(gens):
+        for name, weighted in g.per_judge_loss_totals:
+            judge_names.add(name)
+            by_cell[(name, idx)] = weighted
+    if not judge_names:
+        return "_No custom in-run process judge fired across this epoch's generations._"
+
+    # Row sort: row total descending, then judge_name. Puts the
+    # noisiest judge at the top so the operator's eye lands on it.
+    row_totals: dict[str, float] = {}
+    for name in judge_names:
+        row_totals[name] = sum(by_cell.get((name, i), 0.0) for i in range(len(gens)))
+    sorted_names = sorted(judge_names, key=lambda n: (-row_totals[n], n))
+
+    header = ["judge", *[g.generation_id for g in gens], "total"]
+    lines: list[str] = []
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("| " + " | ".join("---" for _ in header) + " |")
+    for name in sorted_names:
+        cells: list[str] = [f"`{_esc_cell(name)}`"]
+        for i in range(len(gens)):
+            val = by_cell.get((name, i))
+            cells.append(_fmt_num(val) if val is not None else "")
+        cells.append(_fmt_num(row_totals[name]))
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
 def render_per_board_outcomes(data: EpochReportData) -> str:
     """Render per-board-entry outcome columns across promoted generations.
 
@@ -624,6 +681,26 @@ def render_results_section(data: EpochReportData) -> str:
     parts.append("Caption: Per-drift-kind rate movements along the promoted lineage.")
     parts.append("")
     parts.append(render_drift_movement_table(data))
+    parts.append("")
+    parts.append("### Per-judge drift attribution")
+    parts.append("")
+    parts.append(
+        "For every custom in-run process judge that fired across this "
+        "epoch, the table threads its per-generation weighted-loss "
+        "contribution along the lineage. The contribution is the "
+        "judge's `raw_loss * weight` summed across every board entry's "
+        "run within the generation; the `total` column sums the row so "
+        "the operator can rank judges by cumulative cost-of-drift. "
+        "Cells with no value mean the judge did not fire (or the "
+        "generation produced no readable loss profiles). A judge whose "
+        "weighted loss climbs or falls along the row is the proximate "
+        "driver of the per-generation scalar movement — this is the "
+        '"which judges drove the meta-loop\'s progress" view.'
+    )
+    parts.append("")
+    parts.append("Caption: Per-judge weighted-loss attribution across generations.")
+    parts.append("")
+    parts.append(render_per_judge_attribution_table(data))
     parts.append("")
     parts.append("### Per-board outcomes")
     parts.append("")
@@ -750,5 +827,6 @@ __all__ = [
     "render_score_sparkline",
     "render_drift_movement_table",
     "render_per_board_outcomes",
+    "render_per_judge_attribution_table",
     "render_threats_section",
 ]

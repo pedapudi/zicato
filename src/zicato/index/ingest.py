@@ -289,6 +289,42 @@ def _bool_to_int_or_none(value: bool | None) -> int | None:
     return 1 if value else 0
 
 
+def _replace_judge_losses(
+    conn: sqlite3.Connection,
+    run_id: str,
+    profile: LossProfile,
+) -> None:
+    """Rewrite the ``judge_losses`` rows for one run.
+
+    ``judge_losses`` is keyed on ``(run_id, judge_name)``; the natural
+    primary key would let us upsert in-place, but the canonical rebuild
+    path is a delete-then-insert per run so re-ingest after a reducer
+    change cannot leave a stale ``(run_id, judge_name)`` row behind when
+    a judge is removed from a board. The rows are sourced directly from
+    :attr:`LossProfile.per_judge_loss` — the reducer's already-
+    attributed per-judge view — so the index never re-derives the
+    attribution itself.
+    """
+    conn.execute("DELETE FROM judge_losses WHERE run_id = ?", (run_id,))
+    rows: list[tuple[str, str, float, float, float]] = []
+    for jl in profile.per_judge_loss:
+        rows.append(
+            (
+                run_id,
+                jl.judge_name,
+                float(jl.weighted_loss),
+                float(jl.raw_loss),
+                float(jl.weight),
+            )
+        )
+    if rows:
+        conn.executemany(
+            "INSERT INTO judge_losses(run_id, judge_name, weighted_loss, raw_loss, weight) "
+            "VALUES(?, ?, ?, ?, ?)",
+            rows,
+        )
+
+
 def _replace_metric_counts(
     conn: sqlite3.Connection,
     run_id: str,
@@ -557,6 +593,7 @@ def _ingest_run_into(
     )
     _upsert_loss_profile(conn, profile)
     _replace_metric_counts(conn, profile.run_id, profile)
+    _replace_judge_losses(conn, profile.run_id, profile)
     return True
 
 
