@@ -1585,6 +1585,14 @@ function renderBracket() {
   // reigning champion. Each champion node carries the challengers it
   // defended against hung below it.
   const spine = el('div', { class: 'bracket-spine' });
+  // The live challenger id (if any) — needed inside the lineage loop so
+  // the lineage tail col can carry the dashed connector pointing to the
+  // live card. Keeping the connector inside the *previous* col is what
+  // keeps every connector at the same vertical row across the spine; if
+  // it sat at the top of the live col instead, the v(tail)→live arrow
+  // would render one node-height higher than the v0→v1 / v1→v2 arrows
+  // and visibly break the spine line (task #175).
+  const liveChildId = live ? liveChallengerId(live) : null;
   lineage.forEach((champId, i) => {
     const col = el('div', { class: 'bracket-col' });
 
@@ -1624,6 +1632,16 @@ function renderBracket() {
         }, ['Δ ' + fmtDelta(promo.delta_scalar)]));
       }
       col.appendChild(conn);
+    } else if (isReigning && liveChildId) {
+      // Dashed live connector from the reigning champion into the
+      // live-challenger col. Placed inside the reigning-champion col
+      // (mirroring how the promoted connectors are placed BELOW the
+      // champ that promoted) so every connector sits at the same
+      // visual row — the spine line stays straight across v0→v1, v1→v2
+      // AND vN→vLIVE (task #175).
+      const conn = el('div', { class: 'bracket-connector live' });
+      conn.appendChild(el('span', { class: 'bracket-conn-arrow', 'aria-hidden': 'true' }, ['┄▶']));
+      col.appendChild(conn);
     }
 
     // Challengers hung below: discarded ones (a decided rejection) and
@@ -1647,8 +1665,11 @@ function renderBracket() {
 
   // Live matchup at the head — a compact pointer into the hall above.
   // The hall grid renders the in-progress round in full; the spine
-  // only needs a connector node so the resolved lineage visibly
-  // continues into the live challenge.
+  // only needs a single live-card node so the resolved lineage visibly
+  // continues into the live challenge. The dashed `┄▶` connector is
+  // attached to the previous (reigning-champion) col above; the live
+  // col itself holds only the live card so its top row aligns with the
+  // top row of every other spine col (task #175).
   let liveHeadCol = null;
   const currentLiveId = live ? liveChallengerId(live) : null;
   if (live) {
@@ -1662,26 +1683,29 @@ function renderBracket() {
 
     // #12 — when there is no resolved lineage yet (the very first
     // tournament of an epoch, or a fresh workspace), the champion has
-    // no spine node of its own. Draw one here so the bracket always
-    // shows the baseline the challenger branches off. It is the
-    // reigning champion, so it joins the green spine.
+    // no spine node of its own. Synthesize one here, in its own col so
+    // the spine row stays homogenous: every spine col still has its
+    // top-row node followed by an optional connector. The synthetic
+    // champion gets the dashed `┄▶` connector pointing into the live
+    // col, mirroring how the lineage-tail col carries the connector
+    // when the lineage is non-empty.
     if (lineage.length === 0 && champId) {
+      const synthCol = el('div', { class: 'bracket-col' });
       const champIdSpan = el('span', { class: 'bracket-champ-id mono' }, [champId]);
       const champHg = harmonografGenLink(champId);
       if (champHg) champIdSpan.appendChild(champHg);
-      headCol.appendChild(el('div', {
+      synthCol.appendChild(el('div', {
         class: 'bracket-champ is-spine is-seed is-current',
       }, [
         champIdSpan,
         el('span', { class: 'bracket-champ-tag' }, ['seed · champion']),
       ]));
-    }
-
-    if (lineage.length > 0 || (lineage.length === 0 && champId)) {
       const conn = el('div', { class: 'bracket-connector live' });
       conn.appendChild(el('span', { class: 'bracket-conn-arrow', 'aria-hidden': 'true' }, ['┄▶']));
-      headCol.appendChild(conn);
+      synthCol.appendChild(conn);
+      spine.appendChild(synthCol);
     }
+
     headCol.appendChild(renderLiveCard(live, champId));
     spine.appendChild(headCol);
     liveHeadCol = headCol;

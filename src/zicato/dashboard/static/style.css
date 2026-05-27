@@ -900,11 +900,20 @@ h4 {
    Every node on the lineage (the seed and every promoted generation)
    renders as a green spine node. The seed carries only the "seed" tag;
    it is not styled apart from the spine. The reigning (tail) champion
-   gets a brighter fill so the current holder reads at a glance. */
+   gets a brighter fill so the current holder reads at a glance.
+
+   `min-height` matches `.bracket-live` so the top row of the spine
+   (every champ box and the live card alike) shares one uniform
+   footprint. Without it the closed champ boxes render shorter than the
+   live card and the connector arrows cross at different Y coordinates,
+   visibly breaking the spine line (task #175). The taller live card
+   sets the floor; champ boxes pad with extra centered whitespace. */
 .bracket-champ {
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 2px;
   background: rgba(46, 160, 67, 0.14); border: 2px solid var(--accent-promoted);
   border-radius: 8px; padding: 10px 16px; min-width: 96px;
+  min-height: var(--spine-node-min-height, 120px); box-sizing: border-box;
 }
 .bracket-champ.is-current {
   background: rgba(46, 160, 67, 0.26);
@@ -976,6 +985,10 @@ h4 {
   background: rgba(31, 111, 235, 0.10); border: 2px solid var(--accent-running);
   border-radius: 8px; padding: 10px 14px; cursor: pointer;
   min-width: 150px; animation: pulse 2.2s infinite;
+  /* Shares the spine-top footprint with `.bracket-champ` so every
+     spine node centers on the same Y. See `.bracket-champ` for the
+     reasoning (task #175). */
+  min-height: var(--spine-node-min-height, 120px); box-sizing: border-box;
 }
 .bracket-live:hover { background: rgba(31, 111, 235, 0.16); }
 .bracket-live:focus-visible {

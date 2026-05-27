@@ -751,6 +751,36 @@ def test_brief_block_is_centered_column(style_css: str) -> None:
     ), "brief column must be centred"
 
 
+def test_spine_top_nodes_share_a_min_height(style_css: str) -> None:
+    """Every top-row node in the tournament-gauntlet spine shares a
+    uniform ``min-height`` so the connector arrows between them line up
+    horizontally.
+
+    The closed-champion box (``.bracket-champ``) and the live-challenger
+    card (``.bracket-live``) carry different content — the live card
+    bundles per-entry dots, progress and verdict — and naturally render
+    at different heights. Without a shared ``min-height`` the live node
+    is ~30px taller than a closed champ; the v(tail)→vLIVE connector
+    sits ~30px below the v0→v1 / v1→v2 connectors and the spine line
+    visibly breaks (task #175).
+
+    The CSS contract: both selectors must carry ``min-height`` (the
+    floor; both reference the same ``--spine-node-min-height`` token).
+    """
+    for selector in (".bracket-champ {", ".bracket-live {"):
+        idx = style_css.find(selector)
+        assert idx != -1, f"missing CSS rule: {selector}"
+        block = style_css[idx : idx + 480]
+        assert "min-height" in block, (
+            f"{selector} must declare min-height so the spine top row "
+            f"shares one uniform footprint"
+        )
+        assert "--spine-node-min-height" in block, (
+            f"{selector} must reference the shared --spine-node-min-height "
+            f"token so the champ and live card stay locked at the same floor"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Dark mode + palette
 # ---------------------------------------------------------------------------

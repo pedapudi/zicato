@@ -813,6 +813,237 @@ test('gauntlet: a sole-seed epoch keeps SEED · CHAMPION (no promotions yet)', (
     `the live column names v1, got "${liveCol.textContent}"`);
 });
 
+test('gauntlet spine alignment: live connector lives in the previous col, '
+  + 'never at the top of the live col (task #175)', () => {
+  // Regression: prior layout put the dashed `┄▶` connector at the TOP
+  // of the `bracket-col-live` while every promoted connector sat
+  // BELOW its champion box in the previous col. With the live card
+  // taller than a closed champ box, that asymmetry rendered the
+  // vN→vLIVE arrow one node-height above the v0→v1 / v1→v2 arrows —
+  // visibly breaking the spine line. The fix moves the dashed
+  // connector into the reigning-champion col so every connector sits
+  // at the same vertical row, and leaves the live col with just the
+  // live card on its top row.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: 'e',
+    champion_lineage: ['v0', 'v1', 'v3'],
+    matchups: [
+      { champion: 'v0', challenger: 'v1', decision: 'promoted',
+        delta_scalar: -0.10, ran_at: '2026-05-20T01:00:00Z' },
+      { champion: 'v1', challenger: 'v3', decision: 'promoted',
+        delta_scalar: -0.08, ran_at: '2026-05-20T02:00:00Z' },
+    ],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, epoch_id: 'e',
+        promoted: true, created_at: '2026-05-20T00:00:00Z' },
+      { generation_id: 'v1', parent_generation_id: 'v0', epoch_id: 'e',
+        promoted: true, created_at: '2026-05-20T01:00:00Z' },
+      { generation_id: 'v3', parent_generation_id: 'v1', epoch_id: 'e',
+        promoted: true, created_at: '2026-05-20T02:00:00Z' },
+      { generation_id: 'v4', parent_generation_id: 'v3', epoch_id: 'e',
+        promoted: null, created_at: '2026-05-20T03:00:00Z' },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = {
+    tournament_id: 'tour-v3-vs-v4',
+    parent_generation_id: 'v3',
+    child_generation_id: 'v4',
+    epoch_id: 'e',
+    started_at: '2026-05-20T03:00:00Z',
+    round_index: 1,
+    total_rounds: 3,
+    phase: 'running',
+    entries: [
+      { entry_id: 'a', side: 'parent', status: 'done' },
+      { entry_id: 'a', side: 'child', status: 'running' },
+    ],
+  };
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  // Live col exists and contains the live card.
+  const liveCol = byClass(bracket, 'bracket-col-live')[0];
+  assert(liveCol, 'the live challenger sits in a bracket-col-live column');
+  assert(byClass(liveCol, 'bracket-live').length === 1,
+    'the live col carries exactly one live card');
+
+  // The live col MUST NOT carry a connector — that would push the live
+  // card down one row and misalign the spine. Every connector lives in
+  // the previous col instead.
+  assert(byClass(liveCol, 'bracket-connector').length === 0,
+    'the live col must not host any connector — connectors live in the '
+      + 'previous col so the spine top row stays uniform');
+
+  // The live card must be the FIRST child of the live col (top row),
+  // not buried under a connector.
+  const liveColFirst = liveCol.children[0];
+  assert(liveColFirst
+    && liveColFirst.getAttribute('class').split(/\s+/).includes('bracket-live'),
+    `the live col's first child must be the live card, got class `
+      + `"${liveColFirst && liveColFirst.getAttribute('class')}"`);
+
+  // The dashed `live` connector lives in the reigning-champion col
+  // (the lineage tail). Find it by walking from the live card up to
+  // its sibling tree: the connector should sit in the col immediately
+  // before the live col, alongside the v3 spine node.
+  const cols = byClass(bracket, 'bracket-col')
+    .filter((c) => !c.getAttribute('class').split(/\s+/).includes('bracket-col-live'));
+  // Last non-live col is the lineage tail's col (it carries v3).
+  const tailCol = cols[cols.length - 1];
+  assert(tailCol && tailCol.textContent.includes('v3'),
+    `the lineage-tail col must carry v3, got "${tailCol && tailCol.textContent}"`);
+  const tailConns = byClass(tailCol, 'bracket-connector');
+  const liveConns = tailConns.filter((c) =>
+    c.getAttribute('class').split(/\s+/).includes('live'));
+  assert(liveConns.length === 1,
+    `the lineage-tail col must carry exactly one dashed live connector, `
+      + `got ${liveConns.length}`);
+});
+
+test('gauntlet spine alignment: every spine top-row node shares the same '
+  + 'min-height class so connector arrows line up (task #175)', () => {
+  // The closed champion box and the live card render at different
+  // natural heights — `.bracket-champ` packs only an id + tag (~46px)
+  // while `.bracket-live` adds dots, progress and verdict (~75px+).
+  // With `align-items: flex-start` on the spine, that mismatch tilted
+  // the connector arrows. The fix gives every spine-top node the same
+  // `min-height` so the centerlines align. The harness can't measure
+  // CSS but it CAN pin the class contract: every node on the spine
+  // top row carries either `.bracket-champ` or `.bracket-live`, and
+  // the CSS rules on those selectors share a `min-height`.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: 'e',
+    champion_lineage: ['v0', 'v1'],
+    matchups: [
+      { champion: 'v0', challenger: 'v1', decision: 'promoted',
+        delta_scalar: -0.10, ran_at: '2026-05-20T01:00:00Z' },
+    ],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, epoch_id: 'e',
+        promoted: true, created_at: '2026-05-20T00:00:00Z' },
+      { generation_id: 'v1', parent_generation_id: 'v0', epoch_id: 'e',
+        promoted: true, created_at: '2026-05-20T01:00:00Z' },
+      { generation_id: 'v2', parent_generation_id: 'v1', epoch_id: 'e',
+        promoted: null, created_at: '2026-05-20T02:00:00Z' },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = {
+    tournament_id: 'tour-v1-vs-v2',
+    parent_generation_id: 'v1',
+    child_generation_id: 'v2',
+    epoch_id: 'e',
+    started_at: '2026-05-20T02:00:00Z',
+    round_index: 1,
+    total_rounds: 3,
+    phase: 'running',
+    entries: [
+      { entry_id: 'a', side: 'parent', status: 'done' },
+      { entry_id: 'a', side: 'child', status: 'running' },
+    ],
+  };
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  // Every spine col's FIRST child is a spine-top node, never a
+  // connector. That is the structural invariant that keeps the top
+  // row aligned across cols.
+  const cols = byClass(bracket, 'bracket-col');
+  assert(cols.length >= 3,
+    `expected at least 3 spine cols (v0, v1, live), got ${cols.length}`);
+  for (const col of cols) {
+    const first = col.children[0];
+    assert(first, `every spine col has a first child, got empty col`);
+    const cls = (first.getAttribute('class') || '').split(/\s+/);
+    assert(cls.includes('bracket-champ') || cls.includes('bracket-live'),
+      `every spine col's first child is a champ or live card so the top `
+        + `row stays homogenous; got class "${first.getAttribute('class')}"`);
+  }
+});
+
+test('gauntlet spine alignment: a zero-lineage epoch keeps the live col '
+  + 'aligned by splitting the synthetic champ into its own col (task #175)', () => {
+  // Edge case: a fresh epoch (no resolved lineage yet) used to pack
+  // BOTH the synthetic seed-champion box AND the live card into the
+  // live col, with the connector wedged between them. That broke the
+  // top-row contract (the synthetic champ and the live card occupied
+  // different rows of the same col). The fix splits them: the
+  // synthetic champ + connector live in their own `bracket-col`, the
+  // live card lives alone in `bracket-col-live`.
+  state.applySnapshot(mockSnapshot());
+  state.bracket = {
+    epoch_id: 'e',
+    champion_lineage: [],
+    matchups: [],
+  };
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', parent_generation_id: null, epoch_id: 'e',
+        promoted: null, created_at: '2026-05-10T09:00:00Z' },
+      { generation_id: 'v1', parent_generation_id: 'v0', epoch_id: 'e',
+        promoted: null, created_at: '2026-05-10T10:00:00Z' },
+    ],
+    experiments: [],
+  };
+  state.activeTournament = {
+    tournament_id: 'tour-v0-vs-v1',
+    parent_generation_id: 'v0',
+    child_generation_id: 'v1',
+    epoch_id: 'e',
+    started_at: '2026-05-10T10:00:00Z',
+    round_index: 1,
+    total_rounds: 3,
+    phase: 'running',
+    entries: [
+      { entry_id: 'a', side: 'parent', status: 'done' },
+      { entry_id: 'a', side: 'child', status: 'running' },
+    ],
+  };
+  render.showView('tournament');
+  const bracket = doc.getElementById('tournament-bracket');
+
+  // The synthetic seed-champion lives in its OWN bracket-col, not in
+  // the live col.
+  const liveCol = byClass(bracket, 'bracket-col-live')[0];
+  assert(liveCol, 'the live challenger sits in a bracket-col-live column');
+  assert(byClass(liveCol, 'bracket-champ').length === 0,
+    'the live col must not host the synthetic seed-champion — that lives '
+      + 'in its own col so the top-row stays homogenous');
+  assert(byClass(liveCol, 'bracket-connector').length === 0,
+    'the live col must not host the dashed connector either');
+
+  // Exactly one is-spine node (the synthetic seed-champion v0) sits
+  // outside the live col.
+  const spineNodes = byClass(bracket, 'is-spine');
+  assertEqual(spineNodes.length, 1,
+    `zero-lineage epoch synthesizes exactly one spine node, got ${spineNodes.length}`);
+  // Walk up: the spine node lives in a regular bracket-col (NOT
+  // bracket-col-live).
+  let owner = spineNodes[0];
+  while (owner && !(owner.getAttribute && owner.getAttribute('class')
+    && owner.getAttribute('class').split(/\s+/).includes('bracket-col'))) {
+    owner = owner.parentNode;
+  }
+  assert(owner, 'the synthetic seed-champion lives in a bracket-col');
+  const ownerCls = owner.getAttribute('class').split(/\s+/);
+  assert(!ownerCls.includes('bracket-col-live'),
+    'the synthetic seed-champion must NOT live in the live col');
+
+  // The synthetic-champ col carries the dashed live connector pointing
+  // into the live col.
+  const ownerConns = byClass(owner, 'bracket-connector')
+    .filter((c) => c.getAttribute('class').split(/\s+/).includes('live'));
+  assertEqual(ownerConns.length, 1,
+    `the synthetic-champ col carries the dashed live connector, got ${ownerConns.length}`);
+});
+
 test('gauntlet: a rejected challenger between two promotions stays off the spine', () => {
   // Regression: when v2 is rejected between two promoted generations
   // (v1 and v3), it must hang off v1 (the champion it failed to beat),
