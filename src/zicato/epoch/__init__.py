@@ -47,6 +47,7 @@ from zicato.epoch.lifecycle import (
     list_epochs,
     load_epoch,
     new_epoch,
+    set_epoch_goal,
     switch_epoch,
 )
 from zicato.epoch.lineage import (
@@ -66,6 +67,7 @@ __all__ = [
     "switch_epoch",
     "current_epoch_id",
     "load_epoch",
+    "set_epoch_goal",
     # journal
     "append_journal_entry",
     "read_journal",

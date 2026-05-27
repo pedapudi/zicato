@@ -130,6 +130,10 @@ class EpochReportData:
     generations: tuple[GenerationView, ...]
     span_start: str
     span_end: str
+    # The free-form operator-supplied goal for the epoch. Empty when
+    # no goal was recorded; the analyzer renders that case as "no goal
+    # recorded" in the header so the report shape stays uniform.
+    goal: str = ""
 
     @property
     def attempted(self) -> int:
@@ -502,6 +506,7 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
         generations=tuple(generations),
         span_start=span_start,
         span_end=span_end,
+        goal=str(cfg.get("goal", "") or ""),
     )
 
 

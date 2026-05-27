@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import click
@@ -55,6 +56,28 @@ from zicato.core.types import ScoringWeights
 from zicato.epoch import lifecycle
 from zicato.epoch.contract import default_contract_paths
 from zicato.epoch.lineage import render_lineage_summary
+from zicato.index.ingest import rebuild_index, repair_epoch_goals
+
+
+def _prompt_for_goal() -> str:
+    """Ask the operator for the epoch's goal when stdin is a TTY.
+
+    Returns the entered line (stripped). In non-TTY contexts — piped
+    input, CI, automation — returns the empty string without
+    prompting. A bare ``Enter`` (or an interrupt) also yields the
+    empty string, which downstream code renders as "no goal recorded".
+    """
+    if not sys.stdin.isatty():
+        return ""
+    try:
+        answer = click.prompt(
+            "What is the goal of this epoch? (one line, leave blank to skip)",
+            default="",
+            show_default=False,
+        )
+    except (click.Abort, EOFError, KeyboardInterrupt):
+        return ""
+    return str(answer).strip()
 
 
 def _resolve_workspace(workspace: str) -> Path:
@@ -222,12 +245,23 @@ def epoch_grp() -> None:
     help="Path to scoring.json; defaults applied if absent. When given, "
     "frozen into the epoch and adopted as the live contract scoring.",
 )
+@click.option(
+    "--goal",
+    "goal",
+    default=None,
+    help="Free-form statement of *why* this epoch exists (the intent "
+    "the operator is testing). Persisted into config.json and "
+    "surfaced in the analyzer report header. When omitted and stdin "
+    "is a TTY, the operator is prompted for one line; in non-TTY "
+    "contexts the goal defaults to the empty string.",
+)
 def new_cmd(
     name: str,
     workspace: str,
     board_source: str,
     brief_source: str,
     scoring_source: str | None,
+    goal: str | None,
 ) -> None:
     """Advanced: create a new epoch and make it current.
 
@@ -246,6 +280,13 @@ def new_cmd(
     """
     ws = _resolve_workspace(workspace)
     weights = _load_weights(scoring_source)
+
+    # Resolve the goal: explicit flag wins; otherwise prompt the
+    # operator when stdin is a TTY (one line is enough — multi-line
+    # goals are supported on the field itself, but the CLI prompt is
+    # kept simple), or fall back to the empty string in non-TTY
+    # contexts (CI, piped input, automation).
+    resolved_goal = goal if goal is not None else _prompt_for_goal()
 
     # Carry the registered inner-harness identity (entrypoint + mutable
     # trees) into the epoch's contract hash. `zicato evolve` derives the
@@ -268,6 +309,7 @@ def new_cmd(
         aux_call_llm=None,
         entrypoint=entrypoint,
         mutable_trees=mutable_trees,
+        goal=resolved_goal,
     )
     # Publish the supplied files as the workspace's live contract so
     # `zicato evolve` / resolve_contract_inputs find the same contract.
@@ -341,4 +383,91 @@ def switch_cmd(epoch_id: str, workspace: str) -> None:
     click.echo(f"Switched to {epoch_id}.")
 
 
-__all__ = ["epoch_grp"]
+@epoch_grp.command(
+    "set-goal",
+    short_help="Set or overwrite the goal field on an existing epoch.",
+)
+@click.option(
+    "--epoch",
+    "epoch_id",
+    required=True,
+    help="The epoch id to mutate.",
+)
+@click.option(
+    "--goal",
+    "goal",
+    required=True,
+    help="The free-form goal text to write into the epoch's config.json.",
+)
+@click.option(
+    "--workspace",
+    default=".zicato",
+    show_default=True,
+    help="Path to the zicato workspace directory.",
+)
+def set_goal_cmd(epoch_id: str, goal: str, workspace: str) -> None:
+    """Set the goal on an existing epoch and re-ingest its index row.
+
+    Designed for the contract-hash auto-roll case: when ``zicato
+    evolve`` opens a new epoch mid-run there is no opportunity to
+    prompt the operator, so the goal lands as an empty string + a
+    warning that recommends running this command later.
+
+    Idempotent — writes the supplied goal into ``config.json`` and
+    refreshes the ``epochs.goal`` index column. The rest of the index
+    is left alone (use ``zicato reindex`` for a full rebuild).
+    """
+    ws = _resolve_workspace(workspace)
+    try:
+        cfg = lifecycle.set_epoch_goal(ws, epoch_id, goal)
+    except FileNotFoundError as exc:
+        raise click.UsageError(str(exc)) from exc
+    # Re-ingest just this epoch's row. ``repair_epoch_goals`` walks
+    # every epoch but that is the simplest idempotent path; the index
+    # writes are keyed upserts so the other rows are no-ops.
+    repair_epoch_goals(ws)
+    click.echo(f"Set goal for epoch {cfg.id}.")
+
+
+@click.command(
+    name="repair-epoch-goals",
+    short_help="Advanced: backfill the goal field on epochs that predate the field.",
+)
+@click.option(
+    "--workspace",
+    default=".zicato",
+    show_default=True,
+    help="Path to the zicato workspace directory.",
+)
+def repair_epoch_goals_cmd(workspace: str) -> None:
+    """Walk every epoch on disk and add an empty goal where missing.
+
+    Targeted migration helper for workspaces whose per-epoch
+    ``config.json`` files were written before the ``goal`` field
+    landed. Defaults missing goals to the empty string (which renders
+    as "no goal recorded" in the analyzer), and refreshes the
+    ``epochs.goal`` column in the index database to match.
+
+    Read-only against epochs that already have a goal value
+    (including a deliberately-empty one). Idempotent: running it
+    twice writes the same bytes. The index is created with the
+    current schema if it does not exist yet.
+
+    For populating the goal on an individual epoch with a real value,
+    see ``zicato epoch set-goal``.
+    """
+    ws = _resolve_workspace(workspace)
+    # Ensure the index exists with the current schema so the column is
+    # present before repair_epoch_goals tries to upsert into it.
+    db_path = ws / "index.db"
+    if not db_path.exists():
+        rebuild_index(ws)
+    result = repair_epoch_goals(ws)
+    click.echo(
+        f"Repaired {result['scanned']} epochs at {ws}: "
+        f"{result['config_patched']} config.json files patched, "
+        f"{result['index_updated']} index rows refreshed."
+    )
+
+
+__all__ = ["epoch_grp", "repair_epoch_goals_cmd"]

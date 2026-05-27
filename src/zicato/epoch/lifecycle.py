@@ -175,6 +175,7 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         "closed": cfg.closed,
         "closed_at": cfg.closed_at,
         "contract_hash": cfg.contract_hash,
+        "goal": cfg.goal,
     }
 
 
@@ -186,6 +187,9 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
     # ``brief_path`` is the current key; ``rubric_path`` is the
     # pre-rename name, still accepted so an epoch ``config.json`` written
     # before the field rename keeps loading.
+    #
+    # ``goal`` defaults to "" so epochs written before the field landed
+    # load as "no goal recorded".
     return EpochConfig(
         id=d["id"],
         name=d["name"],
@@ -196,6 +200,7 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         closed=bool(d.get("closed", False)),
         closed_at=d.get("closed_at", ""),
         contract_hash=str(d.get("contract_hash", "")),
+        goal=str(d.get("goal", "")),
     )
 
 
@@ -345,6 +350,7 @@ def new_epoch(
     *,
     entrypoint: str = "",
     mutable_trees: tuple[str, ...] = (),
+    goal: str = "",
 ) -> EpochConfig:
     """Create a new epoch directory and switch to it.
 
@@ -383,6 +389,13 @@ def new_epoch(
     existing callers (and tests) keep working — an epoch created
     without them simply hashes those two components as empty, which is
     stable and back-compatible.
+
+    ``goal`` is a free-form operator-supplied statement of intent for
+    the epoch. It is persisted into ``config.json`` and surfaced in
+    the analyzer report header so the *why* of the epoch is machine-
+    readable, not just narrative in ``journal.md``. Empty by default
+    (rendered as "no goal recorded" downstream); multi-line strings
+    are accepted verbatim.
 
     Returns the constructed :class:`EpochConfig`.
     """
@@ -458,6 +471,7 @@ def new_epoch(
         closed=False,
         closed_at="",
         contract_hash=contract_hash,
+        goal=goal,
     )
     _write_config(workspace_root, cfg)
 
@@ -587,6 +601,29 @@ async def close_epoch_async(
     return out_path
 
 
+def set_epoch_goal(workspace_root: Path, epoch_id: str, goal: str) -> EpochConfig:
+    """Set (or overwrite) the ``goal`` field on an existing epoch's config.
+
+    Loads the epoch's ``config.json``, replaces the ``goal`` value with
+    the supplied string, and writes the config back. Returns the
+    updated :class:`EpochConfig`. Idempotent — calling it twice with
+    the same goal is a no-op rewrite of the same bytes.
+
+    Designed for the post-hoc CLI: when an epoch was opened via the
+    contract-hash auto-roll (mid-``evolve``, no opportunity to prompt
+    the operator), the goal is empty and the operator can fill it in
+    later with ``zicato epoch set-goal --epoch <id> --goal "..."``.
+
+    Raises :class:`FileNotFoundError` if the epoch does not exist.
+    """
+    from dataclasses import replace
+
+    cfg = load_epoch(workspace_root, epoch_id)
+    cfg = replace(cfg, goal=goal)
+    _write_config(workspace_root, cfg)
+    return cfg
+
+
 def _write_stub_html_companion(
     workspace_root: Path,
     epoch_id: str,
@@ -625,4 +662,5 @@ __all__ = [
     "switch_epoch",
     "current_epoch_id",
     "load_epoch",
+    "set_epoch_goal",
 ]

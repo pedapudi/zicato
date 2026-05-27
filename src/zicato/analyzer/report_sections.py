@@ -103,6 +103,18 @@ def render_title_block(data: EpochReportData) -> str:
     # ordinary ``<p>``. The marker is invisible in the markdown source.
     lines.append("<!-- META -->")
     lines.append("  \n".join(meta_bits))
+    # The operator-supplied goal sits directly under the masthead so
+    # the *why* of the epoch is the first thing a reader sees. Empty
+    # goals are rendered as "(no goal recorded)" so the report shape
+    # stays uniform across epochs that predate the field. Multi-line
+    # goals are rendered verbatim under the heading.
+    lines.append("")
+    lines.append("### Goal")
+    lines.append("")
+    if data.goal.strip():
+        lines.append(data.goal.strip())
+    else:
+        lines.append("_(no goal recorded)_")
     return "\n".join(lines)
 
 

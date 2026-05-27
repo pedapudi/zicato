@@ -1587,6 +1587,16 @@ class EpochConfig:
         — such legacy epochs are treated as *always matching* so the
         orchestrator never spuriously rolls a workspace that predates
         the feature.
+    goal:
+        Free-form operator-supplied statement of *why* this epoch
+        exists — the intent the operator is testing (e.g. "shift the
+        proposer brief toward concrete deltas" or "new scoring weights
+        for cost drift"). Machine-readable companion to the narrative
+        in ``journal.md``; surfaced in the analyzer report header so
+        the reason for an epoch is visible without re-reading the
+        journal. Defaults to the empty string (which renders as "no
+        goal recorded" downstream) so epochs already on disk that
+        predate this field load cleanly. May be multi-line.
     """
 
     id: str
@@ -1598,6 +1608,7 @@ class EpochConfig:
     closed: bool = False
     closed_at: str = ""
     contract_hash: str = ""
+    goal: str = ""
 
 
 @dataclass(frozen=True, slots=True)

@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
@@ -56,7 +56,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       epoch_id TEXT PRIMARY KEY,
       contract_hash TEXT,
       created_at TEXT,
-      closed INTEGER
+      closed INTEGER,
+      goal TEXT
     )
     """,
     """
@@ -178,7 +179,13 @@ def apply_schema(conn: sqlite3.Connection) -> None:
 
     Both the ``user_version`` pragma and the ``schema_meta`` table are
     stamped with :data:`SCHEMA_VERSION`.
+
+    Existing databases stamped at an older :data:`SCHEMA_VERSION` are
+    upgraded in place via :func:`_migrate_inplace` before the regular
+    DDL runs — this lets an ingest path that touches a stale index
+    file pick up the new columns without forcing a full rebuild.
     """
+    _migrate_inplace(conn)
     for stmt in _TABLE_STATEMENTS:
         conn.execute(stmt)
     for stmt in _INDEX_STATEMENTS:
@@ -199,6 +206,39 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         ("zicato analytical index — derived, rebuildable from .zicato/ files",),
     )
     conn.commit()
+
+
+def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Return the current column names of ``table`` (empty if absent)."""
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {r[1] for r in rows}
+
+
+def _migrate_inplace(conn: sqlite3.Connection) -> None:
+    """Carry an older-schema database forward to :data:`SCHEMA_VERSION`.
+
+    The canonical rebuild path drops the database file first, so this
+    migrator only runs against databases that exist with an older
+    ``user_version``. The migrations here are additive (column adds via
+    ``ALTER TABLE ... ADD COLUMN``) and idempotent — running the
+    migrator against an already-current database is a no-op.
+    """
+    current = read_schema_version(conn)
+    if current >= SCHEMA_VERSION:
+        return
+
+    # v1 -> v2: ``epochs.goal`` column. Skipped if the ``epochs`` table
+    # itself does not exist yet (a brand-new database that has not had
+    # the DDL applied; the regular CREATE TABLE will land the column).
+    if current < 2 and "epochs" in {
+        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    }:
+        cols = _column_names(conn, "epochs")
+        if "goal" not in cols:
+            conn.execute("ALTER TABLE epochs ADD COLUMN goal TEXT")
 
 
 def read_schema_version(conn: sqlite3.Connection) -> int:

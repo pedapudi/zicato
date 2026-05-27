@@ -304,6 +304,19 @@ async def ensure_epoch_for_contract(
     )
     log.info("contract changed (%s) — rolled %s -> %s", changed, cur, new_id)
     print(f"contract changed ({changed}) — rolled {cur} -> {new_id}")
+    # The auto-roll path has no operator interaction surface, so the
+    # epoch's ``goal`` field lands empty. Nudge the operator to fill it
+    # in later via the dedicated subcommand.
+    log.warning(
+        "epoch %s opened by auto-roll with no goal recorded; "
+        'run `zicato epoch set-goal --epoch %s --goal "..."` to fill it in.',
+        new_id,
+        new_id,
+    )
+    print(
+        f"NOTE: epoch {new_id} opened by auto-roll with no goal recorded; "
+        f'run `zicato epoch set-goal --epoch {new_id} --goal "..."` to fill it in.'
+    )
     return new_id
 
 

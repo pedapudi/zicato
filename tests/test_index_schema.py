@@ -105,6 +105,7 @@ def test_epochs_columns_match_contract() -> None:
         "contract_hash",
         "created_at",
         "closed",
+        "goal",
     ]
     conn.close()
 

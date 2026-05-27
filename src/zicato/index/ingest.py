@@ -170,15 +170,17 @@ def _upsert_epoch(
     contract_hash: str,
     created_at: str,
     closed: bool,
+    goal: str = "",
 ) -> None:
     conn.execute(
-        "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed) "
-        "VALUES(?, ?, ?, ?) "
+        "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed, goal) "
+        "VALUES(?, ?, ?, ?, ?) "
         "ON CONFLICT(epoch_id) DO UPDATE SET "
         "contract_hash = excluded.contract_hash, "
         "created_at = excluded.created_at, "
-        "closed = excluded.closed",
-        (epoch_id, contract_hash, created_at, 1 if closed else 0),
+        "closed = excluded.closed, "
+        "goal = excluded.goal",
+        (epoch_id, contract_hash, created_at, 1 if closed else 0, goal),
     )
 
 
@@ -737,6 +739,7 @@ def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
             contract_hash=cfg.contract_hash,
             created_at=cfg.created_at,
             closed=cfg.closed,
+            goal=cfg.goal,
         )
         _rebuild_epoch(conn, workspace_root, cfg.id, lineage_by_epoch.get(cfg.id))
 
@@ -744,13 +747,15 @@ def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
         if eid in seen_epochs:
             continue
         # Epoch known only to lineage — no config.json. Index a thin
-        # epoch row and still walk its generations / runs.
+        # epoch row and still walk its generations / runs. ``goal`` is
+        # left empty because there is no config.json to read it from.
         _upsert_epoch(
             conn,
             epoch_id=eid,
             contract_hash="",
             created_at=str(entry.get("started_at", "")),
             closed=bool(entry.get("closed_at")),
+            goal="",
         )
         _rebuild_epoch(conn, workspace_root, eid, entry)
 
@@ -898,6 +903,7 @@ def _upsert_owning_epoch_generation(
     contract_hash = ""
     created_at = ""
     closed = False
+    goal = ""
     try:
         from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
 
@@ -905,9 +911,10 @@ def _upsert_owning_epoch_generation(
         contract_hash = cfg.contract_hash
         created_at = cfg.created_at
         closed = cfg.closed
+        goal = cfg.goal
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         pass
-    _upsert_epoch(conn, epoch_id, contract_hash, created_at, closed)
+    _upsert_epoch(conn, epoch_id, contract_hash, created_at, closed, goal=goal)
 
     parent_id: str | None = None
     promoted = False
@@ -1059,9 +1066,112 @@ def backfill_generations(
     return {"updated": updated, "scanned": scanned}
 
 
+def repair_epoch_goals(
+    workspace_root: Path,
+    db_path: Path | None = None,
+) -> dict[str, int]:
+    """Walk every epoch on disk and reconcile the ``goal`` field.
+
+    Targeted repair for workspaces whose per-epoch ``config.json``
+    predates the ``goal`` field (or whose row in the ``epochs`` index
+    table was written before the column existed). For every epoch we
+    can read off disk, this:
+
+    1. Ensures the ``config.json`` carries a ``goal`` key (added with
+       an empty string if missing); the rewrite goes through the
+       canonical :func:`zicato.epoch.lifecycle._write_config` so all
+       other keys are preserved.
+    2. Re-upserts the ``epochs`` row so the index column matches the
+       on-disk value.
+
+    Idempotent — running it twice writes the same bytes. Read-only on
+    epoch ids: epochs that exist only in ``lineage.json`` (no
+    ``config.json`` on disk) are left untouched.
+
+    Parameters
+    ----------
+    workspace_root:
+        The ``.zicato/`` directory to repair.
+    db_path:
+        Where the index lives. Defaults to ``{workspace_root}/index.db``.
+
+    Returns
+    -------
+    dict
+        ``{"scanned": M, "config_patched": A, "index_updated": B}`` —
+        ``M`` epochs walked, ``A`` config files that needed the goal
+        key added, ``B`` index rows refreshed. The two counters are
+        independent; an epoch can need a config patch but not an
+        index refresh (and vice versa).
+    """
+    from zicato.epoch._storage import (  # noqa: PLC0415
+        backend_for,
+        epoch_config_key,
+    )
+    from zicato.epoch.lifecycle import (  # noqa: PLC0415
+        _write_config,
+        list_epochs,
+    )
+
+    scanned = 0
+    config_patched = 0
+    index_updated = 0
+    backend = backend_for(workspace_root)
+
+    # 1. Walk every epoch on disk and patch its config.json.
+    for cfg in list_epochs(workspace_root):
+        scanned += 1
+        # Read the raw JSON so we can tell whether the goal key was
+        # actually present (vs. defaulted-to-empty by the loader).
+        raw = backend.read_json(epoch_config_key(cfg.id))
+        if not isinstance(raw, dict):
+            continue
+        if "goal" not in raw:
+            # The loader already defaulted cfg.goal to "" — round-trip
+            # back through _write_config to land the key on disk.
+            _write_config(workspace_root, cfg)
+            config_patched += 1
+
+    # 2. Refresh the index epochs.goal column.
+    target = db_path if db_path is not None else _default_db_path(workspace_root)
+    if target.exists():
+        conn = sqlite3.connect(str(target))
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            apply_schema(conn)
+            for cfg in list_epochs(workspace_root):
+                cur = conn.execute(
+                    "SELECT goal FROM epochs WHERE epoch_id = ?",
+                    (cfg.id,),
+                )
+                row = cur.fetchone()
+                existing_goal: str | None = row[0] if row is not None else None
+                if existing_goal == cfg.goal:
+                    continue
+                _upsert_epoch(
+                    conn,
+                    epoch_id=cfg.id,
+                    contract_hash=cfg.contract_hash,
+                    created_at=cfg.created_at,
+                    closed=cfg.closed,
+                    goal=cfg.goal,
+                )
+                index_updated += 1
+            conn.commit()
+        finally:
+            conn.close()
+
+    return {
+        "scanned": scanned,
+        "config_patched": config_patched,
+        "index_updated": index_updated,
+    }
+
+
 __all__ = [
     "rebuild_index",
     "ingest_run",
     "ingest_experiment",
     "backfill_generations",
+    "repair_epoch_goals",
 ]
