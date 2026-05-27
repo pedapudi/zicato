@@ -29,7 +29,11 @@ from pathlib import Path
 
 import click
 
-from zicato.index.ingest import backfill_generations, rebuild_index
+from zicato.index.ingest import (
+    backfill_generations,
+    backfill_tournament_fk,
+    rebuild_index,
+)
 from zicato.index.query import index_counts
 
 
@@ -101,4 +105,44 @@ def reindex_generations_cmd(workspace: str) -> None:
     )
 
 
-__all__ = ["reindex_cmd", "reindex_generations_cmd"]
+@click.command(
+    name="repair-tournament-fk",
+    short_help=(
+        "Advanced: backfill tournament_id on runs / loss_profiles + parent_epoch_id on epochs."
+    ),
+)
+@click.option(
+    "--workspace",
+    default=".zicato",
+    show_default=True,
+    help="Path to the zicato workspace directory.",
+)
+def repair_tournament_fk_cmd(workspace: str) -> None:
+    """Advanced: backfill schema-v2 cross-cutting FKs on an existing index.
+
+    Off the happy path. Schema v2 added a ``tournament_id`` column to
+    ``runs`` and ``loss_profiles`` plus a ``parent_epoch_id`` column on
+    ``epochs``. New writes populate them automatically; this command
+    repairs rows that were ingested under the v1 schema by walking
+    every epoch in ``lineage.json`` and every ``experiment.json`` on
+    disk and rewriting the FK columns from those sources.
+
+    Idempotent: cells that already carry the correct value are skipped,
+    so a re-run against a healthy index is a no-op. Read-only against
+    the workspace files — only the SQLite index is mutated.
+
+    Folded into one command because the two backfills share the same
+    walk and operators always want both columns repaired together.
+    """
+    ws = Path(workspace).resolve()
+    result = backfill_tournament_fk(ws)
+    click.echo(
+        f"Backfilled tournament FK at {ws / 'index.db'}: "
+        f"{result['runs_updated']} runs, "
+        f"{result['loss_updated']} loss profiles, "
+        f"{result['epochs_updated']} epochs updated "
+        f"of {result['scanned']} generations scanned."
+    )
+
+
+__all__ = ["reindex_cmd", "reindex_generations_cmd", "repair_tournament_fk_cmd"]

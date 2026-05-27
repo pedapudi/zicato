@@ -57,7 +57,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       contract_hash TEXT,
       created_at TEXT,
       closed INTEGER,
-      goal TEXT
+      goal TEXT,
+      parent_epoch_id TEXT
     )
     """,
     """
@@ -105,7 +106,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       started_at TEXT,
       ended_at TEXT,
       aborted INTEGER,
-      runtime_ms INTEGER
+      runtime_ms INTEGER,
+      tournament_id TEXT
     )
     """,
     """
@@ -118,7 +120,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       pass_fail INTEGER,
       runtime_ms INTEGER,
       wall_clock_budget_exceeded INTEGER,
-      loss_json TEXT
+      loss_json TEXT,
+      tournament_id TEXT
     )
     """,
     """
@@ -163,6 +166,9 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_loss_gen ON loss_profiles(epoch_id, generation_id)",
     "CREATE INDEX IF NOT EXISTS idx_metric_run ON metric_counts(run_id)",
     "CREATE INDEX IF NOT EXISTS idx_judge_losses_run ON judge_losses(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_tournament ON runs(tournament_id)",
+    "CREATE INDEX IF NOT EXISTS idx_loss_tournament ON loss_profiles(tournament_id)",
+    "CREATE INDEX IF NOT EXISTS idx_epochs_parent ON epochs(parent_epoch_id)",
 )
 
 
@@ -178,6 +184,21 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 """
 
 
+#: Columns added in v2 that older v1 databases will be missing. Each
+#: entry is ``(table, column, ddl_type)``; :func:`_migrate_inplace`
+#: adds whichever of these are absent so an existing v1 file becomes
+#: queryable under v2 without a full rebuild. The full rebuild path
+#: (``zicato reindex``) drops the file and re-applies the v2 CREATE
+#: TABLE statements above, so this migration only matters on
+#: incremental opens against a pre-existing file.
+_V2_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("epochs", "goal", "TEXT"),
+    ("epochs", "parent_epoch_id", "TEXT"),
+    ("runs", "tournament_id", "TEXT"),
+    ("loss_profiles", "tournament_id", "TEXT"),
+)
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     """Create every table + index + stamp the schema version.
 
@@ -188,14 +209,18 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     :func:`zicato.index.ingest.rebuild_index`), but ``ingest_run`` /
     ``ingest_experiment`` call this on an existing file to be safe.
 
+    When the file pre-dates :data:`SCHEMA_VERSION` (e.g. a v1 database
+    opened by a v2-aware writer), the missing columns are added in
+    place via ``ALTER TABLE`` so the incremental writer can proceed
+    without forcing the operator to run ``zicato reindex`` first.
+
     Both the ``user_version`` pragma and the ``schema_meta`` table are
     stamped with :data:`SCHEMA_VERSION`.
-
-    Existing databases stamped at an older :data:`SCHEMA_VERSION` are
-    upgraded in place via :func:`_migrate_inplace` before the regular
-    DDL runs — this lets an ingest path that touches a stale index
-    file pick up the new columns without forcing a full rebuild.
     """
+    # Step the v1 -> v2 migration first so an older file's CREATE TABLE
+    # statement (a no-op because the table already exists) does not skip
+    # adding the new columns. Then the IF-NOT-EXISTS statements below
+    # handle the fresh-database case.
     _migrate_inplace(conn)
     for stmt in _TABLE_STATEMENTS:
         conn.execute(stmt)
@@ -219,6 +244,14 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
 def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
     """Return the current column names of ``table`` (empty if absent)."""
     try:
@@ -236,20 +269,28 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
     ``user_version``. The migrations here are additive (column adds via
     ``ALTER TABLE ... ADD COLUMN``) and idempotent — running the
     migrator against an already-current database is a no-op.
+
+    The consolidated v1 -> v2 step covers every column that landed in
+    SCHEMA_VERSION 2: ``epochs.goal``, ``epochs.parent_epoch_id``,
+    ``runs.tournament_id``, ``loss_profiles.tournament_id``. The
+    ``judge_losses`` table is created (rather than altered) by the
+    regular ``CREATE TABLE IF NOT EXISTS`` pass, so it does not need
+    a migration entry. Each ALTER is guarded by a column-presence
+    check so the migration is idempotent; tables that do not yet
+    exist (fresh database) are skipped — the subsequent CREATE TABLE
+    statement will already include the column.
     """
     current = read_schema_version(conn)
     if current >= SCHEMA_VERSION:
         return
 
-    # v1 -> v2: ``epochs.goal`` column. Skipped if the ``epochs`` table
-    # itself does not exist yet (a brand-new database that has not had
-    # the DDL applied; the regular CREATE TABLE will land the column).
-    if current < 2 and "epochs" in {
-        r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-    }:
-        cols = _column_names(conn, "epochs")
-        if "goal" not in cols:
-            conn.execute("ALTER TABLE epochs ADD COLUMN goal TEXT")
+    if current < 2:
+        for table, column, ddl_type in _V2_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
 
 
 def read_schema_version(conn: sqlite3.Connection) -> int:

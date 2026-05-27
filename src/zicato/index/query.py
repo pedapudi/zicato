@@ -119,10 +119,15 @@ def _select(db_path: Path, sql: str, params: Sequence[Any] = ()) -> list[sqlite3
 
 
 def all_epochs(db_path: Path) -> list[sqlite3.Row]:
-    """Return every indexed epoch, oldest first."""
+    """Return every indexed epoch, oldest first.
+
+    The selection includes ``parent_epoch_id`` (v2 column); a v1
+    database is upgraded in place on the next write so callers always
+    see the column on a read after any write.
+    """
     return _select(
         db_path,
-        "SELECT epoch_id, contract_hash, created_at, closed "
+        "SELECT epoch_id, contract_hash, created_at, closed, parent_epoch_id "
         "FROM epochs ORDER BY created_at, epoch_id",
     )
 
@@ -142,7 +147,7 @@ def runs_for_generation(db_path: Path, epoch_id: str, generation_id: str) -> lis
     return _select(
         db_path,
         "SELECT run_id, epoch_id, generation_id, entry_id, started_at, ended_at, "
-        "aborted, runtime_ms FROM runs "
+        "aborted, runtime_ms, tournament_id FROM runs "
         "WHERE epoch_id = ? AND generation_id = ? ORDER BY entry_id, run_id",
         (epoch_id, generation_id),
     )
@@ -155,10 +160,77 @@ def loss_profiles_for_generation(
     return _select(
         db_path,
         "SELECT run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
-        "runtime_ms, wall_clock_budget_exceeded, loss_json FROM loss_profiles "
+        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id FROM loss_profiles "
         "WHERE epoch_id = ? AND generation_id = ? ORDER BY entry_id, run_id",
         (epoch_id, generation_id),
     )
+
+
+def runs_for_tournament(db_path: Path, tournament_id: str) -> list[sqlite3.Row]:
+    """Return every ``runs`` row that belongs to one tournament round.
+
+    The FK was added in schema v2; a v1 database returns an empty list
+    because every row's ``tournament_id`` is ``NULL``. Run ``zicato
+    repair-tournament-fk`` to backfill the column on an existing v1+
+    workspace.
+    """
+    return _select(
+        db_path,
+        "SELECT run_id, epoch_id, generation_id, entry_id, started_at, ended_at, "
+        "aborted, runtime_ms, tournament_id FROM runs "
+        "WHERE tournament_id = ? ORDER BY entry_id, run_id",
+        (tournament_id,),
+    )
+
+
+def loss_profiles_for_tournament(db_path: Path, tournament_id: str) -> list[sqlite3.Row]:
+    """Return every ``loss_profiles`` row that belongs to one tournament round."""
+    return _select(
+        db_path,
+        "SELECT run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
+        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id "
+        "FROM loss_profiles "
+        "WHERE tournament_id = ? ORDER BY entry_id, run_id",
+        (tournament_id,),
+    )
+
+
+def epoch_ancestry(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
+    """Return the chain from ``epoch_id`` back to the workspace's first epoch.
+
+    Walks ``parent_epoch_id`` (the v2 column) one hop at a time,
+    starting from the row for ``epoch_id`` and following each row's
+    parent until ``parent_epoch_id IS NULL`` (the workspace's first
+    epoch) or a cycle is detected (a safety guard — the lineage DAG
+    is acyclic by construction).
+
+    The returned list starts at ``epoch_id`` and ends at the root,
+    oldest last. A workspace that has never been indexed (or whose
+    ``epoch_id`` is unknown) yields an empty list.
+    """
+    try:
+        conn = open_index(db_path)
+    except IndexNotBuiltError:
+        return []
+    try:
+        chain: list[sqlite3.Row] = []
+        seen: set[str] = set()
+        cur_id: str | None = epoch_id
+        while cur_id is not None and cur_id not in seen:
+            seen.add(cur_id)
+            row = conn.execute(
+                "SELECT epoch_id, contract_hash, created_at, closed, parent_epoch_id "
+                "FROM epochs WHERE epoch_id = ?",
+                (cur_id,),
+            ).fetchone()
+            if row is None:
+                break
+            chain.append(row)
+            next_id = row["parent_epoch_id"]
+            cur_id = next_id if isinstance(next_id, str) and next_id else None
+        return chain
+    finally:
+        conn.close()
 
 
 def metric_counts_for_run(db_path: Path, run_id: str) -> list[sqlite3.Row]:
@@ -305,6 +377,9 @@ __all__ = [
     "generations_for_epoch",
     "runs_for_generation",
     "loss_profiles_for_generation",
+    "runs_for_tournament",
+    "loss_profiles_for_tournament",
+    "epoch_ancestry",
     "metric_counts_for_run",
     "judge_losses_for_run",
     "judge_losses_for_generation",

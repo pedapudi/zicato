@@ -30,6 +30,9 @@ _EXPECTED_INDEXES = {
     "idx_loss_gen",
     "idx_metric_run",
     "idx_judge_losses_run",
+    "idx_runs_tournament",
+    "idx_loss_tournament",
+    "idx_epochs_parent",
 }
 
 
@@ -108,6 +111,7 @@ def test_epochs_columns_match_contract() -> None:
         "created_at",
         "closed",
         "goal",
+        "parent_epoch_id",
     ]
     conn.close()
 
@@ -125,6 +129,7 @@ def test_loss_profiles_columns_match_contract() -> None:
         "runtime_ms",
         "wall_clock_budget_exceeded",
         "loss_json",
+        "tournament_id",
     ]
     conn.close()
 

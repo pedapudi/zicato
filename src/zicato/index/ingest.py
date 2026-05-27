@@ -64,6 +64,73 @@ def _default_db_path(workspace_root: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Cross-epoch + cross-generation lineage resolvers
+# ---------------------------------------------------------------------------
+
+
+def _parent_epoch_id_from_lineage_entry(entry: dict[str, Any] | None) -> str | None:
+    """Extract the parent epoch id from a single ``lineage.json`` entry.
+
+    The ``v0_parent`` field is the canonical pointer at the prior
+    epoch's promoted leaf. In current writers it carries the bare
+    parent epoch id (the design comment in :mod:`zicato.epoch.lineage`
+    flags a planned ``{epoch}:{gen}`` form). We accept either:
+
+    * a bare ``"epoch_id"`` string — used verbatim,
+    * a ``"epoch_id:generation_id"`` string — the ``epoch_id`` half
+      is the answer,
+    * ``None`` — the workspace's first epoch has no parent.
+
+    A non-string value collapses to ``None``.
+    """
+    if entry is None:
+        return None
+    raw = entry.get("v0_parent")
+    if not isinstance(raw, str) or not raw:
+        return None
+    # Tolerate the planned "{epoch}:{gen}" form by stripping the
+    # generation suffix when present.
+    if ":" in raw:
+        return raw.split(":", 1)[0]
+    return raw
+
+
+def _tournament_id_for_run(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+) -> str | None:
+    """Resolve the tournament a run belongs to from its generation's experiment.
+
+    A "tournament round" between a parent and a child generation is
+    keyed as ``"{epoch_id}:{parent_gen}->{child_gen}"`` — the same id
+    the ``tournaments`` table already uses. The child generation's
+    ``experiment.json`` carries the ``parent_generation_id`` field,
+    which is exactly the parent half of the key.
+
+    The runs that belong to a tournament are the runs under the
+    *child* generation: a tournament round runs the challenger across
+    every board entry, and the parent's scores are read from the
+    parent generation's cached ``gen_score.json`` rather than re-run.
+    So the helper looks up the child's experiment, not the parent's.
+
+    Returns ``None`` when the generation has no ``experiment.json``
+    (e.g. a ``v0`` seed) — those runs are champion-only fast-cache
+    runs with no tournament round attached.
+    """
+    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+
+    try:
+        experiment = read_experiment(workspace_root, epoch_id, generation_id)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        return None
+    parent = experiment.parent_generation_id
+    if not parent:
+        return None
+    return f"{epoch_id}:{parent}->{generation_id}"
+
+
+# ---------------------------------------------------------------------------
 # events.jsonl drift tally
 # ---------------------------------------------------------------------------
 
@@ -171,16 +238,35 @@ def _upsert_epoch(
     created_at: str,
     closed: bool,
     goal: str = "",
+    parent_epoch_id: str | None = None,
 ) -> None:
+    """Upsert one ``epochs`` row.
+
+    ``goal`` is the operator's free-form statement of why this epoch
+    exists, written to the per-epoch ``config.json``. Empty string for
+    epochs created before the field existed.
+
+    ``parent_epoch_id`` is the id of the epoch this one was forked off
+    of (the prior epoch in the workspace's lineage). The schema
+    permits ``NULL`` for the workspace's first epoch.
+
+    The upsert never clobbers an existing ``parent_epoch_id`` with
+    ``NULL`` — incremental writers that don't know the parent (e.g.
+    ``_upsert_owning_epoch_generation`` opened off a partially-rebuilt
+    lineage) pass ``None`` and the existing value is preserved via
+    ``COALESCE``. The canonical rebuild path always knows the parent
+    from ``lineage.json`` and writes it explicitly.
+    """
     conn.execute(
-        "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed, goal) "
-        "VALUES(?, ?, ?, ?, ?) "
+        "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed, goal, parent_epoch_id) "
+        "VALUES(?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(epoch_id) DO UPDATE SET "
         "contract_hash = excluded.contract_hash, "
         "created_at = excluded.created_at, "
         "closed = excluded.closed, "
-        "goal = excluded.goal",
-        (epoch_id, contract_hash, created_at, 1 if closed else 0, goal),
+        "goal = excluded.goal, "
+        "parent_epoch_id = COALESCE(excluded.parent_epoch_id, epochs.parent_epoch_id)",
+        (epoch_id, contract_hash, created_at, 1 if closed else 0, goal, parent_epoch_id),
     )
 
 
@@ -221,12 +307,23 @@ def _upsert_run(
     ended_at: str,
     aborted: bool,
     runtime_ms: int,
+    tournament_id: str | None = None,
 ) -> None:
+    """Upsert one ``runs`` row.
+
+    ``tournament_id`` is the FK link back to a ``tournaments`` row.
+    NULL is permitted for old rows (pre-v2 schema) and for runs that
+    have no tournament round (champion-only fast-cache runs under a
+    ``v0`` seed). The upsert preserves an existing ``tournament_id``
+    via ``COALESCE`` so a re-ingest that cannot resolve the round
+    (e.g. the child's ``experiment.json`` was deleted) does not clear
+    the column.
+    """
     conn.execute(
         "INSERT INTO runs("
         "run_id, epoch_id, generation_id, entry_id, started_at, ended_at, "
-        "aborted, runtime_ms) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?) "
+        "aborted, runtime_ms, tournament_id) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(run_id) DO UPDATE SET "
         "epoch_id = excluded.epoch_id, "
         "generation_id = excluded.generation_id, "
@@ -234,7 +331,8 @@ def _upsert_run(
         "started_at = excluded.started_at, "
         "ended_at = excluded.ended_at, "
         "aborted = excluded.aborted, "
-        "runtime_ms = excluded.runtime_ms",
+        "runtime_ms = excluded.runtime_ms, "
+        "tournament_id = COALESCE(excluded.tournament_id, runs.tournament_id)",
         (
             run_id,
             epoch_id,
@@ -244,16 +342,28 @@ def _upsert_run(
             ended_at,
             1 if aborted else 0,
             int(runtime_ms),
+            tournament_id,
         ),
     )
 
 
-def _upsert_loss_profile(conn: sqlite3.Connection, profile: LossProfile) -> None:
+def _upsert_loss_profile(
+    conn: sqlite3.Connection,
+    profile: LossProfile,
+    tournament_id: str | None = None,
+) -> None:
+    """Upsert one ``loss_profiles`` row.
+
+    ``tournament_id`` matches the FK on the parallel ``runs`` row
+    (same nullability story). Preserves any pre-existing value via
+    ``COALESCE`` so a re-ingest that can't resolve the round leaves
+    the column intact.
+    """
     conn.execute(
         "INSERT INTO loss_profiles("
         "run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
-        "runtime_ms, wall_clock_budget_exceeded, loss_json) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(run_id) DO UPDATE SET "
         "epoch_id = excluded.epoch_id, "
         "generation_id = excluded.generation_id, "
@@ -262,7 +372,8 @@ def _upsert_loss_profile(conn: sqlite3.Connection, profile: LossProfile) -> None
         "pass_fail = excluded.pass_fail, "
         "runtime_ms = excluded.runtime_ms, "
         "wall_clock_budget_exceeded = excluded.wall_clock_budget_exceeded, "
-        "loss_json = excluded.loss_json",
+        "loss_json = excluded.loss_json, "
+        "tournament_id = COALESCE(excluded.tournament_id, loss_profiles.tournament_id)",
         (
             profile.run_id,
             profile.epoch_id,
@@ -273,6 +384,7 @@ def _upsert_loss_profile(conn: sqlite3.Connection, profile: LossProfile) -> None
             int(profile.runtime_ms),
             1 if profile.wall_clock_budget_exceeded else 0,
             json.dumps(asdict(profile), sort_keys=True),
+            tournament_id,
         ),
     )
 
@@ -576,6 +688,13 @@ def _ingest_run_into(
             )
             profile = replace(profile, drift_counts=synthesised)
 
+    # Resolve the tournament round this run belongs to from the child
+    # generation's experiment.json. Returns ``None`` for v0 seed runs
+    # (no experiment) or runs whose experiment cannot be read; the
+    # upsert tolerates either case (NULL column, idempotent re-ingest
+    # via COALESCE).
+    tournament_id = _tournament_id_for_run(workspace_root, epoch_id, generation_id)
+
     _upsert_run(
         conn,
         run_id=profile.run_id,
@@ -590,8 +709,9 @@ def _ingest_run_into(
         ended_at="",
         aborted=profile.wall_clock_budget_exceeded,
         runtime_ms=profile.runtime_ms,
+        tournament_id=tournament_id,
     )
-    _upsert_loss_profile(conn, profile)
+    _upsert_loss_profile(conn, profile, tournament_id=tournament_id)
     _replace_metric_counts(conn, profile.run_id, profile)
     _replace_judge_losses(conn, profile.run_id, profile)
     return True
@@ -777,6 +897,7 @@ def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
             created_at=cfg.created_at,
             closed=cfg.closed,
             goal=cfg.goal,
+            parent_epoch_id=_parent_epoch_id_from_lineage_entry(lineage_by_epoch.get(cfg.id)),
         )
         _rebuild_epoch(conn, workspace_root, cfg.id, lineage_by_epoch.get(cfg.id))
 
@@ -793,6 +914,7 @@ def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
             created_at=str(entry.get("started_at", "")),
             closed=bool(entry.get("closed_at")),
             goal="",
+            parent_epoch_id=_parent_epoch_id_from_lineage_entry(entry),
         )
         _rebuild_epoch(conn, workspace_root, eid, entry)
 
@@ -951,8 +1073,11 @@ def _upsert_owning_epoch_generation(
         goal = cfg.goal
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         pass
-    _upsert_epoch(conn, epoch_id, contract_hash, created_at, closed, goal=goal)
 
+    # Resolve the parent epoch id from lineage.json's v0_parent field
+    # for the matching entry. Tolerates a missing / unreadable lineage
+    # — the upsert preserves any existing parent_epoch_id via COALESCE.
+    parent_epoch_id: str | None = None
     parent_id: str | None = None
     promoted = False
     gen_created_at = ""
@@ -963,6 +1088,7 @@ def _upsert_owning_epoch_generation(
         for entry in lineage.get("epochs", []):
             if entry.get("id") != epoch_id:
                 continue
+            parent_epoch_id = _parent_epoch_id_from_lineage_entry(entry)
             for g in entry.get("generations", []):
                 if g.get("id") == generation_id:
                     parent_id = g.get("parent_id")
@@ -971,6 +1097,15 @@ def _upsert_owning_epoch_generation(
             break
     except (OSError, json.JSONDecodeError):
         pass
+    _upsert_epoch(
+        conn,
+        epoch_id,
+        contract_hash,
+        created_at,
+        closed,
+        goal=goal,
+        parent_epoch_id=parent_epoch_id,
+    )
     _upsert_generation(
         conn,
         epoch_id=epoch_id,
@@ -1205,10 +1340,126 @@ def repair_epoch_goals(
     }
 
 
+def backfill_tournament_fk(
+    workspace_root: Path,
+    db_path: Path | None = None,
+) -> dict[str, int]:
+    """Backfill ``tournament_id`` on existing ``runs`` and ``loss_profiles``.
+
+    Walks every generation in ``lineage.json`` whose ``experiment.json``
+    is on disk, computes the canonical
+    ``"{epoch_id}:{parent_gen}->{child_gen}"`` tournament id, and
+    rewrites the ``runs.tournament_id`` and ``loss_profiles.tournament_id``
+    columns for every row under that generation that does not already
+    have one.
+
+    Also backfills ``epochs.parent_epoch_id`` from each lineage entry's
+    ``v0_parent`` — folded into the same command so an operator with an
+    older index gets both v2 columns repaired in one pass.
+
+    Idempotent: only rewrites cells that are currently ``NULL`` or
+    disagree with the disk-derived value. A fresh index built by the
+    v2 ingest path is already populated correctly, so this command is
+    a no-op there.
+
+    Returns
+    -------
+    dict
+        ``{"runs_updated": A, "loss_updated": B, "epochs_updated": C,
+        "scanned": M}`` — A, B, C count cells actually rewritten, M is
+        the number of generation rows the walk visited.
+    """
+    target = db_path if db_path is not None else _default_db_path(workspace_root)
+    if not target.exists():
+        return {
+            "runs_updated": 0,
+            "loss_updated": 0,
+            "epochs_updated": 0,
+            "scanned": 0,
+        }
+
+    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+
+    runs_updated = 0
+    loss_updated = 0
+    epochs_updated = 0
+    scanned = 0
+    conn = sqlite3.connect(str(target))
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        # Make sure the v2 columns exist before we try to write them —
+        # an older index file opened here might still be v1. apply_schema
+        # is idempotent + carries the v1 -> v2 migration.
+        apply_schema(conn)
+
+        lineage = load_lineage(workspace_root)
+        for entry in lineage.get("epochs", []):
+            epoch_id = entry.get("id")
+            if not isinstance(epoch_id, str):
+                continue
+
+            # epochs.parent_epoch_id from this lineage entry's v0_parent.
+            parent_epoch_id = _parent_epoch_id_from_lineage_entry(entry)
+            cur = conn.execute(
+                "SELECT parent_epoch_id FROM epochs WHERE epoch_id = ?",
+                (epoch_id,),
+            )
+            row = cur.fetchone()
+            if row is not None and row[0] != parent_epoch_id:
+                conn.execute(
+                    "UPDATE epochs SET parent_epoch_id = ? WHERE epoch_id = ?",
+                    (parent_epoch_id, epoch_id),
+                )
+                epochs_updated += 1
+
+            for g in entry.get("generations", []):
+                gid = g.get("id")
+                if not isinstance(gid, str):
+                    continue
+                scanned += 1
+                try:
+                    experiment = read_experiment(workspace_root, epoch_id, gid)
+                except (FileNotFoundError, json.JSONDecodeError, KeyError):
+                    continue
+                parent = experiment.parent_generation_id
+                if not parent:
+                    continue
+                tournament_id = f"{epoch_id}:{parent}->{gid}"
+
+                # runs.tournament_id — only rewrite cells where the
+                # current value disagrees (NULL or a stale id).
+                cur = conn.execute(
+                    "UPDATE runs SET tournament_id = ? "
+                    "WHERE epoch_id = ? AND generation_id = ? "
+                    "AND (tournament_id IS NULL OR tournament_id != ?)",
+                    (tournament_id, epoch_id, gid, tournament_id),
+                )
+                runs_updated += cur.rowcount if cur.rowcount > 0 else 0
+
+                cur = conn.execute(
+                    "UPDATE loss_profiles SET tournament_id = ? "
+                    "WHERE epoch_id = ? AND generation_id = ? "
+                    "AND (tournament_id IS NULL OR tournament_id != ?)",
+                    (tournament_id, epoch_id, gid, tournament_id),
+                )
+                loss_updated += cur.rowcount if cur.rowcount > 0 else 0
+        conn.commit()
+    finally:
+        conn.close()
+    return {
+        "runs_updated": runs_updated,
+        "loss_updated": loss_updated,
+        "epochs_updated": epochs_updated,
+        "scanned": scanned,
+    }
+
+
 __all__ = [
     "rebuild_index",
     "ingest_run",
     "ingest_experiment",
     "backfill_generations",
     "repair_epoch_goals",
+    "backfill_tournament_fk",
 ]
