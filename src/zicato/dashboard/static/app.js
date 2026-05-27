@@ -1,19 +1,22 @@
 // zicato dashboard — entry point.
 //
-// app.js is the thin orchestrator. It imports the modular core spine
-// (state, bus, router, api, sse, dom, format, harmonograf), the shared
-// component library, and the render layer, then wires them together:
+// app.js is the thin orchestrator. The dashboard has two shells:
 //
-//   * the SSE / api layer mutates AppState;
-//   * AppState emits `state:changed` on the bus;
-//   * the router emits `route:changed` on the bus;
-//   * this entry point subscribes to both and calls the render layer.
+//   * Phase-0 shell (DEFAULT) — the level-aligned redesign that maps
+//     directly onto the environment → epoch → generation → round → run
+//     hierarchy. Five new view modules under ``js/views/phase0_*.js``,
+//     a fixed sidebar (Live Activity card + Files + Search), and a
+//     breadcrumb as the primary navigation.
 //
-// The render layer is a pure consumer — given (state, route) it paints
-// keyed DOM nodes. A delta patches only the affected node; the activity
-// log appends keyed rows. Nothing here re-implements rendering or data
-// fetching: the modular boundary (core spine | components | render |
-// entry) is the architecture. See js/CONTRACTS.md.
+//   * Legacy 5-tab shell — Overview, Tree, Tournament, Epoch, Files.
+//     Selectable with ``?legacy=1`` for the duration of the phase-0
+//     rollout. Mounted exactly as before so a fresh page-load with
+//     ``?legacy=1`` walks the identical code path the dashboard has
+//     used since the modular boundary landed.
+//
+// The shell pick is resolved BEFORE any view module runs so each
+// shell's containers are wired only when its DOM is visible. The bus
+// is the spine: a state mutation or a route change drives a render.
 
 import { bus } from './js/core/bus.js';
 import { state } from './js/core/state.js';
@@ -26,43 +29,115 @@ import {
 } from './js/views/render.js';
 import { mockSnapshot } from './js/views/mock.js';
 
+import { parsePhase0Hash } from './js/views/phase0_router.js';
+import {
+  renderBreadcrumb, showPhase0View, renderSidebarLive,
+} from './js/views/phase0_shell.js';
+import { renderPhase0Workspace } from './js/views/phase0_workspace.js';
+import { renderPhase0Epoch } from './js/views/phase0_epoch.js';
+import { renderPhase0Generation } from './js/views/phase0_generation.js';
+import { renderPhase0Round } from './js/views/phase0_round.js';
+import { renderPhase0Run } from './js/views/phase0_run.js';
+
 // A single render is debounced across a burst of `state:changed`
 // emissions inside one tick so a multi-field state update repaints
 // once. The render layer is itself idempotent, so this is purely an
 // efficiency floor.
 let _renderQueued = false;
+let _shell = 'phase0'; // resolved in init()
+
 function scheduleRender() {
   if (_renderQueued) return;
   _renderQueued = true;
   queueMicrotask(() => {
     _renderQueued = false;
-    renderAll();
+    if (_shell === 'legacy') {
+      renderAll();
+    } else {
+      renderPhase0All();
+    }
   });
 }
 
+// Render the entire phase-0 shell. Header / footer / sidebar / breadcrumb
+// + the active L0..L4 view. Idempotent: each per-level module is itself
+// digest-aware where the underlying data justifies it.
+function renderPhase0All() {
+  renderHeader();
+  renderFooter();
+  renderSidebarLive();
+  const route = parsePhase0Hash(window.location.hash);
+  renderBreadcrumb(route);
+  showPhase0View(route.level);
+  switch (route.level) {
+    case 'workspace':
+      renderPhase0Workspace(scheduleRender);
+      break;
+    case 'epoch':
+      renderPhase0Epoch(route.params, scheduleRender);
+      break;
+    case 'generation':
+      renderPhase0Generation(route.params);
+      break;
+    case 'round':
+      renderPhase0Round(route.params);
+      break;
+    case 'run':
+      renderPhase0Run(route.params);
+      break;
+    default:
+      break;
+  }
+}
+
+// Resolve which shell to mount before anything else runs. ``?legacy=1``
+// switches to the legacy 5-tab UI; everything else (default) gets the
+// phase-0 level-aligned shell.
+function resolveShell() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('legacy') === '1') return 'legacy';
+  return 'phase0';
+}
+
+function mountShell(shell) {
+  const legacy = document.getElementById('legacy-shell');
+  const phase0 = document.getElementById('phase0-shell');
+  if (shell === 'legacy') {
+    if (legacy) legacy.classList.remove('hidden');
+    if (phase0) phase0.classList.add('hidden');
+  } else {
+    if (legacy) legacy.classList.add('hidden');
+    if (phase0) phase0.classList.remove('hidden');
+  }
+}
+
 function init() {
-  // The drill panel close affordance.
+  _shell = resolveShell();
+  mountShell(_shell);
+
+  // The drill panel close affordance — used by the legacy shell. Harmless
+  // when the phase-0 shell is active (the panel is shared chrome).
   const drillClose = document.getElementById('drill-close');
   if (drillClose) drillClose.addEventListener('click', closeDrill);
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') closeDrill();
   });
 
-  // The bus is the spine: a state mutation or a route change drives a
-  // render. The render layer reads the router's current route itself.
   bus.on('state:changed', scheduleRender);
-  bus.on('route:changed', () => applyRoute());
-  // A `log:appended` emission (the run-log ?after= poll merged new
-  // events) drives a strictly append-only log-tail render — the panel
-  // grows by keyed rows and never flashes.
-  bus.on('log:appended', () => appendLogTail());
+  bus.on('route:changed', () => {
+    if (_shell === 'legacy') applyRoute();
+    else scheduleRender();
+  });
+  bus.on('log:appended', () => {
+    if (_shell === 'legacy') appendLogTail();
+    else scheduleRender();
+  });
 
-  // Tree-view pan + zoom wiring (the SVG itself is repainted on render).
-  setupLineageInteractions();
+  if (_shell === 'legacy') setupLineageInteractions();
 
   // Tick the header's elapsed clock once per second so it reads "live"
-  // even when no state changes arrive. The render layer's renderHeader
-  // is cheap and idempotent.
+  // even when no state changes arrive. The renderHeader function is
+  // cheap and idempotent in both shells.
   setInterval(() => { renderHeader(); }, 1000);
 
   // Mock mode must be resolved BEFORE router.start(): it emits
@@ -79,15 +154,20 @@ function init() {
     state.applySnapshot(mockSnapshot());
   }
 
-  // Resolve the initial route before the first paint.
+  // Resolve the initial route before the first paint. The legacy router
+  // emits `route:changed` -> applyRoute; the phase-0 shell just installs
+  // its own hashchange listener so a fragment update repaints.
   router.start();
+  if (_shell === 'phase0') {
+    window.addEventListener('hashchange', () => scheduleRender());
+  }
 
   if (mock) {
-    renderAll();
+    if (_shell === 'legacy') renderAll(); else renderPhase0All();
     return;
   }
 
-  renderAll();
+  if (_shell === 'legacy') renderAll(); else renderPhase0All();
   loadEnvironment();
   loadServiceIdentity();
   connectSSE();

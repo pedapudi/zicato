@@ -890,7 +890,17 @@ def test_bundle_under_size_envelope(
     # alone) each measured one fix in isolation; the fully integrated
     # bundle was re-measured directly at 423,713 bytes. A 460 KB cap
     # leaves ~36 KB of headroom for incidental drift.
-    assert total < 460_000, f"bundle is {total} bytes, exceeds 460_000 envelope"
+    # Raised again by the phase-0 dashboard redesign (task #181): the
+    # bundle now ships a second, level-aligned shell behind the default
+    # entry path while keeping the legacy 5-tab UI reachable behind
+    # ``?legacy=1``. Six new view modules (workspace / epoch /
+    # generation / round / run + the breadcrumb & sidebar shell + a
+    # phase-0 router) and their scoped ``phase0-*`` CSS land alongside
+    # the existing modules. The single-branch bundle measured directly
+    # at ~501 KB; a 540 KB cap leaves ~40 KB of headroom for incidental
+    # drift while phase-1 lights up the stubbed sections (per-judge
+    # data, contract-diff polish, transcript wiring).
+    assert total < 540_000, f"bundle is {total} bytes, exceeds 540_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

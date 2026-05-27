@@ -2739,3 +2739,135 @@ h4 {
   .exp-summary { flex-wrap: wrap; }
   .exp-summary-idea { white-space: normal; flex-basis: 100%; }
 }
+
+/* ============================================================
+   Phase-0 redesign shell: level-aligned dashboard.
+
+   The phase-0 shell replaces the legacy 5-tab navigation with a
+   fixed sidebar + breadcrumb-as-navigation + per-level view
+   container. The legacy shell is preserved verbatim behind
+   ``?legacy=1``. Styles are scoped to ``.phase0-*`` classes so a
+   stray legacy rule never touches a phase-0 node.
+   ============================================================ */
+.phase0-shell.hidden { display: none; }
+#legacy-shell.hidden { display: none; }
+.phase0-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 0;
+  min-height: calc(100vh - 90px);
+}
+.phase0-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  padding: 1rem 0.75rem;
+  border-right: 1px solid var(--rule, #ddd);
+  font-size: 0.85rem;
+}
+.phase0-sidebar-title {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.4rem;
+  color: var(--muted, #666);
+}
+.phase0-live-card { margin-bottom: 1.5rem; }
+.phase0-live-body { display: flex; flex-direction: column; gap: 0.2rem; }
+.phase0-live-line { font-family: var(--mono, monospace); font-size: 0.78rem; }
+.phase0-live-jump {
+  display: inline-block;
+  margin-top: 0.4rem;
+  font-size: 0.78rem;
+}
+.phase0-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 1rem;
+}
+.phase0-sidebar-link {
+  text-decoration: none;
+  padding: 0.3rem 0.4rem;
+  border-radius: 3px;
+}
+.phase0-sidebar-link:hover { background: rgba(0, 0, 0, 0.05); }
+.phase0-main { padding: 1rem 1.5rem; min-width: 0; }
+.phase0-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0;
+  margin: 0 0 1rem;
+  border-bottom: 1px solid var(--rule, #ddd);
+  font-size: 0.85rem;
+}
+.phase0-crumb {
+  text-decoration: none;
+  font-family: var(--mono, monospace);
+}
+.phase0-crumb-placeholder { color: var(--muted, #999); }
+.phase0-crumb-sep { color: var(--muted, #999); }
+.phase0-view { display: block; padding: 0; }
+.phase0-view.hidden { display: none; }
+.phase0-view h2 { margin-top: 0; }
+.phase0-view > div { margin: 0.6rem 0 1.2rem; }
+.phase0-stub {
+  border: 1px dashed var(--rule, #ddd);
+  padding: 0.6rem 0.8rem;
+  background: rgba(0, 0, 0, 0.02);
+}
+.phase0-stub-msg { color: var(--muted, #888); font-style: italic; }
+.phase0-kv-table, .phase0-lineage-table, .phase0-contract-diff,
+.phase0-mini-table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.phase0-kv-table td, .phase0-lineage-table td, .phase0-contract-diff td,
+.phase0-mini-table td,
+.phase0-lineage-table th, .phase0-contract-diff th,
+.phase0-mini-table th {
+  padding: 0.25rem 0.6rem 0.25rem 0;
+  text-align: left;
+  border-bottom: 1px solid var(--rule, #eee);
+}
+.phase0-contract-diff-changed { background: rgba(255, 200, 0, 0.08); }
+.phase0-sparkline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+.phase0-sparkline-val { color: var(--accent, #06f); }
+.phase0-vs {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+.phase0-vs-side { display: flex; flex-direction: column; }
+.phase0-vs-label { font-size: 0.75rem; text-transform: uppercase; }
+.phase0-vs-id { font-size: 1rem; }
+.phase0-vs-versus { font-size: 1.2rem; opacity: 0.6; }
+.phase0-decision-line { margin: 0.2rem 0; }
+.phase0-h3 {
+  font-size: 0.95rem;
+  margin: 1rem 0 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.phase0-search-input {
+  width: 100%;
+  max-width: 480px;
+  padding: 0.4rem 0.6rem;
+  margin-bottom: 0.8rem;
+}
+.phase0-events-line { font-size: 0.8rem; }
+.phase0-journal-preview {
+  white-space: pre-wrap;
+  max-height: 20rem;
+  overflow: auto;
+  padding: 0.6rem;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 3px;
+}

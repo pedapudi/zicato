@@ -24,7 +24,8 @@
     </div>
   </header>
 
-  <div class="app-shell">
+  <!-- ============ LEGACY SHELL (active under ?legacy=1) ================ -->
+  <div id="legacy-shell" class="app-shell">
 
     <nav id="nav-rail" class="nav-rail" role="navigation" aria-label="Dashboard views">
       <a class="nav-item" id="nav-overview" href="#/overview" aria-label="Overview">
@@ -52,11 +53,6 @@
     <main id="main-content" role="main">
 
       <!-- ============ OVERVIEW VIEW ============ -->
-      <!-- The environment home: a one-glance view of the whole zicato
-           environment — identity, loop health, a COMPACT live-activity
-           card (the full champion/challenger board lives only in the
-           Tournament view), the score trajectory, the epochs table and
-           recent experiments. Every panel degrades independently. -->
       <div id="view-overview" class="view" data-view="overview">
 
         <section id="identity-section" aria-label="Environment identity">
@@ -168,9 +164,6 @@
       </div>
 
       <!-- ============ CONVERSATION VIEW ============ -->
-      <!-- Focused view: not a nav-rail tab. Reached by drilling from a
-           board card (#conversation/{entry_id}); the back link returns
-           to the Tournament view. -->
       <div id="view-conversation" class="view hidden" data-view="conversation">
 
         <section id="conversation-section" class="conversation-section"
@@ -244,16 +237,8 @@
       </div>
 
       <!-- ============ FILES VIEW ============ -->
-      <!-- Browse every generation's source tree and applied patches.
-           Works for both storage backends — the server reads through
-           the GenerationStore seam, so directory snapshots and the git
-           backend render identically here. -->
       <div id="view-files" class="view hidden" data-view="files">
 
-        <!-- What a generation changed: a generation picker, then a
-             side-by-side (split) diff of every file the selected
-             generation changed relative to its parent generation (or
-             the v0 baseline). Route-driven: #/files/{epoch}/{gen}. -->
         <section id="files-changes-section" aria-label="Generation changes">
           <h2>What changed</h2>
           <div id="files-changes-controls" class="files-changes-controls">
@@ -264,10 +249,6 @@
           </div>
         </section>
 
-        <!-- Patches applied in this single generation. The "in v{N}"
-             label makes the per-generation scope obvious — contrast with
-             the cumulative section below, which walks the champion
-             lineage back to the seed. -->
         <section id="files-patches-section" aria-label="Patches in this generation">
           <h2 id="files-patches-title">Patches in this generation</h2>
           <div id="files-patches" class="files-patches">
@@ -275,11 +256,6 @@
           </div>
         </section>
 
-        <!-- The CUMULATIVE patch chain: every patch on the champion
-             lineage from the seed to the selected generation. Walks
-             parent_generation_id back through live AppState; rejected
-             siblings are NOT on the chain. Empty when only the seed
-             generation is selected. -->
         <section id="files-cumulative-section" aria-label="Patches applied to reach this generation">
           <h2 id="files-cumulative-title">Patches applied to reach this generation</h2>
           <div id="files-cumulative" class="files-cumulative">
@@ -287,10 +263,6 @@
           </div>
         </section>
 
-        <!-- The mutation-site browser: every # zicato:mutable span in the
-             selected generation's epoch baseline, and — for each — a diff
-             of the v0 original against the patched content in any
-             generation whose patch touched that mutation id. -->
         <section id="mutations-section" aria-label="Mutation-site browser">
           <h2>Mutation sites</h2>
           <div id="mutations-browser" class="mutations-browser">
@@ -307,6 +279,213 @@
 
     </main>
 
+  </div>
+
+  <!-- ============ PHASE-0 SHELL (default; level-aligned redesign) ====== -->
+  <!--
+    The phase-0 shell renders the level-aligned views (L0 workspace,
+    L1 epoch, L2 generation, L3 round, L4 run). It is the default; the
+    legacy 5-tab UI above is reachable with ``?legacy=1`` for fallback
+    while the new shell stabilises across the L0..L4 hierarchy. Sidebar
+    is a fixed strip with Live Activity (heartbeat-subscribed),
+    breadcrumb-aware Files, and free-text Search.
+   -->
+  <div id="phase0-shell" class="phase0-shell hidden" data-shell="phase0">
+
+    <aside id="phase0-sidebar" class="phase0-sidebar" role="navigation"
+        aria-label="Phase-0 sidebar">
+      <div id="phase0-live-card" class="phase0-live-card"
+          aria-label="Live activity">
+        <h3 class="phase0-sidebar-title">Live activity</h3>
+        <div id="phase0-live-body" class="phase0-live-body">
+          <p class="empty">No active run.</p>
+        </div>
+      </div>
+      <nav class="phase0-sidebar-nav" aria-label="Sidebar tools">
+        <a id="phase0-nav-files" class="phase0-sidebar-link" href="#/files">Files</a>
+        <a id="phase0-nav-search" class="phase0-sidebar-link" href="#/search">Search</a>
+        <a id="phase0-nav-legacy" class="phase0-sidebar-link"
+            href="?legacy=1"
+            title="Switch back to the legacy 5-tab UI">Legacy UI</a>
+      </nav>
+    </aside>
+
+    <main id="phase0-main" class="phase0-main" role="main">
+
+      <nav id="phase0-breadcrumb" class="phase0-breadcrumb"
+          aria-label="Hierarchy breadcrumb">
+        <a class="phase0-crumb" href="#/workspace" data-crumb="workspace">workspace</a>
+        <span class="phase0-crumb-sep" aria-hidden="true">&rsaquo;</span>
+        <span class="phase0-crumb phase0-crumb-placeholder"
+            data-crumb="epoch">epoch</span>
+        <span class="phase0-crumb-sep" aria-hidden="true">&rsaquo;</span>
+        <span class="phase0-crumb phase0-crumb-placeholder"
+            data-crumb="generation">gen</span>
+        <span class="phase0-crumb-sep" aria-hidden="true">&rsaquo;</span>
+        <span class="phase0-crumb phase0-crumb-placeholder"
+            data-crumb="round">round</span>
+        <span class="phase0-crumb-sep" aria-hidden="true">&rsaquo;</span>
+        <span class="phase0-crumb phase0-crumb-placeholder"
+            data-crumb="run">run</span>
+      </nav>
+
+      <div id="phase0-content" class="phase0-content" role="region"
+          aria-live="polite">
+
+        <!-- L0 workspace -->
+        <section id="phase0-view-workspace"
+            class="phase0-view phase0-view-workspace"
+            data-level="workspace">
+          <h2>Workspace</h2>
+          <div id="phase0-workspace-env" class="phase0-workspace-env"
+              aria-label="Environment configuration">
+            <p class="empty">No environment loaded.</p>
+          </div>
+          <div id="phase0-workspace-lineage" class="phase0-workspace-lineage"
+              aria-label="Multi-epoch lineage">
+            <p class="empty">No epochs recorded.</p>
+          </div>
+          <div id="phase0-workspace-sparkline" class="phase0-workspace-sparkline"
+              aria-label="Cross-epoch best-scalar sparkline">
+            <p class="empty">No scalar history yet.</p>
+          </div>
+        </section>
+
+        <!-- L1 epoch -->
+        <section id="phase0-view-epoch" class="phase0-view phase0-view-epoch hidden"
+            data-level="epoch">
+          <h2>Epoch</h2>
+          <div id="phase0-epoch-goal" class="phase0-epoch-goal"
+              aria-label="Epoch goal">
+            <p class="empty">(goal not yet recorded — populated once #178 lands)</p>
+          </div>
+          <div id="phase0-epoch-contract-diff" class="phase0-epoch-contract-diff"
+              aria-label="Contract diff vs predecessor">
+            <p class="empty">No predecessor to diff against.</p>
+          </div>
+          <div id="phase0-epoch-spine" class="phase0-epoch-spine"
+              aria-label="Generation spine (gauntlet)">
+            <p class="empty">No generations yet.</p>
+          </div>
+          <div id="phase0-epoch-heatmap-entries" class="phase0-epoch-heatmap-entries"
+              aria-label="Per-entry × generation heatmap (loss profiles)">
+            <p class="empty">No loss profiles yet.</p>
+          </div>
+          <div id="phase0-epoch-heatmap-judges"
+              class="phase0-epoch-heatmap-judges phase0-stub"
+              aria-label="Per-judge × generation heatmap (stub)">
+            <p class="empty">(populated once #179 lands)</p>
+          </div>
+          <div id="phase0-epoch-journal" class="phase0-epoch-journal"
+              aria-label="Journal preview">
+            <p class="empty">No journal preview.</p>
+          </div>
+        </section>
+
+        <!-- L2 generation -->
+        <section id="phase0-view-generation"
+            class="phase0-view phase0-view-generation hidden"
+            data-level="generation">
+          <h2>Generation</h2>
+          <div id="phase0-gen-hypothesis" class="phase0-gen-hypothesis"
+              aria-label="Hypothesis (proposed before / outcome after)">
+            <p class="empty">No hypothesis recorded.</p>
+          </div>
+          <div id="phase0-gen-patches" class="phase0-gen-patches"
+              aria-label="Patches">
+            <p class="empty">No patches recorded.</p>
+          </div>
+          <div id="phase0-gen-entries" class="phase0-gen-entries"
+              aria-label="Per-entry breakdown">
+            <p class="empty">No per-entry breakdown yet.</p>
+          </div>
+          <div id="phase0-gen-judges" class="phase0-gen-judges phase0-stub"
+              aria-label="Per-judge breakdown (stub)">
+            <p class="empty">(populated once #179 lands)</p>
+          </div>
+          <div id="phase0-gen-compare" class="phase0-gen-compare"
+              aria-label="Compare-to-v? picker">
+            <p class="empty">No comparison target selected.</p>
+          </div>
+        </section>
+
+        <!-- L3 round / tournament -->
+        <section id="phase0-view-round" class="phase0-view phase0-view-round hidden"
+            data-level="round">
+          <h2>Round</h2>
+          <div id="phase0-round-vs" class="phase0-round-vs"
+              aria-label="Champion vs challenger">
+            <p class="empty">No matchup selected.</p>
+          </div>
+          <div id="phase0-round-entries" class="phase0-round-entries"
+              aria-label="Per-entry comparison">
+            <p class="empty">No per-entry comparison yet.</p>
+          </div>
+          <div id="phase0-round-judges" class="phase0-round-judges phase0-stub"
+              aria-label="Per-judge comparison (stub)">
+            <p class="empty">(populated once #179 / #180 land)</p>
+          </div>
+          <div id="phase0-round-decision" class="phase0-round-decision"
+              aria-label="Decision + driver">
+            <p class="empty">No decision yet.</p>
+          </div>
+        </section>
+
+        <!-- L4 run -->
+        <section id="phase0-view-run" class="phase0-view phase0-view-run hidden"
+            data-level="run">
+          <h2>Run</h2>
+          <div id="phase0-run-header" class="phase0-run-header"
+              aria-label="Run header metrics">
+            <p class="empty">No run selected.</p>
+          </div>
+          <div id="phase0-run-expectation" class="phase0-run-expectation"
+              aria-label="Expectation outcomes">
+            <p class="empty">No expectation recorded.</p>
+          </div>
+          <div id="phase0-run-judges" class="phase0-run-judges phase0-stub"
+              aria-label="Per-judge breakdown (stub)">
+            <p class="empty">(populated once #179 lands)</p>
+          </div>
+          <div id="phase0-run-transcript" class="phase0-run-transcript"
+              aria-label="Transcript">
+            <p class="empty">No transcript loaded.</p>
+          </div>
+          <div id="phase0-run-events" class="phase0-run-events"
+              aria-label="Live events stream">
+            <p class="empty">No events yet.</p>
+          </div>
+        </section>
+
+        <!-- Sidebar-driven: Files (breadcrumb-aware) -->
+        <section id="phase0-view-files" class="phase0-view phase0-view-files hidden"
+            data-level="files">
+          <h2>Files</h2>
+          <p class="panel-subheader">
+            Artifact browser; defaults to the current generation's dir
+            when navigated to from a generation.
+          </p>
+          <p class="empty">Use the legacy Files view for full diff + patches
+            (linked from the sidebar).</p>
+        </section>
+
+        <!-- Sidebar-driven: free-text search -->
+        <section id="phase0-view-search" class="phase0-view phase0-view-search hidden"
+            data-level="search">
+          <h2>Search</h2>
+          <p class="panel-subheader">
+            Free-text search across board entries, judges, patches,
+            and mutation IDs.
+          </p>
+          <input type="search" id="phase0-search-input"
+              class="phase0-search-input" placeholder="search terms..." />
+          <div id="phase0-search-results" class="phase0-search-results">
+            <p class="empty">No query.</p>
+          </div>
+        </section>
+
+      </div>
+    </main>
   </div>
 
   <aside id="drill-panel" class="drill-panel" role="complementary" aria-label="Drill-down panel" aria-hidden="true">

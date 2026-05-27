@@ -2183,3 +2183,219 @@ def test_read_adk_session_id_from_events_no_session_field(tmp_path: Path) -> Non
     p = tmp_path / "events.jsonl"
     _write(p, json.dumps({"event_id": "e0", "run_id": "r0"}) + "\n")
     assert read_adk_session_id_from_events(str(p)) == ""
+
+
+# ---------------------------------------------------------------------------
+# Phase-0 redesign: L0 workspace view + L1 contract diff
+# ---------------------------------------------------------------------------
+
+
+def _seed_second_epoch(ws: Path) -> str:
+    """Add a second epoch directory to the workspace fixture.
+
+    Returns the new epoch id. The directory is sorted-AFTER the
+    fixture's ``2026-05-16_e0`` so build_contract_diff resolves it as
+    the successor with ``2026-05-16_e0`` as the predecessor.
+    """
+    epoch_id = "2026-05-17_e1"
+    epoch_dir = ws / "epochs" / epoch_id
+    (epoch_dir / "generations" / "v0").mkdir(parents=True, exist_ok=True)
+    _write(epoch_dir / "brief.md", "# brief\n\n## Goal\n\nIterate further.\n")
+    _write_json(epoch_dir / "config.json", {"closed": False})
+    return epoch_id
+
+
+def test_build_workspace_view_returns_per_epoch_rows(workspace: Path) -> None:
+    """build_workspace_view enumerates every epoch directory on disk."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_workspace_view
+
+    _seed_second_epoch(workspace)
+    view = build_workspace_view(WorkspacePaths(workspace))
+
+    assert view["current_epoch_id"] == "2026-05-16_e0"
+    ids = [row["epoch_id"] for row in view["epochs"]]
+    assert ids == ["2026-05-16_e0", "2026-05-17_e1"]
+    # Each row carries the contract fields the L0 view needs.
+    for row in view["epochs"]:
+        for key in (
+            "epoch_id",
+            "goal",
+            "best_scalar",
+            "best_generation_id",
+            "generation_count",
+            "promoted_count",
+            "closed",
+        ):
+            assert key in row
+    # Sparkline mirrors the epochs list one-to-one.
+    spark_ids = [pt["epoch_id"] for pt in view["sparkline"]]
+    assert spark_ids == ids
+
+
+def test_build_workspace_view_no_epochs_directory(tmp_path: Path) -> None:
+    """A workspace without an ``epochs/`` dir degrades to an empty list."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_workspace_view
+
+    ws = tmp_path / ".zicato"
+    (ws / "runtime").mkdir(parents=True)
+    view = build_workspace_view(WorkspacePaths(ws))
+    assert view["epochs"] == []
+    assert view["sparkline"] == []
+    assert view["current_epoch_id"] is None
+
+
+def test_build_workspace_view_closed_flag_reads_config(workspace: Path) -> None:
+    """A closed epoch surfaces ``closed: True``."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_workspace_view
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write_json(epoch_dir / "config.json", {"closed": True})
+
+    view = build_workspace_view(WorkspacePaths(workspace))
+    row = next(r for r in view["epochs"] if r["epoch_id"] == "2026-05-16_e0")
+    assert row["closed"] is True
+
+
+def test_build_contract_diff_no_predecessor(workspace: Path) -> None:
+    """The first epoch on disk reports ``predecessor_epoch_id = None``."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_contract_diff
+
+    diff = build_contract_diff(WorkspacePaths(workspace), "2026-05-16_e0")
+    assert diff["epoch_id"] == "2026-05-16_e0"
+    assert diff["predecessor_epoch_id"] is None
+    assert diff["any_changed"] is False
+    # Stable five-row matrix even when no diff is possible.
+    names = [c["name"] for c in diff["components"]]
+    assert names == ["board", "brief", "scoring", "entrypoint", "mutable_trees"]
+    for c in diff["components"]:
+        assert c["changed"] is False
+
+
+def test_build_contract_diff_flags_changed_components(workspace: Path) -> None:
+    """Components with differing hashes between epochs are marked changed."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_contract_diff
+
+    # Predecessor — the fixture's epoch.
+    pred_dir = workspace / "epochs" / "2026-05-16_e0"
+    _write_json(
+        pred_dir / "contract_components.json",
+        {
+            "board": "boardhash_v0",
+            "brief": "briefhash_v0",
+            "scoring": "scoringhash_v0",
+            "entrypoint": "entryhash_v0",
+            "mutable_trees": "treeshash_v0",
+        },
+    )
+    # Successor with only the brief changed.
+    succ_id = _seed_second_epoch(workspace)
+    succ_dir = workspace / "epochs" / succ_id
+    _write_json(
+        succ_dir / "contract_components.json",
+        {
+            "board": "boardhash_v0",
+            "brief": "briefhash_v1",
+            "scoring": "scoringhash_v0",
+            "entrypoint": "entryhash_v0",
+            "mutable_trees": "treeshash_v0",
+        },
+    )
+
+    diff = build_contract_diff(WorkspacePaths(workspace), succ_id)
+    assert diff["predecessor_epoch_id"] == "2026-05-16_e0"
+    assert diff["any_changed"] is True
+    changed = {c["name"]: c for c in diff["components"] if c["changed"]}
+    assert set(changed) == {"brief"}
+    assert changed["brief"]["previous_hash"] == "briefhash_v0"
+    assert changed["brief"]["current_hash"] == "briefhash_v1"
+
+
+def test_build_contract_diff_missing_components_file(workspace: Path) -> None:
+    """An absent ``contract_components.json`` does not raise — every row reads ``None``."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_contract_diff
+
+    succ_id = _seed_second_epoch(workspace)
+    diff = build_contract_diff(WorkspacePaths(workspace), succ_id)
+    assert diff["predecessor_epoch_id"] == "2026-05-16_e0"
+    # No component hashes anywhere — every row reads (None, None, False).
+    for c in diff["components"]:
+        assert c["previous_hash"] is None
+        assert c["current_hash"] is None
+        assert c["changed"] is False
+    assert diff["any_changed"] is False
+
+
+def test_api_workspace_endpoint_returns_view(client: TestClient) -> None:
+    """``GET /api/workspace`` returns the L0 workspace view payload."""
+    r = client.get("/api/workspace")
+    assert r.status_code == 200
+    body = r.json()
+    assert "current_epoch_id" in body
+    assert "epochs" in body and isinstance(body["epochs"], list)
+    assert "sparkline" in body and isinstance(body["sparkline"], list)
+
+
+def test_api_contract_diff_endpoint_returns_payload(client: TestClient) -> None:
+    """``GET /api/contract-diff/{epoch_id}`` returns the L1 diff payload."""
+    r = client.get("/api/contract-diff/2026-05-16_e0")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["epoch_id"] == "2026-05-16_e0"
+    assert "components" in body
+    names = [c["name"] for c in body["components"]]
+    assert names == ["board", "brief", "scoring", "entrypoint", "mutable_trees"]
+
+
+def test_api_contract_diff_endpoint_rejects_unsafe_id(client: TestClient) -> None:
+    """Malformed epoch ids degrade to an empty diff (no 500)."""
+    r = client.get("/api/contract-diff/../etc/passwd")
+    # The Starlette path regex may reject the slash before reaching our
+    # handler (404), or the handler may return its own empty-diff
+    # JSON 200. Both are acceptable degradation modes.
+    assert r.status_code in (200, 404, 405)
+    if r.status_code == 200:
+        body = r.json()
+        assert body["components"] == []
+
+
+# ---------------------------------------------------------------------------
+# Phase-0 redesign: static shell structure
+# ---------------------------------------------------------------------------
+
+
+def test_phase0_shell_present_in_index_html() -> None:
+    """The phase-0 shell containers are present in the served ``index.html``."""
+    import zicato.dashboard as _dashboard_pkg
+
+    index_path = Path(_dashboard_pkg.__file__).resolve().parent / "static" / "index.html"
+    html = index_path.read_text(encoding="utf-8")
+    assert 'id="phase0-shell"' in html, "phase-0 shell container must be present"
+    assert 'id="phase0-sidebar"' in html, "phase-0 sidebar must be present"
+    assert 'id="phase0-breadcrumb"' in html, "phase-0 breadcrumb must be present"
+    # Each L0..L4 view container must be wired so the shell can switch
+    # between them without re-fetching the HTML.
+    for level in ("workspace", "epoch", "generation", "round", "run"):
+        assert f'id="phase0-view-{level}"' in html, f"phase0 view container for {level!r} missing"
+    # Legacy shell preserved so ``?legacy=1`` still works.
+    assert 'id="legacy-shell"' in html
+
+
+def test_build_workspace_view_promoted_count_reads_experiments(workspace: Path) -> None:
+    """build_workspace_view counts a promoted generation from experiment.json."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_workspace_view
+
+    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
+    gen_dir = epoch_dir / "generations" / "v1"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        gen_dir / "experiment.json",
+        {
+            "generation_id": "v1",
+            "outcome": {"tournament_decision": "promoted"},
+        },
+    )
+
+    view = build_workspace_view(WorkspacePaths(workspace))
+    row = next(r for r in view["epochs"] if r["epoch_id"] == "2026-05-16_e0")
+    assert row["promoted_count"] >= 1, "the promoted generation must be counted"
+    assert row["generation_count"] >= 1, "v1 must show up in generation_count"

@@ -153,6 +153,11 @@ def create_app(
         Route("/api/environment", handlers["api_environment"]),
         Route("/api/epoch", handlers["api_epoch"]),
         Route("/api/lineage", handlers["api_lineage"]),
+        Route("/api/workspace", handlers["api_workspace"]),
+        Route(
+            "/api/contract-diff/{epoch_id}",
+            handlers["api_contract_diff"],
+        ),
         Route("/api/run-log", handlers["api_run_log"]),
         Route("/api/active-runs", handlers["api_active_runs"]),
         Route("/api/active-tournament", handlers["api_active_tournament"]),

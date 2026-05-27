@@ -113,6 +113,24 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     async def api_lineage(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_lineage_view(paths))
 
+    async def api_workspace(_request: Request) -> JSONResponse:
+        """L0 (workspace-level) cross-epoch summary for the new shell."""
+        return JSONResponse(state_reader.build_workspace_view(paths))
+
+    async def api_contract_diff(request: Request) -> JSONResponse:
+        """L1 (epoch-level) contract diff vs predecessor epoch."""
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "predecessor_epoch_id": None,
+                    "components": [],
+                    "any_changed": False,
+                }
+            )
+        return JSONResponse(state_reader.build_contract_diff(paths, epoch_id))
+
     async def api_run_log(request: Request) -> JSONResponse:
         limit = state_reader.clamp_run_log_limit(_int_query(request, "limit"))
         # ``?after=<cursor>`` requests only events past a cursor so the
@@ -519,6 +537,8 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_environment": api_environment,
         "api_epoch": api_epoch,
         "api_lineage": api_lineage,
+        "api_workspace": api_workspace,
+        "api_contract_diff": api_contract_diff,
         "api_run_log": api_run_log,
         "api_active_runs": api_active_runs,
         "api_active_tournament": api_active_tournament,

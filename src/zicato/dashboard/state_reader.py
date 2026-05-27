@@ -2185,6 +2185,237 @@ def find_generation_run(
 
 
 # ---------------------------------------------------------------------------
+# Phase-0 redesign: level-aligned views (L0 workspace, L1 contract diff)
+# ---------------------------------------------------------------------------
+
+
+def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
+    """L0 (workspace-level) cross-epoch summary.
+
+    Returns the whole-workspace ribbon the new dashboard's Workspace shell
+    needs: the per-epoch lineage with a single best (lowest) scalar
+    surfaced per epoch, plus a flat ``sparkline`` list of those best
+    scalars in epoch (directory) order so the L0 view can paint a tiny
+    cross-epoch curve without re-fanning to per-epoch endpoints.
+
+    Each epoch row carries:
+
+    * ``epoch_id``      — directory name on disk.
+    * ``goal``          — one-line goal distilled from the proposer brief
+      (mirrors :func:`build_epochs_summary`); ``None`` when absent.
+    * ``best_scalar``   — the lowest finite per-generation scalar across
+      every generation in that epoch, or ``None`` when the index is
+      absent or no generation has a scalar yet. Lower is better — the
+      tournament gate ranks by it.
+    * ``best_generation_id`` — generation id that achieved
+      ``best_scalar``; ``None`` paired with a ``None`` scalar.
+    * ``generation_count`` — total generations on disk for the epoch.
+    * ``promoted_count``   — number of generations marked promoted.
+    * ``closed``        — ``True`` when the epoch's ``config.json`` is
+      flagged ``closed``; ``False`` otherwise (covers both "open" and
+      "no config" cases — open is the only reasonable default).
+
+    The single live ``epoch_id`` (the current epoch marker on disk) is
+    surfaced as the top-level ``current_epoch_id`` so the L0 view can
+    render the active row with a "live" affordance.
+
+    Every component degrades independently: a missing or unreadable
+    input becomes an empty / ``None`` value, never an exception.
+    """
+    current = read_current_epoch(paths)
+    rows: list[dict[str, Any]] = []
+    sparkline: list[dict[str, Any]] = []
+    if not paths.epochs.is_dir():
+        return {
+            "current_epoch_id": current,
+            "epochs": rows,
+            "sparkline": sparkline,
+        }
+
+    # Open the analytical index once for all epochs. Absent index = every
+    # epoch surfaces a ``None`` best scalar but the row list still renders.
+    conn: sqlite3.Connection | None
+    try:
+        conn = _open_index(paths.index_db)
+    except (_IndexAbsent, sqlite3.Error):
+        conn = None
+
+    try:
+        for epoch_dir in sorted(paths.epochs.iterdir()):
+            if not epoch_dir.is_dir():
+                continue
+            epoch_id = epoch_dir.name
+
+            cfg = _read_json_value(epoch_dir / "config.json")
+            closed = False
+            if isinstance(cfg, dict) and isinstance(cfg.get("closed"), bool):
+                closed = bool(cfg["closed"])
+
+            goal = _distill_brief_goal(_read_epoch_brief(epoch_dir))
+
+            # Walk this epoch's generations from the on-disk lineage —
+            # not from the analytical index, which is a best-effort
+            # mirror. Promotion + parent are read from the index when
+            # available (build_lineage_view will fall back).
+            gens_dir = epoch_dir / "generations"
+            gen_ids: list[str] = []
+            if gens_dir.is_dir():
+                for child in sorted(gens_dir.iterdir()):
+                    if child.is_dir():
+                        gen_ids.append(child.name)
+
+            best_scalar: float | None = None
+            best_gen_id: str | None = None
+            promoted_count = 0
+            if conn is not None:
+                for gid in gen_ids:
+                    scalar, _entries = _mean_drift_loss_per_generation(conn, epoch_id, gid)
+                    if scalar is None or not _is_finite(scalar):
+                        continue
+                    if best_scalar is None or scalar < best_scalar:
+                        best_scalar = scalar
+                        best_gen_id = gid
+                # Promotion count comes from experiment.json (durable on
+                # disk), not the index, so this is robust to an absent /
+                # stale ``promotions`` table.
+                for gid in gen_ids:
+                    exp = _read_json_value(gens_dir / gid / "experiment.json")
+                    if isinstance(exp, dict):
+                        outcome = exp.get("outcome")
+                        if isinstance(outcome, dict):
+                            decision = _experiment_decision(exp)
+                            if (
+                                decision is not None
+                                and decision.strip().lower() in _PROMOTED_DECISIONS
+                            ):
+                                promoted_count += 1
+
+            row = {
+                "epoch_id": epoch_id,
+                "goal": goal,
+                "best_scalar": best_scalar,
+                "best_generation_id": best_gen_id,
+                "generation_count": len(gen_ids),
+                "promoted_count": promoted_count,
+                "closed": closed,
+            }
+            rows.append(row)
+            sparkline.append({"epoch_id": epoch_id, "scalar": best_scalar})
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return {
+        "current_epoch_id": current,
+        "epochs": rows,
+        "sparkline": sparkline,
+    }
+
+
+# Component names recorded in ``contract_components.json`` (mirrors the
+# orchestrator's :func:`_changed_components` set). Pinned here so a stray
+# / unknown key on disk does not silently change the diff output shape.
+_CONTRACT_COMPONENT_NAMES = (
+    "board",
+    "brief",
+    "scoring",
+    "entrypoint",
+    "mutable_trees",
+)
+
+
+def _read_contract_components(paths: WorkspacePaths, epoch_id: str) -> dict[str, str]:
+    """Return the per-component contract sub-hashes for one epoch.
+
+    Mirrors the orchestrator's ``_stored_component_hashes`` reader: the
+    breakdown is written next to ``config.json`` as
+    ``contract_components.json`` when an epoch is created or rolled.
+    Returns an empty dict when the file is missing or unreadable so the
+    diff caller can render a "no breakdown available" state for legacy
+    epochs.
+    """
+    path = paths.epochs / epoch_id / "contract_components.json"
+    raw = _read_json_value(path)
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items()}
+
+
+def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
+    """L1 (epoch-level) contract diff vs the predecessor epoch.
+
+    Compares the named epoch's ``contract_components.json`` against the
+    immediately preceding epoch's. The predecessor is resolved as the
+    epoch whose id sorts just before ``epoch_id`` in the on-disk listing
+    (matches the convention :func:`build_epochs_summary` uses).
+
+    Returns::
+
+        {
+            "epoch_id": str,
+            "predecessor_epoch_id": str | None,
+            "components": [
+                { "name": str, "current_hash": str|None,
+                  "previous_hash": str|None, "changed": bool }
+            ],
+            "any_changed": bool,
+        }
+
+    A component is listed even when both hashes are missing (so the L1
+    view can render a stable five-row matrix). ``changed`` is ``True``
+    iff the two hashes differ AND both are non-empty (an unknown
+    predecessor hash is "no diff signal", not "everything changed").
+
+    The first epoch on disk reports ``predecessor_epoch_id = None`` and
+    every component as not-changed: there is nothing to diff against.
+    """
+    cur = _read_contract_components(paths, epoch_id)
+
+    # Resolve predecessor: epoch directory immediately before ``epoch_id``
+    # in sort order.
+    predecessor: str | None = None
+    if paths.epochs.is_dir():
+        ids = sorted(d.name for d in paths.epochs.iterdir() if d.is_dir())
+        if epoch_id in ids:
+            idx = ids.index(epoch_id)
+            if idx > 0:
+                predecessor = ids[idx - 1]
+
+    prev: dict[str, str] = {}
+    if predecessor is not None:
+        prev = _read_contract_components(paths, predecessor)
+
+    components: list[dict[str, Any]] = []
+    any_changed = False
+    for name in _CONTRACT_COMPONENT_NAMES:
+        cur_hash = cur.get(name) or None
+        prev_hash = prev.get(name) or None
+        changed = (
+            predecessor is not None
+            and cur_hash is not None
+            and prev_hash is not None
+            and cur_hash != prev_hash
+        )
+        if changed:
+            any_changed = True
+        components.append(
+            {
+                "name": name,
+                "current_hash": cur_hash,
+                "previous_hash": prev_hash,
+                "changed": changed,
+            }
+        )
+
+    return {
+        "epoch_id": epoch_id,
+        "predecessor_epoch_id": predecessor,
+        "components": components,
+        "any_changed": any_changed,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Consolidated environment view — the single coalesced dashboard read
 # ---------------------------------------------------------------------------
 
