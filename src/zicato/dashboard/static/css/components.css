@@ -105,11 +105,20 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   height: calc(100vh - var(--topbar-height));
   padding: var(--space-5);
   border-right: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background: var(--color-bg);
   font-size: var(--font-size-13);
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+  overflow-y: auto;
+}
+/* A hairline divider between every consecutive sidebar section so the
+ * three blocks (Live activity, Browse, Search) read as one consistent
+ * vertical rhythm. The live activity card carries its own surface so
+ * it sits above the rule rather than being preceded by one. */
+.phase0-sidebar > .phase0-sidebar-section + .phase0-sidebar-section {
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
 }
 
 .phase0-main {
@@ -791,62 +800,141 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
 }
 
 /* =====================================================================
- * Sidebar — new visual treatment
+ * Sidebar — section-aligned visual rhythm
+ *
+ * Every block in the sidebar (Live activity, Browse/Files, Search)
+ * wears the same hat: a section eyebrow with an optional icon and an
+ * optional right-side adornment, then the block's body. The Live
+ * Activity card is the only block that carries a tinted background;
+ * the other two sit flush so the sidebar reads as one cohesive list of
+ * sections rather than three competing cards.
  * ===================================================================== */
-.phase0-shell .phase0-sidebar-title {
+
+/* Legacy title selector kept for any caller still emitting it; styled
+ * the same as the new section eyebrow so the visual rhythm is
+ * unchanged. */
+.phase0-shell .phase0-sidebar-title,
+.phase0-shell .phase0-sidebar-section-label {
   font-size: var(--font-size-11);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   font-weight: var(--weight-semibold);
   color: var(--color-text-muted);
-  margin: 0 0 var(--space-3);
+  margin: 0;
 }
-.phase0-shell .phase0-live-card {
-  margin-bottom: 0;
-  padding: var(--space-4);
-  background: var(--color-bg-soft);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+
+.phase0-shell .phase0-sidebar-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
-.phase0-shell .phase0-live-header {
+.phase0-shell .phase0-sidebar-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  margin-bottom: var(--space-2);
+  min-height: 18px;
+}
+.phase0-shell .phase0-sidebar-section-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+}
+.phase0-shell .phase0-sidebar-section-icon {
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-faint);
+  flex: none;
+}
+.phase0-shell .phase0-sidebar-section-adorn {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Live activity card — the only sidebar block with a tinted surface.
+ * Reads as a small status tile: section eyebrow + live indicator on top,
+ * 2×2 metric grid in the middle, view-current-run CTA at the bottom. */
+.phase0-shell .phase0-live-card {
+  margin-bottom: 0;
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  gap: var(--space-3);
 }
 .phase0-shell .phase0-live-body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-3);
 }
-.phase0-shell .phase0-live-line {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-12);
-  color: var(--color-text-secondary);
-  display: flex;
+.phase0-shell .phase0-live-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: var(--space-2);
 }
-.phase0-shell .phase0-live-line-label {
-  color: var(--color-text-muted);
+.phase0-shell .phase0-live-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-soft);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.phase0-shell .phase0-live-tile-label {
   font-size: var(--font-size-11);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  min-width: 56px;
-}
-.phase0-shell .phase0-live-jump {
-  display: inline-block;
-  margin-top: var(--space-2);
-  font-size: var(--font-size-12);
-  color: var(--color-accent);
-  text-decoration: none;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
   font-weight: var(--weight-medium);
 }
-.phase0-shell .phase0-live-jump:hover { text-decoration: underline; }
+.phase0-shell .phase0-live-tile-value {
+  font-size: var(--font-size-13);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.phase0-shell .phase0-live-jump {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  margin-top: 0;
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, transparent);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-12);
+  color: var(--color-accent);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  letter-spacing: 0.02em;
+  transition: background var(--transition-fast),
+              border-color var(--transition-fast),
+              color var(--transition-fast);
+}
+.phase0-shell .phase0-live-jump:hover {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  color: var(--color-accent-hover);
+}
+.phase0-shell .phase0-live-jump-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  transition: transform var(--transition-fast);
+}
+.phase0-shell .phase0-live-jump:hover .phase0-live-jump-icon {
+  transform: translateX(2px);
+}
 
+/* Browse / Files affordance — single nav row sized like a button so it
+ * reads as a clickable tile rather than a stray link. */
 .phase0-shell .phase0-sidebar-nav {
   margin-top: 0;
   display: flex;
@@ -856,19 +944,50 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
 .phase0-shell .phase0-sidebar-link {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   color: var(--color-text-secondary);
   text-decoration: none;
   font-size: var(--font-size-13);
   font-weight: var(--weight-medium);
-  transition: background var(--transition-fast), color var(--transition-fast);
+  border: 1px solid transparent;
+  transition: background var(--transition-fast),
+              color var(--transition-fast),
+              border-color var(--transition-fast);
 }
-.phase0-shell .phase0-sidebar-link:hover {
+.phase0-shell .phase0-sidebar-link:hover,
+.phase0-shell .phase0-sidebar-link:focus-visible {
   background: var(--color-bg-soft);
+  border-color: var(--color-border);
   color: var(--color-text-primary);
+  outline: none;
 }
+.phase0-shell .phase0-sidebar-link-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--color-text-muted);
+}
+.phase0-shell .phase0-sidebar-link:hover .phase0-sidebar-link-icon {
+  color: var(--color-accent);
+}
+.phase0-shell .phase0-sidebar-link-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.phase0-shell .phase0-sidebar-link-chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--color-text-faint);
+  transition: transform var(--transition-fast), color var(--transition-fast);
+}
+.phase0-shell .phase0-sidebar-link:hover .phase0-sidebar-link-chevron {
+  color: var(--color-text-muted);
+  transform: translateX(2px);
+}
+
 .phase0-shell .phase0-sidebar-footer {
   margin-top: auto;
   padding-top: var(--space-4);
@@ -878,31 +997,58 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   font-family: var(--font-mono);
 }
 
-/* Sidebar search — always-visible input + collapsing results panel.
- * Sits below the Files nav and replaces the previous (stub) Search link
- * that navigated to a placeholder page.
- */
+/* Sidebar search — input wrapped in a <label> so the leading magnifier
+ * icon shares a focus ring with the input. The results panel hangs
+ * below the field, hidden until a query is typed. */
 .phase0-shell .phase0-sidebar-search {
-  margin-top: var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
-.phase0-shell .phase0-sidebar-search-input {
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
+.phase0-shell .phase0-sidebar-search-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-bg);
+  background: var(--color-surface);
+  transition: border-color var(--transition-fast),
+              box-shadow var(--transition-fast),
+              background var(--transition-fast);
+}
+.phase0-shell .phase0-sidebar-search-field:hover {
+  border-color: var(--color-border-strong);
+}
+.phase0-shell .phase0-sidebar-search-field:focus-within {
+  border-color: var(--color-accent);
+  background: var(--color-surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent);
+}
+.phase0-shell .phase0-sidebar-search-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--color-text-faint);
+}
+.phase0-shell .phase0-sidebar-search-field:focus-within
+    .phase0-sidebar-search-icon {
+  color: var(--color-accent);
+}
+.phase0-shell .phase0-sidebar-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-2) 0;
+  border: none;
+  background: transparent;
   color: var(--color-text-primary);
   font-size: var(--font-size-13);
   font-family: var(--font-sans, inherit);
   outline: none;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: none;
 }
-.phase0-shell .phase0-sidebar-search-input:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px var(--color-accent-soft, rgba(0, 120, 215, 0.15));
+.phase0-shell .phase0-sidebar-search-input::placeholder {
+  color: var(--color-text-faint);
 }
 .phase0-shell .phase0-sidebar-search-results[hidden] { display: none; }
 .phase0-shell .phase0-sidebar-search-results {
@@ -911,7 +1057,12 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   gap: var(--space-3);
   max-height: 60vh;
   overflow-y: auto;
-  padding-top: var(--space-2);
+  padding: var(--space-3);
+  margin-top: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-1);
 }
 .phase0-shell .phase0-sidebar-search-cat {
   display: flex;
@@ -924,6 +1075,7 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   letter-spacing: 0.08em;
   color: var(--color-text-muted);
   font-weight: var(--weight-semibold);
+  padding: 0 var(--space-1);
 }
 .phase0-shell .phase0-sidebar-search-empty {
   font-size: var(--font-size-12);

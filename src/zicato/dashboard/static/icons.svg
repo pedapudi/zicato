@@ -38,4 +38,30 @@
     <path d="M4 10 L8 14 L16 6" stroke="currentColor" stroke-width="2.4"
         stroke-linecap="round" stroke-linejoin="round" fill="none"/>
   </symbol>
+  <symbol id="icon-search" viewBox="0 0 20 20">
+    <circle cx="9" cy="9" r="5" fill="none" stroke="currentColor"
+        stroke-width="1.8"/>
+    <path d="M13 13 L17 17" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" fill="none"/>
+  </symbol>
+  <symbol id="icon-folder" viewBox="0 0 20 20">
+    <path d="M3 6 a1 1 0 0 1 1 -1 h4 l2 2 h7 a1 1 0 0 1 1 1 v6
+             a1 1 0 0 1 -1 1 h-13 a1 1 0 0 1 -1 -1 Z"
+        fill="none" stroke="currentColor" stroke-width="1.6"
+        stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="icon-activity" viewBox="0 0 20 20">
+    <path d="M2 10 L6 10 L8 4 L12 16 L14 10 L18 10" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+        stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="icon-arrow-right" viewBox="0 0 20 20">
+    <path d="M4 10 L15 10 M11 6 L15 10 L11 14" fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+        stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="icon-chevron-right" viewBox="0 0 20 20">
+    <path d="M8 5 L13 10 L8 15" fill="none" stroke="currentColor"
+        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
 </svg>

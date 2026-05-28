@@ -38,27 +38,85 @@
 
     <aside id="phase0-sidebar" class="phase0-sidebar" role="navigation"
         aria-label="Phase-0 sidebar">
-      <div id="phase0-live-card" class="phase0-live-card"
+
+      <!-- Live activity card. The section header is a static eyebrow
+           with a pulse indicator that flips live/idle from JS; the body
+           below carries the metric grid + jump CTA. -->
+      <section id="phase0-live-card" class="phase0-live-card phase0-sidebar-section"
           aria-label="Live activity">
-        <h3 class="phase0-sidebar-title">Live activity</h3>
+        <div class="phase0-sidebar-section-header">
+          <span class="phase0-sidebar-section-eyebrow">
+            <svg class="phase0-sidebar-section-icon" aria-hidden="true"
+                width="12" height="12" viewBox="0 0 20 20">
+              <use href="/static/icons.svg#icon-activity"/>
+            </svg>
+            <span class="phase0-sidebar-section-label">Live activity</span>
+          </span>
+          <span id="phase0-live-adorn" class="phase0-sidebar-section-adorn"></span>
+        </div>
         <div id="phase0-live-body" class="phase0-live-body">
           <p class="empty">No active run.</p>
         </div>
-      </div>
-      <nav class="phase0-sidebar-nav" aria-label="Sidebar tools">
-        <a id="phase0-nav-files" class="phase0-sidebar-link" href="#/files">Files</a>
-      </nav>
-      <div id="phase0-sidebar-search" class="phase0-sidebar-search"
+      </section>
+
+      <!-- Files affordance. A single nav row sized like a button — icon
+           + label + chevron. Lives in its own section block so the
+           sidebar's rhythm matches the other two cards. -->
+      <section class="phase0-sidebar-section phase0-sidebar-section-files"
+          aria-label="Files">
+        <div class="phase0-sidebar-section-header">
+          <span class="phase0-sidebar-section-eyebrow">
+            <svg class="phase0-sidebar-section-icon" aria-hidden="true"
+                width="12" height="12" viewBox="0 0 20 20">
+              <use href="/static/icons.svg#icon-folder"/>
+            </svg>
+            <span class="phase0-sidebar-section-label">Browse</span>
+          </span>
+        </div>
+        <nav class="phase0-sidebar-nav" aria-label="Sidebar tools">
+          <a id="phase0-nav-files" class="phase0-sidebar-link" href="#/files">
+            <svg class="phase0-sidebar-link-icon" aria-hidden="true"
+                width="16" height="16" viewBox="0 0 20 20">
+              <use href="/static/icons.svg#icon-folder"/>
+            </svg>
+            <span class="phase0-sidebar-link-label">Files</span>
+            <svg class="phase0-sidebar-link-chevron" aria-hidden="true"
+                width="14" height="14" viewBox="0 0 20 20">
+              <use href="/static/icons.svg#icon-chevron-right"/>
+            </svg>
+          </a>
+        </nav>
+      </section>
+
+      <!-- Search card. The input lives in a label wrapper so the
+           magnifier icon shares a focus ring with the input. The
+           results panel hangs below, hidden until a query is typed. -->
+      <section id="phase0-sidebar-search" class="phase0-sidebar-section phase0-sidebar-search"
           aria-label="Sidebar search">
-        <h3 class="phase0-sidebar-title">Search</h3>
-        <input type="search" id="phase0-sidebar-search-input"
-            class="phase0-sidebar-search-input"
-            placeholder="entries · judges · patches"
-            aria-label="Search entries, judges, patches, and mutation ids" />
+        <div class="phase0-sidebar-section-header">
+          <span class="phase0-sidebar-section-eyebrow">
+            <svg class="phase0-sidebar-section-icon" aria-hidden="true"
+                width="12" height="12" viewBox="0 0 20 20">
+              <use href="/static/icons.svg#icon-search"/>
+            </svg>
+            <span class="phase0-sidebar-section-label">Search</span>
+          </span>
+        </div>
+        <label class="phase0-sidebar-search-field"
+            for="phase0-sidebar-search-input">
+          <svg class="phase0-sidebar-search-icon" aria-hidden="true"
+              width="14" height="14" viewBox="0 0 20 20">
+            <use href="/static/icons.svg#icon-search"/>
+          </svg>
+          <input type="search" id="phase0-sidebar-search-input"
+              class="phase0-sidebar-search-input"
+              placeholder="entries · judges · patches"
+              aria-label="Search entries, judges, patches, and mutation ids" />
+        </label>
         <div id="phase0-sidebar-search-results"
             class="phase0-sidebar-search-results" hidden>
         </div>
-      </div>
+      </section>
     </aside>
 
     <main id="main-content" class="phase0-main" role="main">

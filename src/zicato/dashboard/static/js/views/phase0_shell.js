@@ -6,12 +6,11 @@
 // navigation), the sidebar's Live Activity card (heartbeat-subscribed,
 // digest-gated), and the view-container visibility switch.
 
-import { $, el, clearChildren, patchText, patchClass } from '../core/dom.js';
+import { $, el, svgEl, clearChildren, patchText, patchClass } from '../core/dom.js';
 import { parseIso, fmtDuration, nowMs } from '../core/format.js';
 import { state } from '../core/state.js';
 import { phase0Href, PHASE0_LEVELS } from './phase0_router.js';
 import { renderLiveIndicator } from '../components/live_indicator.js';
-import { renderPill } from '../components/pill.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
 
 // How long since the last heartbeat before the run is considered
@@ -238,14 +237,18 @@ export function renderSidebarLive() {
   const hb = state.heartbeat || {};
   clearChildren(body);
 
-  // Header row carries the live indicator + a small status pill so the
-  // sidebar communicates liveness at a glance, independent of payload.
+  // Liveness banner — a single emerald/gray indicator sits in the
+  // top-right corner of the Live Activity card and announces the run
+  // state at a glance. The card's section eyebrow (in index.html) is
+  // the persistent label; this indicator is the dynamic part.
   const live = !!(hb && (hb.epoch_id || hb.generation_id));
-  const header = el('div', { class: 'phase0-live-header' }, [
-    renderLiveIndicator({ live, label: live ? 'live' : 'idle', size: 'sm' }),
-    renderPill(live ? 'active' : 'no run', live ? 'live' : 'stale'),
-  ]);
-  body.appendChild(header);
+  const adorn = $('phase0-live-adorn');
+  if (adorn) {
+    clearChildren(adorn);
+    adorn.appendChild(renderLiveIndicator({
+      live, label: live ? 'live' : 'idle', size: 'sm',
+    }));
+  }
 
   if (!heartbeatLoaded) {
     // SSE has not yet delivered the first heartbeat. Saying "No active
@@ -259,35 +262,28 @@ export function renderSidebarLive() {
     return;
   }
 
-  const lines = [];
-  if (hb.epoch_id) {
-    lines.push(el('div', { class: 'phase0-live-line' }, [
-      el('span', { class: 'phase0-live-line-label' }, ['epoch']),
-      el('span', { class: 'mono' }, [hb.epoch_id]),
-    ]));
-  }
-  if (hb.generation_id) {
-    lines.push(el('div', { class: 'phase0-live-line' }, [
-      el('span', { class: 'phase0-live-line-label' }, ['gen']),
-      el('span', { class: 'mono' }, [hb.generation_id]),
-    ]));
-  }
-  if (hb.round_index != null) {
-    lines.push(el('div', { class: 'phase0-live-line' }, [
-      el('span', { class: 'phase0-live-line-label' }, ['round']),
-      el('span', { class: 'mono' }, [String(hb.round_index)]),
-    ]));
-  }
+  // Metric grid — four small tiles (epoch / gen / round / runs) laid
+  // out as a 2×2 grid. Each tile is a tiny KV: small-caps label on top,
+  // mono value below. Dense without feeling like raw debug output.
   const activeCount = Array.isArray(state.activeRuns) ? state.activeRuns.length : 0;
-  lines.push(el('div', { class: 'phase0-live-line' }, [
-    el('span', { class: 'phase0-live-line-label' }, ['runs']),
-    el('span', { class: 'mono' }, [String(activeCount)]),
-  ]));
+  const tiles = [
+    ['epoch', hb.epoch_id != null ? String(hb.epoch_id) : '—'],
+    ['gen', hb.generation_id != null ? String(hb.generation_id) : '—'],
+    ['round', hb.round_index != null ? String(hb.round_index) : '—'],
+    ['runs', String(activeCount)],
+  ];
+  const grid = el('div', { class: 'phase0-live-grid' },
+    tiles.map(([label, value]) =>
+      el('div', { class: 'phase0-live-tile' }, [
+        el('span', { class: 'phase0-live-tile-label' }, [label]),
+        el('span', { class: 'phase0-live-tile-value mono' }, [value]),
+      ])));
+  body.appendChild(grid);
 
-  // "Jump to current run" link — points at the L4 run view for the
+  // "Jump to current run" CTA — points at the L4 run view for the
   // first active run, or at the current generation when no run id is
-  // available. The label is stable across heartbeats so an operator
-  // can muscle-memory it.
+  // available. Treated as a button-like card affordance rather than a
+  // stray underlined link.
   let jumpHref = phase0Href('workspace');
   if (hb.epoch_id && hb.generation_id) {
     jumpHref = phase0Href('generation', {
@@ -302,12 +298,21 @@ export function renderSidebarLive() {
       });
     }
   }
-  lines.push(el('a', {
+  const jumpIcon = svgEl('svg', {
+    class: 'phase0-live-jump-icon',
+    'aria-hidden': 'true',
+    width: '14', height: '14', viewBox: '0 0 20 20',
+  });
+  jumpIcon.appendChild(svgEl('use', {
+    href: '/static/icons.svg#icon-arrow-right',
+  }));
+  body.appendChild(el('a', {
     class: 'phase0-live-jump',
     href: jumpHref,
-  }, ['jump to current run →']));
-
-  for (const line of lines) body.appendChild(line);
+  }, [
+    el('span', { class: 'phase0-live-jump-label' }, ['View current run']),
+    jumpIcon,
+  ]));
 }
 
 // Reset the digest cache. Used by tests that share module state across
