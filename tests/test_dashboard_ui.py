@@ -403,7 +403,30 @@ def test_bundle_under_size_envelope(
     # The fully integrated bundle was re-measured directly at 349,957
     # bytes; a 380 KB cap leaves ~30 KB of headroom for incidental drift
     # while the three features settle.
-    assert total < 380_000, f"bundle is {total} bytes, exceeds 380_000 envelope"
+    # Raised by the integration-wave-6 squash, which lands four further
+    # frontend features on top of the wave-4 baseline (the harmonograf
+    # self-host work in the same wave is backend-only and does not touch
+    # the bundle):
+    #   * Sidebar redesign — three sectioned cards with eyebrow icons,
+    #     hairline dividers, and a live indicator in the live-activity
+    #     header (``views/phase0_shell.js`` + new
+    #     ``components/sidebar_section.js`` + the ``phase0-sidebar-*``
+    #     selectors in ``components.css``).
+    #   * Spine SVG connectors — the spine is now an SVG canvas with
+    #     bezier connectors landing on actual dot centers
+    #     (``components/spine.js`` gains a measure-then-paint pass).
+    #   * L2 generation redesign — hero verdict + alignment-vs-outcome
+    #     panel + per-entry vs-champion deltas, dropping the redundant
+    #     bottom verdict tile (``views/phase0_generation.js`` gains
+    #     ~600 lines and ``components.css`` picks up the L2 layout
+    #     selectors).
+    #   * Harmonograf link call sites restored across L0/L1/L3/L4
+    #     (small additions to the four phase-0 view modules; the
+    #     helper itself was already in the bundle).
+    # The fully integrated bundle was re-measured directly at 397,325
+    # bytes; a 430 KB cap leaves ~33 KB of headroom for incidental drift
+    # while the four features settle.
+    assert total < 430_000, f"bundle is {total} bytes, exceeds 430_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
