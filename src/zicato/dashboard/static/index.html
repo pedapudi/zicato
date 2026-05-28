@@ -48,6 +48,12 @@
         <span class="nav-glyph" aria-hidden="true">&#9783;</span>
         <span class="nav-label">Files</span>
       </a>
+      <a class="nav-item" id="legacy-nav-phase0" href="?phase0=1"
+          title="Switch to the new level-aligned UI (persists to localStorage)"
+          aria-label="Use new UI">
+        <span class="nav-glyph" aria-hidden="true">&#10148;</span>
+        <span class="nav-label">Use new UI</span>
+      </a>
     </nav>
 
     <main id="main-content" role="main">
@@ -306,7 +312,8 @@
         <a id="phase0-nav-search" class="phase0-sidebar-link" href="#/search">Search</a>
         <a id="phase0-nav-legacy" class="phase0-sidebar-link"
             href="?legacy=1"
-            title="Switch back to the legacy 5-tab UI">Legacy UI</a>
+            title="Switch to the legacy 5-tab UI (persists to localStorage)"
+            >Use legacy UI &rsaquo;</a>
       </nav>
     </aside>
 
@@ -357,7 +364,7 @@
           <h2>Epoch</h2>
           <div id="phase0-epoch-goal" class="phase0-epoch-goal"
               aria-label="Epoch goal">
-            <p class="empty">(goal not yet recorded — populated once #178 lands)</p>
+            <p class="empty">No epoch loaded.</p>
           </div>
           <div id="phase0-epoch-contract-diff" class="phase0-epoch-contract-diff"
               aria-label="Contract diff vs predecessor">
@@ -372,9 +379,9 @@
             <p class="empty">No loss profiles yet.</p>
           </div>
           <div id="phase0-epoch-heatmap-judges"
-              class="phase0-epoch-heatmap-judges phase0-stub"
-              aria-label="Per-judge × generation heatmap (stub)">
-            <p class="empty">(populated once #179 lands)</p>
+              class="phase0-epoch-heatmap-judges"
+              aria-label="Per-judge × generation heatmap">
+            <p class="empty">No per-judge data yet.</p>
           </div>
           <div id="phase0-epoch-journal" class="phase0-epoch-journal"
               aria-label="Journal preview">
@@ -399,9 +406,9 @@
               aria-label="Per-entry breakdown">
             <p class="empty">No per-entry breakdown yet.</p>
           </div>
-          <div id="phase0-gen-judges" class="phase0-gen-judges phase0-stub"
-              aria-label="Per-judge breakdown (stub)">
-            <p class="empty">(populated once #179 lands)</p>
+          <div id="phase0-gen-judges" class="phase0-gen-judges"
+              aria-label="Per-judge breakdown">
+            <p class="empty">No per-judge data yet.</p>
           </div>
           <div id="phase0-gen-compare" class="phase0-gen-compare"
               aria-label="Compare-to-v? picker">
@@ -421,9 +428,9 @@
               aria-label="Per-entry comparison">
             <p class="empty">No per-entry comparison yet.</p>
           </div>
-          <div id="phase0-round-judges" class="phase0-round-judges phase0-stub"
-              aria-label="Per-judge comparison (stub)">
-            <p class="empty">(populated once #179 / #180 land)</p>
+          <div id="phase0-round-judges" class="phase0-round-judges"
+              aria-label="Per-judge comparison">
+            <p class="empty">No per-judge comparison yet.</p>
           </div>
           <div id="phase0-round-decision" class="phase0-round-decision"
               aria-label="Decision + driver">
@@ -443,9 +450,9 @@
               aria-label="Expectation outcomes">
             <p class="empty">No expectation recorded.</p>
           </div>
-          <div id="phase0-run-judges" class="phase0-run-judges phase0-stub"
-              aria-label="Per-judge breakdown (stub)">
-            <p class="empty">(populated once #179 lands)</p>
+          <div id="phase0-run-judges" class="phase0-run-judges"
+              aria-label="Per-judge breakdown">
+            <p class="empty">No per-judge data yet.</p>
           </div>
           <div id="phase0-run-transcript" class="phase0-run-transcript"
               aria-label="Transcript">

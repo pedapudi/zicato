@@ -1,0 +1,498 @@
+"""Phase-1 light-up tests for the dashboard service.
+
+These exercise the readers and endpoints that wire real data into the
+phase-0 stubs:
+
+* ``build_workspace_identity`` — structured workspace identity payload.
+* ``build_per_judge_trend`` — L1 judge × generation heatmap matrix.
+* ``build_per_judge_for_generation`` — L2 per-judge totals.
+* ``build_per_entry_for_generation`` — L2 per-entry via tournament FK.
+* ``build_per_judge_comparison`` — L3 champion vs challenger judge Δ.
+* ``build_per_judge_for_run`` — L4 per-judge totals for a single run.
+* ``build_workspace_view`` — now exposes ``parent_epoch_id`` per row.
+* ``build_epoch_view`` — now exposes the frozen ``goal`` field.
+* Endpoint routes — each new ``/api/...`` path resolves and returns the
+  expected shape against the populated fixture workspace.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+
+import pytest
+from starlette.testclient import TestClient
+
+from zicato.dashboard.server import create_app
+from zicato.dashboard.state_reader import (
+    WorkspacePaths,
+    build_epoch_view,
+    build_per_entry_for_generation,
+    build_per_judge_comparison,
+    build_per_judge_for_generation,
+    build_per_judge_for_run,
+    build_per_judge_trend,
+    build_workspace_identity,
+    build_workspace_view,
+)
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _write_json(path: Path, obj: object) -> None:
+    _write(path, json.dumps(obj))
+
+
+@pytest.fixture
+def phase1_workspace(tmp_path: Path) -> Path:
+    """A workspace populated with judge_losses + tournament FK + epoch goals.
+
+    Two epochs, four generations under e0 (v0 → v1 → v2 with v1a as a
+    rejected sibling), and per-judge / per-entry data populated so each
+    new endpoint surfaces a non-empty payload.
+    """
+    ws = tmp_path / ".zicato"
+    (ws / "runtime" / "active_runs").mkdir(parents=True)
+    (ws / "runtime" / "control").mkdir(parents=True)
+
+    e0 = "2026-05-16_e0"
+    e1 = "2026-05-17_e1"
+    _write(ws / "current_epoch", e0)
+
+    # Workspace-level config — entrypoint + a (real, walkable) source root.
+    source_root = ws / "source_a"
+    source_root.mkdir()
+    (source_root / "a.py").write_text(
+        '# zicato:mutable id="m1"\nSYSTEM_PROMPT = "hello"\n',
+        encoding="utf-8",
+    )
+    _write_json(
+        ws / "config.json",
+        {
+            "adapter": {
+                "entrypoint": "kossel_run:root_agent",
+                "mutable_trees": [str(source_root)],
+            }
+        },
+    )
+
+    # Heartbeat for instance_id + created_at.
+    _write_json(
+        ws / "runtime" / "heartbeat.json",
+        {
+            "pid": 4242,
+            "instance_id": "phase1-test",
+            "started_at": "2026-05-16T04:00:00Z",
+            "last_heartbeat": "2026-05-16T04:30:00Z",
+            "epoch_id": e0,
+            "generation_id": "v2",
+        },
+    )
+
+    # Epoch directories — both epochs with brief + scoring + board.
+    for eid, goal in (
+        (e0, "Tighten the planner to reduce drift on multi-turn boards."),
+        (e1, "Reduce wall-clock variance on the long-form board."),
+    ):
+        epoch_dir = ws / "epochs" / eid
+        _write(epoch_dir / "board.jsonl", json.dumps({"id": "entry_alpha"}) + "\n")
+        _write(epoch_dir / "brief.md", f"# brief\n\n## Goal\n\n{goal}\n")
+        _write_json(epoch_dir / "scoring.json", {"weights": {"drift_loss": 1.0}})
+        _write_json(
+            epoch_dir / "config.json",
+            {"contract_hash": "h", "closed": False, "goal": goal},
+        )
+
+    # Generations on e0: v0 (promoted baseline, from #173), v1
+    # (promoted child of v0), v1a (rejected sibling), v2 (promoted
+    # child of v1).
+    e0_dir = ws / "epochs" / e0
+    for gid, parent, decision in (
+        ("v0", None, "promoted"),
+        ("v1", "v0", "promoted"),
+        ("v1a", "v0", "rejected"),
+        ("v2", "v1", "promoted"),
+    ):
+        gen_dir = e0_dir / "generations" / gid
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(
+            gen_dir / "experiment.json",
+            {
+                "parent_generation_id": parent,
+                "proposed_at": "2026-05-16T04:25:00Z",
+                "outcome": {
+                    "decision": decision,
+                    "scalar_score_delta": -0.05 if decision == "promoted" else 0.10,
+                },
+            },
+        )
+
+    # Build the analytical index with judge_losses + tournament_id FK
+    # + epochs.goal + epochs.parent_epoch_id (the schema v2 shape).
+    _build_index(ws / "index.db", e0, e1, source_root)
+    return ws
+
+
+def _build_index(path: Path, e0: str, e1: str, source_root: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE epochs(epoch_id TEXT PRIMARY KEY, contract_hash TEXT,
+            created_at TEXT, closed INTEGER, goal TEXT, parent_epoch_id TEXT);
+        CREATE TABLE generations(epoch_id TEXT, generation_id TEXT,
+            parent_generation_id TEXT, promoted INTEGER, created_at TEXT,
+            PRIMARY KEY(epoch_id, generation_id));
+        CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT,
+            hypothesis_core_idea TEXT, hypothesis_why TEXT, hypothesis_json TEXT,
+            tournament_decision TEXT, rejection_reason TEXT, scalar_score_delta REAL,
+            drift_loss_delta REAL, pass_rate_delta REAL, outcome_json TEXT,
+            PRIMARY KEY(epoch_id, generation_id));
+        CREATE TABLE patches(patch_id TEXT PRIMARY KEY, epoch_id TEXT,
+            generation_id TEXT, mutation_id TEXT, op TEXT, rationale TEXT);
+        CREATE TABLE runs(run_id TEXT PRIMARY KEY, epoch_id TEXT, generation_id TEXT,
+            entry_id TEXT, started_at TEXT, ended_at TEXT, aborted INTEGER,
+            runtime_ms INTEGER, tournament_id TEXT);
+        CREATE TABLE loss_profiles(run_id TEXT PRIMARY KEY, epoch_id TEXT,
+            generation_id TEXT, entry_id TEXT, drift_loss REAL, pass_fail INTEGER,
+            runtime_ms INTEGER, wall_clock_budget_exceeded INTEGER, loss_json TEXT,
+            tournament_id TEXT);
+        CREATE TABLE metric_counts(run_id TEXT, namespace TEXT, name TEXT,
+            severity TEXT, count REAL);
+        CREATE TABLE tournaments(tournament_id TEXT PRIMARY KEY, epoch_id TEXT,
+            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
+            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
+            rejection_reason TEXT, ran_at TEXT);
+        CREATE TABLE judge_losses(run_id TEXT, judge_name TEXT, weighted_loss REAL,
+            raw_loss REAL, weight REAL, PRIMARY KEY(run_id, judge_name));
+        """
+    )
+
+    # Epoch rows — e1 is a child of e0.
+    conn.executemany(
+        "INSERT INTO epochs VALUES(?,?,?,?,?,?)",
+        [
+            (
+                e0,
+                "h",
+                "2026-05-16T04:00:00Z",
+                0,
+                "Tighten the planner to reduce drift on multi-turn boards.",
+                None,
+            ),
+            (
+                e1,
+                "h",
+                "2026-05-17T04:00:00Z",
+                0,
+                "Reduce wall-clock variance on the long-form board.",
+                e0,
+            ),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO generations VALUES(?,?,?,?,?)",
+        [
+            (e0, "v0", None, 1, "2026-05-16T04:05:00Z"),
+            (e0, "v1", "v0", 1, "2026-05-16T04:15:00Z"),
+            (e0, "v1a", "v0", 0, "2026-05-16T04:17:00Z"),
+            (e0, "v2", "v1", 1, "2026-05-16T04:25:00Z"),
+        ],
+    )
+    # Tournaments — v0->v1 (promoted), v0->v1a (rejected), v1->v2 (promoted).
+    for parent, child, decision in (
+        ("v0", "v1", "promoted"),
+        ("v0", "v1a", "rejected"),
+        ("v1", "v2", "promoted"),
+    ):
+        conn.execute(
+            "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                f"{e0}:{parent}->{child}",
+                e0,
+                parent,
+                child,
+                decision,
+                0.5,
+                0.4 if decision == "promoted" else 0.6,
+                -0.1 if decision == "promoted" else 0.1,
+                None if decision == "promoted" else "worse drift",
+                "2026-05-16T04:30:00Z",
+            ),
+        )
+
+    # Runs + loss_profiles + judge_losses. Each gen runs entry_alpha once.
+    # judge_losses populated for two judges: critic_A and critic_B.
+    judge_rows = []
+    for gid, drift in (("v0", 0.5), ("v1", 0.3), ("v1a", 0.7), ("v2", 0.2)):
+        run_id = f"run_{gid}"
+        # tournament_id mirrors the ingester convention.
+        if gid == "v0":
+            tournament_id = None
+        elif gid == "v1":
+            tournament_id = f"{e0}:v0->v1"
+        elif gid == "v1a":
+            tournament_id = f"{e0}:v0->v1a"
+        else:
+            tournament_id = f"{e0}:v1->v2"
+        conn.execute(
+            "INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)",
+            (run_id, e0, gid, "entry_alpha", "", "", 0, 100, tournament_id),
+        )
+        conn.execute(
+            "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (run_id, e0, gid, "entry_alpha", drift, 1, 100, 0, "{}", tournament_id),
+        )
+        # Each gen drives both judges; loss inverts roughly with drift.
+        judge_rows.append((run_id, "critic_A", drift * 0.6, drift * 0.8, 0.75))
+        judge_rows.append((run_id, "critic_B", drift * 0.4, drift * 0.5, 0.25))
+    conn.executemany(
+        "INSERT INTO judge_losses VALUES(?,?,?,?,?)",
+        judge_rows,
+    )
+    # Also drop a per-run loss.json on disk so the entry → run id
+    # resolver in the by-entry per-judge endpoint can recover the run.
+    workspace_root = path.parent
+    for gid in ("v0", "v1", "v1a", "v2"):
+        run_dir = workspace_root / "epochs" / e0 / "generations" / gid / "runs" / "entry_alpha"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "loss.json").write_text(
+            json.dumps({"run_id": f"run_{gid}", "entry_id": "entry_alpha"}),
+            encoding="utf-8",
+        )
+    conn.commit()
+    conn.close()
+
+
+@pytest.fixture
+def static_dir(tmp_path: Path) -> Path:
+    d = tmp_path / "static_phase1"
+    d.mkdir()
+    (d / "index.html").write_text("<!doctype html><title>zicato</title>", encoding="utf-8")
+    (d / "app.js").write_text("// app", encoding="utf-8")
+    return d
+
+
+@pytest.fixture
+def phase1_client(phase1_workspace: Path, static_dir: Path) -> TestClient:
+    app = create_app(phase1_workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        yield c
+
+
+# ---------------------------------------------------------------------------
+# build_workspace_identity
+# ---------------------------------------------------------------------------
+
+
+def test_workspace_identity_exposes_structured_fields(phase1_workspace: Path) -> None:
+    ident = build_workspace_identity(WorkspacePaths(phase1_workspace))
+    assert ident["root"] == str(phase1_workspace)
+    assert ident["adk_entrypoint"] == "kossel_run:root_agent"
+    assert isinstance(ident["source_roots"], list) and len(ident["source_roots"]) == 1
+    assert ident["instance_id"] == "phase1-test"
+    assert ident["created_at"] == "2026-05-16T04:00:00Z"
+    # Contract paths point at the live epoch's files.
+    assert "epochs/2026-05-16_e0/board.jsonl" in ident["board_path"]
+    assert "epochs/2026-05-16_e0/brief.md" in ident["brief_path"]
+    assert "epochs/2026-05-16_e0/scoring.json" in ident["scoring_path"]
+
+
+def test_workspace_identity_mutation_point_count(phase1_workspace: Path) -> None:
+    ident = build_workspace_identity(WorkspacePaths(phase1_workspace))
+    # The fixture's source_a/a.py has exactly one ``# zicato:mutable``
+    # marker; the enumerator must surface it on the L0 identity card.
+    assert ident["mutation_point_count"] >= 1
+
+
+def test_workspace_identity_degrades_when_config_absent(tmp_path: Path) -> None:
+    ws = tmp_path / ".zicato"
+    (ws / "runtime").mkdir(parents=True)
+    ident = build_workspace_identity(WorkspacePaths(ws))
+    # All fields are present; missing inputs degrade to None / empty list.
+    assert ident["root"] == str(ws)
+    assert ident["adk_entrypoint"] is None
+    assert ident["source_roots"] == []
+    assert ident["mutation_point_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# build_workspace_view — parent_epoch_id edge
+# ---------------------------------------------------------------------------
+
+
+def test_workspace_view_includes_parent_epoch_id(phase1_workspace: Path) -> None:
+    view = build_workspace_view(WorkspacePaths(phase1_workspace))
+    rows = {r["epoch_id"]: r for r in view["epochs"]}
+    # e1 was seeded with parent_epoch_id = e0; the L0 view must surface
+    # that so the lineage column can render an arrow between rows.
+    assert rows["2026-05-17_e1"]["parent_epoch_id"] == "2026-05-16_e0"
+    # The root epoch has no parent.
+    assert rows["2026-05-16_e0"]["parent_epoch_id"] is None
+
+
+def test_workspace_view_prefers_config_goal_over_brief(phase1_workspace: Path) -> None:
+    view = build_workspace_view(WorkspacePaths(phase1_workspace))
+    row = next(r for r in view["epochs"] if r["epoch_id"] == "2026-05-16_e0")
+    assert row["goal"] == "Tighten the planner to reduce drift on multi-turn boards."
+
+
+# ---------------------------------------------------------------------------
+# build_epoch_view — goal field
+# ---------------------------------------------------------------------------
+
+
+def test_build_epoch_view_surfaces_frozen_goal(phase1_workspace: Path) -> None:
+    view = build_epoch_view(WorkspacePaths(phase1_workspace))
+    assert view["epoch_id"] == "2026-05-16_e0"
+    assert view["goal"] == "Tighten the planner to reduce drift on multi-turn boards."
+
+
+# ---------------------------------------------------------------------------
+# Per-judge / per-entry helpers
+# ---------------------------------------------------------------------------
+
+
+def test_build_per_judge_trend_returns_judge_by_generation(phase1_workspace: Path) -> None:
+    trend = build_per_judge_trend(WorkspacePaths(phase1_workspace), "2026-05-16_e0")
+    assert trend["epoch_id"] == "2026-05-16_e0"
+    # Spine is v0 → v1 → v2 (promoted lineage); v1a is rejected and not
+    # part of the spine.
+    assert trend["generations"] == ["v0", "v1", "v2"]
+    judges = {j["judge_name"]: j for j in trend["judges"]}
+    assert set(judges) == {"critic_A", "critic_B"}
+    assert "v1" in judges["critic_A"]["by_generation"]
+
+
+def test_build_per_judge_for_generation_returns_totals(phase1_workspace: Path) -> None:
+    payload = build_per_judge_for_generation(
+        WorkspacePaths(phase1_workspace), "2026-05-16_e0", "v1"
+    )
+    assert payload["epoch_id"] == "2026-05-16_e0"
+    assert payload["generation_id"] == "v1"
+    names = {j["judge_name"] for j in payload["judges"]}
+    assert names == {"critic_A", "critic_B"}
+    for j in payload["judges"]:
+        assert j["weighted_loss"] is not None
+        assert j["weight"] is not None
+
+
+def test_build_per_entry_uses_tournament_id_fk(phase1_workspace: Path) -> None:
+    payload = build_per_entry_for_generation(
+        WorkspacePaths(phase1_workspace), "2026-05-16_e0", "v1"
+    )
+    # FK composed from epoch + parent_generation_id (v0) → child (v1).
+    assert payload["tournament_id"] == "2026-05-16_e0:v0->v1"
+    assert len(payload["entries"]) == 1
+    entry = payload["entries"][0]
+    assert entry["entry_id"] == "entry_alpha"
+    assert entry["drift_loss"] is not None
+
+
+def test_build_per_entry_v0_has_no_tournament_id(phase1_workspace: Path) -> None:
+    # v0 is a root generation with no parent → no tournament round attached.
+    payload = build_per_entry_for_generation(
+        WorkspacePaths(phase1_workspace), "2026-05-16_e0", "v0"
+    )
+    assert payload["tournament_id"] is None
+    # The fallback walks loss_profiles_for_generation, so the row still
+    # surfaces.
+    assert len(payload["entries"]) == 1
+
+
+def test_build_per_judge_comparison_picks_primary_driver(phase1_workspace: Path) -> None:
+    payload = build_per_judge_comparison(
+        WorkspacePaths(phase1_workspace), "2026-05-16_e0", "v1", "v2"
+    )
+    assert payload["epoch_id"] == "2026-05-16_e0"
+    assert payload["champion"] == "v1"
+    assert payload["challenger"] == "v2"
+    # Both judges fired; the primary driver is one of them.
+    assert payload["primary_driver"] in {"critic_A", "critic_B"}
+    # Each row has a delta.
+    for j in payload["judges"]:
+        assert j["delta"] is not None
+
+
+def test_build_per_judge_for_run_returns_rows(phase1_workspace: Path) -> None:
+    payload = build_per_judge_for_run(WorkspacePaths(phase1_workspace), "run_v1")
+    assert payload["run_id"] == "run_v1"
+    names = {j["judge_name"] for j in payload["judges"]}
+    assert names == {"critic_A", "critic_B"}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint shapes
+# ---------------------------------------------------------------------------
+
+
+def test_endpoint_per_judge_trend(phase1_client: TestClient) -> None:
+    r = phase1_client.get("/api/epoch/2026-05-16_e0/per-judge-trend")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["epoch_id"] == "2026-05-16_e0"
+    assert body["generations"] == ["v0", "v1", "v2"]
+    assert isinstance(body["judges"], list)
+
+
+def test_endpoint_per_judge_for_generation(phase1_client: TestClient) -> None:
+    r = phase1_client.get("/api/generation/2026-05-16_e0/v1/per-judge")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["generation_id"] == "v1"
+    assert any(j["judge_name"] == "critic_A" for j in body["judges"])
+
+
+def test_endpoint_per_entry_for_generation(phase1_client: TestClient) -> None:
+    r = phase1_client.get("/api/generation/2026-05-16_e0/v1/per-entry")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["tournament_id"] == "2026-05-16_e0:v0->v1"
+    assert any(e["entry_id"] == "entry_alpha" for e in body["entries"])
+
+
+def test_endpoint_per_judge_comparison(phase1_client: TestClient) -> None:
+    r = phase1_client.get("/api/round/2026-05-16_e0/v1/v2/per-judge-comparison")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["champion"] == "v1"
+    assert body["challenger"] == "v2"
+    assert body["primary_driver"] in {"critic_A", "critic_B"}
+
+
+def test_endpoint_per_judge_for_run(phase1_client: TestClient) -> None:
+    r = phase1_client.get("/api/run/run_v1/per-judge")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["run_id"] == "run_v1"
+    assert any(j["judge_name"] == "critic_A" for j in body["judges"])
+
+
+def test_endpoint_per_judge_for_run_by_entry(phase1_client: TestClient) -> None:
+    r = phase1_client.get("/api/run/2026-05-16_e0/v1/entry_alpha/per-judge")
+    assert r.status_code == 200
+    body = r.json()
+    # The entry's loss.json carries run_id "run_v1"; the endpoint
+    # resolves it and returns the same shape as the run_id-keyed route.
+    assert body["run_id"] == "run_v1"
+
+
+def test_environment_workspace_is_structured(phase1_client: TestClient) -> None:
+    """``/api/environment`` now nests workspace as an identity object."""
+    r = phase1_client.get("/api/environment")
+    assert r.status_code == 200
+    ws = r.json().get("workspace")
+    assert isinstance(ws, dict)
+    assert ws.get("adk_entrypoint") == "kossel_run:root_agent"
+    assert isinstance(ws.get("mutation_point_count"), int)
+
+
+def test_endpoint_rejects_unsafe_ids(phase1_client: TestClient) -> None:
+    """Path-traversal ids degrade rather than 500."""
+    r = phase1_client.get("/api/generation/..%2Fbad/v1/per-judge")
+    # Starlette may match the path with the dot segments; the handler
+    # itself returns an empty payload for an unsafe id.
+    assert r.status_code in (200, 404)

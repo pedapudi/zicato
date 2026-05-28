@@ -44,8 +44,9 @@ async function ensureWorkspace(repaint) {
 }
 
 // Render the environment config block. Sources its data from the
-// ``state.workspace`` field that the environment payload already
-// populates; degrades to a placeholder when missing.
+// ``state.workspace`` identity payload that the environment endpoint
+// surfaces — root, adk_entrypoint, source_roots, contract paths, and
+// the live mutation-point count. Degrades cleanly when missing.
 function renderEnv() {
   const node = $('phase0-workspace-env');
   if (!node) return;
@@ -55,30 +56,62 @@ function renderEnv() {
     node.appendChild(el('p', { class: 'empty' }, ['No environment loaded.']));
     return;
   }
-  const rows = [];
-  // ``state.workspace`` can be either a string (legacy) or an object
-  // payload; render the few keyed fields we know are stable.
+  // Legacy: ``state.workspace`` might still be a bare path string when
+  // a snapshot was captured before the identity block landed. Surface
+  // it minimally rather than failing.
   if (typeof ws === 'string') {
-    rows.push({ k: 'root', v: ws });
-  } else if (typeof ws === 'object') {
-    for (const k of Object.keys(ws)) {
-      const v = ws[k];
-      if (typeof v === 'string' || typeof v === 'number' || v == null) {
-        rows.push({ k, v: v == null ? '—' : String(v) });
-      }
-    }
+    const tbl = el('table', { class: 'phase0-kv-table' });
+    const tbody = el('tbody');
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: 'phase0-kv-key mono' }, ['root']),
+      el('td', { class: 'phase0-kv-val mono' }, [ws]),
+    ]));
+    tbl.appendChild(tbody);
+    node.appendChild(tbl);
+    return;
   }
-  if (rows.length === 0) {
+  if (typeof ws !== 'object') {
     node.appendChild(el('p', { class: 'empty' }, ['No environment fields.']));
     return;
   }
+  // Render fields in a stable, semantically grouped order — the
+  // operator scans top-to-bottom for identity → entrypoint → sources →
+  // contract files → mutation surface metadata.
+  const ordered = [
+    ['root', ws.root],
+    ['adk_entrypoint', ws.adk_entrypoint],
+    ['instance_id', ws.instance_id],
+    ['created_at', ws.created_at],
+    ['board_path', ws.board_path],
+    ['brief_path', ws.brief_path],
+    ['scoring_path', ws.scoring_path],
+    ['mutation_point_count',
+      typeof ws.mutation_point_count === 'number' ? ws.mutation_point_count : null],
+  ];
   const tbl = el('table', { class: 'phase0-kv-table' });
   const tbody = el('tbody');
-  for (const r of rows) {
+  for (const [k, v] of ordered) {
+    const display = (v == null || v === '') ? '—' : String(v);
     tbody.appendChild(el('tr', null, [
-      el('td', { class: 'phase0-kv-key mono' }, [r.k]),
-      el('td', { class: 'phase0-kv-val mono' }, [r.v]),
+      el('td', { class: 'phase0-kv-key mono' }, [k]),
+      el('td', { class: 'phase0-kv-val mono' }, [display]),
     ]));
+  }
+  // Source roots — multi-value, render as one row per path.
+  const roots = Array.isArray(ws.source_roots) ? ws.source_roots : [];
+  if (roots.length === 0) {
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: 'phase0-kv-key mono' }, ['source_roots']),
+      el('td', { class: 'phase0-kv-val mono' }, ['—']),
+    ]));
+  } else {
+    for (let i = 0; i < roots.length; i += 1) {
+      tbody.appendChild(el('tr', null, [
+        el('td', { class: 'phase0-kv-key mono' },
+          [i === 0 ? 'source_roots' : '']),
+        el('td', { class: 'phase0-kv-val mono' }, [roots[i]]),
+      ]));
+    }
   }
   tbl.appendChild(tbody);
   node.appendChild(tbl);
@@ -99,9 +132,23 @@ function renderLineage() {
     node.appendChild(el('p', { class: 'empty' }, ['No epochs recorded.']));
     return;
   }
+  // Build a set of (parent -> child) edges so the lineage column can
+  // render a "→ <child_id>" arrow under each parent row. The index's
+  // ``epochs.parent_epoch_id`` column carries this directly; legacy
+  // workspaces fall back to directory order (no arrows rendered).
+  const childOf = new Map();
+  for (const r of rows) {
+    if (r && r.parent_epoch_id && r.epoch_id) {
+      // First-wins so a duplicated edge does not flip later rows.
+      if (!childOf.has(r.parent_epoch_id)) {
+        childOf.set(r.parent_epoch_id, r.epoch_id);
+      }
+    }
+  }
   const tbl = el('table', { class: 'phase0-lineage-table' });
   tbl.appendChild(el('thead', null, [el('tr', null, [
     el('th', null, ['epoch']),
+    el('th', null, ['lineage']),
     el('th', null, ['goal']),
     el('th', null, ['best scalar']),
     el('th', null, ['gens']),
@@ -111,12 +158,17 @@ function renderLineage() {
   const tbody = el('tbody');
   const cur = payload.current_epoch_id;
   for (const r of rows) {
+    const child = childOf.get(r.epoch_id);
+    const lineageCell = child
+      ? el('span', { class: 'mono phase0-lineage-edge' }, ['→ ', child])
+      : el('span', { class: 'mono' }, ['—']);
     const tr = el('tr', null, [
       el('td', null, [el('a', {
         href: phase0Href('epoch', { epochId: r.epoch_id }),
         class: 'mono',
       }, [r.epoch_id])]),
-      el('td', null, [r.goal || '—']),
+      el('td', null, [lineageCell]),
+      el('td', null, [r.goal || '(no goal recorded)']),
       el('td', { class: 'mono' }, [fmtScalar(r.best_scalar)]),
       el('td', { class: 'mono' }, [String(r.generation_count || 0)]),
       el('td', { class: 'mono' }, [String(r.promoted_count || 0)]),

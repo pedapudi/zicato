@@ -238,7 +238,14 @@ function renderIdentityPanel() {
       ]),
     ]));
   };
-  row('workspace', state.workspace);
+  // ``state.workspace`` is now a structured identity block (Phase 1);
+  // legacy snapshots may still surface a bare path string. Render the
+  // root in both shapes so the legacy Overview never prints
+  // ``[object Object]``.
+  const wsRoot = (state.workspace && typeof state.workspace === 'object')
+    ? state.workspace.root
+    : state.workspace;
+  row('workspace', wsRoot);
   row('epoch', epochId);
   row('generation', genId != null && genId !== '' ? genId : null);
   row('inner harness', harness ? harness.entrypoint : null);

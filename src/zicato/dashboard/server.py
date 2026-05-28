@@ -158,6 +158,30 @@ def create_app(
             "/api/contract-diff/{epoch_id}",
             handlers["api_contract_diff"],
         ),
+        Route(
+            "/api/epoch/{epoch_id}/per-judge-trend",
+            handlers["api_per_judge_trend"],
+        ),
+        Route(
+            "/api/generation/{epoch_id}/{generation_id}/per-judge",
+            handlers["api_per_judge_for_generation"],
+        ),
+        Route(
+            "/api/generation/{epoch_id}/{generation_id}/per-entry",
+            handlers["api_per_entry_for_generation"],
+        ),
+        Route(
+            "/api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison",
+            handlers["api_per_judge_comparison"],
+        ),
+        Route(
+            "/api/run/{run_id}/per-judge",
+            handlers["api_per_judge_for_run"],
+        ),
+        Route(
+            "/api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge",
+            handlers["api_per_judge_for_run_by_entry"],
+        ),
         Route("/api/run-log", handlers["api_run_log"]),
         Route("/api/active-runs", handlers["api_active_runs"]),
         Route("/api/active-tournament", handlers["api_active_tournament"]),

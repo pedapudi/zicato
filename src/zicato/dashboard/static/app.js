@@ -77,27 +77,22 @@ function renderPhase0All() {
       renderPhase0Epoch(route.params, scheduleRender);
       break;
     case 'generation':
-      renderPhase0Generation(route.params);
+      renderPhase0Generation(route.params, scheduleRender);
       break;
     case 'round':
-      renderPhase0Round(route.params);
+      renderPhase0Round(route.params, scheduleRender);
       break;
     case 'run':
-      renderPhase0Run(route.params);
+      renderPhase0Run(route.params, scheduleRender);
       break;
     default:
       break;
   }
 }
 
-// Resolve which shell to mount before anything else runs. ``?legacy=1``
-// switches to the legacy 5-tab UI; everything else (default) gets the
-// phase-0 level-aligned shell.
-function resolveShell() {
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('legacy') === '1') return 'legacy';
-  return 'phase0';
-}
+// Persisted shell-pick lives in js/core/shell.js so test modules can
+// import it without triggering app.js's init() side effects.
+import { resolveShell, setShellPreference } from './js/core/shell.js';
 
 function mountShell(shell) {
   const legacy = document.getElementById('legacy-shell');
@@ -111,9 +106,33 @@ function mountShell(shell) {
   }
 }
 
+function _wireShellToggles() {
+  // Phase-0 sidebar link: "Use legacy UI →" — persists the choice and
+  // reloads. We intercept the click and call setShellPreference so the
+  // bare ``?legacy=1`` href degrades gracefully when JS is off.
+  const legacyLink = document.getElementById('phase0-nav-legacy');
+  if (legacyLink) {
+    legacyLink.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      setShellPreference('legacy');
+    });
+  }
+  // Legacy shell footer link: "Use new UI →" — symmetric toggle back to
+  // phase-0. Wired only when the legacy shell is mounted (the element
+  // is added below in mountShell when shell === 'legacy').
+  const newLink = document.getElementById('legacy-nav-phase0');
+  if (newLink) {
+    newLink.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      setShellPreference('phase0');
+    });
+  }
+}
+
 function init() {
   _shell = resolveShell();
   mountShell(_shell);
+  _wireShellToggles();
 
   // The drill panel close affordance — used by the legacy shell. Harmless
   // when the phase-0 shell is active (the panel is shared chrome).

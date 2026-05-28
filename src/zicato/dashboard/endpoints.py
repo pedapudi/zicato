@@ -117,6 +117,116 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         """L0 (workspace-level) cross-epoch summary for the new shell."""
         return JSONResponse(state_reader.build_workspace_view(paths))
 
+    async def api_per_judge_trend(request: Request) -> JSONResponse:
+        """Per-judge × generation matrix for an epoch (L1 heatmap)."""
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {"epoch_id": epoch_id, "generations": [], "judges": []},
+                status_code=200,
+            )
+        return JSONResponse(state_reader.build_per_judge_trend(paths, epoch_id))
+
+    async def api_per_judge_for_generation(request: Request) -> JSONResponse:
+        """Per-judge breakdown for one generation (L2)."""
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse(
+                {"epoch_id": epoch_id, "generation_id": generation_id, "judges": []},
+                status_code=200,
+            )
+        return JSONResponse(
+            state_reader.build_per_judge_for_generation(paths, epoch_id, generation_id)
+        )
+
+    async def api_per_entry_for_generation(request: Request) -> JSONResponse:
+        """Per-entry breakdown for one generation, via tournament_id FK (L2)."""
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "tournament_id": None,
+                    "entries": [],
+                },
+                status_code=200,
+            )
+        return JSONResponse(
+            state_reader.build_per_entry_for_generation(paths, epoch_id, generation_id)
+        )
+
+    async def api_per_judge_comparison(request: Request) -> JSONResponse:
+        """Per-judge Δ between champion and challenger (L3)."""
+        epoch_id = request.path_params["epoch_id"]
+        champion_id = request.path_params["champion_id"]
+        challenger_id = request.path_params["challenger_id"]
+        if (
+            not _is_safe_id(epoch_id)
+            or not _is_safe_id(champion_id)
+            or not _is_safe_id(challenger_id)
+        ):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "champion": champion_id,
+                    "challenger": challenger_id,
+                    "judges": [],
+                    "primary_driver": None,
+                },
+                status_code=200,
+            )
+        return JSONResponse(
+            state_reader.build_per_judge_comparison(paths, epoch_id, champion_id, challenger_id)
+        )
+
+    async def api_per_judge_for_run(request: Request) -> JSONResponse:
+        """Per-judge breakdown for one run (L4)."""
+        run_id = request.path_params["run_id"]
+        if not _is_safe_id(run_id):
+            return JSONResponse({"run_id": run_id, "judges": []}, status_code=200)
+        return JSONResponse(state_reader.build_per_judge_for_run(paths, run_id))
+
+    async def api_per_judge_for_run_by_entry(request: Request) -> JSONResponse:
+        """Per-judge breakdown for one run, addressed by (epoch, gen, entry).
+
+        The L4 dashboard view routes by board-entry id; the index keys
+        every per-judge row by run id. This resolves the run id from the
+        run directory's ``loss.json`` (or falls back to the directory
+        name) and delegates to :func:`build_per_judge_for_run`.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        entry_id = request.path_params["entry_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
+            return JSONResponse({"run_id": None, "judges": []}, status_code=200)
+        # Read the entry's loss.json to recover the canonical run_id —
+        # that is the key the index's judge_losses table is bound to.
+        loss_path = (
+            paths.epochs
+            / epoch_id
+            / "generations"
+            / generation_id
+            / "runs"
+            / entry_id
+            / "loss.json"
+        )
+        run_id: str | None = None
+        try:
+            loss = json.loads(loss_path.read_text(encoding="utf-8"))
+            if isinstance(loss, dict):
+                raw_run = loss.get("run_id")
+                if isinstance(raw_run, str) and raw_run:
+                    run_id = raw_run
+        except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
+            run_id = None
+        if run_id is None:
+            run_id = entry_id  # Best-effort fallback: directory name.
+        result = state_reader.build_per_judge_for_run(paths, run_id)
+        return JSONResponse(result)
+
     async def api_contract_diff(request: Request) -> JSONResponse:
         """L1 (epoch-level) contract diff vs predecessor epoch."""
         epoch_id = request.path_params["epoch_id"]
@@ -539,6 +649,12 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_lineage": api_lineage,
         "api_workspace": api_workspace,
         "api_contract_diff": api_contract_diff,
+        "api_per_judge_trend": api_per_judge_trend,
+        "api_per_judge_for_generation": api_per_judge_for_generation,
+        "api_per_entry_for_generation": api_per_entry_for_generation,
+        "api_per_judge_comparison": api_per_judge_comparison,
+        "api_per_judge_for_run": api_per_judge_for_run,
+        "api_per_judge_for_run_by_entry": api_per_judge_for_run_by_entry,
         "api_run_log": api_run_log,
         "api_active_runs": api_active_runs,
         "api_active_tournament": api_active_tournament,

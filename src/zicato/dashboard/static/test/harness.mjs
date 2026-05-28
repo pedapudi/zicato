@@ -269,12 +269,28 @@ export function makeEvent(type, props = {}) {
   };
 }
 
+// A minimal in-memory localStorage shim. The shell-toggle persists the
+// user's chosen UI through this; tests need to read / clear it.
+class MemoryStorage {
+  constructor() { this._kv = new Map(); }
+  getItem(k) { return this._kv.has(k) ? this._kv.get(k) : null; }
+  setItem(k, v) { this._kv.set(String(k), String(v)); }
+  removeItem(k) { this._kv.delete(k); }
+  clear() { this._kv.clear(); }
+  get length() { return this._kv.size; }
+  key(i) {
+    const keys = [...this._kv.keys()];
+    return i < keys.length ? keys[i] : null;
+  }
+}
+
 // Install a fresh document/window onto globalThis. Returns the document.
 export function installDom() {
   const document = new DocumentImpl();
   globalThis.document = document;
   globalThis.window = globalThis.window || {};
   globalThis.window.location = globalThis.window.location || { hash: '', search: '' };
+  globalThis.window.localStorage = new MemoryStorage();
   globalThis.window.addEventListener = (t, fn) => {
     (globalThis.window._listeners = globalThis.window._listeners || {});
     (globalThis.window._listeners[t] = globalThis.window._listeners[t] || []).push(fn);

@@ -1,15 +1,85 @@
 // views/phase0_round.js — L3 (round/tournament-level) view.
 //
 // Renders the per-round shell: always-on champion vs challenger header,
-// per-entry comparison (table), per-judge comparison (stub until #179 /
-// #180 land — the per-judge data path and the tournament_id FK need
-// to be wired before this can be honestly populated), and a decision +
-// driver call-out at the bottom. Sources its data from the already-
-// populated bracket payload (state.bracket.matchups) so no additional
-// fetch is needed for the minimal phase-0 render.
+// per-entry comparison (via tournament_id FK + champion comparison),
+// per-judge comparison (Δ per judge with the primary-driver call-out),
+// and a decision + driver call-out at the bottom. Sources matchup
+// metadata from ``state.bracket.matchups``; the comparison tables are
+// lazy-fetched per (champion, challenger) key.
 
 import { $, el, clearChildren } from '../core/dom.js';
+import { fetchJson } from '../core/api.js';
 import { state } from '../core/state.js';
+
+const _entriesCache = new Map(); // "epoch/champ->chall" -> {champ, chall} payloads
+const _judgeCmpCache = new Map(); // "epoch/champ->chall" -> payload
+const _loadingEntries = new Set();
+const _loadingJudges = new Set();
+
+export function resetRoundCaches() {
+  _entriesCache.clear();
+  _judgeCmpCache.clear();
+  _loadingEntries.clear();
+  _loadingJudges.clear();
+}
+
+export function roundEntriesPayload(epochId, champId, chalId) {
+  return _entriesCache.get(epochId + '/' + champId + '->' + chalId) || null;
+}
+
+export function roundJudgesPayload(epochId, champId, chalId) {
+  return _judgeCmpCache.get(epochId + '/' + champId + '->' + chalId) || null;
+}
+
+async function ensureEntries(epochId, champId, chalId, repaint) {
+  if (!epochId || !champId || !chalId) return null;
+  const key = epochId + '/' + champId + '->' + chalId;
+  if (_entriesCache.has(key)) return _entriesCache.get(key);
+  if (_loadingEntries.has(key)) return null;
+  _loadingEntries.add(key);
+  try {
+    const champData = await fetchJson('/api/generation/'
+      + encodeURIComponent(epochId) + '/' + encodeURIComponent(champId) + '/per-entry');
+    const chalData = await fetchJson('/api/generation/'
+      + encodeURIComponent(epochId) + '/' + encodeURIComponent(chalId) + '/per-entry');
+    _entriesCache.set(key, { champion: champData, challenger: chalData });
+  } catch {
+    _entriesCache.set(key, { champion: null, challenger: null });
+  } finally {
+    _loadingEntries.delete(key);
+    if (typeof repaint === 'function') repaint();
+  }
+  return _entriesCache.get(key);
+}
+
+async function ensureJudgesComparison(epochId, champId, chalId, repaint) {
+  if (!epochId || !champId || !chalId) return null;
+  const key = epochId + '/' + champId + '->' + chalId;
+  if (_judgeCmpCache.has(key)) return _judgeCmpCache.get(key);
+  if (_loadingJudges.has(key)) return null;
+  _loadingJudges.add(key);
+  try {
+    const data = await fetchJson('/api/round/'
+      + encodeURIComponent(epochId) + '/'
+      + encodeURIComponent(champId) + '/' + encodeURIComponent(chalId)
+      + '/per-judge-comparison');
+    if (data && typeof data === 'object') _judgeCmpCache.set(key, data);
+  } catch {
+    _judgeCmpCache.set(key, {
+      epoch_id: epochId, champion: champId, challenger: chalId,
+      judges: [], primary_driver: null,
+    });
+  } finally {
+    _loadingJudges.delete(key);
+    if (typeof repaint === 'function') repaint();
+  }
+  return _judgeCmpCache.get(key);
+}
+
+function _fmtNum(v) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  return v.toFixed(3);
+}
 
 function findMatchup(championId, challengerId) {
   const br = state.bracket || {};
@@ -43,23 +113,120 @@ function renderVs(params, matchup) {
   node.appendChild(wrap);
 }
 
-function renderEntries() {
+function renderEntries(epochId, champId, chalId) {
   const node = $('phase0-round-entries');
   if (!node) return;
   clearChildren(node);
-  // The per-entry A/B grid is sourced from /api/matchup-grid and is
-  // intentionally NOT fetched here (the existing tournament view's grid
-  // loader is the canonical path). For phase 0 we surface the slot.
-  node.appendChild(el('p', { class: 'panel-subheader' },
-    ['Per-entry comparison lands once the L3 fetch path migrates from the legacy view.']));
+  if (!epochId || !champId || !chalId) {
+    node.appendChild(el('p', { class: 'empty' }, ['No matchup selected.']));
+    return;
+  }
+  const cached = _entriesCache.get(epochId + '/' + champId + '->' + chalId);
+  if (!cached) {
+    node.appendChild(el('p', { class: 'empty' }, ['loading per-entry comparison…']));
+    return;
+  }
+  const champEntries = (cached.champion && Array.isArray(cached.champion.entries))
+    ? cached.champion.entries : [];
+  const chalEntries = (cached.challenger && Array.isArray(cached.challenger.entries))
+    ? cached.challenger.entries : [];
+  const byEntry = new Map();
+  for (const r of champEntries) {
+    if (r && r.entry_id) byEntry.set(r.entry_id, { champ: r });
+  }
+  for (const r of chalEntries) {
+    if (r && r.entry_id) {
+      const slot = byEntry.get(r.entry_id) || {};
+      slot.chal = r;
+      byEntry.set(r.entry_id, slot);
+    }
+  }
+  if (byEntry.size === 0) {
+    node.appendChild(el('p', { class: 'empty' },
+      ['No per-entry data recorded for this round.']));
+    return;
+  }
+  // Surface the FK we used so the operator can see this is a real
+  // tournament-keyed query, not a generation-scoped fallback.
+  if (cached.challenger && cached.challenger.tournament_id) {
+    node.appendChild(el('p', { class: 'panel-subheader mono' },
+      ['tournament_id · ', cached.challenger.tournament_id]));
+  }
+  const tbl = el('table', { class: 'phase0-mini-table' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['entry']),
+    el('th', null, ['champ drift']),
+    el('th', null, ['chal drift']),
+    el('th', null, ['Δ']),
+    el('th', null, ['champ pass']),
+    el('th', null, ['chal pass']),
+  ])]));
+  const tbody = el('tbody');
+  const ids = Array.from(byEntry.keys()).sort();
+  for (const eid of ids) {
+    const { champ, chal } = byEntry.get(eid);
+    const c = (champ && typeof champ.drift_loss === 'number') ? champ.drift_loss : null;
+    const ch = (chal && typeof chal.drift_loss === 'number') ? chal.drift_loss : null;
+    const delta = (c != null && ch != null) ? (ch - c) : null;
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: 'mono' }, [eid]),
+      el('td', { class: 'mono' }, [_fmtNum(c)]),
+      el('td', { class: 'mono' }, [_fmtNum(ch)]),
+      el('td', { class: 'mono' }, [_fmtNum(delta)]),
+      el('td', { class: 'mono' }, [String(champ && champ.pass_fail != null ? champ.pass_fail : '—')]),
+      el('td', { class: 'mono' }, [String(chal && chal.pass_fail != null ? chal.pass_fail : '—')]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  node.appendChild(tbl);
 }
 
-function renderJudges() {
+function renderJudges(epochId, champId, chalId) {
   const node = $('phase0-round-judges');
   if (!node) return;
   clearChildren(node);
-  node.appendChild(el('p', { class: 'empty phase0-stub-msg' },
-    ['(per-judge comparison — populated once #179 / #180 land)']));
+  if (!epochId || !champId || !chalId) {
+    node.appendChild(el('p', { class: 'empty' }, ['No matchup selected.']));
+    return;
+  }
+  const data = _judgeCmpCache.get(epochId + '/' + champId + '->' + chalId);
+  if (!data) {
+    node.appendChild(el('p', { class: 'empty' }, ['loading per-judge comparison…']));
+    return;
+  }
+  const judges = Array.isArray(data.judges) ? data.judges : [];
+  if (judges.length === 0) {
+    const msg = data.note ? '(no per-judge data: ' + data.note + ')'
+      : '(no per-judge data recorded for either side)';
+    node.appendChild(el('p', { class: 'empty' }, [msg]));
+    return;
+  }
+  if (data.primary_driver) {
+    node.appendChild(el('p', { class: 'panel-subheader' }, [
+      el('strong', null, ['primary driver: ']),
+      el('span', { class: 'mono' }, [data.primary_driver]),
+    ]));
+  }
+  const tbl = el('table', { class: 'phase0-mini-table' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['judge']),
+    el('th', null, ['champion']),
+    el('th', null, ['challenger']),
+    el('th', null, ['Δ']),
+  ])]));
+  const tbody = el('tbody');
+  for (const j of judges) {
+    const driverClass = j.judge_name === data.primary_driver
+      ? 'phase0-judge-driver mono' : 'mono';
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: driverClass }, [j.judge_name || '—']),
+      el('td', { class: 'mono' }, [_fmtNum(j.champion_weighted_loss)]),
+      el('td', { class: 'mono' }, [_fmtNum(j.challenger_weighted_loss)]),
+      el('td', { class: 'mono' }, [_fmtNum(j.delta)]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  node.appendChild(tbl);
 }
 
 function renderDecision(matchup) {
@@ -92,12 +259,18 @@ function renderDecision(matchup) {
   node.appendChild(wrap);
 }
 
-export function renderPhase0Round(params) {
+export function renderPhase0Round(params, repaint) {
   const matchup = (params && params.championId && params.challengerId)
     ? findMatchup(params.championId, params.challengerId)
     : null;
+  const epochId = (params && params.epochId)
+    || (state.epochDef && state.epochDef.epoch_id) || null;
+  const champId = params && params.championId;
+  const chalId = params && params.challengerId;
+  ensureEntries(epochId, champId, chalId, repaint);
+  ensureJudgesComparison(epochId, champId, chalId, repaint);
   renderVs(params, matchup);
-  renderEntries();
-  renderJudges();
+  renderEntries(epochId, champId, chalId);
+  renderJudges(epochId, champId, chalId);
   renderDecision(matchup);
 }

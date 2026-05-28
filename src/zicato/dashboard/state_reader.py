@@ -969,6 +969,40 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
     # Journal: epoch-level markdown log of hypothesis+outcome rounds.
     view["journal"] = _read_text_best_effort(epoch_dir / "journal.md")
 
+    # Frozen goal — Task #178's first-class field on EpochConfig and
+    # the index ``epochs.goal`` column. The index is best-effort; on a
+    # never-indexed workspace fall back to the goal recorded in
+    # ``config.json`` (the canonical durable copy). Brief-distilled
+    # fallback is preserved for legacy epochs whose ``config.json``
+    # predates the field.
+    goal_text = ""
+    if isinstance(cfg, dict):
+        raw_goal = cfg.get("goal")
+        if isinstance(raw_goal, str):
+            goal_text = raw_goal.strip()
+    if not goal_text:
+        try:
+            from zicato.index.query import all_epochs as _all_epochs  # noqa: PLC0415
+
+            for row in _all_epochs(paths.index_db):
+                if (
+                    row["epoch_id"] == epoch_id
+                    and isinstance(row.keys(), object)
+                    and "goal" in row.keys()
+                ):
+                    raw = row["goal"]
+                    if isinstance(raw, str):
+                        goal_text = raw.strip()
+                    break
+        except Exception:  # noqa: BLE001 — best-effort
+            goal_text = ""
+    if not goal_text:
+        # Last resort: distill from the brief's ``## Goal`` heading.
+        distilled = _distill_brief_goal(view.get("brief") or "")
+        if distilled:
+            goal_text = distilled
+    view["goal"] = goal_text
+
     # Analysis: the post-epoch analysis report.
     analysis_md = _read_text_best_effort(epoch_dir / "analysis.md")
     view["analysis_md"] = analysis_md
@@ -2251,7 +2285,18 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             if isinstance(cfg, dict) and isinstance(cfg.get("closed"), bool):
                 closed = bool(cfg["closed"])
 
-            goal = _distill_brief_goal(_read_epoch_brief(epoch_dir))
+            # Goal — prefer the frozen ``epochs.goal`` field (Task #178);
+            # fall back to ``config.json`` then to the brief's ``## Goal``
+            # heading so legacy epochs still surface something.
+            goal: str | None = None
+            if isinstance(cfg, dict):
+                raw_goal = cfg.get("goal")
+                if isinstance(raw_goal, str) and raw_goal.strip():
+                    goal = raw_goal.strip()
+            if goal is None:
+                distilled = _distill_brief_goal(_read_epoch_brief(epoch_dir))
+                if distilled:
+                    goal = distilled
 
             # Walk this epoch's generations from the on-disk lineage —
             # not from the analytical index, which is a best-effort
@@ -2290,6 +2335,25 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                             ):
                                 promoted_count += 1
 
+            # Lineage edge — read ``parent_epoch_id`` from the index
+            # when available so the L0 lineage table can render arrows
+            # between consecutive epochs. Best-effort: a v1 / never-
+            # indexed database surfaces ``None`` and the L0 view falls
+            # back to directory order.
+            parent_epoch_id: str | None = None
+            if conn is not None:
+                try:
+                    row_ep = conn.execute(
+                        "SELECT parent_epoch_id FROM epochs WHERE epoch_id = ?",
+                        (epoch_id,),
+                    ).fetchone()
+                    if row_ep is not None:
+                        raw_p = row_ep["parent_epoch_id"]
+                        if isinstance(raw_p, str) and raw_p:
+                            parent_epoch_id = raw_p
+                except sqlite3.Error:
+                    parent_epoch_id = None
+
             row = {
                 "epoch_id": epoch_id,
                 "goal": goal,
@@ -2298,6 +2362,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                 "generation_count": len(gen_ids),
                 "promoted_count": promoted_count,
                 "closed": closed,
+                "parent_epoch_id": parent_epoch_id,
             }
             rows.append(row)
             sparkline.append({"epoch_id": epoch_id, "scalar": best_scalar})
@@ -2420,6 +2485,433 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Phase-1 light-up: per-judge / per-entry / per-tournament helpers
+# ---------------------------------------------------------------------------
+
+
+def _tournament_id_for(epoch_id: str, parent_gen_id: str, child_gen_id: str) -> str:
+    """Compose the tournament id keying convention used by the ingester.
+
+    Mirrors :func:`zicato.index.ingest._tournament_id_for_run` exactly:
+    a tournament round is ``{epoch_id}:{parent_gen}->{child_gen}``. Kept
+    co-located with the dashboard reader so a downstream rename of the
+    ingester's helper does not silently desync the FK-based endpoints.
+    """
+    return f"{epoch_id}:{parent_gen_id}->{child_gen_id}"
+
+
+def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
+    """Per-judge × generation matrix for one epoch.
+
+    Returns ``{epoch_id, generations, judges: [{judge_name,
+    by_generation: {gen_id: weighted_loss}}]}``. ``generations`` is the
+    spine in lineage order (the promoted lineage when available, else
+    every generation in directory order). The ``by_generation`` map is
+    populated from :func:`zicato.index.query.judge_loss_trend` per judge.
+
+    Best-effort: a never-indexed workspace yields empty
+    ``generations`` / ``judges`` lists with a ``note``.
+    """
+    from zicato.index.query import judge_loss_trend  # noqa: PLC0415
+
+    # Discover the set of judges seen in this epoch by walking the
+    # generations directly. The trend query is per-judge so we need a
+    # judge list before we can call it.
+    judges: set[str] = set()
+    try:
+        import sqlite3 as _sql  # noqa: PLC0415
+
+        conn = _sql.connect(str(paths.index_db))
+        conn.row_factory = _sql.Row
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT jl.judge_name "
+                "FROM judge_losses AS jl "
+                "JOIN runs AS r ON r.run_id = jl.run_id "
+                "WHERE r.epoch_id = ? "
+                "ORDER BY jl.judge_name",
+                (epoch_id,),
+            ).fetchall()
+            for r in rows:
+                if isinstance(r["judge_name"], str):
+                    judges.add(r["judge_name"])
+        except _sql.Error:
+            pass
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return {
+            "epoch_id": epoch_id,
+            "generations": [],
+            "judges": [],
+            "note": "index not built; run zicato reindex",
+        }
+
+    # Resolve the spine — the promoted lineage when available, else
+    # every generation in directory order. The L1 heatmap renders only
+    # promoted-spine generations so the columns stay narrow.
+    lineage_view = build_lineage_view(paths)
+    epoch_gens = [g for g in lineage_view.get("generations", []) if g.get("epoch_id") == epoch_id]
+    spine = _champion_lineage(epoch_gens)
+    if not spine:
+        spine = [g["generation_id"] for g in epoch_gens]
+
+    judge_rows: list[dict[str, Any]] = []
+    for judge_name in sorted(judges):
+        try:
+            rows = judge_loss_trend(paths.index_db, epoch_id, judge_name)
+        except Exception:  # noqa: BLE001
+            rows = []
+        by_gen: dict[str, float] = {}
+        for r in rows:
+            gid = r["generation_id"]
+            val = r["total_weighted_loss"]
+            if isinstance(gid, str) and isinstance(val, int | float):
+                by_gen[gid] = float(val)
+        judge_rows.append(
+            {
+                "judge_name": judge_name,
+                "by_generation": by_gen,
+            }
+        )
+
+    return {
+        "epoch_id": epoch_id,
+        "generations": spine,
+        "judges": judge_rows,
+    }
+
+
+def build_per_judge_for_generation(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str
+) -> dict[str, Any]:
+    """Per-judge table for one generation.
+
+    Returns ``{epoch_id, generation_id, judges: [{judge_name,
+    weighted_loss, raw_loss, run_count, weight}]}`` keyed off
+    :func:`zicato.index.query.judge_losses_for_generation`. A never-
+    indexed workspace yields empty ``judges`` with a ``note``.
+    """
+    from zicato.index.query import judge_losses_for_generation  # noqa: PLC0415
+
+    try:
+        rows = judge_losses_for_generation(paths.index_db, epoch_id, generation_id)
+    except Exception:  # noqa: BLE001
+        return {
+            "epoch_id": epoch_id,
+            "generation_id": generation_id,
+            "judges": [],
+            "note": "index not built; run zicato reindex",
+        }
+    judges = [
+        {
+            "judge_name": r["judge_name"],
+            "weighted_loss": (
+                float(r["total_weighted_loss"])
+                if isinstance(r["total_weighted_loss"], int | float)
+                else None
+            ),
+            "raw_loss": (
+                float(r["total_raw_loss"]) if isinstance(r["total_raw_loss"], int | float) else None
+            ),
+            "run_count": int(r["run_count"]) if isinstance(r["run_count"], int) else None,
+            "weight": float(r["weight"]) if isinstance(r["weight"], int | float) else None,
+        }
+        for r in rows
+    ]
+    return {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "judges": judges,
+    }
+
+
+def build_per_entry_for_generation(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+) -> dict[str, Any]:
+    """Per-entry breakdown of one generation, scoped via tournament_id FK.
+
+    Returns ``{epoch_id, generation_id, tournament_id, entries:
+    [{entry_id, run_id, drift_loss, pass_fail, runtime_ms,
+    wall_clock_budget_exceeded}]}``. The tournament id is composed via
+    :func:`_tournament_id_for` from the child generation's
+    ``parent_generation_id`` field (its ``experiment.json``); a v0 seed
+    with no parent yields ``tournament_id: None`` and the fallback walks
+    :func:`zicato.index.query.loss_profiles_for_generation` directly.
+
+    A never-indexed workspace yields empty ``entries`` with a ``note``.
+    """
+    from zicato.index.query import (  # noqa: PLC0415
+        loss_profiles_for_generation,
+        loss_profiles_for_tournament,
+    )
+
+    # Resolve the parent_generation_id from the child's experiment.json
+    # so we can compose the FK. The reader is best-effort: a missing
+    # / malformed file falls back to the generation-scoped query.
+    exp_path = paths.epochs / epoch_id / "generations" / generation_id / "experiment.json"
+    parent_gen_id: str | None = None
+    raw_exp = _read_json_value(exp_path)
+    if isinstance(raw_exp, dict):
+        raw_parent = raw_exp.get("parent_generation_id")
+        if isinstance(raw_parent, str) and raw_parent:
+            parent_gen_id = raw_parent
+
+    tournament_id: str | None = None
+    rows: list[Any] = []
+    if parent_gen_id is not None:
+        tournament_id = _tournament_id_for(epoch_id, parent_gen_id, generation_id)
+        try:
+            rows = loss_profiles_for_tournament(paths.index_db, tournament_id)
+        except Exception:  # noqa: BLE001
+            rows = []
+    if not rows:
+        # Either the FK lookup found nothing (v1 index without
+        # backfill) or there is no parent. Walk the generation-scoped
+        # query so a completed-but-orphaned tournament still surfaces.
+        try:
+            rows = loss_profiles_for_generation(paths.index_db, epoch_id, generation_id)
+        except Exception:  # noqa: BLE001
+            rows = []
+
+    entries = [
+        {
+            "entry_id": r["entry_id"],
+            "run_id": r["run_id"],
+            "generation_id": r["generation_id"],
+            "drift_loss": (
+                float(r["drift_loss"]) if isinstance(r["drift_loss"], int | float) else None
+            ),
+            "pass_fail": r["pass_fail"],
+            "runtime_ms": (int(r["runtime_ms"]) if isinstance(r["runtime_ms"], int) else None),
+            "wall_clock_budget_exceeded": bool(r["wall_clock_budget_exceeded"])
+            if r["wall_clock_budget_exceeded"] is not None
+            else None,
+        }
+        for r in rows
+    ]
+
+    return {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "tournament_id": tournament_id,
+        "entries": entries,
+    }
+
+
+def build_per_judge_comparison(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    champion_id: str,
+    challenger_id: str,
+) -> dict[str, Any]:
+    """Per-judge Δ between two generations.
+
+    Returns ``{epoch_id, champion, challenger, judges: [{judge_name,
+    champion_weighted_loss, challenger_weighted_loss, delta}],
+    primary_driver}``. ``primary_driver`` is the judge_name with the
+    largest absolute delta; ``None`` when no judge fired on either side.
+
+    A never-indexed workspace yields empty ``judges`` with a ``note``.
+    """
+    from zicato.index.query import judge_losses_for_generation  # noqa: PLC0415
+
+    try:
+        champ_rows = judge_losses_for_generation(paths.index_db, epoch_id, champion_id)
+        chal_rows = judge_losses_for_generation(paths.index_db, epoch_id, challenger_id)
+    except Exception:  # noqa: BLE001
+        return {
+            "epoch_id": epoch_id,
+            "champion": champion_id,
+            "challenger": challenger_id,
+            "judges": [],
+            "primary_driver": None,
+            "note": "index not built; run zicato reindex",
+        }
+
+    by_judge: dict[str, dict[str, float | None]] = {}
+    for r in champ_rows:
+        name = r["judge_name"]
+        if not isinstance(name, str):
+            continue
+        v = r["total_weighted_loss"]
+        by_judge.setdefault(name, {"champion": None, "challenger": None})["champion"] = (
+            float(v) if isinstance(v, int | float) else None
+        )
+    for r in chal_rows:
+        name = r["judge_name"]
+        if not isinstance(name, str):
+            continue
+        v = r["total_weighted_loss"]
+        by_judge.setdefault(name, {"champion": None, "challenger": None})["challenger"] = (
+            float(v) if isinstance(v, int | float) else None
+        )
+
+    judges: list[dict[str, Any]] = []
+    primary_driver: str | None = None
+    primary_abs: float = -1.0
+    for name in sorted(by_judge):
+        sides = by_judge[name]
+        champ_v = sides.get("champion")
+        chal_v = sides.get("challenger")
+        delta: float | None = None
+        if isinstance(champ_v, int | float) and isinstance(chal_v, int | float):
+            delta = float(chal_v) - float(champ_v)
+        elif isinstance(chal_v, int | float):
+            delta = float(chal_v)
+        elif isinstance(champ_v, int | float):
+            delta = -float(champ_v)
+        judges.append(
+            {
+                "judge_name": name,
+                "champion_weighted_loss": champ_v,
+                "challenger_weighted_loss": chal_v,
+                "delta": delta,
+            }
+        )
+        if delta is not None and abs(delta) > primary_abs:
+            primary_abs = abs(delta)
+            primary_driver = name
+
+    return {
+        "epoch_id": epoch_id,
+        "champion": champion_id,
+        "challenger": challenger_id,
+        "judges": judges,
+        "primary_driver": primary_driver,
+    }
+
+
+def build_per_judge_for_run(paths: WorkspacePaths, run_id: str) -> dict[str, Any]:
+    """Per-judge breakdown for one run.
+
+    Returns ``{run_id, judges: [{judge_name, weighted_loss, raw_loss,
+    weight}]}``. A never-indexed workspace yields empty ``judges``.
+    """
+    from zicato.index.query import judge_losses_for_run  # noqa: PLC0415
+
+    try:
+        rows = judge_losses_for_run(paths.index_db, run_id)
+    except Exception:  # noqa: BLE001
+        return {"run_id": run_id, "judges": [], "note": "index not built; run zicato reindex"}
+    judges = [
+        {
+            "judge_name": r["judge_name"],
+            "weighted_loss": (
+                float(r["weighted_loss"]) if isinstance(r["weighted_loss"], int | float) else None
+            ),
+            "raw_loss": (float(r["raw_loss"]) if isinstance(r["raw_loss"], int | float) else None),
+            "weight": float(r["weight"]) if isinstance(r["weight"], int | float) else None,
+        }
+        for r in rows
+    ]
+    return {"run_id": run_id, "judges": judges}
+
+
+def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
+    """Structured workspace identity block — Phase 1's L0 env object.
+
+    Replaces the bare ``str(paths.root)`` previously surfaced as
+    ``state.workspace``. Returns an object with the fields the L0 view's
+    environment-configuration table renders:
+
+    * ``root`` — absolute path to the ``.zicato`` directory.
+    * ``adk_entrypoint`` — the adapter's entrypoint (e.g.
+      ``mod:agent``) when ``config.json`` carries one, else ``None``.
+    * ``source_roots`` — every ``mutable_trees`` entry from
+      ``config.json`` (empty list when absent).
+    * ``board_path`` / ``brief_path`` / ``scoring_path`` — absolute
+      paths to the current epoch's contract files when an epoch is
+      live, else ``None``.
+    * ``mutation_point_count`` — the count of mutation points the
+      enumerator finds across ``source_roots``. ``0`` when the
+      enumerator fails or there are no source roots — never raises.
+    * ``instance_id`` — heartbeat's ``instance_id`` when present,
+      else ``"default"`` (the runtime's seed default).
+    * ``created_at`` — heartbeat's ``started_at`` when present, else
+      ``None`` (the workspace is too young to have a heartbeat).
+    """
+    cfg = _read_json_value(paths.root / "config.json")
+    adapter = cfg.get("adapter") if isinstance(cfg, dict) else None
+    adapter = adapter if isinstance(adapter, dict) else {}
+
+    entrypoint = adapter.get("entrypoint")
+    if not isinstance(entrypoint, str) or not entrypoint:
+        if isinstance(cfg, dict):
+            for key in ("adk_entrypoint", "entrypoint"):
+                val = cfg.get(key)
+                if isinstance(val, str) and val:
+                    entrypoint = val
+                    break
+            else:
+                entrypoint = None
+        else:
+            entrypoint = None
+
+    raw_trees = adapter.get("mutable_trees")
+    if not isinstance(raw_trees, list) and isinstance(cfg, dict):
+        raw_trees = cfg.get("mutable_trees")
+    if isinstance(raw_trees, list):
+        source_roots = [t for t in raw_trees if isinstance(t, str)]
+    else:
+        source_roots = []
+
+    epoch_id = read_current_epoch(paths)
+    if epoch_id is not None:
+        epoch_dir = paths.epochs / epoch_id
+        board_path = str(epoch_dir / "board.jsonl")
+        brief_path_candidate = epoch_dir / "brief.md"
+        if not brief_path_candidate.exists():
+            legacy = epoch_dir / "rubric.md"
+            brief_path = str(legacy) if legacy.exists() else str(brief_path_candidate)
+        else:
+            brief_path = str(brief_path_candidate)
+        scoring_path = str(epoch_dir / "scoring.json")
+    else:
+        board_path = None
+        brief_path = None
+        scoring_path = None
+
+    # Mutation point enumeration — best-effort so a malformed source
+    # tree never bubbles up to the dashboard endpoint as a 500. The
+    # enumerator walks every source root for ``# zicato:mutable`` markers
+    # plus a goldfive manifest if one exists.
+    mutation_point_count = 0
+    if source_roots:
+        try:
+            from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
+
+            mutation_point_count = len(enumerate_mutations([Path(r) for r in source_roots]))
+        except Exception:  # noqa: BLE001 — best-effort
+            mutation_point_count = 0
+
+    hb = read_heartbeat_dict(paths)
+    instance_id = "default"
+    created_at: str | None = None
+    if isinstance(hb, dict):
+        raw_iid = hb.get("instance_id")
+        if isinstance(raw_iid, str) and raw_iid:
+            instance_id = raw_iid
+        raw_started = hb.get("started_at")
+        if isinstance(raw_started, str) and raw_started:
+            created_at = raw_started
+
+    return {
+        "root": str(paths.root),
+        "adk_entrypoint": entrypoint,
+        "source_roots": source_roots,
+        "board_path": board_path,
+        "brief_path": brief_path,
+        "scoring_path": scoring_path,
+        "mutation_point_count": mutation_point_count,
+        "instance_id": instance_id,
+        "created_at": created_at,
+    }
+
+
 def build_environment(
     paths: WorkspacePaths, run_log_limit: int = RUN_LOG_DEFAULT_LIMIT
 ) -> dict[str, Any]:
@@ -2436,6 +2928,12 @@ def build_environment(
     goal}`` -- so the Overview's epochs table can show what each epoch
     is trying to accomplish without a per-epoch ``/api/epoch`` fetch.
 
+    ``workspace`` is now a structured identity block (see
+    :func:`build_workspace_identity`) so the L0 view can render
+    entrypoint / source roots / contract paths / mutation-point count
+    without a second fetch. The legacy callers that expected a plain
+    string still find the root path on ``workspace.root``.
+
     Every component degrades independently: a missing or unreadable
     input becomes an empty / ``None`` value, never an exception, so this
     function — like every reader here — cannot 500 an endpoint.
@@ -2445,7 +2943,7 @@ def build_environment(
     # not this reader — it is intentionally absent from the environment
     # payload. ``heartbeat`` is the orchestrator's runtime heartbeat.
     return {
-        "workspace": str(paths.root),
+        "workspace": build_workspace_identity(paths),
         "epoch_id": read_current_epoch(paths),
         "epoch": build_epoch_view(paths),
         "epochs": build_epochs_summary(paths),

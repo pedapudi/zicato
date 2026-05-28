@@ -1,13 +1,53 @@
 // views/phase0_run.js — L4 (run-level) view.
 //
 // Renders the per-run shell: header metrics, expectation outcomes,
-// per-judge breakdown (stub until #179 lands), transcript (single-run
-// layout for phase 0; side-by-side toggle is phase 2), and a live
-// events stream. Live transcript rendering belongs ONLY at L4 per the
-// design agreement — every other level shows summary data.
+// per-judge breakdown (via /api/run/{epoch}/{gen}/{entry}/per-judge),
+// transcript (single-run layout for phase 0; side-by-side toggle is
+// phase 2), and a live events stream. Live transcript rendering
+// belongs ONLY at L4 per the design agreement — every other level
+// shows summary data.
 
 import { $, el, clearChildren } from '../core/dom.js';
+import { fetchJson } from '../core/api.js';
 import { state } from '../core/state.js';
+
+const _runJudgeCache = new Map(); // "epoch/gen/entry" -> payload
+const _loadingRunJudges = new Set();
+
+export function resetRunCaches() {
+  _runJudgeCache.clear();
+  _loadingRunJudges.clear();
+}
+
+export function runJudgePayload(epochId, generationId, entryId) {
+  return _runJudgeCache.get(epochId + '/' + generationId + '/' + entryId) || null;
+}
+
+async function ensureRunJudges(epochId, generationId, entryId, repaint) {
+  if (!epochId || !generationId || !entryId) return null;
+  const key = epochId + '/' + generationId + '/' + entryId;
+  if (_runJudgeCache.has(key)) return _runJudgeCache.get(key);
+  if (_loadingRunJudges.has(key)) return null;
+  _loadingRunJudges.add(key);
+  try {
+    const data = await fetchJson('/api/run/'
+      + encodeURIComponent(epochId) + '/'
+      + encodeURIComponent(generationId) + '/'
+      + encodeURIComponent(entryId) + '/per-judge');
+    if (data && typeof data === 'object') _runJudgeCache.set(key, data);
+  } catch {
+    _runJudgeCache.set(key, { run_id: null, judges: [] });
+  } finally {
+    _loadingRunJudges.delete(key);
+    if (typeof repaint === 'function') repaint();
+  }
+  return _runJudgeCache.get(key);
+}
+
+function _fmtNum(v) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  return v.toFixed(3);
+}
 
 function findActiveRun(entryId) {
   if (!entryId) return null;
@@ -71,12 +111,48 @@ function renderExpectation() {
     ['Expectation outcomes land once the L4 fetch path migrates.']));
 }
 
-function renderJudges() {
+function renderJudges(epochId, generationId, entryId) {
   const node = $('phase0-run-judges');
   if (!node) return;
   clearChildren(node);
-  node.appendChild(el('p', { class: 'empty phase0-stub-msg' },
-    ['(per-judge breakdown — populated once #179 lands)']));
+  if (!epochId || !generationId || !entryId) {
+    node.appendChild(el('p', { class: 'empty' }, ['No run selected.']));
+    return;
+  }
+  const data = _runJudgeCache.get(epochId + '/' + generationId + '/' + entryId);
+  if (!data) {
+    node.appendChild(el('p', { class: 'empty' }, ['loading per-judge breakdown…']));
+    return;
+  }
+  const judges = Array.isArray(data.judges) ? data.judges : [];
+  if (judges.length === 0) {
+    const msg = data.note ? '(no per-judge data: ' + data.note + ')'
+      : '(no per-judge data recorded for this run)';
+    node.appendChild(el('p', { class: 'empty' }, [msg]));
+    return;
+  }
+  if (data.run_id) {
+    node.appendChild(el('p', { class: 'panel-subheader mono' },
+      ['run_id · ', data.run_id]));
+  }
+  const tbl = el('table', { class: 'phase0-mini-table' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['judge']),
+    el('th', null, ['weighted loss']),
+    el('th', null, ['raw loss']),
+    el('th', null, ['weight']),
+  ])]));
+  const tbody = el('tbody');
+  for (const j of judges) {
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: 'mono' }, [String(j.judge_name || '—')]),
+      el('td', { class: 'mono' }, [_fmtNum(j.weighted_loss)]),
+      el('td', { class: 'mono' }, [_fmtNum(j.raw_loss)]),
+      el('td', { class: 'mono' }, [_fmtNum(j.weight)]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  node.appendChild(tbl);
 }
 
 function renderTranscript() {
@@ -113,11 +189,15 @@ function renderEvents() {
   node.appendChild(list);
 }
 
-export function renderPhase0Run(params) {
+export function renderPhase0Run(params, repaint) {
   const run = findActiveRun(params && params.entryId);
+  const epochId = (params && params.epochId) || null;
+  const generationId = (params && params.generationId) || null;
+  const entryId = (params && params.entryId) || null;
+  ensureRunJudges(epochId, generationId, entryId, repaint);
   renderRunHeaderMetrics(params, run);
   renderExpectation();
-  renderJudges();
+  renderJudges(epochId, generationId, entryId);
   renderTranscript();
   renderEvents();
 }

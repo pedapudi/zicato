@@ -1,12 +1,13 @@
 // views/phase0_epoch.js — L1 (epoch-level) view.
 //
-// Renders the epoch shell: goal header (stub until #178 lands), contract
-// diff vs predecessor (computed from /api/contract-diff/{epoch}), and
-// shells for the generation spine + per-entry × generation heatmap +
-// per-judge × generation heatmap (stub until #179 lands) and the journal
-// preview. The gauntlet renderer (renderBracket) is treated as a black
-// box per the task #175 coordination — this view does NOT modify its
-// internals; it can call it as-is when full integration lands.
+// Renders the epoch shell: goal header (now wired to ``epochs.goal``),
+// contract diff vs predecessor (computed from
+// /api/contract-diff/{epoch}), generation spine, per-entry × generation
+// heatmap, per-judge × generation heatmap (now wired to
+// /api/epoch/{id}/per-judge-trend), and the journal preview. The
+// gauntlet renderer (renderBracket) is treated as a black box per the
+// task #175 coordination — this view does NOT modify its internals;
+// it can call it as-is when full integration lands.
 
 import { $, el, clearChildren } from '../core/dom.js';
 import { fetchJson } from '../core/api.js';
@@ -14,6 +15,41 @@ import { state } from '../core/state.js';
 
 const _contractDiffCache = new Map(); // epochId -> payload
 const _loadingDiff = new Set();
+
+// Per-judge × generation matrix, keyed by epoch_id. Lazy fetch, mirrors
+// the contract-diff cache shape so a re-render does not refetch.
+const _perJudgeTrendCache = new Map();
+const _loadingTrend = new Set();
+
+export function resetPerJudgeTrendCache() {
+  _perJudgeTrendCache.clear();
+  _loadingTrend.clear();
+}
+
+export function perJudgeTrendPayload(epochId) {
+  return _perJudgeTrendCache.get(epochId) || null;
+}
+
+async function ensurePerJudgeTrend(epochId, repaint) {
+  if (!epochId) return null;
+  if (_perJudgeTrendCache.has(epochId)) return _perJudgeTrendCache.get(epochId);
+  if (_loadingTrend.has(epochId)) return null;
+  _loadingTrend.add(epochId);
+  try {
+    const data = await fetchJson('/api/epoch/' + encodeURIComponent(epochId) + '/per-judge-trend');
+    if (data && typeof data === 'object') {
+      _perJudgeTrendCache.set(epochId, data);
+    }
+  } catch {
+    _perJudgeTrendCache.set(epochId, {
+      epoch_id: epochId, generations: [], judges: [],
+    });
+  } finally {
+    _loadingTrend.delete(epochId);
+    if (typeof repaint === 'function') repaint();
+  }
+  return _perJudgeTrendCache.get(epochId);
+}
 
 export function resetContractDiffCache() {
   _contractDiffCache.clear();
@@ -52,11 +88,28 @@ function renderGoal() {
   const node = $('phase0-epoch-goal');
   if (!node) return;
   clearChildren(node);
-  // Task #178 introduces a frozen ``epochs.goal`` column. Until it
-  // lands, the goal-of-the-epoch is unrecorded — surface a clearly
-  // labelled placeholder so the operator knows the slot exists.
-  node.appendChild(el('p', { class: 'empty phase0-stub-msg' },
-    ['(goal not yet recorded — populated once #178 lands)']));
+  const def = state.epochDef;
+  const goal = (def && typeof def.goal === 'string') ? def.goal.trim() : '';
+  if (goal) {
+    node.appendChild(el('h3', { class: 'phase0-h3' }, ['Goal']));
+    node.appendChild(el('p', { class: 'phase0-epoch-goal-text' }, [goal]));
+    return;
+  }
+  // No goal recorded — surface the slot with a clearly labelled
+  // placeholder and a hint that the goal is set by the operator at
+  // epoch-creation time (``zicato epoch set-goal --epoch <id> --goal
+  // "..."``). The inline-set affordance is intentionally NOT a wire-up
+  // here: a write-side endpoint that mutates the on-disk
+  // ``config.json`` would be a Phase 2 control surface (see #181's
+  // control-channel design) and is not part of this light-up scope.
+  node.appendChild(el('h3', { class: 'phase0-h3' }, ['Goal']));
+  node.appendChild(el('p', { class: 'empty' }, ['(no goal recorded)']));
+  node.appendChild(el('p', { class: 'panel-subheader' }, [
+    'Set the goal via the CLI: ',
+    el('code', { class: 'mono' }, [
+      'zicato epoch set-goal --epoch <id> --goal "..."',
+    ]),
+  ]));
 }
 
 function renderContractDiff(epochId) {
@@ -148,12 +201,58 @@ function renderEntryHeatmap() {
   node.appendChild(tbl);
 }
 
-function renderJudgeHeatmap() {
+function _fmtLoss(v) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  return v.toFixed(3);
+}
+
+function renderJudgeHeatmap(epochId) {
   const node = $('phase0-epoch-heatmap-judges');
   if (!node) return;
   clearChildren(node);
-  node.appendChild(el('p', { class: 'empty phase0-stub-msg' },
-    ['(per-judge × generation heatmap — populated once #179 lands)']));
+  if (!epochId) {
+    node.appendChild(el('p', { class: 'empty' }, ['Select an epoch.']));
+    return;
+  }
+  const data = _perJudgeTrendCache.get(epochId);
+  if (!data) {
+    node.appendChild(el('p', { class: 'empty' }, ['loading per-judge trend…']));
+    return;
+  }
+  const generations = Array.isArray(data.generations) ? data.generations : [];
+  const judges = Array.isArray(data.judges) ? data.judges : [];
+  if (generations.length === 0 || judges.length === 0) {
+    const msg = data.note
+      ? '(no per-judge data: ' + data.note + ')'
+      : '(no per-judge data recorded for this epoch yet)';
+    node.appendChild(el('p', { class: 'empty' }, [msg]));
+    return;
+  }
+  // Header row: blank judge column + one column per generation in
+  // spine order. Cells are weighted losses; missing data renders "—".
+  const tbl = el('table', { class: 'phase0-judge-heatmap' });
+  const thead = el('thead');
+  const headRow = el('tr', null, [el('th', null, ['judge'])]);
+  for (const gid of generations) {
+    headRow.appendChild(el('th', { class: 'mono' }, [gid]));
+  }
+  thead.appendChild(headRow);
+  tbl.appendChild(thead);
+  const tbody = el('tbody');
+  for (const j of judges) {
+    const tr = el('tr', null, [el('td', { class: 'mono' }, [j.judge_name || '—'])]);
+    const byGen = j.by_generation || {};
+    for (const gid of generations) {
+      tr.appendChild(el('td', { class: 'mono' }, [_fmtLoss(byGen[gid])]));
+    }
+    tbody.appendChild(tr);
+  }
+  tbl.appendChild(tbody);
+  node.appendChild(tbl);
+  node.appendChild(el('p', { class: 'panel-subheader' }, [
+    'Spine-only: rejected lineage is folded into the totals on the parent ',
+    'generation where it was scored.',
+  ]));
 }
 
 function renderJournal() {
@@ -177,10 +276,11 @@ export function renderPhase0Epoch(params, repaint) {
     || (state.epochDef && state.epochDef.epoch_id)
     || null;
   ensureContractDiff(epochId, repaint);
+  ensurePerJudgeTrend(epochId, repaint);
   renderGoal();
   renderContractDiff(epochId);
   renderSpine();
   renderEntryHeatmap();
-  renderJudgeHeatmap();
+  renderJudgeHeatmap(epochId);
   renderJournal();
 }
