@@ -1832,6 +1832,85 @@ def test_conversation_unavailable_without_transcript_module(
 
 
 # ---------------------------------------------------------------------------
+# Per-(epoch, gen, entry) transcript endpoint — L4 conversation diff
+# ---------------------------------------------------------------------------
+
+
+def test_run_transcript_endpoint_returns_turn_shape(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``GET /api/run/{epoch}/{gen}/{entry}/transcript`` returns the
+    reducer's :class:`Transcript` ``.to_dict()`` plus the resolved
+    coordinates. This is the endpoint the L4 conversation-diff view
+    fetches the focused-side and compare-side transcripts from.
+    """
+    _install_stub_transcript(monkeypatch)
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        r = c.get("/api/run/2026-05-16_e0/v1/waffles_single/transcript")
+        assert r.status_code == 200
+        body = r.json()
+        # Reducer payload keys.
+        for key in ("turns", "annotations", "run_id", "event_count", "complete"):
+            assert key in body
+        # Resolved coordinate keys (added by the endpoint so the
+        # frontend can label the column without a second lookup).
+        assert body["epoch_id"] == "2026-05-16_e0"
+        assert body["generation_id"] == "v1"
+        assert body["entry_id"] == "waffles_single"
+        # Stub transcript counts the file's lines.
+        assert body["event_count"] == 3
+        # The stub returns a single user turn — verify the shape passes
+        # through.
+        assert isinstance(body["turns"], list)
+        assert body["turns"][0]["role"] == "user"
+
+
+def test_run_transcript_endpoint_missing_run_returns_empty_transcript(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A nonexistent run yields a graceful empty transcript (HTTP 200).
+
+    The L4 view must render an honest empty column when the compare
+    target has no run on disk yet — a hard 404 would break the picker.
+    """
+    _install_stub_transcript(monkeypatch)
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        r = c.get("/api/run/2026-05-16_e0/v99/waffles_single/transcript")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["turns"] == []
+        assert body["annotations"] == []
+        assert body["run_id"] is None
+        assert body["event_count"] == 0
+        assert body["complete"] is False
+        assert body["epoch_id"] == "2026-05-16_e0"
+        assert body["generation_id"] == "v99"
+
+
+def test_run_transcript_endpoint_unsafe_ids_degrade(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed coordinate returns an empty transcript with an error,
+    NOT a 500. Mirrors the per-judge / expectations endpoints' contract.
+    """
+    _install_stub_transcript(monkeypatch)
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        # An id containing a path separator after URL decode is rejected
+        # by ``_is_safe_id`` — the same predicate every per-(epoch, gen,
+        # entry) endpoint uses, so the handler reports an empty
+        # transcript with an ``error`` field rather than 500.
+        r = c.get("/api/run/has%20space/v1/waffles_single/transcript")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["turns"] == []
+        assert body["run_id"] is None
+        assert "error" in body
+
+
+# ---------------------------------------------------------------------------
 # Fast-mode cached-champion transcript fetch
 # ---------------------------------------------------------------------------
 # When a fast-mode round runs, the champion side is NOT executed live —

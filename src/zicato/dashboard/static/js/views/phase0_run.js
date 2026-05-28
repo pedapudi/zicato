@@ -20,6 +20,16 @@ const _runExpectationsCache = new Map(); // same key -> payload
 const _loadingRunExpectations = new Set();
 const _runHeaderCache = new Map(); // same key -> payload
 const _loadingRunHeader = new Set();
+// L4 transcript caches — one map keyed by the full (epoch, gen, entry)
+// triple so the focused run and any compare-target run share the same
+// pool. The compare picker only toggles which entry is fetched; the
+// cache is generic.
+const _transcriptCache = new Map();
+const _loadingTranscript = new Set();
+// Compare-mode state — which generation is the picker pointing at, keyed
+// per (focused epoch, entry) so navigating to another L4 entry resets
+// the picker to "off" instead of carrying a stale compare target.
+const _compareGenByEntry = new Map();
 
 export function resetRunCaches() {
   _runJudgeCache.clear();
@@ -28,6 +38,25 @@ export function resetRunCaches() {
   _loadingRunExpectations.clear();
   _runHeaderCache.clear();
   _loadingRunHeader.clear();
+  _transcriptCache.clear();
+  _loadingTranscript.clear();
+  _compareGenByEntry.clear();
+}
+
+export function transcriptPayload(epochId, generationId, entryId) {
+  return _transcriptCache.get(
+    epochId + '/' + generationId + '/' + entryId,
+  ) || null;
+}
+
+export function compareGenFor(epochId, entryId) {
+  return _compareGenByEntry.get(epochId + '/' + entryId) || null;
+}
+
+export function setCompareGenFor(epochId, entryId, generationId) {
+  const key = epochId + '/' + entryId;
+  if (!generationId) _compareGenByEntry.delete(key);
+  else _compareGenByEntry.set(key, generationId);
 }
 
 export function runJudgePayload(epochId, generationId, entryId) {
@@ -91,6 +120,31 @@ async function ensureRunExpectations(epochId, generationId, entryId, repaint) {
     if (typeof repaint === 'function') repaint();
   }
   return _runExpectationsCache.get(key);
+}
+
+async function ensureTranscript(epochId, generationId, entryId, repaint) {
+  if (!epochId || !generationId || !entryId) return null;
+  const key = epochId + '/' + generationId + '/' + entryId;
+  if (_transcriptCache.has(key)) return _transcriptCache.get(key);
+  if (_loadingTranscript.has(key)) return null;
+  _loadingTranscript.add(key);
+  try {
+    const data = await fetchJson('/api/run/'
+      + encodeURIComponent(epochId) + '/'
+      + encodeURIComponent(generationId) + '/'
+      + encodeURIComponent(entryId) + '/transcript');
+    if (data && typeof data === 'object') _transcriptCache.set(key, data);
+  } catch {
+    _transcriptCache.set(key, {
+      epoch_id: epochId, generation_id: generationId, entry_id: entryId,
+      run_id: null, turns: [], annotations: [],
+      event_count: 0, complete: false,
+    });
+  } finally {
+    _loadingTranscript.delete(key);
+    if (typeof repaint === 'function') repaint();
+  }
+  return _transcriptCache.get(key);
 }
 
 async function ensureRunHeader(epochId, generationId, entryId, repaint) {
@@ -378,14 +432,252 @@ function _renderJudges(epochId, generationId, entryId) {
   }));
 }
 
-function _renderTranscript() {
+// Build a turn card for one transcript turn. The renderer is shared
+// between single-run mode (one column) and compare mode (two columns),
+// and between the focused side and the compare side; the only
+// per-context decoration is the column wrapper class up the tree.
+function _turnCard(turn) {
+  const meta = el('div', { class: 'conversation-turn-meta' });
+  const agent = (turn && turn.agent) ? String(turn.agent) : '';
+  const role = (turn && turn.role) ? String(turn.role) : 'agent';
+  const kindRaw = (turn && turn.kind) ? String(turn.kind) : '';
+  // Map the underlying event kind to one of the kind- decorator classes
+  // the existing CSS understands. Anything plan/policy/judge-shaped picks
+  // up a colour; everything else stays neutral.
+  let kindCls = '';
+  if (kindRaw.includes('plan')) kindCls = ' kind-plan';
+  else if (kindRaw.includes('tool') || kindRaw.includes('delegation')) {
+    kindCls = ' kind-tool';
+  }
+  if (agent) meta.appendChild(el('span', { class: 'conversation-turn-agent' }, [agent]));
+  meta.appendChild(el('span', { class: 'conversation-turn-role' }, [role]));
+  if (kindRaw) {
+    meta.appendChild(el(
+      'span', { class: 'conversation-turn-kind' + kindCls }, [kindRaw],
+    ));
+  }
+  if (turn && turn.seq != null) {
+    meta.appendChild(el('span', { class: 'conversation-turn-seq mono' },
+      ['#' + String(turn.seq)]));
+  }
+  if (turn && turn.ts) {
+    meta.appendChild(el('span', { class: 'conversation-turn-ts mono' },
+      [String(turn.ts).slice(11, 19)]));
+  }
+
+  const card = el('div', { class: 'conversation-turn' }, [meta]);
+
+  if (turn && turn.text) {
+    card.appendChild(el('div', { class: 'conversation-turn-text' },
+      [String(turn.text)]));
+  }
+  // Tool calls / results — compact rows, same selectors the existing
+  // matchup conversation diff uses.
+  const tcs = (turn && Array.isArray(turn.tool_calls)) ? turn.tool_calls : [];
+  for (const tc of tcs) {
+    const argsText = tc && tc.args != null
+      ? (typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args))
+      : '';
+    card.appendChild(el('div', { class: 'conversation-tool tool-call' }, [
+      el('span', { class: 'conversation-tool-glyph' }, ['→']),
+      el('span', { class: 'conversation-tool-name' },
+        [tc && tc.name ? String(tc.name) : 'tool']),
+      argsText ? el('span', { class: 'conversation-tool-args mono' },
+        [argsText.slice(0, 240)]) : null,
+    ].filter(Boolean)));
+  }
+  const trs = (turn && Array.isArray(turn.tool_results)) ? turn.tool_results : [];
+  for (const tr of trs) {
+    const resultText = tr && tr.result ? String(tr.result) : '';
+    card.appendChild(el('div', { class: 'conversation-tool tool-result' }, [
+      el('span', { class: 'conversation-tool-glyph' }, ['←']),
+      el('span', { class: 'conversation-tool-name' },
+        [tr && tr.name ? String(tr.name) : 'result']),
+      resultText ? el('span', { class: 'conversation-tool-args' },
+        [resultText.slice(0, 240)]) : null,
+    ].filter(Boolean)));
+  }
+  return card;
+}
+
+// Build a one-column transcript body — used by single-run mode AND by
+// each side of the side-by-side diff. ``data`` is the cache payload
+// (either still loading == null/undefined, or the API JSON).
+function _transcriptColumnBody(data, opts) {
+  const placeholder = (opts && opts.placeholder) || 'compare';
+  if (!data) {
+    return renderLoadingState({ label: 'Loading transcript' });
+  }
+  const turns = Array.isArray(data.turns) ? data.turns : [];
+  if (turns.length === 0) {
+    if (data.run_id == null) {
+      return renderEmptyState(
+        placeholder === 'compare'
+          ? 'No transcript available for the compare target.'
+          : 'No transcript recorded for this run.',
+      );
+    }
+    // The reducer returned a run_id but no turns — the canonical
+    // "completed but zero turns" case (eg. wall-clock timeout). Surface
+    // an honest panel instead of the loading spinner.
+    const panel = el('div', { class: 'conversation-no-turns-panel' }, [
+      el('div', { class: 'conversation-no-turns-headline' },
+        ['This run produced no transcript turns.']),
+      el('div', { class: 'conversation-no-turns-fact mono' },
+        ['run · ' + String(data.run_id)]),
+    ]);
+    return panel;
+  }
+  const body = el('div', { class: 'conversation-column-body' });
+  // Multi-run boundary — when a multi_turn_emulated run lands here the
+  // reducer carries run_index on each turn; emit a divider on rollover.
+  let lastRunIndex = null;
+  let lastRunId = null;
+  for (const turn of turns) {
+    const ri = (turn && typeof turn.run_index === 'number') ? turn.run_index : 1;
+    const rid = (turn && turn.run_id) ? String(turn.run_id) : null;
+    if (lastRunIndex !== null && ri !== lastRunIndex) {
+      body.appendChild(el('div', { class: 'conversation-run-separator' }, [
+        el('span', { class: 'conversation-run-separator-label' },
+          ['turn ' + ri + ' of multi-run entry']),
+        rid ? el('span', { class: 'conversation-run-separator-run-id mono' },
+          ['run · ' + rid]) : null,
+      ].filter(Boolean)));
+    }
+    lastRunIndex = ri;
+    lastRunId = rid;
+    body.appendChild(_turnCard(turn));
+  }
+  void lastRunId; // pacify the linter — meaningful only inside the loop.
+  return body;
+}
+
+// Build the sibling-generation picker. Lists every generation in the
+// focused epoch except the focused one; emitting an empty string value
+// = "no compare". Single source for the picker behaviour so the change
+// handler stays in lockstep with the options.
+function _buildComparePicker(epochId, focusedGen, selectedCompare, onChange) {
+  const select = el('select', { class: 'mono' });
+  select.appendChild(el('option', { value: '' }, ['compare to … (off)']));
+  const lineage = state.lineage || {};
+  const generations = Array.isArray(lineage.generations) ? lineage.generations : [];
+  // Filter to this epoch; skip the focused generation itself.
+  const inEpoch = generations
+    .filter((g) => g && g.epoch_id === epochId && g.generation_id !== focusedGen)
+    .map((g) => g.generation_id);
+  // Stable order: generation id is monotonically increasing (v0, v1, …);
+  // sort by natural order so the picker reads left-to-right in age.
+  inEpoch.sort();
+  for (const gid of inEpoch) {
+    const opt = el('option', { value: gid }, [gid]);
+    if (gid === selectedCompare) opt.setAttribute('selected', 'selected');
+    select.appendChild(opt);
+  }
+  select.addEventListener('change', (ev) => {
+    const v = (ev && ev.target && ev.target.value) ? String(ev.target.value) : '';
+    onChange(v || null);
+  });
+  return select;
+}
+
+function _renderTranscript(epochId, generationId, entryId, repaint) {
   const node = $('phase0-run-transcript');
   if (!node) return;
   clearChildren(node);
+
+  if (!epochId || !generationId || !entryId) {
+    node.appendChild(renderCard({
+      title: 'Transcript',
+      body: el('p', { class: 'empty' }, ['No run selected.']),
+    }));
+    return;
+  }
+
+  // Drive the focused-side fetch every render — the cache makes the
+  // call cheap.
+  ensureTranscript(epochId, generationId, entryId, repaint);
+
+  const compareGen = compareGenFor(epochId, entryId);
+  if (compareGen) {
+    ensureTranscript(epochId, compareGen, entryId, repaint);
+  }
+
+  const focusedKey = epochId + '/' + generationId + '/' + entryId;
+  const focusedData = _transcriptCache.get(focusedKey) || null;
+
+  // -- Header: compare picker + run-id chip ----------------------------
+  const header = el('div', { class: 'conversation-column-head' });
+  header.appendChild(el('span', { class: 'conversation-column-label' },
+    ['compare']));
+  header.appendChild(_buildComparePicker(
+    epochId, generationId, compareGen, (next) => {
+      setCompareGenFor(epochId, entryId, next);
+      if (typeof repaint === 'function') repaint();
+      else _renderTranscript(epochId, generationId, entryId, repaint);
+    },
+  ));
+
+  let body;
+  if (!compareGen) {
+    // Single-run mode — one column.
+    const col = el('div', { class: 'conversation-column' });
+    const colHead = el('div', { class: 'conversation-column-head' }, [
+      el('span', { class: 'conversation-column-label' }, ['focused']),
+      el('span', { class: 'conversation-run-id mono' }, [
+        'v · ' + generationId,
+      ]),
+      (focusedData && focusedData.run_id)
+        ? el('span', { class: 'conversation-run-id mono' },
+          ['run · ' + String(focusedData.run_id)])
+        : null,
+      (focusedData && typeof focusedData.event_count === 'number')
+        ? el('span', { class: 'conversation-event-count mono' },
+          [String(focusedData.event_count) + ' events'])
+        : null,
+    ].filter(Boolean));
+    col.appendChild(colHead);
+    col.appendChild(_transcriptColumnBody(focusedData, { placeholder: 'focused' }));
+    body = el('div', { class: 'conversation-panel' }, [header, col]);
+  } else {
+    // Compare mode — two columns aligned by turn index.
+    const compareKey = epochId + '/' + compareGen + '/' + entryId;
+    const compareData = _transcriptCache.get(compareKey) || null;
+    const focusedCol = el('div', { class: 'conversation-column champion' });
+    focusedCol.appendChild(el('div', { class: 'conversation-column-head' }, [
+      el('span', { class: 'conversation-column-label' }, ['focused']),
+      el('span', { class: 'conversation-run-id mono' },
+        ['v · ' + generationId]),
+      (focusedData && focusedData.run_id)
+        ? el('span', { class: 'conversation-run-id mono' },
+          ['run · ' + String(focusedData.run_id)])
+        : null,
+    ].filter(Boolean)));
+    focusedCol.appendChild(
+      _transcriptColumnBody(focusedData, { placeholder: 'focused' }),
+    );
+
+    const compareCol = el('div', { class: 'conversation-column challenger' });
+    compareCol.appendChild(el('div', { class: 'conversation-column-head' }, [
+      el('span', { class: 'conversation-column-label' }, ['compare']),
+      el('span', { class: 'conversation-run-id mono' },
+        ['v · ' + compareGen]),
+      (compareData && compareData.run_id)
+        ? el('span', { class: 'conversation-run-id mono' },
+          ['run · ' + String(compareData.run_id)])
+        : null,
+    ].filter(Boolean)));
+    compareCol.appendChild(
+      _transcriptColumnBody(compareData, { placeholder: 'compare' }),
+    );
+
+    const cols = el('div', { class: 'conversation-columns' }, [
+      focusedCol, compareCol,
+    ]);
+    body = el('div', { class: 'conversation-panel' }, [header, cols]);
+  }
   node.appendChild(renderCard({
     title: 'Transcript',
-    body: el('p', { class: 'empty' },
-      ['Transcript renders here (single-run for phase 0; side-by-side compare in phase 2).']),
+    body,
   }));
 }
 
@@ -436,6 +728,6 @@ export function renderPhase0Run(params, repaint) {
   _renderHeader(params, run);
   _renderExpectation(epochId, generationId, entryId);
   _renderJudges(epochId, generationId, entryId);
-  _renderTranscript();
+  _renderTranscript(epochId, generationId, entryId, repaint);
   _renderEvents();
 }

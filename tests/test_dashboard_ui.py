@@ -386,7 +386,24 @@ def test_bundle_under_size_envelope(
     # fetchers. The fully integrated bundle was re-measured directly at
     # 307,717 bytes; a 340 KB cap leaves ~32 KB of headroom for
     # incidental drift.
-    assert total < 340_000, f"bundle is {total} bytes, exceeds 340_000 envelope"
+    # Reset by the integration-wave-4 squash, which lands three large
+    # frontend features on top of the visual-design baseline:
+    #   * L1 redesign — branch nodes on the spine, full-width experiment
+    #     cards, and a rendered analysis-report card at the foot of the
+    #     epoch view (``components/spine.js`` + ``views/phase0_epoch.js``
+    #     gain ~500 lines together; ``components.css`` picks up the
+    #     spine-branch + analysis-report selectors).
+    #   * Sidebar inline search — replaces the dedicated search page with
+    #     a search input + results panel in the left rail
+    #     (``views/phase0_sidebar_search.js`` is new; ``app.js`` /
+    #     ``phase0_router.js`` lose the legacy ``#/search`` route).
+    #   * L4 conversation diff — a compare picker and side-by-side
+    #     transcript renderer on the run view (``views/phase0_run.js``
+    #     gains ~700 lines).
+    # The fully integrated bundle was re-measured directly at 349,957
+    # bytes; a 380 KB cap leaves ~30 KB of headroom for incidental drift
+    # while the three features settle.
+    assert total < 380_000, f"bundle is {total} bytes, exceeds 380_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

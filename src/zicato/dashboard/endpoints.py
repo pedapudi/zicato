@@ -594,6 +594,101 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         result = _build_matchup_conversations(paths, entry_id)
         return JSONResponse(result)
 
+    async def api_run_transcript(request: Request) -> Response:
+        """Reconstruct the transcript for one ``(epoch, gen, entry)`` run.
+
+        Powers the L4 conversation diff: the focused-run side fetches the
+        transcript via this endpoint, and the compare side fetches it
+        again with the picker's selected generation. Returns the same
+        :class:`Transcript` ``.to_dict()`` shape as ``/api/conversation``
+        plus the resolved coordinates so the frontend can label the
+        column without a second lookup. Always answers 200 with an empty
+        transcript when the run is absent — the frontend renders a
+        graceful empty column rather than a hard 404, matching the
+        zero-turn-complete-run path the matchup endpoint already takes.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        entry_id = request.path_params["entry_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "entry_id": entry_id,
+                    "run_id": None,
+                    "turns": [],
+                    "annotations": [],
+                    "event_count": 0,
+                    "complete": False,
+                    "error": "invalid epoch/generation/entry id",
+                },
+                status_code=200,
+            )
+        if not _HAVE_TRANSCRIPT:
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "entry_id": entry_id,
+                    "run_id": None,
+                    "turns": [],
+                    "annotations": [],
+                    "event_count": 0,
+                    "complete": False,
+                    "error": "transcript reconstruction unavailable",
+                },
+                status_code=200,
+            )
+        # Resolve the events.jsonl path through the explicit
+        # (epoch, generation, entry) tuple — find_generation_run does the
+        # walk but ignores the epoch. We can call it directly: the
+        # generation id is unique within the workspace, and that helper
+        # already returns the right ``(run_id, events_path)``.
+        located = state_reader.find_generation_run(paths, generation_id, entry_id)
+        if located is None:
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "entry_id": entry_id,
+                    "run_id": None,
+                    "turns": [],
+                    "annotations": [],
+                    "event_count": 0,
+                    "complete": False,
+                },
+                status_code=200,
+            )
+        run_id, events_path = located
+        try:
+            transcript = reconstruct_transcript(events_path, partial_ok=True)
+            payload = transcript.to_dict()
+        except Exception as exc:  # noqa: BLE001 — best-effort, never 500
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "entry_id": entry_id,
+                    "run_id": run_id,
+                    "turns": [],
+                    "annotations": [],
+                    "event_count": 0,
+                    "complete": False,
+                    "error": f"transcript failed: {exc}",
+                },
+                status_code=200,
+            )
+        # The reconstructor sets its own run_id from the events stream;
+        # surface the directory-name run_id explicitly when the reducer
+        # produced no value (empty file).
+        if not payload.get("run_id"):
+            payload["run_id"] = run_id
+        payload["epoch_id"] = epoch_id
+        payload["generation_id"] = generation_id
+        payload["entry_id"] = entry_id
+        return JSONResponse(payload)
+
     # -- control endpoints (POST) ------------------------------------
 
     def _forbidden_if_read_only() -> JSONResponse | None:
@@ -737,6 +832,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_epoch_analysis_html": api_epoch_analysis_html,
         "api_conversation": api_conversation,
         "api_matchup_conversations": api_matchup_conversations,
+        "api_run_transcript": api_run_transcript,
         "control_pause": control_pause,
         "control_skip_round": control_skip_round,
         "control_kill": control_kill,

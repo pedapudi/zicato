@@ -247,6 +247,10 @@ def create_app(
             "/api/matchup/{entry_id}/conversations",
             handlers["api_matchup_conversations"],
         ),
+        Route(
+            "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript",
+            handlers["api_run_transcript"],
+        ),
         Route("/events", events),
         Route("/api/control/pause", handlers["control_pause"], methods=["POST"]),
         Route(
