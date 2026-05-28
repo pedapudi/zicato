@@ -340,3 +340,108 @@ def test_load_epoch_round_trips(workspace: Path, board_file: Path, brief_file: P
 def test_load_epoch_missing_raises(workspace: Path) -> None:
     with pytest.raises(FileNotFoundError):
         load_epoch(workspace, "nothing")
+
+
+# ---------------------------------------------------------------------------
+# Per-judge weight preservation through the frozen scoring.json
+#
+# Twin of the workspace_loader fix (#179): ``_scoring_from_dict`` (read)
+# and ``_scoring_to_dict`` (write) on the epoch-creation path must
+# preserve ``per_judge_weights`` and ``default_judge_weight``. Without
+# the fix, the frozen ``<epoch>/scoring.json`` silently drops the
+# operator's per-judge weighting, so re-reading the frozen contract
+# (e.g. for re-analysis or replay) reverts to dataclass defaults even
+# though the live workspace-level ``scoring.json`` had them.
+# ---------------------------------------------------------------------------
+
+
+def test_scoring_from_dict_preserves_per_judge_weights() -> None:
+    """``_scoring_from_dict`` round-trips ``per_judge_weights`` +
+    ``default_judge_weight``.
+
+    Mirrors :func:`zicato.workspace_loader._scoring_weights_from_dict`
+    after #179. The helper is private but exercised here directly so the
+    fix-shape is locked in at the unit level.
+    """
+    from zicato.epoch.lifecycle import _scoring_from_dict
+
+    payload = {
+        "drift_weight": 1.0,
+        "pass_weight": 1.0,
+        "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
+        "per_kind_weights": {},
+        "per_judge_weights": {"quality": 4.0, "no_pii": 7.0},
+        "default_judge_weight": 2.5,
+        "plan_revision_weight": 0.5,
+        "runtime_weight": 0.0,
+        "promote_margin": 0.01,
+        "pass_rate_monotonicity": True,
+    }
+    weights = _scoring_from_dict(payload)
+    assert dict(weights.per_judge_weights) == {"quality": 4.0, "no_pii": 7.0}
+    assert weights.default_judge_weight == 2.5
+
+
+def test_scoring_from_dict_defaults_when_per_judge_fields_absent() -> None:
+    """Legacy ``scoring.json`` (no per_judge_weights / default_judge_weight
+    keys) loads at the dataclass defaults — empty mapping + ``1.0`` —
+    so an epoch frozen before #179 still loads cleanly."""
+    from zicato.epoch.lifecycle import _scoring_from_dict
+
+    legacy_payload = {
+        "drift_weight": 1.0,
+        "pass_weight": 1.0,
+        "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
+        "per_kind_weights": {},
+        "plan_revision_weight": 0.5,
+        "runtime_weight": 0.0,
+        "promote_margin": 0.01,
+        "pass_rate_monotonicity": True,
+    }
+    weights = _scoring_from_dict(legacy_payload)
+    assert dict(weights.per_judge_weights) == {}
+    assert weights.default_judge_weight == 1.0
+
+
+def test_new_epoch_freezes_per_judge_weights_into_scoring_json(
+    workspace: Path, board_file: Path, brief_file: Path
+) -> None:
+    """End-to-end: hand ``new_epoch`` a ScoringWeights with non-default
+    ``per_judge_weights`` + ``default_judge_weight`` and confirm both
+    fields survive the freeze (raw JSON on disk) and the round-trip
+    through :func:`load_epoch` (parsed ScoringWeights)."""
+    weights = ScoringWeights(
+        per_judge_weights={"quality": 4.0, "no_pii": 7.0},
+        default_judge_weight=2.5,
+    )
+    cfg = new_epoch(workspace, "per-judge", board_file, brief_file, weights)
+
+    # The raw frozen file carries the fields verbatim (write side).
+    frozen = json.loads(
+        (workspace / "epochs" / cfg.id / "scoring.json").read_text(encoding="utf-8")
+    )
+    assert frozen["per_judge_weights"] == {"quality": 4.0, "no_pii": 7.0}
+    assert frozen["default_judge_weight"] == 2.5
+
+    # The parsed ScoringWeights from load_epoch carries them too (read side).
+    loaded = load_epoch(workspace, cfg.id)
+    assert dict(loaded.scoring.per_judge_weights) == {"quality": 4.0, "no_pii": 7.0}
+    assert loaded.scoring.default_judge_weight == 2.5
+
+
+def test_new_epoch_with_default_weights_freezes_empty_per_judge(
+    workspace: Path, board_file: Path, brief_file: Path
+) -> None:
+    """Default ScoringWeights (no per-judge override) still write the
+    keys — as an empty mapping + 1.0 — so the frozen schema is
+    stable across epochs regardless of whether the operator opted into
+    per-judge weighting."""
+    cfg = new_epoch(workspace, "defaults", board_file, brief_file, ScoringWeights())
+    frozen = json.loads(
+        (workspace / "epochs" / cfg.id / "scoring.json").read_text(encoding="utf-8")
+    )
+    assert frozen["per_judge_weights"] == {}
+    assert frozen["default_judge_weight"] == 1.0
+    loaded = load_epoch(workspace, cfg.id)
+    assert dict(loaded.scoring.per_judge_weights) == {}
+    assert loaded.scoring.default_judge_weight == 1.0

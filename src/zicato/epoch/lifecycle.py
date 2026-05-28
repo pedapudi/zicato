@@ -132,6 +132,8 @@ def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
         "pass_weight": weights.pass_weight,
         "severity_weights": dict(weights.severity_weights),
         "per_kind_weights": dict(weights.per_kind_weights),
+        "per_judge_weights": dict(weights.per_judge_weights),
+        "default_judge_weight": weights.default_judge_weight,
         "plan_revision_weight": weights.plan_revision_weight,
         "runtime_weight": weights.runtime_weight,
         "promote_margin": weights.promote_margin,
@@ -140,6 +142,18 @@ def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
 
 
 def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
+    # Per-judge weighting is optional — only forward the kwarg when the
+    # on-disk scoring.json carries a non-empty mapping so a legacy file
+    # written before per-judge loss promotion (#179) loads at the
+    # dataclass default. ``default_judge_weight`` is forwarded only when
+    # the key is present, for the same back-compat reason. Mirror of
+    # :func:`zicato.workspace_loader._scoring_weights_from_dict`.
+    judge_kwargs: dict[str, Any] = {}
+    raw_per_judge = d.get("per_judge_weights")
+    if isinstance(raw_per_judge, dict) and raw_per_judge:
+        judge_kwargs["per_judge_weights"] = {str(k): float(v) for k, v in raw_per_judge.items()}
+    if "default_judge_weight" in d:
+        judge_kwargs["default_judge_weight"] = float(d["default_judge_weight"])
     raw_sev = d.get("severity_weights")
     if raw_sev:
         severity = {str(k): float(v) for k, v in raw_sev.items()}
@@ -152,6 +166,7 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
             runtime_weight=float(d.get("runtime_weight", 0.0)),
             promote_margin=float(d.get("promote_margin", 0.01)),
             pass_rate_monotonicity=bool(d.get("pass_rate_monotonicity", True)),
+            **judge_kwargs,
         )
     return ScoringWeights(
         drift_weight=float(d.get("drift_weight", 1.0)),
@@ -161,6 +176,7 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
         runtime_weight=float(d.get("runtime_weight", 0.0)),
         promote_margin=float(d.get("promote_margin", 0.01)),
         pass_rate_monotonicity=bool(d.get("pass_rate_monotonicity", True)),
+        **judge_kwargs,
     )
 
 
