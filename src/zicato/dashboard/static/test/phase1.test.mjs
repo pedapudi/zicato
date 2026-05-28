@@ -170,9 +170,11 @@ test('renderPhase0Epoch renders the frozen goal when present', () => {
   installNode('phase0-epoch-spine');
   installNode('phase0-epoch-heatmap-entries');
   installNode('phase0-epoch-heatmap-judges');
-  installNode('phase0-epoch-journal');
+  installNode('phase0-epoch-experiments');
+  installNode('phase0-epoch-analysis');
   epoch.resetContractDiffCache();
   epoch.resetPerJudgeTrendCache();
+  epoch.resetAnalysisCache();
   state.epochDef = {
     epoch_id: 'e0',
     goal: 'Tighten the planner.',
@@ -189,9 +191,11 @@ test('renderPhase0Epoch shows "(no goal recorded)" when empty', () => {
   installNode('phase0-epoch-spine');
   installNode('phase0-epoch-heatmap-entries');
   installNode('phase0-epoch-heatmap-judges');
-  installNode('phase0-epoch-journal');
+  installNode('phase0-epoch-experiments');
+  installNode('phase0-epoch-analysis');
   epoch.resetContractDiffCache();
   epoch.resetPerJudgeTrendCache();
+  epoch.resetAnalysisCache();
   state.epochDef = { epoch_id: 'e0', goal: '', experiments: [] };
   epoch.renderPhase0Epoch({ epochId: 'e0' });
   const text = document.getElementById('phase0-epoch-goal').textContent;
@@ -205,9 +209,11 @@ test('renderPhase0Epoch renders the per-judge × generation heatmap', () => {
   installNode('phase0-epoch-spine');
   installNode('phase0-epoch-heatmap-entries');
   installNode('phase0-epoch-heatmap-judges');
-  installNode('phase0-epoch-journal');
+  installNode('phase0-epoch-experiments');
+  installNode('phase0-epoch-analysis');
   epoch.resetContractDiffCache();
   epoch.resetPerJudgeTrendCache();
+  epoch.resetAnalysisCache();
   state.epochDef = { epoch_id: 'e0', goal: 'g', experiments: [] };
   const payload = {
     epoch_id: 'e0',

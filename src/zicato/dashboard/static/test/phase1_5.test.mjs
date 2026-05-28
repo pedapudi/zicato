@@ -172,16 +172,17 @@ test('hypothesis_block handles missing hypothesis predictions gracefully', () =>
 // test on this code path, since the rest of the L1 page already has
 // dedicated coverage in phase1.test.mjs.
 
-test('renderPhase0Epoch renders Recent experiments through the compact helper', () => {
+test('renderPhase0Epoch renders Recent experiments as full-width cards', () => {
   installNode('phase0-epoch-goal');
   installNode('phase0-epoch-contract-diff');
   installNode('phase0-epoch-spine');
   installNode('phase0-epoch-heatmap-entries');
   installNode('phase0-epoch-heatmap-judges');
   installNode('phase0-epoch-experiments');
-  installNode('phase0-epoch-journal');
+  installNode('phase0-epoch-analysis');
   epoch.resetContractDiffCache();
   epoch.resetPerJudgeTrendCache();
+  epoch.resetAnalysisCache();
   state.epochDef = {
     epoch_id: 'e0',
     goal: 'g',
@@ -193,15 +194,24 @@ test('renderPhase0Epoch renders Recent experiments through the compact helper', 
     const text = document.getElementById('phase0-epoch-experiments').textContent;
     assert(text.includes('Recent experiments'),
       `section header must render; got: ${text.slice(0, 200)}`);
-    assert(text.includes('Proposed (before)'),
-      'must use the shared Proposed/Outcome split (compact)');
+    // Card layout: generation id, uppercase verdict pill, and the
+    // labelled "why" / "predicted" inline rows.
+    assert(text.includes('v3'),
+      'generation id must render in the card header');
+    assert(text.includes('PROMOTED'),
+      `verdict pill must render as uppercase label; got: ${text.slice(0, 200)}`);
     assert(text.includes('topicality constraints'),
-      'core_idea must render via the shared helper');
-    assert(text.includes('promoted'),
-      'verdict badge must render via the shared helper');
-    // Compact: no risks / modulating / ran_at on L1.
-    assert(!text.includes('Risks.'),
-      `L1 compact must NOT render risks; got: ${text.slice(0, 400)}`);
+      'core_idea must render as the prominent first body line');
+    assert(text.includes('why'),
+      'why lead label must render');
+    assert(text.includes('predicted'),
+      'predicted lead label must render');
+    // The old 2-column "Proposed (before)" split must be gone.
+    assert(!text.includes('Proposed (before)'),
+      `L1 must NOT render the old two-column compact helper; got: ${text.slice(0, 200)}`);
+    // Compact still: no risks / modulating on L1.
+    assert(!text.includes('Modulating.'),
+      `L1 cards must NOT render the modulating sites; got: ${text.slice(0, 400)}`);
   } finally {
     restoreFetch();
   }
@@ -214,9 +224,10 @@ test('renderPhase0Epoch shows empty state when no experiments yet', () => {
   installNode('phase0-epoch-heatmap-entries');
   installNode('phase0-epoch-heatmap-judges');
   installNode('phase0-epoch-experiments');
-  installNode('phase0-epoch-journal');
+  installNode('phase0-epoch-analysis');
   epoch.resetContractDiffCache();
   epoch.resetPerJudgeTrendCache();
+  epoch.resetAnalysisCache();
   state.epochDef = { epoch_id: 'e0', goal: 'g', experiments: [] };
   const restoreFetch = mockFetch(() => ({}));
   try {

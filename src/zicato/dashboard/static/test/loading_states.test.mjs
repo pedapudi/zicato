@@ -52,6 +52,7 @@ function resetState() {
   epoch.resetContractDiffCache();
   epoch.resetPerJudgeTrendCache();
   epoch.resetPerEntryTrendCache();
+  epoch.resetAnalysisCache();
   generation.resetGenerationCaches();
   round.resetRoundCaches();
   runV.resetRunCaches();
@@ -102,7 +103,7 @@ test('L0 workspace lineage shows Loading when /api/workspace not yet landed', ()
     `lineage must NOT say "No epochs recorded" while loading; got: ${text.slice(0, 200)}`);
 });
 
-// -- L1 epoch spine + experiments + journal --------------------------
+// -- L1 epoch spine + experiments + analysis -------------------------
 
 test('L1 epoch spine shows Loading when state.epochDef is null', () => {
   resetState();
@@ -112,7 +113,7 @@ test('L1 epoch spine shows Loading when state.epochDef is null', () => {
   installNode('phase0-epoch-heatmap-entries');
   installNode('phase0-epoch-heatmap-judges');
   installNode('phase0-epoch-experiments');
-  installNode('phase0-epoch-journal');
+  installNode('phase0-epoch-analysis');
   epoch.renderPhase0Epoch({ epochId: 'e0' });
   const text = spine.textContent;
   assert(text.includes('Loading'),
@@ -129,7 +130,7 @@ test('L1 epoch spine shows "No generations yet" when epochDef loaded with empty 
   installNode('phase0-epoch-heatmap-entries');
   installNode('phase0-epoch-heatmap-judges');
   installNode('phase0-epoch-experiments');
-  installNode('phase0-epoch-journal');
+  installNode('phase0-epoch-analysis');
   state.epochDef = { epoch_id: 'e0', goal: 'g', experiments: [] };
   epoch.renderPhase0Epoch({ epochId: 'e0' });
   const text = spine.textContent;
@@ -147,7 +148,7 @@ test('L1 epoch experiments shows Loading when state.epochDef is null', () => {
   installNode('phase0-epoch-heatmap-entries');
   installNode('phase0-epoch-heatmap-judges');
   const experiments = installNode('phase0-epoch-experiments');
-  installNode('phase0-epoch-journal');
+  installNode('phase0-epoch-analysis');
   epoch.renderPhase0Epoch({ epochId: 'e0' });
   const text = experiments.textContent;
   assert(text.includes('Loading'),
@@ -156,7 +157,7 @@ test('L1 epoch experiments shows Loading when state.epochDef is null', () => {
     `experiments must NOT say "No experiments recorded" while loading; got: ${text}`);
 });
 
-test('L1 epoch journal shows Loading when state.epochDef is null', () => {
+test('L1 epoch analysis shows Loading when state.epochDef is null', () => {
   resetState();
   installNode('phase0-epoch-goal');
   installNode('phase0-epoch-contract-diff');
@@ -164,13 +165,13 @@ test('L1 epoch journal shows Loading when state.epochDef is null', () => {
   installNode('phase0-epoch-heatmap-entries');
   installNode('phase0-epoch-heatmap-judges');
   installNode('phase0-epoch-experiments');
-  const journal = installNode('phase0-epoch-journal');
+  const analysis = installNode('phase0-epoch-analysis');
   epoch.renderPhase0Epoch({ epochId: 'e0' });
-  const text = journal.textContent;
+  const text = analysis.textContent;
   assert(text.includes('Loading'),
-    `journal slot must show Loading when state.epochDef == null; got: ${text}`);
-  assert(!text.includes('No journal preview'),
-    `journal must NOT say "No journal preview" while loading; got: ${text}`);
+    `analysis slot must show Loading when state.epochDef == null; got: ${text}`);
+  assert(!text.includes('not yet generated'),
+    `analysis must NOT say "not yet generated" while loading; got: ${text}`);
 });
 
 // -- L2 generation hypothesis card -----------------------------------
