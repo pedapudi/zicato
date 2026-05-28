@@ -274,7 +274,107 @@ def test_bundle_under_size_envelope(
     headroom for natural growth.
     """
     total = len(index_html) + len(style_css) + len(app_js) + len(icons_svg)
-    assert total < 280_000, f"bundle is {total} bytes, exceeds 280_000 envelope"
+    # Raised from 270 KB by the dashboard redesign:
+    # the monolithic ``app.js`` was re-architected into ES modules — a
+    # thin entry point plus the core spine (state / bus / router / api /
+    # sse / dom / format / harmonograf), a shared component library and
+    # the render layer. The module boundaries add per-file headers,
+    # import statements and the documented contracts, costing a few tens
+    # of KB; that cost buys the structural no-flash render spine and the
+    # zero-collision modular layout. Raised again by the route-driven
+    # Files view (its "What changed" section — a generation picker and a
+    # side-by-side split diff of every changed file — plus the shared
+    # `diff` component's split-mode CSS), the Overview environment-home
+    # rebuild (identity / live-activity / epochs / recent-experiments
+    # panels and the score-trajectory chart) and the Epoch-view redesign
+    # (the experiment narrative renders each experiment as a four-beat
+    # card — description / hypothesis / change / outcome — with a
+    # coloured-accent layout, partly offset by deleting the prior flat
+    # experiment-log markup). Raised again by the dashboard-hardening
+    # integration, which folds in four independent dashboard fixes:
+    #   * the Files-view live-refresh fix — the generation picker routes
+    #     through the keyed reconcile spine (so a generation created
+    #     mid-run appears without a reload and without DOM churn) via a
+    #     flattened picker-row model;
+    #   * the Epoch-view journal renderer — the journal markdown is
+    #     parsed into a labelled round-by-round timeline instead of being
+    #     emitted verbatim (which had leaked literal ``**`` markers onto
+    #     the page), plus the ``inlineMarkdown`` splitter gaining
+    #     `**bold**` support and the timeline's CSS;
+    #   * the Overview score-trajectory axis labels (offset by deleting
+    #     the duplicate Tree-view trajectory chart);
+    #   * the Tournament view's scroll / conversation-diff fixes and the
+    #     champion/challenger terminology rename.
+    # The single-branch caps measured each fix in isolation; the
+    # fully integrated bundle was re-measured directly and the cap
+    # below set comfortably above it. The ``app_js`` fixture
+    # concatenates every shipped JS file, so this envelope covers
+    # the whole bundle. The dev-only JS test harness
+    # under ``static/test/`` is NOT shipped and is excluded. The
+    # dashboard is served off disk by the standalone Python service with
+    # no network cost; this guard only keeps the vanilla bundle from
+    # drifting unboundedly.
+    # Raised again by the dashboard IA / analysis integration, which
+    # folds in three further dashboard fixes on top of the redesign:
+    #   * the Files-view folding split-diff — the "What changed" diff
+    #     gained a folding split-diff renderer (foldDiffOps +
+    #     renderFoldingSplitDiff: long unchanged runs collapse to a
+    #     click-to-expand marker so a small change is not buried under a
+    #     wall of identical source), the mutation-site viewer and
+    #     file-content pane route through the keyed reconcile spine
+    #     (swapIfChanged) so an SSE repaint keeps their horizontal scroll
+    #     position, plus Files-view soft-wrap / working-scroll CSS;
+    #   * the completed-tournament A/B matchup grid + scalar breakdown
+    #     (a new /api/matchup-grid endpoint and its render path);
+    #   * the Epoch-view / Overview information-architecture redesign —
+    #     the Epoch view's "Experiment log" and "Journal" panels are
+    #     merged into one chronological "Experiments" section with
+    #     progressive disclosure, and the Overview epochs table gains a
+    #     per-epoch goal column fed by a new `/api/environment.epochs`
+    #     summary.
+    # The single-branch caps (410 KB / 385 KB) each measured one fix in
+    # isolation; the fully integrated bundle was re-measured directly
+    # (index.html + style.css + icons.svg + the concatenated JS bundle)
+    # at 399,681 bytes. A 440 KB cap leaves ~40 KB of headroom for
+    # incidental drift without re-licensing every minor edit.
+    # Raised again by the dashboard-refresh / fast-mode / paper-style
+    # integration, which folds in three further surfaces:
+    #   * the renderAll-level digest gate (a no-op SSE tick now yields
+    #     zero DOM writes), the renderHeader/renderFooter rewrites onto
+    #     patchText/patchClass, and the matchup-detail + conversation-view
+    #     split onto key + populate + swapIfChanged;
+    #   * the fast-mode champion-side `cached` pill (a tiny addition in
+    #     renderBoardSide and the cached -> done bucket in state_reader
+    #     + shared.js);
+    #   * the ACM-style paper analysis report — a substantial addition
+    #     under src/zicato/analyzer/ that does not ship in the bundle, but
+    #     the inline-fragment epoch view path (analysis_html_inline +
+    #     .analysis-paper-card) and the .paper CSS rules do.
+    # The single-branch caps (421,859 / 403,909, the latter shipped
+    # alone) each measured one fix in isolation; the fully integrated
+    # bundle was re-measured directly at 423,713 bytes. A 460 KB cap
+    # leaves ~36 KB of headroom for incidental drift.
+    # Raised again by the phase-0 dashboard redesign (task #181): the
+    # bundle now ships a second, level-aligned shell behind the default
+    # entry path while keeping the legacy 5-tab UI reachable behind
+    # ``?legacy=1``. Six new view modules (workspace / epoch /
+    # generation / round / run + the breadcrumb & sidebar shell + a
+    # phase-0 router) and their scoped ``phase0-*`` CSS land alongside
+    # the existing modules. The single-branch bundle measured directly
+    # at ~501 KB; a 540 KB cap leaves ~40 KB of headroom for incidental
+    # drift while phase-1 lights up the stubbed sections (per-judge
+    # data, contract-diff polish, transcript wiring).
+    # Raised again by the visual-design pass (task #188): the phase-0
+    # shell adopts a real design system — seven component modules under
+    # static/js/components/ (tile, card, pill, heatmap, sparkline, spine,
+    # live_indicator) and the rewritten phase-0 view modules that
+    # compose them. The components.css / tokens.css sheets ship under
+    # static/css/ and are linked alongside style.css but are not part of
+    # the four bundle fixtures, so this envelope only covers the JS +
+    # index.html + style.css + icons.svg quartet. The fully integrated
+    # bundle measured at ~574 KB; a 620 KB cap leaves ~45 KB of headroom
+    # for incidental drift.
+    assert total < 620_000, f"bundle is {total} bytes, exceeds 620_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

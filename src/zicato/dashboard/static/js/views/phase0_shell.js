@@ -10,6 +10,8 @@ import { $, el, clearChildren, patchText, patchClass } from '../core/dom.js';
 import { parseIso, fmtDuration, nowMs } from '../core/format.js';
 import { state } from '../core/state.js';
 import { phase0Href, PHASE0_LEVELS } from './phase0_router.js';
+import { renderLiveIndicator } from '../components/live_indicator.js';
+import { renderPill } from '../components/pill.js';
 
 // How long since the last heartbeat before the run is considered
 // stale. heartbeat.json is rewritten on a short cadence (well under a
@@ -228,6 +230,15 @@ export function renderSidebarLive() {
   const hb = state.heartbeat || {};
   clearChildren(body);
 
+  // Header row carries the live indicator + a small status pill so the
+  // sidebar communicates liveness at a glance, independent of payload.
+  const live = !!(hb && (hb.epoch_id || hb.generation_id));
+  const header = el('div', { class: 'phase0-live-header' }, [
+    renderLiveIndicator({ live, label: live ? 'live' : 'idle', size: 'sm' }),
+    renderPill(live ? 'active' : 'no run', live ? 'live' : 'stale'),
+  ]);
+  body.appendChild(header);
+
   if (!hb.epoch_id && !hb.generation_id) {
     body.appendChild(el('p', { class: 'empty' }, ['No active run.']));
     return;
@@ -235,20 +246,28 @@ export function renderSidebarLive() {
 
   const lines = [];
   if (hb.epoch_id) {
-    lines.push(el('div', { class: 'phase0-live-line mono' },
-      ['epoch · ', hb.epoch_id]));
+    lines.push(el('div', { class: 'phase0-live-line' }, [
+      el('span', { class: 'phase0-live-line-label' }, ['epoch']),
+      el('span', { class: 'mono' }, [hb.epoch_id]),
+    ]));
   }
   if (hb.generation_id) {
-    lines.push(el('div', { class: 'phase0-live-line mono' },
-      ['gen · ', hb.generation_id]));
+    lines.push(el('div', { class: 'phase0-live-line' }, [
+      el('span', { class: 'phase0-live-line-label' }, ['gen']),
+      el('span', { class: 'mono' }, [hb.generation_id]),
+    ]));
   }
   if (hb.round_index != null) {
-    lines.push(el('div', { class: 'phase0-live-line mono' },
-      ['round · ', String(hb.round_index)]));
+    lines.push(el('div', { class: 'phase0-live-line' }, [
+      el('span', { class: 'phase0-live-line-label' }, ['round']),
+      el('span', { class: 'mono' }, [String(hb.round_index)]),
+    ]));
   }
   const activeCount = Array.isArray(state.activeRuns) ? state.activeRuns.length : 0;
-  lines.push(el('div', { class: 'phase0-live-line mono' },
-    ['active · ', String(activeCount)]));
+  lines.push(el('div', { class: 'phase0-live-line' }, [
+    el('span', { class: 'phase0-live-line-label' }, ['runs']),
+    el('span', { class: 'mono' }, [String(activeCount)]),
+  ]));
 
   // "Jump to current run" link — points at the L4 run view for the
   // first active run, or at the current generation when no run id is

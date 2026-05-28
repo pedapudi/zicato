@@ -1,27 +1,32 @@
 // views/phase0_workspace.js — L0 (workspace-level) view.
 //
-// Renders the whole-environment ribbon: env config block, multi-epoch
-// lineage with a single best-scalar per epoch, and a tiny cross-epoch
-// sparkline. Data source: ``/api/workspace`` (state_reader.build_workspace_view).
-// The fetch is owned here (lazy: only when this view becomes active)
-// so the L0 endpoint never fans out across the dashboard.
+// The cross-environment overview: identity / environment card, a live-
+// activity card with a liveness indicator, an epoch lineage timeline,
+// and a cross-epoch best-scalar sparkline. The page is composed from
+// the design-system components (card, tile, pill, sparkline,
+// live indicator). Each section renders INTO its pre-existing slot
+// (`phase0-workspace-env` etc.) so tests reading those slots see the
+// expected text; the slots themselves were defined in index.html.
 
 import { $, el, clearChildren } from '../core/dom.js';
 import { fetchJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import { phase0Href } from './phase0_router.js';
+import { renderCard } from '../components/card.js';
+import { renderPill } from '../components/pill.js';
+import { renderSparkline } from '../components/sparkline.js';
+import { renderLiveIndicator } from '../components/live_indicator.js';
+import { renderMetricTile } from '../components/tile.js';
 
 // Cached workspace payload (per-tab; refetched when the L0 view opens).
 let _workspaceCache = null;
 let _workspaceLoading = false;
 
-// Reset on demand so a fresh visit re-fetches; mostly here for tests.
 export function resetWorkspaceCache() {
   _workspaceCache = null;
   _workspaceLoading = false;
 }
 
-// Surface the in-memory workspace payload — primarily for tests.
 export function workspacePayload() { return _workspaceCache; }
 
 async function ensureWorkspace(repaint) {
@@ -43,40 +48,33 @@ async function ensureWorkspace(repaint) {
   return _workspaceCache;
 }
 
-// Render the environment config block. Sources its data from the
-// ``state.workspace`` identity payload that the environment endpoint
-// surfaces — root, adk_entrypoint, source_roots, contract paths, and
-// the live mutation-point count. Degrades cleanly when missing.
-function renderEnv() {
-  const node = $('phase0-workspace-env');
-  if (!node) return;
-  clearChildren(node);
+function _fmtScalar(v) {
+  if (typeof v !== 'number' || !isFinite(v)) return '—';
+  return v.toFixed(3);
+}
+
+function _hasLiveHeartbeat() {
+  const hb = state.heartbeat;
+  if (!hb || typeof hb !== 'object') return false;
+  if (!hb.epoch_id && !hb.generation_id) return false;
+  return true;
+}
+
+// -- Environment + Live Activity ---------------------------------------
+function _renderEnvKv() {
   const ws = state.workspace;
-  if (!ws) {
-    node.appendChild(el('p', { class: 'empty' }, ['No environment loaded.']));
-    return;
-  }
-  // Legacy: ``state.workspace`` might still be a bare path string when
-  // a snapshot was captured before the identity block landed. Surface
-  // it minimally rather than failing.
+  if (!ws) return el('p', { class: 'empty' }, ['No environment loaded.']);
   if (typeof ws === 'string') {
-    const tbl = el('table', { class: 'phase0-kv-table' });
-    const tbody = el('tbody');
-    tbody.appendChild(el('tr', null, [
-      el('td', { class: 'phase0-kv-key mono' }, ['root']),
-      el('td', { class: 'phase0-kv-val mono' }, [ws]),
-    ]));
-    tbl.appendChild(tbody);
-    node.appendChild(tbl);
-    return;
+    return el('div', { class: 'kv-list' }, [
+      el('div', { class: 'kv-list-key' }, ['root']),
+      el('div', { class: 'kv-list-value' }, [ws]),
+    ]);
   }
   if (typeof ws !== 'object') {
-    node.appendChild(el('p', { class: 'empty' }, ['No environment fields.']));
-    return;
+    return el('p', { class: 'empty' }, ['No environment fields.']);
   }
-  // Render fields in a stable, semantically grouped order — the
-  // operator scans top-to-bottom for identity → entrypoint → sources →
-  // contract files → mutation surface metadata.
+  // Phase 1 tests look for specific values rendered as text — entrypoint,
+  // source roots, mutation count, instance id. We preserve those.
   const ordered = [
     ['root', ws.root],
     ['adk_entrypoint', ws.adk_entrypoint],
@@ -88,127 +86,212 @@ function renderEnv() {
     ['mutation_point_count',
       typeof ws.mutation_point_count === 'number' ? ws.mutation_point_count : null],
   ];
-  const tbl = el('table', { class: 'phase0-kv-table' });
-  const tbody = el('tbody');
+  const wrap = el('div', { class: 'kv-list' });
   for (const [k, v] of ordered) {
-    const display = (v == null || v === '') ? '—' : String(v);
-    tbody.appendChild(el('tr', null, [
-      el('td', { class: 'phase0-kv-key mono' }, [k]),
-      el('td', { class: 'phase0-kv-val mono' }, [display]),
-    ]));
+    wrap.appendChild(el('div', { class: 'kv-list-key' }, [k]));
+    wrap.appendChild(el('div', { class: 'kv-list-value' },
+      [v == null || v === '' ? '—' : String(v)]));
   }
-  // Source roots — multi-value, render as one row per path.
   const roots = Array.isArray(ws.source_roots) ? ws.source_roots : [];
-  if (roots.length === 0) {
-    tbody.appendChild(el('tr', null, [
-      el('td', { class: 'phase0-kv-key mono' }, ['source_roots']),
-      el('td', { class: 'phase0-kv-val mono' }, ['—']),
-    ]));
-  } else {
+  if (roots.length > 0) {
+    wrap.appendChild(el('div', { class: 'kv-list-key' }, ['source_roots']));
+    const list = el('div', { class: 'kv-list-value' });
     for (let i = 0; i < roots.length; i += 1) {
-      tbody.appendChild(el('tr', null, [
-        el('td', { class: 'phase0-kv-key mono' },
-          [i === 0 ? 'source_roots' : '']),
-        el('td', { class: 'phase0-kv-val mono' }, [roots[i]]),
-      ]));
+      list.appendChild(el('div', null, [roots[i]]));
     }
+    wrap.appendChild(list);
   }
-  tbl.appendChild(tbody);
-  node.appendChild(tbl);
+  return wrap;
 }
 
-function fmtScalar(v) {
-  if (typeof v !== 'number' || !isFinite(v)) return '—';
-  return v.toFixed(3);
-}
-
-function renderLineage() {
-  const node = $('phase0-workspace-lineage');
+function _renderEnvSection() {
+  const node = $('phase0-workspace-env');
   if (!node) return;
   clearChildren(node);
+  // The L0 page now uses a two-card top strip. The environment slot
+  // renders the env card; the lineage slot below renders the lineage
+  // + the live-activity panel + the trend (so we keep three slots).
+  // For env we render a card-wrapped kv block.
+  const live = _hasLiveHeartbeat();
+  const hb = state.heartbeat || {};
+  const sparkPts = (_workspaceCache && Array.isArray(_workspaceCache.sparkline))
+    ? _workspaceCache.sparkline : [];
+  const sparkValues = sparkPts.map((p) => p && p.scalar)
+    .filter((v) => typeof v === 'number' && isFinite(v));
+
+  // Live activity column body.
+  const liveChildren = [];
+  liveChildren.push(el('div', { class: 'phase0-live-header' }, [
+    renderLiveIndicator({ live, label: live ? 'live' : 'idle' }),
+    renderPill(live ? 'active' : 'no run', live ? 'live' : 'stale'),
+  ]));
+  if (live) {
+    if (hb.epoch_id) {
+      liveChildren.push(el('div', { class: 'phase0-live-line' }, [
+        el('span', { class: 'phase0-live-line-label' }, ['epoch']),
+        el('span', { class: 'mono' }, [hb.epoch_id]),
+      ]));
+    }
+    if (hb.generation_id) {
+      liveChildren.push(el('div', { class: 'phase0-live-line' }, [
+        el('span', { class: 'phase0-live-line-label' }, ['gen']),
+        el('span', { class: 'mono' }, [hb.generation_id]),
+      ]));
+    }
+    const activeRuns = Array.isArray(state.activeRuns) ? state.activeRuns.length : 0;
+    liveChildren.push(el('div', { class: 'phase0-live-line' }, [
+      el('span', { class: 'phase0-live-line-label' }, ['runs']),
+      el('span', { class: 'mono' }, [String(activeRuns)]),
+    ]));
+    if (hb.epoch_id) {
+      liveChildren.push(el('a', {
+        class: 'phase0-live-jump',
+        href: phase0Href('epoch', { epochId: hb.epoch_id }),
+      }, ['jump to current epoch →']));
+    }
+  } else {
+    liveChildren.push(el('p', { class: 'empty' }, ['No active run.']));
+  }
+  if (sparkValues.length >= 2) {
+    liveChildren.push(el('div', {
+      style: 'margin-top:var(--space-2); display:flex; align-items:center; gap:var(--space-2);',
+    }, [
+      el('span', { class: 'phase0-live-line-label' }, ['trend']),
+      renderSparkline(sparkValues, {
+        width: 120, height: 22, ariaLabel: 'cross-epoch best-scalar trend',
+      }),
+    ]));
+  }
+
+  const strip = el('div', { class: 'phase0-view-strip phase0-view-strip-2' }, [
+    renderCard({
+      title: 'Environment',
+      body: _renderEnvKv(),
+    }),
+    renderCard({
+      title: 'Live activity',
+      accent: live ? 'accent' : 'default',
+      body: el('div', { class: 'phase0-live-body' }, liveChildren),
+    }),
+  ]);
+  node.appendChild(strip);
+}
+
+// -- Epoch lineage -----------------------------------------------------
+function _renderLineageTimeline() {
   const payload = _workspaceCache || {};
   const rows = Array.isArray(payload.epochs) ? payload.epochs : [];
   if (rows.length === 0) {
-    node.appendChild(el('p', { class: 'empty' }, ['No epochs recorded.']));
-    return;
+    return el('p', { class: 'empty' }, ['No epochs recorded.']);
   }
-  // Build a set of (parent -> child) edges so the lineage column can
-  // render a "→ <child_id>" arrow under each parent row. The index's
-  // ``epochs.parent_epoch_id`` column carries this directly; legacy
-  // workspaces fall back to directory order (no arrows rendered).
+  // Build a child-of map so the lineage column can carry an "→ <child>"
+  // arrow (the Phase 1 test asserts this exact text).
   const childOf = new Map();
   for (const r of rows) {
     if (r && r.parent_epoch_id && r.epoch_id) {
-      // First-wins so a duplicated edge does not flip later rows.
       if (!childOf.has(r.parent_epoch_id)) {
         childOf.set(r.parent_epoch_id, r.epoch_id);
       }
     }
   }
-  const tbl = el('table', { class: 'phase0-lineage-table' });
-  tbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', null, ['epoch']),
-    el('th', null, ['lineage']),
-    el('th', null, ['goal']),
-    el('th', null, ['best scalar']),
-    el('th', null, ['gens']),
-    el('th', null, ['promoted']),
-    el('th', null, ['status']),
-  ])]));
-  const tbody = el('tbody');
   const cur = payload.current_epoch_id;
+  const tl = el('div', { class: 'epoch-timeline' });
   for (const r of rows) {
+    const isLive = r.epoch_id === cur;
+    const isClosed = !!r.closed;
+    const hasPromoted = (r.promoted_count || 0) > 0;
+    const variantClass = isLive ? 'is-live' : (hasPromoted ? 'is-promoted' : '');
+    const statusPill = isLive
+      ? renderPill('live', 'live')
+      : (isClosed ? renderPill('closed', 'neutral') : renderPill('open', 'info'));
     const child = childOf.get(r.epoch_id);
-    const lineageCell = child
-      ? el('span', { class: 'mono phase0-lineage-edge' }, ['→ ', child])
-      : el('span', { class: 'mono' }, ['—']);
-    const tr = el('tr', null, [
-      el('td', null, [el('a', {
-        href: phase0Href('epoch', { epochId: r.epoch_id }),
-        class: 'mono',
-      }, [r.epoch_id])]),
-      el('td', null, [lineageCell]),
-      el('td', null, [r.goal || '(no goal recorded)']),
-      el('td', { class: 'mono' }, [fmtScalar(r.best_scalar)]),
-      el('td', { class: 'mono' }, [String(r.generation_count || 0)]),
-      el('td', { class: 'mono' }, [String(r.promoted_count || 0)]),
-      el('td', { class: 'mono' }, [
-        r.epoch_id === cur ? 'live' : (r.closed ? 'closed' : 'open'),
+    const arrowSuffix = child ? ' → ' + child : '';
+
+    const item = el('a', {
+      class: 'epoch-timeline-item ' + variantClass,
+      href: phase0Href('epoch', { epochId: r.epoch_id }),
+    }, [
+      el('span', { class: 'epoch-timeline-dot', 'aria-hidden': 'true' }),
+      el('div', null, [
+        el('div', { class: 'epoch-timeline-name' }, [r.epoch_id + arrowSuffix]),
+        el('div', { class: 'epoch-timeline-goal' },
+          [r.goal || '(no goal recorded)']),
       ]),
+      el('span', { class: 'epoch-timeline-scalar' },
+        ['best · ' + _fmtScalar(r.best_scalar)
+          + ' · ' + (r.generation_count || 0) + ' gens'
+          + ' · ' + (r.promoted_count || 0) + ' promoted']),
+      el('span', { class: 'epoch-timeline-status' }, [statusPill]),
     ]);
-    tbody.appendChild(tr);
+    tl.appendChild(item);
   }
-  tbl.appendChild(tbody);
-  node.appendChild(tbl);
+  return tl;
 }
 
-function renderSparkline() {
-  const node = $('phase0-workspace-sparkline');
+function _renderLineageSection() {
+  const node = $('phase0-workspace-lineage');
   if (!node) return;
   clearChildren(node);
+  node.appendChild(renderCard({
+    title: 'Epoch lineage',
+    subtitle: 'The full history of this workspace, oldest to newest.',
+    body: _renderLineageTimeline(),
+  }));
+}
+
+// -- Cross-epoch trend -------------------------------------------------
+function _renderTrendBody() {
   const payload = _workspaceCache || {};
   const pts = Array.isArray(payload.sparkline) ? payload.sparkline : [];
   if (pts.length === 0) {
-    node.appendChild(el('p', { class: 'empty' }, ['No scalar history yet.']));
-    return;
+    return el('p', { class: 'empty' }, ['No scalar history yet.']);
   }
-  // A textual sparkline keeps the dependency surface zero — full SVG
-  // rendering is downstream work, but the L0 view needs SOMETHING to
-  // render here so the layout is honest about the data being present.
-  const line = el('div', { class: 'phase0-sparkline mono' }, []);
-  for (const p of pts) {
-    line.appendChild(el('span', { class: 'phase0-sparkline-cell' }, [
-      (p.epoch_id || '—') + ' ',
-      el('span', { class: 'phase0-sparkline-val' }, [fmtScalar(p.scalar)]),
-      '  ',
-    ]));
-  }
-  node.appendChild(line);
+  const values = pts.map((p) => p && p.scalar)
+    .filter((v) => typeof v === 'number' && isFinite(v));
+  const firstFinite = values.length > 0 ? values[0] : null;
+  const lastFinite = values.length > 0 ? values[values.length - 1] : null;
+  const delta = (firstFinite != null && lastFinite != null)
+    ? lastFinite - firstFinite : null;
+  const sentiment = delta == null ? 'flat'
+    : (delta < 0 ? 'good' : (delta > 0 ? 'bad' : 'flat'));
+
+  return el('div', { class: 'trend-card-body' }, [
+    el('div', { class: 'trend-card-meta' }, [
+      el('div', { class: 'tile-strip' }, [
+        renderMetricTile({ label: 'epochs', value: pts.length }),
+        renderMetricTile({ label: 'latest best', value: _fmtScalar(lastFinite) }),
+        renderMetricTile({
+          label: 'Δ vs first',
+          value: delta == null ? '—' : (delta > 0 ? '+' : '') + delta.toFixed(3),
+          sentiment,
+        }),
+      ]),
+    ]),
+    el('div', { class: 'trend-card-spark' }, [
+      values.length >= 2
+        ? renderSparkline(values, {
+            width: 220, height: 56, ariaLabel: 'cross-epoch best-scalar curve',
+            fill: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
+          })
+        : el('span', { class: 'empty' }, ['need ≥ 2 epochs for a trend line']),
+    ]),
+  ]);
+}
+
+function _renderSparklineSection() {
+  const node = $('phase0-workspace-sparkline');
+  if (!node) return;
+  clearChildren(node);
+  node.appendChild(renderCard({
+    title: 'Cross-epoch trend',
+    subtitle: 'Best (lowest) scalar per epoch — lower is better.',
+    body: _renderTrendBody(),
+  }));
 }
 
 export function renderPhase0Workspace(repaint) {
   ensureWorkspace(repaint);
-  renderEnv();
-  renderLineage();
-  renderSparkline();
+  _renderEnvSection();
+  _renderLineageSection();
+  _renderSparklineSection();
 }

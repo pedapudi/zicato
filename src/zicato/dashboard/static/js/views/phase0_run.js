@@ -1,17 +1,19 @@
 // views/phase0_run.js — L4 (run-level) view.
 //
-// Renders the per-run shell: header metrics, expectation outcomes,
-// per-judge breakdown (via /api/run/{epoch}/{gen}/{entry}/per-judge),
-// transcript (single-run layout for phase 0; side-by-side toggle is
-// phase 2), and a live events stream. Live transcript rendering
-// belongs ONLY at L4 per the design agreement — every other level
-// shows summary data.
+// Header slot: metric tile strip with the run's headline numbers.
+// Expectation slot: pass/fail outcomes (Phase 1.5 owns inner structure).
+// Judges slot: per-judge weighted-loss table.
+// Transcript slot: Phase 1.5 owns inner structure.
+// Events slot: event chip stream with colored type chips.
 
 import { $, el, clearChildren } from '../core/dom.js';
 import { fetchJson } from '../core/api.js';
 import { state } from '../core/state.js';
+import { renderCard } from '../components/card.js';
+import { renderMetricTile } from '../components/tile.js';
+import { renderPill, renderEventChip } from '../components/pill.js';
 
-const _runJudgeCache = new Map(); // "epoch/gen/entry" -> payload
+const _runJudgeCache = new Map();
 const _loadingRunJudges = new Set();
 
 export function resetRunCaches() {
@@ -58,135 +60,170 @@ function findActiveRun(entryId) {
   return null;
 }
 
-function renderRunHeaderMetrics(params, run) {
+function _renderHeader(params, run) {
   const node = $('phase0-run-header');
   if (!node) return;
   clearChildren(node);
   if (!params || (!params.entryId && !params.generationId)) {
-    node.appendChild(el('p', { class: 'empty' }, ['No run selected.']));
+    node.appendChild(renderCard({
+      title: 'Run',
+      body: el('p', { class: 'empty' }, ['No run selected.']),
+    }));
     return;
   }
-  const wrap = el('div', { class: 'phase0-run-header-inner' });
+  const tiles = el('div', { class: 'tile-strip' });
   if (params.epochId) {
-    wrap.appendChild(el('div', { class: 'mono' },
-      ['epoch · ', params.epochId]));
+    tiles.appendChild(renderMetricTile({
+      label: 'epoch', value: params.epochId, size: 'sm',
+    }));
   }
   if (params.generationId) {
-    wrap.appendChild(el('div', { class: 'mono' },
-      ['gen · ', params.generationId]));
+    tiles.appendChild(renderMetricTile({
+      label: 'generation', value: params.generationId, size: 'sm',
+    }));
   }
   if (params.entryId) {
-    wrap.appendChild(el('div', { class: 'mono' },
-      ['entry · ', params.entryId]));
+    tiles.appendChild(renderMetricTile({
+      label: 'entry', value: params.entryId, size: 'sm',
+    }));
   }
-  if (run) {
-    if (typeof run.progress === 'number') {
-      wrap.appendChild(el('div', { class: 'mono' },
-        ['progress · ', String(Math.round((run.progress || 0) * 100)), '%']));
-    }
-    if (typeof run.elapsed_seconds === 'number') {
-      wrap.appendChild(el('div', { class: 'mono' },
-        ['elapsed · ', String(Math.round(run.elapsed_seconds)), 's']));
-    }
-    if (run.status) {
-      wrap.appendChild(el('div', { class: 'mono' },
-        ['status · ', String(run.status)]));
-    }
-  } else {
-    wrap.appendChild(el('p', { class: 'panel-subheader' },
-      ['Run is not currently active — historical metrics land once L4 fetches them.']));
+  if (run && typeof run.elapsed_seconds === 'number') {
+    tiles.appendChild(renderMetricTile({
+      label: 'elapsed',
+      value: Math.round(run.elapsed_seconds),
+      unit: 's',
+    }));
   }
-  node.appendChild(wrap);
+  if (run && typeof run.progress === 'number') {
+    tiles.appendChild(renderMetricTile({
+      label: 'progress',
+      value: Math.round((run.progress || 0) * 100),
+      unit: '%',
+    }));
+  }
+  if (run && run.status) {
+    tiles.appendChild(renderMetricTile({
+      label: 'status', value: run.status, size: 'sm',
+    }));
+  }
+
+  const body = el('div');
+  body.appendChild(tiles);
+  if (!run) {
+    body.appendChild(el('p', {
+      style: 'margin:var(--space-3) 0 0; font-size:var(--font-size-12); color:var(--color-text-muted);',
+    }, ['Run is not currently active — historical metrics land once L4 fetches them.']));
+  } else if (run.status === 'running') {
+    body.appendChild(el('div', {
+      style: 'margin-top:var(--space-3); display:flex; gap:var(--space-2);',
+    }, [renderPill('live', 'live')]));
+  }
+  node.appendChild(renderCard({
+    title: 'Run header',
+    body,
+  }));
 }
 
-function renderExpectation() {
+function _renderExpectation() {
   const node = $('phase0-run-expectation');
   if (!node) return;
   clearChildren(node);
-  // The expectation outcome is sourced from the per-run loss.json,
-  // which the matchup-conversations endpoint already projects. Phase 0
-  // surfaces the slot; the wire-up lands once the L4 fetch path
-  // migrates from the legacy conversation view.
-  node.appendChild(el('p', { class: 'panel-subheader' },
-    ['Expectation outcomes land once the L4 fetch path migrates.']));
+  // Phase 1.5 owns the inner structure. We card-wrap for layout.
+  node.appendChild(renderCard({
+    title: 'Expectations',
+    body: el('p', { class: 'empty' },
+      ['Expectation outcomes land once the L4 fetch path migrates (Phase 1.5).']),
+  }));
 }
 
-function renderJudges(epochId, generationId, entryId) {
+function _renderJudges(epochId, generationId, entryId) {
   const node = $('phase0-run-judges');
   if (!node) return;
   clearChildren(node);
+  let body;
   if (!epochId || !generationId || !entryId) {
-    node.appendChild(el('p', { class: 'empty' }, ['No run selected.']));
-    return;
+    body = el('p', { class: 'empty' }, ['No run selected.']);
+  } else {
+    const data = _runJudgeCache.get(epochId + '/' + generationId + '/' + entryId);
+    if (!data) {
+      body = el('p', { class: 'empty' }, ['loading per-judge breakdown…']);
+    } else {
+      const judges = Array.isArray(data.judges) ? data.judges : [];
+      if (judges.length === 0) {
+        const msg = data.note ? '(no per-judge data: ' + data.note + ')'
+          : '(no per-judge data recorded for this run)';
+        body = el('p', { class: 'empty' }, [msg]);
+      } else {
+        const wrap = el('div');
+        if (data.run_id) {
+          wrap.appendChild(el('p', {
+            style: 'font-size:var(--font-size-11); color:var(--color-text-muted); margin:0 0 var(--space-2); font-family:var(--font-mono);',
+          }, ['run · ', data.run_id]));
+        }
+        const tbl = el('table', { class: 'ds-table' });
+        tbl.appendChild(el('thead', null, [el('tr', null, [
+          el('th', null, ['judge']),
+          el('th', null, ['weighted loss']),
+          el('th', null, ['raw loss']),
+          el('th', null, ['weight']),
+        ])]));
+        const tbody = el('tbody');
+        for (const j of judges) {
+          tbody.appendChild(el('tr', null, [
+            el('td', { class: 'mono' }, [String(j.judge_name || '—')]),
+            el('td', { class: 'mono' }, [_fmtNum(j.weighted_loss)]),
+            el('td', { class: 'mono' }, [_fmtNum(j.raw_loss)]),
+            el('td', { class: 'mono' }, [_fmtNum(j.weight)]),
+          ]));
+        }
+        tbl.appendChild(tbody);
+        wrap.appendChild(tbl);
+        body = wrap;
+      }
+    }
   }
-  const data = _runJudgeCache.get(epochId + '/' + generationId + '/' + entryId);
-  if (!data) {
-    node.appendChild(el('p', { class: 'empty' }, ['loading per-judge breakdown…']));
-    return;
-  }
-  const judges = Array.isArray(data.judges) ? data.judges : [];
-  if (judges.length === 0) {
-    const msg = data.note ? '(no per-judge data: ' + data.note + ')'
-      : '(no per-judge data recorded for this run)';
-    node.appendChild(el('p', { class: 'empty' }, [msg]));
-    return;
-  }
-  if (data.run_id) {
-    node.appendChild(el('p', { class: 'panel-subheader mono' },
-      ['run_id · ', data.run_id]));
-  }
-  const tbl = el('table', { class: 'phase0-mini-table' });
-  tbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', null, ['judge']),
-    el('th', null, ['weighted loss']),
-    el('th', null, ['raw loss']),
-    el('th', null, ['weight']),
-  ])]));
-  const tbody = el('tbody');
-  for (const j of judges) {
-    tbody.appendChild(el('tr', null, [
-      el('td', { class: 'mono' }, [String(j.judge_name || '—')]),
-      el('td', { class: 'mono' }, [_fmtNum(j.weighted_loss)]),
-      el('td', { class: 'mono' }, [_fmtNum(j.raw_loss)]),
-      el('td', { class: 'mono' }, [_fmtNum(j.weight)]),
-    ]));
-  }
-  tbl.appendChild(tbody);
-  node.appendChild(tbl);
+  node.appendChild(renderCard({
+    title: 'Per-judge breakdown',
+    body,
+  }));
 }
 
-function renderTranscript() {
+function _renderTranscript() {
   const node = $('phase0-run-transcript');
   if (!node) return;
   clearChildren(node);
-  node.appendChild(el('p', { class: 'panel-subheader' },
-    ['Transcript renders here (single-run layout for phase 0; '
-      + 'side-by-side compare toggles in phase 2).']));
+  node.appendChild(renderCard({
+    title: 'Transcript',
+    body: el('p', { class: 'empty' },
+      ['Transcript renders here (single-run for phase 0; side-by-side compare in phase 2).']),
+  }));
 }
 
-function renderEvents() {
+function _renderEvents() {
   const node = $('phase0-run-events');
   if (!node) return;
   clearChildren(node);
-  // Reuse the same run-log tail the legacy log panel reads from. The
-  // live transcript only belongs at L4 per the design agreement;
-  // every other level shows summary data.
   const events = (state.logTail && Array.isArray(state.logTail.events))
-    ? state.logTail.events.slice(-12) : [];
+    ? state.logTail.events.slice(-30) : [];
+  let body;
   if (events.length === 0) {
-    node.appendChild(el('p', { class: 'empty' }, ['No events yet.']));
-    return;
+    body = el('p', { class: 'empty' }, ['No events yet.']);
+  } else {
+    const list = el('div', { class: 'events-list' });
+    for (const ev of events) {
+      const ts = ev.ts || ev.timestamp || '';
+      list.appendChild(el('div', { class: 'events-row' }, [
+        renderEventChip(ev.kind || 'event'),
+        el('span', { class: 'events-row-ts' }, [String(ts).slice(11, 19)]),
+        el('span', { class: 'events-row-summary' }, [ev.summary || '']),
+      ]));
+    }
+    body = list;
   }
-  const list = el('div', { class: 'phase0-events-list mono' });
-  for (const ev of events) {
-    const line = el('div', { class: 'phase0-events-line' }, [
-      ev.kind || '—',
-      ' · ',
-      ev.summary || '',
-    ]);
-    list.appendChild(line);
-  }
-  node.appendChild(list);
+  node.appendChild(renderCard({
+    title: 'Events stream',
+    body,
+  }));
 }
 
 export function renderPhase0Run(params, repaint) {
@@ -195,9 +232,9 @@ export function renderPhase0Run(params, repaint) {
   const generationId = (params && params.generationId) || null;
   const entryId = (params && params.entryId) || null;
   ensureRunJudges(epochId, generationId, entryId, repaint);
-  renderRunHeaderMetrics(params, run);
-  renderExpectation();
-  renderJudges(epochId, generationId, entryId);
-  renderTranscript();
-  renderEvents();
+  _renderHeader(params, run);
+  _renderExpectation();
+  _renderJudges(epochId, generationId, entryId);
+  _renderTranscript();
+  _renderEvents();
 }
