@@ -31,6 +31,33 @@ const _loadingTranscript = new Set();
 // the picker to "off" instead of carrying a stale compare target.
 const _compareGenByEntry = new Map();
 
+// Per-card render digests — the SSE heartbeat ticks once per second
+// and emits state:changed every time. The transcript card (which
+// hosts a native <select> picker) must NOT be rebuilt on every tick;
+// rebuilding closes the native dropdown the moment a user clicks it.
+//
+// Each card has its own digest covering only the inputs it actually
+// reads — the header card includes the elapsed clock, the transcript
+// card does not. A heartbeat tick that only re-stamps the elapsed
+// counter rebuilds the header tile-strip but leaves the transcript
+// card (and its open dropdown) untouched.
+let _lastHeaderDigest = null;
+let _lastExpectationDigest = null;
+let _lastJudgesDigest = null;
+let _lastTranscriptDigest = null;
+let _lastEventsDigest = null;
+// Force-render override — picker-change handlers and fetch-completion
+// callbacks set this to bypass the per-card digest gates so the very
+// next render repaints unconditionally. Cleared at the top of each
+// renderPhase0Run after the gates consult it.
+let _forceNextRunRender = false;
+// Compare-picker state — see _buildComparePicker for the full
+// rationale. Hoisted here so resetRunCaches() can reset them in the
+// canonical "scrub everything" path.
+let _comparePicker = null;
+let _comparePickerSig = null;
+let _comparePickerHandler = null;
+
 export function resetRunCaches() {
   _runJudgeCache.clear();
   _loadingRunJudges.clear();
@@ -41,6 +68,120 @@ export function resetRunCaches() {
   _transcriptCache.clear();
   _loadingTranscript.clear();
   _compareGenByEntry.clear();
+  _lastHeaderDigest = null;
+  _lastExpectationDigest = null;
+  _lastJudgesDigest = null;
+  _lastTranscriptDigest = null;
+  _lastEventsDigest = null;
+  _forceNextRunRender = false;
+  // Picker state lives outside the data caches but resetRunCaches() is
+  // the canonical "scrub everything" hook every L4 test calls, so it
+  // resets here too.
+  _comparePicker = null;
+  _comparePickerSig = null;
+  _comparePickerHandler = null;
+}
+
+// Reset every per-card digest — used by tests that want to assert a
+// no-op render is gated without clearing the transcript / expectations
+// cache the previous render populated.
+export function resetRunRenderDigest() {
+  _lastHeaderDigest = null;
+  _lastExpectationDigest = null;
+  _lastJudgesDigest = null;
+  _lastTranscriptDigest = null;
+  _lastEventsDigest = null;
+  _forceNextRunRender = false;
+}
+
+// Build a per-card digest object so each card can independently gate
+// its own repaint. Heartbeat-timestamp churn MUST be excluded from
+// every card's digest; the transcript card additionally excludes the
+// elapsed clock (which would otherwise rebuild the <select> every
+// second on a live run).
+//
+// Exported so tests can pin which fields are part of the contract.
+export function runViewDigest(params) {
+  const epochId = (params && params.epochId) || null;
+  const generationId = (params && params.generationId) || null;
+  const entryId = (params && params.entryId) || null;
+  const key = (epochId || '') + '/' + (generationId || '') + '/' + (entryId || '');
+  const compareGen = compareGenFor(epochId, entryId) || null;
+  const compareKey = compareGen
+    ? (epochId || '') + '/' + compareGen + '/' + (entryId || '')
+    : null;
+
+  // -- Active-run snapshot --------------------------------------------
+  // elapsed_seconds ticks every second on a live run; bucketed to the
+  // nearest second so a sub-second jitter does not churn the digest.
+  const run = findActiveRun(entryId);
+  const runStatus = run ? (run.status || '') : '';
+  const runProgress = run && typeof run.progress === 'number'
+    ? Math.round((run.progress || 0) * 100) : null;
+  const runElapsed = run && typeof run.elapsed_seconds === 'number'
+    ? Math.round(run.elapsed_seconds) : null;
+  const runPresent = run != null;
+
+  // -- Cached payload signatures --------------------------------------
+  const focusedTx = _transcriptCache.get(key);
+  const focusedTxSig = focusedTx
+    ? (focusedTx.run_id || '') + ':'
+      + (typeof focusedTx.event_count === 'number' ? focusedTx.event_count : -1)
+    : null;
+  const compareTx = compareKey ? _transcriptCache.get(compareKey) : null;
+  const compareTxSig = compareTx
+    ? (compareTx.run_id || '') + ':'
+      + (typeof compareTx.event_count === 'number' ? compareTx.event_count : -1)
+    : null;
+  const judges = _runJudgeCache.get(key);
+  const judgesSig = judges
+    ? (judges.run_id || '') + ':'
+      + (Array.isArray(judges.judges) ? judges.judges.length : 0)
+    : null;
+  const expectations = _runExpectationsCache.get(key);
+  const expSig = expectations
+    ? (Array.isArray(expectations.outcomes) ? expectations.outcomes.length : 0)
+    : null;
+  const header = _runHeaderCache.get(key);
+  const headerSig = header
+    ? (header.run_id || '') + ':' + (header.runtime_ms != null ? header.runtime_ms : '')
+      + ':' + (header.pass_fail != null ? String(header.pass_fail) : '')
+    : null;
+
+  // -- Events stream --------------------------------------------------
+  const eventsLen = (state.logTail && Array.isArray(state.logTail.events))
+    ? state.logTail.events.length : 0;
+  const eventsLoaded = state.logEventsPath != null || state.logCursor != null;
+
+  // -- Lineage --------------------------------------------------------
+  // Number of generations on the focused epoch — the compare picker's
+  // option list reads that and nothing else. Filtering here so the
+  // digest is independent of other epochs' generations.
+  let lineageEpochGenLen = 0;
+  if (state.lineage && Array.isArray(state.lineage.generations)) {
+    for (const g of state.lineage.generations) {
+      if (g && g.epoch_id === epochId) lineageEpochGenLen += 1;
+    }
+  }
+
+  return {
+    // Each card consumes only the slice it depends on. JSON.stringify
+    // collapses the slice into a hashable string at the gate site.
+    header: {
+      epochId, generationId, entryId,
+      runStatus, runProgress, runElapsed, runPresent, headerSig,
+    },
+    expectation: { epochId, generationId, entryId, expSig },
+    judges: { epochId, generationId, entryId, judgesSig },
+    transcript: {
+      // Transcript card MUST be independent of the elapsed clock so a
+      // live run's per-second tick does not close the open compare
+      // <select> dropdown.
+      epochId, generationId, entryId, compareGen,
+      focusedTxSig, compareTxSig, lineageEpochGenLen,
+    },
+    events: { eventsLen, eventsLoaded },
+  };
 }
 
 export function transcriptPayload(epochId, generationId, entryId) {
@@ -552,32 +693,73 @@ function _transcriptColumnBody(data, opts) {
   return body;
 }
 
-// Build the sibling-generation picker. Lists every generation in the
-// focused epoch except the focused one; emitting an empty string value
-// = "no compare". Single source for the picker behaviour so the change
-// handler stays in lockstep with the options.
+// Build (or update in place) the sibling-generation picker. Lists every
+// generation in the focused epoch except the focused one; emitting an
+// empty string value = "no compare". Returns the <select> element —
+// the SAME element across renders unless its option list changed.
 function _buildComparePicker(epochId, focusedGen, selectedCompare, onChange) {
-  const select = el('select', { class: 'mono' });
-  select.appendChild(el('option', { value: '' }, ['compare to … (off)']));
   const lineage = state.lineage || {};
   const generations = Array.isArray(lineage.generations) ? lineage.generations : [];
-  // Filter to this epoch; skip the focused generation itself.
   const inEpoch = generations
     .filter((g) => g && g.epoch_id === epochId && g.generation_id !== focusedGen)
     .map((g) => g.generation_id);
-  // Stable order: generation id is monotonically increasing (v0, v1, …);
-  // sort by natural order so the picker reads left-to-right in age.
   inEpoch.sort();
-  for (const gid of inEpoch) {
-    const opt = el('option', { value: gid }, [gid]);
-    if (gid === selectedCompare) opt.setAttribute('selected', 'selected');
-    select.appendChild(opt);
-  }
-  select.addEventListener('change', (ev) => {
-    const v = (ev && ev.target && ev.target.value) ? String(ev.target.value) : '';
-    onChange(v || null);
+  const sig = JSON.stringify({
+    epochId, focusedGen, options: inEpoch,
   });
-  return select;
+
+  // Rebuild only when the option list changed. The existing <select>
+  // is preserved across renders so an open native dropdown survives a
+  // heartbeat-triggered repaint.
+  if (_comparePicker == null || _comparePickerSig !== sig) {
+    const select = el('select', { class: 'mono' });
+    select.appendChild(el('option', { value: '' }, ['compare to … (off)']));
+    for (const gid of inEpoch) {
+      const opt = el('option', { value: gid }, [gid]);
+      select.appendChild(opt);
+    }
+    // Bind the change handler ONCE — a closure over a mutable ref so a
+    // later render can swap in a fresh onChange without re-wiring.
+    select.addEventListener('change', (ev) => {
+      const v = (ev && ev.target && ev.target.value) ? String(ev.target.value) : '';
+      const handler = _comparePickerHandler;
+      if (typeof handler === 'function') handler(v || null);
+    });
+    _comparePicker = select;
+    _comparePickerSig = sig;
+  }
+
+  // Keep the picker's selected value in sync with the caller's
+  // intent. Setting .value on a native <select> does not close an open
+  // dropdown unless the value actually changes; we still gate the
+  // write to avoid spurious churn.
+  const wantValue = selectedCompare || '';
+  if (_comparePicker.value !== wantValue) {
+    // Also reflect on the option's selected attribute so the harness
+    // (and any DOM-introspection test) sees the chosen value.
+    const opts = _comparePicker.children;
+    for (const opt of opts) {
+      const isMatch = (opt.getAttribute && opt.getAttribute('value')) === wantValue;
+      if (isMatch) opt.setAttribute('selected', 'selected');
+      else opt.removeAttribute && opt.removeAttribute('selected');
+    }
+    _comparePicker.value = wantValue;
+  }
+
+  // Refresh the handler closure each render so it captures the latest
+  // route + repaint without rebuilding the <select>.
+  _comparePickerHandler = onChange;
+
+  return _comparePicker;
+}
+
+// Reset the picker module state. Used by tests that share state across
+// renders, and by resetRunCaches() so a fresh route gets a fresh
+// picker.
+export function resetComparePicker() {
+  _comparePicker = null;
+  _comparePickerSig = null;
+  _comparePickerHandler = null;
 }
 
 function _renderTranscript(epochId, generationId, entryId, repaint) {
@@ -719,15 +901,54 @@ export function renderPhase0Run(params, repaint) {
   const epochId = (params && params.epochId) || null;
   const generationId = (params && params.generationId) || null;
   const entryId = (params && params.entryId) || null;
+  // Fetches still fire on every entry — the cache short-circuits the
+  // ones already settled, and a fetch-completion callback flips
+  // _forceNextRunRender so the data lands on the very next render.
   ensureRunJudges(epochId, generationId, entryId, repaint);
   ensureRunExpectations(epochId, generationId, entryId, repaint);
   // Only fetch the header endpoint when there is no live state for the
   // run — a live run draws its progress / elapsed / status from the
   // active-runs snapshot and the loss.json does not exist yet.
   if (!run) ensureRunHeader(epochId, generationId, entryId, repaint);
-  _renderHeader(params, run);
-  _renderExpectation(epochId, generationId, entryId);
-  _renderJudges(epochId, generationId, entryId);
-  _renderTranscript(epochId, generationId, entryId, repaint);
-  _renderEvents();
+  // Transcript fetches (focused + optional compare) are kicked off
+  // here so the per-card digest below sees the cache hit when the
+  // payload eventually arrives.
+  ensureTranscript(epochId, generationId, entryId, repaint);
+  const compareGen = compareGenFor(epochId, entryId);
+  if (compareGen) ensureTranscript(epochId, compareGen, entryId, repaint);
+
+  // Per-card digest gates — a heartbeat timestamp tick changes neither
+  // the transcript digest nor the events digest, so an open <select>
+  // dropdown in the transcript card survives the tick. The header
+  // card's elapsed clock IS allowed to tick because the header has no
+  // interactive form widget.
+  const digests = runViewDigest(params);
+  const force = _forceNextRunRender;
+  _forceNextRunRender = false;
+
+  const headerDigest = JSON.stringify(digests.header);
+  if (force || headerDigest !== _lastHeaderDigest) {
+    _lastHeaderDigest = headerDigest;
+    _renderHeader(params, run);
+  }
+  const expDigest = JSON.stringify(digests.expectation);
+  if (force || expDigest !== _lastExpectationDigest) {
+    _lastExpectationDigest = expDigest;
+    _renderExpectation(epochId, generationId, entryId);
+  }
+  const judgesDigest = JSON.stringify(digests.judges);
+  if (force || judgesDigest !== _lastJudgesDigest) {
+    _lastJudgesDigest = judgesDigest;
+    _renderJudges(epochId, generationId, entryId);
+  }
+  const transcriptDigest = JSON.stringify(digests.transcript);
+  if (force || transcriptDigest !== _lastTranscriptDigest) {
+    _lastTranscriptDigest = transcriptDigest;
+    _renderTranscript(epochId, generationId, entryId, repaint);
+  }
+  const eventsDigest = JSON.stringify(digests.events);
+  if (force || eventsDigest !== _lastEventsDigest) {
+    _lastEventsDigest = eventsDigest;
+    _renderEvents();
+  }
 }

@@ -573,7 +573,13 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
 }
 .spine-row {
   display: flex;
-  align-items: stretch;
+  /* Bottom-align every column so the spine-nodes (the dots that form
+     the lineage row) sit at the SAME vertical position regardless of
+     how many rejected-challenger branches sit above any one node. A
+     stretched-row layout would let v0 (no branches) put its dot at the
+     top while v3 (4 branches above) puts its dot near the middle —
+     visually breaking the "spine" metaphor. */
+  align-items: flex-end;
   gap: 0;
   overflow-x: auto;
   padding: var(--space-2) 0;
@@ -676,8 +682,14 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   align-items: center;
   flex: 0 0 auto;
   padding: 0 var(--space-1);
-  align-self: flex-start;
-  margin-top: 28px; /* align with the dot */
+  /* The row uses align-items: flex-end so columns bottom-align. The
+     spine-node's dot sits near the TOP of the node (after padding-top
+     ≈ 12px + half the 14px dot). Push the connector up from the
+     bottom by the height of the node-below-the-dot so the arrow lines
+     up with the dot center. The value is a CSS var so a future tweak
+     to the node's internal padding only changes one place. */
+  align-self: flex-end;
+  margin-bottom: var(--spine-dot-from-bottom, 52px);
   gap: var(--space-1);
 }
 .spine-connector-line {
@@ -1328,6 +1340,11 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
 .spine-col {
   display: flex;
   flex-direction: column;
+  /* Anchor the spine-node at the bottom of the column so branches +
+     tee stack ABOVE it. Combined with align-items: flex-end on the
+     row, this puts every spine-node's dot at the same vertical
+     position regardless of how many branches a column carries. */
+  justify-content: flex-end;
   align-items: center;
   flex: 0 0 auto;
   position: relative;
@@ -1338,7 +1355,12 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   gap: var(--space-1);
   margin-bottom: var(--space-1);
   justify-content: center;
-  max-width: 220px;
+  /* Cap the branch-chip row at the node's min-width so a parent with
+     many challengers wraps cleanly above its own column instead of
+     bleeding sideways into the neighbouring connector zone. A wider
+     wrap was the visible bug in #195 — v3 with four rejected
+     challengers (v4..v7) drew chips that overflowed left toward v1. */
+  max-width: 90px;
 }
 .spine-branch {
   display: inline-flex;
