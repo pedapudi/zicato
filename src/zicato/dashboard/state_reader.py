@@ -2811,6 +2811,185 @@ def build_per_judge_for_run(paths: WorkspacePaths, run_id: str) -> dict[str, Any
     return {"run_id": run_id, "judges": judges}
 
 
+def _load_run_loss(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> dict[str, Any] | None:
+    """Read a board-entry run's ``loss.json`` defensively.
+
+    Returns the parsed dict or ``None`` when the file is absent or
+    unreadable. Used by :func:`build_expectation_outcomes_for_run` and
+    :func:`build_run_header` to project structured fields without
+    requiring an indexed workspace.
+    """
+    loss_path = (
+        paths.epochs / epoch_id / "generations" / generation_id / "runs" / entry_id / "loss.json"
+    )
+    try:
+        loss = json.loads(loss_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
+        return None
+    return loss if isinstance(loss, dict) else None
+
+
+def build_expectation_outcomes_for_run(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> dict[str, Any]:
+    """Structured expectation outcomes for a single run (L4).
+
+    The reducer stamps a single ``expectation_result`` on each run's
+    ``loss.json`` — a dict shaped ``{kind, passed, detail}`` (see
+    :class:`zicato.core.types.ExpectationResult`). This reader projects
+    it into a list-shaped payload so the L4 view can render a uniform
+    table regardless of whether the entry carried zero, one, or
+    (forward-compat) several expectations.
+
+    Returns ``{epoch_id, generation_id, entry_id, outcomes: [...]}``
+    where each outcome has the fields:
+
+    * ``kind`` — the matcher discriminant (``predicate``, ``regex``,
+      ``expected_text``, ``json_schema``, ``rubric``, or a custom
+      kind-like string the reducer happened to stamp).
+    * ``passed`` — ``True`` / ``False`` / ``None`` (the matcher could
+      not produce a verdict).
+    * ``detail`` — human-readable explanation (regex match position,
+      judge rationale, predicate return). Empty string when the
+      matcher had nothing to say.
+    * ``judge_name`` — the rubric's judge identity when ``kind`` is
+      ``rubric``; ``None`` otherwise.
+    * ``score`` — the rubric's numeric score when present; ``None``
+      otherwise.
+
+    An entry with no expectation (``expectation_result`` is ``None``)
+    or no on-disk ``loss.json`` yields an empty ``outcomes`` list — the
+    L4 view shows ``(no expectations recorded for this run)``.
+    """
+    empty: dict[str, Any] = {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "entry_id": entry_id,
+        "outcomes": [],
+    }
+    loss = _load_run_loss(paths, epoch_id, generation_id, entry_id)
+    if loss is None:
+        return empty
+    raw = loss.get("expectation_result")
+    if raw is None:
+        return empty
+
+    # The reducer stamps a single dict today; we normalise to a list to
+    # keep the wire shape stable when multi-expectation entries land.
+    if isinstance(raw, dict):
+        items: list[Any] = [raw]
+    elif isinstance(raw, list):
+        items = list(raw)
+    else:
+        return empty
+
+    outcomes: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        kind_str = str(kind) if isinstance(kind, str) else None
+        passed_raw = item.get("passed")
+        if isinstance(passed_raw, bool):
+            passed: bool | None = passed_raw
+        else:
+            passed = None
+        detail = item.get("detail")
+        detail_str = detail if isinstance(detail, str) else ""
+        judge_raw = item.get("judge_name")
+        judge_name = judge_raw if isinstance(judge_raw, str) and judge_raw else None
+        score_raw = item.get("score")
+        score: float | None
+        if isinstance(score_raw, int | float) and not isinstance(score_raw, bool):
+            score = float(score_raw)
+        else:
+            score = None
+        outcomes.append(
+            {
+                "kind": kind_str,
+                "passed": passed,
+                "detail": detail_str,
+                "judge_name": judge_name,
+                "score": score,
+            }
+        )
+    return {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "entry_id": entry_id,
+        "outcomes": outcomes,
+    }
+
+
+def build_run_header(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+) -> dict[str, Any]:
+    """Per-run header metrics (L4).
+
+    Projects the numeric / verdict header fields from a board-entry
+    run's ``loss.json``. The L4 page already shows ``drift_loss`` and
+    ``pass_fail`` from the per-entry table; this reader surfaces the
+    remaining header fields the previous placeholder promised:
+
+    * ``runtime_ms`` — total wall-clock duration in ms.
+    * ``tokens_spent`` — LLM token cost as recorded by the harness.
+    * ``output_chars`` — characters in the run's final output.
+    * ``turns_completed`` — conversational turns executed (multi-turn
+      only; ``None`` for single-turn).
+    * ``plan_revisions`` — count of plan-revision events observed.
+    * ``wall_clock_budget_exceeded`` — ``True`` iff the run was force-
+      aborted by its budget.
+
+    Plus the headline verdict numbers so the frontend can render the
+    full strip from one payload:
+
+    * ``drift_loss``, ``pass_fail``, ``run_id``.
+
+    Every field defaults to ``None`` when ``loss.json`` is absent or
+    missing the key; the response shape is stable so the L4 renderer
+    never branches on whether the file exists.
+    """
+    keys = (
+        "drift_loss",
+        "pass_fail",
+        "runtime_ms",
+        "tokens_spent",
+        "output_chars",
+        "turns_completed",
+        "plan_revisions",
+        "wall_clock_budget_exceeded",
+        "run_id",
+    )
+    header: dict[str, Any] = {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "entry_id": entry_id,
+    }
+    for k in keys:
+        header[k] = None
+    loss = _load_run_loss(paths, epoch_id, generation_id, entry_id)
+    if loss is None:
+        return header
+    for k in keys:
+        v = loss.get(k)
+        # Pass scalars (numeric / bool / str) and ``None`` through;
+        # discard nested dicts / lists which are not header material.
+        if v is None or isinstance(v, int | float | str | bool):
+            header[k] = v
+    return header
+
+
 def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
     """Structured workspace identity block — Phase 1's L0 env object.
 

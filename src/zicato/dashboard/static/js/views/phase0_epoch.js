@@ -20,6 +20,7 @@ import { renderPill } from '../components/pill.js';
 import { renderSpine } from '../components/spine.js';
 import { renderHeatmapTable } from '../components/heatmap.js';
 import { renderMetricTile } from '../components/tile.js';
+import { renderHypothesisOutcomeCompact } from '../core/hypothesis_block.js';
 
 const _contractDiffCache = new Map();
 const _loadingDiff = new Set();
@@ -372,59 +373,70 @@ function _renderJudgeHeatmap(epochId) {
   }));
 }
 
-// -- Recent experiments — Phase 1.5 owns; we just card-wrap. ----------
-function _renderRecentExperimentsBody() {
+// Compact "Recent experiments" list — Phase 1.5's hypothesis-block
+// helper rendered inside visual-design's card wrapper. L1 shows several
+// experiments on one page, so the helper runs in compact mode; the
+// full version (L2) renders one experiment per page from the same
+// helper.
+function _renderRecentExperiments(epochId) {
+  const node = $('phase0-epoch-experiments');
+  if (!node) return;
+  clearChildren(node);
   const def = state.epochDef;
   const experiments = (def && Array.isArray(def.experiments)) ? def.experiments : [];
+  let body;
   if (experiments.length === 0) {
-    return el('p', { class: 'empty' }, ['No experiments yet.']);
-  }
-  const tbl = el('table', { class: 'ds-table' });
-  tbl.appendChild(el('thead', null, [el('tr', null, [
-    el('th', null, ['gen']),
-    el('th', null, ['idea']),
-    el('th', null, ['Δscalar']),
-    el('th', null, ['decision']),
-  ])]));
-  const tbody = el('tbody');
-  for (const e of experiments) {
-    const out = e.outcome || {};
-    const hyp = e.hypothesis || {};
-    const dec = (out.tournament_decision || out.decision || '').toString().toLowerCase();
-    const ds = out.scalar_score_delta;
-    let pillVariant = 'neutral';
-    if (dec === 'promoted') pillVariant = 'promoted';
-    else if (dec === 'rejected') pillVariant = 'rejected';
-    else if (dec === 'deferred') pillVariant = 'deferred';
-    const dsClass = typeof ds === 'number' && isFinite(ds)
-      ? (ds < 0 ? 'delta-cell-good' : (ds > 0 ? 'delta-cell-bad' : 'delta-cell-flat'))
-      : '';
-    const idea = (hyp.core_idea || '').slice(0, 110);
-    tbody.appendChild(el('tr', null, [
-      el('td', { class: 'mono' }, [
-        el('a', {
-          href: phase0Href('generation', {
-            epochId: def.epoch_id, generationId: e.generation_id,
-          }),
-        }, [e.generation_id || '—']),
-      ]),
-      el('td', null, [idea || '(no idea recorded)']),
-      el('td', { class: 'mono ' + dsClass },
-        [typeof ds === 'number' && isFinite(ds) ? ds.toFixed(3) : '—']),
-      el('td', null, [renderPill(dec || '—', pillVariant)]),
+    body = el('p', { class: 'empty' }, ['No experiments recorded yet.']);
+  } else {
+    body = el('div');
+    body.appendChild(el('p', { class: 'panel-subheader' }, [
+      'Most recent first — proposed-before / outcome-after split, '
+      + 'matching the per-generation view. Open a row for the full block.',
     ]));
+    // Newest first, cap at six so L1 stays a digest. Use slice + reverse
+    // (not sort) so a stable order with ties is preserved.
+    const recent = experiments.slice(-6).reverse();
+    const list = el('div', { class: 'phase0-exp-list' });
+    for (const exp of recent) {
+      const genId = exp && exp.generation_id ? exp.generation_id : '?';
+      const row = el('div', { class: 'phase0-exp-row' });
+      const header = el('div', { class: 'phase0-exp-row-h' }, [
+        el('span', { class: 'phase0-exp-gen mono' }, ['gen · ', genId]),
+      ]);
+      if (epochId) {
+        header.appendChild(el('a', {
+          class: 'phase0-exp-link',
+          href: phase0Href('generation', { epochId, generationId: genId }),
+        }, ['open generation →']));
+      }
+      row.appendChild(header);
+      row.appendChild(renderHypothesisOutcomeCompact(
+        exp && exp.hypothesis, exp && exp.outcome, { compact: true },
+      ));
+      list.appendChild(row);
+    }
+    body.appendChild(list);
   }
-  tbl.appendChild(tbody);
-  return tbl;
+  node.appendChild(renderCard({
+    title: 'Recent experiments',
+    body,
+  }));
 }
 
 function _renderJournal() {
   const node = $('phase0-epoch-journal');
   if (!node) return;
   clearChildren(node);
+  const def = state.epochDef;
+  const journal = def && typeof def.journal === 'string' ? def.journal : '';
+  if (!journal.trim()) {
+    node.appendChild(el('p', { class: 'empty' }, ['No journal preview.']));
+    return;
+  }
   node.appendChild(renderCard({
-    title: 'Recent experiments',
-    body: _renderRecentExperimentsBody(),
+    title: 'Journal preview',
+    body: el('pre', { class: 'phase0-journal-preview mono' },
+      [journal.slice(0, 1200)]),
   }));
 }
 
@@ -448,5 +460,6 @@ export function renderPhase0Epoch(params, repaint) {
   _renderSpine(epochId);
   _renderEntryHeatmap(epochId, gids);
   _renderJudgeHeatmap(epochId);
+  _renderRecentExperiments(epochId);
   _renderJournal();
 }

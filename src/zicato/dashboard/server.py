@@ -182,6 +182,14 @@ def create_app(
             "/api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge",
             handlers["api_per_judge_for_run_by_entry"],
         ),
+        Route(
+            "/api/run/{epoch_id}/{generation_id}/{entry_id}/expectations",
+            handlers["api_run_expectations"],
+        ),
+        Route(
+            "/api/run/{epoch_id}/{generation_id}/{entry_id}/header",
+            handlers["api_run_header"],
+        ),
         Route("/api/run-log", handlers["api_run_log"]),
         Route("/api/active-runs", handlers["api_active_runs"]),
         Route("/api/active-tournament", handlers["api_active_tournament"]),

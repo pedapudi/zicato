@@ -12,6 +12,7 @@ import { state } from '../core/state.js';
 import { renderCard } from '../components/card.js';
 import { renderPill, renderInlinePill } from '../components/pill.js';
 import { renderMetricTile } from '../components/tile.js';
+import { renderHypothesisOutcomeCompact } from '../core/hypothesis_block.js';
 
 const _perJudgeCache = new Map();
 const _perEntryCache = new Map();
@@ -96,38 +97,14 @@ function _renderHypothesis(exp) {
   if (!exp) {
     body = el('p', { class: 'empty' }, ['No hypothesis recorded.']);
   } else {
-    const hyp = exp.hypothesis || {};
-    const out = exp.outcome || {};
-    const wrap = el('div', { class: 'hyp-block' });
-    const before = el('div', { class: 'hyp-section' });
-    before.appendChild(el('h4', null, ['Proposed (before)']));
-    if (hyp.core_idea) {
-      before.appendChild(el('p', { class: 'hyp-core' }, [hyp.core_idea]));
-    } else {
-      before.appendChild(el('p', { class: 'empty' }, ['No core idea recorded.']));
-    }
-    if (hyp.why) {
-      before.appendChild(el('p', null, [el('strong', null, ['why. ']), hyp.why]));
-    }
-    if (hyp.risks) {
-      before.appendChild(el('p', null, [el('strong', null, ['risks. ']), hyp.risks]));
-    }
-    wrap.appendChild(before);
-    const after = el('div', { class: 'hyp-section' });
-    after.appendChild(el('h4', null, ['Outcome (after)']));
-    if (out.summary) {
-      after.appendChild(el('p', null, [out.summary]));
-    } else if (out.tournament_decision || out.decision) {
-      after.appendChild(el('p', null, [
-        'decision: ',
-        el('span', { class: 'mono' },
-          [String(out.tournament_decision || out.decision)]),
-      ]));
-    } else {
-      after.appendChild(el('p', { class: 'empty' }, ['No outcome recorded.']));
-    }
-    wrap.appendChild(after);
-    body = wrap;
+    // L2 is one experiment per page, so we use the long-form mode.
+    // L1's recent-experiments list uses the same helper in compact mode
+    // (see phase0_epoch.js).
+    body = el('div', { class: 'phase0-hypothesis' }, [
+      renderHypothesisOutcomeCompact(
+        exp.hypothesis, exp.outcome, { compact: false },
+      ),
+    ]);
   }
   node.appendChild(renderCard({
     title: 'Hypothesis',

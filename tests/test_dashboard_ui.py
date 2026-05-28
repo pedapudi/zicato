@@ -364,17 +364,25 @@ def test_bundle_under_size_envelope(
     # at ~501 KB; a 540 KB cap leaves ~40 KB of headroom for incidental
     # drift while phase-1 lights up the stubbed sections (per-judge
     # data, contract-diff polish, transcript wiring).
-    # Raised again by the visual-design pass (task #188): the phase-0
-    # shell adopts a real design system — seven component modules under
-    # static/js/components/ (tile, card, pill, heatmap, sparkline, spine,
-    # live_indicator) and the rewritten phase-0 view modules that
-    # compose them. The components.css / tokens.css sheets ship under
-    # static/css/ and are linked alongside style.css but are not part of
-    # the four bundle fixtures, so this envelope only covers the JS +
-    # index.html + style.css + icons.svg quartet. The fully integrated
-    # bundle measured at ~574 KB; a 620 KB cap leaves ~45 KB of headroom
-    # for incidental drift.
-    assert total < 620_000, f"bundle is {total} bytes, exceeds 620_000 envelope"
+    # Reset by the integration-wave-3 squash. The legacy 5-tab shell +
+    # its render layer (the ~270 KB ``render.js`` blob), the
+    # shell-picker plumbing, and the now-orphaned ``refresh.test.mjs`` /
+    # ``render.test.mjs`` / ``files.test.mjs`` JS tests are gone — a
+    # very large net reduction. The visual-design pass adds the design
+    # system on top (seven component modules under
+    # ``static/js/components/`` and the rewritten phase-0 view modules
+    # that compose them; the ``components.css`` / ``tokens.css`` sheets
+    # ship under ``static/css/`` linked alongside ``style.css`` but are
+    # not part of the four bundle fixtures, so this envelope only covers
+    # the JS + ``index.html`` + ``style.css`` + ``icons.svg`` quartet).
+    # The phase-1.5 cleanup lands the shared
+    # ``core/hypothesis_block.js`` module rendered from L1 (Recent
+    # experiments, compact) and L2 (full), the L4 expectation outcomes
+    # table renderer, and the L4 run-header tiles + their two cache
+    # fetchers. The fully integrated bundle was re-measured directly at
+    # 307,717 bytes; a 340 KB cap leaves ~32 KB of headroom for
+    # incidental drift.
+    assert total < 340_000, f"bundle is {total} bytes, exceeds 340_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

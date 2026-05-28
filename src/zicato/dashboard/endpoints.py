@@ -227,6 +227,52 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         result = state_reader.build_per_judge_for_run(paths, run_id)
         return JSONResponse(result)
 
+    async def api_run_expectations(request: Request) -> JSONResponse:
+        """Expectation outcomes for one run (L4)."""
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        entry_id = request.path_params["entry_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "entry_id": entry_id,
+                    "outcomes": [],
+                },
+                status_code=200,
+            )
+        return JSONResponse(
+            state_reader.build_expectation_outcomes_for_run(
+                paths, epoch_id, generation_id, entry_id
+            )
+        )
+
+    async def api_run_header(request: Request) -> JSONResponse:
+        """Header metrics (runtime/tokens/turns/...) for one run (L4)."""
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        entry_id = request.path_params["entry_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "entry_id": entry_id,
+                    "drift_loss": None,
+                    "pass_fail": None,
+                    "runtime_ms": None,
+                    "tokens_spent": None,
+                    "output_chars": None,
+                    "turns_completed": None,
+                    "plan_revisions": None,
+                    "wall_clock_budget_exceeded": None,
+                    "run_id": None,
+                },
+                status_code=200,
+            )
+        return JSONResponse(state_reader.build_run_header(paths, epoch_id, generation_id, entry_id))
+
     async def api_contract_diff(request: Request) -> JSONResponse:
         """L1 (epoch-level) contract diff vs predecessor epoch."""
         epoch_id = request.path_params["epoch_id"]
@@ -655,6 +701,8 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_per_judge_comparison": api_per_judge_comparison,
         "api_per_judge_for_run": api_per_judge_for_run,
         "api_per_judge_for_run_by_entry": api_per_judge_for_run_by_entry,
+        "api_run_expectations": api_run_expectations,
+        "api_run_header": api_run_header,
         "api_run_log": api_run_log,
         "api_active_runs": api_active_runs,
         "api_active_tournament": api_active_tournament,
