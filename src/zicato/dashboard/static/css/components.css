@@ -580,32 +580,37 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   font-style: normal;
   margin: 0;
 }
-.spine-row {
-  display: flex;
-  /* Bottom-align every column so the spine-nodes (the dots that form
-     the lineage row) sit at the SAME vertical position regardless of
-     how many rejected-challenger branches sit above any one node. A
-     stretched-row layout would let v0 (no branches) put its dot at the
-     top while v3 (4 branches above) puts its dot near the middle —
-     visually breaking the "spine" metaphor. */
-  align-items: flex-end;
-  gap: 0;
+/* The spine renders as an SVG canvas with HTML node boxes layered on
+   top. The .spine-scroll wrapper provides horizontal scrolling when
+   the canvas outgrows the card; the inner .spine-stage owns the
+   absolute-positioned children. */
+.spine-scroll {
   overflow-x: auto;
   padding: var(--space-2) 0;
+}
+.spine-stage {
+  /* width + height come from the renderer inline-style. */
+  position: relative;
+}
+.spine-svg {
+  display: block;
 }
 .spine-node {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-2);
   border: 1.5px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
-  min-width: 90px;
   text-decoration: none;
   color: inherit;
   transition: transform var(--transition-fast), border-color var(--transition-fast);
+  /* Allow clicks even though the SVG layer above us is
+     pointer-events: none — be explicit so a future tweak keeps the
+     node boxes interactive. */
+  pointer-events: auto;
 }
 .spine-node-link, .spine-node-clickable {
   cursor: pointer;
@@ -686,45 +691,9 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   font-variant-numeric: tabular-nums;
 }
 
-.spine-connector {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  padding: 0 var(--space-1);
-  /* The row uses align-items: flex-end so columns bottom-align. The
-     spine-node's dot sits near the TOP of the node (after padding-top
-     ≈ 12px + half the 14px dot). Push the connector up from the
-     bottom by the height of the node-below-the-dot so the arrow lines
-     up with the dot center. The value is a CSS var so a future tweak
-     to the node's internal padding only changes one place. */
-  align-self: flex-end;
-  margin-bottom: var(--spine-dot-from-bottom, 52px);
-  gap: var(--space-1);
-}
-.spine-connector-line {
-  height: 2px;
-  width: var(--space-5);
-  background: var(--color-border-strong);
-  border-radius: 1px;
-}
-.spine-connector-arrow {
-  font-size: var(--font-size-14);
-  color: var(--color-border-strong);
-  line-height: 1;
-}
-.spine-connector-promoted .spine-connector-line { background: var(--color-success); }
-.spine-connector-promoted .spine-connector-arrow { color: var(--color-success); }
-.spine-connector-live .spine-connector-line {
-  background: var(--color-accent);
-  background-image: linear-gradient(90deg, var(--color-accent) 50%, transparent 50%);
-  background-size: 6px 2px;
-}
-.spine-connector-live .spine-connector-arrow { color: var(--color-accent); }
-.spine-connector-dashed .spine-connector-line {
-  background: var(--color-border-strong);
-  background-image: linear-gradient(90deg, var(--color-border-strong) 50%, transparent 50%);
-  background-size: 5px 2px;
-}
+/* Connector lines, arrowheads, and chip-drop curves all live inside
+   the .spine-svg canvas now — they are colored at render time off the
+   CSS custom-property tokens. No per-class CSS connector rules needed. */
 
 .spine-footer {
   display: flex;
@@ -1484,41 +1453,33 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
 /* =====================================================================
  * Spine — rejected-challenger branches above their parent
  *
- * Each spine column carries an optional row of rejected-challenger
- * chips ABOVE the promoted spine node, connected by a short vertical
- * tee. This lets a viewer glance at the spine and see which versions
- * challenged which parent.
+ * Each spine column is ABSOLUTELY positioned inside the
+ * .spine-stage canvas so its dot center lands on the same coordinate
+ * the SVG connector layer drew a line to. The column stacks chips →
+ * (legacy tee, kept hidden) → the spine node vertically; the chips
+ * grid is a simple wrap that the JS sized to match its layout pass.
  * ===================================================================== */
 .spine-col {
   display: flex;
   flex-direction: column;
-  /* Anchor the spine-node at the bottom of the column so branches +
-     tee stack ABOVE it. Combined with align-items: flex-end on the
-     row, this puts every spine-node's dot at the same vertical
-     position regardless of how many branches a column carries. */
-  justify-content: flex-end;
   align-items: center;
-  flex: 0 0 auto;
-  position: relative;
+  /* position: absolute + left/top come from inline style. */
 }
 .spine-branches {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1);
-  margin-bottom: var(--space-1);
-  justify-content: center;
-  /* Cap the branch-chip row at the node's min-width so a parent with
-     many challengers wraps cleanly above its own column instead of
-     bleeding sideways into the neighbouring connector zone. A wider
-     wrap was the visible bug in #195 — v3 with four rejected
-     challengers (v4..v7) drew chips that overflowed left toward v1. */
-  max-width: 90px;
+  gap: 4px;
+  justify-content: flex-start;
+  align-content: flex-start;
+  /* width + position come from inline style — the JS layout pass
+     sized the chip grid so it lines up with the SVG drops. */
 }
 .spine-branch {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: 2px 8px;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 6px;
   background: var(--color-error-soft);
   color: var(--color-error-fg);
   border-radius: var(--radius-pill);
@@ -1527,17 +1488,26 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   text-decoration: none;
   font-family: var(--font-mono);
   white-space: nowrap;
+  pointer-events: auto;
+  /* Match the SPINE_GEOMETRY.CHIP_WIDTH/HEIGHT JS constants so
+     each chip's center lines up with the SVG drop endpoint. */
+  width: 56px;
+  height: 22px;
+  box-sizing: border-box;
 }
 .spine-branch:hover {
   background: color-mix(in srgb, var(--color-error) 20%, var(--color-error-soft));
 }
 .spine-branch-id { font-weight: var(--weight-semibold); }
 .spine-branch-scalar { opacity: 0.75; }
+/* The legacy tee div is kept (rendered when branches exist) so the
+   DOM still surfaces a "this column has rejected children" marker
+   for screen readers + the existing test. The real connector line
+   from chip to parent dot is now an SVG curve in the canvas below. */
 .spine-branch-tee {
-  width: 2px;
-  height: var(--space-3);
-  background: color-mix(in srgb, var(--color-error) 50%, transparent);
-  margin-bottom: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
 }
 
 /* =====================================================================
