@@ -43,6 +43,14 @@ dependencies = [
     # journal/lineage + the post-run reducer, not goldfive Events; the
     # harmonograf view stays the per-run execution view by design.)
     "harmonograf-client",
+    # harmonograf_server is the in-process console server zicato auto-
+    # launches at evolve startup (see
+    # zicato.integration.harmonograf_supervisor). Bound to a free
+    # localhost port unless ZICATO_HARMONOGRAF_URL /
+    # config.integration.harmonograf_url opts in to an external instance.
+    # Imported lazily so a degraded install (missing dep) only disables
+    # the live console; evolve still runs.
+    "harmonograf-server",
     "click >= 8.1",
     "jsonschema >= 4.20",
 ]
@@ -180,6 +188,8 @@ module = [
     "google.*",
     "harmonograf_client",
     "harmonograf_client.*",
+    "harmonograf_server",
+    "harmonograf_server.*",
     "zicato.index",
     "zicato.index.*",
     "zicato.health",
@@ -249,3 +259,11 @@ goldfive = { git = "https://github.com/pedapudi/goldfive.git", rev = "ed44eaaf93
 # harmonograf-client. The repo is public on GitHub, so this resolves
 # both locally and in CI with the default token — no secret required.
 harmonograf-client = { git = "https://github.com/pedapudi/harmonograf.git", subdirectory = "client", rev = "bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" }
+# harmonograf-server is the same monorepo, server subdirectory. Pinned
+# to the same rev as the client so the two never skew. zicato auto-
+# launches its own harmonograf-server bound to a free localhost port at
+# evolve startup (see zicato.integration.harmonograf_supervisor) so the
+# operator no longer needs to keep a separate harmonograf process
+# running; setting ``ZICATO_HARMONOGRAF_URL`` / ``integration.harmonograf_url``
+# opts back into an external instance.
+harmonograf-server = { git = "https://github.com/pedapudi/harmonograf.git", subdirectory = "server", rev = "bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" }

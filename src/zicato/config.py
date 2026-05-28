@@ -141,8 +141,14 @@ class IntegrationConfig:
     Fields
     ------
     harmonograf_url:
-        URL of a live harmonograf server to additionally stream a run's
-        telemetry to. Empty string means "JSONL-only telemetry".
+        URL of an external harmonograf server to stream this evolve
+        invocation's telemetry to. Empty string (the default) means
+        zicato auto-launches its own harmonograf bound to a free
+        localhost port at evolve startup (see
+        :mod:`zicato.telemetry.harmonograf_supervisor`). Set this to opt
+        out of auto-launch and stream to an external long-lived
+        harmonograf instead — useful for collecting traffic from many
+        zicato invocations into a single shared console.
     supervisor_binary:
         Filesystem path to the ``zicato-supervisor`` watchdog binary, or
         empty string to fall back to the in-tree release build and then

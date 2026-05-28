@@ -1121,10 +1121,15 @@ async def evolve_n_rounds(
     # ``heartbeat.json`` so the supervisor binary can detect a wedge.
     lock = acquire_workspace_lock(workspace_root, instance_id)
     beater = HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)
-    # Resolve the harmonograf console URL (if configured) once up front
-    # so the supervisor / dashboard can surface a "watch live" link from
-    # the heartbeat for the whole invocation.
-    harmonograf_url = _resolve_harmonograf_url(workspace_root)
+    # Resolve the harmonograf console URL once up front so the supervisor
+    # / dashboard can surface a "watch live" link from the heartbeat for
+    # the whole invocation. When no URL is configured (the default after
+    # #202) the supervisor auto-launches an in-process harmonograf bound
+    # to a free localhost port; the handle is shut down in the finally
+    # block. The auto-launched URL is also pushed into ZICATO_HARMONOGRAF_URL
+    # so per-board-run workers attach their per-run sinks to the same
+    # server without any further plumbing.
+    harmonograf_url, harmonograf_handle = _resolve_or_launch_harmonograf(workspace_root)
     outcomes: list[EvolveRoundOutcome] = []
     try:
         await beater.start()
@@ -1278,6 +1283,13 @@ async def evolve_n_rounds(
     finally:
         await beater.stop()
         release_workspace_lock(lock)
+        # Shut down the auto-launched harmonograf server (no-op on the
+        # opt-out / failure-isolation paths). MUST run unconditionally
+        # so a crashed evolve still tears the embedded server down.
+        try:
+            harmonograf_handle.shutdown()
+        except Exception as exc:  # noqa: BLE001 — never raise from teardown
+            log.debug("harmonograf shutdown raised: %s", exc)
     _set_stop_reason(stop_reason)
     return outcomes
 
@@ -1300,6 +1312,11 @@ def _resolve_harmonograf_url(workspace_root: Path) -> str:
     ``harmonograf_url`` config key are honoured. Best-effort: any
     failure resolving the config falls back to the empty string so a
     broken config never blocks an evolve run.
+
+    Note this resolves only the *configured* URL — it does NOT trigger
+    auto-launch. :func:`_resolve_or_launch_harmonograf` is the variant
+    the evolve loop uses, which falls back to spawning an in-process
+    server when the configured URL is empty.
     """
     try:
         from zicato import workspace_loader  # noqa: PLC0415
@@ -1313,6 +1330,135 @@ def _resolve_harmonograf_url(workspace_root: Path) -> str:
     except Exception as exc:  # noqa: BLE001 — never block a run on this
         log.debug("harmonograf url resolution skipped: %s", exc)
         return ""
+
+
+def _resolve_or_launch_harmonograf(
+    workspace_root: Path,
+) -> tuple[str, Any]:
+    """Return ``(url, handle)`` for the harmonograf console this evolve uses.
+
+    Auto-launch semantics (the post-#202 default):
+
+    * If the operator pinned ``ZICATO_HARMONOGRAF_URL`` (or the
+      workspace-config ``harmonograf_url`` key), use that URL verbatim
+      and return a no-op handle — opt-out lets a long-lived shared
+      harmonograf collect traffic from multiple zicato invocations.
+    * Otherwise launch an in-process harmonograf server bound to a free
+      localhost port (see :mod:`zicato.telemetry.harmonograf_supervisor`)
+      and return its URL + a real handle whose ``shutdown()`` the
+      caller MUST invoke at evolve teardown.
+
+    On any auto-launch failure (missing dep, port-bind error, startup
+    timeout), the supervisor logs a warning and returns a no-op handle
+    with ``url=""``. The orchestrator treats that as "JSONL-only
+    telemetry" exactly as it did before #202 — the live console is
+    additive, never load-bearing.
+
+    Side effect: when auto-launch succeeds, the resolved URL is also
+    written into ``os.environ["ZICATO_HARMONOGRAF_URL"]`` so the
+    tournament runner and worker subprocesses (which re-resolve via
+    :func:`zicato.telemetry.sink.resolve_harmonograf_url`) attach their
+    own per-run sinks to the same server without any further plumbing.
+    The orchestrator restores the pre-launch env var value on shutdown
+    via :class:`_EnvVarRestorer` — a nested evolve invocation that
+    inherits a parent's auto-launched URL won't clobber it.
+    """
+    configured = _resolve_harmonograf_url(workspace_root)
+    if configured:
+        # Opt-out: external harmonograf in use. No auto-launch, no
+        # env-var manipulation, no shutdown needed.
+        log.debug("harmonograf auto-launch skipped: external URL configured (%s)", configured)
+        return configured, _NoopShutdownHandle()
+
+    try:
+        from zicato.telemetry.harmonograf_supervisor import (  # noqa: PLC0415
+            start_harmonograf,
+        )
+    except Exception as exc:  # noqa: BLE001 — supervisor import is best-effort
+        log.warning("harmonograf auto-launch skipped: supervisor module unavailable (%s)", exc)
+        return "", _NoopShutdownHandle()
+
+    handle = start_harmonograf(workspace_root)
+    if not handle.url:
+        # Supervisor's own failure-isolation path already logged a warning.
+        return "", handle
+
+    # Make the auto-launched URL discoverable to the tournament runner
+    # and the worker subprocesses, both of which re-resolve the env var
+    # via load_config()/resolve_harmonograf_url(). The restorer is
+    # captured on the handle so shutdown unsets / restores the
+    # environment cleanly.
+    restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_URL")
+    restorer.set(handle.url)
+    return handle.url, _LaunchedHandle(handle, restorer)
+
+
+class _NoopShutdownHandle:
+    """Tiny stand-in for the auto-launch handle when no launch happened.
+
+    Used in two places: when the operator pinned an external URL (opt-
+    out) and when the supervisor refused to launch (degraded install).
+    Mirrors the ``shutdown()`` contract of the real handle so the
+    orchestrator's ``finally`` block can call it unconditionally.
+    """
+
+    url: str = ""
+
+    def shutdown(self) -> None:
+        return None
+
+
+class _LaunchedHandle:
+    """Composite handle: server lifecycle plus env-var restoration."""
+
+    def __init__(self, inner: Any, restorer: _EnvVarRestorer) -> None:
+        self._inner = inner
+        self._restorer = restorer
+        self.url = inner.url
+
+    def shutdown(self) -> None:
+        # Restore env BEFORE stopping the server so a concurrent
+        # tournament-runner re-resolve does not pick up the auto-launched
+        # URL after the server is gone.
+        try:
+            self._restorer.restore()
+        except Exception as exc:  # noqa: BLE001 — restoration is best-effort
+            log.debug("env restoration during harmonograf shutdown failed: %s", exc)
+        try:
+            self._inner.shutdown()
+        except Exception as exc:  # noqa: BLE001 — never raise from teardown
+            log.debug("harmonograf shutdown raised: %s", exc)
+
+
+class _EnvVarRestorer:
+    """RAII-style snapshot+restore for a single environment variable.
+
+    Captures the variable's prior value on construction (or its absence)
+    so :meth:`restore` returns the environment to the exact state the
+    process started in. Idempotent — re-calling :meth:`restore` is a
+    no-op.
+    """
+
+    def __init__(self, name: str) -> None:
+        import os  # noqa: PLC0415
+
+        self._os = os
+        self._name = name
+        self._had = name in os.environ
+        self._prior = os.environ.get(name)
+        self._restored = False
+
+    def set(self, value: str) -> None:
+        self._os.environ[self._name] = value
+
+    def restore(self) -> None:
+        if self._restored:
+            return
+        self._restored = True
+        if self._had and self._prior is not None:
+            self._os.environ[self._name] = self._prior
+        else:
+            self._os.environ.pop(self._name, None)
 
 
 def _beat(beater: HeartbeatBeater | None, **fields: Any) -> None:

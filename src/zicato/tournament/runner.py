@@ -660,14 +660,28 @@ def _resolve_harmonograf_url(workspace_root: Path) -> str:
     its own, but the workspace ``config.json`` value is read here (in the
     orchestrator process) and threaded through the args file so the
     worker does not need the workspace-config loader.
+
+    Resilient to a missing / unreadable workspace ``config.json``:
+    ``resolve_harmonograf_url`` is called with whatever config dict we
+    could load (or ``None`` on failure), so the
+    ``ZICATO_HARMONOGRAF_URL`` env path — which the orchestrator's auto-
+    launch wiring (#202) writes into — keeps working even when the
+    workspace has no on-disk config yet (smoke tests, fresh init).
     """
     try:
-        from zicato import workspace_loader  # noqa: PLC0415
         from zicato.telemetry.sink import resolve_harmonograf_url  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — harmonograf wiring is optional
+        return ""
+    cfg: dict[str, Any] | None
+    try:
+        from zicato import workspace_loader  # noqa: PLC0415
 
         cfg = workspace_loader.load_workspace_config(workspace_root)
+    except Exception:  # noqa: BLE001 — config is optional; env still wins
+        cfg = None
+    try:
         return resolve_harmonograf_url(cfg)
-    except Exception:  # noqa: BLE001 — harmonograf wiring is optional
+    except Exception:  # noqa: BLE001 — never fail a tournament on URL resolution
         return ""
 
 

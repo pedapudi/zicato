@@ -221,12 +221,34 @@ def _install_telemetry_stubs(
     reducer_mod.reduce_loss = reduce_loss  # type: ignore[attr-defined]
     reducer_mod.read_loss_profile = read_loss_profile  # type: ignore[attr-defined]
 
+    # Stub the harmonograf supervisor so the orchestrator's evolve loop
+    # takes its failure-isolation path (empty URL, no-op handle) instead
+    # of launching a real in-process harmonograf for every orchestrator
+    # test. start_harmonograf returns a no-op handle; the rest of the
+    # path treats that as "JSONL-only telemetry", exactly like the
+    # pre-#202 behaviour these tests were written against.
+    supervisor_mod = types.ModuleType("zicato.telemetry.harmonograf_supervisor")
+
+    class _StubHandle:
+        url: str = ""
+
+        def shutdown(self) -> None:
+            return None
+
+    def _stub_start_harmonograf(*_args: Any, **_kwargs: Any) -> _StubHandle:
+        return _StubHandle()
+
+    supervisor_mod.start_harmonograf = _stub_start_harmonograf  # type: ignore[attr-defined]
+    supervisor_mod.HarmonografHandle = _StubHandle  # type: ignore[attr-defined]
+
     telemetry_pkg = types.ModuleType("zicato.telemetry")
     telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
     telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
+    telemetry_pkg.harmonograf_supervisor = supervisor_mod  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
+    monkeypatch.setitem(sys.modules, "zicato.telemetry.harmonograf_supervisor", supervisor_mod)
 
     # Since the L3 subprocess-isolation refactor each tournament run
     # spawns a worker subprocess, which cannot see these sys.modules

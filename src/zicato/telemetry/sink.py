@@ -134,8 +134,18 @@ def resolve_harmonograf_url(
 
     The environment variable takes precedence so an operator can point a
     single run at a local harmonograf without editing the workspace
-    config. Returns the empty string when neither source supplies a URL
-    — callers treat that as "JSONL-only telemetry".
+    config. Returns the empty string when neither source supplies a URL.
+
+    Empty-string semantics changed in #202: before, the orchestrator
+    treated an empty URL as "JSONL-only telemetry" and shipped no live
+    console; now the evolve loop's
+    :func:`zicato.orchestrator._resolve_or_launch_harmonograf` auto-
+    launches an in-process server in that case and writes the resulting
+    URL back into ``ZICATO_HARMONOGRAF_URL`` so subsequent callers of
+    this function (the tournament runner, the per-board worker) re-
+    resolve to the auto-launched URL via the env-var path above. This
+    function itself does NOT trigger a launch — it remains a pure
+    resolver.
 
     Parameters
     ----------
