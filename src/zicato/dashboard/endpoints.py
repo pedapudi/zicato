@@ -352,6 +352,16 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     async def api_health_report(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_health_report(paths))
 
+    async def api_search(request: Request) -> JSONResponse:
+        """Sidebar search across entries / judges / patches / mutations.
+
+        The ``?q=`` parameter is the substring to match. An empty or
+        whitespace-only query short-circuits to empty result sets so the
+        callers cannot trigger a wide scan with a degenerate query.
+        """
+        q = request.query_params.get("q", "")
+        return JSONResponse(state_reader.build_search_results(paths, q))
+
     async def api_score_trajectory(_request: Request) -> JSONResponse:
         # The environment-wide evolution curve — scalar per generation.
         return JSONResponse(state_reader.build_score_trajectory(paths))
@@ -711,6 +721,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_tournament_detail": api_tournament_detail,
         "api_matchup_grid": api_matchup_grid,
         "api_health_report": api_health_report,
+        "api_search": api_search,
         "api_score_trajectory": api_score_trajectory,
         "api_drift_movements": api_drift_movements,
         "api_files": api_files,

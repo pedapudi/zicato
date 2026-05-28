@@ -175,9 +175,10 @@ class _SectionCollector(HTMLParser):
             self._in_nav = False
 
 
-# The five L0..L4 view containers + the two sidebar-driven views the
+# The five L0..L4 view containers + the sidebar-driven Files view the
 # shell must keep wired so app.js can switch between them without
-# re-fetching the HTML.
+# re-fetching the HTML. (Search is no longer a route — it is an
+# always-visible sidebar input that filters inline.)
 REQUIRED_PHASE0_VIEW_IDS = {
     "phase0-view-workspace",
     "phase0-view-epoch",
@@ -185,7 +186,6 @@ REQUIRED_PHASE0_VIEW_IDS = {
     "phase0-view-round",
     "phase0-view-run",
     "phase0-view-files",
-    "phase0-view-search",
 }
 
 # The header / footer chrome containers app.js paints into.
@@ -214,7 +214,11 @@ REQUIRED_SHELL_IDS = {
     "phase0-live-card",
     "phase0-live-body",
     "phase0-nav-files",
-    "phase0-nav-search",
+    # The always-visible sidebar search bar (an `<input>` plus a
+    # collapsing results panel). Replaces the previous `phase0-nav-search`
+    # stub link that pointed at a placeholder page.
+    "phase0-sidebar-search-input",
+    "phase0-sidebar-search-results",
 }
 
 REQUIRED_IDS = REQUIRED_CHROME_IDS | REQUIRED_SHELL_IDS | REQUIRED_PHASE0_VIEW_IDS

@@ -3137,3 +3137,232 @@ def build_environment(
         "run_log": build_run_log(paths, run_log_limit),
         "generated_at": _iso(_utc_now()),
     }
+
+
+# ---------------------------------------------------------------------------
+# Sidebar search — entries / judges / patches / mutations
+# ---------------------------------------------------------------------------
+#
+# The sidebar exposes an always-visible search bar (no per-page navigation
+# away from the current view). ``build_search_results`` walks the live
+# workspace for substring + exact matches across four categories:
+#
+#   * entries   — id substring against the current epoch's ``board.jsonl``
+#   * judges    — name substring against in-board judges + index judge_losses
+#   * patches   — mutation_id / rationale substring against the index
+#   * mutations — mutation_id substring against the index's patches table
+#
+# Each category is independently capped at :data:`SEARCH_LIMIT_PER_CATEGORY`
+# results. Exact matches are sorted before substring matches so a query
+# that names an id outright surfaces it first. Empty / whitespace queries
+# short-circuit to empty result sets so the caller cannot tax the index
+# with a degenerate scan.
+
+#: Per-category cap on the number of results returned. The sidebar UI is
+#: narrow; ten matches per category is enough to surface the obvious
+#: targets without overwhelming the panel.
+SEARCH_LIMIT_PER_CATEGORY = 10
+
+
+def _empty_search_result() -> dict[str, Any]:
+    return {
+        "entries": [],
+        "judges": [],
+        "patches": [],
+        "mutations": [],
+    }
+
+
+def _collect_judge_names_from_board_file(path: Path) -> set[str]:
+    """Walk a raw ``board.jsonl`` and union every judge name."""
+    names: set[str] = set()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        return names
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("board_meta") is True:
+            continue
+        judges = obj.get("judges")
+        if not isinstance(judges, list):
+            continue
+        for j in judges:
+            if not isinstance(j, dict):
+                continue
+            name = j.get("name")
+            if isinstance(name, str) and name:
+                names.add(name)
+    return names
+
+
+def _collect_judge_names_from_index(db_path: Path) -> set[str]:
+    """Union of distinct ``judge_name`` values in the analytical index."""
+    names: set[str] = set()
+    if not db_path.is_file():
+        return names
+    try:
+        import sqlite3  # noqa: PLC0415
+
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cur = conn.execute("SELECT DISTINCT judge_name FROM judge_losses")
+            for row in cur.fetchall():
+                if isinstance(row[0], str) and row[0]:
+                    names.add(row[0])
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — best-effort; missing table is OK
+        return names
+    return names
+
+
+def _sort_by_match_quality(
+    items: list[dict[str, Any]], key: str, q_lower: str
+) -> list[dict[str, Any]]:
+    """Sort exact matches (case-insensitive) before substring matches.
+
+    Each item carries a ``match_kind`` field set to ``"exact"`` when the
+    item's ``key`` equals the query case-insensitively, ``"substring"``
+    otherwise. Ties within a kind are sorted by the matched field.
+    """
+
+    def _rank(item: dict[str, Any]) -> tuple[int, str]:
+        val = str(item.get(key, "") or "")
+        is_exact = val.lower() == q_lower
+        item["match_kind"] = "exact" if is_exact else "substring"
+        return (0 if is_exact else 1, val.lower())
+
+    items.sort(key=_rank)
+    return items
+
+
+def build_search_results(paths: WorkspacePaths, query: str) -> dict[str, Any]:
+    """Search entries / judges / patches / mutations for substring matches.
+
+    Returns a dict keyed by category, each value a list of small match
+    records carrying enough fields to build a navigation link client-side.
+    Every category is independently capped at
+    :data:`SEARCH_LIMIT_PER_CATEGORY`; exact (case-insensitive) matches
+    sort before substring matches.
+
+    The current epoch (as recorded by ``current_epoch``) bounds the entry
+    + judge scans. Patch + mutation scans cover every epoch in the index
+    so an operator can locate a historical mutation across the workspace.
+    A degenerate query (empty / whitespace) short-circuits to empty
+    results so the caller cannot accidentally fan out a wide scan.
+    """
+    q = (query or "").strip()
+    if not q:
+        return _empty_search_result()
+    q_lower = q.lower()
+
+    result = _empty_search_result()
+    epoch_id = read_current_epoch(paths)
+
+    # --- entries: walk the current epoch's board.jsonl ---------------
+    entry_hits: list[dict[str, Any]] = []
+    if epoch_id:
+        board_path = paths.epochs / epoch_id / "board.jsonl"
+        board = _parse_board(board_path)
+        if board:
+            for entry in board:
+                eid = entry.get("id")
+                if not isinstance(eid, str) or not eid:
+                    continue
+                if q_lower in eid.lower():
+                    entry_hits.append({"id": eid})
+    entry_hits = _sort_by_match_quality(entry_hits, "id", q_lower)
+    result["entries"] = entry_hits[:SEARCH_LIMIT_PER_CATEGORY]
+
+    # --- judges: board + index union ---------------------------------
+    judge_names: set[str] = set()
+    if epoch_id:
+        judge_names |= _collect_judge_names_from_board_file(paths.epochs / epoch_id / "board.jsonl")
+    judge_names |= _collect_judge_names_from_index(paths.index_db)
+    judge_hits: list[dict[str, Any]] = [{"name": n} for n in judge_names if q_lower in n.lower()]
+    judge_hits = _sort_by_match_quality(judge_hits, "name", q_lower)
+    result["judges"] = judge_hits[:SEARCH_LIMIT_PER_CATEGORY]
+
+    # --- patches + mutations: index scan ------------------------------
+    # Both share the same patches table; one scan populates both, since
+    # a mutation_id hit also implies the patch is interesting and a
+    # rationale-only hit is a patch-only match.
+    if paths.index_db.is_file():
+        import sqlite3  # noqa: PLC0415
+
+        try:
+            conn = sqlite3.connect(str(paths.index_db))
+            try:
+                conn.row_factory = sqlite3.Row
+                # The LIKE patterns mirror the substring semantics the
+                # frontend describes to operators. SQLite's LIKE is
+                # case-insensitive for ASCII by default — the typical
+                # case for mutation ids + rationale text.
+                like = f"%{q}%"
+                rows = conn.execute(
+                    "SELECT patch_id, epoch_id, generation_id, mutation_id, "
+                    "       op, rationale FROM patches "
+                    "WHERE mutation_id LIKE ? OR rationale LIKE ? "
+                    "ORDER BY epoch_id ASC, generation_id ASC",
+                    (like, like),
+                ).fetchall()
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001 — best-effort
+            rows = []
+
+        patch_hits: list[dict[str, Any]] = []
+        mutation_hits: list[dict[str, Any]] = []
+        seen_mutations: set[tuple[str, str, str]] = set()
+        for row in rows:
+            patch_id = row["patch_id"]
+            ep_id = row["epoch_id"]
+            gen_id = row["generation_id"]
+            mut_id = row["mutation_id"]
+            rationale = row["rationale"] or ""
+            snippet = _preview(rationale) if rationale else ""
+            patch_hits.append(
+                {
+                    "patch_id": patch_id,
+                    "epoch_id": ep_id,
+                    "generation_id": gen_id,
+                    "mutation_id": mut_id,
+                    "rationale_snippet": snippet,
+                }
+            )
+            # A mutation row is interesting only when the substring
+            # actually hits the mutation_id (a rationale-only match
+            # belongs in patches but not in mutations).
+            if isinstance(mut_id, str) and mut_id and q_lower in mut_id.lower():
+                key = (mut_id, ep_id or "", gen_id or "")
+                if key in seen_mutations:
+                    continue
+                seen_mutations.add(key)
+                mutation_hits.append(
+                    {
+                        "mutation_id": mut_id,
+                        "epoch_id": ep_id,
+                        "generation_id": gen_id,
+                        "patch_id": patch_id,
+                    }
+                )
+
+        # Patch records are sorted by mutation_id quality (the most
+        # operator-meaningful field); rationale-only hits fall to
+        # the substring bucket regardless of whether the mutation_id
+        # matches verbatim.
+        patch_hits = _sort_by_match_quality(patch_hits, "mutation_id", q_lower)
+        mutation_hits = _sort_by_match_quality(mutation_hits, "mutation_id", q_lower)
+        result["patches"] = patch_hits[:SEARCH_LIMIT_PER_CATEGORY]
+        result["mutations"] = mutation_hits[:SEARCH_LIMIT_PER_CATEGORY]
+
+    return result

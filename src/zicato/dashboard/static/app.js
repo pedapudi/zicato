@@ -21,6 +21,7 @@ import {
   renderBreadcrumb, showPhase0View, renderSidebarLive,
   renderHeader, renderFooter,
 } from './js/views/phase0_shell.js';
+import { initSidebarSearch } from './js/views/phase0_sidebar_search.js';
 import { renderPhase0Workspace } from './js/views/phase0_workspace.js';
 import { renderPhase0Epoch } from './js/views/phase0_epoch.js';
 import { renderPhase0Generation } from './js/views/phase0_generation.js';
@@ -100,6 +101,11 @@ function init() {
   // installs its own hashchange listener so a fragment update repaints.
   router.start();
   window.addEventListener('hashchange', () => scheduleRender());
+
+  // Wire the sidebar search input. The bar is always visible (regardless
+  // of route), so its listener is bound once at bootstrap rather than on
+  // every render.
+  initSidebarSearch();
 
   if (mock) {
     renderPhase0All();

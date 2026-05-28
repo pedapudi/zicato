@@ -31,7 +31,8 @@
     The phase-0 shell renders the level-aligned views (L0 workspace,
     L1 epoch, L2 generation, L3 round, L4 run). Sidebar is a fixed
     strip with Live Activity (heartbeat-subscribed), breadcrumb-aware
-    Files, and free-text Search.
+    Files, and an always-visible search bar that filters across
+    entries / judges / patches / mutations and renders results inline.
    -->
   <div id="phase0-shell" class="phase0-shell" data-shell="phase0">
 
@@ -46,8 +47,18 @@
       </div>
       <nav class="phase0-sidebar-nav" aria-label="Sidebar tools">
         <a id="phase0-nav-files" class="phase0-sidebar-link" href="#/files">Files</a>
-        <a id="phase0-nav-search" class="phase0-sidebar-link" href="#/search">Search</a>
       </nav>
+      <div id="phase0-sidebar-search" class="phase0-sidebar-search"
+          aria-label="Sidebar search">
+        <h3 class="phase0-sidebar-title">Search</h3>
+        <input type="search" id="phase0-sidebar-search-input"
+            class="phase0-sidebar-search-input"
+            placeholder="entries · judges · patches"
+            aria-label="Search entries, judges, patches, and mutation ids" />
+        <div id="phase0-sidebar-search-results"
+            class="phase0-sidebar-search-results" hidden>
+        </div>
+      </div>
     </aside>
 
     <main id="main-content" class="phase0-main" role="main">
@@ -211,21 +222,6 @@
             when navigated to from a generation.
           </p>
           <p class="empty">Files view not yet wired in this shell.</p>
-        </section>
-
-        <!-- Sidebar-driven: free-text search -->
-        <section id="phase0-view-search" class="phase0-view phase0-view-search hidden"
-            data-level="search">
-          <h2>Search</h2>
-          <p class="panel-subheader">
-            Free-text search across board entries, judges, patches,
-            and mutation IDs.
-          </p>
-          <input type="search" id="phase0-search-input"
-              class="phase0-search-input" placeholder="search terms..." />
-          <div id="phase0-search-results" class="phase0-search-results">
-            <p class="empty">No query.</p>
-          </div>
         </section>
 
       </div>

@@ -204,6 +204,7 @@ def create_app(
             handlers["api_matchup_grid"],
         ),
         Route("/api/health-report", handlers["api_health_report"]),
+        Route("/api/search", handlers["api_search"]),
         Route("/api/score-trajectory", handlers["api_score_trajectory"]),
         Route(
             "/api/drift-movements/{generation_id}",

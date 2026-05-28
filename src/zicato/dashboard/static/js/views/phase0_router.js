@@ -10,14 +10,17 @@
 //   #/round/<epoch_id>/<champion_id>-><challenger_id>
 //   #/run/<epoch_id>/<generation_id>/<entry_id>
 //   #/files                — sidebar tool, breadcrumb-aware
-//   #/search               — sidebar tool, free-text search
+//
+// (The search affordance is an always-visible sidebar input — not a
+// route. Typing filters inline; no navigation away from the current
+// page.)
 //
 // This module ONLY parses the fragment and exposes a structured route.
 // The shell installs its own hashchange listener so a fragment update
 // repaints.
 
 export const PHASE0_LEVELS = [
-  'workspace', 'epoch', 'generation', 'round', 'run', 'files', 'search',
+  'workspace', 'epoch', 'generation', 'round', 'run', 'files',
 ];
 
 export const PHASE0_DEFAULT = 'workspace';
@@ -120,8 +123,6 @@ export function phase0Href(level, params) {
       return '#/run';
     case 'files':
       return '#/files';
-    case 'search':
-      return '#/search';
     default:
       return '#/workspace';
   }

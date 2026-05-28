@@ -2852,12 +2852,6 @@ h4 {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.phase0-search-input {
-  width: 100%;
-  max-width: 480px;
-  padding: 0.4rem 0.6rem;
-  margin-bottom: 0.8rem;
-}
 .phase0-events-line { font-size: 0.8rem; }
 .phase0-journal-preview {
   white-space: pre-wrap;
