@@ -1,15 +1,112 @@
-// views/phase0_shell.js — chrome for the phase-0 level-aligned shell.
+// views/phase0_shell.js — chrome for the level-aligned shell.
 //
-// This module owns the cross-level pieces of the new shell: the
-// breadcrumb (the primary navigation), the sidebar's Live Activity card
-// (heartbeat-subscribed, digest-gated, mirrors the top-bar pattern from
-// render.js's _relevantStateDigest.hbDigest), and the view-container
-// visibility switch. It is intentionally tiny so per-level rendering
-// can be added incrementally without touching this file.
+// This module owns the cross-level pieces of the shell: the header bar
+// (epoch / gen / round badges, elapsed clock, health-badge), the footer
+// bar (version / port / build), the breadcrumb (the primary
+// navigation), the sidebar's Live Activity card (heartbeat-subscribed,
+// digest-gated), and the view-container visibility switch.
 
-import { $, el, clearChildren, patchText } from '../core/dom.js';
+import { $, el, clearChildren, patchText, patchClass } from '../core/dom.js';
+import { parseIso, fmtDuration, nowMs } from '../core/format.js';
 import { state } from '../core/state.js';
 import { phase0Href, PHASE0_LEVELS } from './phase0_router.js';
+
+// How long since the last heartbeat before the run is considered
+// stale. heartbeat.json is rewritten on a short cadence (well under a
+// minute); 90s leaves generous slack for a slow tick or a paused
+// scheduler without false-flagging a healthy live run.
+const STALE_HEARTBEAT_MS = 90_000;
+
+// Render the top header bar — epoch / gen / round badges, the elapsed
+// clock, and the connection / heartbeat health badge. Idempotent: every
+// text write routes through patchText so an unchanged tick writes zero
+// DOM nodes (text selection inside the header survives each tick).
+export function renderHeader() {
+  const hb = state.heartbeat || {};
+  // Epoch + generation + round come straight off the heartbeat —
+  // ``epoch_id``, ``generation_id`` ("v2"), and ``round_index`` (an
+  // int) — the single source of truth the orchestrator stamps each
+  // tick. The header summary (state.epoch.{id,generation,round}, seeded
+  // from the initial snapshot) is the fallback.
+  const epochId = hb.epoch_id || state.epoch.id;
+  const genId = hb.generation_id || state.epoch.generation;
+  const roundIdx = (hb.round_index != null) ? hb.round_index : state.epoch.round;
+  patchText($('epoch-id'),
+    'epoch · ' + (epochId != null && epochId !== '' ? epochId : '—'));
+  patchText($('generation-id'),
+    'gen · ' + (genId != null && genId !== '' ? genId : '—'));
+  patchText($('round-id'),
+    'round · ' + (roundIdx != null && roundIdx !== '' ? roundIdx : '—'));
+
+  // Elapsed = now − started_at. The heartbeat's ``started_at`` is the
+  // run's start; ``round_started_at`` and ``epoch_started_at`` are
+  // accepted fallbacks. parseIso copes with both the ``Z`` and
+  // ``+00:00`` zone forms.
+  const startedRaw = hb.started_at || state.epoch.startedAt
+    || hb.round_started_at || hb.epoch_started_at;
+  const startedMs = parseIso(startedRaw);
+  if (isFinite(startedMs)) {
+    patchText($('elapsed'), fmtDuration((nowMs() - startedMs) / 1000));
+  } else {
+    patchText($('elapsed'), '—');
+  }
+
+  const badge = $('health-badge');
+  if (!badge) return;
+  let badgeText = '';
+  let badgeKind = '';
+  if (state.connecting) {
+    badgeKind = 'pending';
+    badgeText = 'connecting';
+  } else if (state.connected) {
+    // Stale = the last heartbeat is older than STALE_HEARTBEAT_MS.
+    // ``last_heartbeat`` is the canonical field; ``timestamp`` is the
+    // older name. A healthy live run keeps this fresh and must NOT
+    // trip the badge — an unparseable/absent timestamp is treated as
+    // healthy rather than falsely stale.
+    const hbMs = parseIso(hb.last_heartbeat != null ? hb.last_heartbeat : hb.timestamp);
+    const stale = isFinite(hbMs) && (nowMs() - hbMs) > STALE_HEARTBEAT_MS;
+    if (stale) {
+      badgeKind = 'warn';
+      badgeText = 'stale heartbeat';
+    } else {
+      badgeKind = 'ok';
+      badgeText = 'healthy';
+    }
+  } else {
+    badgeKind = 'error';
+    badgeText = 'disconnected';
+  }
+  // patchClass writes only when the presence must change — a steady
+  // 'ok' badge is left untouched across every 1Hz tick.
+  patchClass(badge, 'ok', badgeKind === 'ok');
+  patchClass(badge, 'warn', badgeKind === 'warn');
+  patchClass(badge, 'error', badgeKind === 'error');
+  patchClass(badge, 'pending', badgeKind === 'pending');
+  patchText(badge, badgeText);
+
+  const mockBadge = $('mock-badge');
+  if (mockBadge) patchClass(mockBadge, 'hidden', !state.mock);
+}
+
+// Render the footer bar — version / port / build sourced from
+// /api/health (mirrored on ``state.service`` until /api/health lands).
+// Idempotent: every text write routes through patchText so a no-op
+// refresh writes zero DOM nodes.
+export function renderFooter() {
+  const h = state.health || {};
+  const pick = (a, b) => {
+    if (a != null && a !== '') return a;
+    if (b != null && b !== '') return b;
+    return '—';
+  };
+  patchText($('dashboard-version'),
+    'dashboard · ' + pick(h.version, state.service.version));
+  patchText($('dashboard-port'),
+    'port · ' + pick(h.port, state.service.port));
+  patchText($('dashboard-build'),
+    'build · ' + pick(h.build, state.service.build));
+}
 
 // Map a parsed phase-0 route into the breadcrumb segments. Each segment
 // is either a clickable link (target route + label) or a placeholder
@@ -100,10 +197,9 @@ export function showPhase0View(level) {
 }
 
 // Compute a stable digest of the heartbeat fields that drive the
-// sidebar's Live Activity card. Mirrors the top-bar header subscription
-// pattern from render.js's _relevantStateDigest.hbDigest — a heartbeat
-// tick that only re-stamps a timestamp must NOT churn the live card.
-// Exported so a test can pin which fields are part of the contract.
+// sidebar's Live Activity card. A heartbeat tick that only re-stamps a
+// timestamp must NOT churn the live card. Exported so a test can pin
+// which fields are part of the contract.
 export function liveActivityDigest() {
   const hb = state.heartbeat || {};
   return JSON.stringify({

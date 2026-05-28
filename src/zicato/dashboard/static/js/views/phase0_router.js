@@ -13,9 +13,8 @@
 //   #/search               — sidebar tool, free-text search
 //
 // This module ONLY parses the fragment and exposes a structured route.
-// The legacy router in core/router.js is left untouched; the phase-0
-// shell installs its own hashchange listener so legacy deep-links keep
-// working under ``?legacy=1``.
+// The shell installs its own hashchange listener so a fragment update
+// repaints.
 
 export const PHASE0_LEVELS = [
   'workspace', 'epoch', 'generation', 'round', 'run', 'files', 'search',

@@ -153,10 +153,9 @@ def test_conversation_started_without_sequence_sorts_first(tmp_path: Path) -> No
     # transcript must surface that synthetic "conversation started" turn
     # at the START of the rendered order (chronological), not the END
     # (which is what a naïve sequence-first / sequence-less-sorts-last
-    # ordering produces). The downstream conversation view in
-    # ``static/js/views/render.js`` renders turns in the order this
-    # module yields them, so this is the authoritative test for the
-    # invariant.
+    # ordering produces). The downstream conversation view renders
+    # turns in the order this module yields them, so this is the
+    # authoritative test for the invariant.
     lines = [
         # The real sink writes conversation_started with no `sequence`
         # field — modelled exactly here.

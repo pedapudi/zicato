@@ -2376,8 +2376,6 @@ def test_phase0_shell_present_in_index_html() -> None:
     # between them without re-fetching the HTML.
     for level in ("workspace", "epoch", "generation", "round", "run"):
         assert f'id="phase0-view-{level}"' in html, f"phase0 view container for {level!r} missing"
-    # Legacy shell preserved so ``?legacy=1`` still works.
-    assert 'id="legacy-shell"' in html
 
 
 def test_build_workspace_view_promoted_count_reads_experiments(workspace: Path) -> None:

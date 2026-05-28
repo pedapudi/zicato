@@ -24,279 +24,14 @@
     </div>
   </header>
 
-  <!-- ============ LEGACY SHELL (active under ?legacy=1) ================ -->
-  <div id="legacy-shell" class="app-shell">
-
-    <nav id="nav-rail" class="nav-rail" role="navigation" aria-label="Dashboard views">
-      <a class="nav-item" id="nav-overview" href="#/overview" aria-label="Overview">
-        <span class="nav-glyph" aria-hidden="true">&#9632;</span>
-        <span class="nav-label">Overview</span>
-      </a>
-      <a class="nav-item" id="nav-tree" href="#/tree" aria-label="Tree">
-        <span class="nav-glyph" aria-hidden="true">&#10138;</span>
-        <span class="nav-label">Tree</span>
-      </a>
-      <a class="nav-item" id="nav-tournament" href="#/tournament" aria-label="Tournament">
-        <span class="nav-glyph" aria-hidden="true">&#9707;</span>
-        <span class="nav-label">Tournament</span>
-      </a>
-      <a class="nav-item" id="nav-epoch" href="#/epoch" aria-label="Epoch">
-        <span class="nav-glyph" aria-hidden="true">&#9638;</span>
-        <span class="nav-label">Epoch</span>
-      </a>
-      <a class="nav-item" id="nav-files" href="#/files" aria-label="Files">
-        <span class="nav-glyph" aria-hidden="true">&#9783;</span>
-        <span class="nav-label">Files</span>
-      </a>
-      <a class="nav-item" id="legacy-nav-phase0" href="?phase0=1"
-          title="Switch to the new level-aligned UI (persists to localStorage)"
-          aria-label="Use new UI">
-        <span class="nav-glyph" aria-hidden="true">&#10148;</span>
-        <span class="nav-label">Use new UI</span>
-      </a>
-    </nav>
-
-    <main id="main-content" role="main">
-
-      <!-- ============ OVERVIEW VIEW ============ -->
-      <div id="view-overview" class="view" data-view="overview">
-
-        <section id="identity-section" aria-label="Environment identity">
-          <h2>Environment</h2>
-          <div id="identity-panel" class="identity-panel">
-            <p class="empty">No environment loaded.</p>
-          </div>
-        </section>
-
-        <section id="health-section" aria-label="Loop health">
-          <h2>Loop health</h2>
-          <div id="health-panel" class="health-panel" role="status" aria-live="polite">
-            <p class="empty">No health report yet.</p>
-          </div>
-        </section>
-
-        <section id="live-activity-section" aria-label="Live activity">
-          <h2>Live activity</h2>
-          <div id="live-activity" class="live-activity">
-            <p class="empty">No active tournament.</p>
-          </div>
-        </section>
-
-        <section id="overview-trajectory-section" aria-label="Score trajectory">
-          <h2>Score trajectory</h2>
-          <div class="diagram">
-            <svg id="overview-trajectory-svg" xmlns="http://www.w3.org/2000/svg"
-               viewBox="0 0 720 240" role="img"
-               aria-label="Scalar score trajectory across generations"></svg>
-          </div>
-        </section>
-
-        <section id="epochs-section" aria-label="Epochs">
-          <h2>Epochs</h2>
-          <div id="epochs-panel" class="epochs-panel">
-            <p class="empty">No epochs recorded yet.</p>
-          </div>
-        </section>
-
-        <section id="recent-experiments-section" aria-label="Recent experiments">
-          <h2>Recent experiments</h2>
-          <div id="recent-experiments" class="recent-experiments">
-            <p class="empty">No experiments recorded yet.</p>
-          </div>
-        </section>
-
-        <section id="log-section" aria-label="Log tail">
-          <h2>Log tail</h2>
-          <div id="log-tail" class="log-tail mono" role="log" aria-live="polite" aria-relevant="additions">
-            <p class="empty">No events yet.</p>
-          </div>
-        </section>
-
-      </div>
-
-      <!-- ============ TREE VIEW ============ -->
-      <div id="view-tree" class="view hidden" data-view="tree">
-
-        <section id="lineage-section" aria-label="Lineage graph">
-          <h2>Lineage</h2>
-          <p class="panel-subheader">
-            Generations across every epoch. Drag to pan, wheel to zoom; click a node for its experiment.
-          </p>
-          <div id="lineage-viewport" class="lineage-viewport">
-            <div id="lineage-stage" class="lineage-stage">
-              <svg id="lineage-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360"
-                 role="img" aria-label="Cross-epoch lineage graph"></svg>
-            </div>
-          </div>
-          <div class="lineage-controls">
-            <button type="button" id="lineage-zoom-out" class="btn" aria-label="Zoom out">&minus;</button>
-            <button type="button" id="lineage-zoom-reset" class="btn" aria-label="Reset zoom">reset</button>
-            <button type="button" id="lineage-zoom-in" class="btn" aria-label="Zoom in">+</button>
-          </div>
-        </section>
-
-      </div>
-
-      <!-- ============ TOURNAMENT VIEW ============ -->
-      <div id="view-tournament" class="view hidden" data-view="tournament">
-
-        <section id="tournament-bracket-section" aria-label="Tournament bracket">
-          <h2>Tournament gauntlet</h2>
-          <p class="panel-subheader">
-            Champion lineage runs the green spine; each discarded challenger
-            hangs below the champion it failed to beat. Click a matchup.
-          </p>
-          <div id="tournament-bracket" class="tournament-bracket" role="list"
-             aria-label="Champion lineage and discarded challengers">
-            <p class="empty">No tournaments recorded yet.</p>
-          </div>
-        </section>
-
-        <section id="tournament-detail-section" aria-label="Tournament detail">
-          <h2>Matchup detail</h2>
-          <div id="tournament-detail" class="tournament-detail">
-            <p class="empty">Select a matchup above.</p>
-          </div>
-        </section>
-
-        <section id="heatmap-section" aria-label="Drift heatmap">
-          <h2>Drift-kind movements</h2>
-          <div class="diagram">
-            <svg id="heatmap-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 320"
-               role="img" aria-label="Drift heatmap"></svg>
-          </div>
-        </section>
-
-      </div>
-
-      <!-- ============ CONVERSATION VIEW ============ -->
-      <div id="view-conversation" class="view hidden" data-view="conversation">
-
-        <section id="conversation-section" class="conversation-section"
-             aria-label="Side-by-side conversation diff">
-          <div id="conversation-panel" class="conversation-panel">
-            <p class="empty">No conversation selected.</p>
-          </div>
-        </section>
-
-      </div>
-
-      <!-- ============ EPOCH VIEW ============ -->
-      <div id="view-epoch" class="view hidden" data-view="epoch">
-
-        <section id="epoch-overview-section" aria-label="Epoch definition">
-          <h2>Epoch definition</h2>
-          <div id="epoch-overview" class="epoch-overview">
-            <p class="empty">No epoch loaded.</p>
-          </div>
-        </section>
-
-        <section id="epoch-harness-section" aria-label="Registered harness">
-          <h2>Harness</h2>
-          <div id="epoch-harness" class="epoch-harness">
-            <p class="empty">No harness recorded.</p>
-          </div>
-        </section>
-
-        <section id="epoch-board-section" aria-label="Board entries">
-          <h2>Board</h2>
-          <div id="epoch-board" class="epoch-board">
-            <p class="empty">No board entries.</p>
-          </div>
-        </section>
-
-        <section id="epoch-brief-section" aria-label="Proposer brief">
-          <h2>Proposer brief</h2>
-          <div id="epoch-brief" class="epoch-brief">
-            <p class="empty">No proposer brief recorded.</p>
-          </div>
-        </section>
-
-        <section id="epoch-scoring-section" aria-label="Scoring weights">
-          <h2>Scoring</h2>
-          <div id="epoch-scoring" class="epoch-scoring">
-            <p class="empty">No scoring weights recorded.</p>
-          </div>
-        </section>
-
-        <section id="epoch-mutations-section" aria-label="Mutation surface">
-          <h2>Mutation surface</h2>
-          <div id="epoch-mutations" class="epoch-mutations">
-            <p class="empty">No mutation snapshot yet.</p>
-          </div>
-        </section>
-
-        <section id="epoch-experiments-section" aria-label="Experiments">
-          <h2>Experiments</h2>
-          <div id="epoch-experiment-log" class="epoch-experiment-log">
-            <p class="empty">No experiments recorded.</p>
-          </div>
-        </section>
-
-        <section id="epoch-analysis-section" aria-label="Epoch analysis">
-          <h2>Analysis</h2>
-          <div id="epoch-analysis" class="epoch-analysis">
-            <p class="empty">No analysis recorded.</p>
-          </div>
-        </section>
-
-      </div>
-
-      <!-- ============ FILES VIEW ============ -->
-      <div id="view-files" class="view hidden" data-view="files">
-
-        <section id="files-changes-section" aria-label="Generation changes">
-          <h2>What changed</h2>
-          <div id="files-changes-controls" class="files-changes-controls">
-            <p class="empty">No generations yet.</p>
-          </div>
-          <div id="files-changes-diff" class="files-changes-diff">
-            <p class="empty">Select a generation to see what it changed.</p>
-          </div>
-        </section>
-
-        <section id="files-patches-section" aria-label="Patches in this generation">
-          <h2 id="files-patches-title">Patches in this generation</h2>
-          <div id="files-patches" class="files-patches">
-            <p class="empty">Select a generation to view its patches.</p>
-          </div>
-        </section>
-
-        <section id="files-cumulative-section" aria-label="Patches applied to reach this generation">
-          <h2 id="files-cumulative-title">Patches applied to reach this generation</h2>
-          <div id="files-cumulative" class="files-cumulative">
-            <p class="empty">Select a generation to view its lineage chain.</p>
-          </div>
-        </section>
-
-        <section id="mutations-section" aria-label="Mutation-site browser">
-          <h2>Mutation sites</h2>
-          <div id="mutations-browser" class="mutations-browser">
-            <div id="mutations-list-pane" class="mutations-list-pane">
-              <p class="empty">Select a generation to browse its mutation sites.</p>
-            </div>
-            <div id="mutations-detail-pane" class="mutations-detail-pane">
-              <p class="empty">Select a mutation site to view its diff.</p>
-            </div>
-          </div>
-        </section>
-
-      </div>
-
-    </main>
-
-  </div>
-
-  <!-- ============ PHASE-0 SHELL (default; level-aligned redesign) ====== -->
+  <!-- ============ PHASE-0 SHELL (the only shell) ====================== -->
   <!--
     The phase-0 shell renders the level-aligned views (L0 workspace,
-    L1 epoch, L2 generation, L3 round, L4 run). It is the default; the
-    legacy 5-tab UI above is reachable with ``?legacy=1`` for fallback
-    while the new shell stabilises across the L0..L4 hierarchy. Sidebar
-    is a fixed strip with Live Activity (heartbeat-subscribed),
-    breadcrumb-aware Files, and free-text Search.
+    L1 epoch, L2 generation, L3 round, L4 run). Sidebar is a fixed
+    strip with Live Activity (heartbeat-subscribed), breadcrumb-aware
+    Files, and free-text Search.
    -->
-  <div id="phase0-shell" class="phase0-shell hidden" data-shell="phase0">
+  <div id="phase0-shell" class="phase0-shell" data-shell="phase0">
 
     <aside id="phase0-sidebar" class="phase0-sidebar" role="navigation"
         aria-label="Phase-0 sidebar">
@@ -310,14 +45,10 @@
       <nav class="phase0-sidebar-nav" aria-label="Sidebar tools">
         <a id="phase0-nav-files" class="phase0-sidebar-link" href="#/files">Files</a>
         <a id="phase0-nav-search" class="phase0-sidebar-link" href="#/search">Search</a>
-        <a id="phase0-nav-legacy" class="phase0-sidebar-link"
-            href="?legacy=1"
-            title="Switch to the legacy 5-tab UI (persists to localStorage)"
-            >Use legacy UI &rsaquo;</a>
       </nav>
     </aside>
 
-    <main id="phase0-main" class="phase0-main" role="main">
+    <main id="main-content" class="phase0-main" role="main">
 
       <nav id="phase0-breadcrumb" class="phase0-breadcrumb"
           aria-label="Hierarchy breadcrumb">
@@ -472,8 +203,7 @@
             Artifact browser; defaults to the current generation's dir
             when navigated to from a generation.
           </p>
-          <p class="empty">Use the legacy Files view for full diff + patches
-            (linked from the sidebar).</p>
+          <p class="empty">Files view not yet wired in this shell.</p>
         </section>
 
         <!-- Sidebar-driven: free-text search -->

@@ -33,11 +33,15 @@ module codes against are pinned in `js/CONTRACTS.md`.
   `appendRows`, `patch*`), `format.js`, `harmonograf.js`.
 - `js/components/index.js` — the shared component library: cards,
   tables, badges, the diff renderer, the line chart, progress meters.
-- `js/views/` — the render layer. `render.js` paints every view
-  (Overview / Lineage / Tournament / Epoch / Files / Conversation +
-  the chrome); `shared.js` holds the cross-view helpers
-  (`predictedGateVerdict`, the entry-status bucket, the data-quality
-  summary); `mock.js` is the offline `?mock=1` snapshot.
+- `js/views/` — the render layer. `phase0_shell.js` paints the chrome
+  (header / footer / breadcrumb / sidebar Live Activity card + the
+  view-container visibility switch); `phase0_router.js` is the
+  hash-router for the L0..L4 hierarchy; `phase0_workspace.js`,
+  `phase0_epoch.js`, `phase0_generation.js`, `phase0_round.js`,
+  `phase0_run.js` paint one level each. `shared.js` holds the
+  cross-view helpers (`predictedGateVerdict`, the entry-status bucket,
+  the data-quality summary); `mock.js` is the offline `?mock=1`
+  snapshot.
 - `js/CONTRACTS.md` — the pinned frontend contracts: the
   `/api/environment` shape, the SSE delta types, the AppState shape,
   the component API, per-view specs, the routes.

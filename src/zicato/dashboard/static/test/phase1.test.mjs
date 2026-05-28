@@ -8,7 +8,6 @@
 //   * L2 per-judge and per-entry tables.
 //   * L3 per-judge comparison + primary-driver call-out.
 //   * L4 per-judge run breakdown.
-//   * Persisted shell-pick via localStorage.
 //
 // Each test installs a fresh DOM, seeds the module's cache or
 // ``state`` slot the renderer reads, drives one render, and asserts
@@ -29,7 +28,6 @@ const epoch = await import('../js/views/phase0_epoch.js');
 const generation = await import('../js/views/phase0_generation.js');
 const round = await import('../js/views/phase0_round.js');
 const runV = await import('../js/views/phase0_run.js');
-const shellMod = await import('../js/core/shell.js');
 
 // Helper: install one node by id, return the node.
 function installNode(id, tag = 'div') {
@@ -406,59 +404,6 @@ test('renderPhase0Run populates the per-judge breakdown for the focused run', ()
       resolve();
     }, 20);
   });
-});
-
-// --- localStorage shell toggle ---------------------------------------
-
-test('resolveShell defaults to phase0 with empty localStorage', () => {
-  window.localStorage.clear();
-  window.location.search = '';
-  assertEqual(shellMod.resolveShell(), 'phase0');
-});
-
-test('resolveShell respects ?legacy=1 query param even when localStorage prefers phase0', () => {
-  window.localStorage.clear();
-  window.localStorage.setItem(shellMod.SHELL_STORAGE_KEY, 'phase0');
-  window.location.search = '?legacy=1';
-  assertEqual(shellMod.resolveShell(), 'legacy');
-});
-
-test('resolveShell returns persisted "legacy" when no query override', () => {
-  window.localStorage.clear();
-  window.localStorage.setItem(shellMod.SHELL_STORAGE_KEY, 'legacy');
-  window.location.search = '';
-  assertEqual(shellMod.resolveShell(), 'legacy');
-});
-
-test('resolveShell respects ?phase0=1 override even when persisted is legacy', () => {
-  window.localStorage.clear();
-  window.localStorage.setItem(shellMod.SHELL_STORAGE_KEY, 'legacy');
-  window.location.search = '?phase0=1';
-  assertEqual(shellMod.resolveShell(), 'phase0');
-});
-
-test('setShellPreference persists "legacy" through localStorage', () => {
-  window.localStorage.clear();
-  // Stub the location replace so the call doesn't actually navigate.
-  const origReplace = window.location.replace;
-  let called = false;
-  window.location.replace = () => { called = true; };
-  window.location.href = 'http://127.0.0.1:8989/';
-  // The browser URL class is unavailable in the harness; the
-  // implementation falls back to reload() in that case.
-  let reloadCalled = false;
-  window.location.reload = () => { reloadCalled = true; };
-  shellMod.setShellPreference('legacy');
-  assertEqual(window.localStorage.getItem(shellMod.SHELL_STORAGE_KEY), 'legacy');
-  // At least one of replace / reload should have been invoked.
-  assert(called || reloadCalled, 'a navigation hook must fire');
-  window.location.replace = origReplace;
-});
-
-test('setShellPreference ignores garbage shell names', () => {
-  window.localStorage.clear();
-  shellMod.setShellPreference('nonsense');
-  assertEqual(window.localStorage.getItem(shellMod.SHELL_STORAGE_KEY), null);
 });
 
 await run();

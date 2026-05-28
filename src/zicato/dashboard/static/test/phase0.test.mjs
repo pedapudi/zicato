@@ -1,17 +1,15 @@
-// test/phase0.test.mjs — phase-0 redesign tests.
+// test/phase0.test.mjs — level-aligned shell tests.
 //
-// The phase-0 shell adds:
-//   * a new hash router (parsePhase0Hash / phase0Href) for L0..L4 +
+// The shell:
+//   * a hash router (parsePhase0Hash / phase0Href) for L0..L4 +
 //     sidebar tools (Files, Search);
 //   * a sidebar Live Activity card that subscribes to heartbeat
-//     changes via a digest gate (mirrors the top-bar header pattern in
-//     render.js's _relevantStateDigest.hbDigest);
+//     changes via a digest gate (mirrors the top-bar header pattern);
 //   * a breadcrumb as the primary navigation;
 //   * five view containers (phase0-view-<level>) the shell toggles.
 //
 // These tests pin those contracts so a downstream change does not
-// silently regress them. The render layer's existing legacy contracts
-// are NOT touched here — they have their own coverage in render.test.mjs.
+// silently regress them.
 
 import { installDom, test, run, assert, assertEqual, assertDeep } from './harness.mjs';
 

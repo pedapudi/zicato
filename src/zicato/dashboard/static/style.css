@@ -2043,9 +2043,8 @@ h4 {
 /* --- Files view: "What changed" section ---------------------------
    A generation picker, then a side-by-side (split) diff of every file
    the selected generation changed relative to its parent generation
-   (or the v0 baseline). The split diff is the folding renderer in
-   render.js (renderFoldingSplitDiff): long unchanged runs collapse to
-   a click-to-expand marker so a small change is not buried under a
+   (or the v0 baseline). Long unchanged runs collapse to a
+   click-to-expand marker so a small change is not buried under a
    wall of identical source. See the `.diff*` block below.            */
 .files-changes-controls {
   margin-bottom: 0.75rem;
@@ -2120,13 +2119,12 @@ h4 {
 }
 
 /* --- Files view: folding side-by-side diff ------------------------
-   The "What changed" diff (renderFoldingSplitDiff in render.js).
-   `diff-split` lays out two side panes — old on the left, new on the
-   right. Long unchanged runs collapse to a `diff-fold` marker; changed
-   lines are accented. Lines SOFT-WRAP (white-space: pre-wrap +
-   overflow-wrap) so no content ever falls off-screen and becomes
-   unreachable — the dashboard's job is to display the source
-   faithfully, not to truncate it.                                    */
+   The "What changed" diff. `diff-split` lays out two side panes — old
+   on the left, new on the right. Long unchanged runs collapse to a
+   `diff-fold` marker; changed lines are accented. Lines SOFT-WRAP
+   (white-space: pre-wrap + overflow-wrap) so no content ever falls
+   off-screen and becomes unreachable — the dashboard's job is to
+   display the source faithfully, not to truncate it.                 */
 .diff {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.74rem;
@@ -2741,16 +2739,14 @@ h4 {
 }
 
 /* ============================================================
-   Phase-0 redesign shell: level-aligned dashboard.
+   The level-aligned dashboard shell.
 
-   The phase-0 shell replaces the legacy 5-tab navigation with a
-   fixed sidebar + breadcrumb-as-navigation + per-level view
-   container. The legacy shell is preserved verbatim behind
-   ``?legacy=1``. Styles are scoped to ``.phase0-*`` classes so a
-   stray legacy rule never touches a phase-0 node.
+   A fixed sidebar (Live Activity card + Files + Search) +
+   breadcrumb-as-navigation + per-level view container. Styles are
+   scoped to ``.phase0-*`` classes so the chrome stays isolated from
+   per-view layout.
    ============================================================ */
 .phase0-shell.hidden { display: none; }
-#legacy-shell.hidden { display: none; }
 .phase0-shell {
   display: grid;
   grid-template-columns: 220px 1fr;

@@ -1,37 +1,25 @@
 // zicato dashboard — entry point.
 //
-// app.js is the thin orchestrator. The dashboard has two shells:
+// app.js is the thin orchestrator for the level-aligned shell. The
+// shell maps directly onto the environment → epoch → generation →
+// round → run hierarchy: five view modules under ``js/views/phase0_*.js``,
+// a fixed sidebar (Live Activity card + Files + Search), and a
+// breadcrumb as the primary navigation.
 //
-//   * Phase-0 shell (DEFAULT) — the level-aligned redesign that maps
-//     directly onto the environment → epoch → generation → round → run
-//     hierarchy. Five new view modules under ``js/views/phase0_*.js``,
-//     a fixed sidebar (Live Activity card + Files + Search), and a
-//     breadcrumb as the primary navigation.
-//
-//   * Legacy 5-tab shell — Overview, Tree, Tournament, Epoch, Files.
-//     Selectable with ``?legacy=1`` for the duration of the phase-0
-//     rollout. Mounted exactly as before so a fresh page-load with
-//     ``?legacy=1`` walks the identical code path the dashboard has
-//     used since the modular boundary landed.
-//
-// The shell pick is resolved BEFORE any view module runs so each
-// shell's containers are wired only when its DOM is visible. The bus
-// is the spine: a state mutation or a route change drives a render.
+// The bus is the spine: a state mutation or a route change drives a
+// render.
 
 import { bus } from './js/core/bus.js';
 import { state } from './js/core/state.js';
 import { router } from './js/core/router.js';
 import { loadEnvironment, loadServiceIdentity } from './js/core/api.js';
 import { connectSSE } from './js/core/sse.js';
-import {
-  renderAll, renderHeader, renderFooter, applyRoute,
-  setupLineageInteractions, closeDrill, appendLogTail,
-} from './js/views/render.js';
 import { mockSnapshot } from './js/views/mock.js';
 
 import { parsePhase0Hash } from './js/views/phase0_router.js';
 import {
   renderBreadcrumb, showPhase0View, renderSidebarLive,
+  renderHeader, renderFooter,
 } from './js/views/phase0_shell.js';
 import { renderPhase0Workspace } from './js/views/phase0_workspace.js';
 import { renderPhase0Epoch } from './js/views/phase0_epoch.js';
@@ -44,18 +32,13 @@ import { renderPhase0Run } from './js/views/phase0_run.js';
 // once. The render layer is itself idempotent, so this is purely an
 // efficiency floor.
 let _renderQueued = false;
-let _shell = 'phase0'; // resolved in init()
 
 function scheduleRender() {
   if (_renderQueued) return;
   _renderQueued = true;
   queueMicrotask(() => {
     _renderQueued = false;
-    if (_shell === 'legacy') {
-      renderAll();
-    } else {
-      renderPhase0All();
-    }
+    renderPhase0All();
   });
 }
 
@@ -90,80 +73,20 @@ function renderPhase0All() {
   }
 }
 
-// Persisted shell-pick lives in js/core/shell.js so test modules can
-// import it without triggering app.js's init() side effects.
-import { resolveShell, setShellPreference } from './js/core/shell.js';
-
-function mountShell(shell) {
-  const legacy = document.getElementById('legacy-shell');
-  const phase0 = document.getElementById('phase0-shell');
-  if (shell === 'legacy') {
-    if (legacy) legacy.classList.remove('hidden');
-    if (phase0) phase0.classList.add('hidden');
-  } else {
-    if (legacy) legacy.classList.add('hidden');
-    if (phase0) phase0.classList.remove('hidden');
-  }
-}
-
-function _wireShellToggles() {
-  // Phase-0 sidebar link: "Use legacy UI →" — persists the choice and
-  // reloads. We intercept the click and call setShellPreference so the
-  // bare ``?legacy=1`` href degrades gracefully when JS is off.
-  const legacyLink = document.getElementById('phase0-nav-legacy');
-  if (legacyLink) {
-    legacyLink.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      setShellPreference('legacy');
-    });
-  }
-  // Legacy shell footer link: "Use new UI →" — symmetric toggle back to
-  // phase-0. Wired only when the legacy shell is mounted (the element
-  // is added below in mountShell when shell === 'legacy').
-  const newLink = document.getElementById('legacy-nav-phase0');
-  if (newLink) {
-    newLink.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      setShellPreference('phase0');
-    });
-  }
-}
-
 function init() {
-  _shell = resolveShell();
-  mountShell(_shell);
-  _wireShellToggles();
-
-  // The drill panel close affordance — used by the legacy shell. Harmless
-  // when the phase-0 shell is active (the panel is shared chrome).
-  const drillClose = document.getElementById('drill-close');
-  if (drillClose) drillClose.addEventListener('click', closeDrill);
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') closeDrill();
-  });
-
   bus.on('state:changed', scheduleRender);
-  bus.on('route:changed', () => {
-    if (_shell === 'legacy') applyRoute();
-    else scheduleRender();
-  });
-  bus.on('log:appended', () => {
-    if (_shell === 'legacy') appendLogTail();
-    else scheduleRender();
-  });
-
-  if (_shell === 'legacy') setupLineageInteractions();
+  bus.on('route:changed', () => { scheduleRender(); });
+  bus.on('log:appended', () => { scheduleRender(); });
 
   // Tick the header's elapsed clock once per second so it reads "live"
   // even when no state changes arrive. The renderHeader function is
-  // cheap and idempotent in both shells.
+  // cheap and idempotent.
   setInterval(() => { renderHeader(); }, 1000);
 
-  // Mock mode must be resolved BEFORE router.start(): it emits
-  // `route:changed` -> applyRoute(), which may kick off a route-driven
-  // load (e.g. the conversation diff for a `#/tournament/conv/{entry}`
-  // deep-link). With `state.mock` still false the load would hit the
-  // real (empty) endpoint and cache its degraded payload over the mock.
+  // Mock mode must be resolved BEFORE router.start(): a `route:changed`
+  // bus emit may kick off a route-driven load. With `state.mock` still
+  // false the load would hit the real (empty) endpoint and cache its
+  // degraded payload over the mock.
   const params = new URLSearchParams(window.location.search);
   const mock = params.get('mock') === '1';
   if (mock) {
@@ -173,27 +96,24 @@ function init() {
     state.applySnapshot(mockSnapshot());
   }
 
-  // Resolve the initial route before the first paint. The legacy router
-  // emits `route:changed` -> applyRoute; the phase-0 shell just installs
-  // its own hashchange listener so a fragment update repaints.
+  // Resolve the initial route before the first paint. The phase-0 shell
+  // installs its own hashchange listener so a fragment update repaints.
   router.start();
-  if (_shell === 'phase0') {
-    window.addEventListener('hashchange', () => scheduleRender());
-  }
+  window.addEventListener('hashchange', () => scheduleRender());
 
   if (mock) {
-    if (_shell === 'legacy') renderAll(); else renderPhase0All();
+    renderPhase0All();
     return;
   }
 
-  if (_shell === 'legacy') renderAll(); else renderPhase0All();
+  renderPhase0All();
   loadEnvironment();
   loadServiceIdentity();
   connectSSE();
 }
 
 // Expose for tests + console debugging without polluting global scope.
-window.__zicato = { state, router, bus, renderAll };
+window.__zicato = { state, router, bus };
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
