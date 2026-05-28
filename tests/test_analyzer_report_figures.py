@@ -353,6 +353,110 @@ def test_per_board_heatmap_renders_hatch_for_missing_data() -> None:
     assert "nodata-stripes" in svg
 
 
+def test_per_board_heatmap_reads_per_entry_dict_shape_with_drift_loss() -> None:
+    """On-disk ``per_entry`` is a dict keyed by entry id with absolute
+    ``drift_loss`` values. The heatmap subtracts the parent champion's
+    drift_loss to form a per-cell delta (challenger − champion); a
+    negative value (loss dropped) paints the cell as 'better' (green),
+    a positive value as 'worse' (red).
+
+    Regression for Task #196: the older resolver only understood a
+    list-of-dicts shape or pre-computed ``scalar_delta`` keys, so
+    workspaces with the current dict-of-dicts shape painted every cell
+    as hatched 'no data'.
+    """
+    entries = (_entry("slides"), _entry("qa"))
+    # v0 baseline carries its own per-entry numbers so the v1 column can
+    # be diffed against the seed champion too.
+    # v1 (parent v0): slides 10-12=-2, qa 20-22=-2.
+    # v2 (parent v1): slides 4-10=-6 (better), qa 25-20=+5 (worse).
+    gens = (
+        _gen(
+            gid="v0",
+            is_baseline=True,
+            decision="baseline",
+            gen_score={
+                "per_entry": {
+                    "slides": {"drift_loss": 12.0, "pass_fail": True},
+                    "qa": {"drift_loss": 22.0, "pass_fail": False},
+                }
+            },
+        ),
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="promoted",
+            gen_score={
+                "per_entry": {
+                    "slides": {"drift_loss": 10.0, "pass_fail": True},
+                    "qa": {"drift_loss": 20.0, "pass_fail": False},
+                }
+            },
+        ),
+        _gen(
+            gid="v2",
+            parent="v1",
+            decision="rejected",
+            gen_score={
+                "per_entry": {
+                    "slides": {"drift_loss": 4.0, "pass_fail": True},
+                    "qa": {"drift_loss": 25.0, "pass_fail": False},
+                }
+            },
+        ),
+    )
+    svg = render_svg_per_board_heatmap(_data(gens, entries))
+    _assert_inline_svg(svg)
+    # Every CELL carries a real delta — no hatched placeholders (the
+    # ``nodata-stripes`` pattern is defined once in <defs>; only cells
+    # that fall back to hatched reference it via ``fill="url(#nodata-stripes)"``).
+    assert 'fill="url(#nodata-stripes)"' not in svg
+    # The v2.qa cell rendered the +5.000 challenger-minus-champion delta
+    # (drift_loss went 20 -> 25, a regression).
+    assert "+5.000" in svg
+    # The v2.slides cell rendered -6.000 (drift_loss 10 -> 4 = improved).
+    assert "-6.000" in svg
+    # The v1 column is diffed against the baseline seed: slides 10-12=-2.
+    assert "-2.000" in svg
+
+
+def test_per_board_heatmap_dict_shape_promoted_lineage_baseline_diff() -> None:
+    """A promoted challenger's per-entry delta is computed against the
+    immediately-preceding champion (its parent), NOT against the seed.
+    """
+    entries = (_entry("a"),)
+    gens = (
+        _gen(gid="v0", is_baseline=True, decision="baseline"),
+        _gen(
+            gid="v1",
+            parent="v0",
+            decision="promoted",
+            gen_score={"per_entry": {"a": {"drift_loss": 50.0}}},
+        ),
+        _gen(
+            gid="v2",
+            parent="v1",
+            decision="promoted",
+            gen_score={"per_entry": {"a": {"drift_loss": 30.0}}},
+        ),
+        _gen(
+            gid="v3",
+            parent="v2",
+            decision="rejected",
+            gen_score={"per_entry": {"a": {"drift_loss": 35.0}}},
+        ),
+    )
+    svg = render_svg_per_board_heatmap(_data(gens, entries))
+    _assert_inline_svg(svg)
+    # v2 vs v1 = 30 - 50 = -20.000 (better).
+    assert "-20.000" in svg
+    # v3 vs v2 = 35 - 30 = +5.000 (worse).
+    assert "+5.000" in svg
+    # v1 has no parent champion with per-entry data (baseline has none),
+    # so its cell hatches.
+    assert 'fill="url(#nodata-stripes)"' in svg
+
+
 # ---------------------------------------------------------------------------
 # Lineage compact
 # ---------------------------------------------------------------------------

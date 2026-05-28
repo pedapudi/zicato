@@ -507,6 +507,13 @@ def _per_entry_delta(g: GenerationView, entry_id: str) -> float | None:
     keyed by id, ``per_entry`` list of dicts, ``board`` mapping. Returns
     ``None`` when no per-entry information is recorded so the renderer
     can mark the cell as 'no data' rather than a fake zero.
+
+    For the on-disk shape the orchestrator currently writes
+    (``{"per_entry": {entry_id: {"drift_loss": x, ...}}}``) this only
+    yields a delta if the cached object explicitly carries one of the
+    delta keys; otherwise the per-entry-against-parent resolver
+    (:func:`_per_entry_delta_against`) must be used so a drift_loss
+    absolute value can be diffed against the parent champion.
     """
     score = g.gen_score
     if not score:
@@ -521,7 +528,7 @@ def _per_entry_delta(g: GenerationView, entry_id: str) -> float | None:
                     v = _coerce_float(ent.get(k))
                     if v is not None:
                         return v
-    # Common shape 2: {"per_entry": [{"entry_id": id, "delta": x}, ...]}.
+    # Common shape 2a: {"per_entry": [{"entry_id": id, "delta": x}, ...]}.
     per_entry = score.get("per_entry")
     if isinstance(per_entry, list):
         for row in per_entry:
@@ -531,7 +538,91 @@ def _per_entry_delta(g: GenerationView, entry_id: str) -> float | None:
                         v = _coerce_float(row.get(k))
                         if v is not None:
                             return v
+    # Common shape 2b: {"per_entry": {entry_id: {"scalar_delta": x, ...}}}.
+    if isinstance(per_entry, dict) and entry_id in per_entry:
+        ent = per_entry[entry_id]
+        if isinstance(ent, dict):
+            for k in ("scalar_delta", "delta", "scalar_score_delta"):
+                if k in ent:
+                    v = _coerce_float(ent.get(k))
+                    if v is not None:
+                        return v
     return None
+
+
+def _per_entry_drift_loss(g: GenerationView, entry_id: str) -> float | None:
+    """Best-effort extract of the per-entry absolute ``drift_loss``.
+
+    The current orchestrator caches per-entry results as a dict keyed
+    by entry id, where each value carries the absolute ``drift_loss``
+    (not a delta against the round's champion). This resolver pulls
+    that absolute number so the heatmap renderer can subtract the
+    parent champion's value and form a delta — the cell semantics the
+    figure encodes (challenger − champion, red = worse, green = better).
+
+    Returns ``None`` when no per-entry drift_loss is recorded so the
+    renderer can hatch the cell rather than fake a zero.
+    """
+    score = g.gen_score
+    if not score:
+        return None
+    # Most common on-disk shape: per_entry as a dict of {id: {...}}.
+    per_entry = score.get("per_entry")
+    if isinstance(per_entry, dict) and entry_id in per_entry:
+        ent = per_entry[entry_id]
+        if isinstance(ent, dict):
+            for k in ("drift_loss", "loss", "loss_mean"):
+                if k in ent:
+                    v = _coerce_float(ent.get(k))
+                    if v is not None:
+                        return v
+    # List shape: a row keyed by entry_id carries the absolute number.
+    if isinstance(per_entry, list):
+        for row in per_entry:
+            if isinstance(row, dict) and str(row.get("entry_id", "")) == entry_id:
+                for k in ("drift_loss", "loss", "loss_mean"):
+                    if k in row:
+                        v = _coerce_float(row.get(k))
+                        if v is not None:
+                            return v
+    # `entries` shape: same idea under a different top-level key.
+    entries = score.get("entries")
+    if isinstance(entries, dict) and entry_id in entries:
+        ent = entries[entry_id]
+        if isinstance(ent, dict):
+            for k in ("drift_loss", "loss", "loss_mean"):
+                if k in ent:
+                    v = _coerce_float(ent.get(k))
+                    if v is not None:
+                        return v
+    return None
+
+
+def _per_entry_delta_against(
+    g: GenerationView,
+    parent: GenerationView | None,
+    entry_id: str,
+) -> float | None:
+    """Resolve one challenger × board-entry cell value for the heatmap.
+
+    First tries the cached delta (``_per_entry_delta``); when that
+    yields ``None``, falls back to ``challenger.drift_loss −
+    parent.drift_loss`` so the cell still surfaces a movement on
+    workspaces whose cached ``gen_score.json`` only carries absolute
+    per-entry losses. Returns ``None`` only when neither the cached
+    delta nor a both-sides drift_loss reading is available — the
+    renderer hatches that cell as 'no data'.
+    """
+    cached = _per_entry_delta(g, entry_id)
+    if cached is not None:
+        return cached
+    if parent is None:
+        return None
+    chal = _per_entry_drift_loss(g, entry_id)
+    champ = _per_entry_drift_loss(parent, entry_id)
+    if chal is None or champ is None:
+        return None
+    return chal - champ
 
 
 def _heatmap_color(value: float, vmax: float) -> str:
@@ -615,12 +706,18 @@ def render_svg_per_board_heatmap(
     width = label_w + cell_w * len(challengers) + 18
     height = header_h + cell_h * len(entries) + 16
 
+    # Build a lineage index so per-challenger cells can be diffed against
+    # the round's champion (parent) when only absolute per-entry losses
+    # are cached.
+    by_id: dict[str, GenerationView] = {g.generation_id: g for g in data.generations}
+
     # Collect all per-entry deltas to pick a symmetric vmax.
     values: list[float] = []
     cell_grid: dict[tuple[int, int], float | None] = {}
     for ci, g in enumerate(challengers):
+        parent = by_id.get(g.parent_generation_id)
         for ri, e in enumerate(entries):
-            v = _per_entry_delta(g, e.id)
+            v = _per_entry_delta_against(g, parent, e.id)
             cell_grid[(ri, ci)] = v
             if v is not None:
                 values.append(v)

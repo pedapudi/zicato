@@ -930,6 +930,11 @@ _PAPER_TYPOGRAPHY = """
   margin: 16px 0 22px;
   padding: 0;
   text-align: left;
+  /* Wide tables (e.g. mutation surface with absolute file paths) scroll
+     horizontally inside their figure rather than overflow the article
+     column or the host dashboard card. */
+  overflow-x: auto;
+  max-width: 100%;
 }
 .paper figure.paper-table > figcaption {
   font-family: var(--paper-font-display);
@@ -948,6 +953,21 @@ _PAPER_TYPOGRAPHY = """
   text-align: left;
   border-top: 1.3px solid var(--paper-text);
   border-bottom: 1.3px solid var(--paper-text);
+  /* Help the table wrap long content cells (paths, hashes) instead of
+     widening past the figure container. ``code`` cells additionally
+     opt into break-anywhere so a long path can break inside a slash
+     run rather than push the column. */
+  table-layout: auto;
+}
+/* Path-like ``<code>`` cells inside paper tables can break anywhere so
+   long absolute paths do not blow out the column width. Scoped to
+   table cells so prose / inline-code outside tables keeps its
+   non-breaking monospaced rendering. */
+.paper figure.paper-table table td code,
+.paper figure.paper-table table th code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 .paper table thead tr { border-bottom: 0.7px solid var(--paper-text); }
 .paper table th, .paper table td {

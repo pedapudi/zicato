@@ -1342,3 +1342,81 @@ def test_inline_fragment_carries_callout_css() -> None:
     """
     fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
     assert ".paper-callout" in fragment
+
+
+def test_paper_table_figure_allows_horizontal_scroll() -> None:
+    """Wide tables (e.g. mutation surface with absolute file paths) must
+    scroll horizontally inside their figure rather than overflow.
+
+    Regression for Task #196: the mutation-surface table can carry
+    absolute file paths that push the table past the article column.
+    The fix is on ``figure.paper-table`` (overflow-x: auto) so the
+    table scrolls inside the figure instead.
+    """
+    fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
+    # The selector + property pair must be present in the inline CSS.
+    # Pull out the .paper figure.paper-table block and assert overflow-x.
+    idx = fragment.find(".paper figure.paper-table {")
+    assert idx >= 0, "missing figure.paper-table CSS block"
+    block_end = fragment.find("}", idx)
+    block = fragment[idx:block_end]
+    assert "overflow-x: auto" in block
+    assert "max-width: 100%" in block
+
+
+def test_paper_table_code_cells_wrap_long_paths() -> None:
+    """Path-like ``<code>`` cells in paper tables wrap at any character.
+
+    Regression for Task #196: long absolute paths emitted inside
+    ``<code>`` cells were rendering as a single unbroken string,
+    pushing the column wider than the figure. The fix scopes
+    ``overflow-wrap: anywhere`` + ``word-break: break-word`` to
+    ``<code>`` cells inside paper tables specifically so prose code
+    spans (which should stay nowrap) are untouched.
+    """
+    fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
+    # The selector must target ``code`` inside paper-table cells.
+    assert ".paper figure.paper-table table td code" in fragment
+    # And the break-anywhere directive lands on that rule.
+    block_start = fragment.find(".paper figure.paper-table table td code")
+    block_open = fragment.find("{", block_start)
+    block_end = fragment.find("}", block_open)
+    block = fragment[block_open:block_end]
+    assert "overflow-wrap: anywhere" in block
+    assert "word-break: break-word" in block
+
+
+def test_dashboard_analysis_host_breaks_long_paths_and_scrolls_tables() -> None:
+    """The dashboard's analysis host scopes the same wrapping/scrolling
+    rules to the embedded analysis fragment.
+
+    The fragment ships its own paper-scoped CSS, but the dashboard's
+    ``.phase0-analysis-host`` wrapper layers a defensive overflow rule
+    in case the fragment is dropped into a future surface that bypasses
+    the paper rules. Regression for Task #196.
+    """
+    css_path = (
+        Path(__file__).resolve().parent.parent
+        / "src"
+        / "zicato"
+        / "dashboard"
+        / "static"
+        / "css"
+        / "components.css"
+    )
+    css = css_path.read_text(encoding="utf-8")
+    # The host wrapper itself scrolls.
+    host_idx = css.find(".phase0-analysis-host {")
+    assert host_idx >= 0
+    host_block = css[host_idx : css.find("}", host_idx)]
+    assert "overflow-x: auto" in host_block
+    # And the host scope cascades the break-anywhere rule onto ``<code>``
+    # cells in the embedded analysis fragment.
+    assert ".phase0-analysis-host .paper figure.paper-table table td code" in css
+    assert ".phase0-analysis-host .paper figure.paper-table table th code" in css
+    # The host-scoped figure overflow rule is also present so the inner
+    # table scrolls inside the dashboard card.
+    scope_idx = css.find(".phase0-analysis-host .paper figure.paper-table {")
+    assert scope_idx >= 0
+    scope_block = css[scope_idx : css.find("}", scope_idx)]
+    assert "overflow-x: auto" in scope_block

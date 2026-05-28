@@ -1510,6 +1510,27 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
    * we only constrain the container so the figures + tables can
    * scroll horizontally if they exceed the card width. */
   overflow-x: auto;
+  /* Defensive: the embedded ``.paper-article`` has a 760px max-width,
+   * but tables with absolute paths can still try to widen the article
+   * if the inner table cell text is unbreakable. Cap the host's own
+   * width to prevent the analysis card from pushing past the epoch
+   * view's column. */
+  max-width: 100%;
+  min-width: 0;
+}
+/* Path-like ``<code>`` cells inside the embedded analysis fragment
+ * break anywhere so absolute file paths wrap inside the host card
+ * rather than overflow. Mirrors the standalone HTML's scoping under
+ * ``.paper figure.paper-table`` so both surfaces wrap consistently. */
+.phase0-analysis-host .paper figure.paper-table table td code,
+.phase0-analysis-host .paper figure.paper-table table th code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+.phase0-analysis-host .paper figure.paper-table {
+  overflow-x: auto;
+  max-width: 100%;
 }
 .phase0-analysis-link {
   font-size: var(--font-size-12);
