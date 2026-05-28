@@ -20,6 +20,7 @@ import { renderPill } from '../components/pill.js';
 import { renderSpine } from '../components/spine.js';
 import { renderHeatmapTable } from '../components/heatmap.js';
 import { renderMetricTile } from '../components/tile.js';
+import { renderLoadingState, renderEmptyState } from '../components/loading.js';
 import { renderHypothesisOutcomeCompact } from '../core/hypothesis_block.js';
 
 const _contractDiffCache = new Map();
@@ -137,7 +138,17 @@ function _renderGoal() {
   if (!node) return;
   clearChildren(node);
   const def = state.epochDef;
-  const goal = (def && typeof def.goal === 'string') ? def.goal.trim() : '';
+  // Still waiting for the epoch contract to land via SSE — say so
+  // explicitly instead of falling through to "(no goal recorded)".
+  if (def == null) {
+    node.appendChild(renderCalloutCard({
+      title: 'Goal',
+      accent: 'default',
+      body: renderLoadingState(),
+    }));
+    return;
+  }
+  const goal = (typeof def.goal === 'string') ? def.goal.trim() : '';
   if (goal) {
     node.appendChild(renderCalloutCard({
       title: 'Goal',
@@ -172,7 +183,7 @@ function _renderContractDiff(epochId) {
   } else {
     const data = _contractDiffCache.get(epochId);
     if (!data) {
-      body = el('p', { class: 'empty' }, ['loading contract diff…']);
+      body = renderLoadingState({ label: 'Loading contract diff' });
     } else if (!data.predecessor_epoch_id) {
       body = el('p', { class: 'empty' },
         ['First epoch in the workspace — no predecessor to diff.']);
@@ -279,10 +290,18 @@ function _renderSpine(epochId) {
   const node = $('phase0-epoch-spine');
   if (!node) return;
   clearChildren(node);
-  const spineNodes = _buildSpineNodes(epochId);
-  const body = spineNodes.length === 0
-    ? el('p', { class: 'empty' }, ['No generations yet.'])
-    : renderSpine({ nodes: spineNodes });
+  // Loading state — the epoch contract has not yet landed via SSE.
+  // Without this guard the spine flashes the empty message even on a
+  // workspace with many generations.
+  let body;
+  if (state.epochDef == null) {
+    body = renderLoadingState({ label: 'Loading spine' });
+  } else {
+    const spineNodes = _buildSpineNodes(epochId);
+    body = spineNodes.length === 0
+      ? renderEmptyState('No generations yet.')
+      : renderSpine({ nodes: spineNodes });
+  }
   node.appendChild(renderCard({
     title: 'Generation spine',
     subtitle: 'Champion lineage left-to-right; rejected generations footnoted below.',
@@ -297,16 +316,20 @@ function _renderEntryHeatmap(epochId, generationIds) {
   if (!node) return;
   clearChildren(node);
   let body;
-  if (!epochId || generationIds.length === 0) {
-    body = el('p', { class: 'empty' }, ['No generations yet.']);
+  // The epoch contract drives whether there are generations at all, so
+  // a null epochDef is a loading state — not a "no generations" empty.
+  if (state.epochDef == null) {
+    body = renderLoadingState({ label: 'Loading per-entry heatmap' });
+  } else if (!epochId || generationIds.length === 0) {
+    body = renderEmptyState('No generations yet.');
   } else {
     const data = _perEntryTrendCache.get(epochId);
     if (!data) {
-      body = el('p', { class: 'empty' }, ['loading per-entry heatmap…']);
+      body = renderLoadingState({ label: 'Loading per-entry heatmap' });
     } else {
       const entries = Array.isArray(data.entries) ? data.entries : [];
       if (entries.length === 0) {
-        body = el('p', { class: 'empty' }, ['No per-entry data yet.']);
+        body = renderEmptyState('No per-entry data yet.');
       } else {
         body = renderHeatmapTable({
           rows: entries.map((e) => e.entry_id),
@@ -341,7 +364,7 @@ function _renderJudgeHeatmap(epochId) {
   else {
     const data = _perJudgeTrendCache.get(epochId);
     if (!data) {
-      body = el('p', { class: 'empty' }, ['loading per-judge heatmap…']);
+      body = renderLoadingState({ label: 'Loading per-judge heatmap' });
     } else {
       const generations = Array.isArray(data.generations) ? data.generations : [];
       const judges = Array.isArray(data.judges) ? data.judges : [];
@@ -383,39 +406,43 @@ function _renderRecentExperiments(epochId) {
   if (!node) return;
   clearChildren(node);
   const def = state.epochDef;
-  const experiments = (def && Array.isArray(def.experiments)) ? def.experiments : [];
   let body;
-  if (experiments.length === 0) {
-    body = el('p', { class: 'empty' }, ['No experiments recorded yet.']);
+  if (def == null) {
+    body = renderLoadingState({ label: 'Loading experiments' });
   } else {
-    body = el('div');
-    body.appendChild(el('p', { class: 'panel-subheader' }, [
-      'Most recent first — proposed-before / outcome-after split, '
-      + 'matching the per-generation view. Open a row for the full block.',
-    ]));
-    // Newest first, cap at six so L1 stays a digest. Use slice + reverse
-    // (not sort) so a stable order with ties is preserved.
-    const recent = experiments.slice(-6).reverse();
-    const list = el('div', { class: 'phase0-exp-list' });
-    for (const exp of recent) {
-      const genId = exp && exp.generation_id ? exp.generation_id : '?';
-      const row = el('div', { class: 'phase0-exp-row' });
-      const header = el('div', { class: 'phase0-exp-row-h' }, [
-        el('span', { class: 'phase0-exp-gen mono' }, ['gen · ', genId]),
-      ]);
-      if (epochId) {
-        header.appendChild(el('a', {
-          class: 'phase0-exp-link',
-          href: phase0Href('generation', { epochId, generationId: genId }),
-        }, ['open generation →']));
+    const experiments = Array.isArray(def.experiments) ? def.experiments : [];
+    if (experiments.length === 0) {
+      body = renderEmptyState('No experiments recorded yet.');
+    } else {
+      body = el('div');
+      body.appendChild(el('p', { class: 'panel-subheader' }, [
+        'Most recent first — proposed-before / outcome-after split, '
+        + 'matching the per-generation view. Open a row for the full block.',
+      ]));
+      // Newest first, cap at six so L1 stays a digest. Use slice + reverse
+      // (not sort) so a stable order with ties is preserved.
+      const recent = experiments.slice(-6).reverse();
+      const list = el('div', { class: 'phase0-exp-list' });
+      for (const exp of recent) {
+        const genId = exp && exp.generation_id ? exp.generation_id : '?';
+        const row = el('div', { class: 'phase0-exp-row' });
+        const header = el('div', { class: 'phase0-exp-row-h' }, [
+          el('span', { class: 'phase0-exp-gen mono' }, ['gen · ', genId]),
+        ]);
+        if (epochId) {
+          header.appendChild(el('a', {
+            class: 'phase0-exp-link',
+            href: phase0Href('generation', { epochId, generationId: genId }),
+          }, ['open generation →']));
+        }
+        row.appendChild(header);
+        row.appendChild(renderHypothesisOutcomeCompact(
+          exp && exp.hypothesis, exp && exp.outcome, { compact: true },
+        ));
+        list.appendChild(row);
       }
-      row.appendChild(header);
-      row.appendChild(renderHypothesisOutcomeCompact(
-        exp && exp.hypothesis, exp && exp.outcome, { compact: true },
-      ));
-      list.appendChild(row);
+      body.appendChild(list);
     }
-    body.appendChild(list);
   }
   node.appendChild(renderCard({
     title: 'Recent experiments',
@@ -428,9 +455,16 @@ function _renderJournal() {
   if (!node) return;
   clearChildren(node);
   const def = state.epochDef;
-  const journal = def && typeof def.journal === 'string' ? def.journal : '';
+  if (def == null) {
+    node.appendChild(renderCard({
+      title: 'Journal preview',
+      body: renderLoadingState({ label: 'Loading journal' }),
+    }));
+    return;
+  }
+  const journal = typeof def.journal === 'string' ? def.journal : '';
   if (!journal.trim()) {
-    node.appendChild(el('p', { class: 'empty' }, ['No journal preview.']));
+    node.appendChild(renderEmptyState('No journal preview.'));
     return;
   }
   node.appendChild(renderCard({

@@ -12,6 +12,7 @@ import { state } from '../core/state.js';
 import { renderCard } from '../components/card.js';
 import { renderMetricTile } from '../components/tile.js';
 import { renderPill, renderEventChip } from '../components/pill.js';
+import { renderLoadingState, renderEmptyState } from '../components/loading.js';
 
 const _runJudgeCache = new Map();
 const _loadingRunJudges = new Set();
@@ -212,12 +213,11 @@ function _renderHeader(params, run) {
         + '/' + (params.entryId || ''),
     );
     if (!header) {
-      body.appendChild(el('p', { class: 'panel-subheader' },
-        ['loading run header…']));
+      body.appendChild(renderLoadingState({ label: 'Loading run header' }));
     } else if (header.run_id == null && header.runtime_ms == null) {
-      body.appendChild(el('p', {
-        style: 'margin:var(--space-3) 0 0; font-size:var(--font-size-12); color:var(--color-text-muted);',
-      }, ['No completed-run metrics recorded for this entry yet.']));
+      body.appendChild(renderEmptyState(
+        'No completed-run metrics recorded for this entry yet.',
+      ));
     } else {
       const completed = el('div', { class: 'tile-strip' });
       const verdictCls = header.pass_fail === true ? 'good'
@@ -282,12 +282,11 @@ function _renderExpectation(epochId, generationId, entryId) {
       epochId + '/' + generationId + '/' + entryId,
     );
     if (!data) {
-      body = el('p', { class: 'empty' }, ['loading expectations…']);
+      body = renderLoadingState({ label: 'Loading expectations' });
     } else {
       const outcomes = Array.isArray(data.outcomes) ? data.outcomes : [];
       if (outcomes.length === 0) {
-        body = el('p', { class: 'empty' },
-          ['(no expectations recorded for this run)']);
+        body = renderEmptyState('(no expectations recorded for this run)');
       } else {
         const tbl = el('table', { class: 'ds-table' });
         tbl.appendChild(el('thead', null, [el('tr', null, [
@@ -337,13 +336,13 @@ function _renderJudges(epochId, generationId, entryId) {
   } else {
     const data = _runJudgeCache.get(epochId + '/' + generationId + '/' + entryId);
     if (!data) {
-      body = el('p', { class: 'empty' }, ['loading per-judge breakdown…']);
+      body = renderLoadingState({ label: 'Loading per-judge breakdown' });
     } else {
       const judges = Array.isArray(data.judges) ? data.judges : [];
       if (judges.length === 0) {
         const msg = data.note ? '(no per-judge data: ' + data.note + ')'
           : '(no per-judge data recorded for this run)';
-        body = el('p', { class: 'empty' }, [msg]);
+        body = renderEmptyState(msg);
       } else {
         const wrap = el('div');
         if (data.run_id) {
@@ -398,7 +397,13 @@ function _renderEvents() {
     ? state.logTail.events.slice(-30) : [];
   let body;
   if (events.length === 0) {
-    body = el('p', { class: 'empty' }, ['No events yet.']);
+    // logEventsPath / logCursor are populated by the first /api/log-tail
+    // response; if neither has landed the event stream is still loading
+    // rather than genuinely empty.
+    const eventsLoaded = state.logEventsPath != null || state.logCursor != null;
+    body = eventsLoaded
+      ? renderEmptyState('No events yet.')
+      : renderLoadingState({ label: 'Loading events' });
   } else {
     const list = el('div', { class: 'events-list' });
     for (const ev of events) {

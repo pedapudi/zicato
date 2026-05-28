@@ -124,20 +124,40 @@ test('breadcrumbSegments adds the run crumb when entry id is present', () => {
 // --- sidebar Live Activity digest ------------------------------------
 
 test('liveActivityDigest only depends on heartbeat structural fields', () => {
-  // Reset state so the digest is deterministic for the assertion.
+  // The first heartbeat lands at this point; the digest baseline is
+  // taken *after* it lands so the test pins the steady-state contract:
+  // re-stamping the heartbeat's churn fields (last_heartbeat, etc.)
+  // must NOT flip the digest. The null→loaded transition is a separate
+  // edge that the sidebar relies on to leave its "Loading…" placeholder.
+  state.heartbeat = { last_heartbeat: '2026-05-27T00:00:00Z' };
+  state.activeRuns = [];
+  state.activeTournament = null;
+  shell.resetSidebarDigest();
+  const before = shell.liveActivityDigest();
+
+  // Re-stamping a timestamp field on the heartbeat does NOT change the
+  // digest — the contract says only the structural fields drive a
+  // repaint.
+  state.heartbeat = { last_heartbeat: '2026-05-27T00:00:05Z' };
+  const after = shell.liveActivityDigest();
+  assertEqual(before, after,
+    'a heartbeat-timestamp-only tick must not flip the digest');
+});
+
+test('liveActivityDigest flips on the first heartbeat (null → loaded)', () => {
+  // The null→loaded edge is precisely what tells the sidebar to swap
+  // its "Loading…" placeholder for the real card. If the digest stayed
+  // identical across this transition the loading text would persist
+  // forever even after the first heartbeat lands.
   state.heartbeat = null;
   state.activeRuns = [];
   state.activeTournament = null;
   shell.resetSidebarDigest();
   const empty = shell.liveActivityDigest();
-
-  // Re-stamping a timestamp field on the heartbeat does NOT change the
-  // digest — the contract says only the structural fields drive a
-  // repaint.
   state.heartbeat = { last_heartbeat: '2026-05-27T00:00:00Z' };
-  const after = shell.liveActivityDigest();
-  assertEqual(empty, after,
-    'a heartbeat-timestamp-only tick must not flip the digest');
+  const loaded = shell.liveActivityDigest();
+  assert(empty !== loaded,
+    'first heartbeat (null → loaded) MUST flip the digest');
 });
 
 test('liveActivityDigest changes when generation_id changes', () => {

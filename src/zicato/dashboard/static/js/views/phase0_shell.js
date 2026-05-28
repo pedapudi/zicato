@@ -12,6 +12,7 @@ import { state } from '../core/state.js';
 import { phase0Href, PHASE0_LEVELS } from './phase0_router.js';
 import { renderLiveIndicator } from '../components/live_indicator.js';
 import { renderPill } from '../components/pill.js';
+import { renderLoadingState, renderEmptyState } from '../components/loading.js';
 
 // How long since the last heartbeat before the run is considered
 // stale. heartbeat.json is rewritten on a short cadence (well under a
@@ -205,6 +206,12 @@ export function showPhase0View(level) {
 export function liveActivityDigest() {
   const hb = state.heartbeat || {};
   return JSON.stringify({
+    // ``heartbeat_loaded`` flips when the first heartbeat lands so the
+    // sidebar can swap the "Loading…" placeholder for the real card on
+    // the first tick after SSE settles. Without it a null→{} transition
+    // (heartbeat arrives carrying no live ids) writes zero DOM and the
+    // sidebar is stuck on "Loading…".
+    heartbeat_loaded: state.heartbeat != null,
     epoch_id: hb.epoch_id || null,
     generation_id: hb.generation_id || null,
     round_index: hb.round_index != null ? hb.round_index : null,
@@ -227,6 +234,7 @@ export function renderSidebarLive() {
   if (digest === _lastLiveDigest) return;
   _lastLiveDigest = digest;
 
+  const heartbeatLoaded = state.heartbeat != null;
   const hb = state.heartbeat || {};
   clearChildren(body);
 
@@ -239,8 +247,15 @@ export function renderSidebarLive() {
   ]);
   body.appendChild(header);
 
+  if (!heartbeatLoaded) {
+    // SSE has not yet delivered the first heartbeat. Saying "No active
+    // run." here is misleading — the dashboard simply has not received
+    // the first tick yet. Show the explicit loading placeholder.
+    body.appendChild(renderLoadingState({ label: 'Loading live activity' }));
+    return;
+  }
   if (!hb.epoch_id && !hb.generation_id) {
-    body.appendChild(el('p', { class: 'empty' }, ['No active run.']));
+    body.appendChild(renderEmptyState('No active run.'));
     return;
   }
 

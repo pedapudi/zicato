@@ -12,6 +12,7 @@ import { state } from '../core/state.js';
 import { renderCard } from '../components/card.js';
 import { renderPill, renderInlinePill } from '../components/pill.js';
 import { renderMetricTile } from '../components/tile.js';
+import { renderLoadingState, renderEmptyState } from '../components/loading.js';
 import { renderHypothesisOutcomeCompact } from '../core/hypothesis_block.js';
 
 const _perJudgeCache = new Map();
@@ -94,8 +95,14 @@ function _renderHypothesis(exp) {
   if (!node) return;
   clearChildren(node);
   let body;
-  if (!exp) {
-    body = el('p', { class: 'empty' }, ['No hypothesis recorded.']);
+  // state.epochDef == null → waiting for SSE to deliver the epoch
+  // contract that holds this generation's experiment. Without the
+  // distinction the user sees "No hypothesis recorded." on every
+  // generation page while the connection is still settling.
+  if (state.epochDef == null) {
+    body = renderLoadingState({ label: 'Loading hypothesis' });
+  } else if (!exp) {
+    body = renderEmptyState('No hypothesis recorded.');
   } else {
     // L2 is one experiment per page, so we use the long-form mode.
     // L1's recent-experiments list uses the same helper in compact mode
@@ -117,6 +124,12 @@ function _renderPatches(exp) {
   const node = $('phase0-gen-patches');
   if (!node) return;
   clearChildren(node);
+  let body;
+  if (state.epochDef == null) {
+    body = renderLoadingState({ label: 'Loading patches' });
+    node.appendChild(renderCard({ title: 'Patches', body }));
+    return;
+  }
   const patches = exp && exp.patches;
   let entries = [];
   if (patches && typeof patches === 'object' && !Array.isArray(patches)) {
@@ -124,9 +137,8 @@ function _renderPatches(exp) {
   } else if (Array.isArray(patches)) {
     entries = patches.map((p, i) => ({ id: (p && p.mutation_id) || ('p' + i), patch: p }));
   }
-  let body;
   if (entries.length === 0) {
-    body = el('p', { class: 'empty' }, ['No patches recorded.']);
+    body = renderEmptyState('No patches recorded.');
   } else {
     const tbl = el('table', { class: 'ds-table patches-list' });
     tbl.appendChild(el('thead', null, [el('tr', null, [
@@ -167,12 +179,13 @@ function _renderEntries(epochId, generationId) {
   } else {
     const data = _perEntryCache.get(epochId + '/' + generationId);
     if (!data) {
-      body = el('p', { class: 'empty' }, ['loading per-entry breakdown…']);
+      body = renderLoadingState({ label: 'Loading per-entry breakdown' });
     } else {
       const entries = Array.isArray(data.entries) ? data.entries : [];
       if (entries.length === 0) {
-        body = el('p', { class: 'empty' },
-          [data.note ? '(no per-entry data: ' + data.note + ')' : 'No per-entry data recorded.']);
+        body = renderEmptyState(
+          data.note ? '(no per-entry data: ' + data.note + ')' : 'No per-entry data recorded.',
+        );
       } else {
         const wrap = el('div');
         if (data.tournament_id) {
@@ -236,13 +249,13 @@ function _renderJudges(epochId, generationId) {
   } else {
     const data = _perJudgeCache.get(epochId + '/' + generationId);
     if (!data) {
-      body = el('p', { class: 'empty' }, ['loading per-judge breakdown…']);
+      body = renderLoadingState({ label: 'Loading per-judge breakdown' });
     } else {
       const judges = Array.isArray(data.judges) ? data.judges : [];
       if (judges.length === 0) {
         const msg = data.note ? '(no per-judge data: ' + data.note + ')'
           : '(no per-judge data recorded for this generation)';
-        body = el('p', { class: 'empty' }, [msg]);
+        body = renderEmptyState(msg);
       } else {
         const tbl = el('table', { class: 'ds-table' });
         tbl.appendChild(el('thead', null, [el('tr', null, [
@@ -279,8 +292,10 @@ function _renderCompare(exp) {
   clearChildren(node);
   // The compare slot now carries the verdict tile strip at the top of L2.
   let body;
-  if (!exp) {
-    body = el('p', { class: 'empty' }, ['No experiment recorded.']);
+  if (state.epochDef == null) {
+    body = renderLoadingState({ label: 'Loading verdict' });
+  } else if (!exp) {
+    body = renderEmptyState('No experiment recorded.');
   } else {
     const out = exp.outcome || {};
     const decision = (out.tournament_decision || out.decision || '—').toString().toLowerCase();

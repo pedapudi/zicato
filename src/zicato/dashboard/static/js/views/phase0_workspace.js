@@ -17,6 +17,7 @@ import { renderPill } from '../components/pill.js';
 import { renderSparkline } from '../components/sparkline.js';
 import { renderLiveIndicator } from '../components/live_indicator.js';
 import { renderMetricTile } from '../components/tile.js';
+import { renderLoadingState, renderEmptyState } from '../components/loading.js';
 
 // Cached workspace payload (per-tab; refetched when the L0 view opens).
 let _workspaceCache = null;
@@ -63,7 +64,11 @@ function _hasLiveHeartbeat() {
 // -- Environment + Live Activity ---------------------------------------
 function _renderEnvKv() {
   const ws = state.workspace;
-  if (!ws) return el('p', { class: 'empty' }, ['No environment loaded.']);
+  // null/undefined → still waiting for the SSE snapshot or /api/environment
+  // to land. Saying "No environment loaded." here is misleading; it
+  // implies the workspace is empty when in fact the dashboard simply
+  // has not seen the first heartbeat yet.
+  if (ws == null) return renderLoadingState({ label: 'Loading environment' });
   if (typeof ws === 'string') {
     return el('div', { class: 'kv-list' }, [
       el('div', { class: 'kv-list-key' }, ['root']),
@@ -113,6 +118,10 @@ function _renderEnvSection() {
   // + the live-activity panel + the trend (so we keep three slots).
   // For env we render a card-wrapped kv block.
   const live = _hasLiveHeartbeat();
+  // Heartbeat has not arrived yet — distinct from "heartbeat arrived
+  // but reports no active run". The latter is genuinely empty; the
+  // former is loading.
+  const heartbeatLoading = state.heartbeat == null;
   const hb = state.heartbeat || {};
   const sparkPts = (_workspaceCache && Array.isArray(_workspaceCache.sparkline))
     ? _workspaceCache.sparkline : [];
@@ -125,7 +134,9 @@ function _renderEnvSection() {
     renderLiveIndicator({ live, label: live ? 'live' : 'idle' }),
     renderPill(live ? 'active' : 'no run', live ? 'live' : 'stale'),
   ]));
-  if (live) {
+  if (heartbeatLoading) {
+    liveChildren.push(renderLoadingState({ label: 'Loading live activity' }));
+  } else if (live) {
     if (hb.epoch_id) {
       liveChildren.push(el('div', { class: 'phase0-live-line' }, [
         el('span', { class: 'phase0-live-line-label' }, ['epoch']),
@@ -150,7 +161,7 @@ function _renderEnvSection() {
       }, ['jump to current epoch →']));
     }
   } else {
-    liveChildren.push(el('p', { class: 'empty' }, ['No active run.']));
+    liveChildren.push(renderEmptyState('No active run.'));
   }
   if (sparkValues.length >= 2) {
     liveChildren.push(el('div', {
@@ -179,10 +190,16 @@ function _renderEnvSection() {
 
 // -- Epoch lineage -----------------------------------------------------
 function _renderLineageTimeline() {
-  const payload = _workspaceCache || {};
+  // The workspace cache is the source of truth for the lineage. Null
+  // means the /api/workspace fetch is still in flight; an empty epochs
+  // array means the workspace is loaded but actually has no epochs.
+  if (_workspaceCache == null) {
+    return renderLoadingState({ label: 'Loading lineage' });
+  }
+  const payload = _workspaceCache;
   const rows = Array.isArray(payload.epochs) ? payload.epochs : [];
   if (rows.length === 0) {
-    return el('p', { class: 'empty' }, ['No epochs recorded.']);
+    return renderEmptyState('No epochs recorded.');
   }
   // Build a child-of map so the lineage column can carry an "→ <child>"
   // arrow (the Phase 1 test asserts this exact text).
@@ -241,10 +258,13 @@ function _renderLineageSection() {
 
 // -- Cross-epoch trend -------------------------------------------------
 function _renderTrendBody() {
-  const payload = _workspaceCache || {};
+  if (_workspaceCache == null) {
+    return renderLoadingState({ label: 'Loading trend' });
+  }
+  const payload = _workspaceCache;
   const pts = Array.isArray(payload.sparkline) ? payload.sparkline : [];
   if (pts.length === 0) {
-    return el('p', { class: 'empty' }, ['No scalar history yet.']);
+    return renderEmptyState('No scalar history yet.');
   }
   const values = pts.map((p) => p && p.scalar)
     .filter((v) => typeof v === 'number' && isFinite(v));

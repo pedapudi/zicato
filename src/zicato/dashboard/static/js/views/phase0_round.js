@@ -10,6 +10,7 @@ import { fetchJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import { renderCard, renderCalloutCard } from '../components/card.js';
 import { renderPill } from '../components/pill.js';
+import { renderLoadingState, renderEmptyState } from '../components/loading.js';
 
 const _entriesCache = new Map();
 const _judgeCmpCache = new Map();
@@ -153,6 +154,21 @@ function _renderVs(params, matchup) {
     }));
     return;
   }
+  // Both sides of the matchup need per-entry data to render the
+  // pass-rate / drift-loss columns. If neither side has landed yet,
+  // call out the loading state at the top-level card instead of
+  // letting it fall through to the all-zero round-side card.
+  const epochKey = (state.epochDef && state.epochDef.epoch_id) || params.epochId;
+  const champId0 = (params && params.championId) || (matchup && matchup.champion);
+  const chalId0  = (params && params.challengerId) || (matchup && matchup.challenger);
+  if (champId0 && chalId0
+      && !_entriesCache.get(epochKey + '/' + champId0 + '->' + chalId0)) {
+    node.appendChild(renderCard({
+      title: 'Matchup',
+      body: renderLoadingState({ label: 'Loading matchup' }),
+    }));
+    return;
+  }
   const champId = (params && params.championId) || (matchup && matchup.champion) || '—';
   const chalId  = (params && params.challengerId) || (matchup && matchup.challenger) || '—';
   const cached = _entriesCache.get(
@@ -204,7 +220,7 @@ function _renderEntries(epochId, champId, chalId) {
   } else {
     const cached = _entriesCache.get(epochId + '/' + champId + '->' + chalId);
     if (!cached) {
-      body = el('p', { class: 'empty' }, ['loading per-entry comparison…']);
+      body = renderLoadingState({ label: 'Loading per-entry comparison' });
     } else {
       const champEntries = (cached.champion && Array.isArray(cached.champion.entries))
         ? cached.champion.entries : [];
@@ -222,7 +238,7 @@ function _renderEntries(epochId, champId, chalId) {
         }
       }
       if (byEntry.size === 0) {
-        body = el('p', { class: 'empty' }, ['No per-entry data recorded for this round.']);
+        body = renderEmptyState('No per-entry data recorded for this round.');
       } else {
         const wrap = el('div');
         if (cached.challenger && cached.challenger.tournament_id) {
@@ -295,13 +311,13 @@ function _renderJudges(epochId, champId, chalId) {
   } else {
     const data = _judgeCmpCache.get(epochId + '/' + champId + '->' + chalId);
     if (!data) {
-      body = el('p', { class: 'empty' }, ['loading per-judge comparison…']);
+      body = renderLoadingState({ label: 'Loading per-judge comparison' });
     } else {
       const judges = Array.isArray(data.judges) ? data.judges : [];
       if (judges.length === 0) {
         const msg = data.note ? '(no per-judge data: ' + data.note + ')'
           : '(no per-judge data recorded for either side)';
-        body = el('p', { class: 'empty' }, [msg]);
+        body = renderEmptyState(msg);
       } else {
         const wrap = el('div');
         if (data.primary_driver) {
@@ -355,10 +371,20 @@ function _renderDecision(matchup) {
   const node = $('phase0-round-decision');
   if (!node) return;
   clearChildren(node);
+  // The bracket lives in state.bracket; until it lands we say "Loading",
+  // not "No decision yet." — the latter implies the bracket exists and
+  // has no entry, which is not the loading case.
+  if (state.bracket == null) {
+    node.appendChild(renderCard({
+      title: 'Decision',
+      body: renderLoadingState({ label: 'Loading decision' }),
+    }));
+    return;
+  }
   if (!matchup) {
     node.appendChild(renderCard({
       title: 'Decision',
-      body: el('p', { class: 'empty' }, ['No decision yet.']),
+      body: renderEmptyState('No decision yet.'),
     }));
     return;
   }
