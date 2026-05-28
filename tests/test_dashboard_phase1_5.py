@@ -289,8 +289,31 @@ def test_run_header_degrades_when_loss_json_missing(tmp_path: Path) -> None:
         "plan_revisions",
         "wall_clock_budget_exceeded",
         "run_id",
+        "adk_session_id",
     ):
         assert header[key] is None
+
+
+def test_run_header_surfaces_adk_session_id(tmp_path: Path) -> None:
+    """``adk_session_id`` flows from ``loss.json`` into the header so the
+    L4 renderer can deep-link into harmonograf without a second roundtrip
+    to ``events.jsonl`` (which the SSE hot path forbids touching)."""
+    ws = tmp_path / ".zicato"
+    (ws / "runtime").mkdir(parents=True)
+    epoch_id = "fake"
+    run_dir = ws / "epochs" / epoch_id / "generations" / "v0" / "runs" / "x"
+    run_dir.mkdir(parents=True)
+    _write_json(
+        run_dir / "loss.json",
+        {
+            "run_id": "r1",
+            "drift_loss": 0.1,
+            "adk_session_id": "adk-session-abc-123",
+        },
+    )
+    header = build_run_header(WorkspacePaths(ws), epoch_id, "v0", "x")
+    assert header["adk_session_id"] == "adk-session-abc-123"
+    assert header["run_id"] == "r1"
 
 
 def test_run_header_skips_nested_loss_fields(tmp_path: Path) -> None:

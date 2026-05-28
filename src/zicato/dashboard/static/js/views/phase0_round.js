@@ -11,6 +11,7 @@ import { state } from '../core/state.js';
 import { renderCard, renderCalloutCard } from '../components/card.js';
 import { renderPill } from '../components/pill.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
+import { harmonografGenLink } from '../core/harmonograf.js';
 
 const _entriesCache = new Map();
 const _judgeCmpCache = new Map();
@@ -126,9 +127,20 @@ function _renderRoundSide(label, id, entries, opts) {
   if (label === 'champion') cls.push('round-side-champion');
   else cls.push('round-side-challenger');
   if (o.rejected) cls.push('is-rejected');
+  // A round side aggregates many per-entry runs (one per board entry).
+  // There is no single session id for the side as a whole, so we land
+  // on harmonograf's base URL scoped by the generation id via the
+  // gen-link's aria-label. Renders nothing when no harmonograf_url is
+  // configured, and only when this side has a real id.
+  const hgLink = id ? harmonografGenLink(id) : null;
+  const idRow = el('div', { class: 'round-side-id mono' }, [
+    id || '—',
+    hgLink ? ' ' : null,
+    hgLink,
+  ].filter(Boolean));
   return el('div', { class: cls.join(' ') }, [
     el('div', { class: 'round-side-label' }, [label]),
-    el('div', { class: 'round-side-id mono' }, [id || '—']),
+    idRow,
     el('div', { class: 'round-side-stats' }, [
       el('div', { class: 'round-side-stat' }, [
         el('div', { class: 'round-side-stat-label' }, ['pass rate']),

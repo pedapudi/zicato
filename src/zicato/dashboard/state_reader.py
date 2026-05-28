@@ -2956,6 +2956,12 @@ def build_run_header(
 
     * ``drift_loss``, ``pass_fail``, ``run_id``.
 
+    Also surfaces the ADK session id persisted in ``loss.json`` by the
+    reducer, so the L4 header can deep-link into harmonograf at the
+    run's execution trace without a second roundtrip to ``events.jsonl``:
+
+    * ``adk_session_id`` — the goldfive/ADK session id for this run.
+
     Every field defaults to ``None`` when ``loss.json`` is absent or
     missing the key; the response shape is stable so the L4 renderer
     never branches on whether the file exists.
@@ -2970,6 +2976,7 @@ def build_run_header(
         "plan_revisions",
         "wall_clock_budget_exceeded",
         "run_id",
+        "adk_session_id",
     )
     header: dict[str, Any] = {
         "epoch_id": epoch_id,

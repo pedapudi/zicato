@@ -23,6 +23,7 @@ import { renderSpine } from '../components/spine.js';
 import { renderHeatmapTable } from '../components/heatmap.js';
 import { renderMetricTile } from '../components/tile.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
+import { harmonografLink } from '../core/harmonograf.js';
 
 const _contractDiffCache = new Map();
 const _loadingDiff = new Set();
@@ -363,11 +364,28 @@ function _renderSpine(epochId) {
       ? renderEmptyState('No generations yet.')
       : renderSpine({ nodes: spineNodes });
   }
+  // When there is a live run on THIS epoch, surface a harmonograf
+  // deep-link as a card action — the spine doubles as the L1 live
+  // callout. Picks the first active run as the representative session;
+  // degrades to the bare base URL when no run has surfaced an
+  // adk_session_id yet, and renders nothing when no harmonograf_url is
+  // configured.
+  const hb = state.heartbeat || {};
+  const liveHere = hb.epoch_id === epochId && !!hb.generation_id;
+  let actions = null;
+  if (liveHere) {
+    const activeRunList = Array.isArray(state.activeRuns) ? state.activeRuns : [];
+    const firstRun = activeRunList.length > 0 ? activeRunList[0] : null;
+    actions = firstRun
+      ? harmonografLink(firstRun, 'Open in harmonograf')
+      : harmonografLink({}, 'Open in harmonograf');
+  }
   node.appendChild(renderCard({
     title: 'Generation spine',
     subtitle: 'Champion lineage left-to-right; rejected challengers branch off their parent.',
     accent: 'accent',
     body,
+    actions,
   }));
 }
 

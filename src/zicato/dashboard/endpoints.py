@@ -268,6 +268,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                     "plan_revisions": None,
                     "wall_clock_budget_exceeded": None,
                     "run_id": None,
+                    "adk_session_id": None,
                 },
                 status_code=200,
             )

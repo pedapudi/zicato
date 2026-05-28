@@ -13,6 +13,7 @@ import { renderCard } from '../components/card.js';
 import { renderMetricTile } from '../components/tile.js';
 import { renderPill, renderEventChip } from '../components/pill.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
+import { harmonografLink } from '../core/harmonograf.js';
 
 const _runJudgeCache = new Map();
 const _loadingRunJudges = new Set();
@@ -453,11 +454,30 @@ function _renderHeader(params, run) {
           style: 'margin:var(--space-2) 0 0; font-size:var(--font-size-11); color:var(--color-text-muted); font-family:var(--font-mono);',
         }, ['run_id · ', header.run_id]));
       }
+      // Harmonograf deep-link for the completed run — uses the
+      // adk_session_id surfaced by loss.json (via build_run_header); the
+      // helper falls back to the bare harmonograf base url when the id
+      // is absent. Renders nothing when no harmonograf_url is configured.
+      const hgLink = harmonografLink(header, 'Open in harmonograf');
+      if (hgLink) {
+        body.appendChild(el('p', {
+          style: 'margin:var(--space-2) 0 0; font-size:var(--font-size-12);',
+        }, [hgLink]));
+      }
     }
   } else if (run.status === 'running') {
     body.appendChild(el('div', {
       style: 'margin-top:var(--space-3); display:flex; gap:var(--space-2);',
     }, [renderPill('live', 'live')]));
+    // For live runs the active-run record may carry adk_session_id once
+    // the worker has surfaced it; degrades gracefully to the bare base
+    // url, and renders nothing if no harmonograf_url is configured.
+    const hgLink = harmonografLink(run, 'Open in harmonograf');
+    if (hgLink) {
+      body.appendChild(el('p', {
+        style: 'margin:var(--space-2) 0 0; font-size:var(--font-size-12);',
+      }, [hgLink]));
+    }
   }
   node.appendChild(renderCard({
     title: 'Run header',

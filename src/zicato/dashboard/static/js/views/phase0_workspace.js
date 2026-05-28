@@ -18,6 +18,7 @@ import { renderSparkline } from '../components/sparkline.js';
 import { renderLiveIndicator } from '../components/live_indicator.js';
 import { renderMetricTile } from '../components/tile.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
+import { harmonografLink, harmonografBase } from '../core/harmonograf.js';
 
 // Cached workspace payload (per-tab; refetched when the L0 view opens).
 let _workspaceCache = null;
@@ -159,6 +160,19 @@ function _renderEnvSection() {
         class: 'phase0-live-jump',
         href: phase0Href('epoch', { epochId: hb.epoch_id }),
       }, ['jump to current epoch →']));
+    }
+    // Harmonograf deep-link for the live activity — pick the first
+    // active run as the representative session. Falls back to the bare
+    // base url when no run has surfaced its adk_session_id yet.
+    const activeRunList = Array.isArray(state.activeRuns) ? state.activeRuns : [];
+    const firstRun = activeRunList.length > 0 ? activeRunList[0] : null;
+    const hgLink = firstRun
+      ? harmonografLink(firstRun, 'Open in harmonograf')
+      : harmonografLink({}, 'Open in harmonograf');
+    if (hgLink) {
+      liveChildren.push(el('div', {
+        style: 'margin-top:var(--space-2); font-size:var(--font-size-12);',
+      }, [hgLink]));
     }
   } else {
     liveChildren.push(renderEmptyState('No active run.'));
