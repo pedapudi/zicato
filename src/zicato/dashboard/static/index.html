@@ -201,8 +201,15 @@
             class="phase0-view phase0-view-generation hidden"
             data-level="generation">
           <h2>Generation</h2>
+          <!-- Hero: decision pill, delta tiles, verdict line. Owns the
+               "what happened" answer; no other card duplicates it.
+               (Slot id kept as "compare" for back-compat with tests.) -->
+          <div id="phase0-gen-compare" class="phase0-gen-compare"
+              aria-label="Generation hero (decision + deltas)">
+            <p class="empty">No verdict yet.</p>
+          </div>
           <div id="phase0-gen-hypothesis" class="phase0-gen-hypothesis"
-              aria-label="Hypothesis (proposed before / outcome after)">
+              aria-label="Hypothesis · Alignment vs Outcome">
             <p class="empty">No hypothesis recorded.</p>
           </div>
           <div id="phase0-gen-patches" class="phase0-gen-patches"
@@ -216,10 +223,6 @@
           <div id="phase0-gen-judges" class="phase0-gen-judges"
               aria-label="Per-judge breakdown">
             <p class="empty">No per-judge data yet.</p>
-          </div>
-          <div id="phase0-gen-compare" class="phase0-gen-compare"
-              aria-label="Compare-to-v? picker">
-            <p class="empty">No comparison target selected.</p>
           </div>
         </section>
 

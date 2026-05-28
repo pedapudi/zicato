@@ -288,8 +288,11 @@ test('renderPhase0Generation populates per-judge and per-entry tables', () => {
       const et = document.getElementById('phase0-gen-entries').textContent;
       assert(et.includes('entry_alpha'),
         `per-entry row must render; got: ${et.slice(0, 200)}`);
-      assert(et.includes('e0:v0->v1'),
-        'tournament_id FK should surface on the per-entry table');
+      // The redundant "tournament · e0:v0->v1" header line was dropped in
+      // the L2 redesign — the "vs <champion>" column already conveys the
+      // matchup context.
+      assert(et.includes('vs v0'),
+        `vs-champion delta column header must render; got: ${et.slice(0, 200)}`);
       globalThis.fetch = origFetch;
       resolve();
     }, 20);

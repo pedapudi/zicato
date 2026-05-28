@@ -241,9 +241,15 @@ test('renderPhase0Epoch shows empty state when no experiments yet', () => {
   }
 });
 
-// --- L2 generation: full mode through the shared helper --------------
+// --- L2 generation: Hypothesis · Alignment two-column block ----------
+//
+// The L2 redesign (Task #200) replaced the shared "Proposed (before) /
+// Outcome (after)" helper with a custom Hypothesis · Alignment block.
+// The hypothesis column still owns the operator's prose; the alignment
+// column compares predicted dimensions to the actual outcome. The
+// outcome metric numbers live in the hero card above, not here.
 
-test('renderPhase0Generation hypothesis block uses the full Proposed/Outcome helper', () => {
+test('renderPhase0Generation hypothesis card renders Hypothesis + Alignment columns', () => {
   installNode('phase0-gen-hypothesis');
   installNode('phase0-gen-patches');
   installNode('phase0-gen-entries');
@@ -258,13 +264,15 @@ test('renderPhase0Generation hypothesis block uses the full Proposed/Outcome hel
   try {
     generation.renderPhase0Generation({ epochId: 'e0', generationId: 'v3' });
     const text = document.getElementById('phase0-gen-hypothesis').textContent;
-    assert(text.includes('Proposed (before)') && text.includes('Outcome (after)'),
-      `split labels must render; got: ${text.slice(0, 200)}`);
-    // Full mode: risks + modulating + ran_at MUST render on L2.
-    assert(text.includes('Risks.'),
-      `L2 full must render risks lead; got: ${text.slice(0, 400)}`);
-    assert(text.includes('researcher_instruction'),
-      'L2 full must render modulating site');
+    assert(text.includes('Hypothesis') && text.includes('Alignment vs Outcome'),
+      `both column headers must render; got: ${text.slice(0, 200)}`);
+    // The Hypothesis column owns the operator's risks block (relocated
+    // into the alignment column at the bottom). Modulating sites no
+    // longer surface here — they are the same data as the Patches card.
+    assert(text.includes('Risks (operator-stated)'),
+      `risks block must render in the alignment column; got: ${text.slice(0, 400)}`);
+    assert(!text.includes('Modulating.'),
+      `redundant Modulating line must NOT render — it duplicates Patches; got: ${text.slice(0, 200)}`);
   } finally {
     restoreFetch();
   }

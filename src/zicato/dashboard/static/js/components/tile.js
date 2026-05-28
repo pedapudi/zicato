@@ -57,6 +57,11 @@ function _fmtDelta(delta) {
  *   value      — primary value, will be stringified
  *   unit       — optional unit suffix ("%", "ms", "s")
  *   delta      — optional secondary value (number or pre-formatted string)
+ *   direction  — optional explicit arrow override: "up" | "down" | "flat".
+ *                When set, the rendered delta text is shown verbatim
+ *                (no sign parsing). Useful when the caller wants the
+ *                delta-line to be a human-readable verdict like "worse"
+ *                without a leading sign char.
  *   sentiment  — "good" | "bad" | "flat" | "neutral" — colours the delta
  *   accent     — when truthy, the tile picks up the accent color treatment
  *   size       — "sm" | "md" | "lg" — controls value font size
@@ -83,7 +88,7 @@ export function renderMetricTile(opts) {
   ]);
   let deltaNode = null;
   if (delta != null) {
-    const arrow = _arrow(o.delta);
+    const arrow = o.direction ? (ARROWS[o.direction] || ARROWS.flat) : _arrow(o.delta);
     const sentClass = sentiment ? SENTIMENT_CLASS[sentiment] : '';
     deltaNode = el('div', { class: 'tile-delta ' + (sentClass || '') }, [
       el('span', { class: 'tile-delta-arrow' }, [arrow]),

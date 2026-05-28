@@ -1663,6 +1663,198 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
 .phase0-analysis-link:hover { text-decoration: underline; }
 
 /* =====================================================================
+ * L2 generation page — holistic redesign (Task #200)
+ * ===================================================================== */
+.gen-hero-card { padding: var(--space-5); }
+.gen-hero-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.gen-hero-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.gen-hero-title {
+  font-size: var(--font-size-22);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+.gen-hero-lineage {
+  margin: 0;
+  font-size: var(--font-size-13);
+  color: var(--color-text-muted);
+}
+.gen-hero-parent {
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  text-decoration: none;
+}
+.gen-hero-parent:hover { text-decoration: underline; }
+.gen-hero-tiles { /* inherits .tile-strip */ }
+.gen-hero-summary {
+  margin: 0;
+  font-size: var(--font-size-14);
+  color: var(--color-text-primary);
+  line-height: var(--line-relaxed);
+}
+.gen-hero-caveat {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-12);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Hypothesis · Alignment two-column block. */
+.gen-hyp-block {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+@media (max-width: 960px) {
+  .gen-hyp-block { grid-template-columns: 1fr; }
+}
+.gen-hyp-col, .gen-align-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.gen-hyp-block-h {
+  font-size: var(--font-size-11);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-2);
+}
+.gen-hyp-sub-h {
+  font-size: var(--font-size-11);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  margin: var(--space-3) 0 var(--space-1);
+}
+.gen-hyp-core {
+  margin: 0;
+  font-size: var(--font-size-15);
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-snug);
+}
+.gen-hyp-line {
+  margin: var(--space-1) 0;
+  font-size: var(--font-size-13);
+  color: var(--color-text-secondary);
+  line-height: var(--line-relaxed);
+}
+.gen-hyp-predicted {
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--font-size-13);
+  color: var(--color-text-secondary);
+  line-height: var(--line-relaxed);
+}
+.gen-align-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.gen-align-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+}
+.gen-align-label {
+  font-size: var(--font-size-12);
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+.gen-align-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px var(--space-2);
+  font-size: var(--font-size-12);
+}
+.gen-align-kv-key {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-11);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.gen-align-kv-val { color: var(--color-text-primary); }
+.gen-align-verdict {
+  font-size: var(--font-size-12);
+  font-family: var(--font-mono);
+}
+.gen-align-verdict.good { color: var(--color-success-fg); }
+.gen-align-verdict.bad  { color: var(--color-error-fg); }
+.gen-align-verdict.flat { color: var(--color-text-muted); }
+.gen-align-glyph {
+  font-size: var(--font-size-14);
+  font-weight: var(--weight-semibold);
+}
+.gen-align-risks {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-13);
+  color: var(--color-text-secondary);
+}
+.gen-align-risks p { margin: 0; }
+
+/* Patches single inline form. */
+.gen-patch-inline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.gen-patch-inline-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.gen-patch-inline-rationale {
+  margin: 0;
+  font-size: var(--font-size-13);
+  color: var(--color-text-secondary);
+  line-height: var(--line-relaxed);
+}
+
+/* Per-entry table. */
+.gen-entries-table .gen-entries-link {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.gen-entries-table .gen-entries-link:hover { text-decoration: underline; }
+.gen-entries-row { cursor: default; }
+.gen-entry-delta-good { color: var(--color-success-fg); }
+.gen-entry-delta-bad  { color: var(--color-error-fg); }
+.gen-entry-delta-flat { color: var(--color-text-muted); }
+.gen-entries-hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-11);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* Per-judge inline form. */
+.gen-judge-inline {
+  font-size: var(--font-size-13);
+  color: var(--color-text-secondary);
+  padding: var(--space-1) 0;
+}
+.gen-judge-inline .gen-judge-name {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+/* =====================================================================
  * Make the legacy app shell continue to look OK if user uses ?legacy=1
  * but the new shell controls the look here.
  * ===================================================================== */
