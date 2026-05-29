@@ -1,12 +1,23 @@
 // views/phase0_workspace.js — L0 (workspace-level) view.
 //
-// The cross-environment overview: identity / environment card, a live-
-// activity card with a liveness indicator, an epoch lineage timeline,
-// and a cross-epoch best-scalar sparkline. The page is composed from
-// the design-system components (card, tile, pill, sparkline,
-// live indicator). Each section renders INTO its pre-existing slot
-// (`phase0-workspace-env` etc.) so tests reading those slots see the
-// expected text; the slots themselves were defined in index.html.
+// The cross-environment overview: identity / environment card, a
+// "Workspace at a glance" tile strip with workspace-wide totals, an
+// epoch lineage timeline, and a cross-epoch best-scalar sparkline.
+//
+// The in-content Live Activity card was retired once the redesigned
+// sidebar (post-#198) made Live Activity a persistent fixture of the
+// left rail. L0 main is now purely a workspace-level summary; the
+// sidebar carries the live-run state across every level. Each section
+// renders INTO its pre-existing slot (``phase0-workspace-env`` etc.)
+// so tests reading those slots see the expected text; the slots
+// themselves were defined in index.html.
+//
+// Layout (post-dedup):
+//   * env slot — Environment card (left) + "Workspace at a glance"
+//     totals tile (right) in a 2-up strip.
+//   * lineage slot — full-width Epoch lineage card.
+//   * sparkline slot — full-width Cross-epoch trend card with a wider
+//     sparkline (the freed vertical space lets the curve breathe).
 
 import { $, el, clearChildren } from '../core/dom.js';
 import { fetchJson } from '../core/api.js';
@@ -15,10 +26,8 @@ import { phase0Href } from './phase0_router.js';
 import { renderCard } from '../components/card.js';
 import { renderPill } from '../components/pill.js';
 import { renderSparkline } from '../components/sparkline.js';
-import { renderLiveIndicator } from '../components/live_indicator.js';
 import { renderMetricTile } from '../components/tile.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
-import { harmonografLink, harmonografBase } from '../core/harmonograf.js';
 
 // Cached workspace payload (per-tab; refetched when the L0 view opens).
 let _workspaceCache = null;
@@ -55,14 +64,7 @@ function _fmtScalar(v) {
   return v.toFixed(3);
 }
 
-function _hasLiveHeartbeat() {
-  const hb = state.heartbeat;
-  if (!hb || typeof hb !== 'object') return false;
-  if (!hb.epoch_id && !hb.generation_id) return false;
-  return true;
-}
-
-// -- Environment + Live Activity ---------------------------------------
+// -- Environment + workspace totals -----------------------------------
 function _renderEnvKv() {
   const ws = state.workspace;
   // null/undefined → still waiting for the SSE snapshot or /api/environment
@@ -110,93 +112,86 @@ function _renderEnvKv() {
   return wrap;
 }
 
+// "Workspace at a glance" — a tile strip with workspace-wide totals
+// computed from the lineage payload. Replaces the in-content Live
+// Activity card that used to occupy this column; the sidebar owns
+// live-run state, so L0 main is now strictly summary.
+function _renderGlanceBody() {
+  if (_workspaceCache == null) {
+    return renderLoadingState({ label: 'Loading totals' });
+  }
+  const payload = _workspaceCache;
+  const rows = Array.isArray(payload.epochs) ? payload.epochs : [];
+  if (rows.length === 0) {
+    return renderEmptyState('No epochs recorded.');
+  }
+  let totalGens = 0;
+  let totalPromoted = 0;
+  let openEpochs = 0;
+  let closedEpochs = 0;
+  for (const r of rows) {
+    if (!r) continue;
+    totalGens += (typeof r.generation_count === 'number') ? r.generation_count : 0;
+    totalPromoted += (typeof r.promoted_count === 'number') ? r.promoted_count : 0;
+    if (r.closed) {
+      closedEpochs += 1;
+    } else {
+      openEpochs += 1;
+    }
+  }
+  const current = payload.current_epoch_id || null;
+  const currentRow = current
+    ? rows.find((r) => r && r.epoch_id === current) || null
+    : null;
+  const currentBest = currentRow
+    ? _fmtScalar(currentRow.best_scalar) : '—';
+
+  const tiles = el('div', { class: 'tile-strip' }, [
+    renderMetricTile({ label: 'epochs', value: rows.length }),
+    renderMetricTile({ label: 'generations', value: totalGens }),
+    renderMetricTile({ label: 'promoted', value: totalPromoted }),
+  ]);
+  const meta = el('div', { class: 'phase0-glance-meta' }, [
+    el('div', { class: 'phase0-glance-line' }, [
+      el('span', { class: 'phase0-glance-label' }, ['open']),
+      el('span', { class: 'mono' }, [String(openEpochs)]),
+      el('span', { class: 'phase0-glance-sep' }, ['·']),
+      el('span', { class: 'phase0-glance-label' }, ['closed']),
+      el('span', { class: 'mono' }, [String(closedEpochs)]),
+    ]),
+    el('div', { class: 'phase0-glance-line' }, [
+      el('span', { class: 'phase0-glance-label' }, ['current']),
+      current
+        ? el('a', {
+            class: 'phase0-glance-current',
+            href: phase0Href('epoch', { epochId: current }),
+          }, [el('span', { class: 'mono' }, [current])])
+        : el('span', { class: 'mono' }, ['—']),
+      el('span', { class: 'phase0-glance-sep' }, ['·']),
+      el('span', { class: 'phase0-glance-label' }, ['best']),
+      el('span', { class: 'mono' }, [currentBest]),
+    ]),
+  ]);
+
+  return el('div', { class: 'phase0-glance-body' }, [tiles, meta]);
+}
+
 function _renderEnvSection() {
   const node = $('phase0-workspace-env');
   if (!node) return;
   clearChildren(node);
-  // The L0 page now uses a two-card top strip. The environment slot
-  // renders the env card; the lineage slot below renders the lineage
-  // + the live-activity panel + the trend (so we keep three slots).
-  // For env we render a card-wrapped kv block.
-  const live = _hasLiveHeartbeat();
-  // Heartbeat has not arrived yet — distinct from "heartbeat arrived
-  // but reports no active run". The latter is genuinely empty; the
-  // former is loading.
-  const heartbeatLoading = state.heartbeat == null;
-  const hb = state.heartbeat || {};
-  const sparkPts = (_workspaceCache && Array.isArray(_workspaceCache.sparkline))
-    ? _workspaceCache.sparkline : [];
-  const sparkValues = sparkPts.map((p) => p && p.scalar)
-    .filter((v) => typeof v === 'number' && isFinite(v));
-
-  // Live activity column body.
-  const liveChildren = [];
-  liveChildren.push(el('div', { class: 'phase0-live-header' }, [
-    renderLiveIndicator({ live, label: live ? 'live' : 'idle' }),
-    renderPill(live ? 'active' : 'no run', live ? 'live' : 'stale'),
-  ]));
-  if (heartbeatLoading) {
-    liveChildren.push(renderLoadingState({ label: 'Loading live activity' }));
-  } else if (live) {
-    if (hb.epoch_id) {
-      liveChildren.push(el('div', { class: 'phase0-live-line' }, [
-        el('span', { class: 'phase0-live-line-label' }, ['epoch']),
-        el('span', { class: 'mono' }, [hb.epoch_id]),
-      ]));
-    }
-    if (hb.generation_id) {
-      liveChildren.push(el('div', { class: 'phase0-live-line' }, [
-        el('span', { class: 'phase0-live-line-label' }, ['gen']),
-        el('span', { class: 'mono' }, [hb.generation_id]),
-      ]));
-    }
-    const activeRuns = Array.isArray(state.activeRuns) ? state.activeRuns.length : 0;
-    liveChildren.push(el('div', { class: 'phase0-live-line' }, [
-      el('span', { class: 'phase0-live-line-label' }, ['runs']),
-      el('span', { class: 'mono' }, [String(activeRuns)]),
-    ]));
-    if (hb.epoch_id) {
-      liveChildren.push(el('a', {
-        class: 'phase0-live-jump',
-        href: phase0Href('epoch', { epochId: hb.epoch_id }),
-      }, ['jump to current epoch →']));
-    }
-    // Harmonograf deep-link for the live activity — pick the first
-    // active run as the representative session. Falls back to the bare
-    // base url when no run has surfaced its adk_session_id yet.
-    const activeRunList = Array.isArray(state.activeRuns) ? state.activeRuns : [];
-    const firstRun = activeRunList.length > 0 ? activeRunList[0] : null;
-    const hgLink = firstRun
-      ? harmonografLink(firstRun, 'Open in harmonograf')
-      : harmonografLink({}, 'Open in harmonograf');
-    if (hgLink) {
-      liveChildren.push(el('div', {
-        style: 'margin-top:var(--space-2); font-size:var(--font-size-12);',
-      }, [hgLink]));
-    }
-  } else {
-    liveChildren.push(renderEmptyState('No active run.'));
-  }
-  if (sparkValues.length >= 2) {
-    liveChildren.push(el('div', {
-      style: 'margin-top:var(--space-2); display:flex; align-items:center; gap:var(--space-2);',
-    }, [
-      el('span', { class: 'phase0-live-line-label' }, ['trend']),
-      renderSparkline(sparkValues, {
-        width: 120, height: 22, ariaLabel: 'cross-epoch best-scalar trend',
-      }),
-    ]));
-  }
-
+  // Two-card top strip: Environment (left) + Workspace at a glance
+  // (right). The lineage slot below renders the lineage; the sparkline
+  // slot at the bottom renders the trend (so we keep three slots).
   const strip = el('div', { class: 'phase0-view-strip phase0-view-strip-2' }, [
     renderCard({
       title: 'Environment',
       body: _renderEnvKv(),
     }),
     renderCard({
-      title: 'Live activity',
-      accent: live ? 'accent' : 'default',
-      body: el('div', { class: 'phase0-live-body' }, liveChildren),
+      title: 'Workspace at a glance',
+      subtitle: 'Lifetime totals across every epoch.',
+      body: _renderGlanceBody(),
     }),
   ]);
   node.appendChild(strip);
@@ -302,9 +297,12 @@ function _renderTrendBody() {
       ]),
     ]),
     el('div', { class: 'trend-card-spark' }, [
+      // The freed vertical space (the in-content Live Activity card
+      // is gone) lets the trend sparkline take a noticeably wider
+      // canvas — 360×72 reads as a real chart, not a thumbnail.
       values.length >= 2
         ? renderSparkline(values, {
-            width: 220, height: 56, ariaLabel: 'cross-epoch best-scalar curve',
+            width: 360, height: 72, ariaLabel: 'cross-epoch best-scalar curve',
             fill: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
           })
         : el('span', { class: 'empty' }, ['need ≥ 2 epochs for a trend line']),

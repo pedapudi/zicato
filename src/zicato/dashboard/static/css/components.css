@@ -1438,12 +1438,66 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
 }
 
 /* =====================================================================
+ * Workspace-at-a-glance body (L0)
+ *
+ * Replaces the in-content Live Activity card retired post-#198. The
+ * sidebar now owns live-run state; this body is a quiet summary of
+ * workspace-wide totals (epochs / generations / promoted) with a
+ * thin meta line below for open / closed counts and the current
+ * epoch deep-link.
+ * ===================================================================== */
+.phase0-glance-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.phase0-glance-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-size-12);
+  color: var(--color-text-secondary);
+}
+.phase0-glance-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.phase0-glance-label {
+  font-size: var(--font-size-11);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  font-weight: var(--weight-medium);
+}
+.phase0-glance-sep {
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+.phase0-glance-current {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-weight: var(--weight-medium);
+}
+.phase0-glance-current:hover {
+  color: var(--color-accent-hover);
+  text-decoration: underline;
+}
+
+/* =====================================================================
  * Cross-epoch trend card (L0)
+ *
+ * Post #206 the trend gets the full content width — the in-content
+ * Live Activity card was retired, and the sparkline canvas grew from
+ * 220×56 to 360×72 so the curve reads as a real chart, not a
+ * thumbnail next to the lineage column.
  * ===================================================================== */
 .trend-card-body {
   display: flex;
   align-items: flex-end;
-  gap: var(--space-3);
+  gap: var(--space-4);
+  flex-wrap: wrap;
 }
 .trend-card-meta {
   flex: 1 1 auto;

@@ -238,14 +238,25 @@ test('L4 run header harmonograf link falls back to base url when adk_session_id 
 });
 
 // ---------------------------------------------------------------------
-// L0 workspace Live Activity card
+// L0 workspace
+//
+// Post-#206 the in-content Live Activity card on L0 was retired — the
+// redesigned sidebar (#198) already owns live-run state across every
+// level, so duplicating it under the env column was redundant. L0 no
+// longer surfaces a harmonograf link directly; the L4 run header and
+// the L1 spine actions still do (asserted below). The sidebar's
+// "View current run" jump CTA carries the user one click into L4
+// where the harmonograf link is rendered.
 // ---------------------------------------------------------------------
 
-test('L0 workspace live activity renders harmonograf link when a run is active', () => {
+test('L0 workspace renders NO harmonograf link (in-content live card was retired)', () => {
   installNode('phase0-workspace-env');
   installNode('phase0-workspace-lineage');
   installNode('phase0-workspace-sparkline');
   state.workspace = { root: '/tmp/.zicato' };
+  // Even with a fully-configured live run + harmonograf url, the L0
+  // env / glance / lineage / trend slots must NOT carry a harmonograf
+  // link — the in-content live activity card is gone.
   state.heartbeat = {
     harmonograf_url: 'https://harmonograf.example.com',
     epoch_id: 'e0', generation_id: 'v3',
@@ -256,39 +267,18 @@ test('L0 workspace live activity renders harmonograf link when a run is active',
   ];
   ws.resetWorkspaceCache();
   ws.renderPhase0Workspace();
-  const node = document.getElementById('phase0-workspace-env');
-  const link = findHarmonografLink(node);
-  assert(link != null,
-    'L0 live activity must surface a harmonograf link for the active run');
-  assertEqual(
-    link.getAttribute('href'),
-    'https://harmonograf.example.com/#/session/adk-live-xyz',
-    'L0 harmonograf href must point at the live run session');
-  assertEqual(link.getAttribute('target'), '_blank');
-  assertEqual(link.getAttribute('rel'), 'noopener');
+  for (const id of [
+    'phase0-workspace-env',
+    'phase0-workspace-lineage',
+    'phase0-workspace-sparkline',
+  ]) {
+    const node = document.getElementById(id);
+    const link = findHarmonografLink(node);
+    assertEqual(link, null,
+      `L0 slot #${id} must NOT carry a harmonograf link after the in-content live card was retired`);
+  }
   state.heartbeat = null;
   state.activeRuns = [];
-});
-
-test('L0 workspace renders NO harmonograf link when no active run', () => {
-  installNode('phase0-workspace-env');
-  installNode('phase0-workspace-lineage');
-  installNode('phase0-workspace-sparkline');
-  state.workspace = { root: '/tmp/.zicato' };
-  // Harmonograf is configured but there is no live run, so the "live
-  // activity" branch never paints — and therefore neither does the
-  // harmonograf link tied to it.
-  state.heartbeat = {
-    harmonograf_url: 'https://harmonograf.example.com',
-  };
-  state.activeRuns = [];
-  ws.resetWorkspaceCache();
-  ws.renderPhase0Workspace();
-  const node = document.getElementById('phase0-workspace-env');
-  const link = findHarmonografLink(node);
-  assertEqual(link, null,
-    'L0 must render NO harmonograf link in the no-active-run branch');
-  state.heartbeat = null;
 });
 
 // ---------------------------------------------------------------------
