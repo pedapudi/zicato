@@ -29,14 +29,14 @@ This document covers:
 During an early dogfood run, an epoch produced this:
 
 ```
-v0  gen_score = 1.000000
-v1  gen_score = 1.000000
+v0  scalar = 1.000000
+v1  scalar = 1.000000
 ```
 
 Both generations scored **exactly** `1.000000`. Not "close" —
 identical to six decimal places. v1's patches had been applied,
 the tournament had run the full board against both sides, the
-gate had evaluated, v1 had been rejected on `insufficient_margin`,
+gate had evaluated, v1 had been rejected on insufficient improvement,
 and the round had been journaled. Every robustness layer was
 satisfied. The loop reported itself healthy.
 
@@ -111,170 +111,171 @@ below 25%" and similar — those are loop-health detectors).
 
 ## 3. The detectors
 
-Loop health runs a fixed set of detectors after every round (and
-on demand via `zicato health`). Each detector inspects the
-round's runs, scores, and the epoch-so-far history, and either
-stays silent or emits a `LoopHealthFinding` with a severity.
+Loop health runs a fixed set of detectors (in `health/diagnostics.py`)
+over the epoch-so-far history — the per-generation `LossProfile`s, the
+resolved `Experiment` records, and the epoch's board. Each detector is
+a pure function returning a list of `HealthFinding`s; it either stays
+silent or emits one or more findings, each with a stable `code` and a
+fixed severity. The orchestrator runs them after a round and `zicato
+health` runs them on demand.
 
-### 3.1 Degenerate scoring
+Each detector's tuning knob is a field of `HealthConfig`, re-tunable
+between runs via a `ZICATO_HEALTH_*` environment variable. The four
+knobs and their defaults: `scoring_window` (3), `scoring_epsilon`
+(`1e-6`), `no_expectations_fraction` (`0.5`), `stalled_rejects` (3).
 
-**What it catches.** The motivating incident (§1): parent and
-candidate produce identical (or near-identical) generation
-scores, round after round, because the scoring is not
-distinguishing them.
+### 3.1 Degenerate scoring — `degenerate_scoring`
 
-**Signal.** For a round, `|candidate.score - parent.score|` is
-below a degeneracy floor (`degenerate_score_epsilon`, default
-`1e-6`). One such round is `info` — scores can legitimately tie.
-The detector escalates on *sustained* degeneracy: N consecutive
-rounds (default 3) where every score delta is below the floor is
-`critical`, because at that point the evaluation has demonstrably
-failed to produce signal across multiple distinct candidates.
+**What it catches.** The motivating incident (§1): tournaments produce
+no usable score signal, round after round, because the scoring is not
+distinguishing the candidates from their parents.
 
-A second, sharper sub-signal: if **every** generation in the
-epoch carries the *exact same* `score` value (e.g. all
-`1.000000`), that is `critical` immediately, no waiting for three
-rounds — a single shared constant across the whole lineage is the
-fingerprint of the §1 bug.
+**Signal.** Looks at the most-recent `scoring_window` (default 3)
+experiments that carry a tournament outcome. When *every* one of them
+has `|scalar_score_delta|` below `scoring_epsilon` (default `1e-6`),
+the loop is spinning on a flat loss surface. Severity is always
+**`critical`** — a degenerate scorer wastes every round's wall-clock.
+The detector is silent until at least `scoring_window` evaluated
+experiments exist and silent if any tournament in the window showed a
+real delta.
 
-### 3.2 Non-differentiating board entries
+### 3.2 Non-differentiating board entry — `non_differentiating_entry`
 
-**What it catches.** Individual board entries that always return
-the same `drift_loss` and `pass_fail` for every generation,
-parent and candidate alike. Such an entry contributes a constant
-to every score and therefore *cannot* move a tournament — it is
-dead weight on the board.
+**What it catches.** Individual board entries whose `drift_loss` never
+moves across the generations they ran under. Such an entry contributes
+a constant to every generation's score and therefore *cannot* move a
+tournament — it is a dead test.
 
-**Signal.** For each `entry_id`, look across every run of that
-entry in the epoch. If `drift_loss` has zero variance (every run
-identical) AND `pass_fail` never flips, the entry is
-non-differentiating. A handful of non-differentiating entries on
-a large board is `warning` (the board has some slack); a board
-where the *majority* of entries are non-differentiating is
-`critical` (the board as a whole cannot distinguish generations).
+**Signal.** For each `entry_id`, collect its `drift_loss` across every
+generation it ran under. When the entry ran under two or more
+generations and produced an *identical* `drift_loss` every time, the
+detector emits one **`warning`** finding for that entry (one finding
+per dead entry, not an aggregate). Entries that ran under only a single
+generation are ignored — there is nothing yet to compare. The fix it
+recommends: remove the entry or strengthen its expectation.
 
 This detector is the per-entry version of degenerate scoring: it
-localises *which* entries are the dead weight, so the operator
-knows what to fix.
+localises *which* entries are the dead weight, so the operator knows
+what to fix.
 
-### 3.3 Flat drift signal
+### 3.3 Flat drift signal — `flat_drift_signal`
 
 **What it catches.** The drift telemetry — zicato's primary loss
-signal — is not moving at all across the epoch. Either the inner
+signal — counted nothing at all across the epoch. Either the inner
 harness genuinely produces no drift (possible but rare), or drift
-detection is misconfigured / not wired, or the board's tasks are
-too easy to provoke any drift.
+detection is misconfigured / not wired, or the board's tasks are too
+easy to provoke any drift.
 
-**Signal.** Aggregate `drift_counts_by_kind` across all runs in
-the epoch. If the total drift count is zero across every run, or
-every drift kind has zero variance across rounds (the same flat
-counts every round), the drift signal is flat. Flat drift makes
-the `w_drift` term in the score a constant, which collapses
-scoring to pass-rate-only without the operator having chosen
-that. Severity: `warning` if drift is low-but-nonzero and static;
-`critical` if drift is identically zero across the whole epoch
-(strongly suggests the goldfive telemetry is not actually
-reaching the reducer).
+**Signal.** Walks every run's unified metric view and sums the `count`
+of every metric in the `drift:` namespace. When that total is exactly
+zero across all runs in the epoch, the drift side of the loss is inert.
+Severity is **`warning`**: the loop can still optimise on the pass/fail
+side, but half the loss surface is dead. Silent when there are no runs
+to assess.
 
-### 3.4 No expectations
+### 3.4 No expectations — `no_expectations`
 
-**What it catches.** No board entry carries an expectation
-predicate, so `pass_fail` is `None` everywhere and the pass-rate
-side of scoring contributes nothing. The loop is then running on
-drift loss alone — which is *valid* (see
+**What it catches.** Most of the board carries no expectation, so
+`pass_fail` is `None` for most runs and the pass-rate side of scoring
+contributes almost nothing. The loop is then running on drift loss
+alone — which is *valid* (see
 [SCORING.md §1](SCORING.md#1-why-both-signals): drift loss works
 without ground truth) but is also a common accident, where the
 operator *meant* to attach expectations and forgot.
 
-**Signal.** Count board entries with an expectation. Zero is the
-trigger. Severity is `info`, not `warning` — drift-loss-only is a
-supported mode, so this is a *notice* ("you are running without
-ground-truth pass/fail; that is fine if intentional"), not an
-alarm. It exists because the §1-style silent degeneracy is much
-more likely when half the scoring signal is structurally absent,
-and the operator should be reminded they opted into that.
+**Signal.** Computes the fraction of board entries whose `expectation`
+is `None`. Fires when that fraction is *strictly greater than*
+`no_expectations_fraction` (default `0.5`) — i.e. more than half the
+board is drift-only. Severity is **`info`**, not `warning` —
+drift-loss-only is a supported mode, so this is a *notice*, not an
+alarm. Silent on an empty board.
 
-### 3.5 Stalled loop
+### 3.5 Stalled loop — `stalled_loop`
 
-**What it catches.** The loop is making rounds but the lineage is
-not advancing — no promotions for a long stretch — *combined
-with* a loop-health reason to believe the eval is at fault rather
-than the proposer.
+**What it catches.** The proposer is not finding improvements — a run
+of consecutive rejected generations.
 
-**Signal.** This detector is the bridge to the L5 circuit
-breaker. On its own, "no promotions for K rounds" is L5's
-territory. The loop-health stalled detector fires when no
-promotions for K rounds **and** at least one other detector
-(degenerate scoring, non-differentiating entries, flat drift) is
-also firing in the same window. That conjunction is the strong
-signal: the loop is not promoting *and* there is a structural
-reason it *cannot*. Severity: `critical`. When the loop is
-stalled but no other detector fires, loop health stays silent and
-lets L5 own it — the eval looks fine; the proposer is just not
-winning.
+**Signal.** Scans the most-recent evaluated experiments and counts the
+trailing run of `rejected` tournament decisions. When that run reaches
+`stalled_rejects` (default 3), the detector emits one **`warning`**
+finding. There is no conjunction with the other detectors in the
+shipped code — the stall is reported on its own as the operator's cue
+that the proposer is stuck and the brief or mutable surface may need
+attention; it is also the L5 circuit breaker's territory
+([ROBUSTNESS.md §2.5](ROBUSTNESS.md#25-l5-consecutive-bad-circuit-breaker)).
+Silent until `stalled_rejects` evaluated experiments exist and the
+trailing reject-run reaches the threshold.
 
 ### 3.6 Severity summary
 
-| Detector | `info` | `warning` | `critical` |
-|---|---|---|---|
-| Degenerate scoring | one round of tied scores | — | N consecutive degenerate rounds; or one shared constant score across the whole lineage |
-| Non-differentiating entries | — | a minority of entries are dead weight | the majority of entries are dead weight |
-| Flat drift signal | — | drift low and static | drift identically zero across the epoch |
-| No expectations | no entry has an expectation | — | — |
-| Stalled loop | — | — | no promotions for K rounds AND another detector firing |
+Each detector emits a *fixed* severity (the shipped detectors do not
+escalate by severity tier — they either fire at their one severity or
+stay silent):
+
+| Detector `code` | Severity | Fires when |
+|---|---|---|
+| `degenerate_scoring` | `critical` | last `scoring_window` tournaments all have `\|Δscalar\| ≤ scoring_epsilon` |
+| `non_differentiating_entry` | `warning` | a board entry's `drift_loss` is identical across every generation it ran under (one finding per such entry) |
+| `flat_drift_signal` | `warning` | total `drift:`-namespace metric count is zero across all runs |
+| `no_expectations` | `info` | fraction of entries without an expectation `> no_expectations_fraction` |
+| `stalled_loop` | `warning` | trailing run of `rejected` decisions reaches `stalled_rejects` |
 
 Severities mean:
 
-- **`info`** — a notice. Surfaced in the report and the
-  dashboard panel; never interrupts the loop.
-- **`warning`** — something is degrading the loop's
-  discriminating power but it is not yet meaningless. Surfaced;
-  logged loudly; the loop continues.
-- **`critical`** — the loop is, or is about to become,
-  meaningless. Surfaced as a loud orchestrator warning (§6); the
-  trigger for the optional early-stop.
+- **`info`** — a notice. Recorded in the report; does not flip
+  `LoopHealth.healthy` to `False` and never interrupts the loop.
+- **`warning`** — something is degrading the loop's discriminating
+  power but it is not yet meaningless. Recorded; flips `healthy` to
+  `False`; the loop continues.
+- **`critical`** — the loop is, or is about to become, meaningless.
+  Surfaced as a loud orchestrator stderr WARNING (§6) and the only
+  severity that counts toward the default-on early-stop (§6.2).
 
 ## 4. The `LoopHealth` report
 
 The detectors' output is collected into a typed `LoopHealth`
-report — one per round, and one produced on demand by
-`zicato health`.
+report (`health/diagnostics.py`) — assessed per epoch, and produced on
+demand by `zicato health`.
 
 ```json
 {
   "epoch_id": "2026-05-15_e1",
-  "round": 7,
-  "computed_at": "2026-05-15T14:22:00Z",
-  "overall": "critical",
+  "healthy": false,
+  "checked_at": "2026-05-15T14:22:00Z",
   "findings": [
     {
-      "detector": "degenerate_scoring",
+      "code": "degenerate_scoring",
       "severity": "critical",
-      "summary": "v0..v7 all carry gen_score = 1.000000; the evaluation has produced zero score variance across 8 generations.",
-      "evidence": {
-        "generations": ["v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7"],
-        "shared_score": 1.0,
-        "consecutive_degenerate_rounds": 7
-      },
-      "remedy": "Inspect scoring.json weights and the per-entry loss.json files; a board where every entry scores identically cannot drive a tournament."
+      "summary": "last 3 tournaments produced |Δscalar| ≤ 1e-06 — the loop is spinning with no optimization signal",
+      "detail": {
+        "window": 3,
+        "epsilon": 1e-06,
+        "generation_ids": ["v5", "v6", "v7"],
+        "scalar_score_deltas": [0.0, 0.0, 0.0]
+      }
     },
     {
-      "detector": "non_differentiating_entries",
-      "severity": "critical",
-      "summary": "9 of 10 board entries return identical drift_loss and pass_fail for every generation.",
-      "evidence": {
-        "non_differentiating": ["short_solar", "long_solar", "..."],
-        "differentiating": ["contradictory_brief"],
-        "board_size": 10
-      },
-      "remedy": "These entries are dead weight. Either replace them with tasks that provoke variable behaviour, or check that the adapter is actually running distinct generations."
+      "code": "non_differentiating_entry",
+      "severity": "warning",
+      "summary": "board entry 'short_solar' scored an identical drift_loss (1) across all 8 generations it ran under — a dead test",
+      "detail": {
+        "entry_id": "short_solar",
+        "drift_loss": 1.0,
+        "generation_ids": ["v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7"],
+        "recommendation": "remove the entry or strengthen its expectation so it can differentiate generations"
+      }
     },
     {
-      "detector": "no_expectations",
+      "code": "no_expectations",
       "severity": "info",
-      "summary": "No board entry carries an expectation; scoring is running on drift loss alone.",
-      "evidence": {"entries_with_expectation": 0, "board_size": 10},
-      "remedy": "If pass/fail ground truth was intended, attach expectations (see BOARD-FORMAT.md). Drift-loss-only is supported but is half the signal."
+      "summary": "8/10 board entries (80%) have no expectation — the pass/fail side of the loss is mostly absent",
+      "detail": {
+        "entries_without_expectation": 8,
+        "total_entries": 10,
+        "fraction": 0.8,
+        "threshold": 0.5,
+        "entry_ids_without_expectation": ["..."]
+      }
     }
   ]
 }
@@ -284,77 +285,86 @@ Fields:
 
 | Field | Meaning |
 |---|---|
-| `epoch_id`, `round` | Which round this report covers. |
-| `computed_at` | Timestamp. |
-| `overall` | The max severity across all findings (`ok` if no findings). |
-| `findings` | One `LoopHealthFinding` per firing detector. |
-| `findings[].detector` | The detector name (§3). |
+| `epoch_id` | The epoch this report describes. |
+| `healthy` | `True` iff no finding has `warning` or `critical` severity. Purely-`info` findings do not flip it to `False`. |
+| `checked_at` | ISO-8601 UTC timestamp of when the assessment ran. |
+| `findings` | Every `HealthFinding` produced by every detector, in detector order (`degenerate_scoring`, `non_differentiating_entry`, `flat_drift_signal`, `no_expectations`, `stalled_loop`). A detector may emit more than one finding (`non_differentiating_entry` emits one per dead entry). |
+| `findings[].code` | The detector's stable symbolic identifier (§3). |
 | `findings[].severity` | `info` / `warning` / `critical`. |
-| `findings[].summary` | One-sentence human-readable rendering. |
-| `findings[].evidence` | Structured data backing the finding — exact generations, entry ids, counts — so the operator can verify it. |
-| `findings[].remedy` | A concrete next step. Detectors never just complain; each carries the operator's fix. |
+| `findings[].summary` | One-line human-readable rendering for terminal output. |
+| `findings[].detail` | Structured specifics — entry ids, generation ids, the numbers that tripped the detector, and (where the detector offers one) a `recommendation`. JSON-friendly so the report round-trips. |
 
-The per-round report is written to
-`.zicato/epochs/{epoch}/loop_health/round_{NNN}.json` next to the
-`patterns/` directory. It is a canonical file like every other
-artifact, and it is projected into the analytical index (a
-`loop_health` concern can be added to the index schema; see
-[ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md)) so the dashboard's
-loop-health panel ([DASHBOARD.md](DASHBOARD.md)) can render the
-epoch's health trajectory without a file-walk.
+The `LoopHealth` dataclass itself has no `round` or `overall` field —
+it is keyed to an epoch, and the aggregate health bit is the boolean
+`healthy` rather than a max-severity enum. Findings carry their fix
+inside `detail.recommendation` where applicable rather than a dedicated
+`remedy` field.
+
+When the orchestrator runs the assessment each round it persists the
+report to `epochs/{epoch}/health/round_{N}.json` (the per-round JSON
+the orchestrator writes adds the `round` it was computed at as an
+envelope). `zicato health` recomputes the assessment live rather than
+reading these files back.
 
 ## 5. The `zicato health` CLI
 
-`zicato health` runs the detectors on demand and prints the
-`LoopHealth` report.
+`zicato health` runs the detectors against an epoch's full history and
+prints the `LoopHealth` report.
 
 ```
-zicato health [--epoch <id>] [--round <N>] [--format json|text]
+zicato health [--workspace <dir>] [--epoch <id>]
 ```
 
-- With no flags, runs every detector against the current epoch's
-  full history and prints the report for the latest round.
-- `--round <N>` prints the stored report for a specific past
-  round (read straight from
-  `loop_health/round_{NNN}.json` — no recomputation).
-- `--epoch <id>` targets a non-current epoch.
-- `--format json` emits the `LoopHealth` object verbatim for
-  scripting.
+- With no flags, assesses the workspace's current epoch (read from the
+  `current_epoch` marker) and prints the report.
+- `--epoch <id>` targets a specific epoch instead of the current one.
+- `--workspace <dir>` points at a non-default workspace root (default
+  `.zicato`).
 
-Text output:
+The shipped command has **no `--round`** flag (the report is per-epoch,
+not per-round; `zicato health` recomputes the assessment live and does
+not read back the orchestrator's per-round
+`epochs/{epoch}/health/round_{N}.json` files) and **no `--format`**
+flag — it always prints the colour-coded text rendering below.
+
+Text output (colour-coded by severity; the `detail` keys are printed
+indented under each finding's summary):
 
 ```
 $ zicato health
-loop health — epoch 2026-05-15_e1 — round 7 — OVERALL: CRITICAL
+Loop health for epoch '2026-05-15_e1'
+checked_at: 2026-05-15T14:22:00Z
+UNHEALTHY — one or more findings need attention.
 
-  [critical] degenerate_scoring
-    v0..v7 all carry gen_score = 1.000000; the evaluation has
-    produced zero score variance across 8 generations.
-    → Inspect scoring.json weights and the per-entry loss.json
-      files; a board where every entry scores identically
-      cannot drive a tournament.
-
-  [critical] non_differentiating_entries
-    9 of 10 board entries return identical drift_loss and
-    pass_fail for every generation.
-    → These entries are dead weight. Replace them, or check the
-      adapter is running distinct generations.
-
-  [info] no_expectations
-    No board entry carries an expectation; scoring is running on
-    drift loss alone.
-    → Attach expectations if pass/fail ground truth was intended.
-
-2 critical, 0 warning, 1 info.
+3 finding(s):
+  [CRITICAL] degenerate_scoring: last 3 tournaments produced |Δscalar| ≤ 1e-06 — the loop is spinning with no optimization signal
+      epsilon: 1e-06
+      generation_ids: ['v5', 'v6', 'v7']
+      scalar_score_deltas: [0.0, 0.0, 0.0]
+      window: 3
+  [WARNING] non_differentiating_entry: board entry 'short_solar' scored an identical drift_loss (1) across all 8 generations it ran under — a dead test
+      drift_loss: 1.0
+      entry_id: short_solar
+      generation_ids: ['v0', 'v1', '...']
+      recommendation: remove the entry or strengthen its expectation so it can differentiate generations
+  [INFO] no_expectations: 8/10 board entries (80%) have no expectation — the pass/fail side of the loss is mostly absent
+      ...
 ```
 
-Exit codes follow the CLI convention (see [CLI.md](CLI.md)):
+When every detector stays silent the command prints the `HEALTHY` line
+and "No findings — every detector stayed silent."
+
+Exit codes:
 
 | Code | When |
 |---|---|
-| `0` | Report produced; `overall` is `ok` or `info`. |
-| `9` | Report produced; `overall` is `warning` or `critical`. A distinct non-zero code so a CI / wrapper script can branch on "the loop is degenerate" exactly the way it branches on the other meaningful outcomes. |
-| `2` / `3` | Usage / configuration error. |
+| `0` | Report produced and no `critical` finding is present (including a report that has only `warning` / `info` findings). |
+| non-zero (`1`) | Report produced and at least one `critical` finding is present — the command raises `SystemExit(1)` so a CI / supervisor wrapper notices a degenerate eval. Only `critical` trips this; a `warning`-only report still exits `0`. |
+
+Note this is narrower than a separate "degenerate" exit code: the
+shipped command branches solely on the presence of a `critical`
+finding (currently only `degenerate_scoring` is `critical`), exiting
+`1` rather than a bespoke code.
 
 A CI wrapper that runs `zicato evolve` overnight pairs it with
 `zicato health` so a degenerate epoch is caught the next morning
@@ -363,80 +373,60 @@ step that the §1 incident depended on.
 
 ## 6. How the orchestrator surfaces critical findings
 
-Loop health is computed inside the round loop, right after the
-journal entry is written (round mechanics step 8 in
-[EPOCHS-AND-JOURNALING.md §8](EPOCHS-AND-JOURNALING.md#8-round-mechanics);
-loop health slots in as a step alongside the pattern detectors).
-Two surfacing behaviours follow.
+Loop health is computed inside the round loop, after the round's
+experiment + journal entry are written. The orchestrator calls
+`assess_loop_health` over the epoch's accumulated losses, experiments,
+and board, persists the report to `epochs/{epoch}/health/round_{N}.json`,
+and derives a `(summary, has_critical)` pair from it. Two surfacing
+behaviours follow.
 
 ### 6.1 Loud warning on critical
 
-When a round's `LoopHealth` comes back `critical`, the
-orchestrator does not let it scroll past as a normal log line. It
-emits a bannered warning to stderr:
+When a round's `LoopHealth` carries any `critical` finding
+(`has_critical` is true), the orchestrator emits a prominent
+`WARNING`-level log line to stderr — it does not let the finding
+scroll past as a normal log line:
 
 ```
-╔══════════════════════════════════════════════════════════════════╗
-║  LOOP HEALTH: CRITICAL                                            ║
-║                                                                   ║
-║  degenerate_scoring — v0..v7 all carry gen_score = 1.000000.      ║
-║  The evaluation has produced zero score variance across 8         ║
-║  generations. The tournament cannot distinguish candidates;       ║
-║  rounds are being run but no optimisation signal exists.          ║
-║                                                                   ║
-║  → zicato health   for the full report and remedies.             ║
-╚══════════════════════════════════════════════════════════════════╝
+LOOP HEALTH CRITICAL — epoch 2026-05-15_e1 round 7: CRITICAL: last 3
+tournaments produced |Δscalar| ≤ 1e-06 — the loop is spinning with no
+optimization signal. The evolve loop is producing no usable signal;
+inspect the scoring weights / proposer brief before spending more LLM
+calls.
 ```
 
-The same finding is broadcast as an SSE event to the live
-dashboard (a `loop_health_critical` event kind — see
-[DASHBOARD.md](DASHBOARD.md)), where the loop-health panel turns
-red. The point of the banner and the panel is that the §1 failure
-mode can never again depend on an operator happening to notice a
-suspicious number — the system says it out loud.
+The point is that the §1 failure mode can never again depend on an
+operator happening to notice a suspicious number — the system says it
+out loud. Non-critical findings (`warning` / `info`) are recorded in
+the persisted report and reflected in the round's outcome summary but
+do not trigger this stderr warning.
 
-A `warning`-level report logs a single prominent (but
-un-bannered) line; an `info`-level report logs a quiet notice.
-Only `critical` gets the banner.
+### 6.2 Early-stop on sustained critical health
 
-### 6.2 Optional early-stop on sustained degeneracy
+Beyond the stderr warning, the orchestrator has a loop-health circuit
+breaker. It counts *consecutive* rounds whose health came back
+critical; when that run reaches `_DEGENERATE_HEALTH_STOP_THRESHOLD`
+(shipped value: **2**), the loop stops cleanly between rounds with the
+current epoch's state fully written, and the stop reason is recorded as
+`degenerate_health`.
 
-A loud warning is enough if an operator is watching. For
-unattended runs (the overnight calibration epoch), zicato offers
-an opt-in early-stop:
+This early-stop is **on by default** — it is the `stop_on_degenerate_health`
+parameter of the orchestrator's `run_evolve_loop`, defaulting to `True`.
+There is **no `zicato evolve --stop-on-degenerate` CLI flag**; the
+behaviour is the orchestrator default and is not toggled from the
+command line. (The CLI's separate `--max-consecutive-rejections` flag,
+default 3, is the *unproductive-loop* stop — it counts consecutive
+tournament rejections, the L5 territory of
+[ROBUSTNESS.md §2.5](ROBUSTNESS.md#25-l5-consecutive-bad-circuit-breaker)
+— and is distinct from this *meaningless-loop* health stop.)
 
-```
-zicato evolve --rounds 20 --stop-on-degenerate
-```
-
-With `--stop-on-degenerate`, the orchestrator halts the loop —
-cleanly, with the current epoch's state fully written — the first
-time it sees a `critical` loop-health report whose cause is
-*sustained* degeneracy (the degenerate-scoring detector's
-N-consecutive-rounds or shared-constant trigger, or a
-majority-non-differentiating board). `evolve` exits with code
-`9`, the same code `zicato health` uses, so a wrapper script
-treats "stopped because degenerate" identically to "checked and
-found degenerate".
-
-The early-stop is **opt-in, not default**, for the same reason
-the L5 circuit breaker is opt-in
-([ROBUSTNESS.md §2.5](ROBUSTNESS.md#25-l5-consecutive-bad-circuit-breaker)):
-zicato does not unilaterally decide an operator's loop is not
-worth continuing. A single degenerate round can be noise; a
-genuinely intended drift-loss-only board with low-variance tasks
-is not *wrong*, just hard to optimise. The operator who passes
-`--stop-on-degenerate` is stating "if the eval has gone
-toothless, do not burn the rest of my budget" — and that is the
-right person to make that call. Without the flag, the loop keeps
-running and the banner keeps firing; the operator decides.
-
-Not every `critical` finding triggers the early-stop — only
-sustained degeneracy does. A `no_expectations` finding is only
-`info` and never stops anything. A single `critical` round of
-tied scores warns but does not stop (it might be noise). The
-early-stop is reserved for the cases where continuing is
-*provably* wasted compute.
+The threshold is deliberately tight at 2: a single critical round can
+be a transient (one degenerate tournament), but two in a row means the
+loop is genuinely producing no signal. A `no_expectations` finding is
+only `info` and a `non_differentiating_entry` / `flat_drift_signal`
+finding is only `warning`, so none of those alone trips the breaker —
+only a `critical` finding (today, `degenerate_scoring`) counts toward
+the consecutive-critical run.
 
 ## 7. Cross-references
 

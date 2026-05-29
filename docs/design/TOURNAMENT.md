@@ -43,12 +43,13 @@ harness as registered, the baseline. Then, round after round:
 3. The tournament runs the **whole board** against both the
    reigning champion `vN` and the challenger `vN+1`.
 4. The scoring gate ([SCORING.md §5](SCORING.md#5-the-tournament-promotion-gate))
-   decides:
-   - **Challenger wins** → the challenger is *promoted*; it
-     becomes the new champion. The lineage advances `vN → vN+1`.
-   - **Champion holds** → the challenger is *discarded*; the
-     champion stays. No version bump; the next round proposes a
-     fresh challenger against the *same* champion.
+   decides (`GateOutcome.decision`):
+   - **Challenger wins** (`decision="promoted"`) → the challenger is
+     *promoted*; it becomes the new champion. The lineage advances
+     `vN → vN+1`.
+   - **Champion holds** (`decision="rejected"`) → the challenger is
+     *discarded*; the champion stays. No version bump; the next round
+     proposes a fresh challenger against the *same* champion.
 
 Every matchup is therefore **parent versus child**: the champion
 is always the parent generation, the challenger is always the
@@ -260,19 +261,20 @@ whether any pass flipped.
 ### 3.4 Scalar breakdown
 
 How the per-entry numbers aggregate into the two generation
-scores — the arithmetic of [SCORING.md §4](SCORING.md#4-per-generation-aggregate-score),
-shown:
+scalars — the arithmetic of [SCORING.md §4](SCORING.md#4-per-generation-aggregate-score)
+(`drift_loss_mean` is the unweighted mean over the five entries above;
+defaults `drift_weight = pass_weight = 1.0`), shown:
 
 ```
 Scalar breakdown
 
-                       champion v2     challenger c-r4
-  weighted_drift          1.343            0.986
-  pass_rate               0.714            1.000
-  w_drift · drift         0.672            0.493
-  w_pass · (1-pass_rate)  0.143            0.000
-  ──────────────────     ───────          ───────
-  gen_score               0.814            0.493
+                            champion v2     challenger c-r4
+  drift_loss_mean              0.836            0.624
+  pass_rate                    0.600            1.000
+  drift_weight · drift         0.836            0.624
+  pass_weight · (1-pass_rate)  0.400            0.000
+  ───────────────────────     ───────          ───────
+  scalar                       1.236            0.624
 ```
 
 This is the bridge between "the grid of per-entry numbers" and
@@ -284,26 +286,31 @@ The promotion gate's decision and its reasoning — both sides of
 the two-sided gate ([SCORING.md §5](SCORING.md#5-the-tournament-promotion-gate)):
 
 ```
-Gate verdict — PROMOTE
+Gate verdict — PROMOTED
 
-  drift-side (margin)
-    parent.score − candidate.score = 0.814 − 0.493 = 0.321
-    required margin                = 0.05
-    → PASS  (0.321 > 0.05)
+  Rule 1 — scalar margin
+    child.scalar                  = 0.624
+    parent.scalar − promote_margin = 1.236 − 0.01 = 1.226
+    delta_scalar (child − parent) = −0.612  (improvement)
+    → PASS  (0.624 ≤ 1.226, no reject)
 
-  pass-rate side (strict monotonicity)
-    parent passed:    {short_solar, long_solar... no — long_solar failed}
-                      {short_solar, revision_dialog, expert_review}
-    candidate passes: all of the above + long_solar
-    → PASS  (no pre-existing pass regressed)
+  Rule 2 — pass-rate monotonicity
+    parent passed:    {short_solar, revision_dialog, expert_review}
+    candidate passes: all of the above + long_solar + contradictory
+    → PASS  (no previously-passing entry regressed)
 
-  DECISION: promote — challenger c-r4 becomes champion v3
+  Rule 3 — per-namespace monotonicity
+    rubric: / schema: aggregates absent; drift: unguarded by default
+    → PASS
+
+  decision: promoted — challenger c-r4 becomes champion v3
 ```
 
-When the verdict is `reject`, this section names the failing side
-and the exact `rejection_reason`
-(`insufficient_margin (delta=..., required=...)` or
-`pass_rate_regression_on_<entry_id>`). When an operator
+When the verdict is `rejected`, this section names the failing rule
+and the exact `GateOutcome.reason` — `"insufficient improvement: ..."`
+or `"challenger regressed: ..."` (Rule 1), `"pass-rate regression on
+entries: <id>, ..."` (Rule 2), or `"monotonicity_regression on
+namespace=<ns>, ..."` (Rule 3). When an operator
 overrode the gate ([DASHBOARD.md §5.3](DASHBOARD.md#53-command-catalogue-and-safe-point-semantics)),
 the section shows both the would-have-been verdict and the
 override — the override is never silent.
@@ -428,7 +435,7 @@ Two series, both from the `tournaments` / `generations` tables:
   challenger came.
 
 ```
-gen_score
+scalar
 1.0 ┤ ●─────●
     │        ╲
 0.8 ┤         ●╲          champion (winners' spine)
@@ -457,7 +464,7 @@ that against the round's `decision`:
 
 ```sql
 SELECT m.value AS mutation_id,
-       SUM(e.tournament_decision = 'promote') AS wins,
+       SUM(e.tournament_decision = 'promoted') AS wins,
        COUNT(*) AS appearances
 FROM experiments e, json_each(e.modulating) m
 WHERE e.epoch_id = ?
