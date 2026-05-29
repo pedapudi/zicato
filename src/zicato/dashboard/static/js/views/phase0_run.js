@@ -123,6 +123,16 @@ export function runViewDigest(params) {
     ? Math.round(run.elapsed_seconds) : null;
   const runPresent = run != null;
 
+  // -- Heartbeat-derived fields the header consumes -------------------
+  // The header card paints a harmonograf deep-link whose presence/href
+  // depends on state.heartbeat.harmonograf_url. On a cold deep-link to
+  // /#/run/... the first render happens BEFORE the SSE heartbeat lands,
+  // so harmonograf_url is null; once it arrives, the header MUST
+  // re-render to surface the link. Folding the URL into the header
+  // digest makes the gate at the render site fire that repaint.
+  const harmonografUrl = (state.heartbeat && state.heartbeat.harmonograf_url)
+    ? String(state.heartbeat.harmonograf_url) : '';
+
   // -- Cached payload signatures --------------------------------------
   const focusedTx = _transcriptCache.get(key);
   const focusedTxSig = focusedTx
@@ -171,6 +181,7 @@ export function runViewDigest(params) {
     header: {
       epochId, generationId, entryId,
       runStatus, runProgress, runElapsed, runPresent, headerSig,
+      harmonografUrl,
     },
     expectation: { epochId, generationId, entryId, expSig },
     judges: { epochId, generationId, entryId, judgesSig },
