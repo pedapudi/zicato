@@ -430,7 +430,35 @@ def test_bundle_under_size_envelope(
     # The fully integrated bundle was re-measured directly at 397,325
     # bytes; a 430 KB cap leaves ~33 KB of headroom for incidental drift
     # while the four features settle.
-    assert total < 430_000, f"bundle is {total} bytes, exceeds 430_000 envelope"
+    # Raised by the integration-wave-7 squash, which lands six branches on
+    # top of the wave-6 baseline (one is backend-only, the other five are
+    # frontend):
+    #   * L4 cold-deeplink rerender fix — adds harmonograf_url to the
+    #     header digest so cold deep-links rehydrate
+    #     (``views/phase0_run.js`` digest helper).
+    #   * L4 default-compare-to-parent — the compare picker defaults to
+    #     the parent generation with a per-user override map
+    #     (``views/phase0_run.js`` gains ``defaultCompareGenFor`` +
+    #     ``_compareUserOverride``).
+    #   * L2 compare picker — side-by-side compare picker with stable
+    #     select + URL hash sync (``views/phase0_generation.js`` gains
+    #     ~1100 lines; ``phase0_router.js`` + ``components.css`` pick up
+    #     the L2 compare-grid selectors).
+    #   * L0 Live Activity dedup — drops the redundant in-content card,
+    #     adds a "Workspace at a glance" tile strip, and grows the cross-
+    #     epoch trend sparkline (``views/phase0_workspace.js`` +
+    #     ``components.css``).
+    #   * Clean-slate navigation — drops the sidebar entirely; top bar v2
+    #     with brand + breadcrumb + ⌘K palette + status pill replaces it
+    #     (``views/phase0_shell.js`` rewrite, new
+    #     ``components/command_palette.js`` +
+    #     ``components/status_pill.js`` +
+    #     ``components/status_pill_dropdown.js``; ``views/phase0_workspace.js``
+    #     gains the Recent Decisions card).
+    # The fully integrated bundle was re-measured directly at 435,521
+    # bytes; a 470 KB cap leaves ~30 KB of headroom for incidental drift
+    # while the five features settle.
+    assert total < 470_000, f"bundle is {total} bytes, exceeds 470_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
