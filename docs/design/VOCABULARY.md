@@ -193,8 +193,10 @@ A zicato workspace keyed by `instance_id`. The default instance is
 `default`; nested zicato setups (target 3 — see
 [DOGFOOD-TARGETS.md §3](DOGFOOD-TARGETS.md#3-target-3--zicato-itself))
 key by distinct ids so outer and inner zicato workspaces don't
-cross-talk. `instance_id` is carried in `.zicato/config.json` and
-materialized in paths under `.zicato/instances/{instance_id}/`. See
+cross-talk. `instance_id` is carried in `.zicato/config.json` today
+(written by `zicato init --instance-id`). The planned per-instance path
+materialization under `.zicato/instances/{instance_id}/` is **not yet
+shipped** — there is no per-command `--instance` selector. See
 [DOGFOOD-TARGETS.md §3.5](DOGFOOD-TARGETS.md#35-the-recursion--instance_id-need).
 
 ## Journal
@@ -202,8 +204,9 @@ materialized in paths under `.zicato/instances/{instance_id}/`. See
 The running narrative of an epoch. Markdown file at
 `.zicato/epochs/{epoch}/journal.md`. Appended every round with the
 `core_idea`, `drift_loss_delta`, `pass_rate_delta`, and
-`tournament_decision`. Human-readable; render with `zicato journal
-show`. See [EPOCHS-AND-JOURNALING.md §4](EPOCHS-AND-JOURNALING.md#4-the-journal-running).
+`tournament_decision`. Human-readable; read the file directly (there
+is no `zicato journal` command — open `journal.md` or view it in the
+dashboard). See [EPOCHS-AND-JOURNALING.md §4](EPOCHS-AND-JOURNALING.md#4-the-journal-running).
 
 ## Lineage
 
@@ -221,8 +224,10 @@ identity (entry_id, epoch_id, generation, tags), drift features
 (counts by kind, by severity, escalations, plan revisions, task
 failure ratio), multi-turn features (turn count, per-turn drift
 counts, stopped_reason), runtime features (runtime_ms, aborted,
-abort_reason), and derived fields (drift_loss, pass_fail). The
-contract every other zicato component reads from. See
+abort_reason), and derived fields (drift_loss, pass_fail) plus a
+`per_judge_loss` attribution (the weighted-loss contribution of each
+named judge, keyed by `judge_name`). The contract every other zicato
+component reads from. See
 [TELEMETRY.md §3](TELEMETRY.md#3-lossprofile).
 
 ## Mutation point
@@ -328,11 +333,14 @@ affect any other generation. See
 
 ## Tournament
 
-The component that compares parent vs candidate generations on the
-frozen-for-this-epoch board and applies the promotion gate. Default
-mode re-runs every entry against both generations. `--mode fast`
-skips the parent re-run and uses the parent's historical score (less
-rigorous; faster). The gate requires (a) the candidate beats the
-parent by `tournament_margin` on score and (b) strict monotonicity on
-pass-rate (the candidate must not regress any pre-existing pass).
+The component that compares champion (parent) vs challenger (child)
+generations on the frozen-for-this-epoch board and applies the
+promotion gate. The standalone `zicato tournament` command defaults to
+`--mode full` (re-run every entry against both generations); `--mode
+fast` skips the parent re-run and uses the parent's historical
+aggregate (less rigorous; faster). Note `zicato evolve` defaults to
+`fast`. The gate requires (a) the challenger beats the champion by
+`promote_margin` on the scalar score and (b) strict pass-rate
+monotonicity on pre-existing entries (the challenger must not regress
+any pre-existing pass).
 See [SCORING.md §5](SCORING.md#5-the-tournament-promotion-gate).
