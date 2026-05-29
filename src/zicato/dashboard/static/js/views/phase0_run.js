@@ -31,6 +31,13 @@ const _loadingTranscript = new Set();
 // per (focused epoch, entry) so navigating to another L4 entry resets
 // the picker to "off" instead of carrying a stale compare target.
 const _compareGenByEntry = new Map();
+// Parallel "user explicitly touched the picker" flag, same key shape.
+// When false, compareGenFor() auto-defaults to the focused gen's
+// parent_generation_id (the champion-at-time-of-challenge — the side
+// the user wants to see when they navigate to a rejected challenger).
+// Once the user picks anything (including "(off)"), the flag flips
+// true and subsequent renders honour their explicit choice instead.
+const _compareUserOverride = new Map();
 
 // Per-card render digests — the SSE heartbeat ticks once per second
 // and emits state:changed every time. The transcript card (which
@@ -69,6 +76,7 @@ export function resetRunCaches() {
   _transcriptCache.clear();
   _loadingTranscript.clear();
   _compareGenByEntry.clear();
+  _compareUserOverride.clear();
   _lastHeaderDigest = null;
   _lastExpectationDigest = null;
   _lastJudgesDigest = null;
@@ -107,7 +115,7 @@ export function runViewDigest(params) {
   const generationId = (params && params.generationId) || null;
   const entryId = (params && params.entryId) || null;
   const key = (epochId || '') + '/' + (generationId || '') + '/' + (entryId || '');
-  const compareGen = compareGenFor(epochId, entryId) || null;
+  const compareGen = compareGenFor(epochId, entryId, generationId) || null;
   const compareKey = compareGen
     ? (epochId || '') + '/' + compareGen + '/' + (entryId || '')
     : null;
@@ -202,12 +210,54 @@ export function transcriptPayload(epochId, generationId, entryId) {
   ) || null;
 }
 
-export function compareGenFor(epochId, entryId) {
-  return _compareGenByEntry.get(epochId + '/' + entryId) || null;
+// Look up the focused gen's parent_generation_id on the epoch contract.
+// state.epochDef.experiments is the canonical list — the same place the
+// L2 generation view reads from. Returns null when:
+//   * state.epochDef has not been hydrated yet (cold deep-link),
+//   * the focused gen has no experiment record (eg. the v0 seed), or
+//   * the experiment's parent_generation_id is null / empty.
+// Exported so tests can assert the helper independently of the picker.
+export function defaultCompareGenFor(generationId) {
+  if (!generationId) return null;
+  const def = state.epochDef;
+  if (!def || !Array.isArray(def.experiments)) return null;
+  for (const exp of def.experiments) {
+    if (exp && exp.generation_id === generationId) {
+      const parent = exp.parent_generation_id;
+      if (typeof parent === 'string' && parent.length > 0) return parent;
+      return null;
+    }
+  }
+  return null;
+}
+
+// Resolve the compare-picker target for a (focused epoch, entry, gen)
+// triple. When the user has touched the picker, their explicit choice
+// wins (including "(off)"). Otherwise auto-default to the focused gen's
+// parent — when navigating to a rejected challenger or a promoted
+// challenger that beat a champion, the side-by-side is the useful view,
+// so the picker should land there without a click.
+//
+// The third argument (focused generationId) is optional for backwards
+// compatibility with call sites that don't have it handy; when omitted
+// the auto-default is skipped and only an explicit override is honoured.
+export function compareGenFor(epochId, entryId, generationId) {
+  const key = epochId + '/' + entryId;
+  if (_compareUserOverride.get(key)) {
+    return _compareGenByEntry.get(key) || null;
+  }
+  // No explicit pick yet — fall back to the parent on the epoch
+  // contract. Returns null gracefully when the contract is not yet
+  // loaded or the focused gen has no parent (eg. v0).
+  return defaultCompareGenFor(generationId);
 }
 
 export function setCompareGenFor(epochId, entryId, generationId) {
   const key = epochId + '/' + entryId;
+  // The user touched the picker — flag the override so subsequent
+  // renders honour the choice (including null = explicit "(off)") and
+  // stop auto-defaulting to the parent.
+  _compareUserOverride.set(key, true);
   if (!generationId) _compareGenByEntry.delete(key);
   else _compareGenByEntry.set(key, generationId);
 }
@@ -810,7 +860,7 @@ function _renderTranscript(epochId, generationId, entryId, repaint) {
   // call cheap.
   ensureTranscript(epochId, generationId, entryId, repaint);
 
-  const compareGen = compareGenFor(epochId, entryId);
+  const compareGen = compareGenFor(epochId, entryId, generationId);
   if (compareGen) {
     ensureTranscript(epochId, compareGen, entryId, repaint);
   }
@@ -945,7 +995,7 @@ export function renderPhase0Run(params, repaint) {
   // here so the per-card digest below sees the cache hit when the
   // payload eventually arrives.
   ensureTranscript(epochId, generationId, entryId, repaint);
-  const compareGen = compareGenFor(epochId, entryId);
+  const compareGen = compareGenFor(epochId, entryId, generationId);
   if (compareGen) ensureTranscript(epochId, compareGen, entryId, repaint);
 
   // Per-card digest gates — a heartbeat timestamp tick changes neither

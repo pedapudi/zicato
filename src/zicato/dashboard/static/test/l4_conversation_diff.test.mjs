@@ -142,6 +142,11 @@ test('L4 single-run mode renders the focused transcript as one column', async ()
   runV.resetRunCaches();
   state.activeRuns = [];
   state.logTail = { events: [] };
+  // Hermeticity — the picker auto-defaults to the focused gen's
+  // parent_generation_id off state.epochDef.experiments; clear any
+  // leakage from prior test files so this single-run case is not
+  // surprised into compare mode.
+  state.epochDef = null;
   const restore = mockFetch(_baseFetchHandler);
   try {
     runV.renderPhase0Run({
