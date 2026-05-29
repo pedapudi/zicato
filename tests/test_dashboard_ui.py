@@ -209,16 +209,20 @@ REQUIRED_CHROME_IDS = {
 
 REQUIRED_SHELL_IDS = {
     "phase0-shell",
-    "phase0-sidebar",
-    "phase0-breadcrumb",
-    "phase0-live-card",
-    "phase0-live-body",
-    "phase0-nav-files",
-    # The always-visible sidebar search bar (an `<input>` plus a
-    # collapsing results panel). Replaces the previous `phase0-nav-search`
-    # stub link that pointed at a placeholder page.
-    "phase0-sidebar-search-input",
-    "phase0-sidebar-search-results",
+    # The clean-slate navigation rework dropped the sidebar entirely;
+    # everything global lives in the top bar. ``#phase0-topbar`` is the
+    # single live slot the shell paints branding / breadcrumb / ⌘K
+    # button / status pill / Files icon / Harmonograf icon into.
+    "phase0-topbar",
+    # The status pill expands a small dropdown panel anchored just
+    # below the top bar; always present in the DOM (hidden).
+    "phase0-status-dropdown",
+    # The ⌘K command palette overlay + its input + results list.
+    "phase0-palette-overlay",
+    "phase0-palette-input",
+    "phase0-palette-results",
+    # The L0 Recent Decisions card slot.
+    "phase0-workspace-recent",
 }
 
 REQUIRED_IDS = REQUIRED_CHROME_IDS | REQUIRED_SHELL_IDS | REQUIRED_PHASE0_VIEW_IDS

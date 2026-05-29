@@ -1,17 +1,30 @@
 // views/phase0_shell.js — chrome for the level-aligned shell.
 //
-// This module owns the cross-level pieces of the shell: the header bar
-// (epoch / gen / round badges, elapsed clock, health-badge), the footer
-// bar (version / port / build), the breadcrumb (the primary
-// navigation), the sidebar's Live Activity card (heartbeat-subscribed,
-// digest-gated), and the view-container visibility switch.
+// Clean-slate navigation rework: the sidebar is gone. Everything global
+// lives in the top bar:
+//
+//   [zicato]  workspace › presn › v3 › entry_alpha   [⌘K]   ● RUNNING v8 ›   [Files]  [Harmonograf ↗]
+//
+// The top bar is rendered into ``#phase0-topbar`` (the single live slot
+// in index.html) on every relevant heartbeat tick. ``renderTopBar`` is
+// digest-gated so a heartbeat tick that only re-stamps a timestamp
+// writes zero DOM nodes.
+//
+// Legacy contracts the rest of the app still relies on:
+//   * ``renderSidebarLive`` — kept as a no-op shim so app.js can keep
+//     its existing render fan-out without a coordinated change.
+//   * ``liveActivityDigest`` / ``resetSidebarDigest`` — same.
+//   * ``renderHeader`` — still writes into the hidden compat strip
+//     (epoch-id / generation-id / elapsed / health-badge) so existing
+//     tests can keep reading those nodes.
 
 import { $, el, svgEl, clearChildren, patchText, patchClass } from '../core/dom.js';
 import { parseIso, fmtDuration, nowMs } from '../core/format.js';
 import { state } from '../core/state.js';
 import { phase0Href, PHASE0_LEVELS } from './phase0_router.js';
-import { renderLiveIndicator } from '../components/live_indicator.js';
-import { renderLoadingState, renderEmptyState } from '../components/loading.js';
+import { renderStatusPill } from '../components/status_pill.js';
+import { harmonografBase } from '../core/harmonograf.js';
+import { open as openPalette } from '../components/command_palette.js';
 
 // How long since the last heartbeat before the run is considered
 // stale. heartbeat.json is rewritten on a short cadence (well under a
@@ -19,17 +32,13 @@ import { renderLoadingState, renderEmptyState } from '../components/loading.js';
 // scheduler without false-flagging a healthy live run.
 const STALE_HEARTBEAT_MS = 90_000;
 
-// Render the top header bar — epoch / gen / round badges, the elapsed
-// clock, and the connection / heartbeat health badge. Idempotent: every
+// Render the hidden compat header strip. The visible top bar lives in
+// ``#phase0-topbar``; ``renderHeader`` only keeps the chrome nodes that
+// the rest of the dashboard already patches into. Idempotent: every
 // text write routes through patchText so an unchanged tick writes zero
-// DOM nodes (text selection inside the header survives each tick).
+// DOM nodes.
 export function renderHeader() {
   const hb = state.heartbeat || {};
-  // Epoch + generation + round come straight off the heartbeat —
-  // ``epoch_id``, ``generation_id`` ("v2"), and ``round_index`` (an
-  // int) — the single source of truth the orchestrator stamps each
-  // tick. The header summary (state.epoch.{id,generation,round}, seeded
-  // from the initial snapshot) is the fallback.
   const epochId = hb.epoch_id || state.epoch.id;
   const genId = hb.generation_id || state.epoch.generation;
   const roundIdx = (hb.round_index != null) ? hb.round_index : state.epoch.round;
@@ -40,10 +49,6 @@ export function renderHeader() {
   patchText($('round-id'),
     'round · ' + (roundIdx != null && roundIdx !== '' ? roundIdx : '—'));
 
-  // Elapsed = now − started_at. The heartbeat's ``started_at`` is the
-  // run's start; ``round_started_at`` and ``epoch_started_at`` are
-  // accepted fallbacks. parseIso copes with both the ``Z`` and
-  // ``+00:00`` zone forms.
   const startedRaw = hb.started_at || state.epoch.startedAt
     || hb.round_started_at || hb.epoch_started_at;
   const startedMs = parseIso(startedRaw);
@@ -61,11 +66,6 @@ export function renderHeader() {
     badgeKind = 'pending';
     badgeText = 'connecting';
   } else if (state.connected) {
-    // Stale = the last heartbeat is older than STALE_HEARTBEAT_MS.
-    // ``last_heartbeat`` is the canonical field; ``timestamp`` is the
-    // older name. A healthy live run keeps this fresh and must NOT
-    // trip the badge — an unparseable/absent timestamp is treated as
-    // healthy rather than falsely stale.
     const hbMs = parseIso(hb.last_heartbeat != null ? hb.last_heartbeat : hb.timestamp);
     const stale = isFinite(hbMs) && (nowMs() - hbMs) > STALE_HEARTBEAT_MS;
     if (stale) {
@@ -79,8 +79,6 @@ export function renderHeader() {
     badgeKind = 'error';
     badgeText = 'disconnected';
   }
-  // patchClass writes only when the presence must change — a steady
-  // 'ok' badge is left untouched across every 1Hz tick.
   patchClass(badge, 'ok', badgeKind === 'ok');
   patchClass(badge, 'warn', badgeKind === 'warn');
   patchClass(badge, 'error', badgeKind === 'error');
@@ -158,14 +156,14 @@ export function breadcrumbSegments(route) {
   return segs;
 }
 
-// Render the breadcrumb into ``#phase0-breadcrumb``. Idempotent: the
-// container is rebuilt from segments each call. The container itself
-// is preserved (so its outer attributes survive across renders).
-export function renderBreadcrumb(route) {
-  const root = $('phase0-breadcrumb');
-  if (!root) return;
+// Render the breadcrumb into a fresh node. Used by the top-bar renderer.
+// Returns the container element so the top-bar paint can append it.
+export function renderBreadcrumbNode(route) {
   const segs = breadcrumbSegments(route);
-  clearChildren(root);
+  const root = el('nav', {
+    class: 'phase0-breadcrumb',
+    'aria-label': 'Hierarchy breadcrumb',
+  });
   segs.forEach((seg, i) => {
     if (i > 0) {
       root.appendChild(el('span', {
@@ -186,6 +184,120 @@ export function renderBreadcrumb(route) {
       }, [seg.label]));
     }
   });
+  return root;
+}
+
+// Render the breadcrumb. The breadcrumb is part of the top-bar paint;
+// ``renderBreadcrumb`` is kept as a shim that re-runs the full top-bar
+// paint so app.js can keep its existing render fan-out unchanged.
+export function renderBreadcrumb(route) {
+  renderTopBar(route);
+}
+
+// Top-bar digest — what does the top bar actually depend on?
+//   * the route (for the breadcrumb)
+//   * heartbeat status fields (epoch_id, generation_id, last_heartbeat,
+//     harmonograf_url — for the status pill state + harmonograf link)
+//   * connection + activeRuns / activeTournament (status state)
+//
+// A heartbeat tick that only re-stamps timestamps must NOT churn the
+// pill. The dot animation is purely CSS so the steady-state hold is
+// jitter-free.
+export function topBarDigest(route) {
+  const hb = state.heartbeat || {};
+  const lastHbMs = parseIso(hb.last_heartbeat != null ? hb.last_heartbeat : hb.timestamp);
+  const isStale = isFinite(lastHbMs) && (nowMs() - lastHbMs) > STALE_HEARTBEAT_MS;
+  const activeCount = Array.isArray(state.activeRuns) ? state.activeRuns.length : 0;
+  return JSON.stringify({
+    route: route && route.raw ? route.raw : (route && route.level || null),
+    params: route && route.params ? route.params : null,
+    heartbeat_loaded: state.heartbeat != null,
+    epoch_id: hb.epoch_id || null,
+    generation_id: hb.generation_id || null,
+    round_index: hb.round_index != null ? hb.round_index : null,
+    started_at: hb.started_at || null,
+    harmonograf_url: hb.harmonograf_url || null,
+    connecting: !!state.connecting,
+    is_stale: isStale,
+    active_count: activeCount,
+    has_tournament: !!state.activeTournament,
+  });
+}
+
+let _lastTopBarDigest = null;
+
+// Render the top bar into ``#phase0-topbar``. Digest-gated.
+export function renderTopBar(route) {
+  const host = $('phase0-topbar');
+  if (!host) return;
+  const digest = topBarDigest(route);
+  if (digest === _lastTopBarDigest) return;
+  _lastTopBarDigest = digest;
+
+  clearChildren(host);
+
+  // ---- left cluster: branding + breadcrumb ----
+  const brand = el('a', {
+    class: 'phase0-topbar-brand',
+    href: phase0Href('workspace'),
+    'aria-label': 'zicato — go to workspace',
+  }, ['zicato']);
+
+  const left = el('div', { class: 'phase0-topbar-left' }, [
+    brand,
+    renderBreadcrumbNode(route),
+  ]);
+
+  // ---- right cluster: ⌘K · status pill · Files · Harmonograf ----
+  const palBtn = el('button', {
+    type: 'button',
+    class: 'phase0-topbar-palette-btn',
+    'aria-label': 'Open command palette (Cmd+K)',
+    onClick: (ev) => {
+      if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+      openPalette();
+    },
+  }, [
+    el('span', { class: 'phase0-topbar-palette-kbd' }, ['⌘K']),
+  ]);
+
+  const pill = renderStatusPill();
+
+  const filesIcon = svgEl('svg', {
+    class: 'phase0-topbar-icon',
+    'aria-hidden': 'true',
+    width: '16', height: '16', viewBox: '0 0 20 20',
+  });
+  filesIcon.appendChild(svgEl('use', {
+    href: '/static/icons.svg#icon-folder',
+  }));
+  const filesLink = el('a', {
+    class: 'phase0-topbar-iconlink',
+    href: phase0Href('files'),
+    'aria-label': 'Files',
+    title: 'Files',
+  }, [filesIcon]);
+
+  const right = el('div', { class: 'phase0-topbar-right' }, [
+    palBtn, pill, filesLink,
+  ]);
+
+  // Harmonograf — only when the heartbeat surfaces a URL.
+  const hgBase = harmonografBase();
+  if (hgBase) {
+    right.appendChild(el('a', {
+      class: 'phase0-topbar-iconlink phase0-topbar-iconlink-external',
+      'data-link': 'harmonograf',
+      href: hgBase,
+      target: '_blank',
+      rel: 'noopener',
+      'aria-label': 'Open harmonograf',
+      title: 'Harmonograf',
+    }, ['↗']));
+  }
+
+  host.appendChild(left);
+  host.appendChild(right);
 }
 
 // Show only the phase0 view container that matches ``level``; hide all
@@ -198,18 +310,17 @@ export function showPhase0View(level) {
   }
 }
 
-// Compute a stable digest of the heartbeat fields that drive the
-// sidebar's Live Activity card. A heartbeat tick that only re-stamps a
-// timestamp must NOT churn the live card. Exported so a test can pin
-// which fields are part of the contract.
+// ---------------------------------------------------------------------------
+// Back-compat shims — the sidebar Live Activity card is gone. These
+// stubs keep the existing app.js fan-out + tests stable without
+// re-architecting the bus subscribers.
+// ---------------------------------------------------------------------------
+
 export function liveActivityDigest() {
+  // Same shape the rest of the app expects — kept so the previous
+  // phase0 tests still resolve a digest for null→loaded etc.
   const hb = state.heartbeat || {};
   return JSON.stringify({
-    // ``heartbeat_loaded`` flips when the first heartbeat lands so the
-    // sidebar can swap the "Loading…" placeholder for the real card on
-    // the first tick after SSE settles. Without it a null→{} transition
-    // (heartbeat arrives carrying no live ids) writes zero DOM and the
-    // sidebar is stuck on "Loading…".
     heartbeat_loaded: state.heartbeat != null,
     epoch_id: hb.epoch_id || null,
     generation_id: hb.generation_id || null,
@@ -221,100 +332,12 @@ export function liveActivityDigest() {
   });
 }
 
-let _lastLiveDigest = null;
+// The sidebar live card is gone — this is a no-op stub kept so the
+// existing app.js render fan-out compiles unchanged.
+export function renderSidebarLive() { /* no-op: sidebar removed */ }
 
-// Render the sidebar's Live Activity card. Digest-gated: a no-op tick
-// (the heartbeat's churning timestamp fields) writes ZERO DOM nodes,
-// so text selection, scroll position and focus survive each tick.
-export function renderSidebarLive() {
-  const body = $('phase0-live-body');
-  if (!body) return;
-  const digest = liveActivityDigest();
-  if (digest === _lastLiveDigest) return;
-  _lastLiveDigest = digest;
-
-  const heartbeatLoaded = state.heartbeat != null;
-  const hb = state.heartbeat || {};
-  clearChildren(body);
-
-  // Liveness banner — a single emerald/gray indicator sits in the
-  // top-right corner of the Live Activity card and announces the run
-  // state at a glance. The card's section eyebrow (in index.html) is
-  // the persistent label; this indicator is the dynamic part.
-  const live = !!(hb && (hb.epoch_id || hb.generation_id));
-  const adorn = $('phase0-live-adorn');
-  if (adorn) {
-    clearChildren(adorn);
-    adorn.appendChild(renderLiveIndicator({
-      live, label: live ? 'live' : 'idle', size: 'sm',
-    }));
-  }
-
-  if (!heartbeatLoaded) {
-    // SSE has not yet delivered the first heartbeat. Saying "No active
-    // run." here is misleading — the dashboard simply has not received
-    // the first tick yet. Show the explicit loading placeholder.
-    body.appendChild(renderLoadingState({ label: 'Loading live activity' }));
-    return;
-  }
-  if (!hb.epoch_id && !hb.generation_id) {
-    body.appendChild(renderEmptyState('No active run.'));
-    return;
-  }
-
-  // Metric grid — four small tiles (epoch / gen / round / runs) laid
-  // out as a 2×2 grid. Each tile is a tiny KV: small-caps label on top,
-  // mono value below. Dense without feeling like raw debug output.
-  const activeCount = Array.isArray(state.activeRuns) ? state.activeRuns.length : 0;
-  const tiles = [
-    ['epoch', hb.epoch_id != null ? String(hb.epoch_id) : '—'],
-    ['gen', hb.generation_id != null ? String(hb.generation_id) : '—'],
-    ['round', hb.round_index != null ? String(hb.round_index) : '—'],
-    ['runs', String(activeCount)],
-  ];
-  const grid = el('div', { class: 'phase0-live-grid' },
-    tiles.map(([label, value]) =>
-      el('div', { class: 'phase0-live-tile' }, [
-        el('span', { class: 'phase0-live-tile-label' }, [label]),
-        el('span', { class: 'phase0-live-tile-value mono' }, [value]),
-      ])));
-  body.appendChild(grid);
-
-  // "Jump to current run" CTA — points at the L4 run view for the
-  // first active run, or at the current generation when no run id is
-  // available. Treated as a button-like card affordance rather than a
-  // stray underlined link.
-  let jumpHref = phase0Href('workspace');
-  if (hb.epoch_id && hb.generation_id) {
-    jumpHref = phase0Href('generation', {
-      epochId: hb.epoch_id, generationId: hb.generation_id,
-    });
-    const first = (state.activeRuns || [])[0];
-    if (first && first.entry_id) {
-      jumpHref = phase0Href('run', {
-        epochId: hb.epoch_id,
-        generationId: hb.generation_id,
-        entryId: first.entry_id,
-      });
-    }
-  }
-  const jumpIcon = svgEl('svg', {
-    class: 'phase0-live-jump-icon',
-    'aria-hidden': 'true',
-    width: '14', height: '14', viewBox: '0 0 20 20',
-  });
-  jumpIcon.appendChild(svgEl('use', {
-    href: '/static/icons.svg#icon-arrow-right',
-  }));
-  body.appendChild(el('a', {
-    class: 'phase0-live-jump',
-    href: jumpHref,
-  }, [
-    el('span', { class: 'phase0-live-jump-label' }, ['View current run']),
-    jumpIcon,
-  ]));
+// Reset both digest caches (top bar + the legacy sidebar). Tests share
+// module state across renders so a fresh case must not see a stale hit.
+export function resetSidebarDigest() {
+  _lastTopBarDigest = null;
 }
-
-// Reset the digest cache. Used by tests that share module state across
-// renders so a fresh test does not see a stale cache hit.
-export function resetSidebarDigest() { _lastLiveDigest = null; }

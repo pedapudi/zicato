@@ -60,30 +60,11 @@ function resetState() {
 }
 
 // -- L0 sidebar live-activity card -----------------------------------
-
-test('L0 sidebar shows Loading when heartbeat is null (SSE not yet settled)', () => {
-  resetState();
-  const body = installNode('phase0-live-body');
-  shell.renderSidebarLive();
-  const text = body.textContent;
-  assert(text.includes('Loading'),
-    `sidebar must show Loading when state.heartbeat == null; got: ${text}`);
-  assert(!text.includes('No active run'),
-    `sidebar must NOT say "No active run" while loading; got: ${text}`);
-});
-
-test('L0 sidebar shows "No active run" when heartbeat is loaded but empty', () => {
-  resetState();
-  // Heartbeat object is present but carries no live-run fields.
-  state.heartbeat = { last_heartbeat: '2026-05-27T00:00:00Z' };
-  const body = installNode('phase0-live-body');
-  shell.renderSidebarLive();
-  const text = body.textContent;
-  assert(text.includes('No active run'),
-    `sidebar must say "No active run" once heartbeat loaded; got: ${text}`);
-  assert(!text.includes('Loading'),
-    `sidebar must NOT say "Loading" after heartbeat lands; got: ${text}`);
-});
+//
+// The clean-slate navigation rework dropped the sidebar entirely.
+// Loading-vs-empty semantics for the live-activity surface are now
+// owned by the top-bar status pill (states CONNECTING / IDLE /
+// RUNNING / STALE) — exercised in top_bar.test.mjs.
 
 // -- L0 workspace lineage --------------------------------------------
 

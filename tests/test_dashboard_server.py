@@ -2449,8 +2449,9 @@ def test_phase0_shell_present_in_index_html() -> None:
     index_path = Path(_dashboard_pkg.__file__).resolve().parent / "static" / "index.html"
     html = index_path.read_text(encoding="utf-8")
     assert 'id="phase0-shell"' in html, "phase-0 shell container must be present"
-    assert 'id="phase0-sidebar"' in html, "phase-0 sidebar must be present"
-    assert 'id="phase0-breadcrumb"' in html, "phase-0 breadcrumb must be present"
+    # The clean-slate navigation rework dropped the sidebar; the top bar
+    # is the single chrome surface.
+    assert 'id="phase0-topbar"' in html, "phase-0 top bar must be present"
     # Each L0..L4 view container must be wired so the shell can switch
     # between them without re-fetching the HTML.
     for level in ("workspace", "epoch", "generation", "round", "run"):

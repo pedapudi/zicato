@@ -169,37 +169,11 @@ test('liveActivityDigest changes when generation_id changes', () => {
 });
 
 // --- sidebar Live Activity rendering -------------------------------
-
-test('renderSidebarLive paints the heartbeat fields into the live card', () => {
-  // Install the live-card container the shell expects.
-  const body = document.createElement('div');
-  body.id = 'phase0-live-body';
-  document.body.appendChild(body);
-
-  state.heartbeat = {
-    epoch_id: 'e0',
-    generation_id: 'v3',
-    round_index: 2,
-  };
-  state.activeRuns = [{ entry_id: 'entry_alpha' }];
-  shell.resetSidebarDigest();
-  shell.renderSidebarLive();
-  const text = body.textContent;
-  assert(text.includes('e0'), 'epoch id must render');
-  assert(text.includes('v3'), 'generation id must render');
-  assert(text.includes('round'), 'round label must render');
-  // "Jump to current run" link points at the L4 run for the active entry.
-  const jump = body.querySelector('[class]');
-  // Find the anchor by attribute.
-  const links = [];
-  for (const c of body.childNodes) {
-    if (c.localName === 'a') links.push(c);
-  }
-  assert(links.length >= 1, 'a jump link must render');
-  const href = links[0].getAttribute('href');
-  assert(href.includes('/run/e0/v3/entry_alpha'),
-    `jump link must point at the L4 run route; got ${href}`);
-});
+//
+// The clean-slate navigation rework dropped the sidebar entirely;
+// renderSidebarLive is now a no-op shim kept for back-compat with the
+// app.js render fan-out. The state-aware status pill in the top bar
+// owns this surface now — see top_bar.test.mjs for the new contract.
 
 // --- view container toggle -----------------------------------------
 

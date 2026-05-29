@@ -3,8 +3,8 @@
 // app.js is the thin orchestrator for the level-aligned shell. The
 // shell maps directly onto the environment → epoch → generation →
 // round → run hierarchy: five view modules under ``js/views/phase0_*.js``,
-// a fixed sidebar (Live Activity card + Files + Search), and a
-// breadcrumb as the primary navigation.
+// the clean-slate top bar (branding, breadcrumb, ⌘K palette button,
+// status pill, files + harmonograf icons), and the level-aligned views.
 //
 // The bus is the spine: a state mutation or a route change drives a
 // render.
@@ -18,10 +18,11 @@ import { mockSnapshot } from './js/views/mock.js';
 
 import { parsePhase0Hash } from './js/views/phase0_router.js';
 import {
-  renderBreadcrumb, showPhase0View, renderSidebarLive,
+  renderTopBar, showPhase0View, renderSidebarLive,
   renderHeader, renderFooter,
 } from './js/views/phase0_shell.js';
-import { initSidebarSearch } from './js/views/phase0_sidebar_search.js';
+import { installKeyboardShortcut as installPaletteShortcut }
+  from './js/components/command_palette.js';
 import { renderPhase0Workspace } from './js/views/phase0_workspace.js';
 import { renderPhase0Epoch } from './js/views/phase0_epoch.js';
 import { renderPhase0Generation } from './js/views/phase0_generation.js';
@@ -43,15 +44,18 @@ function scheduleRender() {
   });
 }
 
-// Render the entire phase-0 shell. Header / footer / sidebar / breadcrumb
-// + the active L0..L4 view. Idempotent: each per-level module is itself
-// digest-aware where the underlying data justifies it.
+// Render the entire phase-0 shell. Header chrome / footer / top bar +
+// the active L0..L4 view. Each per-level module is itself digest-aware
+// where the underlying data justifies it; the top-bar paint is itself
+// digest-gated so a noisy heartbeat tick writes zero DOM.
 function renderPhase0All() {
   renderHeader();
   renderFooter();
+  // Keep the sidebar-live shim wired so any old subscriber that still
+  // calls it is harmless. (It is a no-op now.)
   renderSidebarLive();
   const route = parsePhase0Hash(window.location.hash);
-  renderBreadcrumb(route);
+  renderTopBar(route);
   showPhase0View(route.level);
   switch (route.level) {
     case 'workspace':
@@ -102,10 +106,9 @@ function init() {
   router.start();
   window.addEventListener('hashchange', () => scheduleRender());
 
-  // Wire the sidebar search input. The bar is always visible (regardless
-  // of route), so its listener is bound once at bootstrap rather than on
-  // every render.
-  initSidebarSearch();
+  // Wire the ⌘K / Ctrl+K keyboard shortcut. The palette element itself
+  // is wired lazily on first open so the bootstrap path stays minimal.
+  installPaletteShortcut();
 
   if (mock) {
     renderPhase0All();

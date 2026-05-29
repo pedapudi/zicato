@@ -12,131 +12,76 @@
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
+  <!-- ============ TOP BAR v2 — sidebar dropped =========================
+       The clean-slate navigation rework moved every global affordance
+       into the top bar. Branding + breadcrumb (the hierarchical
+       navigation up the tree) on the left; ⌘K palette trigger +
+       state-aware status pill + Files icon + Harmonograf link on the
+       right.
+
+       The header keeps a hidden chrome strip (epoch / gen / round /
+       elapsed / health / mock) so existing modules that patchText into
+       those nodes can keep doing so without churning the top bar's
+       layout. The visible chrome is the new top-bar component the
+       shell paints into ``#phase0-topbar``.
+   -->
   <header id="header-bar" class="header-bar" role="banner" aria-label="Environment header">
-    <div class="header-left">
-      <h1 class="title">zicato</h1>
-      <span id="epoch-id" class="meta mono" aria-label="Epoch identifier">epoch &middot; &mdash;</span>
-      <span id="generation-id" class="meta mono" aria-label="Current generation">gen &middot; &mdash;</span>
-      <span id="round-id" class="meta mono" aria-label="Current round">round &middot; &mdash;</span>
+    <div id="phase0-topbar" class="phase0-topbar" data-component="phase0-topbar">
+      <!-- The shell paints branding · breadcrumb · ⌘K · status pill ·
+           files icon · harmonograf icon into this single container.
+           Painted on first render and every relevant heartbeat tick. -->
     </div>
-    <div class="header-right">
-      <span id="elapsed" class="meta mono" aria-label="Elapsed time">00:00:00</span>
-      <span id="health-badge" class="badge pending" role="status" aria-label="Dashboard connection status">connecting</span>
-      <span id="mock-badge" class="badge deferred hidden" aria-label="Mock mode active">mock</span>
+    <!-- Hidden compat strip: the existing renderHeader patches these
+         nodes' text + class on every tick. Keeping them in the DOM
+         (display:none via CSS) means the renderHeader / renderFooter
+         pipelines do not have to be rewritten in this task. -->
+    <div class="header-bar-compat" aria-hidden="true">
+      <span id="epoch-id" class="meta mono">epoch &middot; &mdash;</span>
+      <span id="generation-id" class="meta mono">gen &middot; &mdash;</span>
+      <span id="round-id" class="meta mono">round &middot; &mdash;</span>
+      <span id="elapsed" class="meta mono">00:00:00</span>
+      <span id="health-badge" class="badge pending" role="status">connecting</span>
+      <span id="mock-badge" class="badge deferred hidden">mock</span>
     </div>
   </header>
 
-  <!-- ============ PHASE-0 SHELL (the only shell) ====================== -->
-  <!--
-    The phase-0 shell renders the level-aligned views (L0 workspace,
-    L1 epoch, L2 generation, L3 round, L4 run). Sidebar is a fixed
-    strip with Live Activity (heartbeat-subscribed), breadcrumb-aware
-    Files, and an always-visible search bar that filters across
-    entries / judges / patches / mutations and renders results inline.
+  <!-- Status pill dropdown panel — painted below the top bar by the
+       status pill component when the pill is clicked. Always present in
+       the DOM (hidden); the pill component populates + reveals on click. -->
+  <div id="phase0-status-dropdown" class="phase0-status-dropdown" role="dialog"
+      aria-label="Status detail" hidden></div>
+
+  <!-- ⌘K command palette overlay. Hidden by default; the palette
+       component reveals it on Cmd/Ctrl+K or a click on the ⌘K button. -->
+  <div id="phase0-palette-overlay" class="phase0-palette-overlay"
+      role="dialog" aria-modal="true" aria-label="Command palette" hidden>
+    <div class="phase0-palette-backdrop" data-palette-backdrop></div>
+    <div class="phase0-palette" role="document">
+      <div class="phase0-palette-input-wrap">
+        <svg class="phase0-palette-input-icon" aria-hidden="true"
+            width="16" height="16" viewBox="0 0 20 20">
+          <use href="/static/icons.svg#icon-search"/>
+        </svg>
+        <input id="phase0-palette-input" type="search"
+            class="phase0-palette-input"
+            placeholder="Jump to a page, entry, judge, patch, or mutation…"
+            aria-label="Command palette query" autocomplete="off" />
+      </div>
+      <div id="phase0-palette-results" class="phase0-palette-results"
+          role="listbox" aria-label="Command palette results"></div>
+      <div class="phase0-palette-footer">
+        <span class="phase0-palette-hint">↑↓ navigate &nbsp; ↵ open &nbsp; Esc close</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PHASE-0 SHELL (the only shell) ======================
+       The sidebar is gone — clean-slate navigation lives in the top bar.
+       The shell is now a single full-width main column.
    -->
-  <div id="phase0-shell" class="phase0-shell" data-shell="phase0">
-
-    <aside id="phase0-sidebar" class="phase0-sidebar" role="navigation"
-        aria-label="Phase-0 sidebar">
-
-      <!-- Live activity card. The section header is a static eyebrow
-           with a pulse indicator that flips live/idle from JS; the body
-           below carries the metric grid + jump CTA. -->
-      <section id="phase0-live-card" class="phase0-live-card phase0-sidebar-section"
-          aria-label="Live activity">
-        <div class="phase0-sidebar-section-header">
-          <span class="phase0-sidebar-section-eyebrow">
-            <svg class="phase0-sidebar-section-icon" aria-hidden="true"
-                width="12" height="12" viewBox="0 0 20 20">
-              <use href="/static/icons.svg#icon-activity"/>
-            </svg>
-            <span class="phase0-sidebar-section-label">Live activity</span>
-          </span>
-          <span id="phase0-live-adorn" class="phase0-sidebar-section-adorn"></span>
-        </div>
-        <div id="phase0-live-body" class="phase0-live-body">
-          <p class="empty">No active run.</p>
-        </div>
-      </section>
-
-      <!-- Files affordance. A single nav row sized like a button — icon
-           + label + chevron. Lives in its own section block so the
-           sidebar's rhythm matches the other two cards. -->
-      <section class="phase0-sidebar-section phase0-sidebar-section-files"
-          aria-label="Files">
-        <div class="phase0-sidebar-section-header">
-          <span class="phase0-sidebar-section-eyebrow">
-            <svg class="phase0-sidebar-section-icon" aria-hidden="true"
-                width="12" height="12" viewBox="0 0 20 20">
-              <use href="/static/icons.svg#icon-folder"/>
-            </svg>
-            <span class="phase0-sidebar-section-label">Browse</span>
-          </span>
-        </div>
-        <nav class="phase0-sidebar-nav" aria-label="Sidebar tools">
-          <a id="phase0-nav-files" class="phase0-sidebar-link" href="#/files">
-            <svg class="phase0-sidebar-link-icon" aria-hidden="true"
-                width="16" height="16" viewBox="0 0 20 20">
-              <use href="/static/icons.svg#icon-folder"/>
-            </svg>
-            <span class="phase0-sidebar-link-label">Files</span>
-            <svg class="phase0-sidebar-link-chevron" aria-hidden="true"
-                width="14" height="14" viewBox="0 0 20 20">
-              <use href="/static/icons.svg#icon-chevron-right"/>
-            </svg>
-          </a>
-        </nav>
-      </section>
-
-      <!-- Search card. The input lives in a label wrapper so the
-           magnifier icon shares a focus ring with the input. The
-           results panel hangs below, hidden until a query is typed. -->
-      <section id="phase0-sidebar-search" class="phase0-sidebar-section phase0-sidebar-search"
-          aria-label="Sidebar search">
-        <div class="phase0-sidebar-section-header">
-          <span class="phase0-sidebar-section-eyebrow">
-            <svg class="phase0-sidebar-section-icon" aria-hidden="true"
-                width="12" height="12" viewBox="0 0 20 20">
-              <use href="/static/icons.svg#icon-search"/>
-            </svg>
-            <span class="phase0-sidebar-section-label">Search</span>
-          </span>
-        </div>
-        <label class="phase0-sidebar-search-field"
-            for="phase0-sidebar-search-input">
-          <svg class="phase0-sidebar-search-icon" aria-hidden="true"
-              width="14" height="14" viewBox="0 0 20 20">
-            <use href="/static/icons.svg#icon-search"/>
-          </svg>
-          <input type="search" id="phase0-sidebar-search-input"
-              class="phase0-sidebar-search-input"
-              placeholder="entries · judges · patches"
-              aria-label="Search entries, judges, patches, and mutation ids" />
-        </label>
-        <div id="phase0-sidebar-search-results"
-            class="phase0-sidebar-search-results" hidden>
-        </div>
-      </section>
-    </aside>
+  <div id="phase0-shell" class="phase0-shell phase0-shell-no-sidebar" data-shell="phase0">
 
     <main id="main-content" class="phase0-main" role="main">
-
-      <nav id="phase0-breadcrumb" class="phase0-breadcrumb"
-          aria-label="Hierarchy breadcrumb">
-        <a class="phase0-crumb" href="#/workspace" data-crumb="workspace">workspace</a>
-        <span class="phase0-crumb-sep" aria-hidden="true">&rsaquo;</span>
-        <span class="phase0-crumb phase0-crumb-placeholder"
-            data-crumb="epoch">epoch</span>
-        <span class="phase0-crumb-sep" aria-hidden="true">&rsaquo;</span>
-        <span class="phase0-crumb phase0-crumb-placeholder"
-            data-crumb="generation">gen</span>
-        <span class="phase0-crumb-sep" aria-hidden="true">&rsaquo;</span>
-        <span class="phase0-crumb phase0-crumb-placeholder"
-            data-crumb="round">round</span>
-        <span class="phase0-crumb-sep" aria-hidden="true">&rsaquo;</span>
-        <span class="phase0-crumb phase0-crumb-placeholder"
-            data-crumb="run">run</span>
-      </nav>
 
       <div id="phase0-content" class="phase0-content" role="region"
           aria-live="polite">
@@ -157,6 +102,10 @@
           <div id="phase0-workspace-sparkline" class="phase0-workspace-sparkline"
               aria-label="Cross-epoch best-scalar sparkline">
             <p class="empty">No scalar history yet.</p>
+          </div>
+          <div id="phase0-workspace-recent" class="phase0-workspace-recent"
+              aria-label="Recent decisions across generations">
+            <p class="empty">No recent decisions yet.</p>
           </div>
         </section>
 
@@ -274,7 +223,7 @@
           </div>
         </section>
 
-        <!-- Sidebar-driven: Files (breadcrumb-aware) -->
+        <!-- Files view -->
         <section id="phase0-view-files" class="phase0-view phase0-view-files hidden"
             data-level="files">
           <h2>Files</h2>

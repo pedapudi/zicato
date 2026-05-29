@@ -321,9 +321,110 @@ function _renderSparklineSection() {
   }));
 }
 
+// -- Recent decisions --------------------------------------------------
+//
+// Pulls the most recent experiments off ``state.epochDef.experiments``,
+// reverse-chronological, capped at 10. Each row is clickable → L2 for
+// that generation. Card title "RECENT DECISIONS" with a "view all
+// generations →" link to L1 in the card footer.
+
+const RECENT_DECISIONS_CAP = 10;
+
+function _recentDecisionsRows() {
+  const def = state.epochDef;
+  if (!def || typeof def !== 'object') return [];
+  const xs = Array.isArray(def.experiments) ? def.experiments : [];
+  // Reverse so latest-first (experiments are appended in chronological
+  // order in the journal); cap at 10 so the card stays a glance.
+  return xs.slice().reverse().slice(0, RECENT_DECISIONS_CAP);
+}
+
+function _recentDecisionsBody() {
+  const rows = _recentDecisionsRows();
+  if (state.epochDef == null) {
+    return renderLoadingState({ label: 'Loading recent decisions' });
+  }
+  if (rows.length === 0) {
+    return renderEmptyState('No recent decisions yet.');
+  }
+  const epochId = (state.epochDef && state.epochDef.epoch_id)
+    || (state.heartbeat && state.heartbeat.epoch_id) || null;
+  const list = el('div', { class: 'phase0-recent-decisions' });
+  for (const exp of rows) {
+    const genId = exp.generation_id || exp.gen_id || exp.id || '—';
+    // ``outcome`` is the journal payload — an object with
+    // ``tournament_decision`` + ``scalar_score_delta`` in production.
+    // ``verdict`` is the short form used in tests + legacy fixtures.
+    const out = exp.outcome && typeof exp.outcome === 'object'
+      ? exp.outcome : {};
+    const verdictRaw = exp.verdict
+      || (typeof exp.outcome === 'string' ? exp.outcome : null)
+      || out.tournament_decision
+      || '';
+    const verdict = String(verdictRaw).toLowerCase();
+    const scalarRaw = exp.scalar != null ? exp.scalar
+      : (out.scalar_score_delta != null ? out.scalar_score_delta : null);
+    const scalar = scalarRaw != null ? Number(scalarRaw) : null;
+    const scalarFmt = scalar == null || !isFinite(scalar)
+      ? '—'
+      : (scalar > 0 ? '+' : '') + scalar.toFixed(2);
+    let mark = '·';
+    let dataVariant = 'open';
+    if (verdict.startsWith('prom') || verdict === 'accepted') {
+      mark = '✓';
+      dataVariant = 'promoted';
+    } else if (verdict.startsWith('rej')) {
+      mark = '✗';
+      dataVariant = 'rejected';
+    }
+    const href = epochId
+      ? phase0Href('generation', { epochId, generationId: genId })
+      : phase0Href('workspace');
+    list.appendChild(el('a', {
+      class: 'phase0-recent-decisions-row',
+      'data-variant': dataVariant,
+      href,
+      'data-gen-id': genId,
+    }, [
+      el('span', { class: 'phase0-recent-decisions-id' }, [genId]),
+      el('span', { class: 'phase0-recent-decisions-mark' }, [mark]),
+      el('span', { class: 'phase0-recent-decisions-verdict' },
+        [verdict || 'open']),
+      el('span', { class: 'phase0-recent-decisions-scalar' }, [scalarFmt]),
+    ]));
+  }
+  return list;
+}
+
+function _renderRecentDecisionsSection() {
+  const node = $('phase0-workspace-recent');
+  if (!node) return;
+  clearChildren(node);
+  const epochId = (state.epochDef && state.epochDef.epoch_id)
+    || (state.heartbeat && state.heartbeat.epoch_id) || null;
+  const footer = epochId
+    ? el('a', {
+        class: 'phase0-recent-decisions-allgens',
+        href: phase0Href('epoch', { epochId }),
+      }, ['view all generations →'])
+    : null;
+  node.appendChild(renderCard({
+    title: 'RECENT DECISIONS',
+    subtitle: 'Most recent experiments from the current epoch.',
+    body: _recentDecisionsBody(),
+    footer,
+  }));
+}
+
 export function renderPhase0Workspace(repaint) {
   ensureWorkspace(repaint);
   _renderEnvSection();
   _renderLineageSection();
   _renderSparklineSection();
+  _renderRecentDecisionsSection();
+}
+
+// Exported for tests — the count of rows the card will render.
+export function recentDecisionsCount() {
+  return _recentDecisionsRows().length;
 }

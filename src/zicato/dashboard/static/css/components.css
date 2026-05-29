@@ -59,7 +59,11 @@
 }
 
 /* =====================================================================
- * Top bar — app name, breadcrumb, heartbeat
+ * Top bar v2 — clean-slate navigation
+ * ---------------------------------------------------------------------
+ * Branding + breadcrumb live on the left, ⌘K + status pill + Files +
+ * Harmonograf on the right. The header bar is the only chrome; the
+ * sidebar is gone.
  * ===================================================================== */
 body:has(.phase0-shell:not(.hidden)) .header-bar {
   background: var(--color-surface);
@@ -68,16 +72,13 @@ body:has(.phase0-shell:not(.hidden)) .header-bar {
   padding: 0 var(--space-6);
   height: var(--topbar-height);
   font-family: var(--font-sans);
+  display: flex;
+  align-items: center;
 }
-body:has(.phase0-shell:not(.hidden)) .header-bar .title {
-  font-size: var(--font-size-18);
-  font-weight: var(--weight-bold);
-  color: var(--color-text-primary);
-  letter-spacing: -0.01em;
-}
-body:has(.phase0-shell:not(.hidden)) .header-bar .meta {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-12);
+/* The hidden compat strip keeps legacy chrome ids alive for renderHeader
+ * but contributes nothing to the visible layout. */
+.header-bar-compat {
+  display: none;
 }
 body:has(.phase0-shell:not(.hidden)) .footer-bar {
   background: var(--color-bg);
@@ -87,45 +88,426 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   padding: var(--space-3) var(--space-6);
 }
 
-/* =====================================================================
- * Phase-0 shell layout — sidebar + main content
- * ===================================================================== */
-.phase0-shell {
-  display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr;
-  gap: 0;
-  min-height: calc(100vh - var(--topbar-height) - 60px);
-  background: var(--color-bg);
+.phase0-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  min-width: 0;
+}
+.phase0-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.phase0-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+}
+.phase0-topbar-brand {
+  font-size: var(--font-size-16);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+.phase0-topbar-brand:hover {
+  background: var(--color-bg-soft);
 }
 
-.phase0-sidebar {
-  position: sticky;
-  top: var(--topbar-height);
-  align-self: start;
-  height: calc(100vh - var(--topbar-height));
-  padding: var(--space-5);
-  border-right: 1px solid var(--color-border);
-  background: var(--color-bg);
-  font-size: var(--font-size-13);
+/* ⌘K palette trigger */
+.phase0-topbar-palette-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-3);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-12);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background var(--transition-fast),
+              border-color var(--transition-fast);
+}
+.phase0-topbar-palette-btn:hover {
+  background: var(--color-bg-soft);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+.phase0-topbar-palette-kbd {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-11);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+}
+
+/* Files / Harmonograf icon links */
+.phase0-topbar-iconlink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: background var(--transition-fast),
+              color var(--transition-fast),
+              border-color var(--transition-fast);
+}
+.phase0-topbar-iconlink:hover {
+  background: var(--color-bg-soft);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+.phase0-topbar-iconlink-external {
+  font-size: var(--font-size-14);
+  font-weight: var(--weight-semibold);
+}
+.phase0-topbar-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* =====================================================================
+ * Status pill — one pill, four states (CONNECTING / IDLE / STALE / RUNNING)
+ * ===================================================================== */
+.phase0-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-12);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: background var(--transition-fast),
+              border-color var(--transition-fast);
+}
+.phase0-status-pill:hover {
+  background: var(--color-bg-soft);
+}
+.phase0-status-pill-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-faint);
+  flex: none;
+}
+.phase0-status-pill-label {
+  white-space: nowrap;
+}
+.phase0-status-pill-chevron {
+  color: var(--color-text-faint);
+  margin-left: 2px;
+}
+.phase0-status-pill-running {
+  background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--color-success) 30%, var(--color-border));
+  color: var(--color-success-fg);
+}
+.phase0-status-pill-running .phase0-status-pill-dot {
+  background: var(--color-success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 20%, transparent);
+  animation: phase0-status-pulse 1.6s ease-in-out infinite;
+}
+.phase0-status-pill-idle {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+.phase0-status-pill-idle .phase0-status-pill-dot {
+  background: var(--color-text-faint);
+}
+.phase0-status-pill-stale {
+  background: var(--color-warning-soft);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, var(--color-border));
+  color: var(--color-warning-fg);
+}
+.phase0-status-pill-stale .phase0-status-pill-dot {
+  background: var(--color-warning);
+}
+.phase0-status-pill-connecting {
+  background: var(--color-bg-soft);
+  border-color: var(--color-border);
+  color: var(--color-text-faint);
+}
+.phase0-status-pill-connecting .phase0-status-pill-dot {
+  background: var(--color-text-faint);
+  animation: phase0-status-pulse 1.6s ease-in-out infinite;
+}
+@keyframes phase0-status-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+/* Status dropdown panel — anchored just below the top bar. */
+.phase0-status-dropdown[hidden] { display: none; }
+.phase0-status-dropdown {
+  position: fixed;
+  top: calc(var(--topbar-height) + 4px);
+  right: var(--space-6);
+  width: 320px;
+  max-width: calc(100vw - 2 * var(--space-6));
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  z-index: 90;
+}
+.phase0-status-dropdown-panel {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  overflow-y: auto;
+  gap: var(--space-3);
+  padding: var(--space-4);
 }
-/* A hairline divider between every consecutive sidebar section so the
- * three blocks (Live activity, Browse, Search) read as one consistent
- * vertical rhythm. The live activity card carries its own surface so
- * it sits above the rule rather than being preceded by one. */
-.phase0-sidebar > .phase0-sidebar-section + .phase0-sidebar-section {
-  padding-top: var(--space-5);
+.phase0-status-dropdown-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.phase0-status-dropdown-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-text-faint);
+}
+.phase0-status-dropdown-dot-running { background: var(--color-success); }
+.phase0-status-dropdown-dot-idle    { background: var(--color-text-faint); }
+.phase0-status-dropdown-dot-stale   { background: var(--color-warning); }
+.phase0-status-dropdown-dot-connecting { background: var(--color-text-faint); }
+.phase0-status-dropdown-state {
+  font-weight: var(--weight-semibold);
+  font-size: var(--font-size-13);
+  letter-spacing: 0.04em;
+  color: var(--color-text-primary);
+}
+.phase0-status-dropdown-kvs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.phase0-status-kv-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: var(--font-size-12);
+}
+.phase0-status-kv-key {
+  width: 64px;
+  flex: none;
+  color: var(--color-text-muted);
+  text-transform: lowercase;
+}
+.phase0-status-kv-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-12);
+}
+.phase0-status-dropdown-eyebrow {
+  font-size: var(--font-size-11);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-muted);
+  margin-top: var(--space-2);
+}
+.phase0-status-dropdown-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.phase0-status-recent-row {
+  display: grid;
+  grid-template-columns: 1fr auto 80px 56px;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: 2px 0;
+  font-size: var(--font-size-12);
+  color: var(--color-text-secondary);
+}
+.phase0-status-recent-id {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono);
+}
+.phase0-status-recent-mark { color: var(--color-text-muted); }
+.phase0-status-recent-row[data-variant="promoted"] .phase0-status-recent-mark {
+  color: var(--color-success);
+}
+.phase0-status-recent-row[data-variant="rejected"] .phase0-status-recent-mark {
+  color: var(--color-error);
+}
+.phase0-status-recent-verdict { color: var(--color-text-muted); }
+.phase0-status-recent-scalar {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+.phase0-status-dropdown-cta {
+  display: inline-flex;
+  align-items: center;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, transparent);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-12);
+  color: var(--color-accent);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  transition: background var(--transition-fast);
+}
+.phase0-status-dropdown-cta:hover {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+.phase0-status-dropdown-hint {
+  font-size: var(--font-size-12);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* =====================================================================
+ * ⌘K command palette
+ * ===================================================================== */
+.phase0-palette-overlay[hidden] { display: none; }
+.phase0-palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+.phase0-palette-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(2px);
+}
+.phase0-palette {
+  position: relative;
+  width: min(600px, calc(100% - 2 * var(--space-6)));
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.phase0-palette-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+.phase0-palette-input-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--color-text-muted);
+  flex: none;
+}
+.phase0-palette-input {
+  flex: 1 1 auto;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: var(--font-size-15);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+.phase0-palette-input::placeholder { color: var(--color-text-faint); }
+.phase0-palette-results {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+}
+.phase0-palette-eyebrow {
+  font-size: var(--font-size-11);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-muted);
+  padding: var(--space-2) var(--space-4) 4px;
+}
+.phase0-palette-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  text-decoration: none;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-13);
+  cursor: pointer;
+}
+.phase0-palette-row:hover {
+  background: var(--color-bg-soft);
+}
+.phase0-palette-row-active {
+  background: var(--color-accent-soft);
+}
+.phase0-palette-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+.phase0-palette-row-hint {
+  flex: 0 0 auto;
+  font-size: var(--font-size-11);
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+}
+.phase0-palette-empty {
+  padding: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-13);
+  margin: 0;
+  text-align: center;
+}
+.phase0-palette-footer {
+  padding: var(--space-2) var(--space-4);
   border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-11);
+  color: var(--color-text-faint);
+  text-align: right;
+}
+
+/* =====================================================================
+ * Phase-0 shell layout — single full-width column (no sidebar)
+ * ===================================================================== */
+.phase0-shell {
+  display: block;
+  min-height: calc(100vh - var(--topbar-height) - 60px);
+  background: var(--color-bg);
 }
 
 .phase0-main {
   padding: var(--space-6) var(--space-7) var(--space-9);
   min-width: 0;
   max-width: var(--content-max-width);
-  margin: 0;
+  margin: 0 auto;
   width: 100%;
 }
 
@@ -133,12 +515,11 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0 0 var(--space-4) 0;
-  margin: 0 0 var(--space-6);
-  border-bottom: 1px solid var(--color-border);
+  gap: var(--space-1);
   font-size: var(--font-size-13);
   color: var(--color-text-muted);
+  min-width: 0;
+  overflow: hidden;
 }
 .phase0-crumb {
   text-decoration: none;
@@ -769,19 +1150,66 @@ body:has(.phase0-shell:not(.hidden)) .footer-bar {
 }
 
 /* =====================================================================
- * Sidebar — section-aligned visual rhythm
- *
- * Every block in the sidebar (Live activity, Browse/Files, Search)
- * wears the same hat: a section eyebrow with an optional icon and an
- * optional right-side adornment, then the block's body. The Live
- * Activity card is the only block that carries a tinted background;
- * the other two sit flush so the sidebar reads as one cohesive list of
- * sections rather than three competing cards.
+ * L0 RECENT DECISIONS card — workspace addition (from clean-slate nav)
  * ===================================================================== */
+.phase0-shell .phase0-recent-decisions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.phase0-shell .phase0-recent-decisions-row {
+  display: grid;
+  grid-template-columns: 1fr auto 96px 72px;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  font-size: var(--font-size-13);
+  color: var(--color-text-secondary);
+  transition: background var(--transition-fast);
+}
+.phase0-shell .phase0-recent-decisions-row:hover {
+  background: var(--color-bg-soft);
+  color: var(--color-text-primary);
+}
+.phase0-shell .phase0-recent-decisions-id {
+  color: var(--color-text-primary);
+  font-weight: var(--weight-medium);
+  font-family: var(--font-mono);
+}
+.phase0-shell .phase0-recent-decisions-mark { color: var(--color-text-muted); }
+.phase0-shell .phase0-recent-decisions-row[data-variant="promoted"]
+    .phase0-recent-decisions-mark {
+  color: var(--color-success);
+  font-weight: var(--weight-bold);
+}
+.phase0-shell .phase0-recent-decisions-row[data-variant="rejected"]
+    .phase0-recent-decisions-mark {
+  color: var(--color-error);
+  font-weight: var(--weight-bold);
+}
+.phase0-shell .phase0-recent-decisions-verdict { color: var(--color-text-muted); }
+.phase0-shell .phase0-recent-decisions-scalar {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+.phase0-shell .phase0-recent-decisions-allgens {
+  color: var(--color-accent);
+  font-size: var(--font-size-12);
+  text-decoration: none;
+  font-weight: var(--weight-semibold);
+}
+.phase0-shell .phase0-recent-decisions-allgens:hover {
+  text-decoration: underline;
+}
 
-/* Legacy title selector kept for any caller still emitting it; styled
- * the same as the new section eyebrow so the visual rhythm is
- * unchanged. */
+/* =====================================================================
+ * Legacy fallthrough — unused sidebar selectors kept as no-op shims so
+ * older modules that still emit the class names do not paint stray
+ * elements. (None of these match real DOM after the clean-slate rework.)
+ * ===================================================================== */
 .phase0-shell .phase0-sidebar-title,
 .phase0-shell .phase0-sidebar-section-label {
   font-size: var(--font-size-11);
