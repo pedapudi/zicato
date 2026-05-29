@@ -41,9 +41,13 @@ Backends
   child is a ``copytree`` of the parent plus an all-or-nothing patch
   apply. This IS the pre-seam directory-snapshot mechanism, byte-for-
   byte — the seam formalises it, it does not change the bytes.
-* A git backend (``GitGenerationStore``) is on the roadmap
-  (``docs/design/STORAGE.md`` §7) — not implemented here. When it
-  ships it implements this same protocol.
+* :class:`~zicato.epoch.git_genstore.GitGenerationStore` — the git
+  backend (``docs/design/STORAGE.md`` §7), selected by the
+  ``storage_backend: "git"`` config knob (see
+  :func:`default_generation_store`). It implements this same protocol,
+  checking out a ``git worktree`` per generation. The operator-facing
+  git CLI (``zicato repo`` / ``log`` / ``diff`` / ``show`` / ``bisect``
+  / ``blame``, ``workspace migrate-to-git``) is still on the roadmap.
 """
 
 from __future__ import annotations
