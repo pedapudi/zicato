@@ -12,8 +12,10 @@ This document covers:
 - How zicato captures the event stream (no custom EventSink).
 - The post-run reducer — its inputs, its output, why it is a function
   and not a sink.
+- The harmonograf session model (one server, many sessions) and
+  the deep-link route.
 - The `LossProfile` shape, field by field.
-- Multi-turn aggregation (turn-bounded vs run-bounded views).
+- Multi-turn aggregation (run-bounded counts + derived signals).
 - The emulator's `zicato:emulator` lane for harmonograf visibility.
 - What's used as feature vs as loss.
 
@@ -40,27 +42,43 @@ zicato composes goldfive's sink and avoids the dependency.
 
 For every run (one entry, one generation), zicato:
 
-1. Constructs the sink:
+1. Constructs the list of sinks via
+   `zicato.telemetry.sink.make_run_sinks(...)`. The list always
+   includes the canonical per-run `JSONLPersistenceSink`:
 
    ```python
    from goldfive.sinks.persistence import JSONLPersistenceSink
 
    sink = JSONLPersistenceSink(
-       path=".zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/events.jsonl",
+       path=".zicato/epochs/{epoch}/generations/{generation_id}/runs/{entry_id}/events.jsonl",
        mode="write",   # NEVER "append" — see §1.2
    )
    ```
 
-2. Hands the sink to `goldfive.run` / `goldfive.wrap` (or the
+   The exact path comes from `zicato.core.workspace.events_jsonl_path`
+   so the layout stays in one place. When a harmonograf URL is
+   resolvable (`resolve_harmonograf_url`), `make_run_sinks` **also**
+   appends a `harmonograf_client.HarmonografSink` so the run streams
+   live to the harmonograf console. That attachment is strictly
+   best-effort: a missing `harmonograf_client`, or any failure
+   building the sink, is logged at `warning` and the run continues
+   JSONL-only. The JSONL sink is the source of truth; harmonograf is
+   an additive live view.
+
+2. Hands the sinks to `goldfive.run` / `goldfive.wrap` (or the
    adapter's equivalent):
 
    ```python
-   await goldfive.run(inner_harness, board_entry.input, sinks=[sink])
+   await goldfive.run(inner_harness, board_entry.input, sinks=sinks)
    ```
 
 3. Awaits the terminal event (`RunCompleted` or `RunAborted`).
-4. Calls `await sink.close()` to flush.
-5. Hands the JSONL path to the post-run reducer (§2).
+4. Closes the sinks to flush.
+5. Hands the JSONL path to the post-run reducer (§2), which writes
+   `loss.json` next to `events.jsonl`. Per-run telemetry is therefore
+   exactly two files in the run directory: `events.jsonl` (the
+   canonical event stream) and `loss.json` (the reduced
+   `LossProfile`).
 
 ### 1.2 Why `mode="write"`, never `"append"`
 
@@ -74,15 +92,60 @@ triple maps to a distinct path. Reruns of the same `(epoch,
 generation, entry_id)` overwrite — the operator's intent is "redo this
 entry against this generation".
 
-### 1.3 No live UX in v0
+### 1.3 The live view is harmonograf
 
-A live-tail view (drift counts ticking up as the run progresses) is
-an ergonomic addition, not a foundational primitive. If `zicato run
---tail` ever needs one, the right shape is an in-process accumulator
-sink alongside the JSONL one (strictly additive — the JSONL sink still
-captures the canonical record). v0 does not ship this; harmonograf
-already exists for the live view and is the right tool when an
-operator wants to watch a generation run unfold.
+zicato does not build its own live-tail primitive (drift counts
+ticking up inside zicato as a run progresses). The live view is
+harmonograf: `make_run_sinks` (§1.1) attaches a `HarmonografSink`
+alongside the canonical JSONL sink whenever a harmonograf URL is in
+scope, so every run streams to the harmonograf console as it unfolds.
+`zicato evolve` resolves that URL — auto-launching an in-process
+harmonograf server when none is configured (see §1.4) — so the live
+view is on by default, not an opt-in. If a future zicato-side
+accumulator is ever wanted, the right shape is an additive in-process
+sink alongside the JSONL one (the JSONL sink stays the canonical
+record); that is not built today because harmonograf already serves
+the need.
+
+### 1.4 One harmonograf server, many sessions
+
+There is **one** harmonograf server per `evolve` invocation and
+**many** sessions on it — harmonograf multiplexes sessions, so a
+single console shows every timeline:
+
+- **Per-board-run sessions.** Each tournament run (one generation ×
+  one board entry) is its own harmonograf session. Its session id is
+  the synthetic run id `{generation_id}--{entry_id}` — the same id the
+  index's `runs` table keys on. The parent and child generations each
+  produce their own run, hence their own session, for the same entry.
+- **The meta-loop session.** The orchestrator's own goldfive
+  events — the proposer's auxiliary LLM call and the in-process
+  process-judge calls (e.g. the decision-telemetry analyzer's insight
+  call) — are conceptually a distinct session from any board run.
+  They are bucketed under one stable id per evolve invocation,
+  `zicato-meta-loop-<sanitized-iso>`, where the suffix is the evolve
+  start ISO timestamp with `:`→`-` and ` `→`_` (so it is URL-safe);
+  the id is built by
+  `zicato.telemetry.harmonograf_supervisor.meta_loop_session_id`. The
+  meta-loop's canonical JSONL is written to
+  `<workspace>/.zicato/runtime/meta_loop_events.jsonl` by the
+  `MetaLoopEmitter` (`zicato.telemetry.meta_loop`), and the same
+  harmonograf server receives the meta-loop sink when a URL is in
+  scope. The emitter reuses goldfive's canonical envelopes
+  (`AgentInvocationStarted` / `AgentInvocationCompleted`,
+  `JudgementEmitted`), so the dashboard and reducer need no
+  meta-loop-specific code path.
+
+#### Deep-linking into a session
+
+The dashboard deep-links into harmonograf at
+`<harmonograf_url>/#/session/<adk_session_id>`. The `adk_session_id`
+is the goldfive/ADK session id observed in the run's `events.jsonl`;
+the reducer extracts it and stamps it into `loss.json`
+(`LossProfile.adk_session_id`) so the dashboard can build the link
+without re-opening the event stream. The harmonograf URL itself is
+the auto-launched-or-configured one resolved by
+`resolve_harmonograf_url` (carried in `ZICATO_HARMONOGRAF_URL`).
 
 ## 2. The post-run reducer
 
@@ -153,8 +216,10 @@ A run that crashed before the goldfive boundary closed may leave a
 JSONL without a terminal event. The reducer handles this gracefully:
 
 - If the last event is not a `RunCompleted` / `RunAborted`, the
-  reducer stamps `aborted=true` with `abort_reason="no_terminal_event"`
-  and computes whatever features it can.
+  reducer computes whatever features it can from the partial stream;
+  a budget-exhaustion abort is recorded via
+  `wall_clock_budget_exceeded`, which scoring then treats as
+  worst-case for the entry.
 - Malformed lines (parse errors) propagate the parser's exception.
   The runner catches and logs them; the per-run loss profile records
   the failure.
@@ -168,179 +233,224 @@ the happy path.
 
 The reducer's output. The contract every other zicato component reads
 from. Pattern detectors and tournament scoring are blind to JSONL —
-they read `LossProfile`s.
+they read `LossProfile`s. The dataclass is defined in
+`zicato.core.types` (not `zicato.telemetry`); the shape below mirrors
+that definition.
+
+The structure is **flat by design** — every field is a scalar, a
+tuple of scalars, or a tuple of small frozen dataclasses
+(`DriftCount`, `MetricCount`, `JudgeLoss`) — so the profile
+round-trips through JSON and is diffable in the journal. Counts are
+carried as *tuples of typed measurement rows*, not as `dict`s.
 
 ```python
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
+from zicato.core.types import (
+    DriftCount, MetricCount, JudgeLoss, ExpectationResult,
+)
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class LossProfile:
     # --- identity ---
+    run_id: str            # the synthetic {generation_id}--{entry_id}
     entry_id: str
+    generation_id: str
     epoch_id: str
-    generation: str
-    tags: list[str]
 
-    # --- drift features ---
-    drift_counts_by_kind: dict[str, int] = field(default_factory=dict)
-    drift_counts_by_judge: dict[str, int] = field(default_factory=dict)
-    drift_counts_by_severity: dict[str, int] = field(default_factory=dict)
-    escalations: int = 0
-    plan_revisions: int = 0
-    task_failure_ratio: float = 0.0
-    human_intervention_required: bool = False
-
-    # --- multi-turn features ---
-    turn_count: int = 0
-    drift_counts_by_kind_per_turn: list[dict[str, int]] = field(default_factory=list)
-    stopped_reason: Optional[str] = None  # "stop_when" / "max_turns" / "script_exhausted" / "abort"
-
-    # --- runtime features ---
-    runtime_ms: int = 0
-    aborted: bool = False
-    abort_reason: Optional[str] = None
+    # --- drift + outcome features ---
+    drift_counts: tuple[DriftCount, ...]   # (kind, severity, count) rows
+    plan_revisions: int
+    task_failure_ratio: float
+    runtime_ms: int
+    wall_clock_budget_exceeded: bool
+    expectation_result: ExpectationResult | None
 
     # --- derived ---
-    drift_loss: float = 0.0    # weighted scalar (see SCORING.md)
-    pass_fail: Optional[bool] = None   # None if expectations list is empty
-    rubric_scores: list[float] = field(default_factory=list)  # scores from rubric-kind checks
+    drift_loss: float                      # weighted scalar (see SCORING.md)
+    pass_fail: bool | None                 # None when no expectation attached
+
+    # --- multi-turn extras (None on single-turn entries) ---
+    turns_completed: int | None = None
+    memory_failure_count: int | None = None
+    context_loss_count: int | None = None
+
+    # --- generalised metric surface ---
+    metric_counts: tuple[MetricCount, ...] = ()  # superset of drift_counts
+    tokens_spent: int = 0
+    output_chars: int = 0
+    schema_failures: int = 0
+
+    # --- harmonograf deep-link ---
+    adk_session_id: str = ""               # /#/session/<adk_session_id>
+
+    # --- per-judge attribution ---
+    per_judge_loss: tuple[JudgeLoss, ...] = ()
 ```
 
 The fields, in groups:
 
 ### 3.1 Identity
 
-The triple `(entry_id, epoch_id, generation)` uniquely names this
-profile. `tags` is duplicated from the board entry so pattern detectors
-can slice without re-joining.
+The quad `(run_id, entry_id, generation_id, epoch_id)` names this
+profile. `run_id` is the synthetic `{generation_id}--{entry_id}` id —
+the same id the analytical index's `runs` table keys on and the same
+id used as the per-board-run harmonograf session (§1.4).
 
-### 3.2 Drift features
+### 3.2 Drift counts and outcome features
 
 | Field | Computation |
 |---|---|
-| `drift_counts_by_kind` | Count `DriftDetected` payloads bucketed by the symbolic `kind` (e.g. `"DRIFT_KIND_CONFABULATION_RISK"`). Custom-judge violations all bucket under `"DRIFT_KIND_CUSTOM"`. |
-| `drift_counts_by_judge` | Count `DRIFT_KIND_CUSTOM` payloads bucketed by `judge_name` — the per-custom-judge breakdown. See §3.2.1. |
-| `drift_counts_by_severity` | Same, bucketed by `severity` (`"INFO"` / `"WARNING"` / `"CRITICAL"`). |
-| `escalations` | Count of `DriftDetected` payloads whose `lifecycle == DRIFT_LIFECYCLE_ESCALATING`. |
-| `plan_revisions` | Count of `PlanRevised` payloads. |
-| `task_failure_ratio` | `TaskFailed` count / max(1, `TaskStarted` count). |
-| `human_intervention_required` | True if any drift kind was `DRIFT_KIND_HUMAN_INTERVENTION_REQUIRED`. |
+| `drift_counts` | A tuple of `DriftCount(kind, severity, count)` rows. `kind` is the lowercase wire-canonical drift-kind string (see `zicato.core.drift_kinds`); `severity` is `"info"` / `"warning"` / `"critical"`. A given kind may appear in several rows, one per severity bucket. Custom-judge violations fold into a `kind` of `"custom:<judge_name>"` — see §3.2.1. |
+| `plan_revisions` | Number of plan-revision events observed. |
+| `task_failure_ratio` | Fatally-failed tasks / total tasks, in `[0.0, 1.0]`. |
+| `runtime_ms` | Total wall-clock duration in milliseconds. |
+| `wall_clock_budget_exceeded` | `True` iff the run hit `BoardEntry.wall_clock_budget_seconds` and was force-aborted; scoring then treats the run as worst-case for the entry. |
+| `expectation_result` | The `ExpectationResult(kind, passed, detail)` of evaluating the entry's expectation, or `None` when the entry had no expectation (or the run aborted before it could fire). |
 
-The buckets use the symbolic enum names (the strings from the
-`.proto`) rather than the integer values. This keeps the JSON
-self-describing and survives proto-enum reordering in goldfive
-without invalidating historical loss profiles.
+`DriftCount.kind` carries the wire-canonical lowercase string, not
+the symbolic proto enum integer — this keeps the JSON self-describing
+and survives proto-enum reordering in goldfive without invalidating
+historical loss profiles.
 
-#### 3.2.1 Custom judges and `DRIFT_KIND_CUSTOM`
+#### 3.2.1 Custom judges and `custom:<judge_name>`
 
 A board entry can carry **process** checks — `Judge.custom` /
 `Judge.python` — in its `judges` list (see
 [BOARD-FORMAT.md](BOARD-FORMAT.md) §4 and
 [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §3). goldfive evaluates these
-custom judges against the live reasoning stream, and a violation is
-emitted as a `JudgementEmitted` event with `kind == DriftKind.CUSTOM`
-and `judge_name` set to the `Judge`'s `name`.
+custom judges against the live reasoning stream; an adverse verdict is
+emitted as a `DriftDetected` of kind `custom`, paired with a
+`JudgementEmitted` carrying the judge's stable `judge_name`.
 
-The reducer treats these like any other drift event — they land in
-`drift_counts_by_kind` under `"DRIFT_KIND_CUSTOM"`. But because every
-custom judge shares that one kind, the kind alone cannot tell two
-judges apart. The reducer therefore also buckets `DRIFT_KIND_CUSTOM`
-payloads by their `judge_name` into `drift_counts_by_judge`:
+The reducer attributes each such drift to its authoring judge by
+folding the judge name into the `DriftCount.kind` as
+`"custom:<judge_name>"` (via
+`zicato.telemetry.reducer._judge_attributed_kind`). So two different
+custom judges appear as two distinct `DriftCount` kinds rather than
+collapsing into one bucket:
 
 ```json
-"drift_counts_by_kind":  {"DRIFT_KIND_CUSTOM": 3, "DRIFT_KIND_LOOPING_REASONING": 1},
-"drift_counts_by_judge": {"cite-before-metric": 2, "ack-before-edit": 1}
+"drift_counts": [
+  {"kind": "looping_reasoning",      "severity": "warning",  "count": 1},
+  {"kind": "custom:cite-before-metric", "severity": "critical", "count": 2},
+  {"kind": "custom:ack-before-edit",    "severity": "warning",  "count": 1}
+]
 ```
 
-`drift_counts_by_judge` is what the scoring layer reads to apply
-`ScoringWeights.per_judge_weights` — the per-judge weight is keyed on
-`judge_name` (see [SCORING.md](SCORING.md) §2.2). It is also what the
-journal and the pattern detectors use to attribute a custom-judge
-failure to a specific judge.
+The aggregate `drift_loss` already sums in every judge's
+contribution, but it does not preserve *which* judge drove the loss.
+`per_judge_loss` (§3.6) carries that attribution out separately. The
+per-judge weight applied is `ScoringWeights.per_judge_weights` keyed
+on `judge_name` (see [SCORING.md §2.2](SCORING.md#22-per-judge-weights)).
 
-goldfive's built-in judges emit their own native `DriftKind`s, not
-`CUSTOM`, so they never appear in `drift_counts_by_judge` — they are
-already discriminated by kind.
+goldfive's built-in judges emit their own native drift kinds (not
+`custom`), so they are already discriminated by kind and never need
+the `custom:` prefix.
 
 The drift kinds zicato cares about most are documented in goldfive's
 DRIFT.md; the full taxonomy is `DriftKind` in
 `goldfive/proto/goldfive/v1/types.proto`. Notable kinds for the v0
 dogfood (presentation agent):
 
-- `DRIFT_KIND_CONFABULATION_RISK` — research-shaped task produced
-  output without calling a tool. Fires often when a research
-  specialist's prompt doesn't require source-checking.
-- `DRIFT_KIND_CAPABILITY_MISMATCH` — coordinator delegated to an
-  agent whose tools can't perform the bound task.
-- `DRIFT_KIND_LOOPING_REASONING` — chain-of-thought repeated across
-  turns.
-- `DRIFT_KIND_LOOPING_TOOL_CALL` — same tool called with same args.
-- `DRIFT_KIND_PLAN_DIVERGENCE` — what the agent did doesn't match
-  what the plan said.
-- `DRIFT_KIND_INTENT_DIVERGENCE` — agent pursued a goal different
-  from `session.goals`.
+- `confabulation_risk` — research-shaped task produced output without
+  calling a tool. Fires often when a research specialist's prompt
+  doesn't require source-checking.
+- `capability_mismatch` — coordinator delegated to an agent whose
+  tools can't perform the bound task.
+- `looping_reasoning` — chain-of-thought repeated across turns.
+- `looping_tool_call` — same tool called with same args.
+- `plan_divergence` — what the agent did doesn't match the plan.
+- `intent_divergence` — agent pursued a goal different from
+  `session.goals`.
 
-### 3.3 Multi-turn features
+### 3.3 Multi-turn extras
 
-These fields are populated only on multi-turn entries.
+These fields are `None` on single-turn entries.
 
 | Field | Computation |
 |---|---|
-| `turn_count` | Number of agent turns observed (`AgentInvocationStarted` events from the inner harness lane). |
-| `drift_counts_by_kind_per_turn` | One dict per turn, same shape as `drift_counts_by_kind` but bounded to that turn. |
-| `stopped_reason` | Why the conversation ended: `"stop_when"`, `"max_turns"`, `"script_exhausted"`, or `"abort"`. |
+| `turns_completed` | Number of conversational turns the run executed before terminating (by `stop_when`, `max_turns`, or abort). |
+| `memory_failure_count` | Zicato-derived: how many times the inner agent re-asked something the simulated user had already answered. Computed by the reducer, not goldfive. |
+| `context_loss_count` | Zicato-derived: how many times the agent appeared to forget a fact established earlier in the conversation. Same multi-turn-pattern detector as `memory_failure_count`. |
 
-Both turn-bounded and run-bounded counts are useful and the cost of
-keeping both is small (one extra walk through the events keyed by
-turn boundaries).
+These shapes are not new drift kinds; they are zicato-level
+computations from goldfive's events plus the transcript.
 
-Per-turn slices let pattern detectors surface "memory failure" shapes
-— agent re-asked the same question across turns, agent forgot a fact
-established earlier. These shapes are not new drift kinds; they are
-zicato-level computations from goldfive's events + the transcript.
+### 3.4 Generalised metric surface
 
-### 3.4 Runtime features
+The reducer generalises drift counts into a namespaced metric surface
+so the same per-run unit can carry cost, latency, rubric, and
+schema-failure metrics alongside drift.
 
 | Field | Computation |
 |---|---|
-| `runtime_ms` | Terminal event's `emitted_at` minus `RunStarted.started_at`, in milliseconds. |
-| `aborted` | True if terminal event is `RunAborted`. |
-| `abort_reason` | The `RunAborted.reason` string, or `None`. |
+| `metric_counts` | A tuple of `MetricCount(name, severity, count)` rows. `name` is namespaced (`"drift:looping_reasoning"`, `"cost:input_tokens"`, `"rubric:slide_structure"`, ...); `count` is a float so the same row can carry counts, rates, scores, and durations. When populated it is a **superset** of `drift_counts` (every drift row also appears under the `"drift:"` namespace). When left empty, `LossProfile.unified_metrics()` synthesises it on the fly from `drift_counts` plus the first-class scalars. |
+| `tokens_spent` | First-class scalar mirrored into `metric_counts` as `"cost:tokens_spent"`. |
+| `output_chars` | First-class scalar mirrored as `"output:chars"`. |
+| `schema_failures` | First-class scalar mirrored as `"schema:failures"`. |
 
-`runtime_ms` is bounded by `wall_clock_budget_seconds * 1000` plus a
-small grace period the adapter's abort path takes.
+`runtime_ms` (§3.2) is bounded by `wall_clock_budget_seconds * 1000`
+plus a small grace period the adapter's abort path takes; the
+`wall_clock_budget_exceeded` flag records the exhaustion case.
 
 ### 3.5 Derived
 
 | Field | Source |
 |---|---|
-| `drift_loss` | Weighted scalar computed from the drift features. See [SCORING.md](SCORING.md). |
-| `pass_fail` | The AND of the entry's `expectations` (outcome checks) evaluated against the run result. `None` when the `expectations` list is empty. |
-| `rubric_scores` | The numeric scores returned by the entry's `rubric`-kind outcome checks, in `expectations` order. Useful for the journal — including advisory rubrics (`threshold=None`) whose scores are recorded but do not gate `pass_fail`. |
+| `drift_loss` | Weighted scalar computed from `drift_counts` (severity-weighted, with per-judge weights folded in). Higher = worse. See [SCORING.md](SCORING.md). |
+| `pass_fail` | Derived from `expectation_result`. `None` when no expectation was attached, so pass-rate aggregation across the board can ignore entries without ground truth. |
 
 `drift_loss` is computed in the reducer (not in a downstream component)
 because the reducer is the single place that has both the per-kind
 counts and the weights. Pattern detectors and tournament scoring read
 the scalar.
 
-## 4. Multi-turn aggregation: run-bounded and turn-bounded
+### 3.6 Harmonograf deep-link: `adk_session_id`
+
+`adk_session_id` is the ADK/goldfive session id carried on every
+event envelope in the run's `events.jsonl` (the `sessionId` field).
+The reducer extracts it and stamps it onto the profile so the
+dashboard can build the harmonograf deep-link
+`<harmonograf_url>/#/session/<adk_session_id>` (§1.4) without
+re-opening the event stream. It is the empty string when the events
+file is absent or carries no envelope `sessionId`. Back-compat
+default `""` so profiles written before the field was added load
+cleanly.
+
+### 3.7 Per-judge attribution: `per_judge_loss`
+
+`per_judge_loss` is a tuple of `JudgeLoss(judge_name, raw_loss,
+weight, weighted_loss)` rows — one per custom judge that fired
+against the run. The aggregate `drift_loss` already sums in each
+judge's `weighted_loss` (`raw_loss * weight`), but it does not
+preserve which judge drove the loss. `per_judge_loss` carries that
+attribution out of the reducer so the analyzer's per-judge
+drift-attribution view and the analytical index's `judge_losses`
+table (see [ANALYTICAL-INDEX.md §3.9](ANALYTICAL-INDEX.md#39-judge_losses))
+can answer "which judges drove this run's loss" without re-walking
+`events.jsonl`. `raw_loss` is the judge's unweighted
+severity-weighted drift sum; `weight` is the
+`per_judge_weights` multiplier (falling back to
+`default_judge_weight`); the empty-string `judge_name` is the
+catch-all bucket for `custom`-kind drifts the reducer could not pair
+with a `JudgementEmitted`.
+
+## 4. Multi-turn aggregation
 
 Goldfive's drift events fire per turn (the planner refines per-turn;
 detectors fire per-turn). A multi-turn entry produces many drift
-events across many turns. Two aggregation views matter:
+events across many turns. The reducer aggregates them **run-bounded**:
+`drift_counts` is the total per (kind, severity) across the whole
+conversation. This is the comparable-to-single-turn view, and it is
+the view the tournament uses to score the entry.
 
-- **Run-bounded:** total drift counts across the whole conversation.
-  This is the comparable-to-single-turn view; the tournament uses it
-  to score the entry.
-- **Turn-bounded:** counts per turn. This is the per-turn shape view;
-  pattern detectors use it to surface progression patterns ("the
-  CONFABULATION_RISK drift fires on turn 3 specifically, not earlier",
-  "LOOPING_REASONING ramps from turn 4 onward").
-
-The reducer computes both. The run-bounded view is the field
-`drift_counts_by_kind`; the turn-bounded view is the list field
-`drift_counts_by_kind_per_turn` where index `i` is turn `i`'s counts.
+zicato does not ship a per-turn `drift_counts` breakdown as a profile
+field. The per-turn *shape* questions ("did the agent re-ask
+something already answered", "did it forget a fact established
+earlier") are instead surfaced as the derived multi-turn signals
+`memory_failure_count` and `context_loss_count` (§3.3), computed by
+the reducer from goldfive's events plus the transcript. These are
+zicato-level computations, not new goldfive drift kinds.
 
 ### 4.1 Turn boundaries
 
@@ -397,20 +507,18 @@ for scoring. Some are both. The split:
 
 | Field | Feature? | Loss? |
 |---|---|---|
-| `drift_counts_by_kind` | yes (per-kind movement is hypothesis-shaped) | yes (weighted into `drift_loss`) |
-| `drift_counts_by_judge` | yes (per-custom-judge movement is hypothesis-shaped) | yes (the `CUSTOM` slice of `drift_loss`, weighted by `per_judge_weights`) |
-| `drift_counts_by_severity` | yes | yes |
-| `escalations` | yes | yes |
+| `drift_counts` | yes (per-(kind, severity) movement is hypothesis-shaped) | yes (severity-weighted into `drift_loss`) |
+| `per_judge_loss` | yes (per-custom-judge movement is hypothesis-shaped) | yes (each judge's `weighted_loss` is already summed into `drift_loss` via `per_judge_weights`) |
 | `plan_revisions` | yes | yes |
 | `task_failure_ratio` | yes | yes |
-| `human_intervention_required` | yes | no (already captured by drift counts; a yes/no flag would double-count) |
-| `turn_count` | yes (efficiency signal) | no |
-| `drift_counts_by_kind_per_turn` | yes (per-turn pattern) | no (run-bounded counts dominate the score) |
-| `stopped_reason` | yes (efficiency signal — did the persona's `stop_when` fire?) | no |
+| `turns_completed` | yes (efficiency signal) | no |
+| `memory_failure_count` | yes (multi-turn pattern) | no (run-bounded drift counts dominate the score) |
+| `context_loss_count` | yes (multi-turn pattern) | no |
+| `tokens_spent` / `output_chars` / `schema_failures` | yes (cost/output signals) | no by default (available to the scorer via `metric_counts` if an epoch weights them) |
 | `runtime_ms` | yes | partial (only the budget-exhaustion case adds a loss term) |
-| `aborted` | yes | yes (heavy loss term) |
+| `wall_clock_budget_exceeded` | yes | yes (worst-case loss term for the entry) |
 | `pass_fail` | yes | yes (the pass-rate side of the score) |
-| `rubric_scores` | yes (journal-only — not directly fed to the proposer's input by default) | no (`pass_fail` already carries each rubric's threshold verdict) |
+| `expectation_result` | yes (journal-only — the matcher detail) | no (`pass_fail` already carries the verdict) |
 
 The proposer sees aggregated patterns (§4.6 of the architecture doc),
 not raw loss profiles. The tournament sees `drift_loss` and `pass_fail`
@@ -468,7 +576,7 @@ Putting it all together, the full per-run telemetry path:
                                                    ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ JSONLPersistenceSink(                                                        │
-│     path=".zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/events.jsonl",
+│     path=".zicato/epochs/{epoch}/generations/{generation_id}/runs/{entry_id}/events.jsonl",
 │     mode="write",                                                            │
 │ )                                                                            │
 │                                                                              │

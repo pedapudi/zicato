@@ -27,8 +27,9 @@ This document covers:
 - Why the index exists and what it is *not* (§1).
 - The discipline: files canonical, index derived, dual-write +
   full rebuild (§2).
-- The full schema — eight tables (§3).
-- `zicato reindex` — the rebuild command (§4).
+- The full schema — nine tables (§3).
+- `zicato reindex` / `zicato reindex-generations` — the rebuild
+  commands (§4).
 - Where SQLite is and is NOT used in zicato (§5).
 - The Rust supervisor's read path via `rusqlite` (§6).
 
@@ -83,18 +84,18 @@ With the index in place, the questions in §1.1 become single SQL
 statements:
 
 ```sql
--- hypothesis match-rate, round over round, for one epoch
-SELECT round, AVG(matched) AS match_rate
-FROM hypothesis_movements
+-- promote/reject decisions and the scalar delta, round over round
+SELECT ran_at, parent_generation_id, child_generation_id,
+       decision, delta_scalar
+FROM tournaments
 WHERE epoch_id = '2026-05-15_e1'
-GROUP BY round
-ORDER BY round;
+ORDER BY ran_at;
 ```
 
 ```sql
--- board entries that never differentiate parent from candidate
+-- board entries that never differentiate parent from child
 SELECT entry_id
-FROM metric_counts
+FROM loss_profiles
 GROUP BY entry_id
 HAVING COUNT(DISTINCT drift_loss) <= 1;
 ```
@@ -149,10 +150,15 @@ whole database by walking the filesystem. This is the
 correctness backstop:
 
 - If the index is ever suspected stale or corrupt, `reindex`
-  fixes it — no manual repair, no migration.
+  fixes it — no manual repair.
 - If the schema changes between zicato versions, `reindex`
-  rebuilds under the new schema; there is no index migration
-  path to maintain because the index is disposable.
+  rebuilds under the new schema. The index is disposable, so a
+  full rebuild is always the clean path. As a convenience for an
+  *existing* file opened by a newer writer, `apply_schema` also
+  carries out a small in-place additive migration (e.g. the v1 → v2
+  column adds, §4.2) so an incremental `ingest_*` write does not
+  force a rebuild first — but a rebuild remains the canonical
+  recovery.
 - If an operator hand-edits a file under `.zicato/epochs/`
   (e.g. fixes a malformed `experiment.json`), `reindex` brings
   the index back in line.
@@ -179,9 +185,10 @@ write generations/v5/gen_score.json                    ── canonical
         ▼
 upsert into index.db:
    experiments(v5, ...)            ── derived
-   hypothesis_movements(v5, ...)   ── derived
-   runs(v5, *, ...)                ── derived
-   tournaments(round 5, ...)       ── derived
+   runs(v5--*, ...)                ── derived
+   loss_profiles(v5--*, ...)       ── derived
+   judge_losses(v5--*, ...)        ── derived
+   tournaments(v4 vs v5, ...)      ── derived
         │
         ▼
 broadcast SSE 'round_finished'  (dashboard reads index)
@@ -197,7 +204,7 @@ operations. The ordering rule makes this safe:
 If the orchestrator crashes between the two, the index is
 *behind* the filesystem — never *ahead*. A behind index is
 self-healing: the next `reindex` (or the resume protocol's
-reindex-on-restart, §4.3) catches it up. An ahead index — a
+reindex-on-restart, §4.4) catches it up. An ahead index — a
 row referencing a file that was never written — would be a
 phantom, and the ordering rule makes that impossible.
 
@@ -210,19 +217,26 @@ a round's rows.
 Only the orchestrator (`zicato evolve`, and the one-shot
 subcommands `analyze` / `tournament` when run standalone) writes
 `index.db`. The Rust supervisor opens the database **read-only**
-(§6). `zicato reindex` is a writer but acquires the workspace
-lock (`.zicato/runtime/lock.json`) first, so it never races a
-live `evolve`. SQLite's own file locking is the backstop, but
-the workspace lock is the primary discipline — consistent with
-the single-writer-per-file rule the rest of the runtime layer
+(§6). `zicato reindex` / `zicato reindex-generations` are writers,
+expected to run off the happy path while no `evolve` is in flight;
+they are not part of the live loop. SQLite's own file locking plus
+the WAL-mode posture (§6) are the concurrency backstop, consistent
+with the single-writer-per-file rule the rest of the runtime layer
 follows (see [RUNTIME.md](RUNTIME.md)).
 
 ## 3. Schema
 
-The index has **eight tables**, mirroring the artifact hierarchy:
+The schema is defined authoritatively in
+`src/zicato/index/schema.py` as plain SQL DDL (kept as SQL strings,
+not an ORM, precisely so the Rust supervisor can mirror it
+verbatim). The current `SCHEMA_VERSION` is **2**. That module is the
+contract; this section documents it.
+
+The index has **nine tables**, mirroring the artifact hierarchy:
 `epochs` → `generations` → `experiments` → `patches`, and
-`generations` → `runs` → `loss_profiles` / `metric_counts`, with
-`tournaments` as the per-round comparison record.
+`generations` → `runs` → `loss_profiles` / `metric_counts` /
+`judge_losses`, with `tournaments` as the per-round comparison
+record.
 
 ```
 ┌──────────┐      ┌──────────────┐      ┌──────────────┐      ┌──────────┐
@@ -235,37 +249,47 @@ The index has **eight tables**, mirroring the artifact hierarchy:
                   │     runs     │─1:1─▶│  loss_profiles │
                   └──────┬───────┘      └────────────────┘
                          │ 1:N
-                         ▼
-                  ┌────────────────┐
-                  │  metric_counts │
-                  └────────────────┘
+              ┌──────────┴──────────┐
+              ▼                     ▼
+      ┌────────────────┐    ┌────────────────┐
+      │  metric_counts │    │  judge_losses  │
+      └────────────────┘    └────────────────┘
 
 ┌──────────────┐
-│ tournaments  │   one row per round: parent vs candidate, gate verdict
+│ tournaments  │   one row per round: parent vs child, gate verdict
 └──────────────┘
 ```
 
 All `*_id` columns are the same string identifiers used in the
 filesystem layout (`epoch_id` is the epoch directory name,
-`generation` is `v0` / `v1` / ..., `entry_id` is the board entry
-id). This makes any index row trivially traceable back to its
-canonical file.
+`generation_id` is `v0` / `v1` / ..., `entry_id` is the board entry
+id, and `run_id` is the per-run `{generation_id}--{entry_id}`
+synthetic id). This makes any index row trivially traceable back to
+its canonical file.
+
+Schema versioning is stamped two ways by `apply_schema`: the SQLite
+`PRAGMA user_version` (the authoritative source, readable from any
+client) and a one-row `schema_meta` table (a human-legible mirror,
+not part of the cross-language contract). A consumer that opens a
+database whose `user_version` does not equal `SCHEMA_VERSION` should
+treat the index as stale and run `zicato reindex`.
 
 ### 3.1 `epochs`
 
 One row per epoch directory. Projection of `lineage.json` plus
-the epoch's `scoring.json` and `EpochConfig`.
+the epoch's `config.json` (`EpochConfig`).
 
 | Column | Type | Source |
 |---|---|---|
 | `epoch_id` | TEXT PK | epoch directory name |
-| `started_at` | TEXT | `lineage.json` |
-| `closed_at` | TEXT NULL | `lineage.json` (NULL while open) |
-| `v0_parent` | TEXT NULL | `lineage.json` — `epoch:gen` of the predecessor's head |
 | `contract_hash` | TEXT | `EpochConfig.contract_hash` |
-| `promoted_count` | INTEGER | derived from `lineage.json` |
-| `rejected_count` | INTEGER | derived from `lineage.json` |
-| `final_generation` | TEXT NULL | `lineage.json` |
+| `created_at` | TEXT | `lineage.json` |
+| `closed` | INTEGER | 1 once the epoch is closed |
+| `goal` | TEXT | the epoch's goal (v2 column) |
+| `parent_epoch_id` | TEXT | predecessor epoch id, cross-epoch lineage (v2 column) |
+
+`goal` and `parent_epoch_id` are the two `epochs` columns added in
+the v1 → v2 migration (§4.2).
 
 ### 3.2 `generations`
 
@@ -274,16 +298,15 @@ One row per generation directory under any epoch.
 | Column | Type | Source |
 |---|---|---|
 | `epoch_id` | TEXT | (FK → `epochs`) |
-| `generation` | TEXT | `v0` / `v1` / ... |
-| `round` | INTEGER | round that produced it (0 for `v0`) |
-| `parent_generation` | TEXT NULL | the generation it was proposed against |
-| `is_promoted` | INTEGER | 1 if this generation was promoted |
-| `weighted_drift` | REAL | `gen_score.json` |
-| `pass_rate` | REAL | `gen_score.json` |
-| `score` | REAL | `gen_score.json` — the tournament scalar |
-| `computed_at` | TEXT | `gen_score.json` |
+| `generation_id` | TEXT | `v0` / `v1` / ... |
+| `parent_generation_id` | TEXT NULL | the generation it was proposed against |
+| `promoted` | INTEGER | 1 if this generation was promoted |
+| `created_at` | TEXT | when the generation was created |
 
-Primary key `(epoch_id, generation)`.
+Primary key `(epoch_id, generation_id)`. The `parent_generation_id`
+and `promoted` columns are exactly the two that the targeted
+`zicato reindex-generations` repair rewrites (§4.3) — they are the
+fields a buggy live dual-write was observed to leave stale.
 
 ### 3.3 `experiments`
 
@@ -293,25 +316,26 @@ the `v0` baseline, which has no experiment).
 | Column | Type | Source |
 |---|---|---|
 | `epoch_id` | TEXT | (FK) |
-| `generation` | TEXT | (FK → `generations`) |
-| `round` | INTEGER | `outcome.round_number` |
-| `core_idea` | TEXT | `hypothesis.core_idea` |
-| `why` | TEXT | `hypothesis.why` |
-| `modulating` | TEXT (JSON array) | `hypothesis.modulating` — mutation-point ids |
-| `expected_pass_rate_low` | REAL | `hypothesis.expected_pass_rate_delta.low` |
-| `expected_pass_rate_high` | REAL | `hypothesis.expected_pass_rate_delta.high` |
-| `tournament_decision` | TEXT NULL | `outcome.tournament_decision` (NULL until tournament runs) |
-| `rejection_reason` | TEXT NULL | `outcome.rejection_reason` |
-| `drift_loss_delta` | REAL NULL | `outcome.drift_loss_delta` |
-| `pass_rate_delta` | REAL NULL | `outcome.pass_rate_delta` |
-| `wall_clock_seconds` | REAL NULL | `outcome.wall_clock_seconds` |
-| `override_by_operator` | INTEGER | 1 if the gate verdict was operator-overridden (see [DASHBOARD.md §5.3](DASHBOARD.md#53-command-catalogue-and-safe-point-semantics)) |
+| `generation_id` | TEXT | (FK → `generations`) |
+| `hypothesis_core_idea` | TEXT | `hypothesis.core_idea` |
+| `hypothesis_why` | TEXT | `hypothesis.why` |
+| `hypothesis_json` | TEXT (JSON) | the full hypothesis block, verbatim |
+| `tournament_decision` | TEXT | `outcome.tournament_decision` (NULL until the tournament runs) |
+| `rejection_reason` | TEXT | `outcome.rejection_reason` |
+| `scalar_score_delta` | REAL | `outcome` — child − parent scalar |
+| `drift_loss_delta` | REAL | `outcome.drift_loss_delta` |
+| `pass_rate_delta` | REAL | `outcome.pass_rate_delta` |
+| `outcome_json` | TEXT (JSON) | the full resolved `outcome` block, verbatim |
 
-Primary key `(epoch_id, generation)`. The `modulating` list is
-stored as a JSON-encoded array; SQLite's `json_each` makes it
-queryable (the mutation heat map in
-[TOURNAMENT.md §4.5](TOURNAMENT.md#45-mutation-heat-map) uses
-exactly this).
+Primary key `(epoch_id, generation_id)`. The detail the index does
+not give a dedicated column — mutation-point ids, the
+expected-pass-rate band, the per-kind hypothesis match — lives
+inside the `hypothesis_json` / `outcome_json` blobs and is reached
+with SQLite's JSON functions (`json_extract`, `json_each`); the
+mutation heat map in
+[TOURNAMENT.md §4.5](TOURNAMENT.md#45-mutation-heat-map) reads the
+modulating ids out of `hypothesis_json` this way rather than from a
+separate column.
 
 ### 3.4 `patches`
 
@@ -321,7 +345,7 @@ One row per `patches/{patch_id}.json` file.
 |---|---|---|
 | `patch_id` | TEXT PK | patch file `id` |
 | `epoch_id` | TEXT | (FK) |
-| `generation` | TEXT | (FK → `generations`) |
+| `generation_id` | TEXT | (FK → `generations`) |
 | `mutation_id` | TEXT | patch `mutation_id` |
 | `op` | TEXT | `replace` (the v0 op) |
 | `rationale` | TEXT | patch `rationale` |
@@ -340,17 +364,24 @@ One row per `runs/{entry_id}/` directory — i.e. one per
 
 | Column | Type | Source |
 |---|---|---|
+| `run_id` | TEXT PK | the synthetic `{generation_id}--{entry_id}` run id |
 | `epoch_id` | TEXT | (FK) |
-| `generation` | TEXT | (FK → `generations`) |
+| `generation_id` | TEXT | (FK → `generations`) |
 | `entry_id` | TEXT | board entry id |
-| `side` | TEXT | `parent` or `candidate` — which side of the tournament this run was |
-| `events_path` | TEXT | relative path to `events.jsonl` (for the harmonograf drill-down) |
+| `started_at` | TEXT | run start |
+| `ended_at` | TEXT | run end |
 | `aborted` | INTEGER | `loss.json` — 1 if `RunAborted` |
 | `runtime_ms` | INTEGER | `loss.json` |
+| `tournament_id` | TEXT | (FK → `tournaments`) — the round this run belonged to (v2 column) |
 
-Primary key `(epoch_id, generation, entry_id, side)`. The
-`events_path` column is the join key between the index (the
-competition view) and harmonograf (the execution view) — see
+Primary key is `run_id` (the `{generation_id}--{entry_id}`
+synthetic id). The "which side of the tournament" distinction is
+carried by the run's generation: the parent and child generations
+each get their own run row, and `tournament_id` ties both to the
+round they were scored in. `tournament_id` is one of the v2-added
+columns (§4.2), indexed by `idx_runs_tournament`. The harmonograf
+drill-down join key is the run's `adk_session_id` (stamped into
+`loss.json` by the reducer, not stored as an index column) — see
 [TOURNAMENT.md §5](TOURNAMENT.md#5-the-harmonograf-split) and §5
 below.
 
@@ -360,22 +391,28 @@ One row per `loss.json` — the reduced per-run feature vector.
 
 | Column | Type | Source |
 |---|---|---|
+| `run_id` | TEXT PK | (FK → `runs`) — the `{generation_id}--{entry_id}` id |
 | `epoch_id` | TEXT | (FK) |
-| `generation` | TEXT | (FK) |
-| `entry_id` | TEXT | (FK → `runs`) |
-| `side` | TEXT | (FK → `runs`) |
+| `generation_id` | TEXT | (FK) |
+| `entry_id` | TEXT | board entry id |
 | `drift_loss` | REAL | `LossProfile.drift_loss` |
 | `pass_fail` | INTEGER NULL | `LossProfile.pass_fail` (NULL when the entry's `expectations` list is empty) |
-| `escalations` | INTEGER | `LossProfile.escalations` |
-| `plan_revisions` | INTEGER | `LossProfile.plan_revisions` |
-| `task_failure_ratio` | REAL | `LossProfile.task_failure_ratio` |
-| `human_intervention_required` | INTEGER | `LossProfile.human_intervention_required` |
+| `runtime_ms` | INTEGER | `LossProfile.runtime_ms` |
+| `wall_clock_budget_exceeded` | INTEGER | 1 if the run exhausted its wall-clock budget |
+| `loss_json` | TEXT (JSON) | the full `LossProfile`, verbatim — the per-kind counts, escalations, plan revisions, etc. that get no dedicated column live here |
+| `tournament_id` | TEXT | (FK → `tournaments`) — the round (v2 column) |
 
-Primary key matches `runs`. This table is the scoring-side
-projection; the per-entry A/B grid in
-[TOURNAMENT.md §4.2](TOURNAMENT.md#42-per-entry-ab-grid) is a
-self-join of `loss_profiles` on `entry_id` across the two
-`side` values.
+Primary key `run_id` (matching `runs`). This table is the
+scoring-side projection; the per-entry A/B grid in
+[TOURNAMENT.md §4.2](TOURNAMENT.md#42-per-entry-ab-grid) joins the
+parent and child generations' `loss_profiles` rows on `entry_id`.
+Features the `LossProfile` carries but that are not promoted to
+their own column (`escalations`, `plan_revisions`,
+`task_failure_ratio`, `human_intervention_required`, the per-kind
+counts) are recoverable from `loss_json` with `json_extract`; the
+drift counts are *also* unpivoted into `metric_counts` (§3.7) for
+`GROUP BY`-able access. `tournament_id` is a v2-added column
+indexed by `idx_loss_tournament`.
 
 ### 3.7 `metric_counts`
 
@@ -387,143 +424,157 @@ dicts; storing them unpivoted makes them `GROUP BY`-able.
 
 | Column | Type | Source |
 |---|---|---|
-| `epoch_id` | TEXT | (FK) |
-| `generation` | TEXT | (FK) |
-| `entry_id` | TEXT | (FK → `runs`) |
-| `side` | TEXT | (FK → `runs`) |
-| `metric_kind` | TEXT | `drift_kind`, `severity`, or `judge` |
-| `metric_name` | TEXT | e.g. `DRIFT_KIND_CONFABULATION_RISK`, `CRITICAL`, or a custom judge's `judge_name` |
-| `count` | INTEGER | the count |
+| `run_id` | TEXT | (FK → `runs`) — the `{generation_id}--{entry_id}` id |
+| `namespace` | TEXT | which dict the row came from: the drift-kind, severity, or custom-judge bucket |
+| `name` | TEXT | e.g. `DRIFT_KIND_CONFABULATION_RISK`, or a custom judge's `judge_name` |
+| `severity` | TEXT | the severity bucket (`INFO` / `WARNING` / `CRITICAL`) where applicable |
+| `count` | REAL | the count |
 
-No single-column primary key; the natural key is
-`(epoch_id, generation, entry_id, side, metric_kind,
-metric_name)`. The drift-kind heatmap in
+No primary key declared; the table is reached by `run_id` (the
+`idx_metric_run` index) and aggregated. The drift-kind heatmap in
 [DASHBOARD.md §4.6](DASHBOARD.md#46-drift-kind-heatmap) is a
-`SUM(count) GROUP BY metric_name, round` over this table; the
-`metric_kind = 'judge'` rows give the same view sliced by
-custom judge (`judge_name`) rather than by `DriftKind`.
+`SUM(count) GROUP BY name` over this table joined to `runs` for the
+round; the custom-judge `namespace` rows give the same view sliced
+by `judge_name` rather than by `DriftKind`. The per-judge weighted
+loss is also materialised in its own table — `judge_losses` (§3.9).
 
 ### 3.8 `tournaments`
 
-One row per round — the parent-vs-candidate comparison record.
+One row per round — the parent-vs-child comparison record.
 
 | Column | Type | Source |
 |---|---|---|
+| `tournament_id` | TEXT PK | the round's stable id |
 | `epoch_id` | TEXT | (FK) |
-| `round` | INTEGER | round number |
-| `parent_generation` | TEXT | the reigning champion's id |
-| `candidate_generation` | TEXT | the challenger's id |
-| `parent_score` | REAL | parent `gen_score.json` |
-| `candidate_score` | REAL | candidate `gen_score.json` |
+| `parent_generation_id` | TEXT | the reigning champion's id |
+| `child_generation_id` | TEXT | the challenger's id |
 | `decision` | TEXT | `promote` or `reject` |
+| `parent_scalar` | REAL | parent's tournament scalar |
+| `child_scalar` | REAL | child's tournament scalar |
+| `delta_scalar` | REAL | child − parent |
 | `rejection_reason` | TEXT NULL | gate's reason if rejected |
-| `mode` | TEXT | `tournament` or `fast` |
-| `wall_clock_seconds` | REAL | total round wall-clock |
-| `aux_llm_calls` | INTEGER | auxiliary LLM calls spent on the round (proposer + emulator) |
+| `ran_at` | TEXT | when the round was scored |
 
-Primary key `(epoch_id, round)`. This is the table that backs
-the tournament bracket and the per-matchup detail in
+Primary key `tournament_id`. This is the table that backs the
+tournament bracket and the per-matchup detail in
 [TOURNAMENT.md](TOURNAMENT.md): the bracket *is* `SELECT * FROM
-tournaments WHERE epoch_id = ? ORDER BY round`.
+tournaments WHERE epoch_id = ? ORDER BY ran_at`. `runs` and
+`loss_profiles` carry a `tournament_id` FK back to this table so a
+round's full per-entry detail is one join away.
 
-### 3.9 A derived view: `hypothesis_movements`
+### 3.9 `judge_losses`
 
-The hypothesis ledger (proposer calibration — see
-[TOURNAMENT.md §4.3](TOURNAMENT.md#43-hypothesis-ledger)) needs
-the per-kind predicted-vs-actual match. That lives in
-`experiment.json`'s `outcome.hypothesis_match`. It is projected
-into a table populated alongside `experiments`:
+One row per (run × custom judge) — the per-judge weighted-loss
+breakdown that the scoring layer's `per_judge_weights` produces
+(see [SCORING.md §2.2](SCORING.md#22-per-judge-weights)). This is
+the table added in the v1 → v2 migration; it is created by the
+regular `CREATE TABLE IF NOT EXISTS` pass (the migrator does not
+need an `ALTER` for it — a fresh table on a v1 database).
 
 | Column | Type | Source |
 |---|---|---|
-| `epoch_id` | TEXT | (FK) |
-| `generation` | TEXT | (FK → `experiments`) |
-| `round` | INTEGER | the round |
-| `drift_kind` | TEXT | the kind the hypothesis predicted |
-| `predicted_direction` | TEXT | `up` / `down` / `flat` |
-| `predicted_magnitude` | TEXT NULL | `minor` / `moderate` / `major` |
-| `actual_direction` | TEXT | observed direction |
-| `actual_magnitude` | TEXT NULL | observed magnitude |
-| `matched` | INTEGER | 1 if the outcome's `hypothesis_match[kind].matched` is true |
+| `run_id` | TEXT | (FK → `runs`) — the `{generation_id}--{entry_id}` id |
+| `judge_name` | TEXT | the custom judge's `name` |
+| `weighted_loss` | REAL | `raw_loss × weight` — the judge's contribution to `drift_loss` |
+| `raw_loss` | REAL | the judge's unweighted loss |
+| `weight` | REAL | the `per_judge_weights` weight applied |
 
-The `matched` column carries the **explicit sign+magnitude
-match semantics** described in
-[TOURNAMENT.md §4.3](TOURNAMENT.md#43-hypothesis-ledger): a
-prediction counts as matched only when both the *direction*
-(sign) and the *magnitude* bucket agree with the observed
-movement. A "predicted down moderate, observed down minor" is
-**not** a match — the sign is right but the magnitude bucket is
-wrong. The index stores the already-decided `matched` boolean
-(the decision is made by the tournament runner when it writes
-the `outcome` block); it also stores the four raw
-predicted/actual columns so the dashboard can show *why* a
-prediction missed without re-deriving the rule.
-
-It is listed here as a ninth physical table rather than a SQL
-`VIEW` because it is populated by the dual-write and queried
-hot; a view would re-parse JSON on every read.
+Primary key `(run_id, judge_name)`, indexed by
+`idx_judge_losses_run`. Where `metric_counts` (§3.7) carries the
+raw per-judge *counts*, `judge_losses` carries the per-judge
+*weighted loss* — the hypothesis ledger and the per-judge
+attribution panels read this table directly rather than
+re-deriving the weighting from counts × weights.
 
 ## 4. `zicato reindex`
 
 `zicato reindex` rebuilds `index.db` from the filesystem. It is
-the correctness backstop for the whole index design.
+the correctness backstop for the whole index design. It is an
+advanced / off-the-happy-path command — `zicato evolve` keeps the
+index current via the live dual-write, so an operator reaches for
+`reindex` only to repair a behind-or-corrupt index.
 
 ```
-zicato reindex [--epoch <id>] [--verify] [--workspace <path>]
+zicato reindex [--workspace <path>]
 ```
+
+`--workspace` is the **only** flag (default `.zicato`). There is no
+`--epoch` and no `--verify` — `reindex` always rebuilds the whole
+workspace.
 
 ### 4.1 Behaviour
 
-With no flags, `reindex`:
+`reindex`:
 
-1. Acquires the workspace lock (`.zicato/runtime/lock.json`) —
-   refuses to run if an `evolve` is in flight.
-2. Opens (or creates) `.zicato/index.db`.
-3. Drops every table and recreates the schema (§3) for the
-   current zicato version. Because the index is disposable,
-   there is no schema-migration path — a version bump just
-   rebuilds.
-4. Walks `.zicato/lineage.json`, then every
-   `.zicato/epochs/{epoch}/` directory: every `gen_score.json`,
-   `experiment.json`, `patches/*.json`, `runs/*/loss.json`.
-5. Inserts the derived rows inside a single transaction per
-   epoch.
-6. Releases the lock.
+1. Opens (or creates) `.zicato/index.db`.
+2. Drops the database and re-applies the v2 schema (§3) — the
+   canonical build path (`rebuild_index`) starts from a clean file.
+3. Walks `.zicato/lineage.json`, then every
+   `.zicato/epochs/{epoch}/` directory: every `experiment.json`,
+   `patches/*.json`, `runs/*/loss.json`, and the resolved outcomes.
+4. Inserts the derived rows.
+5. Prints a summary of how many epochs, generations, and runs were
+   indexed.
 
 ```
 $ zicato reindex
 [reindex] workspace: /home/op/myagent/.zicato
-[reindex] dropping + recreating 9 tables (schema v3)
-[reindex] epoch initial          : 8 generations, 80 runs, 312 patches
-[reindex] epoch 2026-05-15_e1    : 5 generations, 50 runs, 191 patches
-[reindex] indexed 13 generations across 2 epochs in 1.4s
+[reindex] indexed 2 epochs, 13 generations, 130 runs
 ```
 
-### 4.2 Flags
+### 4.2 Schema versioning, not a `--verify` flag
 
-| Flag | Meaning |
-|---|---|
-| `--epoch <id>` | Reindex only the named epoch. Drops and rebuilds that epoch's rows only; other epochs' rows are untouched. Useful after hand-editing one epoch's files. |
-| `--verify` | Do not rebuild. Instead, walk the filesystem and the index in parallel and report any row that disagrees (or any canonical file with no index row). Exit code `1` if drift is found, `0` if clean. This is the integrity check; CI for the dogfood targets runs it. |
-| `--workspace <path>` | Standard workspace override. |
+The shipped `reindex` does not have a `--verify` integrity mode and
+does not take an `--epoch` scope. The discipline in §2 (canonical
+file first, index row second) is what keeps the index from ever
+going *ahead* of the files; a behind index is fixed by a plain
+`reindex` (or by the next incremental `ingest_*`).
 
-`reindex --verify` is the assertion that the discipline in §2
-holds. In normal operation it always reports clean — the
-dual-write keeps the index current and the ordering rule keeps
-it from ever going ahead of the filesystem. A non-clean
-`--verify` means either a crash left the index behind (benign;
-a plain `reindex` fixes it) or a bug in the dual-write (a real
-defect; `--verify` is how it gets caught).
+Schema versioning is the mechanism that makes a rebuild
+recognisably necessary. `SCHEMA_VERSION` is **2**, stamped into
+`PRAGMA user_version` and the `schema_meta` table by `apply_schema`.
+The v1 → v2 migration added five things:
 
-### 4.3 Reindex on resume
+- `epochs.goal`
+- `epochs.parent_epoch_id`
+- `runs.tournament_id`
+- `loss_profiles.tournament_id`
+- the whole `judge_losses` table (§3.9)
+
+When a newer writer opens an older v1 file, `apply_schema` performs
+the additive `ALTER TABLE` column adds in place (the `judge_losses`
+table is created by the ordinary `CREATE TABLE IF NOT EXISTS` pass),
+so incremental writes proceed without forcing a rebuild. A full
+`reindex` drops the file and re-applies the v2 DDL outright.
+
+### 4.3 `zicato reindex-generations` — targeted repair
+
+Alongside the full rebuild, zicato ships a narrow repair command:
+
+```
+zicato reindex-generations [--workspace <path>]
+```
+
+It reconciles **only** the `generations` table from disk. It was
+added for workspaces whose `generations` rows were written by a
+buggy live dual-write — `parent_generation_id` left NULL and
+`promoted` clamped to `0` on every row except the seed. It walks
+`lineage.json` plus every `experiment.json` and rewrites only the
+`parent_generation_id` and `promoted` columns of each `generations`
+row; the rest of the index is untouched. It is idempotent and
+read-only against the workspace files. For anything broader, use the
+full `zicato reindex`.
+
+### 4.4 Reindex on resume
 
 The resume protocol (see [ROBUSTNESS.md §2.6](ROBUSTNESS.md#26-l6-atomic-writes-resume-markers)
-and [RUNTIME.md](RUNTIME.md)) runs a scoped `reindex` as one of
+and [RUNTIME.md](RUNTIME.md)) brings the index current as one of
 its first steps when `zicato evolve` restarts after a crash.
 Because the index can only ever be *behind* the filesystem
-(§2.3), a restart reindex is purely catch-up: it re-derives any
-rows for rounds that completed on disk but crashed before their
-index write. The resume protocol then proceeds against the
+(§2.3), the restart catch-up is purely additive: the orchestrator
+re-derives (via the incremental `ingest_*` path, or a full
+`reindex`) any rows for rounds that completed on disk but crashed
+before their index write. The resume protocol then proceeds against the
 canonical files as it always has; the index is brought current
 purely so the dashboard's analytics are correct from the first
 SSE frame after restart.
@@ -546,8 +597,12 @@ from the storage side in
 The principle: SQLite is used for the **derived, queried,
 cross-cutting** layer, and *only* there. Source trees go to git;
 event capture goes to JSONL. The index never absorbs either —
-it projects *from* them (the `runs.events_path` column points
-*at* the JSONL; it does not contain the events).
+it projects *from* them. A run's `events.jsonl` is reached from
+its index row by reconstructing the path from the run coordinate
+(`{epoch}/generations/{gen}/runs/{entry}/events.jsonl`); the
+harmonograf drill-down uses the run's `adk_session_id` (in
+`loss.json`). The index holds the *reduced* features, not the
+events.
 
 ### 5.1 Ecosystem consistency
 

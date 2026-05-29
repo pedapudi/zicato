@@ -14,13 +14,17 @@ two things unresolved that this document closes:
    commit/worktree-shaped. §4 resolves this fork explicitly and §5
    states what the implementation does about it now.
 
-The git-backed generation store is still on the roadmap (§7). It is a
-large, multi-week effort and is deliberately *not* implemented yet —
-but the design no longer leaves the seam question open while waiting
-for it. The `GenerationStore` protocol that a git backend would
-implement is extracted **now**, with the directory backend behind it,
-so the git backend is later a second implementation of a known
-protocol rather than a refactor of unprotocoled code.
+The `GenerationStore` protocol that resolves that fork is shipped, and
+**both** backends behind it are shipped: the directory-snapshot
+backend (the default and always-available fallback) and the
+git-backed backend (`GitGenerationStore`, selected by config — §7).
+The directory backend remains the default. What is *not* yet
+shipped — and is correctly marked as roadmap below — is the operator
+CLI surface over the git store (`zicato repo` / `log` / `diff` /
+`show` / `bisect` / `blame`) and the `zicato workspace migrate-to-git`
+converter for an existing directory-backed workspace (§7.5). The git
+*backend* is usable today from a fresh `storage_backend: "git"`
+workspace; the git *CLI commands* are the deferred follow-up.
 
 ## 1. The shape of zicato's persistence
 
@@ -150,8 +154,13 @@ where epoch/generation vocabulary belongs.
 
 ## 5. What the implementation does now
 
-Three concrete changes ship with this design. The git backend (§7) does
-*not* — it is correctly scoped as a separate, later effort.
+Four concrete changes ship: the `epoch/` migration onto
+`StorageBackend` (§5.1), the `GenerationStore` protocol with **both**
+backends behind it — directory and git (§5.2), and the continuous
+indexing design (§5.3). The git backend (§7) ships as the second
+`GenerationStore`; what remains a separate, later effort is the
+operator CLI over the git store and the `migrate-to-git` converter
+(§7.5).
 
 ### 5.1 `epoch/` migrated onto `StorageBackend`
 
