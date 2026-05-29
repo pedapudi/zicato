@@ -49,17 +49,20 @@ The presentation agent's authors annotate the following with span
 markers:
 
 - **Specialist `instruction=` strings.** One marker per specialist.
-  Ids: `researcher.instruction`, `outliner.instruction`,
-  `writer.instruction`, `reviser.instruction`.
+  Ids: `researcher_instruction`, `outliner_instruction`,
+  `writer_instruction`, `reviser_instruction`.
 - **Coordinator routing.** The coordinator's system prompt that
   describes when to delegate to which specialist. Id:
-  `coordinator.routing`.
+  `coordinator_instruction`.
 - **Tool descriptions.** The `description=` field on each `AgentTool`
-  / leaf tool. Ids: `researcher.tools.search.description`, etc.
+  / leaf tool.
 
-That's roughly 8-12 mutation points for the v0 dogfood. Enough surface
-for the proposer to find leverage; small enough that pattern attribution
-is unambiguous.
+The vendored example
+(`examples/zicato_examples/target_1_presentation/`) exposes 9 mutation
+points. Enough surface for the proposer to find leverage; small enough
+that pattern attribution is unambiguous. (Mutation ids are plain
+strings — the example uses the underscore convention; any spelling the
+marker regex accepts works.)
 
 ### 1.4 Drift kinds expected to move
 
@@ -88,8 +91,9 @@ The full meta-loop, end-to-end:
   agent produces.
 - The reducer maps drift events to a meaningful `drift_loss`.
 - The proposer produces patches the applier can apply cleanly.
-- The validator (V1-V7 in [MUTATION-SURFACE.md](MUTATION-SURFACE.md))
-  catches typical malformed patches.
+- The validator (the pre-apply P1-P3 and post-apply A1-A4 checks in
+  [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6) catches typical
+  malformed patches.
 - The tournament correctly promotes / rejects candidates.
 - The journal renders a readable trace across multiple rounds.
 
@@ -209,44 +213,52 @@ A new board entry kind: `synthetic_adversarial`. The entry wires a
 deliberately constructed to loop, hallucinate, or refuse. The
 expectation is "drift fires of the right kind".
 
-Schema (forward-looking; v0 ships the kind registration; the
+Schema (forward-looking; the `synthetic_adversarial` kind and its
+discriminant fields ship in the v0 `BoardEntry` type; the runner
 implementation lands with target 2):
 
 ```json
 {
   "id": "looping_research",
   "kind": "synthetic_adversarial",
-  "synthetic_agent": "myproj.synthetic.LoopingResearcher",
-  "expected_drift_kinds": ["DRIFT_KIND_LOOPING_REASONING", "DRIFT_KIND_LOOPING_TOOL_CALL"],
-  "expected_to_fire_within_turns": 3,
+  "input": "Research the history of the printing press.",
+  "adversarial_agent_spec": "myproj.synthetic.LoopingResearcher",
+  "required_drift_kinds": ["looping_reasoning", "looping_tool_call"],
   "wall_clock_budget_seconds": 240,
   "tags": ["adversarial", "looping"]
 }
 ```
 
-Pass = drift kinds in `expected_drift_kinds` fire within
-`expected_to_fire_within_turns`. Fail = drift missed.
+`BoardEntry.validate` requires a `synthetic_adversarial` entry to
+carry `input`, a non-empty `adversarial_agent_spec`, and a non-empty
+`required_drift_kinds` (each validated against the registered drift
+kind set). Pass = the kinds in `required_drift_kinds` fire. Fail =
+drift missed.
 
 The synthetic agent's source is in the operator's project, not in
-zicato. The `synthetic_agent` field is a dotted path the adapter
-resolves at run time. A small library of known-bad agents (looping,
+zicato. `adversarial_agent_spec` is a dotted path the adapter resolves
+at run time. A small library of known-bad agents (looping,
 confabulating, refusing, off-topic) gives the operator a starter set.
 
 #### 2.5.3 Specificity via `synthetic_clean`
 
 Another new entry kind: `synthetic_clean`. Wires a **known-good
-agent** that just does its job. The expectation is "no spurious drift
+agent** that just does its job. The intent is "no spurious drift
 fires". Pass = drift count zero (or below a tolerance). Fail = drift
 fired when none was warranted.
+
+The `synthetic_clean` kind also ships in the v0 `BoardEntry` type;
+`validate` requires only `input` for it (the clean-run thresholds live
+in the entry's `context` map and the target-2 loss model, not as
+first-class discriminant fields):
 
 ```json
 {
   "id": "clean_summarisation",
   "kind": "synthetic_clean",
-  "synthetic_agent": "myproj.synthetic.SimpleSummariser",
-  "max_drift_events": 0,
-  "tolerated_drift_kinds": ["DRIFT_KIND_NEW_WORK_DISCOVERED"],
+  "input": "Summarise the attached three-paragraph brief.",
   "wall_clock_budget_seconds": 180,
+  "context": {"max_drift_events": "0", "tolerated_drift_kinds": "new_work_discovered"},
   "tags": ["clean", "specificity"]
 }
 ```
@@ -306,10 +318,12 @@ schema breakage:
 2. **`mutation_points()` over a list of source roots.** Already
    pinned in [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §5. v0
    typically uses one; target 2 uses two.
-3. **`BoardEntry.kind` is string-typed against a registered set.**
-   Already pinned in [BOARD-FORMAT.md](BOARD-FORMAT.md) §6. Adding
-   `synthetic_adversarial` / `synthetic_clean` is a registry update,
-   not a schema change.
+3. **`BoardEntry.kind` already reserves the synthetic slots.**
+   Pinned in [BOARD-FORMAT.md](BOARD-FORMAT.md) §6. `synthetic_adversarial`
+   and `synthetic_clean` ship today as reserved members of the
+   `BoardEntryKind` literal (with their discriminant fields and
+   `validate` rules already in the v0 `BoardEntry`); target 2 lands
+   only the runner, not a schema change.
 4. **`LossProfile` is open-ended on new fields.** Already pinned in
    [TELEMETRY.md](TELEMETRY.md). The target-2 cost / adversarial /
    specificity fields plug in.
@@ -449,10 +463,10 @@ Annotated in zicato's own code:
   `zicato init` skeleton).
 
 Note: the default emulator prompt template is **mutable** but every
-patch to it must preserve the answer-leak refusal section (V4
-placeholder check in [MUTATION-SURFACE.md](MUTATION-SURFACE.md)).
-Removing the refusal section would break the emulator's collusion-
-proof construction.
+patch to it must preserve the answer-leak refusal section (the
+`required_placeholders` / A3 post-apply check in
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6). Removing the refusal
+section would break the emulator's collusion-proof construction.
 
 The validator rules carry forward into target 3 because the validator
 is part of zicato's own code — the outer zicato can patch zicato's

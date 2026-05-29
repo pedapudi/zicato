@@ -121,10 +121,13 @@ same `call_llm` callable as the harness. Warn operators about
 collusion in the docs but don't enforce.
 
 **Chosen.** Two distinct `call_llm` callables required. The check
-runs at config time and is a HARD ERROR (exit code 8). Context
-construction is sealed (no `**kwargs`). The emulator sees only the
-persona and the user-facing transcript. A post-hoc heuristic
-detects answer leakage. See [EMULATOR.md](EMULATOR.md).
+(`zicato.core.workspace.assert_distinct_callables`) runs at config
+time and is a HARD ERROR — it raises `RuntimeError` and refuses to
+start the run when `harness_call_llm is auxiliary_call_llm` (identity
+comparison; two distinct wrappers over the same endpoint pass, by
+design). Context construction is sealed (no `**kwargs`). The emulator
+sees only the persona and the user-facing transcript. A post-hoc
+heuristic detects answer leakage. See [EMULATOR.md](EMULATOR.md).
 
 **Why.** Collusion is a silent failure mode. The naive emulator
 produces plausible transcripts and plausible scores; the loop looks
@@ -306,8 +309,9 @@ code. The proposer reads the brief, the proposer's hypothesis
 reflects the brief, the journal records whether the proposer
 followed it.
 
-The `## Forbidden` section is mechanically enforced (V5 in
-[MUTATION-SURFACE.md](MUTATION-SURFACE.md)). Everything else is
+The `## Forbidden` section is mechanically enforced (by
+`check_forbidden_ids`; see
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6). Everything else is
 advisory — the proposer reads it as natural language. Forbidden
 mechanics handle the "you must not touch this" case; advisory
 prose handles the "I'd rather you focused on that" case.

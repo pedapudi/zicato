@@ -85,32 +85,35 @@ directory.
 
 ```
 .zicato/
-  config.json
+  config.json                        # adapter entrypoint + mutable trees + contract paths
+  current_epoch                      # marker: id of the current epoch
   lineage.json                       # cross-epoch generation DAG
   epochs/
     initial/                         # default first epoch
       board.jsonl                    # frozen for this epoch
-      brief.md              # operator-edited; read fresh each round
+      brief.md                       # operator-edited; read fresh each round
       scoring.json                   # weights + tournament thresholds
+      config.json                    # EpochConfig (id, name, contract_hash, closed)
+      mutations.json                 # most-recent mutation-point enumeration
       generations/
         v0/
           snapshot/                  # inner-harness source at this generation
-          experiment.json            # absent for v0 (the baseline)
+          experiment.json            # synthetic seed marker (the baseline)
+          gen_score.json
           runs/
             {entry_id}/
               events.jsonl
               loss.json
-          gen_score.json
         v1/
           snapshot/
-          experiment.json            # hypothesis + patch_ids + outcome
+          experiment.json            # lineage coords + hypothesis + patch_ids + outcome
           patches/
             {patch_id}.json          # one file per patch (see §3.2)
+          gen_score.json
           runs/
             {entry_id}/
               events.jsonl
               loss.json
-          gen_score.json
         v2/
           ...
       current_generation             # marker: id of the promoted head
@@ -119,11 +122,13 @@ directory.
         round_002.json
         ...
       journal.md                     # running narrative across generations
-      analysis.md                    # generated at epoch close
+      analysis.md                    # generated at epoch close (or a stub)
+      analysis.html                  # deterministic render, refreshed each round
     epoch_after_board_edit/
       board.jsonl
       brief.md
       scoring.json
+      config.json
       generations/
         v0/                          # baseline at this epoch's start
           snapshot/                  # the promoted last vN from `initial`
@@ -133,15 +138,22 @@ directory.
       patterns/
       journal.md
       analysis.md
+      analysis.html
 ```
+
+(The proposer-brief filename is canonically `brief.md`; `rubric.md` is
+a legacy fallback some examples still pass to `epoch new --brief`.)
 
 A few specifics:
 
 - `v0` is **always** the baseline. In a fresh epoch its `snapshot/`
   is the promoted final generation from the previous epoch (or the
   initial-registered source for the first epoch).
-- `experiment.json` is absent for `v0` and present for every
-  subsequent generation in the epoch.
+- `v0` carries a **synthetic seed `experiment.json`** (written by
+  `write_seed_experiment`; `zicato repair-v0-baseline` backfills it
+  for older workspaces) so every generation directory has a uniform
+  shape. Every subsequent generation carries a real proposer
+  `experiment.json`.
 - Patches live in **separate `patches/{patch_id}.json` files** under
   each generation directory. The body of `experiment.json` carries
   `patch_ids: [...]` referencing them. See §3.2 for the rationale and
@@ -157,57 +169,71 @@ The proposer's output is NOT a bare `list[Patch]` — it is a typed
 Every field is required. Schema-invalid proposer responses are
 rejected; the proposer is re-prompted.
 
+The proposer's raw response is a JSON object with two top-level keys,
+`hypothesis` and `patches`; `zicato.proposer.structured` validates it
+and lifts it into a typed `Experiment`. What lands on disk in
+`experiment.json` is the serialized `Experiment`, whose body carries
+lineage coordinates plus the hypothesis and a `patch_ids` list (see
+§3.2 — the patches live in separate per-patch files). The hypothesis
+sub-object:
+
 ```json
 {
+  "epoch_id": "2026-04-08_hardened_research",
+  "generation_id": "v1",
+  "parent_generation_id": "v0",
+  "proposed_at": "2026-04-08T14:32:10Z",
   "hypothesis": {
     "core_idea": "Tighten the researcher's system prompt so it stops asserting facts without citing sources.",
 
     "modulating": [
-      "researcher.instruction",
-      "researcher.description"
+      "researcher_instruction",
+      "researcher_description"
     ],
 
-    "why": "Pattern observed across rounds 3-5: DRIFT_KIND_CONFABULATION_RISK fires on 70% of entries tagged `[research]` and 0% on entries tagged `[summarise]`. The researcher's current instruction does not require source citations.",
+    "why": "Pattern observed across rounds 3-5: confabulation_risk fires on 70% of entries tagged `[research]` and 0% on entries tagged `[summarise]`. The researcher's current instruction does not require source citations.",
 
     "expected_drift_movements": [
-      {"kind": "CONFABULATION_RISK", "direction": "down", "magnitude": "moderate"},
-      {"kind": "TOOL_ERROR", "direction": "up", "magnitude": "minor"}
+      {"kind": "confabulation_risk", "direction": "decrease", "magnitude": "medium"},
+      {"kind": "tool_error", "direction": "increase", "magnitude": "small"}
     ],
 
-    "expected_pass_rate_delta": {"low": 0.0, "high": 0.15},
+    "expected_pass_rate_delta": "+0.00 to +0.15",
 
-    "risks": [
-      "Tighter prompt may slow the researcher (more tool calls per turn).",
-      "If sources are unavailable the researcher may refuse instead of approximating."
-    ]
+    "risks": "Tighter prompt may slow the researcher (more tool calls per turn); if sources are unavailable the researcher may refuse instead of approximating.",
+
+    "expected_metric_movements": []
   },
   "patch_ids": [
     "be4c8de0b5234ec4a8d8db4e8af3f8f0",
     "1f29c6a2e9e44ad99c4f55c9f7df0a3e"
-  ]
+  ],
+  "outcome": null
 }
 ```
 
-The two patch objects themselves live in separate per-patch files —
-see §3.2 below. The body of `experiment.json` only references them
-by id. This keeps the `experiment.json` body small (operator-readable
-in a terminal pager) and gives the operator one file per patch when
-they want to inspect or hand-edit a specific change.
+The patch objects themselves live in separate per-patch files — see
+§3.2 below. The body of `experiment.json` only references them by id.
+This keeps the body small (operator-readable in a terminal pager) and
+gives the operator one file per patch when they want to inspect or
+hand-edit a specific change.
 
-The fields in detail:
+The hypothesis fields in detail (the `HypothesisSpec` dataclass):
 
 | Field | Type | Purpose |
 |---|---|---|
 | `core_idea` | `string` (one sentence) | What is being modulated, in plain language. The journal cites this. |
-| `modulating` | `list[string]` | Mutation-point ids being touched. MUST be a non-empty subset of `mutation_points()`. |
-| `why` | `string` | The pattern observation that motivated the change. Cites pattern ids when relevant. |
-| `expected_drift_movements` | `list[{kind, direction, magnitude}]` | Per drift kind, predicted direction (`up`/`down`/`flat`) and magnitude (`minor`/`moderate`/`major`). |
-| `expected_pass_rate_delta` | `{low: float, high: float}` | Predicted pass-rate band, e.g. `{0.0, 0.15}` for "no worse, up to 15 points better". |
-| `risks` | `list[string]` | Plausible ways this could go wrong. |
+| `modulating` | `list[string]` | Mutation-point ids this hypothesis touches. Every id must resolve in the live mutation manifest; the proposer may list ids it is not patching this round, but all must exist. |
+| `why` | `string` | The pattern observation that motivated the change. |
+| `expected_drift_movements` | `list[{kind, direction, magnitude}]` | Per drift kind, predicted `direction` (`decrease` / `increase` / `neutral` / `decrease_or_neutral` / `increase_or_neutral`) and `magnitude` (`small` / `medium` / `large`). |
+| `expected_pass_rate_delta` | `string` (free text) | Predicted pass-rate band as free text, e.g. `"+0.00 to +0.15"`. Free text rather than a typed range because the proposer expresses uncertainty differently per hypothesis. |
+| `risks` | `string` (optional) | One-paragraph description of failure modes the proposer anticipates. Defaults to the empty string. |
+| `expected_metric_movements` | `list[{metric_name, direction, magnitude}]` | Generalised predictions over any namespaced metric (`drift:`, `cost:`, `rubric:`, ...). At least one of `expected_drift_movements` / `expected_metric_movements` must be non-empty. |
 
-The schema is enforced at proposer-output time. The proposer is given
-the schema in its system prompt and the response is parsed as JSON;
-malformed responses get one retry with an error message.
+The schema is enforced at proposer-output time (a JSON Schema pass
+plus a cross-check pass in `zicato.proposer.structured`). The proposer
+is given the schema in its system prompt; a malformed response is
+rejected and re-prompted with the parse error appended.
 
 ### 3.2 Patch storage (per-patch files)
 
@@ -268,23 +294,24 @@ file.
 
 ```json
 {
+  "epoch_id": "2026-04-08_hardened_research",
+  "generation_id": "v1",
+  "parent_generation_id": "v0",
+  "proposed_at": "2026-04-08T14:32:10Z",
   "hypothesis": { ... },
   "patch_ids": [ ... ],
   "outcome": {
-    "drift_movements_actual": [
-      {"kind": "CONFABULATION_RISK", "direction": "down", "magnitude": "moderate"},
-      {"kind": "TOOL_ERROR", "direction": "flat", "magnitude": null}
+    "ran_at": "2026-04-08T14:38:42Z",
+    "drift_movements": [
+      {"kind": "confabulation_risk", "from_rate": 0.70, "to_rate": 0.40, "hypothesis_match": true, "note": ""},
+      {"kind": "tool_error", "from_rate": 0.10, "to_rate": 0.10, "hypothesis_match": false, "note": "predicted small increase, observed flat"}
     ],
-    "hypothesis_match": [
-      {"kind": "CONFABULATION_RISK", "matched": true},
-      {"kind": "TOOL_ERROR", "matched": false, "note": "predicted minor up, actual flat"}
-    ],
-    "drift_loss_delta": -0.18,
     "pass_rate_delta": 0.05,
-    "tournament_decision": "promote",
-    "rejection_reason": null,
-    "wall_clock_seconds": 412.3,
-    "round_number": 4
+    "drift_loss_delta": -0.18,
+    "scalar_score_delta": 0.12,
+    "tournament_decision": "promoted",
+    "rejection_reason": "",
+    "metric_movements": []
   }
 }
 ```
@@ -293,20 +320,21 @@ The per-patch files are NOT rewritten when the outcome lands —
 `update_experiment_outcome` only re-writes `experiment.json`. The
 patches are immutable once written.
 
-The fields:
+The fields (the `OutcomeRecord` dataclass):
 
 | Field | Meaning |
 |---|---|
-| `drift_movements_actual` | Per-kind direction + magnitude from the tournament's loss deltas. |
-| `hypothesis_match` | For every kind in `expected_drift_movements`, did actual match expected? |
-| `drift_loss_delta` | Candidate's drift loss minus parent's, weighted by entry weight. |
-| `pass_rate_delta` | Candidate's pass-rate minus parent's. |
-| `tournament_decision` | `"promote"` or `"reject"`. |
-| `rejection_reason` | Free-form reason if rejected (e.g. `"pass_rate_regression_on_summarise_short"`). Null if promoted. |
-| `wall_clock_seconds` | Total wall-clock for the round (proposal + apply + tournament). |
-| `round_number` | This round's position within the epoch (1-indexed; v0 is round 0). |
+| `ran_at` | ISO-8601 UTC timestamp when the experiment finished evaluating. |
+| `drift_movements` | Per-kind realized movements. Each carries `from_rate` (parent per-run mean), `to_rate` (child per-run mean), `hypothesis_match` (did the realized movement match the prediction within the magnitude bucket?), and an optional `note`. |
+| `pass_rate_delta` | Candidate's board-wide pass-rate minus parent's. Range `[-1.0, 1.0]`. |
+| `drift_loss_delta` | Change in mean drift loss across the board. Negative = improvement. |
+| `scalar_score_delta` | Change in the combined tournament scalar; its sign gates `tournament_decision`. |
+| `tournament_decision` | `"promoted"`, `"rejected"`, or `"deferred"`. |
+| `rejection_reason` | Symbolic reason when rejected (e.g. `"insufficient margin: ..."`); empty string otherwise. |
+| `metric_movements` | Realized movements over any namespaced metric — the generalised superset of `drift_movements`. |
 
-The `hypothesis_match` field is the load-bearing signal. Patches that
+The per-movement `hypothesis_match` flag is the load-bearing signal.
+Patches that
 ship score deltas are common; patches whose proposer correctly
 predicted the drift kinds are rarer and more valuable. Aggregating
 hypothesis match-rate across rounds is what the analysis pass uses to
@@ -314,35 +342,44 @@ gauge whether the proposer is reasoning or guessing.
 
 ## 4. The journal (running)
 
-`journal.md` is appended every round with a short, human-readable
-rendering. Format:
+`journal.md` is appended one section per experiment with a short,
+human-readable rendering. The tournament runner re-renders the same
+section once the outcome is populated, so the proposal appears first
+and the verdict follows. Canonical format (one section per generation,
+headed by its version label and the one-line `core_idea`):
 
 ```markdown
-## Round 1 — v0 → v1   (promote)
-- core_idea: Tighten the researcher's system prompt so it stops asserting facts without citing sources.
-- drift_loss_delta: -0.18
-- pass_rate_delta: +0.05
-- hypothesis match: CONFABULATION_RISK ✓ | TOOL_ERROR ✗ (predicted up, flat)
-- modulating: researcher.instruction, researcher.description
+## v1 — Tighten the researcher's system prompt so it stops asserting facts without citing sources.
 
-## Round 2 — v1 → (rejected)
-- core_idea: Add a budget hint to the coordinator routing so it stops re-routing.
-- drift_loss_delta: +0.02
-- pass_rate_delta: -0.10 (regression on `summarise_short`)
-- tournament_decision: reject — pass_rate_regression_on_summarise_short
-- modulating: coordinator.routing
+**proposed_at**: 2026-04-08T14:32:10Z
+**modulating**: researcher_instruction, researcher_description
+**why**: Pattern observed across rounds 3-5: confabulation_risk fires on 70% of entries tagged `[research]`.
+**outcome**: promoted (Δscalar=+0.120, Δdrift_loss=-0.180, Δpass_rate=+0.050)
 
-## Round 3 — v1 → v2   (promote)
-...
+## v2 — Add a budget hint to the coordinator routing so it stops re-routing.
+
+**proposed_at**: 2026-04-08T14:41:55Z
+**modulating**: coordinator_instruction
+**why**: Coordinator re-routes the writer on revision turns.
+**outcome**: rejected (Δscalar=-0.020, Δdrift_loss=+0.020, Δpass_rate=-0.100)
+**rejection_reason**: pass_rate_regression_on_summarise_short
 ```
 
-`zicato journal show` renders this file. `zicato journal show --since
-round=4` slices the file by round.
+The journal is plain markdown, not JSONL, so the append is a single
+text write (a crash mid-write leaves the prior journal intact rather
+than a truncated record). There is no `zicato journal show` command —
+the file is meant to be read directly with `cat` / `less`, or rendered
+via the dashboard and `analysis.html`.
 
 ## 5. The analysis (per-epoch)
 
 `analysis.md` is generated by an `auxiliary_call_llm` pass at epoch
-close. The pass receives:
+close — **only when an auxiliary LLM has been configured**. When no
+auxiliary callable is available (e.g. `zicato epoch close` run by hand
+without one wired through), the close path writes a deterministic stub
+`analysis.md` — the journal snapshot plus a `_no auxiliary LLM was
+supplied_` placeholder — that the operator can later re-render with
+`zicato regenerate-report`. The LLM pass receives:
 
 - The full `journal.md` for the epoch.
 - The list of all `experiment.json` files (hypothesis + outcome).
@@ -383,13 +420,19 @@ analysis pass result triggers a regenerate.
 
 ### 5.1 Closing — manual primary, auto-close fallback
 
-The operator closes an epoch with `zicato epoch close`. This:
+The operator closes an epoch with `zicato epoch close [EPOCH_ID]`
+(the current epoch when `EPOCH_ID` is omitted). This:
 
-1. Runs the analysis pass.
-2. Writes `analysis.md`.
-3. Marks the epoch's directory read-only (filesystem `chmod`,
-   not strictly enforced — convention only).
-4. Stamps `lineage.json` with the close timestamp.
+1. Runs the analysis pass (best-effort — only if an auxiliary LLM is
+   configured; otherwise writes the stub described in §5 above).
+2. Writes `analysis.md` (and re-renders `analysis.html`).
+3. Stamps the epoch's `config.json` as closed and records the close
+   timestamp in `lineage.json`.
+
+To re-render an existing epoch's report against the current on-disk
+data, use `zicato regenerate-report` (deterministic figures/tables
+always; `--no-llm` skips the prose pass). `zicato analyze-telemetry`
+(re)runs the decision-telemetry analyzer for an epoch out of band.
 
 If the operator starts a new epoch (`zicato epoch new`) without
 closing the previous one, the CLI auto-closes the previous epoch with
@@ -523,37 +566,55 @@ dashboard, and the deterministically-generated
 ## 6. Lineage
 
 `lineage.json` lives at `.zicato/lineage.json` (one file, all epochs)
-and records the cross-cutting DAG:
+and records the cross-cutting DAG.
+
+`zicato init` scaffolds the file as an empty-DAG placeholder:
+
+```json
+{"nodes": [], "edges": []}
+```
+
+Once `evolve` registers epochs and lands generations, the lineage
+mutators (`zicato.epoch.lineage`) write the populated, epoch-keyed
+form — a top-level `epochs` list, each epoch carrying its
+`generations`:
 
 ```json
 {
   "epochs": [
     {
       "id": "initial",
+      "name": "initial",
       "started_at": "2026-04-01T10:00:00Z",
       "closed_at": "2026-04-08T14:30:00Z",
       "v0_parent": null,
-      "promoted_versions": ["v1", "v2", "v3", "v5", "v7"],
-      "rejected_versions": ["v4", "v6"],
-      "final_generation": "v7"
+      "generations": [
+        {"id": "v0", "parent_id": null, "promoted": true,  "created_at": "2026-04-01T10:00:00Z"},
+        {"id": "v1", "parent_id": "v0", "promoted": true,  "created_at": "2026-04-01T10:12:00Z"},
+        {"id": "v2", "parent_id": "v1", "promoted": false, "created_at": "2026-04-01T10:31:00Z"}
+      ]
     },
     {
       "id": "hardened_research",
+      "name": "hardened_research",
       "started_at": "2026-04-08T14:31:00Z",
-      "closed_at": null,
+      "closed_at": "",
       "v0_parent": "initial:v7",
-      "promoted_versions": ["v1", "v2"],
-      "rejected_versions": [],
-      "final_generation": "v2"
+      "generations": [
+        {"id": "v0", "parent_id": "initial:v7", "promoted": true, "created_at": "2026-04-08T14:31:00Z"}
+      ]
     }
   ]
 }
 ```
 
-The DAG is shallow because epochs are linear and the v0 of a new
-epoch points to the final version of its predecessor. The interesting
-information is in the per-epoch lists: how many rounds promoted, how
-many rejected, how the rejection rate evolved.
+Each generation row carries its `parent_id` (the generation it was
+forked from; `null`/cross-epoch `epoch:gen` for `v0`) and a `promoted`
+flag. The DAG is shallow because epochs are linear and the `v0` of a
+new epoch points (via `v0_parent`) to the final version of its
+predecessor. Per-epoch promotion/rejection counts are derived from the
+`generations` list's `promoted` flags rather than stored as separate
+fields.
 
 `zicato epoch list` renders `lineage.json` as a table:
 
@@ -608,8 +669,8 @@ A typical structure:
 
 The `## Forbidden` section — the **forbidden-id list** — is **enforced
 mechanically**: any patch that targets a mutation-point id in this
-list is rejected at validate time (constraint V5 in
-[MUTATION-SURFACE.md](MUTATION-SURFACE.md)). Every other section is
+list is rejected at validate time by `check_forbidden_ids` (see
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6). Every other section is
 advisory — the proposer reads them as natural language and uses them
 to steer.
 

@@ -52,23 +52,29 @@ A span marker is a comment on the line immediately above a
 inside a call**. The comment has the form:
 
 ```
-# zicato:mutable id="<stable-id>" [kind="prompt"|"description"|"template"|...]
+# zicato:mutable id="<stable-id>" [key="value" ...]
 ```
 
 `id` is required and globally unique within a single registration.
-`kind` is an optional symbolic label for documentation and proposer
-heuristics; it has no effect on AST resolution.
+Any trailing `key="value"` pairs are parsed verbatim into the
+`MutationPoint.metadata` mapping; they have no effect on AST
+resolution. The conventional keys the validator and proposer act on
+are `required_placeholders` (comma-separated f-string-style
+placeholders the rewritten content must preserve), `min` / `max`
+(numeric bounds for `set_numeric` patches), `enum` (a comma-separated
+closed domain for `set_enum` patches), and free-form documentation
+keys such as `language` / `role`.
 
 Two examples:
 
 ```python
 # Specialist's system prompt — coordinator routes user research turns here.
-# zicato:mutable id="researcher.instruction" kind="prompt"
+# zicato:mutable id="researcher_instruction"
 INSTRUCTION = """You research the user's question by ..."""
 
 researcher = LlmAgent(
     name="researcher",
-    # zicato:mutable id="researcher.description" kind="description"
+    # zicato:mutable id="researcher_description" role="tool_description"
     description="Performs literature lookup and source aggregation.",
     instruction=INSTRUCTION,
     ...
@@ -82,12 +88,13 @@ the applier can rewrite.
 
 ### 2.2 File marker
 
-A file marker is a comment in the first 16 lines of a file (header
-region — module docstring above, marker below, no statements before
-it). It has the form:
+A file marker is a comment in the header region of a file (module
+docstring above, marker below, no statements before it). It has the
+form — note the `:file` suffix on the marker prefix, not a separate
+`file` word:
 
 ```
-# zicato:mutable file id="<stable-id>" [kind="prompts"|"templates"|...]
+# zicato:mutable:file id="<stable-id>" [key="value" ...]
 ```
 
 Example:
@@ -95,17 +102,17 @@ Example:
 ```python
 """Specialist prompts for the presentation agent."""
 
-# zicato:mutable file id="presentation_agent.prompts" kind="prompts"
+# zicato:mutable:file id="presentation_agent_prompts"
 
 INTRO = "..."
 OUTLINE = "..."
 REVISION = "..."
 ```
 
-When a file marker is present, the proposer may propose a patch whose
-target is the file id and whose `new_text` is the entire post-edit
-contents of the file. The applier writes the file in full, then runs
-every validator constraint on it.
+When a file marker is present, the proposer may propose a `replace`
+patch whose target is the file id and whose `new_content` is the
+entire post-edit contents of the file. The applier writes the file in
+full, then runs every validator constraint on it.
 
 A file with a file marker MAY also carry span markers for finer-grained
 targets. Both are emitted by `mutation_points()`; the proposer chooses
@@ -135,8 +142,8 @@ nodes.
 1. Iterate over every comment in the file (the enumerator uses
    `tokenize` for comment lines paired with the `ast.parse` tree).
 2. For each `# zicato:mutable id="..."` comment that is NOT a file
-   marker, find the AST node on the **next non-blank, non-comment
-   source line**.
+   marker (i.e. lacks the `:file` suffix), find the AST node on the
+   **next non-blank, non-comment source line**.
 3. The target node MUST be one of:
    - `ast.Assign` whose `value` is `ast.Constant` of type `str`
      (covers `X = "..."` and `X = """..."""`).
@@ -150,10 +157,10 @@ nodes.
 
 **File marker resolution:**
 
-1. Within the first 16 lines of the file, search for a line matching
-   `# zicato:mutable file id="..."`.
-2. If found, the entire file (excluding the marker line) is the
-   target. The current value is the file's full text minus that line.
+1. In the file's header region, search for a line matching
+   `# zicato:mutable:file id="..."`.
+2. If found, the entire file is the target. The recorded `content` is
+   the file's full text.
 3. A file may carry at most one file marker.
 
 **Unrecognized marker form:** the enumerator emits a warning to stderr
@@ -165,28 +172,37 @@ The enumerator returns a list of `MutationPoint` objects. The dataclass
 shape:
 
 ```python
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MutationPoint:
     id: str                       # globally unique within registration
     kind: Literal["span", "file"] # marker form
-    label: str | None             # `kind=` attribute on the marker; None if absent
     file: Path                    # absolute path to the source file
-    start_line: int               # 1-indexed inclusive
-    end_line: int                 # 1-indexed inclusive
-    start_col: int                # 0-indexed (None for file markers)
-    end_col: int                  # 0-indexed (None for file markers)
-    current_text: str             # value at enumeration time
     source_root: Path             # which registered root this came from
+    line_start: int               # 1-indexed inclusive
+    line_end: int                 # 1-indexed inclusive
+    content: str                  # current text of the region at enumeration
+    content_hash: str             # hex SHA-256 of `content` (stale-write guard)
+    metadata: Mapping[str, str] = field(default_factory=dict)
 ```
 
-`current_text` is a snapshot — the next round will re-enumerate after
-patches land, and `current_text` will reflect the new value. The id is
-stable across snapshots; the location may drift if patches above it
-add or remove lines.
+`content` is a snapshot — the next round will re-enumerate after
+patches land, and `content` will reflect the new value. `content_hash`
+is the hex-encoded SHA-256 of `content`; the applier checks it before
+writing so a stale proposer round cannot clobber an already-rewritten
+region. `metadata` is the bag of `key="value"` pairs lifted from the
+marker line (e.g. `required_placeholders`, `min` / `max`, `enum`,
+`role`). The id is stable across snapshots; the location may drift if
+patches above it add or remove lines.
+
+The dataclass is column-free: a span is recorded by its inclusive
+`line_start` / `line_end` range, not by character columns. There is no
+separate `label` field — the marker's optional attributes all live in
+`metadata`.
 
 ### Stability across generations
 
@@ -252,50 +268,67 @@ the speedup.
 
 ## 6. Validator constraints
 
-When the applier writes a candidate snapshot, every patch must pass
-every validator constraint. Failures reject the patch (and the
-proposer is informed via the round's wall-clock budget).
+The validator (`zicato.mutation.validator`) is deterministic and
+side-effect-free; it returns a list of human-readable problem strings
+rather than raising, so the tournament can log one rejection record
+per experiment. It runs in two phases.
+
+**Pre-apply** (`validate_patches`, before the patch set is written —
+so a malformed batch is refused as a whole rather than half-applied):
 
 | # | Constraint | Why |
 |---|---|---|
-| V1 | The patched file parses as valid Python (`ast.parse`). | A non-parsing file can't be imported. The whole snapshot is unusable. |
-| V2 | Every import name in the patched file resolves on import. | Catches `from foo import bar` where the patch deleted `bar`. |
-| V3 | The mutation-point id targeted by the patch resolves to exactly one location after the rewrite. | The next round must be able to re-find this id. |
-| V4 | For span markers labeled `kind="prompt"` or `kind="template"`, all `{...}` named placeholders in the pre-patch text are present in the post-patch text. | Prevents the proposer from silently dropping a `{user_message}` formatter that the surrounding code injects. |
-| V5 | The patch does NOT touch any mutation-point id that appears in the proposer brief's `## Forbidden` list. | Operator's mechanical guard against the proposer rewriting things they marked off-limits. |
-| V6 | For file markers, the post-patch file contains the same file marker line (preserved verbatim). | The id must survive into the next round. |
-| V7 | The patch's `new_text` does not contain another `# zicato:mutable` marker that would introduce a new id. | New mutation points must be added by the operator, not the proposer. |
+| P1 | Each patch's `mutation_id` resolves to an enumerated `MutationPoint`. | A patch that targets nothing cannot be applied. |
+| P2 | The `op` matches its payload: `replace` carries `new_content`, `set_numeric` carries `new_numeric`, `set_enum` carries `new_enum`, and no foreign payload field is set. | Catches a malformed proposer response before it touches disk. |
+| P3 | The `op` is compatible with the target point's `kind`: `replace` works on `span` or `file`; `set_numeric` / `set_enum` require a `span` point (they locate a constant after the marker). | A file-level rewrite has no single constant to retarget. |
 
-V4 is intentionally specific to prompt-shaped spans. Placeholder
-preservation for arbitrary strings would be a false-positive factory;
-labelling a marker with `kind="prompt"` is the opt-in.
+A standalone helper, `check_forbidden_ids`, rejects any patch whose
+`mutation_id` is in an operator-supplied forbidden set — the
+mechanical enforcement behind the proposer brief's `## Forbidden` list.
 
-V7 is the load-bearing rule that keeps the mutation surface
-**operator-owned**. The proposer rewrites within the surface; the
-operator decides what the surface is.
+**Post-apply** (`validate_post_apply`, after the candidate snapshot is
+written — the tournament refuses to promote a snapshot with any
+non-empty error list):
+
+| # | Constraint | Why |
+|---|---|---|
+| A1 | Every touched `.py` file still parses (`ast.parse`). Non-Python touched files (e.g. markdown prompt bodies under a manifest-bridged surface) are checked for existence and readability only. | A non-parsing file can't be imported; the whole snapshot is unusable. |
+| A2 | Every patch's `mutation_id` still resolves in a fresh enumeration of the snapshot. | The next round must be able to re-find this id. |
+| A3 | For any point whose pre-apply `metadata` declared `required_placeholders`, each named placeholder (exact substring, braces included) survives in the patched content. | Prevents the proposer from silently dropping a `{user_message}` formatter the surrounding code injects. |
+| A4 | Top-level imports in every patched `.py` file are preserved — the post-apply import set must be a superset of the pre-apply set. The proposer may add imports but not silently remove them. | A dropped import breaks the snapshot at runtime, not at parse time. |
+
+A3 is opt-in per mutation point via the `required_placeholders`
+metadata key on the marker; the validator never guesses placeholders
+for an unannotated span.
+
+The mutation surface stays **operator-owned**: the proposer addresses
+patches by id and rewrites within an enumerated point, but only the
+operator's markers define what the surface is. A2 enforces that every
+patched id still resolves after the rewrite.
 
 ## 7. The `zicato mutations` CLI
 
-The audit command. Walks the registered adapter, calls
-`mutation_points()`, and renders the result.
+The audit command — `Advanced: audit the mutable surface the proposer
+may change`. It resolves the registered adapter from the workspace,
+enumerates `mutation_points()`, and renders the result. `zicato evolve`
+enumerates this surface itself every round; this command exists to let
+an operator audit what the proposer is allowed to change.
 
 ```
 $ zicato mutations
-4 mutation points (2 span, 1 file, 1 file with spans)
-
-[span]   researcher.instruction      kind=prompt
-         agent.py:18 (col 0-3)
+[span]   researcher_instruction
+         agent.py:18-18
          "You research the user's question by ..."
 
-[span]   researcher.description       kind=description
-         agent.py:38 (col 4-15)
+[span]   researcher_description
+         agent.py:38-38
          "Performs literature lookup and source aggregation."
 
-[file]   presentation_agent.prompts   kind=prompts
-         prompts.py (entire file, 142 lines)
+[file]   presentation_agent_prompts
+         prompts.py (entire file)
 
-[span]   prompts.outline              kind=prompt
-         prompts.py:24 (col 0-7)
+[span]   outline_prompt   required_placeholders={section_count}
+         prompts.py:24-24
          "Outline the presentation in three sections: ..."
 ```
 
@@ -303,11 +336,14 @@ Flags:
 
 | Flag | Meaning |
 |---|---|
-| `--id <glob>` | Filter by id glob, e.g. `--id 'researcher.*'`. |
-| `--kind span\|file` | Filter by marker form. |
-| `--show full` | Print the full `current_text` instead of a preview. |
-| `--format json` | Emit JSON (the full `MutationPoint` shape) instead of human-readable text. |
-| `--root <path>` | Restrict to one registered source root. |
+| `--workspace PATH` | Path to the zicato workspace directory (default `.zicato`). |
+| `--id <glob>` | Filter mutation points by id glob, e.g. `--id 'researcher_*'`. |
+| `--kind span\|file` | Restrict the listing to one mutation kind. |
+| `--show preview\|full` | Truncate content previews (`preview`, the default) or dump full content (`full`). |
+| `--format table\|json` | Output format: human-readable `table` (default) or `json` (the full `MutationPoint` shape). |
+
+There is no `--root` flag — the listing always covers every registered
+source root. Filter by id glob (`--id`) when you want a subset.
 
 The intended workflow is:
 
@@ -317,10 +353,11 @@ The intended workflow is:
 3. Operator runs `zicato evolve` and the proposer addresses patches
    against the surface they just confirmed.
 
-`zicato mutations` is also the right place to invoke when an operator
-adds an id to the proposer brief's `## Forbidden` list — the CLI
-surfaces forbidden ids as `[forbidden]` next to the kind so the
-operator can sanity-check that the right ids are excluded.
+`zicato mutations` is also the right place to confirm the exact id
+spellings before adding one to the proposer brief's `## Forbidden`
+list — the forbidden-id check (`check_forbidden_ids`) matches on the
+literal id, so the operator can copy the id straight out of the
+listing.
 
 ## 8. Adding new markers to existing code
 
@@ -357,9 +394,11 @@ plausible but deliberately deferred:
   mutable. Most ADK setups already do this; LangChain setups
   sometimes do not.
 - **Type-narrowed mutation points.** A marker that asserts "the new
-  value must satisfy this Pydantic shape." Today the placeholder
-  check (V4) is the only structural validator on patched text.
+  value must satisfy this Pydantic shape." Today the
+  `required_placeholders` check (A3) plus the `min` / `max` / `enum`
+  metadata bounds are the only structural validators on patched text.
 
 Each of these is straightforward to add later because the
-`MutationPoint` shape is open-ended on the `kind` and `label` fields.
+`MutationPoint.metadata` mapping is an open `str`-keyed bag — a new
+marker attribute is a new metadata key, not a schema change.
 v0 starts narrow.
