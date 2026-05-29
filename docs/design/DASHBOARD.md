@@ -8,12 +8,33 @@ gate verdict is given partial results, and which runs are
 in-flight. It is the live counterpart to `analysis.html`, which is
 the persisted archival snapshot of the epoch.
 
-The dashboard is served by the same Rust binary that runs the
-watchdog. The runtime state files described in
-[RUNTIME.md](RUNTIME.md) are the dashboard's data source. The
-robustness phasing in [ROBUSTNESS.md](ROBUSTNESS.md) covers what
-each layer of defense catches; this document covers the operator
+The dashboard is served by a **standalone Python (Starlette) service**
+(`src/zicato/dashboard/`, run as `python -m zicato.dashboard`), spawned
+by `zicato evolve` alongside — but separate from — the Rust watchdog
+supervisor. (The Rust binary can also serve a dashboard, but `evolve`
+always runs it `--no-dashboard`; the UI is the Python service's job.
+This split-out into its own service was a deliberate decision — see
+[RUNTIME.md](RUNTIME.md) §3.0.) The runtime state files described in
+[RUNTIME.md](RUNTIME.md) — plus the `.zicato/index.db` analytical index
+and the committed `epochs/` artifacts — are the dashboard's data
+source. The robustness phasing in [ROBUSTNESS.md](ROBUSTNESS.md) covers
+what each layer of defense catches; this document covers the operator
 experience and the HTTP / SSE surface.
+
+> **Shipped vs planned, up front.** The Python dashboard service, all
+> the GET endpoints (§6), the `/events` SSE stream, the L0→L4
+> navigation, the ⌘K command palette, and the status pill all **ship
+> today**. The POST control endpoints (§6.2) are **wired and live** —
+> when `evolve` spawns the dashboard it is served `read_only=False`, so
+> the control buttons write `control/` files. What is **planned** is
+> the *other half* of that loop: the orchestrator does not yet *consume*
+> those `control/` files at safe points (see [RUNTIME.md](RUNTIME.md)
+> §2.5), so a control action is recorded but not yet acted on. The
+> `zicato dashboard` CLI exposes only `--workspace` / `--host` /
+> `--port`; the `--read-only` / `--daemon` standalone modes in §2.2 are
+> **not shipped** on that CLI (the `--read-only` toggle exists on the
+> Rust binary and as a `create_app(read_only=…)` argument, not as a
+> `zicato dashboard` flag).
 
 ## 1. What the dashboard is
 
@@ -57,89 +78,105 @@ dashboard auto-starts; the operator doesn't think about it.
 
 ```
 $ zicato evolve --rounds 5
-[evolve] workspace: /home/op/myagent/.zicato
-[evolve] supervisor: spawning zicato-supervisor on :7892
-[evolve] dashboard:  http://localhost:7892/  (live for this epoch)
+...
+Dashboard: http://127.0.0.1:7892
 [evolve] round 1 of 5...
 ```
 
-The URL is printed to stdout once, then the orchestrator runs the
-meta-loop. The supervisor exits when the orchestrator exits; the
-dashboard URL stops working at that point.
+The URL is printed to stdout once the dashboard service reports the
+port it actually bound (read back from `runtime/dashboard.json` — the
+service walks `+1` if the preferred port is taken, so the URL is the
+real one, not an assumed one). Both the dashboard service and the
+watchdog supervisor exit when `evolve` exits; the dashboard URL stops
+working at that point.
 
 ### 2.1 Opt-out and tuning flags
 
+These are the flags that actually ship on `zicato evolve`:
+
 | Flag | Default | Meaning |
 |---|---|---|
-| `--no-dashboard` | off | Do not spawn the supervisor. Useful for non-interactive CI where no operator will look at it; cuts startup by ~20ms. The robustness watchdog also doesn't run; the operator should use OS-level supervision instead. |
-| `--dashboard-port <port>` | `7892` | Bind to a specific port. If taken, fails — the auto +1 retry is only for the default. |
-| `--dashboard-bind <addr>` | `127.0.0.1` | Bind address. Set to `0.0.0.0` for LAN access (with the usual security caveats — there's no auth on the dashboard). |
-| `--dashboard-only` | off | Run the supervisor without running the meta-loop (post-mortem mode against a completed workspace). Equivalent to `zicato dashboard --read-only`. |
+| `--no-dashboard` | off | Do not spawn the dashboard service (and the watchdog supervisor that guards it). `evolve` still runs the loop. Useful for non-interactive CI. |
+| `--dashboard-port <port>` | `7892` | Preferred port for the dashboard HTTP server (always bound on `127.0.0.1`). If taken, the service walks `+1` up to ten times. |
 
-Two notes:
+Notes:
 
-- `--no-dashboard` is the only common opt-out. CI scripts that
-  want predictable noise sometimes use it.
+- There is **no `--dashboard-bind` flag.** The dashboard always binds
+  `127.0.0.1` — the operator views it from the same host as the evolve
+  loop, so loopback is correct. (LAN exposure would be a reverse-proxy
+  concern; it is not a CLI option.)
+- There is **no `--dashboard-only` flag** on `evolve`. For a
+  post-mortem against a completed workspace, run the standalone
+  `zicato dashboard` command (§2.2).
 - There is **no authentication** on the dashboard. It binds to
-  loopback by default. Operators who expose it to the LAN are
-  expected to put a reverse proxy in front of it (basic auth, SSO,
-  etc.). The dashboard does not include auth itself because that's
-  out of scope for the runtime layer and an over-eager built-in
-  would be the wrong defaults for any specific deployment.
+  loopback by default. Operators who put it behind a reverse proxy own
+  the auth story; the dashboard does not include auth itself.
 
-### 2.2 Standalone modes (v1.2+)
+### 2.2 The standalone `zicato dashboard` command
 
-Two genuine use cases for a standalone `zicato dashboard` command
-land later as thin CLI wrappers around the same supervisor binary
-in different modes:
+A standalone `zicato dashboard` command **ships today** for serving an
+*existing* workspace — a post-mortem of a completed epoch, or a
+read-along view of a workspace another `zicato evolve` is currently
+driving. It is a thin wrapper that runs the same Python service in the
+foreground until interrupted (Ctrl-C):
 
-| Mode | Use case | Behavior |
+| Flag | Default | Meaning |
 |---|---|---|
-| `zicato dashboard --read-only` | Post-mortem of a completed epoch | Reads only committed state in `epochs/`; no `.zicato/runtime/` interaction. No control surface. |
-| `zicato dashboard --daemon` | Long-running CI scenarios | Same as auto-spawn mode but doesn't exit when the active `evolve` exits — picks up the next `evolve` invocation. Uses `.zicato/runtime/supervisor.pid` to ensure only one daemon at a time. |
+| `--workspace <path>` | `.zicato` | Workspace root to serve. |
+| `--host <addr>` | `127.0.0.1` | Bind address. |
+| `--port <port>` | `7892` | Preferred port (walks `+1` if taken). |
 
-The auto-spawn case is the common one and gets the simplest CLI:
-no command, just a flag on `evolve`. The standalone modes are for
-when the operator wants to keep the dashboard around longer than
-one `evolve` invocation. They are NOT required for v1.2; they land
-when an operator names a concrete reason for one.
+> **Planned modes.** Two richer modes are **not yet shipped** as
+> `zicato dashboard` flags:
+>
+> | Planned mode | Use case | Intended behavior |
+> |---|---|---|
+> | `--read-only` | Post-mortem / shared view | Disable the POST control surface. (The capability exists — `create_app(read_only=…)` and the Rust binary's `--read-only` — but is not surfaced as a `zicato dashboard` flag; the standalone command currently serves with the control surface enabled.) |
+> | `--daemon` | Long-running CI | Outlive one `evolve` invocation and pick up the next. (The Rust binary has a `--daemon`; the Python `zicato dashboard` does not.) |
+
+The auto-spawn case is the common one and gets the simplest entry
+point: no command, just `evolve` doing it for you.
 
 ## 3. Architecture (HTTP + SSE)
 
 The dashboard server is a single-page HTML application talking
-to a Rust HTTP server over two channels:
+to the Python (Starlette) HTTP server over two channels:
 
 - **HTTP GET** for initial state and on-demand snapshots.
 - **Server-Sent Events** (`text/event-stream`) for live updates.
 
 ```
 ┌────────────────────────────────┐         ┌─────────────────────────────┐
-│  Browser (single-page UI)      │         │  zicato-supervisor (Rust)   │
-│  ──────────────────────────    │         │  ───────────────────────    │
-│  index.html + bundled JS/CSS   │◄────────┤  GET /  → serves index      │
+│  Browser (single-page UI)      │         │  zicato.dashboard (Python/  │
+│  ──────────────────────────    │         │  Starlette + uvicorn)       │
+│  index.html + JS/CSS bundle    │◄────────┤  GET /  → serves index      │
 │                                │         │                             │
 │  On load:                      │         │  GET /api/state             │
 │   1. fetch /api/state          │◄────────┤   ◄ reads .zicato/runtime/  │
-│   2. open EventSource(/events) │         │   ◄ returns full snapshot   │
+│   2. open EventSource(/events) │         │   ◄ + index.db + epochs/    │
 │                                │         │                             │
-│  On every SSE event:           │         │  inotify on .zicato/runtime │
-│   - apply delta to UI state    │◄────────┤   → write SSE event         │
-│                                │         │     to every subscriber     │
+│  On every SSE event:           │         │  watches .zicato/runtime/   │
+│   - apply delta to UI state    │◄────────┤   → snapshot then           │
+│                                │         │     state_change events     │
 │                                │         │                             │
-│  On user action (v1.3):        │         │  POST /api/<action>         │
-│   - POST /api/{action}         ├────────►│   → write .zicato/runtime/  │
-│                                │         │     control/<file>           │
+│  On user action:               │         │  POST /api/control/<action> │
+│   - POST /api/control/{action} ├────────►│   → write .zicato/runtime/  │
+│                                │         │     control/<file>          │
 └────────────────────────────────┘         └─────────────────────────────┘
                                                        │
-                                                       │ orchestrator polls
-                                                       ▼
+                                                       │ (planned) orchestrator
+                                                       ▼  consumes at safe points
                                           ┌─────────────────────────────┐
                                           │  zicato evolve (Python)     │
-                                          │  reads control/ at safe     │
-                                          │  points; consumed commands  │
-                                          │  move to control_log/.      │
+                                          │  PLANNED: read control/ at  │
+                                          │  safe points; archive into  │
+                                          │  control_log/.              │
                                           └─────────────────────────────┘
 ```
+
+The control POST endpoints write the `control/` files today; the
+orchestrator's *consumption* of them is the planned half (see
+[RUNTIME.md](RUNTIME.md) §2.5).
 
 ### 3.1 Why SSE, not WebSockets
 
@@ -148,22 +185,24 @@ to a Rust HTTP server over two channels:
 | Server → client only | ✓ (exactly what we want) | ✓ |
 | Client → server | (separate HTTP POST) | ✓ (same connection) |
 | Auto-reconnect with `Last-Event-ID` | ✓ (builtin) | manual |
-| Implementation complexity (Rust + browser) | low | medium |
+| Implementation complexity (server + browser) | low | medium |
 | Plays nicely with HTTP middleware (gzip, headers) | ✓ | partial |
 
 Live updates are strictly server → client (the orchestrator
 generates events; the browser displays them). Client → server
-actions (v1.3) are infrequent enough to use plain `POST /api/...`.
+actions are infrequent enough to use plain `POST /api/control/...`.
 SSE's auto-reconnect makes the dashboard tolerant of transient
-network drops or supervisor restarts; the browser sends the last
-event ID it saw and the server replays anything missed.
+network drops or service restarts; on reconnect the server re-sends a
+fresh `snapshot` before resuming the live `state_change` stream.
 
 ### 3.2 Bundled assets
 
-The supervisor binary embeds the dashboard's HTML, CSS, and JS as
-static resources via `include_str!`. No external CDN, no
-node_modules, no separate static directory to ship. The binary is
-the whole dashboard.
+The Python dashboard service serves its HTML, CSS, and JS bundle off
+disk from `src/zicato/dashboard/static/` (`index.html`, `app.js`,
+`style.css`, `icons.svg`, plus `css/` and `js/`). `evolve` resolves the
+static directory and hands it to the server; an unknown asset 404s, and
+a missing bundle falls back to a placeholder page. No external CDN, no
+node_modules at runtime.
 
 Styling mirrors `analysis.html`'s aesthetic — same font stack,
 same colour palette, same chart conventions. The two should look
@@ -171,39 +210,30 @@ like the same thing in two modes: live and archival.
 
 ### 3.3 SSE event format
 
+The shipped wire protocol (`src/zicato/dashboard/sse.py`) is: a new
+client first receives one `event: snapshot` carrying the full state,
+then `event: state_change` frames as files under `.zicato/runtime/`
+change. `state_change` frames are **coalesced** — a burst of writes
+within a short debounce window collapses into a single frame whose
+payload carries the set of changed *kinds* (`payload.kinds`), so the
+dashboard does one coalesced refresh instead of a frame per file.
+
 ```
-event: state_changed
-id: 142
-data: {"kind": "active_tournament_updated", "round": 4, "entry_id": "long_solar", "side": "candidate", "status": "done", "drift_loss": 0.31}
+event: snapshot
+data: { ...the same shape as GET /api/state... }
 
-event: state_changed
-id: 143
-data: {"kind": "active_run_started", "run_id": "e4f2_revision_dialog_parent", "generation": "v4", "entry_id": "revision_dialog"}
+event: state_change
+data: {"kinds": ["active_tournament", "active_runs"]}
 
-event: state_changed
-id: 144
-data: {"kind": "heartbeat_stale", "last_seen_at": "2026-05-14T12:35:02.418Z", "age_seconds": 18}
+event: state_change
+data: {"kinds": ["heartbeat"]}
 ```
 
-| Event kind | Trigger |
-|---|---|
-| `state_changed` | Generic; payload's `kind` field narrows it. |
-| `kind: heartbeat_bumped` | Orchestrator wrote a new `heartbeat.json`. |
-| `kind: heartbeat_stale` | Supervisor's local timer noticed no fresh heartbeat. |
-| `kind: active_tournament_updated` | An entry's status flipped (queued → running → done). |
-| `kind: active_run_started` | New `active_runs/{run_id}.json` appeared. |
-| `kind: active_run_phase` | A worker bumped its `phase`. |
-| `kind: active_run_finished` | `active_runs/{run_id}.json` removed (clean) or finalised (killed/crashed). |
-| `kind: round_finished` | Orchestrator wrote round outcome to `experiment.json`. |
-| `kind: loop_health_critical` | A round's `LoopHealth` report came back `critical` (see [LOOP-HEALTH.md](LOOP-HEALTH.md)); payload carries the firing findings. |
-| `kind: epoch_close` | Operator (or auto) closed the epoch. |
-| `kind: control_applied` | A `control/<file>` command was consumed; payload includes the audit entry from `control_log/`. |
-| `kind: escalation_started` | Supervisor sent SIGTERM to a stalled worker. |
-| `kind: escalation_finished` | Supervisor confirmed the worker is dead. |
-
-Event IDs are monotonic per dashboard session. The browser stores
-the last ID it saw in `localStorage` so a reload reconnects
-without missing events.
+The `kind` regions are derived from which file changed (heartbeat,
+active_tournament, active_runs, run_log, lineage, …); the dashboard JS
+reads `payload.kinds` and re-fetches the affected endpoints. A
+keep-alive comment is sent periodically so idle connections survive
+proxy read-timeouts.
 
 ### 3.4 Data sourcing: files-canonical, index-derived
 
@@ -252,40 +282,45 @@ than an error.
 
 ## 4. UI panels
 
-### 4.0 View structure
+### 4.0 Navigation structure
 
-The dashboard is a single page with a fixed header and a
-left-hand nav rail switching between **four views**. Each view
-composes the panels described in §4.1-§4.9. The header
-(§4.1) is always visible; the nav rail routes by URL fragment
-(`#/overview`, `#/tree`, `#/tournament`, `#/epoch`).
+> **Shipped navigation (clean-slate redesign).** The current UI drops
+> the left-hand sidebar in favour of a **top bar** with a drill-down
+> navigation across five levels — **L0 Workspace → L1 Epoch → L2
+> Generation → L3 Round → L4 Run** — a **⌘K command palette** for
+> jumping between epochs / generations / runs, and a **status pill**
+> reflecting the live heartbeat/phase. The panels described in §4.1-§4.9
+> are the building blocks; the drill-down levels compose them.
 
-| View | Route | What it shows | Primary source |
+The levels nest the way the data does — the operator moves *down* the
+competition view and at the run level steps *across* into harmonograf:
+
+| Level | Scope | What it composes | Primary source |
 |---|---|---|---|
-| **Overview** | `#/overview` | The live tournament panel — parent/child entry groups with per-entry **elapsed-vs-budget** bars — plus the log tail. The operator's "what is happening right now" view. | live files: `active_tournament.json`, `active_runs/*` (via `/api/active-runs`), `/api/run-log` |
-| **Tree** | `#/tree` | The cross-epoch lineage graph, **including in-flight generations** (the proposed-but-not-yet-resolved candidate is drawn mid-run), plus the score trajectory. | `/api/lineage` (directory walk, live) |
-| **Tournament** | `#/tournament` | The competition view: the bracket (champion spine + challengers) for resolved rounds, **and the in-progress tournament rendered live**. Selecting a node opens its matchup detail. | live: `active_tournament.json` for the in-progress round; index for closed rounds |
-| **Epoch** | `#/epoch` | The epoch's evaluation contract: scoring with **nested weight dicts** (including `per_judge_weights`), the board, the proposer brief, mutation paths shown **relativized** to the workspace root. | `/api/epoch` |
+| **L0 Workspace** | cross-epoch | a workspace-at-a-glance summary + trend sparkline across epochs | `/api/workspace` |
+| **L1 Epoch** | one epoch | the live tournament / active runs / log tail (the "what's happening now" panels) plus the epoch's evaluation contract (scoring with nested weight dicts incl. `per_judge_weights`, board, proposer brief, mutation paths relativized to the workspace root) | live `active_tournament.json`, `/api/active-runs`, `/api/run-log`, `/api/epoch` |
+| **L2 Generation** | one generation | the lineage graph (**including in-flight generations**), score trajectory, per-generation drill-downs; a **side-by-side compare picker** (defaulting to the parent generation) with URL-hash sync | `/api/lineage`, `/api/generation/...`, `/api/score-trajectory` |
+| **L3 Round** | one round / matchup | the bracket for resolved rounds **and the in-progress tournament rendered live**; the per-matchup A/B grid | `active_tournament.json` for the active round; `index.db` for closed rounds |
+| **L4 Run** | one run | the run's live status + event tail; "open in harmonograf" handoff | `/api/run/...`, `/api/run-log`, transcript endpoints |
 
-Two behaviors are the result of fixes and are called out per-view
+Two behaviors are the result of fixes and are called out per-panel
 below:
 
-- The **Tournament** view renders the in-progress tournament live
-  — it previously read `index.db` and so was blank for the whole
-  duration of every round (see §3.4). It now reads
-  `active_tournament.json` via `/api/active-tournament` for the
-  active round and only reads the index for the bracket of closed
-  rounds.
-- The **Tree** view includes in-flight generations because
-  `/api/lineage` walks generation directories rather than reading
-  the resolved-only `lineage.json`.
+- The in-progress tournament renders **live** — it previously read
+  `index.db` and so was blank for the whole duration of every round
+  (see §3.4). It now reads `active_tournament.json` via
+  `/api/active-tournament` for the active round and only reads the
+  index for the bracket of closed rounds.
+- The lineage includes in-flight generations because `/api/lineage`
+  walks generation directories rather than reading the resolved-only
+  `lineage.json`.
 
 The per-panel sections below (§4.1-§4.9) describe the panel
-building blocks; the table above maps them onto views.
+building blocks; the drill-down levels above map them onto screens.
 
 | # | Panel | What it shows |
 |---|---|---|
-| 4.1 | Header | epoch / generation / round / elapsed |
+| 4.1 | Header / status pill | epoch / generation / round / elapsed + live phase |
 | 4.2 | Tournament view | the competition — bracket, active matchup, predicted gate verdict |
 | 4.3 | Active runs list | every in-flight tournament run |
 | 4.4 | Lineage SVG | the cross-epoch generation tree |
@@ -293,6 +328,7 @@ building blocks; the table above maps them onto views.
 | 4.6 | Drift-kind heatmap | which drift kinds move across the epoch |
 | 4.7 | Loop-health panel | loop-health findings — is the eval toothless? |
 | 4.8 | Log tail | rolling tail of the latest goldfive events |
+| 4.9 | Drill-down side panels | per-generation and per-run detail |
 
 ### 4.1 Header
 
@@ -683,61 +719,65 @@ installed as a protocol handler).
 
 ## 5. Interactivity model
 
-The dashboard is **read-only by default** in v1.2. Interactive
-controls land in v1.3 because the action surface needs safety
-review — gate overrides are contract violations and must leave a
-durable audit trail.
+> **What ships vs what's planned.** As spawned by `evolve` the
+> dashboard service runs `read_only=False`, so the **control POST
+> endpoints are live and the write side works**: clicking a control
+> button drops the corresponding `control/` file atomically. What is
+> **planned** is the orchestrator's *consumption* of those files — the
+> evolve loop does not yet read `control/` at safe points (see
+> [RUNTIME.md](RUNTIME.md) §2.5), and there is no `control_log/`
+> audit-on-consume yet. So today a control action is recorded on disk
+> but does not yet change the running loop. The safety review framing
+> below (gate overrides as contract violations needing a durable audit
+> trail) still governs the planned consume side.
 
-### 5.1 Read-only mode (v1.2)
+### 5.1 The control surface (shipped write side)
 
-| Read operation | Source |
+| Operation | Source / effect |
 |---|---|
-| All panel data | `.zicato/runtime/` + `.zicato/epochs/` |
-| Open in harmonograf | Constructs URL; no zicato state change |
-| Reload page | Re-fetches `/api/state`, opens SSE |
+| All panel data (read) | `.zicato/runtime/` + `.zicato/index.db` + `.zicato/epochs/` |
+| Open in harmonograf | Constructs a handoff URL; no zicato state change |
+| Reload page | Re-fetches `/api/state`, re-opens SSE (fresh snapshot) |
+| **Pause / Skip / Kill / Promote / Reject / Brief** | `POST /api/control/...` → atomic write of a `control/` file (returns `202`). **Consumption is planned** (see §5 banner). |
 
-No active control surface. The dashboard cannot pause the loop,
-kill a run, or override the gate; the operator can only watch.
-The orchestrator control-channel buttons — **Pause**, **Skip**,
-**Force-kill**, **Override** — do render in the v1.2 UI, but as
-**disabled previews**: they are visible so the eventual control
-surface has a place in the layout, but they are inert and the
-POST endpoints behind them (§6.2) are a **v1.3 deliverable**.
-They become live only when v1.3 lands the `control/` file
-protocol and the action surface clears its safety review.
+The control buttons render and are wired to the POST endpoints in
+§6.2. The `--read-only` posture (where the POST endpoints return `403`)
+is available via `create_app(read_only=…)` and the Rust binary's
+`--read-only`, but is not surfaced as a `zicato dashboard` flag yet
+(§2.2).
 
-### 5.2 Write-back via the control-file protocol (v1.3)
+### 5.2 Write-back via the control-file protocol
 
-Operator actions become `POST /api/<action>` requests on the
-dashboard. The dashboard server writes a file under
-`.zicato/runtime/control/`; the orchestrator polls `control/` at
-safe points and acts on the request.
+Operator actions are `POST /api/control/<action>` requests on the
+dashboard service. The service writes a file under
+`.zicato/runtime/control/` (today). The orchestrator is *to* poll
+`control/` at safe points and act on the request (planned).
 
 ```
 operator clicks "pause epoch"
             │
             ▼
-browser → POST /api/pause
+browser → POST /api/control/pause                       (SHIPPED)
             │
             ▼
-supervisor → write .zicato/runtime/control/pause_epoch
-            │ (empty file; presence is the signal)
+dashboard service → atomically write
+            │ .zicato/runtime/control/pause_epoch        (SHIPPED)
+            │ (JSON payload {reason, ts})
             │
             ▼
-            ... at next safe point (between rounds or between
-                board entries depending on command priority) ...
+            ... at next safe point ...                   (PLANNED)
             │
             ▼
-orchestrator → reads control/pause_epoch
-            │ moves it to control_log/<ts>_pause_epoch.json
+orchestrator → reads control/pause_epoch                 (PLANNED)
+            │ archives it into control_log/<ts>_*.json
             │ updates heartbeat.json with phase="paused"
             │
             ▼
-supervisor → inotify sees heartbeat change
-            │ broadcasts SSE event with control_applied + new phase
+dashboard → notices heartbeat change via its watcher     (SHIPPED path)
+            │ emits a state_change SSE frame
             │
             ▼
-browser → updates header pill to "PAUSED"
+browser → updates the status pill to "PAUSED"
 ```
 
 ### 5.3 Command catalogue and safe-point semantics
@@ -752,12 +792,19 @@ browser → updates header pill to "PAUSED"
 | `reject_override` | `control/reject/{gen_id}` | end of tournament, before journaling | gate-override | `command=reject`, `gen=...`, `tournament_decision_was=promote` |
 | `rubric_replace` | `control/rubric_replacement.txt` | between rounds | normal | `command=rubric_replace`, `old_hash=...`, `new_hash=...` |
 
+**Shipped endpoints vs catalogue.** The POST endpoints that exist
+today are `pause`, `skip-round`, `kill/{run_id}`, `promote/{gen_id}`,
+`reject/{gen_id}`, and `brief` (the brief/rubric-replacement). There is
+**no** `resume` endpoint yet, and the `*_was` / `old_hash` audit fields
+above describe the **planned** `control_log/` entries — none of the
+consume-side audit ships today.
+
 **Safe points** are the orchestrator's natural pause boundaries:
 between rounds, between entries within a round, end of tournament
 before journaling. Commands are categorised by which safe point
 they apply to; checking only at safe points avoids the
 "orchestrator dies mid-board-entry because the operator clicked
-pause" failure mode.
+pause" failure mode. (This is the planned consume contract.)
 
 **Gate-override audit.** When `promote_override` lands and the
 tournament would have rejected, the audit log entry records both
@@ -769,72 +816,83 @@ override is not silent.
 
 ### 5.4 Authorization model
 
-There is no authentication on the dashboard in v1.2 or v1.3. The
-dashboard binds to loopback by default; any local user can issue
-any command. The audit log captures `issued_by:
-"operator-localhost"` because the dashboard doesn't ask for an
-operator identity.
+There is no authentication on the dashboard. The dashboard binds to
+loopback by default; any local user can issue any command. The
+(planned) audit log would capture a symbolic `issued_by` because the
+dashboard doesn't ask for an operator identity.
 
 If/when the dashboard needs real auth (multi-operator setups,
-remote access without a reverse proxy), the spot to add it is the
-HTTP middleware in the supervisor — between the request being
-accepted and the control file being written. The audit log gains
-an `issued_by` field that's no longer constant. Until that
-landing, the operator's name in the audit log is symbolic.
+remote access without a reverse proxy), the spot to add it is HTTP
+middleware in the dashboard service — between the request being
+accepted and the control file being written.
 
 ## 6. HTTP API surface
 
-The full API surface for v1.3. v1.2 ships the GET endpoints only.
+This is the shipped surface served by `src/zicato/dashboard/server.py`.
+The GET endpoints and `/events` are always available; the POST control
+endpoints (§6.2) are available unless the app was built `read_only`.
 
-### 6.1 GET endpoints
+### 6.1 Routes at a glance
 
-#### `GET /`
+The full route table registered by the server:
 
-Returns the single-page UI as `text/html`. The HTML inlines its
-CSS and JS; no separate `<script src>` or `<link rel>` to load.
+| Route | Purpose |
+|---|---|
+| `GET /` | The single-page UI (`index.html`, off-disk bundle). |
+| `GET /static/{path}` and `GET /{path}` | UI assets / fallback to the bundle. |
+| `GET /events` | SSE stream (§3.3): one `snapshot` then coalesced `state_change` frames. |
+| `GET /api/health` | Liveness/identity (§6.1 detail below). |
+| `GET /api/state` | Composite live snapshot. |
+| `GET /api/environment?run-log-limit=N` | One coalesced read of the whole environment — the front-end refreshes the entire view from this instead of fanning out to many endpoints. |
+| `GET /api/workspace` | L0 cross-epoch workspace summary. |
+| `GET /api/epoch` | Current epoch's evaluation-contract view (scoring incl. `per_judge_weights`, board, brief, mutation paths). |
+| `GET /api/lineage` | Generation DAG incl. in-flight generations. |
+| `GET /api/active-tournament` | In-progress tournament shape (live). |
+| `GET /api/active-runs` | In-flight runs with computed progress fields. |
+| `GET /api/heartbeat` | Heartbeat snapshot. |
+| `GET /api/run-log?limit=N` | Tail of the active run's `events.jsonl`. |
+| `GET /api/tournaments` | Bracket of resolved rounds (index). |
+| `GET /api/tournaments/{generation_id}` | One resolved round's matchup detail. |
+| `GET /api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}` | Per-entry A/B grid. |
+| `GET /api/score-trajectory` | Gen-score trajectory across rounds. |
+| `GET /api/drift-movements/{generation_id}` | Drift-movement / heatmap data. |
+| `GET /api/health-report` | Latest loop-health report. |
+| `GET /api/search?...` | Cross-workspace search. |
+| `GET /api/contract-diff/{epoch_id}` | Contract diff vs the parent epoch. |
+| `GET /api/epoch/{epoch_id}/per-judge-trend` | Per-judge loss trend across the epoch. |
+| `GET /api/generation/{epoch_id}/{generation_id}/per-judge` | Per-judge breakdown for one generation. |
+| `GET /api/generation/{epoch_id}/{generation_id}/per-entry` | Per-entry breakdown for one generation. |
+| `GET /api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison` | Per-judge A/B comparison for a round. |
+| `GET /api/run/{run_id}/per-judge` | Per-judge breakdown for one run. |
+| `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge` | Same, addressed by triple. |
+| `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/expectations` | Outcome-check (expectations) results. |
+| `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/header` | Run header metadata. |
+| `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/transcript` | Run transcript. |
+| `GET /api/conversation/{run_id}` | Multi-turn conversation for a run. |
+| `GET /api/matchup/{entry_id}/conversations` | Side-by-side conversations for a matchup entry. |
+| `GET /api/files` and `GET /api/files/{epoch_id}/{generation_id}/{tree,content,patches,diff}` | Snapshot file tree, content, patches, and diffs. |
+| `GET /api/mutations/{epoch_id}` and `.../{mutation_id}` | Mutation surface listing and detail. |
+| `GET /api/epoch/{epoch_id}/journal` and `.../journal.md` | Journal as data or rendered markdown. |
+| `GET /api/epoch/{epoch_id}/analysis` and `.../analysis.html` | Analysis as data or rendered HTML. |
+| `POST /api/control/{pause,skip-round,kill/{run_id},promote/{gen},reject/{gen},brief}` | Control surface (§6.2). |
+
+The sections below detail the endpoints whose response shape is
+load-bearing.
 
 #### `GET /api/state`
 
-Returns a complete snapshot. Used on first load and on
-reconnect.
-
-Response shape:
-
-```json
-{
-  "workspace": "/home/op/myagent/.zicato",
-  "instance_id": "default",
-  "epoch": {
-    "id": "hardened_research",
-    "started_at": "2026-04-08T14:31:00Z",
-    "rounds_total": 5,
-    "round_current": 4
-  },
-  "heartbeat": {
-    "ts": "2026-05-14T12:35:02.418Z",
-    "age_seconds": 1.2,
-    "phase": "tournament",
-    "stale": false
-  },
-  "active_tournament": { ... },
-  "active_runs": [ { ... }, { ... } ],
-  "lineage": { ... },
-  "score_trajectory": { ... },
-  "drift_heatmap": { ... },
-  "log_tail": [ ... ]
-}
-```
-
-The shape mirrors the file layout in [RUNTIME.md](RUNTIME.md) — a
-join across `heartbeat.json`, `active_tournament.json`,
-`active_runs/*.json`, plus derived data from `epochs/`.
+Returns a complete live snapshot (`state_reader.build_snapshot`),
+joining `heartbeat.json`, `active_tournament.json`, `active_runs/*`,
+and derived `epochs/` + index data. It is the same shape sent as the
+SSE `snapshot` frame and used on first load and on reconnect.
 
 #### `GET /events`
 
-Server-Sent Events stream. Sends a `state_changed` event for every
-inotify event the supervisor processes. Reconnect-safe: the
-browser sends `Last-Event-ID: <id>` to resume from where it left
-off.
+Server-Sent Events stream. On connect it sends one `event: snapshot`,
+then `event: state_change` frames as files under `.zicato/runtime/`
+change. Frames are **coalesced** over a short debounce window and carry
+the set of changed `kinds` (§3.3). A keep-alive comment keeps idle
+connections open through proxy read-timeouts.
 
 #### `GET /api/active-tournament`
 
@@ -957,42 +1015,44 @@ process-level health checks. Always `200`:
   "read_only": false,
   "workspace": "/home/op/myagent/.zicato",
   "port": 7893,
-  "build": "0.3.0+g67b5fac"
+  "build": "0.3.0"
 }
 ```
 
 | Field | Meaning |
 |---|---|
-| `port` | The TCP port the server actually **bound** — useful because the default `:7892` walks `+1` on a port clash, so the bound port is not always the requested one. The dashboard footer shows this so the operator can confirm which port to point a browser at. |
-| `build` | A build identifier: the crate version plus a short git SHA when the build script could resolve one (`0.3.0+g67b5fac`); the bare version otherwise. Always non-empty. |
-| `read_only` | `true` when the supervisor was started with `--read-only` (post-mortem mode); the POST control endpoints return `403` in that state. |
+| `port` | The TCP port the server actually **bound** (`app.state.bound_port`) — useful because the default `:7892` walks `+1` on a port clash, so the bound port is not always the requested one. |
+| `version` / `build` | The dashboard version string (`_dashboard_version()`). Both fields carry it. |
+| `read_only` | `true` when the app was built `read_only=True`; the POST control endpoints return `403` in that state. As spawned by `evolve` the dashboard runs `read_only=False`. |
 
-### 6.2 POST endpoints (v1.3)
+### 6.2 POST control endpoints
+
+These are **wired and live** (the write side). They are mounted under
+`/api/control/` and gated by the `read_only` flag.
 
 | Endpoint | Body | Effect |
 |---|---|---|
-| `POST /api/pause` | (empty) | Write `control/pause_epoch`. |
-| `POST /api/resume` | (empty) | Write `control/resume_epoch`. |
-| `POST /api/skip-round` | (empty) | Write `control/skip_round`. |
-| `POST /api/kill/{run_id}` | (empty) | Write `control/kill_runs/{run_id}`. |
-| `POST /api/promote/{gen_id}` | `{"justification": "...", "ack_override": true}` | Write `control/promote/{gen_id}`. Body's `ack_override` must be `true` for the request to be honoured; this is the in-UI confirmation step. |
-| `POST /api/reject/{gen_id}` | same as promote | Same shape. |
-| `POST /api/rubric` | `{"content": "..."}` | Write `control/rubric_replacement.txt`. |
+| `POST /api/control/pause` | optional `{"reason": "..."}` | Atomically write `control/pause_epoch` (JSON `{reason, ts}`). |
+| `POST /api/control/skip-round` | optional `{"reason": "..."}` | Write `control/skip_round`. |
+| `POST /api/control/kill/{run_id}` | (none) | Write `control/kill_runs/{run_id}`. |
+| `POST /api/control/promote/{generation_id}` | (none) | Write `control/promote/{generation_id}`. |
+| `POST /api/control/reject/{generation_id}` | (none) | Write `control/reject/{generation_id}`. |
+| `POST /api/control/brief` | raw text body | Write `control/rubric_replacement.txt` (the on-disk file keeps its protocol name; the UI calls it the proposer brief). |
 
-All POST responses are immediate (the dashboard writes the file
-and returns `202 Accepted`); the actual effect is asynchronous —
-the orchestrator applies it at the next safe point. The browser
-relies on the subsequent SSE `control_applied` event to know
-when the action took effect.
+Each writes its `control/` file atomically and returns `202 Accepted`.
+The effect is **asynchronous and planned**: once the orchestrator's
+consume side lands (see §5 banner and [RUNTIME.md](RUNTIME.md) §2.5) it
+will apply the command at the next safe point; today the file is
+written but not consumed. There is no `resume` endpoint and no
+`ack_override` confirmation step in the shipped surface.
 
 ### 6.3 Error responses
 
 | Code | When |
 |---|---|
-| `400` | Malformed body (e.g. `ack_override: false` on a gate-override request). |
-| `404` | Path references a `run_id` or `gen_id` that doesn't exist. |
-| `409` | Conflict — e.g. `POST /api/resume` when not paused. |
-| `503` | Orchestrator stalled (`heartbeat.json` is stale); request not written. The dashboard greys out the controls in this state, but the safety net is here too. |
+| `202` | Success — the control file was written. |
+| `400` | A path-parameter `run_id` / `generation_id` is unsafe (fails the `[A-Za-z0-9._-]` id check). |
+| `403` | The dashboard is in `read_only` mode; the control endpoint refuses. |
 
 ## 7. Progressive `analysis.html` and the dashboard
 
@@ -1004,10 +1064,10 @@ live view.
 | Property | dashboard | `analysis.html` |
 |---|---|---|
 | Updates | live (SSE) | regenerated each round |
-| Source | `.zicato/runtime/` + `epochs/` | `epochs/` only |
-| Process | supervisor (Rust) | orchestrator (Python) |
+| Source | `.zicato/runtime/` + `index.db` + `epochs/` | `epochs/` only |
+| Process | the Python dashboard service | orchestrator (Python) |
 | Reachable while orchestrator is paused | partially (heartbeat shows phase) | yes (it's a file) |
-| Reachable after `evolve` exits | no (supervisor exits with evolve) | yes (the file persists) |
+| Reachable after `evolve` exits | no (the auto-spawned service exits with evolve — but `zicato dashboard` can re-serve the workspace) | yes (the file persists) |
 | Includes LLM narrative | no | yes (at epoch close) |
 
 The two are intentionally redundant. The dashboard is the
@@ -1018,23 +1078,22 @@ teammate" tool. Either can stand alone.
 
 | Phase | What ships |
 |---|---|
-| **v1.2** | Read-only dashboard. Auto-spawn from `zicato evolve`. All GET endpoints. The four views (Overview, Tree, Tournament, Epoch). Live panels read the runtime JSON files; only the bracket of *resolved* rounds and the cross-run analytics read the analytical index (see §3.4). SSE for live updates. Drill-down side panels. The v1.3 control buttons render as disabled previews (§5.1). |
-| **v1.3** | POST endpoints (`pause`, `resume`, `skip-round`, `kill`, `promote`, `reject`, `rubric`). Control file protocol. `control_log/` audit. Gate-override confirmation UX. |
+| **v1.2 — shipped** | The dashboard as a **separate Python service**, auto-spawned from `zicato evolve` (and a standalone `zicato dashboard` command). All GET endpoints (§6.1). The L0→L4 drill-down navigation, ⌘K palette, and status pill. Live panels read the runtime JSON files; only the bracket of *resolved* rounds and the cross-run analytics read the analytical index (see §3.4). SSE for live updates (snapshot + coalesced state_change). Drill-down side panels. |
+| **v1.3 — partially shipped** | POST control endpoints under `/api/control/` (`pause`, `skip-round`, `kill`, `promote`, `reject`, `brief`) — the **write side is live**. **Planned:** the orchestrator's consume-at-safe-points half, the `control_log/` audit, and gate-override confirmation UX. |
 
-The split is the same split as the runtime work — v1.2 is the
-observability pass, v1.3 is the controls pass. The two can be
-operated independently: v1.2 alone is operationally useful (the
-operator can see what's happening even if they can't change it);
-v1.3 layers on after the safety review of the action surface is
-complete.
+The split is the same split as the runtime work — observability first,
+controls after. The two are operated independently: the observability
+pass alone is useful (the operator can see what's happening); the
+control surface's write side ships now, with the loop-side consumption
+landing after the safety review of the action surface.
 
 ## 9. Cross-references
 
 | Topic | Document |
 |---|---|
 | State file layout the dashboard reads from | [RUNTIME.md](RUNTIME.md) §2 |
-| Supervisor binary that serves the dashboard | [RUNTIME.md](RUNTIME.md) §3 |
-| `control/` and `control_log/` file shapes | [RUNTIME.md](RUNTIME.md) §2.5 |
+| The watchdog supervisor + the dashboard-as-separate-service split | [RUNTIME.md](RUNTIME.md) §3, §3.0 |
+| `control/` and `control_log/` file shapes (and the planned consume side) | [RUNTIME.md](RUNTIME.md) §2.5 |
 | Tournament gate formula the predicted verdict approximates | [SCORING.md](SCORING.md) |
 | The tournament competition model — bracket, per-matchup detail, analytics | [TOURNAMENT.md](TOURNAMENT.md) |
 | The harmonograf split — execution view vs competition view | [TOURNAMENT.md](TOURNAMENT.md) §5 |

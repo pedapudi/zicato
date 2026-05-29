@@ -87,17 +87,19 @@ agent's source. zicato is the only thing that does either.
 
 ```
                                                 ┌────────────────────────────┐
-                                                │  zicato-supervisor (Rust)  │
+                                                │  watchdog supervisor (Rust)│
+                                                │  + dashboard service (Py)  │
                                                 │  ────────────────────────  │
-                                                │  spawned by `evolve`;      │
-                                                │  watches .zicato/runtime/  │
-                                                │  serves the live dashboard │
-                                                │  (HTTP + SSE on :7892).    │
-                                                │                            │
-                                                │  Reads heartbeat.json,     │
-                                                │  active_runs/*, controls.  │
-                                                │  Escalates SIGTERM →       │
-                                                │  SIGKILL on stalled work.  │
+                                                │  both spawned by `evolve`. │
+                                                │  Watchdog (Rust, no-dash): │
+                                                │  reads heartbeat.json,     │
+                                                │  active_runs/*; escalates  │
+                                                │  SIGTERM → SIGKILL; serves │
+                                                │  /statusz.                 │
+                                                │  Dashboard (Python/        │
+                                                │  Starlette): HTTP + SSE on │
+                                                │  :7892, reads runtime/ +   │
+                                                │  index.db + epochs/.       │
                                                 └────────────┬───────────────┘
                                                              │ inotify; signals
                                                              │
@@ -623,7 +625,9 @@ instead of walking files.
   ever lag the filesystem, never lead it — so a crash leaves a
   self-healing behind-index, never a phantom row.
 - **Single writer.** Only the orchestrator writes the index; the
-  Rust supervisor opens it read-only via `rusqlite`.
+  dashboard service opens it read-only (the Rust supervisor's
+  read-only `rusqlite` access exists but, under `--no-dashboard`, is
+  not the live-dashboard reader).
 
 The full schema, the rebuild semantics, and the
 SQLite-here-not-there boundary are in
@@ -654,8 +658,11 @@ drift signal, no-expectations, stalled loop) emit findings with
   and an SSE event to the dashboard's loop-health panel — the §1
   silent-degeneracy failure mode never again depends on an
   operator noticing.
-- `zicato evolve --stop-on-degenerate` opts into an early-stop
-  on sustained degeneracy. Opt-in, not default.
+- The orchestrator **stops early on sustained degeneracy by
+  default** (two consecutive rounds with a CRITICAL loop-health
+  finding stop the loop with a `degenerate_health` reason). This is a
+  default-on orchestrator behaviour, not a CLI flag — there is no
+  `--stop-on-degenerate` option on `zicato evolve`.
 
 The detectors, severities, and the `zicato health` CLI are in
 [LOOP-HEALTH.md](LOOP-HEALTH.md).
@@ -711,18 +718,22 @@ automatically.
 | Subcommand | What it does |
 |---|---|
 | `zicato register --adk path:agent --mutable-tree <path>` | Register an inner harness via an adapter. |
-| `zicato board add/list/remove` | Edit the current epoch's board by hand (refused mid-epoch unless `--force`). |
+| `zicato board add/list/remove` | Edit the current epoch's board by hand. |
 | `zicato mutations` | Audit the current mutation surface — every span, every file marker. |
-| `zicato run --generation vN --entry <id>` | Run one entry against one generation. |
-| `zicato analyze` | Aggregate loss profiles into patterns. |
-| `zicato propose` | Run the proposer; emit `Experiment`. |
-| `zicato patch apply` | Apply an experiment's patches to a new candidate snapshot. |
-| `zicato tournament vN vN+1` | Run the tournament between two generations. |
-| `zicato epoch new/close/list/switch` | Manage epochs manually (the escape hatch from auto-epoching). |
-| `zicato reindex` | Rebuild the `.zicato/index.db` analytical index from the filesystem. |
-| `zicato health` | Run loop-health diagnostics on the current epoch. |
-| `zicato journal show` | Render `journal.md`. |
-| `zicato analysis show` | Render `analysis.md` for a closed epoch. |
+| `zicato propose` | Run the proposer; emit one `Experiment`. |
+| `zicato tournament PARENT CHILD` | Run the tournament between two generations in isolation. |
+| `zicato epoch new/close/list/switch/set-goal` | Manage epochs manually (the escape hatch from auto-epoching). |
+| `zicato reindex` / `zicato reindex-generations` | Rebuild (or reconcile just the `generations` table of) the `.zicato/index.db` analytical index. |
+| `zicato health` | Report whether the evolve loop has real optimization signal (loop-health diagnostics). |
+| `zicato analyze-telemetry` | (Re)run the decision-telemetry analyzer for an epoch. |
+| `zicato regenerate-report` | Re-render an epoch's `analysis.md` / `analysis.html` from on-disk data. |
+| `zicato dashboard` | Serve the dashboard for an existing workspace (evolve auto-spawns it; this is the standalone form). |
+| `zicato repair-*` | Targeted index/file migration helpers (`repair-epoch-goals`, `repair-judge-losses`, `repair-tournament-fk`, `repair-v0-baseline`). |
+
+There is no standalone `zicato run`, `zicato analyze`, `zicato patch
+apply`, `zicato journal show`, or `zicato analysis show` in the shipped
+CLI; those stages run only inside `evolve` (the rendered report is
+produced/regenerated by `analyze-telemetry` / `regenerate-report`).
 
 The full reference for every subcommand is in [CLI.md](CLI.md).
 
@@ -744,40 +755,41 @@ files.
 
 ```
    ┌────────────────────────────────┐         ┌────────────────────────────┐
-   │  zicato evolve (Python)        │         │  zicato-supervisor (Rust)  │
-   │  ───────────────────────────   │  spawn  │  ────────────────────────  │
-   │  • acquires .zicato/runtime/   ├────────►│  Watchdog + dashboard      │
-   │    lock.json                   │         │  server in one binary.     │
-   │  • writes heartbeat.json (2s)  │         │                            │
-   │  • spawns subprocess workers   │         │  inotify on runtime/*      │
-   │    for each tournament run     │         │                            │
-   │  • reads control/ at safe      │         │  Heartbeat-stale → flag    │
-   │    points (between rounds)     │         │  the orchestrator stalled  │
-   └────────────────────────────────┘         │                            │
-                  │                           │  Worker stale → SIGTERM    │
-                  │ Popen                     │  → grace → SIGKILL         │
-                  ▼                           │                            │
-   ┌────────────────────────────────┐         │  Serves HTTP + SSE on      │
-   │  worker (Python subprocess)    │         │  :7892 (default). Renders  │
-   │  ───────────────────────────   │  reads  │  live dashboard from state │
-   │  • writes active_runs/{id}.json├────────►│  file changes.             │
-   │  • bumps phase + heartbeat_at  │         │                            │
-   │    every 1s                    │         │  v1.3: accepts POST writes │
-   │  • runs adapter.run_entry      │         │  to control/ files for     │
-   │  • dies on SIGTERM cleanly,    │         │  operator actions.         │
-   │    SIGKILL if it doesn't       │         └────────────────────────────┘
-   └────────────────────────────────┘
+   │  zicato evolve (Python)        │  spawn  │  watchdog supervisor (Rust)│
+   │  ───────────────────────────   ├────────►│  ────────────────────────  │
+   │  • acquires .zicato/runtime/   │         │  --no-dashboard mode:      │
+   │    lock.json (pid-based)       │         │  watches heartbeat.json +  │
+   │  • writes heartbeat.json (2s)  │         │  active_runs/*.            │
+   │  • runs each tournament run    │         │  Heartbeat-stale → flag    │
+   │    IN-PROCESS today            │         │  orchestrator stalled.     │
+   │    (L3 subprocess workers      │         │  Run stale/past deadline → │
+   │     are planned)               │         │  SIGTERM → grace → SIGKILL.│
+   │  • writes active_runs/{id}.json│         │  Serves /statusz.          │
+   │  • PLANNED: read control/ at   │         └────────────────────────────┘
+   │    safe points                 │  spawn  ┌────────────────────────────┐
+   └────────────────────────────────┼────────►│  dashboard service (Python)│
+                                     │         │  ────────────────────────  │
+                                     │         │  Starlette + uvicorn.      │
+                                     │         │  Serves HTTP + SSE on      │
+                                     │         │  :7892 (walks +1). Reads   │
+                                     │         │  runtime/ + index.db +     │
+                                     │         │  epochs/. POST /api/       │
+                                     │         │  control/* writes control/ │
+                                     │         │  files (consume side       │
+                                     │         │  planned).                 │
+                                     │         └────────────────────────────┘
 ```
 
 Three properties hold across the runtime layer:
 
 1. **File-based state is the only source of truth.** Memory
-   state in either process is a cache of what's on disk.
+   state in any process is a cache of what's on disk.
 2. **No LLM in the watchdog path.** Watchdog decisions are
    deterministic functions of file timestamps.
 3. **Single-writer per file.** Each state file has exactly one
-   process that writes to it (orchestrator, supervisor, or one
-   specific worker). No locking beyond `lock.json`.
+   process that writes to it (orchestrator, dashboard service, or —
+   once L3 lands — one specific worker). No locking beyond the
+   pid-based `lock.json`.
 
 The full design lives in seven documents:
 
@@ -791,15 +803,18 @@ The full design lives in seven documents:
 | v0 directory-backed storage today, plus the v0+1 git-backed roadmap (G0-G10) for blob dedup + `git log` / `git diff` / `git bisect` over generations | [STORAGE.md](STORAGE.md) |
 | The `.zicato/index.db` SQLite analytical index — schema, the files-canonical / index-derived discipline, `zicato reindex` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 
-The runtime layer ships in phases. v1 has L1+L2 from
-[ROBUSTNESS.md](ROBUSTNESS.md) — `asyncio.wait_for` per call
-and structured cancellation — sufficient for cooperative inner
-harnesses. v1.1 is the production-readiness pass: subprocess
-workers, the Rust supervisor's watchdog role, atomic writes
-everywhere, the resume protocol. v1.2 adds the dashboard's
-read-only mode; v1.3 adds the interactive controls. The git
-storage backend (v0+1) lands after v1.3 in the sequencing that
-[STORAGE.md](STORAGE.md) §4 lays out.
+The runtime layer ships in phases (see [ROBUSTNESS.md](ROBUSTNESS.md)
+§4 and [RUNTIME.md](RUNTIME.md) §8 for the exact what-ships boundary).
+**Shipped today:** L1+L2 (`asyncio.wait_for` budgets + structured
+cancellation), atomic writes everywhere, the Rust watchdog
+supervisor's watchdog role auto-spawned by `evolve`, the consecutive-
+reject circuit breaker, the `.zicato/runtime/` state files, and the
+dashboard — served as a **separate Python service**, not a role of the
+Rust binary — with its GET API + SSE and the write side of the control
+endpoints. **Planned:** L3 subprocess workers, the crash-resume
+protocol, the orchestrator's consumption of `control/` commands, and
+the git storage backend (v0+1, sequenced in [STORAGE.md](STORAGE.md)
+§4).
 
 ## 6. Storage layout
 

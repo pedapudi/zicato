@@ -12,19 +12,31 @@ it correct against everything else.
 
 ## 1. The six layers
 
-| Layer | Defense | Catches | Ships in |
+| Layer | Defense | Catches | Status today |
 |---|---|---|---|
-| **L1** | `asyncio.wait_for` per-call timeouts | Cooperative network/IO hangs | v1 |
-| **L2** | structured cancellation (CancelledError) | Async code that yields | v1 |
-| **L3** | subprocess tournament workers | GIL-holding loops, any user-code pathology | v1.1 |
-| **L4** | orchestrator watchdog (Rust supervisor) | Parent-side wedges | v1.1 |
-| **L5** | consecutive-bad circuit breaker | Long unproductive epochs | partial v1, full v1.1 |
-| **L6** | atomic writes + resume markers | Mid-run crashes | partial v1, full v1.1 |
+| **L1** | `asyncio.wait_for` per-call + per-entry + per-evolve budgets | Cooperative network/IO hangs | **shipped** |
+| **L2** | structured cancellation (CancelledError) | Async code that yields | **shipped** |
+| **L3** | subprocess tournament workers | GIL-holding loops, any user-code pathology | **planned** — runs are in-process today |
+| **L4** | orchestrator watchdog (Rust supervisor) | Parent-side wedges | **shipped** (watchdog binary auto-spawned; escalation targets the in-process run today, per-run workers when L3 lands) |
+| **L5** | consecutive-bad circuit breaker | Long unproductive epochs | **shipped** (consecutive-reject counter); richer signals planned |
+| **L6** | atomic writes (+ resume markers) | Mid-run crashes | atomic writes **shipped**; the resume protocol **planned** |
 
 The layers nest from inside to outside: L1 and L2 live inside the
-worker process, L3 is the worker boundary itself, L4 is the
-supervisor process outside the workers, L5 is the loop-level
-shutoff, L6 is the on-disk durability story.
+run, L3 is the (planned) worker boundary, L4 is the supervisor process
+outside the runs, L5 is the loop-level shutoff, L6 is the on-disk
+durability story.
+
+> **What this means in practice.** Today zicato is robust against
+> *cooperative* inner harnesses (L1+L2), durably writes its state
+> (L6 atomic writes), runs an external watchdog that escalates stalled
+> work (L4), and stops a fruitlessly-rejecting loop (L5). The one gap
+> versus the full model is **L3**: because runs execute in-process, a
+> truly uncooperative inner harness (a GIL-holding C extension, a
+> `while True: pass`) is not yet hard-killed at a per-run process
+> boundary — the L4 watchdog's escalation would terminate the whole
+> orchestrator process rather than one run. The resume protocol that
+> makes a post-kill restart pick up cleanly is also planned. L3 + the
+> resume protocol are the remaining production-hardening work.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -186,6 +198,16 @@ in production by accident) need L3.
 
 ### 2.3 L3 — subprocess tournament workers (the non-negotiable layer)
 
+> **(Planned — not yet shipped.)** L3 is the one defense layer that
+> does not ship today. As shipped, tournament runs execute **in-process**
+> inside the orchestrator's event loop under the L1 budgets; there is no
+> `zicato _worker` subprocess and no per-run process boundary. The
+> argument below is exactly why L3 is the planned production-hardening
+> work — until it lands, the cooperative-correctness floor (L1+L2) plus
+> the external watchdog (L4) is the real-today story, and an
+> uncooperative inner harness can only be stopped by terminating the
+> orchestrator process as a whole.
+
 **This is the load-bearing layer.** Without L3, zicato cannot
 honour its robustness story against any agent that doesn't
 cooperate with cancellation. With L3, zicato is robust against
@@ -331,8 +353,14 @@ wedge in zicato's own code (unlikely but possible), an event loop
 that gets into a busy cycle, a signal handler that mishandles
 SIGCHLD. The orchestrator watching itself is not a defense.
 
-L4 is the supervisor — a separate Rust process, separate language,
-separate runtime. It watches `heartbeat.json` and the workers.
+L4 is the watchdog supervisor — a separate Rust process, separate
+language, separate runtime (`crates/supervisor/`). It **ships today**:
+`zicato evolve` auto-spawns it (in watchdog-only mode), and it watches
+`heartbeat.json` and the `active_runs/*` files, escalating
+SIGTERM → grace → SIGKILL on a stalled run. (Until L3 lands, the run's
+process *is* the orchestrator's, so the per-run escalation target is
+shared with the orchestrator; once L3 lands the watchdog kills one run
+without touching the orchestrator.)
 
 See [RUNTIME.md](RUNTIME.md) §3 for the supervisor's lifecycle,
 state model, and escalation protocol. This section names what L4
@@ -343,7 +371,7 @@ catches that the inner layers don't.
 | Worker hangs in the inner harness | no | yes (worker SIGKILL) | yes (supervisor escalates if orchestrator is slow to notice) |
 | Orchestrator wedges (zicato bug in `evolve_round`) | no | no | yes (supervisor surfaces "stalled" status to operator; operator decides to restart) |
 | Both orchestrator AND a worker wedge simultaneously | no | depends on the orchestrator | yes (supervisor escalates the worker directly; orchestrator status flagged) |
-| Supervisor itself wedges | no | no | no — but: this is the smallest surface; Rust + no LLM; the supervisor is the thing the design tries hardest to keep simple. If it wedges, `zicato status` still reads the files directly and the operator sees it. |
+| Supervisor itself wedges | no | no | no — but: this is the smallest surface; Rust + no LLM; the supervisor is the thing the design tries hardest to keep simple. If it wedges, the dashboard (a separate process) still reads the state files directly and the operator sees it. |
 
 L4 deliberately does NOT auto-kill the orchestrator. An
 orchestrator stall is more likely to be a slow LLM endpoint than
@@ -361,7 +389,7 @@ should know — and `evolve` should stop on its own rather than
 burning hours of compute.
 
 ```
-zicato evolve --rounds 20 --stop-on-no-improvement
+zicato evolve --rounds 20 --max-consecutive-rejections 3
                                    │
                                    │ K consecutive rejects?
                                    ▼
@@ -387,14 +415,16 @@ The circuit breaker is the only layer that's deliberately
 loop from breaking; L5 is about preventing the loop from
 *wasting time even when working*.
 
-### 2.6 L6 — atomic writes + resume markers
+### 2.6 L6 — atomic writes (+ resume markers)
 
 Every disk write in zicato uses the atomic-rename pattern (see
-[RUNTIME.md](RUNTIME.md) §6). Every state file is either
-fully-old or fully-new on read. Resume markers
-(`current_generation`, the `outcome` block presence in
-`experiment.json`) let a restarted orchestrator figure out
-exactly where it was.
+[RUNTIME.md](RUNTIME.md) §6) — this **ships today**: every state file
+is either fully-old or fully-new on read. The resume *markers* exist on
+disk (`current_generation`, the `outcome` block presence in
+`experiment.json`), but the **resume protocol** that reads them to
+restart an interrupted loop is **planned** (see [RUNTIME.md](RUNTIME.md)
+§4). So today L6 guarantees no torn writes; automatic crash-resume is
+the not-yet-shipped half.
 
 #### Where atomicity matters
 
@@ -531,29 +561,27 @@ Operator sees: that entry's run shows "crashed (OOM)"; the entry is
                the SIGKILL.
 ```
 
-### 3.6 Supervisor wedges
+### 3.6 Watchdog supervisor wedges
 
 ```
-Symptom:    The Rust supervisor itself stops responding (extremely
-            unlikely; in practice this means a kernel-level event
-            like a memory pressure that didn't quite OOM-kill it).
-Pathway:    Dashboard HTTP requests timeout. SSE stream stops.
+Symptom:    The Rust watchdog supervisor itself stops responding
+            (extremely unlikely; in practice a kernel-level event like
+            memory pressure that didn't quite OOM-kill it).
+Pathway:    /statusz stops responding; escalation stops happening.
 Caught by:  No automatic layer — the supervisor IS the watchdog.
-Operator sees: Dashboard becomes unresponsive. The operator runs
-               `zicato status` (which reads state files directly,
-               doesn't need the supervisor) and sees the
-               orchestrator is fine. Operator restarts the
-               supervisor manually (kill -9 the PID in
-               supervisor.pid; re-run zicato dashboard --daemon).
-               Alternatively, just terminating `zicato evolve` and
-               restarting it spawns a fresh supervisor.
+Operator sees: The dashboard still works (it is a separate Python
+               service reading the same state files directly), so the
+               operator can confirm the orchestrator is fine — the
+               watchdog dying does not blind the operator. They restart
+               the watchdog by terminating `zicato evolve` and
+               re-running it, which spawns a fresh supervisor.
 ```
 
-The supervisor is the smallest surface and the lowest-leverage
+The watchdog is the smallest surface and the lowest-leverage
 process; this case is extremely unlikely and graceful degradation
-(via `zicato status`) is the answer. We do not stack a "watchdog
-for the watchdog"; that would just push the same question one
-level up.
+(the dashboard and the state files remain readable) is the answer. We
+do not stack a "watchdog for the watchdog"; that would just push the
+same question one level up.
 
 ### 3.7 Both orchestrator and a worker hang
 
@@ -626,65 +654,65 @@ Operator sees: evolve exits with a clear error; existing state
 The layers ship in order: the cheapest first, the most invasive
 last.
 
-### 4.1 v1: L1 + L2 + partial L5 + partial L6
+### 4.1 Shipped today: L1 + L2 + L4 + L5 + atomic writes (L6)
 
-What lands:
+What's in the shipped build:
 
-- `asyncio.wait_for` wrappers around `auxiliary_call_llm` and
-  `harness_call_llm` (default 120s budget; configurable).
-- Structured cancellation cleanup in the runner and the
-  per-entry adapter calls.
-- The consecutive-reject counter in `evolve` (`--stop-on-no-improvement`).
-- The per-evolve total wall-clock budget
-  (`evolve --max-wall-clock-seconds`), an L1 ceiling on the whole
-  invocation layered on top of each entry's per-entry budget.
-- Atomic writes for `experiment.json` and `gen_score.json` (the
-  files that, if corrupted, would break the journal).
+- L1 `asyncio.wait_for` budgets at the run granularities: per board
+  entry (`wall_clock_budget_seconds`) and per whole invocation
+  (`evolve --max-wall-clock-seconds`, enforced both between rounds and
+  within a round). The per-*aux-call* wrapper (a 120s budget on the
+  proposer / emulator / judge `auxiliary_call_llm` sites) is the small
+  §5 follow-up — not yet threaded through those call sites.
+- L2 structured cancellation cleanup in the runner and per-entry
+  adapter calls.
+- L5 consecutive-reject early stop (`evolve --max-consecutive-rejections`,
+  default 3).
+- L6 atomic writes for the runtime state files **and** `experiment.json`
+  / `gen_score.json` — every JSON/text file goes through the
+  temp-then-rename helper.
+- L4 the Rust watchdog supervisor, auto-spawned by `evolve`
+  (watchdog-only mode), escalating SIGTERM → grace → SIGKILL on a
+  stalled run.
+- The `.zicato/runtime/` state files and the dashboard service that
+  reads them.
 
-What's missing:
+### 4.2 Planned: L3 + the resume protocol
 
-- Subprocess workers; pathological inner-harness code can wedge
-  the orchestrator.
-- Watchdog binary; orchestrator wedges are detected only by the
-  operator.
-- Resume protocol; a mid-round crash requires manual recovery.
+What is **not yet** in the build:
 
-This is the **cooperative-correctness floor**. Inner harnesses
-that respect `CancelledError` work fine. Anything else gets
-described in the docs as "use v1.1".
+- **L3 subprocess workers** and the `zicato _worker` subcommand. Until
+  this lands, pathological *uncooperative* inner-harness code (a
+  GIL-holding loop) cannot be hard-killed at a per-run boundary — the
+  watchdog would have to take the whole orchestrator. This is the one
+  remaining gap versus the full six-layer model.
+- The **resume protocol** on orchestrator restart (the markers exist;
+  reading them to resume does not).
+- `zicato status` / `zicato kill` CLI commands (the dashboard's kill
+  control is the current path for that).
+- The richer L5 signals (hypothesis match-rate decay, same-drift-kinds
+  detection) beyond the consecutive-reject counter.
 
-### 4.2 v1.1: L3 + L4 + full L5 + L6
+Until L3 + resume land, the shipped story is the **cooperative-correctness
+floor plus an external watchdog**: inner harnesses that respect
+`CancelledError` are fully covered; an adversarial inner harness is
+contained only by terminating the orchestrator process.
 
-What lands:
+### 4.3 Shipped: the dashboard (observability)
 
-- `.zicato/runtime/` state files.
-- Subprocess workers; the `zicato _worker` subcommand.
-- Rust supervisor binary in watchdog-only mode (no dashboard
-  yet).
-- SIGTERM → grace → SIGKILL escalation.
-- Atomic writes for every file in the runtime layer.
-- Resume protocol on orchestrator restart.
-- `zicato status` and `zicato kill` commands.
-- Full circuit breaker (consecutive rejects + hypothesis
-  match-rate decay).
-
-This is the **production-readiness pass**. After v1.1 lands, the
-robustness story is complete; the dashboard work in v1.2/v1.3 is
-strictly observational and operational, not load-bearing for
-correctness.
-
-### 4.3 v1.2: dashboard (read-only)
-
-Supervisor gains its dashboard role. No new robustness layers;
-the layers are already in place. This phase is purely about
-making the layers' state visible to the operator. See
+The dashboard ships as a **separate Python service** (not a role of the
+Rust binary), auto-spawned by `evolve`. No new robustness layers — it
+makes the layers' state visible to the operator. See
 [DASHBOARD.md](DASHBOARD.md).
 
-### 4.4 v1.3: dashboard controls
+### 4.4 Partially shipped: the dashboard control surface
 
-The control-file protocol. New operator surface (pause, kill,
-override) but no new defenses — the operator's actions are
-recorded in the audit log and applied at safe points.
+The control-file protocol's **write side ships** (the dashboard's POST
+`/api/control/*` endpoints drop `control/` files). The orchestrator's
+consume-at-safe-points half, the `control_log/` audit, and gate-override
+confirmation are **planned** — no new defenses either way; the
+operator's actions are recorded and (once consumed) applied at safe
+points.
 
 ## 5. Auxiliary LLM timeout follow-up
 
@@ -774,9 +802,10 @@ entries, flat drift signal, no-expectations, stalled loop) run
 after every round, emit a typed `LoopHealth` report with
 `info` / `warning` / `critical` severities, and surface
 `critical` findings as a loud bannered orchestrator warning plus
-an SSE event to the dashboard's loop-health panel. An opt-in
-`zicato evolve --stop-on-degenerate` early-stops on sustained
-degeneracy.
+an SSE event to the dashboard's loop-health panel. The orchestrator
+**early-stops on sustained degeneracy by default** (two consecutive
+CRITICAL rounds → a `degenerate_health` stop reason); this is a
+default-on behaviour, not a `--stop-on-degenerate` CLI flag.
 
 Loop health is a close cousin of the L5 circuit breaker (§2.5)
 and feeds it — the richer L5 signals (hypothesis match-rate
@@ -823,7 +852,7 @@ without proportional value.
 | State files and the supervisor binary | [RUNTIME.md](RUNTIME.md) |
 | The live dashboard view of state | [DASHBOARD.md](DASHBOARD.md) |
 | Where atomic writes touch the storage layer | [STORAGE.md](STORAGE.md) |
-| Loop-health diagnostics — the detectors, `zicato health`, `--stop-on-degenerate` | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
+| Loop-health diagnostics — the detectors, `zicato health`, default-on degenerate early-stop | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
 | Resume markers on `experiment.json` | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3 |
 | Worker entry point | [CLI.md](CLI.md) |
 | The cancellation contract assumed by L1+L2 | [ARCHITECTURE.md](ARCHITECTURE.md) §4 |
