@@ -608,10 +608,10 @@ artifacts into a relational schema.
 `patches/*.json`, `runs/*/loss.json`, and `lineage.json` in the
 workspace.
 
-**Produces.** Eight tables (`epochs`, `generations`,
+**Produces.** Nine tables (`epochs`, `generations`,
 `experiments`, `patches`, `runs`, `loss_profiles`,
-`metric_counts`, `tournaments`) plus a `hypothesis_movements`
-table. Cross-run views — the dashboard's tournament analytics,
+`metric_counts`, `tournaments`, `judge_losses`).
+Cross-run views — the dashboard's tournament analytics,
 loop-health detectors, the lineage queries — read the index
 instead of walking files.
 
