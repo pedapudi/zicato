@@ -11,7 +11,7 @@ it), scored over the frozen board, decided by the two-sided promotion gate. This
 skill is for forensics on a *single* matchup — "why did this round promote /
 reject?". For the epoch-wide retrospective see `skills/zicato-analyze-epoch`; for
 cross-epoch lineage see `skills/zicato-lineage`; for the live bracket UI see
-`skills/zicato-dashboard`.
+`skills/zicato-watch-dashboard`.
 
 Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
 [AGENTS.md](../../AGENTS.md).
@@ -137,4 +137,4 @@ all served from the analytical index:
 - [TOURNAMENT.md](../../docs/design/TOURNAMENT.md) — gauntlet structure, matchup detail, the six analytics.
 - [SCORING.md](../../docs/design/SCORING.md) — the scalar and the two-sided promotion gate.
 - `skills/zicato-analyze-epoch` — the epoch-wide hypothesis-vs-outcome retrospective.
-- `skills/zicato-dashboard` — the live Tournament view (bracket + matchup detail).
+- `skills/zicato-watch-dashboard` — the live Tournament view (bracket + matchup detail).

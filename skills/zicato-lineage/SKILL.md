@@ -9,7 +9,7 @@ The **lineage** is how the inner harness evolved: a shallow DAG of epochs, each
 holding a linear chain of generations, joined across epochs by a baselining
 edge. Use this skill to answer "how did the harness get here?". For one round's
 verdict see `skills/zicato-tournament-forensics`; for an epoch's retrospective
-see `skills/zicato-analyze-epoch`; for the live UI see `skills/zicato-dashboard`.
+see `skills/zicato-analyze-epoch`; for the live UI see `skills/zicato-watch-dashboard`.
 
 Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
 [AGENTS.md](../../AGENTS.md). Read-only.
@@ -104,12 +104,12 @@ harness get here, across all epochs?"
 ## 4. Side-by-side conversation diff for a board entry
 
 To compare *how two generations actually behaved* on the same board entry, use
-the dashboard's compare picker (an L2/L4 feature; see `skills/zicato-dashboard`).
+the dashboard's compare picker (an L2/L4 feature; see `skills/zicato-watch-dashboard`).
 The dashboard is the **competition view**; harmonograf is the **execution
 view**, linked by a per-run drill-down
 ([TOURNAMENT.md §5](../../docs/design/TOURNAMENT.md#5-the-harmonograf-split)):
 
-1. Launch the dashboard for the workspace (`skills/zicato-dashboard` — `evolve`
+1. Launch the dashboard for the workspace (`skills/zicato-watch-dashboard` — `evolve`
    auto-spawns it, or `zicato dashboard` serves an existing workspace). Default
    URL `http://127.0.0.1:7892`.
 2. Open the **Tournament view → matchup detail** for the round, or the
@@ -139,5 +139,5 @@ viewed as two conversations.
 - [EPOCHS-AND-JOURNALING.md](../../docs/design/EPOCHS-AND-JOURNALING.md) §6 — lineage; §10.5 — baselining a rolled epoch.
 - [TOURNAMENT.md](../../docs/design/TOURNAMENT.md) §1, §5, §6 — gauntlet, harmonograf split, bracket vs tree.
 - [VOCABULARY.md](../../docs/design/VOCABULARY.md) — generation, lineage, tournament.
-- `skills/zicato-dashboard` — the live UI, the L2/L4 compare picker.
+- `skills/zicato-watch-dashboard` — the live UI, the L2/L4 compare picker.
 - `skills/zicato-tournament-forensics` — explain one matchup's verdict.
