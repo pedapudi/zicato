@@ -55,6 +55,11 @@ export function parsePhase0Hash(hash) {
     case 'generation':
       if (rest[0]) params.epochId = rest[0];
       if (rest[1]) params.generationId = rest[1];
+      // Optional third segment encodes the L2 compare picker target,
+      // so a side-by-side view is shareable as a URL. The picker
+      // module still owns the runtime state — this just seeds it on
+      // the first paint of a fresh route.
+      if (rest[2]) params.compareGenerationId = rest[2];
       break;
     case 'round':
       if (rest[0]) params.epochId = rest[0];

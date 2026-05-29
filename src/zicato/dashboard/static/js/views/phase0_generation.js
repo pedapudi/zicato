@@ -16,6 +16,13 @@
 //
 // The old bottom "Verdict" card and the old inline 2-column Outcome
 // card are GONE — the hero subsumes both.
+//
+// COMPARE MODE (Task #205): every section above grows a sibling on the
+// right whenever the compare picker selects another generation in the
+// same epoch. The picker lives in the hero slot above the hero strip,
+// follows L4's stable-<select> pattern (heartbeat-tick safe), and stays
+// per (epoch, focused-gen) — switching gens drops the picker back to
+// "off" rather than carrying a stale compare target.
 
 import { $, el, clearChildren } from '../core/dom.js';
 import { fetchJson } from '../core/api.js';
@@ -31,11 +38,65 @@ const _perEntryCache = new Map();
 const _loadingJudges = new Set();
 const _loadingEntries = new Set();
 
+// Compare-picker state — per (epoch, focused-gen) so a route change
+// drops the picker back to "off" instead of carrying a stale compare
+// target. Stable <select> reference mirrors the L4 pattern: an SSE
+// heartbeat tick rebuilds the surrounding cards but leaves the picker
+// (and any open native dropdown) alone.
+const _compareGenByFocused = new Map();
+let _comparePicker = null;
+let _comparePickerSig = null;
+let _comparePickerHandler = null;
+
+// Per-card digest — the SSE heartbeat ticks every second; the picker
+// must NOT close. Each card has its own digest covering only the
+// inputs it actually reads. A heartbeat tick that touches no card
+// input rebuilds nothing.
+let _lastHeroDigest = null;
+let _lastHypothesisDigest = null;
+let _lastPatchesDigest = null;
+let _lastEntriesDigest = null;
+let _lastJudgesDigest = null;
+// Force-render override — picker-change handlers flip this so the next
+// render bypasses every gate.
+let _forceNextGenRender = false;
+
 export function resetGenerationCaches() {
   _perJudgeCache.clear();
   _perEntryCache.clear();
   _loadingJudges.clear();
   _loadingEntries.clear();
+  _compareGenByFocused.clear();
+  _comparePicker = null;
+  _comparePickerSig = null;
+  _comparePickerHandler = null;
+  _lastHeroDigest = null;
+  _lastHypothesisDigest = null;
+  _lastPatchesDigest = null;
+  _lastEntriesDigest = null;
+  _lastJudgesDigest = null;
+  _forceNextGenRender = false;
+}
+
+// Reset every per-card digest — used by tests that want to assert a
+// no-op render is gated without clearing the data caches.
+export function resetGenerationRenderDigest() {
+  _lastHeroDigest = null;
+  _lastHypothesisDigest = null;
+  _lastPatchesDigest = null;
+  _lastEntriesDigest = null;
+  _lastJudgesDigest = null;
+  _forceNextGenRender = false;
+}
+
+export function compareGenFor(epochId, focusedGen) {
+  return _compareGenByFocused.get(epochId + '/' + focusedGen) || null;
+}
+
+export function setCompareGenFor(epochId, focusedGen, generationId) {
+  const key = epochId + '/' + focusedGen;
+  if (!generationId) _compareGenByFocused.delete(key);
+  else _compareGenByFocused.set(key, generationId);
 }
 
 export function perJudgePayload(epochId, generationId) {
@@ -60,6 +121,7 @@ async function ensurePerJudge(epochId, generationId, repaint) {
     _perJudgeCache.set(key, { epoch_id: epochId, generation_id: generationId, judges: [] });
   } finally {
     _loadingJudges.delete(key);
+    _forceNextGenRender = true;
     if (typeof repaint === 'function') repaint();
   }
   return _perJudgeCache.get(key);
@@ -82,6 +144,7 @@ async function ensurePerEntry(epochId, generationId, repaint) {
     });
   } finally {
     _loadingEntries.delete(key);
+    _forceNextGenRender = true;
     if (typeof repaint === 'function') repaint();
   }
   return _perEntryCache.get(key);
@@ -174,36 +237,84 @@ function _promotionSummary(outcome) {
 }
 
 // ---------------------------------------------------------------------------
+// COMPARE PICKER — stable <select> reference (mirrors L4 pattern).
+// ---------------------------------------------------------------------------
+
+// Build (or update in place) the sibling-generation picker. Lists every
+// generation in the focused epoch except the focused one; emitting an
+// empty string value = "no compare". Returns the <select> element —
+// the SAME element across renders unless its option list changed.
+function _buildComparePicker(epochId, focusedGen, selectedCompare, onChange) {
+  // Source the option list from state.epochDef.experiments first (the
+  // canonical L2 data shape) and fall back to state.lineage.generations
+  // if the def has not landed yet. Either way the focused gen is
+  // filtered out.
+  const def = state.epochDef || {};
+  const exps = Array.isArray(def.experiments) ? def.experiments : [];
+  const fromDef = exps
+    .filter((e) => e && e.generation_id && e.generation_id !== focusedGen)
+    .map((e) => e.generation_id);
+  const lineage = state.lineage || {};
+  const lineageGens = Array.isArray(lineage.generations) ? lineage.generations : [];
+  const fromLineage = lineageGens
+    .filter((g) => g && g.epoch_id === epochId && g.generation_id !== focusedGen)
+    .map((g) => g.generation_id);
+  // Merge + dedupe; sort so the option list has a stable order.
+  const merged = Array.from(new Set([...fromDef, ...fromLineage]));
+  merged.sort();
+  const sig = JSON.stringify({ epochId, focusedGen, options: merged });
+
+  if (_comparePicker == null || _comparePickerSig !== sig) {
+    const select = el('select', { class: 'mono gen-compare-picker' });
+    select.appendChild(el('option', { value: '' }, ['compare to … (off)']));
+    for (const gid of merged) {
+      select.appendChild(el('option', { value: gid }, [gid]));
+    }
+    // Bind the change handler ONCE; later renders swap the mutable ref.
+    select.addEventListener('change', (ev) => {
+      const v = (ev && ev.target && ev.target.value) ? String(ev.target.value) : '';
+      const handler = _comparePickerHandler;
+      if (typeof handler === 'function') handler(v || null);
+    });
+    _comparePicker = select;
+    _comparePickerSig = sig;
+  }
+
+  const wantValue = selectedCompare || '';
+  if (_comparePicker.value !== wantValue) {
+    const opts = _comparePicker.children;
+    for (const opt of opts) {
+      const isMatch = (opt.getAttribute && opt.getAttribute('value')) === wantValue;
+      if (isMatch) opt.setAttribute('selected', 'selected');
+      else if (opt.removeAttribute) opt.removeAttribute('selected');
+    }
+    _comparePicker.value = wantValue;
+  }
+
+  _comparePickerHandler = onChange;
+  return _comparePicker;
+}
+
+export function resetComparePicker() {
+  _comparePicker = null;
+  _comparePickerSig = null;
+  _comparePickerHandler = null;
+}
+
+// ---------------------------------------------------------------------------
 // HERO — pill, deltas, summary line.
 // ---------------------------------------------------------------------------
 
-function _renderHero(exp, epochId, generationId) {
-  // The hero slot reuses the existing phase0-gen-compare DOM id so we
-  // do not need an index.html change. The earlier "Verdict" card lived
-  // here too — it is replaced wholesale.
-  const node = $('phase0-gen-compare');
-  if (!node) return;
-  clearChildren(node);
-
-  let body;
-  if (state.epochDef == null) {
-    body = renderLoadingState({ label: 'Loading verdict' });
-    node.appendChild(renderCard({ title: 'Generation', body }));
-    return;
-  }
-  if (!exp) {
-    body = renderEmptyState('No experiment recorded.');
-    node.appendChild(renderCard({ title: 'Generation', body }));
-    return;
-  }
-
+// Render one compact hero strip — used both for the single-mode card
+// body and for each side of a compare-mode pair.
+function _heroStripBody(exp, epochId, generationId, opts) {
+  const o = opts || {};
   const out = exp.outcome || {};
   const decision = _normaliseDecision(out) || 'pending';
   const pillVariant = decision === 'promoted' ? 'promoted'
     : decision === 'rejected' ? 'rejected'
     : decision === 'deferred' ? 'deferred' : 'pending';
 
-  // --- header row: generation id + decision pill + lineage line -----
   const titleRow = el('div', { class: 'gen-hero-title-row' }, [
     el('h3', { class: 'gen-hero-title' }, [
       'Generation ',
@@ -230,22 +341,13 @@ function _renderHero(exp, epochId, generationId) {
   }
   const lineage = el('p', { class: 'gen-hero-lineage' }, lineageBits);
 
-  // --- delta tile strip ---------------------------------------------
   // Sentiment mapping:
-  //   Δscalar / Δdrift: lower is better → positive = bad (red ↑), negative = good (green ↓)
-  //   Δpass:            higher is better → positive = good (green ↑), negative = bad (red ↓)
-  // Below: we pass a pre-formatted directional delta string ("↑ worse" /
-  // "↓ better") so the tile reads at a glance. The tile component
-  // colours by sentiment; the arrow direction matches the raw sign.
+  //   Δscalar / Δdrift: lower is better → positive = bad
+  //   Δpass:            higher is better → positive = good
   const sentimentLowerBetter = (v) => (!_isNum(v) || v === 0) ? 'flat'
     : (v < 0 ? 'good' : 'bad');
   const sentimentHigherBetter = (v) => (!_isNum(v) || v === 0) ? 'flat'
     : (v > 0 ? 'good' : 'bad');
-
-  // Direction (arrow) is bound to the metric's sign; the delta text is
-  // the operator-readable verdict word so the tile reads as e.g.
-  // "↑ worse" / "↓ better" with no redundant +/- prefix duplicating the
-  // headline number above.
   const direction = (v) => {
     if (!_isNum(v) || v === 0) return 'flat';
     return v > 0 ? 'up' : 'down';
@@ -253,23 +355,26 @@ function _renderHero(exp, epochId, generationId) {
   const verdictText = (sent) => sent === 'good' ? 'better'
     : (sent === 'bad' ? 'worse' : 'flat');
 
+  // In compare mode the tiles render at a smaller size so two strips
+  // sit side-by-side without a horizontal scrollbar.
+  const tileSize = o.compact ? 'md' : 'lg';
   const tileStrip = el('div', { class: 'tile-strip gen-hero-tiles' }, [
     renderMetricTile({
-      label: 'Δ scalar', size: 'lg',
+      label: 'Δ scalar', size: tileSize,
       value: _fmtSigned(out.scalar_score_delta),
       direction: direction(out.scalar_score_delta),
       delta: verdictText(sentimentLowerBetter(out.scalar_score_delta)),
       sentiment: sentimentLowerBetter(out.scalar_score_delta),
     }),
     renderMetricTile({
-      label: 'Δ drift', size: 'lg',
+      label: 'Δ drift', size: tileSize,
       value: _fmtSigned(out.drift_loss_delta),
       direction: direction(out.drift_loss_delta),
       delta: verdictText(sentimentLowerBetter(out.drift_loss_delta)),
       sentiment: sentimentLowerBetter(out.drift_loss_delta),
     }),
     renderMetricTile({
-      label: 'Δ pass', size: 'lg',
+      label: 'Δ pass', size: tileSize,
       value: _fmtSigned(out.pass_rate_delta),
       direction: direction(out.pass_rate_delta),
       delta: verdictText(sentimentHigherBetter(out.pass_rate_delta)),
@@ -277,7 +382,6 @@ function _renderHero(exp, epochId, generationId) {
     }),
   ]);
 
-  // --- summary line --------------------------------------------------
   let summaryLine = null;
   if (decision === 'rejected') {
     const parsed = _parseRejectionSummary(out.rejection_reason);
@@ -305,15 +409,114 @@ function _renderHero(exp, epochId, generationId) {
     ]);
   }
 
-  const heroBody = el('div', { class: 'gen-hero-body' }, [
-    titleRow, lineage, tileStrip, summaryLine,
+  return {
+    body: el('div', { class: 'gen-hero-body' }, [
+      titleRow, lineage, tileStrip, summaryLine,
+    ]),
+    decision,
+  };
+}
+
+// Render the small "vs" delta column between the two hero strips. Each
+// row reports the directional difference focused-vs-compared so the
+// operator can read the trade-off at a glance.
+function _heroVsColumn(focusedExp, comparedExp) {
+  const fOut = focusedExp.outcome || {};
+  const cOut = comparedExp.outcome || {};
+  const rows = [];
+  const mkRow = (label, focused, compared, lowerBetter) => {
+    if (!_isNum(focused) || !_isNum(compared)) return;
+    const diff = focused - compared;
+    const sentiment = lowerBetter
+      ? (diff < 0 ? 'good' : (diff > 0 ? 'bad' : 'flat'))
+      : (diff > 0 ? 'good' : (diff < 0 ? 'bad' : 'flat'));
+    rows.push(el('div', { class: 'gen-hero-vs-row' }, [
+      el('div', { class: 'gen-hero-vs-label' }, [label]),
+      el('div', { class: 'gen-hero-vs-value mono gen-hero-vs-' + sentiment },
+        [_fmtSigned(diff)]),
+    ]));
+  };
+  mkRow('Δ scalar', fOut.scalar_score_delta, cOut.scalar_score_delta, true);
+  mkRow('Δ drift',  fOut.drift_loss_delta,   cOut.drift_loss_delta,   true);
+  mkRow('Δ pass',   fOut.pass_rate_delta,    cOut.pass_rate_delta,    false);
+  return el('div', { class: 'gen-hero-vs-col' }, [
+    el('div', { class: 'gen-hero-vs-label gen-hero-vs-header' }, ['vs']),
+    ...rows,
   ]);
-  // Variant accent matches the decision so the page reads at a glance.
-  const accent = decision === 'promoted' ? 'promoted'
-    : decision === 'rejected' ? 'rejected'
-    : decision === 'deferred' ? 'warning' : 'default';
+}
+
+function _renderHero(exp, epochId, generationId, comparedExp, comparedGenId,
+                    onPickerChange) {
+  const node = $('phase0-gen-compare');
+  if (!node) return;
+  clearChildren(node);
+
+  let body;
+  let accent = 'default';
+  if (state.epochDef == null) {
+    body = renderLoadingState({ label: 'Loading verdict' });
+    node.appendChild(renderCard({ title: 'Generation', body }));
+    return;
+  }
+  if (!exp) {
+    body = renderEmptyState('No experiment recorded.');
+    node.appendChild(renderCard({ title: 'Generation', body }));
+    return;
+  }
+
+  // Picker header — stays above the strip(s) so it stays clickable in
+  // both modes.
+  const picker = _buildComparePicker(epochId, generationId,
+    comparedGenId, onPickerChange);
+  const pickerWrap = el('div', { class: 'gen-compare-picker-wrap' }, [
+    el('span', { class: 'gen-compare-picker-label' }, ['compare']),
+    picker,
+  ]);
+
+  if (!comparedGenId) {
+    // Single mode — one strip, like before.
+    const single = _heroStripBody(exp, epochId, generationId);
+    body = el('div', null, [pickerWrap, single.body]);
+    accent = single.decision === 'promoted' ? 'promoted'
+      : single.decision === 'rejected' ? 'rejected'
+      : single.decision === 'deferred' ? 'warning' : 'default';
+  } else if (!comparedExp) {
+    // Compared gen id known but its experiment record has not landed —
+    // render the focused side and an empty-state stub on the right.
+    const left = _heroStripBody(exp, epochId, generationId, { compact: true });
+    const right = el('div', { class: 'gen-hero-body' }, [
+      el('p', { class: 'empty' },
+        [`No experiment record for compared generation ${comparedGenId}.`]),
+    ]);
+    body = el('div', null, [
+      pickerWrap,
+      el('div', { class: 'gen-compare-pair' }, [
+        el('div', { class: 'gen-compare-side focused' }, [left.body]),
+        el('div', { class: 'gen-compare-side compared' }, [right]),
+      ]),
+    ]);
+    accent = left.decision === 'promoted' ? 'promoted'
+      : left.decision === 'rejected' ? 'rejected'
+      : left.decision === 'deferred' ? 'warning' : 'default';
+  } else {
+    const left = _heroStripBody(exp, epochId, generationId, { compact: true });
+    const right = _heroStripBody(comparedExp, epochId, comparedGenId,
+      { compact: true });
+    const vs = _heroVsColumn(exp, comparedExp);
+    body = el('div', null, [
+      pickerWrap,
+      el('div', { class: 'gen-compare-pair gen-compare-pair-with-vs' }, [
+        el('div', { class: 'gen-compare-side focused' }, [left.body]),
+        vs,
+        el('div', { class: 'gen-compare-side compared' }, [right.body]),
+      ]),
+    ]);
+    accent = left.decision === 'promoted' ? 'promoted'
+      : left.decision === 'rejected' ? 'rejected'
+      : left.decision === 'deferred' ? 'warning' : 'default';
+  }
   node.appendChild(renderCard({
-    body: heroBody, accent, variant: 'flush', class: 'gen-hero-card',
+    body, accent, variant: 'flush', class: 'gen-hero-card',
   }));
 }
 
@@ -385,10 +588,8 @@ function _renderAlignmentColumn(hyp, outcome) {
   const out = outcome && typeof outcome === 'object' ? outcome : null;
   const rows = [];
 
-  // --- pass-rate -----------------------------------------------------
   if (_isStr(hyp.expected_pass_rate_delta) && out && _isNum(out.pass_rate_delta)) {
     const actual = out.pass_rate_delta;
-    // Parse the band — "+0.05 to +0.15", "+0.10", "-0.05 to +0.05" all work.
     const nums = (hyp.expected_pass_rate_delta.match(/-?\d+(\.\d+)?/g) || [])
       .map(parseFloat);
     let aligned = null;
@@ -397,7 +598,6 @@ function _renderAlignmentColumn(hyp, outcome) {
       const hi = Math.max(nums[0], nums[1]);
       aligned = actual >= lo && actual <= hi;
     } else if (nums.length === 1) {
-      // Single value: same sign counts as aligned.
       aligned = (nums[0] > 0 && actual > 0)
         || (nums[0] < 0 && actual < 0) || (nums[0] === 0 && actual === 0);
     }
@@ -415,12 +615,6 @@ function _renderAlignmentColumn(hyp, outcome) {
     }));
   }
 
-  // --- drift movements per kind --------------------------------------
-  // We do not have per-kind actuals in the outcome (only aggregate
-  // drift_loss_delta), so the alignment heuristic is: predicted
-  // "decrease" should pair with actual drift_loss_delta <= 0; predicted
-  // "increase" should pair with delta >= 0. This is a directional check
-  // that surfaces the meta-question ("did the proposer's hunch hold?").
   const moves = Array.isArray(hyp.expected_drift_movements)
     ? hyp.expected_drift_movements : [];
   for (const m of moves) {
@@ -451,7 +645,6 @@ function _renderAlignmentColumn(hyp, outcome) {
     wrap.appendChild(stack);
   }
 
-  // Risks block at the bottom — operator-stated, flagged at proposal.
   if (_isStr(hyp.risks)) {
     wrap.appendChild(el('div', { class: 'gen-align-risks' }, [
       el('h5', { class: 'gen-hyp-sub-h' }, ['Risks (operator-stated)']),
@@ -484,26 +677,56 @@ function _alignRow(opts) {
   ]);
 }
 
-function _renderHypothesis(exp) {
+// Build the single-mode hypothesis block (two inner columns —
+// hypothesis prose left, alignment-vs-outcome right). Reused as the
+// per-side body in compare mode.
+function _hypothesisBlock(exp) {
+  const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
+    ? exp.hypothesis : {};
+  return el('div', { class: 'gen-hyp-block' }, [
+    _renderHypothesisColumn(hyp),
+    _renderAlignmentColumn(hyp, exp.outcome),
+  ]);
+}
+
+function _renderHypothesis(exp, comparedExp, comparedGenId, generationId) {
   const node = $('phase0-gen-hypothesis');
   if (!node) return;
   clearChildren(node);
   let body;
+  let subtitle = 'Proposed before; reconciled against the outcome.';
   if (state.epochDef == null) {
     body = renderLoadingState({ label: 'Loading hypothesis' });
   } else if (!exp) {
     body = renderEmptyState('No hypothesis recorded.');
+  } else if (!comparedGenId) {
+    body = _hypothesisBlock(exp);
   } else {
-    const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
-      ? exp.hypothesis : {};
-    body = el('div', { class: 'gen-hyp-block' }, [
-      _renderHypothesisColumn(hyp),
-      _renderAlignmentColumn(hyp, exp.outcome),
+    // Compare mode — two side-by-side hypothesis blocks. The compared
+    // side may still be loading; show a placeholder until its
+    // experiment record lands.
+    const leftHeader = el('div', { class: 'gen-compare-side-label' },
+      ['v · ' + String(generationId)]);
+    const left = el('div', { class: 'gen-compare-side focused' }, [
+      leftHeader,
+      _hypothesisBlock(exp),
     ]);
+    const rightHeader = el('div', { class: 'gen-compare-side-label' },
+      ['v · ' + String(comparedGenId)]);
+    const rightBody = comparedExp ? _hypothesisBlock(comparedExp)
+      : el('p', { class: 'empty' },
+        [`No hypothesis record for compared generation ${comparedGenId}.`]);
+    const right = el('div', { class: 'gen-compare-side compared' }, [
+      rightHeader,
+      rightBody,
+    ]);
+    body = el('div', { class: 'gen-compare-pair gen-compare-pair-2col' },
+      [left, right]);
+    subtitle = 'Side-by-side hypothesis & alignment.';
   }
   node.appendChild(renderCard({
     title: 'Hypothesis · Alignment',
-    subtitle: 'Proposed before; reconciled against the outcome.',
+    subtitle,
     body,
   }));
 }
@@ -520,16 +743,9 @@ function _opVariant(op) {
   return 'neutral';
 }
 
-function _renderPatches(exp) {
-  const node = $('phase0-gen-patches');
-  if (!node) return;
-  clearChildren(node);
-  let body;
-  if (state.epochDef == null) {
-    body = renderLoadingState({ label: 'Loading patches' });
-    node.appendChild(renderCard({ title: 'Patches', body }));
-    return;
-  }
+// Build the patch list body for one experiment — extracted so compare
+// mode can render the same content per side.
+function _patchListBody(exp) {
   const patches = exp && exp.patches;
   let entries = [];
   if (patches && typeof patches === 'object' && !Array.isArray(patches)) {
@@ -537,44 +753,78 @@ function _renderPatches(exp) {
   } else if (Array.isArray(patches)) {
     entries = patches.map((p, i) => ({ id: (p && p.mutation_id) || ('p' + i), patch: p }));
   }
-  let titleSuffix = '';
-  if (entries.length === 0) {
-    body = renderEmptyState('No patches recorded.');
-  } else if (entries.length === 1) {
-    titleSuffix = ' (1)';
+  if (entries.length === 0) return { body: renderEmptyState('No patches recorded.'), count: 0 };
+  if (entries.length === 1) {
     const e = entries[0];
     const p = e.patch || {};
     const op = String(p.op || p.kind || '—');
-    body = el('div', { class: 'gen-patch-inline' }, [
-      el('div', { class: 'gen-patch-inline-head' }, [
-        el('code', { class: 'mono code-pill' }, [e.id]),
-        ' ',
-        renderInlinePill(op.toUpperCase(), _opVariant(op)),
+    return {
+      body: el('div', { class: 'gen-patch-inline' }, [
+        el('div', { class: 'gen-patch-inline-head' }, [
+          el('code', { class: 'mono code-pill' }, [e.id]),
+          ' ',
+          renderInlinePill(op.toUpperCase(), _opVariant(op)),
+        ]),
+        el('p', { class: 'gen-patch-inline-rationale' }, [
+          String(p.rationale || p.message || '(no rationale recorded)'),
+        ]),
       ]),
-      el('p', { class: 'gen-patch-inline-rationale' }, [
-        String(p.rationale || p.message || '(no rationale recorded)'),
+      count: 1,
+    };
+  }
+  const tbl = el('table', { class: 'ds-table patches-list' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['mutation']),
+    el('th', null, ['op']),
+    el('th', null, ['rationale']),
+  ])]));
+  const tbody = el('tbody');
+  for (const e of entries) {
+    const p = e.patch || {};
+    const op = String(p.op || p.kind || '—');
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: 'mono' }, [e.id]),
+      el('td', null, [renderInlinePill(op, _opVariant(op))]),
+      el('td', null, [String(p.rationale || p.message || '—')]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  return { body: tbl, count: entries.length };
+}
+
+function _renderPatches(exp, comparedExp, comparedGenId, generationId) {
+  const node = $('phase0-gen-patches');
+  if (!node) return;
+  clearChildren(node);
+  let body;
+  let titleSuffix = '';
+  if (state.epochDef == null) {
+    body = renderLoadingState({ label: 'Loading patches' });
+    node.appendChild(renderCard({ title: 'Patches', body }));
+    return;
+  }
+  if (!comparedGenId) {
+    const single = _patchListBody(exp || {});
+    body = single.body;
+    if (single.count > 0) titleSuffix = ' (' + single.count + ')';
+  } else {
+    const left = _patchListBody(exp || {});
+    const rightBody = comparedExp
+      ? _patchListBody(comparedExp).body
+      : el('p', { class: 'empty' },
+        [`No patches record for compared generation ${comparedGenId}.`]);
+    body = el('div', { class: 'gen-compare-pair gen-compare-pair-2col' }, [
+      el('div', { class: 'gen-compare-side focused' }, [
+        el('div', { class: 'gen-compare-side-label' },
+          ['v · ' + String(generationId)]),
+        left.body,
+      ]),
+      el('div', { class: 'gen-compare-side compared' }, [
+        el('div', { class: 'gen-compare-side-label' },
+          ['v · ' + String(comparedGenId)]),
+        rightBody,
       ]),
     ]);
-  } else {
-    titleSuffix = ' (' + entries.length + ')';
-    const tbl = el('table', { class: 'ds-table patches-list' });
-    tbl.appendChild(el('thead', null, [el('tr', null, [
-      el('th', null, ['mutation']),
-      el('th', null, ['op']),
-      el('th', null, ['rationale']),
-    ])]));
-    const tbody = el('tbody');
-    for (const e of entries) {
-      const p = e.patch || {};
-      const op = String(p.op || p.kind || '—');
-      tbody.appendChild(el('tr', null, [
-        el('td', { class: 'mono' }, [e.id]),
-        el('td', null, [renderInlinePill(op, _opVariant(op))]),
-        el('td', null, [String(p.rationale || p.message || '—')]),
-      ]));
-    }
-    tbl.appendChild(tbody);
-    body = tbl;
   }
   node.appendChild(renderCard({
     title: 'Patches' + titleSuffix,
@@ -584,6 +834,7 @@ function _renderPatches(exp) {
 
 // ---------------------------------------------------------------------------
 // PER-ENTRY — table with "vs <champion>" delta and clickable rows.
+// In compare mode the "vs" column instead reads "vs <compared-gen>".
 // ---------------------------------------------------------------------------
 
 function _entryDriftDelta(childDrift, parentDrift) {
@@ -591,7 +842,33 @@ function _entryDriftDelta(childDrift, parentDrift) {
   return childDrift - parentDrift;
 }
 
-function _renderEntries(epochId, generationId, parentEntries) {
+function _passFailCell(pf) {
+  if (pf === true || pf === 1 || String(pf).toLowerCase() === 'pass') {
+    return renderInlinePill('pass', 'pass');
+  }
+  if (pf === false || pf === 0 || String(pf).toLowerCase() === 'fail') {
+    return renderInlinePill('fail', 'fail');
+  }
+  if (pf == null) return el('span', { class: 'mono' }, ['—']);
+  return el('span', { class: 'mono' }, [String(pf)]);
+}
+
+function _budgetCell(exceeded) {
+  if (exceeded == null) return el('span', { class: 'mono' }, ['—']);
+  if (exceeded) return renderInlinePill('over', 'warning');
+  return renderInlinePill('OK', 'success');
+}
+
+function _deltaCell(delta) {
+  if (delta == null) return el('span', { class: 'mono dim' }, ['—']);
+  const sentiment = delta < 0 ? 'good' : (delta > 0 ? 'bad' : 'flat');
+  return el('span', {
+    class: 'mono gen-entry-delta gen-entry-delta-' + sentiment,
+  }, [_fmtSigned(delta)]);
+}
+
+function _renderEntries(epochId, generationId, parentEntries,
+                       comparedGenId, comparedEntries) {
   const node = $('phase0-gen-entries');
   if (!node) return;
   clearChildren(node);
@@ -611,82 +888,88 @@ function _renderEntries(epochId, generationId, parentEntries) {
         );
       } else {
         titleSuffix = ' (' + entries.length + ')';
-        // Build a champion-side index keyed by entry_id so the "vs <champ>"
-        // delta is a constant-time lookup per row.
-        const parentMap = new Map();
-        if (parentEntries && Array.isArray(parentEntries.entries)) {
-          for (const pe of parentEntries.entries) {
-            if (pe && pe.entry_id != null) parentMap.set(pe.entry_id, pe);
+        // In compare mode the right-hand peer is the picker target, NOT
+        // the lineage parent. The header reads "vs <compared-gen>".
+        const peerLabel = comparedGenId || (
+          (state.epochDef && state.epochDef.experiments
+            && findExperiment(generationId)
+            && findExperiment(generationId).parent_generation_id) || '—');
+        const peerData = comparedGenId
+          ? (comparedEntries && Array.isArray(comparedEntries.entries)
+            ? comparedEntries.entries : null)
+          : (parentEntries && Array.isArray(parentEntries.entries)
+            ? parentEntries.entries : null);
+        const peerMap = new Map();
+        if (peerData) {
+          for (const pe of peerData) {
+            if (pe && pe.entry_id != null) peerMap.set(pe.entry_id, pe);
           }
         }
-        const parentLabel = (state.epochDef && state.epochDef.experiments
-          && findExperiment(generationId)
-          && findExperiment(generationId).parent_generation_id) || '—';
+
         const tbl = el('table', { class: 'ds-table gen-entries-table' });
-        tbl.appendChild(el('thead', null, [el('tr', null, [
-          el('th', null, ['entry']),
-          el('th', null, ['drift loss']),
-          el('th', null, ['vs ' + String(parentLabel)]),
-          el('th', null, ['pass/fail']),
-          el('th', null, ['budget']),
-        ])]));
+        if (!comparedGenId) {
+          tbl.appendChild(el('thead', null, [el('tr', null, [
+            el('th', null, ['entry']),
+            el('th', null, ['drift loss']),
+            el('th', null, ['vs ' + String(peerLabel)]),
+            el('th', null, ['pass/fail']),
+            el('th', null, ['budget']),
+          ])]));
+        } else {
+          // Compare mode — unified table with focused + compared columns
+          // per metric. The legacy "vs <champion>" column becomes
+          // "vs <compared>" so the headline is unambiguous.
+          tbl.appendChild(el('thead', null, [el('tr', null, [
+            el('th', null, ['entry']),
+            el('th', null, ['focused drift']),
+            el('th', null, ['compared drift']),
+            el('th', null, ['vs ' + String(peerLabel)]),
+            el('th', null, ['focused pass/fail']),
+            el('th', null, ['compared pass/fail']),
+          ])]));
+        }
         const tbody = el('tbody');
         for (const e of entries) {
-          const pf = e.pass_fail;
-          let pfPill;
-          if (pf === true || pf === 1 || String(pf).toLowerCase() === 'pass') {
-            pfPill = renderInlinePill('pass', 'pass');
-          } else if (pf === false || pf === 0 || String(pf).toLowerCase() === 'fail') {
-            pfPill = renderInlinePill('fail', 'fail');
-          } else if (pf == null) {
-            pfPill = el('span', { class: 'mono' }, ['—']);
-          } else {
-            pfPill = el('span', { class: 'mono' }, [String(pf)]);
-          }
-          const exceeded = e.wall_clock_budget_exceeded;
-          let budgetCell;
-          if (exceeded == null) budgetCell = el('span', { class: 'mono' }, ['—']);
-          else if (exceeded) budgetCell = renderInlinePill('over', 'warning');
-          else budgetCell = renderInlinePill('OK', 'success');
-
-          const peer = parentMap.get(e.entry_id);
+          const peer = peerMap.get(e.entry_id);
           const delta = peer ? _entryDriftDelta(e.drift_loss, peer.drift_loss) : null;
-          let deltaCell;
-          if (delta == null) {
-            deltaCell = el('span', { class: 'mono dim' }, ['—']);
-          } else {
-            const sentiment = delta < 0 ? 'good' : (delta > 0 ? 'bad' : 'flat');
-            deltaCell = el('span', {
-              class: 'mono gen-entry-delta gen-entry-delta-' + sentiment,
-            }, [_fmtSigned(delta)]);
-          }
-
-          // The whole row is clickable — anchored on the row's run id so
-          // the L4 page resolves the right transcript. We hand the L4
-          // path to phase0Href so the URL grammar stays canonical.
           const href = phase0Href('run', {
             epochId,
             generationId,
             entryId: e.entry_id,
           });
-          const row = el('tr', { class: 'gen-entries-row' }, [
-            el('td', { class: 'mono' }, [
-              el('a', { href, class: 'gen-entries-link' }, [String(e.entry_id || '—')]),
-            ]),
-            el('td', { class: 'mono' }, [_fmtNum(e.drift_loss)]),
-            el('td', null, [deltaCell]),
-            el('td', null, [pfPill]),
-            el('td', null, [budgetCell]),
-          ]);
-          tbody.appendChild(row);
+          if (!comparedGenId) {
+            tbody.appendChild(el('tr', { class: 'gen-entries-row' }, [
+              el('td', { class: 'mono' }, [
+                el('a', { href, class: 'gen-entries-link' }, [String(e.entry_id || '—')]),
+              ]),
+              el('td', { class: 'mono' }, [_fmtNum(e.drift_loss)]),
+              el('td', null, [_deltaCell(delta)]),
+              el('td', null, [_passFailCell(e.pass_fail)]),
+              el('td', null, [_budgetCell(e.wall_clock_budget_exceeded)]),
+            ]));
+          } else {
+            const peerDrift = peer ? peer.drift_loss : null;
+            const peerPf = peer ? peer.pass_fail : null;
+            tbody.appendChild(el('tr', { class: 'gen-entries-row' }, [
+              el('td', { class: 'mono' }, [
+                el('a', { href, class: 'gen-entries-link' }, [String(e.entry_id || '—')]),
+              ]),
+              el('td', { class: 'mono' }, [_fmtNum(e.drift_loss)]),
+              el('td', { class: 'mono' },
+                [peer ? _fmtNum(peerDrift) : '—']),
+              el('td', null, [_deltaCell(delta)]),
+              el('td', null, [_passFailCell(e.pass_fail)]),
+              el('td', null, [peer ? _passFailCell(peerPf)
+                : el('span', { class: 'mono dim' }, ['—'])]),
+            ]));
+          }
         }
         tbl.appendChild(tbody);
-        const wrap = el('div', null, [
+        body = el('div', null, [
           tbl,
           el('p', { class: 'gen-entries-hint' },
             ['Click an entry id to inspect its run transcript.']),
         ]);
-        body = wrap;
       }
     }
   }
@@ -700,7 +983,50 @@ function _renderEntries(epochId, generationId, parentEntries) {
 // PER-JUDGE — inline for one, table for many.
 // ---------------------------------------------------------------------------
 
-function _renderJudges(epochId, generationId) {
+function _perJudgeBody(data) {
+  if (!data) return renderLoadingState({ label: 'Loading per-judge breakdown' });
+  const judges = Array.isArray(data.judges) ? data.judges : [];
+  if (judges.length === 0) {
+    const msg = data.note ? '(no per-judge data: ' + data.note + ')'
+      : '(no per-judge data recorded for this generation)';
+    return { body: renderEmptyState(msg), count: 0 };
+  }
+  if (judges.length === 1) {
+    const j = judges[0];
+    return {
+      body: el('div', { class: 'gen-judge-inline mono' }, [
+        el('span', { class: 'gen-judge-name' }, [String(j.judge_name || '—')]),
+        ' · weighted ', _fmtNum(j.weighted_loss),
+        ' · raw ', _fmtNum(j.raw_loss),
+        ' · weight ', _fmtNum(j.weight),
+        j.run_count != null ? ' · ' + String(j.run_count) + ' runs' : '',
+      ]),
+      count: 1,
+    };
+  }
+  const tbl = el('table', { class: 'ds-table' });
+  tbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', null, ['judge']),
+    el('th', null, ['weighted loss']),
+    el('th', null, ['raw loss']),
+    el('th', null, ['weight']),
+    el('th', null, ['runs']),
+  ])]));
+  const tbody = el('tbody');
+  for (const j of judges) {
+    tbody.appendChild(el('tr', null, [
+      el('td', { class: 'mono' }, [String(j.judge_name || '—')]),
+      el('td', { class: 'mono' }, [_fmtNum(j.weighted_loss)]),
+      el('td', { class: 'mono' }, [_fmtNum(j.raw_loss)]),
+      el('td', { class: 'mono' }, [_fmtNum(j.weight)]),
+      el('td', { class: 'mono' }, [String(j.run_count == null ? '—' : j.run_count)]),
+    ]));
+  }
+  tbl.appendChild(tbody);
+  return { body: tbl, count: judges.length };
+}
+
+function _renderJudges(epochId, generationId, comparedGenId) {
   const node = $('phase0-gen-judges');
   if (!node) return;
   clearChildren(node);
@@ -710,53 +1036,132 @@ function _renderJudges(epochId, generationId) {
     body = el('p', { class: 'empty' }, ['No generation selected.']);
   } else {
     const data = _perJudgeCache.get(epochId + '/' + generationId);
-    if (!data) {
-      body = renderLoadingState({ label: 'Loading per-judge breakdown' });
-    } else {
-      const judges = Array.isArray(data.judges) ? data.judges : [];
-      if (judges.length === 0) {
-        const msg = data.note ? '(no per-judge data: ' + data.note + ')'
-          : '(no per-judge data recorded for this generation)';
-        body = renderEmptyState(msg);
-      } else if (judges.length === 1) {
-        titleSuffix = ' (1)';
-        const j = judges[0];
-        body = el('div', { class: 'gen-judge-inline mono' }, [
-          el('span', { class: 'gen-judge-name' }, [String(j.judge_name || '—')]),
-          ' · weighted ', _fmtNum(j.weighted_loss),
-          ' · raw ', _fmtNum(j.raw_loss),
-          ' · weight ', _fmtNum(j.weight),
-          j.run_count != null ? ' · ' + String(j.run_count) + ' runs' : '',
-        ]);
+    if (!comparedGenId) {
+      // Single mode — preserve the legacy "inline if 1, table if 2+"
+      // shape exactly.
+      const wrapped = _perJudgeBody(data);
+      if (wrapped instanceof Object && 'body' in wrapped) {
+        body = wrapped.body;
+        if (wrapped.count > 0) titleSuffix = ' (' + wrapped.count + ')';
       } else {
-        titleSuffix = ' (' + judges.length + ')';
-        const tbl = el('table', { class: 'ds-table' });
-        tbl.appendChild(el('thead', null, [el('tr', null, [
-          el('th', null, ['judge']),
-          el('th', null, ['weighted loss']),
-          el('th', null, ['raw loss']),
-          el('th', null, ['weight']),
-          el('th', null, ['runs']),
-        ])]));
-        const tbody = el('tbody');
-        for (const j of judges) {
-          tbody.appendChild(el('tr', null, [
-            el('td', { class: 'mono' }, [String(j.judge_name || '—')]),
-            el('td', { class: 'mono' }, [_fmtNum(j.weighted_loss)]),
-            el('td', { class: 'mono' }, [_fmtNum(j.raw_loss)]),
-            el('td', { class: 'mono' }, [_fmtNum(j.weight)]),
-            el('td', { class: 'mono' }, [String(j.run_count == null ? '—' : j.run_count)]),
-          ]));
-        }
-        tbl.appendChild(tbody);
-        body = tbl;
+        body = wrapped;
       }
+    } else {
+      // Compare mode — two columns, each a per-judge breakdown.
+      const left = _perJudgeBody(data);
+      const compared = _perJudgeCache.get(epochId + '/' + comparedGenId);
+      const right = _perJudgeBody(compared);
+      const leftBody = (left && left.body) ? left.body : left;
+      const rightBody = (right && right.body) ? right.body : right;
+      body = el('div', { class: 'gen-compare-pair gen-compare-pair-2col' }, [
+        el('div', { class: 'gen-compare-side focused' }, [
+          el('div', { class: 'gen-compare-side-label' },
+            ['v · ' + String(generationId)]),
+          leftBody,
+        ]),
+        el('div', { class: 'gen-compare-side compared' }, [
+          el('div', { class: 'gen-compare-side-label' },
+            ['v · ' + String(comparedGenId)]),
+          rightBody,
+        ]),
+      ]);
     }
   }
   node.appendChild(renderCard({
     title: 'Per-judge' + titleSuffix,
     body,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Digest helpers — see L4 for the rationale. Each card lists ONLY the
+// inputs it actually reads so a heartbeat tick does not invalidate it.
+// ---------------------------------------------------------------------------
+
+function _summariseExp(exp) {
+  if (!exp) return null;
+  const out = exp.outcome || {};
+  return {
+    g: exp.generation_id || null,
+    p: exp.parent_generation_id || null,
+    d: out.tournament_decision || out.decision || null,
+    s: _isNum(out.scalar_score_delta) ? out.scalar_score_delta : null,
+    dr: _isNum(out.drift_loss_delta) ? out.drift_loss_delta : null,
+    pr: _isNum(out.pass_rate_delta) ? out.pass_rate_delta : null,
+  };
+}
+
+function _summarisePerEntry(payload) {
+  if (!payload) return null;
+  const entries = Array.isArray(payload.entries) ? payload.entries : [];
+  return entries.length;
+}
+
+function _summarisePerJudge(payload) {
+  if (!payload) return null;
+  const judges = Array.isArray(payload.judges) ? payload.judges : [];
+  return judges.length;
+}
+
+export function generationViewDigest(params) {
+  const epochId = (params && params.epochId)
+    || (state.epochDef && state.epochDef.epoch_id) || null;
+  const generationId = (params && params.generationId) || null;
+  const compared = compareGenFor(epochId, generationId);
+  const exp = findExperiment(generationId);
+  const comparedExp = compared ? findExperiment(compared) : null;
+  const fEntry = epochId && generationId
+    ? _perEntryCache.get(epochId + '/' + generationId) : null;
+  const cEntry = epochId && compared
+    ? _perEntryCache.get(epochId + '/' + compared) : null;
+  const parentId = exp && exp.parent_generation_id || null;
+  const pEntry = epochId && parentId
+    ? _perEntryCache.get(epochId + '/' + parentId) : null;
+  const fJudge = epochId && generationId
+    ? _perJudgeCache.get(epochId + '/' + generationId) : null;
+  const cJudge = epochId && compared
+    ? _perJudgeCache.get(epochId + '/' + compared) : null;
+
+  // Number of generations in the focused epoch — the picker reads that
+  // (via state.lineage / state.epochDef) for its option list, so a
+  // change to the list must invalidate the hero digest.
+  const def = state.epochDef || {};
+  const exps = Array.isArray(def.experiments) ? def.experiments : [];
+  const inDefCount = exps.filter((e) => e && e.generation_id).length;
+  const lineageGens = (state.lineage && Array.isArray(state.lineage.generations))
+    ? state.lineage.generations : [];
+  const inLineageCount = lineageGens
+    .filter((g) => g && g.epoch_id === epochId).length;
+
+  return {
+    hero: {
+      epochId, generationId, compared,
+      f: _summariseExp(exp),
+      c: _summariseExp(comparedExp),
+      optsCount: inDefCount + ':' + inLineageCount,
+    },
+    hypothesis: {
+      epochId, generationId, compared,
+      f: _summariseExp(exp),
+      c: _summariseExp(comparedExp),
+    },
+    patches: {
+      epochId, generationId, compared,
+      f: _summariseExp(exp),
+      c: _summariseExp(comparedExp),
+    },
+    entries: {
+      epochId, generationId, compared,
+      f: _summarisePerEntry(fEntry),
+      c: _summarisePerEntry(cEntry),
+      p: _summarisePerEntry(pEntry),
+    },
+    judges: {
+      epochId, generationId, compared,
+      f: _summarisePerJudge(fJudge),
+      c: _summarisePerJudge(cJudge),
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -767,20 +1172,97 @@ export function renderPhase0Generation(params, repaint) {
   const epochId = (params && params.epochId)
     || (state.epochDef && state.epochDef.epoch_id) || null;
   const generationId = (params && params.generationId) || null;
+  // URL-seeded compare target: ``#/gen/<epoch>/<gen>/<compareGen>``
+  // primes the picker on first paint when no in-memory state has been
+  // set for this (epoch, focused) pair yet. The in-memory state still
+  // wins once the user touches the picker — so once a compare target
+  // is cleared, it stays cleared.
+  const urlSeed = (params && params.compareGenerationId) || null;
+  if (urlSeed && epochId && generationId
+      && !_compareGenByFocused.has(epochId + '/' + generationId)
+      && urlSeed !== generationId) {
+    _compareGenByFocused.set(epochId + '/' + generationId, urlSeed);
+  }
   const exp = findExperiment(generationId);
+  const comparedGenId = compareGenFor(epochId, generationId);
+  const comparedExp = comparedGenId ? findExperiment(comparedGenId) : null;
+
   ensurePerJudge(epochId, generationId, repaint);
   ensurePerEntry(epochId, generationId, repaint);
-  // For the "vs champion" entry column we also need the parent's per-entry
-  // payload — fetched into the same cache so the next render paints with
-  // a non-null parentEntries lookup.
+  // The vs-champion column needs the parent's per-entry payload too.
   const parentId = exp ? exp.parent_generation_id : null;
   if (parentId) ensurePerEntry(epochId, parentId, repaint);
+  // Compare mode — fetch the compared gen's per-entry and per-judge
+  // payloads so both sides paint with non-null data.
+  if (comparedGenId) {
+    ensurePerEntry(epochId, comparedGenId, repaint);
+    ensurePerJudge(epochId, comparedGenId, repaint);
+  }
   const parentEntries = parentId
     ? _perEntryCache.get(epochId + '/' + parentId)
     : null;
-  _renderHero(exp, epochId, generationId);
-  _renderHypothesis(exp);
-  _renderPatches(exp);
-  _renderEntries(epochId, generationId, parentEntries);
-  _renderJudges(epochId, generationId);
+  const comparedEntries = comparedGenId
+    ? _perEntryCache.get(epochId + '/' + comparedGenId)
+    : null;
+
+  const onPickerChange = (next) => {
+    setCompareGenFor(epochId, generationId, next);
+    // Reflect the picker in the URL so a side-by-side view is
+    // shareable. The router parses ``#/gen/<epoch>/<gen>/<cmp>``; we
+    // rewrite the third segment in place (or drop it for "off").
+    try {
+      if (typeof window !== 'undefined' && window.location && epochId
+          && generationId) {
+        const base = '#/gen/' + encodeURIComponent(epochId)
+          + '/' + encodeURIComponent(generationId);
+        const target = next
+          ? base + '/' + encodeURIComponent(next)
+          : base;
+        if (window.location.hash !== target) {
+          window.location.hash = target;
+        }
+      }
+    } catch {
+      // window.location is locked-down or absent (test harness); fall
+      // through and rely on the in-memory state alone.
+    }
+    _forceNextGenRender = true;
+    if (typeof repaint === 'function') repaint();
+    else renderPhase0Generation(params, repaint);
+  };
+
+  // Per-card digest gates — heartbeat ticks should NOT rebuild the
+  // hero card (which hosts the compare picker), so the digest covers
+  // only payload-shaped inputs.
+  const digests = generationViewDigest(params);
+  const force = _forceNextGenRender;
+  _forceNextGenRender = false;
+
+  const heroDigest = JSON.stringify(digests.hero);
+  if (force || heroDigest !== _lastHeroDigest) {
+    _lastHeroDigest = heroDigest;
+    _renderHero(exp, epochId, generationId, comparedExp, comparedGenId,
+      onPickerChange);
+  }
+  const hypDigest = JSON.stringify(digests.hypothesis);
+  if (force || hypDigest !== _lastHypothesisDigest) {
+    _lastHypothesisDigest = hypDigest;
+    _renderHypothesis(exp, comparedExp, comparedGenId, generationId);
+  }
+  const patchDigest = JSON.stringify(digests.patches);
+  if (force || patchDigest !== _lastPatchesDigest) {
+    _lastPatchesDigest = patchDigest;
+    _renderPatches(exp, comparedExp, comparedGenId, generationId);
+  }
+  const entryDigest = JSON.stringify(digests.entries);
+  if (force || entryDigest !== _lastEntriesDigest) {
+    _lastEntriesDigest = entryDigest;
+    _renderEntries(epochId, generationId, parentEntries,
+      comparedGenId, comparedEntries);
+  }
+  const judgeDigest = JSON.stringify(digests.judges);
+  if (force || judgeDigest !== _lastJudgesDigest) {
+    _lastJudgesDigest = judgeDigest;
+    _renderJudges(epochId, generationId, comparedGenId);
+  }
 }
