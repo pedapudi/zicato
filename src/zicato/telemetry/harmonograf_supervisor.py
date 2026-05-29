@@ -26,6 +26,31 @@ dependency, a port-bind failure, or any startup exception logs a
 warning and returns a no-op handle whose ``url`` is the empty string.
 The live console is an additive convenience; evolve must continue
 without it on a degraded install.
+
+Why harmonograf-server is a *hard* dep (task #204 Part B audit)
+---------------------------------------------------------------
+
+After #202 brought harmonograf-server in as a hard dependency, the
+transitive footprint is:
+
+* harmonograf-server-only deps (not used by any other zicato dep):
+  hypercorn, h2, priority, wsproto, sonora, intervaltree, grpcio-tools,
+  rich, markdown-it-py — plus harmonograf-server itself.
+* On a Python 3.12 / Linux install the disk footprint of those
+  *exclusive* deps is ~11 MB (~7.5 MB of which is grpcio-tools, kept
+  because harmonograf-server pulls it for proto generation).
+* Other deps the server pulls (aiosqlite, aiohttp, grpcio, h11,
+  pygments) are also pulled by zicato's first-class deps
+  (google-adk, pytest, harmonograf-client) so they cost zicato nothing
+  extra.
+
+11 MB is well under the 30 MB threshold the task identified as the
+trigger for moving harmonograf-server to an optional extra. The
+auto-launch behaviour is what makes zicato's "open the URL and watch
+the live console" promise work out of the box — pushing it to an
+extra would silently degrade every fresh install to JSONL-only
+telemetry. Decision: keep as a hard dep (option i). Revisit when the
+exclusive footprint crosses ~30 MB.
 """
 
 from __future__ import annotations

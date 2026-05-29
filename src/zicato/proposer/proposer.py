@@ -29,8 +29,10 @@ tmpdir bookkeeping.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.types import Experiment, MutationPoint, Pattern
@@ -41,6 +43,9 @@ from zicato.proposer.structured import (
     PostApplyValidationError,
     parse_experiment_json,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 #: An optional post-parse validation hook. The proposer calls it with a
 #: fully-parsed, forbidden-id-clean :class:`Experiment` and expects back
@@ -86,6 +91,7 @@ async def propose_experiment(
     forbidden_ids: tuple[str, ...] = (),
     workspace_root: Path | None = None,
     validate_experiment: ExperimentValidator | None = None,
+    meta_loop_emitter: MetaLoopEmitter | None = None,
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -137,6 +143,16 @@ async def propose_experiment(
         to the user prompt under a ``## Recent telemetry insights``
         heading. When omitted, the proposer behaves exactly as before —
         callers that pre-date the analyzer surface keep working.
+    meta_loop_emitter:
+        Optional :class:`~zicato.telemetry.meta_loop.MetaLoopEmitter` —
+        the orchestrator builds one per ``evolve_n_rounds`` invocation
+        and threads it here so each proposer LLM call lands a paired
+        ``proposer_call_started`` / ``proposer_call_completed`` envelope
+        on the meta-loop session. When ``None`` (a standalone
+        :func:`propose_experiment` call without orchestrator wiring) no
+        events are emitted — the proposer's behaviour is unchanged.
+        Sink failures are absorbed by the emitter; this call site
+        treats the emit as best-effort.
     validate_experiment:
         Optional post-parse validation hook (see
         :data:`ExperimentValidator`). Runs *after* the response parses
@@ -199,6 +215,24 @@ async def propose_experiment(
             feedback=feedback,
             insights=insights_block,
         )
+        # Meta-loop bookends: one paired ``proposer_call_started`` /
+        # ``proposer_call_completed`` per attempt. ``invocation_id`` is
+        # threaded through so a sink can correlate the pair. Every emit
+        # is best-effort — the emitter swallows sink failures, but we
+        # additionally guard the emit calls so a misconfigured emitter
+        # cannot regress the proposer.
+        invocation_id: str | None = None
+        started_at = time.monotonic()
+        if meta_loop_emitter is not None:
+            try:
+                invocation_id = await meta_loop_emitter.proposer_started(
+                    model=model,
+                    epoch_id=epoch_id,
+                    parent_generation_id=parent_generation_id,
+                    new_generation_id=new_generation_id,
+                )
+            except Exception:  # noqa: BLE001 — additive telemetry only
+                invocation_id = None
         try:
             response_text = await asyncio.wait_for(
                 aux_call_llm(system_prompt, user_prompt, model),
@@ -208,12 +242,43 @@ async def propose_experiment(
             err = f"auxiliary LLM call timed out after {aux_call_timeout_s():.1f}s"
             attempt_errors.append(err)
             feedback = err
+            if meta_loop_emitter is not None and invocation_id is not None:
+                try:
+                    await meta_loop_emitter.proposer_completed(
+                        invocation_id=invocation_id,
+                        latency_s=time.monotonic() - started_at,
+                        response_chars=0,
+                        outcome="timeout",
+                    )
+                except Exception:  # noqa: BLE001 — additive telemetry only
+                    pass
             continue
         except Exception as exc:  # noqa: BLE001 — opaque LLM errors are common
             err = f"auxiliary LLM call raised {type(exc).__name__}: {exc}"
             attempt_errors.append(err)
             feedback = err
+            if meta_loop_emitter is not None and invocation_id is not None:
+                try:
+                    await meta_loop_emitter.proposer_completed(
+                        invocation_id=invocation_id,
+                        latency_s=time.monotonic() - started_at,
+                        response_chars=0,
+                        outcome=f"error:{type(exc).__name__}",
+                    )
+                except Exception:  # noqa: BLE001 — additive telemetry only
+                    pass
             continue
+
+        if meta_loop_emitter is not None and invocation_id is not None:
+            try:
+                await meta_loop_emitter.proposer_completed(
+                    invocation_id=invocation_id,
+                    latency_s=time.monotonic() - started_at,
+                    response_chars=len(response_text or ""),
+                    outcome="completed",
+                )
+            except Exception:  # noqa: BLE001 — additive telemetry only
+                pass
 
         try:
             experiment = parse_experiment_json(

@@ -26,8 +26,10 @@ contents so the proposer can splice them into its user prompt.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from zicato.analyzer.aggregator import (
     DecisionEventSummary,
@@ -39,6 +41,9 @@ from zicato.analyzer.prompts import (
 )
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.workspace import epoch_dir
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 
 def _collect_events_jsonl_paths(workspace_root: Path, epoch_id: str) -> list[Path]:
@@ -116,6 +121,7 @@ async def analyze_epoch_telemetry(
     model: str = "",
     round_n: int | None = None,
     mutation_ids: Sequence[str] | None = None,
+    meta_loop_emitter: MetaLoopEmitter | None = None,
 ) -> Path:
     """Build the decision-event summary, call the LLM, persist the insight.
 
@@ -173,6 +179,24 @@ async def analyze_epoch_telemetry(
         return target
 
     user_prompt = render_insight_user_prompt(summary, epoch_id, mutation_ids)
+    # The decision-telemetry analyzer is the meta-loop's "process judge"
+    # — it surveys the round's telemetry and emits a verdict (the
+    # insight markdown). Bracket the LLM call with a paired
+    # ``judge_invoked`` / ``judgment_emitted`` envelope so the dashboard
+    # / harmonograf timeline shows the analyzer as a judge alongside
+    # the proposer. Every emit is best-effort and isolated from a
+    # misconfigured emitter.
+    invocation_id: str | None = None
+    judge_name = "decision_telemetry_analyzer"
+    started_at = time.monotonic()
+    if meta_loop_emitter is not None:
+        try:
+            invocation_id = await meta_loop_emitter.judge_invoked(
+                judge_name=judge_name,
+                kind="process",
+            )
+        except Exception:  # noqa: BLE001 — additive telemetry only
+            invocation_id = None
     try:
         response = await asyncio.wait_for(
             aux_call_llm(INSIGHT_SYSTEM_PROMPT, user_prompt, model),
@@ -186,6 +210,18 @@ async def analyze_epoch_telemetry(
             ),
             encoding="utf-8",
         )
+        if meta_loop_emitter is not None and invocation_id is not None:
+            try:
+                await meta_loop_emitter.judgment_emitted(
+                    invocation_id=invocation_id,
+                    judge_name=judge_name,
+                    verdict_kind="boolean",
+                    score=None,
+                    detail=f"timeout after {aux_call_timeout_s():.1f}s",
+                    latency_s=time.monotonic() - started_at,
+                )
+            except Exception:  # noqa: BLE001 — additive telemetry only
+                pass
         return target
     except Exception as exc:  # noqa: BLE001 — opaque LLM errors are common
         target.write_text(
@@ -195,7 +231,35 @@ async def analyze_epoch_telemetry(
             ),
             encoding="utf-8",
         )
+        if meta_loop_emitter is not None and invocation_id is not None:
+            try:
+                await meta_loop_emitter.judgment_emitted(
+                    invocation_id=invocation_id,
+                    judge_name=judge_name,
+                    verdict_kind="boolean",
+                    score=None,
+                    detail=f"{type(exc).__name__}: {exc}",
+                    latency_s=time.monotonic() - started_at,
+                )
+            except Exception:  # noqa: BLE001 — additive telemetry only
+                pass
         return target
+
+    if meta_loop_emitter is not None and invocation_id is not None:
+        try:
+            await meta_loop_emitter.judgment_emitted(
+                invocation_id=invocation_id,
+                judge_name=judge_name,
+                verdict_kind="rubric",
+                # No structured score available from a markdown insight —
+                # the dashboard treats ``None`` as "narrative judgement
+                # only" and renders the detail field instead.
+                score=None,
+                detail=f"insight written ({len(response or '')} chars)",
+                latency_s=time.monotonic() - started_at,
+            )
+        except Exception:  # noqa: BLE001 — additive telemetry only
+            pass
 
     # The LLM body is written verbatim. The system prompt already
     # constrains it to a markdown shape; we don't second-guess by

@@ -395,6 +395,7 @@ async def evolve_once(
     beater: HeartbeatBeater | None = None,
     round_index: int = 0,
     total_rounds: int = 0,
+    meta_loop_emitter: Any = None,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round against the current epoch.
 
@@ -615,6 +616,7 @@ async def evolve_once(
             forbidden_ids=brief.forbidden_ids,
             workspace_root=workspace_root,
             validate_experiment=_validate_experiment_post_apply,
+            meta_loop_emitter=meta_loop_emitter,
         )
     except ProposerError as exc:
         # The proposer exhausted its bounded retries without producing a
@@ -896,6 +898,7 @@ async def evolve_once(
             # "Suggested next mutations" section cannot hallucinate
             # mutation target ids that do not exist.
             mutation_ids=[m.id for m in mutations],
+            meta_loop_emitter=meta_loop_emitter,
         )
     except Exception as exc:  # noqa: BLE001 — analyser is best-effort
         log.debug("decision telemetry analyzer skipped: %s", exc)
@@ -1130,6 +1133,18 @@ async def evolve_n_rounds(
     # so per-board-run workers attach their per-run sinks to the same
     # server without any further plumbing.
     harmonograf_url, harmonograf_handle = _resolve_or_launch_harmonograf(workspace_root)
+    # Meta-loop goldfive emitter. One per evolve invocation, stable
+    # session id derived from the start ISO — the proposer + analyzer
+    # call sites take it through ``evolve_once`` so their LLM calls
+    # land as paired envelopes on the same harmonograf timeline workers
+    # already feed. Constructed best-effort; a degraded install (no
+    # goldfive proto stubs) returns an emitter with an empty sink list
+    # and every emit is a no-op. The emitter is closed in the same
+    # ``finally`` block that tears the harmonograf supervisor down.
+    evolve_started_at_iso = _now_iso()
+    meta_loop_emitter = _build_meta_loop_emitter_safe(
+        workspace_root, harmonograf_url, evolve_started_at_iso
+    )
     outcomes: list[EvolveRoundOutcome] = []
     try:
         await beater.start()
@@ -1185,6 +1200,7 @@ async def evolve_n_rounds(
                     beater=beater,
                     round_index=_round_idx,
                     total_rounds=rounds,
+                    meta_loop_emitter=meta_loop_emitter,
                 )
 
             if max_wall_clock_seconds is None:
@@ -1283,6 +1299,14 @@ async def evolve_n_rounds(
     finally:
         await beater.stop()
         release_workspace_lock(lock)
+        # Flush + close the meta-loop emitter BEFORE the harmonograf
+        # supervisor is stopped — a sink that needs to push a final
+        # buffer to the gRPC console wants the server still up.
+        if meta_loop_emitter is not None:
+            try:
+                await meta_loop_emitter.close()
+            except Exception as exc:  # noqa: BLE001 — never raise from teardown
+                log.debug("meta-loop emitter close raised: %s", exc)
         # Shut down the auto-launched harmonograf server (no-op on the
         # opt-out / failure-isolation paths). MUST run unconditionally
         # so a crashed evolve still tears the embedded server down.
@@ -1391,6 +1415,38 @@ def _resolve_or_launch_harmonograf(
     restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_URL")
     restorer.set(handle.url)
     return handle.url, _LaunchedHandle(handle, restorer)
+
+
+def _build_meta_loop_emitter_safe(
+    workspace_root: Path,
+    harmonograf_url: str,
+    evolve_started_at_iso: str,
+) -> Any:
+    """Build the meta-loop emitter; never raise.
+
+    The factory itself is best-effort — a missing goldfive proto stub
+    or a permission error on the JSONL parent directory must not block
+    an evolve invocation. Return ``None`` on any unexpected error so
+    the orchestrator simply skips meta-loop emits (every call site is
+    ``None``-tolerant).
+    """
+    try:
+        from zicato.telemetry.meta_loop import (  # noqa: PLC0415
+            build_meta_loop_emitter,
+        )
+
+        return build_meta_loop_emitter(
+            workspace_root,
+            harmonograf_url=harmonograf_url,
+            evolve_started_at_iso=evolve_started_at_iso,
+        )
+    except Exception as exc:  # noqa: BLE001 — meta-loop telemetry is additive
+        log.warning(
+            "meta-loop emitter build failed (%s); evolve continues without "
+            "proposer / analyzer telemetry envelopes",
+            exc,
+        )
+        return None
 
 
 class _NoopShutdownHandle:
