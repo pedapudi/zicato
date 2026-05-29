@@ -28,30 +28,42 @@ this guide.
 
 | Facet | What it inspects | When it runs | Authored as |
 |---|---|---|---|
-| **Outcome** | The run's *product* — the final output, or the whole transcript. | Post-hoc, after the run terminates, in the loss reducer. | `Predicate` and `Rubric`, attached as `expectations=[...]`. |
+| **Outcome** | The run's *product* — the final output, or the whole transcript. | Post-hoc, after the run terminates, in the loss reducer. | One `Predicate` or `Rubric`, attached as `evaluate=...`. |
 | **Process** | The run's *reasoning* — the live goldfive event stream as the agent thinks. | In-run, by goldfive judges watching the reasoning stream. | `Judge`, attached as `judges=[...]`. |
 
-An entry carries both:
+An entry carries both. The outcome facet is a **single** expectation
+passed as `evaluate=` (the field is singular — one expectation per
+entry); the process facet is a **list** of judges:
 
 ```python
+from goldfive import DriftSeverity
+
 Entry(
     id="cited_market_summary",
     input="Summarise the EV market in three bullets with sources.",
-    expectations=[                       # OUTCOME — checked on the output
-        Predicate.regex(r"\[\d+\]"),     # at least one [n] citation marker
-        Rubric.score("Each bullet is accurate and non-redundant.",
-                     threshold=7.0),
-    ],
-    judges=[                             # PROCESS — checked on the reasoning
+    evaluate=Rubric.score(                # OUTCOME — one check on the output
+        "Each bullet is accurate and non-redundant.",
+        threshold=7.0,
+    ),
+    judges=[                              # PROCESS — checked on the reasoning
         Judge.custom(
-            "cite-before-claim",
+            "cite_before_claim",
             "The agent must cite a source before stating a market metric.",
+            severity=DriftSeverity.WARNING,
         ),
     ],
     budget_s=180,
     tags=["research", "citations"],
 )
 ```
+
+> **One expectation per entry.** The board schema carries a single
+> `expectation` object per entry, not a list — so `Entry` takes
+> `evaluate=<one Predicate-or-Rubric>`, not `expectations=[...]`. When
+> you want several independent outcome assertions on the same prompt,
+> split them across several entries (each can share the same `input`),
+> or fold them into one `Predicate.python` callable that ANDs the
+> conditions.
 
 The split is not cosmetic. An outcome check cannot see *how* the
 agent got to its answer; a process check cannot see the final answer.
@@ -80,15 +92,17 @@ way to the answer and left no trace in the answer itself.
 
 ## 2. Outcome checks: `Predicate` and `Rubric`
 
-Outcome checks attach to an entry as the `expectations` list. Every
-expectation in the list is evaluated against the run result; how the
-list aggregates into the entry's `pass_fail` is in §2.4.
+The outcome check attaches to an entry as the single `evaluate=`
+argument — one `Predicate` or `Rubric` per entry (the underlying
+`BoardEntry.expectation` field is singular; see §2.4).
 
 `Predicate` and `Rubric` are namespaces of static factory helpers —
-you never instantiate them. Import once:
+you never instantiate them. Import the factories from `zicato.board`;
+the `OutputScope` enum they reference lives in `zicato.core`:
 
 ```python
-from zicato.board import Predicate, Rubric, OutputScope
+from zicato.board import Predicate, Rubric
+from zicato.core import OutputScope
 ```
 
 ### 2.1 `Predicate` — deterministic outcome checks
@@ -114,13 +128,17 @@ Predicate.schema({
         "citations": {"type": "array", "items": {"type": "string"}},
     },
 })
-Predicate.python("myproj.predicates.three_bullets_about_solar")
+Predicate.python("myproj.predicates:three_bullets_about_solar")
 ```
 
 `Predicate.python` is the escape hatch for logic the other three
-cannot express. The dotted path must resolve under the project's
-import path at run time; it receives the typed `RunResult` and returns
-`bool`. Predicate **bodies are never serialized** — they live in the
+cannot express. The dotted path uses a **colon** to separate the
+module from the callable — `module.path:func` — the same convention
+the real presentation board writes (e.g.
+`zicato_examples.target_1_presentation.predicates:mentions_waffles`).
+The path must resolve under the project's import path at run time; the
+callable receives the `RunResult` and returns `bool`. Predicate
+**bodies are never serialized** — they live in the
 project's own source. Shipping arbitrary logic as JSON would invite
 injection, so the board carries only the dotted path.
 
@@ -176,7 +194,7 @@ This bears repeating because the word "judge" historically attached
 to the LLM-graded matcher. In the converged vocabulary:
 
 - `Predicate` + `Rubric` = **outcome** checks. Post-hoc. On the
-  product. Listed under `expectations=[...]`.
+  product. Attached as the single `evaluate=...`.
 - `Judge` = **process** check. In-run. On the reasoning. Listed under
   `judges=[...]`.
 
@@ -184,16 +202,25 @@ to the LLM-graded matcher. In the converged vocabulary:
 the finished output, not the reasoning stream. The thing that watches
 the reasoning stream is `Judge`, and only `Judge`.
 
-### 2.4 Multiple expectations on one entry
+### 2.4 One expectation per entry
 
-`expectations=[...]` is a list. An entry with N expectations passes
-iff **every** expectation passes — the entry's `pass_fail` is the
-logical AND. Advisory rubrics (`threshold=None`) always pass and so
-never affect the AND; their scores are recorded for inspection only.
+An entry carries **at most one** outcome check. The underlying
+`BoardEntry.expectation` field is a single object, not a list, and
+`Entry(evaluate=...)` takes one `Predicate` / `Rubric`. The entry's
+`pass_fail` is that one expectation's result (an advisory rubric with
+`threshold=None` always passes and records its score for inspection).
 
-An entry with an empty `expectations=[]` (or no `expectations` at
-all) has `pass_fail = None` and contributes to drift-loss-only
-scoring. See [SCORING.md](SCORING.md) §3.
+An entry with no `evaluate=` has `pass_fail = None` and contributes to
+drift-loss-only scoring. See [SCORING.md](SCORING.md) §3.
+
+When you need several independent outcome assertions on one prompt,
+the idiomatic options are:
+
+- **Split into several entries** that share the same `input` (or the
+  same `turns` / `persona`), one expectation each. This also lets the
+  pattern detectors attribute pass/fail per assertion.
+- **Fold the assertions into one `Predicate.python` callable** that
+  ANDs the conditions and returns a single `bool`.
 
 ## 3. Process checks: `Judge`
 
@@ -252,23 +279,24 @@ check by reading only the final answer, it should be a `Rubric` or a
 ### 3.2 What a violated `Judge` emits
 
 When a `Judge.custom` criterion is violated, goldfive emits a drift
-event of kind `DriftKind.CUSTOM`. The event is **identified by the
-judge's `name`**, carried on the event as `judge_name`. So:
+event of kind `custom` (`DriftKind.CUSTOM`). The event is
+**identified by the judge's `name`**, carried on the event as
+`judge_name`. So:
 
-- The judge `"cite-before-metric"` → on violation → a
-  `DriftKind.CUSTOM` drift with `judge_name == "cite-before-metric"`.
-- The reducer counts it under `DRIFT_KIND_CUSTOM` in
-  `drift_counts_by_kind`, and the per-judge breakdown keys the count
-  on `judge_name`.
+- The judge `"cite-before-metric"` → on violation → a `custom` drift
+  with `judge_name == "cite-before-metric"`.
+- The reducer attributes it under `custom:<judge_name>` in the run's
+  `drift_counts`, and the per-judge breakdown (`per_judge_loss`) keys
+  the count on `judge_name`.
 - `ScoringWeights.per_judge_weights["cite-before-metric"]` lets you
   weight that specific judge's violations (§6.3).
 
-Because every custom judge emits the same `DriftKind.CUSTOM`, the
+Because every custom judge emits the same `custom` drift kind, the
 `judge_name` is the discriminator. Two judges on the same board are
 told apart by name, never by drift kind. This is why the `name` must
 be stable and unique within the board.
 
-The drift-emit path — `Judge.custom` → `DriftKind.CUSTOM` +
+The drift-emit path — `Judge.custom` → `custom` drift +
 `JudgementEmitted.judge_name` — is specified in
 [ARCHITECTURE.md](ARCHITECTURE.md) §4.6.1 and
 [TELEMETRY.md](TELEMETRY.md).
@@ -282,15 +310,16 @@ plan state — use `Judge.python`:
 ```python
 Judge.python(
     "no-duplicate-tool-calls",
-    "myproj.judges.no_duplicate_tool_calls",
+    "myproj.judges:no_duplicate_tool_calls",
     severity=DriftSeverity.WARNING,
 )
 ```
 
-The second argument is a dotted path to a Python callable that
-goldfive invokes against the reasoning stream. Like `Predicate.python`,
-the body lives in the project's source, never in the board JSON. The
-violation it raises emits the same `DriftKind.CUSTOM` +
+The second argument (the judge's `body`) is a dotted import path to a
+Python callable that goldfive invokes against the reasoning stream;
+`Judge.python` requires a path with a module component. Like
+`Predicate.python`, the body lives in the project's source, never in
+the board JSON. The violation it raises emits the same `custom` drift +
 `judge_name` shape as `Judge.custom`.
 
 Reach for `Judge.python` only when a natural-language criterion can't
@@ -299,8 +328,8 @@ express the check. `Judge.custom` is the common case.
 ### 3.4 goldfive's built-in judges and `disable_drift`
 
 goldfive ships its own judges — the drift detectors that produce
-`DRIFT_KIND_CONFABULATION_RISK`, `DRIFT_KIND_LOOPING_REASONING`, and
-the rest of the taxonomy. These are **ambient and default-on**: every
+`confabulation_risk`, `looping_reasoning`, and the rest of the
+`DriftKind` taxonomy. These are **ambient and default-on**: every
 run is watched by them whether or not the board entry adds any
 `judges` of its own. The `judges=[...]` list *adds* custom judges on
 top of the ambient set; it does not replace it.
@@ -341,12 +370,16 @@ from zicato.board import (
     Board,
     Entry,
     Judge,
-    OutputScope,
     Predicate,
     Rubric,
 )
+from zicato.core import OutputScope, UserPersona
 from goldfive import DriftKind, DriftSeverity
 ```
+
+The builder factories (`Board`, `Entry`, `Judge`, `Predicate`,
+`Rubric`) live in `zicato.board`; the `OutputScope` enum and the
+`UserPersona` dataclass are core types imported from `zicato.core`.
 
 ### 4.1 `Entry` — the entry factory
 
@@ -364,12 +397,16 @@ Common keyword arguments:
 | Argument | Meaning |
 |---|---|
 | `id=` | Stable, filesystem-safe identifier. Unique within the board. |
-| `input=` / `turns=` / `persona=` | The per-kind discriminant (exactly one). |
-| `expectations=` | List of `Predicate` / `Rubric` outcome checks. Default `[]`. |
-| `judges=` | List of `Judge` process checks. Default `[]`. |
-| `budget_s=` | Wall-clock budget for the whole entry, in seconds. |
+| `input=` / `turns=` / `persona=` | The per-kind discriminant (exactly one). `turns=` accepts plain strings; `persona=` takes a `UserPersona`. |
+| `evaluate=` | A **single** `Predicate` / `Rubric` outcome check (or omitted). Not a list — one expectation per entry. |
+| `judges=` | List of `Judge` process checks. Default `()`. |
+| `budget_s=` | Wall-clock budget for the whole entry, in seconds. Default `300`. |
 | `weight=` | Relative scoring weight. Default `1.0`. |
 | `tags=` | Operator labels for pattern slicing. Default `()`. |
+
+For a `multi_turn_scripted` entry, `Entry` auto-fills `max_turns` to
+`len(turns)` when you do not pass it; for `multi_turn_emulated` it
+defaults `max_turns` to `5`.
 
 ### 4.2 A worked board
 
@@ -379,26 +416,23 @@ board = Board(
     disable_drift=[DriftKind.LOOPING_TOOL_CALL],
 )
 
-# Single-turn, outcome-only.
+# Single-turn, outcome-only (one expectation).
 board.add(Entry(
     id="three_bullet_solar",
     input="Summarise solar panels in exactly three bullet points.",
-    expectations=[
-        Predicate.regex(r"^- .+\n- .+\n- .+$"),
-    ],
+    evaluate=Predicate.regex(r"^- .+\n- .+\n- .+$"),
     budget_s=120,
     tags=["easy", "summarise"],
 ))
 
-# Single-turn, both facets.
+# Single-turn, both facets — one outcome check, one process judge.
 board.add(Entry(
     id="cited_market_summary",
     input="Summarise the EV market in three bullets, each with a source.",
-    expectations=[
-        Predicate.regex(r"\[\d+\]"),
-        Rubric.score("Each bullet is accurate and non-redundant.",
-                     threshold=7.0),
-    ],
+    evaluate=Rubric.score(
+        "Each bullet is accurate and non-redundant.",
+        threshold=7.0,
+    ),
     judges=[
         Judge.custom(
             "cite-before-metric",
@@ -411,6 +445,17 @@ board.add(Entry(
     tags=["research", "citations"],
 ))
 
+# A second entry sharing the same prompt carries the citation-marker
+# check — one expectation per entry, so independent assertions live on
+# separate entries.
+board.add(Entry(
+    id="cited_market_summary_has_marker",
+    input="Summarise the EV market in three bullets, each with a source.",
+    evaluate=Predicate.regex(r"\[\d+\]"),
+    budget_s=180,
+    tags=["research", "citations"],
+))
+
 # Multi-turn scripted, transcript-scoped rubric + a process judge.
 board.add(Entry(
     id="revision_dialog",
@@ -419,17 +464,16 @@ board.add(Entry(
         "Add a slide about cost.",
         "Now make slide 3 less technical.",
     ],
-    expectations=[
-        Rubric.score(
-            "Did the agent correctly apply every requested revision?",
-            threshold=7.0,
-            reads=OutputScope.TRANSCRIPT,
-        ),
-    ],
+    evaluate=Rubric.score(
+        "Did the agent correctly apply every requested revision?",
+        threshold=7.0,
+        reads=OutputScope.TRANSCRIPT,
+    ),
     judges=[
         Judge.custom(
             "ack-before-edit",
             "The agent must acknowledge a revision request before editing.",
+            severity=DriftSeverity.WARNING,
         ),
     ],
     budget_s=480,
@@ -449,10 +493,11 @@ The builder writes — and `zicato board add` validates — the JSONL
 form specified in [BOARD-FORMAT.md](BOARD-FORMAT.md). One entry per
 line. You can also hand-author it.
 
-The two facets serialize as two arrays on the entry:
+The two facets serialize differently because one is singular and one
+is a list:
 
-- `expectations` — an array of expectation objects (the
-  `Predicate` / `Rubric` outcome checks).
+- `expectation` — a single expectation object (the one
+  `Predicate` / `Rubric` outcome check), or absent.
 - `judges` — an array of judge objects (the `Judge` process checks).
 
 A single-turn entry with both facets, as one JSONL line (shown
@@ -466,31 +511,36 @@ pretty-printed; on disk it is one line):
   "wall_clock_budget_seconds": 180,
   "weight": 1.5,
   "tags": ["research", "citations"],
-  "expectations": [
-    {"kind": "regex", "spec": "\\[\\d+\\]", "fires_on": "final_output"},
-    {"kind": "rubric",
-     "spec": "{\"rubric\":\"Each bullet is accurate and non-redundant.\",\"scale\":[0.0,10.0],\"threshold\":7.0}",
-     "reads": "FINAL"}
-  ],
+  "expectation": {
+    "kind": "rubric",
+    "spec": "{\"rubric\":\"Each bullet is accurate and non-redundant.\",\"scale\":[0.0,10.0],\"threshold\":7.0}",
+    "reads": "final_output"
+  },
   "judges": [
-    {"kind": "custom",
-     "name": "cite-before-metric",
-     "criterion": "The agent must cite a source before stating any market metric.",
-     "severity": "WARNING"}
+    {"name": "cite-before-metric",
+     "mode": "inline",
+     "body": "The agent must cite a source before stating any market metric.",
+     "severity": "warning"}
   ]
 }
 ```
 
-The board-level `disable_drift` is a board-wide setting, not a
-per-entry field. It is recorded once for the board (alongside the
-scoring configuration the epoch freezes); see
-[BOARD-FORMAT.md](BOARD-FORMAT.md) for where the board's
-configuration lives.
+(`Board.save` writes the budget under the short key `budget_s`; the
+reader accepts both `budget_s` and `wall_clock_budget_seconds`, so the
+long form shown here is equally valid for hand-authored boards.)
 
-Enum-valued fields serialize as their **symbolic names** —
-`"WARNING"`, `"FINAL"`, `"custom"` — never as integers or free
-strings. The reader rejects an unrecognised value loudly at
-`zicato board add` time. See §7.
+The board-level `disable_drift` is a board-wide setting, not a
+per-entry field. It is recorded once on the optional `board_meta`
+header line at the top of the JSONL — see
+[BOARD-FORMAT.md](BOARD-FORMAT.md) §1.0.
+
+Enum-valued fields serialize as their **bare wire tokens** — the
+lowercase string value of the enum: `"warning"` / `"critical"` for
+severity, `"final_output"` / `"conversation_end"` for `reads`,
+`"inline"` / `"python"` for a judge's `mode`, `"rubric"` / `"regex"` /
+`"predicate"` / … for an expectation's `kind`. (The enums subclass
+`str`, so the value *is* the token.) The reader rejects an
+unrecognised value loudly at `zicato board add` time. See §7.
 
 ## 6. Scoring weights
 
@@ -508,10 +558,20 @@ critical entry gets `weight=2.0`; the default is `1.0`. See
 
 ### 6.2 Per-drift-kind weights
 
-`ScoringWeights.per_kind_weights` is a mapping from `DriftKind` to a
-multiplier. It elevates or demotes a whole *kind* of drift in the
-loss. Custom-judge violations all land under `DriftKind.CUSTOM`, so
-`per_kind_weights[DriftKind.CUSTOM]` weights *every* custom judge at
+`ScoringWeights.per_kind_weights` is a mapping from a **drift-kind
+token** (the lowercase `DriftKind` wire string) to a multiplier. It
+elevates or demotes a whole *kind* of drift in the loss. The keys are
+the bare tokens — exactly as the frozen `scoring.json` records them:
+
+```json
+"per_kind_weights": {"confabulation_risk": 2.0, "looping_reasoning": 1.5}
+```
+
+In Python you may key with the `DriftKind` member directly
+(`DriftKind.CONFABULATION_RISK`) since `DriftKind` subclasses `str` and
+the member equals its token, but the canonical on-disk form is the
+lowercase string. Custom-judge violations all land under the `custom`
+kind, so `per_kind_weights["custom"]` weights *every* custom judge at
 once.
 
 ### 6.3 Per-judge weights
@@ -522,7 +582,7 @@ judge `name`**:
 
 ```python
 ScoringWeights(
-    per_kind_weights={DriftKind.CONFABULATION_RISK: 1.5},
+    per_kind_weights={"confabulation_risk": 1.5},
     per_judge_weights={
         "cite-before-metric": 2.0,   # this judge's violations weigh double
         "ack-before-edit": 0.5,      # this one is advisory-ish
@@ -533,10 +593,10 @@ ScoringWeights(
 `per_judge_weights` keys are the same `name` strings you passed to
 `Judge.custom` / `Judge.python`, and the same strings that appear as
 `judge_name` on the emitted drift. A judge with no entry in
-`per_judge_weights` is weighted by `per_kind_weights[DriftKind.CUSTOM]`
-(or the uniform default if that is also unset). This is the knob for
-"violations of *this specific* judge matter more than violations of
-*that* one" without splitting them into different drift kinds.
+`per_judge_weights` falls back to `ScoringWeights.default_judge_weight`
+(default `1.0`). This is the knob for "violations of *this specific*
+judge matter more than violations of *that* one" without splitting
+them into different drift kinds.
 
 Because `per_judge_weights` is part of `ScoringWeights`, it is frozen
 per epoch — changing it rolls the epoch.
@@ -546,41 +606,44 @@ per epoch — changing it rolls the epoch.
 Every choice field in the authoring surface is a typed enum. There
 are no magic strings anywhere an operator writes a board.
 
-| Concept | Enum | Owner |
-|---|---|---|
-| Drift kind (`CONFABULATION_RISK`, `CUSTOM`, …) | `DriftKind` | `goldfive` |
-| Drift severity (`INFO` / `WARNING` / `CRITICAL`) | `DriftSeverity` | `goldfive` |
-| Which slice a rubric reads (`FINAL` / `TRANSCRIPT`) | `OutputScope` | `zicato` |
-| Expectation kind (`predicate` / `regex` / `schema` / `python` / `rubric`) | `ExpectationKind` | `zicato` |
+| Concept | Enum | Owner | Wire token examples |
+|---|---|---|---|
+| Drift kind (built-ins + `custom`) | `DriftKind` | `goldfive` | `"confabulation_risk"`, `"looping_reasoning"`, `"custom"` |
+| Drift severity | `DriftSeverity` | `goldfive` | `"info"` / `"warning"` / `"critical"` |
+| Which slice an expectation reads | `OutputScope` | `zicato` | `"final_output"` / `"conversation_end"` |
+| Expectation kind | `ExpectationKind` | `zicato` | `"predicate"` / `"regex"` / `"json_schema"` / `"expected_text"` / `"rubric"` |
+| Judge mode | `JudgeMode` | `zicato` | `"inline"` / `"python"` |
 
 The rule:
 
 - goldfive concepts use **goldfive enums**. A judge's `severity=` is a
   `goldfive.DriftSeverity` member; `disable_drift` is a list of
-  `goldfive.DriftKind` members; `per_kind_weights` keys are
-  `DriftKind` members.
+  `goldfive.DriftKind` members.
 - zicato concepts use **zicato enums**. A rubric's `reads=` is a
-  `zicato` `OutputScope` member.
+  `zicato.core` `OutputScope` member; a judge's `mode` is a
+  `JudgeMode` member.
 
 You import them from where they are defined and pass the member, not
 a string:
 
 ```python
 from goldfive import DriftKind, DriftSeverity
-from zicato.board import OutputScope
+from zicato.core import OutputScope
 
 Judge.custom("x", "...", severity=DriftSeverity.CRITICAL)
 Rubric.score("...", threshold=7.0, reads=OutputScope.TRANSCRIPT)
 Board(disable_drift=[DriftKind.LOOPING_TOOL_CALL])
 ```
 
-On the JSONL wire the enum serializes to its symbolic name (a string
-like `"CRITICAL"`) so the file stays self-describing and human-
-readable — but that string is the *projection* of an enum, validated
-back to the enum on read. An unrecognised value is a loud rejection at
-`zicato board add` time, never a silent default. Magic strings, by
-contrast, fail late and quietly; typed enums fail early and
-mechanically. That is the whole reason for the rule.
+On the JSONL wire the enum serializes to its **bare wire token** — the
+lowercase `str` value of the enum member (`"critical"`,
+`"conversation_end"`, `"inline"`, …), not an uppercase symbolic name.
+These enums subclass `str`, so the value *is* the token and the file
+stays self-describing and human-readable; on read the token is
+validated back to its enum member. An unrecognised value is a loud
+rejection at `zicato board add` time, never a silent default. Magic
+strings, by contrast, fail late and quietly; typed enums fail early
+and mechanically. That is the whole reason for the rule.
 
 ## 8. The proposer brief
 
@@ -627,7 +690,7 @@ The proposer brief is *not* the per-entry `Rubric`:
 | Scope | one board entry | the whole epoch |
 | Read by | the loss reducer, post-run | the proposer, every round |
 | Decides | that entry's `pass_fail` | what the proposer tries next |
-| Form | a typed expectation in `expectations=[...]` | a markdown file |
+| Form | a typed expectation passed as `evaluate=...` | a markdown file |
 | Enforced? | yes — scored | only `## Forbidden` is enforced |
 
 The full proposer-brief design — what causes an epoch boundary, why
@@ -666,8 +729,8 @@ this guide, and `zicato evolve`.
 
 - [ ] Every entry has a stable, filesystem-safe, board-unique `id`.
 - [ ] Every entry has a `budget_s` (wall-clock budget).
-- [ ] Outcome properties are `Predicate` / `Rubric` in
-      `expectations=[...]`.
+- [ ] The outcome property is one `Predicate` / `Rubric` passed as
+      `evaluate=...` (a single expectation per entry).
 - [ ] Process properties are `Judge` in `judges=[...]`.
 - [ ] Every `Judge` criterion describes a property of the *reasoning*,
       not the *output*.
@@ -685,8 +748,8 @@ this guide, and `zicato evolve`.
 | Topic | Document |
 |---|---|
 | The JSONL schema, entry kinds, wall-clock budget | [BOARD-FORMAT.md](BOARD-FORMAT.md) |
-| `Judge` → `DriftKind.CUSTOM` + `judge_name` emit path | [ARCHITECTURE.md §4.6.1](ARCHITECTURE.md#461-pluggable-judges-the-goldfive-integration) |
-| How `expectations`, `judges`, and weights enter the score | [SCORING.md](SCORING.md) |
+| `Judge` → `custom` drift + `judge_name` emit path | [ARCHITECTURE.md §4.6.1](ARCHITECTURE.md#461-pluggable-judges-the-goldfive-integration) |
+| How the `expectation`, `judges`, and weights enter the score | [SCORING.md](SCORING.md) |
 | The proposer brief and epoch boundaries | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
 | Drift counting, `judge_name` in the loss profile | [TELEMETRY.md](TELEMETRY.md) |
 | Why `auxiliary_call_llm` grades rubrics (collusion) | [EMULATOR.md](EMULATOR.md) |

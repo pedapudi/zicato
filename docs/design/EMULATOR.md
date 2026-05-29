@@ -27,8 +27,9 @@ The emulator IS:
 
 - A peer agent that plays "a user trying to accomplish a goal".
 - Driven by an LLM, called through `auxiliary_call_llm`.
-- Bound by a persona shape with three fields: `goal`,
-  `constraints`, `stop_when`.
+- Bound by a persona shape with three string fields: `goal`,
+  `constraints`, `stop_when` (each a single string — `constraints`
+  is one free-text block, not a list).
 - Observable as `goldfive.v1.GoldfiveLLMCallStart` /
   `GoldfiveLLMCallEnd` events on the `zicato:emulator` lane (so
   harmonograf renders its work).
@@ -91,40 +92,49 @@ zicato is configured with **two** distinct `call_llm` callables:
   LLM calls. Reaches the agent code; the agent talks to the world
   through this callable.
 - `auxiliary_call_llm` — used by everything zicato itself drives:
-  the multi-turn user emulator, the patch proposer, any `judge`
-  expectation, the analysis pass at epoch close, the rubric-extraction
-  step if enabled.
+  the multi-turn user emulator, the patch proposer, the in-run
+  process judges, the analysis pass at epoch close, and the rubric
+  grader.
 
 ### 3.1 The hard error
 
-At config time (when the operator calls `zicato register` or
-constructs the runtime config), zicato checks:
+The invariant is enforced by
+`zicato.core.workspace.assert_distinct_callables`, which the runtime
+factory runs at config time and the emulator driver and tournament
+runner re-check defensively before a run. It is a **pure identity
+check**:
 
 ```python
-if (harness_call_llm is auxiliary_call_llm
-        and not (harness_model_override and auxiliary_model_override
-                 and harness_model_override != auxiliary_model_override)):
-    raise ConfigurationError(
-        "harness_call_llm and auxiliary_call_llm are the same callable "
-        "and no distinct model= override was provided. zicato refuses "
-        "to start a run with this configuration: the emulator, judge, "
-        "and proposer would share a model with the harness, which "
-        "produces a degenerate evaluation loop. See docs/design/EMULATOR.md "
-        "§3."
-    )
+def assert_distinct_callables(harness_call_llm, auxiliary_call_llm):
+    if harness_call_llm is auxiliary_call_llm:
+        raise RuntimeError(
+            "harness_call_llm and auxiliary_call_llm must be distinct "
+            "callables; shared callables risk collusion in multi-turn "
+            "emulated entries"
+        )
 ```
+
+The emulator driver wraps that `RuntimeError` as
+`EmulationCollusionError` and refuses to start the run.
 
 The check accepts:
 
 - Two different callables (different functions, different SDK
-  clients, different network targets).
-- One callable but with a different `model=` override for each role
-  (e.g. one callable that knows how to dispatch to two different
-  models depending on its `model` argument).
+  clients, different network targets) — including two distinct
+  closures that happen to wrap the *same* underlying client or
+  endpoint. Differentiating the model behind a shared client is the
+  operator's responsibility; the check does not inspect it.
 
 The check rejects:
 
-- The same callable with no model differentiation.
+- The exact same callable object passed for both roles
+  (`harness_call_llm is auxiliary_call_llm`).
+
+It is **identity (`is`) only** — there is no `model=` override
+carve-out and no inspection of the model argument. The point is to
+catch the trivial mistake of passing one callable twice; defending
+against two closures over the same model family is out of the v0
+threat model (see §11).
 
 This is a HARD ERROR. zicato refuses to start. There is no
 `--allow-collusion` flag. The risk is too quiet and the inconvenience
@@ -185,8 +195,10 @@ cannot deliver:
   state.
 - The **goldfive event stream** — drift events, plan revisions,
   escalations.
-- The board entry's **expectation** — predicate / regex / schema /
-  judge.
+- The board entry's **expectation** — the single outcome check
+  (predicate / regex / json_schema / expected_text / rubric) and any
+  of its `spec`.
+- The board entry's **judges** — the in-run process checks.
 - The **predicate module's source** — the Python file that defines
   pass/fail.
 - Any **other board entry** — past or future.
@@ -297,7 +309,7 @@ another. Three fields:
 | Field | Type | Purpose |
 |---|---|---|
 | `goal` | `string` | What this simulated user is trying to accomplish. Stamped verbatim into the emulator's system prompt. |
-| `constraints` | `list[string]` | Behavioural rules ("you are impatient", "push back when feedback is shallow", "ask one focused follow-up per turn"). Listed in the emulator's system prompt. |
+| `constraints` | `string` | A single free-text block of behavioural rules ("you are impatient; push back when feedback is shallow; ask one focused follow-up per turn"). Not a list — multiple rules go in one string. Stamped into the emulator's system prompt. |
 | `stop_when` | `string` | Condition the emulator checks each turn to decide whether the conversation ends. |
 
 ### 6.1 `stop_when` evaluation
