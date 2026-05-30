@@ -285,3 +285,7 @@
 
 /* --- Overview hero placement -------------------------------------- */
 .v2-ov-hero .v2-slope { margin-top: var(--v2-sp-2); }
+
+/* Integration: center the (fixed-width) stage within the wide card when it
+   fits; fall back to horizontal scroll when there are many rounds. */
+.v2-slope-scroll { display: flex; justify-content: center; }

@@ -53,12 +53,12 @@ import { fmtScalar, fmtDelta } from '../../core/format.js';
 // the whole picture. Exported (frozen) so a regression cannot silently
 // slide the slopes out of place.
 // ---------------------------------------------------------------------------
-const COL_W = 132;       // px between adjacent round columns
-const PAD_X = 96;        // horizontal padding (room for the endpoint labels)
-const PAD_TOP = 34;      // top of the scalar band
-const PAD_BOTTOM = 40;   // bottom padding (round-axis labels)
-const PLOT_H = 168;      // height of the scalar band itself
-const DOT_R = 7;         // champion / challenger node radius
+const COL_W = 300;       // px between adjacent round columns (wide: rounds breathe)
+const PAD_X = 140;       // horizontal padding (room for the endpoint labels)
+const PAD_TOP = 48;      // top of the scalar band
+const PAD_BOTTOM = 52;   // bottom padding (round-axis labels)
+const PLOT_H = 320;      // height of the scalar band itself (tall: real chart)
+const DOT_R = 9;         // champion / challenger node radius
 const HEIGHT = PAD_TOP + PLOT_H + PAD_BOTTOM;
 
 export const SLOPEGRAPH_GEOMETRY = Object.freeze({
