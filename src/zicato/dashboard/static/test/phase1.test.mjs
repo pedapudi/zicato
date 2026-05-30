@@ -15,7 +15,7 @@
 // network — caches are populated synthetically so the tests run in
 // isolation from any server.
 
-import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
 
 installDom();
 
@@ -64,21 +64,24 @@ test('renderPhase0Workspace renders structured workspace identity rows', () => {
   assert(text.includes('phase1'), 'instance_id must render');
 });
 
-test('renderPhase0Workspace L0 lineage shows arrow when parent_epoch_id set', () => {
+test('renderPhase0Workspace L0 lineage renders the ribbon with every epoch id', () => {
+  // The L0 redesign replaced the epoch-timeline list (which drew an
+  // inline "→ child" arrow) with the lineage ribbon. The ribbon encodes
+  // the parent_epoch_id relationship as a connector in its SVG layer
+  // rather than as text, so the contract is now: every epoch surfaces as
+  // a ribbon node carrying its id, at epoch zoom.
   installNode('phase0-workspace-env');
   installNode('phase0-workspace-lineage');
   installNode('phase0-workspace-sparkline');
   state.workspace = { root: '/tmp/.zicato' };
   ws.resetWorkspaceCache();
-  // Seed the workspace cache directly so the renderer paints from it
-  // without going through the network.
   const fakePayload = {
-    current_epoch_id: 'e0',
+    current_epoch_id: 'e1',
     epochs: [
       {
         epoch_id: 'e0', goal: 'Iterate the planner.',
         best_scalar: 0.42, generation_count: 3, promoted_count: 2,
-        closed: false, parent_epoch_id: null,
+        closed: true, parent_epoch_id: null,
       },
       {
         epoch_id: 'e1', goal: null,
@@ -86,63 +89,40 @@ test('renderPhase0Workspace L0 lineage shows arrow when parent_epoch_id set', ()
         closed: false, parent_epoch_id: 'e0',
       },
     ],
-    sparkline: [{ epoch_id: 'e0', scalar: 0.42 }, { epoch_id: 'e1', scalar: 0.40 }],
   };
-  // Inject by calling renderPhase0Workspace twice: first call kicks off
-  // the network request (which fails synchronously here), but to drive
-  // the lineage we directly seed the cache via a re-export hook below.
-  // Simpler: monkeypatch fetchJson via the module's internal cache. We
-  // know resetWorkspaceCache + a synchronous renderer call repaints
-  // from null payload — so we need a way to seed it. Add a small test
-  // hook: call renderPhase0Workspace once with no cache (renders
-  // empty), then mutate by re-exporting the cache slot via a side
-  // door — but the module deliberately keeps the cache private. So:
-  // assert the empty render path doesn't show arrows.
-  ws.renderPhase0Workspace();
-  // Manually re-seed by setting payload through the public API: the
-  // workspacePayload() reader returns the cache; we don't have a
-  // setter. Use the same hack the module's resetWorkspaceCache uses
-  // and rely on the public render with a stubbed window.fetch.
   const origFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
     ok: true, status: 200, headers: new Map(),
     json: async () => fakePayload,
     text: async () => JSON.stringify(fakePayload),
   });
-  // Trigger the async fetch; await a microtask so the promise resolves.
   ws.resetWorkspaceCache();
   ws.renderPhase0Workspace();
   return new Promise((resolve) => {
     setTimeout(() => {
-      // The fetched payload is now in the cache; call render again to
-      // paint it.
       ws.renderPhase0Workspace();
-      const lineageText = document.getElementById('phase0-workspace-lineage').textContent;
-      assert(lineageText.includes('e0'), 'first epoch row must render');
-      assert(lineageText.includes('e1'), 'second epoch row must render');
-      assert(lineageText.includes('→ e1'),
-        `parent_epoch_id e0 → e1 arrow must render; got: ${lineageText.slice(0, 200)}`);
+      const slot = document.getElementById('phase0-workspace-lineage');
+      const lineageText = slot.textContent;
+      const ribbon = slot.querySelector('[class="ribbon ribbon-zoom-epochs"]');
+      assert(ribbon != null, 'the lineage slot must render a ribbon at epoch zoom');
+      assert(lineageText.includes('e0'), 'first epoch must surface on the ribbon');
+      assert(lineageText.includes('e1'), 'second epoch must surface on the ribbon');
       globalThis.fetch = origFetch;
       resolve();
     }, 20);
   });
 });
 
-test('workspace lineage table falls back to "(no goal recorded)" when goal absent', () => {
+test('workspace lineage ribbon degrades gracefully with no epochs', () => {
+  // Goals are an L1 concern now; the L0 ribbon does not render per-epoch
+  // goal text. The empty-workspace path must show the empty state rather
+  // than throw.
   installNode('phase0-workspace-env');
   installNode('phase0-workspace-lineage');
   installNode('phase0-workspace-sparkline');
   state.workspace = { root: '/tmp/.zicato' };
   ws.resetWorkspaceCache();
-  const fakePayload = {
-    current_epoch_id: 'e0',
-    epochs: [{
-      epoch_id: 'e0', goal: null,
-      best_scalar: null, generation_count: 0, promoted_count: 0,
-      closed: false, parent_epoch_id: null,
-    }],
-    sparkline: [],
-  };
+  const fakePayload = { current_epoch_id: null, epochs: [] };
   const origFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
     ok: true, status: 200, headers: new Map(),
@@ -153,9 +133,15 @@ test('workspace lineage table falls back to "(no goal recorded)" when goal absen
   return new Promise((resolve) => {
     setTimeout(() => {
       ws.renderPhase0Workspace();
-      const text = document.getElementById('phase0-workspace-lineage').textContent;
-      assert(text.includes('(no goal recorded)'),
-        `fallback text must render; got: ${text.slice(0, 200)}`);
+      const slot = document.getElementById('phase0-workspace-lineage');
+      const text = slot.textContent;
+      assert(text.includes('Epoch lineage'),
+        `lineage card title must still render; got: ${text.slice(0, 200)}`);
+      assert(text.toLowerCase().includes('no epochs'),
+        `empty workspace must show an empty state; got: ${text.slice(0, 200)}`);
+      // No ribbon node and no crash.
+      assert(slot.querySelector('[class="ribbon ribbon-zoom-epochs"]') == null,
+        'an empty workspace must not draw a populated ribbon');
       globalThis.fetch = origFetch;
       resolve();
     }, 20);
@@ -203,7 +189,10 @@ test('renderPhase0Epoch shows "(no goal recorded)" when empty', () => {
     `placeholder must render; got: ${text}`);
 });
 
-test('renderPhase0Epoch renders the per-judge × generation heatmap', () => {
+// The per-judge heatmap now lives behind the "judges" tab of the single
+// folded heatmap card (rendered into the entries slot); the standalone
+// judges slot is cleared. This test activates that tab and reads it.
+test('renderPhase0Epoch renders the per-judge × generation heatmap (judges tab)', () => {
   installNode('phase0-epoch-goal');
   installNode('phase0-epoch-contract-diff');
   installNode('phase0-epoch-spine');
@@ -214,6 +203,8 @@ test('renderPhase0Epoch renders the per-judge × generation heatmap', () => {
   epoch.resetContractDiffCache();
   epoch.resetPerJudgeTrendCache();
   epoch.resetAnalysisCache();
+  epoch.resetHealthReportCache();
+  epoch.resetHeatmapTab();
   state.epochDef = { epoch_id: 'e0', goal: 'g', experiments: [] };
   const payload = {
     epoch_id: 'e0',
@@ -232,7 +223,20 @@ test('renderPhase0Epoch renders the per-judge × generation heatmap', () => {
   return new Promise((resolve) => {
     setTimeout(() => {
       epoch.renderPhase0Epoch({ epochId: 'e0' });
-      const text = document.getElementById('phase0-epoch-heatmap-judges').textContent;
+      // Toggle to the judges tab inside the folded heatmap card.
+      const slot = document.getElementById('phase0-epoch-heatmap-entries');
+      let judgesTab = null;
+      const walk = (n) => {
+        if (!n || n.nodeType !== 1) return;
+        if (typeof n.hasAttribute === 'function'
+            && n.getAttribute('data-heatmap-tab') === 'judges') judgesTab = n;
+        for (const c of n.children) walk(c);
+      };
+      walk(slot);
+      assert(judgesTab != null, 'the judges tab must exist in the folded heatmap card');
+      judgesTab.dispatchEvent(makeEvent('click'));
+      epoch.renderPhase0Epoch({ epochId: 'e0' });
+      const text = document.getElementById('phase0-epoch-heatmap-entries').textContent;
       assert(text.includes('critic_A'), 'critic_A row must render');
       assert(text.includes('critic_B'), 'critic_B row must render');
       assert(text.includes('v0') && text.includes('v1') && text.includes('v2'),
@@ -300,84 +304,12 @@ test('renderPhase0Generation populates per-judge and per-entry tables', () => {
 });
 
 // --- L3 round: per-judge comparison + primary driver -----------------
-
-test('renderPhase0Round renders per-judge comparison with primary driver', () => {
-  installNode('phase0-round-vs');
-  installNode('phase0-round-entries');
-  installNode('phase0-round-judges');
-  installNode('phase0-round-decision');
-  round.resetRoundCaches();
-  state.epochDef = { epoch_id: 'e0' };
-  state.bracket = { matchups: [{ champion: 'v1', challenger: 'v2', decision: 'promoted' }] };
-  const perEntry = {
-    epoch_id: 'e0', generation_id: 'v2', tournament_id: 'e0:v1->v2',
-    entries: [
-      { entry_id: 'entry_alpha', drift_loss: 0.2, pass_fail: 1 },
-    ],
-  };
-  const perEntryChamp = {
-    epoch_id: 'e0', generation_id: 'v1', tournament_id: 'e0:v0->v1',
-    entries: [
-      { entry_id: 'entry_alpha', drift_loss: 0.3, pass_fail: 1 },
-    ],
-  };
-  const judgeCmp = {
-    epoch_id: 'e0', champion: 'v1', challenger: 'v2',
-    judges: [
-      { judge_name: 'critic_A', champion_weighted_loss: 0.4,
-        challenger_weighted_loss: 0.1, delta: -0.3 },
-      { judge_name: 'critic_B', champion_weighted_loss: 0.2,
-        challenger_weighted_loss: 0.25, delta: 0.05 },
-    ],
-    primary_driver: 'critic_A',
-  };
-  const origFetch = globalThis.fetch;
-  globalThis.fetch = async (url) => {
-    let body = null;
-    if (url.includes('/per-judge-comparison')) body = judgeCmp;
-    else if (url.includes('/v1/per-entry')) body = perEntryChamp;
-    else if (url.includes('/v2/per-entry')) body = perEntry;
-    return {
-      ok: true, status: 200, headers: new Map(),
-      json: async () => body, text: async () => JSON.stringify(body),
-    };
-  };
-  round.renderPhase0Round({ epochId: 'e0', championId: 'v1', challengerId: 'v2' });
-  return new Promise((resolve, reject) => {
-    // Poll: wait until both caches are populated, then assert.
-    const params = { epochId: 'e0', championId: 'v1', challengerId: 'v2' };
-    const start = Date.now();
-    function tick() {
-      try {
-        const haveEntries = round.roundEntriesPayload('e0', 'v1', 'v2');
-        const haveJudges = round.roundJudgesPayload('e0', 'v1', 'v2');
-        if (haveEntries && haveJudges) {
-          round.renderPhase0Round(params);
-          const jt = document.getElementById('phase0-round-judges').textContent;
-          assert(jt.includes('critic_A'), 'critic_A row must render');
-          assert(jt.includes('primary driver'),
-            `primary driver call-out must render; got: ${jt.slice(0, 200)}`);
-          const et = document.getElementById('phase0-round-entries').textContent;
-          assert(et.includes('entry_alpha'), 'per-entry row must render');
-          assert(et.includes('e0:v1->v2'),
-            'challenger tournament_id should surface on the per-entry header');
-          globalThis.fetch = origFetch;
-          resolve();
-        } else if (Date.now() - start > 500) {
-          globalThis.fetch = origFetch;
-          reject(new Error('caches did not populate within 500ms: '
-            + JSON.stringify({ haveEntries: !!haveEntries, haveJudges: !!haveJudges })));
-        } else {
-          setTimeout(tick, 10);
-        }
-      } catch (err) {
-        globalThis.fetch = origFetch;
-        reject(err);
-      }
-    }
-    setTimeout(tick, 5);
-  });
-});
+//
+// The legacy L3 smoke test that lived here was coupled to the pre-redesign
+// round internals (the removed `roundEntriesPayload` accessor) and the old
+// flat-table markup. The redesigned decision view (gate ladder, per-entry
+// diverging A/B, scalar waterfall, and the primary-driver call-out) is
+// covered comprehensively by `phase0_round_decision.test.mjs`.
 
 // --- L4 run: per-judge breakdown -------------------------------------
 

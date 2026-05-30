@@ -1,10 +1,12 @@
 // test/l2_redesign.test.mjs — L2 generation page holistic redesign
-// coverage (Task #200).
+// coverage (Task #200) + the "did the bet pay off?" narrative redesign.
 //
 // Pins the inverted-pyramid structure:
 //   1. HERO     — pill + delta tiles + summary line.
-//   2. HYP/ALIGN — hypothesis prose on the left, alignment vs outcome
-//                  on the right.
+//   2. DID THE BET PAY OFF? — one merged narrative panel: the bet
+//                  (core idea + why), the predicted movements, the
+//                  actual movements charted as a diverging bar, and a
+//                  per-dimension aligned/missed verdict (verdictGlyph).
 //   3. PATCHES  — inline (1) vs table (2+).
 //   4. ENTRIES  — vs-champion delta column + clickable rows.
 //   5. JUDGES   — inline (1) vs table (2+).
@@ -166,7 +168,7 @@ test('L2 hero — rejected gen shows REJECTED pill + parsed regression headline'
   }
 });
 
-// --- 2. ALIGNMENT vs OUTCOME ----------------------------------------
+// --- 2. DID THE BET PAY OFF? (merged hypothesis → outcome panel) -----
 
 test('L2 alignment — pass-rate prediction inside band reads "aligned"', () => {
   installL2Slots();
@@ -211,6 +213,191 @@ test('L2 alignment — rejected gen surfaces "direction missed" when actual drif
       `direction-missed verdict must render; got: ${text.slice(0, 600)}`);
   } finally {
     restoreFetch();
+  }
+});
+
+// Walk a subtree collecting every element whose class includes `cls`.
+function collectByClass(root, cls) {
+  const out = [];
+  const walk = (n) => {
+    if (!n || n.nodeType !== 1) return;
+    if (n.className && String(n.className).split(/\s+/).includes(cls)) out.push(n);
+    for (const c of n.children) walk(c);
+  };
+  walk(root);
+  return out;
+}
+
+test('L2 bet panel — merged hypothesis→outcome reads as ONE "Did the bet pay off?" panel', () => {
+  installL2Slots();
+  generation.resetGenerationCaches();
+  state.epochDef = { epoch_id: 'e0', experiments: [PROMOTED_EXP] };
+  const restoreFetch = mockFetch(() => ({ movements: [] }));
+  try {
+    generation.renderPhase0Generation({ epochId: 'e0', generationId: 'v3' });
+    const node = document.getElementById('phase0-gen-hypothesis');
+    const text = node.textContent;
+    // The single panel carries the new headline.
+    assert(text.includes('Did the bet pay off?'),
+      `merged panel title must render; got: ${text.slice(0, 400)}`);
+    // The bet premise (core idea + why) lives in the SAME panel as the
+    // verdict — no separate hypothesis card.
+    assert(text.includes('Inject topicality constraints'),
+      `the bet's core idea must render in the panel; got: ${text.slice(0, 400)}`);
+    assert(text.includes('Off-topic drift dominates'),
+      `the bet's "why" must render in the panel; got: ${text.slice(0, 400)}`);
+    // Predicted + verdict both present in the one story.
+    assert(text.includes('Predicted'),
+      `predicted movements section must render; got: ${text.slice(0, 600)}`);
+    assert(text.includes('Pass-rate') && text.includes('Drift: off_topic'),
+      `per-dimension verdict rows must render; got: ${text.slice(0, 600)}`);
+    // The old two-card framing must be gone.
+    assert(!text.includes('Alignment vs Outcome'),
+      `old "Alignment vs Outcome" header must NOT survive; got: ${text.slice(0, 600)}`);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test('L2 bet panel — verdict iconography routes through verdictGlyph', () => {
+  installL2Slots();
+  generation.resetGenerationCaches();
+  state.epochDef = { epoch_id: 'e0', experiments: [REJECTED_EXP] };
+  const restoreFetch = mockFetch(() => ({ movements: [] }));
+  try {
+    generation.renderPhase0Generation({ epochId: 'e0', generationId: 'v2' });
+    const node = document.getElementById('phase0-gen-hypothesis');
+    // verdictGlyph renders a .verdict-glyph wrapper with a tri-state
+    // data-verdict attribute; the predicted "off_topic decrease" against
+    // a rose-drift outcome must read as MISSED.
+    const glyphs = collectByClass(node, 'vglyph');
+    assert(glyphs.length >= 1,
+      `at least one verdictGlyph must render; got ${glyphs.length}`);
+    // The shared verdictGlyph encodes the verdict in its kind class
+    // (missed alignment maps to the rejected vocabulary → vglyph-rejected).
+    const kinds = glyphs.map((g) => g.className);
+    assert(kinds.some((c) => c.includes('vglyph-rejected')),
+      `a rejected (missed) verdict glyph must render for the rejected gen; got ${JSON.stringify(kinds)}`);
+    // The glyph mark itself must be one of the canonical ✓ / ✗ / ◦.
+    const marks = collectByClass(node, 'vglyph-mark').map((m) => m.textContent);
+    assert(marks.some((m) => m === '✗'),
+      `a ✗ glyph mark must render; got ${JSON.stringify(marks)}`);
+    // The legacy verdict wording is preserved for continuity.
+    assert(node.textContent.includes('direction missed'),
+      `verdict note must still read "direction missed"; got: ${node.textContent.slice(0, 600)}`);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test('L2 bet panel — aligned prediction routes a ✓ verdict glyph', () => {
+  installL2Slots();
+  generation.resetGenerationCaches();
+  // A gen whose predicted drift "decrease" matches a falling drift loss.
+  state.epochDef = { epoch_id: 'e0', experiments: [PROMOTED_EXP] };
+  const restoreFetch = mockFetch(() => ({ movements: [] }));
+  try {
+    generation.renderPhase0Generation({ epochId: 'e0', generationId: 'v3' });
+    const node = document.getElementById('phase0-gen-hypothesis');
+    const kinds = collectByClass(node, 'vglyph').map((g) => g.className);
+    // PROMOTED_EXP: drift "decrease" predicted, drift_loss_delta = -24 → aligned
+    // (aligned maps to the promoted vocabulary → vglyph-promoted).
+    assert(kinds.some((c) => c.includes('vglyph-promoted')),
+      `an aligned verdict glyph must render for the promoted gen; got ${JSON.stringify(kinds)}`);
+  } finally {
+    restoreFetch();
+  }
+});
+
+test('L2 bet panel — actual drift movements render as a diverging bar', () => {
+  installL2Slots();
+  generation.resetGenerationCaches();
+  state.epochDef = { epoch_id: 'e0', experiments: [PROMOTED_EXP] };
+  // /api/drift-movements/v3 — challenger improved off_topic (fewer
+  // events) and worsened verbosity (more events).
+  const driftMoves = {
+    epoch_id: 'e0', generation_id: 'v3', champion: 'v1', challenger: 'v3',
+    movements: [
+      { kind: 'off_topic', champion_count: 8, challenger_count: 2,
+        delta: -6, direction: 'improved' },
+      { kind: 'verbosity', champion_count: 1, challenger_count: 4,
+        delta: 3, direction: 'worsened' },
+    ],
+  };
+  const restoreFetch = mockFetch((url) => {
+    if (url.includes('/drift-movements/')) return driftMoves;
+    return {};
+  });
+  try {
+    generation.renderPhase0Generation({ epochId: 'e0', generationId: 'v3' });
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        generation.renderPhase0Generation({ epochId: 'e0', generationId: 'v3' });
+        const node = document.getElementById('phase0-gen-hypothesis');
+        const text = node.textContent;
+        // The diverging bar component must mount (real class: .dbar).
+        const bars = collectByClass(node, 'dbar');
+        assert(bars.length >= 1,
+          `a diverging bar must render for actual movements; got ${bars.length}`);
+        // One row per drift kind.
+        const rows = collectByClass(node, 'dbar-row');
+        assert(rows.length === 2,
+          `two diverging-bar rows (off_topic, verbosity) must render; got ${rows.length}`);
+        // The kind labels and signed deltas must surface.
+        assert(text.includes('off_topic') && text.includes('verbosity'),
+          `both drift kinds must label their bars; got: ${text.slice(0, 600)}`);
+        // off_topic improved (delta -6) → good sentiment fill (.dbar-good).
+        const goodFills = collectByClass(node, 'dbar-good');
+        const badFills = collectByClass(node, 'dbar-bad');
+        assert(goodFills.length >= 1,
+          `the improved kind must paint a good-sentiment bar; got ${goodFills.length}`);
+        assert(badFills.length >= 1,
+          `the worsened kind must paint a bad-sentiment bar; got ${badFills.length}`);
+        restoreFetch();
+        resolve();
+      }, 30);
+    });
+  } catch (err) {
+    restoreFetch();
+    throw err;
+  }
+});
+
+test('L2 bet panel — graceful when drift-movements + outcome drift are absent', () => {
+  installL2Slots();
+  generation.resetGenerationCaches();
+  // Experiment with no expected movements and no drift_loss_delta.
+  const bareExp = {
+    generation_id: 'v9',
+    parent_generation_id: 'v1',
+    hypothesis: { core_idea: 'A bare bet.', why: 'Because.' },
+    outcome: { tournament_decision: 'deferred', ran_at: '2026-05-20T00:00:00+00:00' },
+    patches: {},
+  };
+  state.epochDef = { epoch_id: 'e0', experiments: [bareExp] };
+  const restoreFetch = mockFetch(() => ({ movements: [] }));
+  try {
+    generation.renderPhase0Generation({ epochId: 'e0', generationId: 'v9' });
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        generation.renderPhase0Generation({ epochId: 'e0', generationId: 'v9' });
+        const node = document.getElementById('phase0-gen-hypothesis');
+        const text = node.textContent;
+        // Still renders the panel + the bet prose; the actual-movements
+        // section degrades to an empty line rather than throwing.
+        assert(text.includes('Did the bet pay off?'),
+          `panel must still render with no movements; got: ${text.slice(0, 400)}`);
+        assert(text.includes('A bare bet.'),
+          `the bet prose must still render; got: ${text.slice(0, 400)}`);
+        assert(text.includes('No drift movements'),
+          `actual-movements section must degrade gracefully; got: ${text.slice(0, 400)}`);
+        restoreFetch();
+        resolve();
+      }, 30);
+    });
+  } catch (err) {
+    restoreFetch();
+    throw err;
   }
 });
 

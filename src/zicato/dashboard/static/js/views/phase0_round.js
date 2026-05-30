@@ -1,61 +1,127 @@
-// views/phase0_round.js — L3 (round/tournament-level) view.
+// views/phase0_round.js — L3 (round/tournament) view, rebuilt as the
+// DECISION VIEW: the legible "why was this challenger promoted or
+// rejected?".
 //
-// The vs slot carries the big champion / challenger card; the
-// entries slot the per-entry comparison; the judges slot the per-judge
-// comparison + a primary-driver call-out; the decision slot the
-// decision pill + driver text.
+// Layout maps onto the four existing L3 slots:
+//   * phase0-round-vs       — header (champion → challenger + verdict
+//                             glyph), the GATE LADDER (the why), the
+//                             SCALAR BAND (±margin threshold) and the
+//                             SCALAR WATERFALL (which component moved).
+//   * phase0-round-entries  — per-entry A/B as a DIVERGING BAR (each
+//                             entry's challenger−champion drift delta;
+//                             pass→fail flips are flagged).
+//   * phase0-round-judges   — the PRIMARY-DRIVER call-out.
+//   * phase0-round-decision — PROMOTE / REJECT controls (honest:
+//                             "recorded (manual enactment)").
+//
+// Data sources:
+//   * NEW  /api/round/{e}/{champ}/{chal}/gate            — gate ladder +
+//          decision + scalar_components + primary_driver.
+//   * /api/matchup-grid/{e}/{champ}/{chal}               — per-entry A/B.
+//   * /api/round/{e}/{champ}/{chal}/per-judge-comparison — judges + driver.
+//
+// Every endpoint may 404 on a cold deep-link; each fetch degrades to a
+// loading/empty state and NEVER throws. Renders are re-render-safe — the
+// caches mean a repaint paints the same data without refetching.
 
 import { $, el, clearChildren } from '../core/dom.js';
-import { fetchJson } from '../core/api.js';
+import { fetchJson, postControl } from '../core/api.js';
 import { state } from '../core/state.js';
 import { renderCard, renderCalloutCard } from '../components/card.js';
-import { renderPill } from '../components/pill.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
 import { harmonografGenLink } from '../core/harmonograf.js';
 
-const _entriesCache = new Map();
+import { gateLadder } from '../components/gate_ladder.js';
+import { divergingBar } from '../components/diverging_bar.js';
+import { scalarWaterfall } from '../components/scalar_waterfall.js';
+import { scalarBand } from '../components/scalar_band.js';
+import { verdictGlyph } from '../components/verdict_glyph.js';
+
+const _gateCache = new Map();
+const _gridCache = new Map();
 const _judgeCmpCache = new Map();
-const _loadingEntries = new Set();
+const _loadingGate = new Set();
+const _loadingGrid = new Set();
 const _loadingJudges = new Set();
 
+function _key(epochId, champId, chalId) {
+  return epochId + '/' + champId + '->' + chalId;
+}
+
 export function resetRoundCaches() {
-  _entriesCache.clear();
+  _gateCache.clear();
+  _gridCache.clear();
   _judgeCmpCache.clear();
-  _loadingEntries.clear();
+  _loadingGate.clear();
+  _loadingGrid.clear();
   _loadingJudges.clear();
 }
 
-export function roundEntriesPayload(epochId, champId, chalId) {
-  return _entriesCache.get(epochId + '/' + champId + '->' + chalId) || null;
+// Test/inspection accessors.
+export function roundGatePayload(epochId, champId, chalId) {
+  return _gateCache.get(_key(epochId, champId, chalId)) || null;
+}
+export function roundGridPayload(epochId, champId, chalId) {
+  return _gridCache.get(_key(epochId, champId, chalId)) || null;
 }
 export function roundJudgesPayload(epochId, champId, chalId) {
-  return _judgeCmpCache.get(epochId + '/' + champId + '->' + chalId) || null;
+  return _judgeCmpCache.get(_key(epochId, champId, chalId)) || null;
 }
 
-async function ensureEntries(epochId, champId, chalId, repaint) {
+// --- fetchers (each degrades, never throws) --------------------------
+
+async function ensureGate(epochId, champId, chalId, repaint) {
   if (!epochId || !champId || !chalId) return null;
-  const key = epochId + '/' + champId + '->' + chalId;
-  if (_entriesCache.has(key)) return _entriesCache.get(key);
-  if (_loadingEntries.has(key)) return null;
-  _loadingEntries.add(key);
+  const key = _key(epochId, champId, chalId);
+  if (_gateCache.has(key)) return _gateCache.get(key);
+  if (_loadingGate.has(key)) return null;
+  _loadingGate.add(key);
   try {
-    const champData = await fetchJson('/api/generation/'
-      + encodeURIComponent(epochId) + '/' + encodeURIComponent(champId) + '/per-entry');
-    const chalData = await fetchJson('/api/generation/'
-      + encodeURIComponent(epochId) + '/' + encodeURIComponent(chalId) + '/per-entry');
-    _entriesCache.set(key, { champion: champData, challenger: chalData });
+    const data = await fetchJson('/api/round/'
+      + encodeURIComponent(epochId) + '/'
+      + encodeURIComponent(champId) + '/' + encodeURIComponent(chalId) + '/gate');
+    if (data && typeof data === 'object') _gateCache.set(key, data);
+    else _gateCache.set(key, _emptyGate());
   } catch {
-    _entriesCache.set(key, { champion: null, challenger: null });
+    // Cold deep-link / not-yet-shipped endpoint — degrade gracefully.
+    _gateCache.set(key, _emptyGate());
   } finally {
-    _loadingEntries.delete(key);
+    _loadingGate.delete(key);
     if (typeof repaint === 'function') repaint();
   }
-  return _entriesCache.get(key);
+  return _gateCache.get(key);
+}
+
+function _emptyGate() {
+  return {
+    decision: null, reason: '', delta_scalar: null, delta_pass_rate: null,
+    rules: [], scalar_components: null, primary_driver: null, _empty: true,
+  };
+}
+
+async function ensureGrid(epochId, champId, chalId, repaint) {
+  if (!epochId || !chalId) return null;
+  const key = _key(epochId, champId, chalId);
+  if (_gridCache.has(key)) return _gridCache.get(key);
+  if (_loadingGrid.has(key)) return null;
+  _loadingGrid.add(key);
+  try {
+    const data = await fetchJson('/api/matchup-grid/'
+      + encodeURIComponent(epochId) + '/'
+      + encodeURIComponent(champId) + '/' + encodeURIComponent(chalId));
+    _gridCache.set(key, (data && typeof data === 'object') ? data : { entry_grid: [] });
+  } catch {
+    _gridCache.set(key, { entry_grid: [], scalar: null, _empty: true });
+  } finally {
+    _loadingGrid.delete(key);
+    if (typeof repaint === 'function') repaint();
+  }
+  return _gridCache.get(key);
 }
 
 async function ensureJudgesComparison(epochId, champId, chalId, repaint) {
   if (!epochId || !champId || !chalId) return null;
-  const key = epochId + '/' + champId + '->' + chalId;
+  const key = _key(epochId, champId, chalId);
   if (_judgeCmpCache.has(key)) return _judgeCmpCache.get(key);
   if (_loadingJudges.has(key)) return null;
   _loadingJudges.add(key);
@@ -64,7 +130,9 @@ async function ensureJudgesComparison(epochId, champId, chalId, repaint) {
       + encodeURIComponent(epochId) + '/'
       + encodeURIComponent(champId) + '/' + encodeURIComponent(chalId)
       + '/per-judge-comparison');
-    if (data && typeof data === 'object') _judgeCmpCache.set(key, data);
+    _judgeCmpCache.set(key, (data && typeof data === 'object')
+      ? data
+      : { judges: [], primary_driver: null });
   } catch {
     _judgeCmpCache.set(key, {
       epoch_id: epochId, champion: champId, challenger: chalId,
@@ -77,368 +145,369 @@ async function ensureJudgesComparison(epochId, champId, chalId, repaint) {
   return _judgeCmpCache.get(key);
 }
 
+// --- helpers ---------------------------------------------------------
+
 function _fmtNum(v) {
   if (typeof v !== 'number' || !isFinite(v)) return '—';
   return v.toFixed(3);
 }
 
-function _passRate(entries) {
-  if (!Array.isArray(entries) || entries.length === 0) return null;
-  let passed = 0;
-  let counted = 0;
-  for (const e of entries) {
-    const pf = e && e.pass_fail;
-    if (pf == null) continue;
-    counted += 1;
-    if (pf === true || pf === 1 || String(pf).toLowerCase() === 'pass') passed += 1;
-  }
-  if (counted === 0) return null;
-  return passed / counted;
+function _normalizeDecision(d) {
+  return d == null ? null : String(d).toLowerCase();
 }
 
-function _meanLoss(entries) {
-  if (!Array.isArray(entries) || entries.length === 0) return null;
-  let sum = 0;
-  let n = 0;
-  for (const e of entries) {
-    if (typeof e.drift_loss === 'number' && isFinite(e.drift_loss)) {
-      sum += e.drift_loss;
-      n += 1;
+// The promote margin: prefer an explicit margin baked into a gate rule's
+// detail, else the scoring margin in app state, else null (band omitted).
+function _resolveMargin(gate) {
+  const rules = gate && Array.isArray(gate.rules) ? gate.rules : [];
+  for (const r of rules) {
+    if (r && (r.id === 'scalar_margin' || /margin/i.test(r.label || ''))) {
+      if (typeof r.margin === 'number' && isFinite(r.margin)) return r.margin;
+      const m = String(r.detail || '').match(/(\d+(?:\.\d+)?)/);
+      if (m) {
+        const v = parseFloat(m[1]);
+        if (isFinite(v)) return v;
+      }
     }
   }
-  if (n === 0) return null;
-  return sum / n;
+  const sm = state.scoring && state.scoring.margin;
+  return (typeof sm === 'number' && isFinite(sm)) ? sm : null;
 }
 
-function findMatchup(championId, challengerId) {
-  const br = state.bracket || {};
-  const matchups = Array.isArray(br.matchups) ? br.matchups : [];
-  for (const m of matchups) {
-    if (m && m.champion === championId && m.challenger === challengerId) return m;
-  }
-  return null;
+function _isPass(v) {
+  return v === true || v === 1 || String(v).toLowerCase() === 'pass';
 }
 
-function _renderRoundSide(label, id, entries, opts) {
-  const o = opts || {};
-  const pr = _passRate(entries);
-  const ml = _meanLoss(entries);
-  const cls = ['round-side'];
-  if (label === 'champion') cls.push('round-side-champion');
-  else cls.push('round-side-challenger');
-  if (o.rejected) cls.push('is-rejected');
-  // A round side aggregates many per-entry runs (one per board entry).
-  // There is no single session id for the side as a whole, so we land
-  // on harmonograf's base URL scoped by the generation id via the
-  // gen-link's aria-label. Renders nothing when no harmonograf_url is
-  // configured, and only when this side has a real id.
-  const hgLink = id ? harmonografGenLink(id) : null;
-  const idRow = el('div', { class: 'round-side-id mono' }, [
-    id || '—',
-    hgLink ? ' ' : null,
-    hgLink,
-  ].filter(Boolean));
-  return el('div', { class: cls.join(' ') }, [
-    el('div', { class: 'round-side-label' }, [label]),
-    idRow,
-    el('div', { class: 'round-side-stats' }, [
-      el('div', { class: 'round-side-stat' }, [
-        el('div', { class: 'round-side-stat-label' }, ['pass rate']),
-        el('div', { class: 'round-side-stat-value' },
-          [pr == null ? '—' : (pr * 100).toFixed(0) + '%']),
-      ]),
-      el('div', { class: 'round-side-stat' }, [
-        el('div', { class: 'round-side-stat-label' }, ['drift loss']),
-        el('div', { class: 'round-side-stat-value' }, [_fmtNum(ml)]),
-      ]),
-    ]),
-  ]);
-}
+// --- HEADER + GATE LADDER + BAND + WATERFALL (vs slot) ---------------
 
-function _renderVs(params, matchup) {
+function _renderHeaderAndGate(epochId, champId, chalId) {
   const node = $('phase0-round-vs');
   if (!node) return;
   clearChildren(node);
-  if (!params || (!params.championId && !params.challengerId)) {
+
+  if (!epochId || !champId || !chalId) {
     node.appendChild(renderCard({
-      title: 'Matchup',
+      title: 'Decision',
       body: el('p', { class: 'empty' }, ['No matchup selected.']),
     }));
     return;
   }
-  // Both sides of the matchup need per-entry data to render the
-  // pass-rate / drift-loss columns. If neither side has landed yet,
-  // call out the loading state at the top-level card instead of
-  // letting it fall through to the all-zero round-side card.
-  const epochKey = (state.epochDef && state.epochDef.epoch_id) || params.epochId;
-  const champId0 = (params && params.championId) || (matchup && matchup.champion);
-  const chalId0  = (params && params.challengerId) || (matchup && matchup.challenger);
-  if (champId0 && chalId0
-      && !_entriesCache.get(epochKey + '/' + champId0 + '->' + chalId0)) {
-    node.appendChild(renderCard({
-      title: 'Matchup',
-      body: renderLoadingState({ label: 'Loading matchup' }),
-    }));
-    return;
-  }
-  const champId = (params && params.championId) || (matchup && matchup.champion) || '—';
-  const chalId  = (params && params.challengerId) || (matchup && matchup.challenger) || '—';
-  const cached = _entriesCache.get(
-    ((state.epochDef && state.epochDef.epoch_id) || params.epochId)
-    + '/' + champId + '->' + chalId);
-  const champEntries = (cached && cached.champion && Array.isArray(cached.champion.entries))
-    ? cached.champion.entries : [];
-  const chalEntries = (cached && cached.challenger && Array.isArray(cached.challenger.entries))
-    ? cached.challenger.entries : [];
 
-  const champMean = _meanLoss(champEntries);
-  const chalMean  = _meanLoss(chalEntries);
-  const delta = (champMean != null && chalMean != null) ? chalMean - champMean : null;
-  let sentimentClass = '';
-  let deltaText = '—';
-  if (delta != null) {
-    deltaText = (delta > 0 ? '+' : '') + delta.toFixed(3);
-    sentimentClass = delta < 0 ? 'is-good' : (delta > 0 ? 'is-bad' : '');
-  }
-  const decision = matchup ? (matchup.decision || '—').toString().toLowerCase() : null;
-  let pillVariant = 'neutral';
-  if (decision === 'promoted') pillVariant = 'promoted';
-  else if (decision === 'rejected') pillVariant = 'rejected';
-  else if (decision === 'deferred') pillVariant = 'deferred';
-  const isRejected = (decision === 'rejected');
-
-  const body = el('div', { class: 'round-vs' }, [
-    _renderRoundSide('champion', champId, champEntries),
-    el('div', { class: 'round-divider' }, [
-      el('div', { class: 'round-divider-arrow' }, ['vs']),
-      el('div', { class: 'round-divider-delta ' + sentimentClass }, [deltaText]),
-      decision ? renderPill(decision, pillVariant) : null,
-    ]),
-    _renderRoundSide('challenger', chalId, chalEntries, { rejected: isRejected }),
-  ]);
-  node.appendChild(renderCard({
-    title: 'Matchup',
-    body,
-  }));
-}
-
-function _renderEntries(epochId, champId, chalId) {
-  const node = $('phase0-round-entries');
-  if (!node) return;
-  clearChildren(node);
-  let body;
-  if (!epochId || !champId || !chalId) {
-    body = el('p', { class: 'empty' }, ['No matchup selected.']);
-  } else {
-    const cached = _entriesCache.get(epochId + '/' + champId + '->' + chalId);
-    if (!cached) {
-      body = renderLoadingState({ label: 'Loading per-entry comparison' });
-    } else {
-      const champEntries = (cached.champion && Array.isArray(cached.champion.entries))
-        ? cached.champion.entries : [];
-      const chalEntries = (cached.challenger && Array.isArray(cached.challenger.entries))
-        ? cached.challenger.entries : [];
-      const byEntry = new Map();
-      for (const r of champEntries) {
-        if (r && r.entry_id) byEntry.set(r.entry_id, { champ: r });
-      }
-      for (const r of chalEntries) {
-        if (r && r.entry_id) {
-          const slot = byEntry.get(r.entry_id) || {};
-          slot.chal = r;
-          byEntry.set(r.entry_id, slot);
-        }
-      }
-      if (byEntry.size === 0) {
-        body = renderEmptyState('No per-entry data recorded for this round.');
-      } else {
-        const wrap = el('div');
-        if (cached.challenger && cached.challenger.tournament_id) {
-          wrap.appendChild(el('p', {
-            style: 'font-size:var(--font-size-11); color:var(--color-text-muted); margin:0 0 var(--space-2); font-family:var(--font-mono);',
-          }, ['tournament · ', cached.challenger.tournament_id]));
-        }
-        const tbl = el('table', { class: 'ds-table' });
-        tbl.appendChild(el('thead', null, [el('tr', null, [
-          el('th', null, ['entry']),
-          el('th', null, ['champ drift']),
-          el('th', null, ['chal drift']),
-          el('th', null, ['Δ']),
-          el('th', null, ['pass flip']),
-        ])]));
-        const tbody = el('tbody');
-        const ids = Array.from(byEntry.keys()).sort();
-        for (const eid of ids) {
-          const { champ, chal } = byEntry.get(eid);
-          const c = (champ && typeof champ.drift_loss === 'number') ? champ.drift_loss : null;
-          const ch = (chal && typeof chal.drift_loss === 'number') ? chal.drift_loss : null;
-          const delta = (c != null && ch != null) ? (ch - c) : null;
-          let deltaClass = 'mono';
-          if (delta != null) {
-            if (delta < 0) deltaClass += ' delta-cell-good';
-            else if (delta > 0) deltaClass += ' delta-cell-bad';
-          }
-          const champPass = champ && (
-            champ.pass_fail === true || champ.pass_fail === 1
-            || String(champ.pass_fail).toLowerCase() === 'pass');
-          const chalPass = chal && (
-            chal.pass_fail === true || chal.pass_fail === 1
-            || String(chal.pass_fail).toLowerCase() === 'pass');
-          let flipNode;
-          if (champ && chal) {
-            if (champPass && !chalPass) flipNode = el('span', { class: 'mono flip-bad' }, ['pass → fail']);
-            else if (!champPass && chalPass) flipNode = el('span', { class: 'mono flip-good' }, ['fail → pass']);
-            else if (champPass && chalPass) flipNode = el('span', { class: 'mono', style: 'color:var(--color-text-muted)' }, ['both pass']);
-            else flipNode = el('span', { class: 'mono', style: 'color:var(--color-text-muted)' }, ['both fail']);
-          } else {
-            flipNode = el('span', { class: 'mono' }, ['—']);
-          }
-          tbody.appendChild(el('tr', null, [
-            el('td', { class: 'mono' }, [eid]),
-            el('td', { class: 'mono' }, [_fmtNum(c)]),
-            el('td', { class: 'mono' }, [_fmtNum(ch)]),
-            el('td', { class: deltaClass }, [_fmtNum(delta)]),
-            el('td', null, [flipNode]),
-          ]));
-        }
-        tbl.appendChild(tbody);
-        wrap.appendChild(tbl);
-        body = wrap;
-      }
-    }
-  }
-  node.appendChild(renderCard({
-    title: 'Per-entry comparison',
-    body,
-  }));
-}
-
-function _renderJudges(epochId, champId, chalId) {
-  const node = $('phase0-round-judges');
-  if (!node) return;
-  clearChildren(node);
-  let body;
-  if (!epochId || !champId || !chalId) {
-    body = el('p', { class: 'empty' }, ['No matchup selected.']);
-  } else {
-    const data = _judgeCmpCache.get(epochId + '/' + champId + '->' + chalId);
-    if (!data) {
-      body = renderLoadingState({ label: 'Loading per-judge comparison' });
-    } else {
-      const judges = Array.isArray(data.judges) ? data.judges : [];
-      if (judges.length === 0) {
-        const msg = data.note ? '(no per-judge data: ' + data.note + ')'
-          : '(no per-judge data recorded for either side)';
-        body = renderEmptyState(msg);
-      } else {
-        const wrap = el('div');
-        if (data.primary_driver) {
-          // The Phase 1 test asserts the text "primary driver" appears.
-          wrap.appendChild(el('p', {
-            style: 'font-size:var(--font-size-13); margin:0 0 var(--space-3); color:var(--color-text-primary);',
-          }, [
-            el('strong', null, ['primary driver: ']),
-            el('span', { class: 'mono' }, [data.primary_driver]),
-          ]));
-        }
-        const tbl = el('table', { class: 'ds-table' });
-        tbl.appendChild(el('thead', null, [el('tr', null, [
-          el('th', null, ['judge']),
-          el('th', null, ['champion']),
-          el('th', null, ['challenger']),
-          el('th', null, ['Δ']),
-        ])]));
-        const tbody = el('tbody');
-        for (const j of judges) {
-          const delta = (typeof j.delta === 'number' && isFinite(j.delta)) ? j.delta : null;
-          let dCls = 'mono';
-          if (delta != null) {
-            if (delta < 0) dCls += ' delta-cell-good';
-            else if (delta > 0) dCls += ' delta-cell-bad';
-          }
-          const isDriver = j.judge_name === data.primary_driver;
-          const nameContent = isDriver
-            ? [el('strong', null, [j.judge_name || '—'])]
-            : [j.judge_name || '—'];
-          tbody.appendChild(el('tr', null, [
-            el('td', { class: 'mono' }, nameContent),
-            el('td', { class: 'mono' }, [_fmtNum(j.champion_weighted_loss)]),
-            el('td', { class: 'mono' }, [_fmtNum(j.challenger_weighted_loss)]),
-            el('td', { class: dCls }, [_fmtNum(delta)]),
-          ]));
-        }
-        tbl.appendChild(tbody);
-        wrap.appendChild(tbl);
-        body = wrap;
-      }
-    }
-  }
-  node.appendChild(renderCard({
-    title: 'Per-judge comparison',
-    body,
-  }));
-}
-
-function _renderDecision(matchup) {
-  const node = $('phase0-round-decision');
-  if (!node) return;
-  clearChildren(node);
-  // The bracket lives in state.bracket; until it lands we say "Loading",
-  // not "No decision yet." — the latter implies the bracket exists and
-  // has no entry, which is not the loading case.
-  if (state.bracket == null) {
+  const gate = _gateCache.get(_key(epochId, champId, chalId));
+  if (!gate) {
     node.appendChild(renderCard({
       title: 'Decision',
       body: renderLoadingState({ label: 'Loading decision' }),
     }));
     return;
   }
-  if (!matchup) {
-    node.appendChild(renderCard({
-      title: 'Decision',
-      body: renderEmptyState('No decision yet.'),
-    }));
-    return;
-  }
-  const decision = (matchup.decision || '—').toString().toLowerCase();
-  let pillVariant = 'neutral';
-  if (decision === 'promoted') pillVariant = 'promoted';
-  else if (decision === 'rejected') pillVariant = 'rejected';
-  else if (decision === 'deferred') pillVariant = 'deferred';
-  const dsv = (typeof matchup.delta_scalar === 'number' && isFinite(matchup.delta_scalar))
-    ? matchup.delta_scalar.toFixed(3) : '—';
-  const driver = matchup.driver || matchup.rejection_reason || '';
-  const callAccent = decision === 'promoted' ? 'success'
-    : (decision === 'rejected' ? 'error' : 'warning');
-  const callBody = el('div', null, [
-    el('div', { style: 'display:flex; gap:var(--space-3); align-items:center; flex-wrap:wrap;' }, [
-      renderPill(decision, pillVariant),
-      el('span', { class: 'mono', style: 'font-size:var(--font-size-13);' },
-        ['Δ scalar · ', dsv]),
+
+  const decision = _normalizeDecision(gate.decision);
+  const champLink = harmonografGenLink(champId);
+  const chalLink = harmonografGenLink(chalId);
+
+  // 1. Header: champion → challenger + big verdict glyph + verdict word.
+  const header = el('div', { class: 'decision-header' }, [
+    el('div', { class: 'decision-header-matchup' }, [
+      el('span', { class: 'decision-side decision-side-champion mono' },
+        [champId, champLink ? ' ' : null, champLink].filter(Boolean)),
+      el('span', { class: 'decision-arrow', 'aria-hidden': 'true' }, ['→']),
+      el('span', { class: 'decision-side decision-side-challenger mono' },
+        [chalId, chalLink ? ' ' : null, chalLink].filter(Boolean)),
     ]),
-    driver ? el('p', {
-      style: 'margin:var(--space-3) 0 0; font-size:var(--font-size-13); color:var(--color-text-secondary);',
-    }, [String(driver)]) : null,
+    el('div', { class: 'decision-verdict' }, [
+      verdictGlyph(decision || 'neutral', { withLabel: true }),
+    ]),
   ]);
-  node.appendChild(renderCalloutCard({
+
+  const sections = [header];
+
+  // 2. Gate ladder — the legible why.
+  const rules = Array.isArray(gate.rules) ? gate.rules : [];
+  sections.push(el('div', { class: 'decision-section' }, [
+    el('h4', { class: 'decision-section-title' }, ['Gate']),
+    rules.length
+      ? gateLadder({ rules })
+      : renderEmptyState('Gate rules not available for this round.'),
+  ]));
+
+  // 3. Scalar band — where the challenger landed vs the ±margin window.
+  const sc = gate.scalar_components || null;
+  const champScalar = sc && typeof sc.champion === 'number' ? sc.champion : null;
+  const chalScalar = sc && typeof sc.challenger === 'number' ? sc.challenger : null;
+  const margin = _resolveMargin(gate);
+  let band = null;
+  if (champScalar != null && chalScalar != null) {
+    band = scalarBand({
+      champion: champScalar,
+      challenger: chalScalar,
+      margin: margin != null ? margin : 0,
+    });
+  }
+  if (band) {
+    sections.push(el('div', { class: 'decision-section' }, [
+      el('h4', { class: 'decision-section-title' }, ['Scalar vs margin']),
+      band,
+    ]));
+  }
+
+  // 4. Scalar waterfall — which component moved the loss.
+  const wfComponents = _waterfallComponents(epochId, champId, chalId, sc);
+  if (wfComponents.length) {
+    sections.push(el('div', { class: 'decision-section' }, [
+      el('h4', { class: 'decision-section-title' }, ['What moved the loss']),
+      scalarWaterfall({ components: wfComponents, label: 'challenger − champion, per component' }),
+    ]));
+  }
+
+  node.appendChild(renderCard({
     title: 'Decision',
-    accent: callAccent,
-    body: callBody,
+    accent: decision === 'promoted' ? 'success'
+      : (decision === 'rejected' ? 'error' : 'default'),
+    body: el('div', { class: 'decision-view' }, sections),
   }));
 }
 
+// The waterfall components are the per-component challenger−champion
+// change. The gate's scalar_components carries the two scalar totals; the
+// matchup-grid's `scalar.components` already carries the per-component
+// deltas — prefer that. Falls back to nothing when neither is present.
+function _waterfallComponents(epochId, champId, chalId, gateScalar) {
+  const grid = _gridCache.get(_key(epochId, champId, chalId));
+  const comps = grid && grid.scalar && grid.scalar.components;
+  if (comps && typeof comps === 'object') {
+    return Object.keys(comps)
+      .filter((name) => typeof comps[name] === 'number' && isFinite(comps[name]))
+      .map((name) => ({ name, delta: comps[name] }));
+  }
+  // Fall back to a single aggregate bar from the gate's scalar totals.
+  if (gateScalar && typeof gateScalar.champion === 'number'
+      && typeof gateScalar.challenger === 'number') {
+    return [{ name: 'scalar', delta: gateScalar.challenger - gateScalar.champion }];
+  }
+  return [];
+}
+
+// --- PER-ENTRY A/B as a DIVERGING BAR (entries slot) -----------------
+
+function _renderEntries(epochId, champId, chalId) {
+  const node = $('phase0-round-entries');
+  if (!node) return;
+  clearChildren(node);
+
+  let body;
+  if (!epochId || !chalId) {
+    body = el('p', { class: 'empty' }, ['No matchup selected.']);
+  } else {
+    const grid = _gridCache.get(_key(epochId, champId, chalId));
+    if (!grid) {
+      body = renderLoadingState({ label: 'Loading per-entry comparison' });
+    } else {
+      const entryGrid = Array.isArray(grid.entry_grid) ? grid.entry_grid : [];
+      if (entryGrid.length === 0) {
+        body = renderEmptyState('No per-entry data recorded for this round.');
+      } else {
+        const rows = [];
+        for (const e of entryGrid) {
+          if (!e) continue;
+          const delta = (typeof e.delta === 'number' && isFinite(e.delta))
+            ? e.delta
+            : ((typeof e.child_drift_loss === 'number' && typeof e.parent_drift_loss === 'number')
+                ? e.child_drift_loss - e.parent_drift_loss : null);
+          if (delta == null) continue;
+          // Flag a pass→fail flip (a monotonicity regression).
+          const champPass = _isPass(e.parent_pass);
+          const chalPass = _isPass(e.child_pass);
+          const flipped = (e.parent_pass != null && e.child_pass != null)
+            && champPass && !chalPass;
+          rows.push({
+            label: e.entry_id || '—',
+            delta,
+            annotation: flipped
+              ? { glyph: '⚠', title: 'pass→fail (monotonicity)' }
+              : undefined,
+          });
+        }
+        if (rows.length === 0) {
+          body = renderEmptyState('No comparable per-entry drift deltas.');
+        } else {
+          // Lower drift loss is better → a negative challenger−champion
+          // delta is the good direction.
+          body = divergingBar({ rows, goodWhenNegative: true });
+        }
+      }
+    }
+  }
+  node.appendChild(renderCard({
+    title: 'Per-entry A/B (challenger − champion drift)',
+    body,
+  }));
+}
+
+// --- PRIMARY DRIVER call-out (judges slot) ---------------------------
+
+function _driverFromGate(gate) {
+  // Gate's primary_driver is {judge, delta} | null.
+  const pd = gate && gate.primary_driver;
+  if (pd && typeof pd === 'object' && pd.judge) {
+    return { judge: pd.judge, delta: typeof pd.delta === 'number' ? pd.delta : null };
+  }
+  return null;
+}
+
+function _driverFromJudges(judgeData) {
+  // Per-judge-comparison's primary_driver is a judge_name string.
+  const name = judgeData && judgeData.primary_driver;
+  if (typeof name !== 'string' || !name) return null;
+  const judges = Array.isArray(judgeData.judges) ? judgeData.judges : [];
+  const match = judges.find((j) => j && j.judge_name === name);
+  return { judge: name, delta: match && typeof match.delta === 'number' ? match.delta : null };
+}
+
+function _renderDriver(epochId, champId, chalId) {
+  const node = $('phase0-round-judges');
+  if (!node) return;
+  clearChildren(node);
+
+  if (!epochId || !champId || !chalId) {
+    node.appendChild(renderCard({
+      title: 'Primary driver',
+      body: el('p', { class: 'empty' }, ['No matchup selected.']),
+    }));
+    return;
+  }
+
+  const gate = _gateCache.get(_key(epochId, champId, chalId));
+  const judgeData = _judgeCmpCache.get(_key(epochId, champId, chalId));
+  if (!gate && !judgeData) {
+    node.appendChild(renderCard({
+      title: 'Primary driver',
+      body: renderLoadingState({ label: 'Loading primary driver' }),
+    }));
+    return;
+  }
+
+  const driver = _driverFromGate(gate) || _driverFromJudges(judgeData);
+  if (!driver) {
+    node.appendChild(renderCard({
+      title: 'Primary driver',
+      body: renderEmptyState('No primary driver recorded for this round.'),
+    }));
+    return;
+  }
+
+  const deltaText = driver.delta != null
+    ? (driver.delta > 0 ? '+' : '') + driver.delta.toFixed(3)
+    : '—';
+  const deltaCls = 'decision-driver-delta mono'
+    + (driver.delta != null ? (driver.delta < 0 ? ' is-good' : (driver.delta > 0 ? ' is-bad' : '')) : '');
+
+  node.appendChild(renderCard({
+    title: 'Primary driver',
+    body: el('p', { class: 'decision-driver' }, [
+      'Decision driven by judge ',
+      el('strong', { class: 'mono' }, [driver.judge]),
+      ' (Δ ',
+      el('span', { class: deltaCls }, [deltaText]),
+      ').',
+    ]),
+  }));
+}
+
+// --- PROMOTE / REJECT controls (decision slot) -----------------------
+
+function _renderControls(epochId, champId, chalId) {
+  const node = $('phase0-round-decision');
+  if (!node) return;
+  clearChildren(node);
+
+  const challengerId = chalId;
+  if (!challengerId) {
+    node.appendChild(renderCard({
+      title: 'Controls',
+      body: el('p', { class: 'empty' }, ['No challenger selected.']),
+    }));
+    return;
+  }
+
+  const readOnly = !!(state.health && state.health.read_only);
+
+  const status = el('p', {
+    class: 'decision-controls-status',
+    style: 'margin:var(--space-3) 0 0; font-size:var(--font-size-12); color:var(--color-text-muted);',
+  }, ['']);
+
+  function makeButton(action, label, variant) {
+    const btn = el('button', {
+      class: 'btn btn-' + variant + ' decision-control decision-control-' + action,
+      type: 'button',
+      'data-action': action,
+    }, [label]);
+    if (readOnly) {
+      btn.setAttribute('disabled', 'disabled');
+      btn.setAttribute('aria-disabled', 'true');
+    } else {
+      btn.addEventListener('click', async () => {
+        // Confirm before POST.
+        const ok = (typeof globalThis.confirm === 'function')
+          ? globalThis.confirm(action + ' challenger ' + challengerId + '?')
+          : true;
+        if (!ok) return;
+        btn.setAttribute('disabled', 'disabled');
+        status.textContent = 'sending ' + action + '…';
+        try {
+          const res = await postControl(action + '/' + encodeURIComponent(challengerId), {
+            epoch_id: epochId, champion: champId, challenger: challengerId,
+          });
+          if (res && res.ok) {
+            status.textContent = action + ' recorded (manual enactment).';
+          } else {
+            status.textContent = action + ' rejected (HTTP '
+              + (res ? res.status : '?') + ').';
+            btn.removeAttribute('disabled');
+          }
+        } catch {
+          status.textContent = action + ' failed (network).';
+          btn.removeAttribute('disabled');
+        }
+      });
+    }
+    return btn;
+  }
+
+  const buttons = el('div', { class: 'decision-controls-row' }, [
+    makeButton('promote', 'Promote', 'success'),
+    makeButton('reject', 'Reject', 'error'),
+  ]);
+
+  const note = el('p', {
+    class: 'decision-controls-note',
+    style: 'margin:var(--space-2) 0 0; font-size:var(--font-size-11); color:var(--color-text-muted);',
+  }, [readOnly
+    ? 'read-only workspace — controls disabled.'
+    : 'recorded (manual enactment) — the orchestrator does not yet consume control files.']);
+
+  node.appendChild(renderCalloutCard({
+    title: 'Controls',
+    accent: readOnly ? 'warning' : 'accent',
+    body: el('div', { class: 'decision-controls' }, [buttons, note, status]),
+  }));
+}
+
+// --- entry point -----------------------------------------------------
+
 export function renderPhase0Round(params, repaint) {
-  const matchup = (params && params.championId && params.challengerId)
-    ? findMatchup(params.championId, params.challengerId)
-    : null;
   const epochId = (params && params.epochId)
     || (state.epochDef && state.epochDef.epoch_id) || null;
-  const champId = params && params.championId;
-  const chalId = params && params.challengerId;
-  ensureEntries(epochId, champId, chalId, repaint);
+  const champId = (params && params.championId) || null;
+  const chalId = (params && params.challengerId) || null;
+
+  ensureGate(epochId, champId, chalId, repaint);
+  ensureGrid(epochId, champId, chalId, repaint);
   ensureJudgesComparison(epochId, champId, chalId, repaint);
-  _renderVs(params, matchup);
+
+  _renderHeaderAndGate(epochId, champId, chalId);
   _renderEntries(epochId, champId, chalId);
-  _renderJudges(epochId, champId, chalId);
-  _renderDecision(matchup);
+  _renderDriver(epochId, champId, chalId);
+  _renderControls(epochId, champId, chalId);
 }

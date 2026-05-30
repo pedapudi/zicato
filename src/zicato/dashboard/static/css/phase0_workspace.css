@@ -1,0 +1,47 @@
+/* css/phase0_workspace.css — L0 (workspace) layout.
+ *
+ * L0-LAYOUT styling only. Component styling (the lineage ribbon, the
+ * loop-health banner, the verdict glyph) lives in css/structural.css /
+ * css/decision.css and is owned by the component teams — this file
+ * never restyles a component's internals, it only positions L0's own
+ * containers and tightens spacing around the consumed components.
+ *
+ * NOTE for the integrator: wire this file into index.html with
+ *   <link rel="stylesheet" href="css/phase0_workspace.css" />
+ * alongside css/structural.css and css/decision.css (the ribbon /
+ * banner / decision components). It is not linked here because
+ * index.html is outside this change's ownership.
+ *
+ * The legacy `.epoch-timeline` and `.trend-card-*` rules formerly used
+ * by L0 are NOT referenced from this view anymore (the ribbon replaced
+ * the epoch timeline and subsumed the cross-epoch sparkline). Their
+ * rules remain in components.css but are now dead with respect to L0. */
+
+/* The loop-health banner sits full-width at the very top of the
+ * workspace view, above the identity strip, with a little breathing
+ * room beneath it before the Environment / glance cards. */
+.phase0-shell .phase0-health-banner-wrap {
+  margin-bottom: var(--space-4, 1rem);
+}
+
+/* The lineage ribbon can overflow horizontally on long lineages; the
+ * ribbon component ships its own .ribbon-scroll, so here we just make
+ * sure the L0 lineage slot does not clip that scroll region and gives
+ * the ribbon a comfortable minimum height so short lineages don't look
+ * cramped against the card chrome. */
+.phase0-shell .phase0-workspace-lineage .ribbon {
+  width: 100%;
+}
+
+.phase0-shell .phase0-workspace-lineage .ribbon-scroll {
+  overflow-x: auto;
+}
+
+/* The cross-epoch sparkline slot is intentionally empty now (the ribbon
+ * owns the trajectory). Collapse it so it contributes no stray vertical
+ * gap between the ribbon and Recent decisions. */
+.phase0-shell .phase0-workspace-sparkline:empty {
+  display: none;
+  margin: 0;
+  padding: 0;
+}

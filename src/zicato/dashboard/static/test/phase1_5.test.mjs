@@ -194,12 +194,13 @@ test('renderPhase0Epoch renders Recent experiments as full-width cards', () => {
     const text = document.getElementById('phase0-epoch-experiments').textContent;
     assert(text.includes('Recent experiments'),
       `section header must render; got: ${text.slice(0, 200)}`);
-    // Card layout: generation id, uppercase verdict pill, and the
-    // labelled "why" / "predicted" inline rows.
+    // Card layout: generation id, the shared verdict glyph (lowercase
+    // 'promoted' label, consistent dashboard-wide), and the labelled
+    // "why" / "predicted" inline rows.
     assert(text.includes('v3'),
       'generation id must render in the card header');
-    assert(text.includes('PROMOTED'),
-      `verdict pill must render as uppercase label; got: ${text.slice(0, 200)}`);
+    assert(text.includes('promoted'),
+      `the shared verdict glyph label must render; got: ${text.slice(0, 200)}`);
     assert(text.includes('topicality constraints'),
       'core_idea must render as the prominent first body line');
     assert(text.includes('why'),
@@ -249,7 +250,7 @@ test('renderPhase0Epoch shows empty state when no experiments yet', () => {
 // column compares predicted dimensions to the actual outcome. The
 // outcome metric numbers live in the hero card above, not here.
 
-test('renderPhase0Generation hypothesis card renders Hypothesis + Alignment columns', () => {
+test('renderPhase0Generation merges the bet + outcome into one "Did the bet pay off?" panel', () => {
   installNode('phase0-gen-hypothesis');
   installNode('phase0-gen-patches');
   installNode('phase0-gen-entries');
@@ -260,17 +261,22 @@ test('renderPhase0Generation hypothesis card renders Hypothesis + Alignment colu
     epoch_id: 'e0',
     experiments: [SAMPLE_EXP],
   };
-  const restoreFetch = mockFetch(() => ({}));
+  const restoreFetch = mockFetch(() => ({ movements: [] }));
   try {
     generation.renderPhase0Generation({ epochId: 'e0', generationId: 'v3' });
     const text = document.getElementById('phase0-gen-hypothesis').textContent;
-    assert(text.includes('Hypothesis') && text.includes('Alignment vs Outcome'),
-      `both column headers must render; got: ${text.slice(0, 200)}`);
-    // The Hypothesis column owns the operator's risks block (relocated
-    // into the alignment column at the bottom). Modulating sites no
-    // longer surface here — they are the same data as the Patches card.
+    // The redesign folds the old two-card (Hypothesis | Alignment vs
+    // Outcome) split into ONE narrative panel.
+    assert(text.includes('Did the bet pay off?'),
+      `merged panel title must render; got: ${text.slice(0, 200)}`);
+    assert(text.includes('The bet'),
+      `the bet premise heading must render; got: ${text.slice(0, 200)}`);
+    assert(!text.includes('Alignment vs Outcome'),
+      `old "Alignment vs Outcome" header must NOT survive the merge; got: ${text.slice(0, 200)}`);
+    // The panel still owns the operator's risks block. Modulating sites
+    // no longer surface here — they are the same data as the Patches card.
     assert(text.includes('Risks (operator-stated)'),
-      `risks block must render in the alignment column; got: ${text.slice(0, 400)}`);
+      `risks block must render in the panel; got: ${text.slice(0, 400)}`);
     assert(!text.includes('Modulating.'),
       `redundant Modulating line must NOT render — it duplicates Patches; got: ${text.slice(0, 200)}`);
   } finally {

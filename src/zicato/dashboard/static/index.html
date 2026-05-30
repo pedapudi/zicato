@@ -10,6 +10,11 @@
   <link rel="stylesheet" href="css/components.css" />
   <link rel="stylesheet" href="css/decision.css" />
   <link rel="stylesheet" href="css/structural.css" />
+  <link rel="stylesheet" href="css/phase0_shell.css" />
+  <link rel="stylesheet" href="css/phase0_workspace.css" />
+  <link rel="stylesheet" href="css/phase0_epoch.css" />
+  <link rel="stylesheet" href="css/phase0_generation.css" />
+  <link rel="stylesheet" href="css/phase0_round.css" />
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -46,6 +51,16 @@
       <span id="mock-badge" class="badge deferred hidden">mock</span>
     </div>
   </header>
+
+  <!-- Persistent live rail — a slim strip below the top bar that is
+       visible at EVERY level whenever a run is active. The shell paints
+       the in-flight champion vs challenger matchup + entry progress
+       (done / in-flight / queued) + a "jump to decision" link into the
+       L3 round view here, and toggles the ``hidden`` class when the
+       supervisor is idle. Digest-gated so an SSE heartbeat that only
+       re-stamps a timestamp does not flash the rail. -->
+  <div id="phase0-live-rail" class="phase0-live-rail hidden"
+      role="status" aria-label="Live tournament" aria-hidden="true"></div>
 
   <!-- Status pill dropdown panel — painted below the top bar by the
        status pill component when the pill is clicked. Always present in

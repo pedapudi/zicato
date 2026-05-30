@@ -1,41 +1,68 @@
 // views/phase0_workspace.js — L0 (workspace-level) view.
 //
-// The cross-environment overview: identity / environment card, a
-// "Workspace at a glance" tile strip with workspace-wide totals, an
-// epoch lineage timeline, and a cross-epoch best-scalar sparkline.
+// The cross-environment overview, redesigned around two unifying ideas:
 //
-// The in-content Live Activity card was retired once the redesigned
-// sidebar (post-#198) made Live Activity a persistent fixture of the
-// left rail. L0 main is now purely a workspace-level summary; the
-// sidebar carries the live-run state across every level. Each section
-// renders INTO its pre-existing slot (``phase0-workspace-env`` etc.)
-// so tests reading those slots see the expected text; the slots
-// themselves were defined in index.html.
+//   1. A loop-health banner at the very top answers "is this loop even
+//      meaningful right now" before anything else. It is fed by
+//      GET /api/health-report and rendered through the shared
+//      ``healthBanner`` component.
 //
-// Layout (post-dedup):
-//   * env slot — Environment card (left) + "Workspace at a glance"
-//     totals tile (right) in a 2-up strip.
-//   * lineage slot — full-width Epoch lineage card.
-//   * sparkline slot — full-width Cross-epoch trend card with a wider
-//     sparkline (the freed vertical space lets the curve breathe).
+//   2. A single lineage ribbon (``lineageRibbon`` at epoch zoom)
+//      replaces what used to be TWO separate pictures of the same data:
+//      the epoch-lineage timeline and the cross-epoch best-scalar
+//      sparkline. The ribbon encodes the scalar in each node's
+//      y-position, so the spine literally traces the optimization curve
+//      — it SUBSUMES the sparkline. The old ``epoch-timeline`` and the
+//      separate trend/sparkline card are both gone.
+//
+// What remains:
+//   * env slot — loop-health banner (full width, top) + a tightened
+//     identity strip: Environment card (left) + "Workspace at a glance"
+//     totals tile (right).
+//   * lineage slot — the unified lineage ribbon (epoch zoom). Clicking a
+//     node drills into that epoch (L1) via ``phase0Href``.
+//   * sparkline slot — intentionally cleared. The slot still exists in
+//     index.html (we must not edit it) but L0 renders nothing into it
+//     now that the ribbon owns the trajectory.
+//   * recent slot — Recent decisions, the chronological companion to the
+//     ribbon's topological view. Verdict marks now speak through the
+//     shared ``verdictGlyph`` so they read identically everywhere.
+//
+// The in-content Live Activity card was retired earlier (#206); the
+// sidebar owns live-run state across every level.
+//
+// L0-layout styling lives in ``css/phase0_workspace.css`` (a new file;
+// the integrator wires its <link> into index.html alongside
+// structural.css). Component styling (ribbon, banner, glyph) lives in
+// ``css/structural.css`` / ``css/decision.css`` and is owned by the
+// component teams — this view never touches it.
 
 import { $, el, clearChildren } from '../core/dom.js';
 import { fetchJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import { phase0Href } from './phase0_router.js';
 import { renderCard } from '../components/card.js';
-import { renderPill } from '../components/pill.js';
-import { renderSparkline } from '../components/sparkline.js';
 import { renderMetricTile } from '../components/tile.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
+// Shipped components — imported by direct path, consumed as-is.
+import { lineageRibbon } from '../components/lineage_ribbon.js';
+import { healthBanner } from '../components/health_banner.js';
+import { verdictGlyph } from '../components/verdict_glyph.js';
 
 // Cached workspace payload (per-tab; refetched when the L0 view opens).
 let _workspaceCache = null;
 let _workspaceLoading = false;
 
+// Cached loop-health report. ``undefined`` = never fetched, ``null`` =
+// fetched-but-empty/failed (the banner degrades gracefully on null).
+let _healthCache;
+let _healthLoading = false;
+
 export function resetWorkspaceCache() {
   _workspaceCache = null;
   _workspaceLoading = false;
+  _healthCache = undefined;
+  _healthLoading = false;
 }
 
 export function workspacePayload() { return _workspaceCache; }
@@ -48,10 +75,10 @@ async function ensureWorkspace(repaint) {
     if (data && typeof data === 'object') {
       _workspaceCache = data;
     } else {
-      _workspaceCache = { epochs: [], sparkline: [], current_epoch_id: null };
+      _workspaceCache = { epochs: [], current_epoch_id: null };
     }
   } catch {
-    _workspaceCache = { epochs: [], sparkline: [], current_epoch_id: null };
+    _workspaceCache = { epochs: [], current_epoch_id: null };
   } finally {
     _workspaceLoading = false;
     if (typeof repaint === 'function') repaint();
@@ -59,9 +86,32 @@ async function ensureWorkspace(repaint) {
   return _workspaceCache;
 }
 
+async function ensureHealth(repaint) {
+  if (_healthCache !== undefined || _healthLoading) return _healthCache;
+  _healthLoading = true;
+  try {
+    const data = await fetchJson('/api/health-report');
+    _healthCache = (data && typeof data === 'object') ? data : null;
+  } catch {
+    _healthCache = null;
+  } finally {
+    _healthLoading = false;
+    if (typeof repaint === 'function') repaint();
+  }
+  return _healthCache;
+}
+
 function _fmtScalar(v) {
   if (typeof v !== 'number' || !isFinite(v)) return '—';
   return v.toFixed(3);
+}
+
+// -- Loop-health banner ------------------------------------------------
+function _renderHealthBanner() {
+  // ``_healthCache === undefined`` → fetch still in flight; render the
+  // banner's own muted "not yet evaluated" state by passing null.
+  const report = _healthCache === undefined ? null : _healthCache;
+  return healthBanner({ report });
 }
 
 // -- Environment + workspace totals -----------------------------------
@@ -81,16 +131,15 @@ function _renderEnvKv() {
   if (typeof ws !== 'object') {
     return el('p', { class: 'empty' }, ['No environment fields.']);
   }
-  // Phase 1 tests look for specific values rendered as text — entrypoint,
-  // source roots, mutation count, instance id. We preserve those.
+  // Identity strip — the durable "where am I" facts. We keep the load-
+  // bearing identifiers (entrypoint, instance, roots, mutation count)
+  // and drop the path triplet that the L1+ views already surface, so
+  // the strip stays a tight identity card next to the ribbon.
   const ordered = [
     ['root', ws.root],
     ['adk_entrypoint', ws.adk_entrypoint],
     ['instance_id', ws.instance_id],
     ['created_at', ws.created_at],
-    ['board_path', ws.board_path],
-    ['brief_path', ws.brief_path],
-    ['scoring_path', ws.scoring_path],
     ['mutation_point_count',
       typeof ws.mutation_point_count === 'number' ? ws.mutation_point_count : null],
   ];
@@ -113,9 +162,8 @@ function _renderEnvKv() {
 }
 
 // "Workspace at a glance" — a tile strip with workspace-wide totals
-// computed from the lineage payload. Replaces the in-content Live
-// Activity card that used to occupy this column; the sidebar owns
-// live-run state, so L0 main is now strictly summary.
+// computed from the lineage payload. The sidebar owns live-run state, so
+// L0 main is strictly summary.
 function _renderGlanceBody() {
   if (_workspaceCache == null) {
     return renderLoadingState({ label: 'Loading totals' });
@@ -180,9 +228,12 @@ function _renderEnvSection() {
   const node = $('phase0-workspace-env');
   if (!node) return;
   clearChildren(node);
-  // Two-card top strip: Environment (left) + Workspace at a glance
-  // (right). The lineage slot below renders the lineage; the sparkline
-  // slot at the bottom renders the trend (so we keep three slots).
+  // Loop-health banner spans the full width at the very top, then the
+  // two-card identity strip: Environment (left) + Workspace at a glance
+  // (right).
+  node.appendChild(el('div', { class: 'phase0-health-banner-wrap' }, [
+    _renderHealthBanner(),
+  ]));
   const strip = el('div', { class: 'phase0-view-strip phase0-view-strip-2' }, [
     renderCard({
       title: 'Environment',
@@ -197,61 +248,59 @@ function _renderEnvSection() {
   node.appendChild(strip);
 }
 
-// -- Epoch lineage -----------------------------------------------------
-function _renderLineageTimeline() {
-  // The workspace cache is the source of truth for the lineage. Null
-  // means the /api/workspace fetch is still in flight; an empty epochs
-  // array means the workspace is loaded but actually has no epochs.
+// -- Lineage ribbon (epoch zoom) --------------------------------------
+//
+// Builds ribbon nodes from the workspace epochs. The ribbon's geometry
+// (x = order, y = scalar) makes this single picture do the work of the
+// old timeline AND the old cross-epoch sparkline.
+//
+//   * id       — epoch_id (what onSelect drills into)
+//   * parentId — parent_epoch_id (lineage edges)
+//   * scalar   — best_scalar (drives the y-trajectory)
+//   * verdict  — 'promoted' when the epoch promoted anything, else
+//                'open' (epochs do not get "rejected"); the live epoch
+//                additionally carries live:true so the ribbon dashes its
+//                final hop and pulses the node.
+//   * live     — current_epoch_id
+//   * label    — epoch_id (epoch zoom leads with the id + its scalar)
+function _ribbonNodes() {
+  const payload = _workspaceCache;
+  const rows = Array.isArray(payload && payload.epochs) ? payload.epochs : [];
+  const cur = payload ? payload.current_epoch_id : null;
+  return rows
+    .filter((r) => r && r.epoch_id != null)
+    .map((r) => ({
+      id: r.epoch_id,
+      parentId: r.parent_epoch_id != null ? r.parent_epoch_id : null,
+      scalar: (typeof r.best_scalar === 'number' && isFinite(r.best_scalar))
+        ? r.best_scalar : null,
+      verdict: (r.promoted_count || 0) > 0 ? 'promoted' : 'open',
+      live: r.epoch_id === cur,
+      label: r.epoch_id,
+    }));
+}
+
+function _renderLineageBody() {
+  // Null cache = the /api/workspace fetch is still in flight.
   if (_workspaceCache == null) {
     return renderLoadingState({ label: 'Loading lineage' });
   }
-  const payload = _workspaceCache;
-  const rows = Array.isArray(payload.epochs) ? payload.epochs : [];
-  if (rows.length === 0) {
+  const nodes = _ribbonNodes();
+  if (nodes.length === 0) {
     return renderEmptyState('No epochs recorded.');
   }
-  // Build a child-of map so the lineage column can carry an "→ <child>"
-  // arrow (the Phase 1 test asserts this exact text).
-  const childOf = new Map();
-  for (const r of rows) {
-    if (r && r.parent_epoch_id && r.epoch_id) {
-      if (!childOf.has(r.parent_epoch_id)) {
-        childOf.set(r.parent_epoch_id, r.epoch_id);
+  return lineageRibbon({
+    nodes,
+    zoom: 'epochs',
+    onSelect: (epochId) => {
+      // Drill into the epoch (L1) via the hash router — the same
+      // ``phase0Href`` contract the rest of L0 uses for its links.
+      if (epochId == null) return;
+      if (typeof window !== 'undefined' && window.location) {
+        window.location.hash = phase0Href('epoch', { epochId });
       }
-    }
-  }
-  const cur = payload.current_epoch_id;
-  const tl = el('div', { class: 'epoch-timeline' });
-  for (const r of rows) {
-    const isLive = r.epoch_id === cur;
-    const isClosed = !!r.closed;
-    const hasPromoted = (r.promoted_count || 0) > 0;
-    const variantClass = isLive ? 'is-live' : (hasPromoted ? 'is-promoted' : '');
-    const statusPill = isLive
-      ? renderPill('live', 'live')
-      : (isClosed ? renderPill('closed', 'neutral') : renderPill('open', 'info'));
-    const child = childOf.get(r.epoch_id);
-    const arrowSuffix = child ? ' → ' + child : '';
-
-    const item = el('a', {
-      class: 'epoch-timeline-item ' + variantClass,
-      href: phase0Href('epoch', { epochId: r.epoch_id }),
-    }, [
-      el('span', { class: 'epoch-timeline-dot', 'aria-hidden': 'true' }),
-      el('div', null, [
-        el('div', { class: 'epoch-timeline-name' }, [r.epoch_id + arrowSuffix]),
-        el('div', { class: 'epoch-timeline-goal' },
-          [r.goal || '(no goal recorded)']),
-      ]),
-      el('span', { class: 'epoch-timeline-scalar' },
-        ['best · ' + _fmtScalar(r.best_scalar)
-          + ' · ' + (r.generation_count || 0) + ' gens'
-          + ' · ' + (r.promoted_count || 0) + ' promoted']),
-      el('span', { class: 'epoch-timeline-status' }, [statusPill]),
-    ]);
-    tl.appendChild(item);
-  }
-  return tl;
+    },
+  });
 }
 
 function _renderLineageSection() {
@@ -260,73 +309,32 @@ function _renderLineageSection() {
   clearChildren(node);
   node.appendChild(renderCard({
     title: 'Epoch lineage',
-    subtitle: 'The full history of this workspace, oldest to newest.',
-    body: _renderLineageTimeline(),
+    subtitle: 'Each epoch placed by its best scalar — lower sits higher, '
+      + 'so the spine traces the optimization curve.',
+    body: _renderLineageBody(),
   }));
 }
 
-// -- Cross-epoch trend -------------------------------------------------
-function _renderTrendBody() {
-  if (_workspaceCache == null) {
-    return renderLoadingState({ label: 'Loading trend' });
-  }
-  const payload = _workspaceCache;
-  const pts = Array.isArray(payload.sparkline) ? payload.sparkline : [];
-  if (pts.length === 0) {
-    return renderEmptyState('No scalar history yet.');
-  }
-  const values = pts.map((p) => p && p.scalar)
-    .filter((v) => typeof v === 'number' && isFinite(v));
-  const firstFinite = values.length > 0 ? values[0] : null;
-  const lastFinite = values.length > 0 ? values[values.length - 1] : null;
-  const delta = (firstFinite != null && lastFinite != null)
-    ? lastFinite - firstFinite : null;
-  const sentiment = delta == null ? 'flat'
-    : (delta < 0 ? 'good' : (delta > 0 ? 'bad' : 'flat'));
-
-  return el('div', { class: 'trend-card-body' }, [
-    el('div', { class: 'trend-card-meta' }, [
-      el('div', { class: 'tile-strip' }, [
-        renderMetricTile({ label: 'epochs', value: pts.length }),
-        renderMetricTile({ label: 'latest best', value: _fmtScalar(lastFinite) }),
-        renderMetricTile({
-          label: 'Δ vs first',
-          value: delta == null ? '—' : (delta > 0 ? '+' : '') + delta.toFixed(3),
-          sentiment,
-        }),
-      ]),
-    ]),
-    el('div', { class: 'trend-card-spark' }, [
-      // The freed vertical space (the in-content Live Activity card
-      // is gone) lets the trend sparkline take a noticeably wider
-      // canvas — 360×72 reads as a real chart, not a thumbnail.
-      values.length >= 2
-        ? renderSparkline(values, {
-            width: 360, height: 72, ariaLabel: 'cross-epoch best-scalar curve',
-            fill: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
-          })
-        : el('span', { class: 'empty' }, ['need ≥ 2 epochs for a trend line']),
-    ]),
-  ]);
-}
-
-function _renderSparklineSection() {
+// -- Removed: the standalone cross-epoch trend / sparkline card --------
+//
+// The ribbon's y-axis IS the trajectory, so a second sparkline would be
+// redundant. The ``phase0-workspace-sparkline`` slot still exists in
+// index.html (not ours to edit), so we explicitly clear it to leave no
+// stale chrome behind across re-renders.
+function _clearSparklineSection() {
   const node = $('phase0-workspace-sparkline');
   if (!node) return;
   clearChildren(node);
-  node.appendChild(renderCard({
-    title: 'Cross-epoch trend',
-    subtitle: 'Best (lowest) scalar per epoch — lower is better.',
-    body: _renderTrendBody(),
-  }));
 }
 
 // -- Recent decisions --------------------------------------------------
 //
 // Pulls the most recent experiments off ``state.epochDef.experiments``,
 // reverse-chronological, capped at 10. Each row is clickable → L2 for
-// that generation. Card title "RECENT DECISIONS" with a "view all
-// generations →" link to L1 in the card footer.
+// that generation, and wears the shared ``verdictGlyph`` mark. This is
+// the CHRONOLOGICAL companion to the ribbon's topological view: the
+// ribbon shows the whole-lineage shape; this shows the last N decisions
+// with their scalar deltas.
 
 const RECENT_DECISIONS_CAP = 10;
 
@@ -337,6 +345,20 @@ function _recentDecisionsRows() {
   // Reverse so latest-first (experiments are appended in chronological
   // order in the journal); cap at 10 so the card stays a glance.
   return xs.slice().reverse().slice(0, RECENT_DECISIONS_CAP);
+}
+
+// Normalize a journal experiment's outcome to the shared verdict
+// vocabulary ('promoted' | 'rejected' | 'open').
+function _verdictKey(exp) {
+  const out = exp.outcome && typeof exp.outcome === 'object' ? exp.outcome : {};
+  const raw = exp.verdict
+    || (typeof exp.outcome === 'string' ? exp.outcome : null)
+    || out.tournament_decision
+    || '';
+  const v = String(raw).toLowerCase();
+  if (v.startsWith('prom') || v === 'accepted') return 'promoted';
+  if (v.startsWith('rej')) return 'rejected';
+  return 'open';
 }
 
 function _recentDecisionsBody() {
@@ -352,44 +374,30 @@ function _recentDecisionsBody() {
   const list = el('div', { class: 'phase0-recent-decisions' });
   for (const exp of rows) {
     const genId = exp.generation_id || exp.gen_id || exp.id || '—';
-    // ``outcome`` is the journal payload — an object with
-    // ``tournament_decision`` + ``scalar_score_delta`` in production.
-    // ``verdict`` is the short form used in tests + legacy fixtures.
-    const out = exp.outcome && typeof exp.outcome === 'object'
-      ? exp.outcome : {};
-    const verdictRaw = exp.verdict
-      || (typeof exp.outcome === 'string' ? exp.outcome : null)
-      || out.tournament_decision
-      || '';
-    const verdict = String(verdictRaw).toLowerCase();
+    const out = exp.outcome && typeof exp.outcome === 'object' ? exp.outcome : {};
+    const verdict = _verdictKey(exp);
     const scalarRaw = exp.scalar != null ? exp.scalar
       : (out.scalar_score_delta != null ? out.scalar_score_delta : null);
     const scalar = scalarRaw != null ? Number(scalarRaw) : null;
     const scalarFmt = scalar == null || !isFinite(scalar)
       ? '—'
       : (scalar > 0 ? '+' : '') + scalar.toFixed(2);
-    let mark = '·';
-    let dataVariant = 'open';
-    if (verdict.startsWith('prom') || verdict === 'accepted') {
-      mark = '✓';
-      dataVariant = 'promoted';
-    } else if (verdict.startsWith('rej')) {
-      mark = '✗';
-      dataVariant = 'rejected';
-    }
     const href = epochId
       ? phase0Href('generation', { epochId, generationId: genId })
       : phase0Href('workspace');
     list.appendChild(el('a', {
       class: 'phase0-recent-decisions-row',
-      'data-variant': dataVariant,
+      'data-variant': verdict,
       href,
       'data-gen-id': genId,
     }, [
       el('span', { class: 'phase0-recent-decisions-id' }, [genId]),
-      el('span', { class: 'phase0-recent-decisions-mark' }, [mark]),
-      el('span', { class: 'phase0-recent-decisions-verdict' },
-        [verdict || 'open']),
+      // Shared verdict glyph (mark only — the row already labels the
+      // generation; the word would crowd a glance row).
+      el('span', { class: 'phase0-recent-decisions-mark' }, [
+        verdictGlyph(verdict, { withLabel: false }),
+      ]),
+      el('span', { class: 'phase0-recent-decisions-verdict' }, [verdict]),
       el('span', { class: 'phase0-recent-decisions-scalar' }, [scalarFmt]),
     ]));
   }
@@ -410,7 +418,8 @@ function _renderRecentDecisionsSection() {
     : null;
   node.appendChild(renderCard({
     title: 'RECENT DECISIONS',
-    subtitle: 'Most recent experiments from the current epoch.',
+    subtitle: 'Most recent experiments from the current epoch — the '
+      + 'chronological view; the ribbon above is the topological one.',
     body: _recentDecisionsBody(),
     footer,
   }));
@@ -418,9 +427,10 @@ function _renderRecentDecisionsSection() {
 
 export function renderPhase0Workspace(repaint) {
   ensureWorkspace(repaint);
+  ensureHealth(repaint);
   _renderEnvSection();
   _renderLineageSection();
-  _renderSparklineSection();
+  _clearSparklineSection();
   _renderRecentDecisionsSection();
 }
 

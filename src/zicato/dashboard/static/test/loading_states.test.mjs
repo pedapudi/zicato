@@ -190,33 +190,42 @@ test('L2 generation hypothesis shows "No hypothesis recorded" when epochDef load
 
 // -- L3 round decision callout ---------------------------------------
 
-test('L3 round decision shows Loading when state.bracket is null', () => {
+// The redesigned decision view (L3) renders the verdict in the
+// `phase0-round-vs` slot, fetched from `/api/round/.../gate` — it no
+// longer keys off `state.bracket`. Loading-vs-empty for that slot:
+//   * a matchup with the gate not yet cached → "Loading decision"
+//   * no matchup selected (null challenger) → "No matchup selected"
+test('L3 decision shows Loading while the gate fetch is pending', () => {
   resetState();
-  installNode('phase0-round-vs');
+  const vs = installNode('phase0-round-vs');
   installNode('phase0-round-entries');
   installNode('phase0-round-judges');
-  const decision = installNode('phase0-round-decision');
-  round.renderPhase0Round({ epochId: 'e0', championId: 'v1', challengerId: 'v2' });
-  const text = decision.textContent;
-  assert(text.includes('Loading'),
-    `decision must show Loading when state.bracket == null; got: ${text}`);
-  assert(!text.includes('No decision yet'),
-    `decision must NOT say "No decision yet" while loading; got: ${text}`);
+  installNode('phase0-round-decision');
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = () => new Promise(() => {}); // pending — never resolves
+  try {
+    round.renderPhase0Round({ epochId: 'e0', championId: 'v1', challengerId: 'v2' });
+    const text = vs.textContent;
+    assert(text.includes('Loading'),
+      `decision must show Loading while the gate fetch is pending; got: ${text}`);
+  } finally {
+    globalThis.fetch = prevFetch;
+    round.resetRoundCaches();
+  }
 });
 
-test('L3 round decision shows "No decision yet" when bracket loaded but matchup absent', () => {
+test('L3 decision shows the empty state when no matchup is selected', () => {
   resetState();
-  installNode('phase0-round-vs');
+  const vs = installNode('phase0-round-vs');
   installNode('phase0-round-entries');
   installNode('phase0-round-judges');
-  const decision = installNode('phase0-round-decision');
-  state.bracket = { matchups: [] };
-  round.renderPhase0Round({ epochId: 'e0', championId: 'v1', challengerId: 'v2' });
-  const text = decision.textContent;
-  assert(text.includes('No decision yet'),
-    `decision must say "No decision yet" when bracket loaded; got: ${text}`);
+  installNode('phase0-round-decision');
+  round.renderPhase0Round({ epochId: 'e0', championId: null, challengerId: null });
+  const text = vs.textContent;
+  assert(text.includes('No matchup selected'),
+    `decision must show "No matchup selected" when no challenger; got: ${text}`);
   assert(!text.includes('Loading'),
-    `decision must NOT say "Loading" after bracket lands; got: ${text}`);
+    `empty state must NOT say Loading; got: ${text}`);
 });
 
 // -- L4 run header ---------------------------------------------------

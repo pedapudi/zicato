@@ -1,0 +1,154 @@
+/* css/phase0_epoch.css — L1 epoch-view layout.
+ *
+ * Component-internal styling (the lineage ribbon, the health banner, the
+ * verdict glyph, the heatmap cells, the cards) lives in structural.css /
+ * components.css. THIS file only carries the L1-specific COMPOSITION: the
+ * epoch head stack, the story-header chip strip, the contract-diff
+ * digest, and the tabbed-heatmap chrome.
+ *
+ * The orchestrator links this stylesheet from index.html. */
+
+/* -- Epoch head: health banner + story header stacked ---------------- */
+.epoch-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* -- Epoch story header ---------------------------------------------- */
+.epoch-story {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.epoch-story-goal {
+  margin: 0;
+  font-size: var(--font-size-15);
+  line-height: 1.5;
+  color: var(--color-text);
+}
+.epoch-story-goal-empty {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-13);
+}
+
+.epoch-story-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+.epoch-story-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.epoch-story-chip-label {
+  font-size: var(--font-size-11);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+.epoch-story-chip-value {
+  font-size: var(--font-size-13);
+  font-weight: 600;
+  color: var(--color-text);
+}
+.epoch-story-chip-promoted .epoch-story-chip-value { color: var(--color-promoted-fg); }
+.epoch-story-chip-rejected .epoch-story-chip-value { color: var(--color-rejected-fg); }
+.epoch-story-chip-warning  .epoch-story-chip-value { color: var(--color-warning-fg); }
+.epoch-story-chip-muted    .epoch-story-chip-value { color: var(--color-text-muted); font-weight: 500; }
+
+.epoch-story-traj-glyph { font-weight: 700; }
+.epoch-story-traj-down .epoch-story-traj-glyph { color: var(--color-promoted-fg); }
+.epoch-story-traj-up   .epoch-story-traj-glyph { color: var(--color-rejected-fg); }
+.epoch-story-champ-scalar { color: var(--color-text-muted); font-weight: 500; }
+
+/* -- Contract diff digest -------------------------------------------- */
+.contract-diff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.contract-diff-headline {
+  margin: 0;
+  font-size: var(--font-size-14);
+  line-height: 1.5;
+}
+.contract-diff-headline-same {
+  color: var(--color-text-muted);
+}
+.contract-diff-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.contract-diff-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-border);
+  font-size: var(--font-size-12);
+}
+.contract-diff-hash {
+  font-size: var(--font-size-11);
+  color: var(--color-text-muted);
+}
+.contract-diff-carry {
+  margin: 0;
+  font-size: var(--font-size-12);
+  color: var(--color-text-muted);
+}
+.contract-diff-carry-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: var(--font-size-11);
+}
+
+/* -- Tabbed heatmap card --------------------------------------------- */
+.heatmap-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.heatmap-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-3);
+  align-self: flex-start;
+}
+.heatmap-tab {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  text-align: left;
+}
+.heatmap-tab:hover { color: var(--color-text); }
+.heatmap-tab-active {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+.heatmap-tab-label {
+  font-size: var(--font-size-13);
+  font-weight: 600;
+  text-transform: lowercase;
+}
+.heatmap-tab-sub {
+  font-size: var(--font-size-11);
+  color: var(--color-text-muted);
+}
+.heatmap-panel {
+  overflow-x: auto;
+}

@@ -448,4 +448,102 @@ test('L4 defaultCompareGenFor handles null epochDef / missing experiment / empty
   runV.resetRunCaches();
 });
 
+// --- Context-preserving L3→L4 transition ----------------------------
+//
+// When the user drills into an entry FROM a decision (L3), the run hash
+// carries the matchup champion as a 4th segment (``…/vs-<champion>``).
+// The compare picker must DEFAULT to that champion — the exact matchup
+// the operator was judging — instead of the lineage parent.
+
+function _setHash(h) {
+  if (typeof window === 'undefined') globalThis.window = {};
+  if (!window.location) window.location = { hash: '', search: '' };
+  window.location.hash = h;
+}
+
+test('matchupChampionFromHash parses the vs-<champion> segment off the run route', () => {
+  assert(runV.matchupChampionFromHash('#/run/e0/v3/sample_entry/vs-v2') === 'v2',
+    'matchup champion v2 must be recovered from the run hash');
+  // Plain run deep-link (no matchup) → null.
+  assert(runV.matchupChampionFromHash('#/run/e0/v3/sample_entry') === null,
+    'a plain run deep-link must yield no matchup champion');
+  // Non-run route → null.
+  assert(runV.matchupChampionFromHash('#/gen/e0/v3') === null,
+    'a non-run route must yield no matchup champion');
+  // Malformed 4th segment (not vs-prefixed) → null.
+  assert(runV.matchupChampionFromHash('#/run/e0/v3/sample_entry/whatever') === null,
+    'a 4th segment without the vs- prefix must yield no matchup champion');
+});
+
+test('L4 from a decision: picker defaults to the matchup champion, not the lineage parent', async () => {
+  installRunSlots();
+  _resetRunState();
+  seedFiveGenEpoch();
+  // v3's lineage parent is v1; but the matchup the operator judged was
+  // v3 vs v0 (carried on the hash). The picker must land on v0.
+  _setHash('#/run/e0/v3/sample_entry/vs-v0');
+  const restore = mockFetch(_baseFetchHandler);
+  try {
+    await settle({ epochId: 'e0', generationId: 'v3', entryId: 'sample_entry' });
+    const resolved = runV.compareGenFor('e0', 'sample_entry', 'v3');
+    assert(resolved === 'v0',
+      `matchup context must default the picker to champion v0; got ${JSON.stringify(resolved)}`);
+
+    const tNode = document.getElementById('phase0-run-transcript');
+    const text = tNode.textContent;
+    assert(text.includes('seed champion outline'),
+      `compare side must render the matchup champion (v0) transcript; got: ${text.slice(0, 400)}`);
+    const sel = _findSelect(tNode);
+    assert(sel !== null && _selectedOption(sel) === 'v0',
+      `picker must report v0 (the matchup champion) selected; got ${JSON.stringify(sel && _selectedOption(sel))}`);
+  } finally {
+    restore();
+    _setHash('');
+    runV.setCompareGenFor('e0', 'sample_entry', null);
+    runV.resetRunCaches();
+  }
+});
+
+test('L4 from a decision: an explicit user pick still overrides the matchup default', async () => {
+  installRunSlots();
+  _resetRunState();
+  seedFiveGenEpoch();
+  _setHash('#/run/e0/v3/sample_entry/vs-v0');
+  const restore = mockFetch(_baseFetchHandler);
+  try {
+    await settle({ epochId: 'e0', generationId: 'v3', entryId: 'sample_entry' });
+    assert(runV.compareGenFor('e0', 'sample_entry', 'v3') === 'v0',
+      'precondition: matchup default v0');
+    // User picks v1 — explicit override wins over the matchup hint.
+    runV.setCompareGenFor('e0', 'sample_entry', 'v1');
+    await settle({ epochId: 'e0', generationId: 'v3', entryId: 'sample_entry' });
+    assert(runV.compareGenFor('e0', 'sample_entry', 'v3') === 'v1',
+      `explicit user pick must override the matchup default; got `
+      + JSON.stringify(runV.compareGenFor('e0', 'sample_entry', 'v3')));
+  } finally {
+    restore();
+    _setHash('');
+    runV.resetRunCaches();
+  }
+});
+
+test('non-matchup cold deep-link still defaults to the lineage parent (no regression)', async () => {
+  installRunSlots();
+  _resetRunState();
+  seedFiveGenEpoch();
+  // Plain run deep-link — no vs- segment. Must keep the parent default.
+  _setHash('#/run/e0/v3/sample_entry');
+  const restore = mockFetch(_baseFetchHandler);
+  try {
+    await settle({ epochId: 'e0', generationId: 'v3', entryId: 'sample_entry' });
+    const resolved = runV.compareGenFor('e0', 'sample_entry', 'v3');
+    assert(resolved === 'v1',
+      `plain deep-link must default to lineage parent v1; got ${JSON.stringify(resolved)}`);
+  } finally {
+    restore();
+    _setHash('');
+    runV.resetRunCaches();
+  }
+});
+
 await run();

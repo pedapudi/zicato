@@ -1,25 +1,42 @@
-// views/phase0_epoch.js — L1 (epoch-level) view.
+// views/phase0_epoch.js — L1 (epoch-level) view, redesigned.
 //
-// Renders the epoch shell using the design-system components:
-//   - GOAL as a callout card
-//   - CONTRACT DIFF — status of frozen components
-//   - GENERATION SPINE — the centerpiece visual element; promoted spine
-//     left-to-right with rejected challengers branching off their parent
-//   - PER-ENTRY × GENERATION heatmap
-//   - PER-JUDGE × GENERATION heatmap
-//   - RECENT EXPERIMENTS — full-width cards stacked vertically
-//   - ANALYSIS REPORT — the analyzer's rendered figures + tables
+// The L1 view answers, top to bottom: "is this loop meaningful, and what
+// has it done this epoch?" The redesign threads that question through:
 //
-// Each section renders INTO its pre-existing slot so tests reading
-// those slots find the expected text.
+//   - LOOP-HEALTH BANNER — fetched from /api/health-report; surfaces
+//     degenerate scoring / dead entries / flat drift at the very top.
+//   - EPOCH STORY HEADER — a compact at-a-glance line: goal · frozen
+//     contract rollup · #generations · trajectory direction · current
+//     champion · health rollup.
+//   - LINEAGE RIBBON — replaces the flat generation spine. The promoted
+//     lineage traces the optimization curve (lower loss higher on screen),
+//     rejected challengers branch off their parent, the live node pulses
+//     at the right edge. Clicking a node drills to L2.
+//   - CONTRACT DIFF — reframed to "what changed to roll this epoch":
+//     which frozen components (board / brief / scoring / harness) moved.
+//   - HEATMAPS — the per-entry×gen and per-judge×gen heatmaps fold into
+//     ONE card with an entries/judges tab toggle.
+//   - RECENT EXPERIMENTS — full-width cards; verdict iconography speaks
+//     through the shared verdictGlyph.
+//   - ANALYSIS REPORT — the analyzer's rendered figures + tables.
+//
+// The health banner + story header render INTO the goal slot
+// (#phase0-epoch-goal) since index.html is out of scope; the tabbed
+// heatmap renders into the entries slot and the (now redundant) judges
+// slot is cleared. Each section renders into its pre-existing slot so
+// tests reading those slots find the expected text. Re-render safe;
+// degrades gracefully on missing data.
 
 import { $, el, clearChildren } from '../core/dom.js';
 import { fetchJson } from '../core/api.js';
 import { state } from '../core/state.js';
+import { fmtScalar } from '../core/format.js';
 import { phase0Href } from './phase0_router.js';
 import { renderCard, renderCalloutCard } from '../components/card.js';
 import { renderPill } from '../components/pill.js';
-import { renderSpine } from '../components/spine.js';
+import { lineageRibbon } from '../components/lineage_ribbon.js';
+import { healthBanner } from '../components/health_banner.js';
+import { verdictGlyph } from '../components/verdict_glyph.js';
 import { renderHeatmapTable } from '../components/heatmap.js';
 import { renderMetricTile } from '../components/tile.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
@@ -33,6 +50,46 @@ const _perEntryTrendCache = new Map();
 const _loadingEntryTrend = new Set();
 const _analysisCache = new Map();
 const _loadingAnalysis = new Set();
+
+// The active heatmap tab — survives re-render so a repaint does not
+// snap the user back to "entries". Module-level (one L1 at a time).
+let _heatmapTab = 'entries';
+export function resetHeatmapTab() { _heatmapTab = 'entries'; }
+
+// -- Loop-health report -----------------------------------------------
+const _healthCache = { report: undefined };
+const _loadingHealth = { busy: false };
+
+export function resetHealthReportCache() {
+  _healthCache.report = undefined;
+  _loadingHealth.busy = false;
+}
+export function healthReportPayload() {
+  return _healthCache.report === undefined ? null : _healthCache.report;
+}
+
+// Fetch GET /api/health-report once per render cycle and cache it. The
+// report shape — { epoch_id, healthy, findings: [{ code, severity,
+// summary, detail }], checked_at? } — maps straight onto healthBanner.
+// On failure we fall back to whatever the SSE snapshot folded into
+// state.healthReport, then to null (banner degrades to "not yet
+// evaluated").
+async function ensureHealthReport(repaint) {
+  if (_healthCache.report !== undefined) return _healthCache.report;
+  if (_loadingHealth.busy) return null;
+  _loadingHealth.busy = true;
+  try {
+    const data = await fetchJson('/api/health-report');
+    _healthCache.report = (data && typeof data === 'object') ? data : null;
+  } catch {
+    _healthCache.report = (state.healthReport && typeof state.healthReport === 'object')
+      ? state.healthReport : null;
+  } finally {
+    _loadingHealth.busy = false;
+    if (typeof repaint === 'function') repaint();
+  }
+  return _healthCache.report;
+}
 
 export function resetPerJudgeTrendCache() {
   _perJudgeTrendCache.clear();
@@ -176,47 +233,201 @@ async function ensureAnalysis(epochId, repaint) {
   return _analysisCache.get(epochId);
 }
 
-// -- Goal slot --------------------------------------------------------
-function _renderGoal() {
-  const node = $('phase0-epoch-goal');
-  if (!node) return;
-  clearChildren(node);
+// =====================================================================
+// Decision / scalar helpers (shared by the ribbon, the story header and
+// the experiment cards).
+// =====================================================================
+function _decisionOf(exp) {
+  if (!exp || !exp.outcome) return null;
+  return (exp.outcome.tournament_decision || exp.outcome.decision || '').toString().toLowerCase();
+}
+function _scalarOf(exp) {
+  if (!exp || !exp.outcome) return null;
+  const v = exp.outcome.scalar_score;
+  return (typeof v === 'number' && isFinite(v)) ? v : null;
+}
+
+// v0 is the baseline seed — it has no tournament outcome but it IS the
+// promoted root of the lineage. We treat a parentless, outcome-less node
+// as the promoted root so the seed anchors the ribbon's spine rather
+// than falling into the rejected branches.
+function _isBaselineSeed(exp) {
+  if (!exp || typeof exp !== 'object') return false;
+  const parent = exp.parent_generation_id;
+  if (typeof parent === 'string' && parent !== '') return false;
+  return exp.outcome == null;
+}
+
+// =====================================================================
+// Loop-health banner — top of L1, rendered into the goal slot.
+// =====================================================================
+function _renderHealthBanner(node) {
+  const report = healthReportPayload();
+  // healthBanner degrades to "health not yet evaluated" on a null
+  // report, so a still-loading fetch reads as the neutral muted strip.
+  node.appendChild(healthBanner({ report }));
+}
+
+// A one-word rollup of the loop's health for the story header.
+function _healthRollup() {
+  const report = healthReportPayload();
+  if (!report || typeof report !== 'object') return { word: 'unknown', kind: 'muted' };
+  const findings = Array.isArray(report.findings) ? report.findings.filter(Boolean) : [];
+  let rank = 0;
+  for (const f of findings) {
+    const s = String((f && f.severity) || '').toLowerCase();
+    const r = s === 'critical' ? 3 : s === 'warning' ? 2 : s === 'info' ? 1 : 0;
+    if (r > rank) rank = r;
+  }
+  if (rank >= 3) return { word: 'critical', kind: 'rejected' };
+  if (rank >= 2) return { word: 'degraded', kind: 'warning' };
+  return report.healthy === false
+    ? { word: 'degraded', kind: 'warning' }
+    : { word: 'healthy', kind: 'promoted' };
+}
+
+// =====================================================================
+// Epoch story header — the compact at-a-glance line.
+// =====================================================================
+
+// Trajectory: did the best (lowest) scalar improve over the epoch? We
+// compare the first scored generation's scalar to the best scalar seen.
+function _trajectory(experiments) {
+  const scored = experiments
+    .map((e) => _scalarOf(e))
+    .filter((s) => typeof s === 'number' && isFinite(s));
+  if (scored.length === 0) return { dir: 'flat', glyph: '·', label: 'no signal yet' };
+  const first = scored[0];
+  const best = Math.min(...scored);
+  if (best < first - 1e-9) return { dir: 'down', glyph: '↘', label: 'improving' };
+  if (best > first + 1e-9) return { dir: 'up', glyph: '↗', label: 'regressing' };
+  return { dir: 'flat', glyph: '→', label: 'flat' };
+}
+
+// The current champion — the promoted node with the best (lowest)
+// scalar, falling back to the last promoted node, then the baseline.
+function _currentChampion(experiments) {
+  const promoted = experiments.filter((e) => {
+    const d = _decisionOf(e);
+    return d === 'promoted' || _isBaselineSeed(e);
+  });
+  if (promoted.length === 0) return null;
+  let champ = null;
+  let bestScalar = Infinity;
+  for (const e of promoted) {
+    const s = _scalarOf(e);
+    if (typeof s === 'number' && isFinite(s) && s < bestScalar) {
+      bestScalar = s; champ = e;
+    }
+  }
+  if (!champ) champ = promoted[promoted.length - 1];
+  return {
+    id: champ.generation_id || '?',
+    scalar: _scalarOf(champ),
+  };
+}
+
+function _storyChip(label, valueNode, opts) {
+  const o = opts || {};
+  const cls = 'epoch-story-chip'
+    + (o.kind ? ' epoch-story-chip-' + o.kind : '');
+  return el('div', { class: cls }, [
+    el('span', { class: 'epoch-story-chip-label' }, [label]),
+    el('span', { class: 'epoch-story-chip-value' },
+      [typeof valueNode === 'string' ? valueNode : valueNode]),
+  ]);
+}
+
+function _renderStoryHeader(node, epochId) {
   const def = state.epochDef;
-  // Still waiting for the epoch contract to land via SSE — say so
-  // explicitly instead of falling through to "(no goal recorded)".
   if (def == null) {
     node.appendChild(renderCalloutCard({
-      title: 'Goal',
-      accent: 'default',
-      body: renderLoadingState(),
+      title: 'Epoch', accent: 'default', body: renderLoadingState(),
     }));
     return;
   }
+  const experiments = Array.isArray(def.experiments) ? def.experiments : [];
   const goal = (typeof def.goal === 'string') ? def.goal.trim() : '';
-  if (goal) {
-    node.appendChild(renderCalloutCard({
-      title: 'Goal',
-      accent: 'accent',
-      body: el('p', { class: 'goal-callout-text' }, [goal]),
-    }));
-    return;
+  const isClosed = !!def.closed;
+
+  // Contract rollup — how many frozen components changed vs predecessor.
+  const diff = epochId ? _contractDiffCache.get(epochId) : null;
+  let contractWord = 'pending';
+  let contractKind = 'muted';
+  if (diff) {
+    if (!diff.predecessor_epoch_id) {
+      contractWord = 'first epoch';
+      contractKind = 'muted';
+    } else {
+      const comps = Array.isArray(diff.components) ? diff.components : [];
+      const changed = comps.filter((c) => c && c.changed).map((c) => c.name);
+      if (changed.length === 0) {
+        contractWord = 'unchanged';
+        contractKind = 'muted';
+      } else {
+        contractWord = changed.join(' · ');
+        contractKind = 'warning';
+      }
+    }
   }
-  node.appendChild(renderCalloutCard({
-    title: 'Goal',
-    accent: 'warning',
-    body: el('div', null, [
-      el('p', { class: 'empty', style: 'padding-top:0' }, ['(no goal recorded)']),
-      el('p', {
-        style: 'font-size:var(--font-size-12); color:var(--color-text-muted); margin:0;',
-      }, [
-        'Set via ',
+
+  const traj = _trajectory(experiments);
+  const champ = _currentChampion(experiments);
+  const health = _healthRollup();
+
+  // -- the goal line (kept prominent; replaces the old goal callout) --
+  const goalNode = goal
+    ? el('p', { class: 'epoch-story-goal' }, [goal])
+    : el('p', { class: 'epoch-story-goal epoch-story-goal-empty' }, [
+        '(no goal recorded) — set via ',
         el('code', { class: 'mono' }, ['zicato epoch set-goal --epoch <id> --goal "..."']),
+      ]);
+
+  // -- the chip strip -------------------------------------------------
+  const chips = el('div', { class: 'epoch-story-chips' }, [
+    _storyChip('state', isClosed ? 'closed' : 'open',
+      { kind: isClosed ? 'muted' : 'promoted' }),
+    _storyChip('generations', String(experiments.length)),
+    _storyChip('contract', contractWord, { kind: contractKind }),
+    _storyChip('trajectory',
+      el('span', { class: 'epoch-story-traj epoch-story-traj-' + traj.dir }, [
+        el('span', { class: 'epoch-story-traj-glyph', 'aria-hidden': 'true' }, [traj.glyph]),
+        ' ' + traj.label,
       ]),
-    ]),
+      { kind: traj.dir === 'down' ? 'promoted' : traj.dir === 'up' ? 'rejected' : 'muted' }),
+    _storyChip('champion',
+      champ
+        ? el('span', { class: 'epoch-story-champ' }, [
+            el('span', { class: 'mono' }, [String(champ.id)]),
+            champ.scalar != null
+              ? el('span', { class: 'epoch-story-champ-scalar mono' },
+                  [' · ' + fmtScalar(champ.scalar)])
+              : null,
+          ].filter(Boolean))
+        : '—',
+      { kind: champ ? 'promoted' : 'muted' }),
+    _storyChip('health', health.word, { kind: health.kind }),
+  ]);
+
+  node.appendChild(renderCalloutCard({
+    title: 'Epoch story',
+    accent: goal ? 'accent' : 'warning',
+    body: el('div', { class: 'epoch-story' }, [goalNode, chips]),
   }));
 }
 
-// -- Contract diff slot -----------------------------------------------
+// -- Goal slot — now hosts the health banner + the story header -------
+function _renderEpochHead(epochId) {
+  const node = $('phase0-epoch-goal');
+  if (!node) return;
+  clearChildren(node);
+  const wrap = el('div', { class: 'epoch-head' });
+  _renderHealthBanner(wrap);
+  _renderStoryHeader(wrap, epochId);
+  node.appendChild(wrap);
+}
+
+// -- Contract diff slot — "what changed to roll this epoch" -----------
 function _renderContractDiff(epochId) {
   const node = $('phase0-epoch-contract-diff');
   if (!node) return;
@@ -233,86 +444,65 @@ function _renderContractDiff(epochId) {
         ['First epoch in the workspace — no predecessor to diff.']);
     } else {
       const comps = Array.isArray(data.components) ? data.components : [];
-      const def = state.epochDef;
-      const experiments = (def && Array.isArray(def.experiments)) ? def.experiments : [];
-      const promoted = experiments.filter((e) => {
-        const dec = (e.outcome && (e.outcome.tournament_decision || e.outcome.decision)) || '';
-        return String(dec).toLowerCase() === 'promoted';
-      }).length;
-      const isClosed = !!(def && def.closed);
+      const changed = comps.filter((c) => c && c.changed);
+      const unchanged = comps.filter((c) => c && !c.changed);
 
-      const wrap = el('div', null, [
-        el('div', { class: 'tile-strip',
-          style: 'margin-bottom:var(--space-3);' }, [
-          renderMetricTile({
-            label: 'state', value: isClosed ? 'closed' : 'open', size: 'sm',
-          }),
-          renderMetricTile({
-            label: 'generations', value: experiments.length, size: 'sm',
-          }),
-          renderMetricTile({
-            label: 'promoted', value: promoted, size: 'sm',
-          }),
-        ]),
-      ]);
-      if (comps.length > 0) {
-        const tbl = el('table', { class: 'ds-table' });
-        tbl.appendChild(el('thead', null, [el('tr', null, [
-          el('th', null, ['component']),
-          el('th', null, ['previous']),
-          el('th', null, ['current']),
-          el('th', null, ['changed']),
-        ])]));
-        const tbody = el('tbody');
-        for (const c of comps) {
-          const pill = c.changed
-            ? renderPill('changed', 'warning')
-            : renderPill('same', 'neutral');
-          tbody.appendChild(el('tr', null, [
-            el('td', { class: 'mono' }, [c.name]),
-            el('td', { class: 'mono' }, [c.previous_hash ? c.previous_hash.slice(0, 8) : '—']),
-            el('td', { class: 'mono' }, [c.current_hash ? c.current_hash.slice(0, 8) : '—']),
-            el('td', null, [pill]),
+      const wrap = el('div', { class: 'contract-diff' });
+      // Headline: what rolled this epoch.
+      if (changed.length === 0) {
+        wrap.appendChild(el('p', { class: 'contract-diff-headline contract-diff-headline-same' }, [
+          'Nothing changed — the frozen contract carries over from ',
+          el('span', { class: 'mono' }, [String(data.predecessor_epoch_id)]),
+          '.',
+        ]));
+      } else {
+        const lead = el('p', { class: 'contract-diff-headline' }, [
+          'Rolled by ',
+          el('strong', null, [String(changed.length)]),
+          changed.length === 1 ? ' component change vs ' : ' component changes vs ',
+          el('span', { class: 'mono' }, [String(data.predecessor_epoch_id)]),
+          ':',
+        ]);
+        wrap.appendChild(lead);
+        const chipRow = el('div', { class: 'contract-diff-chips' });
+        for (const c of changed) {
+          chipRow.appendChild(el('span', { class: 'contract-diff-chip' }, [
+            el('span', { class: 'mono' }, [String(c.name)]),
+            el('span', { class: 'contract-diff-hash mono' }, [
+              (c.previous_hash ? c.previous_hash.slice(0, 7) : '—')
+              + ' → '
+              + (c.current_hash ? c.current_hash.slice(0, 7) : '—'),
+            ]),
           ]));
         }
-        tbl.appendChild(tbody);
-        wrap.appendChild(tbl);
+        wrap.appendChild(chipRow);
+      }
+      // The carry-over components, named compactly so the reader can see
+      // what stayed frozen.
+      if (unchanged.length > 0) {
+        wrap.appendChild(el('p', { class: 'contract-diff-carry' }, [
+          el('span', { class: 'contract-diff-carry-label' }, ['unchanged: ']),
+          unchanged.map((c) => String(c.name)).join(' · '),
+        ]));
       }
       body = wrap;
     }
   }
   node.appendChild(renderCard({
     title: 'Contract diff',
-    subtitle: 'Frozen components — board / brief / scoring / harness — vs predecessor.',
+    subtitle: 'What changed to roll this epoch — board / brief / scoring / harness vs predecessor.',
     body,
   }));
 }
 
-// -- Spine slot — the centerpiece -------------------------------------
-function _decisionOf(exp) {
-  if (!exp || !exp.outcome) return null;
-  return (exp.outcome.tournament_decision || exp.outcome.decision || '').toString().toLowerCase();
-}
-function _scalarOf(exp) {
-  if (!exp || !exp.outcome) return null;
-  const v = exp.outcome.scalar_score;
-  return (typeof v === 'number' && isFinite(v)) ? v : null;
-}
+// =====================================================================
+// Lineage ribbon slot — replaces the flat generation spine.
+// =====================================================================
 
-// v0 is the baseline seed — it has no tournament outcome but it IS the
-// promoted root of the spine. The spine renderer reads `promoted: true`
-// off the synthesized v0 record so the seed sits at the left edge of
-// the lineage rather than falling into the rejected pile.
-function _isBaselineSeed(exp) {
-  if (!exp || typeof exp !== 'object') return false;
-  const parent = exp.parent_generation_id;
-  if (typeof parent === 'string' && parent !== '') return false;
-  // No outcome yet OR explicit null outcome — v0 carries no tournament
-  // verdict because nothing competed against it.
-  return exp.outcome == null;
-}
-
-function _buildSpineNodes(epochId) {
+// Build the ribbon node list from this epoch's experiments + the live
+// heartbeat. Shape per node: { id, parentId, scalar, verdict, live,
+// label }. verdict ∈ 'promoted' | 'rejected' | (else open).
+function _buildRibbonNodes(epochId) {
   const def = state.epochDef;
   if (!def || !Array.isArray(def.experiments)) return [];
   const exps = def.experiments;
@@ -325,21 +515,19 @@ function _buildSpineNodes(epochId) {
     const id = exp.generation_id || '?';
     const dec = _decisionOf(exp);
     const baseline = _isBaselineSeed(exp);
-    // Baseline (v0) is treated as promoted so it anchors the spine row.
-    const promoted = baseline || dec === 'promoted';
-    const scalar = _scalarOf(exp);
+    const verdict = (baseline || dec === 'promoted') ? 'promoted'
+      : dec === 'rejected' ? 'rejected'
+      : 'open';
     const parentRaw = exp && exp.parent_generation_id;
-    const parent_id = (typeof parentRaw === 'string' && parentRaw !== '')
+    const parentId = (typeof parentRaw === 'string' && parentRaw !== '')
       ? parentRaw : null;
     nodes.push({
-      id, scalar, promoted, decision: dec, live: false, parent_id,
-      href: phase0Href('generation', { epochId: epochId, generationId: id }),
+      id, parentId, scalar: _scalarOf(exp), verdict, live: false, label: id,
     });
   }
   if (liveGen && !nodes.find((n) => n.id === liveGen)) {
     nodes.push({
-      id: liveGen, scalar: null, promoted: false, live: true, parent_id: null,
-      href: phase0Href('generation', { epochId: epochId, generationId: liveGen }),
+      id: liveGen, parentId: null, scalar: null, verdict: 'open', live: true, label: liveGen,
     });
   } else if (liveGen) {
     const idx = nodes.findIndex((n) => n.id === liveGen);
@@ -348,26 +536,33 @@ function _buildSpineNodes(epochId) {
   return nodes;
 }
 
-function _renderSpine(epochId) {
+function _renderRibbon(epochId) {
   const node = $('phase0-epoch-spine');
   if (!node) return;
   clearChildren(node);
-  // Loading state — the epoch contract has not yet landed via SSE.
-  // Without this guard the spine flashes the empty message even on a
-  // workspace with many generations.
   let body;
   if (state.epochDef == null) {
-    body = renderLoadingState({ label: 'Loading spine' });
+    body = renderLoadingState({ label: 'Loading lineage' });
   } else {
-    const spineNodes = _buildSpineNodes(epochId);
-    body = spineNodes.length === 0
+    const nodes = _buildRibbonNodes(epochId);
+    body = nodes.length === 0
       ? renderEmptyState('No generations yet.')
-      : renderSpine({ nodes: spineNodes });
+      : lineageRibbon({
+          nodes,
+          zoom: 'generations',
+          onSelect: (id) => {
+            if (!epochId || !id) return;
+            const target = phase0Href('generation', { epochId, generationId: id });
+            if (typeof window !== 'undefined' && window.location
+                && window.location.hash !== target) {
+              window.location.hash = target;
+            }
+          },
+        });
   }
   // When there is a live run on THIS epoch, surface a harmonograf
-  // deep-link as a card action — the spine doubles as the L1 live
-  // callout. Picks the first active run as the representative session;
-  // degrades to the bare base URL when no run has surfaced an
+  // deep-link as a card action — the ribbon doubles as the L1 live
+  // callout. Degrades to the bare base URL when no run has surfaced an
   // adk_session_id yet, and renders nothing when no harmonograf_url is
   // configured.
   const hb = state.heartbeat || {};
@@ -381,107 +576,128 @@ function _renderSpine(epochId) {
       : harmonografLink({}, 'Open in harmonograf');
   }
   node.appendChild(renderCard({
-    title: 'Generation spine',
-    subtitle: 'Champion lineage left-to-right; rejected challengers branch off their parent.',
+    title: 'Lineage ribbon',
+    subtitle: 'Champion lineage traces the loss curve (lower = higher); '
+      + 'rejected challengers branch off their parent; the live node pulses at the right.',
     accent: 'accent',
     body,
     actions,
   }));
 }
 
-// -- Entry × generation heatmap slot ----------------------------------
-function _renderEntryHeatmap(epochId, generationIds) {
+// =====================================================================
+// Tabbed heatmap slot — entries / judges folded into one card.
+// =====================================================================
+
+function _entriesHeatmapBody(epochId, generationIds) {
+  if (state.epochDef == null) {
+    return renderLoadingState({ label: 'Loading per-entry heatmap' });
+  }
+  if (!epochId || generationIds.length === 0) {
+    return renderEmptyState('No generations yet.');
+  }
+  const data = _perEntryTrendCache.get(epochId);
+  if (!data) return renderLoadingState({ label: 'Loading per-entry heatmap' });
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  if (entries.length === 0) return renderEmptyState('No per-entry data yet.');
+  return renderHeatmapTable({
+    rows: entries.map((e) => e.entry_id),
+    cols: data.generations,
+    valueAt: (row, col) => {
+      const found = entries.find((e) => e.entry_id === row);
+      if (!found) return null;
+      const v = found.by_gen && found.by_gen[col];
+      return (typeof v === 'number' && isFinite(v)) ? v : null;
+    },
+    scale: 'sequential',
+    rowLabel: 'entry',
+    ariaLabel: 'per-entry × generation loss heatmap',
+  });
+}
+
+function _judgesHeatmapBody(epochId) {
+  if (!epochId) return el('p', { class: 'empty' }, ['Select an epoch.']);
+  const data = _perJudgeTrendCache.get(epochId);
+  if (!data) return renderLoadingState({ label: 'Loading per-judge heatmap' });
+  const generations = Array.isArray(data.generations) ? data.generations : [];
+  const judges = Array.isArray(data.judges) ? data.judges : [];
+  if (generations.length === 0 || judges.length === 0) {
+    const msg = data.note ? '(no per-judge data: ' + data.note + ')'
+      : '(no per-judge data recorded for this epoch yet)';
+    return el('p', { class: 'empty' }, [msg]);
+  }
+  return renderHeatmapTable({
+    rows: judges.map((j) => j.judge_name || '—'),
+    cols: generations,
+    valueAt: (row, col) => {
+      const found = judges.find((j) => (j.judge_name || '—') === row);
+      if (!found) return null;
+      const v = found.by_generation && found.by_generation[col];
+      return (typeof v === 'number' && isFinite(v)) ? v : null;
+    },
+    scale: 'sequential',
+    rowLabel: 'judge',
+    ariaLabel: 'per-judge × generation weighted-loss heatmap',
+  });
+}
+
+function _renderHeatmaps(epochId, generationIds, repaint) {
   const node = $('phase0-epoch-heatmap-entries');
   if (!node) return;
   clearChildren(node);
-  let body;
-  // The epoch contract drives whether there are generations at all, so
-  // a null epochDef is a loading state — not a "no generations" empty.
-  if (state.epochDef == null) {
-    body = renderLoadingState({ label: 'Loading per-entry heatmap' });
-  } else if (!epochId || generationIds.length === 0) {
-    body = renderEmptyState('No generations yet.');
-  } else {
-    const data = _perEntryTrendCache.get(epochId);
-    if (!data) {
-      body = renderLoadingState({ label: 'Loading per-entry heatmap' });
-    } else {
-      const entries = Array.isArray(data.entries) ? data.entries : [];
-      if (entries.length === 0) {
-        body = renderEmptyState('No per-entry data yet.');
-      } else {
-        body = renderHeatmapTable({
-          rows: entries.map((e) => e.entry_id),
-          cols: data.generations,
-          valueAt: (row, col) => {
-            const found = entries.find((e) => e.entry_id === row);
-            if (!found) return null;
-            const v = found.by_gen && found.by_gen[col];
-            return (typeof v === 'number' && isFinite(v)) ? v : null;
-          },
-          scale: 'sequential',
-          rowLabel: 'entry',
-          ariaLabel: 'per-entry × generation loss heatmap',
-        });
-      }
-    }
-  }
+
+  // -- tab strip ------------------------------------------------------
+  const tabs = el('div', { class: 'heatmap-tabs', role: 'tablist' });
+  const makeTab = (key, label, sub) => {
+    const active = _heatmapTab === key;
+    const btn = el('button', {
+      type: 'button',
+      class: 'heatmap-tab' + (active ? ' heatmap-tab-active' : ''),
+      role: 'tab',
+      'aria-selected': active ? 'true' : 'false',
+      'data-heatmap-tab': key,
+    }, [
+      el('span', { class: 'heatmap-tab-label' }, [label]),
+      el('span', { class: 'heatmap-tab-sub' }, [sub]),
+    ]);
+    btn.addEventListener('click', () => {
+      if (_heatmapTab === key) return;
+      _heatmapTab = key;
+      if (typeof repaint === 'function') repaint();
+      else _renderHeatmaps(epochId, generationIds, repaint);
+    });
+    return btn;
+  };
+  tabs.appendChild(makeTab('entries', 'entries', 'drift loss per board entry'));
+  tabs.appendChild(makeTab('judges', 'judges', 'weighted loss per judge'));
+
+  const panel = el('div', {
+    class: 'heatmap-panel',
+    role: 'tabpanel',
+    'data-heatmap-panel': _heatmapTab,
+  }, [
+    _heatmapTab === 'judges'
+      ? _judgesHeatmapBody(epochId)
+      : _entriesHeatmapBody(epochId, generationIds),
+  ]);
+
   node.appendChild(renderCard({
-    title: 'Per-entry × generation',
-    subtitle: 'Drift loss per board entry across the spine.',
-    body,
+    title: 'Loss heatmaps',
+    subtitle: 'Per-entry and per-judge drift across the lineage — toggle between views.',
+    body: el('div', { class: 'heatmap-card' }, [tabs, panel]),
   }));
 }
 
-// -- Judge × generation heatmap slot ----------------------------------
-function _renderJudgeHeatmap(epochId) {
+// The redundant judges slot is folded into the tabbed card above; clear
+// it so the static placeholder does not linger under the combined card.
+function _clearJudgeSlot() {
   const node = $('phase0-epoch-heatmap-judges');
-  if (!node) return;
-  clearChildren(node);
-  let body;
-  if (!epochId) body = el('p', { class: 'empty' }, ['Select an epoch.']);
-  else {
-    const data = _perJudgeTrendCache.get(epochId);
-    if (!data) {
-      body = renderLoadingState({ label: 'Loading per-judge heatmap' });
-    } else {
-      const generations = Array.isArray(data.generations) ? data.generations : [];
-      const judges = Array.isArray(data.judges) ? data.judges : [];
-      if (generations.length === 0 || judges.length === 0) {
-        const msg = data.note ? '(no per-judge data: ' + data.note + ')'
-          : '(no per-judge data recorded for this epoch yet)';
-        body = el('p', { class: 'empty' }, [msg]);
-      } else {
-        body = renderHeatmapTable({
-          rows: judges.map((j) => j.judge_name || '—'),
-          cols: generations,
-          valueAt: (row, col) => {
-            const found = judges.find((j) => (j.judge_name || '—') === row);
-            if (!found) return null;
-            const v = found.by_generation && found.by_generation[col];
-            return (typeof v === 'number' && isFinite(v)) ? v : null;
-          },
-          scale: 'sequential',
-          rowLabel: 'judge',
-          ariaLabel: 'per-judge × generation weighted-loss heatmap',
-        });
-      }
-    }
-  }
-  node.appendChild(renderCard({
-    title: 'Per-judge × generation',
-    subtitle: 'Weighted loss per judge across the spine.',
-    body,
-  }));
+  if (node) clearChildren(node);
 }
 
-// -- Recent experiments — full-width card stack -----------------------
-//
-// Each experiment renders as one full-width card. The header carries
-// the generation id, the verdict pill, and the headline deltas; the
-// body carries the hypothesis core idea followed by labelled "why" and
-// "predicted" inline rows. Cards stack vertically with clear borders
-// and spacing, so a long Proposed prose never desyncs columns.
+// =====================================================================
+// Recent experiments — full-width card stack.
+// =====================================================================
 
 function _fmtSigned(v, digits) {
   if (typeof v !== 'number' || !isFinite(v)) return '—';
@@ -514,13 +730,11 @@ function _renderExperimentCard(exp, epochId) {
   const outcome = (exp && typeof exp.outcome === 'object') ? exp.outcome : null;
   const hyp = (exp && typeof exp.hypothesis === 'object') ? exp.hypothesis : {};
 
-  // --- header row: gen id + verdict pill + metric deltas + link -----
+  // --- header row: gen id + verdict glyph + metric deltas + link -----
   const decision = _normaliseDecisionRaw(outcome);
-  const verdictVariant = decision === 'promoted' ? 'promoted'
-    : decision === 'rejected' ? 'rejected'
-    : decision === 'deferred' ? 'deferred'
-    : 'neutral';
-  const verdictLabel = decision ? decision.toUpperCase() : 'PENDING';
+  // The shared verdict glyph is the single source of verdict iconography
+  // dashboard-wide; 'pending' covers a not-yet-decided experiment.
+  const glyph = verdictGlyph(decision || 'pending');
 
   const dScalar = outcome ? outcome.scalar_score_delta : null;
   const dPass = outcome ? outcome.pass_rate_delta : null;
@@ -542,7 +756,7 @@ function _renderExperimentCard(exp, epochId) {
 
   const headerChildren = [
     el('span', { class: 'phase0-exp-gen mono' }, [genId]),
-    renderPill(verdictLabel, verdictVariant),
+    glyph,
     el('span', { class: 'phase0-exp-metrics' }, [
       metricSpan('Δscalar', dScalar, true),
       metricSpan('Δpass', dPass, false),
@@ -649,22 +863,9 @@ function _renderRecentExperiments(epochId) {
   }));
 }
 
-// -- Analysis report slot ---------------------------------------------
-//
-// The analyzer writes ``analysis.md`` + ``analysis.html`` continuously.
-// Render the paper-styled HTML fragment inside a card so the rich
-// post-hoc figures (hypothesis-vs-outcome chart, drift heatmaps,
-// per-judge attribution table) finally surface from the dashboard.
-// Falls back to a "not yet generated" placeholder when the analyzer
-// has not run for this epoch.
-//
-// The fragment is constructed by the dashboard's own server from
-// trusted workspace data and a vendored markdown renderer; the inline
-// CSS is scoped to ``.paper`` so it cannot leak into the dashboard
-// chrome. We therefore use a wrapping ``<div>`` whose innerHTML we
-// set ourselves — NOT an iframe — so the figures pick up the same
-// font + colour tokens as the rest of L1. (Iframe would isolate
-// scrollbars + give a hard-to-style document edge.)
+// =====================================================================
+// Analysis report slot.
+// =====================================================================
 
 function _setHtmlContent(node, html) {
   // The harness's Element forbids innerHTML in production code paths
@@ -709,7 +910,6 @@ function _renderAnalysis(epochId) {
           }, ['Open full report ↗']);
         }
       } else if (available) {
-        // No inline fragment but a full HTML file exists — link to it.
         body = el('p', { class: 'empty' }, [
           'Analysis report rendered as a standalone HTML file.',
         ]);
@@ -745,16 +945,17 @@ export function renderPhase0Epoch(params, repaint) {
     ? def.experiments.map((e) => e.generation_id).filter(Boolean)
     : [];
 
+  ensureHealthReport(repaint);
   ensureContractDiff(epochId, repaint);
   ensurePerJudgeTrend(epochId, repaint);
   ensureAnalysis(epochId, repaint);
   if (gids.length > 0) ensurePerEntryTrend(epochId, gids, repaint);
 
-  _renderGoal();
+  _renderEpochHead(epochId);
   _renderContractDiff(epochId);
-  _renderSpine(epochId);
-  _renderEntryHeatmap(epochId, gids);
-  _renderJudgeHeatmap(epochId);
+  _renderRibbon(epochId);
+  _renderHeatmaps(epochId, gids, repaint);
+  _clearJudgeSlot();
   _renderRecentExperiments(epochId);
   _renderAnalysis(epochId);
 }

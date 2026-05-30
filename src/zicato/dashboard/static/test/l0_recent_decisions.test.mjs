@@ -149,6 +149,12 @@ test('Recent Decisions row carries verdict marks for promoted/rejected',
       '[data-variant="rejected"]');
     assert(promoted.length >= 1, 'a promoted row must wear data-variant=promoted');
     assert(rejected.length >= 1, 'a rejected row must wear data-variant=rejected');
+    // The mark now speaks through the SHARED verdict glyph (consistency
+    // across the dashboard), not a bespoke per-view character. The glyph
+    // component tags its mark with the .vglyph class.
+    const glyphs = slot.querySelectorAll('[role="img"]');
+    assert(glyphs.length >= 2,
+      `each decision row must carry a shared verdict glyph; got ${glyphs.length}`);
   });
 
 test('recentDecisionsCount caps at 10 even when more experiments exist',

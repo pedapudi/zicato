@@ -1,19 +1,28 @@
-// test/l0_dedup_live_activity.test.mjs — L0 in-content Live Activity
-// card was retired (#206).
+// test/l0_dedup_live_activity.test.mjs — L0 redesign dedup contract.
 //
-// Background: post-#198 the redesigned sidebar made Live Activity a
-// persistent fixture of the left rail. The L0 workspace view used to
-// also render an in-content "Live activity" card in the env-strip
-// right column, duplicating the same heartbeat / runs / "jump to
-// current epoch" affordance. This file pins the dedup contract:
+// Two waves of dedup converge here:
 //
-//   1. No matter how live the state is, L0 main NEVER renders an
-//      in-content "Live activity" card or its "jump to current epoch"
-//      CTA (those belong to the sidebar now).
+//   * (#206) The redesigned sidebar made Live Activity a persistent
+//     fixture of the left rail, so L0 main NEVER renders an in-content
+//     "Live activity" card or its "jump to current epoch" CTA.
+//
+//   * (L0 redesign) The epoch-lineage TIMELINE and the cross-epoch
+//     best-scalar SPARKLINE were two pictures of one thing. They are
+//     replaced by a single lineage ribbon (epoch zoom), whose y-axis
+//     encodes the scalar — so it subsumes the sparkline. The standalone
+//     trend/sparkline card is GONE, and a loop-health banner now leads
+//     the view.
+//
+// This file pins:
+//   1. L0 main never renders an in-content "Live activity" card / CTA.
 //   2. The freed space surfaces a "Workspace at a glance" tile strip
-//      that shows lifetime workspace totals (epochs / generations /
-//      promoted), with current-epoch and open/closed breakdown.
-//   3. The Epoch lineage card still renders end-to-end.
+//      (lifetime totals: epochs / generations / promoted; open/closed
+//      breakdown; current-epoch deep-link).
+//   3. The lineage RIBBON renders into the lineage slot (not the old
+//      .epoch-timeline list).
+//   4. The loop-health banner renders at the top of the view.
+//   5. The standalone cross-epoch trend/sparkline card is removed (no
+//      <svg> sparkline in the sparkline slot anymore).
 //
 // The sidebar is exercised in sidebar_redesign.test.mjs and the
 // loading-states fallbacks in loading_states.test.mjs — this file is
@@ -51,13 +60,24 @@ function resetState() {
   ws.resetWorkspaceCache();
 }
 
-function mockFetchOnce(payload) {
+// Route by URL so the workspace payload and the health report can be
+// mocked independently (the view fetches /api/workspace AND
+// /api/health-report). A bare payload (no `health` key) serves the same
+// body to any URL, preserving the old single-payload call sites.
+function mockFetchOnce(payload, health) {
   const original = globalThis.fetch;
-  globalThis.fetch = async () => ({
+  const respond = (body) => ({
     ok: true, status: 200, headers: new Map(),
-    json: async () => payload,
-    text: async () => JSON.stringify(payload),
+    json: async () => body,
+    text: async () => JSON.stringify(body),
   });
+  globalThis.fetch = async (url) => {
+    const u = String(url || '');
+    if (health !== undefined && u.includes('/api/health-report')) {
+      return respond(health);
+    }
+    return respond(payload);
+  };
   return () => { globalThis.fetch = original; };
 }
 
@@ -164,29 +184,25 @@ test('L0 main renders a "Workspace at a glance" tile strip with workspace totals
   }
 });
 
-test('L0 main still renders the Epoch lineage card (untouched by the dedup)', () => {
+test('L0 lineage slot renders the unified lineage ribbon (epoch zoom)', () => {
   resetState();
   installNode('phase0-workspace-env');
   installNode('phase0-workspace-lineage');
   installNode('phase0-workspace-sparkline');
   state.workspace = { root: '/tmp/.zicato' };
   const payload = {
-    current_epoch_id: 'e_alpha',
+    current_epoch_id: 'e_beta',
     epochs: [
       {
         epoch_id: 'e_alpha', goal: 'Iterate.',
         best_scalar: 0.42, generation_count: 3, promoted_count: 1,
-        closed: false, parent_epoch_id: null,
+        closed: true, parent_epoch_id: null,
       },
       {
         epoch_id: 'e_beta', goal: 'Tighten.',
         best_scalar: 0.30, generation_count: 2, promoted_count: 1,
         closed: false, parent_epoch_id: 'e_alpha',
       },
-    ],
-    sparkline: [
-      { epoch_id: 'e_alpha', scalar: 0.42 },
-      { epoch_id: 'e_beta', scalar: 0.30 },
     ],
   };
   const restore = mockFetchOnce(payload);
@@ -195,16 +211,24 @@ test('L0 main still renders the Epoch lineage card (untouched by the dedup)', ()
     return new Promise((resolve) => {
       setTimeout(() => {
         ws.renderPhase0Workspace();
-        const lineageText = document.getElementById('phase0-workspace-lineage').textContent;
+        const slot = document.getElementById('phase0-workspace-lineage');
+        const lineageText = slot.textContent;
         assert(lineageText.includes('Epoch lineage'),
           `lineage card title must render; got: ${lineageText.slice(0, 240)}`);
-        assert(lineageText.includes('e_alpha'),
-          `lineage must render first epoch row; got: ${lineageText.slice(0, 240)}`);
-        assert(lineageText.includes('e_beta'),
-          `lineage must render second epoch row; got: ${lineageText.slice(0, 240)}`);
-        // Parent → child arrow on the older epoch.
-        assert(lineageText.includes('→ e_beta'),
-          `parent_epoch_id arrow e_alpha → e_beta must render; got: ${lineageText.slice(0, 240)}`);
+        // The ribbon (not the old .epoch-timeline list) is the body.
+        const ribbon = slot.querySelector('[class="ribbon ribbon-zoom-epochs"]');
+        assert(ribbon != null,
+          `the lineage slot must render a lineageRibbon at epoch zoom; got: ${lineageText.slice(0, 240)}`);
+        // Every epoch surfaces as a node carrying its id.
+        assert(lineageText.includes('e_alpha') && lineageText.includes('e_beta'),
+          `ribbon must surface both epoch ids; got: ${lineageText.slice(0, 240)}`);
+        // The live (current) epoch is tagged LIVE by the ribbon.
+        assert(lineageText.includes('LIVE'),
+          `the current epoch must read as LIVE on the ribbon; got: ${lineageText.slice(0, 240)}`);
+        // The old timeline list must be gone.
+        const staleTimeline = slot.querySelector('[class="epoch-timeline"]');
+        assert(staleTimeline == null,
+          'the legacy .epoch-timeline list must NOT render (ribbon replaces it)');
         restore();
         resolve();
       }, 20);
@@ -215,9 +239,9 @@ test('L0 main still renders the Epoch lineage card (untouched by the dedup)', ()
   }
 });
 
-// -- The trend card grew into the reclaimed space -------------------
+// -- The standalone sparkline / trend card is gone ------------------
 
-test('L0 trend card sparkline canvas is wider (≥360 px) after #206 reclaim', () => {
+test('L0 no longer renders a separate cross-epoch sparkline/trend card', () => {
   resetState();
   installNode('phase0-workspace-env');
   installNode('phase0-workspace-lineage');
@@ -237,10 +261,6 @@ test('L0 trend card sparkline canvas is wider (≥360 px) after #206 reclaim', (
         parent_epoch_id: 'e_alpha',
       },
     ],
-    sparkline: [
-      { epoch_id: 'e_alpha', scalar: 0.40 },
-      { epoch_id: 'e_beta', scalar: 0.35 },
-    ],
   };
   const restore = mockFetchOnce(payload);
   try {
@@ -248,24 +268,79 @@ test('L0 trend card sparkline canvas is wider (≥360 px) after #206 reclaim', (
     return new Promise((resolve) => {
       setTimeout(() => {
         ws.renderPhase0Workspace();
-        // Walk the sparkline slot looking for an <svg width="360"...>.
+        // The sparkline slot must be empty — the ribbon's y-axis is the
+        // trajectory now, so a standalone trend card would be redundant.
         const slot = document.getElementById('phase0-workspace-sparkline');
+        let svgCount = 0;
         const stack = [slot];
-        let widest = 0;
         while (stack.length > 0) {
           const cur = stack.pop();
           if (!cur || !cur.childNodes) continue;
           for (const child of cur.childNodes) {
             if (!child) continue;
-            if (child.tagName === 'SVG') {
-              const w = parseInt(child.getAttribute('width') || '0', 10);
-              if (w > widest) widest = w;
-            }
+            if (child.tagName === 'SVG') svgCount += 1;
             stack.push(child);
           }
         }
-        assert(widest >= 360,
-          `trend sparkline must be ≥360px wide after #206 (got ${widest})`);
+        assertEqual(svgCount, 0,
+          `the sparkline slot must hold no <svg> (trend card removed); got ${svgCount}`);
+        assert(!slot.textContent.includes('Cross-epoch trend'),
+          `the "Cross-epoch trend" card title must NOT render; got: ${slot.textContent.slice(0, 160)}`);
+        restore();
+        resolve();
+      }, 20);
+    });
+  } catch (err) {
+    restore();
+    throw err;
+  }
+});
+
+// -- The loop-health banner leads the view --------------------------
+
+test('L0 renders the loop-health banner at the top of the env slot', () => {
+  resetState();
+  installNode('phase0-workspace-env');
+  installNode('phase0-workspace-lineage');
+  installNode('phase0-workspace-sparkline');
+  state.workspace = { root: '/tmp/.zicato' };
+  const payload = {
+    current_epoch_id: 'e_alpha',
+    epochs: [
+      {
+        epoch_id: 'e_alpha', goal: 'g', best_scalar: 0.40,
+        generation_count: 1, promoted_count: 1, closed: false,
+        parent_epoch_id: null,
+      },
+    ],
+  };
+  // A warning-severity finding so the banner paints a non-trivial state.
+  const health = {
+    epoch_id: 'e_alpha',
+    healthy: false,
+    findings: [
+      {
+        code: 'flat_loss',
+        severity: 'warning',
+        summary: 'loss surface is flat across the last 3 generations',
+        detail: { window: 3 },
+      },
+    ],
+  };
+  const restore = mockFetchOnce(payload, health);
+  try {
+    ws.renderPhase0Workspace();
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        ws.renderPhase0Workspace();
+        const env = document.getElementById('phase0-workspace-env');
+        const banner = env.querySelector('[role="status"]');
+        assert(banner != null,
+          'a loop-health banner (role=status) must render in the env slot');
+        assertEqual(banner.getAttribute('data-tone'), 'warn',
+          'a warning finding must paint the banner amber (data-tone=warn)');
+        assert(env.textContent.includes('loss surface is flat'),
+          `the banner must surface the top finding summary; got: ${env.textContent.slice(0, 200)}`);
         restore();
         resolve();
       }, 20);

@@ -458,14 +458,14 @@ def test_bundle_under_size_envelope(
     # The fully integrated bundle was re-measured directly at 435,521
     # bytes; a 470 KB cap leaves ~30 KB of headroom for incidental drift
     # while the five features settle.
-    # Raised by the decision-centric dashboard redesign: seven new
+    # Raised by the decision-centric dashboard redesign. Seven new
     # components (gate ladder, diverging bars, scalar waterfall, verdict
-    # glyph, scalar band, lineage ribbon, loop-health banner) land in
-    # wave 1 (~37 KB of new JS) ahead of the view rewrites in wave 2.
-    # Wave-1 bundle measured at 472,769 bytes; a 520 KB cap covers wave 1
-    # and leaves headroom for the wave-2 view integration, after which
-    # the cap is re-measured and tightened.
-    assert total < 520_000, f"bundle is {total} bytes, exceeds 520_000 envelope"
+    # glyph, scalar band, lineage ribbon, loop-health banner) plus the
+    # five rewired views (L0 workspace, L1 epoch, L2 generation, L3
+    # decision view, the shell live rail + L4) and their scoped CSS.
+    # The fully integrated bundle was re-measured directly at 505,027
+    # bytes; a 540 KB cap leaves ~35 KB of headroom for incidental drift.
+    assert total < 540_000, f"bundle is {total} bytes, exceeds 540_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

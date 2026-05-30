@@ -5,8 +5,12 @@
 //   1. HERO    — Decision pill + 3 delta tiles + rejection/promotion line.
 //                This slot owns the "what happened" answer; no other card
 //                duplicates the verdict.
-//   2. HYP/ALIGN — Hypothesis on the left; Alignment-vs-Outcome on the
-//                right (predicted vs actual per dimension, plus risks).
+//   2. DID THE BET PAY OFF? — the intellectual core of a generation. One
+//                coherent narrative panel that merges the old Hypothesis
+//                and Alignment-vs-Outcome cards: THE BET (core idea +
+//                why), the PREDICTED movements, the ACTUAL movements
+//                charted as a diverging bar, and a per-dimension
+//                aligned/missed verdict routed through `verdictGlyph`.
 //   3. PATCHES — Single-patch rows render inline; 2+ patches keep the
 //                compact table.
 //   4. ENTRIES — Per-entry table with a "vs <champion>" delta column;
@@ -15,7 +19,8 @@
 //                compact table.
 //
 // The old bottom "Verdict" card and the old inline 2-column Outcome
-// card are GONE — the hero subsumes both.
+// card are GONE — the hero subsumes both. The hypothesis and alignment
+// are no longer two cards: they read as ONE story.
 //
 // COMPARE MODE (Task #205): every section above grows a sibling on the
 // right whenever the compare picker selects another generation in the
@@ -31,12 +36,16 @@ import { renderCard } from '../components/card.js';
 import { renderPill, renderInlinePill } from '../components/pill.js';
 import { renderMetricTile } from '../components/tile.js';
 import { renderLoadingState, renderEmptyState } from '../components/loading.js';
+import { divergingBar } from '../components/diverging_bar.js';
+import { verdictGlyph } from '../components/verdict_glyph.js';
 import { phase0Href } from './phase0_router.js';
 
 const _perJudgeCache = new Map();
 const _perEntryCache = new Map();
+const _driftMovesCache = new Map();
 const _loadingJudges = new Set();
 const _loadingEntries = new Set();
+const _loadingDriftMoves = new Set();
 
 // Compare-picker state — per (epoch, focused-gen) so a route change
 // drops the picker back to "off" instead of carrying a stale compare
@@ -53,7 +62,7 @@ let _comparePickerHandler = null;
 // inputs it actually reads. A heartbeat tick that touches no card
 // input rebuilds nothing.
 let _lastHeroDigest = null;
-let _lastHypothesisDigest = null;
+let _lastBetDigest = null;
 let _lastPatchesDigest = null;
 let _lastEntriesDigest = null;
 let _lastJudgesDigest = null;
@@ -64,14 +73,16 @@ let _forceNextGenRender = false;
 export function resetGenerationCaches() {
   _perJudgeCache.clear();
   _perEntryCache.clear();
+  _driftMovesCache.clear();
   _loadingJudges.clear();
   _loadingEntries.clear();
+  _loadingDriftMoves.clear();
   _compareGenByFocused.clear();
   _comparePicker = null;
   _comparePickerSig = null;
   _comparePickerHandler = null;
   _lastHeroDigest = null;
-  _lastHypothesisDigest = null;
+  _lastBetDigest = null;
   _lastPatchesDigest = null;
   _lastEntriesDigest = null;
   _lastJudgesDigest = null;
@@ -82,7 +93,7 @@ export function resetGenerationCaches() {
 // no-op render is gated without clearing the data caches.
 export function resetGenerationRenderDigest() {
   _lastHeroDigest = null;
-  _lastHypothesisDigest = null;
+  _lastBetDigest = null;
   _lastPatchesDigest = null;
   _lastEntriesDigest = null;
   _lastJudgesDigest = null;
@@ -104,6 +115,31 @@ export function perJudgePayload(epochId, generationId) {
 }
 export function perEntryPayload(epochId, generationId) {
   return _perEntryCache.get(epochId + '/' + generationId) || null;
+}
+export function driftMovementsPayload(generationId) {
+  return _driftMovesCache.get(generationId) || null;
+}
+
+async function ensureDriftMovements(generationId, repaint) {
+  if (!generationId) return null;
+  if (_driftMovesCache.has(generationId)) return _driftMovesCache.get(generationId);
+  if (_loadingDriftMoves.has(generationId)) return null;
+  _loadingDriftMoves.add(generationId);
+  try {
+    const data = await fetchJson('/api/drift-movements/'
+      + encodeURIComponent(generationId));
+    if (data && typeof data === 'object') _driftMovesCache.set(generationId, data);
+  } catch {
+    _driftMovesCache.set(generationId, {
+      generation_id: generationId, champion: null,
+      challenger: generationId, movements: [],
+    });
+  } finally {
+    _loadingDriftMoves.delete(generationId);
+    _forceNextGenRender = true;
+    if (typeof repaint === 'function') repaint();
+  }
+  return _driftMovesCache.get(generationId);
 }
 
 async function ensurePerJudge(epochId, generationId, repaint) {
@@ -521,7 +557,13 @@ function _renderHero(exp, epochId, generationId, comparedExp, comparedGenId,
 }
 
 // ---------------------------------------------------------------------------
-// HYPOTHESIS — left column (pure prose) + right column (alignment).
+// DID THE BET PAY OFF? — the hypothesis → outcome narrative.
+//
+// One panel, one story: THE BET (core idea + why) → PREDICTED movements
+// → ACTUAL movements (drift charted as a diverging bar) → a verdict per
+// predicted dimension (routed through `verdictGlyph`). The old two-card
+// split (Hypothesis | Alignment-vs-Outcome) is folded into this single
+// reading so the operator follows the thread, not two boxes.
 // ---------------------------------------------------------------------------
 
 // Format an "expected_drift_movements" entry as a one-line predicted
@@ -533,41 +575,20 @@ function _fmtDriftPrediction(m) {
   return `${m.kind} ${dir}${mag}`;
 }
 
-// Render the LEFT column — the operator's pre-run hypothesis prose. We
-// intentionally drop the "Modulating." line: the same info surfaces in
-// the Patches card below (mutation_id == modulating site).
-function _renderHypothesisColumn(hyp) {
-  const wrap = el('div', { class: 'gen-hyp-col' });
-  wrap.appendChild(el('h4', { class: 'gen-hyp-block-h' }, ['Hypothesis']));
+// THE BET — the operator's pre-run framing as prose. We intentionally
+// drop the "Modulating." line: the same info surfaces in the Patches
+// card below (mutation_id == modulating site).
+function _betPremise(hyp) {
+  const wrap = el('div', { class: 'gen-bet-premise' });
+  wrap.appendChild(el('h4', { class: 'gen-bet-h' }, ['The bet']));
   let any = false;
   if (_isStr(hyp.core_idea)) {
-    wrap.appendChild(el('p', { class: 'gen-hyp-core' }, [hyp.core_idea]));
+    wrap.appendChild(el('p', { class: 'gen-bet-core' }, [hyp.core_idea]));
     any = true;
   }
   if (_isStr(hyp.why)) {
-    wrap.appendChild(el('p', { class: 'gen-hyp-line' }, [
+    wrap.appendChild(el('p', { class: 'gen-bet-line' }, [
       el('strong', null, ['Why. ']), hyp.why,
-    ]));
-    any = true;
-  }
-  const predicted = [];
-  if (_isStr(hyp.expected_pass_rate_delta)) {
-    predicted.push(`pass-rate Δ ${hyp.expected_pass_rate_delta}`);
-  }
-  if (Array.isArray(hyp.expected_drift_movements)) {
-    for (const m of hyp.expected_drift_movements) {
-      const line = _fmtDriftPrediction(m);
-      if (line) predicted.push(`drift: ${line}`);
-    }
-  }
-  if (predicted.length) {
-    const ul = el('ul', { class: 'gen-hyp-predicted' });
-    for (const p of predicted) ul.appendChild(el('li', null, [p]));
-    wrap.appendChild(el('div', null, [
-      el('p', { class: 'gen-hyp-line gen-hyp-lead' }, [
-        el('strong', null, ['Predicted']),
-      ]),
-      ul,
     ]));
     any = true;
   }
@@ -578,13 +599,74 @@ function _renderHypothesisColumn(hyp) {
   return wrap;
 }
 
-// Render the RIGHT column — Alignment vs Outcome. For each predicted
-// dimension, render the predicted band/direction and the actual value,
-// with an aligned (✓) / missed (✗) glyph.
-function _renderAlignmentColumn(hyp, outcome) {
-  const wrap = el('div', { class: 'gen-align-col' });
-  wrap.appendChild(el('h4', { class: 'gen-hyp-block-h' },
-    ['Alignment vs Outcome']));
+// PREDICTED — the movements the operator wagered on, before the run.
+function _betPredicted(hyp) {
+  const predicted = [];
+  if (_isStr(hyp.expected_pass_rate_delta)) {
+    predicted.push(`pass-rate Δ ${hyp.expected_pass_rate_delta}`);
+  }
+  if (Array.isArray(hyp.expected_drift_movements)) {
+    for (const m of hyp.expected_drift_movements) {
+      const line = _fmtDriftPrediction(m);
+      if (line) predicted.push(`drift: ${line}`);
+    }
+  }
+  if (predicted.length === 0) return null;
+  const ul = el('ul', { class: 'gen-bet-predicted-list' });
+  for (const p of predicted) ul.appendChild(el('li', null, [p]));
+  return el('div', { class: 'gen-bet-predicted' }, [
+    el('h5', { class: 'gen-bet-sub-h' }, ['Predicted']),
+    ul,
+  ]);
+}
+
+// ACTUAL — the realised drift movements, charted as a diverging bar.
+// Prefers the per-kind champion→challenger counts from
+// /api/drift-movements (delta = challenger − champion; fewer drift
+// events is better → goodWhenNegative). Falls back to the single
+// aggregate outcome.drift_loss_delta when the per-kind index is absent.
+function _betActual(hyp, outcome, driftMoves) {
+  const wrap = el('div', { class: 'gen-bet-actual' });
+  wrap.appendChild(el('h5', { class: 'gen-bet-sub-h' }, ['Actual movements']));
+
+  const moves = (driftMoves && Array.isArray(driftMoves.movements))
+    ? driftMoves.movements : [];
+  const rows = moves
+    .filter((m) => m && _isStr(m.kind) && _isNum(m.delta))
+    .map((m) => ({
+      label: String(m.kind),
+      delta: m.delta,
+      annotation: `${m.champion_count} → ${m.challenger_count}`,
+    }));
+
+  if (rows.length > 0) {
+    wrap.appendChild(divergingBar({ rows, goodWhenNegative: true }));
+    return wrap;
+  }
+
+  // No per-kind index — chart the aggregate drift-loss delta alone so
+  // the bar still answers "did drift fall?".
+  const out = outcome && typeof outcome === 'object' ? outcome : null;
+  if (out && _isNum(out.drift_loss_delta)) {
+    wrap.appendChild(divergingBar({
+      rows: [{ label: 'drift-loss', delta: out.drift_loss_delta }],
+      goodWhenNegative: true,
+    }));
+    return wrap;
+  }
+
+  wrap.appendChild(el('p', { class: 'empty' },
+    ['No drift movements recorded for this generation.']));
+  return wrap;
+}
+
+// VERDICT — for each predicted dimension, a predicted/actual row with an
+// aligned / missed / unknown glyph (the shared `verdictGlyph`). The
+// alignment logic itself is unchanged: a pass-rate band check and a
+// drift-direction check against the realised drift-loss delta.
+function _betVerdict(hyp, outcome) {
+  const wrap = el('div', { class: 'gen-bet-verdict' });
+  wrap.appendChild(el('h5', { class: 'gen-bet-sub-h' }, ['Did it pay off?']));
   const out = outcome && typeof outcome === 'object' ? outcome : null;
   const rows = [];
 
@@ -601,14 +683,14 @@ function _renderAlignmentColumn(hyp, outcome) {
       aligned = (nums[0] > 0 && actual > 0)
         || (nums[0] < 0 && actual < 0) || (nums[0] === 0 && actual === 0);
     }
-    rows.push(_alignRow({
+    rows.push(_verdictRow({
       label: 'Pass-rate',
       predicted: hyp.expected_pass_rate_delta,
       actual: _fmtSigned(actual),
       aligned,
     }));
   } else if (_isStr(hyp.expected_pass_rate_delta)) {
-    rows.push(_alignRow({
+    rows.push(_verdictRow({
       label: 'Pass-rate',
       predicted: hyp.expected_pass_rate_delta,
       actual: '—', aligned: null,
@@ -626,7 +708,7 @@ function _renderAlignmentColumn(hyp, outcome) {
       if (predDir === 'decrease') aligned = actual <= 0;
       else if (predDir === 'increase') aligned = actual >= 0;
     }
-    rows.push(_alignRow({
+    rows.push(_verdictRow({
       label: `Drift: ${m.kind}`,
       predicted: _fmtDriftPrediction(m),
       actual: actual != null
@@ -640,80 +722,91 @@ function _renderAlignmentColumn(hyp, outcome) {
     wrap.appendChild(el('p', { class: 'empty' },
       ['No predictions to compare against the outcome.']));
   } else {
-    const stack = el('div', { class: 'gen-align-rows' });
+    const stack = el('div', { class: 'gen-bet-verdict-rows' });
     for (const r of rows) stack.appendChild(r);
     wrap.appendChild(stack);
-  }
-
-  if (_isStr(hyp.risks)) {
-    wrap.appendChild(el('div', { class: 'gen-align-risks' }, [
-      el('h5', { class: 'gen-hyp-sub-h' }, ['Risks (operator-stated)']),
-      el('p', null, [hyp.risks]),
-    ]));
   }
   return wrap;
 }
 
-function _alignRow(opts) {
+function _verdictRow(opts) {
   const aligned = opts.aligned;
-  const glyph = aligned === true ? '✓'
-    : aligned === false ? '✗' : '·';
-  const glyphClass = aligned === true ? 'good'
-    : aligned === false ? 'bad' : 'flat';
+  // Preserve the legacy verdict wording the page has always shown so the
+  // glyph still reads as "aligned" / "direction missed" / "no comparable
+  // actual", but route the iconography through the shared component.
   const note = aligned === true ? 'aligned'
     : aligned === false ? 'direction missed' : 'no comparable actual';
-  return el('div', { class: 'gen-align-row' }, [
-    el('div', { class: 'gen-align-label' }, [opts.label]),
-    el('div', { class: 'gen-align-grid' }, [
-      el('span', { class: 'gen-align-kv-key' }, ['predicted']),
-      el('span', { class: 'gen-align-kv-val mono' }, [opts.predicted]),
-      el('span', { class: 'gen-align-kv-key' }, ['actual']),
-      el('span', { class: 'gen-align-kv-val mono' }, [opts.actual]),
+  // Map the alignment tri-state onto the shared verdict vocabulary
+  // (promoted=✓ / rejected=✗ / deferred=◦) so the glyph is consistent
+  // with the rest of the dashboard; keep the legacy wording as a note.
+  const decision = aligned === true ? 'promoted'
+    : aligned === false ? 'rejected' : 'deferred';
+  return el('div', { class: 'gen-bet-verdict-row' }, [
+    el('div', { class: 'gen-bet-verdict-label' }, [opts.label]),
+    el('div', { class: 'gen-bet-verdict-grid' }, [
+      el('span', { class: 'gen-bet-kv-key' }, ['predicted']),
+      el('span', { class: 'gen-bet-kv-val mono' }, [opts.predicted]),
+      el('span', { class: 'gen-bet-kv-key' }, ['actual']),
+      el('span', { class: 'gen-bet-kv-val mono' }, [opts.actual]),
     ]),
-    el('div', { class: 'gen-align-verdict ' + glyphClass }, [
-      el('span', { class: 'gen-align-glyph' }, [glyph]),
-      ' ', note,
+    el('span', { class: 'gen-bet-verdict-mark' }, [
+      verdictGlyph(decision, { withLabel: false }),
+      el('span', { class: 'gen-bet-verdict-note' }, [note]),
     ]),
   ]);
 }
 
-// Build the single-mode hypothesis block (two inner columns —
-// hypothesis prose left, alignment-vs-outcome right). Reused as the
-// per-side body in compare mode.
-function _hypothesisBlock(exp) {
+// Build the single-mode bet block: premise → (predicted | actual) →
+// verdict → risks. Reused as the per-side body in compare mode.
+function _betBlock(exp, driftMoves) {
   const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object')
     ? exp.hypothesis : {};
-  return el('div', { class: 'gen-hyp-block' }, [
-    _renderHypothesisColumn(hyp),
-    _renderAlignmentColumn(hyp, exp.outcome),
+  const movementsRow = el('div', { class: 'gen-bet-movements' }, [
+    _betPredicted(hyp),
+    _betActual(hyp, exp.outcome, driftMoves),
   ]);
+  const children = [
+    _betPremise(hyp),
+    movementsRow,
+    _betVerdict(hyp, exp.outcome),
+  ];
+  if (_isStr(hyp.risks)) {
+    children.push(el('div', { class: 'gen-bet-risks' }, [
+      el('h5', { class: 'gen-bet-sub-h' }, ['Risks (operator-stated)']),
+      el('p', null, [hyp.risks]),
+    ]));
+  }
+  return el('div', { class: 'gen-bet-block' }, children);
 }
 
-function _renderHypothesis(exp, comparedExp, comparedGenId, generationId) {
+function _renderBet(exp, comparedExp, comparedGenId, generationId,
+                   driftMoves, comparedDriftMoves) {
+  // The slot id is unchanged (index.html is owned elsewhere); only the
+  // content it carries is the new merged narrative.
   const node = $('phase0-gen-hypothesis');
   if (!node) return;
   clearChildren(node);
   let body;
-  let subtitle = 'Proposed before; reconciled against the outcome.';
+  let subtitle = 'The bet, what it predicted, what actually moved.';
   if (state.epochDef == null) {
-    body = renderLoadingState({ label: 'Loading hypothesis' });
+    body = renderLoadingState({ label: 'Loading the bet' });
   } else if (!exp) {
     body = renderEmptyState('No hypothesis recorded.');
   } else if (!comparedGenId) {
-    body = _hypothesisBlock(exp);
+    body = _betBlock(exp, driftMoves);
   } else {
-    // Compare mode — two side-by-side hypothesis blocks. The compared
-    // side may still be loading; show a placeholder until its
-    // experiment record lands.
+    // Compare mode — two side-by-side bet blocks. The compared side may
+    // still be loading; show a placeholder until its experiment record
+    // lands.
     const leftHeader = el('div', { class: 'gen-compare-side-label' },
       ['v · ' + String(generationId)]);
     const left = el('div', { class: 'gen-compare-side focused' }, [
       leftHeader,
-      _hypothesisBlock(exp),
+      _betBlock(exp, driftMoves),
     ]);
     const rightHeader = el('div', { class: 'gen-compare-side-label' },
       ['v · ' + String(comparedGenId)]);
-    const rightBody = comparedExp ? _hypothesisBlock(comparedExp)
+    const rightBody = comparedExp ? _betBlock(comparedExp, comparedDriftMoves)
       : el('p', { class: 'empty' },
         [`No hypothesis record for compared generation ${comparedGenId}.`]);
     const right = el('div', { class: 'gen-compare-side compared' }, [
@@ -722,10 +815,10 @@ function _renderHypothesis(exp, comparedExp, comparedGenId, generationId) {
     ]);
     body = el('div', { class: 'gen-compare-pair gen-compare-pair-2col' },
       [left, right]);
-    subtitle = 'Side-by-side hypothesis & alignment.';
+    subtitle = 'Side-by-side: did each bet pay off?';
   }
   node.appendChild(renderCard({
-    title: 'Hypothesis · Alignment',
+    title: 'Did the bet pay off?',
     subtitle,
     body,
   }));
@@ -1103,6 +1196,14 @@ function _summarisePerJudge(payload) {
   return judges.length;
 }
 
+function _summariseDriftMoves(payload) {
+  if (!payload) return null;
+  const moves = Array.isArray(payload.movements) ? payload.movements : [];
+  // A cheap, render-relevant fingerprint: count + the per-kind deltas.
+  return moves.length + ':' + moves
+    .map((m) => `${m && m.kind}=${m && m.delta}`).join(',');
+}
+
 export function generationViewDigest(params) {
   const epochId = (params && params.epochId)
     || (state.epochDef && state.epochDef.epoch_id) || null;
@@ -1121,6 +1222,8 @@ export function generationViewDigest(params) {
     ? _perJudgeCache.get(epochId + '/' + generationId) : null;
   const cJudge = epochId && compared
     ? _perJudgeCache.get(epochId + '/' + compared) : null;
+  const fDrift = generationId ? _driftMovesCache.get(generationId) : null;
+  const cDrift = compared ? _driftMovesCache.get(compared) : null;
 
   // Number of generations in the focused epoch — the picker reads that
   // (via state.lineage / state.epochDef) for its option list, so a
@@ -1140,10 +1243,12 @@ export function generationViewDigest(params) {
       c: _summariseExp(comparedExp),
       optsCount: inDefCount + ':' + inLineageCount,
     },
-    hypothesis: {
+    bet: {
       epochId, generationId, compared,
       f: _summariseExp(exp),
       c: _summariseExp(comparedExp),
+      fd: _summariseDriftMoves(fDrift),
+      cd: _summariseDriftMoves(cDrift),
     },
     patches: {
       epochId, generationId, compared,
@@ -1189,14 +1294,18 @@ export function renderPhase0Generation(params, repaint) {
 
   ensurePerJudge(epochId, generationId, repaint);
   ensurePerEntry(epochId, generationId, repaint);
+  // The "actual movements" diverging bar reads the per-kind drift
+  // deltas from /api/drift-movements/<gen>.
+  ensureDriftMovements(generationId, repaint);
   // The vs-champion column needs the parent's per-entry payload too.
   const parentId = exp ? exp.parent_generation_id : null;
   if (parentId) ensurePerEntry(epochId, parentId, repaint);
-  // Compare mode — fetch the compared gen's per-entry and per-judge
-  // payloads so both sides paint with non-null data.
+  // Compare mode — fetch the compared gen's per-entry, per-judge, and
+  // drift-movements payloads so both sides paint with non-null data.
   if (comparedGenId) {
     ensurePerEntry(epochId, comparedGenId, repaint);
     ensurePerJudge(epochId, comparedGenId, repaint);
+    ensureDriftMovements(comparedGenId, repaint);
   }
   const parentEntries = parentId
     ? _perEntryCache.get(epochId + '/' + parentId)
@@ -1204,6 +1313,9 @@ export function renderPhase0Generation(params, repaint) {
   const comparedEntries = comparedGenId
     ? _perEntryCache.get(epochId + '/' + comparedGenId)
     : null;
+  const driftMoves = generationId ? _driftMovesCache.get(generationId) : null;
+  const comparedDriftMoves = comparedGenId
+    ? _driftMovesCache.get(comparedGenId) : null;
 
   const onPickerChange = (next) => {
     setCompareGenFor(epochId, generationId, next);
@@ -1244,10 +1356,11 @@ export function renderPhase0Generation(params, repaint) {
     _renderHero(exp, epochId, generationId, comparedExp, comparedGenId,
       onPickerChange);
   }
-  const hypDigest = JSON.stringify(digests.hypothesis);
-  if (force || hypDigest !== _lastHypothesisDigest) {
-    _lastHypothesisDigest = hypDigest;
-    _renderHypothesis(exp, comparedExp, comparedGenId, generationId);
+  const betDigest = JSON.stringify(digests.bet);
+  if (force || betDigest !== _lastBetDigest) {
+    _lastBetDigest = betDigest;
+    _renderBet(exp, comparedExp, comparedGenId, generationId,
+      driftMoves, comparedDriftMoves);
   }
   const patchDigest = JSON.stringify(digests.patches);
   if (force || patchDigest !== _lastPatchesDigest) {

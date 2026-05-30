@@ -89,6 +89,9 @@ export function resetRunCaches() {
   _comparePicker = null;
   _comparePickerSig = null;
   _comparePickerHandler = null;
+  // The events filter toggle is operator UI state; the canonical
+  // "scrub everything" reset clears it back to the full-feed default.
+  _eventsKeyOnly = false;
 }
 
 // Reset every per-card digest — used by tests that want to assert a
@@ -171,6 +174,11 @@ export function runViewDigest(params) {
   const eventsLen = (state.logTail && Array.isArray(state.logTail.events))
     ? state.logTail.events.length : 0;
   const eventsLoaded = state.logEventsPath != null || state.logCursor != null;
+  // The filter toggle is part of what the events card paints, so a
+  // toggle flip must change the digest even when the feed length is
+  // unchanged. (A toggle handler also force-renders, but folding it in
+  // keeps the gate honest for any indirect re-render path.)
+  const eventsKeyOnlyFlag = _eventsKeyOnly;
 
   // -- Lineage --------------------------------------------------------
   // Number of generations on the focused epoch — the compare picker's
@@ -200,7 +208,7 @@ export function runViewDigest(params) {
       epochId, generationId, entryId, compareGen,
       focusedTxSig, compareTxSig, lineageEpochGenLen,
     },
-    events: { eventsLen, eventsLoaded },
+    events: { eventsLen, eventsLoaded, eventsKeyOnly: eventsKeyOnlyFlag },
   };
 }
 
@@ -208,6 +216,31 @@ export function transcriptPayload(epochId, generationId, entryId) {
   return _transcriptCache.get(
     epochId + '/' + generationId + '/' + entryId,
   ) || null;
+}
+
+// Recover the matchup champion carried into L4 from an L3 decision.
+//
+// When the user drills into an entry FROM a round/decision (L3) the
+// link carries the matchup context as a 4th hash segment on the run
+// route: ``#/run/<epoch>/<challenger>/<entry>/vs-<champion>``. The
+// phase0_router only parses the first three run segments (epoch / gen /
+// entry) and ignores the rest, so the matchup hint is recovered here by
+// reading the live hash directly — no router change, fully shareable as
+// a URL. Returns the champion id, or null for a plain (non-matchup)
+// deep-link.
+//
+// Exported so tests can pin the parse without driving a render.
+export function matchupChampionFromHash(hash) {
+  const raw = (typeof hash === 'string')
+    ? hash
+    : ((typeof window !== 'undefined' && window.location && window.location.hash) || '');
+  const segs = raw.replace(/^#\/?/, '').split('/').filter(Boolean);
+  // run route grammar: run / epoch / gen / entry / vs-<champion>
+  if (segs[0] !== 'run' || segs.length < 5) return null;
+  const tail = decodeURIComponent(segs[4]);
+  if (tail.indexOf('vs-') !== 0) return null;
+  const champ = tail.slice('vs-'.length);
+  return champ.length > 0 ? champ : null;
 }
 
 // Look up the focused gen's parent_generation_id on the epoch contract.
@@ -246,9 +279,17 @@ export function compareGenFor(epochId, entryId, generationId) {
   if (_compareUserOverride.get(key)) {
     return _compareGenByEntry.get(key) || null;
   }
-  // No explicit pick yet — fall back to the parent on the epoch
-  // contract. Returns null gracefully when the contract is not yet
-  // loaded or the focused gen has no parent (eg. v0).
+  // No explicit pick yet. Context-preserving L3→L4: when the user
+  // arrived from a decision the run hash carries the matchup champion
+  // (``…/vs-<champion>``) — default the picker to THAT champion so the
+  // side-by-side opens on the exact matchup the operator was judging,
+  // not the lineage parent. A champion equal to the focused gen (a
+  // degenerate self-matchup) is ignored.
+  const matchupChamp = matchupChampionFromHash();
+  if (matchupChamp && matchupChamp !== generationId) return matchupChamp;
+  // Plain deep-link — fall back to the parent on the epoch contract.
+  // Returns null gracefully when the contract is not yet loaded or the
+  // focused gen has no parent (eg. v0).
   return defaultCompareGenFor(generationId);
 }
 
@@ -944,14 +985,50 @@ function _renderTranscript(epochId, generationId, entryId, repaint) {
   }));
 }
 
-function _renderEvents() {
+// High-signal event kinds — drift spikes, plan revisions, and steering
+// interventions are the events an operator scans for when triaging a
+// live run. Everything else (run_started, judgement_emitted, …) is
+// routine feed noise. Exported so the filter contract is testable
+// independent of the DOM.
+export function isKeyEvent(ev) {
+  const k = String((ev && ev.kind) || '').toLowerCase();
+  if (!k) return false;
+  // Drift spikes.
+  if (k.includes('drift')) return true;
+  // Plan revisions / replans.
+  if (k.includes('plan') || k.includes('replan')) return true;
+  // Steering interventions (operator control-file nudges, steer events).
+  if (k.includes('steer') || k.includes('intervention')) return true;
+  // Hard failures are always worth surfacing.
+  if (k.includes('fail') || k === 'error') return true;
+  return false;
+}
+
+// Filter state — false (default) shows the full feed; true narrows to
+// the high-signal events. Module-level so the toggle survives the
+// per-card digest gate (a digest tick must not reset the operator's
+// filter). resetRunCaches() clears it back to the default.
+let _eventsKeyOnly = false;
+
+// Exported so a test can drive the toggle without simulating a click.
+export function setEventsKeyOnly(on) { _eventsKeyOnly = !!on; }
+export function eventsKeyOnly() { return _eventsKeyOnly; }
+
+function _renderEvents(repaint) {
   const node = $('phase0-run-events');
   if (!node) return;
   clearChildren(node);
-  const events = (state.logTail && Array.isArray(state.logTail.events))
-    ? state.logTail.events.slice(-30) : [];
+  const allEvents = (state.logTail && Array.isArray(state.logTail.events))
+    ? state.logTail.events : [];
+  const keyCount = allEvents.reduce((n, ev) => n + (isKeyEvent(ev) ? 1 : 0), 0);
+
+  // The visible window: last 30 of either the full feed or the
+  // key-only subset, depending on the toggle.
+  const source = _eventsKeyOnly ? allEvents.filter(isKeyEvent) : allEvents;
+  const events = source.slice(-30);
+
   let body;
-  if (events.length === 0) {
+  if (allEvents.length === 0) {
     // logEventsPath / logCursor are populated by the first /api/log-tail
     // response; if neither has landed the event stream is still loading
     // rather than genuinely empty.
@@ -960,16 +1037,55 @@ function _renderEvents() {
       ? renderEmptyState('No events yet.')
       : renderLoadingState({ label: 'Loading events' });
   } else {
+    body = el('div');
+
+    // -- filter toggle ------------------------------------------------
+    const checkbox = el('input', {
+      type: 'checkbox',
+      'data-events-filter': 'key-only',
+    });
+    if (_eventsKeyOnly) checkbox.setAttribute('checked', 'checked');
+    checkbox.addEventListener('change', (ev) => {
+      _eventsKeyOnly = !!(ev && ev.target && ev.target.checked);
+      // Re-render via the app's scheduler when available; otherwise
+      // repaint this card directly so a standalone driver still updates.
+      if (typeof repaint === 'function') {
+        _forceNextRunRender = true;
+        repaint();
+      } else {
+        _renderEvents(repaint);
+      }
+    });
+    const filterBar = el('div', { class: 'events-filter' }, [
+      el('label', { class: 'events-filter-toggle' }, [
+        checkbox,
+        el('span', null, ['key events only']),
+      ]),
+      el('span', { class: 'events-filter-count' }, [
+        keyCount + ' key / ' + allEvents.length + ' total',
+      ]),
+    ]);
+    body.appendChild(filterBar);
+
     const list = el('div', { class: 'events-list' });
-    for (const ev of events) {
-      const ts = ev.ts || ev.timestamp || '';
-      list.appendChild(el('div', { class: 'events-row' }, [
-        renderEventChip(ev.kind || 'event'),
-        el('span', { class: 'events-row-ts' }, [String(ts).slice(11, 19)]),
-        el('span', { class: 'events-row-summary' }, [ev.summary || '']),
-      ]));
+    if (events.length === 0) {
+      // Toggle on but no key events in the feed.
+      list.appendChild(renderEmptyState('No key events yet.'));
+    } else {
+      for (const ev of events) {
+        const ts = ev.ts || ev.timestamp || '';
+        const key = isKeyEvent(ev);
+        list.appendChild(el('div', {
+          class: 'events-row' + (key ? ' events-row-key' : ''),
+          'data-key-event': key ? '1' : '0',
+        }, [
+          renderEventChip(ev.kind || 'event'),
+          el('span', { class: 'events-row-ts' }, [String(ts).slice(11, 19)]),
+          el('span', { class: 'events-row-summary' }, [ev.summary || '']),
+        ]));
+      }
     }
-    body = list;
+    body.appendChild(list);
   }
   node.appendChild(renderCard({
     title: 'Events stream',
@@ -1030,6 +1146,6 @@ export function renderPhase0Run(params, repaint) {
   const eventsDigest = JSON.stringify(digests.events);
   if (force || eventsDigest !== _lastEventsDigest) {
     _lastEventsDigest = eventsDigest;
-    _renderEvents();
+    _renderEvents(repaint);
   }
 }

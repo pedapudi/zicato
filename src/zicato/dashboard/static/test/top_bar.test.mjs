@@ -199,4 +199,152 @@ test('renderStatusPill emits a button with the resolved data-state', () => {
     `label span must read IDLE; got ${label && label.textContent}`);
 });
 
+// --- persistent live rail -------------------------------------------
+
+function installLiveRailSlot() {
+  let stale = document.getElementById('phase0-live-rail');
+  while (stale) {
+    if (stale.parentNode) stale.parentNode.removeChild(stale);
+    stale = document.getElementById('phase0-live-rail');
+  }
+  const node = document.createElement('div');
+  node.id = 'phase0-live-rail';
+  node.classList.add('hidden');
+  document.body.appendChild(node);
+  return node;
+}
+
+function hasClass(node, cls) {
+  return (node.getAttribute('class') || '').split(/\s+/).includes(cls);
+}
+
+test('live rail is hidden when idle (no active tournament)', () => {
+  resetState();
+  state.heartbeat = { last_heartbeat: new Date(Date.now() - 5_000).toISOString() };
+  state.activeTournament = null;
+  const rail = installLiveRailSlot();
+  shell.resetShellDigest();
+  shell.renderLiveRail();
+  assert(!shell.liveRailActive(),
+    'liveRailActive must be false with no tournament');
+  assert(hasClass(rail, 'hidden'),
+    'idle rail must carry the hidden class');
+  assertEqual(rail.children.length, 0,
+    'idle rail must paint no content');
+});
+
+test('live rail renders champion vs challenger + entry tally when a tournament is active', () => {
+  resetState();
+  const future = new Date(Date.now() + 1000).toISOString();
+  state.heartbeat = { last_heartbeat: future, epoch_id: 'e0' };
+  state.activeTournament = {
+    round_index: 2, total_rounds: 4,
+    parent_generation_id: 'v4', child_generation_id: 'v5',
+    entries: [
+      { entry_id: 'a', side: 'parent', status: 'done' },
+      { entry_id: 'a', side: 'child', status: 'done' },
+      { entry_id: 'b', side: 'parent', status: 'running' },
+      { entry_id: 'b', side: 'child', status: 'queued' },
+    ],
+  };
+  const rail = installLiveRailSlot();
+  shell.resetShellDigest();
+  shell.renderLiveRail();
+
+  assert(shell.liveRailActive(),
+    'liveRailActive must be true with a live tournament');
+  assert(!hasClass(rail, 'hidden'),
+    'active rail must not carry the hidden class');
+
+  const champ = rail.querySelector('[data-side="champion"]');
+  const chal = rail.querySelector('[data-side="challenger"]');
+  assert(champ != null && champ.textContent.includes('v4'),
+    `champion side must read v4; got ${champ && champ.textContent}`);
+  assert(chal != null && chal.textContent.includes('v5'),
+    `challenger side must read v5; got ${chal && chal.textContent}`);
+
+  // Tally counts per-side entry rows (each board entry appears once per
+  // side): 2 done / 1 running / 1 queued.
+  const prog = rail.querySelector('[data-tally="2/1/1"]');
+  assert(prog != null,
+    'entry progress must report 2 done / 1 running / 1 queued');
+
+  // Jump-to-decision CTA points at the L3 round route for the matchup.
+  const cta = rail.querySelector('[data-link="jump-to-decision"]');
+  assert(cta != null, 'jump-to-decision CTA must render');
+  assertEqual(cta.getAttribute('href'),
+    router.phase0Href('round', { epochId: 'e0', championId: 'v4', challengerId: 'v5' }),
+    'CTA must deep-link into the L3 round view for the live matchup');
+});
+
+test('live rail digest gates: a same-tick re-render writes zero DOM nodes', () => {
+  resetState();
+  const future = new Date(Date.now() + 1000).toISOString();
+  state.heartbeat = { last_heartbeat: future, epoch_id: 'e0' };
+  state.activeTournament = {
+    parent_generation_id: 'v4', child_generation_id: 'v5',
+    entries: [{ entry_id: 'a', side: 'child', status: 'running' }],
+  };
+  const rail = installLiveRailSlot();
+  shell.resetShellDigest();
+  shell.renderLiveRail();
+  const firstChild = rail.children[0];
+  const count = rail.children.length;
+  // Same state → same digest → no-op.
+  shell.renderLiveRail();
+  assertEqual(rail.children.length, count,
+    'a same-digest rail tick must not rebuild');
+  assert(rail.children[0] === firstChild,
+    'a same-digest rail tick must not replace the left cluster');
+});
+
+test('live rail hides again when the tournament resolves to idle', () => {
+  resetState();
+  const future = new Date(Date.now() + 1000).toISOString();
+  state.heartbeat = { last_heartbeat: future, epoch_id: 'e0' };
+  state.activeTournament = {
+    parent_generation_id: 'v4', child_generation_id: 'v5',
+    entries: [{ entry_id: 'a', side: 'child', status: 'running' }],
+  };
+  const rail = installLiveRailSlot();
+  shell.resetShellDigest();
+  shell.renderLiveRail();
+  assert(!hasClass(rail, 'hidden'), 'precondition: rail visible while live');
+
+  // Tournament resolves — the next tick must hide + clear the rail.
+  state.activeTournament = null;
+  shell.renderLiveRail();
+  assert(hasClass(rail, 'hidden'), 'rail must hide once the tournament resolves');
+  assertEqual(rail.children.length, 0, 'hidden rail must clear its content');
+});
+
+// --- verdict glyph in the breadcrumb --------------------------------
+
+test('breadcrumb routes the gen verdict through the shared verdict glyph', () => {
+  resetState();
+  state.heartbeat = { last_heartbeat: new Date(Date.now() - 5_000).toISOString() };
+  state.epochDef = {
+    epoch_id: 'e0',
+    experiments: [
+      { generation_id: 'v3', parent_generation_id: 'v1',
+        outcome: { tournament_decision: 'promoted' } },
+    ],
+  };
+  // verdictForGeneration resolves the recorded outcome.
+  assertEqual(shell.verdictForGeneration('v3'), 'promoted',
+    'a promoted gen must resolve to the promoted verdict');
+  assertEqual(shell.verdictForGeneration('v9'), null,
+    'an unknown gen must resolve to null');
+
+  installTopBarSlot();
+  shell.resetShellDigest();
+  shell.renderTopBar(router.parsePhase0Hash('#/gen/e0/v3'));
+  const crumb = document.body.querySelector('[data-verdict="promoted"]');
+  assert(crumb != null, 'the gen crumb must carry the promoted verdict marker');
+  const glyph = crumb.querySelector('[class="vglyph-mark"]');
+  assert(glyph != null && glyph.textContent.includes('✓'),
+    `the crumb must render the shared ✓ glyph; got ${glyph && glyph.textContent}`);
+  state.epochDef = null;
+});
+
 await run();
