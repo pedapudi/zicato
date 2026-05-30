@@ -9,6 +9,7 @@ bookkeeping-correct even when no sinks are attached.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,73 @@ def test_meta_loop_session_id_stable_across_one_evolve() -> None:
     # Different start time -> different session id.
     sid_other = meta_loop_session_id("2026-05-28T04:05:07+00:00")
     assert sid_other != sid_a
+
+
+# ---------------------------------------------------------------------------
+# Agent-name sanitization — regression for the broken meta-loop link.
+#
+# harmonograf validates the client/agent name against
+# ``[a-zA-Z0-9_-]{1,128}``. An ISO start time carries ':' (time + offset)
+# and '+' (UTC offset sign), both out-of-class — so an unsanitized id
+# made the sink construction raise and the live link point at nothing.
+# ---------------------------------------------------------------------------
+
+_AGENT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+
+@pytest.mark.parametrize(
+    "iso",
+    [
+        "2026-05-30T17:30:26+00:00",  # the id from the observed failure
+        "2026-05-28T04:05:06+00:00",
+        "2026-12-31T23:59:59+05:30",  # non-UTC offset
+        "2026-05-28T04:05:06.123456+00:00",  # fractional seconds ('.')
+        "2026-05-28 04:05:06+00:00",  # space-separated variant
+        "2026-05-28T04:05:06Z",  # 'Z' suffix
+    ],
+)
+def test_meta_loop_session_id_matches_harmonograf_regex(iso: str) -> None:
+    """Every representative start ISO yields a regex-valid session id."""
+    sid = meta_loop_session_id(iso)
+    assert _AGENT_NAME_RE.match(sid), f"invalid agent name: {sid!r}"
+    # No out-of-class characters survive.
+    assert ":" not in sid
+    assert "+" not in sid
+    assert "." not in sid
+    assert " " not in sid
+
+
+def test_meta_loop_session_id_for_observed_failure_iso() -> None:
+    """Pin the exact before/after for the timestamp from the bug report."""
+    sid = meta_loop_session_id("2026-05-30T17:30:26+00:00")
+    assert sid == "zicato-meta-loop-2026-05-30T17-30-26-00-00"
+
+
+def test_sanitized_client_name_is_regex_valid() -> None:
+    """The composed harmonograf ``Client`` name is also regex-valid.
+
+    The client name prefixes the session id with ``zicato-meta:`` — the
+    ':' is itself out-of-class, so the composed name must be sanitized
+    too (otherwise the sink construction raises despite a valid session
+    id).
+    """
+    from zicato.telemetry.harmonograf_supervisor import _sanitize_agent_name
+
+    sid = meta_loop_session_id("2026-05-30T17:30:26+00:00")
+    client_name = _sanitize_agent_name(f"zicato-meta:{sid}")
+    assert _AGENT_NAME_RE.match(client_name), client_name
+    assert ":" not in client_name
+
+
+def test_sanitize_agent_name_truncates_and_never_empty() -> None:
+    """The helper enforces the 1..128 length bound on its output."""
+    from zicato.telemetry.harmonograf_supervisor import _sanitize_agent_name
+
+    assert _sanitize_agent_name("") == "-"
+    assert _sanitize_agent_name(":::") == "---"
+    long = _sanitize_agent_name("x" * 500)
+    assert _AGENT_NAME_RE.match(long)
+    assert len(long) == 128
 
 
 # ---------------------------------------------------------------------------

@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import socket
 import tempfile
 import threading
@@ -372,6 +373,29 @@ def _resolve_data_dir(workspace_root: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+# harmonograf validates agent / session names against this regex; any
+# name handed to ``harmonograf_client.Client(name=...)`` MUST match or
+# the sink construction raises and the live link points at nothing.
+_AGENT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+_AGENT_NAME_DISALLOWED = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _sanitize_agent_name(name: str) -> str:
+    """Coerce ``name`` to match harmonograf's ``[a-zA-Z0-9_-]{1,128}`` rule.
+
+    Any character outside the allowed class (``:`` and ``+`` from a
+    namespaced/ISO-offset label, ``.`` from a dotted label, whitespace,
+    etc.) is replaced with ``-``. An empty input becomes a single ``-``
+    (the regex forbids zero-length names), and the result is truncated to
+    128 characters so it always satisfies the upper bound. The mapping is
+    deterministic and readable, so the id stays stable across an evolve.
+    """
+    safe = _AGENT_NAME_DISALLOWED.sub("-", name)
+    if not safe:
+        safe = "-"
+    return safe[:128]
+
+
 def meta_loop_session_id(evolve_started_at_iso: str) -> str:
     """Build the stable session id for the orchestrator's meta-loop events.
 
@@ -386,11 +410,12 @@ def meta_loop_session_id(evolve_started_at_iso: str) -> str:
     reducer / dashboard view that needs to recover the session id later
     only needs the evolve start ISO timestamp.
     """
-    # Sanitize: harmonograf session ids are free-form strings but ':'
-    # and ' ' in an ISO timestamp would interact badly with terminal
-    # URLs. Replace with safe separators.
-    safe = evolve_started_at_iso.replace(":", "-").replace(" ", "_")
-    return f"zicato-meta-loop-{safe}"
+    # Sanitize: the id is later handed to harmonograf as an agent name,
+    # which must match ``[a-zA-Z0-9_-]{1,128}``. An ISO timestamp carries
+    # ':' (time + offset) and '+' (UTC offset sign) — both out-of-class —
+    # so coerce every disallowed character to '-' (e.g.
+    # ``2026-05-30T17:30:26+00:00`` -> ``2026-05-30T17-30-26-00-00``).
+    return _sanitize_agent_name(f"zicato-meta-loop-{evolve_started_at_iso}")
 
 
 def build_meta_loop_sink(harmonograf_url: str, session_id: str) -> Awaitable[Any] | Any | None:
@@ -429,7 +454,14 @@ def build_meta_loop_sink(harmonograf_url: str, session_id: str) -> Awaitable[Any
         return None
     try:
         target = _harmonograf_grpc_target(harmonograf_url)
-        client = Client(name=f"zicato-meta:{session_id}", server_addr=target)
+        # The client name is validated by harmonograf against
+        # ``[a-zA-Z0-9_-]{1,128}``. A raw ``zicato-meta:{session_id}``
+        # injects a ':' (and the session id may already be at the length
+        # bound), so sanitize the composed name. ``session_id`` is itself
+        # already ``zicato-meta-loop-...``, so the resulting name stays
+        # readable, e.g. ``zicato-meta-zicato-meta-loop-...``.
+        client_name = _sanitize_agent_name(f"zicato-meta:{session_id}")
+        client = Client(name=client_name, server_addr=target)
         # The HarmonografSink does not currently accept a session_id on
         # construction — sessions are derived per-run from goldfive's
         # own metadata. The client name carries the session label so
@@ -452,3 +484,11 @@ __all__ = [
     "meta_loop_session_id",
     "start_harmonograf",
 ]
+
+
+def _is_valid_agent_name(name: str) -> bool:
+    """True when ``name`` satisfies harmonograf's agent-name regex.
+
+    Exposed for tests asserting the sanitizer's output is always valid.
+    """
+    return _AGENT_NAME_RE.match(name) is not None
