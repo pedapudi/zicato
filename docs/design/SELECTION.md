@@ -83,8 +83,11 @@ is a response to one of them:
 
 Stated in the language of decision theory, this is **best-arm
 identification under expensive, noisy evaluation, with a generative arm
-source and a feasibility constraint.** Hold that phrase; the whole
-literature organizes around it.
+source and a feasibility constraint** (Audibert & Bubeck 2010 is the
+canonical treatment of best-arm identification, and of why the objective
+here is *simple regret* — the quality of the one arm you finally pick —
+not the cumulative regret of a bandit that must earn reward while it
+learns). Hold that phrase; the whole literature organizes around it.
 
 ---
 
@@ -125,9 +128,9 @@ KL-divergence "trust region" of the old one; its Theorem 1 gives a
 monotonic-improvement lower bound
 `η(π_new) ≥ L(π_new) − C·D_TV(π_old, π_new)²`. PPO replaces the hard
 constraint with a clipped objective — a cruder but cheaper way to keep
-the step small. Off-policy variants (Iwaki & Asada 2017) adopt a new
-policy only when a performance-difference lower bound is positive, which
-again requires small KL.
+the step small. Off-policy variants (Iwaki & Asada 2017;
+Meng et al. 2022) adopt a new policy only when a performance-difference
+lower bound is positive, which again requires small KL.
 
 **Noise handling / incumbent protection.** Indirect: by never moving
 far, the *variance* of the improvement estimate stays small enough to
@@ -188,9 +191,9 @@ budget, throw out the worst fraction, give the survivors more, repeat.
 Resources concentrate exponentially on what looks promising.
 
 **Who does this.** Successive Halving, **Hyperband** (Li et al. 2017),
-and the asynchronous **ASHA** are the canonical schedulers. They are
-how AutoML/NAS rank hundreds of hyperparameter or architecture
-candidates under a wall-clock budget.
+and the asynchronous **ASHA** (Li et al. 2020) are the canonical
+schedulers. They are how AutoML/NAS rank hundreds of hyperparameter or
+architecture candidates under a wall-clock budget.
 
 **Noise handling / incumbent protection.** This is the family's
 weakness. Brackets defend against waste, not against noise: a candidate
@@ -210,6 +213,25 @@ champion the next round builds on). The verified guidance is blunt:
 absolute scalar and the cost of a false promotion is high." This is the
 direct evidence against the single-elimination and double-elimination
 structures considered earlier (§6).
+
+### A note on elitism — the same idea under a fourth name
+
+Evolutionary computation arrives at incumbent protection from its own
+direction, and the vocabulary is worth knowing because it is exactly
+zicato's situation. **Elitist** selection — the `(μ+λ)` scheme, where
+the next generation is chosen from parents *and* offspring so the best
+individual can never be lost — protects the incumbent by *never letting
+a worse candidate displace a better one*, in contrast to the
+non-elitist `(μ,λ)` scheme that discards all parents each generation
+(Beyer & Schwefel 2002, the comprehensive ES introduction). CMA-ES
+(Hansen & Ostermeier 2001), the de-facto standard continuous optimizer,
+is built on this selection-and-recombination spine. The connection that
+matters: irace's "elite is never eliminated until challengers are
+evaluated on at least as many instances" (§4) is *elitism plus
+replication* — the evolutionary incumbent-protection idea, made
+noise-aware by demanding the challenger earn its place over an equal
+sample. zicato's "champion stands on reject" is plain `(μ+λ)` elitism;
+the upgrade in §7 is to make it elitism-with-replication.
 
 ---
 
@@ -392,8 +414,14 @@ the research flagged:
   returns the candidate evaluated on the most instances (the
   most-precisely-estimated one); zicato promotes on a single draw, so
   the promoted challenger's loss is an *optimistically biased* estimate
-  — it was selected *because* it looked good, and selection inflates the
-  estimate (the "winner's curse").
+  — it was selected *because* it looked good, and the act of optimizing
+  over noisy estimates systematically overshoots. This is the
+  **optimizer's curse** (Smith & Winkler 2006): even with *unbiased*
+  per-candidate estimates, the *selected* candidate's estimate is
+  biased high in expectation, so the realized loss disappoints. Their
+  prescribed remedy — Bayesian "disciplined skepticism," i.e. shrinking
+  the winner's estimate back toward the prior before acting — is exactly
+  the motivation for the confirmation re-run in §7, lever 3.
 
 ---
 
@@ -525,11 +553,14 @@ flowchart LR
 ```
 
 **Lever 3 — winner's-curse confirmation.** The promoted challenger's
-loss is upward-biased: it was chosen *for* looking good. Before
-committing the crown, **re-evaluate it on a fresh board draw** (or a
-held-out board slice never used for proposal/selection — the epoch is a
-natural home for such a confirmation set). Promote only if it holds up.
-This is the debiasing step zicato wholly lacks today.
+loss is upward-biased: it was chosen *for* looking good (the optimizer's
+curse, Smith & Winkler 2006). Before committing the crown,
+**re-evaluate it on a fresh board draw** (or a held-out board slice
+never used for proposal/selection — the epoch is a natural home for such
+a confirmation set). Promote only if it holds up. A fresh-draw estimate
+is unconditioned on the selection, so it is the cheap, model-free
+version of the paper's Bayesian de-biasing. This is the debiasing step
+zicato wholly lacks today.
 
 **Lever 4 — a trust-region step bound (complementary).** Borrow Family
 ①: cap how far one experiment may move the champion (patch size,
@@ -571,10 +602,11 @@ different places, two opposite statistical stances: be liberal about
    flip, without blowing the wall-clock budget? Is the right rule a
    per-entry sequential test (race each previously-passing entry until
    the flip is confirmed or refuted)?
-2. **The winner's-curse magnitude.** How large is the selection-bias
-   inflation given a board of this size and K challengers per round? Is
-   a fresh-draw confirmation enough, or is an explicit debiased estimator
-   (e.g., a held-out re-estimate) worth the complexity?
+2. **The winner's-curse magnitude.** How large is the optimizer's-curse
+   inflation (Smith & Winkler 2006) given a board of this size and K
+   challengers per round? Is a fresh-draw confirmation enough, or is an
+   explicit Bayesian-shrinkage estimator on the selected candidate worth
+   the complexity?
 3. **Exploration vs. elitism.** Elitist racing converges fast but can
    converge *prematurely*; the literature has non-elitist variants that
    explore better. How much exploration pressure does the proposer need,
@@ -590,17 +622,41 @@ different places, two opposite statistical stances: be liberal about
 
 ## 9. References
 
-All verified against primary sources.
+Primary sources, grouped by the family they anchor. Every claim that
+attaches a name+year in the body resolves to an entry here. Sources tied
+to the verified research findings (TRPO, AlphaGo Zero, AlphaStar, PBT,
+Hyperband, Hoeffding races, irace, Demšar, the off-policy bound) were
+adversarially fact-checked against the original papers; the additional
+canonical references (ASHA, CMA-ES, the ES introduction, best-arm
+identification, the optimizer's curse) were added to anchor claims the
+body makes by inference.
 
-- Schulman et al. 2015, *Trust Region Policy Optimization*. <https://arxiv.org/pdf/1502.05477> — monotonic-improvement lower bound; trust-region constrained update.
-- Iwaki & Asada 2017, *Implicit Incremental Natural Actor Critic* (off-policy monotonic improvement). <https://arxiv.org/pdf/1710.03442>
-- Silver et al. 2017, *Mastering the Game of Go without Human Knowledge* (AlphaGo Zero), Nature 550 — the >55%-over-400-games gating evaluator. <https://discovery.ucl.ac.uk/10045895/1/agz_unformatted_nature.pdf>
-- Vinyals et al. 2019, *Grandmaster level in StarCraft II* (AlphaStar league; main vs. exploiter agents). <https://www.nature.com/articles/s41586-019-1724-z>
-- Jaderberg et al. 2017, *Population Based Training of Neural Networks* (truncation vs. T-test selection). <https://arxiv.org/pdf/1711.09846>
-- Li et al. 2017, *Hyperband*, JMLR 18 — Successive Halving brackets and the noise-vs-bracket tradeoff. <https://www.jmlr.org/papers/volume18/16-558/16-558.pdf>
-- Maron & Moore 1993, *Hoeffding Races*, NeurIPS — confidence-bound elimination. <https://proceedings.neurips.cc/paper/1993/file/02a32ad2669e6fe298e607fe7cc0e1a0-Paper.pdf>
-- López-Ibáñez et al. 2016, *The irace package: iterated racing for automatic algorithm configuration* — elitist iterated racing, EDA candidate generation, replication-based incumbent protection. <https://www.sciencedirect.com/science/article/pii/S2214716015300270>
-- Demšar 2006, *Statistical Comparisons of Classifiers over Multiple Data Sets*, JMLR 7 — Wilcoxon signed-rank (two) / Friedman + Nemenyi (many). <https://www.jmlr.org/papers/volume7/demsar06a/demsar06a.pdf>
+**Reinforcement-learning policy improvement & gating**
+
+- Schulman, Levine, Abbeel, Jordan & Moritz 2015, *Trust Region Policy Optimization*, ICML — the monotonic-improvement lower bound and the trust-region constrained update. <https://arxiv.org/pdf/1502.05477>
+- Iwaki & Asada 2017, *Implicit Incremental Natural Actor Critic* — off-policy monotonic improvement via a positive performance-difference lower bound. <https://arxiv.org/pdf/1710.03442>
+- Meng et al. 2022, IEEE Transactions on Neural Networks and Learning Systems (IEEE Xplore doc 9334437) — an off-policy TRPO surrogate objective that uses both on- and off-policy data while preserving monotonic policy improvement. <https://ieeexplore.ieee.org/document/9334437/>
+- Silver et al. 2017, *Mastering the Game of Go without Human Knowledge* (AlphaGo Zero), Nature 550 — the >55%-over-400-games gating evaluator, the margin chosen "to avoid selecting on noise alone." <https://discovery.ucl.ac.uk/10045895/1/agz_unformatted_nature.pdf>
+- Vinyals et al. 2019, *Grandmaster level in StarCraft II using multi-agent reinforcement learning* (the AlphaStar league; main vs. exploiter agents), Nature 575. <https://www.nature.com/articles/s41586-019-1724-z>
+- Jaderberg et al. 2017, *Population Based Training of Neural Networks* — truncation selection (ranking) vs. T-test selection (statistical gate). <https://arxiv.org/pdf/1711.09846>
+
+**Hyperparameter / model selection & racing**
+
+- Li, Jamieson, DeSalvo, Rostamizadeh & Talwalkar 2017, *Hyperband: A Novel Bandit-Based Approach to Hyperparameter Optimization*, JMLR 18 — Successive Halving brackets and the formal noise-vs-bracket tradeoff. <https://www.jmlr.org/papers/volume18/16-558/16-558.pdf>
+- Li, Jamieson, Rostamizadeh, Gonina, Ben-Tzur, Hardt, Recht & Talwalkar 2020, *A System for Massively Parallel Hyperparameter Tuning* (ASHA), MLSys. <https://arxiv.org/abs/1810.05934>
+- Maron & Moore 1993, *Hoeffding Races: Accelerating Model Selection Search for Classification and Function Approximation*, NeurIPS — confidence-bound elimination. <https://proceedings.neurips.cc/paper/1993/file/02a32ad2669e6fe298e607fe7cc0e1a0-Paper.pdf>
+- López-Ibáñez, Dubois-Lacoste, Pérez Cáceres, Birattari & Stützle 2016, *The irace package: Iterated racing for automatic algorithm configuration*, Operations Research Perspectives 3 — elitist iterated racing, EDA candidate generation, replication-based incumbent protection. <https://www.sciencedirect.com/science/article/pii/S2214716015300270>
+- Demšar 2006, *Statistical Comparisons of Classifiers over Multiple Data Sets*, JMLR 7 — the Wilcoxon signed-rank test (two systems) and Friedman + Nemenyi (many) across a task set. <https://www.jmlr.org/papers/volume7/demsar06a/demsar06a.pdf>
+
+**Evolutionary computation (elitism & noisy fitness)**
+
+- Beyer & Schwefel 2002, *Evolution strategies — A comprehensive introduction*, Natural Computing 1(1):3–52 — `(μ+λ)` elitist vs `(μ,λ)` non-elitist selection. <https://link.springer.com/article/10.1023/A:1015059928466>
+- Hansen & Ostermeier 2001, *Completely Derandomized Self-Adaptation in Evolution Strategies* (CMA-ES), Evolutionary Computation 9(2):159–195. <https://direct.mit.edu/evco/article/9/2/159/892>
+
+**Statistics of selection under noise**
+
+- Audibert & Bubeck 2010, *Best Arm Identification in Multi-Armed Bandits*, COLT — best-arm identification and the simple-regret objective (successive rejects). <https://inria.hal.science/hal-00654404>
+- Smith & Winkler 2006, *The Optimizer's Curse: Skepticism and Postdecision Surprise in Decision Analysis*, Management Science 52(3):311–322 — selecting over noisy estimates systematically overshoots; Bayesian skepticism as the correction. <https://ideas.repec.org/a/inm/ormnsc/v52y2006i3p311-322.html>
 
 *See also* [`TOURNAMENT.md`](TOURNAMENT.md), [`SCORING.md`](SCORING.md),
 [`LOOP-HEALTH.md`](LOOP-HEALTH.md), [`VOCABULARY.md`](VOCABULARY.md).
