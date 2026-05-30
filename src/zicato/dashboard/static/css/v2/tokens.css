@@ -432,3 +432,17 @@
     to { transform: rotate(360deg); }
   }
 }
+
+/* Feature-flag visibility. The bootstrap sets html[data-ui] and toggles
+   the [hidden] attribute, but v1's own layout rules (e.g. `.phase0-shell
+   { display: ... }`) override the UA `[hidden] { display:none }`, so the
+   v1 chrome bleeds through in v2 mode. Force it decisively from the flag
+   attribute — this is the single source of truth for which UI shows. */
+html[data-ui="v2"] #header-bar,
+html[data-ui="v2"] #phase0-live-rail,
+html[data-ui="v2"] #phase0-shell,
+html[data-ui="v2"] #phase0-status-dropdown,
+html[data-ui="v2"] #phase0-palette-overlay,
+html[data-ui="v2"] #footer-bar { display: none !important; }
+html[data-ui="v2"] #v2-root { display: block !important; }
+html:not([data-ui="v2"]) #v2-root { display: none !important; }
