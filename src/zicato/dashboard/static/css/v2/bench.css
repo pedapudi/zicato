@@ -129,9 +129,6 @@
 }
 .v2-bench-hyp-pred-text { font-family: var(--v2-face-data); }
 
-/* --- matrix host ----------------------------------------------------- */
-.v2-bench-matrix { width: 100%; }
-
 /* --- gate forming ---------------------------------------------------- */
 .v2-bench-gate {
   display: flex;
@@ -168,6 +165,158 @@
   font-weight: var(--v2-w-medium);
 }
 
+/* --- THE GRID — small multiples (the focus) -------------------------- *
+ * One boardCell per board entry, laid out as a responsive auto-fill grid
+ * so the operator glances and sees every board's progress + comparison at
+ * once. Cells are equal-track; the grid reflows to the container width. */
+.v2-bench-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+  gap: var(--v2-sp-3);
+  align-content: start;
+}
+.v2-bench-grid-sentinel { display: none; }
+
+/* --- boardCell — one small multiple ---------------------------------- */
+.v2-bc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--v2-sp-2);
+  padding: var(--v2-sp-3);
+  border: 1px solid var(--v2-line);
+  border-radius: var(--v2-radius-md);
+  background: var(--v2-surface);
+  box-sizing: border-box;
+  /* The left edge encodes the comparison sentiment — color is redundant
+   * to the footer glyph/word, so it reads without color. */
+  border-left: 3px solid var(--v2-line-strong);
+}
+.v2-bc[data-sentiment="improve"] { border-left-color: var(--v2-signal-improve); }
+.v2-bc[data-sentiment="regress"] { border-left-color: var(--v2-signal-regress); }
+.v2-bc[data-sentiment="flat"]    { border-left-color: var(--v2-line-strong); }
+
+.v2-bc-drillable { cursor: pointer; transition: border-color var(--v2-transition), box-shadow var(--v2-transition); }
+.v2-bc-drillable:hover { box-shadow: var(--v2-shadow); border-color: var(--v2-line-strong); }
+.v2-bc-drillable:focus-visible {
+  outline: 2px solid var(--v2-signal-caution);
+  outline-offset: 2px;
+}
+
+.v2-bc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--v2-sp-2);
+}
+.v2-bc-id {
+  font-size: var(--v2-fs-12);
+  font-weight: var(--v2-w-medium);
+  color: var(--v2-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.v2-bc-verdict { font-family: var(--v2-face-data); font-size: var(--v2-fs-13); line-height: 1; color: var(--v2-ink-faint); }
+.v2-bc-verdict[data-v="pass"]    { color: var(--v2-signal-improve-fg); }
+.v2-bc-verdict[data-v="fail"]    { color: var(--v2-signal-regress-fg); }
+.v2-bc-verdict[data-v="aborted"] { color: var(--v2-signal-regress-fg); }
+.v2-bc-verdict[data-v="running"] { color: var(--v2-live); }
+.v2-bc-verdict[data-v="queued"]  { color: var(--v2-ink-faint); }
+
+.v2-bc-body {
+  display: flex;
+  align-items: center;
+  gap: var(--v2-sp-3);
+}
+
+/* -- progress ring (live budget arc) -- */
+.v2-bc-ring {
+  position: relative;
+  width: 34px; height: 34px;
+  flex: 0 0 34px;
+  display: none;
+}
+.v2-bc-ring.v2-bc-ring-on { display: block; }
+.v2-bc-ring-svg { display: block; width: 34px; height: 34px; }
+.v2-bc-ring-track { fill: none; stroke: var(--v2-line); stroke-width: 3; }
+.v2-bc-ring-sweep {
+  fill: none;
+  stroke: var(--v2-live);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset var(--v2-transition);
+}
+.v2-bc-ring[data-side="champion"] .v2-bc-ring-sweep { stroke: var(--v2-ink-muted); }
+.v2-bc-ring-pct {
+  position: absolute;
+  inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--v2-fs-11);
+  color: var(--v2-ink-2);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .v2-bc-ring.v2-bc-ring-on .v2-bc-ring-svg {
+    animation: v2-bc-ring-spin 2.4s linear infinite;
+    transform-origin: 50% 50%;
+  }
+  @keyframes v2-bc-ring-spin { to { transform: rotate(360deg); } }
+}
+
+/* -- paired comparison bars -- */
+.v2-bc-bars { flex: 1 1 auto; display: flex; flex-direction: column; gap: var(--v2-sp-1); min-width: 0; }
+.v2-bc-bar {
+  display: grid;
+  grid-template-columns: 12px 30px 1fr auto;
+  align-items: center;
+  gap: var(--v2-sp-1);
+  min-width: 0;
+}
+.v2-bc-bar-glyph { font-family: var(--v2-face-data); font-size: var(--v2-fs-11); line-height: 1; color: var(--v2-ink-muted); text-align: center; }
+.v2-bc-bar[data-state="running"] .v2-bc-bar-glyph { color: var(--v2-live); }
+.v2-bc-bar[data-state="aborted"] .v2-bc-bar-glyph { color: var(--v2-signal-regress-fg); }
+.v2-bc-bar-label { font-size: var(--v2-fs-11); color: var(--v2-ink-muted); }
+.v2-bc-bar-track {
+  height: 8px;
+  border-radius: var(--v2-radius-sm);
+  background: var(--v2-surface-2);
+  overflow: hidden;
+  min-width: 0;
+}
+.v2-bc-bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--v2-ink-faint);
+  transition: width var(--v2-transition);
+}
+/* The challenger bar's fill carries the comparison color; the champion
+ * is the neutral reference. Both are redundant to the footer glyph. */
+.v2-bc[data-sentiment="improve"] .v2-bc-bar[data-side="challenger"] .v2-bc-bar-fill-on { background: var(--v2-signal-improve); }
+.v2-bc[data-sentiment="regress"] .v2-bc-bar[data-side="challenger"] .v2-bc-bar-fill-on { background: var(--v2-signal-regress); }
+.v2-bc-bar[data-side="champion"] .v2-bc-bar-fill-on { background: var(--v2-ink-muted); }
+.v2-bc-bar-val {
+  font-family: var(--v2-face-data);
+  font-size: var(--v2-fs-11);
+  color: var(--v2-ink-2);
+  white-space: nowrap;
+  justify-self: end;
+}
+.v2-bc-bar[data-state="queued"] .v2-bc-bar-val,
+.v2-bc-bar[data-state="running"] .v2-bc-bar-val { color: var(--v2-ink-faint); }
+
+/* -- footer comparison sentiment -- */
+.v2-bc-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--v2-sp-1);
+  font-size: var(--v2-fs-11);
+}
+.v2-bc-cmp-glyph { font-family: var(--v2-face-data); line-height: 1; color: var(--v2-ink-faint); }
+.v2-bc-cmp-text { color: var(--v2-ink-muted); font-family: var(--v2-face-data); }
+.v2-bc[data-sentiment="improve"] .v2-bc-cmp-glyph,
+.v2-bc[data-sentiment="improve"] .v2-bc-cmp-text { color: var(--v2-signal-improve-fg); }
+.v2-bc[data-sentiment="regress"] .v2-bc-cmp-glyph,
+.v2-bc[data-sentiment="regress"] .v2-bc-cmp-text { color: var(--v2-signal-regress-fg); }
+
 /* --- activity ticker ------------------------------------------------- */
 .v2-bench-ticker {
   border: 1px solid var(--v2-line);
@@ -194,6 +343,10 @@
   max-height: 320px;
   overflow-y: auto;
 }
+/* Compact (secondary) variant — the ticker is NOT the focus, the grid
+ * is. Keep it to a short, scrollable strip below the small multiples. */
+.v2-bench-ticker-compact { opacity: 0.92; }
+.v2-bench-ticker-compact .v2-bench-ticker-list { max-height: 132px; }
 .v2-bench-ticker-list[hidden] { display: none; }
 .v2-bench-ticker-row {
   display: grid;

@@ -1,14 +1,18 @@
 // test/v2_bench.test.mjs — unit tests for the Bench (live operations)
-// view (js/v2/views/bench.js).
+// view (js/v2/views/bench.js) in its small-multiples form.
 //
-// The Bench reads the shared AppState (SSE-updated) and renders the live
-// tournament. These tests seed `state` directly (the data layer's job;
-// the view never fetches), render into a fresh harness host, and assert:
+// DASHBOARD-V2 §3 + §4.1: the Bench is a GRID of small multiples — one
+// graphical boardCell per board entry (champion-vs-challenger paired
+// bars + a live progress ring), NOT a table. These tests seed `state`
+// directly (the data layer's job; the view never fetches), render into a
+// fresh harness host, and assert:
 //   - the honest idle state when no run is in flight,
-//   - the header / pinned hypothesis / gate / matrix / ticker surfaces,
-//   - in-place patching across re-renders (no flash; node identity kept),
-//   - the four honest cell states from a tournament snapshot,
-//   - matrix-cell drill wiring.
+//   - the compact header / pinned hypothesis / gate / ticker surfaces,
+//   - the GRID renders exactly one cell per board entry,
+//   - the four honest per-side states surface in the cells,
+//   - the live progress ring sweeps and updates IN PLACE (no flash),
+//   - in-place patching across re-renders (node identity kept),
+//   - each cell is a drillable door.
 // Run directly: `node static/test/v2_bench.test.mjs`.
 
 import { installDom, makeEvent, test, run, assert, assertEqual } from './harness.mjs';
@@ -16,18 +20,13 @@ import { installDom, makeEvent, test, run, assert, assertEqual } from './harness
 installDom();
 
 // A no-op fetch so any incidental network call in the module graph is a
-// resolved empty body rather than a crash (the view itself reads state,
-// not fetch — this only guards transitive imports).
+// resolved empty body rather than a crash.
 globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
 
 const { state } = await import('../js/core/state.js');
 const { renderBench } = await import('../js/v2/views/bench.js');
 const { $ } = await import('../js/core/dom.js');
 
-// The view addresses its surfaces by id through document.getElementById
-// (one #v2-view host in production). Tests must therefore not leave a
-// prior test's host attached, or a stale duplicate-id node would shadow
-// the live one. Clear the document body (and the id registry) per host.
 function freshHost() {
   while (document.body.firstChild) document.body.removeChild(document.body.firstChild);
   document._byId = new Map();
@@ -38,7 +37,6 @@ function freshHost() {
   return host;
 }
 
-// Reset the slices the Bench reads to a clean idle baseline.
 function resetState() {
   state.activeTournament = null;
   state.activeRuns = [];
@@ -59,7 +57,7 @@ function liveTournament() {
     round_index: 0,
     total_rounds: 1,
     entries: [
-      // champion done w/ pass, challenger done w/ pass
+      // champion done w/ pass, challenger done w/ pass (challenger better)
       { entry_id: 'waffles_single', side: 'parent', status: 'done',
         loss_summary: { drift_loss: 0.605, pass_fail: 1.0 }, status_raw: 'completed' },
       { entry_id: 'waffles_single', side: 'child', status: 'done',
@@ -83,6 +81,12 @@ function liveTournament() {
   };
 }
 
+// The grid host's cells, in DOM order (skips the hidden mount sentinel).
+function gridCells() {
+  const grid = $('v2-bench-grid');
+  return grid.querySelectorAll('[data-key]');
+}
+
 // =====================================================================
 
 test('Bench renders an honest idle state when no run is in flight', () => {
@@ -93,7 +97,6 @@ test('Bench renders an honest idle state when no run is in flight', () => {
   const txt = host.textContent;
   assert(txt.includes('No run in flight'), 'honest idle headline');
   assert(txt.includes('Overview') || txt.includes('overview'), 'points to the Overview');
-  // The empty stateBlock is used (never an ad-hoc "No data").
   const state_ = host.querySelectorAll('[data-kind]').find((n) => n.getAttribute('data-kind') === 'empty');
   assert(state_, 'uses stateBlock(empty) for idle');
 });
@@ -149,7 +152,22 @@ test('Bench falls back to the newest experiment when ids do not line up', () => 
   assert(host.textContent.includes('newest bet under test'), 'newest experiment pinned as fallback');
 });
 
-test('Bench renders the four honest matrix cell states from the snapshot', () => {
+test('Bench grid renders exactly one boardCell per board entry', () => {
+  resetState();
+  state.activeTournament = liveTournament();
+  const host = freshHost();
+  renderBench(host, { view: 'bench', params: {} });
+  const cells = gridCells();
+  assertEqual(cells.length, 4, 'four entries → four cells (sides are paired WITHIN a cell)');
+  const ids = cells.map((c) => c.getAttribute('data-key'));
+  for (const id of ['waffles_single', 'q3_metrics_outline', 'picky_stakeholder', 'revision_loop']) {
+    assert(ids.includes(id), `cell for ${id}`);
+  }
+  // Each cell carries the terse entry id as its label.
+  assert(host.textContent.includes('waffles_single'), 'entry id label shown');
+});
+
+test('Bench cells surface the four honest per-side states', () => {
   resetState();
   state.activeTournament = liveTournament();
   state.activeRuns = [
@@ -158,36 +176,73 @@ test('Bench renders the four honest matrix cell states from the snapshot', () =>
   ];
   const host = freshHost();
   renderBench(host, { view: 'bench', params: {} });
-  const matrix = $('v2-bench-matrix');
-  assert(matrix.querySelector('[class]'), 'matrix mounted');
-  const states = matrix.querySelectorAll('[data-state]').map((n) => n.getAttribute('data-state'));
+  const grid = $('v2-bench-grid');
+  const states = grid.querySelectorAll('[data-state]').map((n) => n.getAttribute('data-state'));
   for (const st of ['queued', 'running', 'done', 'aborted']) {
-    assert(states.includes(st), `cell state ${st} present`);
+    assert(states.includes(st), `per-side state ${st} present`);
   }
-  const txt = matrix.textContent;
-  assert(txt.includes('0.605'), 'champion done loss');
-  assert(txt.includes('0.310'), 'challenger done loss');
-  assert(txt.includes('✓ pass'), 'pass verdict glyph');
-  assert(txt.includes('✗ fail'), 'fail verdict glyph');
-  assert(txt.includes('60%'), 'running budget % from active-runs');
+  const txt = grid.textContent;
+  assert(txt.includes('0.605'), 'champion done loss drawn');
+  assert(txt.includes('0.310'), 'challenger done loss drawn');
+  assert(txt.includes('✓'), 'pass verdict glyph');
+  assert(txt.includes('✗'), 'fail verdict glyph');
   assert(txt.includes('aborted'), 'aborted state word');
 });
 
-test('Bench maps champion→parent / challenger→child sides correctly', () => {
+test('Bench paired comparison is color-coded by challenger-vs-champion drift', () => {
   resetState();
   state.activeTournament = liveTournament();
   const host = freshHost();
   renderBench(host, { view: 'bench', params: {} });
-  const matrix = $('v2-bench-matrix');
-  // The waffles_single row: champion (parent) done 0.605, challenger (child) done 0.310.
-  const rows = matrix.querySelectorAll('[data-key]');
-  const waffles = rows.find((r) => r.getAttribute('data-key') === 'waffles_single');
-  assert(waffles, 'waffles_single row present');
-  // children: entry th, champion cell, challenger cell.
-  const championCell = waffles.children[1];
-  const challengerCell = waffles.children[2];
-  assert(championCell.textContent.includes('0.605'), 'champion column = parent side loss');
-  assert(challengerCell.textContent.includes('0.310'), 'challenger column = child side loss');
+  const cells = gridCells();
+  const waffles = cells.find((c) => c.getAttribute('data-key') === 'waffles_single');
+  // challenger 0.310 < champion 0.605 → improvement.
+  assertEqual(waffles.getAttribute('data-sentiment'), 'improve', 'challenger-better → improve');
+  assert(waffles.textContent.includes('drift'), 'comparison delta drawn');
+});
+
+test('Bench live progress ring shows the budget % from active-runs', () => {
+  resetState();
+  state.activeTournament = liveTournament();
+  state.activeRuns = [{ entry_id: 'q3_metrics_outline', generation_id: 'v1', progress: 0.6 }];
+  const host = freshHost();
+  renderBench(host, { view: 'bench', params: {} });
+  const cells = gridCells();
+  const q3 = cells.find((c) => c.getAttribute('data-key') === 'q3_metrics_outline');
+  assert(q3.textContent.includes('60%'), 'ring center shows 60% of budget');
+  // The ring sweep arc encodes the fraction via stroke-dashoffset; a 60%
+  // sweep must be partway between full-offset (0%) and zero-offset (100%).
+  const sweep = q3.querySelectorAll('[stroke-dashoffset]')[0];
+  assert(sweep, 'ring sweep arc present while running');
+  const off = parseFloat(sweep.getAttribute('stroke-dashoffset'));
+  const full = 2 * Math.PI * 13; // circumference (RING_R = 13)
+  assert(off > 0 && off < full, 'sweep is a partial arc (0 < offset < circumference)');
+});
+
+test('Bench progress ring updates IN PLACE across SSE ticks (no flash)', () => {
+  resetState();
+  state.activeTournament = liveTournament();
+  state.activeRuns = [{ entry_id: 'q3_metrics_outline', generation_id: 'v1', progress: 0.3 }];
+  const host = freshHost();
+  renderBench(host, { view: 'bench', params: {} });
+
+  const cellBefore = gridCells().find((c) => c.getAttribute('data-key') === 'q3_metrics_outline');
+  const sweepBefore = cellBefore.querySelectorAll('[stroke-dashoffset]')[0];
+  const offBefore = parseFloat(sweepBefore.getAttribute('stroke-dashoffset'));
+  assert(cellBefore.textContent.includes('30%'), 'starts at 30%');
+
+  // A heartbeat advances the budget. Re-render.
+  state.activeRuns = [{ entry_id: 'q3_metrics_outline', generation_id: 'v1', progress: 0.75 }];
+  renderBench(host, { view: 'bench', params: {} });
+
+  const cellAfter = gridCells().find((c) => c.getAttribute('data-key') === 'q3_metrics_outline');
+  assert(cellAfter === cellBefore, 'cell node identity preserved across the tick');
+  const sweepAfter = cellAfter.querySelectorAll('[stroke-dashoffset]')[0];
+  assert(sweepAfter === sweepBefore, 'ring sweep node identity preserved (patched, not rebuilt)');
+  const offAfter = parseFloat(sweepAfter.getAttribute('stroke-dashoffset'));
+  assert(offAfter < offBefore, 'sweep advanced (offset shrank toward 100%)');
+  assert(cellAfter.textContent.includes('75%'), 'ring % updated in place');
+  assertEqual(host.innerHTMLWriteCount(), 0, 'no innerHTML writes — no flash');
 });
 
 test('Bench gate surfaces challenger-vs-champion scalar/pass + N/M counter', () => {
@@ -202,7 +257,6 @@ test('Bench gate surfaces challenger-vs-champion scalar/pass + N/M counter', () 
   const pass = $('v2-bench-gate-pass');
   assertEqual(pass.getAttribute('data-sentiment'), 'improve', 'higher challenger pass = improve');
   assert($('v2-bench-gate-ns').textContent.includes('2 resolved'), 'namespace count');
-  // Settled units: 2 done (waffles parent+child) + 1 done (q3 parent) + 1 aborted (revision parent) = 4 of 8.
   assert($('v2-bench-gate-count').textContent.includes('4/8 runs complete'), 'N/M counter');
 });
 
@@ -239,8 +293,7 @@ test('Bench patches in place across re-renders (no flash, node identity kept)', 
   const host = freshHost();
   renderBench(host, { view: 'bench', params: {} });
   const headBefore = $('v2-bench-head');
-  const matrixBefore = $('v2-bench-matrix');
-  const lmTableBefore = matrixBefore.children[0];
+  const gridBefore = $('v2-bench-grid');
 
   // A cell transitions: challenger q3 finishes. Re-render.
   const t2 = liveTournament();
@@ -250,9 +303,9 @@ test('Bench patches in place across re-renders (no flash, node identity kept)', 
   renderBench(host, { view: 'bench', params: {} });
 
   assert($('v2-bench-head') === headBefore, 'header node identity preserved');
-  assert($('v2-bench-matrix').children[0] === lmTableBefore, 'matrix table identity preserved');
+  assert($('v2-bench-grid') === gridBefore, 'grid host node identity preserved');
   assertEqual(host.innerHTMLWriteCount(), 0, 'no innerHTML writes across re-render — no flash');
-  assert($('v2-bench-matrix').textContent.includes('0.635'), 'updated challenger loss painted in place');
+  assert($('v2-bench-grid').textContent.includes('0.635'), 'updated challenger loss painted in place');
 });
 
 test('Bench swaps idle ⇄ live cleanly when a run starts / ends', () => {
@@ -265,6 +318,7 @@ test('Bench swaps idle ⇄ live cleanly when a run starts / ends', () => {
   renderBench(host, { view: 'bench', params: {} });
   assertEqual(host.getAttribute('data-bench-mode'), 'live', 'goes live when a run starts');
   assert(host.textContent.includes('GATE forming'), 'live frame present');
+  assertEqual(gridCells().length, 4, 'grid populated when live');
 
   state.activeTournament = null;
   renderBench(host, { view: 'bench', params: {} });
@@ -272,16 +326,15 @@ test('Bench swaps idle ⇄ live cleanly when a run starts / ends', () => {
   assert(host.textContent.includes('No run in flight'), 'idle headline restored');
 });
 
-test('Bench matrix cell is a drillable door (role=button + tabindex)', () => {
+test('Bench cell is a drillable door (role=button + tabindex)', () => {
   resetState();
   state.activeTournament = liveTournament();
   const host = freshHost();
   renderBench(host, { view: 'bench', params: {} });
-  const matrix = $('v2-bench-matrix');
-  const cell = matrix.querySelectorAll('[data-state]')[0];
+  const cell = gridCells()[0];
   assertEqual(cell.getAttribute('role'), 'button', 'cell is a button for a11y');
   assertEqual(cell.getAttribute('tabindex'), '0', 'cell is keyboard-focusable');
-  assert(cell.classList.contains('v2-lm-cell-drillable'), 'cell carries the drillable affordance');
+  assert(cell.classList.contains('v2-bc-drillable'), 'cell carries the drillable affordance');
   // Firing the click must not throw (the router import is lazy/async).
   cell.dispatchEvent(makeEvent('click'));
   assert(true, 'cell click handler runs without throwing');
