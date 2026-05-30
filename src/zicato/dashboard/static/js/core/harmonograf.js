@@ -1,9 +1,21 @@
 // core/harmonograf.js — harmonograf deep-link builders.
 //
-// The heartbeat MAY carry a non-empty `harmonograf_url`. When present,
-// every run on the dashboard deep-links into harmonograf at the run's
-// execution trace. When the heartbeat carries no url at all, render
-// nothing — no disabled stub.
+// LIVENESS GATE (DASHBOARD-V2 bug fix). zicato auto-launches its own
+// harmonograf server bound to the run; that server DIES when the run
+// ends. The heartbeat's `harmonograf_url`, however, lingers (the
+// heartbeat is merged, not replaced — see state.setHeartbeat), so a link
+// built from it after a run completes points at a dead port. The fix:
+// only ever resolve a harmonograf base while a run is actually LIVE.
+// Liveness is read from the live-run signals the client already tracks —
+// an active tournament or any active runs — NOT from the (stale)
+// presence of the url. When nothing is live, every builder returns null,
+// so a call site renders nothing (or its own muted "available during
+// live runs" note via `harmonografLiveNote`).
+//
+// The heartbeat MAY carry a non-empty `harmonograf_url`. When present
+// AND a run is live, every run on the dashboard deep-links into
+// harmonograf at the run's execution trace. When the heartbeat carries
+// no url at all, or no run is live, render nothing — no disabled stub.
 //
 // harmonograf keys its session views by the ADK session id carried on
 // every goldfive event envelope (`sessionId`). The backend surfaces
@@ -21,11 +33,34 @@
 import { el } from './dom.js';
 import { state } from './state.js';
 
+// Is a run currently LIVE? The harmonograf server only exists while the
+// loop runs, so the deep-links are only valid then. Liveness = an active
+// tournament OR at least one active run. (The stale `harmonograf_url`
+// alone is NOT proof of life — it is the bug.)
+export function harmonografIsLive() {
+  if (state.activeTournament != null) return true;
+  if (Array.isArray(state.activeRuns) && state.activeRuns.length > 0) return true;
+  return false;
+}
+
 export function harmonografBase() {
+  // Gate on liveness FIRST: a dead run's server is gone, so no link is
+  // ever valid then — regardless of a lingering heartbeat url.
+  if (!harmonografIsLive()) return null;
   const url = state.heartbeat && state.heartbeat.harmonograf_url;
   if (typeof url !== 'string') return null;
   const trimmed = url.trim();
   return trimmed.length > 0 ? trimmed.replace(/\/+$/, '') : null;
+}
+
+// A muted, non-link note for call sites that want to explain WHY the
+// harmonograf link is absent post-run, rather than rendering nothing.
+// Returns null while live (the real link should render instead).
+export function harmonografLiveNote(text) {
+  if (harmonografIsLive()) return null;
+  return el('span', {
+    class: 'harmonograf-note', 'aria-label': 'harmonograf available during live runs',
+  }, [text || 'harmonograf available during live runs']);
 }
 
 // Derive the zicato synthetic `{generation_id}--{entry_id}` run-id

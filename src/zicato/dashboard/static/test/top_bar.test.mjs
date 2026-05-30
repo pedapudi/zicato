@@ -92,7 +92,10 @@ test('renderTopBar surfaces the harmonograf link only when URL is set',
     assertEqual(externals.length, 0,
       'no harmonograf link must render when URL is unset');
 
-    // Spoof the URL — the next render must add the link.
+    // Spoof the URL AND a live run — harmonograf's server only exists
+    // while a run is live (the dead-port liveness gate), so the link
+    // resolves only then. The next render must add the link.
+    state.activeTournament = { champion: 'v0', challenger: 'v1' };
     state.heartbeat = {
       last_heartbeat: new Date(Date.now() - 5_000).toISOString(),
       harmonograf_url: 'http://localhost:9999',

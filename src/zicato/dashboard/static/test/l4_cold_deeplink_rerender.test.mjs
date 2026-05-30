@@ -231,8 +231,10 @@ test('L4 harmonograf link appears in DOM after SSE hydrates harmonograf_url on a
     assertEqual(findHarmonografLink(slot), null,
       'before hydration, harmonograf_url is null so the link must NOT render');
 
-    // SSE delivers the URL. State changes. App scheduler calls
-    // renderPhase0Run again with the same route params.
+    // SSE delivers the URL AND the live tournament (the run is in
+    // flight — harmonograf's server is up). State changes. App scheduler
+    // calls renderPhase0Run again with the same route params.
+    state.activeTournament = { champion: 'v2', challenger: 'v3' };
     state.heartbeat = {
       epoch_id: '2026-05-20_presn', generation_id: 'v3',
       harmonograf_url: 'https://harmonograf.example.com',
@@ -257,6 +259,7 @@ test('L4 harmonograf link appears in DOM after SSE hydrates harmonograf_url on a
   } finally {
     restore();
     state.heartbeat = null;
+    state.activeTournament = null;
   }
 });
 

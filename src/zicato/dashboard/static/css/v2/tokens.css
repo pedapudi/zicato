@@ -59,32 +59,56 @@
  * ===================================================================
  */
 
-:root {
-  /* --- Neutral ground + ink (calm, minimal chrome) --------------- */
-  --v2-ground:        #fbfcfd;
-  --v2-surface:       #ffffff;
-  --v2-surface-2:     #f4f6f9;
-  --v2-line:          #e6eaf0;
-  --v2-line-strong:   #cdd4de;
+/* ===================================================================
+ * THEMING (DASHBOARD-V2 §3.1) — THREE switchable themes.
+ *
+ * Selected by a `data-theme` attribute on the root (<html>), persisted
+ * to localStorage['zicato.theme'] by the shell's switcher. The DEFAULT
+ * is Solarized Dark: the bare `:root` carries it so the dashboard is
+ * dark before any JS runs (no light flash). The two alternates live in
+ * `:root[data-theme="..."]` blocks that re-bind the SAME token names —
+ * only the values change, so a swap restyles the whole dashboard.
+ *
+ * The semantic signal mapping is identical across all three themes:
+ *   --v2-signal-improve  green   --v2-signal-regress  red
+ *   --v2-signal-caution  amber
+ * — only the exact hue (tuned for each ground) differs. Every component
+ * reads tokens ONLY; no view hard-codes a color, so theming is total.
+ *
+ * Palettes are REFINED, not copied: anchored on the canonical Solarized
+ * / Monokai families, retuned for legible contrast on each ground.
+ * =================================================================== */
 
-  --v2-ink:           #11161f;   /* primary */
-  --v2-ink-2:         #3a4351;   /* secondary */
-  --v2-ink-muted:     #6b7585;   /* labels / muted */
-  --v2-ink-faint:     #9aa3b1;   /* faint / disabled */
-  --v2-ink-on-signal: #ffffff;
+/* --- Solarized Dark (DEFAULT) ------------------------------------- *
+ * Refined per spec: ground #04222B, surface #0A2D38, ink #93A1A1 /
+ * dim #5E7079, improve #8BB80E, regress #E0483C, caution #C4920A. */
+:root,
+:root[data-theme="solarized-dark"] {
+  /* --- Neutral ground + ink (calm, minimal chrome) --------------- */
+  --v2-ground:        #04222B;
+  --v2-surface:       #0A2D38;
+  --v2-surface-2:     #073039;
+  --v2-line:          #144250;
+  --v2-line-strong:   #1E5260;
+
+  --v2-ink:           #CBD6D6;   /* primary — brighter than base ink for headings */
+  --v2-ink-2:         #93A1A1;   /* secondary — the spec's base0 */
+  --v2-ink-muted:     #5E7079;   /* labels / muted — the spec's dim */
+  --v2-ink-faint:     #46585F;   /* faint / disabled */
+  --v2-ink-on-signal: #04222B;
 
   /* --- The exactly-three signal colors --------------------------- */
-  --v2-signal-improve:      #1a7f37;   /* green */
-  --v2-signal-improve-soft: #e7f4ec;
-  --v2-signal-improve-fg:   #166a2e;
+  --v2-signal-improve:      #8BB80E;   /* green — spec */
+  --v2-signal-improve-soft: #1B3416;
+  --v2-signal-improve-fg:   #A6CE3A;
 
-  --v2-signal-regress:      #cf222e;   /* red */
-  --v2-signal-regress-soft: #fcebec;
-  --v2-signal-regress-fg:   #a40e26;
+  --v2-signal-regress:      #E0483C;   /* red — spec */
+  --v2-signal-regress-soft: #3A1A18;
+  --v2-signal-regress-fg:   #F06B60;
 
-  --v2-signal-caution:      #bf8700;   /* amber */
-  --v2-signal-caution-soft: #fbf3da;
-  --v2-signal-caution-fg:   #9a6700;
+  --v2-signal-caution:      #C4920A;   /* amber — spec */
+  --v2-signal-caution-soft: #352A0C;
+  --v2-signal-caution-fg:   #DDB13A;
 
   /* Semantic aliases — verdict + state vocabulary maps onto the three
    * signals so a component never reaches outside the palette. */
@@ -94,9 +118,96 @@
   --v2-open:      var(--v2-ink-muted);
 
   /* --- Liveness -------------------------------------------------- */
-  --v2-live:      #1a7f37;       /* the live pulse rides the improve hue */
-  --v2-live-ring: rgba(26, 127, 55, 0.28);
+  --v2-live:      #8BB80E;       /* the live pulse rides the improve hue */
+  --v2-live-ring: rgba(139, 184, 14, 0.30);
 
+  --v2-shadow:    0 1px 2px rgba(0, 0, 0, 0.45),
+                  0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* --- Solarized Light --------------------------------------------- *
+ * The companion light ground (base3 #FDF6E3 family) with the signal
+ * hues retuned darker for contrast on a pale ground. */
+:root[data-theme="solarized-light"] {
+  --v2-ground:        #FDF6E3;
+  --v2-surface:       #FFFCF2;
+  --v2-surface-2:     #F2EAD0;
+  --v2-line:          #E5DBBF;
+  --v2-line-strong:   #CFC4A2;
+
+  --v2-ink:           #073642;   /* primary — base02 */
+  --v2-ink-2:         #34555E;   /* secondary */
+  --v2-ink-muted:     #657B83;   /* labels — base00 */
+  --v2-ink-faint:     #93A1A1;   /* faint — base1 */
+  --v2-ink-on-signal: #FDF6E3;
+
+  --v2-signal-improve:      #5C7A0A;   /* green — darkened for light ground */
+  --v2-signal-improve-soft: #EAF0CF;
+  --v2-signal-improve-fg:   #4A6308;
+
+  --v2-signal-regress:      #C4362B;   /* red */
+  --v2-signal-regress-soft: #F7E0DC;
+  --v2-signal-regress-fg:   #A52A21;
+
+  --v2-signal-caution:      #9A7100;   /* amber */
+  --v2-signal-caution-soft: #F3E8C6;
+  --v2-signal-caution-fg:   #7E5C00;
+
+  --v2-promoted:  var(--v2-signal-improve);
+  --v2-rejected:  var(--v2-signal-regress);
+  --v2-deferred:  var(--v2-signal-caution);
+  --v2-open:      var(--v2-ink-muted);
+
+  --v2-live:      #5C7A0A;
+  --v2-live-ring: rgba(92, 122, 10, 0.24);
+
+  --v2-shadow:    0 1px 2px rgba(101, 90, 54, 0.12),
+                  0 2px 8px rgba(101, 90, 54, 0.08);
+}
+
+/* --- Monokai ------------------------------------------------------ *
+ * Refined from the classic Monokai family (#272822 ground, #F8F8F2
+ * ink); signals mapped to Monokai's green / red / orange so the
+ * semantic palette holds. */
+:root[data-theme="monokai"] {
+  --v2-ground:        #1E1F1C;
+  --v2-surface:       #272822;
+  --v2-surface-2:     #2F302A;
+  --v2-line:          #3C3D37;
+  --v2-line-strong:   #54564E;
+
+  --v2-ink:           #F8F8F2;   /* primary */
+  --v2-ink-2:         #CFD0C2;   /* secondary */
+  --v2-ink-muted:     #908E80;   /* labels */
+  --v2-ink-faint:     #75715E;   /* faint — Monokai comment */
+  --v2-ink-on-signal: #1E1F1C;
+
+  --v2-signal-improve:      #A6E22E;   /* Monokai green */
+  --v2-signal-improve-soft: #26310E;
+  --v2-signal-improve-fg:   #B6EE4F;
+
+  --v2-signal-regress:      #F92672;   /* Monokai magenta-red */
+  --v2-signal-regress-soft: #3A0F20;
+  --v2-signal-regress-fg:   #FF5C94;
+
+  --v2-signal-caution:      #FD971F;   /* Monokai orange */
+  --v2-signal-caution-soft: #3A2408;
+  --v2-signal-caution-fg:   #FFB454;
+
+  --v2-promoted:  var(--v2-signal-improve);
+  --v2-rejected:  var(--v2-signal-regress);
+  --v2-deferred:  var(--v2-signal-caution);
+  --v2-open:      var(--v2-ink-muted);
+
+  --v2-live:      #A6E22E;
+  --v2-live-ring: rgba(166, 226, 46, 0.28);
+
+  --v2-shadow:    0 1px 2px rgba(0, 0, 0, 0.55),
+                  0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+/* --- Theme-independent scale tokens (faces, type, spacing) -------- */
+:root {
   /* --- Type faces ------------------------------------------------ */
   --v2-face-prose: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter,
                    Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -133,44 +244,16 @@
 
   --v2-radius-sm: 4px;
   --v2-radius-md: 8px;
-  --v2-shadow:    0 1px 2px rgba(16, 22, 31, 0.05),
-                  0 2px 8px rgba(16, 22, 31, 0.04);
+  /* --v2-shadow is theme-specific (each theme block sets it). */
 
   /* --- Layout ---------------------------------------------------- */
   --v2-spine-height: 168px;
   --v2-transition:   140ms ease;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --v2-ground:        #0b0f17;
-    --v2-surface:       #121826;
-    --v2-surface-2:     #182032;
-    --v2-line:          #232c3d;
-    --v2-line-strong:   #344056;
-
-    --v2-ink:           #eef2f8;
-    --v2-ink-2:         #c4ccd9;
-    --v2-ink-muted:     #8c97a8;
-    --v2-ink-faint:     #5e6878;
-
-    --v2-signal-improve:      #3fb950;
-    --v2-signal-improve-soft: #0f2417;
-    --v2-signal-improve-fg:   #5ad06b;
-    --v2-signal-regress:      #f85149;
-    --v2-signal-regress-soft: #2a1416;
-    --v2-signal-regress-fg:   #ff7b72;
-    --v2-signal-caution:      #d29922;
-    --v2-signal-caution-soft: #271d08;
-    --v2-signal-caution-fg:   #e3b341;
-
-    --v2-live:      #3fb950;
-    --v2-live-ring: rgba(63, 185, 80, 0.30);
-
-    --v2-shadow:    0 1px 2px rgba(0, 0, 0, 0.5),
-                    0 2px 8px rgba(0, 0, 0, 0.4);
-  }
-}
+/* NOTE: theming is now EXPLICIT (data-theme on the root), so there is no
+ * `@media (prefers-color-scheme: dark)` override here — it would fight
+ * the chosen theme. The default (bare :root) is already Solarized Dark. */
 
 /* ===================================================================
  * Base — shell, spine, stateBlock. Minimal chrome; whitespace
@@ -238,6 +321,133 @@
   background: currentColor;
 }
 .v2-mode[data-mode="bench"] .v2-mode-dot { background: var(--v2-live); }
+
+/* --- Breadcrumb / level map — the always-visible "where am I" cue --- *
+ * DASHBOARD-V2 §4: the operator must never feel lost between levels.
+ * A persistent crumb trail (Overview › Epoch › Experiment › Run) shows
+ * the current location; the active crumb is emphasized, ancestors are
+ * links back up the spine. */
+.v2-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--v2-sp-1);
+  font-size: var(--v2-fs-12);
+  color: var(--v2-ink-muted);
+  min-width: 0;
+}
+.v2-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--v2-sp-1);
+  color: var(--v2-ink-muted);
+  text-decoration: none;
+  padding: var(--v2-sp-0\.5) var(--v2-sp-1);
+  border-radius: var(--v2-radius-sm);
+  white-space: nowrap;
+}
+a.v2-crumb:hover { color: var(--v2-ink); background: var(--v2-surface-2); }
+a.v2-crumb:focus-visible {
+  outline: 2px solid var(--v2-signal-caution);
+  outline-offset: 1px;
+}
+.v2-crumb[aria-current="page"] {
+  color: var(--v2-ink);
+  font-weight: var(--v2-w-semibold);
+}
+.v2-crumb-sep {
+  color: var(--v2-ink-faint);
+  user-select: none;
+  font-size: var(--v2-fs-11);
+}
+
+/* --- Right-aligned chrome cluster (Bench + live affordance + theme) - */
+.v2-chrome-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--v2-sp-3);
+  margin-left: auto;
+}
+
+/* The always-reachable plain Bench link (hidden when the loud live
+ * affordance is showing, or when already on the Bench). */
+.v2-bench-link { font-weight: var(--v2-w-medium); }
+.v2-bench-link[hidden] { display: none; }
+
+/* The permanent "● live → Bench" affordance. Shown ONLY while a run is
+ * in flight (the shell toggles [hidden]); always one click to the Bench
+ * from anywhere in the chrome (DASHBOARD-V2 §4 / §4.1). */
+.v2-live-go {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--v2-sp-2);
+  font-size: var(--v2-fs-12);
+  font-weight: var(--v2-w-semibold);
+  letter-spacing: 0.03em;
+  text-decoration: none;
+  color: var(--v2-ink-on-signal);
+  background: var(--v2-live);
+  padding: var(--v2-sp-1) var(--v2-sp-3);
+  border-radius: var(--v2-radius-sm);
+}
+.v2-live-go[hidden] { display: none; }
+.v2-live-go:hover { filter: brightness(1.08); }
+.v2-live-go:focus-visible {
+  outline: 2px solid var(--v2-signal-caution);
+  outline-offset: 2px;
+}
+.v2-live-go-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  /* currentColor = the button's on-signal ink (token-derived); the
+   * pulse ring rides the same color, so no hard-coded color is used. */
+  background: currentColor;
+  transform-origin: 50% 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .v2-live-go-dot { animation: v2-live-go-pulse 1.6s ease-in-out infinite; }
+  @keyframes v2-live-go-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+    50%      { box-shadow: 0 0 0 4px transparent; }
+  }
+}
+
+/* --- Theme switcher ----------------------------------------------- *
+ * A compact <select> in the top bar; sets data-theme on the root +
+ * persists to localStorage['zicato.theme']. Reads tokens, so it
+ * restyles itself when the theme changes (DASHBOARD-V2 §3.1). */
+.v2-theme {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--v2-sp-1);
+}
+.v2-theme-label {
+  font-size: var(--v2-fs-11);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--v2-ink-faint);
+}
+.v2-theme-select {
+  font-family: var(--v2-face-prose);
+  font-size: var(--v2-fs-12);
+  color: var(--v2-ink);
+  background: var(--v2-surface-2);
+  border: 1px solid var(--v2-line);
+  border-radius: var(--v2-radius-sm);
+  padding: var(--v2-sp-0\.5) var(--v2-sp-2);
+  cursor: pointer;
+}
+.v2-theme-select:focus-visible {
+  outline: 2px solid var(--v2-signal-caution);
+  outline-offset: 1px;
+}
+.v2-theme-select:hover { border-color: var(--v2-line-strong); }
+
+/* --- Harmonograf muted note (post-run) ---------------------------- */
+.harmonograf-note {
+  font-size: var(--v2-fs-12);
+  color: var(--v2-ink-faint);
+  font-style: italic;
+}
 
 .v2-spine-host {
   border-bottom: 1px solid var(--v2-line);
@@ -308,6 +518,12 @@
   font-size: var(--v2-fs-11);
   line-height: 1;
   color: var(--v2-ink);
+  /* Anchor any animation (the live pulse) on the dot's exact center so
+   * the ring expands concentrically — never lopsided. box-sizing keeps
+   * the 2px border inside the inline width/height the factory sets, so
+   * the circle stays perfectly round. */
+  box-sizing: border-box;
+  transform-origin: 50% 50%;
 }
 .v2-traj-node[data-verdict="promoted"] .v2-traj-dot {
   border-color: var(--v2-promoted); color: var(--v2-promoted);
@@ -423,13 +639,29 @@
   background: var(--v2-signal-improve);
   transition: width var(--v2-transition);
 }
+/* The running-state spinner. A bare rotating text glyph wobbles: its
+ * glyph sits off-center in the em box, and an `inline-block` rotates
+ * about an ambiguous baseline-relative origin — that is the jerky/off-
+ * center bug. Fix: give the glyph a fixed SQUARE box, flex-center the
+ * glyph inside it, and rotate about the box CENTER. The square box +
+ * centered origin make the rotation perfectly smooth. (This applies in
+ * every motion mode; the animation itself is gated below.) */
+.v2-state[data-kind="running"] .v2-state-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
 @media (prefers-reduced-motion: no-preference) {
   .v2-state[data-kind="running"] .v2-state-glyph {
     animation: v2-spin 1.1s linear infinite;
-    display: inline-block;
   }
   @keyframes v2-spin {
-    to { transform: rotate(360deg); }
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
   }
 }
 

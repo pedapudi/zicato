@@ -131,6 +131,9 @@ test('palette shows Harmonograf ↗ row only when heartbeat carries a URL',
       `Harmonograf row must NOT render without URL; got ${text}`);
     palette.close();
 
+    // A live run (active tournament) makes harmonograf's server real —
+    // the link only resolves while live (the dead-port liveness gate).
+    state.activeTournament = { champion: 'v0', challenger: 'v1' };
     state.heartbeat = {
       last_heartbeat: '2026-05-27T00:00:00Z',
       harmonograf_url: 'http://localhost:9999',
@@ -140,7 +143,7 @@ test('palette shows Harmonograf ↗ row only when heartbeat carries a URL',
     palette.open();
     text = pieces.results.textContent;
     assert(text.includes('Harmonograf'),
-      `Harmonograf row must render when URL is set; got ${text}`);
+      `Harmonograf row must render when URL is set + a run is live; got ${text}`);
   });
 
 test('Esc keydown closes the palette', () => {

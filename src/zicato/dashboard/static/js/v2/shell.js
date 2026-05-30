@@ -22,11 +22,79 @@
 import { $, el, patchText, patchAttr, clearChildren, mount } from '../core/dom.js';
 import { state } from '../core/state.js';
 import { fmtScalar } from '../core/format.js';
-import { v2Router, V2_VIEWS, V2_MODE, v2Href } from './router.js';
+import { v2Router, V2_VIEWS, V2_MODE, v2Href, crumbTrail } from './router.js';
 import { trajectory } from './components/trajectory.js';
 import { stateBlock } from './components/stateBlock.js';
+import { harmonografIsLive } from '../core/harmonograf.js';
 
 const ROOT_ID = 'v2-root';
+
+// ---------------------------------------------------------------------------
+// Theming (DASHBOARD-V2 §3.1). THREE switchable themes selected by a
+// `data-theme` attribute on the document root, persisted to
+// localStorage['zicato.theme']. solarized-dark is the DEFAULT. The token
+// sets live in css/v2/tokens.css; this is purely the mechanism + switcher.
+// ---------------------------------------------------------------------------
+export const THEME_KEY = 'zicato.theme';
+export const V2_THEMES = ['solarized-dark', 'solarized-light', 'monokai'];
+export const V2_DEFAULT_THEME = 'solarized-dark';
+const THEME_LABELS = {
+  'solarized-dark': 'Solarized Dark',
+  'solarized-light': 'Solarized Light',
+  monokai: 'Monokai',
+};
+
+function normalizeTheme(t) {
+  return V2_THEMES.includes(t) ? t : V2_DEFAULT_THEME;
+}
+
+// The persisted choice (or the default). Tolerant of a private-mode
+// localStorage that throws.
+export function readTheme() {
+  try {
+    const stored = window.localStorage && window.localStorage.getItem(THEME_KEY);
+    return normalizeTheme(stored);
+  } catch { return V2_DEFAULT_THEME; }
+}
+
+// Apply a theme: stamp data-theme on <html> AND #v2-root (the spec allows
+// either; stamping both makes the selector robust regardless of where a
+// rule is scoped), and persist the choice.
+export function applyTheme(theme) {
+  const t = normalizeTheme(theme);
+  const root = (typeof document !== 'undefined' && document.documentElement) || null;
+  if (root && typeof root.setAttribute === 'function') root.setAttribute('data-theme', t);
+  const v2root = $(ROOT_ID);
+  if (v2root) v2root.setAttribute('data-theme', t);
+  try {
+    if (window.localStorage) window.localStorage.setItem(THEME_KEY, t);
+  } catch { /* private mode — the in-DOM attribute still wins for the session */ }
+  return t;
+}
+
+// Idempotent init — call once at boot before the first paint so the
+// page starts on the persisted (or default) theme.
+export function initTheme() {
+  return applyTheme(readTheme());
+}
+
+// The top-bar theme switcher: a labeled <select> whose change applies +
+// persists the theme. Built once; renderTheme() syncs its value on paint.
+function buildThemeSwitcher() {
+  const select = el('select', {
+    class: 'v2-theme-select', id: 'v2-theme-select', 'aria-label': 'Color theme',
+    onchange: (ev) => {
+      const t = ev && ev.target ? ev.target.value : null;
+      applyTheme(t);
+    },
+  }, V2_THEMES.map((t) => el('option', { value: t }, [THEME_LABELS[t] || t])));
+  // Seed the control to the active theme.
+  select.value = readTheme();
+  return el('label', { class: 'v2-theme' }, [
+    el('span', { class: 'v2-theme-label', 'aria-hidden': 'true' }, ['theme']),
+    select,
+  ]);
+}
 
 // View module registry. The foundation ships the frame; later waves
 // register real renderers here. `fn(host, route)` owns the host's body.
@@ -110,7 +178,7 @@ export function spineNodes() {
 function buildFrame(root) {
   const shell = el('div', { class: 'v2-shell' });
 
-  // Head: brand + mode indicator.
+  // Head: brand · mode indicator · breadcrumb · [live→Bench] · theme.
   const head = el('div', { class: 'v2-shell-head' });
   head.appendChild(el('a', {
     class: 'v2-brand', href: v2Href('overview'), 'aria-label': 'zicato — overview',
@@ -120,6 +188,35 @@ function buildFrame(root) {
     el('span', { class: 'v2-mode-label', id: 'v2-mode-label' }, ['Notebook']),
   ]);
   head.appendChild(mode);
+
+  // Breadcrumb / level map — the primary "where am I" cue. Filled by
+  // renderCrumbs() per route.
+  head.appendChild(el('nav', {
+    class: 'v2-crumbs', id: 'v2-crumbs', 'aria-label': 'Breadcrumb',
+  }));
+
+  // Right cluster: the Bench link · the live→Bench affordance · theme.
+  const right = el('div', { class: 'v2-chrome-right' });
+  // A permanent, plain Bench entry so the Bench is ALWAYS reachable from
+  // the chrome (the v2 miss: the Bench was unreachable when idle). It is
+  // hidden only while the louder live→Bench affordance is showing, to
+  // avoid two Bench links side by side.
+  right.appendChild(el('a', {
+    class: 'v2-crumb v2-bench-link', id: 'v2-bench-link', href: v2Href('bench'),
+    'aria-label': 'Open the Bench (live operations view)',
+  }, ['Bench']));
+  // The permanent "● live → Bench" affordance — visible only while a run
+  // is in flight; always one click to the Bench.
+  right.appendChild(el('a', {
+    class: 'v2-live-go', id: 'v2-live-go', href: v2Href('bench'),
+    hidden: 'hidden', 'aria-label': 'A run is live — open the Bench',
+  }, [
+    el('span', { class: 'v2-live-go-dot', 'aria-hidden': 'true' }),
+    el('span', {}, ['live → Bench']),
+  ]));
+  right.appendChild(buildThemeSwitcher());
+  head.appendChild(right);
+
   shell.appendChild(head);
 
   // Spine host — the persistent trajectory nav.
@@ -144,6 +241,71 @@ function buildFrame(root) {
 let _lastModeDigest = null;
 let _lastSpineDigest = null;
 let _lastViewKey = null;
+let _lastCrumbDigest = null;
+let _lastLiveGoDigest = null;
+let _lastThemeDigest = null;
+
+// Is a run in flight? The chrome's live→Bench affordance shows whenever
+// this is true (DASHBOARD-V2 §4). Reuses the single liveness predicate.
+export function runIsLive() {
+  return harmonografIsLive();
+}
+
+// The breadcrumb / level map — the always-visible "where am I" cue.
+// Ancestors are links back up the spine; the active leaf is non-link.
+function renderCrumbs(route) {
+  const host = $('v2-crumbs');
+  if (!host) return;
+  const trail = crumbTrail(route);
+  const digest = JSON.stringify(trail.map((c) => [c.view, c.label, c.href, c.current]));
+  if (digest === _lastCrumbDigest) return;
+  _lastCrumbDigest = digest;
+  clearChildren(host);
+  trail.forEach((c, i) => {
+    if (i > 0) {
+      host.appendChild(el('span', { class: 'v2-crumb-sep', 'aria-hidden': 'true' }, ['›']));
+    }
+    if (c.current) {
+      host.appendChild(el('span', {
+        class: 'v2-crumb', 'aria-current': 'page',
+      }, [c.label]));
+    } else {
+      host.appendChild(el('a', { class: 'v2-crumb', href: c.href }, [c.label]));
+    }
+  });
+}
+
+// The permanent live→Bench affordance: shown only while a run is in
+// flight, and dimmed (not duplicated) when already on the Bench.
+function renderLiveGo(route) {
+  const go = $('v2-live-go');
+  const benchLink = $('v2-bench-link');
+  if (!go) return;
+  const live = runIsLive();
+  const onBench = route && route.view === 'bench';
+  const digest = (live ? '1' : '0') + (onBench ? 'b' : '');
+  if (digest === _lastLiveGoDigest) return;
+  _lastLiveGoDigest = digest;
+  // The loud live→Bench affordance: only while a run is live and we are
+  // NOT already on the Bench (avoid a no-op self-link).
+  const showLoud = live && !onBench;
+  patchAttr(go, 'hidden', showLoud ? null : 'hidden');
+  // The plain Bench link is the always-reachable fallback; hide it only
+  // when the loud affordance is showing (one Bench link at a time) or
+  // when we are already on the Bench.
+  if (benchLink) patchAttr(benchLink, 'hidden', (showLoud || onBench) ? 'hidden' : null);
+}
+
+// Keep the switcher's value in sync if the theme changed out-of-band
+// (e.g. another tab, or a programmatic applyTheme). Digest-gated.
+function renderTheme() {
+  const select = $('v2-theme-select');
+  if (!select) return;
+  const current = readTheme();
+  if (current === _lastThemeDigest) return;
+  _lastThemeDigest = current;
+  if (select.value !== current) select.value = current;
+}
 
 function renderMode(route) {
   const label = $('v2-mode-label');
@@ -222,6 +384,9 @@ function viewTitle(view) {
 export function renderShell(route) {
   const root = $(ROOT_ID);
   if (!root) return;
+  // The persisted theme is applied before the first paint so the page
+  // never flashes the wrong palette. Idempotent.
+  initTheme();
   // Build the frame exactly once.
   mount(root, 'v2-frame', () => {
     const wrap = el('div', { 'data-node': 'v2-frame' });
@@ -230,6 +395,9 @@ export function renderShell(route) {
   });
   const r = route || v2Router.current();
   renderMode(r);
+  renderCrumbs(r);
+  renderLiveGo(r);
+  renderTheme();
   renderSpine(r);
   renderView(r);
 }
@@ -239,4 +407,7 @@ export function resetShellDigest() {
   _lastModeDigest = null;
   _lastSpineDigest = null;
   _lastViewKey = null;
+  _lastCrumbDigest = null;
+  _lastLiveGoDigest = null;
+  _lastThemeDigest = null;
 }

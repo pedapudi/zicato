@@ -111,6 +111,74 @@ export const v2Router = {
   },
 };
 
+// Human label for a view (the breadcrumb + chrome use these).
+export const V2_VIEW_LABELS = {
+  overview: 'Overview',
+  bench: 'Bench',
+  epoch: 'Epoch',
+  experiment: 'Experiment',
+  run: 'Run',
+  report: 'Report',
+};
+
+// ---------------------------------------------------------------------------
+// Breadcrumb / level map (DASHBOARD-V2 §4). The operator must always see
+// WHERE they are in the spine. From a parsed route, build the ancestor
+// trail down the lineage hierarchy:
+//
+//   Overview › Epoch › Experiment › Run
+//
+// Bench is the live sibling of the Notebook (not an ancestor of a run),
+// so it trails as `Overview › Bench`. Report trails off its Epoch.
+// Each crumb is { view, label, href, current } — `current` marks the
+// active (non-link) leaf; ancestors are links back up.
+// ---------------------------------------------------------------------------
+export function crumbTrail(route) {
+  const r = route || _current;
+  const view = V2_VIEWS.includes(r.view) ? r.view : V2_DEFAULT_VIEW;
+  const p = r.params || {};
+  const crumb = (v, label, current, ...segs) => ({
+    view: v,
+    label: label || V2_VIEW_LABELS[v] || v,
+    href: v2Href(v, ...segs),
+    current: !!current,
+  });
+
+  // Overview is the root of every trail.
+  const trail = [crumb('overview', 'Overview', view === 'overview')];
+  if (view === 'overview') return trail;
+
+  switch (view) {
+    case 'bench':
+      trail.push(crumb('bench', 'Bench', true));
+      break;
+    case 'epoch':
+      trail.push(crumb('epoch', p.epochId ? `Epoch ${p.epochId}` : 'Epoch', true,
+        p.epochId));
+      break;
+    case 'report':
+      if (p.epochId) trail.push(crumb('epoch', `Epoch ${p.epochId}`, false, p.epochId));
+      trail.push(crumb('report', 'Report', true, p.epochId));
+      break;
+    case 'experiment':
+      trail.push(crumb('experiment',
+        p.generationId ? `Experiment ${p.generationId}` : 'Experiment', true,
+        p.generationId));
+      break;
+    case 'run':
+      if (p.generationId) {
+        trail.push(crumb('experiment', `Experiment ${p.generationId}`, false,
+          p.generationId));
+      }
+      trail.push(crumb('run', p.entryId ? `Run ${p.entryId}` : 'Run', true,
+        p.entryId, p.generationId));
+      break;
+    default:
+      break;
+  }
+  return trail;
+}
+
 // Build a v2 fragment for a view + optional path segments.
 export function v2Href(view, ...segs) {
   const v = V2_VIEWS.includes(view) ? view : V2_DEFAULT_VIEW;

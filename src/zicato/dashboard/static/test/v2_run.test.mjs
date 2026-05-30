@@ -41,7 +41,12 @@ function seedLineage() {
     ],
   };
   state.epoch = { id: 'e0' };
+  // A run is LIVE in this fixture (active tournament) so the lingering
+  // harmonograf_url resolves to a valid deep-link — harmonograf's server
+  // only exists during a live run (the dead-port liveness gate). Without
+  // a live signal the link is correctly suppressed.
   state.activeRuns = [];
+  state.activeTournament = { champion: 'v1', challenger: 'v2' };
   state.heartbeat = { harmonograf_url: 'http://hgraf.local' };
 }
 

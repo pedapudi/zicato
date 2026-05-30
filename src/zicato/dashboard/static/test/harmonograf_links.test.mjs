@@ -17,6 +17,13 @@
 //   3. emit a correct ``/#/session/<adk_session_id>`` href;
 //   4. add ``target="_blank"`` + ``rel="noopener"`` so the link opens
 //      safely in a new tab.
+//
+// LIVENESS GATE (DASHBOARD-V2 fix). harmonograf's server dies with the
+// run, so a deep-link is only valid while a run is LIVE. ``harmonografBase``
+// now gates on liveness (an active tournament OR active runs) — not on
+// the lingering ``harmonograf_url`` alone. So every surface that should
+// render a link must have a live signal set; with no live run, no link
+// renders (the dead-port bug is gone).
 
 import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
@@ -26,6 +33,9 @@ const router = await import('../js/views/phase0_router.js');
 void router;
 
 const { state } = await import('../js/core/state.js');
+const {
+  harmonografIsLive, harmonografBase, harmonografLiveNote, harmonografRunUrl,
+} = await import('../js/core/harmonograf.js');
 const ws = await import('../js/views/phase0_workspace.js');
 const epoch = await import('../js/views/phase0_epoch.js');
 const round = await import('../js/views/phase0_round.js');
@@ -74,6 +84,51 @@ function findHarmonografLink(node) {
 }
 
 // ---------------------------------------------------------------------
+// The liveness gate (unit) — the dead-port fix at the source.
+// ---------------------------------------------------------------------
+
+test('harmonograf liveness gate: base is null unless a run is live', () => {
+  state.activeTournament = null;
+  state.activeRuns = [];
+  state.heartbeat = { harmonograf_url: 'https://hg.example.com' };
+  assert(!harmonografIsLive(), 'no tournament + no runs is not live');
+  assertEqual(harmonografBase(), null,
+    'a lingering url with no live run resolves to NO base (dead port)');
+  assertEqual(harmonografRunUrl({ adk_session_id: 'x' }), null,
+    'no run url when not live');
+
+  // An active tournament makes it live.
+  state.activeTournament = { champion: 'v0', challenger: 'v1' };
+  assert(harmonografIsLive(), 'an active tournament is live');
+  assertEqual(harmonografBase(), 'https://hg.example.com',
+    'a live run resolves the (trimmed) base');
+
+  // Active runs alone also count.
+  state.activeTournament = null;
+  state.activeRuns = [{ entry_id: 'e1' }];
+  assert(harmonografIsLive(), 'active runs are live');
+
+  state.activeTournament = null;
+  state.activeRuns = [];
+  state.heartbeat = null;
+});
+
+test('harmonografLiveNote: a muted note post-run, nothing while live', () => {
+  state.activeTournament = null;
+  state.activeRuns = [];
+  const note = harmonografLiveNote();
+  assert(note != null, 'a muted note renders when not live');
+  assert(note.className.includes('harmonograf-note'));
+  assert(note.textContent.toLowerCase().includes('live'),
+    'the note explains it is available during live runs');
+
+  state.activeTournament = { champion: 'v0', challenger: 'v1' };
+  assertEqual(harmonografLiveNote(), null,
+    'no note while live — the real link should render instead');
+  state.activeTournament = null;
+});
+
+// ---------------------------------------------------------------------
 // L4 run header
 // ---------------------------------------------------------------------
 
@@ -84,7 +139,10 @@ test('L4 run header renders harmonograf link with correct href + target + rel', 
   installNode('phase0-run-transcript');
   installNode('phase0-run-events');
   runV.resetRunCaches();
+  // A run is live (active tournament) — harmonograf's server is up, so
+  // the deep-link is valid.
   state.activeRuns = [];
+  state.activeTournament = { champion: 'v2', challenger: 'v3' };
   state.logTail = { events: [] };
   state.heartbeat = {
     harmonograf_url: 'https://harmonograf.example.com',
@@ -129,6 +187,7 @@ test('L4 run header renders harmonograf link with correct href + target + rel', 
   } finally {
     restoreFetch();
     state.heartbeat = null;
+    state.activeTournament = null;
   }
 });
 
@@ -190,6 +249,7 @@ test('L4 run header harmonograf link falls back to base url when adk_session_id 
   installNode('phase0-run-events');
   runV.resetRunCaches();
   state.activeRuns = [];
+  state.activeTournament = { champion: 'v2', challenger: 'v3' };
   state.logTail = { events: [] };
   state.heartbeat = {
     harmonograf_url: 'https://harmonograf.example.com/',
@@ -231,6 +291,55 @@ test('L4 run header harmonograf link falls back to base url when adk_session_id 
       'fallback href must be the base url with trailing slash trimmed');
     assertEqual(link.getAttribute('target'), '_blank');
     assertEqual(link.getAttribute('rel'), 'noopener');
+  } finally {
+    restoreFetch();
+    state.heartbeat = null;
+    state.activeTournament = null;
+  }
+});
+
+// The dead-port fix: a COMPLETED run (no live tournament, no active runs)
+// must render NO harmonograf link even though the heartbeat still carries
+// the (now-dead) harmonograf_url. This is the bug the liveness gate fixes.
+test('L4 run header renders NO harmonograf link once the run is over (dead-port gate)', async () => {
+  installNode('phase0-run-header');
+  installNode('phase0-run-expectation');
+  installNode('phase0-run-judges');
+  installNode('phase0-run-transcript');
+  installNode('phase0-run-events');
+  runV.resetRunCaches();
+  // Run is OVER: nothing live, but the heartbeat url lingers.
+  state.activeRuns = [];
+  state.activeTournament = null;
+  state.logTail = { events: [] };
+  state.heartbeat = {
+    harmonograf_url: 'https://harmonograf.example.com',
+    epoch_id: 'e0', generation_id: 'v3',
+  };
+  const headerPayload = {
+    epoch_id: 'e0', generation_id: 'v3', entry_id: 'predicate_fail',
+    drift_loss: 0.5, pass_fail: false,
+    runtime_ms: 1000, tokens_spent: 100, output_chars: 50,
+    turns_completed: null, plan_revisions: 0,
+    wall_clock_budget_exceeded: false,
+    run_id: 'run_alpha', adk_session_id: 'adk-session-aaa',
+  };
+  const restoreFetch = mockFetch((url) => {
+    if (url.includes('/header')) return headerPayload;
+    if (url.includes('/expectations')) return { outcomes: [] };
+    return { run_id: null, judges: [] };
+  });
+  try {
+    runV.renderPhase0Run({ epochId: 'e0', generationId: 'v3', entryId: 'predicate_fail' });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    runV.renderPhase0Run({ epochId: 'e0', generationId: 'v3', entryId: 'predicate_fail' });
+    const node = document.getElementById('phase0-run-header');
+    const link = findHarmonografLink(node);
+    assertEqual(link, null,
+      'a closed run must render NO harmonograf link — the server is dead even though the url lingers');
+    assert(node.textContent.includes('FAIL'),
+      'the completed-run verdict tile must still render');
   } finally {
     restoreFetch();
     state.heartbeat = null;
@@ -366,6 +475,8 @@ test('L3 round per-side blocks render gen-scoped harmonograf links on champion +
   installNode('phase0-round-judges');
   installNode('phase0-round-decision');
   round.resetRoundCaches();
+  // This round is the live one — harmonograf's server is up.
+  state.activeTournament = { champion: 'v3', challenger: 'v4' };
   state.heartbeat = {
     harmonograf_url: 'https://harmonograf.example.com',
   };
@@ -433,6 +544,7 @@ test('L3 round per-side blocks render gen-scoped harmonograf links on champion +
     state.heartbeat = null;
     state.epochDef = null;
     state.bracket = null;
+    state.activeTournament = null;
   }
 });
 
