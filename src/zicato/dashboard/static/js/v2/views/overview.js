@@ -143,9 +143,26 @@ const _SIGNAL_GLYPH = { improve: '✓', caution: '!', regress: '✗' };
 // fetch that resolves after the view was swapped away is a no-op (it
 // would otherwise write into a host that no longer belongs to it).
 let _gen = 0;
+let _lastOvDigest = null;
 
 export function renderOverview(host, route) {
   if (!host) return;
+
+  // Digest-gate the whole rebuild: the shell calls this on every SSE
+  // heartbeat, but a tick that changes nothing the overview draws must
+  // write zero DOM (otherwise the clearChildren + refetch below flashes
+  // the page every second). Keyed on the structural facts the view
+  // renders — current epoch, epoch count, and the live-tournament phase.
+  const at = state.activeTournament;
+  const digest = [
+    route && route.view,
+    state.epoch && state.epoch.id,
+    Array.isArray(state.epochs) ? state.epochs.length : 0,
+    at ? (at.phase + ':' + (at.child_generation_id || '') + ':' + (at.round_index || 0)) : 'idle',
+  ].join('|');
+  if (digest === _lastOvDigest && host.firstChild) return;
+  _lastOvDigest = digest;
+
   const myGen = (_gen += 1);
 
   clearChildren(host);
