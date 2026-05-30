@@ -1,12 +1,19 @@
 # Dashboard
 
 This document describes the **live dashboard** for an in-flight
-zicato epoch. The dashboard is the operator's window into what the
-loop is doing *right now* — which round is running, which entries
-have completed against parent and candidate, what the predicted
-gate verdict is given partial results, and which runs are
-in-flight. It is the live counterpart to `analysis.html`, which is
-the persisted archival snapshot of the epoch.
+zicato epoch. The dashboard has exactly one job, and the whole
+information architecture is bent toward it:
+
+> **Make the promote/reject DECISION legible.**
+
+Everything else — the lineage, the heatmaps, the log tail — exists
+to support the operator standing in front of one question: *should
+this challenger replace the reigning champion?* That decision is
+the most consequential thing zicato does (the decision theory under
+it is [SELECTION.md](SELECTION.md)); the dashboard is the instrument
+that makes it inspectable while it is still in flight. It is the
+live counterpart to `analysis.html`, the persisted archival snapshot
+of the epoch.
 
 The dashboard is served by a **standalone Python (Starlette) service**
 (`src/zicato/dashboard/`, run as `python -m zicato.dashboard`), spawned
@@ -21,20 +28,29 @@ source. The robustness phasing in [ROBUSTNESS.md](ROBUSTNESS.md) covers
 what each layer of defense catches; this document covers the operator
 experience and the HTTP / SSE surface.
 
-> **Shipped vs planned, up front.** The Python dashboard service, all
-> the GET endpoints (§6), the `/events` SSE stream, the L0→L4
-> navigation, the ⌘K command palette, and the status pill all **ship
-> today**. The POST control endpoints (§6.2) are **wired and live** —
-> when `evolve` spawns the dashboard it is served `read_only=False`, so
-> the control buttons write `control/` files. What is **planned** is
-> the *other half* of that loop: the orchestrator does not yet *consume*
-> those `control/` files at safe points (see [RUNTIME.md](RUNTIME.md)
-> §2.5), so a control action is recorded but not yet acted on. The
-> `zicato dashboard` CLI exposes only `--workspace` / `--host` /
-> `--port`; the `--read-only` / `--daemon` standalone modes in §2.2 are
-> **not shipped** on that CLI (the `--read-only` toggle exists on the
-> Rust binary and as a `create_app(read_only=…)` argument, not as a
-> `zicato dashboard` flag).
+> **Shipped vs planned, up front.** The Python dashboard service, the
+> GET endpoints (§6), the `/events` SSE stream, the L0→L4 navigation,
+> the ⌘K command palette, and the status pill all **ship today**. The
+> **decision-centric layer** described in §4 is the redesign being
+> implemented now: the **lineage ribbon** navigation metaphor, the **L3
+> decision view** (gate ladder, per-entry diverging A/B chart, scalar
+> waterfall, primary-driver call-out, margin band), and the new
+> `GET /api/round/.../gate` endpoint that feeds it are documented here
+> as the target. They compose existing endpoints plus the one new
+> `/gate` endpoint. The POST control endpoints (§6.2) are **wired and
+> live** — when `evolve` spawns the dashboard it is served
+> `read_only=False`, so the control buttons write `control/` files.
+> What is **planned** is the *other half* of that loop: the orchestrator
+> does not yet *consume* those `control/` files at safe points (see
+> [RUNTIME.md](RUNTIME.md) §2.5), so a control action is recorded but
+> not yet enacted. **Uncertainty as first-class** (§4.6) — error bars,
+> the paired-significance verdict in the gate ladder, the field
+> leaderboard — is **planned**, gated on the replication work in
+> [SELECTION.md §7](SELECTION.md#7-the-recommended-design); today the
+> dashboard shows point estimates plus a margin band. The `zicato
+> dashboard` CLI exposes only `--workspace` / `--host` / `--port`; the
+> `--read-only` / `--daemon` standalone modes in §2.2 are **not shipped**
+> on that CLI.
 
 ## 1. What the dashboard is
 
@@ -44,32 +60,32 @@ shows the plan, the per-turn drift state, the intervention
 ladder, the operator-driven steering controls: the temporal
 trace of a single run.
 
-The zicato dashboard is the **competition view**. It shows
-**one epoch**: many goldfive runs across many generations, the
-lineage tree, the live tournament bracket, the score trajectory,
-the drift heatmap. It is the cadence above harmonograf.
+The zicato dashboard is the **decision view**. It shows **one
+epoch**: many goldfive runs across many generations, but always
+organized around the promote/reject decisions that chain those
+generations into a lineage. It is the cadence above harmonograf.
 
 The two are **not merged** — they are different objects (a run
 is a trace; a tournament is a comparison of aggregates over many
 traces). They are *linked* by a per-run drill-down: the
 dashboard's drill-down opens harmonograf against the run's
-`events.jsonl`. The operator moves *down* the competition view
-(epoch → round → matchup → run) and at the run level steps
-*across* into harmonograf's execution view. The full treatment
-of this split is in
+`events.jsonl`. The operator moves *down* the decision view
+(workspace → epoch → generation → decision → run) and at the run
+level steps *across* into harmonograf's execution view. The full
+treatment of this split is in
 [TOURNAMENT.md §5](TOURNAMENT.md#5-the-harmonograf-split) and
 [ARCHITECTURE.md §7](ARCHITECTURE.md#7-the-harmonograf-split-execution-view-vs-competition-view).
 
 | Tool | View | Scope | Cadence |
 |---|---|---|---|
 | harmonograf | execution | one goldfive run | within one run |
-| **zicato dashboard** | **competition** | **one zicato epoch** | **across runs within the epoch** |
-| `analysis.html` | competition (snapshot) | one zicato epoch | regenerated each round; persisted at close |
+| **zicato dashboard** | **decision** | **one zicato epoch** | **across the promote/reject decisions in the epoch** |
+| `analysis.html` | decision (snapshot) | one zicato epoch | regenerated each round; persisted at close |
 
 The same operator may have all three open at once: harmonograf
 focused on the specific run they're inspecting, the zicato
-dashboard for tournament progress, `analysis.html` from a closed
-epoch in a third tab for comparison.
+dashboard for the decision in flight, `analysis.html` from a
+closed epoch in a third tab for comparison.
 
 ## 2. Auto-spawn from `zicato evolve`
 
@@ -174,6 +190,13 @@ to the Python (Starlette) HTTP server over two channels:
                                           └─────────────────────────────┘
 ```
 
+The two processes the operator runs into:
+
+| Process | Port | Role |
+|---|---|---|
+| Rust watchdog supervisor | `:7920` | Watches the orchestrator's heartbeat; restarts / escalates. Serves its own dashboard only when run standalone — under `evolve` it runs `--no-dashboard`. |
+| Python dashboard service | `:7892` | The UI in this document. Reads the workspace; serves GET + SSE; writes `control/` files on POST. |
+
 The control POST endpoints write the `control/` files today; the
 orchestrator's *consumption* of them is the planned half (see
 [RUNTIME.md](RUNTIME.md) §2.5).
@@ -239,7 +262,7 @@ proxy read-timeouts.
 
 zicato persistence is **files-canonical, index-derived**. This is
 a load-bearing rule for the dashboard, and getting it wrong is a
-real bug class — it produced a blank Tournament view mid-run (see
+real bug class — it produced a blank decision view mid-run (see
 below). The rule:
 
 > **Live dashboard state MUST read the JSON / JSONL files (or the
@@ -252,470 +275,376 @@ different cadences:
 | Tier | Files | Written | Read for |
 |---|---|---|---|
 | **Canonical, live** | `runtime/active_tournament.json`, `runtime/heartbeat.json`, `runtime/active_runs/*.json`, `lineage.json`, per-run `events.jsonl` | Live — the moment state changes, by the orchestrator or the worker that owns the file | The live dashboard: anything that must reflect *right now* |
-| **Derived, lagging** | `index.db` (SQLite) | Dual-written at **generation/round boundaries** only (see [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live)); fully rebuildable via `zicato reindex` | Resolved historical / analytical queries: the bracket of *closed* rounds, cross-run aggregates |
+| **Derived, lagging** | `index.db` (SQLite) | Dual-written at **generation/round boundaries** only (see [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live)); fully rebuildable via `zicato reindex` | Resolved historical / analytical queries: closed decisions, cross-run aggregates |
 
 `index.db` is a **derived analytical cache**. It is rebuilt from
 the canonical files by `zicato reindex`, and during a live run it
 is only refreshed at generation boundaries — so mid-round it does
 not yet contain the in-flight generation or the in-progress
-tournament. It is the right source for *resolved* data (closed
-rounds, cross-run aggregates) and the wrong source for *live*
+decision. It is the right source for *resolved* data (closed
+decisions, cross-run aggregates) and the wrong source for *live*
 data.
 
-**The bug this rule prevents.** The Tournament view previously
-read its in-progress matchup from `index.db`. Because the index is
-only refreshed at generation boundaries, mid-round there was no
-row for the running tournament — so the panel rendered **blank**
-for the entire duration of every round, exactly when an operator
-most wants to watch it. The fix: the Tournament view now reads
+**The bug this rule prevents.** The decision view previously read
+its in-progress matchup from `index.db`. Because the index is only
+refreshed at generation boundaries, mid-round there was no row for
+the running tournament — so the panel rendered **blank** for the
+entire duration of every round, exactly when an operator most wants
+to watch the decision form. The fix: the decision view now reads
 `runtime/active_tournament.json` (via `GET /api/active-tournament`)
-live. The index is still read — but only for the bracket of rounds
-that have already *closed*.
+live. The index is still read — but only for decisions that have
+already *closed*.
 
 The endpoints in §6 follow this split: `/api/active-tournament`,
 `/api/active-runs`, `/api/lineage`, `/api/run-log`, and
 `/api/heartbeat` are file-backed and live; `/api/tournaments`
-(the bracket) and `/api/tournaments/{id}` (matchup detail of
-resolved rounds) read the index and degrade gracefully — a missing
-or stale `index.db` yields an empty bracket with a `note` rather
-than an error.
+(the resolved decisions) and `/api/tournaments/{id}` (matchup
+detail of resolved rounds) read the index and degrade gracefully —
+a missing or stale `index.db` yields an empty result with a `note`
+rather than an error.
 
-## 4. UI panels
+## 4. The decision-centric IA
 
-### 4.0 Navigation structure
+The information architecture is **decision-centric, layered over the
+L0→L4 spatial hierarchy**. The levels nest the way the data does —
+workspace contains epochs, epochs contain generations, each
+generation arrives by a decision, each decision is fed by runs — but
+the **L3 decision view is the centerpiece**, and every other level is
+a way of getting to it or summarizing the decisions already made.
 
-> **Shipped navigation (clean-slate redesign).** The current UI drops
-> the left-hand sidebar in favour of a **top bar** with a drill-down
-> navigation across five levels — **L0 Workspace → L1 Epoch → L2
-> Generation → L3 Round → L4 Run** — a **⌘K command palette** for
-> jumping between epochs / generations / runs, and a **status pill**
-> reflecting the live heartbeat/phase. The panels described in §4.1-§4.9
-> are the building blocks; the drill-down levels compose them.
-
-The levels nest the way the data does — the operator moves *down* the
-competition view and at the run level steps *across* into harmonograf:
-
-| Level | Scope | What it composes | Primary source |
+| Level | Scope | The decision framing | Primary source |
 |---|---|---|---|
-| **L0 Workspace** | cross-epoch | a workspace-at-a-glance summary + trend sparkline across epochs | `/api/workspace` |
-| **L1 Epoch** | one epoch | the live tournament / active runs / log tail (the "what's happening now" panels) plus the epoch's evaluation contract (scoring with nested weight dicts incl. `per_judge_weights`, board, proposer brief, mutation paths relativized to the workspace root) | live `active_tournament.json`, `/api/active-runs`, `/api/run-log`, `/api/epoch` |
-| **L2 Generation** | one generation | the lineage graph (**including in-flight generations**), score trajectory, per-generation drill-downs; a **side-by-side compare picker** (defaulting to the parent generation) with URL-hash sync | `/api/lineage`, `/api/generation/...`, `/api/score-trajectory` |
-| **L3 Round** | one round / matchup | the bracket for resolved rounds **and the in-progress tournament rendered live**; the per-matchup A/B grid | `active_tournament.json` for the active round; `index.db` for closed rounds |
-| **L4 Run** | one run | the run's live status + event tail; "open in harmonograf" handoff | `/api/run/...`, `/api/run-log`, transcript endpoints |
+| **L0 Workspace** | cross-epoch | "Is the lineage climbing, and is any loop unhealthy?" — lineage ribbon zoomed to epochs, loop-health banner, recent decisions | `/api/workspace`, `/api/health-report`, `/api/lineage` |
+| **L1 Epoch** | one epoch | "What contract is this epoch deciding under, and how have its decisions gone?" — epoch story header, lineage ribbon, contract diff, per-entry/per-judge heatmaps | `/api/epoch`, `/api/lineage`, `/api/contract-diff/...`, the per-judge endpoints |
+| **L2 Generation** | one generation | "Did the bet this generation made pay off?" — hypothesis→outcome panel, drift-movement chart, patches | `/api/lineage`, `/api/generation/...`, `/api/drift-movements/...`, `/api/files/...` |
+| **L3 Decision / round** | one promote/reject | **The centerpiece** — gate ladder, per-entry diverging A/B chart, scalar waterfall, primary-driver judge, margin band, promote/reject controls | live `active_tournament.json` for the in-flight decision; `/api/round/.../gate` + the index for closed ones |
+| **L4 Run** | one run | "What did this single side actually do?" — transcript diff, drift annotations, harmonograf deep-link | `/api/run/...`, transcript endpoints, `/api/run-log` |
 
-Two behaviors are the result of fixes and are called out per-panel
-below:
+### 4.1 The lineage ribbon — one navigation metaphor at every level
 
-- The in-progress tournament renders **live** — it previously read
-  `index.db` and so was blank for the whole duration of every round
-  (see §3.4). It now reads `active_tournament.json` via
-  `/api/active-tournament` for the active round and only reads the
-  index for the bracket of closed rounds.
-- The lineage includes in-flight generations because `/api/lineage`
-  walks generation directories rather than reading the resolved-only
-  `lineage.json`.
+The **lineage ribbon** is the consistent navigation metaphor. It
+**subsumes** three formerly-separate widgets — the generation-spine,
+the epoch-timeline, and the cross-epoch sparkline — into one object
+that simply *zooms* per level. The ribbon is the answer to "where am
+I in the optimization, and how did I get here?" at L0, L1, and L2
+alike.
 
-The per-panel sections below (§4.1-§4.9) describe the panel
-building blocks; the drill-down levels above map them onto screens.
+What it encodes:
 
-| # | Panel | What it shows |
+- **x-axis** is lineage order (generation index / round); the ribbon
+  reads left → right as the loop progresses.
+- **y-position encodes the scalar** (the drift-derived loss; lower is
+  better). So the ribbon *is* the optimization trajectory — a falling
+  ribbon is a loop that is winning, a flat ribbon is a loop that has
+  stalled, a rising tail is a regression.
+- **Promoted generations** sit on the main trace (the spine of the
+  ribbon). **Rejected challengers branch off their parent** as short
+  stubs that do not continue the trace — a visual record of every bet
+  that did not pay off, hanging at the y-position its scalar earned.
+- **Click any node to drill in** — a generation node opens L2, the
+  decision that produced (or rejected) it opens L3, the in-flight tip
+  pulses.
+
+Zoom levels:
+
+| Zoom | Shown at | Each node is |
 |---|---|---|
-| 4.1 | Header / status pill | epoch / generation / round / elapsed + live phase |
-| 4.2 | Tournament view | the competition — bracket, active matchup, predicted gate verdict |
-| 4.3 | Active runs list | every in-flight tournament run |
-| 4.4 | Lineage SVG | the cross-epoch generation tree |
-| 4.5 | Score trajectory | gen-score over rounds |
-| 4.6 | Drift-kind heatmap | which drift kinds move across the epoch |
-| 4.7 | Loop-health panel | loop-health findings — is the eval toothless? |
-| 4.8 | Log tail | rolling tail of the latest goldfive events |
-| 4.9 | Drill-down side panels | per-generation and per-run detail |
+| epochs | L0 | one epoch (collapsed to its final champion's scalar) |
+| generations within an epoch | L1 | one generation, promoted on the spine or branched off if rejected |
+| round neighborhood | L2 | the focused generation, its parent, and its rejected siblings |
 
-### 4.1 Header
+The ribbon is driven by `GET /api/lineage` (which walks generation
+**directories**, so it includes in-flight generations with
+`promoted: null`) plus `GET /api/score-trajectory` for the
+y-positions, and `GET /api/workspace` for the L0 epoch roll-up.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  zicato · myagent · epoch hardened_research · round 4 / 5 · 00:08:42 elapsed │
-│  parent v4   →   candidate v5     [TOURNAMENT RUNNING]                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+```mermaid
+flowchart LR
+    L0["L0 Workspace<br/>ribbon zoomed to epochs<br/>+ loop-health banner<br/>+ recent decisions"]
+    L1["L1 Epoch<br/>epoch story header<br/>+ ribbon (generations)<br/>+ contract diff<br/>+ per-entry/per-judge heatmaps"]
+    L2["L2 Generation<br/>hypothesis → outcome<br/>+ drift-movement chart<br/>+ patches"]
+    L3["L3 DECISION VIEW ★<br/>gate ladder · diverging A/B<br/>scalar waterfall · primary driver<br/>margin band · promote/reject"]
+    L4["L4 Run<br/>transcript diff<br/>+ drift annotations<br/>+ harmonograf deep-link"]
+    HG["harmonograf<br/>(execution view)"]
 
-Always visible at the top. Phase indicator (`PROPOSING`,
-`APPLYING`, `TOURNAMENT RUNNING`, `JOURNALING`, `PAUSED`,
-`STALLED`) updates from `heartbeat.json`'s `phase` field. Elapsed
-time is `now - evolve_started_at`. Round count is from
-`evolve_args` plus the running counter.
+    L0 -->|"click epoch on ribbon"| L1
+    L1 -->|"click generation on ribbon"| L2
+    L1 -. "click a decision directly" .-> L3
+    L2 -->|"open the deciding round"| L3
+    L3 -->|"open a side's run"| L4
+    L4 -. "step across" .-> HG
 
-### 4.2 Tournament view
-
-The biggest panel. The whole point of the dashboard. The
-**Tournament view** is the competition view of the epoch's
-king-of-the-hill gauntlet (see [TOURNAMENT.md](TOURNAMENT.md) for
-the model). It has two levels.
-
-#### 4.2.1 The bracket
-
-At the top of the panel: the **bracket** — the whole epoch's
-gauntlet at a glance. The winners' spine runs left to right, each
-round's matchup hangs off it, discarded challengers are marked.
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ Tournament — epoch hardened_research — 4 rounds, 3 promotions                 │
-│                                                                                │
-│   v0 ──▶── v1 ──▶── v2 ────────▶── v3 ──▶── (v5 running)                      │
-│   │        │        │              │        │                                 │
-│   r1       r2       r3   ✗         r4       r5  ◀ in flight                    │
-│   PROM     PROM     DISCARD        PROM                                        │
-│   Δ -0.31  Δ -0.18  +0.02          Δ -0.24                                     │
-│                                                                                │
-│   click any round → matchup detail                                            │
-└──────────────────────────────────────────────────────────────────────────────┘
+    L3 -. "promote / reject (POST control, planned-enactment)" .-> L1
 ```
 
-Each row shows the round, the verdict (`PROM` / `DISCARD`), and
-the score delta (negative is an improvement). Promoted rounds sit
-on the spine; discarded rounds are marked `✗`. The bracket of
-**resolved** rounds is driven by the `tournaments` table of the
-analytical index (see
-[ANALYTICAL-INDEX.md §3.8](ANALYTICAL-INDEX.md#38-tournaments)).
-The **in-progress** round at the tip of the spine is rendered
-live from `active_tournament.json`, not the index — see §3.4 for
-why this distinction is load-bearing. Clicking any round opens its
-**matchup detail** — the hypothesis,
-patches, per-entry A/B grid, scalar breakdown, and gate verdict
-(specified in [TOURNAMENT.md §3](TOURNAMENT.md#3-per-matchup-detail)).
+### 4.2 The L3 decision view — the heart of the redesign
 
-#### 4.2.2 The active matchup
+L3 is the screen the whole dashboard exists to render. It drills one
+promote/reject decision — champion vs challenger — and lays out
+*every input the gate weighs*, so the operator can see not only the
+verdict but **why** it came out that way, and override it if the
+machine got it wrong. It works equally for the **in-flight** decision
+(partial data, the verdict still forming) and a **closed** one
+(replayed from the index + the new `/gate` endpoint).
 
-Below the bracket: the **active matchup** — the in-flight round
-drilled in, with live partial data. Shows every board entry ×
-(parent champion, candidate challenger) with per-entry status,
-drift loss, pass/fail, and the running aggregate.
-
-```
-┌────────────────────────────────────────────────────────────────────────────────────┐
-│ Active matchup — round 4 — v4 → v5                                                 │
-│                                                                                    │
-│  entry_id                       weight    parent              candidate    Δ-drift │
-│ ─────────────────────────────  ──────   ───────────────    ──────────────  ─────── │
-│  short_solar                   1.0      [✓] 0.42 ✓ pass    [✓] 0.31 ✓ pass  -0.11  │
-│  long_solar_with_constraints   1.5      [✓] 0.55 ✗ fail    [▶ 73%] running  --     │
-│  contradictory_brief           1.0      [▶ 12%] running    [⋯] queued        --    │
-│  revision_dialog               1.0      [⋯] queued         [⋯] queued        --    │
-│  expert_review                 1.0      [⋯] queued         [⋯] queued        --    │
-│                                                                                    │
-│  completed: 3 / 10 sides · in-flight: 2 · queued: 5                                 │
-│                                                                                    │
-│  ─── PREDICTED GATE VERDICT (from partial results) ───                              │
-│  best case  (remaining favour candidate):   PROMOTE   confidence 0.74               │
-│  worst case (remaining favour parent):      REJECT    confidence 0.31               │
-│  current trend if continued:                PROMOTE   margin 0.08 above threshold   │
-│                                                                                    │
-└────────────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    H["Decision header — epoch · round · champion vN → challenger vN+1 · VERDICT"]
+    subgraph row1[" "]
+        direction LR
+        GL["① Gate ladder<br/>regression suite → scalar margin →<br/>pass-rate monotonicity → namespace monotonicity<br/>(evaluation order; fired rule emphasized)"]
+        MB["② Margin band<br/>±promote_margin around the champion;<br/>where the challenger's scalar lands"]
+    end
+    subgraph row2[" "]
+        direction LR
+        AB["③ Per-entry diverging A/B<br/>champion↔challenger Δ per board entry<br/>improvements left / regressions right<br/>pass→fail flips flagged"]
+        WF["④ Scalar waterfall<br/>which scalar component moved the loss"]
+    end
+    PD["⑤ Primary-driver judge call-out — the judge that moved the loss most"]
+    CTL["⑥ Promote / Reject controls (POST /api/control/*, recorded-not-yet-enacted)"]
+    H --> row1 --> row2 --> PD --> CTL
 ```
 
-**Status glyphs.** `[⋯] queued`, `[▶ N%] running` (where `N%` is
-the **deadline-elapsed fraction** — how far through its
-wall-clock budget the run is, from the `wall_clock_deadline`
-countdown — not true task progress), `[✓] done`, `[!] aborted`,
-`[✗] killed`.
+**① Gate ladder.** The promote gate (see [SCORING.md](SCORING.md) and
+[SELECTION.md §3.2](SELECTION.md#32-the-promote-gate--three-rules-in-order))
+is a short-circuiting sequence of rules; the ladder renders them **in
+evaluation order**, each with a per-rule **pass / fail / not-reached**
+status, the **actual numbers**, and the **fired rule emphasized** (the
+rule that decided the verdict — for a reject, the first rule that
+failed; for a promote, "all passed"). The rungs, in order:
 
-**Predicted gate verdict.** Computed deterministically from
-partial results — no LLM in this path.
-
-#### 4.2.3 The predicted-verdict projection
-
-The gate (see [SCORING.md](SCORING.md)) checks two things:
-
-- `drift_loss_delta < -MARGIN` (candidate's drift loss must beat
-  parent's by at least `MARGIN`).
-- `pass_rate_candidate >= pass_rate_parent` (strict monotonicity
-  on pre-existing pass-rate).
-
-For a partially-complete tournament, we have:
+1. **Regression suite** — the snapshot's own test suite, run before
+   scoring when `regression_gate_enabled`. A failing suite is a hard
+   reject; later rungs are "not reached."
+2. **Scalar margin** — `child_scalar ≤ parent_scalar − promote_margin`.
+   Shows both scalars, the delta, and the margin threshold.
+3. **Pass-rate monotonicity** — every board entry the champion passed,
+   the challenger must also pass. Names the regressed entries if any.
+4. **Namespace monotonicity** — no tracked metric namespace moved in
+   its "worse" direction. Names the regressed namespaces if any.
 
 ```
-completed_entries: list[Entry]            # both sides done
-in_flight_entries: list[Entry]            # at least one side still running
-queued_entries: list[Entry]               # both sides queued
-
-partial_drift_delta = weighted_sum(
-    entry.candidate_drift_loss - entry.parent_drift_loss
-    for entry in completed_entries
-)
-remaining_weight = sum(e.weight for e in (in_flight + queued))
-
-# Best case: every remaining entry favours the candidate by the
-# observed best-case delta so far (or a fixed floor of -1.0 drift).
-best_case_remaining_delta = remaining_weight * min(
-    -1.0,
-    min(e.delta_drift_loss for e in completed_entries) if completed_entries else -1.0
-)
-
-# Worst case: every remaining entry favours the parent by the
-# observed worst-case delta so far (or a fixed ceiling of +1.0).
-worst_case_remaining_delta = remaining_weight * max(
-    +1.0,
-    max(e.delta_drift_loss for e in completed_entries) if completed_entries else +1.0
-)
-
-projected = {
-    "best_case_drift_delta": partial_drift_delta + best_case_remaining_delta,
-    "worst_case_drift_delta": partial_drift_delta + worst_case_remaining_delta,
-    "current_trend": partial_drift_delta * (1 + remaining_weight / completed_weight),
-}
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Gate ladder — round 4 — v4 → v5                              VERDICT: REJECT│
+│                                                                            │
+│  ✓  1. regression suite        passed (snapshot tests 41/41)               │
+│  ✓  2. scalar margin           child 0.31 ≤ parent 0.42 − 0.01  Δ −0.11 ✓  │
+│ ▶✗  3. pass-rate monotonicity  FAILED — long_solar_with_constraints pass→fail
+│  –  4. namespace monotonicity  not reached                                 │
+│                                                                            │
+│  Fired rule: pass-rate monotonicity. The scalar improved, but a            │
+│  previously-passing entry regressed — a hard per-task feasibility reject.  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-The projection has three outputs:
+The fired-rule emphasis is the single most important pixel on the
+screen: it tells the operator *which constraint the decision turned on*
+— a scalar that improved but flipped a passing task to fail reads very
+differently from a scalar that simply didn't clear the margin.
 
-- **Best case** — if every remaining entry runs maximally in the
-  candidate's favour. If this case still rejects, the round is
-  decided early; the operator knows there's no recovering.
-- **Worst case** — if every remaining entry runs maximally
-  against the candidate. If this case still promotes, the round
-  is decided early in the other direction.
-- **Current trend** — straight-line projection of the partial
-  result to the full board. This is the operator's "is it
-  trending toward promote or reject?" gauge.
+**② Margin band.** A horizontal band drawn at the champion's scalar
+± `promote_margin` (default `0.01`). The challenger's scalar is plotted
+against it: inside the band is "insufficient improvement," below it is
+"clears the margin," above it is "regressed." This is the AlphaGo-Zero
+noise threshold made visual (see
+[SELECTION.md §2 Family ②](SELECTION.md#family--statistical-gate-acceptance-replicate-then-test)).
+Today the band is a *fixed* threshold around a *point* estimate; §4.6
+describes the planned upgrade to a confidence interval once replication
+lands.
 
-The projection is **deterministic**. Same partial results in,
-same prediction out. No LLM, no randomness. The dashboard updates
-the prediction every time an entry finishes; once both best-case
-and worst-case agree, the round is decided early (logged as
-"early exit by predicted verdict") and the orchestrator can skip
-the remaining runs.
+**③ Per-entry diverging A/B chart.** One diverging bar per board
+entry: the champion-vs-challenger delta for that entry, **improvements
+diverging one way and regressions the other**, weighted by the entry's
+board weight. **pass→fail regressions are flagged** distinctly (a red
+marker) because Rule 3 turns on exactly those — an operator scanning
+the chart should see a feasibility-killing flip without reading the
+ladder. This is the per-entry detail behind the gate's aggregate
+verdict; it reads from the same paired per-entry deltas the gate
+consumes (`/api/matchup-grid/...` for the grid,
+`/api/round/.../gate` for the gate-aligned breakdown).
 
-(Note: early-exit-by-predicted-verdict is a v1.2 ergonomic add-on,
-not a v1.1 correctness requirement. The default v1.1 behaviour is
-to always finish every entry; the dashboard just shows the
-projection so operators know what to expect.)
+**④ Scalar waterfall.** The scalar is a weighted sum of drift-derived
+components (see [SCORING.md](SCORING.md) — the per-`judge_name`
+`per_judge_weights` term plus the rest of the loss). The waterfall
+decomposes `child_scalar − parent_scalar` into per-component bars, so
+the operator sees **which component moved the loss**: a win driven by
+one judge looks different from a broad win across all of them, and a
+component moving the wrong way under a net improvement is a smell.
 
-### 4.3 Active runs list
+**⑤ Primary-driver judge call-out.** A single emphasized line naming
+the judge that moved the loss the most (the largest single waterfall
+component). It is the one-glance "what is this decision actually
+about?" — fed by the `primary_driver` field of
+`/api/round/.../per-judge-comparison`.
 
-A flat table of every `active_runs/{run_id}.json`, served by
-`GET /api/active-runs`. Updated on every SSE `active_run_*` event.
+**⑥ Promote / reject controls.** The POST `/api/control/promote/{gen}`
+and `/api/control/reject/{gen}` endpoints surfaced as buttons (plus
+pause / skip / kill / brief — §5), gated by `read_only`. **Honest
+status:** the write side ships — clicking writes the `control/` file
+atomically — but the orchestrator does not yet *consume* control files
+at safe points (see [RUNTIME.md](RUNTIME.md) §2.5). So these are
+**recorded-but-not-yet-enacted / planned-enactment**: the dashboard
+records the operator's override on disk; the loop will act on it once
+the consume side lands. A gate-override (promote when the gate would
+reject, or vice versa) is a contract violation needing a durable audit
+trail — see §5.3.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ Active runs                                                                 │
-│                                                                             │
-│  run_id                              gen   entry          phase    deadline │
-│ ──────────────────────────────────  ────  ───────────────  ───────  ──────── │
-│  e4f2_long_solar_candidate          v5    long_solar       agent     73% ▓▓▓ │
-│  e4f2_contradictory_brief_parent    v4    contradictory…   adapter…  12% ▓   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+**The feeding endpoint.** L3 is fed by a new
+`GET /api/round/{epoch}/{champion}/{challenger}/gate` endpoint — a
+structured gate breakdown returning the ladder (each rule with its
+status, numbers, and whether it fired), the per-entry deltas with
+pass→fail flags, the scalar-component waterfall, the margin-band
+geometry, and the primary-driver judge. It is the one **new** endpoint
+this redesign adds; everything else on L3 composes the existing
+endpoints (`/api/active-tournament` for the in-flight decision,
+`/api/matchup-grid/...`, `/api/round/.../per-judge-comparison`). See
+§6.1.
 
-The `deadline` bar is the run's **elapsed-vs-budget** fraction —
-`elapsed_seconds / budget_seconds`, served as the `progress`
-field — NOT a measure of how much of the task is done. A run at
-`73%` is 73% through its wall-clock budget; it may finish (or be
-escalated) at any point. The bar is `null` / absent for a run
-with no budget or no start time. See
-[§6.1 `GET /api/active-runs`](#get-apiactive-runs) for the field
-shapes.
+> **In-flight vs closed.** For the in-flight decision the gate ladder
+> renders against *partial* results — rungs whose inputs are not yet
+> complete show "pending," and the verdict is the deterministic
+> projection (best-case / worst-case / current-trend) computed from
+> completed board entries. Once both best- and worst-case agree, the
+> decision is settled early. The projection is computed from
+> `active_tournament.json`; no LLM, no randomness, same partial results
+> in → same projection out.
 
-Clicking a row opens the per-run drill-down (§4.9).
+### 4.3 L0 — the workspace decision summary
 
-### 4.4 Lineage SVG
+L0 answers "is anything wrong, and is the loop climbing?" before the
+operator drills anywhere. It composes:
 
-Same renderer as `analysis.html`'s lineage graph. Nodes are
-generations, edges are parent → promoted-child relationships
-within the epoch (and dashed edges to the previous epoch's final
-generation for cross-epoch parentage). The graph is driven by
-`GET /api/lineage`, which walks generation directories — so it
-**includes in-flight generations**: a candidate that has been
-proposed and applied but whose tournament has not yet resolved
-appears immediately, with `promoted: null`. The
-currently-running candidate is highlighted with a pulse
-animation.
+- the **lineage ribbon zoomed to epochs** (§4.1) — the cross-epoch
+  trajectory at a glance;
+- the **loop-health banner** (§4.5) — the green/amber/red "is this loop
+  meaningful" signal;
+- a **recent decisions** strip — the last few promote/reject verdicts
+  with their deltas, each a click into its L3 decision view.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ Lineage                                                                     │
-│                                                                             │
-│      v0 ──→ v1 ──→ v2 ──╳ (rejected)                                        │
-│              ╲                                                              │
-│               ──→ v3 ──→ v4 ──→ v5* (running)                               │
-│                                  ↑                                          │
-│                                  parent of next candidate                   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+### 4.4 L1 — the epoch and its decisions
 
-Hovering a node shows the experiment's `core_idea`. Clicking opens
-a side panel with the full `experiment.json` rendered (hypothesis
-fields, outcome fields, per-entry deltas).
+L1 frames "what contract is this epoch deciding under, and how have its
+decisions gone?":
 
-### 4.5 Score trajectory chart
+- an **epoch story header** — the epoch name, its champion, round count,
+  and the running decision tally (promotions / rejections / consecutive
+  rejections against the stop threshold);
+- the **lineage ribbon** zoomed to this epoch's generations (§4.1);
+- the **contract diff** (`/api/contract-diff/{epoch_id}`) — what changed
+  in the evaluation contract (scoring with nested weight dicts incl.
+  `per_judge_weights`, board, proposer brief, mutation paths) versus the
+  parent epoch, since a decision is only meaningful relative to the
+  contract it was made under;
+- **per-entry and per-judge heatmaps** — which board entries and which
+  judges are moving across the epoch's generations (the per-judge-trend
+  and per-entry endpoints), the "what is the lineage learning?" view.
 
-Time series of `gen_score.json`'s drift-loss scalar per
-generation, two lines: parent and candidate at each round. The
-horizontal axis is round number, not wall-clock time. Promoted
-rounds are marked; rejected rounds are marked differently
-(typically a `✗` glyph on the candidate's data point).
+### 4.5 The loop-health banner
 
-```
-loss
-1.0 ┤
-0.8 ┤  ●
-    │  │╲
-0.6 ┤  │ ╲    ●
-    │  │  ╲  ╱│ ╲
-0.4 ┤  │   ●  │  ╲     ●        ●  ← candidate v5 (current trend)
-    │  │      │   ╲___/__       │
-0.2 ┤  │      │       │  ╲___◌
-    │  │      │       │      ╲
-0.0 ┼──┴──────┴───────┴────────●─────────
-    r0    r1     r2      r3     r4 (in flight)
-```
-
-When the candidate is mid-tournament, its data point is shown as
-the **current-trend projection** (see §4.2.3) with a confidence
-band drawn from the best/worst case spread.
-
-### 4.6 Drift-kind heatmap
-
-A small heatmap with drift kinds on the y-axis and rounds on the
-x-axis. Cell intensity is the per-kind count weighted by severity
-across all runs in that round. Helps the operator see which drift
-kinds are moving across the epoch.
+`GET /api/health-report` surfaces zicato's loop-health diagnostics (see
+[LOOP-HEALTH.md](LOOP-HEALTH.md)) as a **green / amber / red banner at
+L0 and L1**, carrying the top finding. It is the "is this loop
+meaningful?" signal — the detector for a *running but meaningless* loop
+where the evaluation is degenerate and no decision can distinguish any
+challenger.
 
 ```
-                   r1   r2   r3   r4
-CONFABULATION_RISK ███  ██   █    ░
-TOOL_ERROR         ░    ░    ░    ░
-CAPABILITY_MISMATCH█    ██   ███  ████  ← surging this round
-LOOPING_REASONING  ░    █    █    ░
-PLAN_REVISION      ██   ██   ██   ██
+┌──────────────────────────────────────────────────────────────────────────┐
+│ ● RED  Loop health — round 7                                               │
+│   degenerate_scoring: v0..v7 all carry gen_score = 1.000000 — zero score   │
+│   variance across 8 generations. The gate cannot tell anyone apart.        │
+│   → Inspect scoring.json and the per-entry loss.json files.                │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-The heatmap is the "what's the lineage learning?" view. When
-`CAPABILITY_MISMATCH` surges in round 4, the operator can
-immediately drill into round 4's runs and see what the proposer
-changed.
+The banner turns red on a `critical` finding and carries the single
+top finding inline; clicking it expands the full per-detector report.
+This is the signal that the *motivating incident* depended on noticing
+by hand — a real run had `v0` and `v1` both score exactly `1.000000`,
+found only by inspection. When the banner is red, the operator knows
+the decision view downstream is meaningless *before* squinting at it.
 
-### 4.7 Loop-health panel
+### 4.6 Uncertainty as first-class (PLANNED, aligned with SELECTION.md)
 
-The loop-health panel surfaces zicato's loop-health diagnostics
-(see [LOOP-HEALTH.md](LOOP-HEALTH.md)) — the detectors that catch
-a *running but meaningless* loop, where the evaluation is
-degenerate and the tournament cannot distinguish any candidate.
+> **This whole subsection is PLANNED.** It is gated on the replication
+> work in [SELECTION.md §7](SELECTION.md#7-the-recommended-design)
+> (levers 0–2: a multi-candidate field, replication, a paired
+> significance gate). None of it ships today.
 
-The panel renders the latest round's `LoopHealth` report: the
-`overall` severity and one row per firing detector, each with its
-severity, summary, and remedy.
+Today the dashboard shows **point estimates** — one scalar per
+generation, one per-entry delta — plus the **margin band** (§4.2),
+which is the *only* uncertainty surface that ships. That is honest for
+the shipped mechanism: zicato runs the board once, so there is no
+distribution to draw error bars from (see
+[SELECTION.md §4](SELECTION.md#4-the-reframe-this-is-a-degenerate-elitist-iterated-race)
+— "no replication" is exactly the gap). The fixed `promote_margin` is
+a stand-in for a confidence interval the loop never measures.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ Loop health — round 7 — OVERALL: CRITICAL                                    │
-│                                                                             │
-│  [critical] degenerate_scoring                                              │
-│    v0..v7 all carry gen_score = 1.000000; the evaluation has produced       │
-│    zero score variance across 8 generations.                                │
-│    → Inspect scoring.json and the per-entry loss.json files.                │
-│                                                                             │
-│  [critical] non_differentiating_entries                                     │
-│    9 of 10 board entries return identical drift_loss + pass_fail.            │
-│    → These entries are dead weight; replace them.                           │
-│                                                                             │
-│  [info] no_expectations                                                     │
-│    No board entry carries an expectation; scoring runs on drift loss only.  │
-│                                                                             │
-│  health trajectory:  ok ok ok warn warn crit crit  ← worsening              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+When replication lands, three things become first-class in the
+decision view:
 
-When the panel goes red the operator knows the loop is toothless
-*without* having to eyeball the journal — the exact manual step
-the motivating incident depended on (a real run had `v0` and `v1`
-both score exactly `1.000000`, found only by inspection). The
-panel border turns red on a `critical` SSE `loop_health_critical`
-event; the health trajectory strip shows the `overall` severity
-of each round so a worsening trend is visible at a glance. The
-per-round reports come from
-`epochs/{epoch}/loop_health/round_{NNN}.json` (projected into the
-analytical index for the trajectory query).
+| Planned surface | Where it lands | Depends on |
+|---|---|---|
+| **Error bars / confidence intervals** on every scalar and per-entry delta — the ribbon's y-positions and the diverging A/B bars gain CIs that tighten with replication depth | L2 ribbon, L3 diverging A/B, the margin band becomes a CI band | replication (lever 1) |
+| **Paired-significance verdict in the gate ladder** — Rule 2 (scalar margin) gains a Wilcoxon signed-rank line: "significant AND effect ≥ margin"; Rule 3 reports a per-task regression only if the flip *persists under replication* | L3 gate ladder | paired-significance gate (lever 2) |
+| **Field leaderboard** — when the tournament becomes an iterated race of K challengers, a ranked table of champion + K challengers with **tightening CIs and replication-depth**, the dominated eliminated by paired test | a new L3 mode (or an L1 panel) | multi-candidate field + racing (levers 0, 5) |
 
-### 4.8 Log tail
+The leaderboard is explicitly **not an e-sports bracket** — brackets
+are the wrong primitive for a small field of expensive, noisy
+candidates (see
+[SELECTION.md §2 Family ③](SELECTION.md#family--single-elimination-bracket-triage-by-resource)
+and [§6](SELECTION.md#6-why-not-double-elimination-or-swiss-the-explicit-verdict)).
+It is a *race standing*: who is ahead, how confident are we, and how
+many replications has each candidate earned. The display owes its
+shape to irace's "return the most-replicated survivor," not to a
+single-elimination tree.
 
-A rolling tail of the latest goldfive events across all active
-runs. Each line: `{ts} {run_id_short} {event_kind} {summary}`.
-Bounded to the last 200 lines client-side; older entries scroll
-off.
+**WRONG-vs-FUTURE discipline.** The doc and the UI both label what
+*ships* (point estimates + margin band) versus what is *planned* (CIs,
+significance verdict, leaderboard). The dashboard must never draw an
+error bar it cannot compute; until replication lands, the margin band
+is the whole uncertainty story and is labelled as the fixed-threshold
+stand-in it is.
 
-```
-12:35:04.800  e4f2_long…   GoldfiveLLMCallStart      researcher (model=...)
-12:35:05.412  e4f2_long…   GoldfiveDriftDetected     CONFABULATION_RISK · sev=MEDIUM
-12:35:05.450  e4f2_long…   GoldfiveLLMCallEnd        904 tokens out
-12:35:05.512  e4f2_contr…  GoldfiveTaskStarted       coordinator: route_to(researcher)
-```
+### 4.7 L2 — did the bet pay off?
 
-The log tail is read from a Rust file watcher on each
-`events.jsonl` file referenced by `active_runs/*.json`. Each file
-is `read+tail`-ed; new lines stream to the SSE subscribers.
+L2 drills one generation and asks "did the bet this generation made pay
+off?":
 
-### 4.9 Drill-down side panels
+- the **hypothesis → outcome panel** — the experiment's `core_idea`,
+  what it was modulating and why, the per-drift-kind predicted-vs-actual
+  match (✓/✗), and the realized outcome (`drift_loss_delta`,
+  `pass_rate_delta`, decision). This is the structured-hypothesis
+  discipline made visible: the hypothesis was written *before* the run,
+  the outcome filled in *after*.
+- the **drift-movement chart** (`/api/drift-movements/{generation_id}`)
+  — which drift kinds moved, and in which direction, for this generation
+  versus its champion.
+- the **patches** — the actual edits (`/api/files/.../patches` and
+  `.../diff`), each linking the mutation point it touched.
 
-Clicking any **generation node** in the lineage opens a side
-panel:
+From L2 the operator opens "the deciding round" to land on the L3
+decision view for this generation's promote/reject.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ Generation v3 — promoted in round 3                                         │
-│                                                                             │
-│ Experiment                                                                  │
-│   core_idea: Tighten the researcher's system prompt for citations           │
-│   modulating: researcher.instruction, researcher.description                │
-│   why:        Pattern observed: CONFABULATION_RISK on 60% of [research]      │
-│                                                                             │
-│ Hypothesis match                                                            │
-│   CONFABULATION_RISK   predicted DOWN moderate    actual DOWN moderate   ✓  │
-│   TOOL_ERROR           predicted UP   minor       actual FLAT            ✗  │
-│                                                                             │
-│ Outcome                                                                     │
-│   drift_loss_delta   -0.18                                                  │
-│   pass_rate_delta    +0.05                                                  │
-│   decision           promote                                                │
-│                                                                             │
-│ Per-entry deltas                                                            │
-│   short_solar                  -0.11   pass→pass   ✓                        │
-│   long_solar_with_constraints  -0.24   fail→pass   ✓✓                       │
-│   contradictory_brief          -0.02   pass→pass                            │
-│   ...                                                                       │
-│                                                                             │
-│ Patches                                                                     │
-│   patches/be4c8de.json  →  researcher.instruction                           │
-│   patches/1f29c6a.json  →  researcher.description                           │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+### 4.8 L4 — one run
 
-Clicking any **active-run row** opens:
+L4 is the single side of one matchup — the leaf where the decision view
+hands off to the execution view:
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ Run e4f2_long_solar_with_constraints_candidate                              │
-│                                                                             │
-│ Live status                                                                 │
-│   phase            agent_running                                            │
-│   started_at       12:35:00                                                 │
-│   wall_clock       38s / 120s   (32%)                                       │
-│   heartbeat_age    0.4s                                                     │
-│   drift_count      2                                                        │
-│                                                                             │
-│ Events (last 20)                                                            │
-│   ...                                                                       │
-│                                                                             │
-│ [ Open in harmonograf → ]                                                   │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+- the **transcript diff** — the focused run's transcript beside the
+  compare side's (the matchup's other generation), via
+  `/api/run/.../transcript` and `/api/matchup/{entry_id}/conversations`;
+- **drift annotations** inline on the transcript turns;
+- the **harmonograf deep-link** — "Open in harmonograf," a handoff URL
+  (typically a `file://` URL at the run's `events.jsonl`, optionally a
+  `harmonograf://` deep link) that opens the execution view for this
+  exact run.
 
-The "Open in harmonograf" button is a `mailto:`-style handoff: it
-constructs a URL that harmonograf understands (typically a
-`file://` URL pointing at the run's `events.jsonl`, optionally a
-`harmonograf://` deep link if the operator has harmonograf
-installed as a protocol handler).
+The run's live status (phase, wall-clock vs budget, heartbeat age,
+drift count) is read from `active_runs/{run_id}.json` via
+`/api/run/{run_id}`; the wall-clock bar is an **elapsed-vs-budget**
+fraction, NOT task progress — a run at `73%` is 73% through its
+wall-clock budget and may finish at any point.
 
 ## 5. Interactivity model
 
@@ -740,11 +669,12 @@ installed as a protocol handler).
 | Reload page | Re-fetches `/api/state`, re-opens SSE (fresh snapshot) |
 | **Pause / Skip / Kill / Promote / Reject / Brief** | `POST /api/control/...` → atomic write of a `control/` file (returns `202`). **Consumption is planned** (see §5 banner). |
 
-The control buttons render and are wired to the POST endpoints in
-§6.2. The `--read-only` posture (where the POST endpoints return `403`)
-is available via `create_app(read_only=…)` and the Rust binary's
-`--read-only`, but is not surfaced as a `zicato dashboard` flag yet
-(§2.2).
+The promote / reject buttons live on the **L3 decision view** (§4.2 ⑥)
+where the operator is already looking at the gate ladder; pause / skip /
+kill / brief live in the top bar. The `--read-only` posture (where the
+POST endpoints return `403`) is available via `create_app(read_only=…)`
+and the Rust binary's `--read-only`, but is not surfaced as a `zicato
+dashboard` flag yet (§2.2).
 
 ### 5.2 Write-back via the control-file protocol
 
@@ -754,30 +684,30 @@ dashboard service. The service writes a file under
 `control/` at safe points and act on the request (planned).
 
 ```
-operator clicks "pause epoch"
+operator clicks "reject" on the L3 decision view
             │
             ▼
-browser → POST /api/control/pause                       (SHIPPED)
+browser → POST /api/control/reject/{gen}                (SHIPPED)
             │
             ▼
 dashboard service → atomically write
-            │ .zicato/runtime/control/pause_epoch        (SHIPPED)
-            │ (JSON payload {reason, ts})
+            │ .zicato/runtime/control/reject/{gen}       (SHIPPED)
+            │ (JSON payload {generation_id, ts})
             │
             ▼
-            ... at next safe point ...                   (PLANNED)
+            ... at end of tournament, before journaling ... (PLANNED)
             │
             ▼
-orchestrator → reads control/pause_epoch                 (PLANNED)
+orchestrator → reads control/reject/{gen}                (PLANNED)
             │ archives it into control_log/<ts>_*.json
-            │ updates heartbeat.json with phase="paused"
+            │ records override_by_operator in experiment.json
             │
             ▼
-dashboard → notices heartbeat change via its watcher     (SHIPPED path)
+dashboard → notices the change via its watcher           (SHIPPED path)
             │ emits a state_change SSE frame
             │
             ▼
-browser → updates the status pill to "PAUSED"
+browser → updates the decision verdict / status pill
 ```
 
 ### 5.3 Command catalogue and safe-point semantics
@@ -806,13 +736,14 @@ they apply to; checking only at safe points avoids the
 "orchestrator dies mid-board-entry because the operator clicked
 pause" failure mode. (This is the planned consume contract.)
 
-**Gate-override audit.** When `promote_override` lands and the
-tournament would have rejected, the audit log entry records both
-the override AND the tournament's would-have-been decision. The
-`experiment.json` outcome block also carries an
-`override_by_operator: true` field. The journal entry shows the
-override; `analysis.md` includes it in the closing pass. The
-override is not silent.
+**Gate-override audit.** A promote/reject from the L3 decision view
+*against* the gate's computed verdict is the high-stakes case. When
+`promote_override` lands and the tournament would have rejected, the
+(planned) audit log entry records both the override AND the gate's
+would-have-been decision; the `experiment.json` outcome block carries
+`override_by_operator: true`; the journal and `analysis.md` show it.
+The override is not silent — the gate ladder is right there on screen
+recording what the operator overrode.
 
 ### 5.4 Authorization model
 
@@ -828,13 +759,15 @@ accepted and the control file being written.
 
 ## 6. HTTP API surface
 
-This is the shipped surface served by `src/zicato/dashboard/server.py`.
-The GET endpoints and `/events` are always available; the POST control
-endpoints (§6.2) are available unless the app was built `read_only`.
+This is the shipped surface served by `src/zicato/dashboard/server.py`,
+plus the one **new** endpoint the redesign adds (`/gate`, marked
+PLANNED). The GET endpoints and `/events` are always available; the
+POST control endpoints (§6.2) are available unless the app was built
+`read_only`.
 
 ### 6.1 Routes at a glance
 
-The full route table registered by the server:
+The route table:
 
 | Route | Purpose |
 |---|---|
@@ -844,33 +777,34 @@ The full route table registered by the server:
 | `GET /api/health` | Liveness/identity (§6.1 detail below). |
 | `GET /api/state` | Composite live snapshot. |
 | `GET /api/environment?run-log-limit=N` | One coalesced read of the whole environment — the front-end refreshes the entire view from this instead of fanning out to many endpoints. |
-| `GET /api/workspace` | L0 cross-epoch workspace summary. |
+| `GET /api/workspace` | L0 cross-epoch workspace summary (feeds the L0 ribbon + recent decisions). |
 | `GET /api/epoch` | Current epoch's evaluation-contract view (scoring incl. `per_judge_weights`, board, brief, mutation paths). |
-| `GET /api/lineage` | Generation DAG incl. in-flight generations. |
-| `GET /api/active-tournament` | In-progress tournament shape (live). |
+| `GET /api/lineage` | Generation DAG incl. in-flight generations — the lineage ribbon's backbone. |
+| `GET /api/active-tournament` | In-progress decision shape (live) — feeds the in-flight L3 view. |
 | `GET /api/active-runs` | In-flight runs with computed progress fields. |
-| `GET /api/heartbeat` | Heartbeat snapshot. |
+| `GET /api/heartbeat` | Heartbeat snapshot (status pill). |
 | `GET /api/run-log?limit=N` | Tail of the active run's `events.jsonl`. |
-| `GET /api/tournaments` | Bracket of resolved rounds (index). |
-| `GET /api/tournaments/{generation_id}` | One resolved round's matchup detail. |
-| `GET /api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}` | Per-entry A/B grid. |
-| `GET /api/score-trajectory` | Gen-score trajectory across rounds. |
-| `GET /api/drift-movements/{generation_id}` | Drift-movement / heatmap data. |
-| `GET /api/health-report` | Latest loop-health report. |
-| `GET /api/search?...` | Cross-workspace search. |
-| `GET /api/contract-diff/{epoch_id}` | Contract diff vs the parent epoch. |
-| `GET /api/epoch/{epoch_id}/per-judge-trend` | Per-judge loss trend across the epoch. |
-| `GET /api/generation/{epoch_id}/{generation_id}/per-judge` | Per-judge breakdown for one generation. |
-| `GET /api/generation/{epoch_id}/{generation_id}/per-entry` | Per-entry breakdown for one generation. |
-| `GET /api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison` | Per-judge A/B comparison for a round. |
-| `GET /api/run/{run_id}/per-judge` | Per-judge breakdown for one run. |
+| `GET /api/tournaments` | Resolved decisions (index). |
+| `GET /api/tournaments/{generation_id}` | One resolved decision's matchup detail. |
+| `GET /api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}` | Per-entry A/B grid (feeds the L3 diverging A/B chart). |
+| `GET /api/round/{epoch_id}/{champion_id}/{challenger_id}/gate` | **NEW (planned).** Structured gate breakdown for the L3 decision view — the ladder (per-rule status, numbers, fired flag), per-entry deltas with pass→fail flags, the scalar-component waterfall, the margin-band geometry, and the primary-driver judge. |
+| `GET /api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison` | Per-judge A/B comparison + `primary_driver` for a decision. |
+| `GET /api/score-trajectory` | Gen-score trajectory — the lineage ribbon's y-positions. |
+| `GET /api/drift-movements/{generation_id}` | Drift-movement / heatmap data (L2). |
+| `GET /api/health-report` | Latest loop-health report (the L0/L1 banner). |
+| `GET /api/search?...` | Cross-workspace search (⌘K palette). |
+| `GET /api/contract-diff/{epoch_id}` | Contract diff vs the parent epoch (L1). |
+| `GET /api/epoch/{epoch_id}/per-judge-trend` | Per-judge loss trend across the epoch (L1 heatmap). |
+| `GET /api/generation/{epoch_id}/{generation_id}/per-judge` | Per-judge breakdown for one generation (L2). |
+| `GET /api/generation/{epoch_id}/{generation_id}/per-entry` | Per-entry breakdown for one generation (L2). |
+| `GET /api/run/{run_id}/per-judge` | Per-judge breakdown for one run (L4). |
 | `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge` | Same, addressed by triple. |
 | `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/expectations` | Outcome-check (expectations) results. |
 | `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/header` | Run header metadata. |
-| `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/transcript` | Run transcript. |
+| `GET /api/run/{epoch_id}/{generation_id}/{entry_id}/transcript` | Run transcript (L4 diff). |
 | `GET /api/conversation/{run_id}` | Multi-turn conversation for a run. |
-| `GET /api/matchup/{entry_id}/conversations` | Side-by-side conversations for a matchup entry. |
-| `GET /api/files` and `GET /api/files/{epoch_id}/{generation_id}/{tree,content,patches,diff}` | Snapshot file tree, content, patches, and diffs. |
+| `GET /api/matchup/{entry_id}/conversations` | Side-by-side conversations for a matchup entry (L4 diff). |
+| `GET /api/files` and `GET /api/files/{epoch_id}/{generation_id}/{tree,content,patches,diff}` | Snapshot file tree, content, patches, and diffs (L2 patches). |
 | `GET /api/mutations/{epoch_id}` and `.../{mutation_id}` | Mutation surface listing and detail. |
 | `GET /api/epoch/{epoch_id}/journal` and `.../journal.md` | Journal as data or rendered markdown. |
 | `GET /api/epoch/{epoch_id}/analysis` and `.../analysis.html` | Analysis as data or rendered HTML. |
@@ -878,6 +812,49 @@ The full route table registered by the server:
 
 The sections below detail the endpoints whose response shape is
 load-bearing.
+
+#### `GET /api/round/{epoch_id}/{champion_id}/{challenger_id}/gate` *(NEW — planned)*
+
+The structured gate breakdown that feeds the L3 decision view (§4.2).
+It composes what the gate already computes (see [SCORING.md](SCORING.md)
+and [SELECTION.md §3.2](SELECTION.md#32-the-promote-gate--three-rules-in-order))
+into a single payload so the front-end does not re-derive the ladder
+client-side. The intended shape:
+
+```json
+{
+  "epoch_id": "hardened_research",
+  "champion": "v4",
+  "challenger": "v5",
+  "verdict": "reject",
+  "fired_rule": "pass_rate_monotonicity",
+  "ladder": [
+    {"rule": "regression_suite",       "status": "pass",        "fired": false, "detail": "41/41 snapshot tests"},
+    {"rule": "scalar_margin",          "status": "pass",        "fired": false, "child": 0.31, "parent": 0.42, "delta": -0.11, "margin": 0.01},
+    {"rule": "pass_rate_monotonicity", "status": "fail",        "fired": true,  "regressed_entries": ["long_solar_with_constraints"]},
+    {"rule": "namespace_monotonicity", "status": "not_reached", "fired": false}
+  ],
+  "margin_band": {"center": 0.42, "margin": 0.01, "challenger": 0.31},
+  "entry_deltas": [
+    {"entry_id": "short_solar", "weight": 1.0, "delta": -0.11, "pass_flip": null},
+    {"entry_id": "long_solar_with_constraints", "weight": 1.5, "delta": 0.04, "pass_flip": "pass_to_fail"}
+  ],
+  "scalar_waterfall": [
+    {"component": "judge:citation_grounding", "delta": -0.14},
+    {"component": "judge:tool_discipline",     "delta": 0.03}
+  ],
+  "primary_driver": "judge:citation_grounding"
+}
+```
+
+It is **read-only and degrades gracefully** like its siblings: an
+unsafe id or a decision with no resolved data returns the same envelope
+with empty `ladder` / `entry_deltas` and a `null` verdict rather than a
+`500`. Until it ships, the L3 view assembles an approximation from
+`/api/matchup-grid/...` (entry deltas) and
+`/api/round/.../per-judge-comparison` (`primary_driver`, per-judge
+waterfall) — the `/gate` endpoint exists to give it the rule-ordered
+ladder and the margin-band geometry in one authoritative read.
 
 #### `GET /api/state`
 
@@ -896,8 +873,10 @@ connections open through proxy read-timeouts.
 
 #### `GET /api/active-tournament`
 
-The current tournament panel's data only. Used by the panel for
-isolated refresh; cheaper than `/api/state`.
+The in-flight decision's data only — feeds the live L3 view (the gate
+ladder rendered against partial results, the diverging A/B chart as
+entries finish, the deterministic verdict projection). Cheaper than
+`/api/state`.
 
 #### `GET /api/active-runs`
 
@@ -918,8 +897,8 @@ well before its deadline.
 
 #### `GET /api/lineage`
 
-Lineage DAG plus per-generation metadata. The response is
-`{"generations": [...]}`; each node is:
+Lineage DAG plus per-generation metadata — the backbone of the lineage
+ribbon (§4.1). The response is `{"generations": [...]}`; each node is:
 
 ```json
 {
@@ -933,28 +912,30 @@ Lineage DAG plus per-generation metadata. The response is
 
 The view is built by walking every generation **directory** in
 every epoch, so it includes **in-flight generations** — a
-candidate that has been proposed and applied but whose tournament
+candidate that has been proposed and applied but whose decision
 has not yet resolved. `promoted` is a tri-state:
 
-| `promoted` | Meaning |
-|---|---|
-| `true` | Generation was promoted (won its tournament). |
-| `false` | Generation was rejected. |
-| `null` | Generation is **still being scored** — tournament in flight. |
+| `promoted` | Meaning | Ribbon rendering |
+|---|---|---|
+| `true` | Promoted (won its decision). | on the spine |
+| `false` | Rejected. | branched off its parent as a stub |
+| `null` | Still being scored — decision in flight. | pulsing tip |
 
 The legacy `lineage.json` only lists resolved (promoted)
 generations; it is used as a fallback for a root node's
 `created_at` / `parent_generation_id`, but the directory walk is
-authoritative. This is what lets the Tree view draw `v0` plus the
-in-flight `v5` mid-run rather than waiting for the round to close.
+authoritative. This is what lets the ribbon draw `v0` plus the
+in-flight `v5` mid-run rather than waiting for the decision to close.
 
 #### `GET /api/run-log?limit=N`
 
 Tails the active run's `events.jsonl` and returns the last `N`
 goldfive events for the log-tail panel. `limit` defaults to `40`
 and is clamped to `1..=500` (an absent or zero value falls back to
-the default). When there is no active run, it falls back to the
-most recent `events.jsonl` under `epochs/`.
+the default; `?after=<cursor>` requests only events past a cursor so
+the dashboard appends rather than re-rendering). When there is no
+active run, it falls back to the most recent `events.jsonl` under
+`epochs/`.
 
 Response shape:
 
@@ -982,25 +963,10 @@ goldfive writes events in two envelope shapes — a camelCase shape
 (`steeringDecisionMade`, `taskProgress`, ...) and a normalized
 `{kind, payload, emitted_at, ...}` shape from the reducer's
 proto-reparse path. The endpoint handles both and normalizes
-every `kind` to snake_case (the same normalization as zicato#1)
-so the dashboard keys on one stable vocabulary. Every failure
-mode — missing file, truncated tail line, unparseable record —
-degrades to fewer or zero events; the endpoint never `500`s.
-
-#### `GET /api/generation/{id}`
-
-Full `experiment.json` for the named generation, rendered ready
-for the side panel.
-
-#### `GET /api/run/{run_id}`
-
-Live `active_runs/{run_id}.json` plus a tail of the run's
-`events.jsonl`.
-
-#### `GET /api/log-tail`
-
-Just the log tail. Useful for an "open in new tab" experience that
-just wants the rolling event view.
+every `kind` to snake_case so the dashboard keys on one stable
+vocabulary. Every failure mode — missing file, truncated tail line,
+unparseable record — degrades to fewer or zero events; the endpoint
+never `500`s.
 
 #### `GET /api/health`
 
@@ -1071,36 +1037,39 @@ live view.
 | Includes LLM narrative | no | yes (at epoch close) |
 
 The two are intentionally redundant. The dashboard is the
-"watching live" tool; `analysis.html` is the "send a link to a
-teammate" tool. Either can stand alone.
+"watching the decision live" tool; `analysis.html` is the "send a link
+to a teammate" tool. Either can stand alone.
 
 ## 8. Phasing
 
 | Phase | What ships |
 |---|---|
-| **v1.2 — shipped** | The dashboard as a **separate Python service**, auto-spawned from `zicato evolve` (and a standalone `zicato dashboard` command). All GET endpoints (§6.1). The L0→L4 drill-down navigation, ⌘K palette, and status pill. Live panels read the runtime JSON files; only the bracket of *resolved* rounds and the cross-run analytics read the analytical index (see §3.4). SSE for live updates (snapshot + coalesced state_change). Drill-down side panels. |
+| **v1.2 — shipped** | The dashboard as a **separate Python service**, auto-spawned from `zicato evolve` (and a standalone `zicato dashboard` command). All GET endpoints in §6.1 *except* `/gate`. The L0→L4 drill-down navigation, ⌘K palette, and status pill. Live panels read the runtime JSON files; only resolved decisions and cross-run analytics read the analytical index (§3.4). SSE for live updates (snapshot + coalesced state_change). |
 | **v1.3 — partially shipped** | POST control endpoints under `/api/control/` (`pause`, `skip-round`, `kill`, `promote`, `reject`, `brief`) — the **write side is live**. **Planned:** the orchestrator's consume-at-safe-points half, the `control_log/` audit, and gate-override confirmation UX. |
+| **decision-centric redesign — being implemented** | The **lineage ribbon** as the unified navigation metaphor (§4.1), the **L3 decision view** (gate ladder, diverging A/B, scalar waterfall, primary-driver call-out, margin band — §4.2), and the new `GET /api/round/.../gate` endpoint that feeds it. The loop-health banner (§4.5) is shipped data (`/api/health-report`) surfaced as a banner. |
+| **uncertainty — planned** | Error bars / CIs, the paired-significance verdict in the gate ladder, and the field leaderboard (§4.6) — gated on the replication work in [SELECTION.md §7](SELECTION.md#7-the-recommended-design). |
 
 The split is the same split as the runtime work — observability first,
-controls after. The two are operated independently: the observability
-pass alone is useful (the operator can see what's happening); the
-control surface's write side ships now, with the loop-side consumption
-landing after the safety review of the action surface.
+controls after, then sharper decision legibility, then uncertainty.
 
 ## 9. Cross-references
 
 | Topic | Document |
 |---|---|
+| The candidate-selection decision theory and the racing/replication roadmap | [SELECTION.md](SELECTION.md) |
+| The promote gate's rules (regression suite → scalar margin → pass-rate → namespace) | [SELECTION.md §3.2](SELECTION.md#32-the-promote-gate--three-rules-in-order), [SCORING.md](SCORING.md) |
+| Uncertainty / replication levers behind §4.6 | [SELECTION.md §7](SELECTION.md#7-the-recommended-design) |
 | State file layout the dashboard reads from | [RUNTIME.md](RUNTIME.md) §2 |
 | The watchdog supervisor + the dashboard-as-separate-service split | [RUNTIME.md](RUNTIME.md) §3, §3.0 |
 | `control/` and `control_log/` file shapes (and the planned consume side) | [RUNTIME.md](RUNTIME.md) §2.5 |
-| Tournament gate formula the predicted verdict approximates | [SCORING.md](SCORING.md) |
-| The tournament competition model — bracket, per-matchup detail, analytics | [TOURNAMENT.md](TOURNAMENT.md) |
-| The harmonograf split — execution view vs competition view | [TOURNAMENT.md](TOURNAMENT.md) §5 |
-| Loop-health diagnostics behind the loop-health panel | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
-| The analytical index — derived, refreshed at generation boundaries, read only for resolved rounds (see §3.4) | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
+| The tournament competition model — matchup detail, analytics | [TOURNAMENT.md](TOURNAMENT.md) |
+| The harmonograf split — execution view vs decision view | [TOURNAMENT.md](TOURNAMENT.md) §5 |
+| Loop-health diagnostics behind the loop-health banner | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
+| The analytical index — derived, refreshed at generation boundaries, read only for resolved decisions (see §3.4) | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | The dual-write discipline behind the files-canonical / index-derived rule | [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live) |
-| The `experiment.json` shape displayed in drill-downs | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3 |
+| The `experiment.json` shape displayed in the L2 hypothesis→outcome panel | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3 |
 | Progressive `analysis.html` generation | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §5.2 |
 | Robustness layers backing the supervisor | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | CLI surface (`zicato evolve --no-dashboard`, `zicato dashboard`) | [CLI.md](CLI.md) |
+</content>
+</invoke>
