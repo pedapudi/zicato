@@ -465,7 +465,14 @@ def test_bundle_under_size_envelope(
     # decision view, the shell live rail + L4) and their scoped CSS.
     # The fully integrated bundle was re-measured directly at 505,027
     # bytes; a 540 KB cap leaves ~35 KB of headroom for incidental drift.
-    assert total < 540_000, f"bundle is {total} bytes, exceeds 540_000 envelope"
+    # Raised again by the ground-up v2 dashboard rewrite (DASHBOARD-V2),
+    # which ships behind a feature flag alongside v1 until cutover: the
+    # v2 foundation (shell/router/spine + the dense primitives under
+    # js/v2/** and css/v2/**) lands first, the v2 views follow. Foundation
+    # bundle measured 566,705 bytes; a 640 KB cap covers the foundation
+    # and the incoming v2 view wave, after which (at v1 removal/cutover)
+    # the envelope is re-measured and tightened sharply.
+    assert total < 640_000, f"bundle is {total} bytes, exceeds 640_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
