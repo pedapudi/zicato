@@ -237,8 +237,13 @@ def test_required_element_ids_present(index_html: str) -> None:
 
 def test_index_loads_local_css_and_js(index_html: str) -> None:
     assert 'href="style.css"' in index_html, "style.css <link> missing"
-    assert 'src="app.js"' in index_html, "app.js <script> missing"
-    assert 'type="module"' in index_html, "app.js must load as ES module"
+    # The v2 feature-flag bootstrap replaced the static <script src="app.js">
+    # with an inline loader that picks one local ES-module entry — app.js
+    # (v1, default) or app2.js (v2) — based on the ?ui flag. Assert the
+    # bootstrap references both local entries and loads them as modules.
+    assert "'app.js'" in index_html, "v1 entry app.js missing from the bootstrap"
+    assert "'app2.js'" in index_html, "v2 entry app2.js missing from the bootstrap"
+    assert "'module'" in index_html, "the entry must load as an ES module"
 
 
 def test_phase0_view_containers_present(index_html: str) -> None:
