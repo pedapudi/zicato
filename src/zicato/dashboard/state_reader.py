@@ -2785,6 +2785,383 @@ def build_per_judge_comparison(
     }
 
 
+# ---------------------------------------------------------------------------
+# Promote-gate breakdown (L3 decision view).
+#
+# The gate logic is authoritative in :mod:`zicato.tournament.gate`. This
+# reader reconstructs the SAME decision the runner recorded by feeding the
+# real :func:`evaluate_gate` (and its helpers) the champion / challenger
+# aggregates read off disk, then decomposes the verdict into the gate's
+# ordered rules with per-rule status. It never re-implements a threshold.
+# ---------------------------------------------------------------------------
+
+
+def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
+    """Build the epoch's :class:`ScoringWeights` from its ``scoring.json``.
+
+    The shipped ``workspace_loader`` / ``lifecycle`` parsers intentionally
+    drop the gate-only fields (``regression_gate_enabled``,
+    ``namespace_weights``, ``namespace_monotonicity``) — they only need the
+    scalar weights. The gate breakdown DOES need them, so this reader maps
+    every gate-relevant key through, falling back to the dataclass defaults
+    when ``scoring.json`` is a partial / legacy document (or absent).
+    """
+    from zicato.core import ScoringWeights  # noqa: PLC0415
+
+    raw = _read_json_value(paths.epochs / epoch_id / "scoring.json")
+    if not isinstance(raw, dict):
+        return ScoringWeights()
+
+    defaults = ScoringWeights()
+    kwargs: dict[str, Any] = {}
+
+    if isinstance(raw.get("promote_margin"), int | float):
+        kwargs["promote_margin"] = float(raw["promote_margin"])
+    if "pass_rate_monotonicity" in raw:
+        kwargs["pass_rate_monotonicity"] = bool(raw["pass_rate_monotonicity"])
+    if "regression_gate_enabled" in raw:
+        kwargs["regression_gate_enabled"] = bool(raw["regression_gate_enabled"])
+
+    raw_ns_w = raw.get("namespace_weights")
+    if isinstance(raw_ns_w, dict):
+        try:
+            kwargs["namespace_weights"] = {str(k): float(v) for k, v in raw_ns_w.items()}
+        except (TypeError, ValueError):
+            pass
+    raw_ns_m = raw.get("namespace_monotonicity")
+    if isinstance(raw_ns_m, dict):
+        kwargs["namespace_monotonicity"] = {str(k): bool(v) for k, v in raw_ns_m.items()}
+
+    try:
+        return ScoringWeights(**kwargs)
+    except TypeError:
+        return defaults
+
+
+def _gen_agg_for_gate(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str
+) -> dict[str, Any] | None:
+    """Assemble the aggregate dict :func:`evaluate_gate` consumes.
+
+    Prefers the cached ``gen_score.json`` (the persisted
+    :func:`aggregate_generation_score` output, which already carries
+    ``scalar`` / ``pass_rate`` / ``per_entry`` / ``namespace_aggregates`` /
+    ``scalar_components``). When ``per_entry`` is missing it is
+    reconstructed from the per-run ``loss.json`` files so the pass-rate
+    monotonicity rule can still be judged. Returns ``None`` only when there
+    is no scalar to compare at all (the rule set then degrades to unknown).
+    """
+    score = _read_gen_score(paths, epoch_id, generation_id)
+    if not isinstance(score, dict):
+        score = {}
+
+    agg: dict[str, Any] = dict(score)
+
+    if not isinstance(agg.get("per_entry"), dict):
+        # Reconstruct {entry_id: {drift_loss, pass_fail}} from loss files
+        # so the monotonicity rule has the two points it compares.
+        loss_files = _read_run_loss_files(paths, epoch_id, generation_id)
+        per_entry: dict[str, dict[str, Any]] = {}
+        for entry_id, cell in loss_files.items():
+            per_entry[entry_id] = {
+                "drift_loss": cell.get("drift_loss"),
+                "pass_fail": cell.get("pass_fail"),
+            }
+        if per_entry:
+            agg["per_entry"] = per_entry
+
+    if not isinstance(agg.get("scalar"), int | float):
+        return None
+    return agg
+
+
+def build_gate_breakdown(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    champion_id: str,
+    challenger_id: str,
+) -> dict[str, Any]:
+    """Structured promote-gate decomposition for the L3 decision view.
+
+    ``GET /api/round/{epoch_id}/{champion}/{challenger}/gate``. Reuses the
+    authoritative :func:`zicato.tournament.gate.evaluate_gate` and its
+    helpers so the breakdown always agrees with what the runner decided.
+
+    Returns the rule-by-rule shape documented on the route handler. Rules
+    are emitted in evaluation order (regression suite -> scalar margin ->
+    pass-rate monotonicity -> namespace monotonicity). The first failing
+    rule has ``status="fail"`` and ``fired=True``; rules after it are
+    ``not_reached``; satisfied rules are ``pass``. Disabled rules are
+    ``skipped`` (regression suite) / ``disabled`` (monotonicity flags) and
+    never ``fired``. A rule whose inputs are unavailable degrades to
+    ``unknown`` rather than guessing.
+    """
+    from zicato.tournament.gate import (  # noqa: PLC0415
+        _regressed_entries,
+        _regressed_namespaces,
+        evaluate_gate,
+    )
+
+    weights = _read_epoch_scoring_weights(paths, epoch_id)
+
+    parent_agg = _gen_agg_for_gate(paths, epoch_id, champion_id) if champion_id else None
+    child_agg = _gen_agg_for_gate(paths, epoch_id, challenger_id)
+
+    base: dict[str, Any] = {
+        "epoch_id": epoch_id,
+        "champion": champion_id,
+        "challenger": challenger_id,
+        "decision": "deferred",
+        "reason": "",
+        "delta_scalar": None,
+        "delta_pass_rate": None,
+        "rules": [],
+        "scalar_components": {"champion": None, "challenger": None},
+        "primary_driver": None,
+    }
+
+    # Echo the per-judge primary driver from the same source the L3
+    # per-judge-comparison endpoint uses (best-effort; never fatal).
+    try:
+        comparison = build_per_judge_comparison(paths, epoch_id, champion_id, challenger_id)
+        driver_name = comparison.get("primary_driver")
+        if isinstance(driver_name, str) and driver_name:
+            driver_delta: float | None = None
+            for jrow in comparison.get("judges", []):
+                if isinstance(jrow, dict) and jrow.get("judge_name") == driver_name:
+                    d = jrow.get("delta")
+                    driver_delta = float(d) if isinstance(d, int | float) else None
+                    break
+            base["primary_driver"] = {"judge": driver_name, "delta": driver_delta}
+    except Exception:  # noqa: BLE001 — the driver echo is best-effort
+        base["primary_driver"] = None
+
+    # Surface the scalar components for both sides regardless of decision.
+    if isinstance(parent_agg, dict):
+        pc = parent_agg.get("scalar_components")
+        if isinstance(pc, dict):
+            base["scalar_components"]["champion"] = {
+                str(k): float(v) for k, v in pc.items() if isinstance(v, int | float)
+            }
+    if isinstance(child_agg, dict):
+        cc = child_agg.get("scalar_components")
+        if isinstance(cc, dict):
+            base["scalar_components"]["challenger"] = {
+                str(k): float(v) for k, v in cc.items() if isinstance(v, int | float)
+            }
+
+    # ---- Build each rule. We assemble all four, then resolve their
+    # ---- statuses against the authoritative gate verdict below.
+    regression_enabled = bool(getattr(weights, "regression_gate_enabled", False))
+    pass_mono_enabled = bool(getattr(weights, "pass_rate_monotonicity", True))
+
+    def _ns_mono_any_enabled() -> bool:
+        ns_mono = getattr(weights, "namespace_monotonicity", {}) or {}
+        ns_weights = getattr(weights, "namespace_weights", {}) or {}
+        return any(
+            enabled and float(ns_weights.get(ns, 0.0)) != 0.0 for ns, enabled in ns_mono.items()
+        )
+
+    ns_mono_enabled = _ns_mono_any_enabled()
+
+    # Without a comparable scalar on both sides we cannot reconstruct the
+    # gate — every numeric rule degrades to "unknown".
+    have_both = isinstance(parent_agg, dict) and isinstance(child_agg, dict)
+
+    if not have_both:
+        base["rules"] = [
+            {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped" if not regression_enabled else "unknown",
+                "detail": (
+                    "disabled"
+                    if not regression_enabled
+                    else "regression-suite outcome not recorded"
+                ),
+                "fired": False,
+            },
+            {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "unknown",
+                "detail": "champion or challenger aggregate not found",
+                "fired": False,
+            },
+            {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "disabled" if not pass_mono_enabled else "unknown",
+                "detail": "disabled" if not pass_mono_enabled else "aggregates not found",
+                "fired": False,
+            },
+            {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "disabled" if not ns_mono_enabled else "unknown",
+                "detail": "disabled" if not ns_mono_enabled else "aggregates not found",
+                "fired": False,
+            },
+        ]
+        return base
+
+    # Both aggregates present — run the real gate.
+    assert isinstance(parent_agg, dict) and isinstance(child_agg, dict)
+    outcome = evaluate_gate(parent_agg, child_agg, weights)
+    base["decision"] = outcome.decision
+    base["reason"] = outcome.reason
+    base["delta_scalar"] = outcome.delta_scalar
+    base["delta_pass_rate"] = outcome.delta_pass_rate
+
+    parent_scalar = float(parent_agg["scalar"])
+    child_scalar = float(child_agg["scalar"])
+    promote_margin = float(getattr(weights, "promote_margin", 0.01))
+
+    # Which rule fired? Re-derive deterministically (mirrors evaluate_gate's
+    # short-circuit order) without re-implementing any threshold — we call
+    # the same predicate evaluate_gate uses.
+    scalar_failed = child_scalar > parent_scalar - promote_margin
+    regressed_entries = _regressed_entries(parent_agg, child_agg) if pass_mono_enabled else []
+    regressed_ns = _regressed_namespaces(parent_agg, child_agg, weights) if ns_mono_enabled else []
+
+    # The fired rule is the first that rejects, in gate order. Regression
+    # suite is a pre-gate the dashboard cannot replay (no recorded
+    # outcome on disk), so it is reported as pass/skipped, never fired.
+    fired_rule: str | None = None
+    if scalar_failed:
+        fired_rule = "scalar_margin"
+    elif pass_mono_enabled and regressed_entries:
+        fired_rule = "pass_rate_monotonicity"
+    elif ns_mono_enabled and regressed_ns:
+        fired_rule = "namespace_monotonicity"
+
+    order = [
+        "regression_suite",
+        "scalar_margin",
+        "pass_rate_monotonicity",
+        "namespace_monotonicity",
+    ]
+    fired_index = order.index(fired_rule) if fired_rule is not None else len(order)
+
+    # -- regression_suite --------------------------------------------
+    if not regression_enabled:
+        regression_rule = {
+            "id": "regression_suite",
+            "label": "Regression suite",
+            "status": "skipped",
+            "detail": "disabled",
+            "fired": False,
+        }
+    else:
+        # Enabled, but the dashboard has no recorded suite outcome to
+        # replay. Honest degrade: the gate ran it, we just cannot show
+        # which way it went from the on-disk aggregates alone.
+        regression_rule = {
+            "id": "regression_suite",
+            "label": "Regression suite",
+            "status": "unknown",
+            "detail": "regression-suite outcome not recorded in the dashboard's read path",
+            "fired": False,
+        }
+
+    # -- scalar_margin -----------------------------------------------
+    scalar_detail = (
+        f"{parent_scalar:.2f} → {child_scalar:.2f} "
+        f"({child_scalar - parent_scalar:+.2f}; needs ≤ "
+        f"{-promote_margin:.2f})"
+    )
+    scalar_rule = {
+        "id": "scalar_margin",
+        "label": "Scalar margin",
+        "status": "fail" if fired_rule == "scalar_margin" else "pass",
+        "detail": scalar_detail,
+        "fired": fired_rule == "scalar_margin",
+    }
+    if fired_index < order.index("scalar_margin"):
+        scalar_rule["status"] = "not_reached"
+
+    # -- pass_rate_monotonicity --------------------------------------
+    if not pass_mono_enabled:
+        pass_rule = {
+            "id": "pass_rate_monotonicity",
+            "label": "Pass-rate monotonicity",
+            "status": "disabled",
+            "detail": "disabled",
+            "fired": False,
+        }
+    elif fired_index < order.index("pass_rate_monotonicity"):
+        pass_rule = {
+            "id": "pass_rate_monotonicity",
+            "label": "Pass-rate monotonicity",
+            "status": "not_reached",
+            "detail": "not reached (an earlier rule fired)",
+            "fired": False,
+        }
+    elif regressed_entries:
+        pass_rule = {
+            "id": "pass_rate_monotonicity",
+            "label": "Pass-rate monotonicity",
+            "status": "fail",
+            "detail": "regressed: " + ", ".join(regressed_entries),
+            "fired": fired_rule == "pass_rate_monotonicity",
+        }
+    else:
+        pass_rule = {
+            "id": "pass_rate_monotonicity",
+            "label": "Pass-rate monotonicity",
+            "status": "pass",
+            "detail": "all preserved",
+            "fired": False,
+        }
+
+    # -- namespace_monotonicity --------------------------------------
+    if not ns_mono_enabled:
+        ns_rule = {
+            "id": "namespace_monotonicity",
+            "label": "Namespace monotonicity",
+            "status": "disabled",
+            "detail": "disabled",
+            "fired": False,
+        }
+    elif fired_index < order.index("namespace_monotonicity"):
+        ns_rule = {
+            "id": "namespace_monotonicity",
+            "label": "Namespace monotonicity",
+            "status": "not_reached",
+            "detail": "not reached (an earlier rule fired)",
+            "fired": False,
+        }
+    elif not isinstance(child_agg.get("namespace_aggregates"), dict):
+        # The rule is enabled but we lack the namespace aggregates to
+        # judge it — degrade honestly rather than claim "all within".
+        ns_rule = {
+            "id": "namespace_monotonicity",
+            "label": "Namespace monotonicity",
+            "status": "unknown",
+            "detail": "namespace aggregates not recorded",
+            "fired": False,
+        }
+    elif regressed_ns:
+        ns_rule = {
+            "id": "namespace_monotonicity",
+            "label": "Namespace monotonicity",
+            "status": "fail",
+            "detail": "regressed: " + ", ".join(regressed_ns),
+            "fired": fired_rule == "namespace_monotonicity",
+        }
+    else:
+        ns_rule = {
+            "id": "namespace_monotonicity",
+            "label": "Namespace monotonicity",
+            "status": "pass",
+            "detail": "all within bounds",
+            "fired": False,
+        }
+
+    base["rules"] = [regression_rule, scalar_rule, pass_rule, ns_rule]
+    return base
+
+
 def build_per_judge_for_run(paths: WorkspacePaths, run_id: str) -> dict[str, Any]:
     """Per-judge breakdown for one run.
 

@@ -203,6 +203,10 @@ def create_app(
             "/api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}",
             handlers["api_matchup_grid"],
         ),
+        Route(
+            "/api/round/{epoch_id}/{champion_id}/{challenger_id}/gate",
+            handlers["api_gate"],
+        ),
         Route("/api/health-report", handlers["api_health_report"]),
         Route("/api/search", handlers["api_search"]),
         Route("/api/score-trajectory", handlers["api_score_trajectory"]),

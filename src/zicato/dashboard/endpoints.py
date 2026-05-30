@@ -350,6 +350,41 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
             state_reader.build_matchup_grid(paths, epoch_id, champion_id, challenger_id)
         )
 
+    async def api_gate(request: Request) -> JSONResponse:
+        """Structured promote-gate breakdown for one round (L3 decision view).
+
+        ``GET /api/round/{epoch_id}/{champion}/{challenger}/gate``. Decomposes
+        the authoritative ``evaluate_gate`` verdict into its ordered rules with
+        per-rule status and the real numbers. A malformed coordinate degrades to
+        a deferred decision with empty rules (HTTP 200) rather than a 500.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        champion_id = request.path_params["champion_id"]
+        challenger_id = request.path_params["challenger_id"]
+        if (
+            not _is_safe_id(epoch_id)
+            or not _is_safe_id(champion_id)
+            or not _is_safe_id(challenger_id)
+        ):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "champion": champion_id,
+                    "challenger": challenger_id,
+                    "decision": "deferred",
+                    "reason": "",
+                    "delta_scalar": None,
+                    "delta_pass_rate": None,
+                    "rules": [],
+                    "scalar_components": {"champion": None, "challenger": None},
+                    "primary_driver": None,
+                },
+                status_code=200,
+            )
+        return JSONResponse(
+            state_reader.build_gate_breakdown(paths, epoch_id, champion_id, challenger_id)
+        )
+
     async def api_health_report(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_health_report(paths))
 
@@ -816,6 +851,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_tournaments": api_tournaments,
         "api_tournament_detail": api_tournament_detail,
         "api_matchup_grid": api_matchup_grid,
+        "api_gate": api_gate,
         "api_health_report": api_health_report,
         "api_search": api_search,
         "api_score_trajectory": api_score_trajectory,
