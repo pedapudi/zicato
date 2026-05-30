@@ -30,7 +30,7 @@
 import { bus } from '../core/bus.js';
 
 export const V2_PREFIX = 'v2';
-export const V2_VIEWS = ['overview', 'bench', 'epoch', 'experiment', 'run', 'report'];
+export const V2_VIEWS = ['overview', 'tournament', 'bench', 'epoch', 'experiment', 'run', 'report'];
 export const V2_DEFAULT_VIEW = 'overview';
 
 // Which mode a view belongs to — the shell shows a Bench/Notebook
@@ -38,6 +38,7 @@ export const V2_DEFAULT_VIEW = 'overview';
 // post-hoc Notebook.
 export const V2_MODE = {
   overview: 'notebook',
+  tournament: 'notebook',
   bench: 'bench',
   epoch: 'notebook',
   experiment: 'notebook',
@@ -114,6 +115,7 @@ export const v2Router = {
 // Human label for a view (the breadcrumb + chrome use these).
 export const V2_VIEW_LABELS = {
   overview: 'Overview',
+  tournament: 'Tournament',
   bench: 'Bench',
   epoch: 'Epoch',
   experiment: 'Experiment',

@@ -480,7 +480,12 @@ def test_bundle_under_size_envelope(
     # BOTH until cutover. Fully integrated bundle measured 696,388 bytes;
     # a 730 KB cap holds it. At v1 removal/cutover this drops sharply and
     # the cap is reset.
-    assert total < 730_000, f"bundle is {total} bytes, exceeds 730_000 envelope"
+    # Raised by the visual rebuild (Tufte slopegraph tournament, the
+    # small-multiples Bench + boardCell, the 3-theme system, the
+    # tournament view) — still side-by-side with v1 behind the flag.
+    # Measured 759,830 bytes; an 800 KB cap holds it until v1 removal,
+    # when this drops sharply and the cap is reset.
+    assert total < 800_000, f"bundle is {total} bytes, exceeds 800_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

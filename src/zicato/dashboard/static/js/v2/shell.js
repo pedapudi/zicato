@@ -371,6 +371,7 @@ function renderView(route) {
 function viewTitle(view) {
   switch (view) {
     case 'overview': return 'Overview';
+    case 'tournament': return 'Tournament';
     case 'bench': return 'Bench';
     case 'epoch': return 'Epoch';
     case 'experiment': return 'Experiment';
