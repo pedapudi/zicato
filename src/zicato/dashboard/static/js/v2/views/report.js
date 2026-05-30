@@ -1,0 +1,140 @@
+// js/v2/views/report.js — the standalone ACM report, full-page.
+//
+// DASHBOARD-V2 §4.3 + §6 — the analyzer's `analysis.html` is the epoch's
+// publication. It is retained VERBATIM: this view does NOT restyle it. We
+// present the standalone document full-page inside an <iframe> pointed at
+// the raw `/api/epoch/{epochId}/analysis.html`, which is the cleanest way
+// to preserve the report's own self-contained styling intact (its CSS and
+// inline SVG render in their own document context, untouched by the v2
+// shell's tokens). A prominent "open in new tab" link goes to the same
+// raw URL so the report is reachable as its own page.
+//
+// Honest states (§2.4): we first probe the JSON analysis endpoint to know
+// whether the standalone document exists. Not-yet-built → an honest
+// not-yet block with the actionable hint (run the analyzer); broken →
+// the reason; available → the iframe.
+//
+// Pure renderer keyed on `route.epochId` (defaulting to the current
+// epoch). Self-registers with the shell.
+
+import { $, el } from '../../core/dom.js';
+import { fetchJson } from '../../core/api.js';
+import { state } from '../../core/state.js';
+import { registerView } from '../shell.js';
+import { v2Router, v2Href } from '../router.js';
+import { stateBlock } from '../components/stateBlock.js';
+
+// availability cache: epochId → { available, broken } | undefined.
+const _availCache = new Map();
+const _loading = new Set();
+
+export function resetReportView() {
+  _availCache.clear();
+  _loading.clear();
+}
+
+function _repaint() {
+  const host = $('v2-view');
+  if (host) renderReport(host, v2Router.current());
+}
+
+async function ensureAvailability(epochId) {
+  if (!epochId || _availCache.has(epochId)) return _availCache.get(epochId);
+  if (_loading.has(epochId)) return undefined;
+  _loading.add(epochId);
+  try {
+    const data = await fetchJson('/api/epoch/' + encodeURIComponent(epochId) + '/analysis');
+    const available = !!(data && (data.analysis_html_available
+      || (typeof data.analysis_html_inline === 'string' && data.analysis_html_inline.trim())));
+    _availCache.set(epochId, { available, broken: false });
+  } catch (err) {
+    _availCache.set(epochId, { available: false, broken: true,
+      reason: (err && err.message) ? String(err.message) : 'analysis endpoint failed' });
+  } finally {
+    _loading.delete(epochId);
+    _repaint();
+  }
+  return _availCache.get(epochId);
+}
+
+export function renderReport(host, route) {
+  if (!host) return;
+  const epochId = (route && route.params && route.params.epochId)
+    || (route && route.epochId)
+    || (state.epochDef && state.epochDef.epoch_id)
+    || (state.heartbeat && state.heartbeat.epoch_id)
+    || (state.epoch && state.epoch.id !== '—' ? state.epoch.id : null)
+    || null;
+
+  ensureAvailability(epochId);
+  const avail = epochId ? _availCache.get(epochId) : undefined;
+  const rawHref = epochId ? '/api/epoch/' + encodeURIComponent(epochId) + '/analysis.html' : null;
+
+  // Coarse content key — only rebuild when the epoch or its availability
+  // verdict moves; the iframe must keep identity so it does not reload on
+  // an incidental shell re-render.
+  const ck = JSON.stringify({
+    epochId,
+    state: avail === undefined ? 'probe' : (avail.broken ? 'broken' : (avail.available ? 'ok' : 'missing')),
+  });
+  if (host.getAttribute('data-report-key') === ck) return;
+  host.setAttribute('data-report-key', ck);
+  while (host.firstChild) host.removeChild(host.firstChild);
+
+  const wrap = el('div', { class: 'v2-report' });
+
+  // Header bar: title + back-to-epoch + open-raw-in-new-tab.
+  const head = el('div', { class: 'v2-report-head' }, [
+    el('div', null, [
+      el('h1', { class: 'v2-view-title v2-report-title' }, [
+        'Analysis report ', el('span', { class: 'v2-mono' }, [String(epochId || '—')]),
+      ]),
+      el('p', { class: 'v2-report-sub' }, [
+        "The epoch's standalone publication, presented verbatim.",
+      ]),
+    ]),
+    el('div', { class: 'v2-report-actions' }, [
+      epochId ? el('a', {
+        class: 'v2-report-link', href: v2Href('epoch', epochId),
+      }, ['← Back to epoch']) : null,
+      (avail && avail.available && rawHref) ? el('a', {
+        class: 'v2-report-link v2-report-link-raw',
+        href: rawHref, target: '_blank', rel: 'noopener',
+      }, ['Open in new tab ↗']) : null,
+    ].filter(Boolean)),
+  ]);
+  wrap.appendChild(head);
+
+  let body;
+  if (!epochId) {
+    body = stateBlock('empty', {
+      label: 'No epoch selected',
+      detail: 'Open an epoch first, then its report.',
+    });
+  } else if (avail === undefined) {
+    body = stateBlock('running', { label: 'Checking for the report' });
+  } else if (avail.broken) {
+    body = stateBlock('broken', { reason: avail.reason || 'could not reach the analysis endpoint' });
+  } else if (!avail.available) {
+    body = stateBlock('not_yet', {
+      label: 'Analysis report not built yet',
+      detail: 'It is generated by the analyzer — run '
+        + 'zicato epoch analyze --epoch ' + epochId + ' to build it.',
+    });
+  } else {
+    // The report retained verbatim — an iframe to the raw standalone HTML
+    // preserves its own styling intact (DO NOT restyle; §6).
+    body = el('iframe', {
+      class: 'v2-report-frame',
+      src: rawHref,
+      title: 'Analysis report for epoch ' + epochId,
+      // The standalone document is first-party (same origin, generated by
+      // our analyzer); no sandbox so its inline styles + SVG render fully.
+      loading: 'eager',
+    });
+  }
+  wrap.appendChild(body);
+  host.appendChild(wrap);
+}
+
+registerView('report', renderReport);
