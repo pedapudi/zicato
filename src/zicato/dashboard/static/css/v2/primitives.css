@@ -1,0 +1,254 @@
+/* css/v2/primitives.css — styling for the v2 dense data-viz primitives.
+ *
+ * Three components live here: the drillable data table (dataTable.js),
+ * the live tournament matrix (liveMatrix.js), and the small-multiples
+ * grid (smallMultiples.js). All color + spacing flows through the v2
+ * design tokens (owned by the sibling tokens.css); every var() carries
+ * a sane fallback so these render correctly even before tokens land.
+ *
+ * Design language: ACM-derived density. Tight rhythm, monospace
+ * numerals, hairline grid rules, semantic color that is ALWAYS
+ * redundant to a glyph or label (a colour-blind operator reads the same
+ * state from the text alone).
+ *
+ * Token contract (with fallbacks):
+ *   --v2-improve  green     --v2-regress  red      --v2-caution amber
+ *   --v2-ink      text      --v2-ink-dim  muted    --v2-surface bg
+ *   --v2-grid     rules     --v2-mono     mono family
+ *   --v2-sp-1..4  spacing
+ */
+
+/* ---- shared numeric / monospace cell ------------------------------- */
+.v2-dt-num,
+.v2-dt-mono {
+  font-family: var(--v2-mono, "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* =====================================================================
+ * dataTable — the dense, drillable tabular primitive
+ * ===================================================================== */
+.v2-dt {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--v2-ink, #0f172a);
+  background: var(--v2-surface, #fff);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.v2-dt-dense { font-size: 12px; line-height: 1.3; }
+
+.v2-dt-caption {
+  caption-side: top;
+  text-align: left;
+  color: var(--v2-ink-dim, #64748b);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: var(--v2-sp-1, 4px) var(--v2-sp-2, 8px);
+}
+
+.v2-dt-th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--v2-ink-dim, #64748b);
+  border-bottom: 1px solid var(--v2-grid, #d0d7de);
+  padding: var(--v2-sp-1, 4px) var(--v2-sp-2, 8px);
+  white-space: nowrap;
+  user-select: none;
+}
+.v2-dt-dense .v2-dt-th { padding: 3px var(--v2-sp-2, 8px); }
+
+.v2-dt-th-sortable { cursor: pointer; }
+.v2-dt-th-sortable:hover { color: var(--v2-ink, #0f172a); }
+.v2-dt-th-sortable:focus-visible {
+  outline: 2px solid var(--v2-caution, #bf8700);
+  outline-offset: -2px;
+}
+.v2-dt-th-sorted { color: var(--v2-ink, #0f172a); }
+
+.v2-dt-sort-cue {
+  margin-left: var(--v2-sp-1, 4px);
+  opacity: 0.35;
+  font-size: 0.85em;
+}
+.v2-dt-sort-cue-active { opacity: 1; }
+
+.v2-dt-td {
+  border-bottom: 1px solid var(--v2-grid, #edf0f5);
+  padding: var(--v2-sp-1, 4px) var(--v2-sp-2, 8px);
+  vertical-align: middle;
+}
+.v2-dt-dense .v2-dt-td { padding: 2px var(--v2-sp-2, 8px); }
+
+.v2-dt-left   { text-align: left; }
+.v2-dt-right  { text-align: right; }
+.v2-dt-center { text-align: center; }
+
+/* Drillable rows: hover state, pointer, keyboard reach, drill cue. */
+.v2-dt-drillable .v2-dt-row-drillable { cursor: pointer; }
+.v2-dt-row-drillable:hover {
+  background: var(--v2-grid, #f1f3f7);
+}
+.v2-dt-row-drillable:focus-visible {
+  outline: 2px solid var(--v2-caution, #bf8700);
+  outline-offset: -2px;
+}
+.v2-dt-td-drill {
+  width: 1.4em;
+  text-align: center;
+  color: var(--v2-ink-dim, #94a3b8);
+}
+.v2-dt-drill-cue {
+  opacity: 0.4;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.v2-dt-row-drillable:hover .v2-dt-drill-cue {
+  opacity: 1;
+  transform: translateX(2px);
+}
+.v2-dt-th-drill { width: 1.4em; }
+
+/* Semantic delta cells — glyph carries the meaning; color reinforces. */
+.v2-dt-delta { white-space: nowrap; }
+.v2-dt-delta-glyph { margin-right: 3px; font-size: 0.8em; }
+.v2-dt-delta-improve { color: var(--v2-improve, #2ea043); }
+.v2-dt-delta-regress { color: var(--v2-regress, #d73a49); }
+.v2-dt-delta-flat    { color: var(--v2-ink-dim, #64748b); }
+.v2-dt-delta-na      { color: var(--v2-ink-dim, #94a3b8); }
+
+.v2-dt-empty-cell {
+  text-align: center;
+  color: var(--v2-ink-dim, #94a3b8);
+  padding: var(--v2-sp-3, 12px);
+  font-style: italic;
+}
+
+/* =====================================================================
+ * liveMatrix — the live tournament matrix
+ * ===================================================================== */
+.v2-lm {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--v2-ink, #0f172a);
+  background: var(--v2-surface, #fff);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.v2-lm-th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--v2-ink-dim, #64748b);
+  border-bottom: 1px solid var(--v2-grid, #d0d7de);
+  padding: var(--v2-sp-1, 4px) var(--v2-sp-2, 8px);
+  white-space: nowrap;
+}
+.v2-lm-th-side { text-align: left; }
+
+.v2-lm-entry {
+  text-align: left;
+  font-weight: 500;
+  border-bottom: 1px solid var(--v2-grid, #edf0f5);
+  padding: var(--v2-sp-1, 4px) var(--v2-sp-2, 8px);
+  white-space: nowrap;
+}
+.v2-lm-entry-sub {
+  margin-left: var(--v2-sp-2, 8px);
+  color: var(--v2-ink-dim, #94a3b8);
+  font-size: 0.85em;
+}
+
+.v2-lm-cell {
+  border-bottom: 1px solid var(--v2-grid, #edf0f5);
+  border-left: 1px solid var(--v2-grid, #f1f3f7);
+  padding: var(--v2-sp-1, 4px) var(--v2-sp-2, 8px);
+  vertical-align: middle;
+}
+.v2-lm-cell-drillable { cursor: pointer; }
+.v2-lm-cell-drillable:hover { background: var(--v2-grid, #f1f3f7); }
+.v2-lm-cell-drillable:focus-visible {
+  outline: 2px solid var(--v2-caution, #bf8700);
+  outline-offset: -2px;
+}
+
+.v2-lm-cell-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--v2-sp-1, 4px);
+  flex-wrap: wrap;
+}
+.v2-lm-glyph { font-size: 0.9em; width: 1.1em; text-align: center; }
+.v2-lm-word { color: var(--v2-ink-dim, #64748b); }
+.v2-lm-summary { color: var(--v2-ink, #0f172a); }
+
+/* Per-state semantic color — redundant to the glyph + the state word. */
+.v2-lm-queued  .v2-lm-glyph { color: var(--v2-ink-dim, #94a3b8); }
+.v2-lm-running .v2-lm-glyph { color: var(--v2-caution, #bf8700); }
+.v2-lm-running .v2-lm-word  { color: var(--v2-caution, #bf8700); }
+.v2-lm-done    .v2-lm-glyph { color: var(--v2-improve, #2ea043); }
+.v2-lm-aborted .v2-lm-glyph { color: var(--v2-regress, #d73a49); }
+.v2-lm-aborted .v2-lm-word  { color: var(--v2-regress, #d73a49); }
+
+/* The running progress bar — a budget bar, NOT a completion bar. */
+.v2-lm-bar {
+  flex: 1 1 60px;
+  min-width: 48px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--v2-grid, #e2e8f0);
+  overflow: hidden;
+  display: none;
+}
+.v2-lm-bar-on { display: block; }
+.v2-lm-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--v2-caution, #bf8700);
+  transition: width 200ms ease;
+}
+
+/* =====================================================================
+ * smallMultiples — responsive grid of mini comparative charts
+ * ===================================================================== */
+.v2-sm {
+  display: grid;
+  gap: var(--v2-sp-2, 8px);
+  width: 100%;
+}
+.v2-sm-empty {
+  color: var(--v2-ink-dim, #94a3b8);
+  font-style: italic;
+  padding: var(--v2-sp-3, 12px);
+  text-align: center;
+}
+
+.v2-sm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--v2-sp-1, 4px);
+  min-width: 0;
+  padding: var(--v2-sp-2, 8px);
+  background: var(--v2-surface, #fff);
+  border: 1px solid var(--v2-grid, #e2e8f0);
+  border-radius: 6px;
+}
+.v2-sm-panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--v2-ink-dim, #64748b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.v2-sm-panel-body { min-width: 0; }
+
+.v2-sm-panel-drillable { cursor: pointer; transition: border-color 120ms ease, background 120ms ease; }
+.v2-sm-panel-drillable:hover {
+  border-color: var(--v2-caution, #bf8700);
+  background: var(--v2-grid, #f7f8fa);
+}
+.v2-sm-panel-drillable:focus-visible {
+  outline: 2px solid var(--v2-caution, #bf8700);
+  outline-offset: -1px;
+}
