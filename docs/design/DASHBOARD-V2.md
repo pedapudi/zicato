@@ -55,27 +55,56 @@ evidence on demand.
    things carry affordance (hover, cursor, link styling, an explicit
    drill cue). And **show uncertainty** — never imply false precision.
 
-## 3. Design language (derived from the ACM report)
+## 3. Design language — GRAPHICAL & INTERACTIVE (the dashboard is NOT the report)
 
-The interactive UI and the report share **one visual identity**. The
-report is not bolted on — it is the canonical *static* form of the same
-language.
+> **Correction (the v2 v1-attempt miss).** The first v2 attempt derived
+> the dashboard's look from the ACM report — dense tables, prose,
+> monospace numbers everywhere. That backfired: the Bench became a wall
+> of text, the Epoch read as a spreadsheet, and navigation got lost.
+> **The interactive dashboard and the report are DIFFERENT artifacts.**
+> The dashboard is **graphical and interactive — charts, diagrams,
+> small multiples, sparklines, hover/click.** The ACM-dense, typographic,
+> table-heavy style is confined to the **standalone report only**.
 
-- **Typography.** A clean text face for prose (hypotheses, reasons,
-  analysis); a monospace face for all data (ids, numbers, deltas, code).
-  Numbers are tabular-aligned. Generous type scale for the one or two
-  numbers that matter per view; small dense type for tables.
-- **Color is semantic, never decorative.** Exactly three signal colors:
-  **green = improvement** (loss down / pass preserved), **red =
-  regression** (loss up / pass lost / fired gate rule), **amber =
-  caution** (degraded health, budget pressure, deferred). Everything
-  else is neutral ink on a calm ground. Color is always redundant to a
-  glyph or label (a11y, grayscale-safe).
-- **Density.** High data-ink ratio: minimal borders/chrome, no card
-  drowning a single number. Prefer tables, heatmaps, small multiples,
-  and inline sparklines. Whitespace structures; it does not pad.
-- **Motion.** Only to signal liveness (a pulsing live node, a streaming
-  row) — gated by `prefers-reduced-motion`. Never gratuitous.
+The dashboard's job is to be *seen and manipulated*, not read like a
+paper. Tufte's forms — designed for exactly this kind of comparative,
+multi-dimensional data — drive it:
+
+- **The tournament & promotion is a slopegraph / bumps chart** (Tufte's
+  Premier-League-standings form). Rounds on x, scalar (loss) on y; the
+  champion is the bold through-line, each challenger a slope into a
+  matchup; promote/reject is encoded by color **and** by whether the
+  slope joins the champion line. One glance gives ranking, value, and
+  direction. This is the "understandable tournament diagram." Interactive:
+  hover → verdict + deltas + fired rule; click → drill.
+- **The Bench is small multiples** — a grid of one tiny visual per board
+  entry (champion-vs-challenger paired mini-bars + a live progress ring),
+  NOT a table. This is the parallel-boards view, improved.
+- **Trends are sparklines**; **landscapes are interactive heatmaps**
+  (hover a cell → detail, click → drill). Word-sized graphics over
+  numbers-in-cells wherever a trend exists.
+- **Color is semantic, never decorative** — green = improvement, red =
+  regression, amber = caution — always redundant to a glyph/label (a11y).
+- **Graphics first, chrome minimal, interaction everywhere.** Hover
+  reveals detail; click drills. Generous visual space for the charts;
+  text is for labels and the one or two numbers that anchor a view.
+- **Motion** signals liveness only (a pulsing live node, a streaming
+  progress ring), correctly transform-origin-centered, gated by
+  `prefers-reduced-motion`. Never gratuitous, never jerky.
+
+### 3.1 Theming
+
+Ships **three switchable themes**, refined (not copied) from
+**Solarized Dark (default)**, Solarized Light, and Monokai. All are CSS
+custom-property sets swapped via a `data-theme` attribute on the root and
+a persisted switcher in the shell; the semantic mapping
+(`--v2-signal-improve` green / `--v2-signal-regress` red /
+`--v2-signal-caution` amber) holds across all three. Refined default
+palette (Solarized Dark): ground `#04222B`, surface `#0A2D38`, ink
+`#93A1A1` / dim `#5E7079`, improve `#8BB80E`, regress `#E0483C`, caution
+`#C4920A`. Every component reads tokens only — never a hard-coded color —
+so a theme swap restyles the whole dashboard. The ACM report keeps its
+own (paper) styling and is theme-independent.
 
 ## 4. Information architecture — two modes + the spine
 
