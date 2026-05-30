@@ -469,10 +469,13 @@ def test_bundle_under_size_envelope(
     # which ships behind a feature flag alongside v1 until cutover: the
     # v2 foundation (shell/router/spine + the dense primitives under
     # js/v2/** and css/v2/**) lands first, the v2 views follow. Foundation
-    # bundle measured 566,705 bytes; a 640 KB cap covers the foundation
-    # and the incoming v2 view wave, after which (at v1 removal/cutover)
-    # the envelope is re-measured and tightened sharply.
-    assert total < 640_000, f"bundle is {total} bytes, exceeds 640_000 envelope"
+    # bundle measured 566,705 bytes. The v2 view wave (overview / bench /
+    # epoch + report / experiment / run, with scoped CSS) then landed:
+    # v1 and v2 ship side-by-side behind the flag, so the bundle carries
+    # BOTH until cutover. Fully integrated bundle measured 696,388 bytes;
+    # a 730 KB cap holds it. At v1 removal/cutover this drops sharply and
+    # the cap is reset.
+    assert total < 730_000, f"bundle is {total} bytes, exceeds 730_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

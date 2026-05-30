@@ -20,6 +20,15 @@ import { mockSnapshot } from './js/views/mock.js';
 import { v2Router } from './js/v2/router.js';
 import { renderShell } from './js/v2/shell.js';
 
+// v2 view modules — each self-registers with the shell via
+// registerView() at import time (side-effect imports, no bindings used).
+import './js/v2/views/overview.js';
+import './js/v2/views/bench.js';
+import './js/v2/views/epoch.js';
+import './js/v2/views/report.js';
+import './js/v2/views/experiment.js';
+import './js/v2/views/run.js';
+
 // A single render is debounced across a burst of `state:changed`
 // emissions in one tick. The shell is itself digest-gated + idempotent,
 // so this is purely an efficiency floor.
