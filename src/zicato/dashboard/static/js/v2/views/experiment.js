@@ -30,6 +30,7 @@
 import { el, clearChildren } from '../../core/dom.js';
 import { state } from '../../core/state.js';
 import { fetchJson } from '../../core/api.js';
+import { bus } from '../../core/bus.js';
 import { v2Router } from '../router.js';
 
 import { stateBlock } from '../components/stateBlock.js';
@@ -527,12 +528,46 @@ function sectionFrame(title, hint) {
 
 let _lastKey = null;
 
+// On a direct deep-link the epoch contract (experiments + parent links)
+// may not be hydrated yet — `state.epochDef`/`state.lineage` are empty,
+// so the champion resolves to "root" and the hypothesis reads as
+// missing. Mirror epoch.js: actively fetch /api/epoch when the contract
+// is absent, fold it into state, and emit `state:changed` so the shell
+// re-renders this view with the data present. Idempotent + guarded.
+let _contractLoading = false;
+function ensureContract() {
+  const def = state.epochDef;
+  if (def && Array.isArray(def.experiments) && def.experiments.length) return;
+  if (_contractLoading) return;
+  _contractLoading = true;
+  Promise.resolve()
+    .then(() => fetchJson('/api/epoch'))
+    .then((data) => {
+      if (data && typeof data === 'object') {
+        state.epochDef = Object.assign({}, state.epochDef || {}, data);
+      }
+    })
+    .catch(() => { /* leave honest-state sections to surface the failure */ })
+    .finally(() => {
+      _contractLoading = false;
+      bus.emit('state:changed'); // shell re-renders → champion + hypothesis resolve
+    });
+}
+
 export function renderExperiment(host, route) {
   if (!host) return;
   ensureCss();
 
   const genId = route && route.params ? route.params.generationId : null;
-  const key = 'experiment|' + String(genId == null ? '' : genId);
+
+  // Ensure the contract is loaded (deep-link hydration); re-renders on arrival.
+  if (genId != null) ensureContract();
+
+  // The render key folds in whether the experiment record is present, so the
+  // post-hydration re-render is NOT swallowed by the no-op guard: an empty
+  // first paint (no contract) → key '…|0', the hydrated paint → '…|1'.
+  const _expReady = _experimentFor(genId) != null;
+  const key = 'experiment|' + String(genId == null ? '' : genId) + '|' + (_expReady ? '1' : '0');
   if (key === _lastKey && host.firstChild) return; // no-op re-render
   _lastKey = key;
 
