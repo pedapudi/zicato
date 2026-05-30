@@ -1,0 +1,434 @@
+/* css/v2/tokens.css — the v2 design language (DASHBOARD-V2 §3).
+ *
+ * ===================================================================
+ * TOKEN CONTRACT — the names every v2 view + component MUST use.
+ * (Read this top comment before styling anything in js/v2/**.)
+ * ===================================================================
+ *
+ * v2 deliberately REUSES the v1 token names where they already say the
+ * right thing (so the live UI and the ACM report can share one
+ * identity later — §3). The v1 `tokens.css` is still loaded; this file
+ * layers the v2-specific language on top and re-binds the few vars the
+ * spec tightens. Everything below is namespaced or additive — it never
+ * silently changes a v1 surface.
+ *
+ * --- The exactly-three semantic signal colors (§3) ------------------
+ * Color is semantic, never decorative. Use ONLY these three for signal,
+ * and ALWAYS pair them with a glyph/label (grayscale-safe, a11y):
+ *
+ *   --v2-signal-improve   green  — loss down / pass preserved / promoted
+ *   --v2-signal-regress   red    — loss up / pass lost / fired gate rule
+ *   --v2-signal-caution   amber  — degraded health, budget pressure,
+ *                                  deferred, stale
+ *
+ * Each has a -soft (fill / chip background) and -fg (text-on-surface)
+ * companion:
+ *   --v2-signal-improve-soft / -fg
+ *   --v2-signal-regress-soft / -fg
+ *   --v2-signal-caution-soft / -fg
+ *
+ * Everything else is NEUTRAL ink on a calm ground (no fourth signal
+ * color, no decorative accent fighting the signal palette):
+ *   --v2-ink            primary text
+ *   --v2-ink-2          secondary text
+ *   --v2-ink-muted      muted / labels
+ *   --v2-ink-faint      faint / disabled
+ *   --v2-ground         page ground
+ *   --v2-surface        raised surface
+ *   --v2-surface-2      alt / recessed surface
+ *   --v2-line           hairline rule / border
+ *   --v2-line-strong    stronger border
+ *
+ * --- Two type faces (§3) --------------------------------------------
+ *   --v2-face-prose     clean text face — hypotheses, reasons, analysis
+ *   --v2-face-data      monospace — ids, numbers, deltas, code.
+ *                       ALL data uses --v2-face-data with
+ *                       `font-variant-numeric: tabular-nums` so columns
+ *                       of numbers align. Use the .v2-num utility.
+ *   Type scale: --v2-fs-{11,12,13,14,16,18,22,28,40}. Hero numbers use
+ *   the large steps; dense tables use 11–13.
+ *
+ * --- Density / spacing (§3) -----------------------------------------
+ *   --v2-sp-{0.5,1,2,3,4,5,6,8} on a 4px rhythm. High data-ink: prefer
+ *   the small steps; whitespace structures, it does not pad.
+ *   --v2-radius-sm / -md, --v2-shadow (minimal chrome — one soft shadow).
+ *
+ * --- Liveness -------------------------------------------------------
+ *   --v2-live           the pulsing live node / streaming row color.
+ *   Motion gated by prefers-reduced-motion (see .v2-pulse below).
+ * ===================================================================
+ */
+
+:root {
+  /* --- Neutral ground + ink (calm, minimal chrome) --------------- */
+  --v2-ground:        #fbfcfd;
+  --v2-surface:       #ffffff;
+  --v2-surface-2:     #f4f6f9;
+  --v2-line:          #e6eaf0;
+  --v2-line-strong:   #cdd4de;
+
+  --v2-ink:           #11161f;   /* primary */
+  --v2-ink-2:         #3a4351;   /* secondary */
+  --v2-ink-muted:     #6b7585;   /* labels / muted */
+  --v2-ink-faint:     #9aa3b1;   /* faint / disabled */
+  --v2-ink-on-signal: #ffffff;
+
+  /* --- The exactly-three signal colors --------------------------- */
+  --v2-signal-improve:      #1a7f37;   /* green */
+  --v2-signal-improve-soft: #e7f4ec;
+  --v2-signal-improve-fg:   #166a2e;
+
+  --v2-signal-regress:      #cf222e;   /* red */
+  --v2-signal-regress-soft: #fcebec;
+  --v2-signal-regress-fg:   #a40e26;
+
+  --v2-signal-caution:      #bf8700;   /* amber */
+  --v2-signal-caution-soft: #fbf3da;
+  --v2-signal-caution-fg:   #9a6700;
+
+  /* Semantic aliases — verdict + state vocabulary maps onto the three
+   * signals so a component never reaches outside the palette. */
+  --v2-promoted:  var(--v2-signal-improve);
+  --v2-rejected:  var(--v2-signal-regress);
+  --v2-deferred:  var(--v2-signal-caution);
+  --v2-open:      var(--v2-ink-muted);
+
+  /* --- Liveness -------------------------------------------------- */
+  --v2-live:      #1a7f37;       /* the live pulse rides the improve hue */
+  --v2-live-ring: rgba(26, 127, 55, 0.28);
+
+  /* --- Type faces ------------------------------------------------ */
+  --v2-face-prose: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter,
+                   Roboto, "Helvetica Neue", Arial, sans-serif;
+  --v2-face-data:  "JetBrains Mono", "SF Mono", ui-monospace, Menlo,
+                   Consolas, "Liberation Mono", monospace;
+
+  --v2-fs-11: 11px;
+  --v2-fs-12: 12px;
+  --v2-fs-13: 13px;
+  --v2-fs-14: 14px;
+  --v2-fs-16: 16px;
+  --v2-fs-18: 18px;
+  --v2-fs-22: 22px;
+  --v2-fs-28: 28px;
+  --v2-fs-40: 40px;
+
+  --v2-lh-tight:  1.2;
+  --v2-lh-snug:   1.35;
+  --v2-lh-normal: 1.5;
+
+  --v2-w-regular:  400;
+  --v2-w-medium:   500;
+  --v2-w-semibold: 600;
+
+  /* --- Density / spacing (4px rhythm) ---------------------------- */
+  --v2-sp-0\.5: 2px;
+  --v2-sp-1:    4px;
+  --v2-sp-2:    8px;
+  --v2-sp-3:    12px;
+  --v2-sp-4:    16px;
+  --v2-sp-5:    20px;
+  --v2-sp-6:    24px;
+  --v2-sp-8:    32px;
+
+  --v2-radius-sm: 4px;
+  --v2-radius-md: 8px;
+  --v2-shadow:    0 1px 2px rgba(16, 22, 31, 0.05),
+                  0 2px 8px rgba(16, 22, 31, 0.04);
+
+  /* --- Layout ---------------------------------------------------- */
+  --v2-spine-height: 168px;
+  --v2-transition:   140ms ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --v2-ground:        #0b0f17;
+    --v2-surface:       #121826;
+    --v2-surface-2:     #182032;
+    --v2-line:          #232c3d;
+    --v2-line-strong:   #344056;
+
+    --v2-ink:           #eef2f8;
+    --v2-ink-2:         #c4ccd9;
+    --v2-ink-muted:     #8c97a8;
+    --v2-ink-faint:     #5e6878;
+
+    --v2-signal-improve:      #3fb950;
+    --v2-signal-improve-soft: #0f2417;
+    --v2-signal-improve-fg:   #5ad06b;
+    --v2-signal-regress:      #f85149;
+    --v2-signal-regress-soft: #2a1416;
+    --v2-signal-regress-fg:   #ff7b72;
+    --v2-signal-caution:      #d29922;
+    --v2-signal-caution-soft: #271d08;
+    --v2-signal-caution-fg:   #e3b341;
+
+    --v2-live:      #3fb950;
+    --v2-live-ring: rgba(63, 185, 80, 0.30);
+
+    --v2-shadow:    0 1px 2px rgba(0, 0, 0, 0.5),
+                    0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* ===================================================================
+ * Base — shell, spine, stateBlock. Minimal chrome; whitespace
+ * structures. (Views own their own dense layout CSS on top of this.)
+ * =================================================================== */
+
+.v2-root {
+  font-family: var(--v2-face-prose);
+  color: var(--v2-ink);
+  background: var(--v2-ground);
+  font-size: var(--v2-fs-14);
+  line-height: var(--v2-lh-normal);
+  min-height: 100vh;
+}
+.v2-root[hidden] { display: none; }
+
+/* Tabular monospace utility — every number/id goes through this. */
+.v2-num,
+.v2-mono {
+  font-family: var(--v2-face-data);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* --- Shell -------------------------------------------------------- */
+.v2-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.v2-shell-head {
+  display: flex;
+  align-items: center;
+  gap: var(--v2-sp-4);
+  padding: var(--v2-sp-2) var(--v2-sp-5);
+  border-bottom: 1px solid var(--v2-line);
+  background: var(--v2-surface);
+}
+.v2-brand {
+  font-weight: var(--v2-w-semibold);
+  font-size: var(--v2-fs-16);
+  letter-spacing: -0.01em;
+  color: var(--v2-ink);
+  text-decoration: none;
+}
+.v2-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--v2-sp-2);
+  font-size: var(--v2-fs-12);
+  font-weight: var(--v2-w-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: var(--v2-sp-0\.5) var(--v2-sp-2);
+  border-radius: var(--v2-radius-sm);
+  color: var(--v2-ink-muted);
+  background: var(--v2-surface-2);
+}
+.v2-mode[data-mode="bench"] {
+  color: var(--v2-signal-improve-fg);
+  background: var(--v2-signal-improve-soft);
+}
+.v2-mode-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor;
+}
+.v2-mode[data-mode="bench"] .v2-mode-dot { background: var(--v2-live); }
+
+.v2-spine-host {
+  border-bottom: 1px solid var(--v2-line);
+  background: var(--v2-surface);
+  padding: var(--v2-sp-3) var(--v2-sp-4) var(--v2-sp-2);
+  overflow-x: auto;
+}
+.v2-view-host {
+  flex: 1 1 auto;
+  padding: var(--v2-sp-5);
+  max-width: 1320px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* --- Spine / trajectory ------------------------------------------ */
+.v2-trajectory {
+  position: relative;
+  width: 100%;
+}
+.v2-trajectory-stage { position: relative; }
+.v2-trajectory-svg {
+  position: absolute; left: 0; top: 0;
+  pointer-events: none;
+}
+.v2-traj-spine-path {
+  fill: none;
+  stroke: var(--v2-promoted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.v2-traj-spine-path-live {
+  stroke: var(--v2-live);
+  stroke-dasharray: 5 4;
+}
+.v2-traj-branch-path {
+  fill: none;
+  stroke: var(--v2-rejected);
+  stroke-width: 1.3;
+  stroke-opacity: 0.55;
+  stroke-dasharray: 3 3;
+}
+.v2-traj-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--v2-sp-1);
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+.v2-traj-node:focus-visible {
+  outline: 2px solid var(--v2-signal-caution);
+  outline-offset: 3px;
+  border-radius: var(--v2-radius-sm);
+}
+.v2-traj-dot {
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--v2-surface);
+  border: 2px solid var(--v2-open);
+  font-family: var(--v2-face-data);
+  font-size: var(--v2-fs-11);
+  line-height: 1;
+  color: var(--v2-ink);
+}
+.v2-traj-node[data-verdict="promoted"] .v2-traj-dot {
+  border-color: var(--v2-promoted); color: var(--v2-promoted);
+}
+.v2-traj-node[data-verdict="rejected"] .v2-traj-dot {
+  border-color: var(--v2-rejected); color: var(--v2-rejected);
+}
+.v2-traj-node[data-live="true"] .v2-traj-dot {
+  border-color: var(--v2-live);
+  box-shadow: 0 0 0 4px var(--v2-live-ring);
+}
+.v2-traj-label {
+  display: flex; flex-direction: column; align-items: center;
+  font-family: var(--v2-face-data);
+  font-size: var(--v2-fs-11);
+  line-height: var(--v2-lh-tight);
+  white-space: nowrap;
+}
+.v2-traj-label-id { color: var(--v2-ink-2); }
+.v2-traj-label-scalar { color: var(--v2-ink-muted); }
+.v2-traj-live-tag {
+  color: var(--v2-live);
+  font-weight: var(--v2-w-semibold);
+  letter-spacing: 0.06em;
+}
+
+/* The single-node / mid-first-run fallback: a compact, centered,
+ * LABELED node — never empty space with a stray glyph (the v1 miss). */
+.v2-trajectory-solo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--v2-sp-3);
+  min-height: 96px;
+  padding: var(--v2-sp-3);
+  text-align: center;
+}
+.v2-trajectory-solo .v2-traj-node { position: static; }
+.v2-trajectory-solo-hint {
+  font-size: var(--v2-fs-12);
+  color: var(--v2-ink-muted);
+  max-width: 220px;
+  text-align: left;
+}
+
+/* Empty (no lineage at all) — still labeled, never blank. */
+.v2-trajectory-empty {
+  display: flex; align-items: center; gap: var(--v2-sp-2);
+  min-height: 96px; justify-content: center;
+  color: var(--v2-ink-muted);
+  font-size: var(--v2-fs-13);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .v2-traj-node[data-live="true"] .v2-traj-dot {
+    animation: v2-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes v2-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px var(--v2-live-ring); }
+    50%      { box-shadow: 0 0 0 7px var(--v2-live-ring); }
+  }
+}
+
+/* --- stateBlock — the canonical honest-state renderer (§2.4, §5) -- */
+.v2-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--v2-sp-2);
+  align-items: flex-start;
+  padding: var(--v2-sp-4);
+  border: 1px dashed var(--v2-line-strong);
+  border-radius: var(--v2-radius-md);
+  background: var(--v2-surface-2);
+  color: var(--v2-ink-muted);
+  font-size: var(--v2-fs-13);
+}
+.v2-state-row {
+  display: flex; align-items: center; gap: var(--v2-sp-2);
+}
+.v2-state-glyph {
+  font-family: var(--v2-face-data);
+  font-size: var(--v2-fs-14);
+  line-height: 1;
+}
+.v2-state-label {
+  font-weight: var(--v2-w-medium);
+  color: var(--v2-ink-2);
+}
+.v2-state-detail { color: var(--v2-ink-muted); font-size: var(--v2-fs-12); }
+
+.v2-state[data-kind="running"] { border-style: solid; }
+.v2-state[data-kind="running"] .v2-state-glyph,
+.v2-state[data-kind="running"] .v2-state-label { color: var(--v2-signal-improve-fg); }
+.v2-state[data-kind="broken"] {
+  border-color: var(--v2-signal-regress);
+  background: var(--v2-signal-regress-soft);
+}
+.v2-state[data-kind="broken"] .v2-state-glyph,
+.v2-state[data-kind="broken"] .v2-state-label { color: var(--v2-signal-regress-fg); }
+.v2-state[data-kind="not_yet"] { opacity: 0.85; }
+
+/* Progress bar for the running state. */
+.v2-state-progress {
+  width: 100%;
+  max-width: 280px;
+  height: 6px;
+  border-radius: var(--v2-radius-pill, 999px);
+  background: var(--v2-line);
+  overflow: hidden;
+}
+.v2-state-progress-fill {
+  height: 100%;
+  background: var(--v2-signal-improve);
+  transition: width var(--v2-transition);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .v2-state[data-kind="running"] .v2-state-glyph {
+    animation: v2-spin 1.1s linear infinite;
+    display: inline-block;
+  }
+  @keyframes v2-spin {
+    to { transform: rotate(360deg); }
+  }
+}

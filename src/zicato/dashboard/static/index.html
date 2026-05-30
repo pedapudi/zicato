@@ -15,6 +15,11 @@
   <link rel="stylesheet" href="css/phase0_epoch.css" />
   <link rel="stylesheet" href="css/phase0_generation.css" />
   <link rel="stylesheet" href="css/phase0_round.css" />
+  <!-- v2 design language (DASHBOARD-V2 §3). Layered tokens + base CSS for
+       the v2 shell/spine/stateBlock. Loaded unconditionally (cheap, all
+       custom properties + `.v2-*`-scoped rules), so it never touches a v1
+       surface; the v2 root stays display:none until the flag selects it. -->
+  <link rel="stylesheet" href="css/v2/tokens.css" />
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -274,6 +279,56 @@
     <span id="dashboard-build" class="meta mono">build &middot; &mdash;</span>
   </footer>
 
-  <script type="module" src="app.js"></script>
+  <!-- ============ v2 ROOT (DASHBOARD-V2 §6, behind a feature flag) =====
+       The ground-up v2 rewrite mounts its entire shell here. It stays
+       hidden until the bootstrap below selects v2; when v2 is active the
+       v1 shell is hidden and the v2 entry (app2.js) paints into this
+       container. v1 remains the default. -->
+  <div id="v2-root" class="v2-root" hidden></div>
+
+  <!-- ============ FEATURE-FLAG BOOTSTRAP ===============================
+       Picks exactly ONE entry. v2 is selected when `?ui=v2` is in the
+       URL OR a persisted localStorage toggle (`zicato.ui = v2`) is set;
+       v1 (app.js) is the default. The query param also persists the
+       choice (and `?ui=v1` clears it), so the toggle is reversible and a
+       reload sticks. Minimal + reversible: deleting this block and
+       restoring `<script src="app.js">` reverts to pure v1. -->
+  <script>
+    (function selectDashboardEntry() {
+      var KEY = 'zicato.ui';
+      var params = new URLSearchParams(window.location.search);
+      var q = params.get('ui');
+      var stored = null;
+      try { stored = window.localStorage.getItem(KEY); } catch (e) { /* private mode */ }
+      // The query param wins and persists the choice; ?ui=v1 clears it.
+      if (q === 'v2' || q === 'v1') {
+        try {
+          if (q === 'v2') window.localStorage.setItem(KEY, 'v2');
+          else window.localStorage.removeItem(KEY);
+        } catch (e) { /* ignore */ }
+        stored = q === 'v2' ? 'v2' : null;
+      }
+      var useV2 = q === 'v2' || (q !== 'v1' && stored === 'v2');
+
+      var entry = document.createElement('script');
+      entry.type = 'module';
+      if (useV2) {
+        // Hide the v1 shell + chrome; reveal the v2 root, then load v2.
+        var v1Ids = ['header-bar', 'phase0-live-rail', 'phase0-shell', 'footer-bar'];
+        for (var i = 0; i < v1Ids.length; i++) {
+          var n = document.getElementById(v1Ids[i]);
+          if (n) n.hidden = true;
+        }
+        var root = document.getElementById('v2-root');
+        if (root) root.hidden = false;
+        document.documentElement.setAttribute('data-ui', 'v2');
+        entry.src = 'app2.js';
+      } else {
+        document.documentElement.setAttribute('data-ui', 'v1');
+        entry.src = 'app.js';
+      }
+      document.body.appendChild(entry);
+    })();
+  </script>
 </body>
 </html>
