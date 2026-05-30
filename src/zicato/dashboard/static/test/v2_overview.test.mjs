@@ -178,11 +178,31 @@ test('healthSignal: surfaces the MOST SEVERE finding as the top finding', () => 
 // Render — the four sections, honest states, drillability
 // ===========================================================================
 
-test('render: the hero plots the trajectory; nodes drill to the epoch page', async () => {
+test('render: the hero is the tournament SLOPEGRAPH; nodes drill to the experiment', async () => {
+  // The corrected v2 hero (DASHBOARD-V2 §3) is the tournament slopegraph,
+  // built from the epoch contract + lineage scalars (the same build the
+  // Tournament view uses), not the old trajectory.
   state.activeTournament = null;
   state.workspace = '/home/sunil/lab/.zicato';
+  state.epochDef = {
+    epoch_id: '2026-05-30_e1',
+    experiments: [
+      { generation_id: 'v0', parent_generation_id: '', hypothesis: { core_idea: 'baseline' } },
+      {
+        generation_id: 'v1', parent_generation_id: 'v0',
+        outcome: { tournament_decision: 'promoted', scalar_score_delta: -0.25, rejection_reason: '' },
+      },
+    ],
+  };
+  state.lineage = {
+    generations: [
+      { id: 'v0', scalar: 0.80, parent_id: null, verdict: 'promoted' },
+      { id: 'v1', scalar: 0.55, parent_id: 'v0', verdict: 'promoted' },
+    ],
+  };
   installFetch({
     '/api/workspace': workspaceFixture(),
+    '/api/epoch': state.epochDef,
     '/api/health-report': { epoch_id: '2026-05-30_e1', healthy: true, findings: [] },
     '/api/active-tournament': REJECT, // no live run (absent file)
   });
@@ -190,21 +210,20 @@ test('render: the hero plots the trajectory; nodes drill to the epoch page', asy
   renderOverview(host, { view: 'overview', params: {} });
   await settle();
 
-  // The hero rendered a trajectory (not a stateBlock).
-  const traj = firstWithClass(host, 'v2-trajectory');
-  assert(traj != null, 'the hero plots the trajectory primitive');
-  // Two epochs + a non-degenerate scalar domain → the full plot.
-  assertEqual(traj.getAttribute('data-mode'), 'plot');
+  // The hero rendered the slopegraph (not a stateBlock, not a trajectory).
+  const sg = firstWithClass(host, 'v2-slope');
+  assert(sg != null, 'the hero is the tournament slopegraph');
+  assertEqual(sg.getAttribute('data-mode'), 'plot', 'one matchup + a finite domain → the full plot');
 
-  // Clicking a node drills to that epoch via the router (sets the hash).
-  const node = firstWithClass(host, 'v2-traj-node');
-  assert(node != null, 'a clickable trajectory node exists');
+  // Clicking a node drills to that experiment via the router.
+  const node = firstWithClass(host, 'v2-slope-node');
+  assert(node != null, 'a clickable slopegraph node exists');
   globalThis.window.location.hash = '';
   node.dispatchEvent(makeEvent('click', { preventDefault() {} }));
-  assert(globalThis.window.location.hash.startsWith('#/v2/epoch/'),
-    `node click drills to an epoch route, got ${globalThis.window.location.hash}`);
+  assert(globalThis.window.location.hash.startsWith('#/v2/experiment/'),
+    `node click drills to an experiment route, got ${globalThis.window.location.hash}`);
 
-  // Net-movement badge reads as a descent (green/improve).
+  // Net-movement badge still reads as a descent (green/improve).
   const delta = firstWithClass(host, 'v2-ov-delta');
   assertEqual(delta.getAttribute('data-signal'), 'improve', 'net descent reads improve');
 });
@@ -309,8 +328,12 @@ test('render: NO live affordance when nothing is in flight', async () => {
 
 test('render: an empty workspace is honest (not_yet), never a bare "No data"', async () => {
   state.activeTournament = null;
+  // No tournament rounds → the hero must fall back to not_yet, not a chart.
+  state.epochDef = null;
+  state.lineage = { generations: [] };
   installFetch({
     '/api/workspace': { current_epoch_id: null, epochs: [], sparkline: [] },
+    '/api/epoch': REJECT,
     '/api/health-report': { epoch_id: null, healthy: true, findings: [] },
     '/api/active-tournament': REJECT,
   });

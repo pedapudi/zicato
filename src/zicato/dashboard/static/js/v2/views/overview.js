@@ -33,11 +33,12 @@
 
 import { $, el, clearChildren } from '../../core/dom.js';
 import { state } from '../../core/state.js';
-import { fmtScalar, fmtDelta, truncate } from '../../core/format.js';
+import { fmtDelta, truncate } from '../../core/format.js';
 import { fetchJson } from '../../core/api.js';
 import { v2Router, v2Href } from '../router.js';
 import { registerView } from '../shell.js';
-import { trajectory } from '../components/trajectory.js';
+import { slopegraph } from '../components/slopegraph.js';
+import { buildRounds, scalarByGeneration } from './tournament.js';
 import { stateBlock } from '../components/stateBlock.js';
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,28 @@ const _SIGNAL_GLYPH = { improve: '✓', caution: '!', regress: '✗' };
 // would otherwise write into a host that no longer belongs to it).
 let _gen = 0;
 let _lastOvDigest = null;
+let _lastWorkspace = null;
+// Deep-link ensure-load of the epoch contract for the hero slopegraph —
+// mirrors tournament.js / epoch.js. Fetched once when state.epochDef is
+// empty; the hero repaints when it lands.
+let _epochLoadingOv = false;
+let _epochLoadedOv = false;
+
+function ensureEpochForHero() {
+  const def = state.epochDef;
+  if (def && Array.isArray(def.experiments) && def.experiments.length > 0) return;
+  if (_epochLoadedOv || _epochLoadingOv) return;
+  _epochLoadingOv = true;
+  fetchJson('/api/epoch').then((data) => {
+    if (data && typeof data === 'object') state.setEpochDef(data);
+  }).catch(() => { /* no contract → the slopegraph's honest empty state */ })
+    .finally(() => {
+      _epochLoadingOv = false;
+      _epochLoadedOv = true;
+      // Repaint the hero in place with the now-loaded contract.
+      if ($('v2-ov-hero-body') && _lastWorkspace) paintHero(_lastWorkspace, state.activeTournament);
+    });
+}
 
 export function renderOverview(host, route) {
   if (!host) return;
@@ -154,10 +177,17 @@ export function renderOverview(host, route) {
   // the page every second). Keyed on the structural facts the view
   // renders — current epoch, epoch count, and the live-tournament phase.
   const at = state.activeTournament;
+  const nExp = (state.epochDef && Array.isArray(state.epochDef.experiments))
+    ? state.epochDef.experiments.length : 0;
+  const nGen = (state.lineage && Array.isArray(state.lineage.generations))
+    ? state.lineage.generations.length : 0;
   const digest = [
     route && route.view,
     state.epoch && state.epoch.id,
     Array.isArray(state.epochs) ? state.epochs.length : 0,
+    // The hero slopegraph rebuilds when the settled rounds (experiments)
+    // or their scalars (lineage) move.
+    nExp, nGen,
     at ? (at.phase + ':' + (at.child_generation_id || '') + ':' + (at.round_index || 0)) : 'idle',
   ].join('|');
   if (digest === _lastOvDigest && host.firstChild) return;
@@ -165,22 +195,29 @@ export function renderOverview(host, route) {
 
   const myGen = (_gen += 1);
 
+  // Ensure the epoch contract is available for the hero slopegraph on a
+  // cold deep-link (the env poll normally folds it; this covers first paint).
+  ensureEpochForHero();
+
   clearChildren(host);
 
   const wrap = el('div', { class: 'v2-overview' });
   host.appendChild(wrap);
 
-  // 1 — the hero: the loss trajectory. Loading until /api/workspace lands.
+  // 1 — the hero: the tournament SLOPEGRAPH (DASHBOARD-V2 §3 — the
+  // headline visual). Champion through-line vs challenger slopes across
+  // rounds; promote joins the line, reject falls away. Loading until the
+  // epoch contract + workspace land.
   const heroSec = el('section', {
-    class: 'v2-ov-hero', 'aria-label': 'Loss trajectory',
+    class: 'v2-ov-hero', 'aria-label': 'Tournament slopegraph',
   }, [
     el('div', { class: 'v2-ov-hero-head' }, [
       el('h1', { class: 'v2-ov-title' }, ['Are we climbing?']),
-      el('span', { class: 'v2-ov-hero-sub' }, ['loss trajectory · lower is better']),
+      el('span', { class: 'v2-ov-hero-sub' }, ['tournament · loss descent · lower is better']),
       el('span', { class: 'v2-ov-delta', id: 'v2-ov-delta' }),
     ]),
     el('div', { class: 'v2-ov-hero-body', id: 'v2-ov-hero-body' }, [
-      stateBlock('running', { label: 'Loading trajectory' }),
+      stateBlock('running', { label: 'Loading tournament' }),
     ]),
   ]);
   wrap.appendChild(heroSec);
@@ -205,9 +242,10 @@ export function renderOverview(host, route) {
 
   const stale = () => myGen !== _gen || $('v2-ov-hero-body') == null;
 
-  // --- read 1: the workspace ribbon → trajectory + context ----------------
+  // --- read 1: the workspace ribbon → hero slopegraph + context -----------
   fetchJson('/api/workspace').then((ws) => {
     if (stale()) return;
+    _lastWorkspace = ws;
     paintHero(ws, state.activeTournament);
     paintContext(ws);
   }).catch((err) => {
@@ -260,18 +298,24 @@ export function renderOverview(host, route) {
 function paintHero(workspace, activeTournament) {
   const body = $('v2-ov-hero-body');
   if (!body) return;
-  const nodes = overviewNodes(workspace, activeTournament);
+  // The hero is the tournament slopegraph (DASHBOARD-V2 §3) — the same
+  // data build the Tournament view uses: settled rounds from the epoch
+  // contract joined with the lineage scalars, plus the live in-flight
+  // matchup. Champion through-line, promote joins / reject falls away.
+  const rounds = buildRounds(state.epochDef, scalarByGeneration(), activeTournament);
+  const live = rounds.length > 0 && rounds[rounds.length - 1].decision === 'running';
   clearChildren(body);
-  if (nodes.length === 0) {
+  if (rounds.length === 0) {
     body.appendChild(stateBlock('not_yet', {
-      label: 'No lineage yet',
-      detail: 'The first epoch will anchor the trajectory once a generation is scored.',
+      label: 'No tournament yet',
+      detail: 'The first matchup anchors the chart once a challenger runs against the champion.',
     }));
   } else {
-    body.appendChild(trajectory({
-      nodes,
-      zoom: 'epochs',
-      onSelect: (id) => v2Router.go('epoch', id),
+    body.appendChild(slopegraph({
+      rounds,
+      live,
+      onMatchup: (challengerId) => { if (challengerId) v2Router.go('experiment', challengerId); },
+      onGeneration: (id) => { if (id) v2Router.go('experiment', id); },
     }));
   }
   body.setAttribute('data-painted', 'true');
