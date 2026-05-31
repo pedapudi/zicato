@@ -293,48 +293,97 @@
        container. v1 remains the default. -->
   <div id="v2-root" class="v2-root" hidden></div>
 
+  <!-- ============ VARIANT ROOT — the four redesign explorations ========
+       ?ui=A|B|C|D each paint a complete, distinct dashboard here;
+       ?ui=gallery shows a picker. Each variant entry (app_A.js …) owns
+       its own render + scoped CSS into this single host. -->
+  <div id="variant-root" class="variant-root" hidden></div>
+
   <!-- ============ FEATURE-FLAG BOOTSTRAP ===============================
-       Picks exactly ONE entry. v2 is selected when `?ui=v2` is in the
-       URL OR a persisted localStorage toggle (`zicato.ui = v2`) is set;
-       v1 (app.js) is the default. The query param also persists the
-       choice (and `?ui=v1` clears it), so the toggle is reversible and a
-       reload sticks. Minimal + reversible: deleting this block and
-       restoring `<script src="app.js">` reverts to pure v1. -->
+       Picks exactly ONE entry from `?ui=`: v1 (default, app.js), v2
+       (app2.js), one of the four redesign variants A|B|C|D (app_X.js),
+       or `gallery` (a static picker). The choice persists to
+       localStorage so a reload sticks; `?ui=v1` clears it. -->
   <script>
     (function selectDashboardEntry() {
       var KEY = 'zicato.ui';
+      var VARIANTS = { A: 1, B: 1, C: 1, D: 1 };
       var params = new URLSearchParams(window.location.search);
       var q = params.get('ui');
       var stored = null;
       try { stored = window.localStorage.getItem(KEY); } catch (e) { /* private mode */ }
-      // The query param wins and persists the choice; ?ui=v1 clears it.
-      if (q === 'v2' || q === 'v1') {
+      if (q === 'v1' || q === 'v2' || q === 'gallery' || (q && VARIANTS[q])) {
         try {
-          if (q === 'v2') window.localStorage.setItem(KEY, 'v2');
-          else window.localStorage.removeItem(KEY);
+          if (q === 'v1') window.localStorage.removeItem(KEY);
+          else window.localStorage.setItem(KEY, q);
         } catch (e) { /* ignore */ }
-        stored = q === 'v2' ? 'v2' : null;
+        stored = q === 'v1' ? null : q;
       }
-      var useV2 = q === 'v2' || (q !== 'v1' && stored === 'v2');
+      var sel = (q && (q === 'v2' || q === 'gallery' || VARIANTS[q])) ? q
+        : (stored && (stored === 'v2' || stored === 'gallery' || VARIANTS[stored]) ? stored : 'v1');
 
-      var entry = document.createElement('script');
-      entry.type = 'module';
-      if (useV2) {
-        // Hide the v1 shell + chrome; reveal the v2 root, then load v2.
-        var v1Ids = ['header-bar', 'phase0-live-rail', 'phase0-shell', 'footer-bar'];
-        for (var i = 0; i < v1Ids.length; i++) {
-          var n = document.getElementById(v1Ids[i]);
-          if (n) n.hidden = true;
+      function hideV1() {
+        var ids = ['header-bar', 'phase0-live-rail', 'phase0-status-dropdown',
+          'phase0-palette-overlay', 'phase0-shell', 'footer-bar'];
+        for (var i = 0; i < ids.length; i++) {
+          var n = document.getElementById(ids[i]); if (n) n.hidden = true;
         }
-        var root = document.getElementById('v2-root');
-        if (root) root.hidden = false;
-        document.documentElement.setAttribute('data-ui', 'v2');
-        entry.src = 'app2.js';
-      } else {
-        document.documentElement.setAttribute('data-ui', 'v1');
-        entry.src = 'app.js';
       }
-      document.body.appendChild(entry);
+      function show(id) { var n = document.getElementById(id); if (n) n.hidden = false; }
+      function load(src) {
+        var e = document.createElement('script'); e.type = 'module'; e.src = src;
+        document.body.appendChild(e);
+      }
+
+      if (sel === 'gallery') {
+        hideV1(); show('variant-root');
+        document.documentElement.setAttribute('data-ui', 'gallery');
+        renderGallery(document.getElementById('variant-root'));
+        return;
+      }
+      if (VARIANTS[sel]) {
+        hideV1(); show('variant-root');
+        document.documentElement.setAttribute('data-ui', 'variant-' + sel);
+        load('app_' + sel + '.js');
+        return;
+      }
+      if (sel === 'v2') {
+        hideV1(); show('v2-root');
+        document.documentElement.setAttribute('data-ui', 'v2');
+        load('app2.js');
+        return;
+      }
+      document.documentElement.setAttribute('data-ui', 'v1');
+      load('app.js');
+
+      function renderGallery(host) {
+        if (!host) return;
+        var cards = [
+          ['A', 'Mission Control', 'Dark live-ops console — bold telemetry, status lights, the live bench.'],
+          ['B', 'Editorial Lab Notebook', 'Clean, airy, typographic — each experiment a beautiful notebook entry.'],
+          ['C', 'Causal Flow', 'Diagram-first — the lineage and the patch → drift → gate causality as interactive graphs.'],
+          ['D', 'Tufte Data-viz', 'Small multiples, sparklines, slopegraphs — high data-ink, precise.']
+        ];
+        host.style.cssText = 'min-height:100vh;background:#0b1417;color:#cdd6cf;'
+          + 'font-family:system-ui,sans-serif;padding:64px 48px;box-sizing:border-box;';
+        var h = '<div style="max-width:1100px;margin:0 auto;">'
+          + '<h1 style="font-weight:600;font-size:28px;margin:0 0 6px;">zicato dashboard — pick a design</h1>'
+          + '<p style="color:#7c8c86;margin:0 0 36px;">Four complete, interactive explorations. Click one to open it; '
+          + 'change the <code>?ui=</code> flag any time. (v1 = <code>?ui=v1</code>, v2 = <code>?ui=v2</code>.)</p>'
+          + '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px;">';
+        for (var i = 0; i < cards.length; i++) {
+          var c = cards[i];
+          h += '<a href="?ui=' + c[0] + '" style="display:block;text-decoration:none;color:inherit;'
+            + 'border:1px solid #20312f;border-radius:10px;padding:24px 26px;background:#0e1b1d;'
+            + 'transition:border-color .15s;" onmouseover="this.style.borderColor=&quot;#5fbf3f&quot;" '
+            + 'onmouseout="this.style.borderColor=&quot;#20312f&quot;">'
+            + '<div style="font-size:12px;letter-spacing:.12em;color:#5fbf3f;font-weight:700;">VARIANT ' + c[0] + '</div>'
+            + '<div style="font-size:20px;font-weight:600;margin:6px 0 8px;">' + c[1] + '</div>'
+            + '<div style="color:#9aa8a2;font-size:14px;line-height:1.5;">' + c[2] + '</div></a>';
+        }
+        h += '</div></div>';
+        host.innerHTML = h;
+      }
     })();
   </script>
 </body>

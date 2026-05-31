@@ -483,9 +483,15 @@ def test_bundle_under_size_envelope(
     # Raised by the visual rebuild (Tufte slopegraph tournament, the
     # small-multiples Bench + boardCell, the 3-theme system, the
     # tournament view) — still side-by-side with v1 behind the flag.
-    # Measured 759,830 bytes; an 800 KB cap holds it until v1 removal,
-    # when this drops sharply and the cap is reset.
-    assert total < 800_000, f"bundle is {total} bytes, exceeds 800_000 envelope"
+    # Measured 759,830 bytes; an 800 KB cap held it.
+    # EXPLORATION PHASE: four complete, parallel dashboard redesign
+    # variants (A Mission-Control / B Editorial / C Causal-Flow / D
+    # Tufte) now ship side-by-side behind ?ui=A|B|C|D so the operator can
+    # interact with all four and pick one. That roughly doubles the
+    # concatenated bundle (measured 1,121,177 bytes). A 1,200 KB cap holds
+    # the exploration; once a variant is chosen, the other three + v1/v2
+    # are deleted and the envelope drops sharply and is reset.
+    assert total < 1_200_000, f"bundle is {total} bytes, exceeds 1_200_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
