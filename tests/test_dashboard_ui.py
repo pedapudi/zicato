@@ -488,10 +488,14 @@ def test_bundle_under_size_envelope(
     # variants (A Mission-Control / B Editorial / C Causal-Flow / D
     # Tufte) now ship side-by-side behind ?ui=A|B|C|D so the operator can
     # interact with all four and pick one. That roughly doubles the
-    # concatenated bundle (measured 1,121,177 bytes). A 1,200 KB cap holds
-    # the exploration; once a variant is chosen, the other three + v1/v2
-    # are deleted and the envelope drops sharply and is reset.
-    assert total < 1_200_000, f"bundle is {total} bytes, exceeds 1_200_000 envelope"
+    # concatenated bundle (measured 1,121,177 bytes).
+    # ENRICHMENT WAVE: each variant gained candidate-lifecycle, board-field,
+    # per-board scoring drill-down, and tournament-style match-up
+    # visualizations (each in its own diagrammatic idiom). Measured
+    # 1,337,956 bytes. A 1,400 KB cap holds the (deliberately temporary)
+    # exploration; once a variant is chosen, the other three + v1/v2 are
+    # deleted and the envelope drops sharply and is reset.
+    assert total < 1_400_000, f"bundle is {total} bytes, exceeds 1_400_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
