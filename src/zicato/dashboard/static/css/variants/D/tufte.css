@@ -298,3 +298,137 @@
 .d-linkrow { cursor: pointer; }
 a.d-link { color: var(--v2-accent); text-decoration: none; border-bottom: 1px dotted var(--v2-accent); }
 a.d-link:hover { color: var(--v2-ink); }
+
+/* ===================== enrichment wave: four themes ===================== */
+
+/* ---- sparkbar (per-candidate / per-board loss bars + verdict glyph) ---- */
+.d-sparkbar-bar { fill: var(--v2-ink); opacity: 0.78; }
+.d-sparkbar-bar.d-fail { fill: var(--v2-bad); opacity: 0.62; }
+.d-sparkbar-bar.d-timeout { fill: var(--v2-caution, var(--v2-accent)); opacity: 0.7;
+  stroke: var(--v2-bad); stroke-width: 0.5; stroke-dasharray: 1 1; }
+.d-sparkbar-foot { stroke: var(--v2-rule); stroke-width: 1; }
+.d-sparkbar-missing { stroke: var(--v2-ink-faint); stroke-width: 1; stroke-dasharray: 1 1; }
+.d-verdict-glyph.d-good { fill: var(--v2-good); }
+.d-verdict-glyph.d-bad { fill: var(--v2-bad); }
+
+/* ---- THEME 1: lifecycle strip ---- */
+.d-lifecycle-strip { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.d-lifecycle-card { padding-bottom: 8px; }
+.d-lifecycle-card:hover { background: var(--v2-rule-soft); }
+.d-lifecycle-foot { display: flex; justify-content: space-between; align-items: center;
+  gap: 6px; margin-top: 4px; }
+
+/* ---- THEME 2: board trellis ---- */
+.d-trellis { display: grid; gap: 18px 18px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.d-trellis-cell { margin: 0; padding: 10px 12px; border: 1px solid var(--v2-rule);
+  border-radius: 4px; background: var(--v2-panel); }
+.d-trellis-cell:hover { border-color: var(--v2-accent); }
+.d-trellis-cap { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.d-trellis-id { font-family: var(--v2-mono); font-size: 12px; color: var(--v2-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d-trellis-meta { display: flex; align-items: center; gap: 4px; font-size: 10px; }
+.d-kind-tag { font-family: var(--v2-mono); font-size: 9.5px; padding: 0 4px; border-radius: 3px;
+  border: 1px solid var(--v2-rule); color: var(--v2-ink-soft); }
+.d-kind-tag.d-kind-single_turn { border-color: var(--v2-rule); }
+.d-kind-tag.d-kind-multi_turn_scripted { border-color: var(--v2-accent); color: var(--v2-accent); }
+.d-kind-tag.d-kind-multi_turn_emulated { border-color: var(--v2-good); color: var(--v2-good); }
+.d-trellis-foot { display: flex; gap: 10px; flex-wrap: wrap; font-size: 10px; margin-top: 4px;
+  font-family: var(--v2-mono); }
+.d-trellis-tags { color: var(--v2-ink-faint); }
+.d-trellis-preview { font-size: 10.5px; margin-top: 4px; font-style: italic; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* pass/fail/timeout glyphs (trellis dot row + value dot plot) */
+.d-glyph-pass { fill: var(--v2-good); }
+.d-glyph-fail { stroke: var(--v2-bad); stroke-width: 1.3; }
+.d-glyph-timeout { fill: var(--v2-bad); font-size: 9px; }
+.d-glyph-none { fill: none; stroke: var(--v2-ink-faint); stroke-width: 0.8; }
+
+/* ---- THEME 3: per-board scoring dot-plot + entry detail ---- */
+.d-ref-rule { stroke: var(--v2-ink-faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.d-valdot .d-dot.d-good { fill: var(--v2-good); }
+.d-valdot .d-dot.d-bad { fill: var(--v2-bad); }
+.d-vbar { fill: var(--v2-accent); opacity: 0.8; }
+.d-vbar-val { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); font-variant-numeric: tabular-nums; }
+
+.d-switcher { display: flex; align-items: center; gap: 8px; margin: 10px 0 2px;
+  font-family: var(--v2-mono); font-size: 12px; flex-wrap: wrap; }
+.d-switch { color: var(--v2-ink-soft); text-decoration: none; padding: 1px 7px; border-radius: 10px;
+  border: 1px solid var(--v2-rule); }
+.d-switch:hover { color: var(--v2-ink); border-color: var(--v2-accent); }
+.d-switch.d-active { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
+
+.d-expect-grid { display: flex; flex-direction: column; gap: 6px; }
+.d-expect-row { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; line-height: 1.4; }
+.d-expect-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; align-self: center; }
+.d-expect-dot.d-good { background: var(--v2-good); }
+.d-expect-dot.d-bad { background: var(--v2-bad); }
+.d-expect-dot.d-flat { background: var(--v2-flat); }
+.d-expect-kind { font-family: var(--v2-mono); font-size: 12px; color: var(--v2-ink); }
+.d-expect-detail { font-size: 12px; }
+
+/* transcript (depth 3) */
+.d-turn { border-left: 2px solid var(--v2-rule); padding: 4px 0 4px 10px; margin: 6px 0; }
+.d-turn-agent { border-left-color: var(--v2-accent); }
+.d-turn-user { border-left-color: var(--v2-good); }
+.d-turn-system { border-left-color: var(--v2-rule); }
+.d-turn-head { font-size: 10.5px; margin-bottom: 2px; }
+.d-turn-text { font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.d-tool { font-size: 11px; color: var(--v2-ink-soft); margin-top: 2px; }
+.d-annot { font-size: 11px; color: var(--v2-ink-faint); margin-top: 2px; font-style: italic; }
+.d-annot-drift { color: var(--v2-bad); }
+.d-annot-judge { color: var(--v2-accent); }
+
+/* ---- THEME 4: paired slopegraphs + alt styles ---- */
+.d-pslope-grid { display: grid; gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+.d-pslope-cell { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px 10px; }
+.d-pslope-title { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 4px; }
+.d-pslope-line { stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.d-pslope-line.d-good { stroke: var(--v2-good); }
+.d-pslope-line.d-bad { stroke: var(--v2-bad); }
+.d-pslope-line.d-flat { stroke: var(--v2-flat); stroke-dasharray: 2 2; }
+.d-pslope-node.d-good { fill: var(--v2-good); }
+.d-pslope-node.d-bad { fill: var(--v2-bad); }
+.d-pslope-node.d-flat { fill: var(--v2-flat); }
+.d-pslope-label { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); }
+.d-pslope-series:hover .d-pslope-line { stroke-width: 2.6; }
+.d-pslope-series:hover .d-pslope-label { fill: var(--v2-accent); }
+
+.d-illustrative-banner { font-size: 11.5px; color: var(--v2-ink-soft);
+  background: var(--v2-rule-soft); border: 1px solid var(--v2-rule);
+  border-radius: 4px; padding: 8px 12px; margin-bottom: 14px; }
+.d-alt-grid { display: grid; gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.d-alt-cell { margin: 0; }
+.d-alt-cap { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 8px; }
+.d-alt-title { font-size: 12.5px; font-weight: 600; color: var(--v2-ink); }
+.d-alt-note { font-size: 11px; line-height: 1.45; margin: 8px 0 0; max-width: 42ch; }
+
+/* bracket */
+.d-bracket-seat { fill: var(--v2-panel); stroke: var(--v2-rule); stroke-width: 1; }
+.d-bracket-seat.d-champ { stroke: var(--v2-accent); }
+.d-bracket-seat.d-win { fill: var(--v2-good-soft); stroke: var(--v2-good); }
+.d-bracket-label { fill: var(--v2-ink); font: 10px var(--v2-mono); }
+.d-bracket-edge { stroke: var(--v2-rule); stroke-width: 1; }
+.d-bracket-edge.d-win { stroke: var(--v2-good); stroke-width: 1.4; }
+
+/* round-robin matrix */
+.d-rr-head { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
+.d-rr-diag { fill: var(--v2-rule-soft); }
+.d-rr-cell { stroke: var(--v2-paper); stroke-width: 1; }
+.d-rr-cell.d-good { fill: var(--v2-good-soft); }
+.d-rr-cell.d-bad { fill: var(--v2-bad-soft); }
+.d-rr-cell.d-flat { fill: var(--v2-rule-soft); }
+.d-rr-cell:hover { stroke: var(--v2-ink); stroke-width: 1.4; }
+
+/* race lanes */
+.d-race-head { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
+.d-race-lane { stroke: var(--v2-rule-soft); stroke-width: 1; }
+.d-race-finish { stroke: var(--v2-good); stroke-width: 1; stroke-dasharray: 2 2; }
+.d-race-cut { stroke: var(--v2-bad); stroke-width: 1; stroke-dasharray: 4 2; }
+.d-race-dot.d-good { fill: var(--v2-good); }
+.d-race-dot.d-bad { fill: var(--v2-panel); stroke: var(--v2-bad); stroke-width: 1.4; }

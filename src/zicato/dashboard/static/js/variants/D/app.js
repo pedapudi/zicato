@@ -23,18 +23,20 @@ import { invalidateLive } from './data.js';
 
 import * as environment from './views/environment.js';
 import * as epoch from './views/epoch.js';
+import * as lifecycle from './views/lifecycle.js';
 import * as experiment from './views/experiment.js';
 import * as tournament from './views/tournament.js';
 import * as run from './views/run.js';
 import * as bench from './views/bench.js';
 
-const RENDERERS = { environment, epoch, experiment, tournament, run, bench };
+const RENDERERS = { environment, epoch, lifecycle, experiment, tournament, run, bench };
 const NAV_ITEMS = [
   ['environment', 'Environment'],
   ['epoch', 'Epoch'],
-  ['tournament', 'Tournament'],
-  ['run', 'Run'],
-  ['bench', 'Bench'],
+  ['lifecycle', 'Lifecycle'],
+  ['bench', 'Boards'],
+  ['tournament', 'Match-ups'],
+  ['run', 'Scoring'],
 ];
 
 let _viewHost = null;

@@ -53,17 +53,25 @@ static/css/variants/D/tufte.css         --v2-* palette + all mark styling (scope
 static/js/variants/D/
   app.js        orchestrator: nav, hash router wiring, SSE re-render
   router.js     #/D/… hash router (parseRoute / href / navigate)
-  svg.js        the data-viz toolkit: sparkline, dotPlot, slopegraph,
-                bumps, heatmap, predictedActual, smallMultiple, decollide
+  svg.js        the data-viz toolkit: sparkline, sparkbar, dotPlot,
+                valueDotPlot, valueBars, genDots, slopegraph,
+                pairedSlopegraph + jitterColumn, bumps, heatmap,
+                predictedActual, bracketMini, roundRobinMatrix, raceLanes,
+                smallMultiple, decollide
   data.js       cached, failure-tolerant drill-down reads over core/api
+                (incl. lineage, gate, expectations, per-judge-for-run,
+                conversation)
   ui.js         crumb, sections, verdict pills, SAFE markdown (the brief)
   views/
     environment.js   cross-epoch small multiples + master slopegraph
     epoch.js         objective + brief + bumps lineage + heatmaps
+    lifecycle.js     THEME 1 — per-candidate loss-profile small multiples
     experiment.js    predicted-vs-actual + drift slopegraph + gate + diff
-    tournament.js     the slopegraph done right + bumps lanes
-    run.js / bench.js basic, nav-reachable
+    bench.js         THEME 2 — the board trellis of small multiples
+    run.js           THEME 3 — per-board scoring dot-plot → entry detail → transcript
+    tournament.js    THEME 4 — paired non-colliding slopegraphs + alt styles
 static/test/variant_d.test.mjs          22 unit tests (node)
+static/test/variant_d_enrich.test.mjs   21 enrichment tests (node)
 ```
 
 ## Where the proposer brief lives
@@ -209,6 +217,78 @@ Matchups
 
 Lineage lanes  (bumps chart — champion spine + rejected challenger lane)
 ```
+
+---
+
+## The four enrichment themes (Tufte idiom)
+
+The variant carries the four shared themes, each in the high-data-ink /
+small-multiples language. New SVG primitives live in `svg.js`
+(`sparkbar`, `genDots`, `valueDotPlot`, `valueBars`, `pairedSlopegraph`,
+`jitterColumn`, `bracketMini`, `roundRobinMatrix`, `raceLanes`); new
+views are `lifecycle.js`, an enriched `bench.js` (now "Boards"), an
+enriched `run.js` (now "Scoring"), and an enriched `tournament.js` (now
+"Match-ups").
+
+### 1 · Candidate lifecycle — `views/lifecycle.js`
+
+A **small-multiple strip**: one tiny multiple per candidate, each a
+`sparkbar` of that candidate's per-board drift-loss profile (one thin bar
+per board entry, on a **shared loss scale** so the strip is directly
+comparable), topped by a gate-verdict glyph — `▲` promoted (teal), `▼`
+rejected (rose). Failed entries carry a foot-tick, timed-out entries are
+hatched. Each card footers the life-story: `← parent` and the verdict
+pill. Beneath the strip, the **lineage bumps** chart gives the champion
+spine its own lane and branches rejected challengers into a distinct
+lower lane (the non-colliding lineage). Click a candidate → its per-board
+scoring; click a bumps node → its experiment.
+
+### 2 · The boards a candidate faces — `views/bench.js`
+
+A **trellis of small multiples**, one micro-chart per board entry (not a
+table of rows). Each cell shows the entry's `kind` tag (single /
+scripted / emulated), budget, weight, tags and input preview; a
+`sparkbar` of that entry's loss **across the candidate generations** on a
+trellis-wide shared scale; and a `genDots` row of pass / fail / timeout
+glyphs, one per generation, beneath the bars. The trellis is **sorted
+meaningfully** — by kind (emulated → scripted → single), then descending
+weight, then id — so the heaviest, most-structured tests read first.
+Click a board → its run scoring.
+
+### 3 · Per-board scoring + drill-down — `views/run.js`
+
+Three depths, narrowing:
+
+- **Depth 1** — a sorted `valueDotPlot` of one candidate's absolute
+  per-entry drift loss (lower = left = better) with a **reference line at
+  the champion's scalar**; dots left of it (beating the champion) read
+  teal, right read rose; a pass/fail/timeout glyph trails each row. A
+  candidate switcher lets the operator move across generations.
+- **Depth 2** — clicking an entry opens its detail small-multiple:
+  expectation outcomes as pass/fail/no-verdict dots (from
+  `…/expectations`) and the per-judge weighted losses as direct-labelled
+  `valueBars` (from `…/per-judge`).
+- **Depth 3** — a collapsible transcript panel lazily loads
+  `/api/conversation/{run_id}` and renders the turns, tool calls, and
+  drift / judge margin annotations.
+
+### 4 · Match-ups across tournament styles — `views/tournament.js`
+
+The real **king-of-the-hill gauntlet** first: a non-colliding bumps
+ladder, then one **paired slopegraph per round** drawn from the real
+`/api/matchup-grid` — champion loss → challenger loss for *every board
+entry*. The operator flagged colliding slopegraph lines as a defect;
+`pairedSlopegraph` defeats collision three ways at once: (a) a per-column
+**label de-collision** pass with hairline leaders back to the true datum;
+(b) a node **jitter** (`jitterColumn`) that fans coincident values a hair
+apart so two lines ending at the same loss do not overdraw; (c) **direct
+labelling** at both ends. Lines are coloured by `verdict`
+(improved / regressed / flat). Below, the same candidate set under
+**alternative structures**, each a different topology and clearly badged
+*illustrative* (only the gauntlet has real per-round data, per
+SELECTION.md §6): a single-elimination `bracketMini` tree, a round-robin
+`roundRobinMatrix` heat grid, and a successive-halving `raceLanes` dot
+plot with an elimination cut.
 
 ## Interaction & honesty
 

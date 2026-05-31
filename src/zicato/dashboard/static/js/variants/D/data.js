@@ -57,6 +57,9 @@ export function invalidateLive() {
       || key.startsWith('/api/generation/')
       || key.startsWith('/api/matchup-grid/')
       || key.startsWith('/api/drift-movements/')
+      || key.startsWith('/api/run/')
+      || key.startsWith('/api/lineage')
+      || key.startsWith('/api/conversation/')
       || key.startsWith('/api/tournaments')) {
       _cache.delete(key);
     }
@@ -97,6 +100,26 @@ export function diff(epochId, genId) {
 }
 export function patches(epochId, genId) {
   return cachedJson(`/api/files/${enc(epochId)}/${enc(genId)}/patches`);
+}
+
+// The promote-gate decomposition for one round — three short-circuiting
+// rules + the scalar-component split for both sides + the primary driver.
+export function gate(epochId, championId, challengerId) {
+  return cachedJson(`/api/round/${enc(epochId)}/${enc(championId)}/${enc(challengerId)}/gate`);
+}
+
+// Theme-3 drill-down depth 2: one entry's expectation outcomes and the
+// per-judge losses for that single run (keyed by board-entry id).
+export function expectations(epochId, genId, entryId) {
+  return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/expectations`);
+}
+export function perJudgeForRun(epochId, genId, entryId) {
+  return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/per-judge`);
+}
+
+// Theme-3 drill-down depth 3: the reconstructed transcript for a run.
+export function conversation(runId) {
+  return cachedJson(`/api/conversation/${enc(runId)}`);
 }
 
 function enc(s) { return encodeURIComponent(s == null ? '' : String(s)); }

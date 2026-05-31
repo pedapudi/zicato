@@ -5,16 +5,19 @@
 //
 //   #/D/                                  → Environment (cross-epoch)
 //   #/D/epoch                             → current Epoch
+//   #/D/lifecycle                         → Candidate lifecycle (small multiples)
+//   #/D/lifecycle/<gen>                   → board scoring for one candidate
 //   #/D/experiment/<gen>                  → Experiment (one generation)
 //   #/D/tournament                        → Tournament / lineage
-//   #/D/run                               → Run
-//   #/D/bench                             → Bench
+//   #/D/run                               → Run / per-board scoring drill-down
+//   #/D/run/<gen>/<entry>                 → one entry's run detail (depth 3)
+//   #/D/bench                             → Bench (board trellis)
 //
 // parseRoute() turns the location hash into a `{ view, params }` record;
 // it tolerates a missing / foreign hash (returns the Environment route)
 // so a deep-link or a stale hash never lands on a blank screen.
 
-export const VIEWS = ['environment', 'epoch', 'experiment', 'tournament', 'run', 'bench'];
+export const VIEWS = ['environment', 'epoch', 'lifecycle', 'experiment', 'tournament', 'run', 'bench'];
 
 export function parseRoute(hash) {
   const raw = String(hash || '').replace(/^#/, '');
@@ -24,9 +27,10 @@ export function parseRoute(hash) {
   const head = parts[0] || 'environment';
   switch (head) {
     case 'epoch': return { view: 'epoch', params: {} };
+    case 'lifecycle': return { view: 'lifecycle', params: { gen: dec(parts[1]) } };
     case 'experiment': return { view: 'experiment', params: { gen: dec(parts[1]) } };
     case 'tournament': return { view: 'tournament', params: {} };
-    case 'run': return { view: 'run', params: { entry: dec(parts[1]) } };
+    case 'run': return { view: 'run', params: { gen: dec(parts[1]), entry: dec(parts[2]) } };
     case 'bench': return { view: 'bench', params: {} };
     case 'environment': case '': return { view: 'environment', params: {} };
     default: return { view: 'environment', params: {} };
@@ -37,9 +41,10 @@ export function href(view, params) {
   const p = params || {};
   switch (view) {
     case 'epoch': return '#/D/epoch';
+    case 'lifecycle': return p.gen ? `#/D/lifecycle/${enc(p.gen)}` : '#/D/lifecycle';
     case 'experiment': return `#/D/experiment/${enc(p.gen)}`;
     case 'tournament': return '#/D/tournament';
-    case 'run': return p.entry ? `#/D/run/${enc(p.entry)}` : '#/D/run';
+    case 'run': return (p.gen && p.entry) ? `#/D/run/${enc(p.gen)}/${enc(p.entry)}` : '#/D/run';
     case 'bench': return '#/D/bench';
     default: return '#/D/';
   }
