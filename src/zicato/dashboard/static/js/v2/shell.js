@@ -96,6 +96,48 @@ function buildThemeSwitcher() {
   ]);
 }
 
+// ---------------------------------------------------------------------------
+// Navigation anchors. A plain `<a href="#/v2/...">` is a real link (so
+// middle-click / open-in-new-tab / "copy link" all work), but as a SPA
+// "home" it has a sharp edge: clicking an anchor whose target equals the
+// CURRENT hash fires NO `hashchange`, so the view never re-resolves — the
+// brand looks dead when you are already on (or returning to) Overview.
+//
+// `navAnchor` keeps the href AND routes the click through `v2Router.go()`,
+// which re-`resolve()`s on a same-hash click and otherwise sets the hash.
+// That makes the brand + breadcrumb ancestors a DEPENDABLE home from every
+// view (including the Bench), independent of whether the browser bothers
+// to fire `hashchange`. We preventDefault only for a plain left click so
+// modified clicks (new tab / window) still get the browser's native href.
+function navOnClick(navigate) {
+  return (ev) => {
+    if (ev && (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey
+      || (ev.button != null && ev.button !== 0))) {
+      return; // let the browser honor the href (new tab / window / etc.)
+    }
+    if (ev && ev.preventDefault) ev.preventDefault();
+    navigate();
+  };
+}
+
+function navAnchor(props, children, view, ...segs) {
+  return el('a', {
+    ...props,
+    href: v2Href(view, ...segs),
+    onclick: navOnClick(() => v2Router.go(view, ...segs)),
+  }, children);
+}
+
+// A nav anchor for a breadcrumb crumb: it already knows its href + the
+// (view, …segs) needed to drive the router on a same-hash click.
+function crumbAnchor(props, children, href, view, segs) {
+  return el('a', {
+    ...props,
+    href,
+    onclick: navOnClick(() => v2Router.go(view, ...(segs || []))),
+  }, children);
+}
+
 // View module registry. The foundation ships the frame; later waves
 // register real renderers here. `fn(host, route)` owns the host's body.
 const _views = new Map();
@@ -180,9 +222,14 @@ function buildFrame(root) {
 
   // Head: brand · mode indicator · breadcrumb · [live→Bench] · theme.
   const head = el('div', { class: 'v2-shell-head' });
-  head.appendChild(el('a', {
-    class: 'v2-brand', href: v2Href('overview'), 'aria-label': 'zicato — overview',
-  }, ['zicato']));
+  // The brand is the dependable "home" from EVERYWHERE — it always routes
+  // to Overview, even when the current hash already is Overview (a plain
+  // anchor would no-op there). navAnchor drives the click through the
+  // router so the view re-resolves regardless.
+  head.appendChild(navAnchor(
+    { class: 'v2-brand', 'aria-label': 'zicato — overview' },
+    ['zicato'], 'overview',
+  ));
   const mode = el('span', { class: 'v2-mode', 'data-mode': 'notebook', id: 'v2-mode' }, [
     el('span', { class: 'v2-mode-dot', 'aria-hidden': 'true' }),
     el('span', { class: 'v2-mode-label', id: 'v2-mode-label' }, ['Notebook']),
@@ -270,7 +317,11 @@ function renderCrumbs(route) {
         class: 'v2-crumb', 'aria-current': 'page',
       }, [c.label]));
     } else {
-      host.appendChild(el('a', { class: 'v2-crumb', href: c.href }, [c.label]));
+      // Ancestor crumbs (the root "Overview" crumb included) route through
+      // the router so they are a dependable jump even on a same-hash click.
+      host.appendChild(crumbAnchor(
+        { class: 'v2-crumb' }, [c.label], c.href, c.view, c.segs,
+      ));
     }
   });
 }

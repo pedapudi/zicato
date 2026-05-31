@@ -49,6 +49,17 @@ const _judgesCache = new Map();
 const _broken = new Map();       // key -> { kind, reason } for a failed fetch
 const _pending = new Set();
 
+// Deep-link hydration guard. A cold deep-link to `#/v2/run/{entry}/{gen}`
+// can land before the environment poll has populated state.lineage /
+// state.epochDef — so the focused generation (and thus its CHAMPION
+// parent) is unresolvable, and the champion column would render blank.
+// We fetch the lineage (and the epoch contract) ONCE, lazily, to hydrate
+// those edges, then repaint. Mirrors epoch.js's ensure* discipline:
+// in-flight is tracked so we never spin, and a failure is swallowed (the
+// honest stateBlock fallbacks already cover a genuinely absent side).
+const _lineageLoading = { v: false };
+const _epochDefLoading = { v: false };
+
 // The host the active route is mounted into — a fetch-completion
 // callback re-renders THIS host so data lands on the next tick.
 let _host = null;
@@ -67,6 +78,8 @@ export function resetRunView() {
   _judgesCache.clear();
   _broken.clear();
   _pending.clear();
+  _lineageLoading.v = false;
+  _epochDefLoading.v = false;
   _host = null;
   _route = null;
 }
@@ -108,22 +121,75 @@ export function resolveEpochId(genId) {
 // view then renders a single column honestly.
 export function resolveChampionId(genId) {
   if (!genId) return null;
+  // Most-authoritative first: the epoch contract's experiments record.
   const def = state.epochDef;
   if (def && Array.isArray(def.experiments)) {
     for (const exp of def.experiments) {
       if (exp && exp.generation_id === genId) {
         const p = exp.parent_generation_id;
         if (typeof p === 'string' && p.length > 0) return p;
-        return null;
+        // The contract carries this gen but no parent edge. Do NOT
+        // short-circuit to null — the epochDef is only the CURRENT epoch
+        // and its experiment.json may not have recorded the parent yet.
+        // The lineage (below) spans every epoch and is the durable source
+        // of the parent edge, so fall through to it. (The seed legitimately
+        // has no parent, and the lineage will agree by also yielding null.)
+        break;
       }
     }
   }
+  // The lineage record — built across ALL epochs with parent_generation_id
+  // (falling back to a legacy parent_id). This is what makes the champion
+  // resolvable for a deep-linked run whose generation is not in the
+  // current epoch's contract.
   const g = genRecord(genId);
   if (g) {
     const p = g.parent_generation_id != null ? g.parent_generation_id : g.parent_id;
     if (typeof p === 'string' && p.length > 0) return p;
   }
   return null;
+}
+
+// Is the focused generation present in the hydrated lineage? When it is
+// NOT, a deep-link landed before the snapshot — we hydrate the lineage so
+// the champion (parent) edge becomes resolvable.
+function genInLineage(genId) {
+  return genRecord(genId) != null;
+}
+
+// Lazily hydrate state.lineage from /api/lineage on a cold deep-link, then
+// repaint so the champion column resolves. Idempotent + single-flight; a
+// failure is swallowed (the honest stateBlock fallbacks cover an absent
+// side). Mirrors epoch.js's ensure* pattern.
+function ensureLineage() {
+  if (_lineageLoading.v) return;
+  _lineageLoading.v = true;
+  fetchJson('/api/lineage')
+    .then((data) => {
+      if (data && Array.isArray(data.generations)) {
+        const lin = state.lineage && typeof state.lineage === 'object'
+          ? state.lineage : {};
+        state.lineage = { ...lin, generations: data.generations };
+      }
+    })
+    .catch(() => { /* honest fallback already covers an absent side */ })
+    .finally(() => { repaint(); });
+}
+
+// Lazily hydrate state.epochDef from /api/epoch — the contract's
+// experiments record is the most-authoritative champion source. Same
+// single-flight discipline as ensureLineage().
+function ensureEpochDef() {
+  if (_epochDefLoading.v) return;
+  _epochDefLoading.v = true;
+  fetchJson('/api/epoch')
+    .then((data) => {
+      if (data && typeof data === 'object' && Array.isArray(data.experiments)) {
+        state.epochDef = data;
+      }
+    })
+    .catch(() => { /* honest fallback already covers an absent side */ })
+    .finally(() => { repaint(); });
 }
 
 // A live active-run record for this entry, when a run is in flight.
@@ -605,6 +671,17 @@ export function renderRun(host, route) {
       detail: 'Open a run from the Experiment view or a tournament cell.',
     }));
     return;
+  }
+
+  // Deep-link hydration: if the focused generation is not yet in the
+  // lineage, a deep-link landed before the snapshot — pull the lineage so
+  // the champion (parent) edge resolves. We also pull the epoch contract
+  // when its experiments record is absent (it carries the authoritative
+  // parent_generation_id). Both are single-flight + repaint on completion.
+  if (!genInLineage(genId)) ensureLineage();
+  if (!(state.epochDef && Array.isArray(state.epochDef.experiments)
+        && state.epochDef.experiments.length > 0)) {
+    ensureEpochDef();
   }
 
   const epochId = resolveEpochId(genId);

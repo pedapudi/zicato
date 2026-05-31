@@ -96,12 +96,19 @@ export const v2Router = {
     return _current;
   },
   current() { return _current; },
-  // Programmatic navigation. Setting location.hash fires `hashchange`,
-  // which calls resolve() — so go() never double-emits.
+  // Programmatic navigation. We set the hash (so the URL is correct +
+  // deep-linkable) AND call resolve() unconditionally. resolve() is
+  // idempotent — it re-parses the (now-updated) hash and re-emits — so
+  // navigation NEVER depends on the browser actually firing `hashchange`.
+  // This is what makes the brand / breadcrumb a dependable home even on a
+  // same-hash click (where no hashchange fires) and in any environment
+  // whose hash assignment is silent. The hashchange listener may also
+  // fire and resolve again; the render layer is debounced + digest-gated,
+  // so a redundant resolve is a no-op paint.
   go(view, ...segs) {
     const next = v2Href(view, ...segs);
-    if (window.location.hash === next) this.resolve();
-    else window.location.hash = next;
+    if (window.location.hash !== next) window.location.hash = next;
+    this.resolve();
   },
   // The mode (`bench` | `notebook`) for the current view.
   mode() { return V2_MODE[_current.view] || 'notebook'; },
@@ -143,6 +150,10 @@ export function crumbTrail(route) {
     view: v,
     label: label || V2_VIEW_LABELS[v] || v,
     href: v2Href(v, ...segs),
+    // The raw segments (sans empties) so a renderer can drive the router
+    // directly — a same-hash crumb click must still re-resolve, which a
+    // plain href cannot do (no hashchange fires).
+    segs: segs.filter((s) => s != null && s !== ''),
     current: !!current,
   });
 

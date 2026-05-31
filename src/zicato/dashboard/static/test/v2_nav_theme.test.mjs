@@ -13,7 +13,7 @@ import { installDom, test, run, assert, assertEqual, makeEvent } from './harness
 const document = installDom();
 
 const {
-  parseV2Hash, v2Href, V2_VIEWS, crumbTrail, V2_VIEW_LABELS,
+  parseV2Hash, v2Href, V2_VIEWS, crumbTrail, V2_VIEW_LABELS, v2Router,
 } = await import('../js/v2/router.js');
 const shell = await import('../js/v2/shell.js');
 const { state } = await import('../js/core/state.js');
@@ -269,6 +269,105 @@ test('nav: the live→Bench affordance hides itself when already on the Bench', 
   const go = byId(root, 'v2-live-go');
   assertEqual(go.getAttribute('hidden'), 'hidden',
     'on the Bench the affordance is a no-op self-link, so it hides');
+});
+
+// ===========================================================================
+// The brand is a dependable "home" from EVERYWHERE (the broken-nav fix)
+// ===========================================================================
+
+function brandAnchor(root) {
+  return byClass(root, 'v2-brand')[0] || null;
+}
+
+test('nav: the brand is an anchor whose href is the Overview route', () => {
+  installV2Root();
+  resetState();
+  window.location.hash = '#/v2/bench';
+  renderShell(parseV2Hash('#/v2/bench'));
+  const root = document.getElementById('v2-root');
+  const brand = brandAnchor(root);
+  assert(brand != null, 'the chrome must carry a "zicato" brand element');
+  assertEqual(brand.localName, 'a', 'the brand must be a real anchor (middle-click / new-tab)');
+  assertEqual(brand.getAttribute('href'), v2Href('overview'),
+    'the brand href must always point at Overview');
+});
+
+test('nav: clicking the brand FROM THE BENCH returns to Overview', () => {
+  installV2Root();
+  resetState();
+  // Start on the Bench.
+  window.location.hash = '#/v2/bench';
+  v2Router.resolve();
+  renderShell(v2Router.current());
+  assertEqual(v2Router.current().view, 'bench', 'precondition: we are on the Bench');
+
+  const root = document.getElementById('v2-root');
+  const brand = brandAnchor(root);
+  // A plain left click — the SPA must intercept + route home.
+  brand.dispatchEvent(makeEvent('click', { button: 0 }));
+
+  assertEqual(v2Router.current().view, 'overview',
+    'clicking the brand from the Bench must resolve to Overview');
+  assertEqual(window.location.hash, v2Href('overview'),
+    'the URL must reflect the Overview route');
+});
+
+test('nav: clicking the brand WHILE ALREADY ON Overview still re-resolves home', () => {
+  installV2Root();
+  resetState();
+  // Already on Overview — a plain anchor would fire no hashchange and the
+  // brand would look dead. The router must still re-resolve.
+  window.location.hash = '#/v2/overview';
+  v2Router.resolve();
+  renderShell(v2Router.current());
+
+  let resolved = 0;
+  const root = document.getElementById('v2-root');
+  const brand = brandAnchor(root);
+  // Spy: a click must drive resolve() even though the hash does not change.
+  const origResolve = v2Router.resolve.bind(v2Router);
+  v2Router.resolve = () => { resolved += 1; return origResolve(); };
+  try {
+    brand.dispatchEvent(makeEvent('click', { button: 0 }));
+  } finally {
+    v2Router.resolve = origResolve;
+  }
+  assert(resolved >= 1, 'a same-hash brand click must still re-resolve the route');
+  assertEqual(v2Router.current().view, 'overview', 'we remain on (return to) Overview');
+});
+
+test('nav: a modified brand click is left to the browser (new tab)', () => {
+  installV2Root();
+  resetState();
+  window.location.hash = '#/v2/bench';
+  v2Router.resolve();
+  renderShell(v2Router.current());
+  const root = document.getElementById('v2-root');
+  const brand = brandAnchor(root);
+  // Cmd/Ctrl-click: the SPA must NOT preventDefault — the browser opens
+  // the href in a new tab and our current view stays on the Bench.
+  const ev = makeEvent('click', { button: 0, metaKey: true });
+  brand.dispatchEvent(ev);
+  assert(!ev._defaultPrevented, 'a modified click must not be hijacked');
+  assertEqual(v2Router.current().view, 'bench',
+    'a modified click leaves the current view to the browser');
+});
+
+test('nav: the breadcrumb root crumb ("Overview") navigates home from the Bench', () => {
+  installV2Root();
+  resetState();
+  window.location.hash = '#/v2/bench';
+  v2Router.resolve();
+  renderShell(v2Router.current());
+  const root = document.getElementById('v2-root');
+  const crumbsHost = byId(root, 'v2-crumbs');
+  // The first crumb is the Overview root, rendered as an anchor (ancestor).
+  const rootCrumb = byClass(crumbsHost, 'v2-crumb').find((c) => c.localName === 'a');
+  assert(rootCrumb != null, 'the Overview root crumb must be a link from the Bench');
+  assertEqual(rootCrumb.getAttribute('href'), v2Href('overview'));
+  rootCrumb.dispatchEvent(makeEvent('click', { button: 0 }));
+  assertEqual(v2Router.current().view, 'overview',
+    'clicking the Overview crumb must return home');
 });
 
 await run();

@@ -178,6 +178,42 @@ test('Run: resolves epoch + champion from the lineage / epoch contract', () => {
 // --------------------------------------------------------------------------
 // Under-specified route
 // --------------------------------------------------------------------------
+test('Run: champion falls back to the lineage parent when the contract omits it', () => {
+  // The current epoch contract carries the focused gen but with NO parent
+  // edge recorded yet (a fresh experiment.json). The lineage — which
+  // spans every epoch — has the real parent. resolveChampionId must NOT
+  // short-circuit on the contract; it must fall through to the lineage.
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', epoch_id: 'e0', parent_generation_id: null },
+      { generation_id: 'v1', epoch_id: 'e0', parent_generation_id: 'v0' },
+    ],
+    experiments: [],
+  };
+  state.epochDef = {
+    epoch_id: 'e0',
+    // The contract knows v1 but has not recorded its parent edge.
+    experiments: [{ generation_id: 'v1', parent_generation_id: null }],
+  };
+  state.epoch = { id: 'e0' };
+  assert(runView.resolveChampionId('v1') === 'v0',
+    'the champion must fall through to the lineage parent (v0), not resolve to null');
+});
+
+test('Run: champion resolves via the legacy parent_id lineage edge', () => {
+  state.lineage = {
+    generations: [
+      { generation_id: 'v0', epoch_id: 'e0', parent_id: null },
+      { generation_id: 'v1', epoch_id: 'e0', parent_id: 'v0' },
+    ],
+    experiments: [],
+  };
+  state.epochDef = null;
+  state.epoch = { id: 'e0' };
+  assert(runView.resolveChampionId('v1') === 'v0',
+    'a legacy parent_id edge must still resolve the champion');
+});
+
 test('Run: a route without a generation renders an honest not-yet, not a blank', () => {
   seedLineage();
   runView.resetRunView();
@@ -316,6 +352,96 @@ test('Run: a completed run with zero turns shows the honest fallback, not a blan
     assert(host.textContent.includes('This run produced no transcript turns.'),
       'zero-turn fallback headline present');
     assert(host.textContent.includes('run · r-v2'), 'the run_id fact is shown, not a blank');
+  } finally { restore(); runView.resetRunView(); }
+});
+
+test('Run: a cold deep-link hydrates the lineage so the CHAMPION column populates', async () => {
+  // The picky_stakeholder repro: a deep-link to #/v2/run/<entry>/v1 lands
+  // BEFORE the environment snapshot — state.lineage is empty, so the
+  // champion (v0) cannot be resolved from in-memory state and its column
+  // would be blank. The view must ensure-load /api/lineage (mirroring
+  // epoch.js), recover the v1→v0 parent edge, fetch the champion (v0)
+  // transcript, and render BOTH columns populated.
+  state.lineage = { generations: [], experiments: [] };
+  state.epochDef = null;
+  state.epoch = { id: 'e0' };
+  state.activeRuns = [];
+  state.activeTournament = null;
+  state.heartbeat = null;
+  runView.resetRunView();
+
+  const PICKY = {
+    v0: {
+      run_id: 'r-v0', event_count: 2, complete: true,
+      turns: [
+        { seq: 1, ts: '2026-05-30T00:00:01Z', agent: '', role: 'user',
+          kind: 'run_started', text: 'Brief the picky stakeholder.',
+          tool_calls: [], tool_results: [], run_index: 1 },
+        { seq: 2, ts: '2026-05-30T00:00:02Z', agent: 'coordinator', role: 'agent',
+          kind: 'task_completed', text: 'champion v0 full transcript content',
+          tool_calls: [], tool_results: [], run_index: 1 },
+      ],
+      annotations: [],
+    },
+    v1: {
+      run_id: 'r-v1', event_count: 2, complete: true,
+      turns: [
+        { seq: 1, ts: '2026-05-30T00:00:01Z', agent: '', role: 'user',
+          kind: 'run_started', text: 'Brief the picky stakeholder.',
+          tool_calls: [], tool_results: [], run_index: 1 },
+        { seq: 2, ts: '2026-05-30T00:00:03Z', agent: 'coordinator', role: 'agent',
+          kind: 'task_completed', text: 'challenger v1 transcript content',
+          tool_calls: [], tool_results: [], run_index: 1 },
+      ],
+      annotations: [],
+    },
+  };
+  const host = makeHost();
+  const restore = mockFetch((url) => {
+    if (url.endsWith('/api/lineage')) {
+      return { generations: [
+        { generation_id: 'v0', epoch_id: 'e0', parent_generation_id: null },
+        { generation_id: 'v1', epoch_id: 'e0', parent_generation_id: 'v0' },
+      ] };
+    }
+    if (url.endsWith('/api/epoch')) {
+      return { epoch_id: 'e0', experiments: [
+        { generation_id: 'v0', parent_generation_id: null },
+        { generation_id: 'v1', parent_generation_id: 'v0' },
+      ] };
+    }
+    const m = url.match(/\/run\/e0\/([^/]+)\/picky_stakeholder_emulated\/transcript/);
+    if (m) {
+      const t = PICKY[m[1]];
+      return t
+        ? { epoch_id: 'e0', generation_id: m[1], entry_id: 'picky_stakeholder_emulated', ...t }
+        : { epoch_id: 'e0', generation_id: m[1], entry_id: 'picky_stakeholder_emulated',
+            run_id: null, turns: [], annotations: [], event_count: 0, complete: false };
+    }
+    if (url.includes('/header')) {
+      return { epoch_id: 'e0', generation_id: 'v1', entry_id: 'picky_stakeholder_emulated',
+        drift_loss: 0.5, pass_fail: true, run_id: 'r-v1' };
+    }
+    return {};
+  });
+  try {
+    // Several settle passes: lineage + epoch hydrate, then the transcript
+    // fetches land, then the columns repaint.
+    await settle(host, route('picky_stakeholder_emulated', 'v1'));
+    await new Promise((res) => setTimeout(res, 0));
+    runView.renderRun(host, route('picky_stakeholder_emulated', 'v1'));
+    await new Promise((res) => setTimeout(res, 0));
+    runView.renderRun(host, route('picky_stakeholder_emulated', 'v1'));
+
+    assert(runView.resolveChampionId('v1') === 'v0',
+      'after hydration the champion (v0) is resolvable');
+    assert(classCount(host, 'v2-run-col') === 2,
+      'both champion + challenger columns render after a cold deep-link');
+    const txt = host.textContent;
+    assert(txt.includes('champion v0 full transcript content'),
+      'the CHAMPION (v0) dialogue must populate — not blank');
+    assert(txt.includes('challenger v1 transcript content'),
+      'the challenger (v1) dialogue must populate too');
   } finally { restore(); runView.resetRunView(); }
 });
 
