@@ -238,4 +238,4 @@ test('cachedJson caches failures as null and retries after invalidate', async ()
   assert(retried && retried.ok === true, 'invalidate allows a retry');
 });
 
-run();
+await run();

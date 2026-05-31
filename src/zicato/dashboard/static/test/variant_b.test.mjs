@@ -342,4 +342,4 @@ test('re-render safe: a second shell paint does not throw or wipe the page', () 
   assert(pageHost().children.length >= before, 'page stays populated across re-renders');
 });
 
-run();
+await run();
