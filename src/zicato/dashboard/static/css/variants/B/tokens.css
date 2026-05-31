@@ -1,0 +1,125 @@
+/* variants/B/tokens.css — the Editorial Lab Notebook design tokens.
+ *
+ * Variant B is light-and-airy first ("Paper"), with an "Ink" dark theme and
+ * a warm "Sepia" reading theme. Every token lives under the variant root
+ * (`#variant-root[data-vb-theme=...]`) so nothing here can touch v1 / v2 /
+ * the other explorations. The semantic mapping (improve / regress /
+ * caution) holds across all three themes and is always paired with a glyph
+ * in the markup for accessibility.
+ *
+ * The aesthetic reference is a research magazine / Distill.pub / Stripe
+ * docs: a serif display face for headlines + pull-quotes, a clean sans for
+ * body and UI, a mono for ids and code, generous measure and leading. */
+
+#variant-root {
+  /* Type families — system stacks so there is no web-font fetch, but the
+     serif gives the magazine voice and the sans the calm body. */
+  --vb-serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua",
+    Georgia, "Times New Roman", serif;
+  --vb-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --vb-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+    Menlo, Consolas, monospace;
+
+  /* The measure (line length) and rhythm. */
+  --vb-measure: 38rem;
+  --vb-measure-wide: 54rem;
+  --vb-gap: 1.5rem;
+  --vb-gap-lg: 2.75rem;
+  --vb-radius: 10px;
+  --vb-radius-sm: 6px;
+
+  /* Motion. */
+  --vb-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* ---- Paper (default, light) -------------------------------------------- */
+#variant-root,
+#variant-root[data-vb-theme="paper"] {
+  --vb-bg: #fbfaf7;
+  --vb-bg-tint: #f3f1ea;
+  --vb-surface: #ffffff;
+  --vb-surface-2: #f7f5ef;
+  --vb-border: #e6e2d8;
+  --vb-border-strong: #d6d1c4;
+  --vb-ink: #21201c;
+  --vb-ink-soft: #4a473f;
+  --vb-ink-dim: #8a857a;
+  --vb-accent: #9a3412;        /* a warm editorial rust for links/marks */
+  --vb-accent-soft: #c2410c;
+
+  --vb-improve: #2f7d3a;
+  --vb-improve-bg: #e8f3e9;
+  --vb-regress: #b3392f;
+  --vb-regress-bg: #f6e7e5;
+  --vb-caution: #9a6b00;
+  --vb-caution-bg: #f6efdd;
+  --vb-neutral: #6b6658;
+  --vb-running: #1f6fb2;
+  --vb-running-bg: #e6f0f7;
+
+  --vb-shadow: 0 1px 2px rgba(33, 32, 28, 0.04), 0 8px 24px rgba(33, 32, 28, 0.05);
+}
+
+/* ---- Ink (dark) -------------------------------------------------------- */
+#variant-root[data-vb-theme="ink"] {
+  --vb-bg: #16151a;
+  --vb-bg-tint: #1d1c22;
+  --vb-surface: #201f26;
+  --vb-surface-2: #26252d;
+  --vb-border: #322f3a;
+  --vb-border-strong: #423e4d;
+  --vb-ink: #ece9f0;
+  --vb-ink-soft: #bcb8c6;
+  --vb-ink-dim: #847f90;
+  --vb-accent: #e8956a;
+  --vb-accent-soft: #f0a87f;
+
+  --vb-improve: #7cc98a;
+  --vb-improve-bg: #1c2b1f;
+  --vb-regress: #e58178;
+  --vb-regress-bg: #2c1d1d;
+  --vb-caution: #d8b15a;
+  --vb-caution-bg: #2a2417;
+  --vb-neutral: #9a94a6;
+  --vb-running: #76b8e8;
+  --vb-running-bg: #16242f;
+
+  --vb-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+/* ---- Sepia (warm reading) ---------------------------------------------- */
+#variant-root[data-vb-theme="sepia"] {
+  --vb-bg: #f4ecd8;
+  --vb-bg-tint: #ece2c9;
+  --vb-surface: #faf3e2;
+  --vb-surface-2: #f0e6cd;
+  --vb-border: #ddd0b0;
+  --vb-border-strong: #cbbb95;
+  --vb-ink: #3a3327;
+  --vb-ink-soft: #5c5340;
+  --vb-ink-dim: #8f8266;
+  --vb-accent: #92400e;
+  --vb-accent-soft: #b45309;
+
+  --vb-improve: #3f7a3a;
+  --vb-improve-bg: #e3ecd2;
+  --vb-regress: #a83a2c;
+  --vb-regress-bg: #efd9cf;
+  --vb-caution: #8a6300;
+  --vb-caution-bg: #efe1be;
+  --vb-neutral: #6f6650;
+  --vb-running: #2a6a96;
+  --vb-running-bg: #dde8ec;
+
+  --vb-shadow: 0 1px 2px rgba(58, 51, 39, 0.05), 0 8px 24px rgba(58, 51, 39, 0.07);
+}
+
+/* Semantic helper colors usable directly in markup (always glyph-backed). */
+#variant-root .vb-improve { color: var(--vb-improve); }
+#variant-root .vb-regress { color: var(--vb-regress); }
+#variant-root .vb-caution { color: var(--vb-caution); }
+#variant-root .vb-neutral { color: var(--vb-neutral); }
+#variant-root .vb-running { color: var(--vb-running); }
+#variant-root .vb-muted { color: var(--vb-ink-dim); }
+#variant-root .vb-mono { font-family: var(--vb-mono); font-size: 0.9em; }
