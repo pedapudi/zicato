@@ -1,25 +1,34 @@
-/* css/v2/experiment.css — layout-only CSS for the Experiment view.
+/* css/v2/experiment.css — layout + diff CSS for the Experiment view.
  *
- * DASHBOARD-V2 §4.4: ONE dense screen answering "was the bet right, and
- * why?". The v1 atoms reused here (gateLadder / divergingBar /
- * scalarWaterfall / verdictGlyph) carry their OWN visual CSS in
- * css/decision.css — this file adds ONLY the screen layout + the few
- * Experiment-specific affordances (the header, the alignment verdict,
- * the pass→fail flip flag, the patch cards). It speaks the --v2-* token
- * language so it sits inside the v2 shell's design system.
+ * DASHBOARD-V2 §3 (graphical & interactive) + §4.4. The Experiment view
+ * is a CAUSAL NARRATIVE in three linked panels — a code change → a
+ * behavioral change → a verdict. This file owns:
+ *   * the three-panel layout + the numbered panel chrome,
+ *   * the CAUSE panel's themed red/green diff viewer (the centerpiece,
+ *     restored), token-colored so it works across all three themes,
+ *   * the EFFECT panel's drift-KIND composition bars,
+ *   * the cross-panel HOVER highlight wash (.v2-exp-lit),
+ *   * the VERDICT panel's two-column gate/waterfall layout,
+ *   * the bet / alignment / flip affordances.
  *
- * Loaded on demand by js/v2/views/experiment.js (the view module injects
- * its own <link>), so index.html is not edited. */
+ * The reused v1 atoms (gateLadder / divergingBar / scalarWaterfall /
+ * verdictGlyph) carry their OWN visual CSS in css/decision.css; this file
+ * adds ONLY screen-level layout + the Experiment-specific components, and
+ * it speaks the --v2-* token language exclusively (every color is a
+ * --v2-* token, never a literal — a theme swap restyles the whole view).
+ *
+ * index.html links this file; the view module also self-injects it as a
+ * belt-and-braces no-op. */
 
-/* ---- the screen ---------------------------------------------------- */
+/* ==== the screen ===================================================== */
 .v2-exp {
   display: flex;
   flex-direction: column;
-  gap: var(--v2-sp-5);
-  max-width: 1080px;
+  gap: var(--v2-sp-6);
+  max-width: 1100px;
 }
 
-/* ---- 1. header ----------------------------------------------------- */
+/* ==== header ========================================================= */
 .v2-exp-head {
   display: flex;
   align-items: flex-start;
@@ -48,25 +57,60 @@
 .v2-exp-verdict { flex: 0 0 auto; font-size: var(--v2-fs-18); }
 .v2-exp-verdict .vglyph-mark { font-size: var(--v2-fs-28); }
 
-/* ---- titled sections ----------------------------------------------- */
-.v2-exp-section { display: flex; flex-direction: column; gap: var(--v2-sp-2); }
-.v2-exp-section-head {
+/* ==== the numbered panels ============================================ */
+.v2-exp-panel {
   display: flex;
-  align-items: baseline;
-  gap: var(--v2-sp-2);
+  flex-direction: column;
+  gap: var(--v2-sp-3);
+  padding: var(--v2-sp-4);
+  border: 1px solid var(--v2-line);
+  border-radius: var(--v2-radius-md);
+  background: var(--v2-surface);
 }
-.v2-exp-section-title {
+.v2-exp-panel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--v2-sp-3);
+}
+.v2-exp-panel-num {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7em;
+  height: 1.7em;
+  border-radius: 999px;
+  background: var(--v2-surface-2);
+  border: 1px solid var(--v2-line-strong);
+  color: var(--v2-ink-2);
+  font-family: var(--v2-face-data);
+  font-size: var(--v2-fs-14);
+  font-weight: 600;
+}
+.v2-exp-panel-title {
   margin: 0;
-  font-size: var(--v2-fs-13);
+  font-size: var(--v2-fs-16);
+  color: var(--v2-ink);
+}
+.v2-exp-panel-caption {
+  margin: var(--v2-sp-0\.5) 0 0;
+  font-size: var(--v2-fs-12);
+  color: var(--v2-ink-muted);
+}
+.v2-exp-panel-body { display: flex; flex-direction: column; gap: var(--v2-sp-4); }
+
+/* a sub-block within a panel */
+.v2-exp-sub { display: flex; flex-direction: column; gap: var(--v2-sp-2); }
+.v2-exp-sub-head { display: flex; align-items: baseline; gap: var(--v2-sp-2); }
+.v2-exp-sub-title {
+  margin: 0;
+  font-size: var(--v2-fs-12);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--v2-ink-2);
 }
-.v2-exp-section-hint {
-  font-size: var(--v2-fs-12);
-  color: var(--v2-ink-muted);
-}
-.v2-exp-section-body { display: flex; flex-direction: column; gap: var(--v2-sp-3); }
+.v2-exp-sub-hint { font-size: var(--v2-fs-11); color: var(--v2-ink-muted); }
+.v2-exp-sub-body { display: flex; flex-direction: column; gap: var(--v2-sp-2); }
 
 .v2-exp-subh {
   margin: 0 0 var(--v2-sp-1);
@@ -74,8 +118,131 @@
   color: var(--v2-ink-muted);
   font-weight: 600;
 }
+.v2-exp-empty-prose { margin: 0; color: var(--v2-ink-muted); font-size: var(--v2-fs-13); font-style: italic; }
 
-/* ---- 2. the bet + drift figure ------------------------------------- */
+/* ==== PANEL 1 — the diff viewer (CAUSE) ============================== */
+.v2-exp-cause { display: flex; flex-direction: column; gap: var(--v2-sp-3); }
+
+.v2-diff-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--v2-sp-2);
+  padding: var(--v2-sp-3);
+  border: 1px solid var(--v2-line);
+  border-radius: var(--v2-radius-md);
+  background: var(--v2-surface-2);
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.v2-diff-card:hover,
+.v2-diff-card:focus-visible {
+  border-color: var(--v2-line-strong);
+  outline: none;
+}
+/* the cross-panel highlight wash — a hovered/pinned cause lights here */
+.v2-diff-card.v2-exp-lit {
+  border-color: var(--v2-signal-caution);
+  box-shadow: 0 0 0 1px var(--v2-signal-caution) inset;
+}
+
+.v2-diff-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--v2-sp-2);
+}
+.v2-diff-mid {
+  font-size: var(--v2-fs-13);
+  font-weight: 600;
+  color: var(--v2-ink);
+}
+.v2-diff-op {
+  font-size: var(--v2-fs-11);
+  padding: var(--v2-sp-0\.5) var(--v2-sp-1);
+  border-radius: var(--v2-radius-sm);
+  background: var(--v2-surface);
+  border: 1px solid var(--v2-line);
+  color: var(--v2-ink-muted);
+}
+.v2-diff-status-added { color: var(--v2-signal-improve-fg); }
+.v2-diff-status-removed { color: var(--v2-signal-regress-fg); }
+.v2-diff-status-modified { color: var(--v2-signal-caution-fg); }
+.v2-diff-path { font-size: var(--v2-fs-12); color: var(--v2-ink-2); }
+.v2-diff-stat { margin-left: auto; font-size: var(--v2-fs-12); }
+.v2-diff-stat-add { color: var(--v2-signal-improve-fg); }
+.v2-diff-stat-del { color: var(--v2-signal-regress-fg); }
+
+.v2-diff-rationale {
+  margin: 0;
+  font-size: var(--v2-fs-13);
+  line-height: var(--v2-lh-snug);
+  color: var(--v2-ink-2);
+}
+.v2-diff-rationale-lead { font-weight: 600; color: var(--v2-ink); }
+.v2-diff-note { margin: 0; font-size: var(--v2-fs-11); color: var(--v2-ink-muted); font-style: italic; }
+
+/* a numeric / enum set — the new value as a chip, no line diff */
+.v2-diff-scalarset {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--v2-sp-2);
+  align-self: flex-start;
+  padding: var(--v2-sp-1) var(--v2-sp-2);
+  border-radius: var(--v2-radius-sm);
+  background: var(--v2-surface);
+  border: 1px solid var(--v2-line);
+}
+.v2-diff-scalarset-label {
+  font-size: var(--v2-fs-11);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--v2-ink-muted);
+}
+.v2-diff-scalarset-val { font-size: var(--v2-fs-14); color: var(--v2-ink); font-weight: 600; }
+
+/* the red/green line diff body */
+.v2-diff-body {
+  border: 1px solid var(--v2-line);
+  border-radius: var(--v2-radius-sm);
+  background: var(--v2-surface);
+  font-family: var(--v2-face-data);
+  font-size: var(--v2-fs-12);
+  line-height: var(--v2-lh-snug);
+  overflow: auto;
+}
+.v2-diff-body-scroll { max-height: 22rem; }
+.v2-diff-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  white-space: pre;
+  padding-right: var(--v2-sp-2);
+}
+.v2-diff-gutter {
+  flex: 0 0 auto;
+  width: 2.4em;
+  padding: 0 var(--v2-sp-1);
+  text-align: right;
+  color: var(--v2-ink-faint);
+  user-select: none;
+  border-right: 1px solid var(--v2-line);
+}
+.v2-diff-sign {
+  flex: 0 0 auto;
+  width: 1.4em;
+  text-align: center;
+  user-select: none;
+}
+.v2-diff-text { flex: 1 1 auto; min-width: 0; }
+.v2-diff-add { background: var(--v2-signal-improve-soft); }
+.v2-diff-add .v2-diff-sign,
+.v2-diff-add .v2-diff-text { color: var(--v2-signal-improve-fg); }
+.v2-diff-del { background: var(--v2-signal-regress-soft); }
+.v2-diff-del .v2-diff-sign,
+.v2-diff-del .v2-diff-text { color: var(--v2-signal-regress-fg); }
+.v2-diff-ctx .v2-diff-text { color: var(--v2-ink-2); }
+
+/* ==== PANEL 2 — drift movement (EFFECT) ============================= */
 .v2-exp-bet { display: flex; flex-direction: column; gap: var(--v2-sp-4); }
 .v2-exp-bet-prose { display: flex; flex-direction: column; gap: var(--v2-sp-1); }
 .v2-exp-core {
@@ -93,17 +260,13 @@
   color: var(--v2-ink-2);
 }
 .v2-exp-lead { font-weight: 600; color: var(--v2-ink); }
-.v2-exp-empty-prose { margin: 0; color: var(--v2-ink-muted); font-size: var(--v2-fs-13); font-style: italic; }
 
-/* predicted | actual, side by side; stack on narrow screens. */
 .v2-exp-driftcols {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--v2-sp-4);
 }
-@media (max-width: 720px) {
-  .v2-exp-driftcols { grid-template-columns: 1fr; }
-}
+@media (max-width: 720px) { .v2-exp-driftcols { grid-template-columns: 1fr; } }
 .v2-exp-driftcol { display: flex; flex-direction: column; gap: var(--v2-sp-1); min-width: 0; }
 .v2-exp-driftcol-h {
   font-size: var(--v2-fs-11);
@@ -151,18 +314,54 @@
 .v2-exp-chip-miss { color: var(--v2-signal-regress-fg); background: var(--v2-signal-regress-soft); border-color: transparent; }
 .v2-exp-chip-na { color: var(--v2-ink-muted); }
 
-/* ---- 3. gate ------------------------------------------------------- */
-.v2-exp-gate { display: flex; flex-direction: column; gap: var(--v2-sp-2); }
-.v2-exp-gate-reason {
-  display: flex;
+/* drift-KIND composition (the interactive bars) */
+.v2-driftcomp { display: flex; flex-direction: column; gap: var(--v2-sp-1); }
+.v2-driftcomp-row {
+  display: grid;
+  grid-template-columns: minmax(8em, 12em) 1fr 4.5em auto;
   align-items: center;
   gap: var(--v2-sp-2);
-  margin: 0;
-  font-size: var(--v2-fs-13);
+  padding: var(--v2-sp-0\.5) var(--v2-sp-1);
+  border-radius: var(--v2-radius-sm);
+  cursor: pointer;
+  transition: background-color 120ms ease;
 }
-.v2-exp-gate-reason-text { color: var(--v2-ink-2); }
+.v2-driftcomp-row:hover,
+.v2-driftcomp-row:focus-visible { background: var(--v2-surface-2); outline: none; }
+.v2-driftcomp-row.v2-exp-lit {
+  background: var(--v2-surface-2);
+  box-shadow: 0 0 0 1px var(--v2-signal-caution) inset;
+}
+.v2-driftcomp-kind { font-size: var(--v2-fs-12); color: var(--v2-ink); }
+.v2-driftcomp-track {
+  position: relative;
+  display: flex;
+  height: 0.85em;
+  min-width: 0;
+}
+.v2-driftcomp-axis {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--v2-line-strong);
+}
+.v2-driftcomp-half { display: flex; width: 50%; }
+.v2-driftcomp-left { justify-content: flex-end; }
+.v2-driftcomp-right { justify-content: flex-start; margin-left: 50%; }
+.v2-driftcomp-center { justify-content: center; margin-left: 25%; }
+.v2-driftcomp-fill { display: block; height: 100%; border-radius: 2px; }
+.v2-driftcomp-good { background: var(--v2-signal-improve); }
+.v2-driftcomp-bad { background: var(--v2-signal-regress); }
+.v2-driftcomp-flat { background: var(--v2-ink-faint); }
+.v2-driftcomp-val { font-size: var(--v2-fs-12); text-align: right; }
+.v2-driftcomp-val.v2-driftcomp-good { color: var(--v2-signal-improve-fg); }
+.v2-driftcomp-val.v2-driftcomp-bad { color: var(--v2-signal-regress-fg); }
+.v2-driftcomp-val.v2-driftcomp-flat { color: var(--v2-ink-muted); }
+.v2-driftcomp-counts { font-size: var(--v2-fs-11); color: var(--v2-ink-muted); white-space: nowrap; }
 
-/* ---- 5. per-entry flip flag --------------------------------------- */
+/* per-entry flip flag */
 .v2-exp-entrycell { display: inline-flex; align-items: center; gap: var(--v2-sp-2); }
 .v2-exp-flip {
   font-size: var(--v2-fs-11);
@@ -174,47 +373,23 @@
 .v2-exp-flip-regress { color: var(--v2-signal-regress-fg); background: var(--v2-signal-regress-soft); }
 .v2-exp-flip-recover { color: var(--v2-signal-improve-fg); background: var(--v2-signal-improve-soft); }
 
-/* ---- 6. per-judge driver ------------------------------------------- */
-.v2-exp-judges { display: flex; flex-direction: column; gap: var(--v2-sp-2); }
-.v2-exp-driver {
+/* a per-entry row washed by a cause hover */
+.v2-dt-row.v2-exp-lit > .v2-dt-td { background: var(--v2-surface-2); }
+
+/* ==== PANEL 3 — the gate (VERDICT) ================================== */
+.v2-exp-verdict-panel { display: flex; flex-direction: column; gap: var(--v2-sp-3); }
+.v2-exp-gate-reason {
   display: flex;
   align-items: center;
   gap: var(--v2-sp-2);
-  padding: var(--v2-sp-2) var(--v2-sp-3);
-  border-radius: var(--v2-radius-sm);
-  background: var(--v2-surface-2);
-}
-.v2-exp-driver-label {
-  font-size: var(--v2-fs-11);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--v2-ink-muted);
-}
-.v2-exp-driver-judge { font-size: var(--v2-fs-13); color: var(--v2-ink); font-weight: 600; }
-
-/* ---- 7. patches ---------------------------------------------------- */
-.v2-exp-patches { display: flex; flex-direction: column; gap: var(--v2-sp-3); }
-.v2-exp-patch {
-  display: flex;
-  flex-direction: column;
-  gap: var(--v2-sp-1);
-  padding: var(--v2-sp-3);
-  border: 1px solid var(--v2-line);
-  border-radius: var(--v2-radius-md);
-  background: var(--v2-surface);
-}
-.v2-exp-patch-head { display: flex; align-items: baseline; gap: var(--v2-sp-2); flex-wrap: wrap; }
-.v2-exp-patch-id { font-size: var(--v2-fs-12); color: var(--v2-ink-muted); }
-.v2-exp-patch-target { font-size: var(--v2-fs-13); color: var(--v2-ink); }
-.v2-exp-patch-summary { margin: 0; font-size: var(--v2-fs-13); color: var(--v2-ink-2); line-height: var(--v2-lh-snug); }
-.v2-exp-patch-diff {
   margin: 0;
-  padding: var(--v2-sp-2);
-  border-radius: var(--v2-radius-sm);
-  background: var(--v2-surface-2);
-  font-size: var(--v2-fs-12);
-  line-height: var(--v2-lh-snug);
-  overflow-x: auto;
-  white-space: pre;
-  color: var(--v2-ink-2);
+  font-size: var(--v2-fs-13);
 }
+.v2-exp-gate-reason-text { color: var(--v2-ink-2); }
+.v2-exp-verdict-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--v2-sp-5);
+}
+@media (max-width: 720px) { .v2-exp-verdict-cols { grid-template-columns: 1fr; } }
+.v2-exp-verdict-col { display: flex; flex-direction: column; gap: var(--v2-sp-1); min-width: 0; }
