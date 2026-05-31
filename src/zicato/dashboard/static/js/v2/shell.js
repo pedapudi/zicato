@@ -403,6 +403,15 @@ function renderView(route) {
   const viewKey = route.view + '|' + JSON.stringify(route.params || {});
   const registered = _views.get(route.view);
   if (registered) {
+    // CRITICAL: when the VIEW changes (not just params), clear the host
+    // first. Each registered view digest-gates its own repaint with
+    // `if (digest === last && host.firstChild) return` — if we navigate
+    // back to a view whose data is unchanged while the host still holds
+    // the PREVIOUS view's DOM, that guard wrongly skips the repaint and
+    // the old view stays on screen (the "nav does nothing" bug). A fresh
+    // host on a view switch forces the incoming view to paint.
+    const prevView = _lastViewKey == null ? null : String(_lastViewKey).split('|')[0];
+    if (prevView !== route.view) clearChildren(host);
     registered(host, route);
     _lastViewKey = viewKey;
     return;

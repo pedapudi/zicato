@@ -212,8 +212,8 @@ export function renderOverview(host, route) {
     class: 'v2-ov-hero', 'aria-label': 'Tournament slopegraph',
   }, [
     el('div', { class: 'v2-ov-hero-head' }, [
-      el('h1', { class: 'v2-ov-title' }, ['Are we climbing?']),
-      el('span', { class: 'v2-ov-hero-sub' }, ['tournament · loss descent · lower is better']),
+      el('h1', { class: 'v2-ov-title' }, ['Optimization trajectory']),
+      el('span', { class: 'v2-ov-hero-sub' }, ['champion vs challengers across rounds · loss descending · lower is better']),
       el('span', { class: 'v2-ov-delta', id: 'v2-ov-delta' }),
     ]),
     el('div', { class: 'v2-ov-hero-body', id: 'v2-ov-hero-body' }, [
