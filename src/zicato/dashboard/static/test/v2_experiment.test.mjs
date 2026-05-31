@@ -185,6 +185,7 @@ function allRoutes() {
   return {
     'drift-movements': DRIFT,
     'matchup-grid': GRID,
+    'per-entry': { entries: [{ entry_id: 'q3_metrics_outline', drift_loss: 71.0, pass_fail: 0 }, { entry_id: 'waffles_single', drift_loss: 60.5, pass_fail: 0 }] },
     '/patches': PATCHES,   // must precede '/diff' (substring) — both under /api/files
     '/diff': DIFF,
     '/gate': GATE,

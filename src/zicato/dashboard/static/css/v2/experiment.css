@@ -393,3 +393,9 @@
 }
 @media (max-width: 720px) { .v2-exp-verdict-cols { grid-template-columns: 1fr; } }
 .v2-exp-verdict-col { display: flex; flex-direction: column; gap: var(--v2-sp-1); min-width: 0; }
+
+/* Per-entry verdict glyphs (baseline board results + A/B). Token-colored,
+   redundant with the ✓/✗ glyph for a11y. */
+.v2-exp-pass { color: var(--v2-signal-improve); }
+.v2-exp-fail { color: var(--v2-signal-regress); }
+.v2-exp-none { color: var(--v2-ink-muted); }

@@ -502,6 +502,45 @@ function _flip(parentPass, childPass) {
   return null;
 }
 
+// The seed ran the full board too — it has no champion to compare against,
+// but its ABSOLUTE per-entry results ARE the baseline every later challenger
+// is measured against, so we show them (drift loss + pass/fail), not a Δ.
+function seedEntriesTable(perEntry, genId) {
+  const rows = Array.isArray(perEntry && perEntry.entries) ? perEntry.entries : [];
+  if (!rows.length) return null;
+  return dataTable({
+    ariaLabel: 'baseline per-entry board results',
+    rows,
+    rowKey: (r) => r.entry_id,
+    onRowClick: (r) => { if (r && r.entry_id != null) v2Router.go('run', r.entry_id, genId); },
+    columns: [
+      {
+        key: 'entry_id', header: 'entry', mono: true,
+        render: (r) => el('span', { class: 'v2-mono' }, [String(r.entry_id == null ? '' : r.entry_id)]),
+        sortValue: (r) => String(r.entry_id == null ? '' : r.entry_id),
+      },
+      {
+        key: 'drift_loss', header: 'drift loss', mono: true, align: 'right',
+        render: (r) => el('span', { class: 'v2-mono' },
+          [(typeof r.drift_loss === 'number' && isFinite(r.drift_loss)) ? r.drift_loss.toFixed(2) : '—']),
+        sortValue: (r) => (typeof r.drift_loss === 'number' ? r.drift_loss : 0),
+      },
+      {
+        key: 'pass_fail', header: 'verdict',
+        render: (r) => {
+          const p = r.pass_fail;
+          const pass = p === true || p === 1;
+          const fail = p === false || p === 0;
+          return el('span', {
+            class: 'v2-exp-' + (pass ? 'pass' : fail ? 'fail' : 'none'),
+          }, [pass ? '✓ pass' : fail ? '✗ fail' : '—']);
+        },
+        sortValue: (r) => ((r.pass_fail === true || r.pass_fail === 1) ? 1 : 0),
+      },
+    ],
+  });
+}
+
 function entriesTable(grid, genId, hl) {
   const rows = Array.isArray(grid && grid.entry_grid) ? grid.entry_grid : [];
   if (!rows.length) return null;
@@ -770,21 +809,29 @@ export function renderExperiment(host, route) {
     );
     body.appendChild(kinds.wrap);
 
-    // 2c. Per-entry A/B — the matchup grid. Seed: honest baseline panel.
-    const entries = subBlock('Per-entry A/B', 'challenger − champion drift · row → run');
-    if (seed) {
+    // 2c. Per-entry results. For a challenger: the A/B matchup grid
+    //     (challenger − champion drift). For the SEED: its own absolute
+    //     board results — the baseline every challenger is measured against
+    //     (it ran the full board; we show drift loss + pass/fail per entry).
+    const entries = subBlock(
+      seed ? 'Baseline board results' : 'Per-entry A/B',
+      seed ? 'the starting drift on each board entry · row → run' : 'challenger − champion drift · row → run');
+    if (seed && !epochId) {
       entries.body.appendChild(seedPanel());
     } else {
       asyncSection(
         entries.body,
         () => {
+          if (seed) {
+            return fetchJson(`/api/generation/${encodeURIComponent(epochId)}/${encodeURIComponent(genId)}/per-entry`);
+          }
           if (!epochId || championId == null) {
             return Promise.reject(new Error('no parent generation — per-entry A/B needs a champion'));
           }
           const url = `/api/matchup-grid/${encodeURIComponent(epochId)}/${encodeURIComponent(championId)}/${encodeURIComponent(genId)}`;
           return fetchJson(url);
         },
-        (grid) => entriesTable(grid, genId, hl),
+        (data) => (seed ? seedEntriesTable(data, genId) : entriesTable(data, genId, hl)),
         { runningLabel: 'Reading per-entry losses', emptyLabel: 'No per-entry losses recorded' },
       );
     }
