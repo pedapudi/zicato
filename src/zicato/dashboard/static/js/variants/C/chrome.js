@@ -16,7 +16,10 @@ import { parseIso, nowMs } from '../../core/format.js';
 const NAV = [
   { view: 'env', label: 'Environment', hint: 'the cross-epoch map' },
   { view: 'epoch', label: 'Epoch', hint: 'lineage + objective' },
+  { view: 'lifecycle', label: 'Lifecycle', hint: 'candidate lifecycle DAG' },
   { view: 'experiment', label: 'Experiment', hint: 'causal flow' },
+  { view: 'scoring', label: 'Scoring', hint: 'per-board Sankey' },
+  { view: 'styles', label: 'Match-ups', hint: 'tournament-style topologies' },
   { view: 'tournament', label: 'Tournament', hint: 'the gauntlet' },
   { view: 'run', label: 'Run', hint: 'one run' },
   { view: 'bench', label: 'Bench', hint: 'status' },
@@ -140,6 +143,12 @@ export function updateNavContext(chrome, ctx) {
     if (view === 'epoch' && ctx.epochId) item.setAttribute('href', href('epoch', { epochId: ctx.epochId }));
     else if (view === 'experiment' && ctx.epochId && ctx.genId) {
       item.setAttribute('href', href('experiment', { epochId: ctx.epochId, genId: ctx.genId }));
+    } else if (view === 'lifecycle' && ctx.epochId && ctx.genId) {
+      item.setAttribute('href', href('lifecycle', { epochId: ctx.epochId, genId: ctx.genId }));
+    } else if (view === 'scoring' && ctx.epochId && ctx.genId) {
+      item.setAttribute('href', href('scoring', { epochId: ctx.epochId, genId: ctx.genId }));
+    } else if (view === 'styles' && ctx.epochId) {
+      item.setAttribute('href', href('styles', { epochId: ctx.epochId }));
     } else if (view === 'tournament' && ctx.epochId) {
       item.setAttribute('href', href('tournament', { epochId: ctx.epochId }));
     } else if (view === 'run' && ctx.runId) {

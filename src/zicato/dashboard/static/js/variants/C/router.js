@@ -8,6 +8,9 @@
 //   #/C/env                                   environment (cross-epoch map)
 //   #/C/epoch/:epochId                        epoch (lineage + objective + brief)
 //   #/C/experiment/:epochId/:genId            experiment (causal Sankey)
+//   #/C/lifecycle/:epochId/:genId             candidate lifecycle DAG (theme 1+2)
+//   #/C/scoring/:epochId/:genId               per-board scoring Sankey (theme 3)
+//   #/C/styles/:epochId                       tournament-style topology switcher (theme 4)
 //   #/C/tournament/:epochId                   tournament (gauntlet bracket graph)
 //   #/C/run/:runId                            run detail
 //   #/C/bench                                 bench / status
@@ -31,6 +34,18 @@ export function parseRoute(hash) {
         view: 'experiment',
         params: { epochId: seg[1] ? dec(seg[1]) : null, genId: seg[2] ? dec(seg[2]) : null },
       };
+    case 'lifecycle':
+      return {
+        view: 'lifecycle',
+        params: { epochId: seg[1] ? dec(seg[1]) : null, genId: seg[2] ? dec(seg[2]) : null },
+      };
+    case 'scoring':
+      return {
+        view: 'scoring',
+        params: { epochId: seg[1] ? dec(seg[1]) : null, genId: seg[2] ? dec(seg[2]) : null },
+      };
+    case 'styles':
+      return { view: 'styles', params: { epochId: seg[1] ? dec(seg[1]) : null } };
     case 'tournament':
       return { view: 'tournament', params: { epochId: seg[1] ? dec(seg[1]) : null } };
     case 'run':
@@ -51,6 +66,12 @@ export function href(view, params = {}) {
       return `#/C/epoch/${enc(params.epochId || '')}`;
     case 'experiment':
       return `#/C/experiment/${enc(params.epochId || '')}/${enc(params.genId || '')}`;
+    case 'lifecycle':
+      return `#/C/lifecycle/${enc(params.epochId || '')}/${enc(params.genId || '')}`;
+    case 'scoring':
+      return `#/C/scoring/${enc(params.epochId || '')}/${enc(params.genId || '')}`;
+    case 'styles':
+      return `#/C/styles/${enc(params.epochId || '')}`;
     case 'tournament':
       return `#/C/tournament/${enc(params.epochId || '')}`;
     case 'run':

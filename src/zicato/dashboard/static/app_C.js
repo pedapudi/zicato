@@ -28,6 +28,9 @@ import { buildChrome, updateNavContext, closeDrawer } from './js/variants/C/chro
 import { renderEnvironment } from './js/variants/C/views/environment.js';
 import { renderEpoch } from './js/variants/C/views/epoch.js';
 import { renderExperiment } from './js/variants/C/views/experiment.js';
+import { renderLifecycle } from './js/variants/C/views/lifecycle.js';
+import { renderScoring } from './js/variants/C/views/scoring.js';
+import { renderStyles } from './js/variants/C/views/styles.js';
 import { renderTournament } from './js/variants/C/views/tournament.js';
 import { renderRun } from './js/variants/C/views/run.js';
 import { renderBench } from './js/variants/C/views/bench.js';
@@ -108,6 +111,9 @@ function render() {
     case 'env': renderEnvironment(ctx); break;
     case 'epoch': renderEpoch(ctx); break;
     case 'experiment': renderExperiment(ctx); break;
+    case 'lifecycle': renderLifecycle(ctx); break;
+    case 'scoring': renderScoring(ctx); break;
+    case 'styles': renderStyles(ctx); break;
     case 'tournament': renderTournament(ctx); break;
     case 'run': renderRun(ctx); break;
     case 'bench': renderBench(ctx); break;

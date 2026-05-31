@@ -25,7 +25,9 @@ Three diagram idioms carry the whole UI:
 |---|---|---|
 | **Cross-epoch node-graph** (lanes + DAG) | Environment | "where has the whole workspace been?" |
 | **Lineage / gauntlet graph** (spine + branches) | Epoch, Tournament | "which challengers survived, which died?" |
-| **Causal Sankey** (patch → drift → gate) | Experiment | "*this* change moved *these* drift kinds, so the gate said *this*" |
+| **Causal Sankey** (patch → drift → gate) | Experiment, Scoring | "*this* change moved *these* drift kinds, so the gate said *this*" |
+| **Lifecycle DAG** (parent → patch → board fan → gate → terminal) | Lifecycle | "one candidate’s whole life, board entry by board entry" |
+| **Topology switcher** (one node set, five graph shapes) | Match-ups | "how would this field look under *each* tournament style?" |
 
 Everything is pan/zoom, hover-to-highlight, click-to-drill. Diagrams are
 hand-built **dependency-free SVG** (no D3, no external libs) on a shared
@@ -133,7 +135,70 @@ edge and per-entry status chips.
            DISCARD +.02
 ```
 
-### 2.5 Run + Bench (reachable from nav)
+### 2.5 Lifecycle — *one candidate’s life as a DAG* (themes 1+2) (`#/C/lifecycle/:epoch/:gen`)
+
+A left-to-right **lifecycle DAG** of a single candidate, read as a
+life-story rather than a form:
+
+```
+ PARENT ─▶ PATCH ─▶ ╭ board fan ╮ ─▶ AGGREGATE ─▶ GATE ─▶ TERMINAL
+ (lineage)  (cause)  ● waffles_single                       ♛ promoted
+                     ● q3_metrics    Σ loss     REJECT      ✕ dead branch
+                     ● picky_stake…
+```
+
+- **PARENT** node = the champion this challenger was patched off (lineage
+  origin); for a seed it reads `∅ seed`.
+- **PATCH** node = the cause — the count of mutation points the patch
+  touched.
+- **BOARD fan (theme 2)** = one node per board entry the candidate faces.
+  Each node’s **radius + colour encodes its drift loss** (bigger/redder =
+  worse; green = passed; amber = budget-exceeded); the **edge into the
+  aggregate is weighted by that entry’s contribution** to the total loss.
+- **AGGREGATE** = the summed scalar; **GATE** = the verdict climax (real
+  `decision`/`delta_scalar` from `…/gate`); **TERMINAL** = a crowned
+  champion (`♛ promoted`) or a `✕ dead branch`.
+
+Below the spine, the **lineage DAG** draws the family tree — `v0` root →
+`v1`/`v2` children, the champion **crowned (♛)** — every node a link to
+that candidate’s own lifecycle. Animated flow runs along the spine.
+
+### 2.6 Scoring — *per-board Sankey + 3-depth drill-down* (theme 3) (`#/C/scoring/:epoch/:gen`)
+
+A **Sankey** (reusing `sankey.js`): `candidate → per-board loss →
+aggregate scalar`, where **band width = each board’s contribution** to
+the total loss; a board node’s colour is pass (green) / fail (red) /
+timeout (amber). Three depths of drill-down:
+
+1. the Sankey itself (board-field).
+2. **click a board node** → it expands in the drawer into an
+   **expectation sub-graph** (`…/expectations`, drawn as outcome nodes)
+   plus a **per-judge loss** bar-graph (`…/per-judge`).
+3. a **transcript flow** button (`/api/conversation/{run_id}`) renders
+   the run turn-by-turn as a vertical flow.
+
+### 2.7 Match-ups — *tournament-style topology switcher* (theme 4, the showcase) (`#/C/styles/:epoch`)
+
+The **same candidate set re-laid-out under five selection structures**,
+each a *different* graph topology, behind a style switcher that re-runs
+layout on the same node ids:
+
+| Style | Topology | Data |
+|---|---|---|
+| **Gauntlet** | star / hub (champion centre, challenger spokes) | **REAL** — `/api/tournaments` verdicts + deltas; spoke click opens the paired per-board **duel grid** (`/api/matchup-grid`) as a slopegraph |
+| Single-elim | binary bracket tree | illustrative |
+| Double-elim | two coupled trees (winners’ / losers’) | illustrative |
+| Swiss | round-by-round bipartite pairing | illustrative |
+| Racing | parallel lanes + elimination cut-lines | illustrative |
+
+Only the gauntlet carries real per-round data; the other four are honest
+**conceptual overlays** of the same generations (SELECTION.md §2/§5/§6),
+each labelled `illustrative` on its tab and `CONCEPTUAL OVERLAY` in its
+banner. The gauntlet’s spoke / round-card click opens the **paired
+(common-random-number) per-board duel** — champion loss vs challenger
+loss per entry, coloured by who won, with a who-won tally.
+
+### 2.8 Run + Bench (reachable from nav)
 
 - **Run** (`#/C/run/:id`) — deliberately diagram-light: live status tiles,
   the rolling event tail, an active-runs picker, and the "open in
@@ -152,8 +217,9 @@ app_C.js                    entry; reuses core/{state,api,sse,format,dom};
   ├ variants/C/diagram/
   │   ├ surface.js          pan/zoom SVG canvas (wheel-zoom, drag-pan)
   │   ├ primitives.js       verdict palette · bezier/ribbon paths · layered DAG
-  │   └ sankey.js           the 3-stage patch→drift→gate layout
-  └ variants/C/views/       environment · epoch · experiment · tournament · run · bench
+  │   ├ sankey.js           the 3-stage Sankey layout (patch→drift→gate AND candidate→board→aggregate)
+  │   └ topology.js         five tournament-style layouts over one candidate set (theme 4)
+  └ variants/C/views/       environment · epoch · lifecycle · experiment · scoring · styles · tournament · run · bench
 css/variants/C/variant.css  --v2-* tokens (scoped to .cz-root) + all styling
 ```
 
@@ -184,9 +250,17 @@ its stylesheet (idempotent) so a bare load also works. Routes live under
 
 ## 5. Tests
 
-`static/test/variant_c.test.mjs` (17 cases, run by `node test/run-all.mjs`)
-covers the router, the collision-free DAG layout, the Sankey layout
-(stage ordering + magnitude-proportional heights), the chrome + drawer,
-and that each hero screen paints real content from `state` (objective
-headline, brief drawer prose, patch→drift→gate Sankey + verdict, spine vs
-branch placement) alongside honest empty states.
+`static/test/variant_c.test.mjs` covers the router, the collision-free
+DAG layout, the Sankey layout (stage ordering + magnitude-proportional
+heights), the chrome + drawer, and that each hero screen paints real
+content from `state` (objective headline, brief drawer prose,
+patch→drift→gate Sankey + verdict, spine vs branch placement) alongside
+honest empty states.
+
+`static/test/variant_c_enrich.test.mjs` covers the enrichment wave: the
+new routes; the lifecycle DAG’s six columns + board fan + crowned lineage
+DAG; the per-board scoring Sankey + clickable board drill-down; the five
+tournament-style topologies (every style keeps the same candidate ids in
+a distinct shape, exactly one is flagged real, the switcher re-lays-out
+on click, the real gauntlet round opens the paired duel grid) — all
+offline with stubbed network and graceful degradation on empty data.

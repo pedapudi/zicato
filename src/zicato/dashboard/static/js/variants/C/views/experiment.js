@@ -27,6 +27,7 @@ import { ribbonPath, verdictClass, verdictLabel } from '../diagram/primitives.js
 import { layoutSankey } from '../diagram/sankey.js';
 import { experimentById, decisionOf, mutationPointsOf, isBaselineSeed } from '../model.js';
 import { openDrawer } from '../chrome.js';
+import { href } from '../router.js';
 import { fmtDelta, fmtScalar } from '../../../core/format.js';
 
 // Per-view caches keyed by gen id, so an SSE refresh does not re-fetch.
@@ -60,6 +61,11 @@ export function renderExperiment(ctx) {
       'The patch is the cause; the drift kinds that moved are the effect; the gate is the verdict. '
       + 'Ribbon width is the magnitude of the movement. Click a mutation node to read its diff.',
     ]),
+    (epochId && genId) ? el('div', { class: 'cz-epoch-actions' }, [
+      el('a', { class: 'cz-btn cz-btn-ghost', href: href('lifecycle', { epochId, genId }) }, ['Lifecycle →']),
+      el('a', { class: 'cz-btn cz-btn-ghost', href: href('scoring', { epochId, genId }) }, ['Per-board scoring →']),
+      el('a', { class: 'cz-btn cz-btn-ghost', href: href('styles', { epochId }) }, ['Match-ups →']),
+    ]) : null,
   ]));
 
   if (!exp && !genId) {
