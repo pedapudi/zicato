@@ -16,15 +16,26 @@ import { el } from '../../../core/dom.js';
 import { fetchJson } from '../../../core/api.js';
 import { state } from '../../../core/state.js';
 import { panel, readouts, empty, loading, chip, deltaBar } from '../components/instruments.js';
-import { href } from '../router.js';
+import { href, navigate } from '../router.js';
+import { missionTrack, lifecycleStations, trackLegend } from '../components/lifecycle.js';
+import { sortieBoard, sortieTally } from '../components/sortie.js';
+import { instrumentPanel } from '../components/drilldown.js';
 
 const grid = new Map();      // key e/c/ch -> matchup grid
 const drift = new Map();     // genId -> movements
 const diff = new Map();      // e/g -> diff text
+const perEntry = new Map();  // e/g -> per-entry score record
+const expectCache = new Map(); // e/g/entry -> expectations
+const judgeCache = new Map();  // e/g/entry -> per-judge
 const loadingSet = new Set();
 let diffOpen = false;
+let selectedEntryId = null;  // sortie tile drilled into
 
-export function resetExperimentCache() { grid.clear(); drift.clear(); diff.clear(); loadingSet.clear(); }
+export function resetExperimentCache() {
+  grid.clear(); drift.clear(); diff.clear(); perEntry.clear();
+  expectCache.clear(); judgeCache.clear(); loadingSet.clear();
+  selectedEntryId = null;
+}
 
 function expFor(epochId, genId) {
   const def = state.epochDef;
@@ -67,6 +78,47 @@ async function ensureData(epochId, genId, parentId, repaint) {
     loadingSet.delete('f' + dkey);
     if (repaint) repaint();
   }
+  // per-entry scores for the sortie board (theme 2/3 depth 1).
+  const pkey = epochId + '/' + genId;
+  if (!perEntry.has(pkey) && !loadingSet.has('p' + pkey)) {
+    loadingSet.add('p' + pkey);
+    try {
+      const r = await fetchJson('/api/generation/' + enc(epochId) + '/' + enc(genId) + '/per-entry');
+      perEntry.set(pkey, r);
+    } catch { perEntry.set(pkey, { entries: [] }); }
+    loadingSet.delete('p' + pkey);
+    if (repaint) repaint();
+  }
+}
+
+// theme 3 depth 2: lazily fetch expectations + per-judge for one entry.
+async function ensureDrill(epochId, genId, entryId, repaint) {
+  if (!entryId) return;
+  const k = epochId + '/' + genId + '/' + entryId;
+  if (!expectCache.has(k) && !loadingSet.has('e' + k)) {
+    loadingSet.add('e' + k);
+    try { expectCache.set(k, await fetchJson('/api/run/' + enc(epochId) + '/' + enc(genId) + '/' + enc(entryId) + '/expectations')); }
+    catch { expectCache.set(k, { outcomes: [] }); }
+    loadingSet.delete('e' + k);
+    if (repaint) repaint();
+  }
+  if (!judgeCache.has(k) && !loadingSet.has('j' + k)) {
+    loadingSet.add('j' + k);
+    try { judgeCache.set(k, await fetchJson('/api/run/' + enc(epochId) + '/' + enc(genId) + '/' + enc(entryId) + '/per-judge')); }
+    catch { judgeCache.set(k, { judges: [] }); }
+    loadingSet.delete('j' + k);
+    if (repaint) repaint();
+  }
+}
+
+// build a Map<entry_id, score> from the per-entry payload.
+function scoresMap(epochId, genId) {
+  const r = perEntry.get(epochId + '/' + genId);
+  const m = new Map();
+  if (r && Array.isArray(r.entries)) {
+    for (const e of r.entries) { if (e && e.entry_id) m.set(e.entry_id, e); }
+  }
+  return m;
 }
 
 function enc(v) { return encodeURIComponent(v == null ? '' : String(v)); }
@@ -255,6 +307,67 @@ function extractDiffText(d) {
   return '';
 }
 
+// -- lifecycle mission track (theme 1) --------------------------------
+function lifecycleSection(epochId, genId, exp, decision, isSeed, parentId) {
+  const scores = scoresMap(epochId, genId);
+  const sortieFired = scores.size > 0;
+  const hb = state.heartbeat || {};
+  const live = hb.epoch_id === epochId && hb.generation_id === genId && !decision && !isSeed;
+  const { stations, reached } = lifecycleStations({
+    parentId, genId, isSeed, sortieFired, entryCount: sortieFired ? scores.size : null,
+    decision, live,
+  });
+  return panel({
+    title: 'Candidate lifecycle',
+    sub: 'born → board sortie → gate → outcome · status lights along the track',
+    accent: decision === 'promoted' ? 'go' : decision === 'rejected' ? 'stop' : isSeed ? 'live' : null,
+    body: [missionTrack(stations, reached), trackLegend()],
+  });
+}
+
+// -- sortie board + drill-down (themes 2 & 3) -------------------------
+function sortieSection(epochId, genId, repaint) {
+  const def = state.epochDef;
+  const board = def && Array.isArray(def.board) ? def.board : [];
+  const scores = scoresMap(epochId, genId);
+  const loaded = perEntry.has(epochId + '/' + genId);
+
+  const onSelect = (entry) => {
+    selectedEntryId = (selectedEntryId === entry.id) ? null : entry.id;
+    if (selectedEntryId) ensureDrill(epochId, genId, selectedEntryId, repaint);
+    if (repaint) repaint();
+  };
+
+  const bodyKids = [];
+  if (board.length) bodyKids.push(sortieTally(board, scores));
+  if (!loaded && !board.length) {
+    bodyKids.push(loading('Reading the board the candidate faces'));
+  } else {
+    bodyKids.push(sortieBoard({ board, scoresById: scores, selectedId: selectedEntryId, onSelect }));
+  }
+
+  // depth 2: the slide-in instrument panel for the selected entry.
+  if (selectedEntryId) {
+    const k = epochId + '/' + genId + '/' + selectedEntryId;
+    const entry = board.find((b) => b.id === selectedEntryId) || { id: selectedEntryId };
+    const score = scores.get(selectedEntryId) || null;
+    bodyKids.push(instrumentPanel({
+      entry, score,
+      expectations: expectCache.has(k) ? expectCache.get(k) : null,
+      perJudge: judgeCache.has(k) ? judgeCache.get(k) : null,
+      runId: score && score.run_id,
+      onOpenRun: (rid) => { if (rid) navigate('run', { runId: rid }); },
+      onClose: () => { selectedEntryId = null; if (repaint) repaint(); },
+    }));
+  }
+
+  return panel({
+    title: 'Sortie board',
+    sub: 'every board entry this candidate faces · lamp = pass / fail / timeout · click a tile to drill in',
+    body: bodyKids,
+  });
+}
+
 export function renderExperiment(root, params, repaint) {
   const epochId = params.epochId || (state.epochDef && state.epochDef.epoch_id);
   const genId = params.genId;
@@ -282,15 +395,17 @@ export function renderExperiment(root, params, repaint) {
     root.appendChild(el('div', { style: 'margin-bottom:16px' }, [
       readouts([
         { label: 'role', value: 'SEED (v0)', tone: 'live', foot: 'absolute baseline' },
-        { label: 'board entries', value: ((grid.get(epochId + '/' + (parentId || '') + '/' + genId) || {}).entry_grid || []).length },
+        { label: 'board entries', value: scoresMap(epochId, genId).size || ((grid.get(epochId + '/' + (parentId || '') + '/' + genId) || {}).entry_grid || []).length },
       ]),
     ]));
-    root.appendChild(panel({
-      title: 'Baseline board results',
-      sub: 'the seed has no comparison — these are its absolute drift losses',
-      accent: 'live',
-      body: abGrid(epochId, genId, parentId, true),
-    }));
+    // theme 1: lifecycle track (seed is crowned by construction)
+    root.appendChild(el('div', { style: 'margin-bottom:16px' }, [
+      lifecycleSection(epochId, genId, exp, decision, true, parentId),
+    ]));
+    // themes 2/3: sortie board + drill-down
+    root.appendChild(el('div', { style: 'margin-bottom:16px' }, [
+      sortieSection(epochId, genId, repaint),
+    ]));
     root.appendChild(el('div', { style: 'margin-top:16px' }, [
       panel({ title: 'Drift profile', sub: 'baseline drift counts', body: driftChart(genId) }),
     ]));
@@ -305,6 +420,11 @@ export function renderExperiment(root, params, repaint) {
       { label: 'Δ drift loss', value: signed(o.drift_loss_delta), tone: typeof o.drift_loss_delta === 'number' && o.drift_loss_delta < 0 ? 'go' : (o.drift_loss_delta > 0 ? 'stop' : null) },
       { label: 'Δ pass rate', value: signed(o.pass_rate_delta), tone: typeof o.pass_rate_delta === 'number' && o.pass_rate_delta > 0 ? 'go' : (o.pass_rate_delta < 0 ? 'stop' : null) },
     ]),
+  ]));
+
+  // theme 1: the candidate lifecycle mission track
+  root.appendChild(el('div', { style: 'margin-bottom:16px' }, [
+    lifecycleSection(epochId, genId, exp, decision, false, parentId),
   ]));
 
   // the causal story: hypothesis (cause) -> gate (verdict)
@@ -325,6 +445,11 @@ export function renderExperiment(root, params, repaint) {
   // the effect: drift that moved
   root.appendChild(el('div', { style: 'margin-bottom:16px' }, [
     panel({ title: 'Drift movement (effect)', sub: 'champion → challenger drift-kind deltas · green = improved', body: driftChart(genId) }),
+  ]));
+
+  // themes 2/3: the sortie board the candidate faced + drill-down
+  root.appendChild(el('div', { style: 'margin-bottom:16px' }, [
+    sortieSection(epochId, genId, repaint),
   ]));
 
   // per-entry A/B grid

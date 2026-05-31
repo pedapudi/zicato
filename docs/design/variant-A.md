@@ -212,6 +212,123 @@ challenger, per-entry status, partial scalars).
   └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## 4b. Enrichment — the four shared themes, in Mission Control's idiom
+
+The variant-enrichment wave adds the four cross-variant themes
+(candidate lifecycle, the boards a candidate faces, per-board scoring +
+drill-down, match-ups across tournament styles). Each is expressed as an
+instrument, bound only to the real API (see `_ENRICHMENT-BRIEF.md`), and
+degrades honestly against the live one-epoch / three-generation /
+all-fail data.
+
+### 4b.1 Candidate lifecycle — the mission track + command roster
+
+On the **Experiment** view, a candidate's life reads as a horizontal
+**telemetry track**: BORN (patch armed off a parent) → BOARD SORTIE
+(entries firing) → PROMOTE GATE (GO / NO-GO) → OUTCOME (crowned champion,
+or aborted dead branch). Each station carries a status light; the rail
+between stations lights up to the furthest stage reached.
+
+```
+  ┌ CANDIDATE LIFECYCLE · born → board sortie → gate → outcome ──────────────────┐
+  │   (✓)━━━━━━━━(✓)━━━━━━━━(✗)━━━━━━━━(✗)                                        │
+  │   Born      Board       Promote     Aborted                                   │
+  │   patch off  sortie      gate        dead branch                              │
+  │   v0         4 entries   NO-GO                                                 │
+  │   ● reached  ● go/crowned  ● no-go/aborted  ● in flight  ● not reached         │
+  └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+On the **Lineage** view, the lineage is a **command roster** — a defended
+hill: the crowned champion banner at the top (defending, pulsing GO
+light), challengers as call-signs below (call-sign · ↳ parent · verdict ·
+Δscalar), with dead branches dimmed and live ones ringed.
+
+```
+  ┌ COMMAND ROSTER · champion defending · dead branches dimmed ──────────────────┐
+  │  ♚  REIGNING CHAMPION · DEFENDING        v0                              ●go   │
+  │  ───────────────────────────────────────────────────────────────────────────  │
+  │  ● v1   ↳ v0   DEAD BRANCH                                          +75.71      │  (dimmed)
+  │  ● v2   ↳ v0   DEAD BRANCH                                           +1.51      │  (dimmed)
+  └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4b.2 The boards a candidate faces — the sortie board
+
+The fixed per-epoch board is a **status-light tile grid** (not a wall of
+rows): every entry the candidate "faces" is a tile carrying the kind
+(◆ single / ⋯◆ scripted / ⟳◆ emulated), the input preview, budget_s,
+weight, tags, a per-entry **loss bar**, and a status **lamp**
+(pass = green / fail = red / timeout = amber). A tally strip sums the
+lamps.
+
+```
+  ┌ SORTIE BOARD · lamp = pass/fail/timeout · click a tile to drill in ──────────┐
+  │ 4 entries  ●0 pass  ●3 fail  ●1 timeout  ●0 unflown                            │
+  │ ┌●waffles_single  ◆single┐ ┌●q3_metrics_outline ◆single┐ ┌●waffles_revision ⋯◆┐│
+  │ │ Make a presentation…    │ │ Outline a deck on Q3…     │ │ (multi-turn script) ││
+  │ │ ▇▇▇▇▇▁▁▁  60.5          │ │ ▇▇▇▇▇▇▁▁  63.5            │ │ ▇▇▇▇▇▇▇▇  88.0     ││
+  │ │ ⏱180s ×1.0  TIMEOUT     │ │ ⏱180s ×1.0  FAIL          │ │ ⏱240s ×1.0  FAIL   ││
+  │ └─────────────────────────┘ └───────────────────────────┘ └────────────────────┘│
+  └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4b.3 Per-board scoring + drill-down — the instrument panel
+
+Three depths. **Depth 1** is the loss bar on each sortie tile. **Depth 2**:
+clicking a tile slides in an **instrument panel** showing the entry's
+**expectation outcomes** (`…/expectations`) with pass/fail marks + detail,
+and its **per-judge loss bars** (`…/per-judge`). **Depth 3**: an *open run
+transcript →* button routes to the run view (`/api/conversation/{run_id}`,
+`run_id` taken from the per-entry record).
+
+```
+  ┌ instrument · board entry   waffles_single                              [✕] ──┐
+  │ single_turn   ⏱180s   loss 60.5   [TIMEOUT]                                   │
+  │ ┌ EXPECTATION OUTCOMES ─────────┐ ┌ PER-JUDGE LOSS ────────────────────────┐ │
+  │ │ ✗ predicate                   │ │ incorporates_feedback ▇▇▇▇▇▇ 27.0  ×1.0 │ │
+  │ │   predicate returned False    │ │                                         │ │
+  │ └───────────────────────────────┘ └─────────────────────────────────────────┘ │
+  │ [ open run transcript → ]                                                      │
+  └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4b.4 Match-ups across tournament styles — the match-up theatre
+
+The **REAL** mechanism is rendered first: a **king-of-the-hill ladder**
+(`/api/tournaments`) — the champion crowned at the top defending, each
+round a rung (`R1 v0 vs v1 … champion holds / challenger crowned`).
+Expanding a rung loads the paired **per-board duel**
+(`/api/matchup-grid/…`): parent vs child loss bars per entry with a
+`won_by`. Then a **style switcher** re-renders the SAME candidate set
+under the other documented structures, each banner-labelled
+**CONCEPTUAL — not how zicato ran this epoch**, with a *different* visual
+topology per style (SELECTION.md §2/§5/§6):
+
+- **single-elim** → an SVG bracket tree (the wrong primitive — noise-fragile),
+- **double-elim** → a winners' rail + a losers' bracket (a second life),
+- **swiss** → a pairing table with running scores,
+- **racing** → race lanes with an elimination cut-line (survivors keep racing → replicate).
+
+```
+  ┌ MATCH-UP THEATRE ────────────────────────────────────────────────────────────┐
+  │ [●Gauntlet] [Single-elim] [Double-elim] [Swiss] [Racing]                       │
+  │ REAL · how zicato actually ran this epoch — king of the hill, paired board.    │
+  │ ♚ KING OF THE HILL  v0  defending                                              │
+  │ R1  v0 vs v1   Δ +75.71   [champion holds] ▾                                   │
+  │      q3_metrics_outline   ▇▇▇ 71.0 │ ▇▇ 63.5      won_by v1                     │
+  │      picky_stakeholder    ▇▇ 105.5 │ ▇▇▇▇▇▇ 642.5  won_by v0                    │
+  │ R2  v0 vs v2   Δ +1.51    [champion holds]                                      │
+  └──────────────────────────────────────────────────────────────────────────────┘
+  (switch to Racing →)
+  ┌ CONCEPTUAL — race lanes with an elimination cut; §5 recommendation ───────────┐
+  │ v0   ▸──────────────────────────────●  70.94   (leader)                        │
+  │ v2   ▸───────────────────────●          72.45                                  │
+  │ v1   ▸──────────●  (out)                146.65                                 │
+  │ ╴╴ elimination cut-line @ 72.45 — lanes past the cut are dropped; replicate    │
+  └──────────────────────────────────────────────────────────────────────────────┘
+```
+
 ## 5. Files
 
 ```
@@ -223,14 +340,19 @@ static/js/variants/A/components/instruments.js   panel, readout, chip, sparkline
 static/js/variants/A/components/gauntlet.js      the clean-lane bracket SVG
 static/js/variants/A/components/markdown.js      tiny safe markdown → DOM (for the brief)
 static/js/variants/A/components/palette.js       ⌘K command palette
+static/js/variants/A/components/lifecycle.js     theme 1 — mission track + command roster
+static/js/variants/A/components/sortie.js        theme 2/3 — sortie-board status-light tiles + tally
+static/js/variants/A/components/drilldown.js     theme 3 — slide-in instrument panel (expectations + per-judge)
+static/js/variants/A/components/matchups.js      theme 4 — gauntlet ladder + style switcher (single/double/swiss/racing)
 static/js/variants/A/views/environment.js        L0 fleet (home)
 static/js/variants/A/views/epoch.js              L1 control panel (objective + brief + gauntlet + heatmap)
-static/js/variants/A/views/experiment.js         L3 telemetry readout (verdict-first; diff drawer)
-static/js/variants/A/views/tournament.js         lineage / gauntlet viz + live active matchup
+static/js/variants/A/views/experiment.js         L3 telemetry readout (lifecycle track + sortie board + drill-down; verdict-first; diff drawer)
+static/js/variants/A/views/tournament.js         lineage command roster + match-up theatre + bracket SVG + live matchup
 static/js/variants/A/views/run.js                L4 run transcript (lighter)
 static/js/variants/A/views/bench.js              live ops (lighter)
 static/variant_A_preview.html                    dev/preview host (?mock=1 for offline review)
 static/test/variant_a.test.mjs                   node tests (router, gauntlet, markdown, views)
+static/test/variant_a_enrich.test.mjs            node tests (lifecycle, sortie board, drill-down, match-up styles)
 ```
 
 ## 6. Data sources (reused, not rebuilt)
@@ -238,9 +360,15 @@ static/test/variant_a.test.mjs                   node tests (router, gauntlet, m
 All reads go through the shared `core/api.js` + `core/sse.js`. Endpoints
 used: `/api/workspace`, `/api/health-report`, `/api/active-tournament`,
 `/api/environment` (folds `epoch` = the contract incl. `goal` + `brief`
-+ `experiments`), `/api/generation/{e}/{g}/per-entry`,
++ `board` + `experiments`), `/api/generation/{e}/{g}/per-entry`,
 `/api/matchup-grid/{e}/{c}/{ch}`, `/api/drift-movements/{g}`,
 `/api/files/{e}/{g}/diff`, `/api/run/{id}`, `/api/conversation/{id}`.
+
+The enrichment views add: `/api/tournaments` (the real gauntlet — champion
+lineage + per-round matchups), `/api/generation/{e}/{g}/per-entry` (the
+sortie-board lamps + per-entry loss + `run_id`),
+`/api/run/{e}/{g}/{entry}/expectations` and `…/per-judge` (the drill-down
+instrument panel). The board itself comes from the folded `epoch.board`.
 
 Note on the gate: the brief references `/api/round/.../gate`, which is
 **not** a shipped route. The promote verdict + the three-rule
