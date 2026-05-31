@@ -22,13 +22,14 @@
 import { bus } from '../../core/bus.js';
 
 export const B_PREFIX = 'B';
-export const B_VIEWS = ['environment', 'epoch', 'experiment', 'tournament', 'run', 'bench'];
+export const B_VIEWS = ['environment', 'epoch', 'experiment', 'board', 'tournament', 'run', 'bench'];
 export const B_DEFAULT = 'environment';
 
 export const B_VIEW_LABELS = {
   environment: 'Environment',
   epoch: 'Epoch',
   experiment: 'Experiment',
+  board: 'The Board',
   tournament: 'Lineage',
   run: 'Run',
   bench: 'Bench',
@@ -99,6 +100,9 @@ export function crumbTrail(route) {
   switch (view) {
     case 'bench':
       trail.push(crumb('bench', 'Bench', true));
+      break;
+    case 'board':
+      trail.push(crumb('board', 'The board', true));
       break;
     case 'tournament':
       trail.push(crumb('tournament', 'Lineage', true, p.generationId));

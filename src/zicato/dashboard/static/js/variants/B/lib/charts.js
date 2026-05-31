@@ -310,6 +310,192 @@ export function progressRing(frac, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// marginTimeline — the candidate's life-story as a vertical "lab notebook
+// margin" rail: conceived → patched → ran the board → judged → verdict. Each
+// `step` is { label, detail?, state }, state ∈ done|active|pending|fail. The
+// final step's tone colors the rail's terminus. Total: an empty list yields a
+// single labeled placeholder dot. Pure DOM (the rail glyphs are CSS).
+// ---------------------------------------------------------------------------
+export function marginTimeline(steps, opts = {}) {
+  const list = Array.isArray(steps) ? steps.filter((s) => s && s.label) : [];
+  const wrap = el('ol', { class: 'vb-margin-timeline', 'aria-label': opts.ariaLabel || 'candidate lifecycle' });
+  if (list.length === 0) {
+    wrap.appendChild(el('li', { class: 'vb-mt-step vb-mt-pending' }, [
+      el('span', { class: 'vb-mt-node', 'aria-hidden': 'true' }),
+      el('span', { class: 'vb-mt-body' }, [
+        el('span', { class: 'vb-mt-label vb-muted' }, [opts.emptyLabel || 'The lifecycle has not started.']),
+      ]),
+    ]));
+    return wrap;
+  }
+  list.forEach((s, i) => {
+    const st = ['done', 'active', 'pending', 'fail'].includes(s.state) ? s.state : 'done';
+    const glyph = st === 'fail' ? '✗' : st === 'active' ? '●' : st === 'pending' ? '○' : '✓';
+    wrap.appendChild(el('li', {
+      class: `vb-mt-step vb-mt-${st}` + (i === list.length - 1 ? ' vb-mt-last' : ''),
+    }, [
+      el('span', { class: 'vb-mt-node', 'aria-hidden': 'true' }, [
+        el('span', { class: 'vb-mt-glyph' }, [glyph]),
+      ]),
+      el('span', { class: 'vb-mt-body' }, [
+        el('span', { class: 'vb-mt-label' }, [String(s.label)]),
+        s.detail ? el('span', { class: 'vb-mt-detail vb-muted' }, [String(s.detail)]) : null,
+      ].filter(Boolean)),
+    ]));
+  });
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// genealogy — a hand-drawn-feeling family tree of the lineage: the parent on
+// top, its children fanned beneath on hand-curved connectors, the champion
+// marked with a crown glyph. `nodes` are { id, parentId, verdict, label,
+// crowned, live }. Clickable via opts.onSelect(id). Total: 0 nodes → a labeled
+// empty figure; a single node centers.
+// ---------------------------------------------------------------------------
+export function genealogy(nodes, opts = {}) {
+  const list = Array.isArray(nodes) ? nodes.filter((n) => n && n.id != null) : [];
+  const width = opts.width || 560;
+  const fig = el('figure', { class: 'vb-genealogy' });
+  if (list.length === 0) {
+    fig.appendChild(el('figcaption', { class: 'vb-fig-empty' }, [opts.emptyLabel || 'No lineage yet — the family tree begins with the seed.']));
+    return fig;
+  }
+  // Group by depth: roots (no parent in the set) on row 0, their children row 1.
+  const ids = new Set(list.map((n) => String(n.id)));
+  const depth = new Map();
+  const depthOf = (n, guard = 0) => {
+    const id = String(n.id);
+    if (depth.has(id)) return depth.get(id);
+    const pid = n.parentId != null ? String(n.parentId) : null;
+    let d = 0;
+    if (pid && ids.has(pid) && guard < 16) {
+      const parent = list.find((x) => String(x.id) === pid);
+      d = (parent ? depthOf(parent, guard + 1) : 0) + 1;
+    }
+    depth.set(id, d);
+    return d;
+  };
+  list.forEach((n) => depthOf(n));
+  const maxDepth = Math.max(0, ...list.map((n) => depth.get(String(n.id))));
+  const rowH = 86;
+  const height = 40 + maxDepth * rowH;
+  const byRow = [];
+  for (let d = 0; d <= maxDepth; d++) byRow.push(list.filter((n) => depth.get(String(n.id)) === d));
+  const pos = new Map();
+  byRow.forEach((row, d) => {
+    const n = row.length;
+    row.forEach((node, i) => {
+      const x = n <= 1 ? width / 2 : 40 + (i / (n - 1)) * (width - 80);
+      const y = 26 + d * rowH;
+      pos.set(String(node.id), { x, y, node });
+    });
+  });
+  const svg = svgEl('svg', {
+    class: 'vb-genealogy-svg', width: '100%', height, viewBox: `0 0 ${width} ${height}`,
+    role: 'img', 'aria-label': opts.ariaLabel || 'lineage genealogy figure',
+  });
+  // Hand-curved connectors parent → child (a quadratic with a slight wobble).
+  for (const node of list) {
+    const pid = node.parentId != null ? String(node.parentId) : null;
+    if (!pid || !pos.has(pid) || !pos.has(String(node.id))) continue;
+    const p = pos.get(pid);
+    const c = pos.get(String(node.id));
+    const midY = (p.y + c.y) / 2;
+    const wobble = ((c.x - p.x) % 7) - 3;
+    const cls = node.verdict === 'promoted' ? 'improve' : node.verdict === 'rejected' ? 'regress' : 'neutral';
+    svg.appendChild(svgEl('path', {
+      d: `M${p.x.toFixed(1)} ${(p.y + 12).toFixed(1)} Q${(c.x + wobble).toFixed(1)} ${midY.toFixed(1)} ${c.x.toFixed(1)} ${(c.y - 12).toFixed(1)}`,
+      class: `vb-gen-link vb-${cls}`, fill: 'none',
+    }));
+  }
+  for (const node of list) {
+    const p = pos.get(String(node.id));
+    if (!p) continue;
+    const v = node.verdict;
+    const cls = v === 'promoted' ? 'improve' : v === 'rejected' ? 'regress' : 'neutral';
+    const g = svgEl('g', {
+      class: 'vb-gen-node' + (opts.onSelect ? ' vb-clickable' : '') + (node.live ? ' vb-gen-live' : ''),
+      role: opts.onSelect ? 'button' : null, tabindex: opts.onSelect ? '0' : null,
+      'aria-label': `generation ${node.label || node.id}${node.crowned ? ' (champion)' : ''}`,
+    });
+    if (node.live) g.appendChild(svgEl('circle', { cx: p.x, cy: p.y, r: 13, class: 'vb-gen-pulse' }));
+    g.appendChild(svgEl('circle', { cx: p.x, cy: p.y, r: 9, class: `vb-gen-dot vb-${cls}` }));
+    if (node.crowned) {
+      g.appendChild(svgEl('text', { x: p.x, y: p.y - 16, class: 'vb-gen-crown', 'text-anchor': 'middle' }, ['♔']));
+    }
+    g.appendChild(svgEl('text', { x: p.x, y: p.y + 3, class: 'vb-gen-id', 'text-anchor': 'middle' }, [String(node.label || node.id)]));
+    if (opts.onSelect) {
+      g.addEventListener('click', () => opts.onSelect(String(node.id)));
+      g.addEventListener('keydown', (ev) => { if (ev && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); opts.onSelect(String(node.id)); } });
+    }
+    svg.appendChild(g);
+  }
+  fig.appendChild(svg);
+  if (opts.caption) fig.appendChild(el('figcaption', { class: 'vb-fig-cap' }, Array.isArray(opts.caption) ? opts.caption : [opts.caption]));
+  return fig;
+}
+
+// ---------------------------------------------------------------------------
+// dotPlot — a word/inline-sized loss figure for one board entry: a thin track
+// with a single dot positioned by `value` within [0, max], colored by pass
+// (improve) / fail (regress), plus a small fail glyph. Used embedded in prose
+// rows. Total: a null value yields a hollow "—" track.
+// ---------------------------------------------------------------------------
+export function dotPlot(value, opts = {}) {
+  const width = opts.width || 120;
+  const height = opts.height || 16;
+  const max = fin(opts.max) && opts.max > 0 ? opts.max : (fin(value) ? Math.max(value, 1) : 1);
+  const svg = svgEl('svg', {
+    class: 'vb-dotplot', width, height, viewBox: `0 0 ${width} ${height}`,
+    role: 'img', 'aria-label': opts.ariaLabel || `loss ${fin(value) ? value.toFixed(1) : 'n/a'}`,
+    preserveAspectRatio: 'none',
+  });
+  const y = height / 2;
+  svg.appendChild(svgEl('line', { x1: 3, y1: y, x2: width - 3, y2: y, class: 'vb-dotplot-track' }));
+  if (!fin(value)) {
+    svg.appendChild(svgEl('text', { x: width / 2, y: y + 3, class: 'vb-dotplot-na', 'text-anchor': 'middle' }, ['—']));
+    return svg;
+  }
+  const frac = Math.max(0, Math.min(1, value / max));
+  const cx = 3 + frac * (width - 6);
+  const tone = opts.pass === false ? 'regress' : opts.pass === true ? 'improve' : 'caution';
+  svg.appendChild(svgEl('circle', { cx, cy: y, r: 3.6, class: `vb-dotplot-dot vb-${tone}` }));
+  return svg;
+}
+
+// ---------------------------------------------------------------------------
+// headToHead — a single board entry's paired duel as two short bars sharing a
+// scale (champion above, challenger below) with the won_by side marked. Used
+// in the gauntlet fixture table-figure. Each call returns a small inline SVG.
+// `champ` / `chall` are losses; `wonBy` ∈ champId | challId | null.
+// ---------------------------------------------------------------------------
+export function headToHead(champLoss, challLoss, opts = {}) {
+  const width = opts.width || 200;
+  const height = opts.height || 30;
+  const max = Math.max(fin(champLoss) ? champLoss : 0, fin(challLoss) ? challLoss : 0, 1);
+  const svg = svgEl('svg', {
+    class: 'vb-h2h', width: '100%', height, viewBox: `0 0 ${width} ${height}`,
+    preserveAspectRatio: 'none', role: 'img',
+    'aria-label': opts.ariaLabel || 'paired loss bars',
+  });
+  const barH = 9;
+  const draw = (val, yTop, won) => {
+    if (!fin(val)) return;
+    const w = (val / max) * (width - 4);
+    svg.appendChild(svgEl('rect', {
+      x: 2, y: yTop, width: Math.max(1.5, w).toFixed(1), height: barH, rx: 1.5,
+      class: 'vb-h2h-bar vb-' + (won ? 'improve' : 'neutral'),
+    }));
+  };
+  const champWon = opts.wonBy != null && opts.champId != null && String(opts.wonBy) === String(opts.champId);
+  const challWon = opts.wonBy != null && opts.challId != null && String(opts.wonBy) === String(opts.challId);
+  draw(champLoss, 3, champWon);
+  draw(challLoss, 3 + barH + 4, challWon);
+  return svg;
+}
+
+// ---------------------------------------------------------------------------
 // formatting helpers (local — kept here so the toolkit is self-contained).
 // ---------------------------------------------------------------------------
 export function fmtNum(v, digits) {

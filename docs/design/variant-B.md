@@ -46,16 +46,26 @@ static/app_B.js                         entry; injects B's CSS, boots shell+rout
 static/js/variants/B/router.js          hash router, prefix #/B/...
 static/js/variants/B/shell.js           masthead, nav, crumbs, theme, live pill
 static/js/variants/B/lib/charts.js      sparkline · slopegraph · divergingBars
-                                        · trajectoryStory · progressRing
+                                        · trajectoryStory · progressRing ·
+                                        marginTimeline · genealogy · dotPlot ·
+                                        headToHead
+static/js/variants/B/lib/fixtures.js    tournament fixtures: gauntletFixture ·
+                                        matchupGridFigure · bracketFixture ·
+                                        doubleElimFixture · roundRobinFixture ·
+                                        swissFixture · raceFixture
 static/js/variants/B/lib/prose.js       SAFE markdown→DOM, renderBrief (TOC +
                                         collapsibles), pullQuote · verdictBadge
                                         · note · section · stat
-static/js/variants/B/lib/data.js        shared selectors + tiny async-cache
+static/js/variants/B/lib/data.js        shared selectors + tiny async-cache;
+                                        boardEntries · gauntlet · fixtureField ·
+                                        lifecycleSteps
 static/js/variants/B/views/             environment · epoch · experiment ·
-                                        tournament · run · bench
+                                        board · tournament · run · bench
 static/css/variants/B/tokens.css        paper/ink/sepia palettes (scoped)
 static/css/variants/B/notebook.css      the editorial stylesheet (scoped)
 static/test/variant_b.test.mjs          22 node tests (discovered by run-all)
+static/test/variant_b_enrich.test.mjs   17 node tests for the four enrichment
+                                        themes (discovered by run-all)
 ```
 
 ### How the proposer brief is surfaced
@@ -209,6 +219,56 @@ absolute per-entry board drift loss.
              10:02:11  judge incorporates_feedback
 ```
 
+## The four enrichment visualizations
+
+The enrichment wave adds the four shared themes in the lab-notebook idiom.
+Every figure is a pure SVG/CSS/DOM factory (no build step, no library), scoped
+under `#variant-root`, total (a degenerate input yields a labeled fallback,
+never a blank box or a throw), and bound only to the real `/api/*` endpoints.
+
+### 1 · Candidate lifecycle (Experiment view)
+The Experiment entry becomes a true notebook page. A **margin timeline**
+(`marginTimeline`) runs down the left rail — *conceived → patched → ran the
+board → judged → verdict* — each beat toned by what the data records (the
+terminal beat fails red on a rejection). The hypothesis
+(`hypothesis_core_idea`) is set as a **pull-quote**; the **rejection reason**
+(from `/api/tournaments`) is set as a second, contrasting pull-quote. A
+hand-drawn-feeling **genealogy figure** (`genealogy`) draws the family tree
+(v0 → {v1, v2}) with curved connectors and the reigning champion marked with a
+crown ♔; every node is clickable into its own entry.
+
+### 2 · The board a candidate faces (The Board view, `#/B/board`)
+The fixed task suite as a typeset **plate**, not a grid of cells and not a
+table. Entries are **grouped by `kind`** (single-turn / multi-turn scripted /
+multi-turn emulated), each a quiet card with its id, an `input_preview` set as
+a pull-line, **tags in small caps**, and **budget + weight hung as fine
+marginal annotations**. A **figure caption** (entry count, kinds, total
+weight) closes the plate. Binds to `epoch.board`.
+
+### 3 · Per-board scoring + drill-down (Experiment view)
+Three depths. Depth 1: each board entry the candidate ran is a prose row with
+a small **inline dot-plot** (`dotPlot`, the loss riding a thin track) and a
+pass/fail glyph, bound to `/api/generation/{e}/{g}/per-entry`. Depth 2:
+clicking a row opens a **footnote/aside in place** — its expectation outcomes
+(`…/expectations`) and per-judge losses (`…/per-judge`). Depth 3: a *“read the
+run transcript”* link drills to the run dialogue.
+
+### 4 · Match-ups across tournament styles (Lineage view)
+The **real king-of-the-hill gauntlet** (`gauntletFixture`, from
+`/api/tournaments`) as a head-to-head **ladder** — one crowned champion spine,
+each challenger a clickable rung with its verdict and Δscalar — and the heart
+of one round, the **paired matchup grid** (`matchupGridFigure` +
+`headToHead`, from `/api/matchup-grid/…`) as a beautifully set table-figure
+(per board: champion vs challenger loss bars, Δ, won_by). Both are real data
+and carry no “illustrative” mark. Then five **illustrative alternative
+structures** over the same generation field, each a *different* topology with
+a SELECTION.md-grounded caption and an explicit “not how this epoch ran” mark:
+a single-elimination **bracket** engraving, a coupled winners’/losers’
+**double-elimination** figure, a **round-robin matrix**, a **Swiss pairing
+ledger**, and a **racing / successive-halving lane** chart
+(`bracketFixture` · `doubleElimFixture` · `roundRobinFixture` ·
+`swissFixture` · `raceFixture`, in `js/variants/B/lib/fixtures.js`).
+
 ## Honest states & re-render safety
 Every async section renders through `note(kind)` — `not_yet | running | empty
 | broken` — never a bare "No data". Views clear-and-repaint their own host but
@@ -220,4 +280,8 @@ absent index, and unreachable endpoints all degrade to a labeled state.
 `node static/test/variant_b.test.mjs` — 22 tests covering the chart toolkit's
 totality, the safe Markdown brief renderer + TOC, the router, and every view
 rendering against the shared mock snapshot (including the seed path, clickable
-drill-downs, and re-render safety). Discovered by `static/test/run-all.mjs`.
+drill-downs, and re-render safety). `node static/test/variant_b_enrich.test.mjs`
+— 17 tests covering the four enrichment themes: the new chart + fixture
+primitives' totality, the board plate, the per-entry scoring drill-down (all
+three depths), and the gauntlet + five illustrative tournament fixtures. Both
+discovered by `static/test/run-all.mjs`.

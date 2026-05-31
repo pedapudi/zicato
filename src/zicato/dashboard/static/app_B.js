@@ -23,6 +23,7 @@ import { renderBShell, applyTheme, readTheme } from './js/variants/B/shell.js';
 import './js/variants/B/views/environment.js';
 import './js/variants/B/views/epoch.js';
 import './js/variants/B/views/experiment.js';
+import './js/variants/B/views/board.js';
 import './js/variants/B/views/tournament.js';
 import './js/variants/B/views/run.js';
 import './js/variants/B/views/bench.js';

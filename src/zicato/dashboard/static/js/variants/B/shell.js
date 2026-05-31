@@ -74,6 +74,7 @@ function navLink(props, children, view, ...segs) {
 const NAV_LINKS = [
   ['environment', 'Environment'],
   ['epoch', 'Epoch'],
+  ['board', 'The Board'],
   ['tournament', 'Lineage'],
   ['bench', 'Bench'],
 ];

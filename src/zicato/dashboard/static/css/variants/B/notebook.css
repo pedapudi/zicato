@@ -496,3 +496,253 @@
 .vb-activity-row { display: flex; gap: 0.75rem; font-size: 0.84rem; }
 .vb-activity-ts { color: var(--vb-ink-dim); flex-shrink: 0; }
 .vb-activity-msg { color: var(--vb-ink-soft); }
+
+/* ===================================================================== */
+/* Enrichment — shared figure primitives                                  */
+/* ===================================================================== */
+/* Small-caps tag set (board tags, fixture labels). */
+#variant-root .vb-smallcaps-tag {
+  display: inline-block; font-variant: small-caps; font-feature-settings: "smcp" 1;
+  text-transform: lowercase; letter-spacing: 0.04em; font-size: 0.78rem;
+  color: var(--vb-ink-soft); background: var(--vb-surface-2);
+  border: 1px solid var(--vb-border); border-radius: 999px;
+  padding: 0.05rem 0.5rem; margin: 0 0.3rem 0.3rem 0;
+}
+#variant-root .vb-dotplot { display: inline-block; vertical-align: middle; }
+#variant-root .vb-dotplot-track { stroke: var(--vb-border-strong); stroke-width: 1; }
+#variant-root .vb-dotplot-dot { stroke: var(--vb-surface); stroke-width: 1; }
+#variant-root .vb-dotplot-dot.vb-improve { fill: var(--vb-improve); }
+#variant-root .vb-dotplot-dot.vb-regress { fill: var(--vb-regress); }
+#variant-root .vb-dotplot-dot.vb-caution { fill: var(--vb-caution); }
+#variant-root .vb-dotplot-na { fill: var(--vb-ink-dim); font-size: 10px; font-family: var(--vb-mono); }
+#variant-root .vb-h2h { display: block; }
+#variant-root .vb-h2h-bar.vb-improve { fill: var(--vb-improve); }
+#variant-root .vb-h2h-bar.vb-neutral { fill: var(--vb-border-strong); }
+#variant-root .vb-illustrative {
+  font-size: 0.74rem; color: var(--vb-ink-dim); font-style: italic;
+  margin: 0 0 0.6rem; display: flex; align-items: baseline; gap: 0.35rem;
+}
+#variant-root .vb-illustrative-mark { font-style: normal; color: var(--vb-caution); }
+
+/* ===================================================================== */
+/* Theme 1 — candidate lifecycle (margin timeline + genealogy)            */
+/* ===================================================================== */
+#variant-root .vb-exp-entry {
+  display: grid; grid-template-columns: 13rem 1fr; gap: 2rem;
+  align-items: start; margin-bottom: 0.5rem;
+}
+@media (max-width: 760px) { #variant-root .vb-exp-entry { grid-template-columns: 1fr; gap: 1.25rem; } }
+#variant-root .vb-exp-margin {
+  position: sticky; top: 5rem; border-right: 1px solid var(--vb-border);
+  padding-right: 1.25rem;
+}
+@media (max-width: 760px) {
+  #variant-root .vb-exp-margin { position: static; border-right: none; border-bottom: 1px solid var(--vb-border); padding: 0 0 1rem; }
+}
+#variant-root .vb-exp-margin-title {
+  font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.16em;
+  color: var(--vb-ink-dim); margin: 0 0 0.85rem; font-weight: 700;
+}
+#variant-root .vb-margin-timeline { list-style: none; margin: 0; padding: 0; }
+#variant-root .vb-mt-step {
+  position: relative; display: grid; grid-template-columns: 1.4rem 1fr; gap: 0.6rem;
+  padding-bottom: 1rem;
+}
+#variant-root .vb-mt-step::before {
+  content: ""; position: absolute; left: 0.65rem; top: 1.3rem; bottom: -0.1rem;
+  width: 1px; background: var(--vb-border-strong);
+}
+#variant-root .vb-mt-last::before { display: none; }
+#variant-root .vb-mt-node {
+  width: 1.35rem; height: 1.35rem; border-radius: 50%; display: grid; place-items: center;
+  border: 1px solid var(--vb-border-strong); background: var(--vb-surface); z-index: 1;
+}
+#variant-root .vb-mt-glyph { font-size: 0.7rem; line-height: 1; }
+#variant-root .vb-mt-done .vb-mt-node { border-color: var(--vb-improve); color: var(--vb-improve); }
+#variant-root .vb-mt-active .vb-mt-node { border-color: var(--vb-running); color: var(--vb-running); }
+#variant-root .vb-mt-fail .vb-mt-node { border-color: var(--vb-regress); color: var(--vb-regress); background: var(--vb-regress-bg); }
+#variant-root .vb-mt-pending .vb-mt-node { color: var(--vb-ink-dim); }
+#variant-root .vb-mt-label { display: block; font-size: 0.86rem; font-weight: 600; color: var(--vb-ink); }
+#variant-root .vb-mt-fail .vb-mt-label { color: var(--vb-regress); }
+#variant-root .vb-mt-pending .vb-mt-label { color: var(--vb-ink-dim); font-weight: 500; }
+#variant-root .vb-mt-detail { display: block; font-size: 0.74rem; line-height: 1.45; }
+
+#variant-root .vb-exp-rejection .vb-pullquote-text { color: var(--vb-regress); font-size: 1.1rem; }
+#variant-root .vb-exp-rejection { border-left-color: var(--vb-regress); }
+
+#variant-root .vb-genealogy { margin: 0; }
+#variant-root .vb-genealogy-svg { display: block; overflow: visible; }
+#variant-root .vb-gen-link { stroke-width: 1.6; stroke-linecap: round; }
+#variant-root .vb-gen-link.vb-improve { stroke: var(--vb-improve); }
+#variant-root .vb-gen-link.vb-regress { stroke: var(--vb-regress); stroke-dasharray: 3 3; }
+#variant-root .vb-gen-link.vb-neutral { stroke: var(--vb-border-strong); }
+#variant-root .vb-gen-dot { stroke: var(--vb-surface); stroke-width: 2; }
+#variant-root .vb-gen-dot.vb-improve { fill: var(--vb-improve); }
+#variant-root .vb-gen-dot.vb-regress { fill: var(--vb-regress); }
+#variant-root .vb-gen-dot.vb-neutral { fill: var(--vb-neutral); }
+#variant-root .vb-gen-id { fill: var(--vb-surface); font-family: var(--vb-mono); font-size: 9px; font-weight: 600; }
+#variant-root .vb-gen-crown { fill: var(--vb-caution); font-size: 14px; }
+#variant-root .vb-gen-crown-inline { color: var(--vb-caution); }
+#variant-root .vb-gen-node.vb-clickable { cursor: pointer; }
+#variant-root .vb-gen-node.vb-clickable:hover .vb-gen-dot { stroke: var(--vb-accent); }
+#variant-root .vb-gen-pulse { fill: var(--vb-running); opacity: 0.25; }
+@media (prefers-reduced-motion: no-preference) {
+  #variant-root .vb-gen-live .vb-gen-pulse { animation: vb-pulse 1.8s var(--vb-ease) infinite; }
+}
+
+/* ===================================================================== */
+/* Theme 2 — the board plate                                              */
+/* ===================================================================== */
+#variant-root .vb-plate { display: flex; flex-direction: column; gap: 2rem; }
+#variant-root .vb-plate-group-head { margin-bottom: 0.85rem; }
+#variant-root .vb-plate-group-name {
+  font-family: var(--vb-serif); font-size: 1.25rem; font-weight: 600;
+  color: var(--vb-ink); margin: 0; display: inline-block;
+}
+#variant-root .vb-plate-group-count { font-size: 0.8rem; margin-left: 0.6rem; }
+#variant-root .vb-plate-group-dek { font-size: 0.84rem; margin: 0.2rem 0 0; }
+#variant-root .vb-plate-cards { display: flex; flex-direction: column; gap: 0.85rem; }
+#variant-root .vb-plate-card {
+  display: grid; grid-template-columns: 1fr 9rem; gap: 1.25rem;
+  background: var(--vb-surface); border: 1px solid var(--vb-border);
+  border-radius: var(--vb-radius); padding: 1rem 1.25rem; box-shadow: var(--vb-shadow);
+}
+@media (max-width: 640px) { #variant-root .vb-plate-card { grid-template-columns: 1fr; } }
+#variant-root .vb-plate-card-id { font-size: 0.95rem; font-weight: 600; margin: 0 0 0.4rem; color: var(--vb-ink); }
+#variant-root .vb-plate-card-preview { font-family: var(--vb-serif); font-size: 0.98rem; line-height: 1.55; color: var(--vb-ink-soft); margin: 0 0 0.55rem; }
+#variant-root .vb-plate-card-tags { margin: 0; }
+#variant-root .vb-plate-card-margin {
+  display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start;
+  border-left: 1px solid var(--vb-border); padding-left: 1rem;
+}
+@media (max-width: 640px) { #variant-root .vb-plate-card-margin { border-left: none; border-top: 1px solid var(--vb-border); padding: 0.6rem 0 0; flex-direction: row; flex-wrap: wrap; gap: 1rem; } }
+#variant-root .vb-plate-anno { display: flex; flex-direction: column; line-height: 1.2; }
+#variant-root .vb-plate-anno-k { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--vb-ink-dim); font-weight: 700; }
+#variant-root .vb-plate-anno-v { font-size: 0.86rem; color: var(--vb-ink-soft); }
+#variant-root .vb-plate-caption { font-size: 0.82rem; color: var(--vb-ink-dim); margin-top: 1.5rem; padding-top: 0.85rem; border-top: 1px solid var(--vb-border); font-style: italic; }
+#variant-root .vb-plate-caption-no { font-style: normal; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.7rem; margin-right: 0.5rem; color: var(--vb-ink-soft); }
+
+/* ===================================================================== */
+/* Theme 3 — per-board scoring + drill-down                               */
+/* ===================================================================== */
+#variant-root .vb-score-list { display: flex; flex-direction: column; }
+#variant-root .vb-score-row { border-bottom: 1px solid var(--vb-border); }
+#variant-root .vb-score-row-head {
+  display: grid; grid-template-columns: 1.2rem 1fr 8rem 3.5rem 8rem auto; gap: 0.75rem;
+  align-items: center; padding: 0.55rem 0.4rem;
+}
+@media (max-width: 720px) { #variant-root .vb-score-row-head { grid-template-columns: 1.2rem 1fr auto; row-gap: 0.3rem; } #variant-root .vb-score-fig, #variant-root .vb-score-loss { grid-column: 2; } }
+#variant-root .vb-score-row-head:hover { background: var(--vb-surface-2); }
+#variant-root .vb-score-marker { color: var(--vb-ink-dim); font-size: 0.7rem; }
+#variant-root .vb-score-name { font-size: 0.88rem; color: var(--vb-ink); }
+#variant-root .vb-score-fig { display: flex; align-items: center; }
+#variant-root .vb-score-loss { font-size: 0.84rem; text-align: right; color: var(--vb-ink-soft); }
+#variant-root .vb-score-pass { display: inline-flex; gap: 0.3rem; align-items: center; font-size: 0.8rem; }
+#variant-root .vb-score-pass-label { font-size: 0.78rem; }
+#variant-root .vb-score-flag { font-size: 0.72rem; }
+#variant-root .vb-score-aside {
+  margin: 0 0 0.75rem 1.95rem; padding: 0.85rem 1.1rem;
+  background: var(--vb-surface-2); border-left: 2px solid var(--vb-accent);
+  border-radius: 0 var(--vb-radius-sm) var(--vb-radius-sm) 0;
+}
+#variant-root .vb-aside-label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--vb-ink-dim); font-weight: 700; margin: 0.6rem 0 0.4rem; }
+#variant-root .vb-aside-label:first-child { margin-top: 0; }
+#variant-root .vb-aside-outcomes, #variant-root .vb-aside-judges { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+#variant-root .vb-aside-outcome, #variant-root .vb-aside-judge { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.84rem; flex-wrap: wrap; }
+#variant-root .vb-aside-outcome-glyph { font-weight: 700; }
+#variant-root .vb-aside-outcome-kind, #variant-root .vb-aside-judge-name { font-weight: 600; }
+#variant-root .vb-aside-outcome-detail { font-style: italic; }
+#variant-root .vb-aside-judge-loss { color: var(--vb-ink-soft); }
+#variant-root .vb-aside-deeper { margin: 0.85rem 0 0; }
+
+/* ===================================================================== */
+/* Theme 4 — tournament-style fixtures                                    */
+/* ===================================================================== */
+#variant-root .vb-fixture { margin: 0; }
+/* The real gauntlet ladder. */
+#variant-root .vb-gauntlet-ladder { display: flex; flex-direction: column; gap: 0.6rem; }
+#variant-root .vb-gauntlet-champ {
+  display: inline-flex; align-items: center; gap: 0.55rem; align-self: flex-start;
+  background: var(--vb-improve-bg); border: 1px solid var(--vb-improve);
+  border-radius: var(--vb-radius); padding: 0.45rem 0.9rem;
+}
+#variant-root .vb-gauntlet-crown { color: var(--vb-caution); font-size: 1.1rem; }
+#variant-root .vb-gauntlet-champ-id { font-weight: 700; color: var(--vb-improve); }
+#variant-root .vb-gauntlet-champ-role { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--vb-ink-dim); }
+#variant-root .vb-gauntlet-rungs { list-style: none; margin: 0; padding: 0 0 0 1.5rem; display: flex; flex-direction: column; gap: 0.3rem; border-left: 2px solid var(--vb-border-strong); }
+#variant-root .vb-gauntlet-rung { display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 0.5rem; border-radius: var(--vb-radius-sm); }
+#variant-root .vb-gauntlet-rung:hover { background: var(--vb-surface-2); }
+#variant-root .vb-gauntlet-rung-no { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--vb-ink-dim); font-weight: 700; width: 1.6rem; }
+#variant-root .vb-gauntlet-connector { color: var(--vb-ink-dim); font-family: var(--vb-mono); letter-spacing: -1px; }
+#variant-root .vb-gauntlet-chall { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600; }
+#variant-root .vb-gauntlet-glyph { font-weight: 700; }
+#variant-root .vb-gauntlet-delta { font-family: var(--vb-mono); font-size: 0.82rem; margin-left: auto; }
+
+/* The paired matchup grid table-figure. */
+#variant-root .vb-matchup-head, #variant-root .vb-matchup-row {
+  display: grid; grid-template-columns: 1fr 1.4fr 7rem; gap: 1rem; align-items: center;
+  padding: 0.5rem 0.4rem;
+}
+#variant-root .vb-matchup-head { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--vb-ink-dim); border-bottom: 1px solid var(--vb-border-strong); }
+#variant-root .vb-matchup-row { border-bottom: 1px solid var(--vb-border); }
+#variant-root .vb-matchup-row.vb-clickable:hover { background: var(--vb-surface-2); }
+#variant-root .vb-matchup-col-bars { display: flex; align-items: center; gap: 0.6rem; }
+#variant-root .vb-matchup-vs { font-size: 0.7rem; color: var(--vb-ink-dim); }
+#variant-root .vb-matchup-delta { font-family: var(--vb-mono); font-size: 0.8rem; flex-shrink: 0; }
+#variant-root .vb-matchup-col-won { display: inline-flex; gap: 0.3rem; align-items: center; font-size: 0.82rem; }
+#variant-root .vb-matchup-won-glyph { font-weight: 700; }
+
+/* The illustrative alternatives. */
+#variant-root .vb-altfix-grid { display: flex; flex-direction: column; gap: 2.25rem; }
+#variant-root .vb-altfix-name { font-family: var(--vb-serif); font-size: 1.1rem; font-weight: 600; color: var(--vb-ink); margin: 0 0 0.65rem; }
+#variant-root .vb-bracket-svg, #variant-root .vb-race-svg { display: block; overflow: visible; }
+#variant-root .vb-bracket-line, #variant-root .vb-bracket-elbow { stroke: var(--vb-border-strong); stroke-width: 1.2; }
+#variant-root .vb-bracket-id { font-family: var(--vb-mono); font-size: 11px; }
+#variant-root .vb-bracket-id.vb-improve { fill: var(--vb-improve); font-weight: 600; }
+#variant-root .vb-bracket-id.vb-regress { fill: var(--vb-regress); }
+#variant-root .vb-bracket-id.vb-neutral { fill: var(--vb-ink-soft); }
+/* Double-elim. */
+#variant-root .vb-double-rail { margin: 0.5rem 0; }
+#variant-root .vb-double-rail-title { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--vb-ink-soft); margin: 0 0 0.4rem; }
+#variant-root .vb-double-rail-hint { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 0.76rem; }
+#variant-root .vb-double-track { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+#variant-root .vb-double-node { border: 1px solid var(--vb-border-strong); border-radius: var(--vb-radius-sm); padding: 0.25rem 0.6rem; font-size: 0.84rem; }
+#variant-root .vb-double-node.vb-improve { border-color: var(--vb-improve); color: var(--vb-improve); }
+#variant-root .vb-double-node.vb-regress { border-color: var(--vb-regress); color: var(--vb-regress); }
+#variant-root .vb-double-drop { text-align: center; font-size: 0.74rem; color: var(--vb-ink-dim); margin: 0.5rem 0; font-style: italic; }
+/* Round-robin matrix. */
+#variant-root .vb-rr-grid { display: grid; gap: 2px; background: var(--vb-border); border: 1px solid var(--vb-border); border-radius: var(--vb-radius-sm); overflow: hidden; max-width: 30rem; }
+#variant-root .vb-rr-corner, #variant-root .vb-rr-colhead, #variant-root .vb-rr-rowhead, #variant-root .vb-rr-cell { background: var(--vb-surface); display: grid; place-items: center; padding: 0.4rem; font-size: 0.78rem; }
+#variant-root .vb-rr-colhead, #variant-root .vb-rr-rowhead { font-family: var(--vb-mono); font-weight: 600; color: var(--vb-ink-soft); background: var(--vb-surface-2); }
+#variant-root .vb-rr-cell { font-weight: 700; }
+#variant-root .vb-rr-cell.vb-improve { color: var(--vb-improve); background: var(--vb-improve-bg); }
+#variant-root .vb-rr-cell.vb-regress { color: var(--vb-regress); background: var(--vb-regress-bg); }
+#variant-root .vb-rr-diag { color: var(--vb-ink-dim); background: var(--vb-bg-tint); }
+/* Swiss ledger. */
+#variant-root .vb-swiss-ledger { display: flex; flex-direction: column; gap: 1rem; }
+#variant-root .vb-swiss-round-no { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--vb-ink-dim); font-weight: 700; margin: 0 0 0.35rem; border-bottom: 1px solid var(--vb-border); padding-bottom: 0.2rem; }
+#variant-root .vb-swiss-pairs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+#variant-root .vb-swiss-pair { display: flex; gap: 0.6rem; align-items: baseline; font-size: 0.86rem; }
+#variant-root .vb-swiss-v { color: var(--vb-ink-dim); font-size: 0.74rem; }
+#variant-root .vb-swiss-pt, #variant-root .vb-swiss-bye { font-size: 0.78rem; margin-left: auto; }
+#variant-root .vb-swiss-standings-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--vb-ink-dim); font-weight: 700; margin: 1rem 0 0.35rem; }
+#variant-root .vb-swiss-standings { margin: 0; padding-left: 1.5rem; }
+#variant-root .vb-swiss-standing { display: flex; gap: 0.6rem; font-size: 0.86rem; }
+#variant-root .vb-swiss-score { margin-left: auto; }
+/* Race lanes. */
+#variant-root .vb-race-lane { stroke-width: 3; stroke-linecap: round; opacity: 0.85; }
+#variant-root .vb-race-lane.vb-improve { stroke: var(--vb-improve); }
+#variant-root .vb-race-lane.vb-regress { stroke: var(--vb-regress); }
+#variant-root .vb-race-lane.vb-neutral { stroke: var(--vb-border-strong); }
+#variant-root .vb-race-cut { stroke: var(--vb-caution); stroke-width: 1; stroke-dasharray: 4 3; }
+#variant-root .vb-race-cut-label { fill: var(--vb-caution); font-size: 9px; }
+#variant-root .vb-race-id { font-family: var(--vb-mono); font-size: 11px; }
+#variant-root .vb-race-id.vb-improve { fill: var(--vb-improve); }
+#variant-root .vb-race-id.vb-regress { fill: var(--vb-regress); }
+#variant-root .vb-race-out { fill: var(--vb-regress); font-size: 10px; }
+#variant-root .vb-race-finish.vb-improve { fill: var(--vb-improve); }
+#variant-root .vb-race-finish.vb-regress { fill: var(--vb-regress); }
+#variant-root .vb-race-finish.vb-neutral { fill: var(--vb-neutral); }
+
+/* The board view lead. */
+#variant-root .vb-board-lead { margin-bottom: 1rem; }
