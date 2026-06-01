@@ -473,4 +473,168 @@ test('tree sidebar: digest-gated — same model + route + toggles yields the sam
   assertEqual(d1, d2, 'a steady heartbeat (identical model/route) is a true digest no-op');
 });
 
+// ====================================================================
+// Console IV folds (round 7): the SLIM REEL on the epoch view, the
+// compact MATCH CARDS on the generations page, and a DENSITY picker.
+// ====================================================================
+
+const reel = await import('../js/variants/T/reel.js');
+
+// ---- (a) the epoch view renders the slim reel, NOT the old bumps ----
+
+test('epoch view: renders the SLIM REEL (champion spine + round ticks), NOT the old lineage-bumps', async () => {
+  freshState(); installFetch();
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await epoch.render(host, ctx, { epochId: EPOCH_ID });
+
+  assert(allByClass(host, 'tr-reel')[0], 'the slim reel rendered on the epoch view');
+  assert(allByClass(host, 'tr-spine')[0], 'the reel has the champion spine');
+  assert(allByClass(host, 'tr-station-seed')[0], 'the reel has the seed/champion station');
+  const ticks = allByClass(host, 'tr-tick');
+  assert(ticks.length >= 2, 'the reel has one round tick per challenger (≥2)');
+  assert(allByClass(host, 'dn-bumps').length === 0, 'the old lineage-bumps chart is GONE (replaced by the reel)');
+  // the heatmap stays on the epoch view (carried forward).
+  assert(allByClass(host, 'dn-heatmap')[0], 'the board×generation heatmap is still present on the epoch view');
+});
+
+// ---- (b) the reel stays fit-to-width under a MANY-generation fixture ----
+
+const MANY_EPOCH = '2026-05-31_many';
+function installManyFetch(roundN) {
+  const n = roundN || 11;                       // 11 rounds → 12 generations
+  const gens = [{ generation_id: 'v0', epoch_id: MANY_EPOCH, parent_generation_id: '', promoted: true }];
+  const matchups = [];
+  const points = [{ generation_id: 'v0', scalar: 100 }];
+  for (let i = 1; i <= n; i++) {
+    const id = 'v' + i;
+    gens.push({ generation_id: id, epoch_id: MANY_EPOCH, parent_generation_id: 'v0', promoted: false });
+    matchups.push({ champion: 'v0', challenger: id, decision: 'rejected', delta_scalar: i * 1.5,
+      ran_at: '2026-05-31T00:' + String(i).padStart(2, '0') + ':00', hypothesis_core_idea: 'Idea ' + i + '.' });
+    points.push({ generation_id: id, scalar: 100 + i });
+  }
+  const MANY = {
+    '/api/epoch': { epoch_id: MANY_EPOCH, closed: false, goal: 'Many rounds.',
+      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
+        outcome: { decision: g.promoted ? 'baseline' : 'rejected' } })), board: [{ id: 'b1', kind: 'single_turn' }] },
+    '/api/lineage': { generations: gens },
+    '/api/tournaments': { epoch_id: MANY_EPOCH, champion_lineage: ['v0'], matchups },
+    '/api/score-trajectory': { points },
+    '/api/workspace': { current_epoch_id: MANY_EPOCH, epochs: [{ epoch_id: MANY_EPOCH }], sparkline: [] },
+    '/api/health-report': { epoch_id: MANY_EPOCH, healthy: true, findings: [] },
+  };
+  MANY[`/api/generation/${MANY_EPOCH}/v0/per-entry`] = { entries: [{ entry_id: 'b1', drift_loss: 50 }] };
+  for (const g of gens) MANY[`/api/generation/${MANY_EPOCH}/${g.generation_id}/per-entry`] =
+    MANY[`/api/generation/${MANY_EPOCH}/${g.generation_id}/per-entry`] || { entries: [{ entry_id: 'b1', drift_loss: 50 }] };
+  globalThis.fetch = async (path) => (Object.prototype.hasOwnProperty.call(MANY, path)
+    ? { ok: true, json: async () => MANY[path] }
+    : { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) });
+}
+
+test('reel: fit-to-width — a fixed-width viewBox; many-round ticks compress and never exceed the viewBox', () => {
+  // 11 rounds → 12 stations. Build the reel directly so we can read the SVG.
+  const rounds = [];
+  for (let i = 1; i <= 11; i++) rounds.push({ challenger: 'v' + i, decision: 'rejected', deltaScalar: i });
+  const node = reel.reel({ championId: 'v0', rounds, onSelect() {}, onSeed() {} });
+  const svgs = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('tr-strip') && n.localName === 'svg');
+  const strip = svgs[0];
+  assert(strip, 'the reel SVG strip rendered');
+  const vb = strip.getAttribute('viewBox');
+  assertEqual(vb, '0 0 1000 92', 'the reel uses a FIXED-width viewBox (fit-to-width, no pan/zoom)');
+  const VBW = 1000;
+
+  // every positioned element (x / cx / x2) stays within the fixed viewBox width.
+  const all = strip.querySelectorAll('[class]');
+  let maxX = 0;
+  for (const elx of all) {
+    const cx = elx.getAttribute('cx'); const x = elx.getAttribute('x'); const x2 = elx.getAttribute('x2');
+    for (const v of [cx, x, x2]) { if (v != null && isFinite(+v)) { assert(+v <= VBW, 'no element exceeds the viewBox width (' + v + ' ≤ ' + VBW + ')'); maxX = Math.max(maxX, +v); } }
+  }
+  assert(maxX > 0 && maxX <= VBW, 'positions are bounded by the fixed viewBox');
+
+  // station spacing COMPRESSES with more rounds: 12 stations sit closer than 4.
+  const xsOf = (n) => {
+    const rs = [];
+    for (let i = 1; i <= n; i++) rs.push({ challenger: 'v' + i, decision: 'rejected', deltaScalar: i });
+    const nd = reel.reel({ championId: 'v0', rounds: rs, onSelect() {} });
+    const s = nd.querySelectorAll('[class]').filter((q) => (q.getAttribute('class') || '').includes('tr-tick') && q.localName === 'circle');
+    return s.map((c) => +c.getAttribute('cx')).sort((a, b) => a - b);
+  };
+  const few = xsOf(3); const many = xsOf(11);
+  const gapFew = few[1] - few[0];
+  const gapMany = many[1] - many[0];
+  assert(gapMany < gapFew, 'with more rounds the tick spacing compresses (' + gapMany.toFixed(1) + ' < ' + gapFew.toFixed(1) + ')');
+});
+
+test('epoch view: the reel fits to width with ~12 generations (no overflow / collision)', async () => {
+  freshState(); installManyFetch(11);
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: MANY_EPOCH });
+  const ticks = allByClass(host, 'tr-tick');
+  assertEqual(ticks.length, 11, 'one tick per challenger round (11)');
+  const strip = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('tr-strip') && n.localName === 'svg')[0];
+  assertEqual(strip.getAttribute('viewBox'), '0 0 1000 92', 'still a fixed-width viewBox under many generations');
+  for (const c of ticks) assert(+c.getAttribute('cx') <= 1000, 'every round tick stays within the viewBox width');
+});
+
+// ---- (c) the generations page renders the banner + match-card grid ----
+
+test('generations view: renders the champion-defends banner + one compact match card per challenger (wrapping grid)', async () => {
+  freshState(); installFetch();
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+
+  const banner = allByClass(host, 'dt-champ-banner')[0];
+  assert(banner, 'the champion-defends banner rendered');
+  assert(host.textContent.includes('CHAMPION'), 'the banner names the champion role');
+  assert(host.textContent.includes('v0'), 'the banner shows the champion id (v0)');
+  assert(host.textContent.includes('title defence'), 'the banner shows the title-defence count');
+
+  const grid = allByClass(host, 'dt-matchcards')[0];
+  assert(grid, 'a match-cards grid container rendered');
+  const cards = allByClass(host, 'dt-match-card');
+  assertEqual(cards.length, 2, 'one match card per challenger round (v0→v1, v0→v2)');
+  // each card carries the versus, a Δ, a one-line hypothesis, and a status link.
+  assert(host.textContent.includes('Enforce explicit slide-structure output'), 'the (one-line) hypothesis core idea is on a card');
+  assert(allByClass(host, 'dt-match-delta').length === 2, 'each card shows a Δscalar');
+  assert(allByClass(host, 'dt-match-open').length === 2, 'each card has a status link (dead-branch/promoted → open)');
+  // the decisive driver from the gate.
+  assert(host.textContent.includes('incorporates_feedback'), 'the decisive-driver judge appears on the v1 card');
+});
+
+// ---- (d) match cards must NOT appear on the environment / workspace view ----
+
+test('match cards: do NOT render on the environment / workspace (home) view', async () => {
+  freshState(); installFetch();
+  const home = await import('../js/variants/T/views/home.js');
+  const host = document.createElement('div');
+  await home.render(host, { navigate() {}, href: router.href }, {});
+  assert(host.textContent.includes('Environment'), 'the home/environment view rendered');
+  assertEqual(allByClass(host, 'dt-match-card').length, 0, 'NO match cards on the environment view');
+  assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO champion-defends banner on the environment view');
+  assertEqual(allByClass(host, 'tr-reel').length, 0, 'NO reel on the environment view');
+});
+
+// ---- (e) the density picker switches compact↔roomy + persists ----
+
+test('density picker: compact↔roomy switches the root attribute + spacing token + persists (third picker)', () => {
+  freshState();
+  assertEqual(ui.DEFAULT_DENSITY, 'compact', 'compact is T’s default density');
+  const ids = ui.DENSITY_THEMES.map((t) => t[0]);
+  assert(['compact', 'cozy', 'roomy'].every((d) => ids.includes(d)), 'all three densities offered (compact/cozy/roomy)');
+  assert(shell.DENSITIES.includes('compact') && shell.DENSITIES.includes('roomy'), 'the shell exposes the density ids');
+
+  const root = document.createElement('div');
+  shell.applyDensity('compact', root);
+  assertEqual(root.getAttribute('data-t-density'), 'compact', 'compact applied to the T root');
+  assertEqual(ui.readDensity(), 'compact', 'compact persisted');
+  shell.applyDensity('roomy', root);
+  assertEqual(root.getAttribute('data-t-density'), 'roomy', 'roomy applied (the root attribute changed)');
+  assertEqual(ui.readDensity(), 'roomy', 'roomy persisted (localStorage)');
+  assertEqual(ui.normaliseDensity('nonsense'), 'compact', 'unknown density → compact');
+});
+
 await run();

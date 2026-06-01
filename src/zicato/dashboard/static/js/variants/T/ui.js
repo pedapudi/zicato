@@ -79,6 +79,34 @@ export function persistType(t) {
   return normaliseType(t);
 }
 
+// ---- density / "roominess" (compact is T's Console default) ---------
+//
+// The THIRD chrome picker. Each value maps to a `[data-t-density]` attribute on
+// the root that the stylesheet keys on, swapping the spacing/size custom
+// properties (padding, gaps, font-size scale, card min-width, rail width, the
+// reel's vertical scale) so the WHOLE UI — reel, match cards, tables, gate,
+// tree — re-breathes. Compact = the dense Console default; Roomy = Atlas-like
+// air (Q's generous proportion); Cozy sits between.
+export const DENSITY_THEMES = [
+  ['compact', 'compact'],
+  ['cozy', 'cozy'],
+  ['roomy', 'roomy'],
+];
+const DENSITY_IDS = DENSITY_THEMES.map((t) => t[0]);
+export const DEFAULT_DENSITY = 'compact';
+const DENSITY_KEY = 'zicato.T.density';
+
+export function normaliseDensity(t) { return DENSITY_IDS.includes(t) ? t : DEFAULT_DENSITY; }
+export function readDensity() {
+  let stored = null;
+  try { stored = window.localStorage.getItem(DENSITY_KEY); } catch (e) { /* private mode */ }
+  return normaliseDensity(stored);
+}
+export function persistDensity(t) {
+  try { window.localStorage.setItem(DENSITY_KEY, normaliseDensity(t)); } catch (e) { /* ignore */ }
+  return normaliseDensity(t);
+}
+
 // ---- small builders -------------------------------------------------
 
 export function section(titleText, ...children) {

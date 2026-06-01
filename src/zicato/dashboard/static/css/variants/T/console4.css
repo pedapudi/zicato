@@ -124,8 +124,63 @@
   --n-font-paper: var(--n-font-base);
 }
 
+/* ===================  the three density / "roominess" tokens  ===================
+ *
+ * The THIRD chrome picker. `[data-t-density]` on the root selects one spacing /
+ * size set. Compact = the dense Console default; Roomy = Atlas-like air (Q's
+ * generous proportion); Cozy sits between. Every layout that should breathe
+ * reads these `--dt-*` tokens (the body rail, the detail padding, section
+ * gaps, panel padding, card min-widths, the reel's vertical scale, a global
+ * font-size scale). A pure CSS swap — no re-render. The bare root inherits
+ * Compact so a cold load before the attribute lands is already the default.
+ */
+#variant-root[data-variant="T"],
+#variant-root[data-variant="T"][data-t-density="compact"] {
+  --dt-rail: 264px;
+  --dt-pad-x: 40px;
+  --dt-pad-y: 30px;
+  --dt-section-gap: 22px;
+  --dt-panel-pad-x: 15px;
+  --dt-panel-pad-y: 13px;
+  --dt-row-gap: 24px;
+  --dt-card-min: 240px;
+  --dt-card-gap: 14px;
+  --dt-card-pad: 13px;
+  --dt-reel-scale: 1;
+  --dt-font-scale: 1;
+}
+#variant-root[data-variant="T"][data-t-density="cozy"] {
+  --dt-rail: 288px;
+  --dt-pad-x: 56px;
+  --dt-pad-y: 40px;
+  --dt-section-gap: 30px;
+  --dt-panel-pad-x: 19px;
+  --dt-panel-pad-y: 17px;
+  --dt-row-gap: 30px;
+  --dt-card-min: 270px;
+  --dt-card-gap: 18px;
+  --dt-card-pad: 16px;
+  --dt-reel-scale: 1.18;
+  --dt-font-scale: 1.04;
+}
+#variant-root[data-variant="T"][data-t-density="roomy"] {
+  --dt-rail: 312px;
+  --dt-pad-x: 72px;
+  --dt-pad-y: 52px;
+  --dt-section-gap: 40px;
+  --dt-panel-pad-x: 24px;
+  --dt-panel-pad-y: 22px;
+  --dt-row-gap: 38px;
+  --dt-card-min: 300px;
+  --dt-card-gap: 24px;
+  --dt-card-pad: 20px;
+  --dt-reel-scale: 1.4;
+  --dt-font-scale: 1.09;
+}
+
 #variant-root[data-variant="T"] {
   font-family: var(--v2-sans);
+  font-size: calc(13px * var(--dt-font-scale, 1));
   color: var(--v2-ink);
   background: var(--v2-paper);
   display: block;
@@ -236,15 +291,16 @@
   .dn-h1 { font-size: 19px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 4px; color: var(--v2-ink); }
   .dn-h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; margin: 0 0 9px; color: var(--v2-ink); }
   /* Q's roominess: more air between sections + inside panels. */
-  .dn-section { margin: 30px 0; }
+  .dn-section { margin: var(--dt-section-gap, 30px) 0; }
   .dn-section > .dn-h2 { border-bottom: 1px solid var(--v2-rule); padding-bottom: 6px; }
   .dn-lede { font-size: 12.5px; color: var(--v2-ink-soft); margin: 2px 0 4px; max-width: 78ch; line-height: 1.45; }
   .dn-mono { font-family: var(--v2-mono); font-size: 11.5px; }
   .dn-faint { color: var(--v2-ink-faint); }
   .dn-empty { color: var(--v2-ink-faint); font-size: 12px; font-style: italic; padding: 10px 0; }
 
-  .dn-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 16px 18px; }
-  .dn-row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+  .dn-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px;
+    padding: var(--dt-panel-pad-y, 16px) var(--dt-panel-pad-x, 18px); }
+  .dn-row { display: flex; gap: var(--dt-row-gap, 24px); flex-wrap: wrap; align-items: flex-start; }
   .dn-stat { font-family: var(--v2-mono); }
   .dn-stat .v { font-size: 18px; font-variant-numeric: tabular-nums; color: var(--v2-ink); }
   .dn-stat .k { font-size: 10px; color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-top: 1px; }
@@ -708,7 +764,7 @@
   /* Q's spacing folded in: a roomier rail + a calmer detail column. */
   .dt-body {
     display: grid;
-    grid-template-columns: 264px minmax(0, 1fr);
+    grid-template-columns: var(--dt-rail, 264px) minmax(0, 1fr);
     align-items: start;
     gap: 0;
     min-height: calc(100vh - 50px);
@@ -722,8 +778,8 @@
     background: color-mix(in srgb, var(--v2-panel) 60%, var(--v2-paper));
     padding: 16px 12px 48px;
   }
-  /* the detail pane: roomy, Q/M proportion — one column, generous padding */
-  .dt-viewhost { max-width: 1160px; margin: 0; padding: 30px 40px 96px; }
+  /* the detail pane: roomy, Q/M proportion — one column, density-driven padding */
+  .dt-viewhost { max-width: 1160px; margin: 0; padding: var(--dt-pad-y, 30px) var(--dt-pad-x, 40px) 96px; }
 
   /* ---- the tree itself ---- */
   .dt-tree { display: flex; flex-direction: column; gap: 1px; }
@@ -838,6 +894,112 @@
   /* a split side keeps its sections compact so two columns stay legible */
   .dt-split-side .dn-section { margin: 20px 0; }
   .dt-split-side .dn-row { gap: 16px; }
+
+  /* ===================  the density / "roominess" picker (third)  =================== */
+
+  .dt-density-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
+  .dt-density-btn { font-family: var(--v2-mono); font-size: 9.5px; padding: 3px 7px; background: transparent;
+    color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
+    border-right: 1px solid var(--v2-rule); }
+  .dt-density-btn:last-child { border-right: none; }
+  .dt-density-btn:hover { color: var(--v2-ink); }
+  .dt-density-btn.dt-density-active { background: var(--v2-caution); color: var(--v2-paper); }
+
+  /* ===================  the SLIM REEL (tr-*) — epoch view, adopted from V  ===================
+   *
+   * A compact, fit-to-width champion spine: station 0 = the seed/champion, each
+   * tick = one round (challenger vs champion). A FIXED viewBox SVG at width:100%
+   * — NO pan/zoom; as rounds grow the ticks compress (the SVG never overflows).
+   * The vertical scale grows with the density picker (--dt-reel-scale) while the
+   * width stays fit-to-container. Hover / selection are CSS state swaps. */
+  .tr-reel { display: flex; flex-direction: column; gap: 6px; }
+  .tr-reel-empty { padding: 6px 0; }
+  .tr-reel-foot { font-size: 10.5px; margin: 2px 0 0; font-family: var(--v2-mono); }
+  .tr-strip-frame { width: 100%; }
+  .tr-strip { display: block; width: 100%; height: auto;
+    max-height: calc(120px * var(--dt-reel-scale, 1)); }
+
+  .tr-spine { stroke: var(--v2-accent); stroke-width: 2.2; vector-effect: non-scaling-stroke; }
+  .tr-axis-lab { fill: var(--v2-ink-faint); font: 11px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+
+  .tr-champ-disc { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 2; }
+  .tr-champ-glyph { fill: var(--v2-accent); font: 11px var(--v2-sans); }
+  .tr-champ-id { fill: var(--v2-ink); font: 600 12px var(--n-font-head); letter-spacing: 0.02em; }
+
+  .tr-tick { transition: r 0.12s ease; }
+  .tr-tick.tr-promote { fill: var(--v2-good); }
+  .tr-tick.tr-reject { fill: var(--v2-bad); }
+  .tr-tick-ord { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
+  .tr-tick-id { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
+
+  .tr-station { cursor: pointer; }
+  .tr-station:focus { outline: none; }
+  .tr-station:hover .tr-tick,
+  .tr-station:focus .tr-tick { stroke: var(--v2-accent); stroke-width: 2; }
+  .tr-station:hover .tr-tick-id,
+  .tr-station:focus .tr-tick-id { fill: var(--v2-ink); }
+  .tr-station:hover .tr-champ-disc,
+  .tr-station:focus .tr-champ-disc { stroke-width: 3; }
+  .tr-station.tr-sel .tr-tick { stroke: var(--v2-accent); stroke-width: 2.4; }
+  .tr-station.tr-sel .tr-tick-id { fill: var(--v2-accent); }
+  .tr-station.tr-sel .tr-champ-disc { stroke-width: 3.2; fill: color-mix(in srgb, var(--v2-accent) 16%, var(--v2-panel)); }
+
+  /* ===================  the GENERATIONS match cards (adopted from W)  ===================
+   *
+   * A champion-defends banner + a RESPONSIVE WRAPPING GRID of COMPACT challenger
+   * match cards (auto-fill, minmax(--dt-card-min, 1fr)) — one per round. Cards
+   * stay short (the full hypothesis lives on the candidate page), so the grid
+   * wraps tidily for 3 OR ~30 generations. These appear on the generations page
+   * only — never on the environment / workspace view. */
+  .dt-champ-banner { display: flex; align-items: center; gap: 16px; text-decoration: none;
+    border: 1.5px solid var(--v2-accent); border-radius: 9px;
+    padding: calc(var(--dt-card-pad, 13px) + 1px) calc(var(--dt-card-pad, 13px) + 5px);
+    margin: 4px 0 6px; background: color-mix(in srgb, var(--v2-panel) 82%, var(--v2-accent));
+    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; }
+  .dt-champ-banner:hover { transform: translateY(-1px); box-shadow: 0 4px 16px color-mix(in srgb, var(--v2-accent) 28%, transparent); }
+  .dt-champ-banner.dt-champ-empty { border-color: var(--v2-rule); background: var(--v2-panel);
+    cursor: default; transform: none; box-shadow: none; }
+  .dt-champ-crown { font-size: 28px; line-height: 1; color: var(--v2-caution); flex: none; }
+  .dt-champ-body { flex: 1; min-width: 0; }
+  .dt-champ-rank { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--v2-accent); font-weight: 700; }
+  .dt-champ-id { font-family: var(--n-font-head); font-size: 23px; font-weight: 700; color: var(--v2-ink); line-height: 1.08; }
+  .dt-champ-meta { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 4px; font-family: var(--v2-mono);
+    font-size: 11px; color: var(--v2-ink-soft); font-variant-numeric: tabular-nums; }
+  .dt-champ-pill { flex: none; }
+
+  .dt-matchcards { display: grid; gap: var(--dt-card-gap, 14px);
+    grid-template-columns: repeat(auto-fill, minmax(var(--dt-card-min, 240px), 1fr)); }
+  .dt-match-card { display: flex; flex-direction: column; gap: 8px; text-decoration: none;
+    border: 1px solid var(--v2-rule); border-left: 4px solid var(--v2-flat); border-radius: 7px;
+    padding: var(--dt-card-pad, 13px) calc(var(--dt-card-pad, 13px) + 2px); background: var(--v2-panel);
+    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; min-width: 0; }
+  .dt-match-card:hover { transform: translateY(-1px); box-shadow: 0 3px 12px color-mix(in srgb, var(--v2-ink) 16%, transparent); }
+  .dt-match-card.dt-match-won { border-left-color: var(--v2-good); }
+  .dt-match-card.dt-match-lost { border-left-color: var(--v2-bad); }
+  .dt-match-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .dt-match-versus { display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--v2-mono); min-width: 0; }
+  .dt-match-chall { font-size: 13.5px; color: var(--v2-accent); font-weight: 700;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-match-vs { font-size: 9.5px; color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.06em; flex: none; }
+  .dt-match-champ { font-size: 12px; color: var(--v2-ink-soft); flex: none; }
+  .dt-match-score { display: flex; align-items: baseline; gap: 8px; }
+  .dt-match-delta { font-family: var(--n-font-head); font-size: 21px; font-weight: 700;
+    font-variant-numeric: tabular-nums; color: var(--v2-ink); }
+  .dt-match-delta.dn-good-t { color: var(--v2-good); }
+  .dt-match-delta.dn-bad-t { color: var(--v2-bad); }
+  .dt-match-delta-k { font-family: var(--v2-mono); font-size: 9px; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--v2-ink-faint); }
+  /* the hypothesis stays ONE truncated line — the full text lives on the candidate page */
+  .dt-match-idea { font-size: 11.5px; line-height: 1.4; color: var(--v2-ink-soft);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-match-idea-lead { font-weight: 700; color: var(--v2-ink); }
+  .dt-match-driver { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-match-foot { margin-top: 1px; padding-top: 7px; border-top: 1px solid var(--v2-rule-soft); }
+  .dt-match-open { font-family: var(--v2-mono); font-size: 9.5px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--v2-ink-faint); }
+  .dt-match-won .dt-match-open { color: var(--v2-good); }
+  .dt-match-lost .dt-match-open { color: var(--v2-bad); }
 
   @media (max-width: 1080px) {
     .dt-split { grid-template-columns: 1fr; gap: 18px; }

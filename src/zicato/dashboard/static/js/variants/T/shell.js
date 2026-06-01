@@ -33,6 +33,7 @@ import { normaliseDecision } from './ui.js';
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
+  DENSITY_THEMES, DEFAULT_DENSITY, normaliseDensity, readDensity, persistDensity,
 } from './ui.js';
 
 import * as home from './views/home.js';
@@ -49,6 +50,7 @@ const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations
 
 export const THEMES = COLOR_THEMES.map((t) => t[0]);
 export const TYPEFACES = TYPE_THEMES.map((t) => t[0]);
+export const DENSITIES = DENSITY_THEMES.map((t) => t[0]);
 
 const KIND_TAG = {
   single_turn: '1-turn', multi_turn_scripted: 'scripted', multi_turn_emulated: 'emulated',
@@ -61,6 +63,7 @@ let _crumbHost = null;
 let _statusEl = null;
 let _colorEl = [];
 let _typeEl = [];
+let _densityEl = [];
 let _backBtn = null;
 let _renderToken = 0;
 let _lastViewKey = null;
@@ -102,6 +105,18 @@ export function applyTypeface(typeface, rootEl) {
   return t;
 }
 
+// The THIRD picker — density / "roominess". A pure CSS-only swap: the root's
+// `data-t-density` attribute drives the spacing/size custom properties, so the
+// whole UI re-breathes without any re-render. Persisted like the other pickers.
+export function applyDensity(density, rootEl) {
+  const t = normaliseDensity(density);
+  const root = rootEl || _root;
+  if (root) root.setAttribute('data-t-density', t);
+  persistDensity(t);
+  for (const b of _densityEl) patchClass(b, 'dt-density-active', b.getAttribute('data-density') === t);
+  return t;
+}
+
 export function mountShell(root) {
   _root = root;
   clearChildren(root);
@@ -110,6 +125,7 @@ export function mountShell(root) {
   root.setAttribute('data-variant', 'T');
   root.setAttribute('data-t-theme', readColor());
   root.setAttribute('data-t-type', readType());
+  root.setAttribute('data-t-density', readDensity());
 
   _crumbHost = el('nav', { class: 'dt-crumbs', 'aria-label': 'Breadcrumb' });
 
@@ -122,6 +138,11 @@ export function mountShell(root) {
     el('button', { class: 'dt-type-btn', type: 'button', 'data-type': id, title: 'typeface: ' + id, text: label }));
   for (const b of _typeEl) b.addEventListener('click', () => applyTypeface(b.getAttribute('data-type')));
   const typeSwitch = el('div', { class: 'dt-type-switch', role: 'group', 'aria-label': 'Typeface' }, _typeEl);
+
+  _densityEl = DENSITY_THEMES.map(([id, label]) =>
+    el('button', { class: 'dt-density-btn', type: 'button', 'data-density': id, title: 'density: ' + id, text: label }));
+  for (const b of _densityEl) b.addEventListener('click', () => applyDensity(b.getAttribute('data-density')));
+  const densitySwitch = el('div', { class: 'dt-density-switch', role: 'group', 'aria-label': 'Density' }, _densityEl);
 
   _statusEl = el('span', { class: 'dt-status' }, [
     el('span', { class: 'dt-status-dot' }),
@@ -146,6 +167,7 @@ export function mountShell(root) {
     el('span', { class: 'dt-topbar-spacer' }),
     colorSwitch,
     typeSwitch,
+    densitySwitch,
     _statusEl,
   ]);
   root.appendChild(topbar);
@@ -156,6 +178,7 @@ export function mountShell(root) {
 
   applyTheme(readColor());
   applyTypeface(readType());
+  applyDensity(readDensity());
 
   window.addEventListener('hashchange', dispatch);
   bus.on('state:changed', onStateChanged);
@@ -309,4 +332,4 @@ function onStateChanged() {
   }, 400);
 }
 
-export { DEFAULT_COLOR, DEFAULT_TYPE };
+export { DEFAULT_COLOR, DEFAULT_TYPE, DEFAULT_DENSITY };

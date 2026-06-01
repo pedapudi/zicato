@@ -1,23 +1,27 @@
 // variants/T/views/epoch.js — EPOCH OVERVIEW: the dense substrate of one epoch.
 //
-// Console III's epoch overview leads with the OBJECTIVE, the collapsible
-// proposer brief, the lineage BUMPS, then the COMPACT board×generation
-// drift-loss HEATMAP. Per the round-5 de-dup decision (fix #6) the heatmap
-// STAYS here at the epoch overview; the board TRELLIS (small-multiples) lives
-// in the Boards view (views/boards.js) — never both on one page.
+// Console IV's epoch overview leads with the OBJECTIVE, the collapsible
+// proposer brief, the SLIM REEL (the rounds along the champion spine — adopted
+// from V, trimmed to a compact fit-to-width spine), then the COMPACT
+// board×generation drift-loss HEATMAP. The slim reel REPLACES the old lineage
+// BUMPS (same champion-vs-challenger-over-rounds story — we show one, never
+// both). Per the round-5 de-dup decision (fix #6) the heatmap STAYS here at the
+// epoch overview; the board TRELLIS (small-multiples) lives in the Boards view
+// (views/boards.js) — never both on one page.
 //
-// Data: /api/epoch, /api/lineage, /api/score-trajectory,
+// Data: /api/epoch, /api/lineage, /api/tournaments, /api/score-trajectory,
 // /api/generation/{e}/{g}/per-entry.
 
 import { el } from '../../../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { reel, reelDigest } from '../reel.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision } from '../ui.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
 
-  const [ep, lin, traj] = await Promise.all([D.epoch(), D.lineage(), D.scoreTrajectory()]);
+  const [ep, lin, traj, bracket] = await Promise.all([D.epoch(), D.lineage(), D.scoreTrajectory(), D.bracket()]);
   if (!ep || ep.epoch_id == null) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Epoch' }), empty('No current epoch.')]);
     return;
@@ -45,9 +49,27 @@ export async function render(host, ctx, params) {
   });
   for (const b of board) { const id = b.entry_id || b.id; if (id) entryIds.add(id); }
 
+  // ---- the slim reel's rounds (champion spine + ticks) ----
+  // The rounds are the actual tournament match-ups (round-ordered by ran_at);
+  // fall back to the rejected/promoted challenger lineage when there is no
+  // tournament payload. The champion is the promoted (or seed) generation.
+  const champ = gens.find((g) => g.promoted) || gens.find((g) => !g.parent) || null;
+  const championId = champ ? champ.id : null;
+  const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups.slice() : [];
+  matchups.sort((a, b) => String(a.ran_at || '').localeCompare(String(b.ran_at || '')));
+  const rounds = matchups.length
+    ? matchups.map((m) => ({ challenger: m.challenger, decision: m.decision, deltaScalar: m.delta_scalar }))
+    : gens.filter((g) => g.parent).map((g) => ({
+        challenger: g.id, decision: g.promoted ? 'promoted' : 'rejected',
+        deltaScalar: (svg.isNum(scalarByGen.get(g.id)) && svg.isNum(championId ? scalarByGen.get(championId) : NaN))
+          ? scalarByGen.get(g.id) - scalarByGen.get(championId) : null,
+      }));
+  const reelSpec = { championId, rounds };
+
   const digest = JSON.stringify({
     epochId, goal: ep.goal || '', briefLen: (ep.brief || '').length, closed: !!ep.closed,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
+    reel: reelDigest(reelSpec),
     loss: [...lossLookup.entries()].sort(),
     board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
   });
@@ -87,13 +109,19 @@ export async function render(host, ctx, params) {
     ]);
     nodes.push(section('Operator’s brief to the proposer', briefDetails));
 
-    // ---- lineage bumps (non-colliding, clickable → candidate) ----
-    const bumpNodes = gens.map((g, i) => ({ id: g.id, x: i, promoted: g.promoted, scalar: scalarByGen.get(g.id), parent: g.parent }));
-    if (bumpNodes.length && !bumpNodes.some((n) => n.promoted)) bumpNodes[0].promoted = true;
-    const bumpsCard = el('div', { class: 'dn-panel' });
-    bumpsCard.appendChild(svg.bumps({ width: 720, height: 170, nodes: bumpNodes, onClick: (n) => ctx.navigate('candidate', { epochId, gen: n.id }) }));
-    bumpsCard.appendChild(legend([['spine', 'champion spine (promoted lineage)'], ['dotpred-bad', 'rejected challenger']], 'click a node → its candidate'));
-    nodes.push(section('Lineage', bumpsCard));
+    // ---- the slim reel: rounds along the champion spine (replaces bumps) ----
+    // Fit-to-width, no pan/zoom: the ticks compress as rounds grow. Clicking a
+    // station → that round's candidate; the seed → the champion. The big
+    // per-challenger detail intentionally lives in the generations match cards,
+    // not hung off the reel (that does not scale to many rounds).
+    const reelCard = el('div', { class: 'dn-panel' });
+    reelCard.appendChild(reel({
+      championId, rounds,
+      selected: null,
+      onSelect: (id) => ctx.navigate('candidate', { epochId, gen: id }),
+      onSeed: (id) => { if (id) ctx.navigate('candidate', { epochId, gen: id }); },
+    }));
+    nodes.push(section('Reel · the rounds along the champion spine', reelCard));
 
     // ---- COMPACT board entries × generations heatmap (stays here, fix #6) ----
     const rows = [...entryIds].sort().map((id) => ({ id, label: id }));
@@ -114,16 +142,4 @@ export async function render(host, ctx, params) {
     nodes.push(section('Board entries × generations · drift loss (heatmap)', hmCard));
     return nodes;
   });
-}
-
-function legend(items, foot) {
-  const kids = items.map(([cls, label]) => {
-    let i;
-    if (cls === 'spine') i = el('i', { class: 'spine' });
-    else if (cls === 'dotact') i = el('i', { class: 'dotact' });
-    else i = el('i', { class: 'dotpred', style: 'border-color:var(--v2-bad);' });
-    return el('span', null, [i, label]);
-  });
-  if (foot) kids.push(el('span', { class: 'dn-faint', text: foot }));
-  return el('div', { class: 'dn-legend' }, kids);
 }

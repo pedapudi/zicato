@@ -1,23 +1,35 @@
 // variants/T/views/gens.js — GENERATIONS group landing.
 //
-// The detail pane for the tree's "Generations" group: a compact roster of
-// every generation in the epoch — lineage role (seed / champion / rejected),
-// parent, scalar (loss), and Δ vs the previous champion — each row linking
-// into that candidate's detail (lifecycle + gate + per-board scoring). This is
-// the "pick a candidate" surface the tree's Generations node opens.
+// The detail pane for the tree's "Generations" group. Console IV folds in
+// Variant W's ARENA standings as the hero of this page:
 //
-// Data: /api/epoch, /api/lineage, /api/score-trajectory.
+//   * a CHAMPION-DEFENDS banner — the reigning champion id · loss · N title
+//     defences · a promoted badge;
+//   * a RESPONSIVE WRAPPING GRID of COMPACT challenger MATCH CARDS (one per
+//     challenger round): `<challenger> vs <champion>` · verdict pill · Δscalar
+//     · a ONE-LINE (truncated) hypothesis · the decisive-driver judge · a status
+//     link (dead-branch / promoted) that opens the candidate.
+//
+// The match cards stay compact (the full hypothesis lives on the candidate
+// page), so the grid wraps tidily for 3 OR ~30 generations. Below the cards the
+// dense ROSTER table is retained for the at-a-glance scan + Δ-vs-champion. Both
+// the cards and the roster double as navigation — opening a candidate's detail.
+// These match cards appear here (and on the epoch reel's siblings) but NEVER on
+// the environment / workspace view.
+//
+// Data: /api/epoch, /api/lineage, /api/tournaments, /api/score-trajectory,
+// /api/round/{e}/{champ}/{chall}/gate.
 
 import { el } from '../../../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, verdictPill, normaliseDecision } from '../ui.js';
+import { gatedSwap, section, empty, verdictPill, normaliseDecision } from '../ui.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading generations…' }));
   const epochId = (params && params.epochId) || null;
 
-  const [ep, lin, traj] = await Promise.all([D.epoch(), D.lineage(), D.scoreTrajectory()]);
+  const [ep, lin, traj, bracket] = await Promise.all([D.epoch(), D.lineage(), D.scoreTrajectory(), D.bracket()]);
   const id = epochId || (ep && ep.epoch_id) || null;
   if (!id) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Generations' }), empty('No epoch selected.')]);
@@ -35,8 +47,21 @@ export async function render(host, ctx, params) {
   const championId = champ ? champ.id : null;
   const champScalar = championId ? scalarByGen.get(championId) : null;
 
+  // the match-ups (the actual gauntlet rounds), round-ordered by ran_at.
+  const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups.slice() : [];
+  matchups.sort((a, b) => String(a.ran_at || '').localeCompare(String(b.ran_at || '')));
+  // resolve each round's gate (cached) for the decisive-driver line.
+  const gates = await Promise.all(matchups.map((m) => (m.champion && m.challenger)
+    ? D.gate(id, m.champion, m.challenger) : Promise.resolve(null)));
+  const promotedCount = gens.filter((g) => g.promoted).length;
+
   const digest = JSON.stringify({
     id, championId,
+    champScalar: svg.isNum(champScalar) ? champScalar.toFixed(3) : null,
+    rounds: matchups.map((m, i) => [m.champion, m.challenger, m.decision,
+      svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null,
+      (m.hypothesis_core_idea || '').slice(0, 90),
+      gates[i] && gates[i].primary_driver ? gates[i].primary_driver.judge : null]),
     gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
   });
 
@@ -47,13 +72,19 @@ export async function render(host, ctx, params) {
       el('p', { class: 'dn-lede', text: 'Every candidate in this epoch. Open one for its lifecycle, promote gate, all match-ups, per-board scoring, and patch diff.' }),
     ]));
 
-    nodes.push(el('div', { class: 'dn-panel dn-row' }, [
-      stat(String(gens.length), 'generations'),
-      stat(String(gens.filter((g) => g.promoted).length), 'promoted'),
-      stat(championId || '—', 'reigning champion'),
-      stat(svg.isNum(champScalar) ? svg.fmt(champScalar, 1) : '—', 'loss floor'),
-    ]));
+    // ── the champion-defends banner (adopted from W) ──────────────────
+    nodes.push(championBanner(championId, champScalar, matchups.length, gens.length, promotedCount, ctx, id));
 
+    // ── the responsive wrapping grid of compact match cards ───────────
+    const cards = el('div', { class: 'dt-matchcards' });
+    if (!matchups.length) {
+      cards.appendChild(empty('No challenger has entered the ring yet — the seed champion stands undefeated.'));
+    } else {
+      matchups.forEach((m, i) => cards.appendChild(matchCard(m, gates[i], ctx, id)));
+    }
+    nodes.push(section('Match-ups · the champion defends · one compact card per challenger round', cards));
+
+    // ── the dense roster table (retained for the at-a-glance scan) ────
     const tblCard = el('div', { class: 'dn-panel' });
     if (!gens.length) {
       tblCard.appendChild(empty('No generations recorded for this epoch.'));
@@ -84,4 +115,74 @@ export async function render(host, ctx, params) {
     nodes.push(section('Roster · click a candidate to open its detail', tblCard));
     return nodes;
   });
+}
+
+// The champion-defends banner: champion id · loss · N title defences · promoted.
+function championBanner(championId, champScalar, defended, total, promoted, ctx, epochId) {
+  if (!championId) {
+    return el('div', { class: 'dt-champ-banner dt-champ-empty' }, [
+      el('span', { class: 'dn-faint', text: 'No reigning champion yet — the seed has not been challenged.' }),
+    ]);
+  }
+  return el('a', {
+    class: 'dt-champ-banner', href: ctx.href('candidate', { epochId, gen: championId }),
+    'aria-label': 'Champion ' + championId + ' — open its detail',
+  }, [
+    el('span', { class: 'dt-champ-crown', 'aria-hidden': 'true', text: '♛' }),
+    el('div', { class: 'dt-champ-body' }, [
+      el('div', { class: 'dt-champ-rank', text: 'CHAMPION · defending the title' }),
+      el('div', { class: 'dt-champ-id', text: championId }),
+      el('div', { class: 'dt-champ-meta' }, [
+        el('span', { text: 'loss ' + (svg.isNum(champScalar) ? svg.fmt(champScalar, 1) : '—') }),
+        el('span', { text: defended + ' title defence' + (defended === 1 ? '' : 's') }),
+        el('span', { text: total + ' generation' + (total === 1 ? '' : 's') + ' · ' + promoted + ' promoted' }),
+      ]),
+    ]),
+    el('span', { class: 'dt-champ-pill' }, [verdictPill('promoted')]),
+  ]);
+}
+
+// One compact challenger MATCH CARD: `<challenger> vs <champion>` · verdict ·
+// Δscalar · a ONE-LINE (truncated) hypothesis · decisive-driver judge · status
+// link. Clicking opens that challenger's candidate detail.
+function matchCard(m, gate, ctx, epochId) {
+  const dec = String(m.decision || (gate && gate.decision) || 'rejected').toLowerCase();
+  const won = dec.includes('promot');
+  const verdict = dec.includes('promot') ? 'promoted' : dec.includes('defer') ? 'deferred' : 'rejected';
+  const delta = svg.isNum(m.delta_scalar) ? m.delta_scalar
+    : (gate && svg.isNum(gate.delta_scalar) ? gate.delta_scalar : null);
+  const driver = gate && gate.primary_driver && gate.primary_driver.judge ? gate.primary_driver.judge : null;
+  const idea = m.hypothesis_core_idea ? String(m.hypothesis_core_idea) : null;
+
+  return el('a', {
+    class: 'dt-match-card' + (won ? ' dt-match-won' : ' dt-match-lost'),
+    href: ctx.href('candidate', { epochId, gen: m.challenger }),
+    'aria-label': 'Round ' + m.champion + ' vs ' + m.challenger + ' — open challenger ' + m.challenger,
+  }, [
+    el('div', { class: 'dt-match-head' }, [
+      el('span', { class: 'dt-match-versus' }, [
+        el('span', { class: 'dt-match-chall', text: m.challenger }),
+        el('span', { class: 'dt-match-vs', text: 'vs' }),
+        el('span', { class: 'dt-match-champ', text: m.champion }),
+      ]),
+      verdictPill(verdict),
+    ]),
+    el('div', { class: 'dt-match-score' }, [
+      el('span', { class: 'dt-match-delta ' + (svg.isNum(delta) ? (delta > 0 ? 'dn-bad-t' : delta < 0 ? 'dn-good-t' : '') : ''),
+        text: svg.isNum(delta) ? svg.fmtSigned(delta, 1) : '—' }),
+      el('span', { class: 'dt-match-delta-k', text: 'Δ scalar' }),
+    ]),
+    idea
+      ? el('div', { class: 'dt-match-idea', title: idea }, [
+          el('span', { class: 'dt-match-idea-lead', text: 'Hypothesis. ' }),
+          el('span', { class: 'dt-match-idea-txt', text: idea }),
+        ])
+      : el('div', { class: 'dt-match-idea dn-faint', text: 'No hypothesis recorded for this round.' }),
+    driver ? el('div', { class: 'dt-match-driver dn-faint' }, [
+      'decisive driver · ', el('span', { class: 'dn-mono', text: driver }),
+    ]) : null,
+    el('div', { class: 'dt-match-foot' }, [
+      el('span', { class: 'dt-match-open', text: won ? 'new champion → open' : 'dead branch → open' }),
+    ]),
+  ].filter(Boolean));
 }
