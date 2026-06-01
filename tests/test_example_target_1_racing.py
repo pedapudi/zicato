@@ -17,8 +17,10 @@ and a canned ``_valid_proposer_response``, it:
   markers are enumerated and the example's proposer patches actually
   apply;
 * loads the example's ``scoring.racing.json`` so the frozen epoch contract
-  carries the racing ``tournament`` block (field_size=4, eta=2, board
-  slices over the example board ids);
+  carries the racing ``tournament`` block (field_size=4, eta=2). The
+  contract does NOT pin ``board_ids``; the orchestrator defaults them to
+  the epoch's full board, so this test also proves the board-slicing rungs
+  run from the bare CLI-flag-style contract (no ids listed);
 * uses the example's real ``mocks.aux_llm`` as the proposer/aux callable
   (it rotates ``researcher_instruction`` / ``coordinator_instruction``
   patches across the four challengers in the field).
@@ -107,6 +109,10 @@ def _bootstrap_racing_workspace(tmp_path: Path) -> tuple[Path, str]:
     weights = _scoring_from_dict(json.loads(RACING_SCORING_PATH.read_text()))
     assert weights.tournament_structure.structure == "racing"
     assert weights.tournament_structure.params["field_size"] == 4
+    # The example contract no longer pins board_ids: the orchestrator must
+    # default them to the epoch's full board so the rungs still slice. This
+    # is the regression the no-board_ids end-to-end path guards.
+    assert "board_ids" not in weights.tournament_structure.params
 
     cfg = new_epoch(
         workspace,

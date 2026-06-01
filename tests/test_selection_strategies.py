@@ -356,6 +356,49 @@ def test_racing_records_cut_and_survivors() -> None:
     assert any(m.cut for m in rung_records)
 
 
+def test_racing_defaults_board_ids_to_epoch_board_when_absent() -> None:
+    # No board_ids in the spec params: make_strategy injects the epoch's
+    # full board, so the rungs slice it (CLI-flag form works out of the box).
+    spec = TournamentStructure(structure="racing", params={"field_size": 4, "eta": 2})
+    assert "board_ids" not in spec.params
+    epoch_board = ["e1", "e2", "e3", "e4"]
+    s = make_strategy(spec, board_ids=epoch_board)
+    s.seed(_champion("v0"), [_challenger(f"v{i}") for i in (1, 2, 3, 4)])
+    first = s.next_matchups()
+    # The strategy now knows the board: rung-0 runs on a real subset, not
+    # the whole-board fallback (board_subset would be None if ids were absent).
+    assert first
+    assert all(m.board_subset is not None for m in first)
+    # Default board_fraction 0.25 over 4 entries ⇒ ceil(1) = 1 entry at rung 0.
+    assert all(len(m.board_subset) == 1 for m in first)
+    assert all(set(m.board_subset) <= set(epoch_board) for m in first)
+
+
+def test_racing_explicit_board_ids_override_the_epoch_default() -> None:
+    # An explicit board_ids subset must win over the injected epoch board.
+    subset = ["e2", "e4", "e6", "e8"]
+    spec = TournamentStructure(
+        structure="racing",
+        params={"field_size": 4, "eta": 2, "board_fraction": 0.5, "board_ids": subset},
+    )
+    # The wider epoch board (8 ids) must NOT leak in; the operator pinned 4.
+    s = make_strategy(spec, board_ids=[f"e{i}" for i in range(1, 9)])
+    s.seed(_champion("v0"), [_challenger(f"v{i}") for i in (1, 2, 3, 4)])
+    first = s.next_matchups()
+    assert first
+    # Rung-0 slice = ceil(0.5 * 4) = 2, drawn from the operator's subset
+    # (in order), not from the wider epoch board.
+    assert all(tuple(m.board_subset) == ("e2", "e4") for m in first)
+
+
+def test_make_strategy_without_board_ids_leaves_params_untouched() -> None:
+    # Board-agnostic call (gauntlet path, no board passed): params unchanged,
+    # so the gauntlet single-duel path stays byte-equivalent.
+    spec = TournamentStructure(structure="racing", params={"field_size": 4})
+    s = make_strategy(spec)
+    assert "board_ids" not in s.params
+
+
 # ---------------------------------------------------------------------------
 # Degeneracy + registry
 # ---------------------------------------------------------------------------

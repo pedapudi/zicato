@@ -371,8 +371,12 @@ it). Example — racing with a four-challenger field:
 `field_size` is the universal knob — *how many challengers the proposer
 must emit each round*; `gauntlet` fixes it at `1`. The racing strategy
 additionally reads the board's entry ids from `params["board_ids"]` to
-slice the rungs (the example contract lists them explicitly; see
-`src/zicato/selection/strategies/racing.py`).
+slice the rungs. `board_ids` is **OPTIONAL**: when the contract omits it,
+the orchestrator defaults it to the epoch's full board (injected centrally
+in `zicato.selection.make_strategy`), so neither the JSON contract nor the
+CLI-flag form below needs to list the ids. Pass an explicit `board_ids`
+only to race on a *subset* of the board — an explicit list always
+overrides the default (see `src/zicato/selection/strategies/racing.py`).
 
 **2. Set it from `zicato evolve` flags (contract-mutating convenience).**
 

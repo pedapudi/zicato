@@ -12,11 +12,14 @@ This is the one bracket-shaped structure SELECTION.md endorses for
 zicato's regime: replication is intrinsic (escalating board slices =
 escalating sample). Maps to successive halving / ASHA (§2③).
 
-The strategy is told the board's entry ids via ``params["board_ids"]``
-(the orchestrator injects them when it builds the strategy, since the
-board is not otherwise visible to the selection layer). When absent it
-falls back to whole-board duels per rung (so a misconfiguration degrades
-gracefully rather than erroring).
+The strategy is told the board's entry ids via ``params["board_ids"]``.
+The orchestrator defaults these to the FULL epoch board when the spec
+does not pin an explicit subset (see :func:`zicato.selection.make_strategy`),
+so the CLI-flag form (``--tournament-structure racing``) slices the board
+out of the box; an explicit ``params["board_ids"]`` still overrides to race
+on a subset. When the ids are absent entirely (e.g. a bare unit-test
+construction with no board) it falls back to whole-board duels per rung, so
+a misconfiguration degrades gracefully rather than erroring.
 """
 
 from __future__ import annotations

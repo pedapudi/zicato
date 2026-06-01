@@ -21,16 +21,7 @@
       "replicates": 2,
       "eta": 2,
       "board_fraction": 0.4,
-      "rung0_board_size": 0,
-      "board_ids": [
-        "waffles_single",
-        "q3_metrics_outline",
-        "transformers_lay_audience",
-        "waffles_revision_scripted",
-        "transformers_progressive_scripted",
-        "picky_stakeholder_emulated",
-        "every_expectation_kind_demo"
-      ]
+      "rung0_board_size": 0
     }
   }
 }

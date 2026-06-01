@@ -10,6 +10,7 @@ rather than erroring, mirroring fast mode's graceful degeneracy.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from zicato.selection.strategies.double_elim import DoubleEliminationStrategy
@@ -33,8 +34,26 @@ STRATEGY_REGISTRY: dict[str, type[SelectionStrategy]] = {
 }
 
 
-def make_strategy(spec: TournamentStructure) -> SelectionStrategy:
+def make_strategy(
+    spec: TournamentStructure,
+    board_ids: Sequence[str] | None = None,
+) -> SelectionStrategy:
     """Construct a fresh strategy for one tournament resolution.
+
+    Parameters
+    ----------
+    spec:
+        The per-epoch :class:`~zicato.core.types.TournamentStructure`
+        (structure token + free-form params).
+    board_ids:
+        The epoch's board entry ids, if known. When provided, they are
+        injected into the strategy params as the default ``board_ids`` —
+        but ONLY when the spec did not already carry an explicit
+        ``board_ids`` (the operator override always wins). This lets
+        board-aware structures (racing) default to the full epoch board
+        without the operator having to list every id on the CLI, while
+        leaving board-agnostic structures (gauntlet, single/double-elim,
+        swiss) untouched — they simply ignore the param.
 
     Raises
     ------
@@ -51,7 +70,12 @@ def make_strategy(spec: TournamentStructure) -> SelectionStrategy:
             f"unknown tournament structure {spec.structure!r}; "
             f"registered structures are: {valid}"
         )
-    return cls(dict(spec.params))
+    params = dict(spec.params)
+    # Default ``board_ids`` to the epoch's full board when the operator
+    # did not pin a subset. Explicit ``params["board_ids"]`` always wins.
+    if board_ids is not None and "board_ids" not in params:
+        params["board_ids"] = tuple(str(x) for x in board_ids)
+    return cls(params)
 
 
 __all__ = ["STRATEGY_REGISTRY", "make_strategy"]

@@ -152,19 +152,21 @@ The racing block in `scoring.racing.json`:
     "replicates": 2,          // paired runs per duel, averaged (noise lever)
     "eta": 2,                 // keep top 1/eta each rung (cut half)
     "board_fraction": 0.4,    // rung-0 board slice = ceil(0.4 * |board|)
-    "rung0_board_size": 0,    // 0 ⇒ derive rung-0 size from board_fraction
-    "board_ids": [ ... ]      // the example board's 7 entry ids, in slice order
+    "rung0_board_size": 0     // 0 ⇒ derive rung-0 size from board_fraction
   }
 }
 ```
 
 > `field_size` is how many challengers the proposer must emit each round
-> (the gauntlet's `field_size` is `1`). `board_ids` tells the racing
-> strategy which entries to slice over and in what order — racing reads
-> the board ids from `params` (see the note in
-> `src/zicato/selection/strategies/racing.py`), so they are listed
-> explicitly in the contract. With `field_size=4`, `eta=2`, and
-> `board_fraction=0.4` over 7 entries: rung 0 races 4 arms on 3 entries
+> (the gauntlet's `field_size` is `1`). `board_ids` (which entries to
+> slice over, and in what order) is **OPTIONAL**: the orchestrator defaults
+> it to the epoch's full board when the contract omits it, so this example
+> no longer lists the ids. Pass an explicit `board_ids` only to race on a
+> *subset* of the board — an explicit list always overrides the default
+> (see `zicato.selection.make_strategy` +
+> `src/zicato/selection/strategies/racing.py`). With `field_size=4`,
+> `eta=2`, and `board_fraction=0.4` over the example board's 7 entries:
+> rung 0 races 4 arms on 3 entries
 > and keeps 2; rung 1 races those 2 on 6 entries and keeps 1; then the
 > survivor meets the champion on all 7 entries through the promote gate.
 
@@ -230,11 +232,10 @@ JSON when possible (so `field_size=4` becomes the integer `4`), else
 taken as a string. The flags are only applied when
 `--tournament-structure` is also passed.
 
-> Note: the flag form does not auto-populate `board_ids`. To exercise
-> the board-slicing rungs from flags alone, add
-> `--tournament-param board_ids='["waffles_single", ...]'` with the
-> board's entry ids — or just use recipe (a), where
-> `scoring.racing.json` already carries them.
+> Note: the flag form **just works** — `board_ids` defaults to the epoch's
+> full board, so the racing rungs slice the board without listing any ids.
+> Pass `--tournament-param board_ids='["waffles_single", ...]'` only to
+> race on a *subset*; an explicit list overrides the default.
 
 ### The mock-harness test that runs this
 
