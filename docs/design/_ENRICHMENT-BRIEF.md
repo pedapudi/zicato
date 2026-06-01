@@ -232,3 +232,82 @@ figures where natural. (`/api/epoch/{e}/analysis/html` may 404 — use `analysis
 - G: Sankey not scaled to its viewport → fit-to-width Tufte Sankey; per-board
   scoring unreadable in-theme → the per-board dot-plot/scoring must have
   sufficient contrast in all three themes.
+
+## Round 4 appendix — convergence II (variants L / M / N / O)
+
+Dashboard-first (E flow). The operator REJECTED K's paper-first metaphor but
+judged K's *publication renderer the best of all variants*. So L/M/N/O are
+dashboard-first with the ACM publication as a TAB (not the home), reusing K's
+paper renderer (`js/variants/K/paper.js`). Carry forward (already working):
+digest-gated rendering (no flashing), NO pan/zoom viewport diagrams
+(fit-to-width), Tufte visuals, clickable non-colliding lineage bumps,
+cold-deep-link hydration, the three color themes.
+
+**NEW — typeface theme picker** (a second picker in the chrome, beside the
+color picker). Offer Open-Sans-based Google Fonts pairings. Loading Google
+Fonts via a stylesheet `<link>` / `@import` to fonts.googleapis.com IS allowed
+(the operator explicitly requested Google Fonts — this is the ONLY permitted
+external dependency, fonts only); provide system-font fallbacks +
+`font-display: swap`. Picker options:
+- **Sans** — Open Sans throughout (UI + headings); tabular figures for data.
+- **Editorial** — Open Sans body + Source Serif 4 for headings & the publication.
+- **Technical** — Open Sans body + JetBrains Mono for data / labels / code.
+- **Display** — Open Sans body + a condensed display face (Archivo Narrow or
+  Oswald) for headings & big numbers.
+Each variant defaults to one; all four selectable; the choice persists.
+
+**MANDATORY FIXES — carry into all four:**
+
+1. **Promote gate — fix the overlapping layout.** K's gate had the rule labels
+   colliding with the scalar-components dot-plot and detail text. Lay it out as
+   clean STACKED sections, each properly sized & fit-to-width: (a) decision pill
+   + Δscalar / Δpass-rate, (b) the rules ladder — each rule its OWN row (label ·
+   status · detail), nothing overlapping, (c) a SEPARATE champion-vs-challenger
+   scalar-components comparison block below. `/api/round/{e}/{champ}/{chall}/gate`.
+
+2. **Mutation view — ONE cohesive visual: surface + SIDE-BY-SIDE diff.** Base on
+   K's mutation element (best of the round). The site × generation matrix and the
+   patch diff are ONE combined layout — the matrix plus a detail pane that fills
+   on cell-select. The diff is **side-by-side** (two columns: champion baseline |
+   challenger new), line-diffed. Data:
+   - baseline content (STRING): `GET /api/mutations/{epoch}/{mutation_id}` →
+     `.baseline.content`. (The "[object Object]" bug = rendering the `baseline`
+     OBJECT instead of `.baseline.content`.)
+   - challenger new content (STRING): `GET /api/files/{epoch}/{gen}/patches` →
+     the `patches[]` entry whose `mutation_id` matches → `.new_content` (+ `.op`,
+     `.rationale`).
+   - full-file fallback: `GET /api/files/{epoch}/{gen}/diff` →
+     `files[].old_content` / `.new_content`.
+
+3. **ACM publication — reuse K's renderer; fix tables; combine table+chart; add
+   match-up detail.** Use K's `paper.js` as the publication base (judged best).
+   GFM **tables MUST render** (I's "Aggregate generation scores" table rendered
+   as raw `| … |`). In the paper, the aggregate-generation-scores TABLE and its
+   summary BAR CHART must be COMBINED into ONE cohesive visual (not two redundant
+   blocks). Add per-matchup detail to the paper (champion vs challenger per-board
+   from `/api/matchup-grid/...`). J's publication was particularly weak — do not
+   copy it.
+
+4. **Heatmap (board × generation drift loss) — theme-aware color ramp.** The ramp
+   must derive from the ACTIVE color theme's tokens at draw time; legible in
+   solarized-light / solarized-dark / monokai. No fixed orange/brown ramp.
+
+5. **Sankey label/value alignment.** In the Tufte sankey, each per-board node's
+   LABEL and its loss VALUE must NOT overlap (the value was rendering on top of
+   the label, e.g. "picky_stakeholder_emu643…"). Right-align the value or give it
+   its own baseline with spacing.
+
+6. **Proportional figure sizing.** Figures on a page must be proportional — no
+   oversized heatmap beside a tiny bumps/trellis (H's epoch page). Establish
+   consistent figure max-widths / shared heights; the drift heatmap especially
+   must not dwarf its neighbors.
+
+7. **NEW VIEW — per-board cross-candidate detail.** A dedicated page for ONE board
+   entry showing how EVERY candidate performed on it: per-candidate loss +
+   pass/fail/timeout, a small comparative chart (sorted bars / dot-plot), and
+   drill to each candidate's run/transcript for that board. **Board trellis cards
+   AND heatmap cells must route HERE** (keyed by entry id) — NOT to an arbitrary
+   candidate view (a trellis click currently dumps the user on candidate v2 with
+   no fidelity). Bind: `/api/generation/{e}/{g}/per-entry` pivoted by `entry_id`
+   across generations; `/api/matchup-grid/...` for paired context; drill via the
+   per-entry `run_id` → `/api/conversation/{run_id}`.

@@ -307,7 +307,7 @@
   <script>
     (function selectDashboardEntry() {
       var KEY = 'zicato.ui';
-      var VARIANTS = { A: 1, B: 1, C: 1, D: 1, E: 1, F: 1, G: 1, H: 1, I: 1, J: 1, K: 1 };
+      var VARIANTS = { A: 1, B: 1, C: 1, D: 1, E: 1, F: 1, G: 1, H: 1, I: 1, J: 1, K: 1, L: 1, M: 1, N: 1, O: 1 };
       var params = new URLSearchParams(window.location.search);
       var q = params.get('ui');
       var stored = null;
@@ -364,6 +364,15 @@
 
       function renderGallery(host) {
         if (!host) return;
+        // Round 4 — convergence II (dashboard-first + K's publication tab +
+        // combined mutation/side-by-side diff + per-board cross-candidate view
+        // + theme-aware heatmap + fixed gate/sankey/sizing + typeface picker).
+        var conv2 = [
+          ['L', 'Atlas III', 'The main line — clean dark dashboard; every round-3 fix folded in, K-grade publication tab, new per-board view, side-by-side mutation diffs.'],
+          ['M', 'Ledger II', 'Editorial, light-first — Open Sans + Source Serif; the ACM publication front-and-centre as a tab.'],
+          ['N', 'Console II', 'Dense observatory — Monokai + JetBrains Mono; data-ink-maximal, compact.'],
+          ['O', 'Compass', 'Master-detail workspace — a persistent epoch→generation→board selector rail; explicit, high-fidelity selection.']
+        ];
         // Round 3 — convergence (E flow + Tufte viz + Tufte Sankey + B/D
         // themes + mutation-per-gen + ACM report; all named bugs fixed).
         var conv = [
@@ -400,6 +409,10 @@
           + '<h1 style="font-weight:600;font-size:28px;margin:0 0 6px;">zicato dashboard — pick a design</h1>'
           + '<p style="color:#7c8c86;margin:0 0 36px;">Change the <code>?ui=</code> flag any time. '
           + '(v1 = <code>?ui=v1</code>, v2 = <code>?ui=v2</code>.)</p>'
+          + '<div style="font-size:12px;letter-spacing:.14em;color:#268bd2;font-weight:700;margin:0 0 14px;">ROUND 4 · CONVERGENCE II</div>'
+          + '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px;margin-bottom:44px;">';
+        for (var m = 0; m < conv2.length; m++) h += card(conv2[m], '#268bd2');
+        h += '</div>'
           + '<div style="font-size:12px;letter-spacing:.14em;color:#b58900;font-weight:700;margin:0 0 14px;">ROUND 3 · CONVERGENCE</div>'
           + '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px;margin-bottom:44px;">';
         for (var k = 0; k < conv.length; k++) h += card(conv[k], '#b58900');
