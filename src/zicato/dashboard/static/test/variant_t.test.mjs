@@ -2570,6 +2570,120 @@ test('rail sizing: a draggable handle on the rail edge changes the rail width, p
   assertEqual(root2.getAttribute('data-t-rail'), '360', 'a page-scale change leaves the rail width untouched');
 });
 
+// A pointer DRAG — pointerdown at X0, pointermove by Δx, pointerup — drives the
+// rail width to start+Δ (within the clamp). This is the smooth-drag spine: the
+// width tracks the pointer delta rather than snapping. Driven on the handle so
+// the captured-pointer path is exercised (the harness ignores the unsupported
+// setPointerCapture but the same handlers fire).
+function dragRail(handle, x0, dx, extra) {
+  handle.dispatchEvent({ type: 'pointerdown', pointerId: 1, clientX: x0, preventDefault() {} });
+  if (typeof extra === 'function') extra();
+  handle.dispatchEvent({ type: 'pointermove', pointerId: 1, clientX: x0 + dx, preventDefault() {} });
+  handle.dispatchEvent({ type: 'pointerup', pointerId: 1, clientX: x0 + dx, preventDefault() {} });
+}
+
+test('rail sizing: a pointer DRAG tracks the pointer delta (start+Δ), captures the pointer, persists on pointerup', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  const root = mountLiveShell('#/');
+  const handle = allByClass(root, 'dt-rail-handle')[0];
+  assert(handle, 'a rail-resize handle rendered');
+
+  // start at the default width; drag the pointer +40px to the RIGHT.
+  shell.applyRail(300, root);
+  assertEqual(+root.getAttribute('data-t-rail'), 300, 'rail starts at 300');
+  dragRail(handle, 500, 40);
+  assertEqual(+root.getAttribute('data-t-rail'), 340, 'a +40px pointer drag widened the rail by exactly 40 (start+Δ — no jump)');
+  // it adds the dragging class while in flight + removes it on release.
+  assert(!(handle.getAttribute('class') || '').includes('dt-rail-dragging'), 'the dragging class is cleared on pointerup');
+  // it persisted the final width (so a reload restores the dragged width).
+  assertEqual(ui.readRail(), 340, 'the dragged width persisted to localStorage on pointerup');
+
+  // dragging LEFT narrows by the delta magnitude.
+  dragRail(handle, 500, -50);
+  assertEqual(+root.getAttribute('data-t-rail'), 290, 'a −50px pointer drag narrowed the rail by exactly 50');
+});
+
+test('rail sizing: the REGRESSION — with a non-100% page scale, the drag tracks the pointer in LAYOUT space (no jump)', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  const root = mountLiveShell('#/');
+  const handle = allByClass(root, 'dt-rail-handle')[0];
+
+  // apply a 120% page scale (zoom=1.2 on the root) — the handle lives INSIDE
+  // the zoomed root, so a viewport-px pointer delta is 1.2× the layout-px delta.
+  shell.applyScale(120, root);
+  assert((root.style.cssText.includes('--dt-page-scale:1.2') || root.getAttribute('data-t-scale') === '120'),
+    'the 120% scale is reflected on the root');
+  shell.applyRail(300, root);
+
+  // drag the pointer +120 VIEWPORT px. In layout space that is +120/1.2 = +100,
+  // so the rail must end at 400 — NOT 420 (the old clientX-driven bug would have
+  // over-tracked because --dt-rail is laid out unscaled).
+  dragRail(handle, 600, 120);
+  assertEqual(+root.getAttribute('data-t-rail'), 400,
+    'the rail tracked the pointer in LAYOUT space (Δx/scale = 100), not raw viewport px (the jumpiness fix)');
+
+  // and at scale 80% a +80 viewport-px drag is +100 layout px.
+  shell.applyScale(80, root);
+  shell.applyRail(300, root);
+  dragRail(handle, 600, 80);
+  assertEqual(+root.getAttribute('data-t-rail'), 400, 'at 80% scale the drag still maps Δx/scale into layout space');
+});
+
+test('rail sizing: a pointer drag CLAMPS at the min/max (a big drag cannot collapse or overrun the rail)', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  const root = mountLiveShell('#/');
+  const handle = allByClass(root, 'dt-rail-handle')[0];
+
+  shell.applyRail(ui.DEFAULT_RAIL, root);
+  // a huge rightward drag clamps to the max.
+  dragRail(handle, 500, 5000);
+  assertEqual(+root.getAttribute('data-t-rail'), ui.RAIL_MAX, 'an oversize drag clamps at RAIL_MAX');
+  // a huge leftward drag clamps to the min.
+  shell.applyRail(ui.DEFAULT_RAIL, root);
+  dragRail(handle, 500, -5000);
+  assertEqual(+root.getAttribute('data-t-rail'), ui.RAIL_MIN, 'an undersize drag clamps at RAIL_MIN');
+});
+
+test('rail sizing: a re-render MID-DRAG does NOT snap the width back to the persisted value', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  const root = mountLiveShell('#/');
+  const handle = allByClass(root, 'dt-rail-handle')[0];
+
+  // persisted width is 300; the live drag will move past it.
+  shell.applyRail(300, root);
+  assertEqual(ui.readRail(), 300, 'the persisted width is 300');
+
+  // start the drag and move +40 → 340 (live, not yet persisted).
+  handle.dispatchEvent({ type: 'pointerdown', pointerId: 1, clientX: 500, preventDefault() {} });
+  handle.dispatchEvent({ type: 'pointermove', pointerId: 1, clientX: 540, preventDefault() {} });
+  assertEqual(+root.getAttribute('data-t-rail'), 340, 'mid-drag the rail tracks the pointer (340)');
+  assertEqual(ui.readRail(), 300, 'the live drag has NOT persisted yet (still 300 in storage)');
+
+  // MID-DRAG re-render: a competing caller (a state:changed tick) re-applies the
+  // PERSISTED width — the guard makes it a no-op so the rail does not snap back.
+  shell.applyRail(ui.readRail(), root);
+  assertEqual(+root.getAttribute('data-t-rail'), 340, 'the mid-drag re-render did NOT snap the width back to 300');
+
+  // continue dragging then release — the final dragged width stands + persists.
+  handle.dispatchEvent({ type: 'pointermove', pointerId: 1, clientX: 560, preventDefault() {} });
+  handle.dispatchEvent({ type: 'pointerup', pointerId: 1, clientX: 560, preventDefault() {} });
+  assertEqual(+root.getAttribute('data-t-rail'), 360, 'the final dragged width (start+60) survived the mid-drag re-render');
+  assertEqual(ui.readRail(), 360, 'the final dragged width persisted on pointerup');
+});
+
+test('rail sizing: ui.pageScaleOf reads the live page-scale factor (zoom / --dt-page-scale / data-t-scale)', () => {
+  const root = document.createElement('div');
+  assertEqual(ui.pageScaleOf(root), 1, 'no scale set → identity factor 1');
+  root.style.setProperty('--dt-page-scale', '1.25');
+  assertEqual(ui.pageScaleOf(root), 1.25, 'reads the --dt-page-scale ratio');
+  root.style.zoom = '0.8';
+  assertEqual(ui.pageScaleOf(root), 0.8, 'prefers the inline zoom when present');
+  const root2 = document.createElement('div');
+  root2.setAttribute('data-t-scale', '150');
+  assertEqual(ui.pageScaleOf(root2), 1.5, 'falls back to the data-t-scale percent attribute');
+  assertEqual(ui.pageScaleOf(null), 1, 'a null root is the identity factor');
+});
+
 test('rail sizing CSS: the body grid keys on --dt-rail and the handle has a col-resize cursor (no-flash chrome)', () => {
   const css = readCss().replace(/\n/g, ' ');
   assert(/\.dt-body\s*\{[^}]*grid-template-columns:[^;]*var\(--dt-rail/.test(css), 'the body grid’s first column is the --dt-rail width');

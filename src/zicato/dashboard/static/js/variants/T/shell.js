@@ -36,7 +36,7 @@ import {
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
   DENSITY,
   SCALE_MIN, SCALE_MAX, SCALE_STEP, DEFAULT_SCALE, normaliseScale, readScale, persistScale,
-  RAIL_MIN, RAIL_MAX, DEFAULT_RAIL, normaliseRail, readRail, persistRail,
+  RAIL_MIN, RAIL_MAX, DEFAULT_RAIL, normaliseRail, readRail, persistRail, pageScaleOf,
 } from './ui.js';
 
 import * as home from './views/home.js';
@@ -72,6 +72,7 @@ let _typeEl = [];
 let _scaleInput = null;
 let _scaleReadout = null;
 let _railHandle = null;        // the draggable rail-resize handle (Change 2)
+let _railDragging = false;     // true while a live rail drag is in flight
 let _backBtn = null;
 let _renderToken = 0;
 let _lastViewKey = null;
@@ -155,54 +156,106 @@ export function resetScale(rootEl) {
 export function applyRail(px, rootEl) {
   const n = normaliseRail(px);
   const root = rootEl || _root;
+  // SNAP-BACK GUARD: while a live drag is in flight, any re-render path that
+  // tries to re-apply the PERSISTED width (e.g. a `state:changed` tick) must
+  // NOT clobber the live drag value. The drag itself sets the width via
+  // stampRail (not applyRail), so this guard only fires on a competing caller.
+  if (_railDragging) return readRailFromRoot(root);
+  stampRail(n, root);
+  persistRail(n);
+  return n;
+}
+
+// Write the clamped rail width to the root (the `--dt-rail` grid column + the
+// mirrored attribute + the handle's aria-valuenow) WITHOUT persisting. The live
+// drag uses this on every `pointermove` so the rail tracks the pointer with no
+// per-frame localStorage churn; the final width is persisted once on pointerup.
+function stampRail(px, rootEl) {
+  const n = normaliseRail(px);
+  const root = rootEl || _root;
   if (root) {
     root.style.setProperty('--dt-rail', n + 'px');
     root.setAttribute('data-t-rail', String(n));
   }
-  persistRail(n);
   if (_railHandle) _railHandle.setAttribute('aria-valuenow', String(n));
   return n;
 }
 
-// Wire the rail-resize handle (Change 2): a pointer drag sets the rail width
-// from the pointer's X (relative to the body's left edge); arrow keys nudge it
-// ±16 (Home/End jump to the min/max). The width applies live + persists. The
-// handler is defensive so the test harness (no real layout / pointer capture)
-// can drive it via keyboard or a synthetic pointer event.
+// Read back the rail width currently stamped on the root (the live `--dt-rail`
+// or its mirrored attribute) — used by the pointerup fallback when the up event
+// carries no clientX so we persist whatever the last live move stamped.
+function readRailFromRoot(rootEl) {
+  const root = rootEl || _root;
+  if (root) {
+    if (root.getAttribute) {
+      const a = root.getAttribute('data-t-rail');
+      if (a != null) return normaliseRail(a);
+    }
+    const st = root.style;
+    if (st && typeof st.getPropertyValue === 'function') {
+      const v = st.getPropertyValue('--dt-rail');
+      if (v) return normaliseRail(parseFloat(v));
+    }
+  }
+  return readRail();
+}
+
+// Wire the rail-resize handle (Change 2). THE JUMPINESS FIX.
+//
+// Two bugs made the old drag jump:
+//   (1) ZOOM MISMATCH. The handle lives inside the app root, which carries a
+//       page-wide `zoom` (the scale pill). `event.clientX` is a VIEWPORT CSS-px
+//       coordinate, but `--dt-rail` is laid out in the root's UNSCALED layout
+//       space. The old code set the width straight from `clientX − railLeft`,
+//       so at zoom ≠ 1 the width over-/under-tracked the pointer (it was then
+//       re-multiplied by `zoom` on render) → visible jump. We now work in DELTA
+//       space and divide the pointer delta by the live page-scale factor, so a
+//       given pointer travel maps 1:1 onto layout-space rail travel at ANY zoom.
+//   (2) LOST POINTER EVENTS. Without pointer capture, a fast drag (or sliding
+//       off the 4-px handle) drops `pointermove`s → the rail stutters. We now
+//       `setPointerCapture` on pointerdown so every move is delivered to the
+//       handle until pointerup.
+//
+// The drag records the start pointer-x + start width on pointerdown, sets the
+// width LIVE (no persist) on each move = clamp(startW + Δx/scale), and persists
+// once on pointerup. A `_railDragging` guard stops any mid-drag re-render from
+// snapping the width back to the persisted value. Arrow keys nudge ±16
+// (Home/End jump to min/max). Defensive so the harness (no real layout / no
+// PointerEvent) can drive it via keyboard or a synthetic pointer event.
 function wireRailHandle(handle, root) {
   if (!handle) return;
   const RAIL_KEY_STEP = 16;
-  let dragging = false;
+  let pointerId = null;
   let startX = 0;
   let startW = readRail();
 
-  const widthFromClientX = (clientX) => {
-    // the rail's left edge ≈ the tree host's left edge; the new width is the
-    // pointer's distance from it.
-    if (typeof clientX !== 'number' || !isFinite(clientX)) return startW;
-    let left = 0;
-    if (_treeHost && _treeHost.getBoundingClientRect) {
-      try { left = _treeHost.getBoundingClientRect().left || 0; } catch (e) { left = 0; }
-    }
-    return clientX - left;
-  };
-
   const onMove = (ev) => {
-    if (!dragging) return;
+    if (!_railDragging) return;
     if (ev && ev.preventDefault) ev.preventDefault();
     const cx = ev && typeof ev.clientX === 'number' ? ev.clientX : null;
-    // prefer an absolute rail-left model; if unavailable, use the drag delta.
-    let next;
-    if (cx != null && _treeHost && _treeHost.getBoundingClientRect) {
-      next = widthFromClientX(cx);
-    } else if (cx != null) {
-      next = startW + (cx - startX);
-    } else { next = startW; }
-    applyRail(next, root);
+    if (cx == null) return;
+    // Divide the VIEWPORT-px pointer delta by the page-scale factor so it maps
+    // onto the root's UNSCALED layout space (where `--dt-rail` lives). At 100%
+    // scale this is an identity; at any other scale it is what stops the jump.
+    const scale = pageScaleOf(root) || 1;
+    const next = startW + (cx - startX) / scale;
+    stampRail(next, root);          // live, no persist (avoid churn / snap-back)
   };
-  const onUp = () => {
-    dragging = false;
-    handle.classList && handle.classList.remove('dt-rail-dragging');
+  const onUp = (ev) => {
+    if (!_railDragging) return;
+    _railDragging = false;
+    if (handle.classList) handle.classList.remove('dt-rail-dragging');
+    if (pointerId != null && typeof handle.releasePointerCapture === 'function') {
+      try { handle.releasePointerCapture(pointerId); } catch (e) { /* ignore */ }
+    }
+    pointerId = null;
+    // Persist the final width (clamped) exactly once.
+    if (ev && typeof ev.clientX === 'number') {
+      const scale = pageScaleOf(root) || 1;
+      applyRail(startW + (ev.clientX - startX) / scale, root);
+    } else {
+      applyRail(readRailFromRoot(root), root);
+    }
     if (typeof window !== 'undefined' && window.removeEventListener) {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
@@ -211,11 +264,19 @@ function wireRailHandle(handle, root) {
     }
   };
   const onDown = (ev) => {
-    dragging = true;
+    _railDragging = true;
     startX = ev && typeof ev.clientX === 'number' ? ev.clientX : 0;
     startW = readRail();
-    handle.classList && handle.classList.add('dt-rail-dragging');
+    if (handle.classList) handle.classList.add('dt-rail-dragging');
     if (ev && ev.preventDefault) ev.preventDefault();
+    // Capture the pointer so EVERY move is delivered to the handle even if the
+    // cursor outruns the thin hit-area (this is the lost-events fix).
+    const pid = ev && (ev.pointerId != null ? ev.pointerId : 0);
+    if (pid != null && typeof handle.setPointerCapture === 'function') {
+      try { handle.setPointerCapture(pid); pointerId = pid; } catch (e) { pointerId = null; }
+    }
+    // With capture, the handle itself receives the moves; also bind on window
+    // as a belt-and-braces fallback (mouse path / no-capture environments).
     if (typeof window !== 'undefined' && window.addEventListener) {
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
@@ -225,6 +286,9 @@ function wireRailHandle(handle, root) {
   };
   handle.addEventListener('pointerdown', onDown);
   handle.addEventListener('mousedown', onDown);
+  // Captured pointer events fire on the handle itself; route them through too.
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onUp);
 
   handle.addEventListener('keydown', (ev) => {
     const k = ev.key;

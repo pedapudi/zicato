@@ -111,6 +111,22 @@ Three operator-requested changes, all CSS/JS-only and scoped to Variant T:
    the detail pane's `1fr` column reflows. This is **page-chrome sizing** —
    distinct from the page-scale pill, which zooms the whole page.
    `shell.applyRail()` / `ui.{readRail,persistRail,normaliseRail}`.
+
+   **Smooth-drag mechanics (the jumpiness fix).** The handle lives *inside* the
+   app root, which carries a page-wide `zoom` (the scale pill). `event.clientX`
+   is a **viewport CSS-px** coordinate, but `--dt-rail` is laid out in the root's
+   **unscaled layout space**, so computing the width straight from `clientX` made
+   the drag over-/under-track (and jump) whenever the page scale ≠ 100 %. The
+   drag now works in **delta space**: `pointerdown` records the start pointer-x +
+   start width and `setPointerCapture`s the pointer (so a fast drag never drops
+   a `pointermove`); each `pointermove` stamps
+   `--dt-rail = clamp(startWidth + (clientX − startX) / pageScale, MIN, MAX)`
+   where `pageScale` is read live via `ui.pageScaleOf(root)` (inline `zoom` →
+   `--dt-page-scale` → `data-t-scale` %); `pointerup` releases capture and
+   **persists once** (no per-move localStorage churn). A `_railDragging` guard
+   makes any competing re-apply of the persisted width (e.g. a `state:changed`
+   re-render) a no-op mid-drag, so the rail never snaps back. Keyboard nudges are
+   unchanged.
 3. **"back" → "up".** The upper-left control navigates UP the selection
    hierarchy (the parent route), not browser-back. Its label is now **"↑ up"**
    (glyph `↑`, text `up`); aria-label "Navigate up", title "Navigate up one

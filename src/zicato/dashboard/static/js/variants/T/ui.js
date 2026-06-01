@@ -177,6 +177,39 @@ export function persistRail(v) {
   return n;
 }
 
+// THE PAGE-SCALE FACTOR a coordinate must be divided by to convert a viewport
+// (CSS-px) pointer position into the LAYOUT space that `--dt-rail` lives in.
+// The Variant-T app root carries a page-wide `zoom` (the scale pill) plus a
+// mirrored `--dt-page-scale` ratio; both are the same number. The rail handle
+// sits INSIDE that zoomed root, so `event.clientX` (viewport CSS px) is the
+// LAID-OUT position multiplied by `zoom`. Dividing the pointer delta by this
+// factor recovers the unscaled layout-space delta the grid column expects —
+// THIS is the fix for the jumpy / over-tracking drag at a non-100% scale.
+//
+// Reads the live factor defensively: first the inline `zoom`, then the
+// `--dt-page-scale` custom property, then the `data-t-scale` percent attribute;
+// falls back to 1 (no scale) when nothing is set or the value is bogus.
+export function pageScaleOf(root) {
+  if (!root) return 1;
+  let raw = null;
+  const st = root.style;
+  if (st) {
+    if (st.zoom != null && st.zoom !== '') raw = st.zoom;
+    else if (typeof st.getPropertyValue === 'function') {
+      const v = st.getPropertyValue('--dt-page-scale');
+      if (v) raw = v;
+    } else if (st._props && st._props['--dt-page-scale'] != null) {
+      raw = st._props['--dt-page-scale'];
+    }
+  }
+  if (raw == null && root.getAttribute) {
+    const pct = root.getAttribute('data-t-scale');
+    if (pct != null) raw = Number(pct) / 100;
+  }
+  const n = Number(raw);
+  return isFinite(n) && n > 0 ? n : 1;
+}
+
 // ---- VISUAL-ELEMENT SIZE tokens (fixed at the cozy baseline) --------
 //
 // The SVG figures are laid out in JS, so their intrinsic SIZE tokens live HERE.
