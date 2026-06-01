@@ -131,6 +131,57 @@ The gauntlet trades breadth of search for depth of reasoning.
 That is the right trade for a system whose unit of progress is a
 *tested hypothesis*, not a *sampled mutation*.
 
+### 1.4 The gauntlet is the *default*, not the only, structure
+
+> **Status.** Design direction, not yet implemented. The interface
+> spec and backend plan are in
+> [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md); the
+> decision-theory placement is in
+> [`SELECTION.md §10`](SELECTION.md#10-configurable-per-epoch-tournament-structures).
+
+The king-of-the-hill gauntlet of §1.1–§1.3 is the **default** tournament
+structure and the only one shipped today. The design direction makes the
+*structure* a **per-epoch configurable choice**: an epoch's frozen
+contract gains a `tournament` block selecting one of `gauntlet`
+(default), `single_elim`, `double_elim`, `swiss`, or `racing`. The
+arguments in §1.3 *for* the gauntlet remain the reason it is the default;
+the other structures exist for regimes with a *large* proposer fan-out
+(§9 lever 0 in `SELECTION.md`), and `racing` is the one whose noise
+handling the selection theory endorses for zicato's few-expensive-noisy
+regime (`SELECTION.md §7–§9`).
+
+The runner stops being hard-wired to "one champion, one challenger, one
+duel". Instead a **`SelectionStrategy`** — chosen from the epoch's
+`tournament.structure` — owns the *scheduling* (which duel(s) to run
+next), the *bracket bookkeeping*, the *champion-advance* rule, and the
+*intra-tournament stopping* (when the bracket is settled). The promote
+gate (§3.5, [`SCORING.md §5`](SCORING.md#5-the-tournament-promotion-gate))
+is **unchanged**: it remains the per-duel accept/reject test every
+structure consumes, so the per-task feasibility guarantee holds for all
+of them.
+
+```mermaid
+flowchart TB
+    O["Orchestrator round"] --> FS["Proposer emits a FIELD<br/>of field_size challengers off champion"]
+    FS --> ST{"SelectionStrategy<br/>(epoch.tournament.structure)"}
+    ST -->|"next_matchups()"| M["one or more duels<br/>champion-vs-challenger / challenger-vs-challenger"]
+    M --> RUN["run_matchup() — the SAME paired board run<br/>(full/fast mode, §3.1 of SELECTION.md)"]
+    RUN --> GATE["promote gate → GateOutcome<br/>(UNCHANGED, §3.5)"]
+    GATE -->|"record_result(verdict)"| ST
+    ST -->|"resolved()? no"| M
+    ST -->|"resolved()? yes"| CR["champion() — the crowned survivor"]
+    CR --> ADV["orchestrator advances current_generation<br/>+ lineage, exactly as today"]
+    ADV -.->|"§5 optimal-stopping decides<br/>whether to spawn the NEXT round"| O
+```
+
+The dashboard bracket (§2) generalises accordingly: today it renders the
+gauntlet's single spine; under a configurable structure it renders the
+structure's own shape (a single-elimination tree, a Swiss standings
+table, a racing rung-ladder) from the same per-matchup records, with the
+gauntlet remaining the default rendering. The persisted-record shape that
+backs the bracket is owned by the data-model design (see
+`TOURNAMENT-STRUCTURES.md §"interface from the data-model agent"`).
+
 ## 2. The dashboard Tournament view
 
 The live dashboard ([DASHBOARD.md](DASHBOARD.md)) has a

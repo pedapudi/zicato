@@ -901,7 +901,97 @@ different places, two opposite statistical stances: be liberal about
 
 ---
 
-## 10. Open questions
+## 10. Configurable per-epoch tournament structures
+
+> **Status.** Design direction, not yet implemented. The full interface
+> spec and the backend implementation plan live in
+> [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md); this section is
+> the *decision-theory* placement of that work into the rest of this
+> document — which structure approximates which §2/§5/§6 mechanism, and
+> the honesty about noise each one demands.
+
+§3–§9 describe *one* selection structure — the king-of-the-hill gauntlet
+(§3), shown to be the degenerate single-replicate instance of the
+statistical-gate family (§2②) / the dueling-bandit framework (§6.3) /
+elitist iterated racing (§4). The recommended path (§9) keeps the
+gauntlet's shape and adds replication and a confidence-bounded test
+*inside* it.
+
+There is an orthogonal axis the maintainer wants to expose: **the
+bracket shape itself, made configurable per epoch.** The gauntlet stays
+the default; an epoch may instead elect single-elimination,
+double-elimination, Swiss, or racing / successive-halving. This section
+states what each structure *is in the language of §2/§5/§6*, and is
+deliberately honest — §2③ and §8 already gave the evidence-backed
+verdict that **brackets are the wrong primitive for few, expensive,
+noisy candidates.** Exposing them as options does not repeal that
+verdict; it makes the trade explicit and per-epoch, and it forces every
+non-gauntlet structure to carry the replication §9 lever 1 prescribes.
+
+### 10.1 The strategy abstraction (one paragraph; full spec elsewhere)
+
+A `SelectionStrategy` is the per-epoch object the orchestrator consults
+to decide **which champion-vs-challenger duel(s) to run next** and **how
+a completed duel's gate verdict advances, eliminates, or seeds the
+field** — and **when the epoch's tournament is resolved.** It owns
+*scheduling + bracket bookkeeping + champion-advance + stopping*; it does
+**not** own the accept/reject decision of a single duel. That stays the
+existing three-rule promote gate (§3.2) — every structure consumes the
+*same* `GateOutcome` per duel, so the feasibility guarantee of §1.4 is
+preserved no matter which bracket is wrapped around it. The full
+interface, per-structure design, and backend plan are in
+[`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md).
+
+### 10.2 Each structure, mapped to this document's theory
+
+| Structure (`tournament.structure`) | What it is here | §-mapping | Selection / advance | Stopping rule | Replication stance |
+|---|---|---|---|---|---|
+| **`gauntlet`** *(default)* | Today's king-of-the-hill (§3) | Degenerate single-replicate dueling bandit (§6.3); `(μ+λ)` elitism (§2 elitism note) | One duel/round: champion vs the round's one challenger; promote on gate `promoted` | §3.3 / §5 — `rounds`, `max_consecutive_rejections`, posterior stop (§5.4) | None today; §9 levers 1–3 add it in place |
+| **`single_elim`** | Bracket of *K* challengers; winners advance; champion is a seed/bye | Condorcet identification (§6.2) over a one-shot field; **the wrong primitive** (§2③, §8) | Each bracket node is a duel; node winner = the side the gate prefers; champion enters as a bye and meets the bracket survivor in the final | Tournament resolves when one finalist remains; champion promoted only if it clears the gate as the final duel's challenger | **Mandatory** ≥ r duels/node, or a strong candidate dies to one unlucky run (§2③, §8) |
+| **`double_elim`** | Winners' + losers' brackets; one loss is survivable | Condorcet ID with a "second life" (§6.2); §8's explicit *not-recommended* | Two brackets; a node-loser drops to the losers' bracket; grand final is winners'-survivor vs losers'-survivor | Resolves when the losers' bracket is exhausted; champion-gate applied to the grand-final survivor | §8: the second-life benefit is **delivered more cheaply by replication** — prefer raising `replicates` over building the losers' bracket |
+| **`swiss`** | Fixed `rounds_n` rounds, pair by running standing | Copeland identification (§6.2); Swiss-as-non-adaptive-racing (§7) | Each round pairs near-standing generations into duels; standing = Copeland score (duels won) tie-broken by mean scalar | Resolves after `rounds_n` Swiss rounds; champion = top of final standing if it clears the gate vs the incumbent | Pairings repeat opponents rarely; **per-pairing replication** is how Swiss earns noise robustness (§6.2's "duels tighten the relative bound") |
+| **`racing`** | All challengers on a board *subset*, cut the worst, escalate budget | **Successive Halving / best-arm ID** (§2③); the *adaptive* form of Swiss/round-robin (§7) and the synthesis §9 lever 5 converges on | Rung 0: every challenger duels the champion on a board slice; eliminate the worst `1−1/eta`; survivors re-duel on a larger slice; repeat | Resolves when one survivor remains or the board is fully consumed; that survivor faces the full-board gate (+ optional §9 lever 3 confirmation) | **Built-in** — racing *is* escalating replication; this is the structure §7–§9 actually recommend, and the only bracket-shaped option this document endorses |
+
+The throughline from §7 holds: every non-gauntlet structure spends more
+duels, and the lever that buys confidence is **how many times you
+re-evaluate**, not the bracket shape. `single_elim` / `double_elim` /
+`swiss` are exposed for completeness and for cheap-field regimes the
+maintainer may later create (e.g. a *large* proposer fan-out under a
+generous budget); `racing` is the one whose noise-handling the literature
+endorses for zicato's regime, because its replication is intrinsic rather
+than bolted on. The config field carries this honesty forward: the
+default stays `gauntlet`, and the docs for `single_elim` / `double_elim`
+must repeat §8's verdict at their point of use.
+
+### 10.3 The prerequisite: a multi-candidate field (§9 lever 0)
+
+Every structure except `gauntlet` needs *K > 1* challengers per round —
+which is exactly **§9 lever 0**. The gauntlet asks the proposer for one
+`Experiment`; a bracketed/racing epoch asks for `field_size` diverse
+experiments off the same champion. This is the shared unlock: without a
+field there is no bracket to schedule. The `tournament` config block
+therefore carries `field_size` (1 for `gauntlet`), and a non-gauntlet
+structure with `field_size = 1` degrades to the gauntlet (one challenger,
+one duel) rather than erroring — the same graceful degeneracy fast mode
+already uses when no champion cache exists (§3.1).
+
+### 10.4 The stopping rule composes with §5
+
+The per-epoch structure decides *intra-tournament* resolution (which
+duel next, when the bracket is settled). The §5 optimal-stopping rule
+decides *whether to keep spawning rounds at all*. These compose: a
+`racing` epoch resolves its rung ladder to a single survivor (intra), and
+the §5 posterior stop still governs whether the *next* round's fresh
+field is worth the cost `c` (inter). For `gauntlet` the two collapse into
+one decision (one duel per round, so "resolve the tournament" and
+"finish the round" coincide) — which is why §3.3 / §5 read as a single
+stopping story today. The implementation must keep the §5 stop *outside*
+the strategy, at the `evolve_n_rounds` level, so it applies uniformly
+across structures.
+
+---
+
+## 11. Open questions
 
 1. **Per-task noise vs. true regression.** How many replications are
    enough to tell a real per-task regression from a chance pass→fail
@@ -937,10 +1027,18 @@ different places, two opposite statistical stances: be liberal about
    per-entry-delta variance? With a `K`-challenger field, is Condorcet
    identification worth its duel budget, or does a Copeland fallback pay
    for itself only past some field size?
+7. **Which structure for which epoch (§10).** Given §8's verdict that
+   brackets are noise-fragile for zicato's regime, when is a non-`racing`
+   structure ever the right per-epoch choice — only under a large
+   proposer fan-out with a generous budget, or never? What
+   `field_size` / `eta` / board-subset schedule does `racing` need to
+   beat the replicated gauntlet on simple regret per unit compute, and
+   should the structure default to `racing` (not `gauntlet`) once §9
+   lever 0's multi-candidate field exists?
 
 ---
 
-## 11. References
+## 12. References
 
 Primary sources, grouped by the family they anchor. Every claim that
 attaches a name+year in the body resolves to an entry here. Sources tied
@@ -1001,5 +1099,7 @@ than for a specific verifiable result.
 - Wu & Liu 2016, *Double Thompson Sampling for Dueling Bandits*, NeurIPS — D-TS for general Copeland (and Condorcet) dueling bandits. <https://proceedings.neurips.cc/paper/2016/hash/9de6d14fff9806d4bcd1ef555be766cd-Abstract.html>
 - Sui, Zoghi, Hofmann & Yue 2018, *Advancements in Dueling Bandits*, IJCAI (survey) — Condorcet/Copeland/von Neumann winners and the algorithm landscape. <https://www.ijcai.org/proceedings/2018/776>
 
-*See also* [`TOURNAMENT.md`](TOURNAMENT.md), [`SCORING.md`](SCORING.md),
-[`LOOP-HEALTH.md`](LOOP-HEALTH.md), [`VOCABULARY.md`](VOCABULARY.md).
+*See also* [`TOURNAMENT.md`](TOURNAMENT.md),
+[`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md),
+[`SCORING.md`](SCORING.md), [`LOOP-HEALTH.md`](LOOP-HEALTH.md),
+[`VOCABULARY.md`](VOCABULARY.md).
