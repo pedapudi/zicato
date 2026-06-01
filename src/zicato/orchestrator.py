@@ -551,6 +551,43 @@ async def evolve_once(
     # --- 5. Loss summary ---
     loss_summary = _render_loss_summary(losses)
 
+    # --- 5b. Tournament-structure dispatch ---
+    # The gauntlet (the default and back-compat baseline) has field_size
+    # == 1: one champion, one challenger, one full-board duel. Steps 6-13
+    # below preserve that path byte-for-byte. A non-gauntlet structure with
+    # a wider field (field_size > 1) is driven by the SelectionStrategy:
+    # the orchestrator proposes + applies N challengers and runs the
+    # strategy's scheduled matchups through resolve_tournament (each via the
+    # same board-unit runner + unchanged promote gate). The §5 inter-round
+    # stopping stays in evolve_n_rounds, OUTSIDE the strategy.
+    from zicato.selection.registry import make_strategy  # noqa: PLC0415
+
+    strategy = make_strategy(tournament_spec)
+    if strategy.field_size() > 1:
+        return await _evolve_multi_challenger(
+            workspace_root=workspace_root,
+            epoch_id=resolved_epoch_id,
+            tournament_spec=tournament_spec,
+            strategy=strategy,
+            parent_id=parent_id,
+            adapter=adapter,
+            board=board,
+            weights=weights,
+            brief=brief,
+            config=config,
+            mutations=mutations,
+            patterns=patterns,
+            loss_summary=loss_summary,
+            disable_drift=disable_drift,
+            auxiliary_call_llm=auxiliary_call_llm,
+            workspace_config=workspace_config,
+            max_proposer_retries=max_proposer_retries,
+            beater=beater,
+            round_index=round_index,
+            total_rounds=total_rounds,
+            meta_loop_emitter=meta_loop_emitter,
+        )
+
     # --- 6. Propose ---
     next_id = _next_generation_id(workspace_root, resolved_epoch_id)
     _beat(
@@ -953,6 +990,656 @@ async def evolve_once(
         health_summary=health_summary,
         health_critical=health_critical,
     )
+
+
+# ---------------------------------------------------------------------------
+# Multi-challenger field (non-gauntlet structures)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _AppliedChallenger:
+    """One proposed-and-applied challenger generation in the field.
+
+    Pairs the freshly-minted child generation id with the validated child
+    snapshot, the proposer's :class:`Experiment`, and the generation
+    record the runner mounts. ``snapshot_root`` is the tree
+    ``run_matchup`` evaluates; ``experiment`` is persisted to
+    ``experiment.json`` so the journal/index carry the proposer's
+    hypothesis and patches exactly as the gauntlet path does.
+    """
+
+    generation_id: str
+    snapshot_root: Path
+    experiment: Experiment
+    generation: Generation
+
+
+async def _propose_and_apply_challenger(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    next_id: str,
+    mutations: list[Any],
+    patterns: list[Any],
+    brief: Any,
+    loss_summary: str,
+    auxiliary_call_llm: CallLLM,
+    auxiliary_model: str,
+    max_proposer_retries: int,
+    beater: HeartbeatBeater | None,
+    round_index: int,
+    meta_loop_emitter: Any,
+) -> _AppliedChallenger | None:
+    """Propose + apply ONE challenger child of the champion.
+
+    Reuses the same propose → post-apply-validate → derive pipeline the
+    gauntlet path uses for its single challenger (the proposer's
+    ``validate_experiment`` hook applies the patch set into a fresh child
+    snapshot and runs ``validate_post_apply``), so a challenger in the
+    field is a real lineage child of the current champion. Returns the
+    applied challenger, or ``None`` when the proposer exhausted its retry
+    budget or the patch set failed post-apply validation — in which case
+    the round simply runs a narrower field rather than crashing (the
+    SelectionStrategy still resolves over whatever applied cleanly).
+    """
+    from zicato.epoch import write_experiment  # noqa: PLC0415
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+    from zicato.mutation.validator import (  # noqa: PLC0415
+        check_forbidden_ids,
+        validate_post_apply,
+    )
+    from zicato.proposer.proposer import (  # noqa: PLC0415
+        ProposerError,
+        propose_experiment,
+    )
+
+    genstore = default_generation_store(workspace_root)
+    last_child_snapshot: dict[str, Path] = {}
+
+    _beat(
+        beater,
+        epoch_id=epoch_id,
+        generation_id=next_id,
+        round_index=round_index,
+        phase=f"proposing:round_{round_index}:{next_id}",
+    )
+
+    async def _validate(candidate: Experiment) -> list[str]:
+        _beat(
+            beater,
+            epoch_id=epoch_id,
+            generation_id=next_id,
+            round_index=round_index,
+            phase=f"applying:round_{round_index}:{next_id}",
+        )
+        child = genstore.derive_generation(
+            epoch_id=epoch_id,
+            parent_generation_id=parent_id,
+            child_generation_id=next_id,
+            patches=list(candidate.patches),
+        )
+        last_child_snapshot["path"] = child
+        return validate_post_apply(child, list(candidate.patches), mutations)
+
+    try:
+        experiment = await propose_experiment(
+            epoch_id=epoch_id,
+            parent_generation_id=parent_id,
+            new_generation_id=next_id,
+            patterns=patterns,
+            mutations=mutations,
+            brief_text=brief.text,
+            current_loss_summary=loss_summary,
+            aux_call_llm=auxiliary_call_llm,
+            model=auxiliary_model,
+            max_retries=max_proposer_retries,
+            forbidden_ids=brief.forbidden_ids,
+            workspace_root=workspace_root,
+            validate_experiment=_validate,
+            meta_loop_emitter=meta_loop_emitter,
+        )
+    except ProposerError as exc:
+        log.warning(
+            "multi-challenger field: proposer could not produce a valid "
+            "challenger for %s/%s (%s); the field runs without it",
+            epoch_id,
+            next_id,
+            "; ".join(exc.attempts) or exc,
+        )
+        return None
+
+    mutations_by_id = {m.id: m for m in mutations}
+    for patch in experiment.patches:
+        if patch.mutation_id not in mutations_by_id:
+            raise RuntimeError(
+                f"proposer-emitted patch {patch.id!r} targets unknown "
+                f"mutation_id {patch.mutation_id!r}"
+            )
+    forbidden_violations = check_forbidden_ids(list(experiment.patches), list(brief.forbidden_ids))
+    if forbidden_violations:
+        raise RuntimeError(
+            "proposer-emitted patches violate forbidden_ids: " + "; ".join(forbidden_violations)
+        )
+
+    child_snapshot = last_child_snapshot["path"]
+    # Persist the proposer-side experiment.json (outcome still None) and
+    # fold it into the live index, exactly as the gauntlet path does for
+    # its single challenger before the tournament finishes.
+    write_experiment(workspace_root, epoch_id, next_id, experiment)
+    _ingest_experiment_into_index(workspace_root, epoch_id, next_id)
+
+    child_gen = Generation(
+        id=next_id,
+        epoch_id=epoch_id,
+        parent_id=parent_id,
+        snapshot_root=child_snapshot,
+        created_at=_now_iso(),
+    )
+    return _AppliedChallenger(
+        generation_id=next_id,
+        snapshot_root=child_snapshot,
+        experiment=experiment,
+        generation=child_gen,
+    )
+
+
+async def _evolve_multi_challenger(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    tournament_spec: Any,
+    strategy: Any,
+    parent_id: str,
+    adapter: Any,
+    board: list[Any],
+    weights: Any,
+    brief: Any,
+    config: Any,
+    mutations: list[Any],
+    patterns: list[Any],
+    loss_summary: str,
+    disable_drift: tuple[Any, ...],
+    auxiliary_call_llm: CallLLM,
+    workspace_config: Any,
+    max_proposer_retries: int,
+    beater: HeartbeatBeater | None,
+    round_index: int,
+    total_rounds: int,
+    meta_loop_emitter: Any,
+) -> EvolveRoundOutcome:
+    """Run ONE evolve round under a non-gauntlet tournament structure.
+
+    The structure's :meth:`SelectionStrategy.field_size` challengers are
+    proposed and applied (each a lineage child of the current champion),
+    then the strategy's matchups are driven through
+    :func:`zicato.selection.resolve_tournament`. Each matchup runs via the
+    same board-unit runner (:func:`zicato.tournament.runner.run_matchup`)
+    and ends in the UNCHANGED promote gate; the strategy reads the gate
+    verdict and never re-decides a duel. On resolution the crowned
+    generation (if any) advances the champion, every rejected challenger
+    is recorded as a dead branch, and the live ``ActiveTournament``
+    envelope + per-challenger ``OutcomeRecord`` audit + v3 index columns
+    are persisted per ``docs/design/TOURNAMENT-DATA-MODEL.md``.
+    """
+    from zicato.core.types import MatchOutcome  # noqa: PLC0415
+    from zicato.epoch import (  # noqa: PLC0415
+        append_journal_entry,
+        append_to_lineage,
+        update_experiment_outcome,
+    )
+    from zicato.selection import resolve_tournament  # noqa: PLC0415
+    from zicato.selection.strategy import (  # noqa: PLC0415
+        Contestant,
+        Matchup,
+        MatchupResult,
+    )
+    from zicato.tournament.runner import run_matchup  # noqa: PLC0415
+
+    auxiliary_model = str(workspace_config.get("auxiliary_model", ""))
+    field_n = strategy.field_size()
+
+    # --- Propose + apply the N-challenger field. Ids are minted in
+    # sequence so each challenger is a distinct vN child of the champion;
+    # a proposer that fails for one challenger simply narrows the field.
+    applied: list[_AppliedChallenger] = []
+    # Mint ids monotonically from the highest existing vN so every
+    # challenger gets a distinct id even when a proposer attempt fails
+    # before it derives a snapshot (so _next_generation_id can't re-pick
+    # the same vN). The first id matches what the gauntlet path would mint.
+    base_id = _next_generation_id(workspace_root, epoch_id)
+    base_n = _round_n_from_generation_id(base_id)
+    for offset in range(field_n):
+        next_id = f"v{base_n + offset}" if base_n is not None else base_id
+        challenger = await _propose_and_apply_challenger(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            parent_id=parent_id,
+            next_id=next_id,
+            mutations=mutations,
+            patterns=patterns,
+            brief=brief,
+            loss_summary=loss_summary,
+            auxiliary_call_llm=auxiliary_call_llm,
+            auxiliary_model=auxiliary_model,
+            max_proposer_retries=max_proposer_retries,
+            beater=beater,
+            round_index=round_index,
+            meta_loop_emitter=meta_loop_emitter,
+        )
+        if challenger is not None:
+            applied.append(challenger)
+
+    if not applied:
+        # The whole field failed to apply — nothing to run. Record a
+        # rejection-shaped outcome so the round still produces a clean
+        # return value and the loop continues.
+        return EvolveRoundOutcome(
+            parent_generation_id=parent_id,
+            proposed_generation_id="",
+            tournament_decision="rejected",
+            rejection_reason="multi-challenger field: no challenger applied cleanly",
+            parent_scalar=0.0,
+            child_scalar=0.0,
+            delta_scalar=0.0,
+        )
+
+    by_id: dict[str, _AppliedChallenger] = {c.generation_id: c for c in applied}
+    champion_gen = Generation(
+        id=parent_id,
+        epoch_id=epoch_id,
+        parent_id=None,
+        snapshot_root=_snapshot_root(workspace_root, epoch_id, parent_id),
+        created_at=_now_iso(),
+        promoted=True,
+    )
+
+    def _generation_for(gid: str) -> Generation:
+        if gid == parent_id:
+            return champion_gen
+        return by_id[gid].generation
+
+    # --- request_field: hand the strategy the champion + applied field.
+    async def _request_field(_n: int) -> tuple[Contestant, list[Contestant]]:
+        champion = Contestant(generation_id=parent_id, role="champion")
+        challengers = [
+            Contestant(
+                generation_id=c.generation_id,
+                role="challenger",
+                snapshot_root=c.snapshot_root,
+                experiment=c.experiment,
+            )
+            for c in applied
+        ]
+        return champion, challengers
+
+    # --- run_matchup: one duel via the board-unit runner + unchanged gate.
+    async def _run_matchup(m: Matchup) -> MatchupResult:
+        _beat(
+            beater,
+            epoch_id=epoch_id,
+            generation_id=m.right.generation_id,
+            round_index=round_index,
+            phase=f"tournament:round_{round_index}:{m.matchup_id}",
+        )
+        result = await run_matchup(
+            adapter=adapter,
+            left_gen=_generation_for(m.left.generation_id),
+            right_gen=_generation_for(m.right.generation_id),
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            board_subset=m.board_subset,
+            replicates=m.replicates,
+            disable_drift=disable_drift,
+            round_index=round_index,
+            total_rounds=total_rounds,
+        )
+        # Cache both sides' aggregates for fast-mode reuse, mirroring the
+        # gauntlet path's _cache_gen_score calls.
+        _cache_gen_score(workspace_root, epoch_id, m.left.generation_id, result.parent_agg)
+        _cache_gen_score(workspace_root, epoch_id, m.right.generation_id, result.child_agg)
+        return MatchupResult(
+            matchup_id=m.matchup_id,
+            left_id=m.left.generation_id,
+            right_id=m.right.generation_id,
+            left_agg=result.parent_agg,
+            right_agg=result.child_agg,
+            outcome=result.outcome,
+            round_index=m.round_index,
+            bracket_slot=m.bracket_slot,
+        )
+
+    # --- Publish the live ActiveTournament envelope before scheduling.
+    competitors_meta = [{"generation_id": parent_id, "seed": 1, "role": "champion"}] + [
+        {"generation_id": c.generation_id, "seed": i + 2, "role": "challenger"}
+        for i, c in enumerate(applied)
+    ]
+    tournament_id = f"tourn_{epoch_id}_{applied[0].generation_id}"
+    _publish_active_tournament(
+        workspace_root,
+        tournament_id=tournament_id,
+        epoch_id=epoch_id,
+        structure=tournament_spec.structure,
+        structure_params=dict(tournament_spec.params),
+        competitors=competitors_meta,
+        round_index=round_index,
+        total_rounds=total_rounds,
+    )
+
+    # --- Drive the strategy to a crowned decision.
+    try:
+        decision = await resolve_tournament(
+            strategy,
+            request_field=_request_field,
+            run_matchup=_run_matchup,
+        )
+    except Exception:
+        # A failure mid-resolution leaves no settled bracket — clear the
+        # live "running" envelope so the dashboard does not show a stuck
+        # tournament, then re-raise.
+        _clear_active_tournament(workspace_root)
+        raise
+    # Settle the live envelope with the resolved rounds + standings so the
+    # dashboard's structure reader sees the final bracket. Unlike the
+    # gauntlet path (which clears its transient running record on exit),
+    # the multi-challenger envelope is RETAINED with phase="completed":
+    # competitors/rounds/standings are the dashboard's only live source for
+    # a non-gauntlet field until the next round's tournament starts.
+    _settle_active_tournament(
+        workspace_root,
+        tournament_id=tournament_id,
+        epoch_id=epoch_id,
+        structure=tournament_spec.structure,
+        structure_params=dict(tournament_spec.params),
+        competitors=competitors_meta,
+        strategy=strategy,
+        decision=decision,
+        round_index=round_index,
+        total_rounds=total_rounds,
+    )
+
+    # --- Per-challenger OutcomeRecord audit. Each challenger records the
+    # matches it played (opponent, win/loss, delta), its final rank, and
+    # the crowning verdict for THIS generation (promoted iff it is the
+    # crowned generation; rejected otherwise — a dead branch).
+    promoted_id = decision.promoted_generation_id
+    rank_by_id = {s.generation_id: s.rank for s in decision.standings}
+    matches_by_gen: dict[str, list[MatchOutcome]] = {c.generation_id: [] for c in applied}
+    for mr in decision.matchups:
+        delta = mr.outcome.delta_scalar
+        winner = mr.lower_scalar_id()
+        if mr.left_id in matches_by_gen:
+            matches_by_gen[mr.left_id].append(
+                MatchOutcome(
+                    match_id=mr.matchup_id,
+                    opponent=mr.right_id,
+                    won=(winner == mr.left_id),
+                    delta_scalar=-delta,
+                )
+            )
+        if mr.right_id in matches_by_gen:
+            matches_by_gen[mr.right_id].append(
+                MatchOutcome(
+                    match_id=mr.matchup_id,
+                    opponent=mr.left_id,
+                    won=(winner == mr.right_id),
+                    delta_scalar=delta,
+                )
+            )
+
+    champion_agg = _first_aggregate_for(parent_id, decision)
+    parent_scalar = float(champion_agg.get("scalar", 0.0)) if champion_agg else 0.0
+
+    finalised_by_id: dict[str, Experiment] = {}
+    child_scalar_crown = parent_scalar
+    for challenger in applied:
+        gid = challenger.generation_id
+        is_crowned = gid == promoted_id
+        gen_decision = "promoted" if is_crowned else "rejected"
+        agg = _first_aggregate_for(gid, decision)
+        gen_scalar = float(agg.get("scalar", 0.0)) if agg else 0.0
+        if is_crowned:
+            child_scalar_crown = gen_scalar
+        outcome_record = OutcomeRecord(
+            ran_at=_now_iso(),
+            drift_movements=(),
+            pass_rate_delta=0.0,
+            drift_loss_delta=0.0,
+            scalar_score_delta=gen_scalar - parent_scalar,
+            tournament_decision=gen_decision,  # type: ignore[arg-type]
+            rejection_reason=("" if is_crowned else decision.reason),
+            structure=tournament_spec.structure,
+            final_rank=rank_by_id.get(gid),
+            match_record=tuple(matches_by_gen.get(gid, ())),
+        )
+        finalised = update_experiment_outcome(workspace_root, epoch_id, gid, outcome_record)
+        finalised_by_id[gid] = finalised
+        _ingest_experiment_into_index(workspace_root, epoch_id, gid)
+
+    # --- Lineage: the crowned generation on the spine (promoted), every
+    # other challenger recorded as a dead branch (rejected child of the
+    # champion). current_generation advances only on a promotion.
+    for challenger in applied:
+        gid = challenger.generation_id
+        is_crowned = gid == promoted_id
+        gen_record = Generation(
+            id=gid,
+            epoch_id=epoch_id,
+            parent_id=parent_id,
+            snapshot_root=challenger.snapshot_root,
+            created_at=challenger.generation.created_at,
+            promoted=is_crowned,
+        )
+        append_to_lineage(workspace_root, epoch_id, gen_record, parent_id=parent_id)
+    if promoted_id is not None:
+        _set_current_generation(workspace_root, epoch_id, promoted_id)
+
+    # --- Journal: one entry per challenger (crowned + dead branches).
+    for challenger in applied:
+        append_journal_entry(workspace_root, epoch_id, finalised_by_id[challenger.generation_id])
+
+    # --- Loop-health + analyzer + report (mirrors the gauntlet path).
+    round_n = _round_n_from_generation_id(applied[0].generation_id) or round_index
+    health_summary, health_critical = _assess_and_persist_loop_health(
+        workspace_root, epoch_id, round_n, board
+    )
+    if health_critical:
+        _warn_loop_no_signal(epoch_id, round_n, health_summary)
+
+    try:
+        from zicato.analyzer import analyze_epoch_telemetry  # noqa: PLC0415
+
+        await analyze_epoch_telemetry(
+            workspace_root,
+            epoch_id,
+            auxiliary_call_llm,
+            model=auxiliary_model,
+            round_n=_round_n_from_generation_id(applied[0].generation_id),
+            mutation_ids=[m.id for m in mutations],
+            meta_loop_emitter=meta_loop_emitter,
+        )
+    except Exception as exc:  # noqa: BLE001 — analyser is best-effort
+        log.debug("decision telemetry analyzer skipped: %s", exc)
+
+    await _regenerate_epoch_report(workspace_root, epoch_id, auxiliary_call_llm, auxiliary_model)
+
+    bookkeeping_decision = "promoted" if promoted_id is not None else "rejected"
+    _beat(
+        beater,
+        epoch_id=epoch_id,
+        generation_id=promoted_id or applied[0].generation_id,
+        round_index=round_index,
+        phase=f"done:round_{round_index}:{tournament_id}:{bookkeeping_decision}",
+    )
+
+    return EvolveRoundOutcome(
+        parent_generation_id=parent_id,
+        proposed_generation_id=(promoted_id or applied[0].generation_id),
+        tournament_decision=bookkeeping_decision,
+        rejection_reason=("" if promoted_id is not None else decision.reason),
+        parent_scalar=parent_scalar,
+        child_scalar=child_scalar_crown,
+        delta_scalar=child_scalar_crown - parent_scalar,
+        health_summary=health_summary,
+        health_critical=health_critical,
+    )
+
+
+def _first_aggregate_for(gid: str, decision: Any) -> dict[str, Any] | None:
+    """Find a generation's aggregate dict from the decision's matchups.
+
+    A generation may appear as ``left`` or ``right`` across several
+    matchups (a Swiss / double-elim run); any one carries its aggregate,
+    so the first occurrence suffices for the scalar the journal records.
+    """
+    for mr in decision.matchups:
+        if mr.left_id == gid:
+            return dict(mr.left_agg)
+        if mr.right_id == gid:
+            return dict(mr.right_agg)
+    return None
+
+
+def _publish_active_tournament(
+    workspace_root: Path,
+    *,
+    tournament_id: str,
+    epoch_id: str,
+    structure: str,
+    structure_params: dict[str, Any],
+    competitors: list[dict[str, Any]],
+    round_index: int,
+    total_rounds: int,
+) -> None:
+    """Best-effort: publish the live ActiveTournament envelope at start.
+
+    Populates the structure envelope (``structure`` / ``structure_params``
+    / ``competitors``) per the data-model doc so the dashboard can render
+    a non-gauntlet field while it runs. ``parent_generation_id`` /
+    ``child_generation_id`` are left empty for non-gauntlet structures
+    (the data model's documented convention); ``competitors`` is the
+    authoritative field. Never raises — a live-state write failure must
+    not abort the round.
+    """
+    try:
+        from zicato.runtime.state import (  # noqa: PLC0415
+            ActiveTournament,
+            write_active_tournament,
+        )
+
+        write_active_tournament(
+            workspace_root,
+            ActiveTournament(
+                tournament_id=tournament_id,
+                parent_generation_id="",
+                child_generation_id="",
+                epoch_id=epoch_id,
+                started_at=_now_iso(),
+                phase="running",
+                round_index=round_index,
+                total_rounds=total_rounds,
+                structure=structure,
+                structure_params=dict(structure_params),
+                competitors=[dict(c) for c in competitors],
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — live state is best-effort
+        log.debug("active-tournament publish skipped: %s", exc)
+
+
+def _settle_active_tournament(
+    workspace_root: Path,
+    *,
+    tournament_id: str,
+    epoch_id: str,
+    structure: str,
+    structure_params: dict[str, Any],
+    competitors: list[dict[str, Any]],
+    strategy: Any,
+    decision: Any,
+    round_index: int,
+    total_rounds: int,
+) -> None:
+    """Best-effort: rewrite the live envelope with the settled bracket.
+
+    Serializes the strategy's ``rounds()`` (data-model §2.4) and the
+    decision's ``standings`` (§2.5) so the dashboard's structure reader
+    sees the final bracket / leaderboard. Never raises.
+    """
+    try:
+        from zicato.runtime.state import (  # noqa: PLC0415
+            ActiveTournament,
+            write_active_tournament,
+        )
+
+        rounds = [
+            {
+                "round_index": r.round_index,
+                "label": r.label,
+                "matches": [
+                    {
+                        "match_id": m.match_id,
+                        "competitors": list(m.competitors),
+                        "winner": m.winner,
+                        "decision": m.decision,
+                        "delta_scalar": m.delta_scalar,
+                        "bracket_slot": m.bracket_slot,
+                        "bye": m.bye,
+                        "survivors": list(m.survivors),
+                        "cut": list(m.cut),
+                        "board_fraction": m.board_fraction,
+                    }
+                    for m in r.matches
+                ],
+            }
+            for r in strategy.rounds()
+        ]
+        standings = [
+            {
+                "generation_id": s.generation_id,
+                "rank": s.rank,
+                "scalar": s.scalar,
+                "wins": s.wins,
+                "losses": s.losses,
+                "status": s.status,
+                "role": s.role,
+            }
+            for s in decision.standings
+        ]
+        write_active_tournament(
+            workspace_root,
+            ActiveTournament(
+                tournament_id=tournament_id,
+                parent_generation_id="",
+                child_generation_id=decision.promoted_generation_id or "",
+                epoch_id=epoch_id,
+                started_at=_now_iso(),
+                phase="completed",
+                round_index=round_index,
+                total_rounds=total_rounds,
+                structure=structure,
+                structure_params=dict(structure_params),
+                competitors=[dict(c) for c in competitors],
+                rounds=rounds,
+                standings=standings,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — live state is best-effort
+        log.debug("active-tournament settle skipped: %s", exc)
+
+
+def _clear_active_tournament(workspace_root: Path) -> None:
+    """Best-effort: clear the live ActiveTournament record. Never raises."""
+    try:
+        from zicato.runtime.state import clear_active_tournament  # noqa: PLC0415
+
+        clear_active_tournament(workspace_root)
+    except Exception as exc:  # noqa: BLE001 — live state is best-effort
+        log.debug("active-tournament clear skipped: %s", exc)
 
 
 # ---------------------------------------------------------------------------
