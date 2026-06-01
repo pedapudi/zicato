@@ -1,0 +1,36 @@
+{
+  "drift_weight": 1.0,
+  "pass_weight": 1.0,
+  "severity_weights": {
+    "info": 1.0,
+    "warning": 3.0,
+    "critical": 10.0
+  },
+  "per_kind_weights": {
+    "confabulation_risk": 2.0,
+    "looping_reasoning": 1.5
+  },
+  "plan_revision_weight": 0.5,
+  "runtime_weight": 0.0,
+  "promote_margin": 0.01,
+  "pass_rate_monotonicity": true,
+  "tournament": {
+    "structure": "racing",
+    "params": {
+      "field_size": 4,
+      "replicates": 2,
+      "eta": 2,
+      "board_fraction": 0.4,
+      "rung0_board_size": 0,
+      "board_ids": [
+        "waffles_single",
+        "q3_metrics_outline",
+        "transformers_lay_audience",
+        "waffles_revision_scripted",
+        "transformers_progressive_scripted",
+        "picky_stakeholder_emulated",
+        "every_expectation_kind_demo"
+      ]
+    }
+  }
+}

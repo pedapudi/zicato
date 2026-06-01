@@ -119,6 +119,134 @@ Editing any of those three files between `evolve` invocations changes
 the evaluation contract; the next `evolve` detects the drift, closes
 the current epoch, and opens a fresh one automatically.
 
+## Running a non-gauntlet tournament (racing)
+
+Everything above runs the **gauntlet** — one challenger per round, one
+full-board duel, king-of-the-hill (the default when `scoring.json`
+carries no `tournament` block). zicato also supports configurable
+per-epoch tournament structures: `gauntlet` (default), `single_elim`,
+`double_elim`, `swiss`, and `racing`. This example ships a ready-made
+**racing** contract alongside the gauntlet one:
+[`scoring.racing.json`](./scoring.racing.json).
+
+**Racing** (successive halving / best-arm identification) is the one
+bracket-shaped structure the selection design endorses for zicato's
+few-expensive-noisy regime (see
+[`docs/design/SELECTION.md`](../../../docs/design/SELECTION.md) §10 and
+[`docs/design/TOURNAMENT-STRUCTURES.md`](../../../docs/design/TOURNAMENT-STRUCTURES.md)
+§3.5). Per round it proposes a **field** of `field_size` challengers,
+races them against the champion on a small board **slice** (a cheap
+rung), eliminates the worst `1 − 1/eta` by score, re-races the survivors
+on a larger slice, and repeats until one survivor remains — which then
+faces the champion on the *full* board through the unchanged promote
+gate. Replication is intrinsic (each rung is a larger sample), which is
+why racing earns its noise robustness without a bracket's fragility.
+
+The racing block in `scoring.racing.json`:
+
+```jsonc
+"tournament": {
+  "structure": "racing",
+  "params": {
+    "field_size": 4,          // challengers proposed per round
+    "replicates": 2,          // paired runs per duel, averaged (noise lever)
+    "eta": 2,                 // keep top 1/eta each rung (cut half)
+    "board_fraction": 0.4,    // rung-0 board slice = ceil(0.4 * |board|)
+    "rung0_board_size": 0,    // 0 ⇒ derive rung-0 size from board_fraction
+    "board_ids": [ ... ]      // the example board's 7 entry ids, in slice order
+  }
+}
+```
+
+> `field_size` is how many challengers the proposer must emit each round
+> (the gauntlet's `field_size` is `1`). `board_ids` tells the racing
+> strategy which entries to slice over and in what order — racing reads
+> the board ids from `params` (see the note in
+> `src/zicato/selection/strategies/racing.py`), so they are listed
+> explicitly in the contract. With `field_size=4`, `eta=2`, and
+> `board_fraction=0.4` over 7 entries: rung 0 races 4 arms on 3 entries
+> and keeps 2; rung 1 races those 2 on 6 entries and keeps 1; then the
+> survivor meets the champion on all 7 entries through the promote gate.
+
+Because the tournament structure is part of the frozen evaluation
+contract (it changes *what a promotion means* — a gauntlet champion and
+a racing champion are selected under different rules), **changing the
+structure rolls the epoch** by contract-hash, exactly as retuning
+`promote_margin` does.
+
+There are two ways to run it.
+
+### (a) Point `evolve` at the racing contract
+
+Identical to the gauntlet recipe above, but resolve the contract from
+`scoring.racing.json` instead of `scoring.json`:
+
+```bash
+EX=/home/sunil/git/zicato/examples/zicato_examples/target_1_presentation
+PY=/home/sunil/git/zicato/.venv/bin/python
+
+# Steps 1-2 (init + register) are identical to the gauntlet recipe.
+$PY -m zicato.cli init     --workspace .zicato
+$PY -m zicato.cli register --workspace .zicato \
+    --adk zicato_examples.target_1_presentation.agent.agent:root_agent \
+    --mutable-tree $EX/agent
+
+# Open the epoch from the RACING scoring contract.
+$PY -m zicato.cli epoch new t1_racing --workspace .zicato \
+    --board   $EX/board.jsonl \
+    --brief   $EX/rubric.md \
+    --scoring $EX/scoring.racing.json
+
+# Evolve. The frozen contract carries structure=racing, so each round
+# proposes a 4-challenger field and runs the rung ladder.
+$PY -m zicato.cli evolve --workspace .zicato \
+    --rounds 2 --mode full \
+    --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
+    --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
+```
+
+### (b) Set the structure with CLI flags
+
+`zicato evolve` can write the `tournament` block into the live
+`scoring.json` for you. This is a **contract-mutating convenience**: the
+written block participates in the contract hash, so it auto-rolls the
+epoch if it differs from the current one (exactly equivalent to editing
+`scoring.json` by hand). Starting from the gauntlet `scoring.json`:
+
+```bash
+$PY -m zicato.cli evolve --workspace .zicato \
+    --rounds 2 --mode full \
+    --tournament-structure racing \
+    --tournament-param field_size=4 \
+    --tournament-param eta=2 \
+    --tournament-param board_fraction=0.4 \
+    --tournament-param replicates=2 \
+    --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
+    --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
+```
+
+Each `--tournament-param KEY=VALUE` is repeatable; `VALUE` is parsed as
+JSON when possible (so `field_size=4` becomes the integer `4`), else
+taken as a string. The flags are only applied when
+`--tournament-structure` is also passed.
+
+> Note: the flag form does not auto-populate `board_ids`. To exercise
+> the board-slicing rungs from flags alone, add
+> `--tournament-param board_ids='["waffles_single", ...]'` with the
+> board's entry ids — or just use recipe (a), where
+> `scoring.racing.json` already carries them.
+
+### The mock-harness test that runs this
+
+`tests/test_example_target_1_racing.py` drives this exact contract end
+to end with **no live LLM**: it loads `scoring.racing.json`, seeds a v0
+snapshot from the real `agent/` tree, uses the example's
+`mocks.aux_llm` proposer, and asserts the racing path executes — four
+challengers proposed + applied, the rung ladder's cuts recorded, a
+champion decision, and the persisted `ActiveTournament` envelope +
+per-challenger `OutcomeRecord` audit. Run it with
+`uv run pytest tests/test_example_target_1_racing.py`.
+
 ## What you should see
 
 The `evolve` step emits a JSON array on stdout with one object per

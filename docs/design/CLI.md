@@ -477,8 +477,8 @@ zicato evolve
     [--max-wall-clock-seconds <S>]
     [--no-auto-epoch]
     [--epoch-name <name>]
-    [--tournament-structure gauntlet|single_elim|double_elim|swiss|racing]   # DESIGN, not yet implemented
-    [--tournament-param KEY=VALUE]                                            # DESIGN, repeatable
+    [--tournament-structure gauntlet|single_elim|double_elim|swiss|racing]   # shipped
+    [--tournament-param KEY=VALUE]                                            # shipped, repeatable
     [--no-dashboard]
     [--dashboard-port <port>]
 ```
@@ -508,8 +508,8 @@ Flags:
 | `--max-wall-clock-seconds <S>` | unset (unbounded) | Total wall-clock budget, in seconds, for the **whole** `evolve` invocation. The loop stops cleanly between rounds once the budget is spent, and a single round that would overrun it is cancelled and recorded as an aborted round. Applies on top of each board entry's own `wall_clock_budget_seconds`. Env var: `ZICATO_MAX_WALL_CLOCK_SECONDS` (explicit flag wins). See [ROBUSTNESS.md](ROBUSTNESS.md) §2.1. |
 | `--no-auto-epoch` | off (auto-epoch ON) | Disable contract-hash auto-epoching: `evolve` errors out (instead of rolling) when the evaluation contract has drifted from the current epoch. See [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10. |
 | `--epoch-name <name>` | the `e{N}` scheme | Name for an auto-created epoch. Ignored when `--epoch` is passed or no new epoch is created. |
-| `--tournament-structure <s>` *(DESIGN, not yet implemented)* | unset ⇒ `scoring.json` ⇒ `gauntlet` | The per-epoch tournament structure: `gauntlet` (default) / `single_elim` / `double_elim` / `swiss` / `racing`. **This is a contract-mutating convenience**: it writes the structure into the live `scoring.json` *before* the contract hash is computed, so it is exactly equivalent to editing `scoring.json` by hand — changing it rolls the epoch via auto-epoching. See [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §5 and [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §9. |
-| `--tournament-param KEY=VALUE` *(DESIGN, repeatable)* | none | Sets one structure `params` key (e.g. `rounds=6`). Value is parsed as JSON if possible, else a string. Writes into the same `tournament.params` block in `scoring.json`; contract-affecting, same caveat as above. |
+| `--tournament-structure <s>` *(shipped; advisory — trust `zicato evolve --help`)* | unset ⇒ `scoring.json` ⇒ `gauntlet` | The per-epoch tournament structure: `gauntlet` (default) / `single_elim` / `double_elim` / `swiss` / `racing`. **This is a contract-mutating convenience**: it writes `{structure, params}` into the live `scoring.json` *before* the contract hash is computed, so it is exactly equivalent to editing `scoring.json` by hand — changing it rolls the epoch via auto-epoching. For a runnable, no-live-LLM walkthrough see the presentation example's [`RUN.md` → "Running a non-gauntlet tournament"](../../examples/zicato_examples/target_1_presentation/RUN.md) and the [`TOURNAMENT-STRUCTURES.md` §4.0 quickstart](TOURNAMENT-STRUCTURES.md). See also [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §5 and [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §9. |
+| `--tournament-param KEY=VALUE` *(shipped, repeatable; advisory)* | none | Sets one structure `params` key (e.g. `field_size=4`, `eta=2`, `board_fraction=0.4` for racing; `rounds_n=6` for swiss). Value is parsed as JSON if possible (so `field_size=4` is the integer `4`), else taken as a string. Writes into the same `tournament.params` block in `scoring.json`; contract-affecting, same caveat as above. Only applied when `--tournament-structure` is also passed. |
 | `--no-dashboard` | off | Do not spawn the dashboard service (and the watchdog supervisor that guards it). The loop still runs. See [RUNTIME.md](RUNTIME.md) §3 and [DASHBOARD.md](DASHBOARD.md) §2.1. |
 | `--dashboard-port <port>` | `7892` (1–65535) | Port for the dashboard HTTP server, bound on `127.0.0.1`. |
 

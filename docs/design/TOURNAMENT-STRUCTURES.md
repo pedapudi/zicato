@@ -333,6 +333,77 @@ The epoch's frozen contract gains a `tournament` block:
   `tournament: TournamentSpec` field with a defaulting factory (mirrors
   how `scoring: ScoringWeights` is already a frozen sub-object).
 
+### 4.0 Quickstart: configure a structure (operator-facing)
+
+> **Status.** Unlike the rest of this document, this subsection describes
+> *shipped* surface — the `tournament` block parses into `ScoringWeights`
+> and the CLI flags below exist. For a runnable, no-live-LLM walkthrough
+> against a real target, see the presentation example's
+> [`RUN.md` → "Running a non-gauntlet tournament"](../../examples/zicato_examples/target_1_presentation/RUN.md)
+> and its `scoring.racing.json`, exercised end-to-end by
+> `tests/test_example_target_1_racing.py`.
+
+Two equivalent ways to select a non-gauntlet structure for an epoch.
+
+**1. Write the `tournament` block into `scoring.json` (authoritative).**
+Add the block alongside the scoring weights, then open/roll the epoch
+from that contract (`epoch new --scoring …` or just let `evolve` resolve
+it). Example — racing with a four-challenger field:
+
+```jsonc
+{
+  "promote_margin": 0.01,
+  // … the usual scoring weights …
+  "tournament": {
+    "structure": "racing",        // gauntlet | single_elim | double_elim | swiss | racing
+    "params": {
+      "field_size": 4,            // challengers proposed per round (gauntlet ⇒ 1)
+      "replicates": 2,            // paired runs per duel, averaged (§6 noise lever)
+      "eta": 2,                   // racing: keep top 1/eta each rung
+      "board_fraction": 0.4,      // racing: rung-0 board slice = ceil(fraction · |board|)
+      "rung0_board_size": 0       // racing: 0 ⇒ derive rung-0 size from board_fraction
+      // swiss instead adds: "rounds_n": 4
+    }
+  }
+}
+```
+
+`field_size` is the universal knob — *how many challengers the proposer
+must emit each round*; `gauntlet` fixes it at `1`. The racing strategy
+additionally reads the board's entry ids from `params["board_ids"]` to
+slice the rungs (the example contract lists them explicitly; see
+`src/zicato/selection/strategies/racing.py`).
+
+**2. Set it from `zicato evolve` flags (contract-mutating convenience).**
+
+```bash
+zicato evolve \
+    --tournament-structure racing \
+    --tournament-param field_size=4 \
+    --tournament-param eta=2 \
+    --tournament-param board_fraction=0.4 \
+    --tournament-param replicates=2 \
+    --harness-call-llm   my_pkg.llms:harness \
+    --auxiliary-call-llm my_pkg.llms:aux \
+    --rounds 2
+```
+
+`--tournament-structure` writes `{structure, params}` into the live
+`scoring.json` *before* the contract hash is computed, so it participates
+in the hash exactly like a hand edit. Each `--tournament-param KEY=VALUE`
+is repeatable; `VALUE` is parsed as JSON when possible (so `field_size=4`
+is the integer `4`), else taken as a string. Params are only applied when
+`--tournament-structure` is also passed. (See `docs/design/CLI.md` for
+the flag reference — advisory; trust `zicato evolve --help`.)
+
+**Either way, changing the structure rolls the epoch.** Because the
+`tournament` block is part of the frozen evaluation contract (§4.1), a
+structure or param change is a contract-hash change: the next `evolve`
+closes the current epoch and opens a fresh one, exactly as retuning
+`promote_margin` does. A gauntlet champion and a racing champion are
+selected under different rules and are not directly comparable, which is
+precisely why the structure rolls the contract.
+
 ### 4.1 Is `tournament` part of the contract hash?
 
 **Recommended: yes** — the structure changes *what a promotion means*, so

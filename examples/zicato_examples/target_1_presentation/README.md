@@ -35,8 +35,22 @@ target_1_presentation/
   board.jsonl               — 7 board entries
   rubric.md                 — operator rubric for epoch e0
   predicates.py             — pass/fail predicates referenced by entries
-  scoring.json              — seed ScoringWeights
+  scoring.json              — seed ScoringWeights (gauntlet, the default)
+  scoring.racing.json       — same weights + a racing tournament block
+                              (non-gauntlet structure; see RUN.md)
 ```
+
+Two scoring contracts ship side by side. `scoring.json` carries no
+`tournament` block, so it runs the default **gauntlet** (one challenger
+per round). `scoring.racing.json` adds a `tournament` block selecting the
+**racing** (successive-halving) structure — a four-challenger field that
+the strategy races on escalating board slices before the survivor faces
+the champion through the unchanged promote gate. See
+[`RUN.md` → "Running a non-gauntlet tournament"](./RUN.md) for the two run
+recipes (point `evolve` at `scoring.racing.json`, or pass
+`--tournament-structure racing` flags) and
+`tests/test_example_target_1_racing.py` for the no-live-LLM test that runs
+it end to end.
 
 The vendored agent module is self-contained: it imports only from
 `google.adk` (and only inside `build_agent_tree`, so the file imports
