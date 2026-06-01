@@ -1206,6 +1206,7 @@ def read_loss_profile(path: Path) -> LossProfile:
         output_chars=int(d.get("output_chars", 0) or 0),
         schema_failures=int(d.get("schema_failures", 0) or 0),
         adk_session_id=str(d.get("adk_session_id", "") or ""),
+        match_id=str(d.get("match_id", "") or ""),
         per_judge_loss=per_judge_loss,
     )
 

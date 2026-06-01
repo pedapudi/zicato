@@ -308,6 +308,7 @@ def _upsert_run(
     aborted: bool,
     runtime_ms: int,
     tournament_id: str | None = None,
+    match_id: str | None = None,
 ) -> None:
     """Upsert one ``runs`` row.
 
@@ -318,12 +319,20 @@ def _upsert_run(
     via ``COALESCE`` so a re-ingest that cannot resolve the round
     (e.g. the child's ``experiment.json`` was deleted) does not clear
     the column.
+
+    ``match_id`` (schema v4) is the per-board-run tournament-provenance
+    tag — the matchup id this run executed within (e.g. ``"rung0_m2"``,
+    ``"racing-final"``). NULL for legacy runs persisted before the tag
+    existed and for runs that ran outside a tagged matchup (a gauntlet
+    duel, which never carries a ``match_id``). Same ``COALESCE`` story
+    as ``tournament_id``: a re-ingest that cannot recover the tag leaves
+    an existing value intact.
     """
     conn.execute(
         "INSERT INTO runs("
         "run_id, epoch_id, generation_id, entry_id, started_at, ended_at, "
-        "aborted, runtime_ms, tournament_id) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "aborted, runtime_ms, tournament_id, match_id) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(run_id) DO UPDATE SET "
         "epoch_id = excluded.epoch_id, "
         "generation_id = excluded.generation_id, "
@@ -332,7 +341,8 @@ def _upsert_run(
         "ended_at = excluded.ended_at, "
         "aborted = excluded.aborted, "
         "runtime_ms = excluded.runtime_ms, "
-        "tournament_id = COALESCE(excluded.tournament_id, runs.tournament_id)",
+        "tournament_id = COALESCE(excluded.tournament_id, runs.tournament_id), "
+        "match_id = COALESCE(excluded.match_id, runs.match_id)",
         (
             run_id,
             epoch_id,
@@ -343,6 +353,7 @@ def _upsert_run(
             1 if aborted else 0,
             int(runtime_ms),
             tournament_id,
+            match_id,
         ),
     )
 
@@ -358,12 +369,20 @@ def _upsert_loss_profile(
     (same nullability story). Preserves any pre-existing value via
     ``COALESCE`` so a re-ingest that can't resolve the round leaves
     the column intact.
+
+    ``match_id`` (schema v4) is read straight off the profile — the
+    runner stamps it onto ``LossProfile.match_id`` (and into the run's
+    ``loss.json``) for runs that executed within a tagged matchup. An
+    empty string on the profile means "untagged" (a gauntlet / ad-hoc /
+    legacy run) and is stored as NULL so the column reads consistently
+    with the ``runs`` table.
     """
+    match_id = getattr(profile, "match_id", "") or None
     conn.execute(
         "INSERT INTO loss_profiles("
         "run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
-        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id, match_id) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(run_id) DO UPDATE SET "
         "epoch_id = excluded.epoch_id, "
         "generation_id = excluded.generation_id, "
@@ -373,7 +392,8 @@ def _upsert_loss_profile(
         "runtime_ms = excluded.runtime_ms, "
         "wall_clock_budget_exceeded = excluded.wall_clock_budget_exceeded, "
         "loss_json = excluded.loss_json, "
-        "tournament_id = COALESCE(excluded.tournament_id, loss_profiles.tournament_id)",
+        "tournament_id = COALESCE(excluded.tournament_id, loss_profiles.tournament_id), "
+        "match_id = COALESCE(excluded.match_id, loss_profiles.match_id)",
         (
             profile.run_id,
             profile.epoch_id,
@@ -385,6 +405,7 @@ def _upsert_loss_profile(
             1 if profile.wall_clock_budget_exceeded else 0,
             json.dumps(asdict(profile), sort_keys=True),
             tournament_id,
+            match_id,
         ),
     )
 
@@ -743,6 +764,10 @@ def _ingest_run_into(
         aborted=profile.wall_clock_budget_exceeded,
         runtime_ms=profile.runtime_ms,
         tournament_id=tournament_id,
+        # Per-board-run tournament provenance (schema v4). The runner
+        # stamped the matchup id onto the profile + loss.json; "" means
+        # untagged (gauntlet / ad-hoc / legacy run) -> stored NULL.
+        match_id=(profile.match_id or None),
     )
     _upsert_loss_profile(conn, profile, tournament_id=tournament_id)
     _replace_metric_counts(conn, profile.run_id, profile)

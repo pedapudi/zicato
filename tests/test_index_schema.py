@@ -130,6 +130,7 @@ def test_loss_profiles_columns_match_contract() -> None:
         "wall_clock_budget_exceeded",
         "loss_json",
         "tournament_id",
+        "match_id",
     ]
     conn.close()
 

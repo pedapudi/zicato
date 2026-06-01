@@ -294,6 +294,53 @@ class SelectionStrategy(ABC):
         return ()
 
 
+def rung_for_match_id(match_id: str | None) -> str | None:
+    """Derive a human-readable rung label from a tournament ``match_id``.
+
+    The per-board-run provenance tag (``LossProfile.match_id``) carries
+    the matchup id the run executed within; this projects that id to the
+    coarser rung/phase label the dashboard groups runs by. It is a pure
+    string projection — no strategy state — so both the analytical index
+    reader and the dashboard state reader can call it.
+
+    The mapping (matching the racing structure's ``match_id`` forms):
+
+    * ``"rung0_m2"`` / ``"rung0"`` -> ``"rung 0"``
+    * ``"rung1_m0"`` -> ``"rung 1"`` (any ``rung<N>...`` form)
+    * ``"racing-final"`` / any ``*-final`` / ``"final"`` -> ``"final"``
+    * ``""`` / ``None`` -> ``None`` (an untagged run — a gauntlet duel,
+      which never carries a ``match_id``, or a legacy run persisted
+      before the tag existed)
+    * anything else (bracket slots like ``"WB-R1-0"``, swiss ``"r0_m1"``)
+      is returned verbatim so a non-racing structure still gets a stable,
+      if un-prettified, label rather than ``None``.
+
+    A gauntlet run is intentionally ``None`` rather than ``"gauntlet"``:
+    the gauntlet path runs through ``run_tournament`` and never stamps a
+    ``match_id``, so its runs arrive here with ``""`` and read as "no
+    rung", which is the honest answer for a single-duel structure.
+    """
+    if not match_id:
+        return None
+    mid = match_id.strip()
+    if not mid:
+        return None
+    lo = mid.lower()
+    if lo == "final" or lo.endswith("-final"):
+        return "final"
+    if lo.startswith("rung"):
+        # "rung0_m2" / "rung12" -> the leading run of digits after "rung".
+        digits = ""
+        for ch in lo[len("rung") :]:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if digits:
+            return f"rung {int(digits)}"
+    return mid
+
+
 def _param_int(params: dict[str, Any], key: str, default: int) -> int:
     """Read an int param defensively (semantics validation is the strategy's)."""
     try:
@@ -319,4 +366,5 @@ __all__ = [
     "RoundRecord",
     "MatchRecord",
     "SelectionStrategy",
+    "rung_for_match_id",
 ]

@@ -32,13 +32,16 @@ def _tournament_cols(conn: sqlite3.Connection) -> set[str]:
 
 
 def test_schema_version_is_three() -> None:
-    assert SCHEMA_VERSION == 3
+    # The v3 tournament-structure columns landed at SCHEMA_VERSION 3 and
+    # remain part of every later version's contract; the current version
+    # is at least 3 (a v4 per-board-run provenance wave bumped it further).
+    assert SCHEMA_VERSION >= 3
 
 
 def test_fresh_build_has_v3_columns() -> None:
     conn = sqlite3.connect(":memory:")
     apply_schema(conn)
-    assert read_schema_version(conn) == 3
+    assert read_schema_version(conn) >= 3
     cols = _tournament_cols(conn)
     for c in _V3_COLS:
         assert c in cols
@@ -58,7 +61,9 @@ def test_v2_database_migrates_in_place_to_v3() -> None:
 
     apply_schema(conn)
 
-    assert read_schema_version(conn) == 3
+    # The v2 -> current migration steps through v3, so the v3 columns
+    # are present even though the file ends at the current version.
+    assert read_schema_version(conn) >= 3
     cols = _tournament_cols(conn)
     for c in _V3_COLS:
         assert c in cols

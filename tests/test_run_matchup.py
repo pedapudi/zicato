@@ -83,9 +83,9 @@ def _gen(tmp_path: Path, gen_id: str) -> Generation:
 
 def _stub_run_single(monkeypatch, canned, *, log: list | None = None):
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side
+        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, workspace_root, epoch_id, side
+        del adapter, weights, config, workspace_root, epoch_id, side, match_id
         if log is not None:
             log.append((generation.id, entry.id))
         return canned[(generation.id, entry.id)]
@@ -182,9 +182,9 @@ def test_run_matchup_replicates_average_losses(monkeypatch, tmp_path):
     calls = {"v1_entry_a": 0}
 
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side
+        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, workspace_root, epoch_id, side
+        del adapter, weights, config, workspace_root, epoch_id, side, match_id
         key = f"{generation.id}_{entry.id}"
         if generation.id == "v1":
             i = calls[key]

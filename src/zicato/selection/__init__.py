@@ -23,6 +23,7 @@ from zicato.selection.strategy import (
     SelectionDecision,
     SelectionStrategy,
     Standing,
+    rung_for_match_id,
 )
 
 __all__ = [
@@ -34,6 +35,7 @@ __all__ = [
     "Standing",
     "RoundRecord",
     "MatchRecord",
+    "rung_for_match_id",
     "make_strategy",
     "STRATEGY_REGISTRY",
     "resolve_tournament",

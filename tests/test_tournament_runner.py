@@ -100,6 +100,7 @@ def _stub_run_single(
         workspace_root: Path,
         epoch_id: str,
         side: str,
+        match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, workspace_root, epoch_id, side
         call_log.append((generation.id, entry.id))
@@ -349,6 +350,7 @@ def test_run_tournament_stamps_each_entry_on_the_correct_side(
         workspace_root: Path,
         epoch_id: str,
         side: str,
+        match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, epoch_id
         # Exactly the transitions the real _run_single performs, keyed on
@@ -701,6 +703,7 @@ class _ConcurrencyStub:
         workspace_root: Path,
         epoch_id: str,
         side: str,
+        match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, workspace_root, epoch_id, side
         self.call_log.append((generation.id, entry.id))
@@ -797,6 +800,7 @@ def test_run_tournament_runs_champion_and_challenger_concurrently(
             workspace_root: Path,
             epoch_id: str,
             side: str,
+            match_id: str = "",
         ) -> LossProfile:
             del adapter, weights, config, workspace_root, epoch_id
             live = self.in_flight.setdefault(entry.id, set())
@@ -964,6 +968,7 @@ def test_run_generation_surfaces_failure_under_concurrency(
         workspace_root: Path,
         epoch_id: str,
         side: str,
+        match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, workspace_root, epoch_id, side
         started.append(entry.id)
@@ -1038,6 +1043,7 @@ def _capture_run_single(monkeypatch: pytest.MonkeyPatch) -> list[BoardEntry]:
         workspace_root: Path,
         epoch_id: str,
         side: str,
+        match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, workspace_root, epoch_id, side
         seen.append(entry)
@@ -1349,6 +1355,7 @@ def test_partial_aggregate_is_visible_before_all_boards_finish(
         workspace_root: Path,
         epoch_id: str,
         side: str,
+        match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, workspace_root, epoch_id, side
         await gates[entry.id].wait()
@@ -1523,6 +1530,7 @@ def test_run_fast_mode_publishes_active_tournament(
         workspace_root: Path,
         epoch_id: str,
         side: str,
+        match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, epoch_id
         # Mirror the real ``_run_single``'s state writes.
@@ -1626,6 +1634,7 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
         workspace_root: Path,
         epoch_id: str,
         side: str,
+        match_id: str = "",
     ) -> LossProfile:
         del adapter, weights, config, epoch_id
         # The runner published the record up-front — these updates land.

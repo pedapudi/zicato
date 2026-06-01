@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
@@ -107,7 +107,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       ended_at TEXT,
       aborted INTEGER,
       runtime_ms INTEGER,
-      tournament_id TEXT
+      tournament_id TEXT,
+      match_id TEXT
     )
     """,
     """
@@ -121,7 +122,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       runtime_ms INTEGER,
       wall_clock_budget_exceeded INTEGER,
       loss_json TEXT,
-      tournament_id TEXT
+      tournament_id TEXT,
+      match_id TEXT
     )
     """,
     """
@@ -219,6 +221,20 @@ _V3_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+#: Columns added in v4 (per-board-run tournament provenance). A run
+#: carries the ``match_id`` of the matchup it executed within (e.g.
+#: ``"rung0_m2"``, ``"racing-final"``), so the dashboard can relate a
+#: board run to its rung/matchup. Same incremental-open ALTER pattern as
+#: the earlier waves: a pre-existing v3 database gains these as ``NULL``
+#: columns on open (legacy runs stay untagged — the field is simply
+#: absent), and a full ``zicato reindex`` re-derives what it can from
+#: each run's ``loss.json`` (which now carries ``match_id`` for new runs).
+_V4_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("runs", "match_id", "TEXT"),
+    ("loss_profiles", "match_id", "TEXT"),
+)
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     """Create every table + index + stamp the schema version.
 
@@ -295,7 +311,10 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
     ``runs.tournament_id``, ``loss_profiles.tournament_id``. The
     ``judge_losses`` table is created (rather than altered) by the
     regular ``CREATE TABLE IF NOT EXISTS`` pass, so it does not need
-    a migration entry. Each ALTER is guarded by a column-presence
+    a migration entry. The v2 -> v3 step adds the configurable-
+    tournament-structure columns to ``tournaments``; the v3 -> v4 step
+    adds ``runs.match_id`` + ``loss_profiles.match_id`` (per-board-run
+    tournament provenance). Each ALTER is guarded by a column-presence
     check so the migration is idempotent; tables that do not yet
     exist (fresh database) are skipped — the subsequent CREATE TABLE
     statement will already include the column.
@@ -314,6 +333,14 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
 
     if current < 3:
         for table, column, ddl_type in _V3_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+    if current < 4:
+        for table, column, ddl_type in _V4_ADDED_COLUMNS:
             if not _table_exists(conn, table):
                 continue
             if column in _column_names(conn, table):

@@ -1301,6 +1301,7 @@ async def _evolve_multi_challenger(
             disable_drift=disable_drift,
             round_index=round_index,
             total_rounds=total_rounds,
+            match_id=m.matchup_id,
         )
         # Cache both sides' aggregates for fast-mode reuse, mirroring the
         # gauntlet path's _cache_gen_score calls.

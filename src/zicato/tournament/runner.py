@@ -700,6 +700,7 @@ def _aborted_loss_profile(
     epoch_id: str,
     weights: ScoringWeights,
     runtime_ms: int,
+    match_id: str = "",
 ) -> LossProfile:
     """Synthesise a worst-case aborted :class:`LossProfile` for one run.
 
@@ -734,6 +735,7 @@ def _aborted_loss_profile(
         expectation_result=None,
         drift_loss=drift_loss,
         pass_fail=(False if entry.expectation is not None else None),
+        match_id=match_id,
     )
 
 
@@ -797,8 +799,19 @@ async def _run_single(
     workspace_root: Path,
     epoch_id: str,
     side: str,
+    match_id: str = "",
 ) -> LossProfile:
     """Run one entry under one generation in an isolated subprocess worker.
+
+    ``match_id`` is the tournament matchup this run executes within (e.g.
+    ``"rung0_m2"``, ``"racing-final"``); empty string for a run that is
+    not part of a tagged matchup (a gauntlet duel via
+    :func:`run_tournament`, or an ad-hoc caller). The worker — which
+    writes ``loss.json`` — does not know it, so the runner stamps it onto
+    the :class:`LossProfile` after the run settles AND rewrites
+    ``loss.json`` with the tag so a later full ``zicato reindex`` (which
+    re-reads ``loss.json``) re-derives the same provenance. The aborted
+    profiles synthesised on a killed/crashed run carry it too.
 
     ``side`` is the tournament side this run belongs to — ``"parent"``
     or ``"child"`` — supplied explicitly by the caller, which knows
@@ -936,6 +949,7 @@ async def _run_single(
                 epoch_id=epoch_id,
                 weights=weights,
                 runtime_ms=0,
+                match_id=match_id,
             )
             return final_loss
 
@@ -1012,6 +1026,7 @@ async def _run_single(
                 epoch_id=epoch_id,
                 weights=weights,
                 runtime_ms=runtime_ms,
+                match_id=match_id,
             )
             return final_loss
 
@@ -1034,11 +1049,27 @@ async def _run_single(
                 epoch_id=epoch_id,
                 weights=weights,
                 runtime_ms=runtime_ms,
+                match_id=match_id,
             )
             return final_loss
 
-        # Live index dual-write: the run's loss.json is on disk, so fold
-        # it into the SQLite analytical index. Best-effort.
+        # Tag the run with the matchup it ran within. The worker (which
+        # wrote loss.json) does not know the match_id, so the runner
+        # stamps it here and rewrites loss.json so a later full ``zicato
+        # reindex`` — which re-reads loss.json — re-derives the same
+        # provenance, not just the live dual-write below. ``match_id=""``
+        # (a gauntlet / ad-hoc run) leaves the profile and file byte-
+        # unchanged: there is nothing to stamp, so we skip the rewrite.
+        if match_id:
+            loss = replace(loss, match_id=match_id)
+            try:
+                reducer_module.write_loss_profile(loss, Path(loss_profile_path_str))
+            except OSError as exc:  # noqa: BLE001 — provenance rewrite is best-effort
+                log.debug("run %s: match_id loss.json rewrite skipped: %s", run_id, exc)
+
+        # Live index dual-write: the run's loss.json is on disk (now
+        # carrying match_id when tagged), so fold it into the SQLite
+        # analytical index. Best-effort.
         _ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
         final_loss = loss
         return final_loss
@@ -1196,6 +1227,7 @@ async def _run_full_board_unit(
     workspace_root: Path,
     epoch_id: str,
     scorer: _IncrementalScorer | None = None,
+    match_id: str = "",
 ) -> tuple[LossProfile, LossProfile]:
     """Run ONE board entry's champion + challenger concurrently.
 
@@ -1238,6 +1270,7 @@ async def _run_full_board_unit(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             side="parent",
+            match_id=match_id,
         ),
         _run_single(
             adapter=adapter,
@@ -1248,6 +1281,7 @@ async def _run_full_board_unit(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             side="child",
+            match_id=match_id,
         ),
         return_exceptions=True,
     )
@@ -1275,6 +1309,7 @@ async def _run_board_units_full(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    match_id: str = "",
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Run every board entry as a full-mode board unit, bounded concurrency.
 
@@ -1328,6 +1363,7 @@ async def _run_board_units_full(
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
                 scorer=scorer,
+                match_id=match_id,
             )
 
     results = await asyncio.gather(
@@ -1781,6 +1817,7 @@ async def _run_replicated(
     workspace_root: Path,
     epoch_id: str,
     replicates: int,
+    match_id: str = "",
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Run a paired board ``replicates`` times, averaging per-entry losses.
 
@@ -1808,6 +1845,7 @@ async def _run_replicated(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
+            match_id=match_id,
         )
         runs.append((left_losses, right_losses))
     if len(runs) == 1:
@@ -1865,6 +1903,7 @@ async def run_matchup(
     disable_drift: tuple[Any, ...] = (),
     round_index: int = 0,
     total_rounds: int = 0,
+    match_id: str = "",
 ) -> TournamentResult:
     """Run ONE duel between two generations, ending in the unchanged gate.
 
@@ -1881,6 +1920,14 @@ async def run_matchup(
     ``left`` and ``child_*`` describe ``right``, so the strategy reads
     ``outcome.decision`` / ``outcome.delta_scalar`` exactly as the gauntlet
     does today.
+
+    ``match_id`` is the strategy's id for THIS matchup (e.g. ``"rung0_m2"``,
+    ``"racing-final"``). It is threaded down to every board-entry run so
+    each persisted :class:`LossProfile` (and the analytical-index ``runs`` /
+    ``loss_profiles`` rows) is tagged with the matchup it ran within —
+    enabling per-run rung attribution in the dashboard. Empty string (the
+    default) leaves runs untagged, which is exactly what the gauntlet path
+    (via :func:`run_tournament`) does.
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
@@ -1901,6 +1948,7 @@ async def run_matchup(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         replicates=replicates,
+        match_id=match_id,
     )
 
     left_agg = aggregate_generation_score(list(left_losses.values()), weights)

@@ -956,6 +956,16 @@ class LossProfile:
         Empty string when the events file is absent or carries no
         envelope ``sessionId``. Back-compat default: ``""`` so profiles
         written before this field was added load cleanly.
+    match_id:
+        The tournament matchup this run executed within — e.g.
+        ``"rung0_m2"``, ``"rung1_m0"``, ``"racing-final"``. Stamped by
+        the tournament runner once the run settles (the reducer/worker
+        does not know it). Empty string for runs that ran outside a
+        tagged matchup — a gauntlet duel (which goes through
+        ``run_tournament``, not ``run_matchup``) or any ad-hoc run — and
+        for profiles written before this field was added. The dashboard
+        derives a ``rung`` label from it (see
+        :func:`zicato.selection.strategy.rung_for_match_id`).
     """
 
     run_id: str
@@ -984,6 +994,11 @@ class LossProfile:
     # harmonograf deep-link route is /#/session/<adk_session_id>.
     # Back-compat default: "" so old profiles load without change.
     adk_session_id: str = ""
+    # The tournament matchup this run ran within (e.g. "rung0_m2",
+    # "racing-final"). Stamped by the tournament runner after the run
+    # settles; "" for gauntlet / ad-hoc runs and for profiles written
+    # before this field was added.
+    match_id: str = ""
     # Per-judge loss attribution — empty tuple when no custom judge fired
     # against this run. The reducer sums each judge's ``custom``-kind
     # drift contributions (already attributed via ``custom:<judge_name>``)

@@ -272,8 +272,9 @@ def _install_run_single_stub(
         workspace_root: Path,
         epoch_id: str,
         side: str,
+        match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side
+        del adapter, weights, config, workspace_root, epoch_id, side, match_id
         return canned[(generation.id, entry.id)]
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)

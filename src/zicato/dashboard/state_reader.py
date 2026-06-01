@@ -3018,11 +3018,20 @@ def build_per_entry_for_generation(
 
     Returns ``{epoch_id, generation_id, tournament_id, entries:
     [{entry_id, run_id, drift_loss, pass_fail, runtime_ms,
-    wall_clock_budget_exceeded}]}``. The tournament id is composed via
-    :func:`_tournament_id_for` from the child generation's
+    wall_clock_budget_exceeded, match_id, rung}]}``. The tournament id is
+    composed via :func:`_tournament_id_for` from the child generation's
     ``parent_generation_id`` field (its ``experiment.json``); a v0 seed
     with no parent yields ``tournament_id: None`` and the fallback walks
     :func:`zicato.index.query.loss_profiles_for_generation` directly.
+
+    ``match_id`` is the per-board-run tournament-provenance tag — the
+    matchup id this run executed within (e.g. ``"rung0_m2"``,
+    ``"racing-final"``) — and ``rung`` is the coarser label derived from
+    it (e.g. ``"rung 0"``, ``"final"``) via
+    :func:`zicato.selection.strategy.rung_for_match_id`. Both are ``None``
+    for an untagged run: a gauntlet duel (which never carries a
+    ``match_id``) or a legacy run persisted before the tag existed —
+    additive, never an error.
 
     A never-indexed workspace yields empty ``entries`` with a ``note``.
     """
@@ -3059,22 +3068,43 @@ def build_per_entry_for_generation(
         except Exception:  # noqa: BLE001
             rows = []
 
-    entries = [
-        {
-            "entry_id": r["entry_id"],
-            "run_id": r["run_id"],
-            "generation_id": r["generation_id"],
-            "drift_loss": (
-                float(r["drift_loss"]) if isinstance(r["drift_loss"], int | float) else None
-            ),
-            "pass_fail": r["pass_fail"],
-            "runtime_ms": (int(r["runtime_ms"]) if isinstance(r["runtime_ms"], int) else None),
-            "wall_clock_budget_exceeded": bool(r["wall_clock_budget_exceeded"])
-            if r["wall_clock_budget_exceeded"] is not None
-            else None,
-        }
-        for r in rows
-    ]
+    from zicato.selection.strategy import rung_for_match_id  # noqa: PLC0415
+
+    def _match_id_of(row: Any) -> str | None:
+        # ``match_id`` lands in schema v4. A stale index opened before
+        # the migration ran would not carry the column; tolerate its
+        # absence (and a NULL value) so an old index loads, not errors.
+        try:
+            keys = row.keys()
+        except AttributeError:
+            keys = ()
+        if "match_id" not in keys:
+            return None
+        value = row["match_id"]
+        return value if isinstance(value, str) and value else None
+
+    entries = []
+    for r in rows:
+        match_id = _match_id_of(r)
+        entries.append(
+            {
+                "entry_id": r["entry_id"],
+                "run_id": r["run_id"],
+                "generation_id": r["generation_id"],
+                "drift_loss": (
+                    float(r["drift_loss"]) if isinstance(r["drift_loss"], int | float) else None
+                ),
+                "pass_fail": r["pass_fail"],
+                "runtime_ms": (int(r["runtime_ms"]) if isinstance(r["runtime_ms"], int) else None),
+                "wall_clock_budget_exceeded": bool(r["wall_clock_budget_exceeded"])
+                if r["wall_clock_budget_exceeded"] is not None
+                else None,
+                # Per-board-run tournament provenance (additive). ``None``
+                # for an untagged run (gauntlet duel / legacy run).
+                "match_id": match_id,
+                "rung": rung_for_match_id(match_id),
+            }
+        )
 
     return {
         "epoch_id": epoch_id,

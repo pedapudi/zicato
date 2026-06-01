@@ -113,6 +113,51 @@ def _select(db_path: Path, sql: str, params: Sequence[Any] = ()) -> list[sqlite3
         conn.close()
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Return the column names of ``table`` (empty when the table is absent)."""
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {r[1] for r in rows}
+
+
+def _select_optional_columns(
+    db_path: Path,
+    table: str,
+    base_columns: Sequence[str],
+    optional_columns: Sequence[str],
+    where: str,
+    params: Sequence[Any],
+) -> list[sqlite3.Row]:
+    """Select ``base_columns`` plus whichever ``optional_columns`` exist.
+
+    A column added in a later schema version (e.g. ``match_id`` in v4)
+    may be absent from a legacy index that the read-only dashboard opens
+    without migrating. Rather than letting the ``SELECT`` fail with "no
+    such column", this probes the live table for each optional column and
+    emits ``NULL AS <col>`` for any that are missing — so a legacy row
+    still loads with the field present-but-null, exactly the back-compat
+    contract the dashboard relies on. Returns ``[]`` for a missing index.
+    """
+    try:
+        conn = open_index(db_path)
+    except IndexNotBuiltError:
+        return []
+    try:
+        present = _table_columns(conn, table)
+        select_terms = list(base_columns)
+        for col in optional_columns:
+            if col in present:
+                select_terms.append(col)
+            else:
+                select_terms.append(f"NULL AS {col}")
+        sql = f"SELECT {', '.join(select_terms)} FROM {table} {where}"
+        return list(conn.execute(sql, tuple(params)).fetchall())
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Common selectors
 # ---------------------------------------------------------------------------
@@ -144,10 +189,21 @@ def generations_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
 
 def runs_for_generation(db_path: Path, epoch_id: str, generation_id: str) -> list[sqlite3.Row]:
     """Return every run row under one generation, ordered by entry id."""
-    return _select(
+    return _select_optional_columns(
         db_path,
-        "SELECT run_id, epoch_id, generation_id, entry_id, started_at, ended_at, "
-        "aborted, runtime_ms, tournament_id FROM runs "
+        "runs",
+        (
+            "run_id",
+            "epoch_id",
+            "generation_id",
+            "entry_id",
+            "started_at",
+            "ended_at",
+            "aborted",
+            "runtime_ms",
+            "tournament_id",
+        ),
+        ("match_id",),
         "WHERE epoch_id = ? AND generation_id = ? ORDER BY entry_id, run_id",
         (epoch_id, generation_id),
     )
@@ -157,10 +213,22 @@ def loss_profiles_for_generation(
     db_path: Path, epoch_id: str, generation_id: str
 ) -> list[sqlite3.Row]:
     """Return every loss-profile row under one generation."""
-    return _select(
+    return _select_optional_columns(
         db_path,
-        "SELECT run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
-        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id FROM loss_profiles "
+        "loss_profiles",
+        (
+            "run_id",
+            "epoch_id",
+            "generation_id",
+            "entry_id",
+            "drift_loss",
+            "pass_fail",
+            "runtime_ms",
+            "wall_clock_budget_exceeded",
+            "loss_json",
+            "tournament_id",
+        ),
+        ("match_id",),
         "WHERE epoch_id = ? AND generation_id = ? ORDER BY entry_id, run_id",
         (epoch_id, generation_id),
     )
@@ -174,10 +242,21 @@ def runs_for_tournament(db_path: Path, tournament_id: str) -> list[sqlite3.Row]:
     repair-tournament-fk`` to backfill the column on an existing v1+
     workspace.
     """
-    return _select(
+    return _select_optional_columns(
         db_path,
-        "SELECT run_id, epoch_id, generation_id, entry_id, started_at, ended_at, "
-        "aborted, runtime_ms, tournament_id FROM runs "
+        "runs",
+        (
+            "run_id",
+            "epoch_id",
+            "generation_id",
+            "entry_id",
+            "started_at",
+            "ended_at",
+            "aborted",
+            "runtime_ms",
+            "tournament_id",
+        ),
+        ("match_id",),
         "WHERE tournament_id = ? ORDER BY entry_id, run_id",
         (tournament_id,),
     )
@@ -185,11 +264,22 @@ def runs_for_tournament(db_path: Path, tournament_id: str) -> list[sqlite3.Row]:
 
 def loss_profiles_for_tournament(db_path: Path, tournament_id: str) -> list[sqlite3.Row]:
     """Return every ``loss_profiles`` row that belongs to one tournament round."""
-    return _select(
+    return _select_optional_columns(
         db_path,
-        "SELECT run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
-        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id "
-        "FROM loss_profiles "
+        "loss_profiles",
+        (
+            "run_id",
+            "epoch_id",
+            "generation_id",
+            "entry_id",
+            "drift_loss",
+            "pass_fail",
+            "runtime_ms",
+            "wall_clock_budget_exceeded",
+            "loss_json",
+            "tournament_id",
+        ),
+        ("match_id",),
         "WHERE tournament_id = ? ORDER BY entry_id, run_id",
         (tournament_id,),
     )
