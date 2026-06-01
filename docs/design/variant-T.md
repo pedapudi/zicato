@@ -473,6 +473,39 @@ overflow-x:auto` on the wrapper only), so a wide table scrolls WITHIN its box an
 never pushes the paper/panel layout sideways. As a backstop, `.dn-panel` itself
 is `max-width:100%; overflow-x:hidden` so no element can visually escape a panel.
 
+## Lifecycle DAG — BOARD column dedupes per ENTRY (rung multiplicity)
+
+The lifecycle DAG (`dag.js`) is the clean cause→effect SUMMARY of one
+candidate's life: `parent → patch → BOARD fan → Σ → gate → terminal`. The BOARD
+column is a vertical fan of per-entry nodes (a loss disc + an entry label). For a
+**RACING** candidate the same board ENTRY is run multiple times across rungs
+(rung0 slice → rung1 larger slice → racing-final full board), so the raw
+`/api/generation/.../per-entry` stream repeats an `entry_id` N times. Rendered
+naively that fan showed the same entry as ~20 confusing duplicate nodes
+(`q3_metrics_outline` ×3, `waffles_single` ×4, …) and the labels overlapped the
+discs.
+
+The column now **dedupes to one node per distinct entry** (grouped by
+`entry_id`, first-seen order; ≤ ~7 nodes, not ~20). Each node shows a
+**representative loss** — the entry's LAST run (the racing-final / full-board
+run) — and, when the entry was raced more than once, a **rung-multiplicity
+badge** (`×N`, class `ezn-board-mult`) to the right of the disc plus a dashed
+`ezn-board-raced` disc marker, so the repetition reads as "the same board
+re-raced across rungs", not random duplicates. The Σ-loss aggregate sums the
+representative (deduped) losses. Clicking a node still drills into that entry's
+per-board detail (which shows ALL its runs). The per-rung detail lives in the
+racing ladder (Match-ups) + the per-board scoring dot-plot — NOT in this
+summary.
+
+**Text spacing:** the entry label is **end-anchored to the LEFT of the disc**
+(`x = cx − (r + 8)`, `text-anchor="end"`) so it can never sit on the circle or on
+the loss text (which lives INSIDE the disc); long ids are clipped with an
+ellipsis (title tooltip carries the full id + per-rung note); rows are spaced by
+the density-scaled fan step. For a **GAUNTLET** candidate (one run per entry) every
+group has size 1 → dedupe is a no-op, no badge, no raced marker — rendering is
+unchanged. The DAG stays fit-to-width (`width:100%` + viewBox), theme-aware
+across the 9 themes, and scales with the page-scale pill.
+
 ## Render discipline (carried forward)
 
 Digest-gated repaint (structural data only, heartbeat = no-op; each compare side
@@ -485,7 +518,7 @@ heatmap; Tufte sankey with label ≠ value; side-by-side diff with real strings.
 
 ## Tests
 
-`test/variant_t.test.mjs` (67 tests) covers, carried forward: the tree renders
+`test/variant_t.test.mjs` (76 tests) covers, carried forward: the tree renders
 Environment → Epoch → {Generations, Boards, Mutation surface, Publication};
 multi-generation nav; the candidate-page promote gate; the patch-node click →
 per-candidate diff with real strings; v0 showing ≥2 match-ups; the board view
@@ -546,3 +579,14 @@ epoch (with a sparse workspace + a 404 `/api/epoch`, the publication-route case)
 the tree **lists** that epoch and does **not** show *"No epochs in this workspace
 yet."*; the empty state appears only when every authoritative source is genuinely
 empty.
+
+The **lifecycle BOARD-column** fix adds: a **RACING** candidate whose per-entry
+stream repeats an `entry_id` across rungs renders **one node per distinct entry**
+(count == distinct entries, not total runs), each raced entry carries a `×N`
+multiplicity badge + an `ezn-board-raced` marker, and the node shows the
+representative (final full-board) loss, not the rung0 loss; the entry **label is
+end-anchored left of the disc** (`x ≤ cx − r`) and adjacent rows keep a ≥24 px
+gap, so a label never overlaps the disc; a **GAUNTLET** candidate (one run per
+entry) renders unchanged (one node per entry, multiplicity 1, no badge, no raced
+marker); and `.ezn-board-mult` / `.ezn-board-raced` are themed via the scoped
+`--v2-*` token contract.

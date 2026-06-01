@@ -94,30 +94,74 @@ export function lifecycleDag(spec) {
   }
   edgeLayer.appendChild(svgEl('path', { d: flow(X.parent + 0.06 * w, midY, X.patch - 0.065 * w, midY), class: 'ezn-edge ezn-edge-spine', fill: 'none' }));
 
-  const total = entries.reduce((a, e) => a + (isNum(e.drift_loss) ? e.drift_loss : 0), 0) || 1;
-  const step = entries.length > 1 ? (fanBot - fanTop) / (entries.length - 1) : 0;
-  if (entries.length === 0) {
+  // DEDUPE to ONE node per distinct board ENTRY. A RACING candidate re-runs the
+  // SAME entry across rungs (rung0 slice → rung1 larger slice → racing-final
+  // full board), so the raw `entries` stream carries the same entry_id N times.
+  // The lifecycle is the clean cause→effect SUMMARY — the per-rung detail lives
+  // in the racing ladder + per-board scoring — so we collapse each entry to a
+  // single node, show a REPRESENTATIVE loss (the final/full-board run, i.e. the
+  // last run seen for that entry), and annotate the rung multiplicity when an
+  // entry was raced more than once. For a gauntlet candidate (one run per entry)
+  // every group has size 1 → no annotation, identical to the old rendering.
+  const groups = [];
+  const byId = new Map();
+  for (const e of entries) {
+    const id = e == null ? '' : e.entry_id;
+    let grp = byId.get(id);
+    if (!grp) { grp = { entry_id: id, runs: [] }; byId.set(id, grp); groups.push(grp); }
+    grp.runs.push(e);
+  }
+  // representative = the LAST run for the entry (racing-final / full board). Its
+  // loss + pass/fail + timeout drive the node; multiplicity = the run count.
+  const board = groups.map((grp) => {
+    const rep = grp.runs[grp.runs.length - 1] || {};
+    return {
+      entry_id: grp.entry_id,
+      drift_loss: rep.drift_loss,
+      pass_fail: rep.pass_fail,
+      wall_clock_budget_exceeded: rep.wall_clock_budget_exceeded,
+      mult: grp.runs.length,
+    };
+  });
+
+  const total = board.reduce((a, e) => a + (isNum(e.drift_loss) ? e.drift_loss : 0), 0) || 1;
+  const step = board.length > 1 ? (fanBot - fanTop) / (board.length - 1) : 0;
+  if (board.length === 0) {
     rectNode(nodeLayer, X.board, midY, 0.14 * w, 40, 'no board entries', 'scored', 'ezn-neutral');
   } else {
-    entries.forEach((e, i) => {
-      const y = entries.length > 1 ? fanTop + i * step : midY;
+    board.forEach((e, i) => {
+      const y = board.length > 1 ? fanTop + i * step : midY;
       const r = 12;
+      // the loss value lives INSIDE the disc; the entry label sits to the LEFT
+      // of the disc (anchored at its end), so a label can NEVER overlap the
+      // circle or the loss text. The rung-multiplicity badge sits to the RIGHT.
+      const labelDX = -(r + 8);
       const cls = e.pass_fail === 1 ? 'ezn-promoted' : (e.wall_clock_budget_exceeded ? 'ezn-deferred' : 'ezn-rejected');
       edgeLayer.appendChild(svgEl('path', { d: flow(X.patch + 0.065 * w, midY, X.board - r, y), class: 'ezn-edge ezn-edge-soft', fill: 'none' }));
       const contrib = (isNum(e.drift_loss) ? e.drift_loss : 0) / total;
       edgeLayer.appendChild(svgEl('path', { d: flow(X.board + r, y, X.agg - 0.05 * w, midY), class: 'ezn-edge ' + (cls === 'ezn-promoted' ? 'ezn-edge-good' : 'ezn-edge-bad'), 'stroke-width': Math.max(1, contrib * 12), fill: 'none' }));
-      const g = svgEl('g', {
-        class: 'ezn-node ezn-board-node ' + cls, 'data-cz': 'lc-board-node',
-        'data-key': e.entry_id, tabindex: o.onEntry ? '0' : null,
-        'aria-label': `${e.entry_id} drift loss ${isNum(e.drift_loss) ? fmt(e.drift_loss) : '—'}`,
-      }, [
+      const raced = e.mult > 1;
+      const children = [
         svgEl('title', null),
         svgEl('circle', { cx: X.board, cy: y, r, class: 'ezn-board-disc' }),
-        svgEl('text', { x: X.board, y: y - r - 4, class: 'ezn-board-label', 'text-anchor': 'middle' }, [clip(e.entry_id, 20)]),
+        // label to the LEFT of the disc, vertically centred, never on the circle.
+        svgEl('text', { x: X.board + labelDX, y: y + 3, class: 'ezn-board-label', 'text-anchor': 'end' }, [clip(e.entry_id, 18)]),
+        // representative loss INSIDE the disc.
         svgEl('text', { x: X.board, y: y + 3, class: 'ezn-board-loss', 'text-anchor': 'middle' }, [isNum(e.drift_loss) ? fmt(e.drift_loss, 0) : '—']),
-      ]);
+      ];
+      if (raced) {
+        // rung-multiplicity badge to the RIGHT of the disc — makes it clear the
+        // SAME entry was re-raced across rungs (not a random duplicate).
+        children.push(svgEl('text', { x: X.board + r + 6, y: y + 3, class: 'ezn-board-mult', 'text-anchor': 'start' }, ['×' + e.mult]));
+      }
+      const g = svgEl('g', {
+        class: 'ezn-node ezn-board-node ' + cls + (raced ? ' ezn-board-raced' : ''), 'data-cz': 'lc-board-node',
+        'data-key': e.entry_id, 'data-mult': e.mult, tabindex: o.onEntry ? '0' : null,
+        'aria-label': `${e.entry_id} drift loss ${isNum(e.drift_loss) ? fmt(e.drift_loss) : '—'}` + (raced ? ` · raced over ${e.mult} rungs` : ''),
+      }, children);
       const tt = g.childNodes[0];
       if (tt) tt.textContent = `${e.entry_id}: loss ${isNum(e.drift_loss) ? fmt(e.drift_loss) : '—'}`
+        + (raced ? ` · re-raced across ${e.mult} rungs (representative = full-board run)` : '')
         + (e.wall_clock_budget_exceeded ? ' · timed out' : '')
         + (e.pass_fail === 0 ? ' · failed' : e.pass_fail === 1 ? ' · passed' : '');
       if (o.onEntry) {

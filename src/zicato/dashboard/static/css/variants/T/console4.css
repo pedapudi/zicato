@@ -817,6 +817,9 @@
   .ezn-board-node.ezn-deferred .ezn-board-disc { stroke: var(--v2-caution); }
   .ezn-board-label { fill: var(--v2-ink-soft); font: 9px var(--v2-mono); }
   .ezn-board-loss { fill: var(--v2-ink); font: 9px var(--v2-mono); font-variant-numeric: tabular-nums; }
+  /* rung-multiplicity badge: the SAME entry re-raced across rungs (racing). */
+  .ezn-board-mult { fill: var(--v2-ink-faint); font: 600 8.5px var(--v2-mono); font-variant-numeric: tabular-nums; }
+  .ezn-board-raced .ezn-board-disc { stroke-dasharray: 3 2; }
   .ezn-board-node { cursor: pointer; }
   .ezn-board-node:hover .ezn-board-disc { stroke-width: 2.2; }
   .ezn-board-node:focus { outline: none; }

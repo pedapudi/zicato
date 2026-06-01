@@ -1995,4 +1995,116 @@ test('tree (BUG 2): the "No epochs" empty state shows ONLY when there are genuin
     'with genuinely zero epochs the empty state IS shown');
 });
 
+// ====================================================================
+// Lifecycle DAG · BOARD column: dedupe per ENTRY (rung multiplicity),
+// and label/circle text-spacing. A RACING candidate re-runs the SAME
+// board entry across rungs (rung0 slice → rung1 → racing-final full
+// board), so the raw per-entry stream repeats an entry_id N times.
+// ====================================================================
+
+// collect the BOARD-column node groups of a freshly built lifecycle DAG.
+function boardNodesOf(svgNode) {
+  return svgNode.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'g' && (n.getAttribute('class') || '').split(/\s+/).includes('ezn-board-node'));
+}
+function childByClass(g, cls) {
+  return g.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes(cls))[0] || null;
+}
+
+test('lifecycle BOARD column: a RACING candidate dedupes to ONE node per distinct entry (count == distinct entries, not total runs) + annotates rung multiplicity', () => {
+  // v3: a racing candidate. The SAME entries recur across rungs:
+  //   q3_metrics_outline ×3, waffles_single ×2, picky_stakeholder_emulated (once).
+  // The last run per entry is the racing-final / full-board run (representative).
+  const entries = [
+    { entry_id: 'q3_metrics_outline', run_id: 'r0a', drift_loss: 90.0, pass_fail: 0, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1a', drift_loss: 85.0, pass_fail: 0, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2a', drift_loss: 80.0, pass_fail: 1, wall_clock_budget_exceeded: false },
+    { entry_id: 'waffles_single', run_id: 'r0b', drift_loss: 60.0, pass_fail: 0, wall_clock_budget_exceeded: false },
+    { entry_id: 'waffles_single', run_id: 'r1b', drift_loss: 61.0, pass_fail: 0, wall_clock_budget_exceeded: true },
+    { entry_id: 'picky_stakeholder_emulated', run_id: 'r0c', drift_loss: 105.0, pass_fail: 0, wall_clock_budget_exceeded: false },
+  ];
+  const distinct = new Set(entries.map((e) => e.entry_id));
+  const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: 360 });
+  const nodes = boardNodesOf(svgNode);
+
+  assertEqual(nodes.length, distinct.size, 'ONE board node per DISTINCT entry (3), not one per run (6)');
+  const keys = nodes.map((n) => n.getAttribute('data-key')).sort();
+  assertDeep(keys, ['picky_stakeholder_emulated', 'q3_metrics_outline', 'waffles_single'], 'each distinct entry appears exactly once');
+
+  // multiplicity: q3 (×3) and waffles (×2) carry a badge; picky (×1) does not.
+  const byKey = {}; for (const n of nodes) byKey[n.getAttribute('data-key')] = n;
+  assertEqual(byKey['q3_metrics_outline'].getAttribute('data-mult'), '3', 'q3 ran across 3 rungs');
+  assertEqual(byKey['waffles_single'].getAttribute('data-mult'), '2', 'waffles ran across 2 rungs');
+  assertEqual(byKey['picky_stakeholder_emulated'].getAttribute('data-mult'), '1', 'picky ran once');
+
+  const q3mult = childByClass(byKey['q3_metrics_outline'], 'ezn-board-mult');
+  assert(q3mult && q3mult.textContent === '×3', 'a re-raced entry carries a "×N rungs" multiplicity badge (×3)');
+  assert(childByClass(byKey['waffles_single'], 'ezn-board-mult'), 'waffles (raced ×2) carries a multiplicity badge');
+  assert(!childByClass(byKey['picky_stakeholder_emulated'], 'ezn-board-mult'), 'a once-run entry carries NO multiplicity badge');
+
+  // representative loss = the LAST (racing-final / full-board) run, NOT rung0.
+  const q3loss = childByClass(byKey['q3_metrics_outline'], 'ezn-board-loss');
+  assertEqual(q3loss.textContent, svg.fmt(80.0, 0), 'the node shows the representative (final full-board) loss, not the rung0 loss');
+
+  // the raced nodes carry the marker class so the disc renders distinctly.
+  assert((byKey['q3_metrics_outline'].getAttribute('class') || '').includes('ezn-board-raced'), 'a re-raced node is marked ezn-board-raced');
+  assert(!(byKey['picky_stakeholder_emulated'].getAttribute('class') || '').includes('ezn-board-raced'), 'a once-run node is NOT marked raced');
+});
+
+test('lifecycle BOARD column: labels never overlap the loss disc + rows are vertically spaced', () => {
+  const entries = [
+    { entry_id: 'q3_metrics_outline', drift_loss: 80, pass_fail: 0 },
+    { entry_id: 'q3_metrics_outline', drift_loss: 80, pass_fail: 0 },
+    { entry_id: 'waffles_single', drift_loss: 60, pass_fail: 0 },
+    { entry_id: 'picky_stakeholder_emulated', drift_loss: 105, pass_fail: 0 },
+    { entry_id: 'every_expectation_kind', drift_loss: 40, pass_fail: 1 },
+  ];
+  const h = 360;
+  const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: h });
+  const nodes = boardNodesOf(svgNode);
+
+  // (b) the entry label is offset from the disc — anchored at its END and placed
+  // to the LEFT of the circle (x < disc cx) — so a label can NEVER sit on the disc.
+  for (const g of nodes) {
+    const disc = childByClass(g, 'ezn-board-disc');
+    const label = childByClass(g, 'ezn-board-label');
+    const cx = +disc.getAttribute('cx');
+    const r = +disc.getAttribute('r');
+    const lx = +label.getAttribute('x');
+    assertEqual(label.getAttribute('text-anchor'), 'end', 'the label is end-anchored (grows leftward, away from the disc)');
+    assert(lx <= cx - r, `the label x (${lx}) is left of the disc’s left edge (${cx - r}) — no overlap with the circle`);
+    // long ids are clipped with an ellipsis so the label never runs into the disc.
+    assert(label.textContent.length <= 18, 'a long entry id is truncated for the node label');
+  }
+
+  // adjacent rows are spaced by a comfortable vertical gap (legible, no overlap).
+  const cys = nodes.map((g) => +childByClass(g, 'ezn-board-disc').getAttribute('cy')).sort((a, b) => a - b);
+  for (let i = 1; i < cys.length; i++) {
+    assert(cys[i] - cys[i - 1] >= 24, `row gap (${cys[i] - cys[i - 1]}) is at least a 24px minimum so labels never collide`);
+  }
+});
+
+test('lifecycle BOARD column: a GAUNTLET candidate (one run per entry) renders unchanged — one node per entry, NO spurious multiplicity badge', () => {
+  // the gauntlet path: each board entry is run exactly once. Dedupe is a no-op.
+  const entries = [
+    { entry_id: 'waffles_single', run_id: 'g1', drift_loss: 60.5, pass_fail: 0, wall_clock_budget_exceeded: false },
+    { entry_id: 'picky_stakeholder_emulated', run_id: 'g2', drift_loss: 105.5, pass_fail: 0, wall_clock_budget_exceeded: true },
+  ];
+  const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360 });
+  const nodes = boardNodesOf(svgNode);
+  assertEqual(nodes.length, entries.length, 'one node per entry (gauntlet: dedupe is a no-op)');
+  for (const g of nodes) {
+    assertEqual(g.getAttribute('data-mult'), '1', 'each gauntlet entry has multiplicity 1');
+    assert(!childByClass(g, 'ezn-board-mult'), 'no spurious multiplicity badge on a gauntlet node');
+    assert(!(g.getAttribute('class') || '').includes('ezn-board-raced'), 'a gauntlet node is not marked raced');
+  }
+});
+
+test('lifecycle BOARD column: the multiplicity badge style + raced disc marker are themed in the scoped stylesheet', () => {
+  const css = readCss();
+  assert(/\.ezn-board-mult\s*\{/.test(css), '.ezn-board-mult is styled (themed via CSS vars)');
+  assert(/\.ezn-board-mult[^}]*var\(--v2-/.test(css), '.ezn-board-mult uses a theme variable (theme-aware across the 9 themes)');
+  assert(/\.ezn-board-raced\s+\.ezn-board-disc\s*\{/.test(css), 'a raced node’s disc carries a distinct marker style');
+});
+
 await run();
