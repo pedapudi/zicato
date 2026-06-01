@@ -59,9 +59,9 @@ export function reel(spec) {
   // round PLUS a leading champion/seed station.
   const stationCount = rounds.length + 1;             // +1 for the seed/champion
   const VBW = 120 + stationCount * 150;               // virtual width
-  const VBH = 200;
-  const spineY = 52;                                  // the champion spine
-  const stationY = 132;                               // the challenger stations
+  const VBH = 220;
+  const spineY = 96;                                  // the champion spine (pushed down to clear the caption + seed labels above it)
+  const stationY = 150;                               // the challenger stations
   const x0 = 70;
   const step = (VBW - x0 - 60) / Math.max(1, stationCount - 1);
   const xAt = (i) => x0 + i * step;
@@ -86,8 +86,8 @@ export function reel(spec) {
     tabindex: o.onSeed ? '0' : null, role: o.onSeed ? 'button' : null,
     'aria-label': `Champion ${championId || 'seed'}`,
   }, [
-    svgEl('text', { x: seedX, y: spineY - 22, class: 'vr-champ-id', 'text-anchor': 'middle' }, [championId || 'seed']),
-    svgEl('text', { x: seedX, y: spineY - 8, class: 'vr-champ-tag', 'text-anchor': 'middle' }, ['reigning']),
+    svgEl('text', { x: seedX, y: spineY - 44, class: 'vr-champ-id', 'text-anchor': 'middle' }, [championId || 'seed']),
+    svgEl('text', { x: seedX, y: spineY - 28, class: 'vr-champ-tag', 'text-anchor': 'middle' }, ['reigning']),
   ]);
   if (o.onSeed) {
     seedG.style.cursor = 'pointer';
