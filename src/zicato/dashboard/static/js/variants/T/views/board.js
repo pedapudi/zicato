@@ -15,9 +15,38 @@
 //       /api/conversation/{run_id} per candidate (the two inline transcripts).
 
 import { el } from '../../../core/dom.js';
+import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, stat, normaliseDecision, densityTokens } from '../ui.js';
+
+// In-flight board-units for THIS entry, read from /api/active-runs (folded
+// into AppState by /api/environment). Each carries a generation_id / run_id /
+// progress; some payloads key the board unit as `entry_id`, others as
+// `board_entry_id` / `entry`. Filter to the one entry the board page is on.
+export function inflightForEntry(activeRuns, entryId) {
+  const runs = Array.isArray(activeRuns) ? activeRuns : [];
+  if (!entryId) return [];
+  return runs.filter((r) => {
+    if (!r || typeof r !== 'object') return false;
+    const e = r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : r.entry);
+    return e === entryId;
+  });
+}
+
+// 0..1 progress (some payloads send 0..100 — clamp + normalise).
+function progressRatio(r) {
+  let p = r && (r.progress != null ? r.progress : r.fraction);
+  if (!svg.isNum(p)) {
+    if (r && svg.isNum(r.elapsed_seconds) && svg.isNum(r.budget_seconds) && r.budget_seconds > 0) {
+      p = r.elapsed_seconds / r.budget_seconds;
+    } else return null;
+  }
+  if (p > 1) p = p / 100;
+  if (p < 0) p = 0;
+  if (p > 1) p = 1;
+  return p;
+}
 
 const KIND_LABEL = {
   single_turn: 'single-turn', multi_turn_scripted: 'scripted multi-turn',
@@ -90,6 +119,13 @@ export async function render(host, ctx, params) {
     leftConv = convs[0]; rightConv = convs[1];
   }
 
+  // In-flight runs currently executing on THIS board entry (live, any
+  // structure). The completed-results rendering below covers finished runs; an
+  // entry mid-run with no completed results yet must read as "N running", never
+  // blank — so the in-flight set folds into both the digest and the view.
+  const inflight = inflightForEntry(state.activeRuns, entryId);
+  const ranCount = rows.filter((r) => r.ran).length;
+
   const digest = JSON.stringify({
     epochId, entryId, selGen,
     def: def ? [def.kind, def.weight, def.budget_s] : null,
@@ -97,6 +133,10 @@ export async function render(host, ctx, params) {
     rows: rows.map((r) => [r.gen, svg.isNum(r.loss) ? r.loss.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId]),
     left: leftSel ? [leftSel.gen, transcriptDigest(leftConv)] : null,
     right: rightSel ? [rightSel.gen, transcriptDigest(rightConv)] : null,
+    inflight: inflight.map((r) => {
+      const pr = progressRatio(r);
+      return [r.generation_id || r.gen || null, r.run_id || null, pr != null ? pr.toFixed(2) : null];
+    }),
   });
 
   gatedSwap(host, digest, () => {
@@ -117,6 +157,47 @@ export async function render(host, ctx, params) {
         el('div', { class: 'dn-faint', style: 'font-size:10px;text-transform:uppercase;letter-spacing:0.06em;', text: 'input preview' }),
         el('div', { style: 'margin-top:4px;line-height:1.4;', text: '“' + def.input_preview + '”' }),
       ]));
+    }
+
+    // LIVE — candidates currently executing on THIS board entry. Rendered for
+    // ANY tournament structure (the active-runs feed is structure-agnostic). A
+    // board mid-run with no completed results yet now reads "N candidates
+    // running" with each candidate's progress, rather than appearing empty.
+    if (inflight.length) {
+      const liveCard = el('div', { class: 'dn-panel dn-board-inflight' });
+      liveCard.appendChild(el('div', { class: 'dn-inflight-head' }, [
+        el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
+        el('span', { class: 'dn-inflight-count', text: String(inflight.length) + (inflight.length === 1 ? ' candidate running' : ' candidates running') }),
+        el('span', { class: 'dn-faint', text: ' on this board entry' }),
+      ]));
+      const tbl = el('table', { class: 'dn-board-table dn-inflight-table' });
+      tbl.appendChild(el('thead', null, [el('tr', null, [
+        el('th', { text: 'candidate' }), el('th', { text: 'run' }), el('th', { text: 'progress' }),
+      ])]));
+      const tbody = el('tbody');
+      for (const r of inflight) {
+        const gen = r.generation_id || r.gen || '—';
+        const pr = progressRatio(r);
+        const pct = pr != null ? Math.round(pr * 100) : null;
+        tbody.appendChild(el('tr', { class: 'dn-inflight-row' }, [
+          el('td', { class: 'dn-mono', text: String(gen) }),
+          el('td', { class: 'dn-mono dn-faint', text: r.run_id ? String(r.run_id) : 'pending' }),
+          el('td', null, [
+            el('span', { class: 'dn-progress' }, [
+              el('span', { class: 'dn-progress-fill', style: 'width:' + (pct != null ? pct : 6) + '%' + (pct == null ? ';opacity:0.4' : '') }),
+            ]),
+            el('span', { class: 'dn-mono dn-faint dn-progress-pct', text: pct != null ? ' ' + pct + '%' : ' running…' }),
+          ]),
+        ]));
+      }
+      tbl.appendChild(tbody);
+      liveCard.appendChild(tbl);
+      nodes.push(section('Live · candidates running on this board entry', liveCard));
+    } else if (!ranCount) {
+      // No completed run AND nothing in flight — honest empty (still not blank).
+      nodes.push(section('Status', el('div', { class: 'dn-panel' }, [
+        empty('No candidate has run on this board entry yet.'),
+      ])));
     }
 
     // sorted comparative dot-plot, worst-first, champion reference rule.

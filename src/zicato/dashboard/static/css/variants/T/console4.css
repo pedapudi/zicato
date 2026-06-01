@@ -908,6 +908,38 @@
   .dt-status.dt-connected .dt-status-dot { background: var(--v2-good); }
   .dt-status.dt-running .dt-status-dot { background: var(--v2-caution); }
 
+  /* The RUN badge — surfaces an ACTIVE run for ANY tournament structure
+   * (racing / swiss / elim / gauntlet). Hidden when idle/done; shown with the
+   * structure+phase label + an in-flight board-unit count when running. */
+  .dt-run-badge { display: none; align-items: center; gap: 5px; margin-left: 6px;
+    padding: 1px 7px; border-radius: 9px; border: 1px solid var(--v2-rule);
+    background: var(--v2-panel); color: var(--v2-ink-soft); font-size: 10px;
+    letter-spacing: 0.02em; white-space: nowrap; }
+  .dt-status.dt-running .dt-run-badge { display: inline-flex; }
+  .dt-run-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--v2-good); flex: 0 0 auto;
+    box-shadow: 0 0 0 0 var(--v2-good-soft); animation: dt-run-pulse 1.6s ease-out infinite; }
+  .dt-run-label { color: var(--v2-good); text-transform: lowercase; }
+  .dt-run-count { color: var(--v2-ink-faint); }
+  @keyframes dt-run-pulse {
+    0%   { box-shadow: 0 0 0 0 var(--v2-good); opacity: 1; }
+    70%  { box-shadow: 0 0 0 5px transparent; opacity: 0.7; }
+    100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) { .dt-run-pulse { animation: none; } }
+
+  /* board-detail — the LIVE in-flight candidates panel. */
+  .dn-board-inflight { border-left: 2px solid var(--v2-good); }
+  .dn-inflight-head { display: flex; align-items: center; gap: 6px; font-family: var(--v2-mono);
+    font-size: 11px; margin-bottom: 6px; }
+  .dn-inflight-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-good); flex: 0 0 auto;
+    animation: dt-run-pulse 1.6s ease-out infinite; }
+  .dn-inflight-count { color: var(--v2-good); font-weight: 600; }
+  .dn-inflight-table td { vertical-align: middle; }
+  .dn-progress { display: inline-block; width: 120px; max-width: 40vw; height: 7px; border-radius: 4px;
+    background: var(--v2-rule-soft); overflow: hidden; vertical-align: middle; }
+  .dn-progress-fill { display: block; height: 100%; background: var(--v2-good); transition: width 0.3s ease; }
+  .dn-progress-pct { font-size: 10.5px; }
+
   /* ---- the body split: persistent tree rail + single detail pane ---- */
   /* Q's spacing folded in: a roomier rail + a calmer detail column. */
   .dt-body {

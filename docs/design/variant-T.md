@@ -230,6 +230,54 @@ the non-gauntlet renderers are driven + tested with **mock structure payloads**
 (`test/variant_t.test.mjs`) and degrade gracefully (an honest empty state, no
 throw) when the structure payload is absent.
 
+## The live-status indicator — structure-agnostic (running for ANY structure)
+
+The chrome status pill (`.dt-status`) reports whether a run is **ACTIVE for any
+tournament structure**, not just the gauntlet. The earlier pill was
+gauntlet-shaped: it lit only off `state.activeTournament`, so a live **racing**
+(or swiss / single_elim / double_elim) run read as "nothing is running" even
+though the run was plainly in flight.
+
+`livestatus.deriveLiveStatus({heartbeat, activeRuns, activeTournament})` folds
+the three live read signals — all already in `AppState` (the consolidated
+`/api/environment` read populates `heartbeat` / `activeRuns` /
+`activeTournament`, and the SSE `heartbeat` event keeps `heartbeat` fresh) —
+into one structure-agnostic verdict:
+
+- **`/api/heartbeat.phase`** is the primary signal. A **non-idle** phase ⇒
+  running — covering both `proposing:…` and every `tournament:…` structure.
+  `isActivePhase()` treats `idle` / `done` / `complete` / `finished` / `stopped`
+  / `error` (and an empty/absent phase) as at-rest; anything else is active. The
+  phase may be a colon-path (`tournament:round_0:rung0_m3`); the first segment
+  names the stage.
+- **`/api/active-runs.length`** is the in-flight board-unit count (was 14
+  mid-rung) — corroborates, and surfaces a "· N units" tail on the badge.
+- **`/api/active-tournament.phase === "running"`** corroborates and supplies the
+  `structure` for the label.
+
+`phaseLabel(phase, structure)` derives a readable label — e.g. racing →
+`racing · rung 0`, swiss → `swiss · round 2`, proposing → `proposing field`.
+When running, the pill carries the `dt-running` state and shows a **RUN badge**
+(`.dt-run-badge` — a pulsing dot + the structure/phase label + the in-flight
+count); idle/done hides the badge. `renderStatus()` is **digest-gated**
+(`liveStatusDigest`): a steady heartbeat re-tick with an unchanged verdict
+writes ZERO DOM (no flash). The badge reads in all nine themes (good/ink-faint
+tokens) and the pulse honours `prefers-reduced-motion`.
+
+## Board-detail — in-flight runs (a mid-run entry is never blank)
+
+The per-board view (`#/e/<epoch>/board/<entry>`) surfaces the candidates
+**currently executing** on that one entry. `inflightForEntry(state.activeRuns,
+entryId)` filters the structure-agnostic active-runs feed to the page's entry
+(matching `entry_id` / `board_entry_id` / `entry`); each in-flight candidate
+renders with its generation id, run id, and a progress bar (`progressRatio`
+normalises 0..1 or 0..100, falling back to `elapsed/budget`). The completed
+per-candidate breakdown still renders for finished runs; an entry mid-run with
+no completed results yet now reads **"N candidates running"** with progress
+rather than appearing empty (and a truly-quiet entry shows an honest "no
+candidate has run yet" rather than a blank). The panel folds into the view's
+digest so it stays live-updating + flash-free on the same SSE/poll cadence.
+
 ## The chrome controls (colour dropdown · typeface buttons · scale pill)
 
 - **Colour — a SWATCH DROPDOWN** of **nine** themes (round 10). The closed
@@ -348,7 +396,7 @@ heatmap; Tufte sankey with label ≠ value; side-by-side diff with real strings.
 
 ## Tests
 
-`test/variant_t.test.mjs` (36 tests) covers, carried forward: the tree renders
+`test/variant_t.test.mjs` (54 tests) covers, carried forward: the tree renders
 Environment → Epoch → {Generations, Boards, Mutation surface, Publication};
 multi-generation nav; the candidate-page promote gate; the patch-node click →
 per-candidate diff with real strings; v0 showing ≥2 match-ups; the board view
@@ -381,3 +429,18 @@ and selecting each (incl. the six Gogh palettes) applies + persists it; **(f)**
 the colour picker is a **swatch dropdown** — a trigger with the current swatch +
 name, nine options each with a ≥4-swatch strip preview, clicking an option
 applies + persists, and the keyboard (ArrowDown opens, Esc closes) works.
+
+The **live-status** fix adds: **(a)** a live **racing** run (a non-idle
+heartbeat phase + a non-empty active-runs feed + active-tournament
+`phase:"running"`) derives a **RUNNING** verdict naming the structure (`racing`)
+and phase (`rung 0`) with the in-flight count; the heartbeat phase **alone**
+(`proposing:field`) and active-runs **alone** each light the running state
+(structure-agnostic), and `isActivePhase` separates running phases from
+idle/terminal ones; **(b)** an **idle** heartbeat + empty active-runs + null
+(or `complete`) tournament reads **idle/done** (not running); the chrome RUN
+badge lights for a live racing run, names the structure, shows the unit count,
+and is **digest-gated** (an unchanged re-tick does not rewrite the badge);
+**(c)** the **board-detail** view, given active-runs matching the `entry_id`,
+renders the **in-flight candidates** with progress (filtered to that entry,
+excluding other entries), while an entry **with** completed results still
+renders the per-candidate breakdown (no in-flight panel when nothing is live).

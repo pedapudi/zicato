@@ -30,6 +30,7 @@ import * as D from './data.js';
 import { invalidateLive } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { normaliseDecision } from './ui.js';
+import { deriveLiveStatus, liveStatusDigest } from './livestatus.js';
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
@@ -62,6 +63,9 @@ let _viewHost = null;
 let _treeHost = null;
 let _crumbHost = null;
 let _statusEl = null;
+let _statusTextEl = null;     // the connection word (live/connecting/offline)
+let _runLabelEl = null;       // the structure+phase run label
+let _runCountEl = null;       // the in-flight board-unit count
 let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
 let _typeEl = [];
 let _scaleInput = null;
@@ -306,9 +310,22 @@ export function mountShell(root) {
     scaleReset,
   ]);
 
+  // The live-status pill: a connection dot + the connection word, plus a
+  // RUN badge that lights up whenever the loop is active for ANY tournament
+  // structure (read from the live APIs in renderStatus, not the gauntlet-only
+  // activeTournament). The run badge carries the structure + phase label and an
+  // in-flight board-unit count; it is hidden when idle/done.
+  _statusTextEl = el('span', { class: 'dt-status-text', text: 'connecting…' });
+  _runLabelEl = el('span', { class: 'dt-run-label', text: '' });
+  _runCountEl = el('span', { class: 'dt-run-count', text: '' });
   _statusEl = el('span', { class: 'dt-status' }, [
     el('span', { class: 'dt-status-dot' }),
-    el('span', { class: 'dt-status-text', text: 'connecting…' }),
+    _statusTextEl,
+    el('span', { class: 'dt-run-badge', 'aria-live': 'polite' }, [
+      el('span', { class: 'dt-run-pulse', 'aria-hidden': 'true' }),
+      _runLabelEl,
+      _runCountEl,
+    ]),
   ]);
 
   // top-left back/up control — navigates UP the hierarchy; dispatch then
@@ -430,16 +447,34 @@ function renderCrumbs(route) {
   });
 }
 
+// THE LIVE-STATUS FIX. Derive a STRUCTURE-AGNOSTIC run verdict from the three
+// live signals already folded into AppState by /api/environment + the SSE
+// heartbeat (state.heartbeat.phase, state.activeRuns, state.activeTournament).
+// A non-idle heartbeat phase ⇒ running for ANY structure (gauntlet / racing /
+// swiss / single_elim / double_elim); the in-flight count + active-tournament
+// `phase === "running"` corroborate. Digest-gated: a steady heartbeat ping that
+// leaves the derived verdict unchanged writes ZERO DOM (no flash).
 function renderStatus() {
   if (!_statusEl) return;
   const conn = state.connected ? 'live' : state.connecting ? 'connecting…' : 'offline';
-  const live = !!state.activeTournament;
-  const digest = conn + '|' + (live ? 'L' : '');
+  const status = deriveLiveStatus({
+    heartbeat: state.heartbeat,
+    activeRuns: state.activeRuns,
+    activeTournament: state.activeTournament,
+  });
+  const digest = liveStatusDigest(conn, status);
   if (digest === _lastStatusDigest) return;
   _lastStatusDigest = digest;
-  patchText(_statusEl.querySelector('.dt-status-text') || _statusEl, conn);
+
+  patchText(_statusTextEl || _statusEl, conn);
   patchClass(_statusEl, 'dt-connected', state.connected);
-  patchClass(_statusEl, 'dt-running', live);
+  patchClass(_statusEl, 'dt-running', status.running);
+
+  if (_runLabelEl) patchText(_runLabelEl, status.running ? status.label : '');
+  if (_runCountEl) {
+    const n = status.inFlight;
+    patchText(_runCountEl, status.running && n > 0 ? ('· ' + n + (n === 1 ? ' unit' : ' units')) : '');
+  }
 }
 
 // Enable/disable the back control: it is inert at the environment root (no

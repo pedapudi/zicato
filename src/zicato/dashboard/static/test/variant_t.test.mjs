@@ -30,6 +30,8 @@ const shell = await import('../js/variants/T/shell.js');
 const data = await import('../js/variants/T/data.js');
 const tree = await import('../js/variants/T/tree.js');
 const compare = await import('../js/variants/T/compare.js');
+const livestatus = await import('../js/variants/T/livestatus.js');
+const coreState = await import('../js/core/state.js');
 
 const EPOCH_ID = '2026-05-30_e0';
 
@@ -1288,6 +1290,166 @@ test('gauntlet (default): the match-ups page still renders the champion banner +
   assertEqual(allByClass(host, 'dt-match-card').length, 2, 'the gauntlet match cards still render (v0→v1, v0→v2)');
   assertEqual(allByClass(host, 'dn-sbracket').length, 0, 'NO bracket SVG for the gauntlet default');
   assertEqual(allByClass(host, 'dt-structure-pill').length, 0, 'NO structure pill for a gauntlet epoch with no tournament block');
+});
+
+// ====================================================================
+// LIVE-STATUS — surfacing an ACTIVE run for ANY tournament structure
+// (the gauntlet-shaped status pill missed live racing/swiss/elim runs).
+// ====================================================================
+
+// ---- (a) a non-idle heartbeat + active-runs + active-tournament running ----
+
+test('live-status: a live RACING run (non-idle phase + in-flight runs + tournament running) shows a RUNNING state with structure + phase', () => {
+  const status = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'tournament:round_0:rung0_m3', generation_id: 'v3', round_index: 0, epoch_id: EPOCH_ID },
+    activeRuns: Array.from({ length: 14 }, (_, i) => ({ generation_id: 'v' + (i % 4), entry_id: 'b' + i, run_id: 'run_' + i, progress: 0.3 })),
+    activeTournament: { structure: 'racing', phase: 'running', competitors: [{ generation_id: 'v0' }], rounds: [], standings: [] },
+  });
+  assertEqual(status.running, true, 'a live racing run reads as RUNNING (not "nothing is running")');
+  assertEqual(status.structure, 'racing', 'the structure is surfaced from active-tournament');
+  assertEqual(status.inFlight, 14, 'the in-flight board-unit count is surfaced');
+  assertEqual(status.tournamentRunning, true, 'active-tournament phase "running" corroborates');
+  assert(status.label.includes('racing'), 'the readable label names the structure (racing)');
+  assert(status.label.includes('rung 0'), 'the readable label derives the rung from the phase string');
+});
+
+test('live-status: the heartbeat phase ALONE (proposing) lights the running state even before a tournament exists', () => {
+  const status = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'proposing:field', generation_id: null },
+    activeRuns: [],
+    activeTournament: null,
+  });
+  assertEqual(status.running, true, 'a non-idle proposing phase ⇒ running even with no tournament + no active-runs');
+  assert(status.label.includes('proposing'), 'the proposing phase yields a readable "proposing …" label');
+  assertEqual(status.inFlight, 0, 'no board-units in flight during proposing');
+});
+
+test('live-status: in-flight active-runs alone (no heartbeat) still read as running, structure-agnostic', () => {
+  const status = livestatus.deriveLiveStatus({
+    heartbeat: null,
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
+    activeTournament: { structure: 'swiss', phase: 'running' },
+  });
+  assertEqual(status.running, true, 'a non-empty active-runs feed alone reads as running');
+  assertEqual(status.structure, 'swiss', 'the structure is taken from active-tournament');
+});
+
+// ---- (b) idle heartbeat + empty active-runs ⇒ idle/done ----
+
+test('live-status: an IDLE heartbeat + empty active-runs + null tournament shows idle/done (not running)', () => {
+  const idle = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'idle' }, activeRuns: [], activeTournament: null,
+  });
+  assertEqual(idle.running, false, 'an idle phase + nothing in flight is NOT running');
+  assertEqual(idle.inFlight, 0, 'no in-flight units when idle');
+  assertEqual(idle.label, 'idle', 'the idle label reads "idle"');
+
+  const doneTok = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'done' }, activeRuns: [], activeTournament: { structure: 'racing', phase: 'complete' },
+  });
+  assertEqual(doneTok.running, false, 'a done phase + a completed (not "running") tournament is NOT running');
+
+  // a fully-absent set (no heartbeat, no runs, no tournament) → "done".
+  const empty = livestatus.deriveLiveStatus({});
+  assertEqual(empty.running, false, 'an empty environment is not running');
+  assertEqual(empty.label, 'done', 'an empty environment reads "done"');
+});
+
+test('live-status: isActivePhase distinguishes running phases from idle/terminal ones', () => {
+  assertEqual(livestatus.isActivePhase('tournament:round_0:rung0_m3'), true, 'a tournament phase is active');
+  assertEqual(livestatus.isActivePhase('proposing:field'), true, 'a proposing phase is active');
+  assertEqual(livestatus.isActivePhase('idle'), false, 'idle is not active');
+  assertEqual(livestatus.isActivePhase('done'), false, 'done is not active');
+  assertEqual(livestatus.isActivePhase(''), false, 'an empty phase is not active');
+  assertEqual(livestatus.isActivePhase(null), false, 'an absent phase is not active');
+});
+
+// ---- (b′) the chrome status pill reflects the running state, digest-gated ----
+
+test('live-status: the chrome RUN badge lights for a live racing run and the status digest is gated (no flash)', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  // seed the shared AppState with a live racing run BEFORE mounting the shell.
+  coreState.state.connected = true;
+  coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0:rung0_m3', generation_id: 'v3' });
+  coreState.state.activeRuns = [
+    { generation_id: 'v1', entry_id: 'waffles_single', run_id: 'r1', progress: 0.4 },
+    { generation_id: 'v2', entry_id: 'waffles_single', run_id: 'r2', progress: 0.2 },
+  ];
+  coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
+
+  const root = mountLiveShell('#/');
+  const statusEl = allByClass(root, 'dt-status')[0];
+  assert(statusEl, 'the chrome status pill rendered');
+  assert((statusEl.getAttribute('class') || '').includes('dt-running'), 'the status pill carries the dt-running state for a live racing run');
+  const label = allByClass(root, 'dt-run-label')[0];
+  assert(label && label.textContent.includes('racing'), 'the run badge names the structure (racing)');
+  const count = allByClass(root, 'dt-run-count')[0];
+  assert(count && count.textContent.includes('2'), 'the run badge shows the in-flight board-unit count (2)');
+
+  // DIGEST-GATE: a steady heartbeat re-tick with IDENTICAL live signals must not
+  // rewrite the badge text node (no flash). The same derived verdict ⇒ no DOM.
+  const labelNodeBefore = label.firstChild;
+  coreState.state._changed();           // a heartbeat-style re-tick, same data.
+  assert(allByClass(root, 'dt-run-label')[0].firstChild === labelNodeBefore,
+    'an unchanged live status is a digest no-op — the run-label text node is not rewritten');
+
+  // reset to an idle environment so other tests start clean.
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+});
+
+// ---- (c) board-detail surfaces the in-flight runs for an entry ----
+
+test('board view: an entry mid-run with NO completed results renders its in-flight candidates (not empty)', async () => {
+  freshState(); installFetch();
+  // no completed per-entry rows for this fresh entry, but two runs are live on it.
+  const board = await import('../js/variants/T/views/board.js');
+  coreState.state.activeRuns = [
+    { generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_waffles', progress: 0.65 },
+    { generation_id: 'v4', entry_id: 'waffles_single', run_id: 'run_v4_waffles', progress: 0.1 },
+    { generation_id: 'v5', entry_id: 'some_other_entry', run_id: 'run_v5_other', progress: 0.5 },
+  ];
+  const host = document.createElement('div');
+  await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
+
+  const live = allByClass(host, 'dn-board-inflight')[0];
+  assert(live, 'a live in-flight panel rendered on the board view');
+  assert(host.textContent.includes('2 candidates running'), 'the panel reads "2 candidates running" (filtered to THIS entry)');
+  assert(host.textContent.includes('v3') && host.textContent.includes('v4'), 'both in-flight candidates on this entry are listed');
+  assert(!host.textContent.includes('v5'), 'a run on a DIFFERENT entry is excluded');
+  const fills = allByClass(host, 'dn-progress-fill');
+  assert(fills.length >= 2, 'each in-flight candidate shows a progress bar');
+  assert(host.textContent.includes('65%'), 'a candidate progress percentage is surfaced');
+
+  coreState.state.activeRuns = [];
+});
+
+test('board view: the inflightForEntry filter matches entry_id and tolerates alternate keys', async () => {
+  const runs = [
+    { generation_id: 'v1', entry_id: 'e1', run_id: 'r1' },
+    { generation_id: 'v2', board_entry_id: 'e1', run_id: 'r2' },
+    { generation_id: 'v3', entry: 'e1', run_id: 'r3' },
+    { generation_id: 'v4', entry_id: 'e2', run_id: 'r4' },
+  ];
+  const b = await import('../js/variants/T/views/board.js');
+  assertEqual(b.inflightForEntry(runs, 'e1').length, 3, 'all three e1 runs match across entry_id / board_entry_id / entry keys');
+  assertEqual(b.inflightForEntry(runs, 'nope').length, 0, 'no match for an unknown entry');
+  assertEqual(b.inflightForEntry(null, 'e1').length, 0, 'a null active-runs feed yields no in-flight runs');
+});
+
+// ---- (d) board-detail still renders completed results for finished runs ----
+
+test('board view: an entry WITH completed results still renders the per-candidate breakdown (regression)', async () => {
+  freshState(); installFetch();
+  coreState.state.activeRuns = [];   // nothing live — pure completed view.
+  const board = await import('../js/variants/T/views/board.js');
+  const host = document.createElement('div');
+  await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
+  assert(host.textContent.includes('Board · waffles_single'), 'the completed-results board view still renders');
+  assert(allByClass(host, 'dn-board-table').length >= 1, 'the completed per-candidate breakdown table still renders');
+  assertEqual(allByClass(host, 'dn-board-inflight').length, 0, 'no in-flight panel when nothing is live on the entry');
 });
 
 await run();
