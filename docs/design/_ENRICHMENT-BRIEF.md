@@ -377,3 +377,55 @@ Per-variant personalities:
 - **S "Lens"** — tree sidebar + **comparison-first detail**: first-class side-by-side
   (champion vs challenger transcripts on a board; two candidates' lifecycle/matchups).
   Solarized-Light + Editorial.
+
+## Round 6 appendix — convergence IV (variants T / U / V / W)
+
+Base: **Variant P (Console III) is the anchor** (judged the best-looking console).
+Per the operator: fold **S's side-by-side comparison detail** and **Q's spacing**
+into the P base; **Miller columns (R) are back-burnered** (not pursued here);
+keep the creativity that produced Lens/Strata/Monograph. ALL Round-5 capabilities
++ fixes carry forward unchanged: the data-model TREE sidebar (Environment → Epoch
+→ {Generations, Boards, Mutation surface, Publication}); promote gate ON the
+candidate page; lifecycle **patch node → per-candidate side-by-side diff**; **ALL**
+of a candidate's match-ups; **first-class board view**; board run → **INLINE
+side-by-side transcript**; **trellis in the Boards view / heatmap at epoch
+overview** (de-duped); color picker (3 themes) + typeface picker (Open-Sans
+Google-Fonts pairings); digest-gating; NO pan/zoom viewport (fit-to-width);
+theme-aware heatmap; Tufte sankey label≠value; K's publication epoch-scoped.
+
+NEW for this round:
+1. **Side-by-side comparison detail (from S).** First-class compare in the detail
+   pane: two candidates' lifecycle / match-ups / per-board scoring, and
+   champion-vs-challenger transcripts, side by side — via a "compare with…"
+   affordance. (S's implementation is the reference: `js/variants/S/compare.js`,
+   `views/*`.)
+2. **Q's spacing.** Generous, proportional layout (the operator praised Q's
+   spacing): `js/variants/Q/**`, `css/variants/Q/atlas4.css`.
+3. **Back/up affordance (top-left) — FIXED.** Q's back button is handy but BUGGY:
+   it renders the destination into the SIDE PANEL instead of the main centre pane.
+   The back/up control must navigate UP the selection hierarchy and render the
+   resulting view into the MAIN DETAIL PANE — NEVER the sidebar. Test this
+   explicitly (after a back action the rail host is unchanged and the detail host
+   holds the destination view).
+
+Per-variant personalities:
+- **T "Console IV"** — the anchor synthesis: P's dense Console base + tree sidebar
+  + S's side-by-side compare + Q's spacing + a working back button. Monokai default
+  + Technical typeface. The primary candidate.
+- **U "Atlas V"** — the comfortable sibling: the same synthesis, roomier and lighter
+  (Q/M spacing-forward), Solarized-Light default + Sans typeface — a calm, airy
+  alternative to T's density.
+- **V "Reel"** (CREATIVE — temporal): the epoch as a horizontal **timeline /
+  playback** of rounds — the champion spine with challengers entering over time, a
+  scrubber/stepper along the rounds. Selecting a point on the reel opens that
+  round's match-up + promote gate + the challenger's lifecycle. The tree sidebar
+  stays (collapsible) for full-fidelity nav; the reel is the hero AND doubles as
+  navigation. Bind `/api/lineage` + `/api/tournaments` (round order via `ran_at`).
+  Solarized-Dark + Display. (No pan/zoom — the reel lays out fit-to-width.)
+- **W "Arena"** (CREATIVE — broadcast): the tournament as a live **standings /
+  leaderboard + MATCH CARDS** — the champion "defending the title" at the top,
+  each challenger a match card (Δscalar, verdict, hypothesis) that opens into its
+  lifecycle / match-ups / gate. A broadcast-style header (epoch, champion, round
+  count). The tree sidebar stays (collapsible); the standings double as
+  navigation. Bind `/api/tournaments` + `/api/lineage` + `/api/round/.../gate`.
+  Monokai or Solarized-Dark + Display/Technical.

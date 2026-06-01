@@ -307,7 +307,7 @@
   <script>
     (function selectDashboardEntry() {
       var KEY = 'zicato.ui';
-      var VARIANTS = { A: 1, B: 1, C: 1, D: 1, E: 1, F: 1, G: 1, H: 1, I: 1, J: 1, K: 1, L: 1, M: 1, N: 1, O: 1, P: 1, Q: 1, R: 1, S: 1 };
+      var VARIANTS = { A: 1, B: 1, C: 1, D: 1, E: 1, F: 1, G: 1, H: 1, I: 1, J: 1, K: 1, L: 1, M: 1, N: 1, O: 1, P: 1, Q: 1, R: 1, S: 1, T: 1, U: 1, V: 1, W: 1 };
       var params = new URLSearchParams(window.location.search);
       var q = params.get('ui');
       var stored = null;
@@ -364,6 +364,15 @@
 
       function renderGallery(host) {
         if (!host) return;
+        // Round 6 — convergence IV (P anchor + S side-by-side compare + Q
+        // spacing + fixed back button; two creative takes: Reel timeline,
+        // Arena broadcast).
+        var conv4 = [
+          ['T', 'Console IV', 'The anchor — P’s dense console + tree sidebar, S’s side-by-side compare, Q’s spacing, a working back button.'],
+          ['U', 'Atlas V', 'The comfortable sibling — the same synthesis, roomier and lighter (Solarized-Light + Sans).'],
+          ['V', 'Reel', 'Creative — the epoch as a horizontal timeline/playback of rounds; the reel is the hero and the navigator.'],
+          ['W', 'Arena', 'Creative — the tournament as live standings + match cards; the champion defends, challengers are cards.']
+        ];
         // Round 5 — convergence III (N base + data-model TREE sidebar + L's
         // mutation viewer + M's spacing + O's candidate-centric lifecycle/
         // matchups; promote gate on candidate, patch→per-candidate diff, all
@@ -419,6 +428,10 @@
           + '<h1 style="font-weight:600;font-size:28px;margin:0 0 6px;">zicato dashboard — pick a design</h1>'
           + '<p style="color:#7c8c86;margin:0 0 36px;">Change the <code>?ui=</code> flag any time. '
           + '(v1 = <code>?ui=v1</code>, v2 = <code>?ui=v2</code>.)</p>'
+          + '<div style="font-size:12px;letter-spacing:.14em;color:#6c71c4;font-weight:700;margin:0 0 14px;">ROUND 6 · CONVERGENCE IV · P + S + Q</div>'
+          + '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px;margin-bottom:44px;">';
+        for (var t = 0; t < conv4.length; t++) h += card(conv4[t], '#6c71c4');
+        h += '</div>'
           + '<div style="font-size:12px;letter-spacing:.14em;color:#d33682;font-weight:700;margin:0 0 14px;">ROUND 5 · CONVERGENCE III · tree sidebar</div>'
           + '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:20px;margin-bottom:44px;">';
         for (var s = 0; s < conv3.length; s++) h += card(conv3[s], '#d33682');
