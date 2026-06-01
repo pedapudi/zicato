@@ -177,3 +177,58 @@ decomposition for both sides. This is the decisive moment of the lifecycle.
 - **patch** = the diff a challenger applies to the champion snapshot.
 - **proposer brief** = operator's brief to the proposer for the epoch.
 - **dead branch** = a rejected challenger; the champion stands.
+
+## Round 3 appendix — convergence (variants H / I / J / K)
+
+Built on Variant E's IA/flow (the operator confirmed E's flow is "likely
+fine"). The following are MANDATORY across H/I/J/K.
+
+**Theme system (the B + D color language — the operator loves these).** Port
+Variant B's three-theme token system — **solarized-light, solarized-dark,
+monokai** — with a visible switcher. Every mark and diagram must read
+correctly in ALL THREE (sufficient contrast). B tokens: `css/variants/B/tokens.css`;
+D palette: `css/variants/D/tufte.css`.
+
+**Tufte-style Sankey — NOT a pannable viewport.** The causal-flow Sankey
+(candidate → per-board loss → aggregate scalar) is well-liked but must be
+redrawn Tufte-style: fit-to-container width (responsive, NO zoom/pan
+viewport), high data-ink — thin flows, direct in-place labels, minimal axis
+chrome, restrained improve/regress color, no decorative gradients/shadows.
+Reuse the flow data plumbing in `js/variants/C/diagram/sankey.js` but re-skin
+to Tufte. **NO diagram may live in a pan/zoom viewport** — F's flow and G's
+sankey were both "hard to navigate / not scaled for the viewport." Lay
+everything out to fit the container.
+
+**Lineage = Tufte bumps, not a DAG-in-viewport.** Use D's bumps/slopegraph
+lineage (`js/variants/D/svg.js`, `views/lifecycle.js`) — the operator prefers
+it to C's pannable DAG. Lineage / parent-child nodes MUST be clickable
+(→ candidate) and MUST NOT collide (de-collide coincident y-values; F's v1/v2
+collided).
+
+**NEW view — mutation sites per generation** (E lacked it). Bind:
+- `GET /api/mutations/{epoch_id}` → `{generations:[…], mutations:[{mutation_id,
+  kind, file, role, line_start, line_end, patched_by, patched_generation_ids}]}`
+- `GET /api/files/{epoch}/{generation}/patches` → `{patches:[{id, mutation_id,
+  op, new_content}]}` — what each generation actually changed.
+Render the mutation surface as a **mutation-site × generation matrix**: which
+sites each generation patched (site = `file:line` + `role`), with drill-down
+to the patch diff. Reuse patch-diff rendering (`js/v2/components/patchDiff.js`,
+`js/variants/D/views/experiment.js`). Also `/api/contract-diff/{epoch_id}`.
+
+**NEW view — ACM-style epoch publication** (E lacked it). Bind:
+- `GET /api/epoch/{epoch_id}/analysis` → `{analysis_md: "…markdown with
+  <!-- EYEBROW --> / <!-- META --> / ## Abstract / ## sections…"}`.
+The existing renderer is `js/v2/views/report.js` — reuse its approach (parse
+the section markers; render eyebrow / title / meta / abstract / body as a
+typeset publication). Render it Tufte/editorial; embed live Tufte figures
+(lineage bumps, matchup slopegraph, drift heatmap) inline as the paper's
+figures where natural. (`/api/epoch/{e}/analysis/html` may 404 — use `analysis_md`.)
+
+**Bug fixes carried in (must NOT reproduce):**
+- E: the "open full transcript" link must be properly styled (a themed
+  button/link, not an unstyled anchor).
+- F: lineage nodes collided and node clicks were dead → de-collide + wire each
+  node's click → candidate; no viewport.
+- G: Sankey not scaled to its viewport → fit-to-width Tufte Sankey; per-board
+  scoring unreadable in-theme → the per-board dot-plot/scoring must have
+  sufficient contrast in all three themes.
