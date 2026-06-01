@@ -48,13 +48,21 @@ export function scalarsFromTournaments(tours) {
   return m;
 }
 
-// The full structural model the rail consumes.
-export async function loadRailModel() {
-  const epochId = await loadEpochId();
+// The full structural model the rail consumes. `forEpochId` scopes the
+// generation/board skeleton to ONE epoch (the rail uses this for the
+// expanded epoch); when omitted it falls back to the live epoch from
+// /api/epoch (back-compat for the candidate / board / run views).
+export async function loadRailModel(forEpochId) {
+  const epochId = forEpochId || await loadEpochId();
   const [lineage, ep, tours] = await Promise.all([
     D.lineage(), epochId ? D.epoch() : Promise.resolve(null), D.tournaments(),
   ]);
-  const rawGens = (lineage && Array.isArray(lineage.generations)) ? lineage.generations : [];
+  let rawGens = (lineage && Array.isArray(lineage.generations)) ? lineage.generations : [];
+  // Scope to the requested epoch when the lineage carries epoch_id and the
+  // generation set spans more than one epoch.
+  if (forEpochId && rawGens.some((g) => g.epoch_id)) {
+    rawGens = rawGens.filter((g) => !g.epoch_id || g.epoch_id === forEpochId);
+  }
   const ordered = orderGenerations(rawGens);
   const scalarById = scalarsFromTournaments(tours);
   const gens = ordered.map((g) => ({
@@ -69,4 +77,45 @@ export async function loadRailModel() {
     input_preview: b.input_preview, expectation_kind: b.expectation_kind, tags: b.tags || [],
   })) : [];
   return { epochId, gens, ordered, rawGens, board, scalarById, tours };
+}
+
+// The ALL-EPOCHS workspace model — the root of the rail + the workspace
+// detail. Groups every generation from /api/lineage by its `epoch_id`
+// (parent-before-child within each group). Degrades gracefully when the
+// live data carries only ONE epoch (one group) — the STRUCTURE stays
+// all-epochs-first regardless. The active/live epoch (from /api/epoch) is
+// flagged so the rail can pre-expand and the workspace can mark it.
+export async function loadWorkspaceModel() {
+  const liveEpochId = await loadEpochId();
+  const [lineage, tours, traj] = await Promise.all([
+    D.lineage(), D.tournaments(), D.scoreTrajectory(),
+  ]);
+  const rawGens = (lineage && Array.isArray(lineage.generations)) ? lineage.generations : [];
+  const scalarById = scalarsFromTournaments(tours);
+
+  // Group by epoch_id, preserving first-seen epoch order; generations with
+  // no epoch_id fall under the live epoch (single-epoch live data).
+  const groupsMap = new Map();
+  const epochOrder = [];
+  for (const g of rawGens) {
+    const eid = g.epoch_id || liveEpochId || '—';
+    if (!groupsMap.has(eid)) { groupsMap.set(eid, []); epochOrder.push(eid); }
+    groupsMap.get(eid).push(g);
+  }
+  // Ensure the live epoch shows even if it has no generations recorded yet.
+  if (liveEpochId && !groupsMap.has(liveEpochId)) { groupsMap.set(liveEpochId, []); epochOrder.push(liveEpochId); }
+
+  const epochs = epochOrder.map((eid) => {
+    const ordered = orderGenerations(groupsMap.get(eid));
+    const gens = ordered.map((g) => ({
+      id: g.generation_id, promoted: !!g.promoted,
+      parent: g.parent_generation_id || null, x: lineageX(g, ordered),
+      scalar: scalarById.has(g.generation_id) ? scalarById.get(g.generation_id) : null,
+    }));
+    const promoted = gens.filter((g) => g.promoted).length;
+    return { epochId: eid, live: eid === liveEpochId, ordered, gens, promoted };
+  });
+
+  const trajPoints = (traj && Array.isArray(traj.points)) ? traj.points : [];
+  return { liveEpochId, epochs, scalarById, tours, trajPoints };
 }

@@ -1,23 +1,30 @@
 // test/variant_o.test.mjs — Variant O ("Compass") unit tests.
 //
-// Compass is a master-detail two-pane workspace: a persistent selector rail
-// (epoch → generation → board entry) + a detail pane that follows the
-// EXPLICIT, PERSISTENT selection in the URL. These tests pin:
-//   * the router (typed selection; deep-link round-trip; mutations site slot);
-//   * the two-pane layout (rail + detail) renders;
-//   * selecting a board entry opens the per-board CROSS-CANDIDATE view —
-//     keyed by ENTRY ID, never an arbitrary candidate;
+// Compass is a master-detail two-pane workspace, scoped by LEVEL:
+//   WORKSPACE (all epochs) → EPOCH → GENERATION → BOARD ENTRY.
+// These tests pin the corrected IA:
+//   * the router (typed selection incl. the new epoch level; deep-link
+//     round-trip; the epoch mutations site/gen slots);
+//   * default #/O/ renders an ALL-EPOCHS workspace overview (not a single
+//     epoch); the rail lists epoch(s) at the top;
+//   * selecting an EPOCH shows the publication AND the mutation surface at
+//     EPOCH scope;
+//   * a GENERATION's facet list does NOT include publication
+//     (lifecycle/matchups/run only); the candidate-centric match-ups +
+//     lifecycle still render;
+//   * a board entry still routes to the per-board cross-candidate view by
+//     entry id (never an arbitrary candidate);
 //   * the side-by-side mutation diff renders REAL strings (NOT "[object
 //     Object]"): baseline = /api/mutations/{e}/{mid}.baseline.content,
 //     challenger = the matching patch's .new_content;
-//   * the promote gate is laid out as clean stacked sections (rules ladder +
-//     a SEPARATE scalar-components block) with no overlap;
-//   * the sankey's per-board label and loss VALUE are distinct nodes (≠);
+//   * the promote gate stacks (rules ladder + separate scalar-components);
+//   * the sankey's per-board label and loss VALUE are distinct nodes;
 //   * the heatmap accepts a theme-derived ramp;
-//   * the typeface + color pickers switch (and persist) the root attributes;
-//   * a digest-gated repaint is a no-op (identical data → no rebuild);
-//   * a COLD deep-link hydrates the selection (run transcript paints);
-//   * the publication GFM table renders.
+//   * the typeface picker UPDATES the active pill on click (aria-pressed +
+//     vo-active move to the clicked button) AND applies the font; the color
+//     picker does the same;
+//   * a digest-gated repaint is a no-op (a heartbeat-only change rebuilds 0);
+//   * a COLD deep-link hydrates the selection (run transcript paints).
 
 import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
@@ -32,6 +39,7 @@ const dom = await import('../js/core/dom.js');
 const EPOCH_ID = '2026-05-30_e0';
 
 const FIXTURE = {
+  '/api/environment': { epoch: { epoch_id: EPOCH_ID } },
   '/api/epoch': {
     epoch_id: EPOCH_ID, closed: false, goal: 'Improve the presentation agent.',
     board: [
@@ -44,6 +52,7 @@ const FIXTURE = {
     { generation_id: 'v1', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false },
     { generation_id: 'v2', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false },
   ] },
+  '/api/score-trajectory': { points: [] },
   '/api/tournaments': { epoch_id: EPOCH_ID, champion_lineage: ['v0'], matchups: [
     { champion: 'v0', challenger: 'v1', decision: 'rejected', delta_scalar: 75.71 },
     { champion: 'v0', challenger: 'v2', decision: 'rejected', delta_scalar: 1.51 },
@@ -130,29 +139,53 @@ function freshState() {
 
 // ---- router ----------------------------------------------------------
 
-test('router: parses typed selections under the #/O/ prefix', () => {
-  assertEqual(router.parseRoute('#/O/').view, 'overview');
-  const g = router.parseRoute('#/O/gen/v1/mutations');
-  assertEqual(g.view, 'gen'); assertEqual(g.kind, 'gen'); assertEqual(g.gen, 'v1'); assertEqual(g.facet, 'mutations');
-  const gs = router.parseRoute('#/O/gen/v1/mutations/coordinator_prompt');
-  assertEqual(gs.facet, 'mutations'); assertEqual(gs.entry, 'coordinator_prompt');
+test('router: default #/O/ is the WORKSPACE (all-epochs), not a single epoch', () => {
+  const w = router.parseRoute('#/O/');
+  assertEqual(w.view, 'workspace');
+  assertEqual(w.kind, 'workspace');
+});
+
+test('router: parses the EPOCH level + its facets', () => {
+  const e = router.parseRoute(`#/O/epoch/${EPOCH_ID}`);
+  assertEqual(e.view, 'epoch'); assertEqual(e.kind, 'epoch'); assertEqual(e.epoch, EPOCH_ID); assertEqual(e.facet, 'overview');
+  const pub = router.parseRoute(`#/O/epoch/${EPOCH_ID}/publication`);
+  assertEqual(pub.facet, 'publication');
+  const mut = router.parseRoute(`#/O/epoch/${EPOCH_ID}/mutations/coordinator_prompt/v1`);
+  assertEqual(mut.facet, 'mutations'); assertEqual(mut.entry, 'coordinator_prompt'); assertEqual(mut.gen, 'v1');
+});
+
+test('router: a GENERATION has only candidate-centric facets (NO publication, NO mutations)', () => {
+  assert(!router.FACETS.includes('publication'), 'publication is NOT a generation facet');
+  assert(!router.FACETS.includes('mutations'), 'the full mutation surface is NOT a generation facet');
+  // an unknown facet (e.g. the removed publication) degrades to lifecycle.
+  const g = router.parseRoute('#/O/gen/v1/publication');
+  assertEqual(g.view, 'gen'); assertEqual(g.facet, 'lifecycle');
+  const lc = router.parseRoute('#/O/gen/v1/lifecycle');
+  assertEqual(lc.facet, 'lifecycle');
+  const mu = router.parseRoute('#/O/gen/v1/matchups');
+  assertEqual(mu.facet, 'matchups');
+});
+
+test('router: parses typed board + run selections', () => {
   const b = router.parseRoute('#/O/board/waffles_single');
   assertEqual(b.view, 'board'); assertEqual(b.kind, 'board'); assertEqual(b.entry, 'waffles_single');
   const r = router.parseRoute('#/O/gen/v1/run/waffles_single');
   assertEqual(r.view, 'run'); assertEqual(r.gen, 'v1'); assertEqual(r.entry, 'waffles_single');
 });
 
-test('router: a foreign / empty hash defaults to overview', () => {
-  assertEqual(router.parseRoute('').view, 'overview');
-  assertEqual(router.parseRoute('#/something').view, 'overview');
+test('router: a foreign / empty hash defaults to the workspace', () => {
+  assertEqual(router.parseRoute('').view, 'workspace');
+  assertEqual(router.parseRoute('#/something').view, 'workspace');
 });
 
-test('router: href round-trips a board + a gen+facet selection', () => {
+test('router: href round-trips epoch + gen + board selections', () => {
   assertEqual(router.parseRoute(router.href('board', { entry: 'q3' })).entry, 'q3');
   const back = router.parseRoute(router.href('gen', { gen: 'v2', facet: 'matchups' }));
   assertEqual(back.gen, 'v2'); assertEqual(back.facet, 'matchups');
-  const site = router.parseRoute(router.href('gen', { gen: 'v1', facet: 'mutations', entry: 'planner_prompt' }));
-  assertEqual(site.entry, 'planner_prompt');
+  const ep = router.parseRoute(router.href('epoch', { epoch: EPOCH_ID, facet: 'publication' }));
+  assertEqual(ep.epoch, EPOCH_ID); assertEqual(ep.facet, 'publication');
+  const site = router.parseRoute(router.href('epoch', { epoch: EPOCH_ID, facet: 'mutations', entry: 'planner_prompt', gen: 'v2' }));
+  assertEqual(site.entry, 'planner_prompt'); assertEqual(site.gen, 'v2');
 });
 
 test('router: selectionKey is stable per selection', () => {
@@ -203,12 +236,10 @@ test('gatePanel stacks a rules ladder + a SEPARATE scalar-components block', () 
   const node = ui.gatePanel(gate, 'v0', 'v1', { fmt: svg.fmt, fmtSigned: svg.fmtSigned });
   const rules = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').startsWith('vo-rule vo-rule-'));
   assertEqual(rules.length, 3, 'one row per rule');
-  // each rule row carries a label, a status, and a detail in its OWN cells.
   const first = rules.find((r) => (r.getAttribute('class') || '').includes('vo-rule-fail'));
   assert(first, 'the fired rule row exists');
   assert(first.textContent.includes('Scalar margin'), 'rule label present');
   assert(first.textContent.includes('fail'), 'rule status present');
-  // the scalar-components live in their OWN table block (not overlaid on rules).
   const tables = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-sc-table');
   assertEqual(tables.length, 1, 'a separate champion-vs-challenger components table');
   assert(node.textContent.includes('drift'), 'a scalar component is named');
@@ -229,8 +260,6 @@ test('sankey draws the board label and its loss value as DISTINCT nodes', () => 
   const vals = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-sankey-val');
   assert(labels.length >= 2, 'a label per board node');
   assert(vals.length >= 2, 'a value per board node, separate from the label');
-  // The label text is the (truncated) entry id; the value text is the number
-  // — they are different text nodes, so the value never overprints the label.
   const labelTexts = labels.map((n) => n.textContent);
   const valTexts = vals.map((n) => n.textContent);
   assert(labelTexts.some((t) => t.startsWith('picky')), 'label carries the entry id');
@@ -254,69 +283,211 @@ test('heatRamp resolves a [lo,hi] pair per theme; heatmap consumes it', () => {
   assert(node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-hm-cell').length === 1, 'cell drawn with the ramp');
 });
 
-// ---- typeface + color pickers switch & persist -----------------------
+// ---- typeface picker: clicking UPDATES the active pill ---------------
 
-test('typeface + color pickers set (and persist) the root attributes', () => {
+test('typeface picker: clicking an option moves the active pill (aria-pressed + class) AND applies the font', () => {
   freshState();
   const root = document.createElement('div');
-  // typeface
+  let pickedFace = null;
+  // start active on "display" (O's default).
+  const tf = ui.typefaceSwitcher('display', (f) => { pickedFace = f; ui.applyTypeface(root, f); });
+  const btn = (id) => tf.querySelectorAll('[data-type]').filter((b) => b.getAttribute('data-type') === id)[0];
+  // before: display is active, technical is not.
+  assert(btn('display').getAttribute('aria-pressed') === 'true', 'display starts pressed');
+  assert(!(btn('technical').getAttribute('class') || '').includes('vo-active'), 'technical starts inactive');
+  // click technical.
+  btn('technical').dispatchEvent({ type: 'click' });
+  assertEqual(pickedFace, 'technical', 'onPick fired with the chosen id');
+  assertEqual(root.getAttribute('data-vo-type'), 'technical', 'the font was applied');
+  // AFTER the click the active pill MOVED to technical (the bug: it stayed).
+  assert((btn('technical').getAttribute('class') || '').includes('vo-active'), 'technical is now active');
+  assertEqual(btn('technical').getAttribute('aria-pressed'), 'true', 'technical aria-pressed=true');
+  assert(!(btn('display').getAttribute('class') || '').includes('vo-active'), 'display is no longer active');
+  assertEqual(btn('display').getAttribute('aria-pressed'), 'false', 'display aria-pressed=false');
+});
+
+test('color picker: clicking an option moves the active pill (mirrors the typeface picker)', () => {
+  freshState();
+  let pickedTheme = null;
+  const cs = ui.themeSwitcher('solarized-dark', (t) => { pickedTheme = t; });
+  const btn = (id) => cs.querySelectorAll('[data-theme]').filter((b) => b.getAttribute('data-theme') === id)[0];
+  btn('solarized-light').dispatchEvent({ type: 'click' });
+  assertEqual(pickedTheme, 'solarized-light');
+  assert((btn('solarized-light').getAttribute('class') || '').includes('vo-active'), 'light is now active');
+  assertEqual(btn('solarized-light').getAttribute('aria-pressed'), 'true');
+  assert(!(btn('solarized-dark').getAttribute('class') || '').includes('vo-active'), 'dark is no longer active');
+});
+
+test('pickers persist the chosen value on the root', () => {
+  freshState();
+  const root = document.createElement('div');
   assertEqual(ui.applyTypeface(root, 'editorial'), 'editorial');
   assertEqual(root.getAttribute('data-vo-type'), 'editorial');
   assertEqual(ui.readTypeface(), 'editorial', 'persisted');
-  // O defaults to "display".
-  assertEqual(ui.normaliseTypeface('bogus'), 'display');
-  // color
+  assertEqual(ui.normaliseTypeface('bogus'), 'display', 'O defaults to display');
   assertEqual(ui.applyTheme(root, 'monokai'), 'monokai');
   assertEqual(root.getAttribute('data-vo-theme'), 'monokai');
   assertEqual(ui.readTheme(), 'monokai', 'persisted');
-  // the switchers fire onPick with the chosen id.
-  let pickedFace = null; let pickedTheme = null;
-  const tf = ui.typefaceSwitcher('display', (f) => { pickedFace = f; });
-  tf.querySelectorAll('[data-type]').filter((b) => b.getAttribute('data-type') === 'technical')[0].dispatchEvent({ type: 'click' });
-  assertEqual(pickedFace, 'technical');
-  const cs = ui.themeSwitcher('solarized-dark', (t) => { pickedTheme = t; });
-  cs.querySelectorAll('[data-theme]').filter((b) => b.getAttribute('data-theme') === 'solarized-light')[0].dispatchEvent({ type: 'click' });
-  assertEqual(pickedTheme, 'solarized-light');
 });
 
-// ---- the rail + a digest-gated no-op --------------------------------
+// ---- the rail: ALL-EPOCHS at the top + a digest-gated no-op ----------
 
-test('rail renders epoch + generations + board entries; identical data is a no-op', async () => {
+test('rail lists EPOCHS at the top; expands the selected epoch to gens + board; identical data is a no-op', async () => {
   freshState(); installFetch();
-  const { loadRailModel } = await import('../js/variants/O/model.js');
+  const { loadRailModel, loadWorkspaceModel } = await import('../js/variants/O/model.js');
   const rail = await import('../js/variants/O/rail.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
-  const m = await loadRailModel();
-  rail.renderRail(host, ctx, { epochId: m.epochId, gens: m.gens, board: m.board, selection: router.parseRoute('#/O/') });
+  const ws = await loadWorkspaceModel();
+  const re = await loadRailModel(EPOCH_ID);
+  const model = { epochs: ws.epochs, selectedEpochId: EPOCH_ID, gens: re.gens, board: re.board, selection: router.parseRoute(`#/O/epoch/${EPOCH_ID}`) };
+  rail.renderRail(host, ctx, model);
+  // the WORKSPACE root + an epoch row.
+  const wsRows = host.querySelectorAll('[class]').filter((n) => {
+    const c = n.getAttribute('class') || '';
+    return c.split(/\s+/).includes('vo-rail-workspace');
+  });
+  assertEqual(wsRows.length, 1, 'a workspace root row');
+  const epochs = host.querySelectorAll('[data-epoch]');
+  assert(epochs.length >= 1, 'a rail row per epoch');
+  // under the selected epoch, generations + board expand.
   const gens = host.querySelectorAll('[data-gen]').filter((n) => (n.getAttribute('class') || '').includes('vo-rail-gen'));
   const boards = host.querySelectorAll('[data-entry]');
-  assertEqual(gens.length, 3, 'a rail row per generation');
-  assertEqual(boards.length, 2, 'a rail row per board entry');
+  assertEqual(gens.length, 3, 'a rail row per generation under the expanded epoch');
+  assertEqual(boards.length, 2, 'a rail row per board entry under the expanded epoch');
   const first = host.firstChild;
-  rail.renderRail(host, ctx, { epochId: m.epochId, gens: m.gens, board: m.board, selection: router.parseRoute('#/O/') });
+  rail.renderRail(host, ctx, model);
   assert(host.firstChild === first, 'identical data → no rebuild');
 });
 
-// ---- two-pane layout renders (rail + detail) -------------------------
+// ---- WORKSPACE detail: all-epochs overview ---------------------------
 
-test('overview detail pane renders the lineage + workspace glance', async () => {
+test('default #/O/ renders an ALL-EPOCHS workspace overview (not a single-epoch view)', async () => {
   freshState(); installFetch();
-  const overview = await import('../js/variants/O/views/overview.js');
+  const workspace = await import('../js/variants/O/views/workspace.js');
+  const host = document.createElement('div');
+  let routedTo = null;
+  const ctx = { navigate: (v, p) => { routedTo = { v, p }; }, href: router.href };
+  await workspace.render(host, ctx, router.parseRoute('#/O/'));
+  assert(host.textContent.includes('Workspace'), 'the workspace heading');
+  assert(host.textContent.toLowerCase().includes('every epoch'), 'the all-epochs lede');
+  // one epoch card (live data has a single epoch — degrades gracefully).
+  const cards = host.querySelectorAll('[data-epoch]');
+  assertEqual(cards.length, 1, 'an epoch card per epoch (one in the live data)');
+  // the lineage bumps render inside the card.
+  const bumps = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-bumps');
+  assert(bumps.length >= 1, 'lineage bumps present');
+  // clicking the card body opens the EPOCH.
+  cards[0].dispatchEvent({ type: 'click', target: cards[0] });
+  assertEqual(routedTo.v, 'epoch');
+  assertEqual(routedTo.p.epoch, EPOCH_ID, 'the card selects that epoch');
+  const firstChild = host.firstChild;
+  await workspace.render(host, ctx, router.parseRoute('#/O/'));
+  assert(host.firstChild === firstChild, 'identical data → no rebuild (heartbeat no-op)');
+});
+
+// ---- EPOCH detail: publication + mutation surface at EPOCH scope -----
+
+test('selecting an EPOCH shows the publication at EPOCH scope (GFM table renders)', async () => {
+  freshState(); installFetch();
+  const epoch = await import('../js/variants/O/views/epoch.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
-  await overview.render(host, ctx, router.parseRoute('#/O/'));
-  assert(host.children.length > 0, 'overview painted');
-  const bumps = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-bumps');
-  assertEqual(bumps.length, 1, 'lineage bumps present');
-  const first = host.firstChild;
-  await overview.render(host, ctx, router.parseRoute('#/O/'));
-  assert(host.firstChild === first, 'identical data → no rebuild');
+  await epoch.render(host, ctx, router.parseRoute(`#/O/epoch/${EPOCH_ID}/publication`));
+  const paper = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-paper');
+  assertEqual(paper.length, 1, 'the K-grade paper renderer, at epoch scope');
+  const tables = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('vo-md-table'));
+  assert(tables.length >= 1, 'the GFM table rendered as a real <table>');
+  assert(host.textContent.includes('Improving the presentation agent'), 'the title rendered');
+  assert(host.textContent.includes('aggregate loss'), 'the table header cells rendered');
+  assert(!host.textContent.includes('| --- |'), 'no raw markdown table separator leaked');
 });
 
-// ---- selecting a board entry opens the per-board cross-candidate view --
+test('selecting an EPOCH shows the mutation surface (matrix + real-string side-by-side diff) at EPOCH scope', async () => {
+  freshState(); installFetch();
+  const epoch = await import('../js/variants/O/views/epoch.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  // the coordinator site, patched by v1, selected via the route slots.
+  await epoch.render(host, ctx, router.parseRoute(`#/O/epoch/${EPOCH_ID}/mutations/coordinator_prompt/v1`));
+  const matrix = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-mutmatrix');
+  const diff = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-sxs');
+  assertEqual(matrix.length, 1, 'the epoch-wide site × generation matrix');
+  assertEqual(diff.length, 1, 'ONE side-by-side diff, in the same combined visual');
+  assert(host.textContent.includes('EMIT an explicit slide outline first.'), 'challenger .new_content rendered');
+  assert(host.textContent.includes('Always cite sources.'), 'baseline .content rendered');
+  assert(!host.textContent.includes('[object Object]'), 'no [object Object] bug');
+});
 
-test('board view opens BY ENTRY ID showing every candidate (not a candidate)', async () => {
+test('the epoch overview renders lineage + a per-board heatmap + the match-up summary', async () => {
+  freshState(); installFetch();
+  const epoch = await import('../js/variants/O/views/epoch.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await epoch.render(host, ctx, router.parseRoute(`#/O/epoch/${EPOCH_ID}`));
+  const bumps = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-bumps');
+  const heat = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-heatmap');
+  assert(bumps.length >= 1, 'lineage bumps in the epoch overview');
+  assert(heat.length >= 1, 'a per-board drift heatmap');
+  assert(host.textContent.includes('v0 → v1') || host.textContent.includes('v0 → v2'), 'the match-up summary lists rounds');
+});
+
+// ---- GENERATION detail: candidate-centric, NO publication facet ------
+
+test('a GENERATION detail is candidate-centric: lifecycle/matchups tabs only (NO publication tab)', async () => {
+  freshState(); installFetch();
+  const cand = await import('../js/variants/O/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await cand.render(host, ctx, router.parseRoute('#/O/gen/v1/lifecycle'));
+  const tabFacets = host.querySelectorAll('[data-facet]').map((b) => b.getAttribute('data-facet'));
+  assert(tabFacets.includes('lifecycle'), 'lifecycle tab present');
+  assert(tabFacets.includes('matchups'), 'matchups tab present');
+  assert(!tabFacets.includes('publication'), 'NO publication tab on a generation');
+  assert(!tabFacets.includes('mutations'), 'NO full mutation-surface tab on a generation');
+});
+
+test('generation lifecycle renders per-board scoring + sankey + gate, and links its OWN patch sites to the epoch mutation surface', async () => {
+  freshState(); installFetch();
+  const cand = await import('../js/variants/O/views/candidate.js');
+  const host = document.createElement('div');
+  let routedTo = null;
+  const ctx = { navigate: (v, p) => { routedTo = { v, p }; }, href: router.href };
+  await cand.render(host, ctx, router.parseRoute('#/O/gen/v1/lifecycle'));
+  const dot = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-valdot');
+  const sankey = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-sankey');
+  const gate = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-gate');
+  assertEqual(dot.length, 1, 'per-board value dot-plot');
+  assertEqual(sankey.length, 1, 'the Tufte sankey');
+  assertEqual(gate.length, 1, 'the promote gate panel');
+  // the candidate's own patch site links into the EPOCH mutation surface.
+  assert(host.textContent.includes('coordinator_prompt'), 'this generation’s patched site is surfaced');
+  const siteRow = host.querySelectorAll('[data-site]').filter((n) => n.getAttribute('data-site') === 'coordinator_prompt')[0];
+  assert(siteRow, 'the patch-site row exists');
+  siteRow.dispatchEvent({ type: 'click' });
+  assertEqual(routedTo.v, 'epoch', 'a patch site routes to the EPOCH-scoped surface');
+  assertEqual(routedTo.p.facet, 'mutations');
+  assertEqual(routedTo.p.entry, 'coordinator_prompt');
+  assertEqual(routedTo.p.gen, 'v1', 'focused on THIS generation’s patch');
+});
+
+test('generation match-ups render the gauntlet ladder + the paired duel + the round gate', async () => {
+  freshState(); installFetch();
+  const cand = await import('../js/variants/O/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await cand.render(host, ctx, router.parseRoute('#/O/gen/v1/matchups'));
+  const bumps = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-bumps');
+  const slope = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-pslope');
+  const gate = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-gate');
+  assert(bumps.length >= 1, 'the gauntlet ladder bumps');
+  assert(slope.length >= 1, 'the paired per-board slopegraph duel');
+  assert(gate.length >= 1, 'the round gate');
+});
+
+// ---- BOARD entry: per-board cross-candidate view (UNCHANGED) ---------
+
+test('a board entry routes to the per-board cross-candidate view BY ENTRY ID (not a candidate)', async () => {
   freshState(); installFetch();
   const boardView = await import('../js/variants/O/views/board.js');
   const host = document.createElement('div');
@@ -325,72 +496,16 @@ test('board view opens BY ENTRY ID showing every candidate (not a candidate)', a
   await boardView.render(host, ctx, router.parseRoute('#/O/board/waffles_single'));
   assert(host.textContent.includes('waffles_single'), 'the board entry id is the subject');
   assert(host.textContent.includes('cross-candidate'), 'this is the cross-candidate view');
-  // the comparative chart shows a bar per candidate that ran the entry.
   const bars = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-sortbars');
   assertEqual(bars.length, 1, 'a sorted comparative chart');
   const sortRows = host.querySelectorAll('[data-vo]').filter((n) => n.getAttribute('data-vo') === 'sortrow');
   assertEqual(sortRows.length, 3, 'one row per candidate (v0/v1/v2), keyed by candidate');
-  // a drill-to-run list with a row per candidate.
   assert(host.textContent.includes('open run'), 'each candidate drills to its run for THIS board');
-  // clicking a candidate row routes to that candidate's RUN for THIS board
-  // entry — carrying the entry id, never an arbitrary candidate view.
   const list = host.querySelectorAll('[data-gen]').filter((n) => (n.getAttribute('class') || '').includes('vo-runlist-item'));
   assert(list.length >= 1, 'run-list rows present');
   list[0].dispatchEvent({ type: 'click' });
   assertEqual(routedTo.v, 'run');
   assertEqual(routedTo.p.entry, 'waffles_single', 'routes to a RUN keyed by the board entry id');
-});
-
-// ---- candidate mutations facet: combined matrix + side-by-side diff ---
-
-test('candidate mutations facet combines the matrix with a real-string side-by-side diff', async () => {
-  freshState(); installFetch();
-  const cand = await import('../js/variants/O/views/candidate.js');
-  const host = document.createElement('div');
-  const ctx = { navigate() {}, href: router.href };
-  // select v1's mutations facet with the coordinator site chosen.
-  await cand.render(host, ctx, router.parseRoute('#/O/gen/v1/mutations/coordinator_prompt'));
-  const matrix = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-mutmatrix');
-  const diff = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-sxs');
-  assertEqual(matrix.length, 1, 'the site × generation matrix');
-  assertEqual(diff.length, 1, 'ONE side-by-side diff, in the same combined visual');
-  assert(host.textContent.includes('EMIT an explicit slide outline first.'), 'challenger .new_content rendered');
-  assert(host.textContent.includes('Always cite sources.'), 'baseline .content rendered');
-  assert(!host.textContent.includes('[object Object]'), 'no [object Object] bug');
-});
-
-// ---- candidate lifecycle facet: dot-plot + sankey + gate -------------
-
-test('candidate lifecycle facet renders per-board scoring, the sankey, and the gate', async () => {
-  freshState(); installFetch();
-  const cand = await import('../js/variants/O/views/candidate.js');
-  const host = document.createElement('div');
-  const ctx = { navigate() {}, href: router.href };
-  await cand.render(host, ctx, router.parseRoute('#/O/gen/v1/lifecycle'));
-  const dot = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-valdot');
-  const sankey = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-sankey');
-  const gate = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-gate');
-  assertEqual(dot.length, 1, 'per-board value dot-plot');
-  assertEqual(sankey.length, 1, 'the Tufte sankey');
-  assertEqual(gate.length, 1, 'the promote gate panel');
-});
-
-// ---- publication facet: GFM table renders ----------------------------
-
-test('publication facet renders the ACM paper with a GFM table (not raw pipes)', async () => {
-  freshState(); installFetch();
-  const cand = await import('../js/variants/O/views/candidate.js');
-  const host = document.createElement('div');
-  const ctx = { navigate() {}, href: router.href };
-  await cand.render(host, ctx, router.parseRoute('#/O/gen/v0/publication'));
-  const paper = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '') === 'vo-paper');
-  assertEqual(paper.length, 1, 'the K-grade paper renderer');
-  const tables = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('vo-md-table'));
-  assert(tables.length >= 1, 'the GFM table rendered as a real <table>');
-  assert(host.textContent.includes('Improving the presentation agent'), 'the title rendered');
-  assert(host.textContent.includes('aggregate loss'), 'the table header cells rendered');
-  // the markdown table should NOT survive as raw pipe text.
-  assert(!host.textContent.includes('| --- |'), 'no raw markdown table separator leaked');
 });
 
 // ---- COLD deep-link hydrates the selection (run transcript paints) ---

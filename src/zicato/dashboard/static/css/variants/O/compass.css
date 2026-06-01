@@ -282,6 +282,49 @@
 #variant-root[data-variant="O"] .vo-rail-kind.vo-kind-emulated { color: var(--vo-accent-soft); }
 #variant-root[data-variant="O"] .vo-rail-empty { color: var(--vo-ink-dim); font-size: 12px; padding: 4px 16px; }
 
+/* ----- rail: WORKSPACE root (all-epochs top level) ----------------- */
+#variant-root[data-variant="O"] .vo-rail-workspace {
+  display: flex; flex-direction: column; gap: 2px; padding: 6px 16px 12px;
+  margin: 0 0 4px; cursor: pointer; border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--vo-border);
+  transition: background 0.12s var(--vo-ease), border-color 0.12s var(--vo-ease);
+}
+#variant-root[data-variant="O"] .vo-rail-workspace:hover { background: var(--vo-surface-2); }
+#variant-root[data-variant="O"] .vo-rail-workspace.vo-rail-active {
+  background: var(--vo-surface); border-left-color: var(--vo-accent);
+}
+#variant-root[data-variant="O"] .vo-rail-workspace-eyebrow {
+  font-size: 10px; letter-spacing: 0.14em; color: var(--vo-accent);
+}
+#variant-root[data-variant="O"] .vo-rail-workspace-sub { font-size: 12px; color: var(--vo-ink-soft); }
+
+/* ----- rail: epoch group items + the expanded subtree -------------- */
+#variant-root[data-variant="O"] .vo-rail-disc { width: 12px; flex: 0 0 auto; color: var(--vo-ink-dim); font-size: 10px; }
+#variant-root[data-variant="O"] .vo-rail-epoch-item.vo-rail-expanded { background: var(--vo-surface-2); }
+#variant-root[data-variant="O"] .vo-rail-tag.vo-live {
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--vo-bg); background: var(--vo-accent); border-radius: 3px; padding: 1px 4px;
+}
+#variant-root[data-variant="O"] .vo-rail-subtree { display: block; }
+#variant-root[data-variant="O"] .vo-rail-subgroup { padding: 4px 0 6px; }
+#variant-root[data-variant="O"] .vo-rail-subhead {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--vo-ink-dim); padding: 4px 16px 4px 30px;
+}
+#variant-root[data-variant="O"] .vo-rail-subtree .vo-rail-item { padding-left: 30px; }
+
+/* ----- workspace detail: per-epoch lineage cards ------------------- */
+#variant-root[data-variant="O"] .vo-epoch-cards { display: flex; flex-direction: column; gap: 16px; }
+#variant-root[data-variant="O"] .vo-epoch-card {
+  border: 1px solid var(--vo-border); border-radius: 8px; padding: 14px 16px;
+  background: var(--vo-surface); cursor: pointer;
+  transition: border-color 0.12s var(--vo-ease), background 0.12s var(--vo-ease);
+}
+#variant-root[data-variant="O"] .vo-epoch-card:hover { border-color: var(--vo-accent); }
+#variant-root[data-variant="O"] .vo-epoch-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+#variant-root[data-variant="O"] .vo-epoch-card-id { font-size: 14px; color: var(--vo-ink); }
+#variant-root[data-variant="O"] .vo-pill.vo-live { background: var(--vo-accent); color: var(--vo-bg); }
+
 /* ===== detail pane: headings, sections ============================= */
 
 #variant-root[data-variant="O"] .vo-pagehead { margin-bottom: 14px; }

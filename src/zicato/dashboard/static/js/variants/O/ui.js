@@ -8,7 +8,7 @@
 // promote-gate panel laid out as clean STACKED sections. No data fetching,
 // no AppState mutation.
 
-import { el, clearChildren } from '../../core/dom.js';
+import { el, clearChildren, patchClass } from '../../core/dom.js';
 
 // ---- digest-gated swap (the no-flash guarantee) ---------------------
 //
@@ -56,6 +56,19 @@ export function applyTheme(root, theme) {
   return t;
 }
 
+// Move the active pill (the `vo-active` class + `aria-pressed`) to the
+// button whose `data-<attr>` equals `id`. Shared by BOTH pickers so they
+// behave identically (the bug: the typeface picker applied the font but
+// left the pill on the previous button — it never called this).
+function setPickerActive(wrap, attr, id) {
+  const btns = wrap.querySelectorAll('[' + attr + ']');
+  for (const b of btns) {
+    const on = b.getAttribute(attr) === id;
+    patchClass(b, 'vo-active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+
 export function themeSwitcher(active, onPick) {
   const cur = normaliseTheme(active);
   const wrap = el('div', { class: 'vo-picker', role: 'group', 'aria-label': 'Color theme' });
@@ -64,7 +77,10 @@ export function themeSwitcher(active, onPick) {
       class: 'vo-picker-btn' + (id === cur ? ' vo-active' : ''),
       type: 'button', 'data-theme': id, 'aria-pressed': id === cur ? 'true' : 'false', text: label,
     });
-    b.addEventListener('click', () => onPick && onPick(id));
+    b.addEventListener('click', () => {
+      setPickerActive(wrap, 'data-theme', id);
+      if (onPick) onPick(id);
+    });
     wrap.appendChild(b);
   }
   return wrap;
@@ -108,7 +124,13 @@ export function typefaceSwitcher(active, onPick) {
       class: 'vo-picker-btn' + (id === cur ? ' vo-active' : ''),
       type: 'button', 'data-type': id, 'aria-pressed': id === cur ? 'true' : 'false', text: label,
     });
-    b.addEventListener('click', () => onPick && onPick(id));
+    // FIX: on click, move the active pill to the clicked button (mirrors
+    // the color picker) AND apply the font. The old handler only applied
+    // the font, so the pill never moved off the previously-active button.
+    b.addEventListener('click', () => {
+      setPickerActive(wrap, 'data-type', id);
+      if (onPick) onPick(id);
+    });
     wrap.appendChild(b);
   }
   return wrap;

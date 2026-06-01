@@ -32,15 +32,16 @@ import {
   readTheme, applyTheme, themeSwitcher,
   readTypeface, applyTypeface, typefaceSwitcher,
 } from './ui.js';
-import { loadRailModel } from './model.js';
+import { loadRailModel, loadWorkspaceModel } from './model.js';
 import { renderRail } from './rail.js';
 
-import * as overview from './views/overview.js';
+import * as workspace from './views/workspace.js';
+import * as epoch from './views/epoch.js';
 import * as candidate from './views/candidate.js';
 import * as board from './views/board.js';
 import * as run from './views/run.js';
 
-const VIEWS = { overview, gen: candidate, board, run };
+const VIEWS = { workspace, epoch, gen: candidate, board, run };
 
 let _root = null;
 let _railHost = null;
@@ -113,7 +114,7 @@ function renderStatus() {
 
 async function dispatch() {
   const route = parseRoute(location.hash);
-  const renderer = VIEWS[route.view] || VIEWS.overview;
+  const renderer = VIEWS[route.view] || VIEWS.workspace;
   const selKey = selectionKey(route);
 
   renderStatus();
@@ -128,12 +129,22 @@ async function dispatch() {
 
   const token = ++_renderToken;
   try {
-    // The rail repaints (digest-gated) on every dispatch so the active
-    // selection highlight stays in sync; it shares the cached model read.
-    const model = await loadRailModel();
+    // The rail is all-epochs-first: it lists every epoch, and EXPANDS the
+    // one in scope (an explicitly-selected epoch, or — for a generation /
+    // board / run selection — the live epoch) to its generations + board.
+    const ws = await loadWorkspaceModel();
+    const expandedEpochId = route.kind === 'epoch'
+      ? route.epoch
+      : (route.kind === 'gen' || route.kind === 'board' || route.kind === 'run')
+        ? ws.liveEpochId
+        : null;
+    const railEpoch = expandedEpochId
+      ? await loadRailModel(expandedEpochId)
+      : { gens: [], board: [] };
     if (token !== _renderToken) return;
     renderRail(_railHost, _ctx, {
-      epochId: model.epochId, gens: model.gens, board: model.board, selection: route,
+      epochs: ws.epochs, selectedEpochId: expandedEpochId,
+      gens: railEpoch.gens, board: railEpoch.board, selection: route,
     });
     await renderer.render(_detailHost, _ctx, route);
   } catch (err) {
