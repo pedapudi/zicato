@@ -2463,12 +2463,83 @@ def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _run_id_of_events_file(events_path: Path) -> str | None:
+    """Best-effort read of the goldfive ``runId`` from an events file.
+
+    Every event envelope carries the same ``runId`` (camelCase from the
+    persistence sink; ``run_id`` from the reducer's proto-reparse path),
+    so the first parseable line is sufficient. Returns ``None`` on any
+    read / parse failure or when no run id field is present.
+    """
+    try:
+        with open(events_path, encoding="utf-8") as handle:
+            for raw in handle:
+                stripped = raw.strip()
+                if not stripped:
+                    continue
+                evt = json.loads(stripped)
+                if not isinstance(evt, dict):
+                    continue
+                rid = evt.get("runId") or evt.get("run_id")
+                return str(rid) if isinstance(rid, str) and rid else None
+    except (OSError, json.JSONDecodeError):
+        return None
+    return None
+
+
+# Cache: workspace epochs dir → {run_id: events.jsonl path}. The board-run
+# layout names run directories by ENTRY id, not run id, so the only way to
+# map a run id to its events file is to read the ``runId`` field out of
+# each ``events.jsonl``. We do that scan once per workspace and memoize it,
+# keyed on the epochs-dir path plus its current mtime so a new generation
+# (which bumps the dir mtime) invalidates a stale map.
+_RUN_ID_INDEX_CACHE: dict[str, tuple[float, dict[str, Path]]] = {}
+
+
+def _build_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
+    """Scan ``epochs/*/generations/*/runs/*/events.jsonl`` → ``{run_id: path}``.
+
+    Matches on the ``runId`` carried inside each events file rather than on
+    the run-directory name (which is the board ENTRY id, not the run id).
+    Results are cached per workspace, invalidated when the epochs dir mtime
+    changes.
+    """
+    epochs = paths.epochs
+    cache_key = str(epochs)
+    try:
+        mtime = epochs.stat().st_mtime
+    except OSError:
+        return {}
+
+    cached = _RUN_ID_INDEX_CACHE.get(cache_key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+
+    index: dict[str, Path] = {}
+    if epochs.is_dir():
+        for events_path in epochs.glob("*/generations/*/runs/*/events.jsonl"):
+            rid = _run_id_of_events_file(events_path)
+            if rid and rid not in index:
+                index[rid] = events_path
+    _RUN_ID_INDEX_CACHE[cache_key] = (mtime, index)
+    return index
+
+
 def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
     """Locate the ``events.jsonl`` for one run id.
 
-    Tries, in order: the run's ``active_runs/{run_id}.json``
-    (``events_jsonl_path``); a directory named ``run_id`` anywhere under
-    ``epochs/*/generations/*/runs/`` carrying an ``events.jsonl``.
+    Tries, in order:
+
+    1. The run's ``active_runs/{run_id}.json`` (``events_jsonl_path``).
+    2. A directory named ``run_id`` directly under
+       ``epochs/*/generations/*/runs/`` carrying an ``events.jsonl``
+       (an alternate layout some tooling uses).
+    3. The run-id index built by scanning every
+       ``epochs/*/generations/*/runs/*/events.jsonl`` and matching on the
+       ``runId`` field inside the file. This is the layout the board
+       runner actually writes: run directories are named by board ENTRY
+       id, not run id, so the run id only appears inside the events.
+
     Returns ``None`` when nothing matches.
     """
     run_file = paths.active_runs_dir / f"{run_id}.json"
@@ -2488,6 +2559,12 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
                 events = run_dir / "events.jsonl"
                 if events.exists():
                     return events
+
+    # Fall back to the run-id → events.jsonl index (matches the canonical
+    # board-run layout, where the run directory is named by entry id).
+    indexed = _build_run_id_index(paths).get(run_id)
+    if indexed is not None and indexed.exists():
+        return indexed
     return None
 
 

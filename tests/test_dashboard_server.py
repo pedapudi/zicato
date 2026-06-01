@@ -1732,6 +1732,77 @@ def test_conversation_missing_run_is_404(
         assert r.status_code == 404
 
 
+def test_conversation_resolves_by_run_id_not_dir_name(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``/api/conversation/{run_id}`` resolves the canonical board layout.
+
+    Regression for "transcripts were stored but unreadable": board runs
+    live at ``generations/<gen>/runs/<entry_id>/events.jsonl`` — the run
+    DIRECTORY is named by ENTRY id, while the run id only appears in the
+    ``runId`` field inside the events. The resolver previously looked for
+    a directory named ``<run_id>`` and (with no ``active_runs`` entry for
+    a completed run) returned 404 even though the events were on disk.
+
+    Here the entry dir is ``every_expectation_kind_demo`` and the run id
+    is the opaque hex ``033aa0f652ab4c9090cbe3a7a09a01c9`` carried inside
+    every event line; no ``active_runs/<run_id>.json`` exists.
+    """
+    _install_stub_transcript(monkeypatch)
+    run_id = "033aa0f652ab4c9090cbe3a7a09a01c9"
+    entry_id = "every_expectation_kind_demo"
+    events = (
+        workspace
+        / "epochs"
+        / "2026-05-16_e0"
+        / "generations"
+        / "v3"
+        / "runs"
+        / entry_id
+        / "events.jsonl"
+    )
+    _write(
+        events,
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "emittedAt": "2026-05-16T05:00:01Z",
+                        "eventId": f"{run_id}:0:a",
+                        "runId": run_id,
+                        "sessionId": run_id,
+                        "sequence": "0",
+                        "conversationStarted": {"conversationId": "c-x"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "emittedAt": "2026-05-16T05:00:02Z",
+                        "eventId": f"{run_id}:1:b",
+                        "runId": run_id,
+                        "sequence": "1",
+                        "runStarted": {"goalSummary": "Demo every expectation kind."},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+    )
+
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        # Resolving by the opaque run id returns the stored transcript.
+        r = c.get(f"/api/conversation/{run_id}")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["event_count"] == 2
+        # The by-(epoch, gen, entry) transcript route resolves the same
+        # events via the entry-id directory name.
+        r2 = c.get(f"/api/run/2026-05-16_e0/v3/{entry_id}/transcript")
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["event_count"] == 2
+
+
 def test_matchup_conversations_endpoint(
     workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
