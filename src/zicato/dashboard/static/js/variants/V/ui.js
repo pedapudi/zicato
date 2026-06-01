@@ -1,0 +1,249 @@
+// variants/V/ui.js — shared chrome helpers for the "Reel" variant.
+//
+// Self-contained for Variant V (ported from P's helpers). Default colour theme
+// is Solarized-Dark and the default typeface is Display (the round-6 V
+// personality). Small, pure builders every view composes:
+// the digest-gated content swap (the no-flash guarantee), section headers,
+// verdict pills, a GFM-capable tiny-markdown renderer (TABLES render — fix #3),
+// honest empty / loading states, and the colour + typeface theme tables. No
+// data fetching, no state mutation.
+
+import { el, clearChildren } from '../../core/dom.js';
+import { href } from './router.js';
+
+// ---- digest-gated content swap (the no-flash guarantee) -------------
+//
+// A view computes a stable digest of ONLY its structural/content data
+// (timestamps / heartbeat fields EXCLUDED), then calls gatedSwap(host, digest,
+// build). If the digest equals the one this host last painted AND the host
+// still has children, NOTHING is written — a steady heartbeat re-dispatch is a
+// true no-op and the screen cannot flash.
+export function gatedSwap(host, digest, build) {
+  if (!host) return false;
+  const next = String(digest);
+  if (host.getAttribute('data-n-digest') === next && host.firstChild) return false;
+  clearChildren(host);
+  const built = build();
+  const nodes = Array.isArray(built) ? built : [built];
+  for (const n of nodes) { if (n) host.appendChild(n); }
+  host.setAttribute('data-n-digest', next);
+  return true;
+}
+
+// ---- colour themes (solarized-dark is V's default) ------------------
+export const COLOR_THEMES = [
+  ['solarized-dark', 'sol·dark'],
+  ['monokai', 'monokai'],
+  ['solarized-light', 'sol·light'],
+];
+const COLOR_IDS = COLOR_THEMES.map((t) => t[0]);
+export const DEFAULT_COLOR = 'solarized-dark';
+const COLOR_KEY = 'zicato.V.theme';
+
+export function normaliseColor(t) { return COLOR_IDS.includes(t) ? t : DEFAULT_COLOR; }
+export function readColor() {
+  let stored = null;
+  try { stored = window.localStorage.getItem(COLOR_KEY); } catch (e) { /* private mode */ }
+  return normaliseColor(stored);
+}
+export function persistColor(t) {
+  try { window.localStorage.setItem(COLOR_KEY, normaliseColor(t)); } catch (e) { /* ignore */ }
+  return normaliseColor(t);
+}
+
+// ---- typeface themes (Technical is N's default) ---------------------
+//
+// Each maps to a `[data-n-type]` value the stylesheet keys on (swapping the
+// --n-font-* custom properties). All are Open-Sans-based for the body; the
+// distinction is the heading / data voice:
+//   Sans      — Open Sans throughout (tabular figures for data).
+//   Editorial — Open Sans body + Source Serif 4 headings & publication.
+//   Technical — Open Sans body + JetBrains Mono for data / labels / code.
+//   Display   — Open Sans body + Archivo Narrow (condensed) headings & big nums.
+export const TYPE_THEMES = [
+  ['display', 'Display'],
+  ['sans', 'Sans'],
+  ['editorial', 'Editorial'],
+  ['technical', 'Technical'],
+];
+const TYPE_IDS = TYPE_THEMES.map((t) => t[0]);
+export const DEFAULT_TYPE = 'display';
+const TYPE_KEY = 'zicato.V.typeface';
+
+export function normaliseType(t) { return TYPE_IDS.includes(t) ? t : DEFAULT_TYPE; }
+export function readType() {
+  let stored = null;
+  try { stored = window.localStorage.getItem(TYPE_KEY); } catch (e) { /* private mode */ }
+  return normaliseType(stored);
+}
+export function persistType(t) {
+  try { window.localStorage.setItem(TYPE_KEY, normaliseType(t)); } catch (e) { /* ignore */ }
+  return normaliseType(t);
+}
+
+// ---- small builders -------------------------------------------------
+
+export function section(titleText, ...children) {
+  return el('section', { class: 'dn-section' }, [
+    el('h2', { class: 'dn-h2', text: titleText }),
+    ...children.filter(Boolean),
+  ]);
+}
+
+export function subhead(text) { return el('div', { class: 'dn-subhead', text }); }
+
+export function empty(text) {
+  return el('p', { class: 'dn-empty', text: text || 'No data yet.' });
+}
+
+export function loading(text) {
+  return el('p', { class: 'dn-empty', text: text || 'Loading…' });
+}
+
+export function normaliseDecision(outcome) {
+  if (!outcome || typeof outcome !== 'object') return null;
+  const raw = String(outcome.tournament_decision || outcome.decision || '').toLowerCase();
+  if (raw.includes('promot')) return 'promoted';
+  if (raw.includes('reject')) return 'rejected';
+  if (raw.includes('defer')) return 'deferred';
+  return raw || null;
+}
+
+export function verdictPill(decision) {
+  const d = decision || 'baseline';
+  const label = d === 'baseline' ? 'seed (v0)' : d;
+  return el('span', { class: `dn-pill dn-${d}`, text: label });
+}
+
+export function stat(value, key) {
+  return el('div', { class: 'dn-stat' }, [
+    el('span', { class: 'v', text: value }),
+    el('span', { class: 'k', text: key }),
+  ]);
+}
+
+// A themed link/button (the E bug fix: the "open full transcript" link must be
+// a properly styled themed control, never an unstyled anchor).
+export function linkButton(text, hrefStr, attrs) {
+  return el('a', Object.assign({ class: 'dn-linkbtn', href: hrefStr }, attrs || {}), [text]);
+}
+
+// ---- tiny markdown → DOM (GFM tables render — fix #3) ---------------
+//
+// Renders a SAFE subset to DOM nodes — headings, paragraphs, ordered + bullet
+// lists, blockquotes, inline code/bold/italic/links, fenced code, AND GFM
+// TABLES — without ever using innerHTML on untrusted text. The figure marker
+// `<!-- FIGURE:name -->` invokes opts.onFigure(name) so a live figure can be
+// spliced in. Anything unrecognised becomes a paragraph.
+export function renderMarkdown(md, opts) {
+  const o = opts || {};
+  const root = el('div', { class: 'dn-md-body' });
+  const text = String(md || '').replace(/\r\n/g, '\n');
+  const lines = text.split('\n');
+  let i = 0;
+  let para = [];
+  let list = null; let listOrdered = false;
+
+  const flushPara = () => { if (para.length) { root.appendChild(el('p', null, inline(para.join(' ')))); para = []; } };
+  const flushList = () => { if (list) { root.appendChild(list); list = null; } };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // figure marker → callback
+    const fig = /^<!--\s*FIGURE:([A-Za-z0-9_-]+)\s*-->$/.exec(trimmed);
+    if (fig) {
+      flushPara(); flushList();
+      if (o.onFigure) { const node = o.onFigure(fig[1]); if (node) root.appendChild(node); }
+      i++; continue;
+    }
+    if (/^<!--.*-->$/.test(trimmed)) { i++; continue; } // skip other markers
+
+    if (/^```/.test(trimmed)) {
+      flushPara(); flushList();
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+      i++;
+      root.appendChild(el('pre', null, [el('code', { text: buf.join('\n') })]));
+      continue;
+    }
+    // GFM table: a header row, a `| --- |` separator, then body rows.
+    if (trimmed.startsWith('|') && i + 1 < lines.length
+      && /^\|?[\s:|-]+\|?$/.test(lines[i + 1].trim()) && lines[i + 1].includes('-')) {
+      flushPara(); flushList();
+      const header = splitRow(trimmed);
+      const rows = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim().startsWith('|')) { rows.push(splitRow(lines[i].trim())); i++; }
+      root.appendChild(table(header, rows));
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      flushPara(); flushList();
+      const lvl = Math.min(4, heading[1].length);
+      root.appendChild(el('h' + lvl, null, inline(heading[2])));
+      i++; continue;
+    }
+    if (/^>\s?/.test(line)) {
+      flushPara(); flushList();
+      root.appendChild(el('blockquote', null, inline(line.replace(/^>\s?/, ''))));
+      i++; continue;
+    }
+    const ordered = /^\s*\d+\.\s+(.*)$/.exec(line);
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (ordered || bullet) {
+      flushPara();
+      const wantOrdered = !!ordered;
+      if (!list || listOrdered !== wantOrdered) { flushList(); list = el(wantOrdered ? 'ol' : 'ul'); listOrdered = wantOrdered; }
+      list.appendChild(el('li', null, inline((ordered || bullet)[1])));
+      i++; continue;
+    }
+    if (trimmed === '') { flushPara(); flushList(); i++; continue; }
+    flushList();
+    para.push(trimmed);
+    i++;
+  }
+  flushPara(); flushList();
+  if (!root.firstChild) root.appendChild(el('p', { class: 'dn-faint', text: 'Nothing to render.' }));
+  return root;
+}
+
+function splitRow(line) {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((c) => c.trim());
+}
+
+function table(header, rows) {
+  const t = el('table', { class: 'dn-md-table' });
+  t.appendChild(el('thead', null, [el('tr', null, header.map((c) => el('th', null, inline(c))))]));
+  t.appendChild(el('tbody', null, rows.map((r) => el('tr', null, r.map((c) => el('td', null, inline(c)))))));
+  return t;
+}
+
+function inline(s) {
+  const out = [];
+  const str = String(s == null ? '' : s);
+  const re = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g;
+  let last = 0; let m;
+  while ((m = re.exec(str)) !== null) {
+    if (m.index > last) out.push(str.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith('`')) out.push(el('code', { text: tok.slice(1, -1) }));
+    else if (tok.startsWith('**')) out.push(el('strong', { text: tok.slice(2, -2) }));
+    else if (tok.startsWith('*')) out.push(el('em', { text: tok.slice(1, -1) }));
+    else {
+      const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok);
+      if (lm) out.push(el('a', { class: 'dn-md-link', href: lm[2], text: lm[1] }));
+      else out.push(tok);
+    }
+    last = m.index + tok.length;
+  }
+  if (last < str.length) out.push(str.slice(last));
+  return out.length ? out : [str];
+}
+
+export { href };
