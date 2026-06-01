@@ -502,17 +502,21 @@ def test_bundle_under_size_envelope(
     # mutation-per-generation and ACM-publication views. Measured 2,340,551
     # bytes under a 2,400 KB cap.
     # CONVERGENCE-II WAVE (round 4): four more variants L (Atlas III), M
-    # (Ledger II), N (Console II), O (Compass) — dashboard-first, reusing K's
-    # publication renderer as a tab, with a combined mutation surface +
-    # side-by-side diff, a new per-board cross-candidate view, a typeface-theme
-    # picker (Open Sans pairings via Google Fonts), and the round-3 fixes
-    # (stacked gate, theme-aware heatmap, sankey label/value alignment,
-    # proportional sizing). Fifteen variants + v1/v2 now ship side-by-side
-    # behind ?ui= for the operator to down-select. Measured 2,925,207 bytes.
-    # A 3,000 KB cap holds the (deliberately temporary) exploration; once a
-    # variant is chosen, all the others + v1/v2 are deleted and the envelope
-    # drops sharply and is reset.
-    assert total < 3_000_000, f"bundle is {total} bytes, exceeds 3_000_000 envelope"
+    # (Ledger II), N (Console II), O (Compass) — dashboard-first, K's
+    # publication renderer as a tab, combined mutation + side-by-side diff, a
+    # per-board cross-candidate view, a typeface-theme picker. Measured
+    # 2,925,207 bytes under a 3,000 KB cap.
+    # CONVERGENCE-III WAVE (round 5): four more variants P (Console III), Q
+    # (Atlas IV), R (Strata), S (Lens) — all built on a data-model TREE
+    # navigation sidebar (Environment → Epoch → {Generations, Boards, Mutation
+    # surface, Publication}), with per-candidate patch diffs, all-matchups,
+    # a first-class board view with inline side-by-side transcripts, the
+    # promote gate on the candidate page, and trellis/heatmap de-duplication.
+    # Nineteen variants + v1/v2 now ship side-by-side behind ?ui= for the
+    # operator to down-select. Measured 3,605,283 bytes. A 3,700 KB cap holds
+    # the (deliberately temporary) exploration; once a variant is chosen, all
+    # the others + v1/v2 are deleted and the envelope drops sharply and resets.
+    assert total < 3_700_000, f"bundle is {total} bytes, exceeds 3_700_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
