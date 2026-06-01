@@ -377,7 +377,7 @@ export function mountShell(root) {
 // with its generations and board entries. Failure-tolerant — a missing
 // drill-down degrades to an empty group, never a blank tree.
 async function buildTreeModel() {
-  const [ws, lin, ep] = await Promise.all([D.workspace(), D.lineage(), D.epoch()]);
+  const [ws, lin, ep, brk] = await Promise.all([D.workspace(), D.lineage(), D.epoch(), D.bracket()]);
   const epochs = [];
   const seen = new Set();
   const current = ws ? ws.current_epoch_id : (ep && ep.epoch_id) || null;
@@ -401,6 +401,13 @@ async function buildTreeModel() {
   for (const e of epochs) byEpoch[e.id] = { gens: [], boards: [] };
   if (ep && ep.epoch_id != null) {
     const id = ep.epoch_id;
+    // The CURRENT champion = the LAST id in champion_lineage (the epoch's
+    // reigning generation). Every OTHER promoted generation is a FORMER
+    // champion (it held the title, then was succeeded). When the lineage is
+    // absent, fall back to the last-promoted generation as the current champion
+    // so a pre-feature index still disambiguates one current crown.
+    const lineage = (brk && Array.isArray(brk.champion_lineage)) ? brk.champion_lineage.map(String) : [];
+    const currentChampionId = lineage.length ? lineage[lineage.length - 1] : null;
     const gensList = (lin && Array.isArray(lin.generations) && lin.generations.length)
       ? lin.generations
         .filter((g) => !g.epoch_id || g.epoch_id === id)
@@ -409,6 +416,14 @@ async function buildTreeModel() {
           id: x.generation_id, parent: x.parent_generation_id || null,
           promoted: normaliseDecision(x.outcome) === 'promoted',
         })) : []);
+    // disambiguate the CURRENT champion (♚) from FORMER champions (hollow crown).
+    const fallbackCurrent = currentChampionId == null
+      ? (gensList.filter((g) => g.promoted).map((g) => g.id).pop() || null)
+      : currentChampionId;
+    for (const g of gensList) {
+      g.currentChampion = g.promoted && String(g.id) === String(fallbackCurrent);
+      g.formerChampion = g.promoted && !g.currentChampion;
+    }
     const boardList = (Array.isArray(ep.board) ? ep.board : []).map((b) => ({
       id: b.entry_id || b.id, kindTag: KIND_TAG[b.kind] || null,
     })).filter((b) => b.id);

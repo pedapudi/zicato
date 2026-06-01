@@ -683,25 +683,36 @@ export function structureBracket(opts) {
 
 // ---- racing ladder (DATA-DRIVEN successive-halving) -----------------
 //
-// One column per rung from the structure payload's `rounds[]`; each rung
-// shows its surviving field with the `cut[]` competitors struck through
-// and the `board_fraction` budget shown in the column head, so the
-// operator sees the budget escalation and who was cut at each rung.
+// One column per rung from the structure payload's `rounds[]`, escalating
+// left→right to a final CHAMPION-GATE column. Each rung shows its FULL field
+// racing on a `board_fraction` of the board (shown in the column head), with
+// the `cut[]` worst-by-η struck through (✕) and the `survivors[]` carried
+// forward (↑); faint connectors trace each survivor into the next rung, so
+// the operator reads the halving + the budget escalation at a glance. The
+// lone final survivor flows into a champion-gate seat (♛). A `live` race
+// leaves pending rungs neutral (nobody is cut until the rung's results land)
+// and the gate reads "deciding…" rather than crowning a not-yet-committed
+// winner.
+//
 // FIT-TO-WIDTH (width:100% + viewBox), theme-aware (token classes), no
 // pan/zoom — the same discipline as every other Console mark.
 //
 // opts: { rungs:[{label, competitors, survivors, cut, board_fraction,
-//         match_id}], onCompetitor(genId), title }
+//         match_id, pending}], championId, live, onCompetitor(genId), title }
 export function racingLadder(opts) {
   const o = opts || {};
   const rungs = (Array.isArray(o.rungs) ? o.rungs : []).filter((r) => r);
+  const live = !!o.live;
   const colW = 124;
-  const colGap = 24;
+  const colGap = 30;
+  const gateW = 104;
   const rowH = 18;
   const headH = 34;
   const top = 6;
   const maxRows = Math.max(1, ...rungs.map((r) => (Array.isArray(r.competitors) ? r.competitors.length : 0)), 1);
-  const w = Math.max(colW, rungs.length * colW + Math.max(0, rungs.length - 1) * colGap) + 8;
+  // a trailing champion-gate column rides after the last rung.
+  const ladderW = rungs.length * colW + Math.max(0, rungs.length - 1) * colGap;
+  const w = Math.max(colW, ladderW + colGap + gateW) + 8;
   const h = top + headH + maxRows * rowH + 8;
   const svg = svgEl('svg', {
     class: 'dn-raceladder', width: '100%', height: h,
@@ -713,8 +724,35 @@ export function racingLadder(opts) {
     svg.appendChild(t);
     return svg;
   }
+  const colX = (j) => j * (colW + colGap) + 2;
+  const rowY = (i) => top + headH + i * rowH + rowH / 2;
+  // cache each competitor's row index per rung so connectors can be drawn from
+  // a survivor's seat in rung j to the same competitor's seat in rung j+1.
+  const rowIndex = rungs.map((rung) => {
+    const map = new Map();
+    (Array.isArray(rung.competitors) ? rung.competitors : []).forEach((cid, i) => map.set(String(cid), i));
+    return map;
+  });
+
+  // ── connectors: each survivor of rung j → its seat in rung j+1 ──────
+  for (let j = 0; j < rungs.length - 1; j++) {
+    const surv = Array.isArray(rungs[j].survivors) ? rungs[j].survivors.map(String) : [];
+    const x1 = colX(j) + colW - 6;
+    const x2 = colX(j + 1) + 2;
+    const mx = (x1 + x2) / 2;
+    for (const sid of surv) {
+      const yi = rowIndex[j].get(sid);
+      const yj = rowIndex[j + 1].get(sid);
+      if (yi == null || yj == null) continue;
+      svg.appendChild(svgEl('path', {
+        d: `M${x1},${rowY(yi)} H${mx} V${rowY(yj)} H${x2}`,
+        class: 'dn-raceladder-edge', fill: 'none',
+      }));
+    }
+  }
+
   rungs.forEach((rung, j) => {
-    const x = j * (colW + colGap) + 2;
+    const x = colX(j);
     const head = svgEl('text', { x: x + colW / 2, y: top + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
     head.textContent = shortLabel(rung.label || `Rung ${j + 1}`, 16);
     svg.appendChild(head);
@@ -726,15 +764,21 @@ export function racingLadder(opts) {
     const cutSet = new Set(Array.isArray(rung.cut) ? rung.cut.map(String) : []);
     const surv = new Set(Array.isArray(rung.survivors) ? rung.survivors.map(String) : []);
     const comps = Array.isArray(rung.competitors) ? rung.competitors : [];
+    // a rung whose results are not in yet (no cut + no survivors) is PENDING:
+    // every runner is shown neutral (racing), never cut, until the cut lands.
+    const pending = !!rung.pending || (cutSet.size === 0 && surv.size === 0);
     comps.forEach((cid, i) => {
-      const cy = top + headH + i * rowH + rowH / 2;
+      const cy = rowY(i);
       const sid = String(cid);
-      const eliminated = cutSet.has(sid);
-      const survived = surv.has(sid) || (!eliminated && surv.size === 0 && cutSet.size === 0);
+      const eliminated = !pending && cutSet.has(sid);
+      const survived = !pending && (surv.has(sid) || (!eliminated && surv.size === 0 && cutSet.size === 0));
+      const racing = pending || (!eliminated && !survived);
       const g = svgEl('g', { class: 'dn-raceladder-runner', tabindex: o.onCompetitor ? '0' : null });
-      const cls = 'dn-raceladder-name' + (eliminated ? ' dn-out dn-bad' : survived ? ' dn-good' : '');
+      const cls = 'dn-raceladder-name'
+        + (eliminated ? ' dn-out dn-bad' : survived ? ' dn-good' : racing ? ' dn-racing' : '');
+      const verdict = eliminated ? 'cut' : survived ? 'survives' : 'racing';
       const t = svgEl('text', { x: x + 6, y: cy + 3, class: cls },
-        [title(`${sid} · rung ${j + 1} · ${eliminated ? 'cut' : 'survives'}`)]);
+        [title(`${sid} · rung ${j + 1}${isNum(rung.board_fraction) ? ` · board ${(rung.board_fraction * 100).toFixed(0)}%` : ''} · ${verdict}`)]);
       t.textContent = shortLabel(sid, 14) + (eliminated ? ' ✕' : survived ? ' ↑' : '');
       g.appendChild(t);
       if (o.onCompetitor) {
@@ -745,6 +789,37 @@ export function racingLadder(opts) {
       svg.appendChild(g);
     });
   });
+
+  // ── the trailing champion-gate column ───────────────────────────────
+  const gx = ladderW + colGap + 2;
+  const gateHead = svgEl('text', { x: gx + gateW / 2, y: top + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
+  gateHead.textContent = 'champion-gate';
+  svg.appendChild(gateHead);
+  const cy = rowY(0);
+  const champId = o.championId ? String(o.championId) : null;
+  // connector from the final rung's survivor seat into the gate seat.
+  const lastSurv = Array.isArray(rungs[rungs.length - 1].survivors) ? rungs[rungs.length - 1].survivors.map(String) : [];
+  if (champId && lastSurv.indexOf(champId) >= 0) {
+    const x1 = colX(rungs.length - 1) + colW - 6;
+    const fromY = rowY(rowIndex[rungs.length - 1].get(champId) || 0);
+    const mx = (x1 + gx) / 2;
+    svg.appendChild(svgEl('path', {
+      d: `M${x1},${fromY} H${mx} V${cy} H${gx}`, class: 'dn-raceladder-edge dn-raceladder-edge-champ', fill: 'none',
+    }));
+  }
+  const gateG = svgEl('g', { class: 'dn-raceladder-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });
+  gateG.appendChild(svgEl('rect', { x: gx, y: cy - rowH / 2 - 1, width: gateW, height: rowH + 2, rx: 3,
+    class: 'dn-raceladder-gatebox' + (champId && !live ? ' dn-good' : '') }));
+  const gt = svgEl('text', { x: gx + 6, y: cy + 3, class: 'dn-raceladder-gatelab' + (champId && !live ? ' dn-good' : '') },
+    [title(champId ? (live ? `${champId} leads — gate pending` : `${champId} → champion`) : 'awaiting the final survivor')]);
+  gt.textContent = champId ? '♛ ' + shortLabel(champId, 11) : (live ? 'deciding…' : 'tbd');
+  gateG.appendChild(gt);
+  if (champId && o.onCompetitor) {
+    gateG.style.cursor = 'pointer';
+    gateG.addEventListener('click', () => o.onCompetitor(champId));
+    gateG.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(champId); } });
+  }
+  svg.appendChild(gateG);
   return svg;
 }
 

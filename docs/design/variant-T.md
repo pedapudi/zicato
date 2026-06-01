@@ -78,7 +78,7 @@ hierarchy and drives the single detail pane:
 Environment (workspace)
 └─ Epoch <id>                      (one node per epoch — MULTI-epoch nav)
    ├─ Generations
-   │  └─ <gen> (champion / rejected / seed)
+   │  └─ <gen> (champion / former champion / rejected / seed)
    ├─ Boards
    │  └─ <entry>
    ├─ Mutation surface
@@ -88,7 +88,17 @@ Environment (workspace)
 Expandable / collapsible; multi-epoch AND multi-generation; selection explicit +
 URL-encoded so a cold deep-link hydrates BOTH the open branches and the detail.
 Implemented in `js/variants/T/tree.js`; the shell (`shell.js`) assembles the
-structural model from `/api/workspace` + `/api/lineage` + `/api/epoch.board`.
+structural model from `/api/workspace` + `/api/lineage` + `/api/epoch.board` +
+`/api/tournaments` (for `champion_lineage`).
+
+**Current vs former champion.** Several generations may carry `promoted` over an
+epoch's life, but only ONE is the **current** champion — the last id in
+`champion_lineage`. The shell stamps `currentChampion` / `formerChampion` on each
+gen; the tree badges the current crown with a solid **♚ "champion"** marker
+(`gen-champ`) and every former champion with a distinct, dimmer **hollow-crown
+♔ "former champion"** marker (`gen-former`). A legacy model with no
+current/former split keeps the champion badge for any promoted gen (back-compat).
+Rejected / seed branches are unchanged.
 
 ## Detail views (router prefix `#/`, path = tree path)
 
@@ -174,6 +184,17 @@ width. The selected/hovered tick highlights via a CSS state-class swap (never an
 infinite keyframe). The reel's vertical scale is the fixed cozy
 `--dt-reel-scale` while its width stays fit-to-container.
 
+**Structure-aware (the reel is gauntlet-only).** The champion-spine reel is the
+right picture for a **gauntlet** epoch — N sequential champion-vs-challenger
+title defences — but it is the WRONG story for a non-gauntlet structure (racing
+is successive halving, not a sequence of defences). So `views/epoch.js` reads
+`ep.tournament.structure` (via `isNonGauntlet`) and, for a non-gauntlet epoch,
+**replaces the reel** with a compact **structure strip** (`.dt-struct-strip`):
+the structure label, the field size (`field of N`), the rung / round count, and
+a **"See Match-ups →"** affordance that opens the real ladder / bracket /
+standings. The gauntlet reel is unchanged; only the non-gauntlet case swaps it
+out. The heatmap is unaffected either way.
+
 ## The match cards on the generations page (fold 5, adopted from W)
 
 `views/gens.js` leads with a **champion-defends banner** (champion id · loss · N
@@ -217,9 +238,14 @@ and branches:
   - **`swiss`** — a **standings table** hero (`dt-standings`, reusing
     `dn-board-table`) + a per-round **pairings** list from `rounds[]`.
   - **`racing`** — a **successive-halving rung ladder**
-    (`svg.racingLadder`): one column per rung showing the surviving field with
-    the `cut[]` competitors struck through (✕ = cut, ↑ = survives) and each
-    rung's `board_fraction` shown so the operator sees the budget escalation.
+    (`svg.racingLadder`): one column per rung, escalating left→right to a
+    trailing **champion-gate** column. Each rung shows its full field racing on
+    its `board_fraction` of the board (shown in the column head), with the
+    `cut[]` worst-by-η struck through (✕ = cut, ↑ = survives) and faint
+    survivor→next-rung **connectors** that trace the halving. The lone final
+    survivor flows into the champion-gate seat (♛). A **live** race leaves a
+    pending rung neutral (nobody cut until that rung's results land) and the
+    gate reads "deciding…" rather than crowning a not-yet-committed winner.
 
 A **structure pill** (`dt-structure-pill`: "structure · Swiss (4 rounds)" etc.)
 labels the configured structure in both the **epoch** header (`views/epoch.js`)
@@ -229,6 +255,25 @@ scaling with the page-scale pill). Since the live workspace is gauntlet-only,
 the non-gauntlet renderers are driven + tested with **mock structure payloads**
 (`test/variant_t.test.mjs`) and degrade gracefully (an honest empty state, no
 throw) when the structure payload is absent.
+
+### Surfacing the LIVE tournament during a run
+
+The completed `/api/tournaments` record only commits the promote decision at the
+**very end** of a run, so reading it mid-run shows an empty ladder ("No
+tournament has run yet") and mislabels the eventual winner as
+rejected/eliminated. `views/gens.js` therefore prefers the **LIVE**
+`/api/active-tournament` (`data.activeTournament()`, never cached) whenever a run
+is in flight — detected with the same structure-agnostic
+`deriveLiveStatus({heartbeat, activeRuns, activeTournament})` the chrome reads.
+Both endpoints share the `{structure, competitors, rounds, standings}` shape;
+`structure.normalizeStructure(st, live)` folds them into one renderer input and
+stamps `live` when the active record carries a non-idle `phase`. In `live` mode
+the renderers suppress committed verdicts — standings read **racing** instead of
+champion/eliminated, a rung with no recorded cut/survivors is shown **pending**
+(neutral, nobody struck), and a **LIVE** badge (`.dt-live-pill`) rides beside the
+structure pill. When idle, the view falls back to the completed record exactly as
+before. The lineage tree's crown likewise reflects the in-flight state through
+the heartbeat-driven model rebuild.
 
 ## The live-status indicator — structure-agnostic (running for ANY structure)
 

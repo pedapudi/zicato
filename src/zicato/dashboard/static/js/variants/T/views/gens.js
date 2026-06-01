@@ -21,10 +21,12 @@
 // /api/round/{e}/{champ}/{chall}/gate.
 
 import { el } from '../../../core/dom.js';
+import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, normaliseDecision } from '../ui.js';
-import { renderStructure, structurePill, structureDigest, isNonGauntlet } from './structure.js';
+import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure } from './structure.js';
+import { deriveLiveStatus } from '../livestatus.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading generations…' }));
@@ -43,7 +45,14 @@ export async function render(host, ctx, params) {
   // structure, fetch the full structure state and render the real
   // bracket / standings / racing ladder instead of the gauntlet ladder.
   const tournament = (ep && ep.tournament && typeof ep.tournament === 'object') ? ep.tournament : null;
-  const structure = (tournament && tournament.structure) || 'gauntlet';
+  let structure = (tournament && tournament.structure) || 'gauntlet';
+  // a LIVE non-gauntlet run governs the dispatch even if the epoch contract
+  // has not yet recorded its structure block (the active-tournament names it).
+  const liveStruct = (state.activeTournament && state.activeTournament.structure) || null;
+  const liveActive = deriveLiveStatus({
+    heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
+  }).running;
+  if (structure === 'gauntlet' && liveActive && liveStruct && isNonGauntlet(liveStruct)) structure = liveStruct;
   if (isNonGauntlet(structure)) {
     await renderConfiguredStructure(host, ctx, id, ep, bracket, structure, tournament && tournament.params);
     return;
@@ -130,45 +139,69 @@ export async function render(host, ctx, params) {
   });
 }
 
-// Render the ACTUAL configured (non-gauntlet) structure: pick the epoch's
-// most-recent tournament, fetch its full structure state, and render the
-// bracket / standings / racing ladder. The structure id comes from the new
-// `tournaments[]` array on /api/tournaments; when that is empty (e.g. a
-// pre-feature index) we fall back to the crowning-pair id convention so a
-// completed tournament still resolves via the loss-file fallback chain.
+// Render the ACTUAL configured (non-gauntlet) structure.
+//
+// LIVE-FIRST: when a run is in flight (the structure-agnostic live status from
+// the heartbeat / active-runs / active-tournament), prefer the LIVE
+// /api/active-tournament topology — so the ladder fills in rung-by-rung and
+// the in-flight competitors are NOT mislabeled "rejected/eliminated" (the
+// promote decision only commits at the very end, so a completed record read
+// mid-run would crown the eventual winner prematurely). When idle, fall back
+// to the COMPLETED record: pick the epoch's most-recent tournament from the
+// `tournaments[]` array on /api/tournaments and fetch its full structure
+// state; when that is empty (a pre-feature index) derive the crowning-pair id
+// so a completed tournament still resolves via the loss-file fallback chain.
 async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, params) {
-  const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
-  // prefer a non-gauntlet tournament; else the last tournament; else derive.
+  // is a run live right now? (the same structure-agnostic verdict the chrome reads)
+  const status = deriveLiveStatus({
+    heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
+  });
+  // the LIVE topology (full {structure,phase,competitors,rounds,standings}).
+  const liveRaw = status.running ? await D.activeTournament() : null;
+  const liveSt = normalizeStructure(liveRaw, true);
+  const liveUsable = !!(liveSt && liveSt.live);
+
+  // the COMPLETED record (only fetched when we are NOT showing the live one).
   let tournamentId = null;
-  const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
-  if (nonGaunt.length) tournamentId = nonGaunt[nonGaunt.length - 1].tournament_id;
-  else if (tournaments.length) tournamentId = tournaments[tournaments.length - 1].tournament_id;
-  else {
-    const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
-    const last = matchups[matchups.length - 1];
-    if (last && last.challenger) tournamentId = `${id}:${last.champion || ''}->${last.challenger}`;
+  let st = null;
+  if (!liveUsable) {
+    const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
+    const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
+    if (nonGaunt.length) tournamentId = nonGaunt[nonGaunt.length - 1].tournament_id;
+    else if (tournaments.length) tournamentId = tournaments[tournaments.length - 1].tournament_id;
+    else {
+      const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
+      const last = matchups[matchups.length - 1];
+      if (last && last.challenger) tournamentId = `${id}:${last.champion || ''}->${last.challenger}`;
+    }
+    st = tournamentId ? normalizeStructure(await D.tournamentStructure(id, tournamentId), false) : null;
   }
 
-  const st = tournamentId ? await D.tournamentStructure(id, tournamentId) : null;
-  const digest = JSON.stringify({ id, structure, tournamentId, st: structureDigest(st) });
+  const shown = liveUsable ? liveSt : st;
+  const shownStructure = (shown && shown.structure) || structure;
+  const digest = JSON.stringify({
+    id, structure: shownStructure, tournamentId, live: liveUsable, st: structureDigest(shown),
+  });
   gatedSwap(host, digest, () => {
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
       el('h1', { class: 'dn-h1', text: `Match-ups · ${id}` }),
       el('div', { class: 'dt-structure-line' }, [
-        structurePill(structure, (st && st.structure_params) || params),
-      ]),
-      el('p', { class: 'dn-lede', text: 'The configured tournament structure for this epoch. Open a match or competitor for its candidate detail, promote gate, per-board scoring, and patch diff.' }),
+        structurePill(shownStructure, (shown && shown.structure_params) || params),
+        liveUsable ? el('span', { class: 'dt-live-pill', text: 'LIVE' }) : null,
+      ].filter(Boolean)),
+      el('p', { class: 'dn-lede', text: liveUsable
+        ? 'A run is in flight — the live tournament fills in as runs land. In-flight competitors are shown racing, not rejected; the winner is not committed until the final gate.'
+        : 'The configured tournament structure for this epoch. Open a match or competitor for its candidate detail, promote gate, per-board scoring, and patch diff.' }),
     ]));
-    if (!tournamentId) {
-      nodes.push(empty('No tournament has run for this structure yet.'));
+    if (!shown) {
+      nodes.push(empty(status.running
+        ? 'A run is starting — the live tournament topology is not available yet.'
+        : (tournamentId ? 'The tournament structure is unavailable (the index may not be built).'
+                        : 'No tournament has run for this structure yet.')));
       return nodes;
     }
-    if (!st) {
-      nodes.push(empty('The tournament structure is unavailable (the index may not be built).'));
-      return nodes;
-    }
-    for (const n of renderStructure(st, ctx, id)) nodes.push(n);
+    for (const n of renderStructure(shown, ctx, id)) nodes.push(n);
     return nodes;
   });
 }

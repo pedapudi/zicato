@@ -17,7 +17,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { reel, reelDigest } from '../reel.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
-import { structurePill } from './structure.js';
+import { structurePill, isNonGauntlet, structureLabel } from './structure.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
@@ -71,10 +71,16 @@ export async function render(host, ctx, params) {
   // header pill. Absent ⇒ no pill (a gauntlet epoch that predates the
   // feature reads byte-identically — the block is simply omitted upstream).
   const tournament = (ep && ep.tournament && typeof ep.tournament === 'object') ? ep.tournament : null;
+  // Is this a NON-gauntlet epoch? Racing/swiss/elim are NOT N sequential
+  // champion-vs-challenger rounds, so the gauntlet "champion spine" reel does
+  // not describe them — we swap in a structure-appropriate strip instead.
+  const structure = (tournament && tournament.structure) || 'gauntlet';
+  const nonGauntlet = isNonGauntlet(structure);
 
   const digest = JSON.stringify({
     epochId, goal: ep.goal || '', briefLen: (ep.brief || '').length, closed: !!ep.closed,
     structure: tournament ? [tournament.structure, JSON.stringify(tournament.params || {})] : null,
+    nonGauntlet,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
     reel: reelDigest(reelSpec),
     loss: [...lossLookup.entries()].sort(),
@@ -119,19 +125,40 @@ export async function render(host, ctx, params) {
     ]);
     nodes.push(section('Operator’s brief to the proposer', briefDetails));
 
-    // ---- the slim reel: rounds along the champion spine (replaces bumps) ----
-    // Fit-to-width, no pan/zoom: the ticks compress as rounds grow. Clicking a
-    // station → that round's candidate; the seed → the champion. The big
-    // per-challenger detail intentionally lives in the generations match cards,
-    // not hung off the reel (that does not scale to many rounds).
-    const reelCard = el('div', { class: 'dn-panel' });
-    reelCard.appendChild(reel({
-      championId, rounds,
-      selected: null,
-      onSelect: (id) => ctx.navigate('candidate', { epochId, gen: id }),
-      onSeed: (id) => { if (id) ctx.navigate('candidate', { epochId, gen: id }); },
-    }));
-    nodes.push(section('Reel · the rounds along the champion spine', reelCard));
+    // ---- the structure-aware reel ------------------------------------
+    // GAUNTLET keeps the slim reel: rounds along the champion spine (replaces
+    // bumps). Fit-to-width, no pan/zoom: the ticks compress as rounds grow.
+    // Clicking a station → that round's candidate; the seed → the champion.
+    // The per-challenger detail lives in the generations match cards.
+    //
+    // For a NON-gauntlet epoch the champion-spine reel is the WRONG story
+    // (racing is successive halving, not N sequential title defences), so we
+    // swap in a compact structure strip ("racing · field of N · M rungs") with
+    // a "see Match-ups" affordance that opens the real ladder/bracket.
+    if (nonGauntlet) {
+      const stripCard = el('div', { class: 'dn-panel dt-struct-strip' });
+      const fieldN = gens.length;
+      const params = (tournament && tournament.params) || {};
+      const rungs = Array.isArray(params.rungs) ? params.rungs.length : null;
+      const facts = [el('span', { class: 'dt-struct-strip-lab', text: structureLabel(structure, params) })];
+      facts.push(el('span', { class: 'dt-struct-strip-fact', text: `field of ${fieldN}` }));
+      if (structure === 'racing' && rungs) facts.push(el('span', { class: 'dt-struct-strip-fact', text: `${rungs} rung${rungs === 1 ? '' : 's'}` }));
+      else if (structure === 'swiss' && svg.isNum(params.rounds)) facts.push(el('span', { class: 'dt-struct-strip-fact', text: `${params.rounds} round${params.rounds === 1 ? '' : 's'}` }));
+      stripCard.appendChild(el('div', { class: 'dt-struct-strip-row' }, facts));
+      stripCard.appendChild(el('a', { class: 'dn-linkbtn dt-struct-strip-link', href: ctx.href('gens', { epochId }), text: 'See Match-ups →' }));
+      stripCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+        'this epoch is not a gauntlet — the champion-spine reel does not describe it · the full ladder / bracket / standings live in Match-ups' }));
+      nodes.push(section('Tournament structure · ' + structureLabel(structure, params), stripCard));
+    } else {
+      const reelCard = el('div', { class: 'dn-panel' });
+      reelCard.appendChild(reel({
+        championId, rounds,
+        selected: null,
+        onSelect: (id) => ctx.navigate('candidate', { epochId, gen: id }),
+        onSeed: (id) => { if (id) ctx.navigate('candidate', { epochId, gen: id }); },
+      }));
+      nodes.push(section('Reel · the rounds along the champion spine', reelCard));
+    }
 
     // ---- COMPACT board entries × generations heatmap (stays here, fix #6) ----
     const rows = [...entryIds].sort().map((id) => ({ id, label: id }));

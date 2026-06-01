@@ -1025,9 +1025,12 @@
 
   .dt-glyph { width: 13px; text-align: center; flex: none; font-size: 10px; color: var(--v2-ink-faint); }
   .dt-glyph-gen-champ { color: var(--v2-good); }
+  /* a FORMER champion: dimmer hollow crown — held the title, then succeeded */
+  .dt-glyph-gen-former { color: var(--v2-ink-faint); opacity: 0.85; }
   .dt-glyph-board { color: var(--v2-accent); }
   .dt-glyph-mutations, .dt-glyph-paper { color: var(--v2-ink-soft); }
   .dt-leaf[data-kind="gen-champ"] .dt-text { color: var(--v2-good); }
+  .dt-leaf[data-kind="gen-former"] .dt-text { color: var(--v2-ink-soft); }
   .dt-leaf .dt-text { font-family: var(--v2-mono); font-size: 11.5px; }
   .dt-leaf[data-kind="mutations"] .dt-text,
   .dt-leaf[data-kind="paper"] .dt-text { font-family: var(--v2-sans); font-size: 12px; }
@@ -1036,6 +1039,7 @@
   .dt-tag { font-family: var(--v2-mono); font-size: 8.5px; padding: 0 5px; border-radius: 7px;
     border: 1px solid var(--v2-rule); color: var(--v2-ink-faint); margin-left: auto; white-space: nowrap; }
   .dt-tag-gen-champ { color: var(--v2-good); border-color: var(--v2-good); }
+  .dt-tag-gen-former { color: var(--v2-ink-faint); border-color: var(--v2-rule); font-style: italic; }
 
   /* ---- view affordances added by P ---- */
   .dt-empty { color: var(--v2-ink-faint); font-size: 12px; font-style: italic; padding: 12px 0; }
@@ -1237,11 +1241,23 @@
 
   /* structure pill — the one-line header label (epoch + match-ups) */
   .dt-structure-line { margin-top: 8px; }
+  /* the non-gauntlet epoch structure strip (replaces the champion-spine reel) */
+  .dt-struct-strip { display: flex; flex-direction: column; gap: 8px; }
+  .dt-struct-strip-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .dt-struct-strip-lab { font-family: var(--n-font-head); font-size: 17px; font-weight: 700; color: var(--v2-ink); }
+  .dt-struct-strip-fact { font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft);
+    padding: 2px 9px; border: 1px solid var(--v2-rule); border-radius: 10px; background: var(--v2-rule-soft); }
+  .dt-struct-strip-link { align-self: flex-start; }
   .dt-structure-pill { display: inline-flex; align-items: center; gap: 6px;
     font-family: var(--v2-mono); font-size: 10px; padding: 3px 9px;
     border: 1px solid var(--v2-rule); border-radius: 11px; background: var(--v2-rule-soft); }
   .dt-structure-pill-k { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.07em; }
   .dt-structure-pill-v { color: var(--v2-ink); font-weight: 600; }
+  /* a LIVE badge beside the structure pill while a run is in flight */
+  .dt-live-pill { display: inline-flex; align-items: center; margin-left: 8px;
+    font-family: var(--v2-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em;
+    padding: 2px 8px; border-radius: 10px; color: var(--v2-good);
+    border: 1px solid var(--v2-good); background: color-mix(in srgb, var(--v2-good) 12%, transparent); }
 
   /* bracket (single / double elimination) */
   .dn-sbracket-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
@@ -1265,8 +1281,18 @@
   .dn-raceladder-name.dn-good { fill: var(--v2-good); }
   .dn-raceladder-name.dn-bad { fill: var(--v2-bad); }
   .dn-raceladder-name.dn-out { text-decoration: line-through; opacity: 0.85; }
+  .dn-raceladder-name.dn-racing { fill: var(--v2-ink-soft); }
   .dn-raceladder-runner:hover .dn-raceladder-name,
   .dn-raceladder-runner:focus .dn-raceladder-name { fill: var(--v2-accent); outline: none; }
+  /* survivor → next-rung connectors + the champion-gate seat */
+  .dn-raceladder-edge { stroke: var(--v2-rule); stroke-width: 1.2; vector-effect: non-scaling-stroke; opacity: 0.7; }
+  .dn-raceladder-edge-champ { stroke: var(--v2-good); opacity: 0.9; }
+  .dn-raceladder-gatebox { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1; }
+  .dn-raceladder-gatebox.dn-good { stroke: var(--v2-good); }
+  .dn-raceladder-gatelab { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
+  .dn-raceladder-gatelab.dn-good { fill: var(--v2-good); font-weight: 700; }
+  .dn-raceladder-gate:hover .dn-raceladder-gatelab,
+  .dn-raceladder-gate:focus .dn-raceladder-gatelab { fill: var(--v2-accent); outline: none; }
 
   /* standings + swiss pairings — reuse the dn-board-table base */
   .dt-standings tr.dt-standings-out td { color: var(--v2-ink-faint); }

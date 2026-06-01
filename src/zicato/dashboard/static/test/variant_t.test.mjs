@@ -1452,4 +1452,209 @@ test('board view: an entry WITH completed results still renders the per-candidat
   assertEqual(allByClass(host, 'dn-board-inflight').length, 0, 'no in-flight panel when nothing is live on the entry');
 });
 
+// ====================================================================
+// STRUCTURE-AWARE polish (round: tournament structures render correctly
+// both DURING a live run and after).
+//   (a) the epoch reel is structure-aware (no gauntlet spine for racing);
+//   (b) a LIVE /api/active-tournament fills the ladder (not "nothing ran")
+//       and in-flight competitors are not mislabeled rejected;
+//   (c) the richer racing ladder renders rungs with cut/survivor + board
+//       fraction + a champion-gate;
+//   (d) only the CURRENT champion (last in champion_lineage) is badged
+//       "champion ♚"; FORMER champions get a distinct "former" marker.
+// ====================================================================
+
+// ---- (a) the epoch reel is structure-aware --------------------------
+
+test('epoch reel: a NON-gauntlet (racing) epoch does NOT render the gauntlet champion-spine reel — it shows a structure strip instead', async () => {
+  freshState();
+  installFixtureMap(structFixture('racing', RACING_STRUCT, 'tourn_e0_rc'));
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+
+  // the gauntlet sequential-rounds reel (champion spine + r0…rN ticks) is GONE.
+  assertEqual(allByClass(host, 'tr-reel').length, 0, 'NO champion-spine reel for a racing epoch');
+  assertEqual(allByClass(host, 'tr-spine').length, 0, 'NO champion-spine line for a racing epoch');
+  assertEqual(allByClass(host, 'tr-tick').length, 0, 'NO sequential round ticks for a racing epoch');
+  // a compact structure strip stands in its place, naming the structure + field.
+  const strip = allByClass(host, 'dt-struct-strip')[0];
+  assert(strip, 'a compact structure strip replaced the reel');
+  assert(host.textContent.includes('Racing'), 'the strip names the racing structure');
+  assert(/field of \d+/.test(host.textContent), 'the strip names the field size');
+  assert(host.textContent.includes('rung'), 'the strip names the rung count for racing');
+  assert(host.textContent.includes('See Match-ups'), 'a "See Match-ups" affordance opens the real ladder');
+  // the epoch overview structure is otherwise unchanged (objective + brief).
+  assert(host.textContent.includes('objective'), 'the epoch overview keeps its objective block');
+});
+
+test('epoch reel: a GAUNTLET epoch STILL renders the champion-spine reel (regression — unchanged)', async () => {
+  freshState(); installFetch();   // the default gauntlet fixture (no tournament block)
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(allByClass(host, 'tr-reel')[0], 'the gauntlet epoch keeps the champion-spine reel');
+  assert(allByClass(host, 'tr-spine')[0], 'the gauntlet reel keeps its champion spine');
+  assert(allByClass(host, 'tr-tick').length >= 2, 'the gauntlet reel keeps its per-round ticks');
+  assertEqual(allByClass(host, 'dt-struct-strip').length, 0, 'NO structure strip for a gauntlet epoch');
+});
+
+// ---- (b) a LIVE active-tournament fills the ladder during a run -----
+
+// a live racing /api/active-tournament: first rung decided, second rung still
+// racing (no cut/survivors recorded yet — the run is in flight). The eventual
+// winner (v1) is NOT yet committed, so it must NOT show as rejected/eliminated.
+const LIVE_RACING = {
+  structure: 'racing', phase: 'running',
+  structure_params: { rungs: [{ fraction: 0.5 }, { fraction: 1.0 }] },
+  competitors: [
+    { generation_id: 'v0', seed: 1, role: 'champion' }, { generation_id: 'v1', seed: 2, role: 'challenger' },
+    { generation_id: 'v2', seed: 3, role: 'challenger' }, { generation_id: 'v3', seed: 4, role: 'challenger' },
+  ],
+  rounds: [
+    { round_index: 0, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v0', 'v1'], cut: ['v2', 'v3'], board_fraction: 0.5 }] },
+    { round_index: 1, label: 'Rung 2', matches: [{ match_id: 'rung2', competitors: ['v0', 'v1'], survivors: [], cut: [], board_fraction: 1.0 }] },
+  ],
+  // mid-run the completed-record view would crown v1 already; the LIVE record
+  // leaves everyone racing.
+  standings: [
+    { generation_id: 'v1', rank: 1, scalar: 0.39, status: 'champion' },
+    { generation_id: 'v0', rank: 2, scalar: 0.44, status: 'eliminated' },
+  ],
+};
+
+test('live tournament: during a racing RUN the match-ups ladder fills from /api/active-tournament (not "nothing ran")', async () => {
+  freshState();
+  // the COMPLETED record is empty (the run has not committed any tournament);
+  // only the LIVE active-tournament carries the topology.
+  const F = {
+    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', tournament: { structure: 'racing', params: LIVE_RACING.structure_params }, experiments: [], board: [] },
+    '/api/lineage': { generations: LIVE_RACING.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: EPOCH_ID, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: false })) },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'racing', champion_lineage: [], matchups: [], tournaments: [] },
+    '/api/active-tournament': LIVE_RACING,
+  };
+  installFixtureMap(F);
+  // seed the live signals so deriveLiveStatus() reports a running racing run.
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1' });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
+
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+
+  // the ladder rendered from the LIVE record — NOT an empty "nothing ran" state.
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(ladder, 'the racing ladder rendered from the live active-tournament');
+  assert(!/No tournament has run|unavailable/i.test(host.textContent), 'NOT the empty "nothing ran yet" state during a live run');
+  assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight tournament');
+  assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs (incl. the still-racing one) render');
+
+  // the eventual winner v1 is NOT mislabeled rejected/eliminated mid-run: the
+  // live standings show everyone racing, not "eliminated".
+  assert(!host.textContent.includes('eliminated'), 'no competitor is mislabeled "eliminated" during a live run');
+  // v1 is NOT struck through as a cut runner anywhere (it survives rung 1, races rung 2).
+  const cutNames = allByClass(host, 'dn-out');
+  for (const n of cutNames) assert((n.textContent || '').indexOf('v1') < 0, 'the eventual winner v1 is never struck through (cut) mid-run');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+});
+
+// ---- (c) the richer racing ladder render ----------------------------
+
+test('racing ladder: renders rungs with board fractions, cut (✕) vs survivor (↑) marks, and a champion-gate', () => {
+  const rungs = [
+    { label: 'Rung 1', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v0', 'v1'], cut: ['v2', 'v3'], board_fraction: 0.5 },
+    { label: 'Rung 2', competitors: ['v0', 'v1'], survivors: ['v1'], cut: ['v0'], board_fraction: 1.0 },
+  ];
+  const node = svg.racingLadder({ rungs, championId: 'v1', onCompetitor() {} });
+  assertEqual(node.localName, 'svg', 'the racing ladder is an SVG');
+  assertEqual(node.getAttribute('width'), '100%', 'fit-to-width (width:100%)');
+  assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'carries a viewBox so it scales to its pane');
+  const txt = node.textContent;
+  assert(txt.includes('board 50%') && txt.includes('board 100%'), 'each rung shows its board fraction (budget escalation)');
+  assert(txt.includes('✕'), 'a cut runner is marked ✕');
+  assert(txt.includes('↑'), 'a survivor is marked ↑');
+  // the trailing champion-gate column crowns the final survivor.
+  assert(txt.includes('champion-gate'), 'a champion-gate column is rendered');
+  assert(txt.includes('♛ v1') || txt.includes('♛'), 'the final survivor (v1) flows into the champion-gate seat');
+  // survivor → next-rung connectors trace the halving.
+  assert(allByClass(node, 'dn-raceladder-edge').length >= 1, 'survivor connectors trace the field into the next rung');
+});
+
+test('racing ladder: a LIVE race leaves the pending rung neutral (nobody cut) and the gate reads "deciding…"', () => {
+  const rungs = [
+    { label: 'Rung 1', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v0', 'v1'], cut: ['v2', 'v3'], board_fraction: 0.5 },
+    { label: 'Rung 2', competitors: ['v0', 'v1'], survivors: [], cut: [], board_fraction: 1.0, pending: true },
+  ];
+  const node = svg.racingLadder({ rungs, championId: null, live: true, onCompetitor() {} });
+  // only the DECIDED rung shows cuts; the pending rung does not strike anyone.
+  const struck = allByClass(node, 'dn-out');
+  assertEqual(struck.length, 2, 'only the two decided cuts (v2, v3) are struck — the pending rung strikes nobody');
+  assert(node.textContent.includes('deciding'), 'the champion-gate reads "deciding…" while the race is live (no premature crown)');
+});
+
+// ---- (d) current-vs-former champion badge in the tree ---------------
+
+test('tree champion badge: with champion_lineage ["v0","v3"], ONLY v3 is the current "champion"; v0 is a "former champion"', () => {
+  const host = document.createElement('div');
+  // the model the shell assembles: v0 + v3 both promoted, but the lineage's
+  // LAST id (v3) is the current crown.
+  const model = {
+    epochs: [{ id: EPOCH_ID, current: true }],
+    byEpoch: { [EPOCH_ID]: {
+      gens: [
+        { id: 'v0', promoted: true, parent: null, currentChampion: false, formerChampion: true },
+        { id: 'v1', promoted: false, parent: 'v0', currentChampion: false, formerChampion: false },
+        { id: 'v3', promoted: true, parent: 'v0', currentChampion: true, formerChampion: false },
+      ],
+      boards: [],
+    } },
+  };
+  const toggles = new Set(['e:' + EPOCH_ID, 'e:' + EPOCH_ID + '/gens']);
+  tree.buildTree(host, model, router.parseRoute(`#/e/${EPOCH_ID}`), toggles, { navigate() {}, href: router.href }, () => {});
+
+  // exactly ONE current champion (v3) carries the gen-champ badge…
+  const champs = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-leaf') && n.getAttribute('data-kind') === 'gen-champ');
+  assertEqual(champs.length, 1, 'exactly one CURRENT champion badge (v3)');
+  assert((champs[0].textContent || '').includes('v3'), 'the current champion is v3');
+  assert((champs[0].textContent || '').includes('champion') && !(champs[0].textContent || '').includes('former'), 'v3 reads "champion" (not "former")');
+  // …and the FORMER champion (v0) carries the distinct former-champion marker.
+  const formers = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-leaf') && n.getAttribute('data-kind') === 'gen-former');
+  assertEqual(formers.length, 1, 'exactly one FORMER champion marker (v0)');
+  assert((formers[0].textContent || '').includes('v0') && (formers[0].textContent || '').includes('former'), 'v0 reads "former champion"');
+  // a rejected branch is unchanged.
+  assert(host.textContent.includes('rejected'), 'the rejected branch (v1) is unchanged');
+});
+
+test('tree champion badge: the shell tree model marks the current champion from champion_lineage (and the digest re-stamps when the crown moves)', () => {
+  // two promoted gens, lineage crowns the LAST (v3); the digest must differ
+  // from a model where v0 is the current crown (so the badge re-stamps).
+  const cur3 = { epochs: [{ id: EPOCH_ID, current: true }], byEpoch: { [EPOCH_ID]: { gens: [
+    { id: 'v0', promoted: true, parent: null, currentChampion: false, formerChampion: true },
+    { id: 'v3', promoted: true, parent: 'v0', currentChampion: true, formerChampion: false },
+  ], boards: [] } } };
+  const cur0 = { epochs: [{ id: EPOCH_ID, current: true }], byEpoch: { [EPOCH_ID]: { gens: [
+    { id: 'v0', promoted: true, parent: null, currentChampion: true, formerChampion: false },
+    { id: 'v3', promoted: true, parent: 'v0', currentChampion: false, formerChampion: true },
+  ], boards: [] } } };
+  const route = router.parseRoute(`#/e/${EPOCH_ID}`);
+  const toggles = new Set();
+  assert(tree.treeDigest(cur3, route, toggles) !== tree.treeDigest(cur0, route, toggles),
+    'the tree digest changes when the crown moves (v3 current vs v0 current) — the badge re-stamps');
+});
+
+test('tree champion badge: a legacy model with NO current/former split keeps the champion badge for a promoted generation (back-compat)', () => {
+  const host = document.createElement('div');
+  const model = { epochs: [{ id: EPOCH_ID, current: true }], byEpoch: { [EPOCH_ID]: {
+    gens: [{ id: 'v0', promoted: true, parent: null }], boards: [],
+  } } };
+  const toggles = new Set(['e:' + EPOCH_ID, 'e:' + EPOCH_ID + '/gens']);
+  tree.buildTree(host, model, router.parseRoute(`#/e/${EPOCH_ID}`), toggles, { navigate() {}, href: router.href }, () => {});
+  assert(allByClass(host, 'dt-glyph-gen-champ').length >= 1, 'a legacy promoted generation still carries the champion glyph');
+});
+
 await run();

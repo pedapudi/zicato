@@ -77,6 +77,19 @@ export function scoreTrajectory() { return cachedJson('/api/score-trajectory'); 
 export function lineage() { return cachedJson('/api/lineage'); }
 export function bracket() { return cachedJson('/api/tournaments'); }
 
+// The LIVE tournament state during a run (§ live racing/swiss/elim): the
+// SAME structure shape as /api/tournament-structure ({structure, phase,
+// competitors, rounds, standings}) but for the IN-FLIGHT tournament, so the
+// match-ups ladder fills in rung-by-rung and the in-flight competitors are
+// not mislabeled as rejected. NEVER cached — it changes on every heartbeat,
+// and a failure (404 when idle) degrades to null so callers fall back to the
+// completed /api/tournaments record. The shell already reads state.heartbeat
+// / state.activeRuns to decide whether a run is active; this fetch carries
+// the live topology those signals do not.
+export async function activeTournament() {
+  try { return await fetchJson('/api/active-tournament'); } catch (err) { return null; }
+}
+
 // The FULL epoch contract — goal, brief, board, scoring, experiments.
 // The response also carries the new `tournament: {structure, params}`
 // block (§3.1) when the epoch's scoring.json names a structure, so the

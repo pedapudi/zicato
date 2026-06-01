@@ -36,7 +36,9 @@ export function treeDigest(model, route, toggles) {
     epochs: model.epochs.map((e) => [e.id, !!e.current]),
     by: model.epochs.map((e) => {
       const b = model.byEpoch[e.id] || { gens: [], boards: [] };
-      return [e.id, b.gens.map((g) => [g.id, !!g.promoted]), b.boards.map((x) => x.id)];
+      // include the current/former champion split so the badge re-stamps when
+      // the crown moves (a steady heartbeat with the same crown is a no-op).
+      return [e.id, b.gens.map((g) => [g.id, !!g.promoted, !!g.currentChampion, !!g.formerChampion]), b.boards.map((x) => x.id)];
     }),
     sel: [route ? route.view : 'home', p.epochId || '', p.gen || '', p.entry || '', p.mutId || '', p.gen2 || ''],
     open: [...toggles].sort(),
@@ -103,10 +105,19 @@ export function buildTree(host, model, route, toggles, ctx, onToggle) {
     if (gOpen) {
       for (const g of bundle.gens) {
         const selected = (sel === 'candidate' || sel === 'diff') && p.epochId === epoch.id && p.gen === g.id;
+        // Only the CURRENT champion (the last id in champion_lineage) gets the
+        // ♚ "champion" badge; a FORMER champion (held the title, then was
+        // succeeded) gets a distinct, dimmer hollow-crown "former" marker.
+        // Pre-feature models without the current/former split keep the legacy
+        // ♛ "champion" badge for any promoted generation (back-compat).
+        const isCurrent = g.currentChampion === true;
+        const isFormer = g.formerChampion === true;
+        const legacyChamp = g.promoted && g.currentChampion === undefined && g.formerChampion === undefined;
+        let kind = 'gen', glyph = (g.parent ? '↳' : '◆'), tag = (g.parent ? 'rejected' : 'seed');
+        if (isCurrent || legacyChamp) { kind = 'gen-champ'; glyph = '♚'; tag = 'champion'; }
+        else if (isFormer) { kind = 'gen-former'; glyph = '♔'; tag = 'former champion'; }
         tree.appendChild(leafRow({
-          depth: 3, kind: g.promoted ? 'gen-champ' : 'gen', label: g.id,
-          glyph: g.promoted ? '♛' : (g.parent ? '↳' : '◆'),
-          tag: g.promoted ? 'champion' : (g.parent ? 'rejected' : 'seed'),
+          depth: 3, kind, label: g.id, glyph, tag,
           selected,
           onSelect: () => ctx.navigate('candidate', { epochId: epoch.id, gen: g.id }),
         }));
