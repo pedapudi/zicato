@@ -499,12 +499,20 @@ def test_bundle_under_size_envelope(
     # CONVERGENCE WAVE (round 3): four more variants H (Atlas II), I (Ledger),
     # J (Console), K (Monograph) converge on E's flow + Tufte visuals +
     # Tufte-style fit-to-width Sankey + B/D's three-theme system + the new
-    # mutation-per-generation and ACM-publication views. Eleven variants +
-    # v1/v2 now ship side-by-side behind ?ui= for the operator to down-select.
-    # Measured 2,340,551 bytes. A 2,400 KB cap holds the (deliberately
-    # temporary) exploration; once a variant is chosen, all the others +
-    # v1/v2 are deleted and the envelope drops sharply and is reset.
-    assert total < 2_400_000, f"bundle is {total} bytes, exceeds 2_400_000 envelope"
+    # mutation-per-generation and ACM-publication views. Measured 2,340,551
+    # bytes under a 2,400 KB cap.
+    # CONVERGENCE-II WAVE (round 4): four more variants L (Atlas III), M
+    # (Ledger II), N (Console II), O (Compass) — dashboard-first, reusing K's
+    # publication renderer as a tab, with a combined mutation surface +
+    # side-by-side diff, a new per-board cross-candidate view, a typeface-theme
+    # picker (Open Sans pairings via Google Fonts), and the round-3 fixes
+    # (stacked gate, theme-aware heatmap, sankey label/value alignment,
+    # proportional sizing). Fifteen variants + v1/v2 now ship side-by-side
+    # behind ?ui= for the operator to down-select. Measured 2,925,207 bytes.
+    # A 3,000 KB cap holds the (deliberately temporary) exploration; once a
+    # variant is chosen, all the others + v1/v2 are deleted and the envelope
+    # drops sharply and is reset.
+    assert total < 3_000_000, f"bundle is {total} bytes, exceeds 3_000_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
