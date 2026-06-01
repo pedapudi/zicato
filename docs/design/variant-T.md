@@ -91,6 +91,22 @@ Implemented in `js/variants/T/tree.js`; the shell (`shell.js`) assembles the
 structural model from `/api/workspace` + `/api/lineage` + `/api/epoch.board` +
 `/api/tournaments` (for `champion_lineage`).
 
+**Reliable epoch listing (walkthrough BUG 2).** The epoch roster is derived from
+FOUR authoritative sources, unioned, so an existing epoch ALWAYS lists on EVERY
+route: (1) `/api/lineage` generations grouped by `epoch_id` — the source that is
+populated wherever the detail pane shows the epoch; (2) `/api/workspace.epochs`;
+(3) the `/api/epoch` contract; and (4) the epoch the route is pointing at
+(`route.params.epochId`). Earlier the tree read only (2) ∪ (3) — both of which can
+be empty/stale on some routes (e.g. a workspace digest that omitted `epochs`, or
+an `/api/epoch` that 404s for a non-current epoch on the **publication** view) —
+which left the rail showing *"No epochs in this workspace yet."* even though the
+breadcrumb + detail clearly named the epoch and `/api/lineage` returned its
+generations. The focused epoch's generation bundle now also resolves from
+`/api/lineage` (falling back to `/api/epoch.experiments`), keyed by the contract's
+epoch OR the routed epoch, so a deep-link / the publication route fills its
+generations even when `/api/epoch` is sparse. The empty state appears **only**
+when every source is genuinely empty.
+
 **Current vs former champion.** Several generations may carry `promoted` over an
 epoch's life, but only ONE is the **current** champion — the last id in
 `champion_lineage`. The shell stamps `currentChampion` / `formerChampion` on each
@@ -112,7 +128,7 @@ Rejected / seed branches are unchanged.
 | `#/e/<epoch>/gen/<gen>/diff[/<mutId>]` | **Patch diff** — this candidate's side-by-side diff (baseline vs new content), reusing the mutation-viewer diff component. |
 | `#/e/<epoch>/boards` | **Boards** — the board **trellis** (small-multiples; here per fix #6); cards route to the per-board view by entry id. |
 | `#/e/<epoch>/board/<entry>[/<gen>]` | **Per-board** — one entry across every candidate (sorted dot-plot + table) with the **inline side-by-side transcript** when a candidate is selected. |
-| `#/e/<epoch>/mutations[/<mutId>]` | **Mutation surface** — site × generation matrix + side-by-side diff in one cohesive layout. |
+| `#/e/<epoch>/mutations[/<mutId>[/<gen>]]` | **Mutation surface** — site × generation matrix + side-by-side diff in one cohesive layout. A bare `<mutId>` pins the **SITE** (all generations that patched it, stacked); a trailing `<gen>` pins **ONE cell** (that single generation's diff). |
 | `#/e/<epoch>/paper` | **Publication** — K's ACM renderer (GFM tables, combined table+chart, per-matchup detail), epoch-scoped. |
 
 ## The compare model (NEW — fold 1, from S)
@@ -441,7 +457,7 @@ heatmap; Tufte sankey with label ≠ value; side-by-side diff with real strings.
 
 ## Tests
 
-`test/variant_t.test.mjs` (54 tests) covers, carried forward: the tree renders
+`test/variant_t.test.mjs` (67 tests) covers, carried forward: the tree renders
 Environment → Epoch → {Generations, Boards, Mutation surface, Publication};
 multi-generation nav; the candidate-page promote gate; the patch-node click →
 per-candidate diff with real strings; v0 showing ≥2 match-ups; the board view
@@ -489,3 +505,16 @@ and is **digest-gated** (an unchanged re-tick does not rewrite the badge);
 renders the **in-flight candidates** with progress (filtered to that entry,
 excluding other entries), while an entry **with** completed results still
 renders the per-candidate breakdown (no in-flight panel when nothing is live).
+
+The **walkthrough** fixes add: **BUG 1** — the mutation-surface route carries an
+optional per-cell generation (`#/e/<epoch>/mutations/<mutId>/<gen>`); clicking a
+▪ **CELL** (carrying `data-gen` + `data-site`) renders **exactly ONE**
+generation's side-by-side diff for that site, while clicking the **SITE row
+label** (a bare `<mutId>` link, made visually distinct from the cells) renders
+**ALL** generations that patched the site, stacked — both with real-string
+content (never `[object Object]`), and a scope chip names whether the pane shows
+*one generation* or *all*. **BUG 2** — given `/api/lineage` generations across an
+epoch (with a sparse workspace + a 404 `/api/epoch`, the publication-route case),
+the tree **lists** that epoch and does **not** show *"No epochs in this workspace
+yet."*; the empty state appears only when every authoritative source is genuinely
+empty.

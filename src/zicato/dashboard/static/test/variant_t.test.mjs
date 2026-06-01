@@ -1657,4 +1657,163 @@ test('tree champion badge: a legacy model with NO current/former split keeps the
   assert(allByClass(host, 'dt-glyph-gen-champ').length >= 1, 'a legacy promoted generation still carries the champion glyph');
 });
 
+// ====================================================================
+// WALKTHROUGH bug fixes:
+//   BUG 1 — mutation-surface click semantics. A CELL (site × generation)
+//     opens ONLY that one generation's side-by-side diff for the site; the
+//     SITE row label opens ALL generations that patched the site, stacked.
+//   BUG 2 — the tree reliably lists an existing epoch on EVERY route; the
+//     "No epochs" empty state shows only when there are genuinely zero.
+// ====================================================================
+
+// ---- BUG 1 (a): the router carries the per-cell generation -----------
+
+test('mutations route: a CELL pins mutId + gen; the SITE pins mutId only (round-trips)', () => {
+  // a bare mutId → the SITE (all generations) selection.
+  const site = router.parseRoute(`#/e/${EPOCH_ID}/mutations/oversight_policy`);
+  assertEqual(site.view, 'mutations');
+  assertEqual(site.params.mutId, 'oversight_policy');
+  assert(!site.params.gen, 'a bare mutId carries NO generation (the all-gens SITE view)');
+  // a mutId + gen → ONE site×generation CELL selection.
+  const cell = router.parseRoute(`#/e/${EPOCH_ID}/mutations/oversight_policy/v2`);
+  assertEqual(cell.params.mutId, 'oversight_policy');
+  assertEqual(cell.params.gen, 'v2', 'the trailing segment is the pinned cell generation');
+  // both hrefs round-trip.
+  assertEqual(router.href('mutations', { epochId: EPOCH_ID, mutId: 'oversight_policy' }),
+    `#/e/${EPOCH_ID}/mutations/oversight_policy`, 'the SITE href omits the gen');
+  assertEqual(router.href('mutations', { epochId: EPOCH_ID, mutId: 'oversight_policy', gen: 'v2' }),
+    `#/e/${EPOCH_ID}/mutations/oversight_policy/v2`, 'the CELL href appends the gen');
+  // back/up: a cell steps up to the site (all-gens) view; the site steps to the epoch.
+  assertEqual(router.up(cell).view, 'mutations');
+  assertEqual(router.up(cell).params.gen, undefined, 'a cell steps up to the SITE (all gens) — gen dropped');
+  assertEqual(router.up(cell).params.mutId, 'oversight_policy', 'the site view keeps the mutId');
+  // the bare-mutId SITE view steps up to the mutation-surface root (mutId dropped).
+  const upSite = router.up(site);
+  assertEqual(upSite.view, 'mutations', 'the site steps up to the mutation-surface root');
+  assert(!upSite.params.mutId, 'the mutation-surface root drops the mutId');
+});
+
+// ---- BUG 1 (a): clicking a CELL renders exactly ONE generation's diff ----
+
+test('mutation surface: clicking a CELL renders exactly ONE generation’s side-by-side diff for that site (not all)', async () => {
+  freshState(); installFetch();
+  const mutations = await import('../js/variants/T/views/mutations.js');
+
+  // oversight_policy was patched by BOTH v1 and v2 with DIFFERENT content.
+  // Pin the v2 CELL → only v2's diff appears (not v1's).
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await mutations.render(host, ctx, { epochId: EPOCH_ID, mutId: 'oversight_policy', gen: 'v2' });
+
+  const blocks = allByClass(host, 'dn-patch-block');
+  assertEqual(blocks.length, 1, 'exactly ONE generation diff block for the pinned cell (v2 only — not v1+v2)');
+  const sxs = allByClass(host, 'dn-sxs');
+  assertEqual(sxs.length, 1, 'exactly one side-by-side diff component');
+  // it is v2's content, with REAL strings (never the baseline object).
+  assert(host.textContent.includes('Loosen coordinator oversight'), 'the v2 challenger new_content (the pinned cell) is shown');
+  assert(!host.textContent.includes('Tighten coordinator oversight'), 'v1’s patch is NOT shown when only the v2 cell is pinned');
+  assert(host.textContent.includes('Default oversight'), 'the champion baseline string (LEFT) is shown');
+  assert(!host.textContent.includes('[object Object]'), 'never the baseline OBJECT');
+  // the cells carry both identities so the click can pin one generation.
+  const cells = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-mtx-cell') && n.getAttribute('data-gen'));
+  assert(cells.length >= 1, 'matrix cells carry data-gen + data-site (the cell’s generation + site identity)');
+  assert(cells.every((c) => c.getAttribute('data-site')), 'every cell carries its data-site');
+  // the cell link targets the mutId+gen route (one generation), not the bare site.
+  const cellLink = allByClass(host, 'dn-mtx-celllink')[0];
+  assert(cellLink && (cellLink.getAttribute('href') || '').endsWith('/mutations/coordinator_prompt/v1')
+    || (cellLink.getAttribute('href') || '').includes('/mutations/'), 'a cell link routes to mutId/gen');
+  const anyCellHrefHasGen = allByClass(host, 'dn-mtx-celllink')
+    .some((a) => /\/mutations\/[^/]+\/v\d+$/.test(a.getAttribute('href') || ''));
+  assert(anyCellHrefHasGen, 'at least one cell link carries the trailing /<gen> (one-generation affordance)');
+});
+
+// ---- BUG 1 (b): clicking the SITE row label renders ALL generations ----
+
+test('mutation surface: clicking the SITE row label renders ALL generations that patched the site, stacked', async () => {
+  freshState(); installFetch();
+  const mutations = await import('../js/variants/T/views/mutations.js');
+
+  // pin the SITE (no gen) → BOTH v1 and v2 diffs for oversight_policy stack.
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await mutations.render(host, ctx, { epochId: EPOCH_ID, mutId: 'oversight_policy' });
+
+  const blocks = allByClass(host, 'dn-patch-block');
+  assertEqual(blocks.length, 2, 'BOTH generations (v1, v2) that patched the site are stacked');
+  const sxs = allByClass(host, 'dn-sxs');
+  assertEqual(sxs.length, 2, 'two side-by-side diff components (one per generation)');
+  assert(host.textContent.includes('Tighten coordinator oversight'), 'v1’s patch is shown in the all-gens view');
+  assert(host.textContent.includes('Loosen coordinator oversight'), 'v2’s patch is shown in the all-gens view');
+  assert(host.textContent.includes('Default oversight'), 'the champion baseline string (LEFT) is shown');
+  assert(!host.textContent.includes('[object Object]'), 'never the baseline OBJECT');
+
+  // the SITE row label is the all-gens affordance — it links to the BARE mutId
+  // (no trailing gen), distinct from the per-cell links.
+  const siteLink = allByClass(host, 'dn-mtx-sitelink')[0];
+  assert(siteLink, 'the site row label is a link');
+  const siteHref = siteLink.getAttribute('href') || '';
+  assert(/\/mutations\/[^/]+$/.test(siteHref), 'the site link routes to the BARE mutId (all generations) — no trailing gen');
+});
+
+// ---- BUG 2: the tree lists an existing epoch on every route ----------
+
+test('tree (BUG 2): /api/lineage generations across an epoch make the tree LIST that epoch — never "No epochs"', async () => {
+  freshState();
+  // A workspace feed with NO epochs roster (the sparse-route case that produced
+  // the bug), an /api/epoch that 404s, but /api/lineage plainly carries the
+  // epoch's generations grouped by epoch_id. The tree must STILL list the epoch.
+  const PUB_EPOCH = '2026-06-01_e0';
+  const F = {
+    '/api/workspace': { current_epoch_id: null, sparkline: [] },   // no `epochs` array
+    '/api/lineage': { generations: [
+      { generation_id: 'v0', epoch_id: PUB_EPOCH, parent_generation_id: '', promoted: true },
+      { generation_id: 'v1', epoch_id: PUB_EPOCH, parent_generation_id: 'v0', promoted: false },
+    ] },
+    '/api/tournaments': { epoch_id: PUB_EPOCH, champion_lineage: ['v0'], matchups: [] },
+    // NB: /api/epoch is deliberately absent → 404 (the publication-route case).
+  };
+  globalThis.fetch = async (path) => (Object.prototype.hasOwnProperty.call(F, path)
+    ? { ok: true, json: async () => F[path] }
+    : { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) });
+
+  // mount the live shell on the PUBLICATION route for this epoch.
+  const root = mountLiveShell(`#/e/${PUB_EPOCH}/paper`);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const rail = allByClass(root, 'dt-sidebar')[0];
+  assert(rail, 'the rail mounted');
+  assert(!rail.textContent.includes('No epochs in this workspace yet'),
+    'the tree does NOT show the empty state when /api/lineage carries the epoch');
+  assert(rail.textContent.includes(PUB_EPOCH), 'the tree LISTS the existing epoch (from /api/lineage, on the publication route)');
+  // and the epoch's generations resolve into its bundle.
+  const epochs2 = [{ id: PUB_EPOCH, current: true }];
+  assert(epochs2.length === 1, 'fixture sanity');
+});
+
+test('tree (BUG 2): the "No epochs" empty state shows ONLY when there are genuinely zero epochs', async () => {
+  freshState();
+  // every authoritative source is empty: no workspace epochs, no lineage gens,
+  // no /api/epoch, and the route is the bare environment root (no routed epoch).
+  const F = {
+    '/api/workspace': { current_epoch_id: null, epochs: [], sparkline: [] },
+    '/api/lineage': { generations: [] },
+    '/api/tournaments': { matchups: [] },
+  };
+  globalThis.fetch = async (path) => (Object.prototype.hasOwnProperty.call(F, path)
+    ? { ok: true, json: async () => F[path] }
+    : { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) });
+
+  const root = mountLiveShell('#/');
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const rail = allByClass(root, 'dt-sidebar')[0];
+  assert(rail, 'the rail mounted');
+  assert(rail.textContent.includes('No epochs in this workspace yet'),
+    'with genuinely zero epochs the empty state IS shown');
+});
+
 await run();

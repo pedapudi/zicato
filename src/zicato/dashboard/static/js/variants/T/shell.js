@@ -376,21 +376,50 @@ export function mountShell(root) {
 // Assemble the tree's structural model: every epoch the workspace knows, each
 // with its generations and board entries. Failure-tolerant — a missing
 // drill-down degrades to an empty group, never a blank tree.
-async function buildTreeModel() {
+//
+// THE TREE-EMPTY FIX. The epoch list must derive from AUTHORITATIVE data and be
+// reliable on EVERY route (including the publication view). The old build read
+// ONLY /api/workspace.epochs ∪ /api/epoch — both of which can be empty/stale on
+// some routes (a workspace digest that omitted `epochs`, or an /api/epoch that
+// 404s for a non-current epoch), leaving the tree blank even though /api/lineage
+// plainly returns that epoch's generations and the breadcrumb names it. We now
+// union FOUR authoritative sources: /api/lineage generations grouped by
+// epoch_id, /api/workspace.epochs, /api/epoch, AND the currently-routed epochId
+// — so an existing epoch ALWAYS lists, and the empty state shows only when there
+// are genuinely zero epochs across all of them.
+async function buildTreeModel(route) {
   const [ws, lin, ep, brk] = await Promise.all([D.workspace(), D.lineage(), D.epoch(), D.bracket()]);
   const epochs = [];
   const seen = new Set();
-  const current = ws ? ws.current_epoch_id : (ep && ep.epoch_id) || null;
-  if (ws && Array.isArray(ws.epochs)) {
-    for (const e of ws.epochs) {
-      if (e && e.epoch_id != null && !seen.has(e.epoch_id)) {
-        seen.add(e.epoch_id);
-        epochs.push({ id: e.epoch_id, current: e.epoch_id === current });
-      }
-    }
+  const current = (ws && ws.current_epoch_id) || (ep && ep.epoch_id) || null;
+  const addEpoch = (id) => {
+    if (id == null || seen.has(id)) return;
+    seen.add(id);
+    epochs.push({ id, current: id === current });
+  };
+  // (1) /api/lineage generations grouped by epoch_id — the authoritative source
+  // that is populated on every route the tree paints over (it backs the detail
+  // panes that DO show the epoch). This is what makes the empty state reliable.
+  if (lin && Array.isArray(lin.generations)) {
+    for (const g of lin.generations) if (g && g.epoch_id != null) addEpoch(g.epoch_id);
   }
-  if (ep && ep.epoch_id != null && !seen.has(ep.epoch_id)) {
-    epochs.push({ id: ep.epoch_id, current: ep.epoch_id === current });
+  // (2) /api/workspace.epochs — the multi-epoch roster (when present).
+  if (ws && Array.isArray(ws.epochs)) {
+    for (const e of ws.epochs) if (e && e.epoch_id != null) addEpoch(e.epoch_id);
+  }
+  // (3) the current epoch contract.
+  if (ep && ep.epoch_id != null) addEpoch(ep.epoch_id);
+  // (4) the epoch the route is pointing AT — so a deep-link / the publication
+  // view always shows its own epoch node even if every feed above was sparse.
+  const routeEpochId = route && route.params ? route.params.epochId : null;
+  if (routeEpochId != null) addEpoch(routeEpochId);
+
+  // If no authoritative `current` resolved (sparse workspace/epoch feeds) fall
+  // back to the routed epoch, else the sole epoch — so exactly one node carries
+  // the "current" marker rather than none.
+  if (current == null && epochs.length) {
+    const fallbackCurrentId = routeEpochId != null ? routeEpochId : epochs[0].id;
+    for (const e of epochs) e.current = e.id === fallbackCurrentId;
   }
 
   // Generations + boards: the live data has one epoch, so we resolve the
@@ -399,8 +428,13 @@ async function buildTreeModel() {
   // gracefully — structure all-epochs-first).
   const byEpoch = {};
   for (const e of epochs) byEpoch[e.id] = { gens: [], boards: [] };
-  if (ep && ep.epoch_id != null) {
-    const id = ep.epoch_id;
+  // Resolve the bundle for the focused epoch: the contract's own epoch when
+  // /api/epoch resolved, else the routed epoch (so the publication / a deep-link
+  // route fills its generations from /api/lineage even when /api/epoch is sparse
+  // for a non-current epoch).
+  const bundleId = (ep && ep.epoch_id != null) ? ep.epoch_id : routeEpochId;
+  if (bundleId != null && Object.prototype.hasOwnProperty.call(byEpoch, bundleId)) {
+    const id = bundleId;
     // The CURRENT champion = the LAST id in champion_lineage (the epoch's
     // reigning generation). Every OTHER promoted generation is a FORMER
     // champion (it held the title, then was succeeded). When the lineage is
@@ -408,11 +442,11 @@ async function buildTreeModel() {
     // so a pre-feature index still disambiguates one current crown.
     const lineage = (brk && Array.isArray(brk.champion_lineage)) ? brk.champion_lineage.map(String) : [];
     const currentChampionId = lineage.length ? lineage[lineage.length - 1] : null;
-    const gensList = (lin && Array.isArray(lin.generations) && lin.generations.length)
-      ? lin.generations
-        .filter((g) => !g.epoch_id || g.epoch_id === id)
-        .map((g) => ({ id: g.generation_id, promoted: !!g.promoted, parent: g.parent_generation_id || null }))
-      : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({
+    const linForEpoch = (lin && Array.isArray(lin.generations))
+      ? lin.generations.filter((g) => !g.epoch_id || g.epoch_id === id) : [];
+    const gensList = linForEpoch.length
+      ? linForEpoch.map((g) => ({ id: g.generation_id, promoted: !!g.promoted, parent: g.parent_generation_id || null }))
+      : (ep && Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({
           id: x.generation_id, parent: x.parent_generation_id || null,
           promoted: normaliseDecision(x.outcome) === 'promoted',
         })) : []);
@@ -424,7 +458,7 @@ async function buildTreeModel() {
       g.currentChampion = g.promoted && String(g.id) === String(fallbackCurrent);
       g.formerChampion = g.promoted && !g.currentChampion;
     }
-    const boardList = (Array.isArray(ep.board) ? ep.board : []).map((b) => ({
+    const boardList = (ep && Array.isArray(ep.board) ? ep.board : []).map((b) => ({
       id: b.entry_id || b.id, kindTag: KIND_TAG[b.kind] || null,
     })).filter((b) => b.id);
     byEpoch[id] = { gens: gensList, boards: boardList };
@@ -434,7 +468,7 @@ async function buildTreeModel() {
 
 async function renderTree(route) {
   if (!_treeHost) return;
-  const model = await buildTreeModel();
+  const model = await buildTreeModel(route);
   const digest = treeDigest(model, route, _toggles);
   if (digest === _lastTreeDigest && _treeHost.firstChild) return;
   _lastTreeDigest = digest;

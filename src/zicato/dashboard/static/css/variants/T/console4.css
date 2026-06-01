@@ -647,14 +647,27 @@
   .dn-mtx-sitelink:hover .dn-mtx-file { color: var(--v2-accent); }
   .dn-mtx-role { color: var(--v2-ink-faint); font-size: 9.5px; }
   .dn-mtx-row.dn-mtx-pinned .dn-mtx-site { border-left: 3px solid var(--v2-accent); }
+  /* the SITE label is the "all generations" affordance — make it visibly a
+   * link (underline on hover) so its click target reads distinctly from the
+   * cells, which are the "one generation" affordance. */
+  .dn-mtx-sitelink { cursor: pointer; }
+  .dn-mtx-sitelink:hover .dn-mtx-file { text-decoration: underline; }
+  .dn-mtx-sitelink.dn-mtx-sitelink-on .dn-mtx-file { color: var(--v2-accent); font-weight: 600; }
   .dn-mtx-cell { text-align: center; width: 34px; height: 24px; }
   .dn-mtx-cell.dn-mtx-on { background: var(--v2-good-soft); }
-  .dn-mtx-celllink { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+  /* a pinned CELL (one site×generation) gets a ringed outline so the single
+   * selected cell is unmistakable against the row-label "all" selection. */
+  .dn-mtx-cell.dn-mtx-cell-pinned { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
+  .dn-mtx-celllink { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; cursor: pointer; }
   .dn-mtx-square { fill: var(--v2-good); }
   .dn-mtx-blank { color: var(--v2-ink-faint); opacity: 0.4; }
   .dn-mtx-mark { display: block; }
   .dn-mtx-drillhead { margin-bottom: 10px; font-size: 13px; }
   .dn-mtx-drillhead .dn-mono { color: var(--v2-ink); }
+  /* the scope chip names whether the pane is showing ONE generation or ALL. */
+  .dn-mtx-scope { display: inline-block; margin-left: 8px; font-family: var(--v2-mono); font-size: 9.5px;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-soft);
+    padding: 1px 6px; border: 1px solid var(--v2-rule); border-radius: 3px; }
 
   .dn-patch-block { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px 10px; margin: 8px 0; }
   .dn-patch-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }

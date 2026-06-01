@@ -27,6 +27,10 @@ import { gatedSwap, section, empty, stat } from '../ui.js';
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading mutation surface…' }));
   const pinned = params && params.mutId;
+  // The two-affordance selection. A bare mutId pins the SITE (the whole row →
+  // ALL generations that patched it, stacked). A mutId PLUS a gen pins ONE cell
+  // (that single challenger's side-by-side diff for that site).
+  const pinnedGen = (params && params.gen) || null;
 
   const ep = await D.epoch();
   if (!ep || ep.epoch_id == null) {
@@ -43,12 +47,19 @@ export async function render(host, ctx, params) {
   for (const s of sites) patchedBySite.set(s.mutation_id, new Set(Array.isArray(s.patched_generation_ids) ? s.patched_generation_ids : []));
 
   // The pinned site → its baseline STRING (one call) + per-generation patches.
+  // When a single CELL is pinned (pinnedGen), fetch ONLY that generation's
+  // patches; when the SITE row is pinned, fetch every generation that patched it.
   const pinnedSite = pinned ? sites.find((s) => s.mutation_id === pinned) : null;
   let detail = null;
   const patchesByGen = new Map();
   if (pinnedSite) {
     detail = await D.mutationDetail(epochId, pinned);
-    const touched = [...(patchedBySite.get(pinned) || [])];
+    const allTouched = [...(patchedBySite.get(pinned) || [])];
+    // a cell selection narrows to the single generation (if it actually patched
+    // the site); a site selection keeps every generation, stacked.
+    const touched = pinnedGen
+      ? allTouched.filter((g) => String(g) === String(pinnedGen))
+      : allTouched;
     const all = await Promise.all(touched.map((g) => D.patches(epochId, g)));
     touched.forEach((g, i) => patchesByGen.set(g, (all[i] && Array.isArray(all[i].patches)) ? all[i].patches : []));
   }
@@ -61,15 +72,16 @@ export async function render(host, ctx, params) {
     epochId, gens,
     sites: sites.map((s) => [s.mutation_id, s.file, s.role, s.line_start, s.line_end, (s.patched_generation_ids || []).join(',')]),
     pinned: pinned || null,
+    pinnedGen: pinnedGen || null,
     baselineLen: baselineStr == null ? -1 : baselineStr.length,
-    patched: pinnedSite ? [...(patchedBySite.get(pinned) || [])] : null,
+    patched: pinnedSite ? [...patchesByGen.keys()] : null,
   });
 
   gatedSwap(host, digest, () => {
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
       el('h1', { class: 'dn-h1', text: 'Mutation surface · site × generation' }),
-      el('p', { class: 'dn-lede', text: 'Every enumerated mutation point (a `# zicato:mutable` region) and which generation patched it. Select a site for the side-by-side patch diff — champion baseline against the challenger’s new content.' }),
+      el('p', { class: 'dn-lede', text: 'Every enumerated mutation point (a `# zicato:mutable` region) and which generation patched it. Click a ▪ CELL for ONE generation’s side-by-side patch diff at that site; click the SITE row label for ALL generations that patched it, stacked — champion baseline against each challenger’s new content.' }),
     ]));
 
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
@@ -85,15 +97,15 @@ export async function render(host, ctx, params) {
 
     // ONE cohesive layout: the matrix and the detail pane in a single section.
     const combined = el('div', { class: 'dn-mut-combined' }, [
-      el('div', { class: 'dn-panel dn-mut-matrix' }, [matrixTable(sites, gens, patchedBySite, pinned, ctx, epochId)]),
-      el('div', { class: 'dn-panel dn-mut-detail' }, [detailPane(pinnedSite, baselineStr, detail, patchesByGen, ctx, epochId)]),
+      el('div', { class: 'dn-panel dn-mut-matrix' }, [matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId)]),
+      el('div', { class: 'dn-panel dn-mut-detail' }, [detailPane(pinnedSite, pinnedGen, baselineStr, detail, patchesByGen, ctx, epochId)]),
     ]);
     nodes.push(section('Mutation surface + side-by-side diff', combined));
     return nodes;
   });
 }
 
-function matrixTable(sites, gens, patchedBySite, pinned, ctx, epochId) {
+function matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId) {
   const table = el('table', { class: 'dn-mtx' });
   const thead = el('thead');
   const hr = el('tr');
@@ -108,21 +120,39 @@ function matrixTable(sites, gens, patchedBySite, pinned, ctx, epochId) {
   for (const s of sites) {
     const touched = patchedBySite.get(s.mutation_id) || new Set();
     const isPinned = pinned === s.mutation_id;
+    // the SITE row is "pinned" (all-gens view) only when the row itself is the
+    // selection — i.e. a mutId with NO cell-level gen.
+    const sitePinned = isPinned && !pinnedGen;
     const tr = el('tr', { class: 'dn-mtx-row' + (isPinned ? ' dn-mtx-pinned' : '') });
+    // The ROW LABEL is the "all mutations for this site" affordance: it links to
+    // the bare mutId (no gen) → every generation that patched the site, stacked.
     tr.appendChild(el('th', { class: 'dn-mtx-site', scope: 'row' }, [
-      el('a', { class: 'dn-mtx-sitelink', href: ctx.href('mutations', { epochId, mutId: s.mutation_id }), title: s.mutation_id }, [
+      el('a', {
+        class: 'dn-mtx-sitelink' + (sitePinned ? ' dn-mtx-sitelink-on' : ''),
+        href: ctx.href('mutations', { epochId, mutId: s.mutation_id }),
+        title: `all generations that patched ${s.mutation_id}`,
+        'aria-current': sitePinned ? 'true' : null,
+      }, [
         el('span', { class: 'dn-mtx-file', text: fileLine(s) }),
         el('span', { class: 'dn-mtx-role', text: s.role || s.kind || '' }),
       ]),
     ]));
     for (const g of gens) {
       const on = touched.has(g);
-      const td = el('td', { class: 'dn-mtx-cell' + (on ? ' dn-mtx-on' : '') });
+      // a CELL is the "this one generation" affordance: it links to mutId+gen →
+      // ONLY that single challenger's side-by-side diff for the site.
+      const cellPinned = isPinned && String(pinnedGen) === String(g);
+      const td = el('td', { class: 'dn-mtx-cell' + (on ? ' dn-mtx-on' : '') + (cellPinned ? ' dn-mtx-cell-pinned' : ''),
+        'data-gen': g, 'data-site': s.mutation_id });
       if (on) {
         const dot = svgEl('svg', { class: 'dn-mtx-mark', width: 16, height: 16, viewBox: '0 0 16 16', role: 'img' }, [
           svgEl('rect', { x: 3, y: 3, width: 10, height: 10, rx: 2, class: 'dn-mtx-square' }),
         ]);
-        td.appendChild(el('a', { class: 'dn-mtx-celllink', href: ctx.href('mutations', { epochId, mutId: s.mutation_id }), title: `${g} patched ${s.mutation_id}` }, [dot]));
+        td.appendChild(el('a', {
+          class: 'dn-mtx-celllink', href: ctx.href('mutations', { epochId, mutId: s.mutation_id, gen: g }),
+          title: `${g}’s patch at ${s.mutation_id} (this one generation’s diff)`,
+          'aria-current': cellPinned ? 'true' : null,
+        }, [dot]));
       } else {
         td.appendChild(el('span', { class: 'dn-mtx-blank', 'aria-hidden': 'true', text: '·' }));
       }
@@ -135,20 +165,24 @@ function matrixTable(sites, gens, patchedBySite, pinned, ctx, epochId) {
   // the matrix can be genuinely wide (many generations) — give the TABLE its
   // own contained horizontal scroll so it never forces the panel to overflow.
   wrap.appendChild(el('div', { class: 'dn-table-scroll' }, [table]));
-  wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:10px 0 0;', text: 'row = mutation site · column = generation · ▪ = patched here · click a cell or site → its side-by-side diff' }));
+  wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:10px 0 0;', text: 'row = mutation site · column = generation · ▪ = patched here · click a ▪ CELL → that ONE generation’s diff · click the SITE label → ALL generations that patched it' }));
   return wrap;
 }
 
-// The detail pane: fills on cell-select with the SIDE-BY-SIDE diff(s).
-function detailPane(site, baselineStr, detail, patchesByGen, ctx, epochId) {
+// The detail pane: fills on selection with the SIDE-BY-SIDE diff(s).
+//   * a CELL (mutId + pinnedGen) → ONLY that one generation's diff;
+//   * the SITE row (mutId, no pinnedGen) → ALL generations that patched it.
+function detailPane(site, pinnedGen, baselineStr, detail, patchesByGen, ctx, epochId) {
   const pane = el('div');
   if (!site) {
-    pane.appendChild(el('p', { class: 'dn-empty', text: 'Select a mutation site (a row, or a ▪ cell) to see its side-by-side patch diff.' }));
+    pane.appendChild(el('p', { class: 'dn-empty', text: 'Click a ▪ cell for ONE generation’s side-by-side diff at that site, or the site row label for ALL generations that patched it.' }));
     return pane;
   }
+  const single = !!pinnedGen;
   pane.appendChild(el('div', { class: 'dn-mtx-drillhead' }, [
     el('span', { class: 'dn-mono', text: site.mutation_id }),
     el('span', { class: 'dn-faint dn-mono', text: ' · ' + fileLine(site) + (site.role ? ' · ' + site.role : '') }),
+    el('span', { class: 'dn-mtx-scope', text: single ? `one generation · ${pinnedGen}` : 'all generations' }),
   ]));
 
   if (baselineStr == null) {
@@ -171,7 +205,11 @@ function detailPane(site, baselineStr, detail, patchesByGen, ctx, epochId) {
     any = true;
     pane.appendChild(genDiffBlock(g, patch, baselineStr == null ? '' : baselineStr, newStr, site, ctx, epochId));
   }
-  if (!any) pane.appendChild(el('p', { class: 'dn-empty', text: 'No generation patched this site (or the patch payloads are unavailable).' }));
+  if (!any) {
+    pane.appendChild(el('p', { class: 'dn-empty', text: single
+      ? `Generation ${pinnedGen} did not patch this site (or its patch payload is unavailable).`
+      : 'No generation patched this site (or the patch payloads are unavailable).' }));
+  }
   return pane;
 }
 

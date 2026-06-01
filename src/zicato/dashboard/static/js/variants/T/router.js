@@ -71,7 +71,10 @@ export function parseRoute(hash) {
     case 'board':
       return { view: 'board', params: { epochId, entry: parts[3] || null, gen: parts[4] || null }, cmp };
     case 'mutations':
-      return { view: 'mutations', params: { epochId, mutId: parts[3] || null }, cmp };
+      // …/mutations[/<mutId>[/<gen>]] — a bare mutId pins the SITE (all gens that
+      // patched it, stacked); a trailing gen pins ONE site×generation cell (that
+      // single challenger's side-by-side diff).
+      return { view: 'mutations', params: { epochId, mutId: parts[3] || null, gen: parts[4] || null }, cmp };
     case 'paper': case 'publication': case 'report':
       return { view: 'publication', params: { epochId }, cmp };
     default:
@@ -102,7 +105,10 @@ export function href(view, params, opts) {
       break;
     case 'mutations':
       if (!e) { base = PREFIX + '/'; break; }
-      base = p.mutId ? `${e}/mutations/${enc(p.mutId)}` : `${e}/mutations`;
+      // a bare mutId pins the SITE (all gens); a mutId+gen pins ONE cell.
+      base = p.mutId
+        ? (p.gen ? `${e}/mutations/${enc(p.mutId)}/${enc(p.gen)}` : `${e}/mutations/${enc(p.mutId)}`)
+        : `${e}/mutations`;
       break;
     case 'publication': base = e ? `${e}/paper` : PREFIX + '/'; break;
     default: base = PREFIX + '/';
@@ -148,6 +154,9 @@ export function up(route) {
       if (p.gen) return { view: 'board', params: { epochId: p.epochId, entry: p.entry } };
       return { view: 'boards', params: { epochId: p.epochId } };
     case 'mutations':
+      // a single-cell selection (mutId+gen) steps up to the SITE view (all gens);
+      // the site view steps up to the epoch.
+      if (p.gen && p.mutId) return { view: 'mutations', params: { epochId: p.epochId, mutId: p.mutId } };
       if (p.mutId) return { view: 'mutations', params: { epochId: p.epochId } };
       return { view: 'epoch', params: { epochId: p.epochId } };
     case 'publication': return { view: 'epoch', params: { epochId: p.epochId } };
@@ -194,7 +203,10 @@ export function crumbTrail(route) {
     case 'mutations':
       return [home, epoch,
         p.mutId ? { label: 'mutation surface', view: 'mutations', params: { epochId: p.epochId } } : null,
-        { label: p.mutId ? p.mutId : 'mutation surface', current: true },
+        // a single-cell selection (mutId+gen) keeps the SITE crumb clickable and
+        // labels the leaf with the generation.
+        (p.mutId && p.gen) ? { label: p.mutId, view: 'mutations', params: { epochId: p.epochId, mutId: p.mutId } } : null,
+        { label: (p.mutId && p.gen) ? p.gen : (p.mutId ? p.mutId : 'mutation surface'), current: true },
       ].filter(Boolean);
     case 'publication':
       return [home, epoch, { label: 'publication', current: true }].filter(Boolean);
