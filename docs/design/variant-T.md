@@ -175,6 +175,38 @@ environment / workspace view.
   re-breathes with a pure CSS swap (no re-render). Persisted (`zicato.T.density`);
   the active value is reflected on the pills.
 
+  **Density also scales the VISUAL-ELEMENT size** (round 8), not only the
+  whitespace around them. The SVG figures are laid out in JS, so a parallel
+  size-token table lives in `ui.js` (`densityTokens(density)` → `{ sizeScale,
+  fontScale, nodeRadius, dagRowStep, heatCell, dotRow, sparkbarH, reelScale }`),
+  keyed by the same density id. Each view reads it at render time and feeds the
+  figure's INTRINSIC dimensions: the lifecycle-DAG height + row step, the heatmap
+  cell size, the per-board / candidate / board-view dot-plot row height, the
+  trellis sparkbar height, and the per-judge value-bar row height all grow
+  compact → roomy (and shrink in compact). The reel + match cards keep their
+  existing CSS scaling (`--dt-reel-scale` / `--dt-card-min`). Width is never
+  touched — every figure stays fit-to-width at every density (see below).
+
+## Fit-to-width — visual elements never escape their pane (round 8)
+
+Every visual element is a **responsive SVG** (`width: 100%` + a `viewBox` +
+`preserveAspectRatio`, no fixed pixel width that exceeds the panel and no
+horizontal-scroll wrapper around the whole figure). This now holds for the
+**lifecycle DAG** (`dag.js` — was a fixed 900 px SVG inside an `overflow-x:auto`
+panel; the right-hand stages spilled out and forced sideways scrolling — now the
+viewBox-internal coordinate width scales down to fit the pane, so all six stages
+parent → patch → board → Σ → gate → terminal are visible without scrolling), the
+**Tufte sankey**, the **heatmap** (epoch overview — the `overflow-x:auto` panel
+wrapper is gone), the **bumps**, the per-board / candidate / board-view
+**dot-plots** (`valueDotPlot`), the per-judge **value-bars**, the matchup
+**slopegraph**, and the trellis **sparkbar / gen-dots**. Inherently-wide tabular
+content carries its OWN contained overflow — the **publication** GFM tables, the
+aggregate-scores table, the per-matchup-detail tables, and the **mutation
+matrix** are each wrapped in a `.dn-table-scroll` box (`max-width:100%;
+overflow-x:auto` on the wrapper only), so a wide table scrolls WITHIN its box and
+never pushes the paper/panel layout sideways. As a backstop, `.dn-panel` itself
+is `max-width:100%; overflow-x:hidden` so no element can visually escape a panel.
+
 ## Render discipline (carried forward)
 
 Digest-gated repaint (structural data only, heartbeat = no-op; each compare side
@@ -187,7 +219,7 @@ heatmap; Tufte sankey with label ≠ value; side-by-side diff with real strings.
 
 ## Tests
 
-`test/variant_t.test.mjs` (23 tests) covers: the tree renders Environment →
+`test/variant_t.test.mjs` (29 tests) covers: the tree renders Environment →
 Epoch → {Generations, Boards, Mutation surface, Publication}; multi-generation
 nav; the candidate-page promote gate; the patch-node click → per-candidate diff
 with real strings; v0 showing ≥2 match-ups; the board view reachable from the
@@ -202,4 +234,12 @@ compress, nothing exceeds the width) under a **~12-generation / 11-round**
 fixture; the generations page renders the **champion-defends banner + one match
 card per challenger** in a wrapping grid; match cards do NOT render on the
 environment view; and the **density picker** switches compact↔roomy (root
-attribute + token) and persists.
+attribute + token) and persists. Round 8 adds: the **lifecycle DAG and sankey
+render as fit-to-width responsive SVG** (`width:100%` + viewBox) with NO
+horizontal-scroll wrapper around the figure; the epoch **heatmap** is responsive
+and its panel does not scroll horizontally; the **publication** view's wide
+tables each sit in a contained `.dn-table-scroll` box (the panel itself never
+scrolls) and its live figures are `width:100%`; and **density scales a diagram
+SIZE token** (not only spacing) — `densityTokens('compact')` vs `'roomy'` differ
+on every intrinsic size token, and the rendered DAG height grows compact → roomy
+while BOTH stay `width:100%` (fit-to-width holds at every density).

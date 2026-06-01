@@ -85,7 +85,7 @@ export async function render(host, ctx, params) {
 
     // ONE cohesive layout: the matrix and the detail pane in a single section.
     const combined = el('div', { class: 'dn-mut-combined' }, [
-      el('div', { class: 'dn-panel dn-mut-matrix', style: 'overflow-x:auto;' }, [matrixTable(sites, gens, patchedBySite, pinned, ctx, epochId)]),
+      el('div', { class: 'dn-panel dn-mut-matrix' }, [matrixTable(sites, gens, patchedBySite, pinned, ctx, epochId)]),
       el('div', { class: 'dn-panel dn-mut-detail' }, [detailPane(pinnedSite, baselineStr, detail, patchesByGen, ctx, epochId)]),
     ]);
     nodes.push(section('Mutation surface + side-by-side diff', combined));
@@ -132,7 +132,9 @@ function matrixTable(sites, gens, patchedBySite, pinned, ctx, epochId) {
   }
   table.appendChild(tbody);
   const wrap = el('div');
-  wrap.appendChild(table);
+  // the matrix can be genuinely wide (many generations) — give the TABLE its
+  // own contained horizontal scroll so it never forces the panel to overflow.
+  wrap.appendChild(el('div', { class: 'dn-table-scroll' }, [table]));
   wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:10px 0 0;', text: 'row = mutation site · column = generation · ▪ = patched here · click a cell or site → its side-by-side diff' }));
   return wrap;
 }

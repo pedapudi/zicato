@@ -107,6 +107,31 @@ export function persistDensity(t) {
   return normaliseDensity(t);
 }
 
+// ---- density → VISUAL-ELEMENT SIZE tokens ---------------------------
+//
+// The density picker scales spacing via CSS custom properties (--dt-*), but it
+// must ALSO scale the SIZE of the rendered visual elements — the SVG figures
+// are laid out in JS, so the size tokens live HERE (a pure table keyed by the
+// same density id). Compact → roomy grows diagram heights, node radii, heatmap
+// cell size, dot-plot row height, the reel/DAG vertical scale, and a global
+// figure font scale; compact shrinks them. Every figure stays fit-to-width at
+// every density (Problem 1 holds in compact AND roomy) — only the INTRINSIC
+// (vertical / cell / radius) dimensions scale, the width is always 100% of the
+// pane via the viewBox. `sizeScale` is the master multiplier the views apply to
+// row heights / cell sizes so the whole composition grows coherently.
+const DENSITY_SIZES = {
+  compact: { sizeScale: 0.88, fontScale: 0.92, nodeRadius: 0.9, dagRowStep: 30, heatCell: 13, dotRow: 19, sparkbarH: 36, reelScale: 1 },
+  cozy: { sizeScale: 1, fontScale: 1, nodeRadius: 1, dagRowStep: 34, heatCell: 16, dotRow: 22, sparkbarH: 42, reelScale: 1.18 },
+  roomy: { sizeScale: 1.18, fontScale: 1.1, nodeRadius: 1.18, dagRowStep: 40, heatCell: 20, dotRow: 26, sparkbarH: 50, reelScale: 1.4 },
+};
+
+// The SIZE tokens for one density (defaults to the persisted value). Pure +
+// total — an unknown density falls back to the compact default.
+export function densityTokens(density) {
+  const d = normaliseDensity(density || readDensity());
+  return DENSITY_SIZES[d] || DENSITY_SIZES[DEFAULT_DENSITY];
+}
+
 // ---- small builders -------------------------------------------------
 
 export function section(titleText, ...children) {
@@ -247,7 +272,9 @@ function table(header, rows) {
   const t = el('table', { class: 'dn-md-table' });
   t.appendChild(el('thead', null, [el('tr', null, header.map((c) => el('th', null, inline(c))))]));
   t.appendChild(el('tbody', null, rows.map((r) => el('tr', null, r.map((c) => el('td', null, inline(c)))))));
-  return t;
+  // contain wide GFM tables (e.g. in the publication body) so they scroll
+  // WITHIN their own box and never push the page/panel layout sideways.
+  return el('div', { class: 'dn-table-scroll' }, [t]);
 }
 
 function inline(s) {

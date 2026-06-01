@@ -81,7 +81,8 @@ export function sparkline(opts) {
   const raw = Array.isArray(o.values) ? o.values : [];
   const fin = finiteValues(raw);
   const svg = svgEl('svg', {
-    class: 'dn-spark', width: w, height: h,
+    // fit-to-width: width:100% so the trend sparkline scales to its pane.
+    class: 'dn-spark', width: '100%', height: h,
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none', role: 'img',
   });
   if (fin.length === 0) {
@@ -138,7 +139,7 @@ export function bumps(opts) {
   const w = o.width || 640;
   const h = o.height || 170;
   const padX = 44; const spineY = h * 0.40; const challY = h * 0.80;
-  const svg = svgEl('svg', { class: 'dn-bumps', width: w, height: h, viewBox: `0 0 ${w} ${h}`, role: 'img' });
+  const svg = svgEl('svg', { class: 'dn-bumps', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMid meet', role: 'img' });
   if (nodes.length === 0) {
     const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'no generations yet';
@@ -271,7 +272,10 @@ export function heatmap(opts) {
   const headH = o.headHeight || 44;
   const w = labelW + cols.length * cw + 6;
   const h = headH + rows.length * ch + 6;
-  const svg = svgEl('svg', { class: 'dn-heatmap', width: w, height: h, viewBox: `0 0 ${w} ${h}`, role: 'img' });
+  // FIT-TO-WIDTH: width:100% + a viewBox so the matrix scales DOWN to its pane
+  // (no fixed pixel width that overflows, no horizontal-scroll wrapper). The
+  // intrinsic cell size (cw/ch) is density-scaled by the caller.
+  const svg = svgEl('svg', { class: 'dn-heatmap', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img' });
   if (rows.length === 0 || cols.length === 0) {
     const t = svgEl('text', { x: 4, y: 16, class: 'dn-empty-label' });
     t.textContent = 'no profiles yet';
@@ -333,7 +337,9 @@ export function valueDotPlot(opts) {
   const labelW = o.labelWidth || 170;
   const glyphW = 16;
   const h = Math.max(rh, items.length * rh + 8);
-  const svg = svgEl('svg', { class: 'dn-valdot', width: w, height: h, viewBox: `0 0 ${w} ${h}`, role: 'img' });
+  // FIT-TO-WIDTH: width:100% + viewBox so the dot-plot scales to its pane (and
+  // the narrower compare-split column) without overflowing.
+  const svg = svgEl('svg', { class: 'dn-valdot', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMin meet', role: 'img' });
   if (items.length === 0) {
     const t = svgEl('text', { x: 4, y: 16, class: 'dn-empty-label' });
     t.textContent = 'no scored entries';
@@ -392,7 +398,9 @@ export function sparkbar(opts) {
   const h = o.height || 30;
   const pad = 2;
   const footH = 2;
-  const svg = svgEl('svg', { class: 'dn-sparkbar', width: w, height: h, viewBox: `0 0 ${w} ${h}`, role: 'img' });
+  // FIT-TO-WIDTH inside its trellis cell: width:100% + viewBox (height is the
+  // density-scaled intrinsic dimension).
+  const svg = svgEl('svg', { class: 'dn-sparkbar', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none', role: 'img' });
   if (bars.length === 0) {
     svg.appendChild(svgEl('line', { x1: pad, y1: h - footH, x2: w - pad, y2: h - footH, class: 'dn-spark-empty' }));
     return svg;
@@ -434,7 +442,7 @@ export function genDots(opts) {
   const w = o.width || 200;
   const h = o.height || 14;
   const pad = 2;
-  const svg = svgEl('svg', { class: 'dn-genrow', width: w, height: h, viewBox: `0 0 ${w} ${h}`, role: 'img' });
+  const svg = svgEl('svg', { class: 'dn-genrow', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none', role: 'img' });
   const n = Math.max(1, cells.length);
   const slot = (w - 2 * pad) / n;
   cells.forEach((c, i) => { svg.appendChild(outcomeGlyph(c, pad + slot * (i + 0.5), h / 2)); });
@@ -463,7 +471,7 @@ export function valueBars(opts) {
   const rh = o.rowHeight || 18;
   const labelW = o.labelWidth || 150;
   const h = Math.max(rh, items.length * rh + 6);
-  const svg = svgEl('svg', { class: 'dn-vbars', width: w, height: h, viewBox: `0 0 ${w} ${h}`, role: 'img' });
+  const svg = svgEl('svg', { class: 'dn-vbars', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMin meet', role: 'img' });
   if (items.length === 0) {
     const t = svgEl('text', { x: 4, y: 14, class: 'dn-empty-label' });
     t.textContent = 'no values';
@@ -500,7 +508,7 @@ export function pairedSlopegraph(opts) {
   const rightX = w - colGap;
   const goodDown = (o.goodDirection || 'down') === 'down';
 
-  const svg = svgEl('svg', { class: 'dn-pslope', width: w, height: h, viewBox: `0 0 ${w} ${h}`, role: 'img' });
+  const svg = svgEl('svg', { class: 'dn-pslope', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMin meet', role: 'img' });
   if (series.length === 0) {
     const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'no paired board duels yet';

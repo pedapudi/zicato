@@ -15,7 +15,7 @@ import { el } from '../../../core/dom.js';
 import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, empty, subhead, renderMarkdown } from '../ui.js';
+import { gatedSwap, empty, subhead, renderMarkdown, densityTokens } from '../ui.js';
 
 // Parse analysis_md into { eyebrow, title, meta:[{label,value}], abstract,
 // body } — the same marker scheme K uses.
@@ -177,7 +177,7 @@ function figureFor(name, figures) {
     const series = g0.entry_grid
       .filter((r) => svg.isNum(r.parent_drift_loss) || svg.isNum(r.child_drift_loss))
       .map((r) => ({ label: r.entry_id, id: r.entry_id, a: svg.isNum(r.parent_drift_loss) ? r.parent_drift_loss : NaN, b: svg.isNum(r.child_drift_loss) ? r.child_drift_loss : NaN, verdict: r.verdict }));
-    fig.appendChild(svg.pairedSlopegraph({ width: 520, height: Math.max(200, 50 + series.length * 26),
+    fig.appendChild(svg.pairedSlopegraph({ width: 520, height: Math.max(Math.round(200 * densityTokens().sizeScale), 50 + series.length * Math.round(26 * densityTokens().sizeScale)),
       left: { title: `champion ${m0.champion}` }, right: { title: `challenger ${m0.challenger}` }, labelGap: 150, goodDirection: 'down', series,
       onClick: (s) => ctx.navigate('board', { epochId, entry: s.id, gen: m0.challenger }) }));
     fig.appendChild(el('figcaption', { class: 'dn-paper-figcap', text: `Figure · paired per-board duel ${m0.champion} → ${m0.challenger}.` }));
@@ -227,7 +227,7 @@ function aggregateScoresFigure(gens, scalarByGen) {
     ]));
   }
   tbl.appendChild(tbody);
-  combined.appendChild(tbl);
+  combined.appendChild(el('div', { class: 'dn-table-scroll' }, [tbl]));
   fig.appendChild(combined);
   fig.appendChild(el('figcaption', { class: 'dn-paper-figcap', text: 'Figure · aggregate generation scores — the summary bar chart and its table are one visual (lower scalar is better).' }));
   return fig;
@@ -279,7 +279,7 @@ function appendMatchupDetail(article, figures) {
       tbody.appendChild(tr);
     }
     tbl.appendChild(tbody);
-    sec.appendChild(tbl);
+    sec.appendChild(el('div', { class: 'dn-table-scroll' }, [tbl]));
   });
   if (any) article.appendChild(sec);
 }

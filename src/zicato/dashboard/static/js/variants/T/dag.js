@@ -44,11 +44,18 @@ export function lifecycleDag(spec) {
   const entries = Array.isArray(o.entries) ? o.entries : [];
   const baseline = !!o.baseline || !o.parentId;
   const dec = baseline ? 'baseline' : (o.decision || 'running');
+  // `width` is now the viewBox's INTERNAL coordinate width — the SVG itself is
+  // rendered at width:100% (see the attrs below) so it FITS its pane and never
+  // overflows. A wider viewBox just means a finer internal grid (the figure is
+  // scaled down to fit by preserveAspectRatio); a narrower one (compare split)
+  // keeps labels legible at the smaller painted size.
   const w = o.width || 900;
   const h = o.height || 360;
 
   const svg = svgEl('svg', {
-    class: 'ezn-dag', width: w, height: h, viewBox: `0 0 ${w} ${h}`,
+    // FIT-TO-WIDTH: width:100% + a viewBox (no fixed pixel width that exceeds
+    // the panel, no horizontal-scroll wrapper). All six stages stay visible.
+    class: 'ezn-dag', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`,
     preserveAspectRatio: 'xMidYMid meet', role: 'img',
     'aria-label': `Lifecycle of ${o.genId || 'candidate'}`,
   });

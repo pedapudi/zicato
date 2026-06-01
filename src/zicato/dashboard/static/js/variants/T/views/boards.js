@@ -12,7 +12,7 @@
 import { el } from '../../../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, normaliseDecision } from '../ui.js';
+import { gatedSwap, section, empty, stat, normaliseDecision, densityTokens } from '../ui.js';
 
 const KIND_ORDER = { multi_turn_emulated: 0, multi_turn_scripted: 1, single_turn: 2 };
 const KIND_LABEL = {
@@ -75,6 +75,7 @@ export async function render(host, ctx, params) {
 
 function trellis(board, gens, rowByGenEntry, domain, epochId, ctx) {
   if (!board.length) return el('div', { class: 'dn-panel' }, [empty('No board entries recorded.')]);
+  const dt = densityTokens();
   const sorted = board.slice().sort((a, b) => {
     const ka = KIND_ORDER[a.kind] ?? 9; const kb = KIND_ORDER[b.kind] ?? 9;
     if (ka !== kb) return ka - kb;
@@ -102,8 +103,8 @@ function trellis(board, gens, rowByGenEntry, domain, epochId, ctx) {
           b.expectation_kind ? el('span', { class: 'dn-faint', text: ' · ' + b.expectation_kind }) : null,
         ].filter(Boolean)),
       ]),
-      svg.sparkbar({ width: 200, height: 40, bars, domain: domain || undefined }),
-      svg.genDots({ width: 200, height: 14, cells }),
+      svg.sparkbar({ width: 200, height: dt.sparkbarH, bars, domain: domain || undefined }),
+      svg.genDots({ width: 200, height: Math.round(14 * dt.sizeScale), cells }),
       el('div', { class: 'dn-trellis-foot dn-faint' }, [
         el('span', { text: svg.isNum(b.budget_s) ? `${b.budget_s}s budget` : 'no budget' }),
         el('span', { text: svg.isNum(b.weight) ? `w ${svg.fmt(b.weight, 1)}` : 'w —' }),

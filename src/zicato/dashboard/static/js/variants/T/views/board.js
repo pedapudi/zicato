@@ -17,7 +17,7 @@
 import { el } from '../../../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, normaliseDecision } from '../ui.js';
+import { gatedSwap, section, empty, stat, normaliseDecision, densityTokens } from '../ui.js';
 
 const KIND_LABEL = {
   single_turn: 'single-turn', multi_turn_scripted: 'scripted multi-turn',
@@ -126,8 +126,9 @@ export async function render(host, ctx, params) {
       .sort((a, b) => b.loss - a.loss)
       .map((r) => ({ label: r.gen + (r.promoted ? ' ♛' : ''), value: r.loss, id: r.gen, pass: r.pass, timeout: r.timeout }));
     if (items.length) {
+      const bdt = densityTokens();
       scoreCard.appendChild(svg.valueDotPlot({
-        width: 560, rowHeight: 22, labelWidth: 140, items,
+        width: 560, rowHeight: bdt.dotRow, labelWidth: 140, items,
         reference: champLoss != null ? { value: champLoss, label: `champion ${championId}` } : null,
         // fix #5: select → INLINE transcript on THIS view (same entry, +gen).
         onClick: (it) => ctx.navigate('board', { epochId, entry: entryId, gen: it.id }),

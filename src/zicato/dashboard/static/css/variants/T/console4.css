@@ -300,6 +300,15 @@
 
   .dn-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px;
     padding: var(--dt-panel-pad-y, 16px) var(--dt-panel-pad-x, 18px); }
+  /* CONTAINMENT GUARANTEE: no panel ever scrolls horizontally or lets a child
+   * escape its box. Visual figures (SVGs) are responsive (width:100% + a
+   * viewBox) so they scale DOWN to fit; tables/preformatted blocks carry their
+   * OWN contained overflow, never the panel. */
+  .dn-panel { max-width: 100%; overflow-x: hidden; }
+  .dn-panel > svg, .dn-figpane > svg, .dn-paper-fig > svg { display: block; max-width: 100%; }
+  /* a figure pane is a plain panel whose visual scales to width — explicit so
+   * the intent reads in the markup and no stray overflow wrapper creeps back. */
+  .dn-figpane { overflow-x: hidden; }
   .dn-row { display: flex; gap: var(--dt-row-gap, 24px); flex-wrap: wrap; align-items: flex-start; }
   .dn-stat { font-family: var(--v2-mono); }
   .dn-stat .v { font-size: 18px; font-variant-numeric: tabular-nums; color: var(--v2-ink); }
@@ -569,6 +578,11 @@
   .dn-bad-t { color: var(--v2-bad); }
   .dn-subhead { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--v2-ink-faint);
     margin: 16px 0 7px; font-family: var(--v2-mono); }
+  /* a CONTAINED horizontal scroll for genuinely-wide tables (publication body
+   * GFM tables, the mutation matrix): the scroll lives on THIS wrapper, never
+   * on the surrounding panel/page, so the table can be wide without any element
+   * escaping its pane. */
+  .dn-table-scroll { max-width: 100%; overflow-x: auto; }
   .dn-md-table, .dn-board-table, .dn-sc-table, .dn-scores-table {
     border-collapse: collapse; width: 100%; font-size: 12px; margin: 4px 0 12px; }
   .dn-md-table th, .dn-md-table td, .dn-board-table th, .dn-board-table td,
@@ -656,7 +670,9 @@
   .dn-paper-figcap { font-size: 11px; color: var(--v2-ink-faint); font-family: var(--v2-mono); margin-top: 8px; line-height: 1.4; }
   .dn-paper-plates, .dn-paper-matchups { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--v2-rule); }
   /* combined aggregate-scores visual: chart + table, one figure */
-  .dn-scores-combined { display: grid; gap: 16px; grid-template-columns: auto 1fr; align-items: center; }
+  .dn-scores-combined { display: grid; gap: 16px; grid-template-columns: minmax(220px, 320px) 1fr; align-items: center; min-width: 0; }
+  .dn-scores-combined > svg { width: 100%; min-width: 0; }
+  .dn-scores-combined > .dn-table-scroll { min-width: 0; }
   .dn-scores-table { margin: 0; }
 
   /* ===================  lifecycle DAG (ezn-*)  =================== */

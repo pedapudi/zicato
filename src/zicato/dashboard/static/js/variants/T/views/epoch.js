@@ -16,7 +16,7 @@ import { el } from '../../../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { reel, reelDigest } from '../reel.js';
-import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision } from '../ui.js';
+import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
@@ -126,10 +126,13 @@ export async function render(host, ctx, params) {
     // ---- COMPACT board entries × generations heatmap (stays here, fix #6) ----
     const rows = [...entryIds].sort().map((id) => ({ id, label: id }));
     const cols = gens.map((g) => ({ id: g.id, label: g.id }));
-    const hmCard = el('div', { class: 'dn-panel', style: 'overflow-x:auto;' });
+    // FIT-TO-WIDTH: the heatmap is a responsive SVG (width:100% + viewBox), so
+    // it scales to the pane — NO overflow-x wrapper. Density scales cell size.
+    const hmt = densityTokens();
+    const hmCard = el('div', { class: 'dn-panel dn-figpane' });
     if (rows.length && cols.length) {
       hmCard.appendChild(svg.heatmap({
-        rows, cols,
+        rows, cols, cellW: Math.round(hmt.heatCell * 1.6), cellH: hmt.heatCell,
         value: (r, c) => (lossLookup.has(`${r}|${c}`) ? lossLookup.get(`${r}|${c}`) : null),
         // fix #7: a cell routes to the PER-BOARD cross-candidate view, keyed by
         // the entry id (the row) — NOT to an arbitrary candidate.

@@ -27,7 +27,7 @@ import { el } from '../../../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { lifecycleDag } from '../dag.js';
-import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision } from '../ui.js';
+import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, densityTokens } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 
 export async function render(host, ctx, params, route) {
@@ -189,11 +189,16 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
   ]));
 
   // ---- lifecycle DAG (patch node clickable → diff, fix #2) ----
-  const dagCard = el('div', { class: 'dn-panel', style: 'overflow-x:auto;' });
+  // FIT-TO-WIDTH: the DAG is a responsive SVG (width:100% + viewBox) painted
+  // straight into the panel — NO overflow-x wrapper, so all six stages (parent
+  // → patch → board → Σ → gate → terminal) are visible without sideways
+  // scrolling. Density scales the figure's vertical SIZE (row step + height).
+  const dt = densityTokens();
+  const dagCard = el('div', { class: 'dn-panel dn-figpane' });
   dagCard.appendChild(lifecycleDag({
     genId, parentId: node.parent, baseline, promoted: node.promoted, decision: s.decision,
     deltaScalar: s.primaryDelta, patchPoints: s.mpts, entries: s.entries,
-    width: cmpId ? 560 : 900, height: Math.max(300, 120 + s.entries.length * 34),
+    width: cmpId ? 560 : 900, height: Math.max(Math.round(300 * dt.sizeScale), Math.round(120 * dt.sizeScale) + s.entries.length * dt.dagRowStep),
     onEntry: (eid) => ctx.navigate('candidate', { epochId, gen: genId, entry: eid }, opts),
     onPatch: baseline ? null : () => ctx.navigate('diff', { epochId, gen: genId }),
   }));
@@ -208,7 +213,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
       .sort((a, b) => b.drift_loss - a.drift_loss)
       .map((e) => ({ label: e.entry_id, value: e.drift_loss, id: e.entry_id, pass: e.pass_fail, timeout: !!e.wall_clock_budget_exceeded }));
     scoreCard.appendChild(svg.valueDotPlot({
-      width: cmpId ? 480 : 560, rowHeight: 21, labelWidth: cmpId ? 160 : 200, items,
+      width: cmpId ? 480 : 560, rowHeight: dt.dotRow, labelWidth: cmpId ? 160 : 200, items,
       reference: svg.isNum(championScalar) ? { value: championScalar, label: `champion ${championId}` } : null,
       onClick: (it) => ctx.navigate('candidate', { epochId, gen: genId, entry: it.id }, opts),
     }));
@@ -372,7 +377,8 @@ function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges) {
   const jitems = jrows.filter((j) => svg.isNum(j.weighted_loss)).sort((a, b) => b.weighted_loss - a.weighted_loss).map((j) => ({ label: j.judge_name, value: j.weighted_loss }));
   if (jitems.length) {
     card.appendChild(el('p', { class: 'dn-faint', style: 'margin:14px 0 4px;font-size:11px;', text: 'per-judge weighted process-drift loss · higher = more drift' }));
-    card.appendChild(svg.valueBars({ width: 420, rowHeight: 20, labelWidth: 180, items: jitems }));
+    const djt = densityTokens();
+    card.appendChild(svg.valueBars({ width: 420, rowHeight: Math.round(20 * djt.sizeScale), labelWidth: 180, items: jitems }));
   }
 
   // fix #5 path: the transcript opens INLINE on the board view (no separate run page).

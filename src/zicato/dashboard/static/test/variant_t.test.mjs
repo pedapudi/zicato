@@ -637,4 +637,134 @@ test('density picker: compact↔roomy switches the root attribute + spacing toke
   assertEqual(ui.normaliseDensity('nonsense'), 'compact', 'unknown density → compact');
 });
 
+// ====================================================================
+// Console IV folds (round 8): visual elements FIT their panes, and the
+// density picker scales visual-element SIZE (not only spacing).
+// ====================================================================
+
+const dag = await import('../js/variants/T/dag.js');
+
+// helpers to read the painted SVG of a view -------------------------
+function svgsByClass(host, cls) {
+  return host.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'svg' && (n.getAttribute('class') || '').split(/\s+/).includes(cls));
+}
+// does any ancestor (within host) carry an inline horizontal-scroll style?
+function hasScrollWrapperAncestor(node, host) {
+  let n = node && node.parentNode;
+  while (n && n !== host) {
+    const style = (n.getAttribute && n.getAttribute('style')) || '';
+    const cls = (n.getAttribute && n.getAttribute('class')) || '';
+    // a contained table-scroll wrapper is allowed; a panel/figure scroll is not.
+    if (/overflow-x\s*:\s*auto|overflow-x\s*:\s*scroll/.test(style) && !cls.includes('dn-table-scroll')) return true;
+    n = n.parentNode;
+  }
+  return false;
+}
+
+// ---- (a) the lifecycle DAG + sankey are fit-to-width responsive SVG ----
+
+test('fit-to-width: the lifecycle DAG renders as a responsive SVG (width:100% + viewBox), with NO horizontal-scroll wrapper around the figure', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+
+  const dagSvg = svgsByClass(host, 'ezn-dag')[0];
+  assert(dagSvg, 'the lifecycle DAG SVG rendered on the candidate page');
+  assertEqual(dagSvg.getAttribute('width'), '100%', 'the DAG SVG is width:100% (fit-to-width, not a fixed pixel width)');
+  assert((dagSvg.getAttribute('viewBox') || '').startsWith('0 0 '), 'the DAG SVG carries a viewBox so it scales to its pane');
+  assert(!hasScrollWrapperAncestor(dagSvg, host), 'no horizontal-scroll wrapper around the lifecycle DAG figure/panel');
+
+  // the unit builder honours the same contract directly.
+  const direct = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: [{ entry_id: 'b1', drift_loss: 10, pass_fail: 0 }], decision: 'rejected' });
+  assertEqual(direct.getAttribute('width'), '100%', 'lifecycleDag() builds a width:100% SVG');
+});
+
+test('fit-to-width: the Tufte sankey renders as a responsive SVG (width:100% + viewBox)', () => {
+  const node = svg.sankey({
+    width: 720,
+    patch: [{ id: 'p', label: 'patch', value: 10 }],
+    drift: [{ id: 'd', label: 'drift', value: 10 }],
+    gate: [{ id: 'g', label: 'gate', value: 10 }],
+    links: [{ source: 'p', target: 'd', value: 10 }, { source: 'd', target: 'g', value: 10 }],
+  });
+  assertEqual(node.localName, 'svg', 'sankey builds an SVG');
+  assertEqual(node.getAttribute('width'), '100%', 'the sankey is width:100% (fit-to-width)');
+  assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'the sankey carries a viewBox');
+});
+
+// ---- (a′) the per-board dot-plot + epoch heatmap are responsive too ----
+
+test('fit-to-width: the epoch heatmap is a responsive SVG and its panel does NOT scroll horizontally', async () => {
+  freshState(); installFetch();
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  const hm = svgsByClass(host, 'dn-heatmap')[0];
+  assert(hm, 'the heatmap rendered on the epoch view');
+  assertEqual(hm.getAttribute('width'), '100%', 'the heatmap SVG is width:100% (fit-to-width)');
+  assert(!hasScrollWrapperAncestor(hm, host), 'the heatmap panel does NOT carry a horizontal-scroll wrapper');
+});
+
+// ---- (b) the publication view's wide content is CONTAINED -------------
+
+test('contained: the publication view’s wide tables carry their OWN contained overflow — the panel itself does not scroll horizontally', async () => {
+  freshState(); installFetch();
+  const publication = await import('../js/variants/T/views/publication.js');
+  const host = document.createElement('div');
+  await publication.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+
+  // the per-matchup-detail + aggregate-scores tables are wrapped in a contained
+  // scroll box, so the table can be wide WITHOUT the surrounding paper/panel
+  // overflowing.
+  const tables = host.querySelectorAll('[class]').filter((n) => n.localName === 'table'
+    && /dn-(md|sc|scores|board)-table/.test(n.getAttribute('class') || ''));
+  assert(tables.length >= 1, 'the publication rendered at least one table');
+  let contained = 0;
+  for (const t of tables) {
+    let n = t.parentNode; let ok = false;
+    while (n && n !== host) { if ((n.getAttribute('class') || '').includes('dn-table-scroll')) { ok = true; break; } n = n.parentNode; }
+    if (ok) contained++;
+  }
+  assert(contained === tables.length, 'every wide publication table sits inside a contained .dn-table-scroll box (' + contained + '/' + tables.length + ')');
+
+  // and the live figures in the paper are responsive (no fixed-pixel-width SVG
+  // that could exceed the paper column).
+  const figSvgs = host.querySelectorAll('[class]').filter((n) => n.localName === 'svg');
+  assert(figSvgs.length >= 1, 'the paper spliced at least one live figure');
+  for (const s of figSvgs) assertEqual(s.getAttribute('width'), '100%', 'each paper figure SVG is width:100% (contained within the paper column)');
+});
+
+// ---- (c) the density picker scales a visual-element SIZE token --------
+
+test('density scales SIZE: compact → roomy changes a DIAGRAM dimension token, not only spacing', () => {
+  const compact = ui.densityTokens('compact');
+  const roomy = ui.densityTokens('roomy');
+  // every intrinsic size token grows from compact to roomy.
+  assert(roomy.sizeScale > compact.sizeScale, 'the master sizeScale grows compact → roomy (' + compact.sizeScale + ' → ' + roomy.sizeScale + ')');
+  assert(roomy.dagRowStep > compact.dagRowStep, 'the lifecycle-DAG row step grows with density');
+  assert(roomy.heatCell > compact.heatCell, 'the heatmap cell size grows with density');
+  assert(roomy.dotRow > compact.dotRow, 'the dot-plot row height grows with density');
+  assert(roomy.sparkbarH > compact.sparkbarH, 'the trellis sparkbar height grows with density');
+  assert(roomy.nodeRadius > compact.nodeRadius, 'the node radius scale grows with density');
+  // an unknown density is total — falls back to the compact default.
+  assertEqual(ui.densityTokens('nonsense').sizeScale, compact.sizeScale, 'unknown density falls back to compact sizes');
+});
+
+test('density scales SIZE: the rendered lifecycle-DAG height differs between compact and roomy', () => {
+  const entries = [{ entry_id: 'b1', drift_loss: 10, pass_fail: 0 }, { entry_id: 'b2', drift_loss: 20, pass_fail: 1 }];
+  const ct = ui.densityTokens('compact');
+  const rt = ui.densityTokens('roomy');
+  const hCompact = Math.max(Math.round(300 * ct.sizeScale), Math.round(120 * ct.sizeScale) + entries.length * ct.dagRowStep);
+  const hRoomy = Math.max(Math.round(300 * rt.sizeScale), Math.round(120 * rt.sizeScale) + entries.length * rt.dagRowStep);
+  assert(hRoomy > hCompact, 'the DAG figure height grows compact → roomy (' + hCompact + ' → ' + hRoomy + ')');
+  const dCompact = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: hCompact });
+  const dRoomy = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: hRoomy });
+  assert(+dRoomy.getAttribute('height') > +dCompact.getAttribute('height'), 'the painted DAG SVG height is larger at roomy than compact');
+  // but BOTH stay fit-to-width (Problem 1 holds at every density).
+  assertEqual(dCompact.getAttribute('width'), '100%', 'compact DAG still width:100%');
+  assertEqual(dRoomy.getAttribute('width'), '100%', 'roomy DAG still width:100%');
+});
+
 await run();
