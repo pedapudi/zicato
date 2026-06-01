@@ -1,0 +1,223 @@
+// variants/R/ui.js — shared chrome helpers for the Strata variant.
+//
+// Self-contained for Variant R. Small, pure builders the columns + detail
+// pane compose: the digest-gated content swap (the no-flash guarantee),
+// section headers, verdict pills, a GFM-capable tiny-markdown renderer
+// (tables render), honest empty / loading states, and the colour + typeface
+// theme tables (R defaults: solarized-dark + Display). No data fetching, no
+// state mutation. Mark / chrome classes are `dr-*`, scoped under the R root.
+
+import { el, clearChildren } from '../../core/dom.js';
+
+// ---- digest-gated content swap (the no-flash guarantee) -------------
+//
+// A pane computes a stable digest of ONLY its structural/content data
+// (timestamps / heartbeat fields EXCLUDED), then calls gatedSwap(host, digest,
+// build). If the digest equals the one this host last painted AND the host
+// still has children, NOTHING is written — a steady heartbeat re-dispatch is a
+// true no-op and nothing flashes.
+export function gatedSwap(host, digest, build) {
+  if (!host) return false;
+  const next = String(digest);
+  if (host.getAttribute('data-r-digest') === next && host.firstChild) return false;
+  clearChildren(host);
+  const built = build();
+  const nodes = Array.isArray(built) ? built : [built];
+  for (const n of nodes) { if (n) host.appendChild(n); }
+  host.setAttribute('data-r-digest', next);
+  return true;
+}
+
+// ---- colour themes (solarized-dark is R's default) ------------------
+export const COLOR_THEMES = [
+  ['solarized-dark', 'sol·dark'],
+  ['monokai', 'monokai'],
+  ['solarized-light', 'sol·light'],
+];
+const COLOR_IDS = COLOR_THEMES.map((t) => t[0]);
+export const DEFAULT_COLOR = 'solarized-dark';
+const COLOR_KEY = 'zicato.R.theme';
+
+export function normaliseColor(t) { return COLOR_IDS.includes(t) ? t : DEFAULT_COLOR; }
+export function readColor() {
+  let stored = null;
+  try { stored = window.localStorage.getItem(COLOR_KEY); } catch (e) { /* private mode */ }
+  return normaliseColor(stored);
+}
+export function persistColor(t) {
+  try { window.localStorage.setItem(COLOR_KEY, normaliseColor(t)); } catch (e) { /* ignore */ }
+  return normaliseColor(t);
+}
+
+// ---- typeface themes (Display is R's default) -----------------------
+export const TYPE_THEMES = [
+  ['sans', 'Sans'],
+  ['editorial', 'Editorial'],
+  ['technical', 'Technical'],
+  ['display', 'Display'],
+];
+const TYPE_IDS = TYPE_THEMES.map((t) => t[0]);
+export const DEFAULT_TYPE = 'display';
+const TYPE_KEY = 'zicato.R.typeface';
+
+export function normaliseType(t) { return TYPE_IDS.includes(t) ? t : DEFAULT_TYPE; }
+export function readType() {
+  let stored = null;
+  try { stored = window.localStorage.getItem(TYPE_KEY); } catch (e) { /* private mode */ }
+  return normaliseType(stored);
+}
+export function persistType(t) {
+  try { window.localStorage.setItem(TYPE_KEY, normaliseType(t)); } catch (e) { /* ignore */ }
+  return normaliseType(t);
+}
+
+// ---- small builders -------------------------------------------------
+
+export function section(titleText, ...children) {
+  return el('section', { class: 'dr-section' }, [
+    el('h2', { class: 'dr-h2', text: titleText }),
+    ...children.filter(Boolean),
+  ]);
+}
+
+export function subhead(text) { return el('div', { class: 'dr-subhead', text }); }
+export function empty(text) { return el('p', { class: 'dr-empty', text: text || 'No data yet.' }); }
+export function loading(text) { return el('p', { class: 'dr-empty', text: text || 'Loading…' }); }
+
+export function normaliseDecision(outcome) {
+  if (!outcome || typeof outcome !== 'object') return null;
+  const raw = String(outcome.tournament_decision || outcome.decision || '').toLowerCase();
+  if (raw.includes('promot')) return 'promoted';
+  if (raw.includes('reject')) return 'rejected';
+  if (raw.includes('defer')) return 'deferred';
+  return raw || null;
+}
+
+export function verdictPill(decision) {
+  const d = decision || 'baseline';
+  const label = d === 'baseline' ? 'seed (v0)' : d;
+  return el('span', { class: `dr-pill dr-${d}`, text: label });
+}
+
+export function stat(value, key) {
+  return el('div', { class: 'dr-stat' }, [
+    el('span', { class: 'v', text: value }),
+    el('span', { class: 'k', text: key }),
+  ]);
+}
+
+export function linkButton(text, onClick, attrs) {
+  const b = el('button', Object.assign({ class: 'dr-linkbtn', type: 'button' }, attrs || {}), [text]);
+  if (onClick) b.addEventListener('click', onClick);
+  return b;
+}
+
+// ---- tiny markdown → DOM (GFM tables render) ------------------------
+export function renderMarkdown(md, opts) {
+  const o = opts || {};
+  const root = el('div', { class: 'dr-md-body' });
+  const text = String(md || '').replace(/\r\n/g, '\n');
+  const lines = text.split('\n');
+  let i = 0;
+  let para = [];
+  let list = null; let listOrdered = false;
+
+  const flushPara = () => { if (para.length) { root.appendChild(el('p', null, inline(para.join(' ')))); para = []; } };
+  const flushList = () => { if (list) { root.appendChild(list); list = null; } };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    const fig = /^<!--\s*FIGURE:([A-Za-z0-9_-]+)\s*-->$/.exec(trimmed);
+    if (fig) {
+      flushPara(); flushList();
+      if (o.onFigure) { const node = o.onFigure(fig[1]); if (node) root.appendChild(node); }
+      i++; continue;
+    }
+    if (/^<!--.*-->$/.test(trimmed)) { i++; continue; }
+
+    if (/^```/.test(trimmed)) {
+      flushPara(); flushList();
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) { buf.push(lines[i]); i++; }
+      i++;
+      root.appendChild(el('pre', null, [el('code', { text: buf.join('\n') })]));
+      continue;
+    }
+    if (trimmed.startsWith('|') && i + 1 < lines.length
+      && /^\|?[\s:|-]+\|?$/.test(lines[i + 1].trim()) && lines[i + 1].includes('-')) {
+      flushPara(); flushList();
+      const header = splitRow(trimmed);
+      const rows = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim().startsWith('|')) { rows.push(splitRow(lines[i].trim())); i++; }
+      root.appendChild(table(header, rows));
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      flushPara(); flushList();
+      const lvl = Math.min(4, heading[1].length);
+      root.appendChild(el('h' + lvl, null, inline(heading[2])));
+      i++; continue;
+    }
+    if (/^>\s?/.test(line)) {
+      flushPara(); flushList();
+      root.appendChild(el('blockquote', null, inline(line.replace(/^>\s?/, ''))));
+      i++; continue;
+    }
+    const ordered = /^\s*\d+\.\s+(.*)$/.exec(line);
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (ordered || bullet) {
+      flushPara();
+      const wantOrdered = !!ordered;
+      if (!list || listOrdered !== wantOrdered) { flushList(); list = el(wantOrdered ? 'ol' : 'ul'); listOrdered = wantOrdered; }
+      list.appendChild(el('li', null, inline((ordered || bullet)[1])));
+      i++; continue;
+    }
+    if (trimmed === '') { flushPara(); flushList(); i++; continue; }
+    flushList();
+    para.push(trimmed);
+    i++;
+  }
+  flushPara(); flushList();
+  if (!root.firstChild) root.appendChild(el('p', { class: 'dr-faint', text: 'Nothing to render.' }));
+  return root;
+}
+
+function splitRow(line) {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  return s.split('|').map((c) => c.trim());
+}
+
+function table(header, rows) {
+  const t = el('table', { class: 'dr-md-table' });
+  t.appendChild(el('thead', null, [el('tr', null, header.map((c) => el('th', null, inline(c))))]));
+  t.appendChild(el('tbody', null, rows.map((r) => el('tr', null, r.map((c) => el('td', null, inline(c)))))));
+  return t;
+}
+
+function inline(s) {
+  const out = [];
+  const str = String(s == null ? '' : s);
+  const re = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g;
+  let last = 0; let m;
+  while ((m = re.exec(str)) !== null) {
+    if (m.index > last) out.push(str.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith('`')) out.push(el('code', { text: tok.slice(1, -1) }));
+    else if (tok.startsWith('**')) out.push(el('strong', { text: tok.slice(2, -2) }));
+    else if (tok.startsWith('*')) out.push(el('em', { text: tok.slice(1, -1) }));
+    else {
+      const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok);
+      if (lm) out.push(el('a', { class: 'dr-md-link', href: lm[2], text: lm[1] }));
+      else out.push(tok);
+    }
+    last = m.index + tok.length;
+  }
+  if (last < str.length) out.push(str.slice(last));
+  return out.length ? out : [str];
+}
