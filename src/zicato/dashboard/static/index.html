@@ -323,10 +323,16 @@
         : (stored && (stored === 'v2' || stored === 'gallery' || VARIANTS[stored]) ? stored : 'v1');
 
       function hideV1() {
+        // The v1 chrome carries author CSS that sets `display` (e.g.
+        // `.phase0-shell { display: block }`), which OUTRANKS the UA
+        // `[hidden] { display: none }` rule — so the `hidden` attribute
+        // alone leaves the shell visible above the variant root. Force it
+        // off with an inline style, which beats any selector-based rule.
         var ids = ['header-bar', 'phase0-live-rail', 'phase0-status-dropdown',
           'phase0-palette-overlay', 'phase0-shell', 'footer-bar'];
         for (var i = 0; i < ids.length; i++) {
-          var n = document.getElementById(ids[i]); if (n) n.hidden = true;
+          var n = document.getElementById(ids[i]);
+          if (n) { n.hidden = true; n.style.display = 'none'; }
         }
       }
       function show(id) { var n = document.getElementById(id); if (n) n.hidden = false; }
