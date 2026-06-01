@@ -507,16 +507,19 @@ def test_bundle_under_size_envelope(
     # per-board cross-candidate view, a typeface-theme picker. Measured
     # 2,925,207 bytes under a 3,000 KB cap.
     # CONVERGENCE-III WAVE (round 5): four more variants P (Console III), Q
-    # (Atlas IV), R (Strata), S (Lens) — all built on a data-model TREE
-    # navigation sidebar (Environment → Epoch → {Generations, Boards, Mutation
-    # surface, Publication}), with per-candidate patch diffs, all-matchups,
-    # a first-class board view with inline side-by-side transcripts, the
-    # promote gate on the candidate page, and trellis/heatmap de-duplication.
-    # Nineteen variants + v1/v2 now ship side-by-side behind ?ui= for the
-    # operator to down-select. Measured 3,605,283 bytes. A 3,700 KB cap holds
-    # the (deliberately temporary) exploration; once a variant is chosen, all
-    # the others + v1/v2 are deleted and the envelope drops sharply and resets.
-    assert total < 3_700_000, f"bundle is {total} bytes, exceeds 3_700_000 envelope"
+    # (Atlas IV), R (Strata), S (Lens) — built on a data-model TREE navigation
+    # sidebar, with per-candidate patch diffs, all-matchups, a first-class
+    # board view + inline side-by-side transcripts, the promote gate on the
+    # candidate page, and trellis/heatmap de-dup. Measured 3,605,283 bytes
+    # under a 3,700 KB cap.
+    # CONVERGENCE-IV WAVE (round 6): four more variants T (Console IV — the
+    # anchor: P + S's side-by-side compare + Q's spacing + a fixed back button),
+    # U (Atlas V — roomy/light sibling), V (Reel — timeline/playback), W (Arena
+    # — broadcast standings + match cards). Twenty-three variants + v1/v2 now
+    # ship side-by-side behind ?ui=. Measured 4,224,601 bytes. A 4,300 KB cap
+    # holds the (deliberately temporary, about-to-be-pruned) exploration; once
+    # a variant is chosen the others + v1/v2 are deleted and this resets sharply.
+    assert total < 4_300_000, f"bundle is {total} bytes, exceeds 4_300_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
