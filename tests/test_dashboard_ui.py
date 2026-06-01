@@ -492,10 +492,16 @@ def test_bundle_under_size_envelope(
     # ENRICHMENT WAVE: each variant gained candidate-lifecycle, board-field,
     # per-board scoring drill-down, and tournament-style match-up
     # visualizations (each in its own diagrammatic idiom). Measured
-    # 1,337,956 bytes. A 1,400 KB cap holds the (deliberately temporary)
-    # exploration; once a variant is chosen, the other three + v1/v2 are
-    # deleted and the envelope drops sharply and is reset.
-    assert total < 1_400_000, f"bundle is {total} bytes, exceeds 1_400_000 envelope"
+    # 1,337,956 bytes under a 1,400 KB cap.
+    # SYNTHESIS WAVE (round 2): three new variants E (Atlas), F (Current),
+    # G (Bridge) combine the best parts of A–D — A's navigation, C's
+    # lifecycle/causal-flow, D's data-viz, B/D theming — each self-contained
+    # and digest-gated. Seven variants + v1/v2 now ship side-by-side behind
+    # ?ui= so the operator can compare and pick. Measured 1,813,130 bytes.
+    # A 1,900 KB cap holds the (deliberately temporary) exploration; once a
+    # variant is chosen, all the others + v1/v2 are deleted and the envelope
+    # drops sharply and is reset.
+    assert total < 1_900_000, f"bundle is {total} bytes, exceeds 1_900_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
