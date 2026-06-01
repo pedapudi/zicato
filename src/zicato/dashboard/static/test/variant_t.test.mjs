@@ -767,4 +767,181 @@ test('density scales SIZE: the rendered lifecycle-DAG height differs between com
   assertEqual(dRoomy.getAttribute('width'), '100%', 'roomy DAG still width:100%');
 });
 
+// ====================================================================
+// Console IV folds (round 9): a PAGE-WIDE SCALE pill + a FLUID,
+// resolution-responsive layout. The operator scales the WHOLE page
+// (text + diagrams) — NOT per-pane — and the content uses the full
+// viewport width so the side-by-side compare panes (and their SVGs)
+// render as large as the screen allows.
+// ====================================================================
+
+// shared helper: mount the real shell against a live `location` (the same
+// harness plumbing the back-button test uses), returning the root.
+function mountLiveShell(initialHash) {
+  const listeners = { hashchange: [] };
+  globalThis.HashChangeEvent = function HashChangeEvent() {};
+  globalThis.EventSource = function EventSource() { this.readyState = 0; this.addEventListener = () => {}; this.close = () => {}; };
+  globalThis.EventSource.CLOSED = 2;
+  globalThis.window = globalThis.window || {};
+  globalThis.window.addEventListener = (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); };
+  const loc = { _hash: '' };
+  Object.defineProperty(loc, 'hash', {
+    get() { return this._hash; },
+    set(v) { this._hash = v; for (const fn of (listeners.hashchange || [])) fn(); },
+    configurable: true,
+  });
+  globalThis.location = loc;
+  globalThis.window.location = loc;
+  globalThis.window.dispatchEvent = () => { for (const fn of (listeners.hashchange || [])) fn(); };
+
+  const root = document.createElement('div');
+  document.body.appendChild(root);
+  loc._hash = initialHash || '#/T/';
+  shell.mountShell(root);
+  return root;
+}
+
+// ---- (a) the scale constants + normalisation (the pill's range) ----
+
+test('page scale: ui exposes a 70–150% range (5% steps) with a 100% default and snaps/clamps', () => {
+  freshState();
+  assertEqual(ui.DEFAULT_SCALE, 100, 'the page scale defaults to 100%');
+  assertEqual(ui.SCALE_MIN, 70, 'the pill floors at 70%');
+  assertEqual(ui.SCALE_MAX, 150, 'the pill ceils at 150%');
+  assertEqual(ui.SCALE_STEP, 5, 'the pill steps by 5%');
+  assertEqual(ui.normaliseScale(40), 70, 'below-range clamps up to the min');
+  assertEqual(ui.normaliseScale(999), 150, 'above-range clamps down to the max');
+  assertEqual(ui.normaliseScale(112), 110, 'an off-grid value snaps to the 5% step grid');
+  assertEqual(ui.normaliseScale('nonsense'), 100, 'a non-numeric value falls back to the default');
+  // the shell re-exports the same surface for views/tests.
+  assertEqual(shell.DEFAULT_SCALE, 100, 'the shell exposes the default scale');
+});
+
+// ---- (b) the pill exists in the chrome + drives a PAGE-WIDE scale ----
+
+test('page scale: the draggable scale pill exists in the chrome; setting it applies a PAGE-WIDE scale at the app ROOT (not a pane) + persists + restores', () => {
+  // start from a clean store so the restore assertion is meaningful.
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  const root = mountLiveShell('#/T/');
+
+  // the pill is a draggable range input that lives in the top chrome.
+  const pill = allByClass(root, 'dt-scale-pill')[0];
+  assert(pill, 'the scale pill rendered in the chrome (beside the pickers)');
+  const range = root.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'input' && (n.getAttribute('class') || '').includes('dt-scale-range'))[0];
+  assert(range, 'the pill is a draggable/keyboard range input');
+  assertEqual(range.getAttribute('type'), 'range', 'it is a native range slider (draggable + arrow-key accessible)');
+  assertEqual(range.getAttribute('min'), '70', 'the slider min is 70%');
+  assertEqual(range.getAttribute('max'), '150', 'the slider max is 150%');
+  assertEqual(range.getAttribute('step'), '5', 'the slider steps by 5%');
+  assert(allByClass(root, 'dt-scale-readout')[0], 'a % readout sits beside the slider');
+
+  // default is 100% (no clipping; whole page at native size).
+  assertEqual(root.getAttribute('data-t-scale'), '100', 'the page starts at 100% scale');
+
+  // DRAG / SET the pill → the WHOLE PAGE scales at the app ROOT (the zoom token
+  // changes on the variant root, NOT on any individual pane).
+  range.value = '130';
+  range.setAttribute('value', '130');
+  range.dispatchEvent({ type: 'input', target: range });
+  assertEqual(root.getAttribute('data-t-scale'), '130', 'the app ROOT records the new page scale');
+  assertEqual(String(root.style.zoom), '1.3', 'the scale is applied as `zoom` on the variant root (page-wide, reflows — no clipping)');
+  assertEqual(root.style.cssText.includes('--dt-page-scale:1.3'), true, 'the raw scale ratio is stamped on the root');
+  // the readout reflects the new value.
+  assert(allByClass(root, 'dt-scale-readout')[0].textContent.includes('130%'), 'the % readout updated to 130%');
+
+  // it is NOT a per-pane control: no pane carries its own scale attribute/zoom.
+  const panes = root.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).some((c) => /pane|split-side|viewhost/.test(c)));
+  for (const p of panes) {
+    assert(p.getAttribute('data-t-scale') == null, 'no per-pane scale attribute (scaling is page-wide)');
+    assert(!(p.style && p.style.cssText && p.style.cssText.includes('zoom')), 'no per-pane zoom (scaling is page-wide)');
+  }
+
+  // PERSIST: the chosen scale was written to localStorage.
+  assertEqual(ui.readScale(), 130, 'the chosen page scale persisted to localStorage');
+
+  // RESTORE: a fresh mount reads it back and re-applies it to the root.
+  const root2 = mountLiveShell('#/T/');
+  assertEqual(root2.getAttribute('data-t-scale'), '130', 'a fresh mount restores the persisted scale');
+  assertEqual(String(root2.style.zoom), '1.3', 'the restored scale is re-applied as root zoom');
+  const range2 = root2.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'input' && (n.getAttribute('class') || '').includes('dt-scale-range'))[0];
+  assertEqual(range2.getAttribute('value'), '130', 'the restored slider reflects the persisted value');
+});
+
+// ---- (c) keyboard accessibility (the pill is a native range) -------
+
+test('page scale: the pill is keyboard-accessible — it is a focusable native range with the aria value bounds', () => {
+  const root = mountLiveShell('#/T/');
+  const range = root.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'input' && (n.getAttribute('class') || '').includes('dt-scale-range'))[0];
+  // a native range input is inherently arrow-key adjustable; expose the aria bounds.
+  assertEqual(range.getAttribute('aria-valuemin'), '70', 'aria-valuemin set for assistive tech');
+  assertEqual(range.getAttribute('aria-valuemax'), '150', 'aria-valuemax set for assistive tech');
+  assert(range.getAttribute('aria-valuenow') != null, 'aria-valuenow tracks the current scale');
+  assert((range.getAttribute('aria-label') || '').length > 0, 'the slider carries an aria-label');
+});
+
+// ---- (d) scale COMPOSES with density (one does not reset the other) ----
+
+test('page scale: composes with density — changing density does NOT reset the page scale, and vice-versa', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  const root = mountLiveShell('#/T/');
+
+  // set a non-default scale, then switch density.
+  shell.applyScale(85, root);
+  assertEqual(root.getAttribute('data-t-scale'), '85', 'page scale set to 85%');
+  shell.applyDensity('roomy', root);
+  assertEqual(root.getAttribute('data-t-density'), 'roomy', 'density switched to roomy');
+  // the scale is UNCHANGED by the density switch (they are separate axes).
+  assertEqual(root.getAttribute('data-t-scale'), '85', 'switching density left the page scale untouched');
+  assertEqual(ui.readScale(), 85, 'the page scale is still persisted at 85% after a density change');
+
+  // and switching scale leaves density alone — they compose.
+  shell.applyScale(120, root);
+  assertEqual(root.getAttribute('data-t-density'), 'roomy', 'switching the page scale left density untouched');
+  assertEqual(root.getAttribute('data-t-scale'), '120', 'the new page scale applied');
+  // distinct persistence keys: re-reading each yields its own axis.
+  assertEqual(ui.readDensity(), 'roomy', 'density persists independently');
+  assertEqual(ui.readScale(), 120, 'scale persists independently');
+});
+
+// ---- (e) the layout is FLUID (not clamped to a narrow column) ------
+
+test('layout: the detail pane + compare grid are FLUID — not clamped to a narrow fixed max-width; the compare split uses the FULL content width', async () => {
+  // the detail host fills the width (width:100%), so the two compare panes
+  // each take HALF the FULL content width — not half of a narrow column.
+  const css = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8'));
+
+  // the OLD narrow caps are gone (1160 on the detail pane, 1320 on the viewhost).
+  assert(!/\.dt-viewhost\s*\{[^}]*max-width:\s*1160px/.test(css.replace(/\n/g, ' ')),
+    'the detail pane is no longer clamped to the narrow 1160px column');
+  assert(!/\.dn-viewhost\s*\{[^}]*max-width:\s*1320px/.test(css.replace(/\n/g, ' ')),
+    'the legacy viewhost is no longer clamped to the narrow 1320px column');
+  // the detail pane is fluid (width:100%).
+  assert(/\.dt-viewhost\s*\{[^}]*width:\s*100%/.test(css.replace(/\n/g, ' ')),
+    'the detail pane is fluid (width:100%, fills the available column)');
+
+  // the compare split is a two-equal-column grid (1fr 1fr) — so within a FULL-
+  // width detail pane each pane is half the FULL width (bigger SVGs on bigger
+  // screens). It only collapses to one column on genuinely small screens.
+  assert(/\.dt-split\s*\{[^}]*grid-template-columns:\s*1fr\s+1fr/.test(css.replace(/\n/g, ' ')),
+    'the compare split is a two-equal-column grid that fills the detail width');
+
+  // and at runtime the split renders two full-width-sharing sides (not a
+  // narrow centred column): render a compare view and confirm the split frame
+  // is NOT single-column and carries two sides.
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' }, { params: { epochId: EPOCH_ID, gen: 'v1' }, cmp: 'v2' });
+  const split = allByClass(host, 'dt-split')[0];
+  assert(split && !(split.getAttribute('class') || '').includes('dt-split-single'),
+    'the compare view is a two-column split (each pane gets half the FULL content width)');
+  assertEqual(allByClass(host, 'dt-split-side').length, 2, 'two compare panes share the full width');
+});
+
 await run();

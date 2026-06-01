@@ -107,6 +107,44 @@ export function persistDensity(t) {
   return normaliseDensity(t);
 }
 
+// ---- PAGE-WIDE SCALE (the draggable scale pill) ---------------------
+//
+// A continuous control DISTINCT from density. Density picks a spacing /
+// proportion RHYTHM (compact/cozy/roomy) — how the layout breathes. The page
+// scale is one master multiplier on the WHOLE rendered page (text AND
+// diagrams), applied via `zoom` on the Variant-T app root, so the operator can
+// fill a wide monitor or shrink to fit a laptop. The two COMPOSE: scaling
+// applies ON TOP of whatever density layout is in effect, and changing density
+// never resets the scale (they persist under separate keys). Range 70 %–150 %
+// in 5-point steps; default 100 %. Because `zoom` reflows (it is not a
+// transform), the page never clips — content re-wraps at the scaled size.
+export const SCALE_MIN = 70;
+export const SCALE_MAX = 150;
+export const SCALE_STEP = 5;
+export const DEFAULT_SCALE = 100;
+const SCALE_KEY = 'zicato.T.scale';
+
+// Clamp to the range AND snap to the step grid, so a restored / typed value is
+// always a legal stop. Total — a non-numeric value falls back to the default.
+export function normaliseScale(v) {
+  let n = Number(v);
+  if (!isFinite(n)) n = DEFAULT_SCALE;
+  n = Math.round(n / SCALE_STEP) * SCALE_STEP;
+  if (n < SCALE_MIN) n = SCALE_MIN;
+  if (n > SCALE_MAX) n = SCALE_MAX;
+  return n;
+}
+export function readScale() {
+  let stored = null;
+  try { stored = window.localStorage.getItem(SCALE_KEY); } catch (e) { /* private mode */ }
+  return normaliseScale(stored == null ? DEFAULT_SCALE : stored);
+}
+export function persistScale(v) {
+  const n = normaliseScale(v);
+  try { window.localStorage.setItem(SCALE_KEY, String(n)); } catch (e) { /* ignore */ }
+  return n;
+}
+
 // ---- density → VISUAL-ELEMENT SIZE tokens ---------------------------
 //
 // The density picker scales spacing via CSS custom properties (--dt-*), but it

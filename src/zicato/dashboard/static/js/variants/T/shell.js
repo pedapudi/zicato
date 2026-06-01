@@ -34,6 +34,7 @@ import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
   DENSITY_THEMES, DEFAULT_DENSITY, normaliseDensity, readDensity, persistDensity,
+  SCALE_MIN, SCALE_MAX, SCALE_STEP, DEFAULT_SCALE, normaliseScale, readScale, persistScale,
 } from './ui.js';
 
 import * as home from './views/home.js';
@@ -64,6 +65,8 @@ let _statusEl = null;
 let _colorEl = [];
 let _typeEl = [];
 let _densityEl = [];
+let _scaleInput = null;
+let _scaleReadout = null;
 let _backBtn = null;
 let _renderToken = 0;
 let _lastViewKey = null;
@@ -117,6 +120,33 @@ export function applyDensity(density, rootEl) {
   return t;
 }
 
+// PAGE-WIDE SCALE — the draggable scale pill. Distinct from density: this is a
+// single master multiplier on the ENTIRE page (text AND diagrams), applied as
+// `zoom` on the Variant-T app ROOT (NOT per-pane). `zoom` reflows rather than
+// transforms, so the layout re-wraps at the scaled size and never clips. We
+// also stamp `--dt-page-scale` (a 0–1 ratio) for any rule that wants the raw
+// factor. Persisted under its own key, so it composes with — and survives —
+// density / colour / typeface changes. Drives the pill + its % readout when
+// called programmatically (e.g. on restore or via the keyboard).
+export function applyScale(scale, rootEl) {
+  const n = normaliseScale(scale);
+  const root = rootEl || _root;
+  if (root) {
+    const ratio = n / 100;
+    root.style.zoom = String(ratio);
+    root.style.setProperty('--dt-page-scale', String(ratio));
+    root.setAttribute('data-t-scale', String(n));
+  }
+  persistScale(n);
+  if (_scaleInput) {
+    if (_scaleInput.value !== String(n)) _scaleInput.value = String(n);
+    _scaleInput.setAttribute('value', String(n));
+    _scaleInput.setAttribute('aria-valuenow', String(n));
+  }
+  if (_scaleReadout) patchText(_scaleReadout, n + '%');
+  return n;
+}
+
 export function mountShell(root) {
   _root = root;
   clearChildren(root);
@@ -126,6 +156,7 @@ export function mountShell(root) {
   root.setAttribute('data-t-theme', readColor());
   root.setAttribute('data-t-type', readType());
   root.setAttribute('data-t-density', readDensity());
+  root.setAttribute('data-t-scale', String(readScale()));
 
   _crumbHost = el('nav', { class: 'dt-crumbs', 'aria-label': 'Breadcrumb' });
 
@@ -140,9 +171,40 @@ export function mountShell(root) {
   const typeSwitch = el('div', { class: 'dt-type-switch', role: 'group', 'aria-label': 'Typeface' }, _typeEl);
 
   _densityEl = DENSITY_THEMES.map(([id, label]) =>
-    el('button', { class: 'dt-density-btn', type: 'button', 'data-density': id, title: 'density: ' + id, text: label }));
+    el('button', { class: 'dt-density-btn', type: 'button', 'data-density': id, title: 'density: ' + id + ' — spacing rhythm', text: label }));
   for (const b of _densityEl) b.addEventListener('click', () => applyDensity(b.getAttribute('data-density')));
-  const densitySwitch = el('div', { class: 'dt-density-switch', role: 'group', 'aria-label': 'Density' }, _densityEl);
+  const densitySwitch = el('div', { class: 'dt-density-switch', role: 'group', 'aria-label': 'Density (spacing rhythm)', title: 'Density — spacing rhythm / proportion' }, _densityEl);
+
+  // The PAGE-WIDE SCALE pill: a draggable range slider that scales the WHOLE
+  // page (text + diagrams) via `zoom` on the app root — distinct from density
+  // (spacing). Keyboard-accessible (a native range input: arrows step ±5);
+  // a small % readout sits beside it. Persisted + restored independently.
+  const initialScale = readScale();
+  _scaleInput = el('input', {
+    class: 'dt-scale-range', type: 'range',
+    min: String(SCALE_MIN), max: String(SCALE_MAX), step: String(SCALE_STEP),
+    value: String(initialScale),
+    'aria-label': 'Page scale (whole-page size)',
+    'aria-valuemin': String(SCALE_MIN), 'aria-valuemax': String(SCALE_MAX),
+    'aria-valuenow': String(initialScale),
+    title: 'Page scale — overall page size (text + diagrams); composes with density',
+  });
+  _scaleReadout = el('span', { class: 'dt-scale-readout', text: initialScale + '%' });
+  // Read the live value from the event target / input — fall back to the
+  // `value` attribute so a synthetic event (and the test harness, whose range
+  // input exposes `value` only as an attribute) still drives the scale.
+  const onScale = (ev) => {
+    const raw = (ev && ev.target && ev.target.value != null) ? ev.target.value
+      : (_scaleInput.value != null ? _scaleInput.value : _scaleInput.getAttribute('value'));
+    applyScale(raw);
+  };
+  _scaleInput.addEventListener('input', onScale);
+  _scaleInput.addEventListener('change', onScale);
+  const scalePill = el('div', { class: 'dt-scale-pill', role: 'group', 'aria-label': 'Page scale', title: 'Page scale — overall page size' }, [
+    el('span', { class: 'dt-scale-lab', text: 'scale', 'aria-hidden': 'true' }),
+    _scaleInput,
+    _scaleReadout,
+  ]);
 
   _statusEl = el('span', { class: 'dt-status' }, [
     el('span', { class: 'dt-status-dot' }),
@@ -168,6 +230,7 @@ export function mountShell(root) {
     colorSwitch,
     typeSwitch,
     densitySwitch,
+    scalePill,
     _statusEl,
   ]);
   root.appendChild(topbar);
@@ -179,6 +242,7 @@ export function mountShell(root) {
   applyTheme(readColor());
   applyTypeface(readType());
   applyDensity(readDensity());
+  applyScale(readScale());
 
   window.addEventListener('hashchange', dispatch);
   bus.on('state:changed', onStateChanged);
@@ -332,4 +396,4 @@ function onStateChanged() {
   }, 400);
 }
 
-export { DEFAULT_COLOR, DEFAULT_TYPE, DEFAULT_DENSITY };
+export { DEFAULT_COLOR, DEFAULT_TYPE, DEFAULT_DENSITY, DEFAULT_SCALE, SCALE_MIN, SCALE_MAX, SCALE_STEP };

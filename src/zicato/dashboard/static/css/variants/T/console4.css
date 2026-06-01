@@ -244,7 +244,11 @@
   .dn-status.dn-connected .dn-status-dot { background: var(--v2-good); }
   .dn-status.dn-running .dn-status-dot { background: var(--v2-caution); }
 
-  .dn-viewhost { max-width: 1320px; margin: 0 auto; padding: 16px 20px 70px; }
+  /* FLUID: fill the available width (no narrow centred column wasting wide
+   * screens). A very generous cap keeps prose from running to absurd line
+   * lengths on ultra-wide monitors, but the content otherwise uses the full
+   * width so the compare panes / diagrams scale up. */
+  .dn-viewhost { width: 100%; max-width: min(100%, 2200px); margin: 0; padding: 16px 20px 70px; }
   .dn-pagehead { margin-bottom: 18px; }
 
   /* dense overview strip + tiles */
@@ -794,8 +798,19 @@
     background: color-mix(in srgb, var(--v2-panel) 60%, var(--v2-paper));
     padding: 16px 12px 48px;
   }
-  /* the detail pane: roomy, Q/M proportion — one column, density-driven padding */
-  .dt-viewhost { max-width: 1160px; margin: 0; padding: var(--dt-pad-y, 30px) var(--dt-pad-x, 40px) 96px; }
+  /* the detail pane: FLUID + resolution-responsive. Was clamped to a narrow
+   * 1160px centred column that wasted space on wide monitors AND squeezed the
+   * side-by-side COMPARE panes; now it fills the detail column (width:100%) so
+   * the two compare panes split the FULL content width and every SVG renders
+   * as large as the screen allows. A very generous cap (no centring) only
+   * guards prose line-length on ultra-wide displays; density still drives the
+   * padding, and the page-scale pill multiplies the whole thing on top. */
+  .dt-viewhost {
+    width: 100%;
+    max-width: min(100%, 2400px);
+    margin: 0;
+    padding: var(--dt-pad-y, 30px) var(--dt-pad-x, 40px) 96px;
+  }
 
   /* ---- the tree itself ---- */
   .dt-tree { display: flex; flex-direction: column; gap: 1px; }
@@ -920,6 +935,44 @@
   .dt-density-btn:last-child { border-right: none; }
   .dt-density-btn:hover { color: var(--v2-ink); }
   .dt-density-btn.dt-density-active { background: var(--v2-caution); color: var(--v2-paper); }
+
+  /* ===================  the PAGE-WIDE SCALE pill (draggable)  ===================
+   *
+   * A continuous, draggable control beside the colour / typeface / density
+   * pickers. DISTINCT from density: density = spacing rhythm (compact/cozy/
+   * roomy); this = overall PAGE SIZE (text + diagrams), applied as `zoom` on
+   * the app root by the shell. A native range input → draggable AND keyboard-
+   * accessible (arrows step ±5). A small % readout sits to its right. */
+  .dt-scale-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 9px;
+  }
+  .dt-scale-lab {
+    font-family: var(--v2-mono); font-size: 9.5px; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--v2-ink-faint);
+  }
+  .dt-scale-range {
+    -webkit-appearance: none; appearance: none;
+    width: 96px; height: 4px; margin: 0; cursor: pointer;
+    background: var(--v2-rule); border-radius: 3px; outline: none;
+  }
+  .dt-scale-range:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 3px; }
+  .dt-scale-range::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--v2-accent); border: 2px solid var(--v2-paper);
+    box-shadow: 0 0 0 1px var(--v2-accent); cursor: grab;
+  }
+  .dt-scale-range::-webkit-slider-thumb:active { cursor: grabbing; }
+  .dt-scale-range::-moz-range-thumb {
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--v2-accent); border: 2px solid var(--v2-paper); cursor: grab;
+  }
+  .dt-scale-range::-moz-range-track { height: 4px; background: var(--v2-rule); border-radius: 3px; }
+  .dt-scale-readout {
+    font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-soft);
+    font-variant-numeric: tabular-nums; min-width: 3.4ch; text-align: right;
+  }
 
   /* ===================  the SLIM REEL (tr-*) — epoch view, adopted from V  ===================
    *

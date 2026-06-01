@@ -23,10 +23,20 @@ a new chrome control:
 6. **A density / "roominess" picker** — a THIRD chrome selector
    (compact · cozy · roomy) beside the colour-theme and typeface pickers.
 
+Round 9 makes the console **scale to the operator's screen**:
+
+7. **A PAGE-WIDE SCALE pill** — a draggable, keyboard-accessible slider in the
+   chrome (≈70 %–150 %, 5 % steps, default 100 %) that scales the ENTIRE page —
+   text AND diagrams — and reflows (no clipping). Distinct from density.
+8. **A FLUID, resolution-responsive layout** — the detail pane and the
+   side-by-side compare grid fill the available viewport width instead of being
+   clamped to a narrow centred column, so the compare panes (and their SVGs)
+   render as large as the screen allows: bigger diagrams on bigger monitors.
+
 Default colour theme: **monokai**. Default typeface theme: **Technical**
 (Open Sans body + JetBrains Mono for data / labels / code). Default density:
-**compact** (the dense Console look). Miller columns (R) are back-burnered and
-not pursued here.
+**compact** (the dense Console look). Default page scale: **100 %**. Miller
+columns (R) are back-burnered and not pursued here.
 
 Self-contained under `js/variants/T/**` + `css/variants/T/console4.css` + the
 entry `app_T.js`; reuses only the shared `js/core/*` data spine and imports from
@@ -156,7 +166,7 @@ wraps to multiple rows, so it stays tidy whether there are 3 OR ~30 generations.
 These cards appear on the **generations** scope only — never on the
 environment / workspace view.
 
-## The three pickers
+## The chrome controls (three pickers + the scale pill)
 
 - **Colour** — monokai (default) · solarized-dark · solarized-light, swapped via
   `[data-t-theme]` on the variant root; CSS-only re-skin, persisted
@@ -186,6 +196,50 @@ environment / workspace view.
   compact → roomy (and shrink in compact). The reel + match cards keep their
   existing CSS scaling (`--dt-reel-scale` / `--dt-card-min`). Width is never
   touched — every figure stays fit-to-width at every density (see below).
+
+## The page-wide SCALE pill (round 9) — and how it differs from density
+
+A fourth chrome control, a **draggable range slider** (`.dt-scale-range` inside a
+`.dt-scale-pill`, beside the colour / typeface / density pickers) with a small
+**% readout**. It is a continuous control over **≈70 %–150 %** in **5 % steps**,
+**default 100 %**, and is **keyboard-accessible** (a native range input: arrow
+keys step ±5; it carries `aria-valuemin/max/now` + an `aria-label`).
+
+- **Mechanism.** `shell.applyScale(n, root)` (mirrors `applyTheme` / `applyDensity`)
+  normalises `n` (clamp to range + snap to the 5 % grid), then applies it
+  **page-wide** by setting **`zoom`** on the Variant-T app **ROOT**
+  (`#variant-root[data-variant="T"]`) — e.g. 130 % → `root.style.zoom = 1.3`. It
+  also stamps the raw ratio as `--dt-page-scale` and records `data-t-scale="130"`
+  on the root, and updates the slider + the % readout. `zoom` **reflows** (it is
+  not a CSS transform), so the page re-wraps at the scaled size and never clips.
+- **Page-wide, NOT per-pane.** The scale is applied at the app root only — there
+  is deliberately **no** per-pane zoom control. In the side-by-side compare view
+  the two panes scale together with the rest of the page.
+- **Persistence.** `readScale` / `persistScale` use their own key
+  (`zicato.T.scale`); the value is restored and re-applied on every mount.
+- **Scale vs density — distinct axes that COMPOSE.** Labels + tooltips spell out
+  the roles so the two are not confused: **density** = the *spacing rhythm /
+  proportion* (compact · cozy · roomy — how the layout breathes, via the `--dt-*`
+  tokens and the JS size tokens); the **scale pill** = the *overall page size*
+  (one master `zoom` multiplier on top of whatever density layout is in effect).
+  They persist under separate keys and never reset one another — changing density
+  leaves the scale untouched and vice-versa, so the page scale simply multiplies
+  the chosen density layout.
+
+## Fluid, resolution-responsive layout (round 9)
+
+The content now **fills the available viewport width** instead of sitting in a
+narrow centred column that wasted space on wide monitors. The detail pane
+(`.dt-viewhost`) and the legacy `.dn-viewhost` were clamped to **1160 px / 1320 px
+centred**; both are now **`width:100%`** with only a very generous, *non-centred*
+cap (`max-width: min(100%, 2400px)` / `min(100%, 2200px)`) that merely guards
+prose line-length on ultra-wide displays. Because the detail pane fills its
+column, the side-by-side compare grid (`.dt-split`, a `1fr 1fr` grid that only
+collapses to one column below 1080 px) splits the **FULL content width** — so
+each pane, and every fit-to-width SVG inside it, renders **as large as the screen
+allows**. Net effect: bigger diagrams on bigger screens, still tidy on small ones.
+This composes with the scale pill (the whole fluid layout is then `zoom`-scaled)
+and with density (which still drives the padding rhythm).
 
 ## Fit-to-width — visual elements never escape their pane (round 8)
 
@@ -219,7 +273,7 @@ heatmap; Tufte sankey with label ≠ value; side-by-side diff with real strings.
 
 ## Tests
 
-`test/variant_t.test.mjs` (29 tests) covers: the tree renders Environment →
+`test/variant_t.test.mjs` (34 tests) covers: the tree renders Environment →
 Epoch → {Generations, Boards, Mutation surface, Publication}; multi-generation
 nav; the candidate-page promote gate; the patch-node click → per-candidate diff
 with real strings; v0 showing ≥2 match-ups; the board view reachable from the
@@ -242,4 +296,13 @@ tables each sit in a contained `.dn-table-scroll` box (the panel itself never
 scrolls) and its live figures are `width:100%`; and **density scales a diagram
 SIZE token** (not only spacing) — `densityTokens('compact')` vs `'roomy'` differ
 on every intrinsic size token, and the rendered DAG height grows compact → roomy
-while BOTH stay `width:100%` (fit-to-width holds at every density).
+while BOTH stay `width:100%` (fit-to-width holds at every density). Round 9 adds:
+`ui` exposes a **70–150 % / 5 %-step / 100 %-default** scale surface that snaps +
+clamps; the **draggable scale pill exists in the chrome** and setting it applies a
+**page-wide** scale at the app **ROOT** (`data-t-scale` + `root.style.zoom` change,
+NOT on any pane) and **persists + restores** (a fresh mount re-applies it); the
+pill is a **keyboard-accessible** native range with aria bounds; the page scale
+**composes with density** (switching density does not reset the scale, and the two
+persist independently); and the **layout is fluid** — the old narrow 1160 px /
+1320 px caps are gone, the detail pane is `width:100%`, and the compare split is a
+`1fr 1fr` grid so its two panes share the FULL content width.
