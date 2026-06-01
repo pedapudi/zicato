@@ -146,7 +146,7 @@ change (patch size, number of mutation points, distance from the
 champion). Smaller steps → tighter comparison variance → fewer
 catastrophic regressions. But because trust regions cannot enforce
 per-task non-regression, they can only sit *underneath* zicato's
-predicate gate, never instead of it. (See §7, lever 4.)
+predicate gate, never instead of it. (See §9, lever 4.)
 
 ### Family ② — Statistical-gate acceptance (replicate, then test)
 
@@ -181,7 +181,7 @@ available).
 
 **Verdict for zicato.** This is zicato's family. The promote gate is an
 AlphaGo-Zero-style margin test. The gap is that zicato does **not yet
-replicate** — it runs the board once. §3 and §5 make this precise.
+replicate** — it runs the board once. §3 and §7 make this precise.
 
 ### Family ③ — Single-elimination bracket (triage by resource)
 
@@ -212,7 +212,7 @@ champion the next round builds on). The verified guidance is blunt:
 "brackets are the wrong primitive when each candidate yields a noisy
 absolute scalar and the cost of a false promotion is high." This is the
 direct evidence against the single-elimination and double-elimination
-structures considered earlier (§6).
+structures considered earlier (§8).
 
 ### A note on elitism — the same idea under a fourth name
 
@@ -231,7 +231,7 @@ evaluated on at least as many instances" (§4) is *elitism plus
 replication* — the evolutionary incumbent-protection idea, made
 noise-aware by demanding the challenger earn its place over an equal
 sample. zicato's "champion stands on reject" is plain `(μ+λ)` elitism;
-the upgrade in §7 is to make it elitism-with-replication.
+the upgrade in §9 is to make it elitism-with-replication.
 
 ---
 
@@ -300,7 +300,7 @@ flowchart TB
   runs **only the challenger**; the champion's cached aggregate
   (`gen_score.json`) is reused. This halves the compute per round but
   *re-uses* a champion score from an earlier draw — a subtle break in
-  the pairing that matters under noise (see §5).
+  the pairing that matters under noise (see §7).
 
 Board units run concurrently — the "tournament hall," many boards in
 flight at once — bounded by a single semaphore sized from
@@ -421,15 +421,321 @@ the research flagged:
   biased high in expectation, so the realized loss disappoints. Their
   prescribed remedy — Bayesian "disciplined skepticism," i.e. shrinking
   the winner's estimate back toward the prior before acting — is exactly
-  the motivation for the confirmation re-run in §7, lever 3.
+  the motivation for the confirmation re-run in §9, lever 3.
 
 ---
 
-## 5. The selection options as a spectrum
+## 5. When do we stop? Selection as an optimal-stopping problem
+
+§4 framed the *crowning* decision as elitist racing. There is a second
+decision the loop makes that the gate never touches: **when do we stop
+spawning challengers at all?** Today that answer is crude (§3.3): a
+preset `--rounds`, plus `--max-consecutive-rejections` (default 3) as an
+early bail-out, plus the loop-health degeneracy stop. None of these
+reasons about *the value of continuing*. They are fixed thresholds, not
+decisions. This section treats the question properly — as an **optimal
+stopping problem** — and shows what a principled stop rule would look
+like for zicato.
+
+### 5.1 The framing — a sequential stop-or-continue decision under cost
+
+Each round against the current champion has a real, roughly constant
+**cost** `c` (the wall-clock and compute of proposing one challenger and
+running it over the board). Spending `c` buys a *lottery ticket*: a
+chance the challenger clears the gate and the champion improves by some
+gated amount `Δ ≥ promote_margin`. Two forces oppose:
+
+- **Continuing has value** while the proposer can still find gated
+  improvements off this champion.
+- **That value decays.** As the proposer exhausts the mutation
+  surface and the contract (the board + proposer brief), the
+  per-round probability of a gated win falls and the expected `Δ`
+  shrinks — diminishing returns, the same exhaustion
+  `--max-consecutive-rejections` is a blunt proxy for.
+
+So the loop should continue *only while the expected gated improvement
+of the next round exceeds its cost*, and retire the champion (end the
+epoch / reset to a fresh contract) once it does not. That is exactly the
+shape of an optimal-stopping problem: at each step, observe the history,
+then choose `stop` or `continue`, paying `c` for each continue, to
+maximise expected net gain (Peskir & Shiryaev 2006 is the standard
+reference for the continuous theory and its free-boundary "stop/continue
+region" characterisation).
+
+```mermaid
+flowchart TB
+    R["Round t against champion vN<br/>posterior over the proposer's<br/>remaining hit-rate p_t and gain Δ_t"] --> Q{"E[gated improvement next round]<br/>≥ round cost c<br/>AND wall-clock budget remains?"}
+    Q -->|yes| CONT["CONTINUE — propose challenger t+1"]
+    Q -->|no| STOP["STOP — retire this champion/epoch<br/>(contract exhausted)"]
+    CONT -.->|"observe outcome,<br/>update posterior"| R
+    STOP --> RESET["Epoch boundary / contract-hash change<br/>= horizon reset (new champion lineage)"]
+```
+
+### 5.2 Why the textbook secretary problem fits poorly
+
+The reflex is to reach for the **secretary problem** and its elegant
+closed form — the **odds algorithm** (Bruss 2000), which for the
+classical no-information case recovers the `1/e ≈ 37%` "look-then-leap"
+rule: observe a fraction of candidates, then take the next
+record-beating one. It is the canonical "when to stop interviewing"
+result, and it is tempting because zicato, too, sees candidates one at a
+time and must decide on each.
+
+But the secretary assumptions are the *wrong* ones for zicato, and
+naming the mismatch is the point:
+
+1. **Ordinal-only feedback.** Secretary knows only *relative* rank
+   ("better than all seen so far"). zicato has **cardinal noisy
+   scores** — it knows by *how much*, and on which tasks. Throwing that
+   away to fit the secretary mould discards the loop's richest signal.
+2. **No recall.** Secretary forbids returning to a passed-over
+   candidate. zicato **always recalls the incumbent** — the champion is
+   a persistent option, re-runnable at will (the very thing that makes
+   §6's bandit framing apply).
+3. **Known finite horizon, uniform random order.** Secretary fixes `N`
+   up front and assumes candidates arrive in random order. zicato's
+   horizon is *open* (that is the whole question), and challengers are
+   **not** i.i.d. draws — they are *generated conditioned on the
+   champion*, so their quality is correlated and drifts as the surface
+   is mined.
+
+The secretary/odds result is therefore the right *thing to gesture at*
+and the wrong *tool to use*. The honest lesson it carries over is only
+the qualitative one — "commit to a stopping region rather than running
+forever" — not its formula.
+
+### 5.3 The right tools: cardinal reward with a continuation cost
+
+Once cardinal scores and recall are admitted, the problem becomes
+**optimal stopping with a continuation cost** over a sequence of noisy
+rewards, and two well-matched lenses apply:
+
+- **Bayesian optimal stopping.** Maintain a posterior over the
+  proposer's *current* productivity against this champion — concretely,
+  a hit-rate `p_t` (probability the next challenger clears the gate) and
+  a gain distribution for `Δ`. A natural model: a Beta posterior on
+  `p_t` updated from the recent sequence of promote/reject outcomes
+  (Bernoulli trials), times a posterior on the gated `Δ` when a win
+  occurs. **Stop when the posterior expected improvement of one more
+  round falls below the marginal cost of that round:**
+  `E[p_t · Δ | history] < c`. This is the principled generalisation of
+  `--max-consecutive-rejections`: a long run of rejections drives the
+  Beta posterior's mass toward small `p_t`, which trips the same stop —
+  but it does so *graded by how decisive those rejections were*, and it
+  also stops when wins are real but too *small* to be worth `c`, a case
+  the rejection counter is blind to.
+
+- **The Gittins-index view.** Treat "keep mining this champion" as one
+  arm and "retire and start a fresh epoch/contract" as the alternative.
+  Gittins (1979) showed that for this *continue-vs-retire* family the
+  optimal policy is an **index policy**: compute, per arm, the
+  retirement value at which you are indifferent between continuing and
+  stopping, and act on whichever index is highest. The champion's index
+  *falls* as its productivity posterior decays; you retire it when the
+  index drops below the value of a fresh start. This is the exact bridge
+  to §6 — optimal stopping and bandits are two faces of the same
+  sequential-decision coin, and the Gittins index is where they meet.
+
+### 5.4 What this changes for zicato (refines §3.3)
+
+This section *refines, and does not contradict,* §3.3. The shipped stop
+rules stay as safe defaults; the proposal is to make them the crude
+limits of a posterior rule:
+
+- **Replace the fixed rejection counter with a posterior stop.** Keep
+  `--max-consecutive-rejections` as a hard ceiling, but add an *earlier,
+  smarter* stop: end the run when the Beta-Bernoulli posterior on the
+  proposer's hit-rate puts the expected gated improvement below the
+  round cost. This subsumes the counter (a run of `k` rejections is one
+  observable that lowers the posterior) while also catching the
+  "improving, but not worth the compute" regime.
+- **Tie the stop to the epoch wall-clock budget.** The project already
+  carries an autoresearch-style **per-epoch wall-clock budget** (see
+  [`EPOCHS-AND-JOURNALING.md`](EPOCHS-AND-JOURNALING.md)). That budget is
+  the `c`-denominated horizon: the stop rule should compare *expected
+  gated improvement per round* against *remaining budget*, so the loop
+  spends its last rounds only if they still pay for themselves.
+- **Treat contract-hash auto-epoching as a horizon reset.** When the
+  evaluation contract changes (board / proposer brief / scoring — the
+  contract hash that defines an epoch), the proposer faces a *fresh*
+  optimisation landscape: the productivity posterior should reset and
+  the champion's Gittins index is recomputed against the new contract.
+  Auto-epoching is therefore the natural "new horizon" event in the
+  stopping model — the moment the secretary's fixed `N` would have been
+  redrawn anyway.
+
+The open calibration questions (how to estimate `c` in board-units, how
+much prior to put on proposer productivity, whether to stop *per
+champion* or *per epoch*) are collected in §10.
+
+---
+
+## 6. Bandits and dueling bandits — the relative-feedback view
+
+§1 already named the task **best-arm identification**; §4 cast it as
+racing. Both are *bandit* framings, and making the bandit structure
+explicit pays off twice: it sharpens *why* zicato optimises for simple
+regret rather than cumulative regret, and — more importantly — it
+reveals that zicato's gate consumes a **paired, relative** comparison,
+which puts it squarely in the **dueling-bandit** subfield. That subfield
+has algorithms zicato's single-replicate gauntlet is a degenerate case
+of, and adopting them is the same destination §9 reaches from the racing
+direction.
+
+### 6.1 Standard multi-armed bandits: which regret are we minimising?
+
+A multi-armed bandit faces `K` arms of unknown reward and must allocate
+pulls. Two objectives, often confused, pull in opposite directions:
+
+- **Cumulative-regret minimisation.** Maximise reward *earned while
+  learning*; every pull of a sub-optimal arm costs you. This is the
+  classic exploration/exploitation tension that **UCB** (Auer,
+  Cesa-Bianchi & Fischer 2002) and **Thompson sampling** (Thompson
+  1933; Russo et al. 2018 for the modern treatment) are built for.
+- **Best-arm identification / pure exploration (simple regret).** You
+  get a *separate* budget to explore, are judged *only* on the one arm
+  you finally name, and pay nothing for sub-optimal pulls along the way
+  (Audibert, Bubeck & Munos 2010; Jamieson & Nowak 2014 survey the
+  fixed-confidence and fixed-budget variants).
+
+zicato is unambiguously the **second**. A challenger that loses the gate
+costs compute but does not "go to production" — the loss it incurred
+during evaluation is not charged against the deployed system; only the
+*crowned* champion's quality matters. That is the definition of simple
+regret, and it is why the regret-minimising machinery (UCB indices,
+Thompson allocation tuned for cumulative reward) is the *wrong* import.
+The right imports are the pure-exploration / racing algorithms — which
+is exactly what §4 (irace/racing) and §2② (the statistical-gate family)
+already point at. Bandit theory and racing are not alternatives here;
+best-arm identification *is* the bandit name for racing.
+
+### 6.2 Dueling bandits: the gate consumes relative feedback
+
+Here is the insight standard MAB misses. zicato's gate does **not** read
+two independent absolute scores and subtract them. In full mode (§3.1)
+each board entry is run under *both* generations on the *same task* with
+*common random numbers*, and the gate's decisive input is the **paired,
+per-entry delta** — a *relative* comparison whose shared difficulty has
+cancelled. That is **preference feedback**, not absolute reward, and it
+defines the **dueling-bandit** problem (Yue & Joachims 2009; Yue,
+Broder, Kleinberg & Joachims 2012): you may not observe an arm's reward
+directly, only **noisy outcomes of pairwise duels** between arms.
+
+```mermaid
+flowchart LR
+    subgraph MAB["standard MAB (absolute)"]
+        M1["pull arm A → reward r_A"]
+        M2["pull arm B → reward r_B"]
+        M3["compare r_A, r_B<br/>(noise does NOT cancel)"]
+        M1 --> M3
+        M2 --> M3
+    end
+    subgraph DB["dueling bandit (relative) — zicato's gate"]
+        D1["duel(A,B) on the SAME entry,<br/>common random numbers"]
+        D2["per-entry preference: A ≻ B?<br/>(shared difficulty cancels)"]
+        D1 --> D2
+    end
+```
+
+The dueling-bandit literature supplies the vocabulary for *what a winner
+even is* under relative feedback — which matters the moment more than
+one challenger is in flight (§9, lever 0):
+
+- **Condorcet winner** — an arm that beats *every* other in pairwise
+  preference. The cleanest target; zicato's "beat the champion" gate is
+  a one-opponent Condorcet test.
+- **Copeland winner** — when no Condorcet winner exists (preferences can
+  cycle), the arm that beats the *most* others. The robust fallback for
+  a multi-challenger field with non-transitive deltas.
+- **von Neumann / mixed winner** — the randomised strategy that is
+  unbeatable in expectation when even Copeland is ambiguous.
+
+And it supplies the **algorithms** that turn noisy duels into a
+confident pick, all of which spend duels adaptively to tighten
+*relative*-confidence bounds:
+
+- **Interleaved Filtering** (Yue et al. 2012) — duel a candidate against
+  survivors, eliminate when a confidence bound on the pairwise
+  preference is decisive.
+- **Beat-the-Mean** (Yue & Joachims 2011) — robust to violations of the
+  strong-transitivity assumptions IF relies on.
+- **Relative UCB (RUCB)** and Relative Confidence Sampling (Zoghi,
+  Whiteson, Munos & de Rijke 2014) — a UCB analogue that maintains
+  *pairwise* upper-confidence bounds and needs no Condorcet assumption
+  baked into its exploration.
+- **Double Thompson Sampling** (Wu & Liu 2016) — samples a posterior
+  over the preference matrix *twice* to pick the duel pair; handles
+  general Copeland bandits.
+- **Sparring** — run two ordinary bandit learners against each other,
+  one picking the "left" arm and one the "right"; a simple,
+  reduction-style baseline.
+
+Sui, Zoghi, Hofmann & Yue 2018 survey the area; the recurring theme is
+that **repeated duels tighten relative-confidence bounds**, and you
+promote only once the bound on "challenger ≻ champion" clears a target
+confidence.
+
+### 6.3 Mapping the dueling-bandit view onto zicato — and what it adds
+
+The correspondence is exact:
+
+| Dueling-bandit concept | zicato today |
+|---|---|
+| Arm | A candidate generation |
+| A duel | One paired board run, champion vs challenger, common random numbers (§3.1, already implemented) |
+| Persistent / incumbent arm | The reigning champion (recallable — cf. §5.2) |
+| Preference outcome of a duel | The per-entry / aggregate sign of `child − parent` |
+| Relative-preference acceptance test with a margin | The promote gate's scalar-margin rule (§3.2, the AlphaGo-Zero-style threshold) |
+| Condorcet test against one opponent | "Beat the champion" |
+
+So zicato has *already built the duel*; what it lacks is the
+dueling-bandit **confidence discipline**. A proper dueling-bandit
+acceptance would add three things, each of which is exactly a lever §9
+already proposes — stated here in the bandit idiom so the two
+derivations meet:
+
+1. **A confidence-bounded relative comparison, not a one-shot delta.**
+   The gate today reads a *single* duel and applies a fixed margin.
+   RUCB-style acceptance keeps a confidence bound on `P(challenger ≻
+   champion)` and promotes only when that bound clears a target — i.e.
+   replicate the duel until the *relative* confidence, not just the
+   point estimate, justifies the crown. This is §9 lever 1 (replication)
+   + lever 2 (paired significance) seen from the bandit side, and it
+   directly sharpens §2②'s "replicate, then test."
+2. **Principled replication under noise to a target confidence.**
+   Repeated duels on common-random-number entries are the cheapest
+   possible variance reduction (the pairing already cancels shared
+   difficulty); the dueling-bandit stopping rule says *how many* duels —
+   keep duelling until the relative bound is tight enough — which also
+   defends against the **optimizer's curse** (§4): promoting on one
+   lucky duel is precisely selecting on noise, and a confidence-bounded
+   relative test is the guard.
+3. **Condorcet (or Copeland) identification with a multi-challenger
+   field.** The moment lever 0 puts `K > 1` challengers in flight, "did
+   it beat the champion?" is no longer enough — preferences among
+   challengers can cycle. The dueling-bandit notions say what to crown:
+   the Condorcet winner if one exists, else the Copeland winner. This is
+   the relative-feedback formalisation of §9 lever 5's "race the
+   `K`-field, crown the most-replicated survivor."
+
+**Be honest about the gap.** zicato today is a **degenerate,
+single-replicate dueling bandit**: one challenger, one duel, a fixed
+margin, no confidence bound, no replication. That is a *legitimate
+cheapest-possible* instance of the framework — and the bandit view's
+recommendation is the same one §9 reaches from racing: add replication,
+turn the fixed margin into a confidence-bounded relative test, and
+generalise "beat the champion" to Condorcet/Copeland identification once
+a field exists. Two roads (optimal stopping → bandits → dueling bandits;
+and constrained-update → statistical-gate → racing) arrive at one
+design.
+
+---
+
+## 7. The selection options as a spectrum
 
 Every option is a point on a **compute-vs-confidence** curve, given a
 *field* of candidates. (Producing a field of more than one challenger
-per round is the prerequisite unlock — see §7, lever 0.)
+per round is the prerequisite unlock — see §9, lever 0.)
 
 ```mermaid
 quadrantChart
@@ -478,7 +784,7 @@ replication.
 
 ---
 
-## 6. Why not double-elimination or Swiss (the explicit verdict)
+## 8. Why not double-elimination or Swiss (the explicit verdict)
 
 These were considered directly. The evidence-backed answer:
 
@@ -492,7 +798,7 @@ Adopt **racing + replication**; do not build brackets.
 
 ---
 
-## 7. The recommended design
+## 9. The recommended design
 
 A phased path from today's gauntlet to elitist iterated racing. Each
 lever is independently shippable and independently valuable; they are
@@ -595,7 +901,7 @@ different places, two opposite statistical stances: be liberal about
 
 ---
 
-## 8. Open questions
+## 10. Open questions
 
 1. **Per-task noise vs. true regression.** How many replications are
    enough to tell a real per-task regression from a chance pass→fail
@@ -614,13 +920,27 @@ different places, two opposite statistical stances: be liberal about
    as additional elites?
 4. **Common random numbers under internal stochasticity.** The board
    gives champion and challenger the same *tasks*, but each run has its
-   own internal randomness (LLM sampling, tool nondeterminism). What is
+   own internal randomness (sampling, tool nondeterminism). What is
    the analogue of a shared seed — fixing decode seeds per entry so the
    paired comparison cancels even *intra-run* noise?
+5. **Calibrating the optimal-stopping rule (§5).** How is the round cost
+   `c` best expressed (board-units? wall-clock? a fraction of the epoch
+   budget), and what prior on proposer productivity avoids stopping too
+   early on a champion that is merely between good ideas? Should the stop
+   be evaluated *per champion* or only at *epoch* granularity, and how
+   does the Gittins-style retire-vs-continue index interact with the
+   contract-hash horizon reset?
+6. **Target relative-confidence for promotion (§6).** What confidence
+   level on `P(challenger ≻ champion)` should the dueling-bandit
+   acceptance demand before crowning, and how many common-random-number
+   duels does that imply per round given the board's observed
+   per-entry-delta variance? With a `K`-challenger field, is Condorcet
+   identification worth its duel budget, or does a Copeland fallback pay
+   for itself only past some field size?
 
 ---
 
-## 9. References
+## 11. References
 
 Primary sources, grouped by the family they anchor. Every claim that
 attaches a name+year in the body resolves to an entry here. Sources tied
@@ -629,7 +949,11 @@ Hyperband, Hoeffding races, irace, Demšar, the off-policy bound) were
 adversarially fact-checked against the original papers; the additional
 canonical references (ASHA, CMA-ES, the ES introduction, best-arm
 identification, the optimizer's curse) were added to anchor claims the
-body makes by inference.
+body makes by inference. The optimal-stopping and (dueling-)bandit
+sources (§5–§6) were likewise verified against their originals; the one
+exception is Peskir & Shiryaev 2006, a standard textbook cited from
+canonical knowledge for the optimal-stopping free-boundary theory rather
+than for a specific verifiable result.
 
 **Reinforcement-learning policy improvement & gating**
 
@@ -657,6 +981,25 @@ body makes by inference.
 
 - Audibert & Bubeck 2010, *Best Arm Identification in Multi-Armed Bandits*, COLT — best-arm identification and the simple-regret objective (successive rejects). <https://inria.hal.science/hal-00654404>
 - Smith & Winkler 2006, *The Optimizer's Curse: Skepticism and Postdecision Surprise in Decision Analysis*, Management Science 52(3):311–322 — selecting over noisy estimates systematically overshoots; Bayesian skepticism as the correction. <https://ideas.repec.org/a/inm/ormnsc/v52y2006i3p311-322.html>
+- Jamieson & Nowak 2014, *Best-arm identification algorithms for multi-armed bandits in the fixed confidence setting*, 48th Annual Conference on Information Sciences and Systems (CISS) — survey of fixed-confidence/fixed-budget pure-exploration. <https://nowak.ece.wisc.edu/bestArm.pdf>
+
+**Optimal stopping (§5)**
+
+- Bruss 2000, *Sum the odds to one and stop*, The Annals of Probability 28(3):1384–1391 — the odds algorithm for optimal stopping; the secretary problem's `1/e` rule as a special case. <https://projecteuclid.org/journals/annals-of-probability/volume-28/issue-3/Sum-the-odds-to-one-and-stop/10.1214/aop/1019160340.full>
+- Gittins 1979, *Bandit Processes and Dynamic Allocation Indices*, Journal of the Royal Statistical Society: Series B 41(2):148–164 — the Gittins index; the continue-vs-retire index policy that bridges optimal stopping and bandits. <https://rss.onlinelibrary.wiley.com/doi/10.1111/j.2517-6161.1979.tb01068.x>
+- Peskir & Shiryaev 2006, *Optimal Stopping and Free-Boundary Problems*, Lectures in Mathematics ETH Zürich, Birkhäuser — the canonical reference for the stop/continue region and continuous optimal-stopping theory. <https://link.springer.com/book/10.1007/978-3-7643-7390-0>
+
+**Multi-armed and dueling bandits (§6)**
+
+- Auer, Cesa-Bianchi & Fischer 2002, *Finite-time Analysis of the Multiarmed Bandit Problem*, Machine Learning 47:235–256 — the UCB1 algorithm and its cumulative-regret bound. <https://link.springer.com/article/10.1023/A:1013689704352>
+- Thompson 1933, *On the Likelihood that One Unknown Probability Exceeds Another in View of the Evidence of Two Samples*, Biometrika 25(3/4):285–294 — the original Thompson sampling idea. <https://www.jstor.org/stable/2332286>
+- Russo, Van Roy, Kazerouni, Osband & Wen 2018, *A Tutorial on Thompson Sampling*, Foundations and Trends in Machine Learning 11(1):1–96 — the modern treatment. <https://arxiv.org/abs/1707.02038>
+- Yue & Joachims 2009, *Interactively Optimizing Information Retrieval Systems as a Dueling Bandits Problem*, ICML — the dueling-bandit formulation from relative/pairwise feedback. <https://www.cs.cornell.edu/people/tj/publications/yue_joachims_09a.pdf>
+- Yue, Broder, Kleinberg & Joachims 2012, *The K-armed Dueling Bandits Problem*, Journal of Computer and System Sciences 78(5):1538–1556 — Interleaved Filtering and the formal K-armed dueling-bandit analysis. <https://www.sciencedirect.com/science/article/pii/S0022000012000281>
+- Yue & Joachims 2011, *Beat the Mean Bandit*, ICML — a dueling-bandit algorithm robust to violations of strong stochastic transitivity. <https://www.cs.cornell.edu/people/tj/publications/yue_joachims_11a.pdf>
+- Zoghi, Whiteson, Munos & de Rijke 2014, *Relative Upper Confidence Bound for the K-Armed Dueling Bandit Problem* (RUCB / RCS), ICML — pairwise upper-confidence bounds without a Condorcet assumption in exploration. <https://proceedings.mlr.press/v32/zoghi14.html>
+- Wu & Liu 2016, *Double Thompson Sampling for Dueling Bandits*, NeurIPS — D-TS for general Copeland (and Condorcet) dueling bandits. <https://proceedings.neurips.cc/paper/2016/hash/9de6d14fff9806d4bcd1ef555be766cd-Abstract.html>
+- Sui, Zoghi, Hofmann & Yue 2018, *Advancements in Dueling Bandits*, IJCAI (survey) — Condorcet/Copeland/von Neumann winners and the algorithm landscape. <https://www.ijcai.org/proceedings/2018/776>
 
 *See also* [`TOURNAMENT.md`](TOURNAMENT.md), [`SCORING.md`](SCORING.md),
 [`LOOP-HEALTH.md`](LOOP-HEALTH.md), [`VOCABULARY.md`](VOCABULARY.md).
