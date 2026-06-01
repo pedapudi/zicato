@@ -493,6 +493,68 @@ export function racingModel(st) {
   return { rungs, championId, gateState, gateDelta, live, hasRungs: rungs.length > 0 };
 }
 
+// ── ONE candidate's PATH through the racing tournament ──────────────
+//
+// The lifecycle DAG (views/candidate.js) shows a small rung-progression strip
+// relating a candidate's board runs to the tournament rounds even when the
+// per-run records carry no rung tags. This derives that path for ONE candidate
+// (genId) from the SAME per-challenger /api/tournaments records the racing
+// ladder reconstructs from: rung 0 → rung 1 → racing-final, each with the
+// candidate's Δ-vs-champion at that rung and a won/cut/promoted/rejected
+// verdict. Returns null when the candidate ran no racing matches (gauntlet, or
+// a candidate that never raced) — the strip is then suppressed.
+//
+//   → { stages:[{ label, kind:'rung'|'final', delta, verdict }] } | null
+export function candidateProgression(brk, genId) {
+  if (!brk || typeof brk !== 'object' || genId == null) return null;
+  const id = String(genId);
+  const all = Array.isArray(brk.tournaments) ? brk.tournaments : [];
+  // find THIS candidate's per-challenger racing record (challenger == genId).
+  const challengerOf = (t) => {
+    const tid = String(t.tournament_id || '');
+    const arrow = tid.lastIndexOf('->');
+    if (arrow >= 0) return tid.slice(arrow + 2);
+    const comps = Array.isArray(t.competitors) ? t.competitors.map(String) : [];
+    return comps.length > 1 ? comps[1] : (comps[0] || null);
+  };
+  const rec = all.find((t) => t && String(t.structure) === 'racing'
+    && Array.isArray(t.rounds) && t.rounds.length && challengerOf(t) === id);
+  if (!rec) return null;
+
+  const rungIndexOf = (mid) => { const m = /^rung(\d+)/.exec(String(mid || '')); return m ? Number(m[1]) : null; };
+  const isFinal = (mid) => String(mid || '') === 'racing-final';
+  const lineage = Array.isArray(brk.champion_lineage) ? brk.champion_lineage.map(String) : [];
+  const crowned = lineage.length ? lineage[lineage.length - 1] : null;
+
+  const rungs = [];
+  let final = null;
+  for (const r of rec.rounds) {
+    const mid = r && r.match_id;
+    const delta = svg.isNum(r && r.delta_scalar) ? r.delta_scalar : null;
+    if (isFinal(mid)) { final = { delta, won: !!(r && r.won) }; continue; }
+    const ri = rungIndexOf(mid);
+    if (ri == null) continue;
+    rungs.push({ ri, delta, won: !!(r && r.won) });
+  }
+  rungs.sort((a, b) => a.ri - b.ri);
+  if (!rungs.length && !final) return null;
+
+  const stages = [];
+  rungs.forEach((rg, k) => {
+    // a rung is "survived" when there is a later rung or a final; else "cut".
+    const survived = k < rungs.length - 1 || !!final;
+    stages.push({ label: `rung ${rg.ri}`, kind: 'rung', delta: rg.delta, verdict: survived ? 'survived' : 'cut' });
+  });
+  if (final) {
+    const promoted = final.won || (crowned === id);
+    stages.push({ label: 'final', kind: 'final', delta: final.delta, verdict: promoted ? 'promoted' : 'rejected' });
+  } else if (rungs.length) {
+    // no final reached → the candidate was cut at its last rung.
+    stages[stages.length - 1].verdict = 'cut';
+  }
+  return { stages };
+}
+
 // ---- racing — a successive-halving rung ladder ---------------------
 
 function renderRacing(st, ctx, epochId) {

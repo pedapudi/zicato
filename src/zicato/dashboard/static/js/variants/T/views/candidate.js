@@ -26,9 +26,10 @@
 import { el } from '../../../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { lifecycleDag } from '../dag.js';
+import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, densityTokens } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
+import { candidateProgression } from './structure.js';
 
 export async function render(host, ctx, params, route) {
   params = params || {};
@@ -67,8 +68,8 @@ export async function render(host, ctx, params, route) {
   // Resolve each side's full panel data (cached). Side B only when comparing.
   // The primary side (A) honours the entry drill-down param; the compare side
   // (B) reads its lifecycle clean.
-  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null);
-  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null) : null;
+  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, bracket);
+  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, bracket) : null;
 
   const digest = JSON.stringify({
     epochId, genId, cmpId, entry: params.entry || null,
@@ -110,7 +111,7 @@ export async function render(host, ctx, params, route) {
 
 // Resolve one candidate's full panel data (all cached reads). `entryParam`
 // only applies to the primary (A) side's drill-down.
-async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam) {
+async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, bracket) {
   const node = genList.find((g) => g.id === genId) || { id: genId, parent: null, promoted: false };
   const baseline = !node.parent;
   const exp = experiments.find((x) => x.generation_id === genId) || null;
@@ -120,6 +121,11 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
 
   const pe = await D.perEntry(epochId, genId);
   const entries = (pe && Array.isArray(pe.entries)) ? pe.entries : [];
+
+  // the candidate's PATH through the tournament rungs (rung 0 → rung 1 →
+  // racing-final, each Δ + won/cut) — relates board runs to the rounds even
+  // when the per-run records carry no rung tags. null for a gauntlet candidate.
+  const progression = candidateProgression(bracket, genId);
 
   // fix #3 — EVERY matchup the candidate was in (as champion OR challenger).
   const mine = allMatchups.filter((m) => m.champion === genId || m.challenger === genId);
@@ -148,7 +154,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
 
   return {
     node, baseline, decision, mpts, entries, mine, gateSpecs, gates,
-    primaryDelta, championId, championScalar, scalarByGen,
+    primaryDelta, championId, championScalar, scalarByGen, progression,
     entryParam, exps, judges, drillRow,
   };
 }
@@ -159,7 +165,9 @@ function candidateDigest(s) {
     champScalar: svg.isNum(s.championScalar) ? s.championScalar.toFixed(3) : null,
     delta: svg.isNum(s.primaryDelta) ? s.primaryDelta.toFixed(3) : null,
     mpts: s.mpts,
-    entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded]),
+    entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null]),
+    progression: s.progression && Array.isArray(s.progression.stages)
+      ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
     matchups: s.mine.map((m) => [m.champion, m.challenger, m.decision, svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null]),
     gates: s.gates.map((g, i) => g && Array.isArray(g.rules)
       ? [s.gateSpecs[i].champ, s.gateSpecs[i].chall, s.gateSpecs[i].role, g.decision, svg.isNum(g.delta_scalar) ? g.delta_scalar.toFixed(3) : null, g.rules.map((r) => [r.id, r.status, r.fired])]
@@ -195,14 +203,27 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
   // scrolling. Density scales the figure's vertical SIZE (row step + height).
   const dt = densityTokens();
   const dagCard = el('div', { class: 'dn-panel dn-figpane' });
+
+  // the rung-PROGRESSION strip (racing candidates): rung 0 → rung 1 → final,
+  // each with its Δ-vs-champion + won/cut — relates the board runs to the
+  // tournament rounds even when the per-run records carry no rung tags. Absent
+  // for a gauntlet candidate (one matchup, no rungs → no strip).
+  if (s.progression && Array.isArray(s.progression.stages) && s.progression.stages.length) {
+    dagCard.appendChild(el('div', { class: 'dn-rungprog-strip' }, [
+      el('span', { class: 'dn-rungprog-cap dn-faint', text: 'tournament path' }),
+      rungProgression({ stages: s.progression.stages, width: cmpId ? 480 : 720 }),
+    ]));
+  }
+
   dagCard.appendChild(lifecycleDag({
     genId, parentId: node.parent, baseline, promoted: node.promoted, decision: s.decision,
     deltaScalar: s.primaryDelta, patchPoints: s.mpts, entries: s.entries,
     width: cmpId ? 560 : 900, height: Math.max(Math.round(300 * dt.sizeScale), Math.round(120 * dt.sizeScale) + s.entries.length * dt.dagRowStep),
     onEntry: (eid) => ctx.navigate('candidate', { epochId, gen: genId, entry: eid }, opts),
+    onRun: (eid) => ctx.navigate('board', { epochId, entry: eid, gen: genId }),
     onPatch: baseline ? null : () => ctx.navigate('diff', { epochId, gen: genId }),
   }));
-  dagCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: baseline ? 'parent → patch → board (one node per entry, colour = pass/fail/timeout) → Σ → gate → terminal · click a board node → its drill-down' : 'parent → patch → board → Σ → gate → terminal · click the PATCH node → this candidate’s side-by-side diff · click a board node → its drill-down' }));
+  dagCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: baseline ? 'parent → patch → board (one node per entry, colour = pass/fail/timeout) → Σ → gate → terminal · click a board node → its drill-down' : 'parent → patch → board → Σ → gate → terminal · click the PATCH node → this candidate’s side-by-side diff · hover/click a re-raced board node → its per-run losses (by rung); click a run → its transcript' }));
   host.appendChild(section('Lifecycle · cause → effect → verdict', dagCard));
 
   // ---- per-board scoring dot-plot ----

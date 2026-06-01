@@ -2350,4 +2350,262 @@ test('survival funnel: marks are token-themed in the scoped stylesheet (legible 
   assert(/\.dn-funnel-pending[^}]*var\(--v2-rule/.test(css), 'a pending (live) stage uses a neutral rule token');
 });
 
+// ====================================================================
+// LIFECYCLE relates board runs to rungs/matchups (Change 1):
+//   * a deduped board node is EXPANDABLE — it reveals its N per-run losses
+//     (an inline stack + a sparkline), no longer lossy on the values;
+//   * when the per-entry records carry `match_id`/`rung`, each run is LABELLED
+//     by its rung/matchup; when ABSENT (legacy), no rung labels are fabricated;
+//   * a CANDIDATE RUNG-PROGRESSION strip (rung0→rung1→final, each Δ + won/cut)
+//     relates the candidate to the rounds even without per-run tags;
+//   * a gauntlet candidate (one run per entry) renders unchanged.
+// ====================================================================
+
+function runRowsOf(boardNode) {
+  return boardNode.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'g' && (n.getAttribute('class') || '').split(/\s+/).includes('ezn-board-run'));
+}
+
+test('lifecycle BOARD node: a re-raced entry is EXPANDABLE and reveals each run’s loss (no longer lossy on the values)', () => {
+  // q3_metrics_outline raced 3× (rung0/rung1/final) with losses 4.0 / 64.0 / 63.5.
+  const entries = [
+    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: 1, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: 0, wall_clock_budget_exceeded: false },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0, wall_clock_budget_exceeded: false },
+    { entry_id: 'waffles_single', run_id: 'g1', drift_loss: 60.5, pass_fail: 0, wall_clock_budget_exceeded: false },
+  ];
+  let navTo = null;
+  const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: 360,
+    onRun: (eid, runId) => { navTo = { eid, runId }; } });
+  const nodes = boardNodesOf(svgNode);
+  const byKey = {}; for (const n of nodes) byKey[n.getAttribute('data-key')] = n;
+
+  // the raced node is marked expandable + carries its per-run stack.
+  const q3 = byKey['q3_metrics_outline'];
+  assert((q3.getAttribute('class') || '').includes('ezn-board-expandable'), 'a re-raced node is marked expandable');
+  const stack = q3.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-board-runs'))[0];
+  assert(stack, 'the expandable node carries a per-run expansion panel');
+  const rows = runRowsOf(q3);
+  assertEqual(rows.length, 3, 'the panel reveals ONE row per run (3 runs)');
+  // every per-run loss value is shown (4.0 / 64.0 / 63.5) — no longer lossy.
+  const losses = rows.map((r) => r.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-board-run-loss'))[0].textContent);
+  assertDeep(losses, [svg.fmt(4.0, 1), svg.fmt(64.0, 1), svg.fmt(63.5, 1)], 'each run’s loss is revealed in order (rung0→final)');
+  // a sparkline of the per-run losses renders too.
+  assert(q3.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-board-spark')).length === 1, 'an inline sparkline of the run losses renders');
+
+  // clicking a run row drills into that run/transcript.
+  rows[1].dispatchEvent({ type: 'click', stopPropagation() {} });
+  assert(navTo && navTo.eid === 'q3_metrics_outline', 'clicking a per-run row drills into that run (onRun fired)');
+
+  // a once-run (gauntlet-style) entry in the same set carries NO expansion.
+  assert(!(byKey['waffles_single'].getAttribute('class') || '').includes('ezn-board-expandable'), 'a once-run entry is not expandable');
+  assertEqual(runRowsOf(byKey['waffles_single']).length, 0, 'a once-run entry has no per-run rows');
+});
+
+test('lifecycle BOARD node: per-run rows are LABELLED by rung when records carry match_id/rung', () => {
+  const entries = [
+    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: 1, match_id: 'rung0_m2', rung: 'rung 0' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: 0, match_id: 'rung1_m0', rung: 'rung 1' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0, match_id: 'racing-final', rung: 'final' },
+  ];
+  const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: 360 });
+  const q3 = boardNodesOf(svgNode)[0];
+  assertEqual(q3.getAttribute('data-tagged'), '1', 'the node is flagged as carrying rung-tagged runs');
+  const rungs = q3.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-board-run-rung')).map((n) => n.textContent);
+  assertDeep(rungs, ['rung 0', 'rung 1', 'final'], 'each run is labelled by its rung/matchup (rung 0 / rung 1 / final)');
+});
+
+test('lifecycle BOARD node: with NO rung tags (legacy data) the per-run losses still show but NO rung labels are fabricated', () => {
+  // the current e0 legacy shape: repeated entries, NO match_id/rung fields.
+  const entries = [
+    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: 1 },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: 0 },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0 },
+  ];
+  const svgNode = dag.lifecycleDag({ genId: 'v3', parentId: 'v0', entries, decision: 'rejected', height: 360 });
+  const q3 = boardNodesOf(svgNode)[0];
+  assertEqual(q3.getAttribute('data-tagged'), '0', 'legacy runs are NOT flagged as rung-tagged');
+  // the per-run losses still render (not lossy)…
+  const rows = runRowsOf(q3);
+  assertEqual(rows.length, 3, 'all three per-run losses still render on legacy data');
+  // …but NO rung labels are fabricated.
+  assertEqual(q3.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-board-run-rung')).length, 0,
+    'no rung labels are fabricated when the records carry no match_id/rung');
+});
+
+test('lifecycle RUNG-PROGRESSION strip: reconstructs rung0→rung1→final (Δ + won/cut) from the per-challenger structure record', () => {
+  // v3’s racing path from RACING_TOURNAMENTS: rung0 won → rung1 → racing-final promoted.
+  const prog = STRUCT.candidateProgression(RACING_TOURNAMENTS, 'v3');
+  assert(prog && Array.isArray(prog.stages), 'a progression was reconstructed for the racing candidate v3');
+  assertDeep(prog.stages.map((s) => s.label), ['rung 0', 'rung 1', 'final'], 'the path is rung0 → rung1 → final');
+  assertDeep(prog.stages.map((s) => s.kind), ['rung', 'rung', 'final'], 'the final stage is flagged kind=final');
+  assertEqual(prog.stages[0].verdict, 'survived', 'v3 survived rung0 (it reached rung1)');
+  assertEqual(prog.stages[2].verdict, 'promoted', 'v3 was promoted at the champion gate');
+  assertEqual(prog.stages[2].delta, -32.19, 'the final stage carries the Δ-vs-champion');
+
+  // a cut candidate (v4: rung0 → rung1, no final) ends "cut".
+  const prog4 = STRUCT.candidateProgression(RACING_TOURNAMENTS, 'v4');
+  assert(prog4, 'v4 has a progression');
+  assertEqual(prog4.stages[prog4.stages.length - 1].verdict, 'cut', 'v4 was cut at its last rung (no final reached)');
+
+  // a gauntlet / non-racing candidate has NO progression (strip suppressed).
+  assertEqual(STRUCT.candidateProgression(FIXTURE['/api/tournaments'], 'v1'), null, 'a gauntlet candidate has no rung progression');
+
+  // the builder renders a fit-to-width SVG with a stage per rung.
+  const node = dag.rungProgression({ stages: prog.stages });
+  assertEqual(node.localName, 'svg', 'the progression strip is an SVG');
+  assertEqual(node.getAttribute('width'), '100%', 'the progression strip is fit-to-width (width:100%)');
+  assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'it carries a responsive viewBox (theme-aware, scaled by the page pill)');
+  const stages = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-rungprog-stage'));
+  assertEqual(stages.length, 3, 'one stage per rung/final');
+  assert(node.textContent.includes('rung 0') && node.textContent.includes('final'), 'the stages are labelled by rung');
+});
+
+test('lifecycle RUNG-PROGRESSION strip: a racing candidate page renders the strip; a gauntlet candidate page does NOT', async () => {
+  // a racing candidate (v3) on the live reconstruction fixture.
+  freshState();
+  const F = {
+    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
+      experiments: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, parent_generation_id: g === 'v0' ? '' : 'v0', outcome: { decision: g === 'v0' ? 'baseline' : (g === 'v3' ? 'promoted' : 'rejected') } })), board: [] },
+    '/api/lineage': { generations: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, epoch_id: RC_EPOCH, parent_generation_id: g === 'v0' ? '' : 'v0', promoted: g === 'v0' || g === 'v3' })) },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': RACING_TOURNAMENTS,
+  };
+  // per-entry records for v3: the SAME entry raced across rungs, carrying rung tags.
+  F[`/api/generation/${RC_EPOCH}/v3/per-entry`] = { entries: [
+    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: 1, match_id: 'rung0_m2', rung: 'rung 0' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: 0, match_id: 'rung1_m0', rung: 'rung 1' },
+    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: 0, match_id: 'racing-final', rung: 'final' },
+  ] };
+  installFixtureMap(F);
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH, gen: 'v3' });
+  assert(allByClass(host, 'dn-rungprog-strip')[0], 'the racing candidate page renders the rung-progression strip');
+  const strip = svgsByClass(host, 'ezn-rungprog')[0];
+  assert(strip, 'the progression SVG rendered');
+  assert(strip.textContent.includes('rung 0') && strip.textContent.includes('final'), 'the strip shows rung0 → … → final');
+  // the board node also reveals its per-run losses, labelled by rung.
+  const boardNode = host.querySelectorAll('[class]').filter((n) => n.localName === 'g'
+    && (n.getAttribute('class') || '').split(/\s+/).includes('ezn-board-node'))[0];
+  assert(boardNode && (boardNode.getAttribute('class') || '').includes('ezn-board-expandable'), 'the racing board node is expandable on the candidate page');
+
+  // a gauntlet candidate (default fixture) renders NO progression strip.
+  freshState(); installFetch();
+  const host2 = document.createElement('div');
+  await candidate.render(host2, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  assertEqual(allByClass(host2, 'dn-rungprog-strip').length, 0, 'a gauntlet candidate page renders NO rung-progression strip');
+  // and its board nodes are not expandable (one run per entry).
+  const gnodes = host2.querySelectorAll('[class]').filter((n) => n.localName === 'g'
+    && (n.getAttribute('class') || '').split(/\s+/).includes('ezn-board-node'));
+  for (const g of gnodes) assert(!(g.getAttribute('class') || '').includes('ezn-board-expandable'), 'a gauntlet board node is not expandable');
+});
+
+test('lifecycle per-run stack + progression strip are themed in the scoped stylesheet (theme-aware across the 13 themes)', () => {
+  const css = readCss();
+  assert(/\.ezn-board-runs-box\s*\{/.test(css), '.ezn-board-runs-box is styled');
+  assert(/\.ezn-board-runs-box[^}]*var\(--v2-/.test(css), 'the per-run panel uses a theme variable');
+  assert(/\.ezn-board-spark[^}]*var\(--v2-/.test(css), 'the per-run sparkline uses a theme variable');
+  assert(/\.ezn-rungprog-dot[^}]*var\(--v2-/.test(css), 'the progression dots are token-themed');
+  // the expansion is hidden until hover / focus-within / open (no-flash, reveal-on-demand).
+  assert(/\.ezn-board-node:hover\s+\.ezn-board-runs/.test(css), 'the per-run panel reveals on hover');
+});
+
+// ====================================================================
+// CHANGE 2 — the resizable LEFT side-panel (rail) sizing handle.
+// ====================================================================
+
+test('rail sizing: ui exposes a clamped rail-width range with a default + normalisation', () => {
+  freshState();
+  assertEqual(ui.DEFAULT_RAIL, 288, 'the rail defaults to the cozy 288px baseline');
+  assert(ui.RAIL_MIN >= 120 && ui.RAIL_MIN < ui.DEFAULT_RAIL, 'a sensible minimum below the default');
+  assert(ui.RAIL_MAX > ui.DEFAULT_RAIL, 'a sensible maximum above the default');
+  assertEqual(ui.normaliseRail(10), ui.RAIL_MIN, 'below-range clamps up to the min');
+  assertEqual(ui.normaliseRail(9999), ui.RAIL_MAX, 'above-range clamps down to the max');
+  assertEqual(ui.normaliseRail('nonsense'), ui.DEFAULT_RAIL, 'a non-numeric value falls back to the default');
+  // the shell re-exports the surface.
+  assertEqual(shell.DEFAULT_RAIL, 288, 'the shell exposes the default rail width');
+});
+
+test('rail sizing: a draggable handle on the rail edge changes the rail width, persists + restores; the detail pane reflows', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  const root = mountLiveShell('#/');
+
+  // the handle is a focusable separator on the rail's right edge.
+  const handle = allByClass(root, 'dt-rail-handle')[0];
+  assert(handle, 'a rail-resize handle rendered on the rail edge');
+  assertEqual(handle.getAttribute('role'), 'separator', 'the handle is a separator (keyboard-accessible)');
+  assert((handle.getAttribute('aria-label') || '').length > 0, 'the handle carries an aria-label');
+
+  // default rail width is stamped on the root as the --dt-rail token.
+  assertEqual(root.getAttribute('data-t-rail'), String(ui.DEFAULT_RAIL), 'the rail starts at the default width');
+  assert(root.style.cssText.includes('--dt-rail:' + ui.DEFAULT_RAIL + 'px'), 'the --dt-rail token is on the root (the detail pane’s 1fr column reflows around it)');
+
+  // keyboard: ArrowRight widens, ArrowLeft narrows (the handle is accessible).
+  handle.dispatchEvent({ type: 'keydown', key: 'ArrowRight', preventDefault() {} });
+  const wider = +root.getAttribute('data-t-rail');
+  assert(wider > ui.DEFAULT_RAIL, 'ArrowRight widened the rail');
+  handle.dispatchEvent({ type: 'keydown', key: 'ArrowLeft', preventDefault() {} });
+  handle.dispatchEvent({ type: 'keydown', key: 'ArrowLeft', preventDefault() {} });
+  assert(+root.getAttribute('data-t-rail') < wider, 'ArrowLeft narrowed the rail');
+  // Home/End jump to the bounds.
+  handle.dispatchEvent({ type: 'keydown', key: 'End', preventDefault() {} });
+  assertEqual(+root.getAttribute('data-t-rail'), ui.RAIL_MAX, 'End jumps to the max width');
+  handle.dispatchEvent({ type: 'keydown', key: 'Home', preventDefault() {} });
+  assertEqual(+root.getAttribute('data-t-rail'), ui.RAIL_MIN, 'Home jumps to the min width');
+
+  // the programmatic applyRail() clamps + persists.
+  shell.applyRail(360, root);
+  assertEqual(root.getAttribute('data-t-rail'), '360', 'applyRail set the rail width');
+  assert(root.style.cssText.includes('--dt-rail:360px'), 'the --dt-rail token reflects the chosen width');
+  assertEqual(ui.readRail(), 360, 'the chosen rail width persisted to localStorage');
+
+  // RESTORE: a fresh mount reads it back and re-applies it.
+  const root2 = mountLiveShell('#/');
+  assertEqual(root2.getAttribute('data-t-rail'), '360', 'a fresh mount restores the persisted rail width');
+  assert(root2.style.cssText.includes('--dt-rail:360px'), 'the restored rail width is re-applied to the root');
+
+  // it is page-CHROME sizing, distinct from the page-scale pill (separate axes).
+  shell.applyScale(120, root2);
+  assertEqual(root2.getAttribute('data-t-rail'), '360', 'a page-scale change leaves the rail width untouched');
+});
+
+test('rail sizing CSS: the body grid keys on --dt-rail and the handle has a col-resize cursor (no-flash chrome)', () => {
+  const css = readCss().replace(/\n/g, ' ');
+  assert(/\.dt-body\s*\{[^}]*grid-template-columns:[^;]*var\(--dt-rail/.test(css), 'the body grid’s first column is the --dt-rail width');
+  assert(/\.dt-rail-handle\s*\{[^}]*cursor:\s*col-resize/.test(css), 'the rail handle carries a col-resize cursor');
+});
+
+// ====================================================================
+// CHANGE 3 — the upper-left "back" button is relabelled "up" (its
+// function: navigate UP the selection hierarchy, not browser-back).
+// ====================================================================
+
+test('up button: the upper-left control reads "up" (not "back"), labels itself "navigate up", and still navigates to the parent route', async () => {
+  freshState();
+  const root = mountLiveShell(`#/e/${EPOCH_ID}/gen/v1`);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const upBtn = allByClass(root, 'dt-back')[0];
+  assert(upBtn, 'the upper-left navigation control rendered');
+  // it reads "up", NOT "back".
+  const txt = allByClass(root, 'dt-back-text')[0];
+  assert(txt && txt.textContent === 'up', 'the button text reads "up"');
+  assert(!(root.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-back-text'))[0].textContent.toLowerCase().includes('back')),
+    'the button no longer reads "back"');
+  // the glyph is an up-arrow, and the aria-label/title name "up" / "navigate up".
+  const glyph = allByClass(root, 'dt-back-glyph')[0];
+  assert(glyph && glyph.textContent === '↑', 'the glyph is an up arrow (↑)');
+  assert((upBtn.getAttribute('aria-label') || '').toLowerCase().includes('up'), 'the aria-label names "up" (navigate up)');
+  assert(!(upBtn.getAttribute('aria-label') || '').toLowerCase().includes('back'), 'the aria-label no longer says "back"');
+  assert((upBtn.getAttribute('title') || '').toLowerCase().includes('up'), 'the title names "up"');
+
+  // BEHAVIOUR UNCHANGED: clicking it still navigates UP to the parent route.
+  upBtn.dispatchEvent({ type: 'click' });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assertEqual(location.hash, `#/e/${EPOCH_ID}/gens`, 'clicking "up" navigates to the parent route (candidate → generations)');
+});
+
 await run();

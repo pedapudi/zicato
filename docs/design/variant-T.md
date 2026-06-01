@@ -70,6 +70,52 @@ Six operator-requested changes, all scoped to Variant T:
    and the closed trigger echoes the current theme's swatch + name. (The
    typeface picker stays as inline buttons — only three options.)
 
+## Round-11 changes (lifecycle ↔ rungs · resizable rail · "up")
+
+Three operator-requested changes, all CSS/JS-only and scoped to Variant T:
+
+1. **The lifecycle DAG relates board runs to rungs/matchups** (replaces the
+   lossy `×N`). A RACING candidate re-runs the SAME board entry across rungs
+   (rung0 slice → rung1 larger slice → racing-final full board), so the
+   per-entry stream repeats an `entry_id` N times. The BOARD column still
+   dedupes to **one node per distinct entry**, but it is **no longer lossy on the
+   values**:
+   - **Per-run losses (always).** Each deduped node is **expandable** (hover /
+     focus / click) into a small inline panel that reveals its N per-run losses —
+     a sparkline + one row per run (loss value + pass/fail/timeout dot). Clicking
+     a run row drills into that run's transcript (`onRun` → board view).
+   - **Per-run rung tag (when present).** When the per-entry records carry
+     `match_id` / `rung` (a parallel backend change; e.g. `rung:"rung 0"`,
+     `match_id:"rung0_m2"`), each run row is **labelled by its rung/matchup**
+     (rung 0 / rung 1 / final). When the fields are **absent** (legacy data such
+     as the current e0), the per-run losses still render but **no rung labels are
+     fabricated** (`data-tagged="0"`).
+   - **Candidate rung-progression strip (always).** A small fit-to-width strip
+     near PATCH/BOARD shows the candidate's **path through the tournament** —
+     rung 0 → rung 1 → racing-final, each with its Δ-vs-champion and a
+     won/cut/promoted verdict — reconstructed by
+     `structure.candidateProgression()` from the same per-challenger
+     `/api/tournaments` records the racing ladder uses. So even with no per-run
+     tags the candidate still relates to the rounds/rungs. The builder is
+     `dag.rungProgression()`; theme-aware across the 13 themes; suppressed for a
+     gauntlet candidate (no rungs).
+   - **Gauntlet unchanged.** A gauntlet candidate runs each entry exactly once →
+     every group has size 1 → no expansion, no progression strip; identical to
+     the prior single-node rendering.
+2. **A resizable LEFT side-panel.** A draggable handle on the rail's right edge
+   (`.dt-rail-handle`, `role="separator"`) resizes the tree side-panel: a pointer
+   drag sets the width live, arrow keys nudge ±16 (Home/End jump to the bounds).
+   The width drives the `--dt-rail` grid column on the app root, is **persisted to
+   localStorage** (`zicato.T.rail`) and **restored on load** (digest-gated / no
+   flash), clamped to a sensible min/max (`RAIL_MIN`–`RAIL_MAX`, default 288 px);
+   the detail pane's `1fr` column reflows. This is **page-chrome sizing** —
+   distinct from the page-scale pill, which zooms the whole page.
+   `shell.applyRail()` / `ui.{readRail,persistRail,normaliseRail}`.
+3. **"back" → "up".** The upper-left control navigates UP the selection
+   hierarchy (the parent route), not browser-back. Its label is now **"↑ up"**
+   (glyph `↑`, text `up`); aria-label "Navigate up", title "Navigate up one
+   level". Behaviour is unchanged — it still calls `goBack` / `router.up`.
+
 ## The headline (carried from P) — a data-model TREE sidebar
 
 The top-tab nav is gone. A persistent LEFT TREE mirrors the real zicato
@@ -124,7 +170,7 @@ Rejected / seed branches are unchanged.
 | `#/` | **Environment** — the workspace as a fleet (overview strip, per-epoch loss trendline cards, cross-epoch trajectory). |
 | `#/e/<epoch>` | **Epoch overview** — objective + proposer brief, the **slim REEL** (rounds along the champion spine; replaces the old bumps), the **compact board×generation drift-loss heatmap** (stays here per fix #6). |
 | `#/e/<epoch>/gens` | **Generations** — the **champion-defends banner** + a wrapping grid of compact **MATCH CARDS** (one per challenger round), plus the dense candidate roster (role · parent · scalar · Δ vs champion). Cards + rows open that candidate. |
-| `#/e/<epoch>/gen/<gen>[/<entry>]` | **Candidate** — lifecycle DAG (clickable patch node), per-board dot-plot, entry drill, **ALL match-ups**, and the **stacked promote gate**. |
+| `#/e/<epoch>/gen/<gen>[/<entry>]` | **Candidate** — lifecycle DAG (clickable patch node; **expandable board nodes** revealing per-run losses by rung; a **rung-progression strip** for racing candidates), per-board dot-plot, entry drill, **ALL match-ups**, and the **stacked promote gate**. |
 | `#/e/<epoch>/gen/<gen>~cmp=<gen2>` | **Candidate · COMPARE** — the SAME pane split into TWO candidate panels A \| B (S's comparison-first detail). |
 | `#/e/<epoch>/gen/<gen>/diff[/<mutId>]` | **Patch diff** — this candidate's side-by-side diff (baseline vs new content), reusing the mutation-viewer diff component. |
 | `#/e/<epoch>/boards` | **Boards** — the board **trellis** (small-multiples; here per fix #6); cards route to the per-board view by entry id. |
@@ -145,18 +191,21 @@ target. Champion-vs-challenger transcripts read side by side INLINE on the board
 view (`views/board.js`). The split collapses to a single column when there is no
 compare target.
 
-## The back-button fix (NEW — fold 3)
+## The "up" control (NEW — fold 3; relabelled from "back" in round 11)
 
-A top-left **back/up control** (`shell.js`, `goBack` / `renderBack`, plus
+A top-left **"↑ up" control** (`shell.js`, `goBack` / `renderBack`, plus
 `router.up`) navigates UP the selection hierarchy:
 candidate → generations → epoch → environment; a COMPARE split collapses to the
 bare candidate first; an entry/transcript selection steps up to its bare parent
-first. **The bug to avoid** (Q's): Q rendered the destination into the SIDE
-PANEL. T instead **navigates** (changes the route); the normal dispatch then
-repaints the destination into the **MAIN DETAIL PANE** — the rail/tree host is
-never touched. The button is inert at the environment root. Tested explicitly:
-after a back action the rail host still holds the tree and the detail host holds
-the destination view.
+first. It was labelled "‹ back" through round 10, but since it climbs the
+selection hierarchy (the parent route) rather than doing browser-back, round 11
+relabels it **"↑ up"** (glyph `↑`, text `up`, aria-label/title "Navigate up");
+the behaviour is unchanged. **The bug to avoid** (Q's): Q rendered the
+destination into the SIDE PANEL. T instead **navigates** (changes the route); the
+normal dispatch then repaints the destination into the **MAIN DETAIL PANE** — the
+rail/tree host is never touched. The button is inert at the environment root.
+Tested explicitly: after an up action the rail host still holds the tree and the
+detail host holds the destination view.
 
 ## The seven round-5 fixes (carried forward — not regressed)
 

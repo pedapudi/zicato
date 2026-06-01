@@ -144,6 +144,39 @@ export function persistScale(v) {
   return n;
 }
 
+// ---- LEFT SIDE-PANEL (rail) WIDTH (the draggable rail handle) -------
+//
+// Distinct from the page-scale pill (which zooms the WHOLE page): this resizes
+// only the LEFT tree side-panel width (the `--dt-rail` grid column), so the
+// operator can widen the tree to read long generation / entry ids or narrow it
+// to give the detail pane more room. A draggable handle on the rail's right
+// edge drives it; the chosen width is persisted to localStorage and restored on
+// load. Clamped to a sensible min/max so the rail can never collapse or eat the
+// page. The detail pane reflows to fill the rest (the grid's 1fr column).
+export const RAIL_MIN = 200;
+export const RAIL_MAX = 520;
+export const DEFAULT_RAIL = 288;
+const RAIL_KEY = 'zicato.T.rail';
+
+export function normaliseRail(v) {
+  let n = Number(v);
+  if (!isFinite(n)) n = DEFAULT_RAIL;
+  n = Math.round(n);
+  if (n < RAIL_MIN) n = RAIL_MIN;
+  if (n > RAIL_MAX) n = RAIL_MAX;
+  return n;
+}
+export function readRail() {
+  let stored = null;
+  try { stored = window.localStorage.getItem(RAIL_KEY); } catch (e) { /* private mode */ }
+  return normaliseRail(stored == null ? DEFAULT_RAIL : stored);
+}
+export function persistRail(v) {
+  const n = normaliseRail(v);
+  try { window.localStorage.setItem(RAIL_KEY, String(n)); } catch (e) { /* ignore */ }
+  return n;
+}
+
 // ---- VISUAL-ELEMENT SIZE tokens (fixed at the cozy baseline) --------
 //
 // The SVG figures are laid out in JS, so their intrinsic SIZE tokens live HERE.

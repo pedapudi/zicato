@@ -36,6 +36,7 @@ import {
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
   DENSITY,
   SCALE_MIN, SCALE_MAX, SCALE_STEP, DEFAULT_SCALE, normaliseScale, readScale, persistScale,
+  RAIL_MIN, RAIL_MAX, DEFAULT_RAIL, normaliseRail, readRail, persistRail,
 } from './ui.js';
 
 import * as home from './views/home.js';
@@ -70,6 +71,7 @@ let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
 let _typeEl = [];
 let _scaleInput = null;
 let _scaleReadout = null;
+let _railHandle = null;        // the draggable rail-resize handle (Change 2)
 let _backBtn = null;
 let _renderToken = 0;
 let _lastViewKey = null;
@@ -143,6 +145,95 @@ export function applyScale(scale, rootEl) {
 // a real <button>). Returns the applied value.
 export function resetScale(rootEl) {
   return applyScale(DEFAULT_SCALE, rootEl || _root);
+}
+
+// LEFT SIDE-PANEL (rail) WIDTH — set the `--dt-rail` grid column on the app root
+// + persist. Distinct from the page-scale pill (this resizes ONLY the tree
+// side-panel; the detail pane's 1fr column reflows to fill the rest). Backs the
+// draggable handle on the rail's right edge; clamped to a sensible min/max so
+// the rail can never collapse or eat the page. Returns the applied px width.
+export function applyRail(px, rootEl) {
+  const n = normaliseRail(px);
+  const root = rootEl || _root;
+  if (root) {
+    root.style.setProperty('--dt-rail', n + 'px');
+    root.setAttribute('data-t-rail', String(n));
+  }
+  persistRail(n);
+  if (_railHandle) _railHandle.setAttribute('aria-valuenow', String(n));
+  return n;
+}
+
+// Wire the rail-resize handle (Change 2): a pointer drag sets the rail width
+// from the pointer's X (relative to the body's left edge); arrow keys nudge it
+// ±16 (Home/End jump to the min/max). The width applies live + persists. The
+// handler is defensive so the test harness (no real layout / pointer capture)
+// can drive it via keyboard or a synthetic pointer event.
+function wireRailHandle(handle, root) {
+  if (!handle) return;
+  const RAIL_KEY_STEP = 16;
+  let dragging = false;
+  let startX = 0;
+  let startW = readRail();
+
+  const widthFromClientX = (clientX) => {
+    // the rail's left edge ≈ the tree host's left edge; the new width is the
+    // pointer's distance from it.
+    if (typeof clientX !== 'number' || !isFinite(clientX)) return startW;
+    let left = 0;
+    if (_treeHost && _treeHost.getBoundingClientRect) {
+      try { left = _treeHost.getBoundingClientRect().left || 0; } catch (e) { left = 0; }
+    }
+    return clientX - left;
+  };
+
+  const onMove = (ev) => {
+    if (!dragging) return;
+    if (ev && ev.preventDefault) ev.preventDefault();
+    const cx = ev && typeof ev.clientX === 'number' ? ev.clientX : null;
+    // prefer an absolute rail-left model; if unavailable, use the drag delta.
+    let next;
+    if (cx != null && _treeHost && _treeHost.getBoundingClientRect) {
+      next = widthFromClientX(cx);
+    } else if (cx != null) {
+      next = startW + (cx - startX);
+    } else { next = startW; }
+    applyRail(next, root);
+  };
+  const onUp = () => {
+    dragging = false;
+    handle.classList && handle.classList.remove('dt-rail-dragging');
+    if (typeof window !== 'undefined' && window.removeEventListener) {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    }
+  };
+  const onDown = (ev) => {
+    dragging = true;
+    startX = ev && typeof ev.clientX === 'number' ? ev.clientX : 0;
+    startW = readRail();
+    handle.classList && handle.classList.add('dt-rail-dragging');
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    }
+  };
+  handle.addEventListener('pointerdown', onDown);
+  handle.addEventListener('mousedown', onDown);
+
+  handle.addEventListener('keydown', (ev) => {
+    const k = ev.key;
+    const cur = readRail();
+    if (k === 'ArrowLeft') { ev.preventDefault && ev.preventDefault(); applyRail(cur - RAIL_KEY_STEP, root); }
+    else if (k === 'ArrowRight') { ev.preventDefault && ev.preventDefault(); applyRail(cur + RAIL_KEY_STEP, root); }
+    else if (k === 'Home') { ev.preventDefault && ev.preventDefault(); applyRail(RAIL_MIN, root); }
+    else if (k === 'End') { ev.preventDefault && ev.preventDefault(); applyRail(RAIL_MAX, root); }
+  });
 }
 
 // ---- the colour SWATCH DROPDOWN (Change 6) --------------------------
@@ -328,11 +419,13 @@ export function mountShell(root) {
     ]),
   ]);
 
-  // top-left back/up control — navigates UP the hierarchy; dispatch then
-  // repaints the destination into the MAIN detail pane (never the sidebar).
-  _backBtn = el('button', { class: 'dt-back', type: 'button', title: 'Back / up one level', 'aria-label': 'Back' }, [
-    el('span', { class: 'dt-back-glyph', 'aria-hidden': 'true', text: '‹' }),
-    el('span', { class: 'dt-back-text', text: 'back' }),
+  // top-left UP control — navigates UP the selection hierarchy (the parent
+  // route); dispatch then repaints the destination into the MAIN detail pane
+  // (never the sidebar). Labelled "↑ up" to reflect its function (it climbs the
+  // hierarchy, NOT browser-back).
+  _backBtn = el('button', { class: 'dt-back', type: 'button', title: 'Navigate up one level', 'aria-label': 'Navigate up' }, [
+    el('span', { class: 'dt-back-glyph', 'aria-hidden': 'true', text: '↑' }),
+    el('span', { class: 'dt-back-text', text: 'up' }),
   ]);
   _backBtn.addEventListener('click', () => goBack(parseRoute(location.hash)));
 
@@ -353,11 +446,25 @@ export function mountShell(root) {
 
   _treeHost = el('aside', { class: 'dt-sidebar', 'aria-label': 'Data model navigation' });
   _viewHost = el('main', { class: 'dt-viewhost', role: 'main' });
-  root.appendChild(el('div', { class: 'dt-body' }, [_treeHost, _viewHost]));
+
+  // CHANGE 2 — the draggable RAIL-RESIZE handle on the rail's right edge. It is
+  // a focusable separator (role="separator") so it is keyboard-accessible
+  // (arrows nudge the width ±16); a pointer drag sets the width live. Persisted
+  // to localStorage + restored on mount; the detail pane's 1fr column reflows.
+  const initialRail = readRail();
+  _railHandle = el('div', {
+    class: 'dt-rail-handle', role: 'separator', tabindex: '0',
+    'aria-orientation': 'vertical', 'aria-label': 'Resize the navigation side panel',
+    'aria-valuemin': String(RAIL_MIN), 'aria-valuemax': String(RAIL_MAX), 'aria-valuenow': String(initialRail),
+    title: 'Drag to resize the side panel',
+  });
+  wireRailHandle(_railHandle, root);
+  root.appendChild(el('div', { class: 'dt-body' }, [_treeHost, _railHandle, _viewHost]));
 
   applyTheme(readColor());
   applyTypeface(readType());
   applyScale(readScale());
+  applyRail(initialRail, root);
 
   window.addEventListener('hashchange', dispatch);
   bus.on('state:changed', onStateChanged);
@@ -582,3 +689,4 @@ function onStateChanged() {
 }
 
 export { DEFAULT_COLOR, DEFAULT_TYPE, DEFAULT_SCALE, SCALE_MIN, SCALE_MAX, SCALE_STEP };
+export { RAIL_MIN, RAIL_MAX, DEFAULT_RAIL };
