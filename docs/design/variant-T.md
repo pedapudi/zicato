@@ -192,6 +192,44 @@ wraps to multiple rows, so it stays tidy whether there are 3 OR ~30 generations.
 These cards appear on the **generations** scope only — never on the
 environment / workspace view.
 
+## The configured tournament STRUCTURE (bracket · standings · racing)
+
+The match-ups page renders the **actual configured tournament structure**, not
+just the gauntlet. `views/gens.js` reads `ep.tournament.structure` (from the
+`tournament: {structure, params}` block on `/api/epoch`; absent ⇒ `gauntlet`)
+and branches:
+
+- **`gauntlet`** (default) — the champion-defends banner + match-card grid +
+  roster table above, **unchanged**. A gauntlet epoch with no `tournament`
+  block reads byte-identically to before (no structure pill, no bracket).
+- **non-gauntlet** — fetches the full structure state from
+  `GET /api/tournament-structure/{epoch_id}/{tournament_id}` (the new
+  `data.tournamentStructure()` read; tournament id resolved from the
+  `tournaments[]` array on `/api/tournaments`, falling back to the
+  `{epoch}:{champion}->{challenger}` crowning-pair convention) and dispatches
+  through `views/structure.js`:
+  - **`single_elim` / `double_elim`** — a **fit-to-width bracket**
+    (`svg.structureBracket`): columns = real `rounds[]`, nodes = real
+    `{competitors, winner, decision, bracket_slot, bye}` matches, winners'→next
+    connector lines; double-elim splits the matches into a **winners'** band
+    and a **losers'** band by `bracket_slot` prefix (`WB-` / `LB-`). A standings
+    leaderboard rides below.
+  - **`swiss`** — a **standings table** hero (`dt-standings`, reusing
+    `dn-board-table`) + a per-round **pairings** list from `rounds[]`.
+  - **`racing`** — a **successive-halving rung ladder**
+    (`svg.racingLadder`): one column per rung showing the surviving field with
+    the `cut[]` competitors struck through (✕ = cut, ↑ = survives) and each
+    rung's `board_fraction` shown so the operator sees the budget escalation.
+
+A **structure pill** (`dt-structure-pill`: "structure · Swiss (4 rounds)" etc.)
+labels the configured structure in both the **epoch** header (`views/epoch.js`)
+and the **match-ups** header. The SVG marks follow T's fit-to-width discipline
+(`width:100%` + viewBox, no pan/zoom, token-themed across all nine swatches,
+scaling with the page-scale pill). Since the live workspace is gauntlet-only,
+the non-gauntlet renderers are driven + tested with **mock structure payloads**
+(`test/variant_t.test.mjs`) and degrade gracefully (an honest empty state, no
+throw) when the structure payload is absent.
+
 ## The chrome controls (colour dropdown · typeface buttons · scale pill)
 
 - **Colour — a SWATCH DROPDOWN** of **nine** themes (round 10). The closed

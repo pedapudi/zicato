@@ -24,6 +24,7 @@ import { el } from '../../../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, normaliseDecision } from '../ui.js';
+import { renderStructure, structurePill, structureDigest, isNonGauntlet } from './structure.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading generations…' }));
@@ -33,6 +34,18 @@ export async function render(host, ctx, params) {
   const id = epochId || (ep && ep.epoch_id) || null;
   if (!id) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Generations' }), empty('No epoch selected.')]);
+    return;
+  }
+
+  // The CONFIGURED tournament structure for this epoch (§3.1). Default to
+  // gauntlet — the existing ladder render below — when the contract names
+  // no structure (every gauntlet epoch on disk today). For a non-gauntlet
+  // structure, fetch the full structure state and render the real
+  // bracket / standings / racing ladder instead of the gauntlet ladder.
+  const tournament = (ep && ep.tournament && typeof ep.tournament === 'object') ? ep.tournament : null;
+  const structure = (tournament && tournament.structure) || 'gauntlet';
+  if (isNonGauntlet(structure)) {
+    await renderConfiguredStructure(host, ctx, id, ep, bracket, structure, tournament && tournament.params);
     return;
   }
   const experiments = (ep && Array.isArray(ep.experiments)) ? ep.experiments : [];
@@ -113,6 +126,49 @@ export async function render(host, ctx, params) {
       tblCard.appendChild(tbl);
     }
     nodes.push(section('Roster · click a candidate to open its detail', tblCard));
+    return nodes;
+  });
+}
+
+// Render the ACTUAL configured (non-gauntlet) structure: pick the epoch's
+// most-recent tournament, fetch its full structure state, and render the
+// bracket / standings / racing ladder. The structure id comes from the new
+// `tournaments[]` array on /api/tournaments; when that is empty (e.g. a
+// pre-feature index) we fall back to the crowning-pair id convention so a
+// completed tournament still resolves via the loss-file fallback chain.
+async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, params) {
+  const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
+  // prefer a non-gauntlet tournament; else the last tournament; else derive.
+  let tournamentId = null;
+  const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
+  if (nonGaunt.length) tournamentId = nonGaunt[nonGaunt.length - 1].tournament_id;
+  else if (tournaments.length) tournamentId = tournaments[tournaments.length - 1].tournament_id;
+  else {
+    const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
+    const last = matchups[matchups.length - 1];
+    if (last && last.challenger) tournamentId = `${id}:${last.champion || ''}->${last.challenger}`;
+  }
+
+  const st = tournamentId ? await D.tournamentStructure(id, tournamentId) : null;
+  const digest = JSON.stringify({ id, structure, tournamentId, st: structureDigest(st) });
+  gatedSwap(host, digest, () => {
+    const nodes = [];
+    nodes.push(el('div', { class: 'dn-pagehead' }, [
+      el('h1', { class: 'dn-h1', text: `Match-ups · ${id}` }),
+      el('div', { class: 'dt-structure-line' }, [
+        structurePill(structure, (st && st.structure_params) || params),
+      ]),
+      el('p', { class: 'dn-lede', text: 'The configured tournament structure for this epoch. Open a match or competitor for its candidate detail, promote gate, per-board scoring, and patch diff.' }),
+    ]));
+    if (!tournamentId) {
+      nodes.push(empty('No tournament has run for this structure yet.'));
+      return nodes;
+    }
+    if (!st) {
+      nodes.push(empty('The tournament structure is unavailable (the index may not be built).'));
+      return nodes;
+    }
+    for (const n of renderStructure(st, ctx, id)) nodes.push(n);
     return nodes;
   });
 }

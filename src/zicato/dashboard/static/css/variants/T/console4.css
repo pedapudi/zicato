@@ -1198,6 +1198,52 @@
   .dt-match-won .dt-match-open { color: var(--v2-good); }
   .dt-match-lost .dt-match-open { color: var(--v2-bad); }
 
+  /* ── configured tournament STRUCTURE (bracket / standings / racing) ──
+     All marks read from CSS tokens so they theme across every swatch;
+     the SVGs are fit-to-width (width:100% + viewBox in svg.js) so they
+     scale with the page-scale pill and never need a pan/zoom wrapper. */
+
+  /* structure pill — the one-line header label (epoch + match-ups) */
+  .dt-structure-line { margin-top: 8px; }
+  .dt-structure-pill { display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--v2-mono); font-size: 10px; padding: 3px 9px;
+    border: 1px solid var(--v2-rule); border-radius: 11px; background: var(--v2-rule-soft); }
+  .dt-structure-pill-k { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.07em; }
+  .dt-structure-pill-v { color: var(--v2-ink); font-weight: 600; }
+
+  /* bracket (single / double elimination) */
+  .dn-sbracket-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.05em; }
+  .dn-sbracket-edge { stroke: var(--v2-rule); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+  .dn-sbracket-box { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1;
+    transition: stroke 0.12s; }
+  .dn-sbracket-box.dn-bye { stroke-dasharray: 3 2; }
+  .dn-sbracket-match:hover .dn-sbracket-box,
+  .dn-sbracket-match:focus .dn-sbracket-box { stroke: var(--v2-accent); stroke-width: 1.6; outline: none; }
+  .dn-sbracket-seat { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
+  .dn-sbracket-seat.dn-win { fill: var(--v2-good); font-weight: 700; }
+  .dn-sbracket-seat.dn-out { fill: var(--v2-ink-faint); text-decoration: line-through; }
+  .dn-sbracket-bye { fill: var(--v2-ink-faint); font: italic 9px var(--v2-mono); }
+
+  /* racing ladder (successive halving) */
+  .dn-raceladder-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.05em; }
+  .dn-raceladder-frac { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
+  .dn-raceladder-name { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
+  .dn-raceladder-name.dn-good { fill: var(--v2-good); }
+  .dn-raceladder-name.dn-bad { fill: var(--v2-bad); }
+  .dn-raceladder-name.dn-out { text-decoration: line-through; opacity: 0.85; }
+  .dn-raceladder-runner:hover .dn-raceladder-name,
+  .dn-raceladder-runner:focus .dn-raceladder-name { fill: var(--v2-accent); outline: none; }
+
+  /* standings + swiss pairings — reuse the dn-board-table base */
+  .dt-standings tr.dt-standings-out td { color: var(--v2-ink-faint); }
+  .dt-standings tr.dt-standings-out .dn-mono { text-decoration: line-through; }
+  .dt-swiss-round-h { font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft);
+    text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 6px; }
+  .dt-swiss-round-h:first-child { margin-top: 0; }
+  .dt-swiss-pairings { margin-bottom: 10px; }
+
   @media (max-width: 1080px) {
     .dt-split { grid-template-columns: 1fr; gap: 18px; }
   }

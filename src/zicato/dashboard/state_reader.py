@@ -289,6 +289,14 @@ def _normalize_tournament_statuses(tournament: dict[str, Any] | None) -> dict[st
                 e["generation_id"] = parent_gen
             elif side == "child" and isinstance(child_gen, str) and child_gen:
                 e["generation_id"] = child_gen
+            elif isinstance(side, str) and side:
+                # Non-gauntlet structures widen ``side`` to an OPAQUE
+                # competitor key — the competitor's generation_id itself
+                # (TOURNAMENT-DATA-MODEL.md §2.3). For those rows ``side``
+                # is the right events-lookup key, so pass it through as the
+                # generation_id rather than dropping the row. A gauntlet
+                # row ("parent"/"child") is already handled above.
+                e["generation_id"] = side
         new_entries.append(e)
     out["entries"] = new_entries
     return out
@@ -890,6 +898,47 @@ def _is_finite(value: float) -> bool:
         return False
 
 
+#: The closed enum of tournament structures (TOURNAMENT-DATA-MODEL.md §1.1).
+#: A reader uses this only to normalize an unknown token to the gauntlet
+#: default — semantics live with the selection agent.
+_TOURNAMENT_STRUCTURES: tuple[str, ...] = (
+    "gauntlet",
+    "single_elim",
+    "double_elim",
+    "swiss",
+    "racing",
+)
+
+
+def _normalize_structure(value: Any) -> str:
+    """Map an opaque ``structure`` token to a known one, else ``gauntlet``."""
+    if isinstance(value, str) and value in _TOURNAMENT_STRUCTURES:
+        return value
+    return "gauntlet"
+
+
+def _tournament_block_from_scoring(scoring: Any) -> dict[str, Any] | None:
+    """Extract the ``{structure, params}`` block from a frozen scoring dict.
+
+    Returns ``None`` when ``scoring`` carries no ``tournament`` key (so the
+    Epoch view omits the block and the frontend falls back to gauntlet —
+    byte-identical to pre-feature reads). When present, an unknown
+    structure token degrades to ``"gauntlet"`` and a non-object ``params``
+    degrades to ``{}`` (the data model treats per-key validation as the
+    selection agent's job, §1.4).
+    """
+    if not isinstance(scoring, dict):
+        return None
+    raw = scoring.get("tournament")
+    if not isinstance(raw, dict):
+        return None
+    params = raw.get("params")
+    return {
+        "structure": _normalize_structure(raw.get("structure")),
+        "params": params if isinstance(params, dict) else {},
+    }
+
+
 def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
     """The current epoch's full evaluation contract.
 
@@ -951,6 +1000,19 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
     scoring = _read_json_value(epoch_dir / "scoring.json")
     if scoring is not None:
         view["scoring"] = scoring
+
+    # Tournament structure block (TOURNAMENT-DATA-MODEL.md §3.1). Echo the
+    # epoch's resolved ``{structure, params}`` from the frozen
+    # ``scoring.json`` so the Epoch view can name the structure without a
+    # second fetch. Absent ⇒ default to gauntlet (the frontend's default),
+    # so an epoch that predates the feature still reports a coherent
+    # structure rather than omitting the block.
+    tournament_block = _tournament_block_from_scoring(scoring)
+    if tournament_block is not None:
+        view["tournament"] = tournament_block
+    # else: omit — the frontend defaults to gauntlet (§3.1). Keeping the
+    # block absent for a scoring.json that predates the feature preserves
+    # byte-identical reads for every gauntlet epoch on disk today.
 
     # mutations.json is optional; absent -> empty list (never null).
     mutations = _parse_mutations(epoch_dir / "mutations.json")
@@ -1432,6 +1494,13 @@ def build_bracket(paths: WorkspacePaths) -> dict[str, Any]:
         ]
         champion_lineage = _champion_lineage(generations)
 
+        # Select the structure-aware columns alongside the legacy
+        # per-matchup ones. The v3 columns (structure / *_json) may be
+        # absent on an index that predates the migration — the SELECT is
+        # split so a missing-column error on the structure columns does
+        # not blank out the legacy matchups (back-compat: gauntlet reads
+        # must stay intact). ``_query`` swallows the sqlite error and
+        # returns [] for the structure-aware query in that case.
         tour_rows = _query(
             conn,
             "SELECT t.tournament_id, t.parent_generation_id, t.child_generation_id, "
@@ -1456,10 +1525,53 @@ def build_bracket(paths: WorkspacePaths) -> dict[str, Any]:
             }
             for r in tour_rows
         ]
+
+        # Structure-aware envelope (§3.1). Read the v3 columns
+        # defensively: if they are absent (pre-migration index) the query
+        # returns [] and the structure degenerates to gauntlet — leaving
+        # the legacy ``matchups`` / ``champion_lineage`` byte-identical.
+        struct_rows = _query(
+            conn,
+            "SELECT tournament_id, structure, structure_params_json, "
+            "competitors_json, rounds_json, standings_json, ran_at "
+            "FROM tournaments WHERE epoch_id = ? "
+            "ORDER BY ran_at ASC, tournament_id ASC",
+            (epoch_id,),
+        )
+        tournaments: list[dict[str, Any]] = []
+        epoch_structure = "gauntlet"
+        epoch_structure_params: dict[str, Any] = {}
+        for r in struct_rows:
+            structure = _normalize_structure(r["structure"])
+            params = _opt_json(r["structure_params_json"])
+            params = params if isinstance(params, dict) else {}
+            # The epoch's structure is the contract-frozen value; every
+            # tournament in the epoch shares it, so the last non-gauntlet
+            # value wins (they should all agree).
+            if structure != "gauntlet":
+                epoch_structure = structure
+                epoch_structure_params = params
+            competitors = _opt_json(r["competitors_json"])
+            rounds = _opt_json(r["rounds_json"])
+            standings = _opt_json(r["standings_json"])
+            tournaments.append(
+                {
+                    "tournament_id": r["tournament_id"],
+                    "structure": structure,
+                    "structure_params": params,
+                    "competitors": competitors if isinstance(competitors, list) else [],
+                    "rounds": rounds if isinstance(rounds, list) else [],
+                    "standings": standings if isinstance(standings, list) else [],
+                }
+            )
+
         return {
             "epoch_id": epoch_id,
+            "structure": epoch_structure,
+            "structure_params": epoch_structure_params,
             "champion_lineage": champion_lineage,
             "matchups": matchups,
+            "tournaments": tournaments,
         }
     finally:
         conn.close()
@@ -1838,6 +1950,199 @@ def build_matchup_grid(
         base["scalar"] = scalar
 
     return base
+
+
+def _empty_tournament_structure(epoch_id: str, tournament_id: str, source: str) -> dict[str, Any]:
+    return {
+        "epoch_id": epoch_id,
+        "tournament_id": tournament_id,
+        "structure": "gauntlet",
+        "structure_params": {},
+        "competitors": [],
+        "rounds": [],
+        "standings": [],
+        "source": source,
+    }
+
+
+def _structure_from_index(
+    paths: WorkspacePaths, epoch_id: str, tournament_id: str
+) -> dict[str, Any] | None:
+    """The settled structure state from the SQLite ``tournaments`` row.
+
+    Returns ``None`` when the index is absent, the row is missing, or the
+    v3 structure columns do not exist (pre-migration index) — every such
+    case falls through to the next link in the resolution chain.
+    """
+    try:
+        conn = _open_index(paths.index_db)
+    except (_IndexAbsent, sqlite3.Error):
+        return None
+    try:
+        rows = _query(
+            conn,
+            "SELECT structure, structure_params_json, competitors_json, "
+            "rounds_json, standings_json FROM tournaments "
+            "WHERE epoch_id = ? AND tournament_id = ? LIMIT 1",
+            (epoch_id, tournament_id),
+        )
+        if not rows:
+            return None
+        r = rows[0]
+        params = _opt_json(r["structure_params_json"])
+        competitors = _opt_json(r["competitors_json"])
+        rounds = _opt_json(r["rounds_json"])
+        standings = _opt_json(r["standings_json"])
+        # A row that exists but carries no structure internals (a gauntlet
+        # row, or a NULL-backfilled pre-feature row) is not a useful
+        # structure read; fall through so the active/loss-file links can
+        # offer something richer.
+        if rounds is None and standings is None and competitors is None:
+            return None
+        return {
+            "epoch_id": epoch_id,
+            "tournament_id": tournament_id,
+            "structure": _normalize_structure(r["structure"]),
+            "structure_params": params if isinstance(params, dict) else {},
+            "competitors": competitors if isinstance(competitors, list) else [],
+            "rounds": rounds if isinstance(rounds, list) else [],
+            "standings": standings if isinstance(standings, list) else [],
+            "source": "index",
+        }
+    finally:
+        conn.close()
+
+
+def _structure_from_active(
+    paths: WorkspacePaths, epoch_id: str, tournament_id: str
+) -> dict[str, Any] | None:
+    """The structure state from the live ``active_tournament.json``.
+
+    Returns ``None`` unless the live record matches the requested
+    ``(epoch_id, tournament_id)`` coordinate.
+    """
+    active = read_active_tournament_dict(paths)
+    if not isinstance(active, dict):
+        return None
+    if active.get("tournament_id") != tournament_id:
+        return None
+    if epoch_id and active.get("epoch_id") not in (None, epoch_id):
+        return None
+    params = active.get("structure_params")
+    competitors = active.get("competitors")
+    rounds = active.get("rounds")
+    standings = active.get("standings")
+    return {
+        "epoch_id": active.get("epoch_id") or epoch_id,
+        "tournament_id": tournament_id,
+        "structure": _normalize_structure(active.get("structure")),
+        "structure_params": params if isinstance(params, dict) else {},
+        "competitors": competitors if isinstance(competitors, list) else [],
+        "rounds": rounds if isinstance(rounds, list) else [],
+        "standings": standings if isinstance(standings, list) else [],
+        "source": "active",
+    }
+
+
+def _structure_from_loss_files(
+    paths: WorkspacePaths, epoch_id: str, tournament_id: str
+) -> dict[str, Any] | None:
+    """Reconstruct a degenerate single-match view from per-run loss files.
+
+    The last link in the resolution chain (mirrors ``build_matchup_grid``'s
+    index-free read). A tournament id encodes its crowning pair as
+    ``{epoch}:{champion}->{challenger}`` (the ingester convention); when
+    that decodes, render one round / one match between the two sides with
+    their settled drift-loss scalars. When it does not decode, return a
+    bare envelope so the handler still answers HTTP 200.
+    """
+    if not epoch_id:
+        return None
+    champion, challenger = _decode_crowning_pair(tournament_id)
+    if not challenger:
+        return None
+    parent_score = _read_gen_score(paths, epoch_id, champion) if champion else {}
+    child_score = _read_gen_score(paths, epoch_id, challenger)
+    parent_scalar = parent_score.get("scalar")
+    child_scalar = child_score.get("scalar")
+    parent_scalar = parent_scalar if isinstance(parent_scalar, int | float) else None
+    child_scalar = child_scalar if isinstance(child_scalar, int | float) else None
+    delta = (
+        child_scalar - parent_scalar
+        if parent_scalar is not None and child_scalar is not None
+        else None
+    )
+    competitors: list[dict[str, Any]] = []
+    standings: list[dict[str, Any]] = []
+    if champion:
+        competitors.append({"generation_id": champion, "seed": 1, "role": "champion"})
+        standings.append(
+            {"generation_id": champion, "rank": 1, "scalar": parent_scalar, "role": "champion"}
+        )
+    competitors.append({"generation_id": challenger, "seed": 2, "role": "challenger"})
+    standings.append(
+        {"generation_id": challenger, "rank": 2, "scalar": child_scalar, "role": "challenger"}
+    )
+    match: dict[str, Any] = {
+        "match_id": "r0_m0",
+        "competitors": [c for c in (champion, challenger) if c],
+        "winner": "",
+        "decision": "",
+        "delta_scalar": delta,
+        "bracket_slot": "",
+        "bye": False,
+    }
+    return {
+        "epoch_id": epoch_id,
+        "tournament_id": tournament_id,
+        "structure": "gauntlet",
+        "structure_params": {},
+        "competitors": competitors,
+        "rounds": [{"round_index": 0, "label": "Round 1", "matches": [match]}],
+        "standings": standings,
+        "source": "loss_files",
+    }
+
+
+def _decode_crowning_pair(tournament_id: str) -> tuple[str, str]:
+    """Best-effort decode of ``{epoch}:{champion}->{challenger}``.
+
+    Returns ``(champion, challenger)``; either may be ``""`` when the id
+    does not follow the convention.
+    """
+    if not isinstance(tournament_id, str) or "->" not in tournament_id:
+        return ("", "")
+    left, _, challenger = tournament_id.partition("->")
+    champion = left.rsplit(":", 1)[-1] if ":" in left else left
+    return (champion.strip(), challenger.strip())
+
+
+def build_tournament_structure(
+    paths: WorkspacePaths, epoch_id: str, tournament_id: str
+) -> dict[str, Any]:
+    """``GET /api/tournament-structure/{epoch_id}/{tournament_id}``.
+
+    The single read the UI uses to render a bracket / standings / racing
+    ladder for one tournament (TOURNAMENT-DATA-MODEL.md §3.2). Resolution
+    order mirrors ``build_matchup_grid``'s fallback chain:
+
+    1. the SQLite ``tournaments`` row's structure columns (``source:
+       "index"``);
+    2. the live ``active_tournament.json`` when it matches the coordinate
+       (``source: "active"``);
+    3. a degenerate single-match reconstruction from the per-run
+       ``loss.json`` / ``gen_score.json`` files (``source: "loss_files"``).
+
+    A malformed / unresolvable id degrades to an empty gauntlet structure
+    at HTTP 200 (matching every other handler in ``endpoints.py``).
+    """
+    if not epoch_id or not tournament_id:
+        return _empty_tournament_structure(epoch_id, tournament_id, "loss_files")
+    for resolver in (_structure_from_index, _structure_from_active, _structure_from_loss_files):
+        result = resolver(paths, epoch_id, tournament_id)
+        if result is not None:
+            return result
+    return _empty_tournament_structure(epoch_id, tournament_id, "loss_files")
 
 
 def _latest_round_report(directory: Path) -> Path | None:

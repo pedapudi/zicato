@@ -17,6 +17,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { reel, reelDigest } from '../reel.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
+import { structurePill } from './structure.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
@@ -66,8 +67,14 @@ export async function render(host, ctx, params) {
       }));
   const reelSpec = { championId, rounds };
 
+  // The configured tournament structure (§3.1) — surfaced as a one-line
+  // header pill. Absent ⇒ no pill (a gauntlet epoch that predates the
+  // feature reads byte-identically — the block is simply omitted upstream).
+  const tournament = (ep && ep.tournament && typeof ep.tournament === 'object') ? ep.tournament : null;
+
   const digest = JSON.stringify({
     epochId, goal: ep.goal || '', briefLen: (ep.brief || '').length, closed: !!ep.closed,
+    structure: tournament ? [tournament.structure, JSON.stringify(tournament.params || {})] : null,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
     reel: reelDigest(reelSpec),
     loss: [...lossLookup.entries()].sort(),
@@ -82,7 +89,10 @@ export async function render(host, ctx, params) {
         el('div', { class: 'lab', text: 'objective' }),
         el('div', { class: 'txt', text: ep.goal && ep.goal.trim() ? ep.goal : '(no objective recorded)' }),
       ]),
-    ]));
+      tournament ? el('div', { class: 'dt-structure-line' }, [
+        structurePill(tournament.structure, tournament.params),
+      ]) : null,
+    ].filter(Boolean)));
 
     const promotedCount = gens.filter((g) => g.promoted).length;
     nodes.push(el('div', { class: 'dn-panel dn-row', style: 'margin-top:12px;' }, [

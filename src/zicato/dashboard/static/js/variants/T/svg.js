@@ -575,6 +575,179 @@ export function pairedSlopegraph(opts) {
   return svg;
 }
 
+// ---- structure bracket (DATA-DRIVEN single/double elimination) ------
+//
+// Renders the ACTUAL configured bracket from the tournament-structure
+// payload's `rounds[]` (each round a column, each match a node). Unlike
+// the illustrative `bracketMini` below, every node is a real
+// `{competitors, winner, decision, bracket_slot, bye}` match and the
+// columns are the real bracket rounds. FIT-TO-WIDTH: width:100% + a
+// viewBox so the bracket scales to its pane in every theme (no pan/zoom,
+// no horizontal scroll) — the same discipline as `heatmap` / `sankey`.
+// A `band` prefix ('WB' winners' / 'LB' losers') lets a double-elim
+// caller render two stacked bands by filtering matches on `bracket_slot`.
+//
+// opts: { rounds:[{label, matches:[{match_id, competitors, winner,
+//         decision, bracket_slot, bye}]}], onMatch(match), title }
+export function structureBracket(opts) {
+  const o = opts || {};
+  const rounds = (Array.isArray(o.rounds) ? o.rounds : []).filter((r) => r && Array.isArray(r.matches));
+  const colW = 132;
+  const colGap = 30;
+  const matchH = 38;
+  const matchGap = 14;
+  const top = 22;
+  const maxMatches = Math.max(1, ...rounds.map((r) => r.matches.length || 0), 1);
+  const w = Math.max(colW, rounds.length * colW + Math.max(0, rounds.length - 1) * colGap) + 8;
+  const h = top + maxMatches * (matchH + matchGap) + 8;
+  const svg = svgEl('svg', {
+    class: 'dn-sbracket', width: '100%', height: h,
+    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMin meet', role: 'img',
+  });
+  if (rounds.length === 0) {
+    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no bracket rounds yet';
+    svg.appendChild(t);
+    return svg;
+  }
+  // Center each round's matches vertically so the bracket reads as a tree
+  // converging to the final. The match centers per round are cached so
+  // connector lines can be drawn from a round to the next.
+  const centers = rounds.map((r) => {
+    const n = Math.max(1, r.matches.length);
+    const blockH = n * matchH + (n - 1) * matchGap;
+    const y0 = top + Math.max(0, (h - top - 8 - blockH) / 2);
+    return r.matches.map((_, i) => y0 + i * (matchH + matchGap) + matchH / 2);
+  });
+  const colX = (j) => j * (colW + colGap) + 2;
+
+  // connector lines round j → round j+1 (winners flow forward)
+  for (let j = 0; j < rounds.length - 1; j++) {
+    const cur = centers[j];
+    const nxt = centers[j + 1];
+    cur.forEach((cy, i) => {
+      const tgt = nxt[Math.floor(i / 2)];
+      if (tgt == null) return;
+      const x1 = colX(j) + colW;
+      const x2 = colX(j + 1);
+      const mx = (x1 + x2) / 2;
+      svg.appendChild(svgEl('path', {
+        d: `M${x1},${cy} H${mx} V${tgt} H${x2}`, class: 'dn-sbracket-edge', fill: 'none',
+      }));
+    });
+  }
+
+  rounds.forEach((r, j) => {
+    const x = colX(j);
+    const head = svgEl('text', { x: x + colW / 2, y: 14, class: 'dn-sbracket-head', 'text-anchor': 'middle' });
+    head.textContent = shortLabel(r.label || `Round ${j + 1}`, 18);
+    svg.appendChild(head);
+    r.matches.forEach((m, i) => {
+      const cy = centers[j][i];
+      const y = cy - matchH / 2;
+      const comps = Array.isArray(m.competitors) ? m.competitors : [];
+      const winner = m.winner || '';
+      const decided = !!winner;
+      const g = svgEl('g', { class: 'dn-sbracket-match', tabindex: o.onMatch ? '0' : null });
+      g.appendChild(svgEl('rect', {
+        x, y, width: colW, height: matchH, rx: 3,
+        class: 'dn-sbracket-box' + (m.bye ? ' dn-bye' : ''),
+      }, [title(`${m.bracket_slot || m.match_id || ''}${comps.length ? ': ' + comps.join(' vs ') : ''}${winner ? ' → ' + winner : ''}`)]));
+      // two competitor seats stacked inside the box (top + bottom)
+      const seats = comps.length ? comps : ['tbd'];
+      seats.slice(0, 2).forEach((cid, k) => {
+        const sy = y + (k === 0 ? matchH * 0.30 : matchH * 0.72);
+        const won = cid === winner;
+        const seat = svgEl('text', {
+          x: x + 8, y: sy + 3,
+          class: 'dn-sbracket-seat' + (won ? ' dn-win' : (decided ? ' dn-out' : '')),
+        });
+        seat.textContent = shortLabel(String(cid), 13) + (won ? ' ✦' : '');
+        g.appendChild(seat);
+      });
+      if (m.bye) {
+        const b = svgEl('text', { x: x + colW - 6, y: y + matchH - 6, class: 'dn-sbracket-bye', 'text-anchor': 'end' });
+        b.textContent = 'bye';
+        g.appendChild(b);
+      }
+      if (o.onMatch) {
+        g.style.cursor = 'pointer';
+        g.addEventListener('click', () => o.onMatch(m));
+        g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onMatch(m); } });
+      }
+      svg.appendChild(g);
+    });
+  });
+  return svg;
+}
+
+// ---- racing ladder (DATA-DRIVEN successive-halving) -----------------
+//
+// One column per rung from the structure payload's `rounds[]`; each rung
+// shows its surviving field with the `cut[]` competitors struck through
+// and the `board_fraction` budget shown in the column head, so the
+// operator sees the budget escalation and who was cut at each rung.
+// FIT-TO-WIDTH (width:100% + viewBox), theme-aware (token classes), no
+// pan/zoom — the same discipline as every other Console mark.
+//
+// opts: { rungs:[{label, competitors, survivors, cut, board_fraction,
+//         match_id}], onCompetitor(genId), title }
+export function racingLadder(opts) {
+  const o = opts || {};
+  const rungs = (Array.isArray(o.rungs) ? o.rungs : []).filter((r) => r);
+  const colW = 124;
+  const colGap = 24;
+  const rowH = 18;
+  const headH = 34;
+  const top = 6;
+  const maxRows = Math.max(1, ...rungs.map((r) => (Array.isArray(r.competitors) ? r.competitors.length : 0)), 1);
+  const w = Math.max(colW, rungs.length * colW + Math.max(0, rungs.length - 1) * colGap) + 8;
+  const h = top + headH + maxRows * rowH + 8;
+  const svg = svgEl('svg', {
+    class: 'dn-raceladder', width: '100%', height: h,
+    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
+  });
+  if (rungs.length === 0) {
+    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no rungs yet';
+    svg.appendChild(t);
+    return svg;
+  }
+  rungs.forEach((rung, j) => {
+    const x = j * (colW + colGap) + 2;
+    const head = svgEl('text', { x: x + colW / 2, y: top + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
+    head.textContent = shortLabel(rung.label || `Rung ${j + 1}`, 16);
+    svg.appendChild(head);
+    if (isNum(rung.board_fraction)) {
+      const sub = svgEl('text', { x: x + colW / 2, y: top + 26, class: 'dn-raceladder-frac', 'text-anchor': 'middle' });
+      sub.textContent = `board ${(rung.board_fraction * 100).toFixed(0)}%`;
+      svg.appendChild(sub);
+    }
+    const cutSet = new Set(Array.isArray(rung.cut) ? rung.cut.map(String) : []);
+    const surv = new Set(Array.isArray(rung.survivors) ? rung.survivors.map(String) : []);
+    const comps = Array.isArray(rung.competitors) ? rung.competitors : [];
+    comps.forEach((cid, i) => {
+      const cy = top + headH + i * rowH + rowH / 2;
+      const sid = String(cid);
+      const eliminated = cutSet.has(sid);
+      const survived = surv.has(sid) || (!eliminated && surv.size === 0 && cutSet.size === 0);
+      const g = svgEl('g', { class: 'dn-raceladder-runner', tabindex: o.onCompetitor ? '0' : null });
+      const cls = 'dn-raceladder-name' + (eliminated ? ' dn-out dn-bad' : survived ? ' dn-good' : '');
+      const t = svgEl('text', { x: x + 6, y: cy + 3, class: cls },
+        [title(`${sid} · rung ${j + 1} · ${eliminated ? 'cut' : 'survives'}`)]);
+      t.textContent = shortLabel(sid, 14) + (eliminated ? ' ✕' : survived ? ' ↑' : '');
+      g.appendChild(t);
+      if (o.onCompetitor) {
+        g.style.cursor = 'pointer';
+        g.addEventListener('click', () => o.onCompetitor(sid));
+        g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(sid); } });
+      }
+      svg.appendChild(g);
+    });
+  });
+  return svg;
+}
+
 // ---- mini single-elimination bracket (ILLUSTRATIVE) -----------------
 
 export function bracketMini(opts) {

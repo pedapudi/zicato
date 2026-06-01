@@ -55,6 +55,23 @@ def _is_safe_id(value: str) -> bool:
     return bool(value) and value not in (".", "..") and _SAFE_ID.match(value) is not None
 
 
+# A tournament id is the ingester's stable form ``{epoch}:{parent}->{child}``
+# (ingest.py ``_upsert_tournament``), so it carries ``:`` and ``->`` that the
+# strict ``_SAFE_ID`` rejects. This validator widens the alphabet to admit
+# those two separators while still blocking path-traversal (no ``/`` or
+# ``..``), so the structure endpoint can resolve a real tournament id.
+_SAFE_TOURNAMENT_ID = re.compile(r"^[A-Za-z0-9._:>-]{1,200}$")
+
+
+def _is_safe_tournament_id(value: str) -> bool:
+    return (
+        bool(value)
+        and value not in (".", "..")
+        and ".." not in value
+        and _SAFE_TOURNAMENT_ID.match(value) is not None
+    )
+
+
 def _now_iso() -> str:
     return _dt.datetime.now(_dt.UTC).isoformat().replace("+00:00", "Z")
 
@@ -306,6 +323,31 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
 
     async def api_tournaments(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_bracket(paths))
+
+    async def api_tournament_structure(request: Request) -> JSONResponse:
+        """Full bracket / standings / racing state for one tournament.
+
+        ``GET /api/tournament-structure/{epoch_id}/{tournament_id}``. The
+        single read Variant T uses to render the actual configured
+        structure. A malformed coordinate degrades to an empty gauntlet
+        structure (HTTP 200), matching every other coordinate handler.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        tournament_id = request.path_params["tournament_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_tournament_id(tournament_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "tournament_id": tournament_id,
+                    "structure": "gauntlet",
+                    "structure_params": {},
+                    "competitors": [],
+                    "rounds": [],
+                    "standings": [],
+                    "source": "loss_files",
+                }
+            )
+        return JSONResponse(state_reader.build_tournament_structure(paths, epoch_id, tournament_id))
 
     async def api_tournament_detail(request: Request) -> JSONResponse:
         generation_id = request.path_params["generation_id"]
@@ -849,6 +891,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         "api_active_tournament": api_active_tournament,
         "api_heartbeat": api_heartbeat,
         "api_tournaments": api_tournaments,
+        "api_tournament_structure": api_tournament_structure,
         "api_tournament_detail": api_tournament_detail,
         "api_matchup_grid": api_matchup_grid,
         "api_gate": api_gate,

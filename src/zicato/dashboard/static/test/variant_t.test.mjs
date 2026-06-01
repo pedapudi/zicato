@@ -1076,4 +1076,218 @@ test('layout: the detail pane + compare grid are FLUID — not clamped to a narr
   assertEqual(allByClass(host, 'dt-split-side').length, 2, 'two compare panes share the full width');
 });
 
+// ====================================================================
+// Configurable tournament STRUCTURE — the bracket / standings / racing
+// renderers, driven by MOCK structure payloads (the live workspace is
+// gauntlet-only, so the non-gauntlet renderers are exercised here).
+// ====================================================================
+
+const STRUCT = await import('../js/variants/T/views/structure.js');
+
+// mock single-elim structure payload (§3.2 shape)
+const SE_STRUCT = {
+  epoch_id: EPOCH_ID, tournament_id: 'tourn_e0_se', structure: 'single_elim',
+  structure_params: { seed_order: 'scalar' },
+  competitors: [
+    { generation_id: 'v0', seed: 1, role: 'champion' },
+    { generation_id: 'v1', seed: 2, role: 'challenger' },
+    { generation_id: 'v2', seed: 3, role: 'challenger' },
+    { generation_id: 'v3', seed: 4, role: 'challenger' },
+  ],
+  rounds: [
+    { round_index: 0, label: 'Semifinal', matches: [
+      { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], winner: 'v0', decision: 'rejected', delta_scalar: 0.05, bracket_slot: 'WB-R0-0', bye: false },
+      { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], winner: 'v1', decision: 'promoted', delta_scalar: -0.12, bracket_slot: 'WB-R0-1', bye: false },
+    ] },
+    { round_index: 1, label: 'Final', matches: [
+      { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', delta_scalar: -0.08, bracket_slot: 'WB-R1-0', bye: false },
+    ] },
+  ],
+  standings: [
+    { generation_id: 'v1', rank: 1, scalar: 0.41, wins: 2, losses: 0, status: 'champion', role: 'challenger' },
+    { generation_id: 'v0', rank: 2, scalar: 0.49, wins: 1, losses: 1, status: 'eliminated', role: 'champion' },
+  ],
+  source: 'index',
+};
+
+const SWISS_STRUCT = {
+  epoch_id: EPOCH_ID, tournament_id: 'tourn_e0_sw', structure: 'swiss',
+  structure_params: { rounds: 2 },
+  competitors: [{ generation_id: 'v0', seed: 1, role: 'champion' }, { generation_id: 'v1', seed: 2, role: 'challenger' }],
+  rounds: [
+    { round_index: 0, label: 'Round 1', matches: [{ match_id: 'r0m0', competitors: ['v0', 'v1'], winner: 'v1', delta_scalar: -0.1 }] },
+    { round_index: 1, label: 'Round 2', matches: [{ match_id: 'r1m0', competitors: ['v1', 'v2'], winner: 'v1', delta_scalar: -0.03 }] },
+  ],
+  standings: [
+    { generation_id: 'v1', rank: 1, scalar: 0.4, wins: 2, losses: 0, status: 'champion' },
+    { generation_id: 'v0', rank: 2, scalar: 0.5, wins: 0, losses: 1, status: 'alive' },
+  ],
+  source: 'index',
+};
+
+const RACING_STRUCT = {
+  epoch_id: EPOCH_ID, tournament_id: 'tourn_e0_rc', structure: 'racing',
+  structure_params: { rungs: [{ fraction: 0.5, keep: 0.5 }, { fraction: 1.0, keep: 0.5 }] },
+  competitors: [
+    { generation_id: 'v0', seed: 1, role: 'champion' }, { generation_id: 'v1', seed: 2, role: 'challenger' },
+    { generation_id: 'v2', seed: 3, role: 'challenger' }, { generation_id: 'v3', seed: 4, role: 'challenger' },
+  ],
+  rounds: [
+    { round_index: 0, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v0', 'v1'], cut: ['v2', 'v3'], board_fraction: 0.5 }] },
+    { round_index: 1, label: 'Rung 2', matches: [{ match_id: 'rung2', competitors: ['v0', 'v1'], survivors: ['v1'], cut: ['v0'], board_fraction: 1.0 }] },
+  ],
+  standings: [{ generation_id: 'v1', rank: 1, scalar: 0.39, status: 'champion' }],
+  source: 'index',
+};
+
+function structFixture(structure, payload, tournamentId) {
+  const gens = payload.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: EPOCH_ID, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: c.role === 'champion' }));
+  const F = {
+    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', tournament: { structure, params: payload.structure_params },
+      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id, outcome: { decision: g.promoted ? 'baseline' : 'rejected' } })), board: [] },
+    '/api/lineage': { generations: gens },
+    '/api/score-trajectory': { points: gens.map((g, i) => ({ generation_id: g.generation_id, scalar: 70 + i })) },
+    '/api/tournaments': { epoch_id: EPOCH_ID, structure, structure_params: payload.structure_params, champion_lineage: ['v0'],
+      matchups: [{ champion: 'v0', challenger: 'v1', decision: 'rejected', delta_scalar: 1 }],
+      tournaments: [{ tournament_id: tournamentId, structure, structure_params: payload.structure_params, competitors: payload.competitors, rounds: payload.rounds, standings: payload.standings }] },
+    [`/api/tournament-structure/${EPOCH_ID}/${tournamentId}`]: payload,
+  };
+  return F;
+}
+
+function installFixtureMap(F) {
+  globalThis.fetch = async (path) => {
+    if (Object.prototype.hasOwnProperty.call(F, path)) return { ok: true, json: async () => F[path] };
+    return { ok: false, status: 404, json: async () => ({ error: 'nf' }) };
+  };
+}
+
+test('structure helpers: label + non-gauntlet detection', () => {
+  assertEqual(STRUCT.isNonGauntlet('gauntlet'), false);
+  assertEqual(STRUCT.isNonGauntlet('single_elim'), true);
+  assertEqual(STRUCT.isNonGauntlet('swiss'), true);
+  assertEqual(STRUCT.isNonGauntlet('racing'), true);
+  assert(STRUCT.structureLabel('swiss', { rounds: 4 }).includes('4 rounds'), 'swiss label names its rounds');
+  assert(STRUCT.structureLabel('single_elim', { seed_order: 'scalar' }).includes('scalar'), 'single-elim label names the seed order');
+  assert(STRUCT.structureLabel('racing', { rungs: [1, 2, 3] }).includes('3 rungs'), 'racing label names its rungs');
+});
+
+test('structure: single-elim renders a fit-to-width bracket (real rounds + standings)', async () => {
+  freshState();
+  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+
+  // the structure pill names the configured structure (NOT the gauntlet ladder).
+  assert(allByClass(host, 'dt-structure-pill').length >= 1, 'a structure pill labels the configured structure');
+  assert(host.textContent.includes('Single elimination'), 'the pill names single-elim');
+  assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO gauntlet champion-defends banner for a non-gauntlet structure');
+
+  const bracket = svgsByClass(host, 'dn-sbracket')[0];
+  assert(bracket, 'a bracket SVG rendered');
+  assertEqual(bracket.getAttribute('width'), '100%', 'the bracket is fit-to-width (width:100%)');
+  assert((bracket.getAttribute('viewBox') || '').startsWith('0 0 '), 'the bracket carries a viewBox so it scales to its pane');
+  assert(!hasScrollWrapperAncestor(bracket, host), 'no horizontal-scroll wrapper around the bracket');
+  // both bracket rounds rendered as columns (heads) and the winners are marked.
+  assert(host.textContent.includes('Semifinal') && host.textContent.includes('Final'), 'both bracket rounds render as columns');
+  // a standings leaderboard rendered too.
+  assert(allByClass(host, 'dt-standings').length >= 1, 'a standings leaderboard rendered');
+  assert(host.textContent.includes('champion'), 'the standings names the champion status');
+});
+
+test('structure: double-elim splits into winners + losers bands', async () => {
+  freshState();
+  const DE = JSON.parse(JSON.stringify(SE_STRUCT));
+  DE.structure = 'double_elim';
+  DE.structure_params = { grand_final_reset: true };
+  DE.rounds.push({ round_index: 2, label: 'LB Round 1', matches: [
+    { match_id: 'LB-R0-0', competitors: ['v0', 'v2'], winner: 'v0', decision: 'rejected', delta_scalar: 0.02, bracket_slot: 'LB-R0-0', bye: false },
+  ] });
+  installFixtureMap(structFixture('double_elim', DE, 'tourn_e0_de'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(host.textContent.includes('Double elimination'), 'the pill names double-elim');
+  assert(host.textContent.includes('Winners’ bracket'), 'a winners-bracket band rendered');
+  assert(host.textContent.includes('Losers’ bracket'), 'a losers-bracket band rendered from the LB slots');
+  assertEqual(svgsByClass(host, 'dn-sbracket').length, 2, 'two bracket SVGs — one per band');
+});
+
+test('structure: swiss renders the standings hero + per-round pairings', async () => {
+  freshState();
+  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(host.textContent.includes('Swiss'), 'the pill names swiss');
+  assert(allByClass(host, 'dt-standings').length >= 1, 'the swiss standings leaderboard rendered');
+  assert(allByClass(host, 'dt-swiss-pairings').length === 2, 'a pairings table per round (2 rounds)');
+  assert(host.textContent.includes('Round 1') && host.textContent.includes('Round 2'), 'both swiss rounds render');
+});
+
+test('structure: racing renders a fit-to-width rung ladder with cuts + board fractions', async () => {
+  freshState();
+  installFixtureMap(structFixture('racing', RACING_STRUCT, 'tourn_e0_rc'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(host.textContent.includes('Racing'), 'the pill names racing');
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(ladder, 'a racing-ladder SVG rendered');
+  assertEqual(ladder.getAttribute('width'), '100%', 'the racing ladder is fit-to-width (width:100%)');
+  assert((ladder.getAttribute('viewBox') || '').startsWith('0 0 '), 'the racing ladder carries a viewBox');
+  assert(!hasScrollWrapperAncestor(ladder, host), 'no horizontal-scroll wrapper around the racing ladder');
+  assert(host.textContent.includes('board 50%'), 'a rung shows its board fraction (budget escalation)');
+  assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs render as columns');
+});
+
+test('structure: a missing structure payload degrades gracefully (no throw, honest empty)', async () => {
+  freshState();
+  // epoch names swiss but the structure endpoint 404s + no tournaments[].
+  const F = {
+    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', tournament: { structure: 'swiss', params: {} }, experiments: [], board: [] },
+    '/api/lineage': { generations: [] },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'swiss', champion_lineage: [], matchups: [], tournaments: [] },
+  };
+  installFixtureMap(F);
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(host.textContent.includes('Swiss'), 'the structure pill still names swiss');
+  assert(/No tournament|unavailable/i.test(host.textContent), 'an honest empty state renders rather than throwing');
+});
+
+test('structure: the epoch view shows the structure pill from the epoch tournament block', async () => {
+  freshState();
+  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(allByClass(host, 'dt-structure-pill').length >= 1, 'the epoch header carries a structure pill');
+  assert(host.textContent.includes('Swiss'), 'the epoch pill names the configured swiss structure');
+});
+
+test('structure: the data layer exposes tournamentStructure() + invalidates its cache live', async () => {
+  assertEqual(typeof data.tournamentStructure, 'function', 'data.tournamentStructure() exists');
+  // the live-invalidation set includes the new prefix.
+  const css = '';  // (no css needed) — assert the source carries the prefix.
+  const src = await import('node:fs').then((fs) => fs.readFileSync(new URL('../js/variants/T/data.js', import.meta.url), 'utf8'));
+  assert(src.includes('/api/tournament-structure/'), 'invalidateLive() busts the tournament-structure prefix');
+});
+
+// ---- gauntlet REGRESSION: the default structure is unchanged --------
+
+test('gauntlet (default): the match-ups page still renders the champion banner + match cards (no structure pill)', async () => {
+  freshState(); installFetch();  // the default gauntlet fixture (no tournament block)
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(allByClass(host, 'dt-champ-banner').length === 1, 'the gauntlet champion-defends banner still renders');
+  assertEqual(allByClass(host, 'dt-match-card').length, 2, 'the gauntlet match cards still render (v0→v1, v0→v2)');
+  assertEqual(allByClass(host, 'dn-sbracket').length, 0, 'NO bracket SVG for the gauntlet default');
+  assertEqual(allByClass(host, 'dt-structure-pill').length, 0, 'NO structure pill for a gauntlet epoch with no tournament block');
+});
+
 await run();

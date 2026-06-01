@@ -196,6 +196,10 @@ def create_app(
         Route("/api/heartbeat", handlers["api_heartbeat"]),
         Route("/api/tournaments", handlers["api_tournaments"]),
         Route(
+            "/api/tournament-structure/{epoch_id}/{tournament_id}",
+            handlers["api_tournament_structure"],
+        ),
+        Route(
             "/api/tournaments/{generation_id}",
             handlers["api_tournament_detail"],
         ),

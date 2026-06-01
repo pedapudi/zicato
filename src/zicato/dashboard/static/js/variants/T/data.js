@@ -62,6 +62,7 @@ export function invalidateLive() {
       || key.startsWith('/api/files/')
       || key.startsWith('/api/contract-diff/')
       || key.startsWith('/api/conversation/')
+      || key.startsWith('/api/tournament-structure/')
       || key.startsWith('/api/tournaments')) {
       _cache.delete(key);
     }
@@ -77,7 +78,20 @@ export function lineage() { return cachedJson('/api/lineage'); }
 export function bracket() { return cachedJson('/api/tournaments'); }
 
 // The FULL epoch contract — goal, brief, board, scoring, experiments.
+// The response also carries the new `tournament: {structure, params}`
+// block (§3.1) when the epoch's scoring.json names a structure, so the
+// epoch view can label the structure without a second fetch.
 export function epoch() { return cachedJson('/api/epoch'); }
+
+// The actual configured tournament STRUCTURE for one tournament — the
+// full bracket / standings / racing state (§3.2). Resolves from the
+// index → live active record → per-run loss files, so a completed
+// tournament renders even without the SQLite index. Absent / malformed
+// degrades to an empty gauntlet envelope (HTTP 200), so callers can read
+// it defensively.
+export function tournamentStructure(epochId, tournamentId) {
+  return cachedJson(`/api/tournament-structure/${enc(epochId)}/${enc(tournamentId)}`);
+}
 
 export function perJudgeTrend(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/per-judge-trend`);
