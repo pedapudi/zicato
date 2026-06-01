@@ -1295,6 +1295,10 @@
   .dn-raceladder-name.dn-bad { fill: var(--v2-bad); }
   .dn-raceladder-name.dn-out { text-decoration: line-through; opacity: 0.85; }
   .dn-raceladder-name.dn-racing { fill: var(--v2-ink-soft); }
+  /* each runner's Δ-vs-champion at the rung, right-aligned + token-themed */
+  .dn-raceladder-delta { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
+  .dn-raceladder-delta.dn-good { fill: var(--v2-good); }
+  .dn-raceladder-delta.dn-bad { fill: var(--v2-bad); }
   .dn-raceladder-runner:hover .dn-raceladder-name,
   .dn-raceladder-runner:focus .dn-raceladder-name { fill: var(--v2-accent); outline: none; }
   /* survivor → next-rung connectors + the champion-gate seat */

@@ -1578,9 +1578,9 @@ test('racing ladder: renders rungs with board fractions, cut (✕) vs survivor (
   assert(txt.includes('board 50%') && txt.includes('board 100%'), 'each rung shows its board fraction (budget escalation)');
   assert(txt.includes('✕'), 'a cut runner is marked ✕');
   assert(txt.includes('↑'), 'a survivor is marked ↑');
-  // the trailing champion-gate column crowns the final survivor.
+  // the trailing champion-gate column crowns the final survivor as champion.
   assert(txt.includes('champion-gate'), 'a champion-gate column is rendered');
-  assert(txt.includes('♛ v1') || txt.includes('♛'), 'the final survivor (v1) flows into the champion-gate seat');
+  assert(txt.includes('♚ v1') || txt.includes('♚'), 'the final survivor (v1) flows into the champion-gate seat as the new champion ♚');
   // survivor → next-rung connectors trace the halving.
   assert(allByClass(node, 'dn-raceladder-edge').length >= 1, 'survivor connectors trace the field into the next rung');
 });
@@ -1595,6 +1595,185 @@ test('racing ladder: a LIVE race leaves the pending rung neutral (nobody cut) an
   const struck = allByClass(node, 'dn-out');
   assertEqual(struck.length, 2, 'only the two decided cuts (v2, v3) are struck — the pending rung strikes nobody');
   assert(node.textContent.includes('deciding'), 'the champion-gate reads "deciding…" while the race is live (no premature crown)');
+});
+
+// ====================================================================
+// RACING LADDER reconstruction from the PER-CHALLENGER match records.
+//
+// A racing tournament is persisted as ONE record PER CHALLENGER on
+// /api/tournaments (NOT one assembled-rung record). Each entry is the
+// flattened view from that challenger's seat:
+//   { tournament_id:"<epoch>:<champ>-><chall>", structure:"racing",
+//     competitors:[champ, chall], standings:[],
+//     rounds:[ {match_id:"rungN_mK"|"racing-final", opponent, won, delta_scalar} ] }
+// The ladder must AGGREGATE every record and GROUP matches by the `match_id`
+// rung prefix to rebuild rung0 → … → champion-gate. This mirrors the LIVE
+// epoch 2026-06-01_e0 (champion v0; field v1–v4; v3 promoted).
+// ====================================================================
+
+const RC_EPOCH = '2026-06-01_e0';
+// the four per-challenger racing records, verbatim from the brief's live epoch.
+const RACING_PER_CHALLENGER = [
+  { tournament_id: `${RC_EPOCH}:v0->v1`, structure: 'racing', competitors: ['v0', 'v1'], standings: [],
+    rounds: [{ match_id: 'rung0_m0', opponent: 'v0', won: false, delta_scalar: 25.0 }] },
+  { tournament_id: `${RC_EPOCH}:v0->v2`, structure: 'racing', competitors: ['v0', 'v2'], standings: [],
+    rounds: [{ match_id: 'rung0_m1', opponent: 'v0', won: false, delta_scalar: 3.3 }] },
+  { tournament_id: `${RC_EPOCH}:v0->v3`, structure: 'racing', competitors: ['v0', 'v3'], standings: [],
+    rounds: [
+      { match_id: 'rung0_m2', opponent: 'v0', won: true, delta_scalar: -0.16 },
+      { match_id: 'rung1_m0', opponent: 'v0', won: false, delta_scalar: 1.0 },
+      { match_id: 'racing-final', opponent: 'v0', won: true, delta_scalar: -32.19 },
+    ] },
+  { tournament_id: `${RC_EPOCH}:v0->v4`, structure: 'racing', competitors: ['v0', 'v4'], standings: [],
+    rounds: [
+      { match_id: 'rung0_m3', opponent: 'v0', won: false, delta_scalar: 0.002 },
+      { match_id: 'rung1_m1', opponent: 'v0', won: false, delta_scalar: 1.25 },
+    ] },
+];
+const RACING_TOURNAMENTS = {
+  epoch_id: RC_EPOCH, structure: 'racing',
+  structure_params: { eta: 2, board_fraction: 0.25 },
+  champion_lineage: ['v0', 'v3'],
+  matchups: RACING_PER_CHALLENGER.map((t) => ({ champion: 'v0', challenger: t.tournament_id.split('->')[1], decision: t.tournament_id.endsWith('v3') ? 'promoted' : 'rejected', delta_scalar: 1 })),
+  tournaments: RACING_PER_CHALLENGER,
+};
+
+// ---- (a) reconstruct the rungs/field/cuts/survivors -----------------
+
+test('racing reconstruct: groups the per-challenger records into rung0 {v1,v2,v3,v4} (v1/v2 cut ✕, v3/v4 survive ↑) and rung1 {v3,v4} (v4 cut, v3 survives)', () => {
+  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+  assert(st, 'a racing structure was reconstructed from the per-challenger records');
+  assertEqual(st.structure, 'racing', 'the reconstructed structure is racing');
+  // only the RUNG rounds (racing-final is the gate, not a rung).
+  const rungRounds = st.rounds.filter((r) => String(r.matches[0].match_id) !== 'racing-final');
+  assertEqual(rungRounds.length, 2, 'two rungs reconstructed (rung0, rung1)');
+
+  const r0 = rungRounds[0].matches[0];
+  assertDeep([...r0.competitors].sort(), ['v1', 'v2', 'v3', 'v4'], 'rung0 field is the full challenger set {v1,v2,v3,v4}');
+  assertDeep([...r0.cut].sort(), ['v1', 'v2'], 'rung0 cuts v1 and v2 (no match at rung1 or the final)');
+  assertDeep([...r0.survivors].sort(), ['v3', 'v4'], 'rung0 survivors are v3 and v4 (they appear at rung1)');
+
+  const r1 = rungRounds[1].matches[0];
+  assertDeep([...r1.competitors].sort(), ['v3', 'v4'], 'rung1 field narrows to {v3,v4}');
+  assertDeep([...r1.cut].sort(), ['v4'], 'rung1 cuts v4');
+  assertDeep([...r1.survivors].sort(), ['v3'], 'rung1 survivor is v3 (it reaches the champion gate)');
+  // each rung carries the board fraction (budget escalation: 25% → 50%).
+  assertEqual(r0.board_fraction, 0.25, 'rung0 covers 25% of the board');
+  assertEqual(r1.board_fraction, 0.5, 'rung1 escalates to 50% of the board (×η)');
+  // and each runner's Δ-vs-champion at the rung is carried for the mark.
+  assertEqual(r0.deltas.v1, 25.0, 'rung0 carries v1’s Δ-vs-champion');
+  assertEqual(r0.deltas.v3, -0.16, 'rung0 carries v3’s (winning) Δ-vs-champion');
+});
+
+// ---- (b) the champion-gate crowns v3 (NOT "tbd") --------------------
+
+test('racing reconstruct: the champion-gate resolves v3 as the promoted champion ♚ (racing-final won + champion_lineage), NOT "tbd"', () => {
+  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+  const gate = st.rounds.find((r) => String(r.matches[0].match_id) === 'racing-final');
+  assert(gate, 'a racing-final champion-gate round was reconstructed');
+  const gm = gate.matches[0];
+  assertEqual(gm.winner, 'v3', 'the gate winner is the promoted survivor v3');
+  assertEqual(gm.decision, 'promoted', 'the gate decision is promoted (racing-final won, Δ negative)');
+  assertDeep([...gm.competitors].sort(), ['v0', 'v3'], 'the gate pits the champion v0 against the survivor v3');
+  assertEqual(st.champion_lineage[st.champion_lineage.length - 1], 'v3', 'champion_lineage confirms v3 is the new champion');
+
+  // and the rendered ladder shows v3 crowned ♚ — never "tbd".
+  let navTo = null;
+  const ctx = { navigate: (v, p) => { navTo = { v, p }; }, href: router.href };
+  const nodes = STRUCT.renderStructure(st, ctx, RC_EPOCH);
+  const wrap = document.createElement('div');
+  for (const n of nodes) wrap.appendChild(n);
+  const ladder = svgsByClass(wrap, 'dn-raceladder')[0];
+  assert(ladder, 'the racing ladder rendered from the reconstruction');
+  assert(ladder.textContent.includes('champion-gate'), 'a champion-gate column rendered');
+  assert(ladder.textContent.includes('♚ v3'), 'the gate crowns v3 as the new champion ♚');
+  assert(!ladder.textContent.includes('tbd'), 'the gate is NOT the empty "tbd" skeleton');
+  assert(wrap.textContent.includes('v3 promoted'), 'the caption states the champion-gate outcome (v3 promoted)');
+});
+
+// ---- (c) competitors are clickable to their candidate ---------------
+
+test('racing reconstruct: each competitor in the ladder is clickable → its candidate page', () => {
+  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+  let navTo = null;
+  const ctx = { navigate: (v, p) => { navTo = { v, p }; }, href: router.href };
+  const nodes = STRUCT.renderStructure(st, ctx, RC_EPOCH);
+  const wrap = document.createElement('div');
+  for (const n of nodes) wrap.appendChild(n);
+  const runner = allByClass(wrap, 'dn-raceladder-runner')[0];
+  assert(runner, 'a clickable competitor row exists');
+  runner.dispatchEvent({ type: 'click' });
+  assert(navTo && navTo.v === 'candidate' && navTo.p.epochId === RC_EPOCH, 'clicking a competitor routes to its candidate page');
+  assert(/^v\d+$/.test(navTo.p.gen), 'the navigation carries the competitor generation id');
+});
+
+// ---- (d) the LIVE path still renders an in-progress ladder ----------
+
+test('racing reconstruct: the LIVE /api/active-tournament path still renders the in-progress ladder with a pending rung + a "deciding…" gate', async () => {
+  freshState();
+  const F = {
+    '/api/epoch': { epoch_id: RC_EPOCH, closed: false, goal: 'g', tournament: { structure: 'racing', params: LIVE_RACING.structure_params }, experiments: [], board: [] },
+    '/api/lineage': { generations: LIVE_RACING.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: RC_EPOCH, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: false })) },
+    '/api/score-trajectory': { points: [] },
+    // the COMPLETED record is empty — only the LIVE active-tournament has the topology.
+    '/api/tournaments': { epoch_id: RC_EPOCH, structure: 'racing', champion_lineage: [], matchups: [], tournaments: [] },
+    '/api/active-tournament': LIVE_RACING,
+  };
+  installFixtureMap(F);
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1' });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
+
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
+
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(ladder, 'the LIVE racing ladder rendered from /api/active-tournament');
+  assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight tournament');
+  assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs render (incl. the still-racing one)');
+  // the not-yet-decided rung stays neutral (nobody struck) and the gate reads "deciding…".
+  const struck = allByClass(host, 'dn-out');
+  for (const n of struck) assert((n.textContent || '').indexOf('v1') < 0, 'the leader v1 is never struck (cut) mid-run');
+  assert(ladder.textContent.includes('deciding'), 'the live champion-gate reads "deciding…" — no premature crown');
+  assert(!ladder.textContent.includes('♚'), 'no champion is crowned ♚ while the race is live');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+});
+
+// ---- (e) the match-ups page reconstructs the ladder end-to-end ------
+
+test('racing reconstruct: the match-ups page rebuilds the full ladder from the per-challenger /api/tournaments records (not an empty skeleton)', async () => {
+  freshState();
+  const F = {
+    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
+      experiments: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, parent_generation_id: g === 'v0' ? '' : 'v0', outcome: { decision: g === 'v0' ? 'baseline' : (g === 'v3' ? 'promoted' : 'rejected') } })), board: [] },
+    '/api/lineage': { generations: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, epoch_id: RC_EPOCH, parent_generation_id: g === 'v0' ? '' : 'v0', promoted: g === 'v0' || g === 'v3' })) },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': RACING_TOURNAMENTS,
+  };
+  installFixtureMap(F);
+  // idle — no live run; the ladder must reconstruct from the completed records.
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
+
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(ladder, 'the racing ladder rendered on the match-ups page from the per-challenger records');
+  assert(!/No tournament|No rungs|unavailable/i.test(host.textContent), 'NOT the empty "RUNG · RUNG · CHAMPION-GATE: tbd" skeleton');
+  assert(host.textContent.includes('Rung 0') && host.textContent.includes('Rung 1'), 'both reconstructed rungs render as columns');
+  // the full rung0 field + the cut/survivor marks made it through to the SVG.
+  for (const id of ['v1', 'v2', 'v3', 'v4']) assert(ladder.textContent.includes(id), 'rung0 names the full field — ' + id);
+  assert(ladder.textContent.includes('✕'), 'cut runners are struck ✕');
+  assert(ladder.textContent.includes('↑'), 'survivors are marked ↑');
+  assert(ladder.textContent.includes('♚ v3'), 'the champion-gate crowns v3 as the new champion ♚ (not tbd)');
+  assert(allByClass(host, 'dt-live-pill').length === 0, 'idle reconstruction carries NO live badge');
 });
 
 // ---- (d) current-vs-former champion badge in the tree ---------------

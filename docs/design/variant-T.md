@@ -256,12 +256,40 @@ and branches:
   - **`racing`** — a **successive-halving rung ladder**
     (`svg.racingLadder`): one column per rung, escalating left→right to a
     trailing **champion-gate** column. Each rung shows its full field racing on
-    its `board_fraction` of the board (shown in the column head), with the
-    `cut[]` worst-by-η struck through (✕ = cut, ↑ = survives) and faint
-    survivor→next-rung **connectors** that trace the halving. The lone final
-    survivor flows into the champion-gate seat (♛). A **live** race leaves a
-    pending rung neutral (nobody cut until that rung's results land) and the
-    gate reads "deciding…" rather than crowning a not-yet-committed winner.
+    its `board_fraction` of the board (shown in the column head, escalating ×η),
+    each runner's **Δ-vs-champion** right-aligned, the `cut[]` worst-by-η struck
+    through (✕ = cut, ↑ = survives) and faint survivor→next-rung **connectors**
+    that trace the halving. The lone final survivor flows into the
+    **champion-gate** seat; when the gate is settled and won it crowns the **new
+    champion ♚** (a `dn-good` box, confirmed against `champion_lineage`), else it
+    reads **"champion stands"**. A **live** race leaves a pending rung neutral
+    (nobody cut until that rung's results land) and the gate reads "deciding…"
+    rather than crowning a not-yet-committed winner.
+
+    **Reconstruction from per-challenger records.** A racing tournament is NOT
+    persisted as one assembled-rung record — it is persisted as **one record per
+    challenger** on `/api/tournaments` → `{champion_lineage, tournaments:[…]}`,
+    each `{ tournament_id:"<epoch>:<champ>-><chall>", structure:"racing",
+    competitors:[champ, chall], rounds:[{match_id, opponent, won, delta_scalar}]}`.
+    A single `data.tournamentStructure()` fetch therefore only sees ONE
+    challenger's flattened rounds and cannot rebuild the ladder (the old code
+    rendered an empty "RUNG · RUNG · CHAMPION-GATE: tbd" skeleton). So for the
+    idle racing case `views/gens.js` calls
+    `structure.reconstructRacing(/api/tournaments, epochId)`, which **aggregates
+    every racing record** and **groups its matches by the `match_id` rung
+    prefix** (`rungN_*` → rung N; `racing-final` → the full-board champion gate):
+    - **field(rung N)** = challengers with a `rungN_*` match;
+    - **survivors(rung N)** = those that ALSO appear at rung N+1 (or in the
+      final); **cut(rung N)** = the rest;
+    - the **champion gate** is the lone survivor's `racing-final` match — `won`
+      (Δ negative ⇒ lower loss) ⇒ **promoted**, and the new champion is confirmed
+      by `champion_lineage`'s last id.
+    The reconstruction normalises into the SAME `{structure, competitors, rounds,
+    standings, champion_lineage}` shape the LIVE `/api/active-tournament`
+    produces (rung rounds carrying `{competitors, survivors, cut, board_fraction,
+    deltas}` + a `racing-final` gate round), so the one `renderRacing` handles
+    both. `reconstructRacing` also passes an already-assembled record (the LIVE
+    shape, or a test fixture) straight through.
 
 A **structure pill** (`dt-structure-pill`: "structure · Swiss (4 rounds)" etc.)
 labels the configured structure in both the **epoch** header (`views/epoch.js`)

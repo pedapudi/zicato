@@ -697,8 +697,16 @@ export function structureBracket(opts) {
 // FIT-TO-WIDTH (width:100% + viewBox), theme-aware (token classes), no
 // pan/zoom — the same discipline as every other Console mark.
 //
-// opts: { rungs:[{label, competitors, survivors, cut, board_fraction,
-//         match_id, pending}], championId, live, onCompetitor(genId), title }
+// opts: { rungs:[{label, competitors, survivors, cut, board_fraction, deltas,
+//         match_id, pending}], championId, live, gateState, gateDelta,
+//         onCompetitor(genId), title }
+//
+//   gateState — the champion-gate resolution, one of:
+//     'crowned'  — the survivor cleared the gate → NEW champion (♚, dn-good box)
+//     'stands'   — the survivor lost the gate → champion stands (no crown)
+//     'deciding' — a LIVE race; the gate has not committed → "deciding…"
+//     'pending'  — no final gate recorded yet → "tbd"
+//   (absent ⇒ inferred from championId + live, preserving the old behavior.)
 export function racingLadder(opts) {
   const o = opts || {};
   const rungs = (Array.isArray(o.rungs) ? o.rungs : []).filter((r) => r);
@@ -777,10 +785,20 @@ export function racingLadder(opts) {
       const cls = 'dn-raceladder-name'
         + (eliminated ? ' dn-out dn-bad' : survived ? ' dn-good' : racing ? ' dn-racing' : '');
       const verdict = eliminated ? 'cut' : survived ? 'survives' : 'racing';
+      const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : null;
       const t = svgEl('text', { x: x + 6, y: cy + 3, class: cls },
-        [title(`${sid} · rung ${j + 1}${isNum(rung.board_fraction) ? ` · board ${(rung.board_fraction * 100).toFixed(0)}%` : ''} · ${verdict}`)]);
+        [title(`${sid} · rung ${j + 1}${isNum(rung.board_fraction) ? ` · board ${(rung.board_fraction * 100).toFixed(0)}%` : ''}${delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : ''} · ${verdict}`)]);
       t.textContent = shortLabel(sid, 14) + (eliminated ? ' ✕' : survived ? ' ↑' : '');
       g.appendChild(t);
+      // the competitor's Δ-vs-champion at this rung, right-aligned in the column.
+      if (delta != null) {
+        const dt = svgEl('text', {
+          x: x + colW - 6, y: cy + 3, 'text-anchor': 'end',
+          class: 'dn-raceladder-delta ' + (delta > 0 ? 'dn-bad' : delta < 0 ? 'dn-good' : ''),
+        });
+        dt.textContent = fmtSigned(delta, delta !== 0 && Math.abs(delta) < 0.1 ? 3 : 1);
+        g.appendChild(dt);
+      }
       if (o.onCompetitor) {
         g.style.cursor = 'pointer';
         g.addEventListener('click', () => o.onCompetitor(sid));
@@ -791,33 +809,62 @@ export function racingLadder(opts) {
   });
 
   // ── the trailing champion-gate column ───────────────────────────────
+  //
+  // The gate is the full-board confirmation duel: the lone survivor faces the
+  // reigning champion. Its STATE drives the seat:
+  //   crowned  — survivor cleared the gate → NEW champion ♚ (good box)
+  //   stands   — survivor lost → "champion stands" (no crown)
+  //   deciding — LIVE, not committed → "deciding…"
+  //   pending  — no final gate yet → "tbd"
+  // When gateState is absent, infer from championId + live (legacy callers).
   const gx = ladderW + colGap + 2;
   const gateHead = svgEl('text', { x: gx + gateW / 2, y: top + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
   gateHead.textContent = 'champion-gate';
   svg.appendChild(gateHead);
   const cy = rowY(0);
   const champId = o.championId ? String(o.championId) : null;
+  const gateState = o.gateState || (live ? 'deciding'
+    : (champId ? 'crowned' : 'pending'));
+  const crowned = gateState === 'crowned' && !!champId;
   // connector from the final rung's survivor seat into the gate seat.
   const lastSurv = Array.isArray(rungs[rungs.length - 1].survivors) ? rungs[rungs.length - 1].survivors.map(String) : [];
-  if (champId && lastSurv.indexOf(champId) >= 0) {
+  const seatId = champId || (lastSurv.length === 1 ? lastSurv[0] : null);
+  if (seatId && lastSurv.indexOf(seatId) >= 0) {
     const x1 = colX(rungs.length - 1) + colW - 6;
-    const fromY = rowY(rowIndex[rungs.length - 1].get(champId) || 0);
+    const fromY = rowY(rowIndex[rungs.length - 1].get(seatId) || 0);
     const mx = (x1 + gx) / 2;
     svg.appendChild(svgEl('path', {
-      d: `M${x1},${fromY} H${mx} V${cy} H${gx}`, class: 'dn-raceladder-edge dn-raceladder-edge-champ', fill: 'none',
+      d: `M${x1},${fromY} H${mx} V${cy} H${gx}`,
+      class: 'dn-raceladder-edge' + (crowned ? ' dn-raceladder-edge-champ' : ''), fill: 'none',
     }));
   }
-  const gateG = svgEl('g', { class: 'dn-raceladder-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });
+  const clickId = champId || seatId;
+  const gateG = svgEl('g', { class: 'dn-raceladder-gate', tabindex: (clickId && o.onCompetitor) ? '0' : null });
   gateG.appendChild(svgEl('rect', { x: gx, y: cy - rowH / 2 - 1, width: gateW, height: rowH + 2, rx: 3,
-    class: 'dn-raceladder-gatebox' + (champId && !live ? ' dn-good' : '') }));
-  const gt = svgEl('text', { x: gx + 6, y: cy + 3, class: 'dn-raceladder-gatelab' + (champId && !live ? ' dn-good' : '') },
-    [title(champId ? (live ? `${champId} leads — gate pending` : `${champId} → champion`) : 'awaiting the final survivor')]);
-  gt.textContent = champId ? '♛ ' + shortLabel(champId, 11) : (live ? 'deciding…' : 'tbd');
+    class: 'dn-raceladder-gatebox' + (crowned ? ' dn-good' : '') }));
+  const dStr = isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '';
+  let label;
+  let tip;
+  if (crowned) {
+    label = '♚ ' + shortLabel(champId, 11);
+    tip = `${champId} cleared the gate → new champion${dStr}`;
+  } else if (gateState === 'stands') {
+    label = 'champion stands';
+    tip = `the survivor lost the full-board gate — champion stands${dStr}`;
+  } else if (gateState === 'deciding') {
+    label = 'deciding…';
+    tip = champId ? `${champId} leads — gate not yet committed` : 'the final gate is deciding';
+  } else {
+    label = 'tbd';
+    tip = 'awaiting the final survivor';
+  }
+  const gt = svgEl('text', { x: gx + 6, y: cy + 3, class: 'dn-raceladder-gatelab' + (crowned ? ' dn-good' : '') }, [title(tip)]);
+  gt.textContent = label;
   gateG.appendChild(gt);
-  if (champId && o.onCompetitor) {
+  if (clickId && o.onCompetitor) {
     gateG.style.cursor = 'pointer';
-    gateG.addEventListener('click', () => o.onCompetitor(champId));
-    gateG.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(champId); } });
+    gateG.addEventListener('click', () => o.onCompetitor(clickId));
+    gateG.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(clickId); } });
   }
   svg.appendChild(gateG);
   return svg;

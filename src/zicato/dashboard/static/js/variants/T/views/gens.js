@@ -25,7 +25,7 @@ import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, normaliseDecision } from '../ui.js';
-import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure } from './structure.js';
+import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
 export async function render(host, ctx, params) {
@@ -161,20 +161,31 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   const liveSt = normalizeStructure(liveRaw, true);
   const liveUsable = !!(liveSt && liveSt.live);
 
-  // the COMPLETED record (only fetched when we are NOT showing the live one).
+  // the COMPLETED record (only fetched/reconstructed when NOT showing live).
   let tournamentId = null;
   let st = null;
   if (!liveUsable) {
-    const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
-    const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
-    if (nonGaunt.length) tournamentId = nonGaunt[nonGaunt.length - 1].tournament_id;
-    else if (tournaments.length) tournamentId = tournaments[tournaments.length - 1].tournament_id;
-    else {
-      const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
-      const last = matchups[matchups.length - 1];
-      if (last && last.challenger) tournamentId = `${id}:${last.champion || ''}->${last.challenger}`;
+    // RACING is persisted as ONE record PER CHALLENGER — the per-tournament
+    // structure fetch only sees a single challenger's flattened rounds, which
+    // cannot rebuild the rung/field/cut/survivor ladder. Aggregate every
+    // racing record on /api/tournaments and group matches by their `match_id`
+    // rung prefix to reconstruct the whole ladder + champion-gate outcome.
+    if (structure === 'racing') {
+      st = reconstructRacing(bracket, id);
+      tournamentId = st ? 'racing:reconstructed' : null;
     }
-    st = tournamentId ? normalizeStructure(await D.tournamentStructure(id, tournamentId), false) : null;
+    if (!st) {
+      const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
+      const nonGaunt = tournaments.filter((t) => t && t.structure && t.structure !== 'gauntlet');
+      if (nonGaunt.length) tournamentId = nonGaunt[nonGaunt.length - 1].tournament_id;
+      else if (tournaments.length) tournamentId = tournaments[tournaments.length - 1].tournament_id;
+      else {
+        const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
+        const last = matchups[matchups.length - 1];
+        if (last && last.challenger) tournamentId = `${id}:${last.champion || ''}->${last.challenger}`;
+      }
+      st = tournamentId ? normalizeStructure(await D.tournamentStructure(id, tournamentId), false) : null;
+    }
   }
 
   const shown = liveUsable ? liveSt : st;
