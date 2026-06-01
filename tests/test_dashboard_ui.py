@@ -494,14 +494,17 @@ def test_bundle_under_size_envelope(
     # visualizations (each in its own diagrammatic idiom). Measured
     # 1,337,956 bytes under a 1,400 KB cap.
     # SYNTHESIS WAVE (round 2): three new variants E (Atlas), F (Current),
-    # G (Bridge) combine the best parts of A–D — A's navigation, C's
-    # lifecycle/causal-flow, D's data-viz, B/D theming — each self-contained
-    # and digest-gated. Seven variants + v1/v2 now ship side-by-side behind
-    # ?ui= so the operator can compare and pick. Measured 1,813,130 bytes.
-    # A 1,900 KB cap holds the (deliberately temporary) exploration; once a
-    # variant is chosen, all the others + v1/v2 are deleted and the envelope
-    # drops sharply and is reset.
-    assert total < 1_900_000, f"bundle is {total} bytes, exceeds 1_900_000 envelope"
+    # G (Bridge) combine the best parts of A–D. Measured 1,813,130 bytes
+    # under a 1,900 KB cap.
+    # CONVERGENCE WAVE (round 3): four more variants H (Atlas II), I (Ledger),
+    # J (Console), K (Monograph) converge on E's flow + Tufte visuals +
+    # Tufte-style fit-to-width Sankey + B/D's three-theme system + the new
+    # mutation-per-generation and ACM-publication views. Eleven variants +
+    # v1/v2 now ship side-by-side behind ?ui= for the operator to down-select.
+    # Measured 2,340,551 bytes. A 2,400 KB cap holds the (deliberately
+    # temporary) exploration; once a variant is chosen, all the others +
+    # v1/v2 are deleted and the envelope drops sharply and is reset.
+    assert total < 2_400_000, f"bundle is {total} bytes, exceeds 2_400_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
