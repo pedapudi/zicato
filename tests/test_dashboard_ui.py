@@ -484,42 +484,17 @@ def test_bundle_under_size_envelope(
     # small-multiples Bench + boardCell, the 3-theme system, the
     # tournament view) — still side-by-side with v1 behind the flag.
     # Measured 759,830 bytes; an 800 KB cap held it.
-    # EXPLORATION PHASE: four complete, parallel dashboard redesign
-    # variants (A Mission-Control / B Editorial / C Causal-Flow / D
-    # Tufte) now ship side-by-side behind ?ui=A|B|C|D so the operator can
-    # interact with all four and pick one. That roughly doubles the
-    # concatenated bundle (measured 1,121,177 bytes).
-    # ENRICHMENT WAVE: each variant gained candidate-lifecycle, board-field,
-    # per-board scoring drill-down, and tournament-style match-up
-    # visualizations (each in its own diagrammatic idiom). Measured
-    # 1,337,956 bytes under a 1,400 KB cap.
-    # SYNTHESIS WAVE (round 2): three new variants E (Atlas), F (Current),
-    # G (Bridge) combine the best parts of A–D. Measured 1,813,130 bytes
-    # under a 1,900 KB cap.
-    # CONVERGENCE WAVE (round 3): four more variants H (Atlas II), I (Ledger),
-    # J (Console), K (Monograph) converge on E's flow + Tufte visuals +
-    # Tufte-style fit-to-width Sankey + B/D's three-theme system + the new
-    # mutation-per-generation and ACM-publication views. Measured 2,340,551
-    # bytes under a 2,400 KB cap.
-    # CONVERGENCE-II WAVE (round 4): four more variants L (Atlas III), M
-    # (Ledger II), N (Console II), O (Compass) — dashboard-first, K's
-    # publication renderer as a tab, combined mutation + side-by-side diff, a
-    # per-board cross-candidate view, a typeface-theme picker. Measured
-    # 2,925,207 bytes under a 3,000 KB cap.
-    # CONVERGENCE-III WAVE (round 5): four more variants P (Console III), Q
-    # (Atlas IV), R (Strata), S (Lens) — built on a data-model TREE navigation
-    # sidebar, with per-candidate patch diffs, all-matchups, a first-class
-    # board view + inline side-by-side transcripts, the promote gate on the
-    # candidate page, and trellis/heatmap de-dup. Measured 3,605,283 bytes
-    # under a 3,700 KB cap.
-    # CONVERGENCE-IV WAVE (round 6): four more variants T (Console IV — the
-    # anchor: P + S's side-by-side compare + Q's spacing + a fixed back button),
-    # U (Atlas V — roomy/light sibling), V (Reel — timeline/playback), W (Arena
-    # — broadcast standings + match cards). Twenty-three variants + v1/v2 now
-    # ship side-by-side behind ?ui=. Measured 4,224,601 bytes. A 4,300 KB cap
-    # holds the (deliberately temporary, about-to-be-pruned) exploration; once
-    # a variant is chosen the others + v1/v2 are deleted and this resets sharply.
-    assert total < 4_300_000, f"bundle is {total} bytes, exceeds 4_300_000 envelope"
+    # EXPLORATION PHASE (rounds 1–6, variants A–W + a gallery picker): a
+    # 6-round dashboard design bake-off ran side-by-side behind ?ui=, peaking
+    # at 23 variants and ~4.22 MB. It converged on **Variant T**, which is now
+    # THE dashboard and the default entry. The other variants + the gallery
+    # were archived (preserved at the git tag `dashboard-bakeoff-2026-06-01`
+    # and documented in docs/design/DASHBOARD-VARIANTS.md), so the served
+    # bundle dropped sharply back to v1 + v2 + T. Re-measured at 1,293,389
+    # bytes; a 1,500 KB cap leaves headroom for continued T iteration. (v1 and
+    # v2 remain reachable as fallbacks via ?ui=v1 / ?ui=v2; their eventual
+    # retirement will drop this further.)
+    assert total < 1_500_000, f"bundle is {total} bytes, exceeds 1_500_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
