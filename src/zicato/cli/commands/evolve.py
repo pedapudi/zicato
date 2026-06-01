@@ -368,6 +368,63 @@ async def _terminate_child(proc: asyncio.subprocess.Process | None) -> None:
 _terminate_supervisor = _terminate_child
 
 
+def _parse_tournament_param(raw: str) -> tuple[str, Any]:
+    """Parse one ``KEY=VALUE`` param; VALUE is JSON-if-possible, else str."""
+    if "=" not in raw:
+        raise click.ClickException(f"--tournament-param must be KEY=VALUE; got {raw!r}")
+    key, _, value = raw.partition("=")
+    key = key.strip()
+    if not key:
+        raise click.ClickException(f"--tournament-param has an empty key: {raw!r}")
+    try:
+        parsed: Any = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = value
+    return key, parsed
+
+
+def _write_tournament_structure_into_scoring(
+    workspace_root: Path,
+    structure: str,
+    params_raw: tuple[str, ...],
+) -> None:
+    """Write the ``tournament`` block into the live ``scoring.json``.
+
+    Resolves the live scoring.json the same way the contract does
+    (``resolve_contract_inputs``), so the written block is the exact file
+    the contract hash reads. Preserves every other key in the file (an
+    operator's partial document). The file is created with just the
+    tournament block when it does not exist yet.
+    """
+    from zicato.epoch.contract import resolve_contract_inputs  # noqa: PLC0415
+
+    try:
+        inputs = resolve_contract_inputs(workspace_root)
+        scoring_path = inputs.scoring_path
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    params: dict[str, Any] = {}
+    for raw in params_raw:
+        key, value = _parse_tournament_param(raw)
+        params[key] = value
+
+    existing: dict[str, Any] = {}
+    if scoring_path.exists():
+        try:
+            loaded = json.loads(scoring_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = loaded
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(
+                f"scoring.json at {scoring_path} is not valid JSON: {exc}"
+            ) from exc
+
+    existing["tournament"] = {"structure": structure, "params": params}
+    scoring_path.parent.mkdir(parents=True, exist_ok=True)
+    scoring_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def _import_callable(dotted: str, *, kind: str) -> Any:
     """Resolve ``pkg.mod:attr`` or ``pkg.mod.attr`` to a callable.
 
@@ -469,6 +526,31 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     ),
 )
 @click.option(
+    "--tournament-structure",
+    type=click.Choice(["gauntlet", "single_elim", "double_elim", "swiss", "racing"]),
+    default=None,
+    help=(
+        "Set the per-epoch tournament structure. This is a "
+        "CONTRACT-MUTATING convenience: it writes {structure, params} into "
+        "the live scoring.json before the contract hash is computed, so it "
+        "participates in the hash and auto-rolls the epoch if it differs "
+        "from the current one — exactly equivalent to editing scoring.json "
+        "by hand. Unset (the default) reads whatever scoring.json says "
+        "(gauntlet when absent)."
+    ),
+)
+@click.option(
+    "--tournament-param",
+    "tournament_params",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help=(
+        "Set one tournament params key (repeatable). VALUE is parsed as "
+        "JSON when possible, else taken as a string. Only applied when "
+        "--tournament-structure is also passed."
+    ),
+)
+@click.option(
     "--no-auto-epoch",
     is_flag=True,
     default=False,
@@ -511,6 +593,8 @@ def evolve_cmd(
     auxiliary_dotted: str,
     max_consecutive_rejections: int,
     max_wall_clock_seconds: int | None,
+    tournament_structure: str | None,
+    tournament_params: tuple[str, ...],
     no_auto_epoch: bool,
     epoch_name: str | None,
     no_dashboard: bool,
@@ -534,6 +618,15 @@ def evolve_cmd(
     The dashboard is launched automatically and its URL is printed.
     """
     workspace_root = Path(workspace).resolve()
+
+    # Contract-mutating convenience: when --tournament-structure is set,
+    # write the {structure, params} block into the live scoring.json
+    # BEFORE the contract hash is computed, so it auto-rolls the epoch if
+    # it differs. Exactly equivalent to editing scoring.json by hand.
+    if tournament_structure is not None:
+        _write_tournament_structure_into_scoring(
+            workspace_root, tournament_structure, tournament_params
+        )
 
     harness_call_llm = _import_callable(harness_dotted, kind="harness_call_llm")
     auxiliary_call_llm = _import_callable(auxiliary_dotted, kind="auxiliary_call_llm")

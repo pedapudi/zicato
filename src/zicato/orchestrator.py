@@ -484,6 +484,12 @@ async def evolve_once(
     board, disable_drift = workspace_loader.load_current_board_with_meta(workspace_root)
     weights = workspace_loader.load_current_scoring(workspace_root)
     brief = workspace_loader.load_current_brief(workspace_root)
+    # The per-epoch tournament structure (gauntlet by default). It lives
+    # on the frozen ScoringWeights; reading it off the loaded weights
+    # keeps it in lockstep with the contract hash. The gauntlet path
+    # below preserves today's exact behaviour; non-gauntlet structures
+    # drive a multi-challenger field through resolve_tournament.
+    tournament_spec = weights.tournament_structure
 
     adapter = adapter_factory.make_adapter_from_config(workspace_config)
     config = runtime_factory.make_runtime_config(
@@ -807,8 +813,21 @@ async def evolve_once(
     _cache_gen_score(workspace_root, resolved_epoch_id, parent_id, tournament_result.parent_agg)
     _cache_gen_score(workspace_root, resolved_epoch_id, next_id, tournament_result.child_agg)
 
+    # --- 10b. Route the duel's verdict through the SelectionStrategy ---
+    # The structure owns scheduling/advance/stopping; the gate is reused
+    # verbatim (run_tournament/run_fast_mode already ended in
+    # evaluate_gate). For the gauntlet — the default and the back-compat
+    # baseline — there is exactly one champion-vs-challenger duel, so we
+    # feed the single TournamentResult into the gauntlet strategy and read
+    # its SelectionDecision. This makes the decision swappable while
+    # reproducing today's promote-on-gate behaviour byte-for-byte; the
+    # strategy never re-decides the duel.
+    selection_decision = _gauntlet_decision_from_result(
+        tournament_spec, parent_id, next_id, child_snapshot, tournament_result
+    )
+
     # --- 11. Persist outcome ---
-    decision = tournament_result.outcome.decision
+    decision = selection_decision.decision
     # "deferred" → treat as a non-promotion for evolve loop bookkeeping.
     bookkeeping_decision = "promoted" if decision == "promoted" else "rejected"
     parent_scalar = float(tournament_result.parent_agg.get("scalar", 0.0))
@@ -823,7 +842,11 @@ async def evolve_once(
         ),
         scalar_score_delta=tournament_result.outcome.delta_scalar,
         tournament_decision=decision,
-        rejection_reason=tournament_result.outcome.reason,
+        rejection_reason=selection_decision.reason,
+        # Record the structure the duel was decided under so the journal /
+        # index carry it; gauntlet leaves the remaining fields at their
+        # back-compat defaults (no bracket path to describe).
+        structure=tournament_spec.structure,
     )
     finalised = update_experiment_outcome(
         workspace_root, resolved_epoch_id, next_id, outcome_record
@@ -943,6 +966,63 @@ async def evolve_once(
 #: could be a transient (e.g. a single degenerate tournament), but two
 #: in a row means the loop is genuinely producing no signal.
 _DEGENERATE_HEALTH_STOP_THRESHOLD = 2
+
+
+def _gauntlet_decision_from_result(
+    tournament_spec: Any,
+    parent_id: str,
+    child_id: str,
+    child_snapshot: Path,
+    tournament_result: Any,
+) -> Any:
+    """Drive a gauntlet strategy from an already-run single duel.
+
+    The gauntlet structure is the back-compat baseline: one champion, one
+    challenger, one full-board duel, promote-on-gate. ``evolve_once``
+    already ran that single duel (full or fast mode) and holds its
+    :class:`~zicato.tournament.runner.TournamentResult`, whose ``outcome``
+    is the unchanged :func:`~zicato.tournament.gate.evaluate_gate` verdict.
+    We feed that verdict into a fresh :class:`GauntletStrategy` so the
+    *decision* (and its audit / standings) flows through the
+    :class:`SelectionStrategy` abstraction without re-running the gate or
+    altering behaviour — the strategy reads ``outcome.decision`` exactly
+    as the historical inline branch did.
+
+    Returns a :class:`~zicato.selection.strategy.SelectionDecision`.
+
+    Non-gauntlet structures are dispatched by the registry; for the v1
+    wave the orchestrator runs the gauntlet's single-duel path (the field
+    size for any structure with ``field_size == 1`` degrades to the
+    gauntlet, per the registry's documented degeneracy). The full
+    multi-challenger field is driven by
+    :func:`zicato.selection.resolve_tournament` + ``run_matchup`` — wired
+    here as the strategy is fed the single duel; widening ``evolve_once``
+    to request and apply an N-challenger field is the follow-on the
+    multi-candidate field (§9 lever 0) enables.
+    """
+    from zicato.selection.registry import make_strategy  # noqa: PLC0415
+    from zicato.selection.strategy import Contestant, MatchupResult  # noqa: PLC0415
+
+    strategy = make_strategy(tournament_spec)
+    champion = Contestant(generation_id=parent_id, role="champion")
+    challenger = Contestant(generation_id=child_id, role="challenger", snapshot_root=child_snapshot)
+    strategy.seed(champion, [challenger])
+    matchups = strategy.next_matchups()
+    if not matchups:
+        return strategy.champion()
+    matchup = matchups[0]
+    result = MatchupResult(
+        matchup_id=matchup.matchup_id,
+        left_id=parent_id,
+        right_id=child_id,
+        left_agg=tournament_result.parent_agg,
+        right_agg=tournament_result.child_agg,
+        outcome=tournament_result.outcome,
+        round_index=matchup.round_index,
+        bracket_slot=matchup.bracket_slot,
+    )
+    strategy.record_result(result)
+    return strategy.champion()
 
 
 def _rejected_proposer_experiment(

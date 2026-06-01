@@ -1331,6 +1331,109 @@ class MetricMovementActual:
 TournamentDecision = Literal["promoted", "rejected", "deferred"]
 
 
+#: The five v1 tournament structures. ``"gauntlet"`` is the default and
+#: reproduces the historical king-of-the-hill behaviour byte-for-byte.
+#: The other four are configurable per-epoch via the ``tournament`` block
+#: of ``scoring.json`` (see :class:`TournamentStructure`). The string
+#: tokens are the closed enum the loader validates against and the keys
+#: the selection-strategy registry maps to concrete strategy classes.
+VALID_TOURNAMENT_STRUCTURES: tuple[str, ...] = (
+    "gauntlet",
+    "single_elim",
+    "double_elim",
+    "swiss",
+    "racing",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class MatchOutcome:
+    """One match a generation played inside its tournament.
+
+    A small audit record carried on :class:`OutcomeRecord` so a
+    non-gauntlet structure (bracket / Swiss / racing) can record, per
+    generation, which opponents it faced and how each duel went. A
+    gauntlet leaves :attr:`OutcomeRecord.match_record` empty — its single
+    crowning duel is already described by the top-level outcome fields.
+
+    Fields
+    ------
+    match_id:
+        Stable id of the match within the tournament (e.g. ``"WB-R0-0"``,
+        ``"r2_m1"``, ``"rung1"``).
+    opponent:
+        The generation id this generation was paired against. Empty for a
+        bye or an N-way racing rung.
+    won:
+        ``True`` when this generation was the match's winner (the side the
+        gate / rank preferred).
+    delta_scalar:
+        ``this.scalar - opponent.scalar`` for the match. Negative = this
+        generation scored the lower (better) loss.
+    """
+
+    match_id: str
+    opponent: str
+    won: bool
+    delta_scalar: float
+
+
+@dataclass(frozen=True, slots=True)
+class TournamentStructure:
+    """The per-epoch tournament structure and its tuning params.
+
+    Part of the frozen evaluation contract: it is modelled as a field of
+    :class:`ScoringWeights` (and therefore folds into the contract hash
+    automatically), so changing the structure — or any param — rolls the
+    epoch, exactly as retuning ``promote_margin`` does. A gauntlet
+    champion and a Swiss champion are selected under different rules and
+    are not directly comparable, which is precisely the contract-roll
+    rationale.
+
+    Fields
+    ------
+    structure:
+        One of :data:`VALID_TOURNAMENT_STRUCTURES`. Defaults to
+        ``"gauntlet"`` — the shipped king-of-the-hill behaviour.
+    params:
+        A structure-specific JSON object, stored and round-tripped
+        verbatim as an opaque ``Mapping[str, Any]`` (the same
+        forward-compat posture :attr:`BoardEntry.context` takes). The
+        data layer enforces only that this is a mapping; per-key
+        semantics (``field_size``, ``replicates``, ``swiss.rounds_n``,
+        ``racing.eta`` / ``board_fraction`` / ``rung0_board_size``, …)
+        are owned by the selection strategy that reads them.
+
+    The default factory :meth:`gauntlet` yields the fully-defaulted
+    gauntlet spec an absent ``tournament`` block resolves to.
+    """
+
+    structure: str = "gauntlet"
+    params: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.structure not in VALID_TOURNAMENT_STRUCTURES:
+            valid = ", ".join(repr(s) for s in VALID_TOURNAMENT_STRUCTURES)
+            raise ValueError(
+                f"invalid tournament structure {self.structure!r}; " f"valid values are: {valid}"
+            )
+        if not isinstance(self.params, Mapping):
+            raise ValueError(
+                f"tournament params must be a JSON object (mapping), got "
+                f"{type(self.params).__name__}"
+            )
+
+    @classmethod
+    def gauntlet(cls) -> TournamentStructure:
+        """The fully-defaulted gauntlet spec (the back-compat default)."""
+        return cls(structure="gauntlet", params={})
+
+
+def _default_tournament_structure() -> TournamentStructure:
+    """Default-factory for :attr:`ScoringWeights.tournament_structure`."""
+    return TournamentStructure.gauntlet()
+
+
 @dataclass(frozen=True, slots=True)
 class OutcomeRecord:
     """The post-run record appended to an :class:`Experiment` after evaluation.
@@ -1375,6 +1478,16 @@ class OutcomeRecord:
     # journal JSON keeps deserialising; `metric_movements` is the
     # superset surface for new namespaces.
     metric_movements: tuple[MetricMovementActual, ...] = ()
+    # Generalised tournament-structure surface (additive; every field
+    # defaults to the gauntlet reading so old journals deserialize and
+    # score unchanged). ``structure`` mirrors the epoch's resolved
+    # ``tournament.structure``; ``final_rank`` / ``eliminated_in_round``
+    # / ``match_record`` describe this generation's path through a
+    # non-gauntlet bracket. A gauntlet leaves them at the defaults below.
+    structure: str = "gauntlet"
+    final_rank: int | None = None
+    eliminated_in_round: int | None = None
+    match_record: tuple[MatchOutcome, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1599,6 +1712,11 @@ class ScoringWeights:
     namespace_monotonicity: Mapping[str, bool] = field(
         default_factory=_default_namespace_monotonicity
     )
+    # Per-epoch tournament structure (gauntlet by default). Modelled here
+    # so it factors into the contract hash through the existing scoring
+    # canonicalizer with zero new plumbing: changing the structure or any
+    # param rolls the epoch. See :class:`TournamentStructure`.
+    tournament_structure: TournamentStructure = field(default_factory=_default_tournament_structure)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1892,6 +2010,9 @@ __all__ = [
     "DriftMovementActual",
     "MetricMovementActual",
     "TournamentDecision",
+    "VALID_TOURNAMENT_STRUCTURES",
+    "MatchOutcome",
+    "TournamentStructure",
     "OutcomeRecord",
     "Experiment",
     # Epoch / generation

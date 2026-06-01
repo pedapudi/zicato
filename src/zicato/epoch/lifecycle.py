@@ -127,6 +127,8 @@ def _make_epoch_id(workspace_root: Path, name: str) -> str:
 
 
 def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
+    from zicato.workspace_loader import tournament_structure_to_dict  # noqa: PLC0415
+
     return {
         "drift_weight": weights.drift_weight,
         "pass_weight": weights.pass_weight,
@@ -138,6 +140,7 @@ def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
         "runtime_weight": weights.runtime_weight,
         "promote_margin": weights.promote_margin,
         "pass_rate_monotonicity": weights.pass_rate_monotonicity,
+        "tournament": tournament_structure_to_dict(weights.tournament_structure),
     }
 
 
@@ -148,12 +151,17 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     # dataclass default. ``default_judge_weight`` is forwarded only when
     # the key is present, for the same back-compat reason. Mirror of
     # :func:`zicato.workspace_loader._scoring_weights_from_dict`.
+    from zicato.workspace_loader import tournament_structure_from_dict  # noqa: PLC0415
+
     judge_kwargs: dict[str, Any] = {}
     raw_per_judge = d.get("per_judge_weights")
     if isinstance(raw_per_judge, dict) and raw_per_judge:
         judge_kwargs["per_judge_weights"] = {str(k): float(v) for k, v in raw_per_judge.items()}
     if "default_judge_weight" in d:
         judge_kwargs["default_judge_weight"] = float(d["default_judge_weight"])
+    # The tournament structure rides in the ``tournament`` block; absent
+    # ⇒ gauntlet. Threaded into both ScoringWeights branches below.
+    judge_kwargs["tournament_structure"] = tournament_structure_from_dict(d.get("tournament"))
     raw_sev = d.get("severity_weights")
     if raw_sev:
         severity = {str(k): float(v) for k, v in raw_sev.items()}

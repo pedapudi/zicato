@@ -161,6 +161,12 @@ def test_tournaments_columns_match_contract() -> None:
         "delta_scalar",
         "rejection_reason",
         "ran_at",
+        # v3: the additive tournament-structure columns.
+        "structure",
+        "structure_params_json",
+        "competitors_json",
+        "rounds_json",
+        "standings_json",
     ]
     conn.close()
 

@@ -550,9 +550,14 @@ def test_incremental_ingest_carries_tournament_id_after_reingest(tmp_path: Path)
     assert runs[0]["tournament_id"] == f"{eid_a}:v0->v1"
 
 
-def test_schema_version_is_two() -> None:
-    """The shared-contract constant has been bumped to v2."""
-    assert SCHEMA_VERSION == 2
+def test_schema_version_is_at_least_two() -> None:
+    """The shared-contract constant is v2 or later.
+
+    v2 introduced the ``tournament_id`` / ``parent_epoch_id`` columns this
+    file exercises; later versions are additive over them (v3 adds the
+    tournament-structure columns), so the floor is what matters here.
+    """
+    assert SCHEMA_VERSION >= 2
 
 
 @pytest.mark.parametrize(

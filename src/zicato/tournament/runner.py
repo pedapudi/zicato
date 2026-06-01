@@ -1770,11 +1770,172 @@ async def run_fast_mode(
     )
 
 
+async def _run_replicated(
+    *,
+    adapter: Any,
+    left_gen: Generation,
+    right_gen: Generation,
+    board: list[BoardEntry],
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    replicates: int,
+) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
+    """Run a paired board ``replicates`` times, averaging per-entry losses.
+
+    The §9-lever-1 replication knob. ``replicates == 1`` is the current
+    single-run path (it simply returns ``_run_board_units_full``'s maps
+    unchanged). For ``replicates > 1`` the paired board is run N times and
+    the per-entry drift losses are averaged BEFORE aggregation, so a noisy
+    single run no longer decides a duel. Only the scalar-bearing
+    ``drift_loss`` is averaged; ``pass_fail`` is taken as the majority
+    (true only when a strict majority of replicates passed), which keeps
+    the pass-rate monotonicity rule meaningful under replication.
+
+    The board-unit runner is reused verbatim — replication is a thin loop
+    over it — so the per-run subprocess isolation, scoring, and failure
+    surfacing are unchanged.
+    """
+    runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
+    for _ in range(max(1, replicates)):
+        left_losses, right_losses = await _run_board_units_full(
+            adapter=adapter,
+            parent_gen=left_gen,
+            child_gen=right_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+        )
+        runs.append((left_losses, right_losses))
+    if len(runs) == 1:
+        return runs[0]
+    left_avg = _average_losses([r[0] for r in runs])
+    right_avg = _average_losses([r[1] for r in runs])
+    return left_avg, right_avg
+
+
+def _average_losses(
+    runs: list[dict[str, LossProfile]],
+) -> dict[str, LossProfile]:
+    """Average per-entry ``drift_loss`` across replicate runs.
+
+    Returns one ``entry_id -> LossProfile`` map whose ``drift_loss`` is
+    the mean across runs and whose ``pass_fail`` is the strict-majority
+    vote (``None`` is preserved when the entry has no expectation). All
+    other fields are taken from the first run's profile (they are not
+    scalar-bearing in the gate). ``dataclasses.replace`` keeps the
+    profile shape intact.
+    """
+    from dataclasses import replace as _replace  # noqa: PLC0415
+
+    if not runs:
+        return {}
+    entry_ids = list(runs[0].keys())
+    out: dict[str, LossProfile] = {}
+    for entry_id in entry_ids:
+        profiles = [r[entry_id] for r in runs if entry_id in r]
+        if not profiles:
+            continue
+        mean_drift = sum(float(p.drift_loss) for p in profiles) / len(profiles)
+        pass_votes = [p.pass_fail for p in profiles if p.pass_fail is not None]
+        if pass_votes:
+            true_count = sum(1 for v in pass_votes if v)
+            majority_pass: bool | None = true_count * 2 > len(pass_votes)
+        else:
+            majority_pass = None
+        out[entry_id] = _replace(profiles[0], drift_loss=mean_drift, pass_fail=majority_pass)
+    return out
+
+
+async def run_matchup(
+    *,
+    adapter: Any,
+    left_gen: Generation,
+    right_gen: Generation,
+    board: list[BoardEntry],
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    board_subset: tuple[str, ...] | None = None,
+    replicates: int = 1,
+    disable_drift: tuple[Any, ...] = (),
+    round_index: int = 0,
+    total_rounds: int = 0,
+) -> TournamentResult:
+    """Run ONE duel between two generations, ending in the unchanged gate.
+
+    The selection-layer analogue of :func:`run_tournament`: it runs a
+    single :class:`~zicato.selection.strategy.Matchup` between ``left_gen``
+    and ``right_gen`` — champion-vs-challenger OR
+    challenger-vs-challenger, since the gate only needs two aggregates and
+    treats ``left`` as the nominal parent. It honours a ``board_subset``
+    (racing rungs run on a board slice) and ``replicates`` (averaged
+    paired runs), then aggregates and runs ``_gate_with_regression`` →
+    ``evaluate_gate`` — the SAME gate, never re-decided.
+
+    Returns a :class:`TournamentResult` whose ``parent_*`` fields describe
+    ``left`` and ``child_*`` describe ``right``, so the strategy reads
+    ``outcome.decision`` / ``outcome.delta_scalar`` exactly as the gauntlet
+    does today.
+    """
+    from zicato.core import assert_distinct_callables  # noqa: PLC0415
+
+    assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
+
+    board = _stamp_disable_drift(board, disable_drift)
+    if board_subset is not None:
+        subset = set(board_subset)
+        board = [e for e in board if e.id in subset]
+
+    left_losses, right_losses = await _run_replicated(
+        adapter=adapter,
+        left_gen=left_gen,
+        right_gen=right_gen,
+        board=board,
+        weights=weights,
+        config=config,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        replicates=replicates,
+    )
+
+    left_agg = aggregate_generation_score(list(left_losses.values()), weights)
+    right_agg = aggregate_generation_score(list(right_losses.values()), weights)
+
+    outcome = await _gate_with_regression(
+        parent_agg=left_agg,
+        child_agg=right_agg,
+        child_snapshot_root=right_gen.snapshot_root,
+        weights=weights,
+    )
+
+    per_entry_losses: dict[str, tuple[LossProfile, LossProfile]] = {}
+    for entry_id, left_loss in left_losses.items():
+        right_loss = right_losses.get(entry_id)
+        if right_loss is not None:
+            per_entry_losses[entry_id] = (left_loss, right_loss)
+
+    _ = (round_index, total_rounds)  # reserved for live-state publication
+    return TournamentResult(
+        parent_generation_id=left_gen.id,
+        child_generation_id=right_gen.id,
+        parent_agg=left_agg,
+        child_agg=right_agg,
+        outcome=outcome,
+        per_entry_losses=per_entry_losses,
+    )
+
+
 # Public surface
 __all__ = [
     "TournamentResult",
     "run_fast_mode",
     "run_tournament",
+    "run_matchup",
 ]
 
 

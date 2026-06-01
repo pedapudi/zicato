@@ -199,13 +199,14 @@ def test_loss_profile_round_trips_per_judge_loss(tmp_path: Path) -> None:
 
 
 def test_schema_v2_creates_judge_losses_table_and_index() -> None:
-    """SCHEMA_VERSION is 2; apply_schema creates judge_losses + its index.
+    """apply_schema creates judge_losses + its index (introduced in v2).
 
     The table carries (run_id, judge_name) as its composite PK and three
     numeric columns. The companion index idx_judge_losses_run keys on
-    run_id for the per-run lookup the analyzer issues.
+    run_id for the per-run lookup the analyzer issues. The schema version
+    is v2 or later (v3 is additive over the judge_losses table).
     """
-    assert SCHEMA_VERSION == 2
+    assert SCHEMA_VERSION >= 2
     conn = sqlite3.connect(":memory:")
     apply_schema(conn)
     # Table exists with the contracted columns.

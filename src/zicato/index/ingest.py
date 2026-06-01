@@ -565,12 +565,35 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
     tournament_id = (
         f"{experiment.epoch_id}:{experiment.parent_generation_id}->{experiment.generation_id}"
     )
+    # v3 structure-aware columns. The existing per-matchup columns keep
+    # describing the CROWNING match (the match that decided who becomes
+    # champion) for every structure, so a gauntlet-only reader still gets
+    # a coherent champion-vs-challenger answer. ``structure`` defaults to
+    # ``"gauntlet"`` for runs that predate the feature (the OutcomeRecord
+    # field defaults there too). ``competitors_json`` is the candidate
+    # field this generation faced, derived from its per-match opponents;
+    # for a gauntlet that is just parent + child.
+    structure = outcome.structure or "gauntlet"
+    competitors = [experiment.parent_generation_id, experiment.generation_id]
+    for m in outcome.match_record:
+        if m.opponent and m.opponent not in competitors:
+            competitors.append(m.opponent)
+    rounds = [
+        {
+            "match_id": m.match_id,
+            "opponent": m.opponent,
+            "won": m.won,
+            "delta_scalar": m.delta_scalar,
+        }
+        for m in outcome.match_record
+    ]
     conn.execute(
         "INSERT INTO tournaments("
         "tournament_id, epoch_id, parent_generation_id, child_generation_id, "
         "decision, parent_scalar, child_scalar, delta_scalar, rejection_reason, "
-        "ran_at) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ran_at, structure, structure_params_json, competitors_json, rounds_json, "
+        "standings_json) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(tournament_id) DO UPDATE SET "
         "epoch_id = excluded.epoch_id, "
         "parent_generation_id = excluded.parent_generation_id, "
@@ -580,7 +603,12 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
         "child_scalar = excluded.child_scalar, "
         "delta_scalar = excluded.delta_scalar, "
         "rejection_reason = excluded.rejection_reason, "
-        "ran_at = excluded.ran_at",
+        "ran_at = excluded.ran_at, "
+        "structure = excluded.structure, "
+        "structure_params_json = excluded.structure_params_json, "
+        "competitors_json = excluded.competitors_json, "
+        "rounds_json = excluded.rounds_json, "
+        "standings_json = excluded.standings_json",
         (
             tournament_id,
             experiment.epoch_id,
@@ -592,6 +620,11 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
             float(outcome.scalar_score_delta),
             outcome.rejection_reason,
             outcome.ran_at,
+            structure,
+            json.dumps({}),
+            json.dumps(competitors),
+            json.dumps(rounds),
+            json.dumps([]),
         ),
     )
 

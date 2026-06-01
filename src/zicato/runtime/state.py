@@ -347,6 +347,13 @@ class ActiveTournamentEntry:
     loss_summary: dict[str, float] = field(default_factory=dict)
     drift_count_snapshot: dict[str, int] = field(default_factory=dict)
     adk_session_id: str = ""
+    # ADDITIVE (data-model §2.3): which round/match this run is part of.
+    # ``side`` stays ``"parent"``/``"child"`` for a gauntlet; for every
+    # other structure the runner passes the competitor's generation id as
+    # ``side`` (an opaque key), and ``match_id`` links the row to a
+    # ``rounds[].matches[]`` entry. Default ``""`` so an old
+    # active_tournament.json loads unchanged.
+    match_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -358,6 +365,7 @@ class ActiveTournamentEntry:
             "loss_summary": dict(self.loss_summary),
             "drift_count_snapshot": dict(self.drift_count_snapshot),
             "adk_session_id": self.adk_session_id,
+            "match_id": self.match_id,
         }
 
     @classmethod
@@ -373,6 +381,7 @@ class ActiveTournamentEntry:
                 str(k): int(v) for k, v in d.get("drift_count_snapshot", {}).items()
             },
             adk_session_id=str(d.get("adk_session_id", "") or ""),
+            match_id=str(d.get("match_id", "") or ""),
         )
 
 
@@ -507,6 +516,17 @@ class ActiveTournament:
     total_rounds: int = 0
     partial_champion_agg: dict[str, Any] = field(default_factory=dict)
     partial_challenger_agg: dict[str, Any] = field(default_factory=dict)
+    # ── NEW: the structure envelope (data-model §2.2) ──
+    # All default to the gauntlet reading so an old active_tournament.json
+    # loads unchanged. For ``structure == "gauntlet"`` the runner keeps
+    # writing ``parent_generation_id`` / ``child_generation_id`` exactly
+    # as today and MAY leave these empty; a non-gauntlet structure
+    # populates them as the authoritative field set.
+    structure: str = "gauntlet"
+    structure_params: dict[str, Any] = field(default_factory=dict)
+    competitors: list[dict[str, Any]] = field(default_factory=list)
+    rounds: list[dict[str, Any]] = field(default_factory=list)
+    standings: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -521,6 +541,11 @@ class ActiveTournament:
             "entries": [e.to_dict() for e in self.entries],
             "partial_champion_agg": dict(self.partial_champion_agg),
             "partial_challenger_agg": dict(self.partial_challenger_agg),
+            "structure": self.structure,
+            "structure_params": dict(self.structure_params),
+            "competitors": [dict(c) for c in self.competitors],
+            "rounds": [dict(r) for r in self.rounds],
+            "standings": [dict(s) for s in self.standings],
         }
 
     @classmethod
@@ -542,6 +567,13 @@ class ActiveTournament:
             entries=[ActiveTournamentEntry.from_dict(e) for e in d.get("entries", [])],
             partial_champion_agg=dict(raw_champion) if isinstance(raw_champion, dict) else {},
             partial_challenger_agg=dict(raw_challenger) if isinstance(raw_challenger, dict) else {},
+            structure=str(d.get("structure", "gauntlet") or "gauntlet"),
+            structure_params=(
+                dict(d["structure_params"]) if isinstance(d.get("structure_params"), dict) else {}
+            ),
+            competitors=[dict(c) for c in d.get("competitors", []) if isinstance(c, dict)],
+            rounds=[dict(r) for r in d.get("rounds", []) if isinstance(r, dict)],
+            standings=[dict(s) for s in d.get("standings", []) if isinstance(s, dict)],
         )
 
 

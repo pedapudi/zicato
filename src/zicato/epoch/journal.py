@@ -40,6 +40,7 @@ from zicato.core.types import (
     ExpectedDriftMovement,
     Experiment,
     HypothesisSpec,
+    MatchOutcome,
     OutcomeRecord,
     Patch,
 )
@@ -234,6 +235,20 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         )
         for m in d.get("drift_movements", [])
     )
+    # Generalised tournament-structure fields (additive; every default
+    # reproduces the gauntlet reading so a journal written before the
+    # feature deserializes unchanged).
+    match_record = tuple(
+        MatchOutcome(
+            match_id=str(m.get("match_id", "")),
+            opponent=str(m.get("opponent", "")),
+            won=bool(m.get("won", False)),
+            delta_scalar=float(m.get("delta_scalar", 0.0)),
+        )
+        for m in d.get("match_record", [])
+    )
+    raw_rank = d.get("final_rank")
+    raw_elim = d.get("eliminated_in_round")
     return OutcomeRecord(
         ran_at=str(d.get("ran_at", "")),
         drift_movements=movements,
@@ -242,6 +257,10 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         scalar_score_delta=float(d.get("scalar_score_delta", 0.0)),
         tournament_decision=d.get("tournament_decision", "rejected"),
         rejection_reason=str(d.get("rejection_reason", "")),
+        structure=str(d.get("structure", "gauntlet")),
+        final_rank=int(raw_rank) if raw_rank is not None else None,
+        eliminated_in_round=int(raw_elim) if raw_elim is not None else None,
+        match_record=match_record,
     )
 
 

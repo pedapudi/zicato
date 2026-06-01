@@ -270,18 +270,44 @@ def _scoring_to_canon(weights: object) -> dict[str, object]:
     and independent of which fields the operator spelled out in their
     ``scoring.json``.
     """
-    from dataclasses import fields
+    from dataclasses import fields, is_dataclass
 
     out: dict[str, object] = {}
     for f in fields(weights):  # type: ignore[arg-type]
         value = getattr(weights, f.name)
-        if hasattr(value, "items"):
-            out[f.name] = dict(value)
+        if is_dataclass(value) and not isinstance(value, type):
+            # A nested frozen dataclass field (e.g. the tournament
+            # structure). Recurse so it canonicalizes structurally —
+            # its `params` mapping is dict-ified, lists become lists —
+            # rather than leaking an unserializable object into the
+            # hash input. This is what folds the tournament structure
+            # into the scoring contract automatically (§4 of the data
+            # model design): switching structures or bumping a param
+            # changes this canonical form and rolls the epoch.
+            out[f.name] = _scoring_to_canon(value)
+        elif hasattr(value, "items"):
+            out[f.name] = {k: _canon_value(v) for k, v in value.items()}
         elif isinstance(value, tuple):
-            out[f.name] = list(value)
+            out[f.name] = [_canon_value(v) for v in value]
         else:
             out[f.name] = value
     return out
+
+
+def _canon_value(value: object) -> object:
+    """Canonicalize a single mapping/sequence value for the scoring hash.
+
+    Used for the values inside a nested mapping (e.g. the tournament
+    ``params`` object, which may itself carry nested dicts / lists such
+    as ``racing.rungs``). Plain scalars pass through; nested mappings and
+    sequences are normalised recursively so the canonical form is stable
+    and JSON-serializable.
+    """
+    if isinstance(value, Mapping):
+        return {k: _canon_value(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_canon_value(v) for v in value]
+    return value
 
 
 def _round_floats(value: object) -> object:

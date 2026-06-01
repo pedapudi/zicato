@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.board.jsonl import load_board, load_board_with_meta
-from zicato.core.types import BoardEntry, EpochConfig, ScoringWeights
+from zicato.core.types import BoardEntry, EpochConfig, ScoringWeights, TournamentStructure
 from zicato.core.workspace import board_path, epoch_dir, scoring_path
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch
 from zicato.proposer.brief import ProposerBrief, load_brief
@@ -143,6 +143,22 @@ def load_current_scoring(workspace_root: Path) -> ScoringWeights:
     return _scoring_weights_from_dict(raw)
 
 
+def load_current_tournament(workspace_root: Path) -> TournamentStructure:
+    """Load the current epoch's frozen :class:`TournamentStructure`.
+
+    Reads the ``tournament`` block out of the epoch's frozen
+    ``scoring.json`` (where the structure lives — see the data-model
+    design). Defaults to the gauntlet for epochs that predate the field
+    or never set it, so the loader is safe against old workspaces.
+    """
+    eid = _resolve_current_epoch(workspace_root)
+    path = scoring_path(workspace_root, eid)
+    if not path.exists():
+        return TournamentStructure.gauntlet()
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return tournament_structure_from_dict(raw.get("tournament"))
+
+
 def load_current_brief(workspace_root: Path) -> ProposerBrief:
     """Load the current epoch's parsed :class:`ProposerBrief`."""
     eid = _resolve_current_epoch(workspace_root)
@@ -182,9 +198,44 @@ def _scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
         runtime_weight=float(d.get("runtime_weight", 0.0)),
         promote_margin=float(d.get("promote_margin", 0.01)),
         pass_rate_monotonicity=bool(d.get("pass_rate_monotonicity", True)),
+        tournament_structure=tournament_structure_from_dict(d.get("tournament")),
         **severity_kwarg,
         **judge_kwargs,
     )
+
+
+def tournament_structure_from_dict(raw: Any) -> TournamentStructure:
+    """Parse the ``tournament`` block of a ``scoring.json`` into a spec.
+
+    Absent (``None``) or a non-mapping ⇒ the fully-defaulted gauntlet
+    spec — the back-compat contract: every epoch on disk today, and every
+    operator who never touches the knob, gets the gauntlet.
+
+    A present block must carry a valid ``structure`` token (validated by
+    :class:`~zicato.core.types.TournamentStructure`'s ``__post_init__``,
+    which lists the valid tokens on error) and an optional ``params``
+    object. ``params`` is stored verbatim as an opaque mapping; per-key
+    semantics are the selection strategy's responsibility.
+
+    Shared by :func:`_scoring_weights_from_dict` (used by the contract
+    canonicalizer) and the lifecycle serializer so the on-disk format is
+    fully shared between the two loaders.
+    """
+    if not isinstance(raw, Mapping):
+        return TournamentStructure.gauntlet()
+    structure = str(raw.get("structure", "gauntlet"))
+    raw_params = raw.get("params", {})
+    params: dict[str, Any] = dict(raw_params) if isinstance(raw_params, Mapping) else {}
+    return TournamentStructure(structure=structure, params=params)
+
+
+def tournament_structure_to_dict(spec: TournamentStructure) -> dict[str, Any]:
+    """Serialize a :class:`TournamentStructure` to the ``tournament`` block.
+
+    The inverse of :func:`tournament_structure_from_dict`; ``params`` is
+    written verbatim as a plain dict.
+    """
+    return {"structure": spec.structure, "params": dict(spec.params)}
 
 
 __all__ = [
@@ -193,5 +244,8 @@ __all__ = [
     "load_current_board",
     "load_current_board_with_meta",
     "load_current_scoring",
+    "load_current_tournament",
     "load_current_brief",
+    "tournament_structure_from_dict",
+    "tournament_structure_to_dict",
 ]

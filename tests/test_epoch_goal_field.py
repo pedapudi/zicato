@@ -161,8 +161,10 @@ def test_set_epoch_goal_overwrites_existing(
 # ---------------------------------------------------------------------------
 
 
-def test_schema_version_is_two() -> None:
-    assert SCHEMA_VERSION == 2
+def test_schema_version_is_at_least_two() -> None:
+    # v2 added the ``epochs.goal`` column this file exercises; later
+    # versions are additive over it, so the floor is what matters here.
+    assert SCHEMA_VERSION >= 2
 
 
 def test_v1_database_upgrades_in_place_to_v2(tmp_path: Path) -> None:
@@ -192,7 +194,7 @@ def test_v1_database_upgrades_in_place_to_v2(tmp_path: Path) -> None:
     apply_schema(conn)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(epochs)").fetchall()}
     assert "goal" in cols
-    assert read_schema_version(conn) == 2
+    assert read_schema_version(conn) == SCHEMA_VERSION
     # Legacy row survives the migration; ``goal`` defaults to NULL.
     row = conn.execute(
         "SELECT epoch_id, contract_hash, goal FROM epochs WHERE epoch_id = ?",

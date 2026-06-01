@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
@@ -144,7 +144,12 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       child_scalar REAL,
       delta_scalar REAL,
       rejection_reason TEXT,
-      ran_at TEXT
+      ran_at TEXT,
+      structure TEXT,
+      structure_params_json TEXT,
+      competitors_json TEXT,
+      rounds_json TEXT,
+      standings_json TEXT
     )
     """,
     """
@@ -196,6 +201,21 @@ _V2_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("epochs", "parent_epoch_id", "TEXT"),
     ("runs", "tournament_id", "TEXT"),
     ("loss_profiles", "tournament_id", "TEXT"),
+)
+
+
+#: Columns added in v3 (the configurable-tournament-structure feature).
+#: Same incremental-open ALTER pattern as :data:`_V2_ADDED_COLUMNS`: a
+#: pre-existing v2 database gains these as ``NULL`` columns on open; a
+#: full ``zicato reindex`` drops the file and re-applies the v3 CREATE
+#: TABLE statement above, then re-derives the columns
+#: (``"gauntlet"`` for runs that predate the feature).
+_V3_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("tournaments", "structure", "TEXT"),
+    ("tournaments", "structure_params_json", "TEXT"),
+    ("tournaments", "competitors_json", "TEXT"),
+    ("tournaments", "rounds_json", "TEXT"),
+    ("tournaments", "standings_json", "TEXT"),
 )
 
 
@@ -286,6 +306,14 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
 
     if current < 2:
         for table, column, ddl_type in _V2_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+    if current < 3:
+        for table, column, ddl_type in _V3_ADDED_COLUMNS:
             if not _table_exists(conn, table):
                 continue
             if column in _column_names(conn, table):
