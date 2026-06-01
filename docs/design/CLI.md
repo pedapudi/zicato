@@ -8,6 +8,12 @@ subcommand, every flag, exit codes, output formats.
 The CLI is the primary interface. There is no v0 web UI; harmonograf
 exists for the live run view.
 
+> **Advisory.** This document is a design reference and can drift from
+> the shipped binary. When the two disagree, **`zicato --help` is
+> authoritative.** Flags marked *(DESIGN, not yet implemented)* — e.g.
+> `evolve --tournament-structure` (§3.11) — are specified here ahead of
+> implementation and will not appear in `zicato --help` until they ship.
+
 ## 0. The evolve-centric happy path
 
 The CLI is **evolve-centric**. The day-to-day workflow is two
@@ -471,6 +477,8 @@ zicato evolve
     [--max-wall-clock-seconds <S>]
     [--no-auto-epoch]
     [--epoch-name <name>]
+    [--tournament-structure gauntlet|single_elim|double_elim|swiss|racing]   # DESIGN, not yet implemented
+    [--tournament-param KEY=VALUE]                                            # DESIGN, repeatable
     [--no-dashboard]
     [--dashboard-port <port>]
 ```
@@ -500,6 +508,8 @@ Flags:
 | `--max-wall-clock-seconds <S>` | unset (unbounded) | Total wall-clock budget, in seconds, for the **whole** `evolve` invocation. The loop stops cleanly between rounds once the budget is spent, and a single round that would overrun it is cancelled and recorded as an aborted round. Applies on top of each board entry's own `wall_clock_budget_seconds`. Env var: `ZICATO_MAX_WALL_CLOCK_SECONDS` (explicit flag wins). See [ROBUSTNESS.md](ROBUSTNESS.md) §2.1. |
 | `--no-auto-epoch` | off (auto-epoch ON) | Disable contract-hash auto-epoching: `evolve` errors out (instead of rolling) when the evaluation contract has drifted from the current epoch. See [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10. |
 | `--epoch-name <name>` | the `e{N}` scheme | Name for an auto-created epoch. Ignored when `--epoch` is passed or no new epoch is created. |
+| `--tournament-structure <s>` *(DESIGN, not yet implemented)* | unset ⇒ `scoring.json` ⇒ `gauntlet` | The per-epoch tournament structure: `gauntlet` (default) / `single_elim` / `double_elim` / `swiss` / `racing`. **This is a contract-mutating convenience**: it writes the structure into the live `scoring.json` *before* the contract hash is computed, so it is exactly equivalent to editing `scoring.json` by hand — changing it rolls the epoch via auto-epoching. See [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §5 and [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §9. |
+| `--tournament-param KEY=VALUE` *(DESIGN, repeatable)* | none | Sets one structure `params` key (e.g. `rounds=6`). Value is parsed as JSON if possible, else a string. Writes into the same `tournament.params` block in `scoring.json`; contract-affecting, same caveat as above. |
 | `--no-dashboard` | off | Do not spawn the dashboard service (and the watchdog supervisor that guards it). The loop still runs. See [RUNTIME.md](RUNTIME.md) §3 and [DASHBOARD.md](DASHBOARD.md) §2.1. |
 | `--dashboard-port <port>` | `7892` (1–65535) | Port for the dashboard HTTP server, bound on `127.0.0.1`. |
 

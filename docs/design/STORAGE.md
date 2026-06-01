@@ -285,6 +285,63 @@ add-on to the stated design**:
 No schema change ships with this design — see §6 for the SQLite vs
 DuckDB evaluation and why SQLite stays for now.
 
+### 5.4 The generalized tournament record (configurable structures)
+
+> **Status.** DESIGN (not yet implemented). Full spec:
+> [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §2.
+
+Today a tournament's persistence assumes the king-of-the-hill gauntlet:
+exactly one champion vs one challenger. Making the per-epoch structure
+configurable (`gauntlet` / `single_elim` / `double_elim` / `swiss` /
+`racing`) generalizes the persisted record **additively**, so the
+gauntlet shape stays byte-identical and old workspaces keep loading.
+The generalization touches three records and adds **zero new storage
+mechanism** — it rides entirely on the existing seams (§5.1–§5.2).
+
+**(a) The live runtime record** — `runtime/active_tournament.json`
+(`ActiveTournament`), one JSON record via `StorageBackend`. It gains a
+**structure envelope** alongside the existing two-side fields:
+
+- `structure` / `structure_params` — copied from the epoch contract at
+  tournament start (default `"gauntlet"` / `{}`).
+- `competitors` — the full candidate field (generation id + seed +
+  role), the generalization of "two generations". A gauntlet's two
+  competitors stay derivable from `parent_generation_id` /
+  `child_generation_id`.
+- `rounds` — a tagged-union list of per-round / per-rung / per-bracket
+  match state (one shape per structure; the gauntlet degenerates to one
+  round, one match).
+- `standings` — a flat live ranking (`generation_id`, `rank`, `scalar`,
+  `wins`/`losses`, `status`).
+
+The per-entry rows (`ActiveTournamentEntry`) keep their `(entry_id,
+side)` key; `side` **widens** from `{"parent","child"}` to an opaque
+competitor key (a generation id) for non-gauntlet structures, and gains
+a `match_id` (default `""`). `update_tournament_entry`'s signature is
+unchanged. `base.py` / `files.py` / `memory.py` are **untouched** — the
+new fields are just more JSON in the same `to_dict` / `from_dict`.
+
+**(b) The settled per-generation outcome** — `experiment.json`'s
+`outcome` block (`OutcomeRecord`), persisted via `epoch/_storage.py`. It
+gains `structure`, `final_rank`, `eliminated_in_round`, and a
+per-generation `match_record`. `write_experiment` /
+`_outcome_from_dict` read/write them; no new key helper, no new file.
+
+**(c) The settled index row** — the SQLite `tournaments` table. It gains
+five ADDITIVE `TEXT` columns (`structure`, `structure_params_json`,
+`competitors_json`, `rounds_json`, `standings_json`) as a **v3 column
+add**, exactly the v2 pattern (`_V2_ADDED_COLUMNS`). The existing
+per-matchup columns stay and describe the **crowning** match for every
+structure, so a gauntlet-only reader still gets a coherent answer. The
+index is derived and rebuildable, so the migration is "drop + re-derive"
+on the `reindex` path and an incremental column-add otherwise — the same
+self-healing dual-write ordering rule (§5.3) applies.
+
+**Back-compat.** Every new field defaults to the gauntlet
+interpretation; the only stateful store (the index) is rebuildable. No
+migration tool is needed — a gauntlet workspace written before the
+feature loads and renders unchanged.
+
 ## 6. The analytical index database: SQLite vs DuckDB
 
 `index.db` is a **derived, disposable** analytical index, rebuilt from
@@ -481,3 +538,4 @@ when the git backend ships (§7).
 | `MutationPoint.id` references that patches carry | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
 | CLI surface (`zicato reindex`, and the future `zicato repo` / `log` / `diff`) | [CLI.md](CLI.md) |
 | Why the canonical layer is filesystem-native | [RATIONALE.md](RATIONALE.md) §7 |
+| The generalized tournament record for configurable structures (§5.4) | [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) |

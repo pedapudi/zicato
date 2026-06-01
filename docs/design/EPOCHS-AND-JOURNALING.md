@@ -48,6 +48,9 @@ An operator starts a new epoch when any of the following hold:
   surface the proposer can act on is materially different.
 - The scoring weights change (e.g. the operator decides pass-rate
   matters more relative to drift, or retunes `per_judge_weights`).
+- The tournament structure changes (e.g. `gauntlet → swiss`, or a
+  structure param like `swiss.rounds`) — see §9. Generations selected
+  under different structures are not comparable.
 - The regression baseline rebases (a major refactor of the inner
   harness happened outside the loop and the parent `v0` of the next
   epoch is a fresh snapshot).
@@ -715,6 +718,94 @@ aggregate across rounds:
 - `patterns/round_NNN.json` — pattern detector output for the round.
 - `journal.md` — running narrative.
 
+## 9. Per-epoch tournament structure
+
+> **Status.** DESIGN (not yet implemented). The shipped behaviour is
+> the king-of-the-hill gauntlet; this section specifies how a
+> *configurable* per-epoch structure folds into the epoch contract. The
+> full data model (persisted record, dashboard API, CLI) lives in
+> [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md); the selection
+> algorithms live in [SELECTION.md](SELECTION.md) /
+> [TOURNAMENT.md](TOURNAMENT.md).
+
+### 9.1 The `tournament` block
+
+Each epoch chooses one tournament **structure** — how the crowning
+decision is made over the round's candidate field. The choice is a
+contract property (a gauntlet champion and a Swiss champion are not
+comparable), so it lives in `scoring.json` under a `tournament` key:
+
+```jsonc
+{
+  // ... weights + gate thresholds ...
+  "tournament": {
+    "structure": "gauntlet",   // gauntlet|single_elim|double_elim|swiss|racing
+    "params": { }               // structure-specific; defaults fill in
+  }
+}
+```
+
+- `structure` — one of five closed tokens; `gauntlet` is the default
+  (an epoch with no `tournament` key gets the shipped king-of-the-hill
+  gauntlet, byte-for-byte).
+- `params` — a structure-specific JSON object the selection logic reads
+  (e.g. `swiss.rounds`, `racing.rungs`). See
+  [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §1.3 for the
+  per-structure params and their defaults.
+
+It is modeled as a frozen field on `ScoringWeights` (a
+`TournamentStructure` dataclass), so it is frozen for the epoch's
+lifetime exactly like the weights are.
+
+### 9.2 Contract-hash interaction (it rolls the epoch)
+
+Because the `tournament` block lives inside `scoring.json`, it factors
+into the contract hash through the **existing** scoring canonicalizer —
+`_scoring_to_canon` already serializes every public `ScoringWeights`
+field. **Changing the structure or any param therefore rolls the
+epoch:** switching `gauntlet → swiss`, or bumping `swiss.rounds` from 4
+to 6, changes the scoring component's canonical form, changes the hash,
+and `zicato evolve`'s auto-roll path (§10) closes the current epoch and
+opens a fresh one — exactly as a `promote_margin` retune does today. The
+roll message names the changed component as `scoring` (the structure
+*is* scoring); no new component label is introduced.
+
+This is the desired behaviour: it keeps the invariant that all
+generations within one epoch were selected under one comparable
+structure.
+
+### 9.3 How rounds / matchups journal under each structure
+
+The §8 round mechanics describe one *gauntlet* round (one champion, one
+challenger). Under a richer structure a single `zicato evolve` round can
+play several matches, but the journaling seams are unchanged — they
+**generalize additively**:
+
+- **`experiment.json` `outcome`** — still written once per generation,
+  still carrying `tournament_decision` (the crowning verdict for *that*
+  generation: did it become / stay champion). It gains additive fields
+  — `structure`, `final_rank`, `eliminated_in_round`, and a
+  per-generation `match_record` of the matches that generation played.
+  Old journals deserialize unchanged (every new field defaults to the
+  gauntlet interpretation).
+- **`journal.md`** — still one human-readable section per experiment.
+  For a non-gauntlet structure the section additionally renders the
+  generation's rank / elimination round, but the
+  `## vN — <core_idea>` + outcome-line shape is preserved.
+- **Per-match detail** — each match is two (or, for a racing rung, N)
+  board runs under two (or N) generations, persisted under the usual
+  `generations/{id}/runs/{entry_id}/` layout. No new per-match
+  directory: a match is reconstructable from the per-run `loss.json`
+  files keyed on `(generation_id, entry_id)`, plus the structure's
+  `rounds` state carried on the live `ActiveTournament` and the settled
+  `tournaments` index row.
+
+The full persisted shapes (the generalized `ActiveTournament`,
+`OutcomeRecord`, and `tournaments` table, with their back-compat
+defaults) are specified in
+[TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §2 and
+[STORAGE.md](STORAGE.md) §5.
+
 ## 10. Contract-hash auto-epoching
 
 Operators should never have to think about epoch management in the
@@ -730,7 +821,10 @@ The **evaluation contract** is exactly four things:
    board's `disable_drift` set (`board.jsonl`).
 2. **The proposer brief** — operator steering text
    (`brief.md`).
-3. **The scoring** — weights + gate thresholds (`scoring.json`).
+3. **The scoring** — weights + gate thresholds, **and the per-epoch
+   tournament structure** (`scoring.json`; see §9 for the tournament
+   block and [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) for the
+   full data model).
 4. **The registered inner-harness IDENTITY** — the `--adk` entrypoint
    string plus the sorted list of `--mutable-tree` paths.
 
@@ -771,7 +865,7 @@ so spurious edits do not roll the epoch:
 |---|---|
 | board | `load_board()`, sort entries by id, serialize each to a sorted-key JSON dict (including its `expectations` and `judges`), join; the board's `disable_drift` set sorts into the same canonical form. Semantic content only — reordering rows or reformatting the JSONL is a no-op. |
 | proposer brief | Read text, normalize line endings to `\n`, strip trailing whitespace per line, strip leading/trailing blank lines. CRLF churn and re-indentation are no-ops. |
-| scoring | Parse into a fully-defaulted `ScoringWeights`, round every float to 6 decimal places, `json.dumps(sort_keys=True)`. Partial vs full documents and float-precision noise are no-ops. |
+| scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — round every float to 6 decimal places, `json.dumps(sort_keys=True)`. Partial vs full documents and float-precision noise are no-ops; a structure or param change is NOT a no-op (it rolls the epoch). |
 | entrypoint | The string verbatim. |
 | mutable_trees | Sorted tuple of absolute path strings. Registration order is a no-op. |
 
@@ -863,6 +957,7 @@ the manual escape hatches:
 | Patch shape and validator constraints | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
 | Loss profile written into each `runs/{id}/loss.json` | [TELEMETRY.md](TELEMETRY.md) |
 | Drift loss scalar that drives `tournament_decision` | [SCORING.md](SCORING.md) |
+| Per-epoch tournament structure: config block, persisted record, API, UI | [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) |
 | CLI commands for `epoch new` / `close` / `list` | [CLI.md](CLI.md) |
 | Atomic-rename helper used by `analysis.html` writes | [RUNTIME.md](RUNTIME.md) §6 |
 | Live dashboard that supersedes `analysis.html` during an `evolve` | [DASHBOARD.md](DASHBOARD.md) |
