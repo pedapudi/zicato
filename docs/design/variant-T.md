@@ -212,6 +212,49 @@ a **"See Match-ups →"** affordance that opens the real ladder / bracket /
 standings. The gauntlet reel is unchanged; only the non-gauntlet case swaps it
 out. The heatmap is unaffected either way.
 
+### The survival funnel — the racing epoch hero (`svg.survivalFunnel`)
+
+For a **racing** epoch the structure strip's body is an interactive **survival
+funnel** (`svg.survivalFunnel`, `.dn-funnel`) — the at-a-glance epoch hero,
+complementary to (not a duplicate of) the per-rung ladder that still lives in
+Match-ups. The funnel renders successive halving as a *flow that narrows at each
+cut*:
+
+- The field **flows N → N/2 → … → 1 → champion-gate** across the rungs. Each
+  rung is a **trapezoid stage** whose width ∝ the surviving field size: the left
+  edge encodes the entering field, the right edge the survivors carried forward,
+  so the band **narrows at every cut**. The surviving flow thickens toward the
+  gate.
+- **Eliminated** competitors **peel off as labelled dead-end branches (✕)** at
+  the rung where they were cut (`.dn-funnel-deadedge` elbows down out of the
+  band); **survivors (↑)** ride inside the band.
+- Each stage's **board fraction** is shown in its sub-label (`N field · 25/100
+  board`), so the successive-halving / budget-escalation idea reads.
+- The terminal **champion-gate** is the full-board confirmation: the lone
+  survivor vs the champion. When promoted it **crowns the survivor (♚**,
+  confirmed via `champion_lineage`); else it reads **"champion stands"**, with
+  the final Δ in the tooltip.
+- **Interactive.** Hover a competitor / branch → tooltip with its per-rung
+  Δ-vs-champion + cut/survive verdict; **click** a competitor → its candidate
+  (`#/e/<epoch>/gen/<gen>`); the gate seat clicks through to the crowned survivor.
+- **Live vs idle.** `views/epoch.js` resolves the data **live-first**: when a run
+  is in flight (`deriveLiveStatus` off the shared `state`), it prefers the LIVE
+  `/api/active-tournament` topology — the pending rung renders a **neutral dashed
+  band** (`.dn-funnel-pending`, nobody cut) and the gate reads **"deciding…"**;
+  when idle it **reuses `structure.reconstructRacing(/api/tournaments)`** to
+  rebuild the completed funnel (the same reconstruction the Match-ups ladder
+  uses, via the shared `structure.racingModel(st)` derivation).
+- **Degrade.** When there are **no rung records** (a racing epoch that has not
+  run), the strip **does not** paint an empty funnel — it degrades to the tidy
+  static `field of N · See Match-ups` summary.
+
+The funnel is **racing-specific**: gauntlet keeps its reel; swiss / single- /
+double-elim keep their strip + Match-ups ladder, all unchanged. It is
+**fit-to-width** (width:100% + responsive viewBox, no pan/zoom), **token-themed**
+(`--v2-*`, legible across all 13 themes incl. the light Paper / Selenized swatches),
+and scales with the page-scale pill — the same discipline as every other Console
+mark.
+
 ## The match cards on the generations page (fold 5, adopted from W)
 
 `views/gens.js` leads with a **champion-defends banner** (champion id · loss · N

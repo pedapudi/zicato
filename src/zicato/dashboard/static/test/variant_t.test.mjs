@@ -2156,4 +2156,198 @@ test('lifecycle BOARD column: the multiplicity badge style + raced disc marker a
   assert(/\.ezn-board-raced\s+\.ezn-board-disc\s*\{/.test(css), 'a raced node’s disc carries a distinct marker style');
 });
 
+// ====================================================================
+// SURVIVAL FUNNEL — the racing epoch's structure-strip hero.
+//
+// For a RACING epoch the epoch-overview structure strip renders an
+// interactive survival FUNNEL: the field flows N → N/2 → … → 1 →
+// champion-gate, the flow narrowing at each cut; eliminated competitors peel
+// off as ✕ dead-end branches, survivors (↑) ride the thickening flow into the
+// gate, which crowns the promoted survivor (♚). It REUSES reconstructRacing()
+// (idle) / the LIVE /api/active-tournament (in-flight), degrades to the static
+// "field of N" summary when no rungs have raced, and is racing-specific
+// (gauntlet keeps its reel; other structures keep their strip).
+// ====================================================================
+
+// the survival-funnel SVG primitive renders the field → cuts → survivor → gate.
+test('survival funnel: the SVG narrows N→…→1, marks cuts ✕ / survivors ↑, and crowns the gate ♚', () => {
+  const rungs = [
+    { label: 'Rung 0', competitors: ['v1', 'v2', 'v3', 'v4'], survivors: ['v3', 'v4'], cut: ['v1', 'v2'], board_fraction: 0.25, deltas: { v1: 25, v2: 3.3, v3: -0.16, v4: 0.002 } },
+    { label: 'Rung 1', competitors: ['v3', 'v4'], survivors: ['v3'], cut: ['v4'], board_fraction: 0.5, deltas: { v3: 1.0, v4: 1.25 } },
+  ];
+  const node = svg.survivalFunnel({ rungs, championId: 'v3', gateState: 'crowned', gateDelta: -32.19, onCompetitor() {} });
+  assertEqual(node.localName, 'svg', 'the funnel is an SVG');
+  assertEqual(node.getAttribute('width'), '100%', 'fit-to-width (width:100%)');
+  assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'carries a responsive viewBox (no pan/zoom)');
+
+  // the flow narrows: each stage is a trapezoid whose right edge ∝ survivors.
+  const bands = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-funnel-band') && n.localName === 'polygon');
+  assert(bands.length >= 2, 'one flowing band per rung (the field narrows stage to stage)');
+  const txt = node.textContent;
+  assert(txt.includes('Rung 0') && txt.includes('Rung 1'), 'each stage is labelled by rung');
+  assert(txt.includes('25/100 board') || txt.includes('25'), 'a stage encodes its board fraction (successive halving reads)');
+  assert(txt.includes('✕'), 'eliminated competitors are marked cut (✕)');
+  assert(txt.includes('↑'), 'survivors are marked (↑)');
+  // every cut competitor peels off as a labelled dead-end branch.
+  const deadEdges = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-funnel-deadedge'));
+  assert(deadEdges.length >= 3, 'eliminated competitors peel off as dead-end branches (v1,v2 at rung0 + v4 at rung1)');
+  // the terminal champion-gate crowns the survivor.
+  assert(txt.includes('champion-gate'), 'a terminal champion-gate stage rendered');
+  assert(txt.includes('♚ v3'), 'the crowned survivor is shown (♚ v3)');
+  assert(!txt.includes('tbd'), 'a settled gate is not the empty tbd skeleton');
+});
+
+// (a) the racing epoch strip renders the funnel from the per-challenger records.
+test('survival funnel: the racing epoch strip renders the funnel (stages narrow N→…→1, cuts ✕, gate crowns v3)', async () => {
+  freshState();
+  const F = {
+    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
+      experiments: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, parent_generation_id: g === 'v0' ? '' : 'v0', outcome: { decision: g === 'v0' ? 'baseline' : (g === 'v3' ? 'promoted' : 'rejected') } })), board: [] },
+    '/api/lineage': { generations: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, epoch_id: RC_EPOCH, parent_generation_id: g === 'v0' ? '' : 'v0', promoted: g === 'v0' || g === 'v3' })) },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': RACING_TOURNAMENTS,
+  };
+  installFixtureMap(F);
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
+
+  // racing-specific: NO gauntlet champion-spine reel on a racing epoch.
+  assertEqual(allByClass(host, 'tr-reel').length, 0, 'NO gauntlet reel for a racing epoch');
+  const funnel = svgsByClass(host, 'dn-funnel')[0];
+  assert(funnel, 'the survival funnel rendered in the racing epoch structure strip');
+  assert(funnel.getAttribute('width') === '100%' && (funnel.getAttribute('viewBox') || '').startsWith('0 0 '), 'the funnel is fit-to-width + responsive');
+  assert(!hasScrollWrapperAncestor(funnel, host), 'no horizontal-scroll wrapper around the funnel (no pan/zoom)');
+
+  const txt = funnel.textContent;
+  assert(txt.includes('Rung 0') && txt.includes('Rung 1'), 'both reconstructed rungs render as stages');
+  for (const id of ['v1', 'v2', 'v3', 'v4']) assert(txt.includes(id), 'rung0 names the full field — ' + id);
+  assert(txt.includes('✕'), 'eliminated competitors marked cut (✕) at their rung');
+  assert(txt.includes('↑'), 'survivors marked (↑)');
+  assert(txt.includes('♚ v3'), 'the champion-gate crowns the survivor v3 (♚)');
+  // the funnel does not duplicate the detailed ladder — it keeps the See Match-ups link.
+  assert(host.textContent.includes('See Match-ups'), 'the funnel keeps the See Match-ups → affordance (complementary to the ladder)');
+  assertEqual(svgsByClass(host, 'dn-raceladder').length, 0, 'the epoch hero is the funnel, NOT a duplicate of the Match-ups ladder');
+});
+
+// (b) a competitor is clickable → its candidate.
+test('survival funnel: a competitor is clickable → its candidate page', async () => {
+  freshState();
+  const F = {
+    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
+      experiments: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, parent_generation_id: g === 'v0' ? '' : 'v0', outcome: { decision: g === 'v0' ? 'baseline' : (g === 'v3' ? 'promoted' : 'rejected') } })), board: [] },
+    '/api/lineage': { generations: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, epoch_id: RC_EPOCH, parent_generation_id: g === 'v0' ? '' : 'v0', promoted: g === 'v0' || g === 'v3' })) },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': RACING_TOURNAMENTS,
+  };
+  installFixtureMap(F);
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  let navTo = null;
+  const ctx = { navigate: (v, p) => { navTo = { v, p }; }, href: router.href };
+  await epoch.render(host, ctx, { epochId: RC_EPOCH });
+  const runner = allByClass(host, 'dn-funnel-runner')[0];
+  assert(runner, 'a clickable competitor exists on the funnel');
+  runner.dispatchEvent({ type: 'click' });
+  assert(navTo && navTo.v === 'candidate' && navTo.p.epochId === RC_EPOCH, 'clicking a funnel competitor routes to its candidate page');
+  assert(/^v\d+$/.test(navTo.p.gen), 'the navigation carries the competitor generation id');
+});
+
+// (c) the live path shows a pending stage + "deciding…".
+test('survival funnel: a LIVE racing run shows the in-progress funnel (pending stage neutral, gate "deciding…")', async () => {
+  freshState();
+  const F = {
+    '/api/epoch': { epoch_id: RC_EPOCH, closed: false, goal: 'g', tournament: { structure: 'racing', params: LIVE_RACING.structure_params }, experiments: [], board: [] },
+    '/api/lineage': { generations: LIVE_RACING.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: RC_EPOCH, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: false })) },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': { epoch_id: RC_EPOCH, structure: 'racing', champion_lineage: [], matchups: [], tournaments: [] },
+    '/api/active-tournament': LIVE_RACING,
+  };
+  installFixtureMap(F);
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1' });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
+
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
+
+  const funnel = svgsByClass(host, 'dn-funnel')[0];
+  assert(funnel, 'the LIVE racing funnel rendered from /api/active-tournament');
+  assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight funnel');
+  // the not-yet-decided rung stays neutral (a pending band, nobody struck).
+  assert(allByClass(funnel, 'dn-funnel-pending').length >= 1, 'the pending (still-racing) stage renders neutral (no premature cut)');
+  const struck = allByClass(host, 'dn-out');
+  for (const n of struck) assert((n.textContent || '').indexOf('v1') < 0, 'the leader v1 is never struck (cut) mid-run');
+  assert(funnel.textContent.includes('deciding'), 'the live champion-gate reads "deciding…" — no premature crown');
+  assert(!funnel.textContent.includes('♚'), 'no champion is crowned ♚ while the race is live');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+});
+
+// (d) with no rung records, degrade to the static summary (no empty funnel).
+test('survival funnel: with NO rung records the strip degrades to the static "field of N" summary (no empty funnel)', async () => {
+  freshState();
+  const F = {
+    '/api/epoch': { epoch_id: RC_EPOCH, closed: false, goal: 'g', tournament: { structure: 'racing', params: { rungs: [1, 2] } }, experiments: [
+      { generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } },
+      { generation_id: 'v1', parent_generation_id: 'v0', outcome: { decision: 'rejected' } },
+    ], board: [] },
+    '/api/lineage': { generations: [
+      { generation_id: 'v0', epoch_id: RC_EPOCH, parent_generation_id: '', promoted: true },
+      { generation_id: 'v1', epoch_id: RC_EPOCH, parent_generation_id: 'v0', promoted: false },
+    ] },
+    '/api/score-trajectory': { points: [] },
+    // no racing records yet — nothing to reconstruct.
+    '/api/tournaments': { epoch_id: RC_EPOCH, structure: 'racing', champion_lineage: [], matchups: [], tournaments: [] },
+  };
+  installFixtureMap(F);
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
+
+  assertEqual(svgsByClass(host, 'dn-funnel').length, 0, 'NO empty funnel when there are no rung records');
+  const strip = allByClass(host, 'dt-struct-strip')[0];
+  assert(strip, 'a tidy static structure strip degrades in place');
+  assert(host.textContent.includes('Racing'), 'the static summary still names the racing structure');
+  assert(host.textContent.includes('field of'), 'the static summary states the field size');
+  assert(host.textContent.includes('See Match-ups'), 'the static summary keeps the See Match-ups → link');
+});
+
+// (e) a gauntlet epoch's reel/strip is unchanged (the funnel is racing-specific).
+test('survival funnel: a GAUNTLET epoch is unchanged — its champion-spine reel stays, NO funnel', async () => {
+  freshState(); installFetch();  // the default gauntlet fixture (no tournament block)
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(allByClass(host, 'tr-reel')[0], 'the gauntlet epoch keeps the champion-spine reel');
+  assertEqual(svgsByClass(host, 'dn-funnel').length, 0, 'NO survival funnel for a gauntlet epoch (racing-specific)');
+  assertEqual(allByClass(host, 'dt-struct-strip').length, 0, 'NO structure strip for a gauntlet epoch');
+});
+
+// (f) the funnel marks are themed via CSS tokens (legible across all 13 themes).
+test('survival funnel: marks are token-themed in the scoped stylesheet (legible across the 13 themes)', () => {
+  const css = readCss();
+  assert(/\.dn-funnel-band\s*\{/.test(css), '.dn-funnel-band is styled');
+  assert(/\.dn-funnel-band[^}]*var\(--v2-/.test(css), 'the flow band reads a --v2-* token (theme-aware)');
+  assert(/\.dn-funnel-name\.dn-good[^}]*var\(--v2-good\)/.test(css), 'survivors use the --v2-good token');
+  assert(/\.dn-funnel-name\.dn-bad[^}]*var\(--v2-bad\)/.test(css), 'cuts use the --v2-bad token');
+  assert(/\.dn-funnel-gatebox\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the crowned gate uses the --v2-good token');
+  assert(/\.dn-funnel-pending[^}]*var\(--v2-rule/.test(css), 'a pending (live) stage uses a neutral rule token');
+});
+
 await run();

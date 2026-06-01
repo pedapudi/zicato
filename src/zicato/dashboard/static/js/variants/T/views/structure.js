@@ -429,6 +429,70 @@ function renderSwiss(st, ctx, epochId) {
   return nodes;
 }
 
+// ---- racing — derive the rung/gate model from a normalized payload ─
+//
+// Both the Match-ups ladder (renderRacing, below) AND the epoch-overview
+// survival funnel (views/epoch.js) need the SAME derived view of a racing
+// `st`: the ordered rung list (field/survivors/cut/Δ/board-fraction +
+// pending flag) and the resolved champion-gate (state + crowned id + Δ). This
+// is the single source of that derivation so the funnel and the ladder never
+// disagree. Returns null when `st` is not a racing payload.
+//
+//   → { rungs, championId, gateState, gateDelta, live, hasRungs }
+//   gateState ∈ 'crowned' | 'stands' | 'deciding' | 'pending'.
+export function racingModel(st) {
+  if (!st || String(st.structure) !== 'racing') return null;
+  const live = !!st.live;
+  const rounds = Array.isArray(st.rounds) ? st.rounds : [];
+  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
+  const gateRound = rounds.find((r) => String(firstMatch(r).match_id || '') === 'racing-final') || null;
+  const rungRounds = rounds.filter((r) => String(firstMatch(r).match_id || '') !== 'racing-final');
+
+  const rungs = rungRounds.map((r) => {
+    const m = firstMatch(r);
+    return {
+      label: r.label || `Rung ${(r.round_index || 0) + 1}`,
+      match_id: m.match_id,
+      competitors: Array.isArray(m.competitors) ? m.competitors : [],
+      survivors: Array.isArray(m.survivors) ? m.survivors : [],
+      cut: Array.isArray(m.cut) ? m.cut : [],
+      deltas: (m.deltas && typeof m.deltas === 'object') ? m.deltas : null,
+      board_fraction: svg.isNum(m.board_fraction) ? m.board_fraction : null,
+      pending: !(Array.isArray(m.survivors) && m.survivors.length) && !(Array.isArray(m.cut) && m.cut.length),
+    };
+  });
+
+  const gateMatch = gateRound ? firstMatch(gateRound) : null;
+  const finalRungSurvivors = (() => {
+    for (let i = rungs.length - 1; i >= 0; i--) {
+      if (rungs[i].survivors.length) return rungs[i].survivors.map(String);
+    }
+    return [];
+  })();
+  let championId = null;
+  let gateState = live ? 'deciding' : (gateMatch ? 'settled' : 'pending');
+  if (!live && gateMatch) {
+    const decided = String(gateMatch.decision || '').toLowerCase() === 'promoted'
+      || (gateMatch.winner && gateMatch.winner !== (gateMatch.competitors || [])[0]);
+    const survivor = String(gateMatch.winner || '')
+      || (Array.isArray(gateMatch.competitors) && gateMatch.competitors[1]) || null;
+    if (decided && survivor) {
+      championId = survivor;
+    } else if (lineage.length) {
+      championId = (survivor && lineage[lineage.length - 1] === survivor) ? survivor : null;
+    }
+    if (!championId && lineage.length && finalRungSurvivors.indexOf(lineage[lineage.length - 1]) >= 0) {
+      championId = lineage[lineage.length - 1];
+    }
+    gateState = championId ? 'crowned' : 'stands';
+  } else if (live && finalRungSurvivors.length === 1) {
+    championId = finalRungSurvivors[0];
+  }
+  const gateDelta = (gateMatch && svg.isNum(gateMatch.delta_scalar)) ? gateMatch.delta_scalar : null;
+  return { rungs, championId, gateState, gateDelta, live, hasRungs: rungs.length > 0 };
+}
+
 // ---- racing — a successive-halving rung ladder ---------------------
 
 function renderRacing(st, ctx, epochId) {

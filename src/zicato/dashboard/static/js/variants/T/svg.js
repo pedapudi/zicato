@@ -870,6 +870,204 @@ export function racingLadder(opts) {
   return svg;
 }
 
+// ---- racing SURVIVAL FUNNEL (the at-a-glance epoch hero) -------------
+//
+// The successive-halving field rendered as a FLOW that narrows at each cut:
+// the field flows N → N/2 → … → 1 → champion-gate, the flow's width ∝ the
+// surviving field size. ELIMINATED competitors peel off as labelled dead-end
+// branches (✕) at the rung where they were cut; SURVIVORS (↑) continue, the
+// surviving flow thickening toward the gate. The terminal champion-gate crowns
+// the lone survivor (♚) when promoted, else reads "champion stands"; a LIVE
+// race leaves the pending stage neutral and the gate "deciding…".
+//
+// This is COMPLEMENTARY to racingLadder (the detailed Match-ups ladder): the
+// funnel is the compact epoch-overview hero, the ladder the per-rung detail.
+//
+// FIT-TO-WIDTH (responsive viewBox + width:100%, NO pan/zoom), token-themed
+// across every theme — the same discipline as every other Console mark.
+//
+// opts: { rungs:[{label, competitors, survivors, cut, board_fraction, deltas,
+//         pending}], championId, live, gateState, gateDelta,
+//         onCompetitor(genId), title }
+//
+//   gateState — 'crowned' | 'stands' | 'deciding' | 'pending'
+//     (absent ⇒ inferred from championId + live).
+export function survivalFunnel(opts) {
+  const o = opts || {};
+  const rungs = (Array.isArray(o.rungs) ? o.rungs : []).filter((r) => r);
+  const live = !!o.live;
+  const stageW = 150;
+  const stageGap = 20;
+  const gateW = 132;
+  const top = 30;
+  const laneH = 132;        // the vertical band the surviving flow occupies
+  const deadH = 18;         // per-eliminated-branch row height below the lane
+  // the widest stack of dead-end branches across stages bounds the figure height.
+  const maxDead = Math.max(0, ...rungs.map((r) => (Array.isArray(r.cut) ? r.cut.length : 0)));
+  const w = rungs.length * stageW + Math.max(0, rungs.length - 1) * stageGap + stageGap + gateW + 8;
+  const h = top + laneH + maxDead * deadH + 26;
+  const svg = svgEl('svg', {
+    class: 'dn-funnel', width: '100%', height: h,
+    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
+  });
+  if (rungs.length === 0) {
+    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no rungs yet';
+    svg.appendChild(t);
+    return svg;
+  }
+  const midY = top + laneH / 2;
+  // the entering field of stage 0 sets the maximum flow width (100% lane).
+  const field0 = Math.max(1, (Array.isArray(rungs[0].competitors) ? rungs[0].competitors.length : 1));
+  // a stage's flow band half-height ∝ its entering field size.
+  const bandHalf = (n) => Math.max(6, (laneH / 2) * (Math.max(0, n) / field0));
+  const stageX = (j) => j * (stageW + stageGap) + 2;
+
+  // ── the flowing band: one trapezoid per stage, narrowing at each cut ──
+  // entering width = |competitors|; leaving width = |survivors| (the field
+  // carried to the next stage). A pending (live, undecided) stage keeps a
+  // straight neutral band — nobody has been cut yet.
+  rungs.forEach((rung, j) => {
+    const comps = Array.isArray(rung.competitors) ? rung.competitors : [];
+    const cut = new Set(Array.isArray(rung.cut) ? rung.cut.map(String) : []);
+    const surv = Array.isArray(rung.survivors) ? rung.survivors.map(String) : [];
+    const pending = !!rung.pending || (cut.size === 0 && surv.length === 0);
+    const enterN = comps.length;
+    const leaveN = pending ? enterN : surv.length;
+    const x0 = stageX(j);
+    const x1 = x0 + stageW;
+    const hIn = bandHalf(enterN);
+    const hOut = bandHalf(leaveN);
+    const cls = 'dn-funnel-band' + (pending ? ' dn-funnel-pending' : '');
+    // a trapezoid: left edge full enter-height, right edge narrowed to leave-height.
+    svg.appendChild(svgEl('polygon', {
+      points: `${x0},${midY - hIn} ${x1},${midY - hOut} ${x1},${midY + hOut} ${x0},${midY + hIn}`,
+      class: cls,
+    }, [title(`${rung.label || 'rung ' + j}: ${enterN} in → ${pending ? '…' : leaveN + ' survive'}${isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : ''}`)]));
+    // stage label + board fraction above the band.
+    const head = svgEl('text', { x: x0 + stageW / 2, y: top - 16, class: 'dn-funnel-head', 'text-anchor': 'middle' });
+    head.textContent = shortLabel(rung.label || `Rung ${j}`, 16);
+    svg.appendChild(head);
+    const sub = svgEl('text', { x: x0 + stageW / 2, y: top - 4, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
+    sub.textContent = `${enterN} field` + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}/100 board` : '');
+    svg.appendChild(sub);
+
+    // ── the surviving runners ride INSIDE the band (↑), clickable ──
+    const survRunners = pending ? comps.map(String) : surv;
+    survRunners.forEach((sid, i) => {
+      const cy = survRunners.length === 1 ? midY
+        : midY - hOut + 8 + (i * (Math.max(1, 2 * hOut - 16)) / Math.max(1, survRunners.length - 1));
+      funnelRunner(svg, o, sid, rung, j, x0 + 8, cy, pending ? 'racing' : 'survives');
+    });
+
+    // ── eliminated competitors peel off as labelled dead-end branches (✕) ──
+    if (!pending) {
+      [...cut].forEach((cid, i) => {
+        const sid = String(cid);
+        const branchY = top + laneH + 6 + i * deadH;
+        const elbowX = x0 + stageW * 0.5;
+        // a dead-end branch from the band's lower edge down to the cut row.
+        svg.appendChild(svgEl('path', {
+          d: `M${elbowX},${midY + hIn} V${branchY} H${x0 + stageW - 10}`,
+          class: 'dn-funnel-deadedge', fill: 'none',
+        }));
+        funnelRunner(svg, o, sid, rung, j, elbowX + 4, branchY - 1, 'cut');
+      });
+    }
+  });
+
+  // ── the terminal CHAMPION-GATE ──
+  const finalSurv = (() => {
+    for (let i = rungs.length - 1; i >= 0; i--) {
+      const s = Array.isArray(rungs[i].survivors) ? rungs[i].survivors.map(String) : [];
+      if (s.length) return s;
+    }
+    return [];
+  })();
+  const champId = o.championId ? String(o.championId) : null;
+  const gateState = o.gateState || (live ? 'deciding' : (champId ? 'crowned' : 'pending'));
+  const crowned = gateState === 'crowned' && !!champId;
+  const seatId = champId || (finalSurv.length === 1 ? finalSurv[0] : null);
+  const gx = rungs.length * stageW + Math.max(0, rungs.length - 1) * stageGap + stageGap + 2;
+  // the converging flow from the last stage's surviving band into the gate.
+  const lastLeave = (() => {
+    const r = rungs[rungs.length - 1];
+    const c = Array.isArray(r.competitors) ? r.competitors : [];
+    const s = Array.isArray(r.survivors) ? r.survivors.map(String) : [];
+    const pend = !!r.pending || (s.length === 0 && (!Array.isArray(r.cut) || r.cut.length === 0));
+    return pend ? c.length : s.length;
+  })();
+  const flowH = bandHalf(lastLeave);
+  const lastX = stageX(rungs.length - 1) + stageW;
+  svg.appendChild(svgEl('polygon', {
+    points: `${lastX},${midY - flowH} ${gx},${midY - 11} ${gx},${midY + 11} ${lastX},${midY + flowH}`,
+    class: 'dn-funnel-band dn-funnel-gateflow' + (crowned ? ' dn-good' : ''),
+  }));
+  const gHead = svgEl('text', { x: gx + gateW / 2, y: top - 16, class: 'dn-funnel-head', 'text-anchor': 'middle' });
+  gHead.textContent = 'champion-gate';
+  svg.appendChild(gHead);
+  const gSub = svgEl('text', { x: gx + gateW / 2, y: top - 4, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
+  gSub.textContent = 'full board · vs champion';
+  svg.appendChild(gSub);
+
+  const clickId = champId || seatId;
+  const gateG = svgEl('g', { class: 'dn-funnel-gate', tabindex: (clickId && o.onCompetitor) ? '0' : null });
+  gateG.appendChild(svgEl('rect', {
+    x: gx, y: midY - 16, width: gateW, height: 32, rx: 5,
+    class: 'dn-funnel-gatebox' + (crowned ? ' dn-good' : ''),
+  }));
+  const dStr = isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '';
+  let label;
+  let tip;
+  if (crowned) {
+    label = '♚ ' + shortLabel(champId, 12);
+    tip = `${champId} cleared the full-board gate → crowned champion${dStr}`;
+  } else if (gateState === 'stands') {
+    label = 'champion stands';
+    tip = `the survivor lost the full-board gate — champion stands${dStr}`;
+  } else if (gateState === 'deciding') {
+    label = 'deciding…';
+    tip = champId ? `${champId} leads — the gate has not committed${dStr}` : 'the final gate is deciding';
+  } else {
+    label = 'tbd';
+    tip = 'awaiting the final survivor';
+  }
+  const gt = svgEl('text', { x: gx + gateW / 2, y: midY + 4, class: 'dn-funnel-gatelab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }, [title(tip)]);
+  gt.textContent = label;
+  gateG.appendChild(gt);
+  if (clickId && o.onCompetitor) {
+    gateG.style.cursor = 'pointer';
+    gateG.addEventListener('click', () => o.onCompetitor(clickId));
+    gateG.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(clickId); } });
+  }
+  svg.appendChild(gateG);
+  return svg;
+}
+
+// One funnel competitor label (a survivor riding the band, or a peeled-off
+// eliminated dead-end). Hover → its per-rung Δ + cut/survive verdict; click →
+// its candidate. `verdict` ∈ {survives, cut, racing}.
+function funnelRunner(svg, o, sid, rung, j, x, cy, verdict) {
+  const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : null;
+  const glyph = verdict === 'cut' ? ' ✕' : verdict === 'survives' ? ' ↑' : '';
+  const cls = 'dn-funnel-name'
+    + (verdict === 'cut' ? ' dn-out dn-bad' : verdict === 'survives' ? ' dn-good' : ' dn-racing');
+  const tip = `${sid} · ${rung.label || 'rung ' + j}`
+    + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : '')
+    + (delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : '')
+    + ` · ${verdict}`;
+  const g = svgEl('g', { class: 'dn-funnel-runner', tabindex: o.onCompetitor ? '0' : null });
+  const t = svgEl('text', { x, y: cy + 3, class: cls }, [title(tip)]);
+  t.textContent = shortLabel(sid, 13) + glyph;
+  g.appendChild(t);
+  if (o.onCompetitor) {
+    g.style.cursor = 'pointer';
+    g.addEventListener('click', () => o.onCompetitor(sid));
+    g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(sid); } });
+  }
+  svg.appendChild(g);
+}
+
 // ---- mini single-elimination bracket (ILLUSTRATIVE) -----------------
 
 export function bracketMini(opts) {

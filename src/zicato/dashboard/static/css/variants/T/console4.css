@@ -1405,6 +1405,45 @@
   .dn-raceladder-gate:hover .dn-raceladder-gatelab,
   .dn-raceladder-gate:focus .dn-raceladder-gatelab { fill: var(--v2-accent); outline: none; }
 
+  /* racing SURVIVAL FUNNEL (the epoch-overview hero) — field → cuts →
+     survivor → champion-gate; the flow narrows at each cut. All marks read
+     from --v2-* tokens so the funnel is legible across every theme (incl. the
+     light Paper / Selenized-Light swatches), and the SVG is fit-to-width
+     (width:100% + viewBox in svg.js) so it scales with the page-scale pill. */
+  .dt-funnel-card .dt-struct-strip-row { margin-bottom: 8px; }
+  .dt-funnel-card .dt-struct-strip-link { display: inline-block; margin-top: 8px; }
+  .dn-funnel-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.05em; }
+  .dn-funnel-sub { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
+  /* the flowing band — a soft accent fill so the narrowing reads as a current */
+  .dn-funnel-band { fill: color-mix(in srgb, var(--v2-accent) 18%, transparent);
+    stroke: color-mix(in srgb, var(--v2-accent) 45%, transparent); stroke-width: 1;
+    vector-effect: non-scaling-stroke; }
+  /* a pending (live, undecided) stage is neutral — nobody is cut yet */
+  .dn-funnel-band.dn-funnel-pending { fill: var(--v2-rule-soft);
+    stroke: var(--v2-rule); stroke-dasharray: 4 3; }
+  .dn-funnel-band.dn-funnel-gateflow.dn-good { fill: color-mix(in srgb, var(--v2-good) 20%, transparent);
+    stroke: color-mix(in srgb, var(--v2-good) 55%, transparent); }
+  /* eliminated dead-end branches peeling off below the lane */
+  .dn-funnel-deadedge { stroke: var(--v2-bad); stroke-width: 1.1;
+    vector-effect: non-scaling-stroke; opacity: 0.55; stroke-dasharray: 2 2; }
+  /* competitor labels — survivors (good), cuts (struck, bad), racing (neutral) */
+  .dn-funnel-name { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
+  .dn-funnel-name.dn-good { fill: var(--v2-good); font-weight: 600; }
+  .dn-funnel-name.dn-bad { fill: var(--v2-bad); }
+  .dn-funnel-name.dn-out { text-decoration: line-through; opacity: 0.9; }
+  .dn-funnel-name.dn-racing { fill: var(--v2-ink-soft); }
+  .dn-funnel-runner:hover .dn-funnel-name,
+  .dn-funnel-runner:focus .dn-funnel-name { fill: var(--v2-accent); outline: none; }
+  /* the terminal champion-gate seat */
+  .dn-funnel-gatebox { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1; }
+  .dn-funnel-gatebox.dn-good { stroke: var(--v2-good); stroke-width: 1.4;
+    fill: color-mix(in srgb, var(--v2-good) 10%, transparent); }
+  .dn-funnel-gatelab { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
+  .dn-funnel-gatelab.dn-good { fill: var(--v2-good); font-weight: 700; }
+  .dn-funnel-gate:hover .dn-funnel-gatelab,
+  .dn-funnel-gate:focus .dn-funnel-gatelab { fill: var(--v2-accent); outline: none; }
+
   /* standings + swiss pairings — reuse the dn-board-table base */
   .dt-standings tr.dt-standings-out td { color: var(--v2-ink-faint); }
   .dt-standings tr.dt-standings-out .dn-mono { text-decoration: line-through; }

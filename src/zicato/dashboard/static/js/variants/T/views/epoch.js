@@ -13,11 +13,13 @@
 // /api/generation/{e}/{g}/per-entry.
 
 import { el } from '../../../core/dom.js';
+import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { reel, reelDigest } from '../reel.js';
+import { deriveLiveStatus } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
-import { structurePill, isNonGauntlet, structureLabel } from './structure.js';
+import { structurePill, isNonGauntlet, structureLabel, reconstructRacing, normalizeStructure, racingModel, structureDigest } from './structure.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
@@ -77,10 +79,31 @@ export async function render(host, ctx, params) {
   const structure = (tournament && tournament.structure) || 'gauntlet';
   const nonGauntlet = isNonGauntlet(structure);
 
+  // ---- RACING survival-funnel data (LIVE-FIRST, else reconstructed) ----
+  // For a racing epoch the structure strip renders an interactive survival
+  // FUNNEL (field → cuts → survivor → champion-gate). It needs the SAME
+  // rung/gate model the Match-ups ladder uses: prefer the LIVE
+  // /api/active-tournament topology while a run is in flight (the pending rung
+  // stays neutral, the gate "deciding…"), else REUSE reconstructRacing() to
+  // rebuild the completed ladder from the per-challenger /api/tournaments
+  // records. Resolved to null (→ static summary) when there are no rungs yet.
+  let racingFunnel = null;
+  if (structure === 'racing') {
+    const status = deriveLiveStatus({
+      heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
+    });
+    const liveRaw = status.running ? await D.activeTournament() : null;
+    const liveSt = normalizeStructure(liveRaw, true);
+    const racingSt = (liveSt && liveSt.live) ? liveSt : reconstructRacing(bracket, epochId);
+    const model = racingModel(racingSt);
+    if (model && model.hasRungs) racingFunnel = { st: racingSt, model };
+  }
+
   const digest = JSON.stringify({
     epochId, goal: ep.goal || '', briefLen: (ep.brief || '').length, closed: !!ep.closed,
     structure: tournament ? [tournament.structure, JSON.stringify(tournament.params || {})] : null,
     nonGauntlet,
+    racingFunnel: racingFunnel ? structureDigest(racingFunnel.st) : null,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
     reel: reelDigest(reelSpec),
     loss: [...lossLookup.entries()].sort(),
@@ -136,7 +159,6 @@ export async function render(host, ctx, params) {
     // swap in a compact structure strip ("racing · field of N · M rungs") with
     // a "see Match-ups" affordance that opens the real ladder/bracket.
     if (nonGauntlet) {
-      const stripCard = el('div', { class: 'dn-panel dt-struct-strip' });
       const fieldN = gens.length;
       const params = (tournament && tournament.params) || {};
       const rungs = Array.isArray(params.rungs) ? params.rungs.length : null;
@@ -144,11 +166,48 @@ export async function render(host, ctx, params) {
       facts.push(el('span', { class: 'dt-struct-strip-fact', text: `field of ${fieldN}` }));
       if (structure === 'racing' && rungs) facts.push(el('span', { class: 'dt-struct-strip-fact', text: `${rungs} rung${rungs === 1 ? '' : 's'}` }));
       else if (structure === 'swiss' && svg.isNum(params.rounds)) facts.push(el('span', { class: 'dt-struct-strip-fact', text: `${params.rounds} round${params.rounds === 1 ? '' : 's'}` }));
-      stripCard.appendChild(el('div', { class: 'dt-struct-strip-row' }, facts));
-      stripCard.appendChild(el('a', { class: 'dn-linkbtn dt-struct-strip-link', href: ctx.href('gens', { epochId }), text: 'See Match-ups →' }));
-      stripCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-        'this epoch is not a gauntlet — the champion-spine reel does not describe it · the full ladder / bracket / standings live in Match-ups' }));
-      nodes.push(section('Tournament structure · ' + structureLabel(structure, params), stripCard));
+
+      if (structure === 'racing' && racingFunnel) {
+        // ---- the interactive SURVIVAL FUNNEL (the epoch hero) ----
+        // field → cuts → survivor → champion-gate, the flow narrowing at each
+        // cut; eliminated competitors peel off as ✕ branches, survivors (↑)
+        // ride the thickening flow toward the gate. LIVE: pending rung neutral
+        // + gate "deciding…". Click a competitor → its candidate.
+        const m = racingFunnel.model;
+        // the card keeps the `dt-struct-strip` facts header (so it still reads
+        // as the structure strip) and adds the funnel figure below it.
+        const card = el('div', { class: 'dn-panel dn-figpane dt-funnel-card dt-struct-strip' });
+        const head = el('div', { class: 'dt-struct-strip-row' }, [
+          ...facts,
+          m.live ? el('span', { class: 'dt-live-pill', text: 'LIVE' }) : null,
+        ].filter(Boolean));
+        card.appendChild(head);
+        card.appendChild(svg.survivalFunnel({
+          rungs: m.rungs, championId: m.championId, live: m.live,
+          gateState: m.gateState, gateDelta: m.gateDelta,
+          onCompetitor: (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); },
+        }));
+        const gateNote = m.gateState === 'crowned' ? ` · champion-gate: ${m.championId} promoted ♚`
+          : m.gateState === 'stands' ? ' · champion-gate: champion stands'
+          : m.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
+        card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+          'successive halving — each rung races the field on a growing board fraction, then cuts the worst by η · ✕ = cut · ↑ = survives · ♚ = crowned at the full-board gate · click a competitor → open'
+          + gateNote
+          + (m.live ? ' · LIVE — the eventual winner is not committed until the final gate' : '') }));
+        card.appendChild(el('a', { class: 'dn-linkbtn dt-struct-strip-link', href: ctx.href('gens', { epochId }), text: 'See Match-ups →' }));
+        nodes.push(section('Tournament structure · ' + structureLabel(structure, params), card));
+      } else {
+        // DEGRADE: no rung records yet (e.g. a racing epoch that has not run,
+        // or a non-racing structure) → a tidy static "field of N" summary.
+        const stripCard = el('div', { class: 'dn-panel dt-struct-strip' });
+        stripCard.appendChild(el('div', { class: 'dt-struct-strip-row' }, facts));
+        stripCard.appendChild(el('a', { class: 'dn-linkbtn dt-struct-strip-link', href: ctx.href('gens', { epochId }), text: 'See Match-ups →' }));
+        stripCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+          structure === 'racing'
+            ? 'no rungs have raced yet — the survival funnel fills in once the field runs · the full ladder / standings live in Match-ups'
+            : 'this epoch is not a gauntlet — the champion-spine reel does not describe it · the full ladder / bracket / standings live in Match-ups' }));
+        nodes.push(section('Tournament structure · ' + structureLabel(structure, params), stripCard));
+      }
     } else {
       const reelCard = el('div', { class: 'dn-panel' });
       reelCard.appendChild(reel({
