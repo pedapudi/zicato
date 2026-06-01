@@ -1,12 +1,13 @@
-/* variants/P/console3.css — "Console III: dense observatory, Monokai default".
+/* variants/T/console4.css — "Console IV: dense observatory, Monokai default".
  *
- * Variant P is the round-3 convergence dashboard: a dense, data-ink-maximal
- * skin for power users built on Variant E's flow. THREE switchable themes —
- * monokai (default), solarized-dark, solarized-light — each a CSS
- * custom-property set mapping to the `--v2-*` token names the marks read,
- * swapped via [data-t-theme] on the variant root. The semantic mapping
- * (improve / regress / caution) holds across all three and every mark reads
- * with sufficient contrast in each (incl. the per-board dot-plot in monokai).
+ * Variant T is the converged default dashboard: a dense, data-ink-maximal skin
+ * for power users. NINE switchable colour themes — monokai (default),
+ * solarized-dark, solarized-light, plus six Gogh palettes (google-light,
+ * google-dark, lunaria-light, lunaria-eclipse, belafonte-day, belafonte-night)
+ * — each a CSS custom-property set mapping to the `--v2-*` token names the
+ * marks read, swapped via [data-t-theme] on the variant root and chosen from a
+ * swatch DROPDOWN. The semantic mapping (improve / regress / caution) holds
+ * across all nine and every mark reads with sufficient contrast in each.
  *
  * EVERYTHING is scoped under #variant-root[data-variant="T"] so it cannot leak
  * into other variants or the shared shell. Marks use `dn-*`; the lifecycle
@@ -80,12 +81,144 @@
   --v2-cell-empty: #F2E9CE;
 }
 
-/* ===================  the four typeface themes  ===================
+/* ===================  six Gogh palettes (gogh-co.github.io/Gogh)  ===================
  *
- * All Open-Sans-based for the BODY; the typeface picker swaps the heading /
- * data / publication voices via [data-t-type] on the root. Google Fonts are
- * loaded in app_N.js (display=swap); every family lists a system fallback so a
- * slow / blocked font never breaks layout. Default: Technical.
+ * Each is a real Gogh terminal palette mapped to T's `--v2-*` token contract.
+ * The mapping is principled and identical for every palette so all marks read:
+ *   paper       ← background            panel      ← background nudged to fg/host
+ *   ink         ← bright-white/host     ink-soft   ← foreground
+ *   ink-faint   ← fg mixed toward bg    rule/-soft ← bg mixed toward fg (.18/.09)
+ *   good        ← green (bright on dark) bad       ← red (bright on dark)
+ *   caution     ← yellow               accent     ← cyan (or blue where the
+ *                                         palette's cyan is a neutral grey)
+ *   flat        ← bright-black/grey     cell-empty ← bg mixed toward fg (.04)
+ * The improve/regress/caution semantics + the ink-opacity heatmap ramp hold in
+ * all nine themes. "Belafonte Light" does not exist in Gogh; per the brief we
+ * ship Belafonte Day (light) + Belafonte Night (dark), and key Belafonte's
+ * accent off the palette's blue (its cyan is a low-contrast neutral). */
+
+/* Gogh: Google Light. */
+#variant-root[data-variant="T"][data-t-theme="google-light"] {
+  --v2-paper:      #FFFFFF;
+  --v2-panel:      #F4F4F4;
+  --v2-ink:        #474A4E;
+  --v2-ink-soft:   #5F6368;
+  --v2-ink-faint:  #9FA1A4;
+  --v2-rule:       #E2E3E4;
+  --v2-rule-soft:  #F1F1F1;
+  --v2-good:       #34A853;
+  --v2-good-soft:  #D2ECD9;
+  --v2-bad:        #EA4335;
+  --v2-bad-soft:   #FAD6D3;
+  --v2-caution:    #C99700;
+  --v2-accent:     #1B9CB8;
+  --v2-flat:       #9AA0A6;
+  --v2-cell-empty: #F8F8F8;
+}
+
+/* Gogh: Google Dark. */
+#variant-root[data-variant="T"][data-t-theme="google-dark"] {
+  --v2-paper:      #202124;
+  --v2-panel:      #2C2D30;
+  --v2-ink:        #FFFFFF;
+  --v2-ink-soft:   #E8EAED;
+  --v2-ink-faint:  #989A9D;
+  --v2-rule:       #444548;
+  --v2-rule-soft:  #323336;
+  --v2-good:       #34A853;
+  --v2-good-soft:  #243F2E;
+  --v2-bad:        #EA4335;
+  --v2-bad-soft:   #4C2828;
+  --v2-caution:    #FBBC05;
+  --v2-accent:     #24C1E0;
+  --v2-flat:       #5F6368;
+  --v2-cell-empty: #28292C;
+}
+
+/* Gogh: Lunaria Light. */
+#variant-root[data-variant="T"][data-t-theme="lunaria-light"] {
+  --v2-paper:      #EBE4E1;
+  --v2-panel:      #E2DCD9;
+  --v2-ink:        #363434;
+  --v2-ink-soft:   #484646;
+  --v2-ink-faint:  #898584;
+  --v2-rule:       #CEC8C5;
+  --v2-rule-soft:  #DCD6D3;
+  --v2-good:       #497D46;
+  --v2-good-soft:  #C7CDBF;
+  --v2-bad:        #783C1F;
+  --v2-bad-soft:   #D2BFB6;
+  --v2-caution:    #8F750B;
+  --v2-accent:     #3778A9;
+  --v2-flat:       #898584;
+  --v2-cell-empty: #E6DFDC;
+}
+
+/* Gogh: Lunaria Eclipse. */
+#variant-root[data-variant="T"][data-t-theme="lunaria-eclipse"] {
+  --v2-paper:      #323F46;
+  --v2-panel:      #3B484F;
+  --v2-ink:        #DFE2ED;
+  --v2-ink-soft:   #C9CDD7;
+  --v2-ink-faint:  #8D949D;
+  --v2-rule:       #4D5960;
+  --v2-rule-soft:  #404C53;
+  --v2-good:       #BEDBC1;
+  --v2-good-soft:  #516161;
+  --v2-bad:        #BA9088;
+  --v2-bad-soft:   #505155;
+  --v2-caution:    #F1DFB4;
+  --v2-accent:     #BCDBFF;
+  --v2-flat:       #6B767D;
+  --v2-cell-empty: #38454C;
+}
+
+/* Gogh: Belafonte Day (light). */
+#variant-root[data-variant="T"][data-t-theme="belafonte-day"] {
+  --v2-paper:      #D5CCBA;
+  --v2-panel:      #CCC3B2;
+  --v2-ink:        #34292D;
+  --v2-ink-soft:   #45373C;
+  --v2-ink-faint:  #7F736E;
+  --v2-rule:       #BBB1A3;
+  --v2-rule-soft:  #C8BFAF;
+  --v2-good:       #6E6A4E;
+  --v2-good-soft:  #C3BCA7;
+  --v2-bad:        #BE100E;
+  --v2-bad-soft:   #D0A394;
+  --v2-caution:    #B57A1E;
+  --v2-accent:     #426A79;
+  --v2-flat:       #5E5252;
+  --v2-cell-empty: #D0C6B5;
+}
+
+/* Gogh: Belafonte Night (dark). */
+#variant-root[data-variant="T"][data-t-theme="belafonte-night"] {
+  --v2-paper:      #20111B;
+  --v2-panel:      #271821;
+  --v2-ink:        #D5CCBA;
+  --v2-ink-soft:   #968C83;
+  --v2-ink-faint:  #675B59;
+  --v2-rule:       #35272E;
+  --v2-rule-soft:  #2B1C24;
+  --v2-good:       #A6A07A;
+  --v2-good-soft:  #362A2B;
+  --v2-bad:        #D6403E;
+  --v2-bad-soft:   #431118;
+  --v2-caution:    #EAA549;
+  --v2-accent:     #6F8E97;
+  --v2-flat:       #5E5252;
+  --v2-cell-empty: #25161F;
+}
+
+/* ===================  the three typeface themes  ===================
+ *
+ * Editorial / Technical / Display (the old redundant "Sans" is dropped —
+ * Technical already gives an Open-Sans body). All Open-Sans-based for the BODY;
+ * the typeface picker swaps the heading / data / publication voices via
+ * [data-t-type] on the root. Google Fonts are loaded in app_T.js (display=swap);
+ * every family lists a system fallback so a slow / blocked font never breaks
+ * layout. Default: Technical.
  */
 #variant-root[data-variant="T"] {
   --n-font-base: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -96,12 +229,6 @@
   /* Technical (DEFAULT): Open Sans body + JetBrains Mono data/labels/code. */
   --v2-sans: var(--n-font-base);
   --v2-mono: var(--n-font-mono-real);
-  --n-font-head: var(--n-font-base);
-  --n-font-paper: var(--n-font-base);
-}
-#variant-root[data-variant="T"][data-t-type="sans"] {
-  --v2-sans: var(--n-font-base);
-  --v2-mono: var(--n-font-base);   /* tabular figures via font-variant-numeric */
   --n-font-head: var(--n-font-base);
   --n-font-paper: var(--n-font-base);
 }
@@ -124,32 +251,18 @@
   --n-font-paper: var(--n-font-base);
 }
 
-/* ===================  the three density / "roominess" tokens  ===================
+/* ===================  the COZY spacing baseline (density removed)  ===================
  *
- * The THIRD chrome picker. `[data-t-density]` on the root selects one spacing /
- * size set. Compact = the dense Console default; Roomy = Atlas-like air (Q's
- * generous proportion); Cozy sits between. Every layout that should breathe
- * reads these `--dt-*` tokens (the body rail, the detail padding, section
- * gaps, panel padding, card min-widths, the reel's vertical scale, a global
- * font-size scale). A pure CSS swap — no re-render. The bare root inherits
- * Compact so a cold load before the attribute lands is already the default.
+ * The density picker (compact / cozy / roomy) is GONE — cozy is now the ONE
+ * permanent spacing rhythm. These `--dt-*` tokens (the body rail, detail
+ * padding, section gaps, panel padding, card min-widths, the reel's vertical
+ * scale, a global font-size scale) are baked unconditionally onto the variant
+ * root: every layout that breathes reads them, always at the cozy values. The
+ * page-scale pill (`zoom` on the root) is the sizing control now. The shell
+ * still stamps `data-t-density="cozy"` for any rule that keys on it, but it
+ * never changes.
  */
-#variant-root[data-variant="T"],
-#variant-root[data-variant="T"][data-t-density="compact"] {
-  --dt-rail: 264px;
-  --dt-pad-x: 40px;
-  --dt-pad-y: 30px;
-  --dt-section-gap: 22px;
-  --dt-panel-pad-x: 15px;
-  --dt-panel-pad-y: 13px;
-  --dt-row-gap: 24px;
-  --dt-card-min: 240px;
-  --dt-card-gap: 14px;
-  --dt-card-pad: 13px;
-  --dt-reel-scale: 1;
-  --dt-font-scale: 1;
-}
-#variant-root[data-variant="T"][data-t-density="cozy"] {
+#variant-root[data-variant="T"] {
   --dt-rail: 288px;
   --dt-pad-x: 56px;
   --dt-pad-y: 40px;
@@ -162,20 +275,6 @@
   --dt-card-pad: 16px;
   --dt-reel-scale: 1.18;
   --dt-font-scale: 1.04;
-}
-#variant-root[data-variant="T"][data-t-density="roomy"] {
-  --dt-rail: 312px;
-  --dt-pad-x: 72px;
-  --dt-pad-y: 52px;
-  --dt-section-gap: 40px;
-  --dt-panel-pad-x: 24px;
-  --dt-panel-pad-y: 22px;
-  --dt-row-gap: 38px;
-  --dt-card-min: 300px;
-  --dt-card-gap: 24px;
-  --dt-card-pad: 20px;
-  --dt-reel-scale: 1.4;
-  --dt-font-scale: 1.09;
 }
 
 #variant-root[data-variant="T"] {
@@ -763,16 +862,45 @@
   .dt-crumb-sep { opacity: 0.5; margin: 0 1px; }
   .dt-topbar-spacer { flex: 1; }
 
-  .dt-theme-switch, .dt-type-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
-  .dt-theme-btn, .dt-type-btn { font-size: 9.5px; padding: 3px 7px; background: transparent;
+  /* the typeface switcher stays as inline buttons (only 3 options) */
+  .dt-type-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
+  .dt-type-btn { font-size: 9.5px; padding: 3px 7px; background: transparent;
     color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
-    border-right: 1px solid var(--v2-rule); }
-  .dt-theme-btn { font-family: var(--v2-mono); }
-  .dt-type-btn { font-family: var(--v2-sans); }
-  .dt-theme-btn:last-child, .dt-type-btn:last-child { border-right: none; }
-  .dt-theme-btn:hover, .dt-type-btn:hover { color: var(--v2-ink); }
-  .dt-theme-btn.dt-theme-active { background: var(--v2-accent); color: var(--v2-paper); }
+    border-right: 1px solid var(--v2-rule); font-family: var(--v2-sans); }
+  .dt-type-btn:last-child { border-right: none; }
+  .dt-type-btn:hover { color: var(--v2-ink); }
   .dt-type-btn.dt-type-active { background: var(--v2-ink-soft); color: var(--v2-paper); }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (9 themes) ---- */
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 7px;
+    background: transparent; color: var(--v2-ink-soft); cursor: pointer;
+    font-family: var(--v2-mono); font-size: 9.5px; transition: border-color 0.15s, color 0.15s; }
+  .dt-cd-trigger:hover { color: var(--v2-ink); border-color: var(--v2-accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--v2-ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--v2-ink-faint); font-size: 8px; transition: transform 0.15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+
+  /* the swatch strip — a row of small colour chips (the legibility preview) */
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden;
+    border: 1px solid var(--v2-rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+
+  /* the open listbox */
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 30;
+    min-width: 180px; max-height: 60vh; overflow-y: auto;
+    background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--v2-ink-soft); transition: background 0.12s, color 0.12s; }
+  .dt-cd-option .dt-cd-name { font-family: var(--v2-mono); font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--v2-rule-soft); color: var(--v2-ink); }
+  .dt-cd-option[aria-selected="true"] { color: var(--v2-ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--v2-accent); }
 
   .dt-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
     font-size: 10.5px; color: var(--v2-ink-faint); }
@@ -926,23 +1054,13 @@
   .dt-split-side .dn-section { margin: 20px 0; }
   .dt-split-side .dn-row { gap: 16px; }
 
-  /* ===================  the density / "roominess" picker (third)  =================== */
-
-  .dt-density-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
-  .dt-density-btn { font-family: var(--v2-mono); font-size: 9.5px; padding: 3px 7px; background: transparent;
-    color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
-    border-right: 1px solid var(--v2-rule); }
-  .dt-density-btn:last-child { border-right: none; }
-  .dt-density-btn:hover { color: var(--v2-ink); }
-  .dt-density-btn.dt-density-active { background: var(--v2-caution); color: var(--v2-paper); }
-
-  /* ===================  the PAGE-WIDE SCALE pill (draggable)  ===================
+  /* ===================  the PAGE-WIDE SCALE pill (draggable + reset)  ===================
    *
-   * A continuous, draggable control beside the colour / typeface / density
-   * pickers. DISTINCT from density: density = spacing rhythm (compact/cozy/
-   * roomy); this = overall PAGE SIZE (text + diagrams), applied as `zoom` on
-   * the app root by the shell. A native range input → draggable AND keyboard-
-   * accessible (arrows step ±5). A small % readout sits to its right. */
+   * A continuous, draggable control beside the colour / typeface pickers — the
+   * sole sizing control now that density is gone. Overall PAGE SIZE (text +
+   * diagrams), applied as `zoom` on the app root by the shell. A native range
+   * input → draggable AND keyboard-accessible (arrows step ±5). A % readout +
+   * a RESET button (→ 100%) sit to its right. */
   .dt-scale-pill {
     display: inline-flex; align-items: center; gap: 8px;
     border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 9px;
@@ -973,6 +1091,16 @@
     font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-soft);
     font-variant-numeric: tabular-nums; min-width: 3.4ch; text-align: right;
   }
+  /* the RESET affordance — snaps the page scale back to 100% (keyboard-accessible <button>) */
+  .dt-scale-reset {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 17px; height: 17px; padding: 0; margin-left: 1px;
+    border: 1px solid var(--v2-rule); border-radius: 4px; background: transparent;
+    color: var(--v2-ink-faint); font-size: 11px; line-height: 1; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .dt-scale-reset:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
+  .dt-scale-reset:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
 
   /* ===================  the SLIM REEL (tr-*) — epoch view, adopted from V  ===================
    *

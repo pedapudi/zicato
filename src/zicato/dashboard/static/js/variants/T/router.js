@@ -1,19 +1,21 @@
-// variants/T/router.js — Console IV hash router under the `#/T/` prefix.
+// variants/T/router.js — Console IV hash router under the bare `#/` prefix.
 //
-// Variant T ("Console IV") is the round-6 anchor: P's data-model TREE sidebar
-// (the hash encodes the FULL path through the hierarchy) folded with S's
-// first-class side-by-side COMPARE detail. The hash therefore also carries an
-// optional COMPARISON target so a split candidate pane DEEP-LINKS:
+// Variant T ("Console IV") is the converged default UI: P's data-model TREE
+// sidebar (the hash encodes the FULL path through the hierarchy) folded with
+// S's first-class side-by-side COMPARE detail. T is now the ONLY variant UI, so
+// the old `#/T/` bake-off namespacing prefix is dropped — routes are bare `#/`.
+// The hash also carries an optional COMPARISON target so a split candidate pane
+// DEEP-LINKS:
 //
-//   #/T/                                          → Environment (the fleet)
-//   #/T/e/<epochId>                               → Epoch overview (heatmap)
-//   #/T/e/<epochId>/gens                          → Generations group landing
-//   #/T/e/<epochId>/gen/<gen>[/<entry>]           → Candidate (lifecycle + gate)
-//   #/T/e/<epochId>/gen/<gen>/diff[/<mutId>]      → that candidate's patch diff
-//   #/T/e/<epochId>/boards                        → Boards group (trellis)
-//   #/T/e/<epochId>/board/<entry>[/<gen>]         → per-board + inline transcript
-//   #/T/e/<epochId>/mutations[/<mutId>]           → Mutation surface + diff
-//   #/T/e/<epochId>/paper                         → ACM publication
+//   #/                                          → Environment (the fleet)
+//   #/e/<epochId>                               → Epoch overview (heatmap)
+//   #/e/<epochId>/gens                          → Generations group landing
+//   #/e/<epochId>/gen/<gen>[/<entry>]           → Candidate (lifecycle + gate)
+//   #/e/<epochId>/gen/<gen>/diff[/<mutId>]      → that candidate's patch diff
+//   #/e/<epochId>/boards                        → Boards group (trellis)
+//   #/e/<epochId>/board/<entry>[/<gen>]         → per-board + inline transcript
+//   #/e/<epochId>/mutations[/<mutId>]           → Mutation surface + diff
+//   #/e/<epochId>/paper                         → ACM publication
 //
 // The COMPARE target is a `~cmp=<gen>` suffix on the hash (S's convention) —
 // kept in the hash, not location.search, so one deep-link captures the whole
@@ -22,7 +24,7 @@
 // params, opts)` takes a params OBJECT plus an optional `{cmp}` so the tree,
 // breadcrumb, back button, and every view share one signature.
 
-export const PREFIX = '#/T';
+export const PREFIX = '#';
 export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'publication'];
 
 // Split the hash into its path part and its `~k=v` suffix params (the compare
@@ -46,8 +48,8 @@ export function parseRoute(hash) {
   const { path, extra } = splitHash(hash);
   const cmp = extra.cmp || null;
   const raw = path;
-  if (!raw.startsWith('/T')) return { view: 'home', params: {}, cmp: null };
-  const parts = raw.replace(/^\/T\/?/, '').split('/').filter(Boolean).map(dec);
+  // bare `#/` prefix: the path part is everything after the leading slash.
+  const parts = raw.replace(/^\/+/, '').split('/').filter(Boolean).map(dec);
   if (!parts.length || parts[0] === 'home') return { view: 'home', params: {}, cmp };
   if (parts[0] !== 'e') return { view: 'home', params: {}, cmp };
 

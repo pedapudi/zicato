@@ -8,7 +8,7 @@
 //   * fix #5 — selecting a run shows its transcript INLINE within THIS view,
 //     side by side with the CHAMPION's transcript on the same board (two
 //     candidates' transcripts on that board), NOT a navigation to a separate
-//     run page. The selected gen lives in the URL (#/T/e/<e>/board/<entry>/<gen>)
+//     run page. The selected gen lives in the URL (#/e/<e>/board/<entry>/<gen>)
 //     so the inline transcript rebuilds only on a route change, never a beat.
 //
 // Bind: /api/generation/{e}/{g}/per-entry pivoted by entry_id across gens;

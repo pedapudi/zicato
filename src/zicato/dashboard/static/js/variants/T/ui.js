@@ -28,11 +28,25 @@ export function gatedSwap(host, digest, build) {
   return true;
 }
 
-// ---- colour themes (monokai is N's default) -------------------------
+// ---- colour themes (monokai is the default) -------------------------
+//
+// NINE themes now: the three originals plus six Gogh palettes
+// (https://gogh-co.github.io/Gogh/), each mapped to T's `--v2-*` token
+// contract in console4.css. Because there are nine, the colour picker is a
+// SWATCH DROPDOWN (not inline buttons): each option shows a 5-swatch strip
+// (ground · surface · ink · improve · regress) as a legibility preview hint,
+// plus the theme name. The swatch tuples below FEED that preview — they mirror
+// the [paper, panel, ink, good, bad] tokens each theme defines in the CSS.
 export const COLOR_THEMES = [
-  ['monokai', 'monokai'],
-  ['solarized-dark', 'sol·dark'],
-  ['solarized-light', 'sol·light'],
+  ['monokai',         'monokai',          ['#1e1f1c', '#272822', '#f8f8f2', '#a6e22e', '#f92672']],
+  ['solarized-dark',  'solarized dark',   ['#04222B', '#0A2D38', '#93A1A1', '#8BB80E', '#E0483C']],
+  ['solarized-light', 'solarized light',  ['#FDF6E3', '#FBF1D6', '#586E75', '#6B9B0B', '#DC322F']],
+  ['google-light',    'google light',     ['#FFFFFF', '#F4F4F4', '#474A4E', '#34A853', '#EA4335']],
+  ['google-dark',     'google dark',      ['#202124', '#2C2D30', '#FFFFFF', '#34A853', '#EA4335']],
+  ['lunaria-light',   'lunaria light',    ['#EBE4E1', '#E2DCD9', '#363434', '#497D46', '#783C1F']],
+  ['lunaria-eclipse', 'lunaria eclipse',  ['#323F46', '#3B484F', '#DFE2ED', '#BEDBC1', '#BA9088']],
+  ['belafonte-day',   'belafonte day',    ['#D5CCBA', '#CCC3B2', '#34292D', '#858162', '#BE100E']],
+  ['belafonte-night', 'belafonte night',  ['#20111B', '#271821', '#D5CCBA', '#858162', '#BE100E']],
 ];
 const COLOR_IDS = COLOR_THEMES.map((t) => t[0]);
 export const DEFAULT_COLOR = 'monokai';
@@ -49,17 +63,16 @@ export function persistColor(t) {
   return normaliseColor(t);
 }
 
-// ---- typeface themes (Technical is N's default) ---------------------
+// ---- typeface themes (Technical is the default) ---------------------
 //
-// Each maps to a `[data-n-type]` value the stylesheet keys on (swapping the
+// Each maps to a `[data-t-type]` value the stylesheet keys on (swapping the
 // --n-font-* custom properties). All are Open-Sans-based for the body; the
-// distinction is the heading / data voice:
-//   Sans      — Open Sans throughout (tabular figures for data).
+// distinction is the heading / data voice. (The old "Sans" option is dropped —
+// it was redundant with Technical's Open-Sans body; Technical now covers it.)
 //   Editorial — Open Sans body + Source Serif 4 headings & publication.
 //   Technical — Open Sans body + JetBrains Mono for data / labels / code.
 //   Display   — Open Sans body + Archivo Narrow (condensed) headings & big nums.
 export const TYPE_THEMES = [
-  ['sans', 'Sans'],
   ['editorial', 'Editorial'],
   ['technical', 'Technical'],
   ['display', 'Display'],
@@ -79,45 +92,27 @@ export function persistType(t) {
   return normaliseType(t);
 }
 
-// ---- density / "roominess" (compact is T's Console default) ---------
+// ---- density: REMOVED — COZY is the permanent baseline --------------
 //
-// The THIRD chrome picker. Each value maps to a `[data-t-density]` attribute on
-// the root that the stylesheet keys on, swapping the spacing/size custom
-// properties (padding, gaps, font-size scale, card min-width, rail width, the
-// reel's vertical scale) so the WHOLE UI — reel, match cards, tables, gate,
-// tree — re-breathes. Compact = the dense Console default; Roomy = Atlas-like
-// air (Q's generous proportion); Cozy sits between.
-export const DENSITY_THEMES = [
-  ['compact', 'compact'],
-  ['cozy', 'cozy'],
-  ['roomy', 'roomy'],
-];
-const DENSITY_IDS = DENSITY_THEMES.map((t) => t[0]);
-export const DEFAULT_DENSITY = 'compact';
-const DENSITY_KEY = 'zicato.T.density';
-
-export function normaliseDensity(t) { return DENSITY_IDS.includes(t) ? t : DEFAULT_DENSITY; }
-export function readDensity() {
-  let stored = null;
-  try { stored = window.localStorage.getItem(DENSITY_KEY); } catch (e) { /* private mode */ }
-  return normaliseDensity(stored);
-}
-export function persistDensity(t) {
-  try { window.localStorage.setItem(DENSITY_KEY, normaliseDensity(t)); } catch (e) { /* ignore */ }
-  return normaliseDensity(t);
-}
-
-// ---- PAGE-WIDE SCALE (the draggable scale pill) ---------------------
+// The density picker (compact / cozy / roomy) is gone. Cozy — the calm,
+// mid-air rhythm — is now baked in as the ONE permanent spacing baseline: the
+// `--dt-*` spacing tokens live unconditionally on the variant root in
+// console4.css (no `[data-t-density]` selector), and the SIZE tokens below are
+// fixed at the cozy values. The page-scale pill is the sizing control now.
 //
-// A continuous control DISTINCT from density. Density picks a spacing /
-// proportion RHYTHM (compact/cozy/roomy) — how the layout breathes. The page
-// scale is one master multiplier on the WHOLE rendered page (text AND
+// `DENSITY` names that constant so any caller (and the size-token table) has a
+// single source of truth for "the active density is always cozy".
+export const DENSITY = 'cozy';
+
+// ---- PAGE-WIDE SCALE (the draggable scale pill + reset) -------------
+//
+// The page scale is one master multiplier on the WHOLE rendered page (text AND
 // diagrams), applied via `zoom` on the Variant-T app root, so the operator can
-// fill a wide monitor or shrink to fit a laptop. The two COMPOSE: scaling
-// applies ON TOP of whatever density layout is in effect, and changing density
-// never resets the scale (they persist under separate keys). Range 70 %–150 %
-// in 5-point steps; default 100 %. Because `zoom` reflows (it is not a
-// transform), the page never clips — content re-wraps at the scaled size.
+// fill a wide monitor or shrink to fit a laptop. With density removed, this is
+// the SOLE sizing control. A small RESET affordance beside the pill snaps the
+// scale back to 100% (DEFAULT_SCALE) and persists. Range 70 %–150 % in 5-point
+// steps; default 100 %. Because `zoom` reflows (it is not a transform), the
+// page never clips — content re-wraps at the scaled size.
 export const SCALE_MIN = 70;
 export const SCALE_MAX = 150;
 export const SCALE_STEP = 5;
@@ -145,29 +140,24 @@ export function persistScale(v) {
   return n;
 }
 
-// ---- density → VISUAL-ELEMENT SIZE tokens ---------------------------
+// ---- VISUAL-ELEMENT SIZE tokens (fixed at the cozy baseline) --------
 //
-// The density picker scales spacing via CSS custom properties (--dt-*), but it
-// must ALSO scale the SIZE of the rendered visual elements — the SVG figures
-// are laid out in JS, so the size tokens live HERE (a pure table keyed by the
-// same density id). Compact → roomy grows diagram heights, node radii, heatmap
-// cell size, dot-plot row height, the reel/DAG vertical scale, and a global
-// figure font scale; compact shrinks them. Every figure stays fit-to-width at
-// every density (Problem 1 holds in compact AND roomy) — only the INTRINSIC
-// (vertical / cell / radius) dimensions scale, the width is always 100% of the
-// pane via the viewBox. `sizeScale` is the master multiplier the views apply to
-// row heights / cell sizes so the whole composition grows coherently.
-const DENSITY_SIZES = {
-  compact: { sizeScale: 0.88, fontScale: 0.92, nodeRadius: 0.9, dagRowStep: 30, heatCell: 13, dotRow: 19, sparkbarH: 36, reelScale: 1 },
-  cozy: { sizeScale: 1, fontScale: 1, nodeRadius: 1, dagRowStep: 34, heatCell: 16, dotRow: 22, sparkbarH: 42, reelScale: 1.18 },
-  roomy: { sizeScale: 1.18, fontScale: 1.1, nodeRadius: 1.18, dagRowStep: 40, heatCell: 20, dotRow: 26, sparkbarH: 50, reelScale: 1.4 },
-};
+// The SVG figures are laid out in JS, so their intrinsic SIZE tokens live HERE.
+// With the density picker removed, these are FIXED at the cozy values — the one
+// permanent baseline. They drive diagram heights, node radii, heatmap cell
+// size, dot-plot row height, the reel/DAG vertical scale, and a figure font
+// scale. Every figure stays fit-to-width (Problem 1 holds) — only the INTRINSIC
+// (vertical / cell / radius) dimensions are set here; the width is always 100%
+// of the pane via the viewBox. The page-scale pill scales the WHOLE page on top
+// of these. `sizeScale` is the master multiplier the views apply to row heights
+// / cell sizes so the whole composition stays coherent.
+const COZY_SIZES = { sizeScale: 1, fontScale: 1, nodeRadius: 1, dagRowStep: 34, heatCell: 16, dotRow: 22, sparkbarH: 42, reelScale: 1.18 };
 
-// The SIZE tokens for one density (defaults to the persisted value). Pure +
-// total — an unknown density falls back to the compact default.
-export function densityTokens(density) {
-  const d = normaliseDensity(density || readDensity());
-  return DENSITY_SIZES[d] || DENSITY_SIZES[DEFAULT_DENSITY];
+// The SIZE tokens — always the cozy baseline. The optional argument is ignored
+// (kept so existing call sites that passed a density id still work); pure +
+// total.
+export function densityTokens() {
+  return COZY_SIZES;
 }
 
 // ---- small builders -------------------------------------------------

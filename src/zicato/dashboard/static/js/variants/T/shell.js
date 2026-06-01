@@ -33,7 +33,7 @@ import { normaliseDecision } from './ui.js';
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
-  DENSITY_THEMES, DEFAULT_DENSITY, normaliseDensity, readDensity, persistDensity,
+  DENSITY,
   SCALE_MIN, SCALE_MAX, SCALE_STEP, DEFAULT_SCALE, normaliseScale, readScale, persistScale,
 } from './ui.js';
 
@@ -50,8 +50,8 @@ import * as publication from './views/publication.js';
 const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, publication };
 
 export const THEMES = COLOR_THEMES.map((t) => t[0]);
+const COLOR_IDS = THEMES;
 export const TYPEFACES = TYPE_THEMES.map((t) => t[0]);
-export const DENSITIES = DENSITY_THEMES.map((t) => t[0]);
 
 const KIND_TAG = {
   single_turn: '1-turn', multi_turn_scripted: 'scripted', multi_turn_emulated: 'emulated',
@@ -62,9 +62,8 @@ let _viewHost = null;
 let _treeHost = null;
 let _crumbHost = null;
 let _statusEl = null;
-let _colorEl = [];
+let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
 let _typeEl = [];
-let _densityEl = [];
 let _scaleInput = null;
 let _scaleReadout = null;
 let _backBtn = null;
@@ -95,7 +94,7 @@ export function applyTheme(theme, rootEl) {
   const root = rootEl || _root;
   if (root) root.setAttribute('data-t-theme', t);
   persistColor(t);
-  for (const b of _colorEl) patchClass(b, 'dt-theme-active', b.getAttribute('data-theme') === t);
+  if (_colorDropdown) _colorDropdown.setValue(t);
   return t;
 }
 
@@ -105,18 +104,6 @@ export function applyTypeface(typeface, rootEl) {
   if (root) root.setAttribute('data-t-type', t);
   persistType(t);
   for (const b of _typeEl) patchClass(b, 'dt-type-active', b.getAttribute('data-type') === t);
-  return t;
-}
-
-// The THIRD picker — density / "roominess". A pure CSS-only swap: the root's
-// `data-t-density` attribute drives the spacing/size custom properties, so the
-// whole UI re-breathes without any re-render. Persisted like the other pickers.
-export function applyDensity(density, rootEl) {
-  const t = normaliseDensity(density);
-  const root = rootEl || _root;
-  if (root) root.setAttribute('data-t-density', t);
-  persistDensity(t);
-  for (const b of _densityEl) patchClass(b, 'dt-density-active', b.getAttribute('data-density') === t);
   return t;
 }
 
@@ -147,6 +134,110 @@ export function applyScale(scale, rootEl) {
   return n;
 }
 
+// RESET the page scale back to 100% (DEFAULT_SCALE) + persist. Backs the small
+// reset affordance beside the scale pill (Change 4); keyboard-accessible (it is
+// a real <button>). Returns the applied value.
+export function resetScale(rootEl) {
+  return applyScale(DEFAULT_SCALE, rootEl || _root);
+}
+
+// ---- the colour SWATCH DROPDOWN (Change 6) --------------------------
+//
+// Nine themes is too many for an inline button row, so the colour picker is a
+// dropdown. The CLOSED control is a button showing the current theme's swatch
+// strip + name. Opening reveals a listbox; each option is a row with its own
+// swatch strip (ground · surface · ink · improve · regress — the legibility
+// hint) + name. Fully keyboard-accessible: Enter/Space/ArrowDown open; within
+// the open list ArrowUp/ArrowDown move the active option, Enter/Space select
+// (and apply), Esc closes back to the trigger; a click outside also closes.
+// Returns { node, setValue } so applyTheme() can keep the trigger + the
+// checked option in sync when the theme changes by any path.
+function swatchStrip(swatches, cls) {
+  return el('span', { class: cls || 'dt-swatch-strip', 'aria-hidden': 'true' },
+    (swatches || []).map((c) => el('span', { class: 'dt-swatch', style: `background:${c}` })));
+}
+
+function buildColorDropdown(initial) {
+  let value = normaliseColor(initial);
+  let open = false;
+  const byId = new Map(COLOR_THEMES.map((t) => [t[0], t]));
+
+  const triggerSwatch = swatchStrip((byId.get(value) || COLOR_THEMES[0])[2], 'dt-swatch-strip dt-swatch-strip-sm');
+  const triggerName = el('span', { class: 'dt-cd-name', text: (byId.get(value) || COLOR_THEMES[0])[1] });
+  const trigger = el('button', {
+    class: 'dt-cd-trigger', type: 'button',
+    'aria-haspopup': 'listbox', 'aria-expanded': 'false',
+    'aria-label': 'Colour theme', title: 'Colour theme',
+  }, [triggerSwatch, triggerName, el('span', { class: 'dt-cd-caret', 'aria-hidden': 'true', text: '▾' })]);
+
+  const options = COLOR_THEMES.map(([id, label, swatches]) => {
+    const opt = el('div', {
+      class: 'dt-cd-option', role: 'option', 'data-theme': id,
+      'aria-selected': String(id === value), tabindex: '-1', title: 'colour: ' + label,
+    }, [swatchStrip(swatches), el('span', { class: 'dt-cd-name', text: label })]);
+    opt.addEventListener('click', () => { choose(id); });
+    return opt;
+  });
+  const listbox = el('div', { class: 'dt-cd-list', role: 'listbox', 'aria-label': 'Colour theme' }, options);
+
+  const node = el('div', { class: 'dt-cd', role: 'group', 'aria-label': 'Colour theme' }, [trigger, listbox]);
+
+  let activeIdx = COLOR_IDS.indexOf(value);
+  function setActive(i) {
+    activeIdx = (i + options.length) % options.length;
+    options.forEach((o, k) => patchClass(o, 'dt-cd-active', k === activeIdx));
+  }
+  function setOpen(next) {
+    open = next;
+    patchClass(node, 'dt-cd-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) setActive(Math.max(0, COLOR_IDS.indexOf(value)));
+  }
+  function choose(id) {
+    value = normaliseColor(id);
+    applyTheme(value);            // applies to the root + persists + syncs us
+    setOpen(false);
+  }
+  function setValue(v) {
+    value = normaliseColor(v);
+    const def = byId.get(value) || COLOR_THEMES[0];
+    clearChildren(triggerSwatch);
+    for (const c of def[2]) triggerSwatch.appendChild(el('span', { class: 'dt-swatch', style: `background:${c}` }));
+    patchText(triggerName, def[1]);
+    options.forEach((o) => o.setAttribute('aria-selected', String(o.getAttribute('data-theme') === value)));
+  }
+
+  trigger.addEventListener('click', () => setOpen(!open));
+  trigger.addEventListener('keydown', (ev) => {
+    const k = ev.key;
+    if (k === 'ArrowDown' || k === 'Enter' || k === ' ' || k === 'Spacebar') {
+      ev.preventDefault(); setOpen(true);
+    }
+  });
+  listbox.addEventListener('keydown', (ev) => {
+    const k = ev.key;
+    if (k === 'Escape') { ev.preventDefault(); setOpen(false); }
+    else if (k === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx + 1); }
+    else if (k === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx - 1); }
+    else if (k === 'Enter' || k === ' ' || k === 'Spacebar') {
+      ev.preventDefault();
+      const id = options[activeIdx] && options[activeIdx].getAttribute('data-theme');
+      if (id) choose(id);
+    }
+  });
+  // a click anywhere outside the control closes it.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('click', (ev) => {
+      if (!open) return;
+      let n = ev && ev.target;
+      while (n) { if (n === node) return; n = n.parentNode; }
+      setOpen(false);
+    });
+  }
+
+  return { node, setValue };
+}
+
 export function mountShell(root) {
   _root = root;
   clearChildren(root);
@@ -155,30 +246,29 @@ export function mountShell(root) {
   root.setAttribute('data-variant', 'T');
   root.setAttribute('data-t-theme', readColor());
   root.setAttribute('data-t-type', readType());
-  root.setAttribute('data-t-density', readDensity());
+  // density is fixed at the cozy baseline (no picker) — stamp it for any rule
+  // that still keys on it, but it never changes.
+  root.setAttribute('data-t-density', DENSITY);
   root.setAttribute('data-t-scale', String(readScale()));
 
   _crumbHost = el('nav', { class: 'dt-crumbs', 'aria-label': 'Breadcrumb' });
 
-  _colorEl = COLOR_THEMES.map(([id, label]) =>
-    el('button', { class: 'dt-theme-btn', type: 'button', 'data-theme': id, title: 'colour: ' + id, text: label }));
-  for (const b of _colorEl) b.addEventListener('click', () => applyTheme(b.getAttribute('data-theme')));
-  const colorSwitch = el('div', { class: 'dt-theme-switch', role: 'group', 'aria-label': 'Colour theme' }, _colorEl);
+  // COLOUR PICKER — a SWATCH DROPDOWN (Change 6). Nine themes now, so the inline
+  // buttons are replaced by a keyboard-accessible dropdown: each option shows a
+  // small swatch strip (ground · surface · ink · improve · regress) plus the
+  // theme name; the closed control echoes the current theme's swatch + name.
+  _colorDropdown = buildColorDropdown(readColor());
+  const colorSwitch = _colorDropdown.node;
 
   _typeEl = TYPE_THEMES.map(([id, label]) =>
     el('button', { class: 'dt-type-btn', type: 'button', 'data-type': id, title: 'typeface: ' + id, text: label }));
   for (const b of _typeEl) b.addEventListener('click', () => applyTypeface(b.getAttribute('data-type')));
   const typeSwitch = el('div', { class: 'dt-type-switch', role: 'group', 'aria-label': 'Typeface' }, _typeEl);
 
-  _densityEl = DENSITY_THEMES.map(([id, label]) =>
-    el('button', { class: 'dt-density-btn', type: 'button', 'data-density': id, title: 'density: ' + id + ' — spacing rhythm', text: label }));
-  for (const b of _densityEl) b.addEventListener('click', () => applyDensity(b.getAttribute('data-density')));
-  const densitySwitch = el('div', { class: 'dt-density-switch', role: 'group', 'aria-label': 'Density (spacing rhythm)', title: 'Density — spacing rhythm / proportion' }, _densityEl);
-
   // The PAGE-WIDE SCALE pill: a draggable range slider that scales the WHOLE
-  // page (text + diagrams) via `zoom` on the app root — distinct from density
-  // (spacing). Keyboard-accessible (a native range input: arrows step ±5);
-  // a small % readout sits beside it. Persisted + restored independently.
+  // page (text + diagrams) via `zoom` on the app root. With density removed this
+  // is the sole sizing control. Keyboard-accessible (a native range input:
+  // arrows step ±5); a % readout + a RESET button (→ 100%) sit beside it.
   const initialScale = readScale();
   _scaleInput = el('input', {
     class: 'dt-scale-range', type: 'range',
@@ -200,10 +290,20 @@ export function mountShell(root) {
   };
   _scaleInput.addEventListener('input', onScale);
   _scaleInput.addEventListener('change', onScale);
+  // RESET affordance (Change 4): a real <button> beside the pill that snaps the
+  // page scale back to 100% and persists. A button is inherently keyboard-
+  // accessible (focusable + Enter/Space activate).
+  const scaleReset = el('button', {
+    class: 'dt-scale-reset', type: 'button',
+    title: 'Reset page scale to 100%', 'aria-label': 'Reset page scale to 100%',
+    text: '⟲',
+  });
+  scaleReset.addEventListener('click', () => resetScale());
   const scalePill = el('div', { class: 'dt-scale-pill', role: 'group', 'aria-label': 'Page scale', title: 'Page scale — overall page size' }, [
     el('span', { class: 'dt-scale-lab', text: 'scale', 'aria-hidden': 'true' }),
     _scaleInput,
     _scaleReadout,
+    scaleReset,
   ]);
 
   _statusEl = el('span', { class: 'dt-status' }, [
@@ -229,7 +329,6 @@ export function mountShell(root) {
     el('span', { class: 'dt-topbar-spacer' }),
     colorSwitch,
     typeSwitch,
-    densitySwitch,
     scalePill,
     _statusEl,
   ]);
@@ -241,7 +340,6 @@ export function mountShell(root) {
 
   applyTheme(readColor());
   applyTypeface(readType());
-  applyDensity(readDensity());
   applyScale(readScale());
 
   window.addEventListener('hashchange', dispatch);
@@ -251,7 +349,10 @@ export function mountShell(root) {
   loadEnvironment();
   connectSSE();
 
-  if (!String(location.hash).startsWith('#/T')) location.hash = '#/T/';
+  // bare `#/` prefix — only T's UI loads, so no `/T` namespacing is needed.
+  // A missing / non-app hash gets normalised to the environment root.
+  const h = String(location.hash);
+  if (h === '' || h === '#' || !h.startsWith('#/')) location.hash = '#/';
   else dispatch();
 }
 
@@ -396,4 +497,4 @@ function onStateChanged() {
   }, 400);
 }
 
-export { DEFAULT_COLOR, DEFAULT_TYPE, DEFAULT_DENSITY, DEFAULT_SCALE, SCALE_MIN, SCALE_MAX, SCALE_STEP };
+export { DEFAULT_COLOR, DEFAULT_TYPE, DEFAULT_SCALE, SCALE_MIN, SCALE_MAX, SCALE_STEP };

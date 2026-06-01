@@ -20,8 +20,8 @@ a new chrome control:
 5. **Compact MATCH CARDS on the generations page** (adopted from Variant W) — a
    champion-defends banner + a responsive wrapping grid of one card per
    challenger round.
-6. **A density / "roominess" picker** — a THIRD chrome selector
-   (compact · cozy · roomy) beside the colour-theme and typeface pickers.
+6. ~~A density / "roominess" picker~~ — *removed in round 10; **cozy** is now the
+   permanent baseline (see the round-10 polish above).*
 
 Round 9 makes the console **scale to the operator's screen**:
 
@@ -34,14 +34,40 @@ Round 9 makes the console **scale to the operator's screen**:
    render as large as the screen allows: bigger diagrams on bigger monitors.
 
 Default colour theme: **monokai**. Default typeface theme: **Technical**
-(Open Sans body + JetBrains Mono for data / labels / code). Default density:
-**compact** (the dense Console look). Default page scale: **100 %**. Miller
-columns (R) are back-burnered and not pursued here.
+(Open Sans body + JetBrains Mono for data / labels / code). Default page scale:
+**100 %**. Miller columns (R) are back-burnered and not pursued here.
 
 Self-contained under `js/variants/T/**` + `css/variants/T/console4.css` + the
 entry `app_T.js`; reuses only the shared `js/core/*` data spine and imports from
-no other variant directory (everything needed from P/S/Q is ported in). Selected
-behind `?ui=T` (already wired in index.html).
+no other variant directory (everything needed from P/S/Q is ported in). T is now
+the **converged default UI** (index.html boots `app_T.js`; `?ui=v1`/`?ui=v2` are
+the only fallbacks — exactly one UI loads at a time).
+
+## Round-10 polish (the converged default)
+
+Six operator-requested changes, all scoped to Variant T:
+
+1. **Bare `#/` route prefix.** The vestigial `#/` bake-off namespacing prefix
+   is dropped — T is the only variant UI, so routes are bare: `#/`,
+   `#/e/<epoch>`, `#/e/<epoch>/gen/<gen>`, `#/e/<epoch>/board/<entry>`, … A
+   legacy `#/…` link falls back to Environment (never blank).
+2. **Density picker removed → COZY is the permanent baseline.** The
+   compact/cozy/roomy picker is gone; the **cozy** `--dt-*` spacing tokens are
+   baked unconditionally onto the variant root, and the JS SIZE tokens are fixed
+   at the cozy values. The page-scale pill is the sizing control now.
+3. **"Sans" typeface dropped.** It was redundant with Technical's Open-Sans
+   body. The typeface picker is exactly **Editorial / Technical / Display**
+   (default Technical); the dropped `sans` id normalises to Technical.
+4. **Scale RESET affordance.** A small keyboard-accessible `⟲` button beside the
+   scale pill snaps the page scale back to 100 % and persists (`resetScale()`).
+5. **Six Gogh colour themes** (real palettes from gogh-co.github.io/Gogh),
+   bringing the total to **nine** (monokai stays default). See the chrome
+   section below for the palette→token mapping.
+6. **Colour picker is a SWATCH DROPDOWN.** With nine themes, the inline colour
+   buttons become a keyboard-accessible dropdown; each option shows a 5-swatch
+   preview strip (ground · surface · ink · improve · regress) + the theme name,
+   and the closed trigger echoes the current theme's swatch + name. (The
+   typeface picker stays as inline buttons — only three options.)
 
 ## The headline (carried from P) — a data-model TREE sidebar
 
@@ -64,20 +90,20 @@ URL-encoded so a cold deep-link hydrates BOTH the open branches and the detail.
 Implemented in `js/variants/T/tree.js`; the shell (`shell.js`) assembles the
 structural model from `/api/workspace` + `/api/lineage` + `/api/epoch.board`.
 
-## Detail views (router prefix `#/T/`, path = tree path)
+## Detail views (router prefix `#/`, path = tree path)
 
 | route | view — one line |
 | --- | --- |
-| `#/T/` | **Environment** — the workspace as a fleet (overview strip, per-epoch loss trendline cards, cross-epoch trajectory). |
-| `#/T/e/<epoch>` | **Epoch overview** — objective + proposer brief, the **slim REEL** (rounds along the champion spine; replaces the old bumps), the **compact board×generation drift-loss heatmap** (stays here per fix #6). |
-| `#/T/e/<epoch>/gens` | **Generations** — the **champion-defends banner** + a wrapping grid of compact **MATCH CARDS** (one per challenger round), plus the dense candidate roster (role · parent · scalar · Δ vs champion). Cards + rows open that candidate. |
-| `#/T/e/<epoch>/gen/<gen>[/<entry>]` | **Candidate** — lifecycle DAG (clickable patch node), per-board dot-plot, entry drill, **ALL match-ups**, and the **stacked promote gate**. |
-| `#/T/e/<epoch>/gen/<gen>~cmp=<gen2>` | **Candidate · COMPARE** — the SAME pane split into TWO candidate panels A \| B (S's comparison-first detail). |
-| `#/T/e/<epoch>/gen/<gen>/diff[/<mutId>]` | **Patch diff** — this candidate's side-by-side diff (baseline vs new content), reusing the mutation-viewer diff component. |
-| `#/T/e/<epoch>/boards` | **Boards** — the board **trellis** (small-multiples; here per fix #6); cards route to the per-board view by entry id. |
-| `#/T/e/<epoch>/board/<entry>[/<gen>]` | **Per-board** — one entry across every candidate (sorted dot-plot + table) with the **inline side-by-side transcript** when a candidate is selected. |
-| `#/T/e/<epoch>/mutations[/<mutId>]` | **Mutation surface** — site × generation matrix + side-by-side diff in one cohesive layout. |
-| `#/T/e/<epoch>/paper` | **Publication** — K's ACM renderer (GFM tables, combined table+chart, per-matchup detail), epoch-scoped. |
+| `#/` | **Environment** — the workspace as a fleet (overview strip, per-epoch loss trendline cards, cross-epoch trajectory). |
+| `#/e/<epoch>` | **Epoch overview** — objective + proposer brief, the **slim REEL** (rounds along the champion spine; replaces the old bumps), the **compact board×generation drift-loss heatmap** (stays here per fix #6). |
+| `#/e/<epoch>/gens` | **Generations** — the **champion-defends banner** + a wrapping grid of compact **MATCH CARDS** (one per challenger round), plus the dense candidate roster (role · parent · scalar · Δ vs champion). Cards + rows open that candidate. |
+| `#/e/<epoch>/gen/<gen>[/<entry>]` | **Candidate** — lifecycle DAG (clickable patch node), per-board dot-plot, entry drill, **ALL match-ups**, and the **stacked promote gate**. |
+| `#/e/<epoch>/gen/<gen>~cmp=<gen2>` | **Candidate · COMPARE** — the SAME pane split into TWO candidate panels A \| B (S's comparison-first detail). |
+| `#/e/<epoch>/gen/<gen>/diff[/<mutId>]` | **Patch diff** — this candidate's side-by-side diff (baseline vs new content), reusing the mutation-viewer diff component. |
+| `#/e/<epoch>/boards` | **Boards** — the board **trellis** (small-multiples; here per fix #6); cards route to the per-board view by entry id. |
+| `#/e/<epoch>/board/<entry>[/<gen>]` | **Per-board** — one entry across every candidate (sorted dot-plot + table) with the **inline side-by-side transcript** when a candidate is selected. |
+| `#/e/<epoch>/mutations[/<mutId>]` | **Mutation surface** — site × generation matrix + side-by-side diff in one cohesive layout. |
+| `#/e/<epoch>/paper` | **Publication** — K's ACM renderer (GFM tables, combined table+chart, per-matchup detail), epoch-scoped. |
 
 ## The compare model (NEW — fold 1, from S)
 
@@ -145,8 +171,8 @@ out left→right and is set to `width:100%` (NO pan/zoom, no horizontal scroll).
 Stations are evenly distributed between `x0` and `xMax`, so as rounds grow the
 step shrinks and the ticks **compress** — no element ever exceeds the viewBox
 width. The selected/hovered tick highlights via a CSS state-class swap (never an
-infinite keyframe). The reel's vertical scale follows the density picker
-(`--dt-reel-scale`) while its width stays fit-to-container.
+infinite keyframe). The reel's vertical scale is the fixed cozy
+`--dt-reel-scale` while its width stays fit-to-container.
 
 ## The match cards on the generations page (fold 5, adopted from W)
 
@@ -166,65 +192,76 @@ wraps to multiple rows, so it stays tidy whether there are 3 OR ~30 generations.
 These cards appear on the **generations** scope only — never on the
 environment / workspace view.
 
-## The chrome controls (three pickers + the scale pill)
+## The chrome controls (colour dropdown · typeface buttons · scale pill)
 
-- **Colour** — monokai (default) · solarized-dark · solarized-light, swapped via
-  `[data-t-theme]` on the variant root; CSS-only re-skin, persisted
-  (`zicato.T.theme`). The heatmap ramp derives from the active theme tokens.
-- **Typeface** — **Sans** · **Editorial** (+ Source Serif 4) · **Technical**
-  (default; + JetBrains Mono) · **Display** (+ Archivo Narrow), swapped via
-  `[data-t-type]`, persisted (`zicato.T.typeface`). Google Fonts loaded in
-  `app_T.js` with `display=swap` and system fallbacks — the only external dep.
-- **Density / "roominess"** (fold 6) — **compact** (default; the dense Console
-  look) · **cozy** · **roomy** (Atlas-like air). A third chrome selector beside
-  the others; a root `[data-t-density]` attribute drives the spacing/size custom
-  properties (`--dt-rail` rail width, `--dt-pad-x/-y` detail padding,
-  `--dt-section-gap`, `--dt-panel-pad-*`, `--dt-row-gap`, `--dt-card-min` /
-  `--dt-card-gap` / `--dt-card-pad`, `--dt-reel-scale`, and a global
-  `--dt-font-scale`), so the WHOLE UI — reel, match cards, tables, gate, tree —
-  re-breathes with a pure CSS swap (no re-render). Persisted (`zicato.T.density`);
-  the active value is reflected on the pills.
+- **Colour — a SWATCH DROPDOWN** of **nine** themes (round 10). The closed
+  trigger (`.dt-cd-trigger`) shows the current theme's swatch strip + name;
+  opening reveals a listbox (`.dt-cd-list`) with one `.dt-cd-option` per theme,
+  each a 5-swatch preview strip (`.dt-swatch-strip`: ground · surface · ink ·
+  improve · regress) + name. Keyboard-accessible: Enter/Space/ArrowDown open;
+  ArrowUp/ArrowDown move the active option; Enter/Space select; Esc closes; a
+  click outside closes. Choosing a theme sets `[data-t-theme]` on the variant
+  root (CSS-only re-skin), persists (`zicato.T.theme`), and updates the trigger.
+  The heatmap ramp + every mark derive from the active theme tokens.
 
-  **Density also scales the VISUAL-ELEMENT size** (round 8), not only the
-  whitespace around them. The SVG figures are laid out in JS, so a parallel
-  size-token table lives in `ui.js` (`densityTokens(density)` → `{ sizeScale,
-  fontScale, nodeRadius, dagRowStep, heatCell, dotRow, sparkbarH, reelScale }`),
-  keyed by the same density id. Each view reads it at render time and feeds the
-  figure's INTRINSIC dimensions: the lifecycle-DAG height + row step, the heatmap
-  cell size, the per-board / candidate / board-view dot-plot row height, the
-  trellis sparkbar height, and the per-judge value-bar row height all grow
-  compact → roomy (and shrink in compact). The reel + match cards keep their
-  existing CSS scaling (`--dt-reel-scale` / `--dt-card-min`). Width is never
-  touched — every figure stays fit-to-width at every density (see below).
+  The nine themes (monokai stays default): the three originals — **monokai**,
+  **solarized-dark**, **solarized-light** — plus six **Gogh** palettes
+  (gogh-co.github.io/Gogh): **google-light**, **google-dark**, **lunaria-light**,
+  **lunaria-eclipse**, **belafonte-day**, **belafonte-night**. Each Gogh terminal
+  palette is mapped to T's `--v2-*` token contract by a single principled rule:
+  `paper ← background`, `panel ← background nudged toward fg/host`, `ink ←
+  bright-white/host` and `ink-soft ← foreground`, `ink-faint ← fg mixed toward
+  bg`, `rule`/`rule-soft ← bg mixed toward fg`, `good ← green`, `bad ← red`,
+  `caution ← yellow`, `accent ← cyan` (or the palette's **blue** where the cyan
+  is a low-contrast neutral, as for Belafonte), `flat ← bright-black/grey`,
+  `cell-empty ← bg mixed toward fg`. A few accents/cautions were nudged for
+  contrast on their grounds so every mark, diagram, and the heatmap ramp read in
+  all nine. **"Belafonte Light" does not exist in Gogh** — per the brief we ship
+  Belafonte **Day** (the light variant) + **Night** (dark).
+- **Typeface — inline buttons** (only three, so no dropdown needed):
+  **Editorial** (+ Source Serif 4) · **Technical** (default; + JetBrains Mono) ·
+  **Display** (+ Archivo Narrow), swapped via `[data-t-type]`, persisted
+  (`zicato.T.typeface`). The old redundant **Sans** option is dropped (Technical
+  already gives an Open-Sans body; the `sans` id normalises to Technical). Google
+  Fonts loaded in `app_T.js` with `display=swap` and system fallbacks — the only
+  external dep.
+- **Density — removed; COZY baked in.** There is no density picker. The **cozy**
+  `--dt-*` spacing tokens (`--dt-rail`, `--dt-pad-x/-y`, `--dt-section-gap`,
+  `--dt-panel-pad-*`, `--dt-row-gap`, `--dt-card-*`, `--dt-reel-scale`, the global
+  `--dt-font-scale`) live **unconditionally** on the variant root, and the JS
+  SIZE tokens (`ui.densityTokens()` → `{ sizeScale, fontScale, nodeRadius,
+  dagRowStep, heatCell, dotRow, sparkbarH, reelScale }`) are **fixed at the cozy
+  values** — the views still feed them to the figures' INTRINSIC dimensions
+  (DAG height/row step, heatmap cell, dot-plot rows, sparkbar height) so every
+  figure stays fit-to-width. The shell stamps `data-t-density="cozy"` for any
+  rule that keys on it, but it never changes.
 
-## The page-wide SCALE pill (round 9) — and how it differs from density
+## The page-wide SCALE pill (the sole sizing control) + reset
 
-A fourth chrome control, a **draggable range slider** (`.dt-scale-range` inside a
-`.dt-scale-pill`, beside the colour / typeface / density pickers) with a small
-**% readout**. It is a continuous control over **≈70 %–150 %** in **5 % steps**,
-**default 100 %**, and is **keyboard-accessible** (a native range input: arrow
-keys step ±5; it carries `aria-valuemin/max/now` + an `aria-label`).
+The chrome's sizing control is a **draggable range slider** (`.dt-scale-range`
+inside a `.dt-scale-pill`, beside the colour + typeface pickers) with a small
+**% readout** and a **reset button**. It is a continuous control over
+**≈70 %–150 %** in **5 % steps**, **default 100 %**, and is
+**keyboard-accessible** (a native range input: arrow keys step ±5; it carries
+`aria-valuemin/max/now` + an `aria-label`).
 
-- **Mechanism.** `shell.applyScale(n, root)` (mirrors `applyTheme` / `applyDensity`)
-  normalises `n` (clamp to range + snap to the 5 % grid), then applies it
-  **page-wide** by setting **`zoom`** on the Variant-T app **ROOT**
+- **Mechanism.** `shell.applyScale(n, root)` (mirrors `applyTheme`) normalises
+  `n` (clamp to range + snap to the 5 % grid), then applies it **page-wide** by
+  setting **`zoom`** on the Variant-T app **ROOT**
   (`#variant-root[data-variant="T"]`) — e.g. 130 % → `root.style.zoom = 1.3`. It
   also stamps the raw ratio as `--dt-page-scale` and records `data-t-scale="130"`
   on the root, and updates the slider + the % readout. `zoom` **reflows** (it is
   not a CSS transform), so the page re-wraps at the scaled size and never clips.
+- **RESET (round 10).** A small `.dt-scale-reset` `<button>` (`⟲`, with an
+  `aria-label`) beside the pill calls `shell.resetScale()` → `applyScale(100)`,
+  snapping the page back to 100 % and persisting it. It is inherently
+  keyboard-accessible (focusable; Enter/Space activate).
 - **Page-wide, NOT per-pane.** The scale is applied at the app root only — there
   is deliberately **no** per-pane zoom control. In the side-by-side compare view
   the two panes scale together with the rest of the page.
 - **Persistence.** `readScale` / `persistScale` use their own key
-  (`zicato.T.scale`); the value is restored and re-applied on every mount.
-- **Scale vs density — distinct axes that COMPOSE.** Labels + tooltips spell out
-  the roles so the two are not confused: **density** = the *spacing rhythm /
-  proportion* (compact · cozy · roomy — how the layout breathes, via the `--dt-*`
-  tokens and the JS size tokens); the **scale pill** = the *overall page size*
-  (one master `zoom` multiplier on top of whatever density layout is in effect).
-  They persist under separate keys and never reset one another — changing density
-  leaves the scale untouched and vice-versa, so the page scale simply multiplies
-  the chosen density layout.
+  (`zicato.T.scale`); the value is restored and re-applied on every mount, and is
+  untouched by colour/typeface changes (orthogonal axes).
 
 ## Fluid, resolution-responsive layout (round 9)
 
@@ -239,7 +276,7 @@ collapses to one column below 1080 px) splits the **FULL content width** — so
 each pane, and every fit-to-width SVG inside it, renders **as large as the screen
 allows**. Net effect: bigger diagrams on bigger screens, still tidy on small ones.
 This composes with the scale pill (the whole fluid layout is then `zoom`-scaled)
-and with density (which still drives the padding rhythm).
+on top of the fixed cozy padding rhythm.
 
 ## Fit-to-width — visual elements never escape their pane (round 8)
 
@@ -273,36 +310,36 @@ heatmap; Tufte sankey with label ≠ value; side-by-side diff with real strings.
 
 ## Tests
 
-`test/variant_t.test.mjs` (34 tests) covers: the tree renders Environment →
-Epoch → {Generations, Boards, Mutation surface, Publication}; multi-generation
-nav; the candidate-page promote gate; the patch-node click → per-candidate diff
-with real strings; v0 showing ≥2 match-ups; the board view reachable from the
-tree + inline side-by-side transcript on run select; the **side-by-side COMPARE
-splitting the detail into two candidates**; the **back button navigating UP and
-rendering the destination into the MAIN detail pane while the rail host stays the
-tree**; trellis in Boards / heatmap in epoch; the colour + typeface pickers + the
-compare primitives; and digest no-ops for the candidate view and the tree. Round
-7 adds: the epoch view renders the **slim reel** (spine + ticks) and NOT the old
-bumps; the reel stays **fit-to-width** (fixed `0 0 1000 92` viewBox, ticks
-compress, nothing exceeds the width) under a **~12-generation / 11-round**
-fixture; the generations page renders the **champion-defends banner + one match
-card per challenger** in a wrapping grid; match cards do NOT render on the
-environment view; and the **density picker** switches compact↔roomy (root
-attribute + token) and persists. Round 8 adds: the **lifecycle DAG and sankey
-render as fit-to-width responsive SVG** (`width:100%` + viewBox) with NO
-horizontal-scroll wrapper around the figure; the epoch **heatmap** is responsive
-and its panel does not scroll horizontally; the **publication** view's wide
-tables each sit in a contained `.dn-table-scroll` box (the panel itself never
-scrolls) and its live figures are `width:100%`; and **density scales a diagram
-SIZE token** (not only spacing) — `densityTokens('compact')` vs `'roomy'` differ
-on every intrinsic size token, and the rendered DAG height grows compact → roomy
-while BOTH stay `width:100%` (fit-to-width holds at every density). Round 9 adds:
-`ui` exposes a **70–150 % / 5 %-step / 100 %-default** scale surface that snaps +
-clamps; the **draggable scale pill exists in the chrome** and setting it applies a
-**page-wide** scale at the app **ROOT** (`data-t-scale` + `root.style.zoom` change,
-NOT on any pane) and **persists + restores** (a fresh mount re-applies it); the
-pill is a **keyboard-accessible** native range with aria bounds; the page scale
-**composes with density** (switching density does not reset the scale, and the two
-persist independently); and the **layout is fluid** — the old narrow 1160 px /
-1320 px caps are gone, the detail pane is `width:100%`, and the compare split is a
-`1fr 1fr` grid so its two panes share the FULL content width.
+`test/variant_t.test.mjs` (36 tests) covers, carried forward: the tree renders
+Environment → Epoch → {Generations, Boards, Mutation surface, Publication};
+multi-generation nav; the candidate-page promote gate; the patch-node click →
+per-candidate diff with real strings; v0 showing ≥2 match-ups; the board view
+reachable from the tree + inline side-by-side transcript on run select; the
+**side-by-side COMPARE splitting the detail into two candidates**; the **back
+button navigating UP and rendering the destination into the MAIN detail pane
+while the rail host stays the tree**; trellis in Boards / heatmap in epoch; the
+typeface picker + compare primitives; digest no-ops; the **slim reel** (spine +
+ticks, fixed `0 0 1000 92` viewBox, ticks compress under a ~12-gen/11-round
+fixture); the **champion-defends banner + one match card per challenger**; match
+cards absent on the environment view; the **lifecycle DAG / sankey / heatmap as
+fit-to-width responsive SVG** (`width:100%` + viewBox, no horizontal-scroll
+wrapper); the **publication** view's wide tables contained in `.dn-table-scroll`;
+the scale pill's **70–150 % / 5 %-step / 100 %-default** surface, its **page-wide
+ROOT zoom** (not per-pane), persistence + restore, and keyboard accessibility;
+and the **fluid layout** (no narrow caps; detail pane `width:100%`; `1fr 1fr`
+compare split).
+
+The round-10 polish adds: **(a)** routes use the bare **`#/`** prefix
+(`router.PREFIX === '#'`, no `/T`), a deep route parses, and an href round-trips
+(a legacy `#/T/…` link falls back to home); **(b)** the **density picker is gone**
+(no `DENSITY_THEMES` / `readDensity` / `applyDensity`), `ui.DENSITY === 'cozy'`,
+the SIZE tokens are fixed at the cozy values, the mounted root carries
+`data-t-density="cozy"`, and the CSS has no density-conditional selectors;
+**(c)** the typeface options are **exactly** `editorial/technical/display` (no
+`sans`, default Technical); **(d)** the **scale RESET** button returns the page to
+100 % and persists (and `resetScale()` does the same); **(e)** **all nine** colour
+themes are registered, each defines the full `--v2-*` token contract in the CSS,
+and selecting each (incl. the six Gogh palettes) applies + persists it; **(f)**
+the colour picker is a **swatch dropdown** — a trigger with the current swatch +
+name, nine options each with a ≥4-swatch strip preview, clicking an option
+applies + persists, and the keyboard (ArrowDown opens, Esc closes) works.

@@ -19,7 +19,7 @@
 //     destination into the MAIN DETAIL PANE (rail host unchanged);
 //   * pickers (monokai + Technical defaults) switch + persist; digest no-op.
 
-import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep } from './harness.mjs';
 
 installDom();
 
@@ -136,39 +136,59 @@ function freshState() {
 function allByClass(host, cls) {
   return host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes(cls));
 }
+// read the scoped stylesheet text (for CSS-contract assertions).
+async function readCssAsync() {
+  const fs = await import('node:fs');
+  return fs.readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8');
+}
+const _cssCache = await readCssAsync();
+function readCss() { return _cssCache; }
 
 // ---- router: hierarchical path + the compare (cmp) target ----------
 
 test('router: hierarchical views parse with the epoch + the compare target', () => {
+  // CHANGE 1: the vestigial `/T` hash-route prefix is dropped — routes are bare `#/`.
+  assertEqual(router.PREFIX, '#', 'the route prefix is bare `#` (no `/T`)');
+  assert(!router.href('home', {}).includes('/T'), 'a home href carries no `/T` prefix');
+  assert(!router.href('epoch', { epochId: EPOCH_ID }).includes('/T'), 'an epoch href carries no `/T` prefix');
+  assertEqual(router.href('home', {}), '#/', 'home is the bare `#/` route');
+  assertEqual(router.href('epoch', { epochId: EPOCH_ID }), `#/e/${EPOCH_ID}`, 'epoch href round-trips under the bare prefix');
+  // an old `#/T/...` link no longer resolves to an app view (the prefix is gone).
+  assertEqual(router.parseRoute(`#/T/e/${EPOCH_ID}`).view, 'home', 'a legacy `#/T/` link falls back to home');
   assertEqual(router.parseRoute('').view, 'home');
-  assertEqual(router.parseRoute('#/T/').view, 'home');
+  assertEqual(router.parseRoute('#/').view, 'home');
   assertEqual(router.parseRoute('#/bogus').view, 'home');
-  const ep = router.parseRoute(`#/T/e/${EPOCH_ID}`);
+  const ep = router.parseRoute(`#/e/${EPOCH_ID}`);
   assertEqual(ep.view, 'epoch'); assertEqual(ep.params.epochId, EPOCH_ID);
-  const cand = router.parseRoute(`#/T/e/${EPOCH_ID}/gen/v1`);
+  // a representative DEEP route parses + its href round-trips.
+  const deep = router.parseRoute(`#/e/${EPOCH_ID}/gen/v1/diff/coordinator_prompt`);
+  assertEqual(deep.view, 'diff'); assertEqual(deep.params.gen, 'v1'); assertEqual(deep.params.mutId, 'coordinator_prompt');
+  assertEqual(router.href('diff', { epochId: EPOCH_ID, gen: 'v1', mutId: 'coordinator_prompt' }),
+    `#/e/${EPOCH_ID}/gen/v1/diff/coordinator_prompt`, 'the deep diff href round-trips under the bare prefix');
+  const cand = router.parseRoute(`#/e/${EPOCH_ID}/gen/v1`);
   assertEqual(cand.view, 'candidate'); assertEqual(cand.params.gen, 'v1');
   // the side-by-side compare target rides as a ~cmp= suffix and deep-links.
-  const cmp = router.parseRoute(`#/T/e/${EPOCH_ID}/gen/v1~cmp=v2`);
+  const cmp = router.parseRoute(`#/e/${EPOCH_ID}/gen/v1~cmp=v2`);
   assertEqual(cmp.view, 'candidate'); assertEqual(cmp.params.gen, 'v1'); assertEqual(cmp.cmp, 'v2');
-  assertEqual(router.href('candidate', { epochId: EPOCH_ID, gen: 'v1' }, { cmp: 'v2' }), `#/T/e/${EPOCH_ID}/gen/v1~cmp=v2`);
-  const brd = router.parseRoute(`#/T/e/${EPOCH_ID}/board/waffles_single/v1`);
+  assertEqual(router.href('candidate', { epochId: EPOCH_ID, gen: 'v1' }, { cmp: 'v2' }), `#/e/${EPOCH_ID}/gen/v1~cmp=v2`);
+  const brd = router.parseRoute(`#/e/${EPOCH_ID}/board/waffles_single/v1`);
   assertEqual(brd.view, 'board'); assertEqual(brd.params.entry, 'waffles_single'); assertEqual(brd.params.gen, 'v1');
-  assertEqual(router.parseRoute(`#/T/e/${EPOCH_ID}/mutations/coordinator_prompt`).params.mutId, 'coordinator_prompt');
-  assertEqual(router.parseRoute(`#/T/e/${EPOCH_ID}/paper`).view, 'publication');
-  assertEqual(router.parseRoute(`#/T/e/${EPOCH_ID}/boards`).view, 'boards');
+  assertEqual(router.parseRoute(`#/e/${EPOCH_ID}/mutations/coordinator_prompt`).params.mutId, 'coordinator_prompt');
+  assertEqual(router.parseRoute(`#/e/${EPOCH_ID}/paper`).view, 'publication');
+  assertEqual(router.parseRoute(`#/e/${EPOCH_ID}/boards`).view, 'boards');
 });
 
 // ---- router.up(): the back/up destination -------------------------
 
 test('router.up: navigates UP the selection hierarchy (incl. collapsing a compare split)', () => {
-  assertEqual(router.up(router.parseRoute('#/T/')), null, 'environment has no parent');
-  assertEqual(router.up(router.parseRoute(`#/T/e/${EPOCH_ID}`)).view, 'home', 'epoch → environment');
-  assertEqual(router.up(router.parseRoute(`#/T/e/${EPOCH_ID}/gens`)).view, 'epoch', 'gens → epoch');
-  assertEqual(router.up(router.parseRoute(`#/T/e/${EPOCH_ID}/gen/v1`)).view, 'gens', 'candidate → generations');
+  assertEqual(router.up(router.parseRoute('#/')), null, 'environment has no parent');
+  assertEqual(router.up(router.parseRoute(`#/e/${EPOCH_ID}`)).view, 'home', 'epoch → environment');
+  assertEqual(router.up(router.parseRoute(`#/e/${EPOCH_ID}/gens`)).view, 'epoch', 'gens → epoch');
+  assertEqual(router.up(router.parseRoute(`#/e/${EPOCH_ID}/gen/v1`)).view, 'gens', 'candidate → generations');
   // a compare split collapses to the bare candidate FIRST (it is a deeper state).
-  const upFromCmp = router.up(router.parseRoute(`#/T/e/${EPOCH_ID}/gen/v1~cmp=v2`));
+  const upFromCmp = router.up(router.parseRoute(`#/e/${EPOCH_ID}/gen/v1~cmp=v2`));
   assertEqual(upFromCmp.view, 'candidate'); assert(!upFromCmp.cmp, 'back clears the comparison first');
-  assertEqual(router.up(router.parseRoute(`#/T/e/${EPOCH_ID}/board/waffles_single/v1`)).view, 'board', 'board+gen → bare board');
+  assertEqual(router.up(router.parseRoute(`#/e/${EPOCH_ID}/board/waffles_single/v1`)).view, 'board', 'board+gen → bare board');
 });
 
 // ---- HEADLINE: the data-model TREE sidebar -------------------------
@@ -183,7 +203,7 @@ test('tree sidebar: renders Environment → Epoch → {Generations, Boards, Muta
     } },
   };
   const toggles = new Set(['e:' + EPOCH_ID, 'e:' + EPOCH_ID + '/gens', 'e:' + EPOCH_ID + '/boards']);
-  const route = router.parseRoute(`#/T/e/${EPOCH_ID}`);
+  const route = router.parseRoute(`#/e/${EPOCH_ID}`);
   const ctx = { navigate() {}, href: router.href };
   tree.buildTree(host, model, route, toggles, ctx, () => {});
 
@@ -305,7 +325,7 @@ test('board view: reachable from the tree and selecting a run shows the transcri
   let navTo = null;
   const treeCtx = { navigate: (v, p) => { navTo = { v, p }; }, href: router.href };
   const toggles = new Set(['e:' + EPOCH_ID, 'e:' + EPOCH_ID + '/boards']);
-  tree.buildTree(host, model, router.parseRoute(`#/T/e/${EPOCH_ID}/boards`), toggles, treeCtx, () => {});
+  tree.buildTree(host, model, router.parseRoute(`#/e/${EPOCH_ID}/boards`), toggles, treeCtx, () => {});
   const boardLeaf = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-leaf') && n.getAttribute('data-kind') === 'board')[0];
   assert(boardLeaf, 'a Boards leaf exists in the tree');
   const leafBtn = boardLeaf.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-label'))[0];
@@ -384,7 +404,7 @@ test('back button: navigates UP and renders the destination into the MAIN detail
   // mount the real shell so the back button + the rail/detail hosts exist.
   const root = document.createElement('div');
   document.body.appendChild(root);
-  loc._hash = `#/T/e/${EPOCH_ID}/gen/v1`;
+  loc._hash = `#/e/${EPOCH_ID}/gen/v1`;
   shell.mountShell(root);
   // let the async dispatch settle.
   await new Promise((r) => setTimeout(r, 0));
@@ -402,7 +422,7 @@ test('back button: navigates UP and renders the destination into the MAIN detail
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 
-  assertEqual(location.hash, `#/T/e/${EPOCH_ID}/gens`, 'back navigated UP to the generations group');
+  assertEqual(location.hash, `#/e/${EPOCH_ID}/gens`, 'back navigated UP to the generations group');
   // THE FIX: the destination view lands in the MAIN DETAIL pane, NOT the rail.
   assert(detail.textContent.toLowerCase().includes('generation'), 'the destination view rendered into the MAIN detail pane');
   // the rail host still holds the tree (it was not used as the back destination).
@@ -418,9 +438,11 @@ test('pickers: typeface (Technical default) + colour (monokai default) switch + 
   assertEqual(ui.DEFAULT_COLOR, 'monokai', 'monokai is the default colour theme');
   assertEqual(ui.DEFAULT_TYPE, 'technical', 'Technical is the default typeface');
   const typeIds = ui.TYPE_THEMES.map((t) => t[0]);
-  assert(['sans', 'editorial', 'technical', 'display'].every((t) => typeIds.includes(t)), 'all four typefaces offered');
+  // CHANGE 3: the typeface options are EXACTLY Editorial/Technical/Display — no Sans.
+  assertDeep(typeIds, ['editorial', 'technical', 'display'], 'typefaces are exactly editorial/technical/display (Sans removed)');
+  assert(!typeIds.includes('sans'), 'the redundant Sans typeface is gone');
   const colorIds = ui.COLOR_THEMES.map((t) => t[0]);
-  assert(['monokai', 'solarized-dark', 'solarized-light'].every((c) => colorIds.includes(c)), 'all three colour themes offered');
+  assert(['monokai', 'solarized-dark', 'solarized-light'].every((c) => colorIds.includes(c)), 'the three original colour themes are kept');
   shell.applyTheme('solarized-dark', root);
   assertEqual(root.getAttribute('data-t-theme'), 'solarized-dark', 'colour applied to the T root');
   assertEqual(ui.readColor(), 'solarized-dark', 'colour persisted');
@@ -429,6 +451,7 @@ test('pickers: typeface (Technical default) + colour (monokai default) switch + 
   assertEqual(ui.readType(), 'editorial', 'typeface persisted');
   assertEqual(ui.normaliseColor('nonsense'), 'monokai', 'unknown colour → monokai');
   assertEqual(ui.normaliseType('nonsense'), 'technical', 'unknown typeface → technical');
+  assertEqual(ui.normaliseType('sans'), 'technical', 'the dropped Sans id falls back to Technical');
 });
 
 test('compare primitives: comparePicker reflects the value; splitFrame yields two sides only when B is given', () => {
@@ -466,7 +489,7 @@ test('candidate view: digest-gated — identical data does NOT rebuild the DOM (
 
 test('tree sidebar: digest-gated — same model + route + toggles yields the same digest (heartbeat no-op)', () => {
   const model = { epochs: [{ id: EPOCH_ID, current: true }], byEpoch: { [EPOCH_ID]: { gens: [{ id: 'v0', promoted: true, parent: null }], boards: [{ id: 'waffles_single' }] } } };
-  const route = router.parseRoute(`#/T/e/${EPOCH_ID}/gen/v0`);
+  const route = router.parseRoute(`#/e/${EPOCH_ID}/gen/v0`);
   const toggles = new Set();
   const d1 = tree.treeDigest(model, route, toggles);
   const d2 = tree.treeDigest(model, route, toggles);
@@ -618,23 +641,40 @@ test('match cards: do NOT render on the environment / workspace (home) view', as
   assertEqual(allByClass(host, 'tr-reel').length, 0, 'NO reel on the environment view');
 });
 
-// ---- (e) the density picker switches compact↔roomy + persists ----
+// ---- (e) CHANGE 2: the density picker is GONE; cozy is the baseline ----
 
-test('density picker: compact↔roomy switches the root attribute + spacing token + persists (third picker)', () => {
+test('density removed: no picker, no density APIs; cozy is the permanent baseline', () => {
   freshState();
-  assertEqual(ui.DEFAULT_DENSITY, 'compact', 'compact is T’s default density');
-  const ids = ui.DENSITY_THEMES.map((t) => t[0]);
-  assert(['compact', 'cozy', 'roomy'].every((d) => ids.includes(d)), 'all three densities offered (compact/cozy/roomy)');
-  assert(shell.DENSITIES.includes('compact') && shell.DENSITIES.includes('roomy'), 'the shell exposes the density ids');
+  // the density picker + its read/persist/normalise/applyDensity surface is gone.
+  assert(ui.DENSITY_THEMES === undefined, 'no DENSITY_THEMES table (the picker is removed)');
+  assert(typeof ui.readDensity !== 'function', 'no readDensity (density is not a setting anymore)');
+  assert(typeof ui.persistDensity !== 'function', 'no persistDensity');
+  assert(typeof ui.applyDensity !== 'function' && typeof shell.applyDensity !== 'function', 'no applyDensity picker plumbing');
+  assert(shell.DENSITIES === undefined, 'the shell no longer exposes density ids');
+  // cozy is the one permanent baseline.
+  assertEqual(ui.DENSITY, 'cozy', 'the active density constant is cozy');
 
-  const root = document.createElement('div');
-  shell.applyDensity('compact', root);
-  assertEqual(root.getAttribute('data-t-density'), 'compact', 'compact applied to the T root');
-  assertEqual(ui.readDensity(), 'compact', 'compact persisted');
-  shell.applyDensity('roomy', root);
-  assertEqual(root.getAttribute('data-t-density'), 'roomy', 'roomy applied (the root attribute changed)');
-  assertEqual(ui.readDensity(), 'roomy', 'roomy persisted (localStorage)');
-  assertEqual(ui.normaliseDensity('nonsense'), 'compact', 'unknown density → compact');
+  // the SIZE tokens are FIXED at the cozy values regardless of any argument.
+  const cozy = ui.densityTokens();
+  assertEqual(cozy.sizeScale, 1, 'cozy sizeScale baseline');
+  assertEqual(cozy.heatCell, 16, 'cozy heatmap cell baseline');
+  assertEqual(cozy.dagRowStep, 34, 'cozy DAG row-step baseline');
+  assertEqual(cozy.reelScale, 1.18, 'cozy reel-scale baseline');
+  // an (ignored) argument cannot change the baseline.
+  assertEqual(ui.densityTokens('compact').sizeScale, 1, 'a compact arg is ignored — still cozy');
+  assertEqual(ui.densityTokens('roomy').heatCell, 16, 'a roomy arg is ignored — still cozy');
+
+  // the shell stamps the cozy baseline (never changes) on mount.
+  const root = mountLiveShell('#/');
+  assertEqual(root.getAttribute('data-t-density'), 'cozy', 'the mounted root carries the cozy baseline');
+
+  // and the CSS bakes the cozy --dt-* spacing tokens unconditionally on the root,
+  // with NO density-conditional selectors left.
+  const css = readCss();
+  assert(!/\[data-t-density="compact"\]/.test(css), 'no compact density selector in the CSS');
+  assert(!/\[data-t-density="roomy"\]/.test(css), 'no roomy density selector in the CSS');
+  assert(/#variant-root\[data-variant="T"\]\s*\{[^}]*--dt-rail:\s*288px/.test(css.replace(/\n/g, ' ')),
+    'the cozy --dt-rail (288px) is the unconditional baseline on the root');
 });
 
 // ====================================================================
@@ -736,35 +776,17 @@ test('contained: the publication view’s wide tables carry their OWN contained 
   for (const s of figSvgs) assertEqual(s.getAttribute('width'), '100%', 'each paper figure SVG is width:100% (contained within the paper column)');
 });
 
-// ---- (c) the density picker scales a visual-element SIZE token --------
+// ---- (c) the fixed cozy SIZE tokens still drive a fit-to-width DAG ----
 
-test('density scales SIZE: compact → roomy changes a DIAGRAM dimension token, not only spacing', () => {
-  const compact = ui.densityTokens('compact');
-  const roomy = ui.densityTokens('roomy');
-  // every intrinsic size token grows from compact to roomy.
-  assert(roomy.sizeScale > compact.sizeScale, 'the master sizeScale grows compact → roomy (' + compact.sizeScale + ' → ' + roomy.sizeScale + ')');
-  assert(roomy.dagRowStep > compact.dagRowStep, 'the lifecycle-DAG row step grows with density');
-  assert(roomy.heatCell > compact.heatCell, 'the heatmap cell size grows with density');
-  assert(roomy.dotRow > compact.dotRow, 'the dot-plot row height grows with density');
-  assert(roomy.sparkbarH > compact.sparkbarH, 'the trellis sparkbar height grows with density');
-  assert(roomy.nodeRadius > compact.nodeRadius, 'the node radius scale grows with density');
-  // an unknown density is total — falls back to the compact default.
-  assertEqual(ui.densityTokens('nonsense').sizeScale, compact.sizeScale, 'unknown density falls back to compact sizes');
-});
-
-test('density scales SIZE: the rendered lifecycle-DAG height differs between compact and roomy', () => {
+test('cozy SIZE tokens drive the lifecycle-DAG dimensions and it stays fit-to-width', () => {
   const entries = [{ entry_id: 'b1', drift_loss: 10, pass_fail: 0 }, { entry_id: 'b2', drift_loss: 20, pass_fail: 1 }];
-  const ct = ui.densityTokens('compact');
-  const rt = ui.densityTokens('roomy');
-  const hCompact = Math.max(Math.round(300 * ct.sizeScale), Math.round(120 * ct.sizeScale) + entries.length * ct.dagRowStep);
-  const hRoomy = Math.max(Math.round(300 * rt.sizeScale), Math.round(120 * rt.sizeScale) + entries.length * rt.dagRowStep);
-  assert(hRoomy > hCompact, 'the DAG figure height grows compact → roomy (' + hCompact + ' → ' + hRoomy + ')');
-  const dCompact = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: hCompact });
-  const dRoomy = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: hRoomy });
-  assert(+dRoomy.getAttribute('height') > +dCompact.getAttribute('height'), 'the painted DAG SVG height is larger at roomy than compact');
-  // but BOTH stay fit-to-width (Problem 1 holds at every density).
-  assertEqual(dCompact.getAttribute('width'), '100%', 'compact DAG still width:100%');
-  assertEqual(dRoomy.getAttribute('width'), '100%', 'roomy DAG still width:100%');
+  const ct = ui.densityTokens();   // the cozy baseline (no argument needed)
+  const h = Math.max(Math.round(300 * ct.sizeScale), Math.round(120 * ct.sizeScale) + entries.length * ct.dagRowStep);
+  const d = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: h });
+  assert(+d.getAttribute('height') === h, 'the painted DAG SVG height honours the cozy size token');
+  // fit-to-width holds (Problem 1): width:100% + a viewBox so it scales to the pane.
+  assertEqual(d.getAttribute('width'), '100%', 'the DAG is width:100% (fit-to-width)');
+  assert((d.getAttribute('viewBox') || '').startsWith('0 0 '), 'the DAG carries a viewBox');
 });
 
 // ====================================================================
@@ -796,7 +818,7 @@ function mountLiveShell(initialHash) {
 
   const root = document.createElement('div');
   document.body.appendChild(root);
-  loc._hash = initialHash || '#/T/';
+  loc._hash = initialHash || '#/';
   shell.mountShell(root);
   return root;
 }
@@ -822,7 +844,7 @@ test('page scale: ui exposes a 70–150% range (5% steps) with a 100% default an
 test('page scale: the draggable scale pill exists in the chrome; setting it applies a PAGE-WIDE scale at the app ROOT (not a pane) + persists + restores', () => {
   // start from a clean store so the restore assertion is meaningful.
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
-  const root = mountLiveShell('#/T/');
+  const root = mountLiveShell('#/');
 
   // the pill is a draggable range input that lives in the top chrome.
   const pill = allByClass(root, 'dt-scale-pill')[0];
@@ -862,7 +884,7 @@ test('page scale: the draggable scale pill exists in the chrome; setting it appl
   assertEqual(ui.readScale(), 130, 'the chosen page scale persisted to localStorage');
 
   // RESTORE: a fresh mount reads it back and re-applies it to the root.
-  const root2 = mountLiveShell('#/T/');
+  const root2 = mountLiveShell('#/');
   assertEqual(root2.getAttribute('data-t-scale'), '130', 'a fresh mount restores the persisted scale');
   assertEqual(String(root2.style.zoom), '1.3', 'the restored scale is re-applied as root zoom');
   const range2 = root2.querySelectorAll('[class]').filter((n) =>
@@ -873,7 +895,7 @@ test('page scale: the draggable scale pill exists in the chrome; setting it appl
 // ---- (c) keyboard accessibility (the pill is a native range) -------
 
 test('page scale: the pill is keyboard-accessible — it is a focusable native range with the aria value bounds', () => {
-  const root = mountLiveShell('#/T/');
+  const root = mountLiveShell('#/');
   const range = root.querySelectorAll('[class]').filter((n) =>
     n.localName === 'input' && (n.getAttribute('class') || '').includes('dt-scale-range'))[0];
   // a native range input is inherently arrow-key adjustable; expose the aria bounds.
@@ -885,26 +907,136 @@ test('page scale: the pill is keyboard-accessible — it is a focusable native r
 
 // ---- (d) scale COMPOSES with density (one does not reset the other) ----
 
-test('page scale: composes with density — changing density does NOT reset the page scale, and vice-versa', () => {
+test('page scale: persists across re-applies and survives a colour/typeface change (the sole sizing axis)', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
-  const root = mountLiveShell('#/T/');
+  const root = mountLiveShell('#/');
 
-  // set a non-default scale, then switch density.
+  // set a non-default scale, then change colour + typeface (the other axes).
   shell.applyScale(85, root);
   assertEqual(root.getAttribute('data-t-scale'), '85', 'page scale set to 85%');
-  shell.applyDensity('roomy', root);
-  assertEqual(root.getAttribute('data-t-density'), 'roomy', 'density switched to roomy');
-  // the scale is UNCHANGED by the density switch (they are separate axes).
-  assertEqual(root.getAttribute('data-t-scale'), '85', 'switching density left the page scale untouched');
-  assertEqual(ui.readScale(), 85, 'the page scale is still persisted at 85% after a density change');
+  shell.applyTheme('solarized-dark', root);
+  shell.applyTypeface('display', root);
+  // the scale is UNCHANGED by a colour/typeface switch (separate axes).
+  assertEqual(root.getAttribute('data-t-scale'), '85', 'switching colour/typeface left the page scale untouched');
+  assertEqual(ui.readScale(), 85, 'the page scale is still persisted at 85%');
 
-  // and switching scale leaves density alone — they compose.
+  // re-apply a new scale — it lands and the cozy density baseline is untouched.
   shell.applyScale(120, root);
-  assertEqual(root.getAttribute('data-t-density'), 'roomy', 'switching the page scale left density untouched');
+  assertEqual(root.getAttribute('data-t-density'), 'cozy', 'the density baseline stays cozy');
   assertEqual(root.getAttribute('data-t-scale'), '120', 'the new page scale applied');
-  // distinct persistence keys: re-reading each yields its own axis.
-  assertEqual(ui.readDensity(), 'roomy', 'density persists independently');
   assertEqual(ui.readScale(), 120, 'scale persists independently');
+});
+
+// ---- CHANGE 4: the scale RESET affordance returns to 100% + persists ----
+
+test('page scale RESET: a keyboard-accessible reset button snaps the scale back to 100% and persists', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  const root = mountLiveShell('#/');
+
+  // move off 100% first.
+  shell.applyScale(135, root);
+  assertEqual(root.getAttribute('data-t-scale'), '135', 'scale moved to 135%');
+  assertEqual(ui.readScale(), 135, '135% persisted');
+
+  // the reset affordance is a real <button> (keyboard-accessible) beside the pill.
+  const resetBtn = root.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'button' && (n.getAttribute('class') || '').includes('dt-scale-reset'))[0];
+  assert(resetBtn, 'a reset button sits beside the scale pill');
+  assert((resetBtn.getAttribute('aria-label') || '').length > 0, 'the reset button carries an aria-label (keyboard/AT accessible)');
+
+  // clicking it snaps the page scale back to 100% and persists.
+  resetBtn.dispatchEvent({ type: 'click' });
+  assertEqual(root.getAttribute('data-t-scale'), '100', 'reset returned the page scale to 100%');
+  assertEqual(String(root.style.zoom), '1', 'the root zoom is back to 1 (100%)');
+  assertEqual(ui.readScale(), 100, 'the reset 100% persisted to localStorage');
+
+  // the programmatic resetScale() export does the same.
+  shell.applyScale(70, root);
+  shell.resetScale(root);
+  assertEqual(root.getAttribute('data-t-scale'), '100', 'resetScale() also returns to 100%');
+});
+
+// ---- CHANGE 5 + 6: nine themes + the colour SWATCH DROPDOWN ----
+
+test('colour themes: all NINE are registered, each defines the full --v2 token contract, and selecting each applies it', () => {
+  freshState();
+  const ids = ui.COLOR_THEMES.map((t) => t[0]);
+  const expected = ['monokai', 'solarized-dark', 'solarized-light',
+    'google-light', 'google-dark', 'lunaria-light', 'lunaria-eclipse',
+    'belafonte-day', 'belafonte-night'];
+  assertEqual(ids.length, 9, 'nine colour themes registered');
+  assertDeep(ids, expected, 'the nine ids are the three originals + six Gogh palettes');
+  assertEqual(ui.DEFAULT_COLOR, 'monokai', 'monokai stays the default');
+
+  // every theme defines the FULL --v2 token contract in the scoped CSS.
+  const css = readCss();
+  const contract = ['paper', 'panel', 'ink', 'ink-soft', 'ink-faint', 'rule', 'rule-soft',
+    'good', 'good-soft', 'bad', 'bad-soft', 'caution', 'accent', 'flat', 'cell-empty'];
+  for (const id of ids) {
+    if (id === 'monokai') continue; // monokai shares the bare-root default block
+    const re = new RegExp('\\[data-t-theme="' + id + '"\\]\\s*\\{([^}]*)\\}');
+    const m = re.exec(css.replace(/\n/g, ' '));
+    assert(m, 'theme ' + id + ' has a CSS block');
+    for (const tok of contract) {
+      assert(m[1].includes('--v2-' + tok + ':'), 'theme ' + id + ' defines --v2-' + tok);
+    }
+  }
+
+  // selecting EACH theme applies it to the root + persists (incl. the six Gogh).
+  const root = document.createElement('div');
+  for (const id of ids) {
+    shell.applyTheme(id, root);
+    assertEqual(root.getAttribute('data-t-theme'), id, id + ' applied to the root');
+    assertEqual(ui.readColor(), id, id + ' persisted');
+  }
+});
+
+test('colour picker is a SWATCH DROPDOWN: a closed trigger with the current swatch+name and one swatch strip per option', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  shell.applyTheme('monokai');
+  const root = mountLiveShell('#/');
+
+  // the colour control is a dropdown (NOT the old inline button row).
+  const dd = allByClass(root, 'dt-cd')[0];
+  assert(dd, 'the colour control is a dropdown (dt-cd)');
+  assertEqual(allByClass(root, 'dt-theme-btn').length, 0, 'no old inline colour buttons remain');
+
+  // the closed trigger shows the current theme name + a swatch strip preview.
+  const trigger = allByClass(root, 'dt-cd-trigger')[0];
+  assert(trigger, 'a dropdown trigger button rendered');
+  assert(trigger.textContent.includes('monokai'), 'the trigger names the current theme');
+  const triggerStrip = trigger.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-swatch-strip'))[0];
+  assert(triggerStrip, 'the trigger shows a swatch-strip preview');
+
+  // the listbox has one OPTION per theme, each with a swatch strip (≥4 swatches) + name.
+  const options = allByClass(root, 'dt-cd-option');
+  assertEqual(options.length, 9, 'one dropdown option per theme (nine)');
+  for (const opt of options) {
+    const strip = opt.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-swatch-strip'))[0];
+    assert(strip, 'option ' + opt.getAttribute('data-theme') + ' has a swatch strip');
+    const swatches = strip.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dt-swatch'));
+    assert(swatches.length >= 4, 'the strip shows ≥4 representative colours (got ' + swatches.length + ')');
+    // the swatches are real colour values (inline background style).
+    assert((swatches[0].getAttribute('style') || '').includes('background:'), 'a swatch carries a colour background');
+  }
+
+  // clicking an option applies + persists that theme, and the trigger updates.
+  const opt = options.filter((o) => o.getAttribute('data-theme') === 'belafonte-night')[0];
+  opt.dispatchEvent({ type: 'click' });
+  assertEqual(root.getAttribute('data-t-theme'), 'belafonte-night', 'clicking the option applied the theme');
+  assertEqual(ui.readColor(), 'belafonte-night', 'the chosen theme persisted');
+  assert(allByClass(root, 'dt-cd-trigger')[0].textContent.includes('belafonte night'), 'the closed trigger now shows the chosen theme');
+
+  // keyboard: ArrowDown on the trigger opens; Enter on the open list selects.
+  const triggerKb = allByClass(root, 'dt-cd-trigger')[0];
+  triggerKb.dispatchEvent({ type: 'keydown', key: 'ArrowDown', preventDefault() {}, target: triggerKb });
+  assert((dd.getAttribute('class') || '').includes('dt-cd-open'), 'ArrowDown opens the dropdown');
+  const list = allByClass(root, 'dt-cd-list')[0];
+  // arrow to the first option (monokai) and select it.
+  list.dispatchEvent({ type: 'keydown', key: 'ArrowUp', preventDefault() {} });
+  // Esc closes without further change.
+  list.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
+  assert(!(dd.getAttribute('class') || '').includes('dt-cd-open'), 'Escape closes the dropdown');
 });
 
 // ---- (e) the layout is FLUID (not clamped to a narrow column) ------
