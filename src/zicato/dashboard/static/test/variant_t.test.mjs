@@ -958,16 +958,17 @@ test('page scale RESET: a keyboard-accessible reset button snaps the scale back 
   assertEqual(root.getAttribute('data-t-scale'), '100', 'resetScale() also returns to 100%');
 });
 
-// ---- CHANGE 5 + 6: nine themes + the colour SWATCH DROPDOWN ----
+// ---- CHANGE 5 + 6: thirteen themes + the colour SWATCH DROPDOWN ----
 
-test('colour themes: all NINE are registered, each defines the full --v2 token contract, and selecting each applies it', () => {
+test('colour themes: all THIRTEEN are registered, each defines the full --v2 token contract, and selecting each applies it', () => {
   freshState();
   const ids = ui.COLOR_THEMES.map((t) => t[0]);
   const expected = ['monokai', 'solarized-dark', 'solarized-light',
     'google-light', 'google-dark', 'lunaria-light', 'lunaria-eclipse',
-    'belafonte-day', 'belafonte-night'];
-  assertEqual(ids.length, 9, 'nine colour themes registered');
-  assertDeep(ids, expected, 'the nine ids are the three originals + six Gogh palettes');
+    'belafonte-day', 'belafonte-night',
+    'paper', 'zenburn', 'selenized-black', 'relaxed'];
+  assertEqual(ids.length, 13, 'thirteen colour themes registered');
+  assertDeep(ids, expected, 'the thirteen ids are the three originals + ten Gogh palettes');
   assertEqual(ui.DEFAULT_COLOR, 'monokai', 'monokai stays the default');
 
   // every theme defines the FULL --v2 token contract in the scoped CSS.
@@ -984,12 +985,56 @@ test('colour themes: all NINE are registered, each defines the full --v2 token c
     }
   }
 
-  // selecting EACH theme applies it to the root + persists (incl. the six Gogh).
+  // selecting EACH theme applies it to the root + persists (incl. all ten Gogh).
   const root = document.createElement('div');
   for (const id of ids) {
     shell.applyTheme(id, root);
     assertEqual(root.getAttribute('data-t-theme'), id, id + ' applied to the root');
     assertEqual(ui.readColor(), id, id + ' persisted');
+  }
+});
+
+// ---- ROUND 9: the four NEW Gogh themes (Paper/Zenburn/Selenized Black/Relaxed) ----
+
+test('new themes: Paper/Zenburn/Selenized Black/Relaxed are registered with swatch strips, define the full token contract, and selecting each changes the root attribute + tokens', () => {
+  freshState();
+  const css = readCss();
+  const byId = new Map(ui.COLOR_THEMES.map((t) => [t[0], t]));
+  const NEW = ['paper', 'zenburn', 'selenized-black', 'relaxed'];
+  const contract = ['paper', 'panel', 'ink', 'ink-soft', 'ink-faint', 'rule', 'rule-soft',
+    'good', 'good-soft', 'bad', 'bad-soft', 'caution', 'accent', 'flat', 'cell-empty'];
+
+  // (a) each new theme is registered with a name + a 4–6-colour preview strip.
+  for (const id of NEW) {
+    const t = byId.get(id);
+    assert(t, id + ' is registered in COLOR_THEMES');
+    assert(typeof t[1] === 'string' && t[1].length > 0, id + ' has a display name');
+    assert(Array.isArray(t[2]) && t[2].length >= 4 && t[2].length <= 6, id + ' has a 4–6-colour swatch strip (got ' + t[2].length + ')');
+    for (const c of t[2]) assert(/^#[0-9a-fA-F]{6}$/.test(c), id + ' swatch ' + c + ' is an inlined hex (no network)');
+  }
+
+  // (b) each new theme defines the full --v2 token contract in the scoped CSS,
+  //     and its token block differs from monokai's (the default) — tokens differ.
+  const monokaiBlock = /\[data-t-theme="monokai"\]\s*\{([^}]*)\}/.exec(css.replace(/\n/g, ' '))[1];
+  for (const id of NEW) {
+    const m = new RegExp('\\[data-t-theme="' + id + '"\\]\\s*\\{([^}]*)\\}').exec(css.replace(/\n/g, ' '));
+    assert(m, id + ' has a scoped CSS token block');
+    for (const tok of contract) assert(m[1].includes('--v2-' + tok + ':'), id + ' defines --v2-' + tok);
+    const paperVal = /--v2-paper:\s*([^;]+);/.exec(m[1])[1].trim();
+    const monokaiPaper = /--v2-paper:\s*([^;]+);/.exec(monokaiBlock)[1].trim();
+    assert(paperVal.toLowerCase() !== monokaiPaper.toLowerCase(), id + ' ground differs from monokai (tokens differ)');
+  }
+
+  // (c) selecting each NEW theme applies it to the root attribute + persists.
+  const root = document.createElement('div');
+  shell.applyTheme('monokai', root);
+  let prev = root.getAttribute('data-t-theme');
+  for (const id of NEW) {
+    shell.applyTheme(id, root);
+    assertEqual(root.getAttribute('data-t-theme'), id, id + ' applied to the root (attribute changed)');
+    assert(prev !== id, 'the root theme attribute changed selecting ' + id);
+    assertEqual(ui.readColor(), id, id + ' persisted');
+    prev = id;
   }
 });
 
@@ -1012,7 +1057,11 @@ test('colour picker is a SWATCH DROPDOWN: a closed trigger with the current swat
 
   // the listbox has one OPTION per theme, each with a swatch strip (≥4 swatches) + name.
   const options = allByClass(root, 'dt-cd-option');
-  assertEqual(options.length, 9, 'one dropdown option per theme (nine)');
+  assertEqual(options.length, 13, 'one dropdown option per theme (thirteen)');
+  // the four new themes each surface as a listed option.
+  for (const id of ['paper', 'zenburn', 'selenized-black', 'relaxed']) {
+    assert(options.filter((o) => o.getAttribute('data-theme') === id).length === 1, id + ' is a listed dropdown option');
+  }
   for (const opt of options) {
     const strip = opt.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-swatch-strip'))[0];
     assert(strip, 'option ' + opt.getAttribute('data-theme') + ' has a swatch strip');
@@ -2103,7 +2152,7 @@ test('lifecycle BOARD column: a GAUNTLET candidate (one run per entry) renders u
 test('lifecycle BOARD column: the multiplicity badge style + raced disc marker are themed in the scoped stylesheet', () => {
   const css = readCss();
   assert(/\.ezn-board-mult\s*\{/.test(css), '.ezn-board-mult is styled (themed via CSS vars)');
-  assert(/\.ezn-board-mult[^}]*var\(--v2-/.test(css), '.ezn-board-mult uses a theme variable (theme-aware across the 9 themes)');
+  assert(/\.ezn-board-mult[^}]*var\(--v2-/.test(css), '.ezn-board-mult uses a theme variable (theme-aware across the 13 themes)');
   assert(/\.ezn-board-raced\s+\.ezn-board-disc\s*\{/.test(css), 'a raced node’s disc carries a distinct marker style');
 });
 

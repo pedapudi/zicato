@@ -60,10 +60,11 @@ Six operator-requested changes, all scoped to Variant T:
    (default Technical); the dropped `sans` id normalises to Technical.
 4. **Scale RESET affordance.** A small keyboard-accessible `⟲` button beside the
    scale pill snaps the page scale back to 100 % and persists (`resetScale()`).
-5. **Six Gogh colour themes** (real palettes from gogh-co.github.io/Gogh),
-   bringing the total to **nine** (monokai stays default). See the chrome
-   section below for the palette→token mapping.
-6. **Colour picker is a SWATCH DROPDOWN.** With nine themes, the inline colour
+5. **Ten Gogh colour themes** (real palettes from gogh-co.github.io/Gogh),
+   bringing the total to **thirteen** (monokai stays default). See the chrome
+   section below for the palette→token mapping. Round 9 added four more —
+   **Paper** (light), **Zenburn**, **Selenized Black**, **Relaxed** (dark).
+6. **Colour picker is a SWATCH DROPDOWN.** With thirteen themes, the inline colour
    buttons become a keyboard-accessible dropdown; each option shows a 5-swatch
    preview strip (ground · surface · ink · improve · regress) + the theme name,
    and the closed trigger echoes the current theme's swatch + name. (The
@@ -294,7 +295,7 @@ and branches:
 A **structure pill** (`dt-structure-pill`: "structure · Swiss (4 rounds)" etc.)
 labels the configured structure in both the **epoch** header (`views/epoch.js`)
 and the **match-ups** header. The SVG marks follow T's fit-to-width discipline
-(`width:100%` + viewBox, no pan/zoom, token-themed across all nine swatches,
+(`width:100%` + viewBox, no pan/zoom, token-themed across all thirteen swatches,
 scaling with the page-scale pill). Since the live workspace is gauntlet-only,
 the non-gauntlet renderers are driven + tested with **mock structure payloads**
 (`test/variant_t.test.mjs`) and degrade gracefully (an honest empty state, no
@@ -350,7 +351,7 @@ When running, the pill carries the `dt-running` state and shows a **RUN badge**
 (`.dt-run-badge` — a pulsing dot + the structure/phase label + the in-flight
 count); idle/done hides the badge. `renderStatus()` is **digest-gated**
 (`liveStatusDigest`): a steady heartbeat re-tick with an unchanged verdict
-writes ZERO DOM (no flash). The badge reads in all nine themes (good/ink-faint
+writes ZERO DOM (no flash). The badge reads in all thirteen themes (good/ink-faint
 tokens) and the pulse honours `prefers-reduced-motion`.
 
 ## Board-detail — in-flight runs (a mid-run entry is never blank)
@@ -369,7 +370,7 @@ digest so it stays live-updating + flash-free on the same SSE/poll cadence.
 
 ## The chrome controls (colour dropdown · typeface buttons · scale pill)
 
-- **Colour — a SWATCH DROPDOWN** of **nine** themes (round 10). The closed
+- **Colour — a SWATCH DROPDOWN** of **thirteen** themes (round 10; +4 in round 9). The closed
   trigger (`.dt-cd-trigger`) shows the current theme's swatch strip + name;
   opening reveals a listbox (`.dt-cd-list`) with one `.dt-cd-option` per theme,
   each a 5-swatch preview strip (`.dt-swatch-strip`: ground · surface · ink ·
@@ -379,10 +380,12 @@ digest so it stays live-updating + flash-free on the same SSE/poll cadence.
   root (CSS-only re-skin), persists (`zicato.T.theme`), and updates the trigger.
   The heatmap ramp + every mark derive from the active theme tokens.
 
-  The nine themes (monokai stays default): the three originals — **monokai**,
-  **solarized-dark**, **solarized-light** — plus six **Gogh** palettes
+  The thirteen themes (monokai stays default): the three originals — **monokai**,
+  **solarized-dark**, **solarized-light** — plus ten **Gogh** palettes
   (gogh-co.github.io/Gogh): **google-light**, **google-dark**, **lunaria-light**,
-  **lunaria-eclipse**, **belafonte-day**, **belafonte-night**. Each Gogh terminal
+  **lunaria-eclipse**, **belafonte-day**, **belafonte-night**, and (round 9)
+  **paper** (light), **zenburn** (dark), **selenized-black** (dark), **relaxed**
+  (dark). Each Gogh terminal
   palette is mapped to T's `--v2-*` token contract by a single principled rule:
   `paper ← background`, `panel ← background nudged toward fg/host`, `ink ←
   bright-white/host` and `ink-soft ← foreground`, `ink-faint ← fg mixed toward
@@ -391,8 +394,18 @@ digest so it stays live-updating + flash-free on the same SSE/poll cadence.
   is a low-contrast neutral, as for Belafonte), `flat ← bright-black/grey`,
   `cell-empty ← bg mixed toward fg`. A few accents/cautions were nudged for
   contrast on their grounds so every mark, diagram, and the heatmap ramp read in
-  all nine. **"Belafonte Light" does not exist in Gogh** — per the brief we ship
+  all thirteen. **"Belafonte Light" does not exist in Gogh** — per the brief we ship
   Belafonte **Day** (the light variant) + **Night** (dark).
+
+  The four round-9 palettes resolved to the exact Gogh filenames `Paper.yml`,
+  `Zenburn.yml`, `Selenized Black.yml`, `Relaxed.yml` (no name resolution
+  needed). Two legibility nudges: **Paper** (a light theme) keys `ink` off
+  near-black — its palette white `#aaaaaa` is too low-contrast for ink on the
+  cream ground — and keys `accent` off the palette's blue (its cyan `#158c86` is
+  a deep teal); **Zenburn**'s "green" channel is a yellow-green that collides
+  with its yellow, so `good` is nudged to a true sage green and `accent` to
+  Zenburn's canonical cyan `#8cd0d3` (the yml cyan `#93bea3` is a near-neutral
+  grey-green), keeping improve/caution/accent separable.
 - **Typeface — inline buttons** (only three, so no dropdown needed):
   **Editorial** (+ Source Serif 4) · **Technical** (default; + JetBrains Mono) ·
   **Display** (+ Archivo Narrow), swapped via `[data-t-type]`, persisted
@@ -504,7 +517,7 @@ ellipsis (title tooltip carries the full id + per-rung note); rows are spaced by
 the density-scaled fan step. For a **GAUNTLET** candidate (one run per entry) every
 group has size 1 → dedupe is a no-op, no badge, no raced marker — rendering is
 unchanged. The DAG stays fit-to-width (`width:100%` + viewBox), theme-aware
-across the 9 themes, and scales with the page-scale pill.
+across the 13 themes, and scales with the page-scale pill.
 
 ## Render discipline (carried forward)
 
@@ -545,11 +558,14 @@ the SIZE tokens are fixed at the cozy values, the mounted root carries
 `data-t-density="cozy"`, and the CSS has no density-conditional selectors;
 **(c)** the typeface options are **exactly** `editorial/technical/display` (no
 `sans`, default Technical); **(d)** the **scale RESET** button returns the page to
-100 % and persists (and `resetScale()` does the same); **(e)** **all nine** colour
+100 % and persists (and `resetScale()` does the same); **(e)** **all thirteen** colour
 themes are registered, each defines the full `--v2-*` token contract in the CSS,
-and selecting each (incl. the six Gogh palettes) applies + persists it; **(f)**
+and selecting each (incl. the ten Gogh palettes) applies + persists it — and a
+dedicated test pins the four round-9 additions (Paper/Zenburn/Selenized Black/
+Relaxed) registering with swatch strips, full token contracts that differ from
+the default, and a root-attribute change on select; **(f)**
 the colour picker is a **swatch dropdown** — a trigger with the current swatch +
-name, nine options each with a ≥4-swatch strip preview, clicking an option
+name, thirteen options each with a ≥4-swatch strip preview, clicking an option
 applies + persists, and the keyboard (ArrowDown opens, Esc closes) works.
 
 The **live-status** fix adds: **(a)** a live **racing** run (a non-idle

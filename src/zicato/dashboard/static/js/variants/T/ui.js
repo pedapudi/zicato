@@ -30,9 +30,9 @@ export function gatedSwap(host, digest, build) {
 
 // ---- colour themes (monokai is the default) -------------------------
 //
-// NINE themes now: the three originals plus six Gogh palettes
+// THIRTEEN themes now: the three originals plus ten Gogh palettes
 // (https://gogh-co.github.io/Gogh/), each mapped to T's `--v2-*` token
-// contract in console4.css. Because there are nine, the colour picker is a
+// contract in console4.css. Because there are many, the colour picker is a
 // SWATCH DROPDOWN (not inline buttons): each option shows a 5-swatch strip
 // (ground · surface · ink · improve · regress) as a legibility preview hint,
 // plus the theme name. The swatch tuples below FEED that preview — they mirror
@@ -47,6 +47,10 @@ export const COLOR_THEMES = [
   ['lunaria-eclipse', 'lunaria eclipse',  ['#323F46', '#3B484F', '#DFE2ED', '#BEDBC1', '#BA9088']],
   ['belafonte-day',   'belafonte day',    ['#D5CCBA', '#CCC3B2', '#34292D', '#858162', '#BE100E']],
   ['belafonte-night', 'belafonte night',  ['#20111B', '#271821', '#D5CCBA', '#858162', '#BE100E']],
+  ['paper',           'paper',            ['#F2EEDE', '#E6E2D3', '#1A1A1A', '#216609', '#CC3E28']],
+  ['zenburn',         'zenburn',          ['#3A3A3A', '#424241', '#DCDCCC', '#8FB28F', '#CC9393']],
+  ['selenized-black', 'selenized black',  ['#181818', '#202020', '#DEDEDE', '#83C746', '#FF5E56']],
+  ['relaxed',         'relaxed',          ['#353A44', '#3D424B', '#F7F7F7', '#A0AC77', '#BC5653']],
 ];
 const COLOR_IDS = COLOR_THEMES.map((t) => t[0]);
 export const DEFAULT_COLOR = 'monokai';

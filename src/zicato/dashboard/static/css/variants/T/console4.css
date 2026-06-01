@@ -1,13 +1,14 @@
 /* variants/T/console4.css — "Console IV: dense observatory, Monokai default".
  *
  * Variant T is the converged default dashboard: a dense, data-ink-maximal skin
- * for power users. NINE switchable colour themes — monokai (default),
- * solarized-dark, solarized-light, plus six Gogh palettes (google-light,
- * google-dark, lunaria-light, lunaria-eclipse, belafonte-day, belafonte-night)
- * — each a CSS custom-property set mapping to the `--v2-*` token names the
- * marks read, swapped via [data-t-theme] on the variant root and chosen from a
- * swatch DROPDOWN. The semantic mapping (improve / regress / caution) holds
- * across all nine and every mark reads with sufficient contrast in each.
+ * for power users. THIRTEEN switchable colour themes — monokai (default),
+ * solarized-dark, solarized-light, plus ten Gogh palettes (google-light,
+ * google-dark, lunaria-light, lunaria-eclipse, belafonte-day, belafonte-night,
+ * paper, zenburn, selenized-black, relaxed) — each a CSS custom-property set
+ * mapping to the `--v2-*` token names the marks read, swapped via [data-t-theme]
+ * on the variant root and chosen from a swatch DROPDOWN. The semantic mapping
+ * (improve / regress / caution) holds across all thirteen and every mark reads
+ * with sufficient contrast in each.
  *
  * EVERYTHING is scoped under #variant-root[data-variant="T"] so it cannot leak
  * into other variants or the shared shell. Marks use `dn-*`; the lifecycle
@@ -209,6 +210,96 @@
   --v2-accent:     #6F8E97;
   --v2-flat:       #5E5252;
   --v2-cell-empty: #25161F;
+}
+
+/* ===================  four more Gogh palettes (round 9)  ===================
+ *
+ * Paper (light), Zenburn (dark), Selenized Black (dark), Relaxed (dark) — same
+ * principled mapping as the six above. Two nudges for legibility:
+ *   Paper  — ink keyed off near-black (the palette's white #aaaaaa is too low
+ *            contrast for ink on the cream ground); accent keyed off the
+ *            palette's blue (its cyan #158c86 is a deep teal — blue reads cleaner
+ *            on the light ground).
+ *   Zenburn — the palette's "green" channel is a yellow-green (#efef87/#ffff87)
+ *            that collides with its yellow; good is nudged to a true sage green
+ *            and accent to Zenburn's canonical cyan #8cd0d3 (the yml's cyan
+ *            #93bea3 is a near-neutral grey-green) so improve/caution/accent
+ *            stay separable. */
+
+/* Gogh: Paper (light). */
+#variant-root[data-variant="T"][data-t-theme="paper"] {
+  --v2-paper:      #F2EEDE;
+  --v2-panel:      #E6E2D3;
+  --v2-ink:        #1A1A1A;
+  --v2-ink-soft:   #33312B;
+  --v2-ink-faint:  #85837A;
+  --v2-rule:       #C6C3B6;
+  --v2-rule-soft:  #DCD9CA;
+  --v2-good:       #216609;
+  --v2-good-soft:  #CCD6B8;
+  --v2-bad:        #CC3E28;
+  --v2-bad-soft:   #EBCEBD;
+  --v2-caution:    #B58900;
+  --v2-accent:     #1E6FCC;
+  --v2-flat:       #6E6A5E;
+  --v2-cell-empty: #E8E4D5;
+}
+
+/* Gogh: Zenburn (dark). */
+#variant-root[data-variant="T"][data-t-theme="zenburn"] {
+  --v2-paper:      #3A3A3A;
+  --v2-panel:      #424241;
+  --v2-ink:        #DCDCCC;
+  --v2-ink-soft:   #C5C5B8;
+  --v2-ink-faint:  #83837C;
+  --v2-rule:       #575754;
+  --v2-rule-soft:  #494947;
+  --v2-good:       #8FB28F;
+  --v2-good-soft:  #2E3A2E;
+  --v2-bad:        #CC9393;
+  --v2-bad-soft:   #402F2F;
+  --v2-caution:    #FFD7A7;
+  --v2-accent:     #8CD0D3;
+  --v2-flat:       #757575;
+  --v2-cell-empty: #404040;
+}
+
+/* Gogh: Selenized Black (dark). */
+#variant-root[data-variant="T"][data-t-theme="selenized-black"] {
+  --v2-paper:      #181818;
+  --v2-panel:      #202020;
+  --v2-ink:        #DEDEDE;
+  --v2-ink-soft:   #B9B9B9;
+  --v2-ink-faint:  #606060;
+  --v2-rule:       #353535;
+  --v2-rule-soft:  #262626;
+  --v2-good:       #83C746;
+  --v2-good-soft:  #243218;
+  --v2-bad:        #FF5E56;
+  --v2-bad-soft:   #3A1B19;
+  --v2-caution:    #EFC541;
+  --v2-accent:     #56D8C9;
+  --v2-flat:       #3B3B3B;
+  --v2-cell-empty: #1E1E1E;
+}
+
+/* Gogh: Relaxed (dark). */
+#variant-root[data-variant="T"][data-t-theme="relaxed"] {
+  --v2-paper:      #353A44;
+  --v2-panel:      #3D424B;
+  --v2-ink:        #F7F7F7;
+  --v2-ink-soft:   #D9D9D9;
+  --v2-ink-faint:  #7F8287;
+  --v2-rule:       #53575F;
+  --v2-rule-soft:  #444851;
+  --v2-good:       #A0AC77;
+  --v2-good-soft:  #353D2E;
+  --v2-bad:        #BC5653;
+  --v2-bad-soft:   #3F2A2C;
+  --v2-caution:    #EBC17A;
+  --v2-accent:     #7EAAC7;
+  --v2-flat:       #636363;
+  --v2-cell-empty: #3C404A;
 }
 
 /* ===================  the three typeface themes  ===================
@@ -887,7 +978,7 @@
   .dt-type-btn:hover { color: var(--v2-ink); }
   .dt-type-btn.dt-type-active { background: var(--v2-ink-soft); color: var(--v2-paper); }
 
-  /* ---- the COLOUR SWATCH DROPDOWN (9 themes) ---- */
+  /* ---- the COLOUR SWATCH DROPDOWN (13 themes) ---- */
   .dt-cd { position: relative; display: inline-flex; }
   .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
     border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 7px;
