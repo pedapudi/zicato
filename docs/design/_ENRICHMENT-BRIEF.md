@@ -311,3 +311,69 @@ Each variant defaults to one; all four selectable; the choice persists.
    no fidelity). Bind: `/api/generation/{e}/{g}/per-entry` pivoted by `entry_id`
    across generations; `/api/matchup-grid/...` for paired context; drill via the
    per-entry `run_id` → `/api/conversation/{run_id}`.
+
+## Round 5 appendix — convergence III (variants P / Q / R / S)
+
+Base aesthetic: **Variant N (Console II) — judged the most appealing — refined.**
+Combine the praised parts of the field: N's data-ink foundation, **L's mutation
+viewer** + L's board view (now first-class), **M's generous spacing/proportion**
+(singled out as good), **O's candidate-centric lifecycle + match-ups**, K's
+publication renderer (epoch-scoped). Carry forward ALL prior discipline:
+digest-gated rendering, NO pan/zoom viewport diagrams (fit-to-width), theme-aware
+heatmap, Tufte fit-to-width Sankey with label≠value, side-by-side mutation diff
+with REAL strings (`.baseline.content`), stacked non-overlapping promote gate,
+color picker (3 themes) + typeface picker (Open-Sans Google-Fonts pairings).
+
+**HEADLINE — a tree-structure navigation sidebar grounded in the DATA MODEL.**
+Replace the top-tab nav with a persistent LEFT TREE that mirrors the real
+hierarchy:
+```
+Environment (workspace)          /api/environment · /api/workspace · /api/lineage · /api/score-trajectory
+└─ Epoch <id>                    /api/epoch (board + contract) · /api/lineage (this epoch's gens)
+   ├─ Generations
+   │  └─ <gen> (champion/rejected)   per-gen: lifecycle · match-ups · per-board scoring · patch→diff · runs
+   ├─ Boards                     /api/epoch.board → each entry = per-board cross-candidate view
+   │  └─ <entry> → runs → transcript (INLINE, side-by-side)
+   ├─ Mutation surface           /api/mutations/{epoch}  (epoch-scoped: site×gen + side-by-side diff)
+   └─ Publication                /api/epoch/{epoch}/analysis  (epoch-scoped ACM paper)
+```
+Expandable/collapsible; selecting any node drives the detail pane. It MUST allow
+navigating MULTIPLE epochs AND MULTIPLE generations (N's gap: its epoch/candidate
+tabs could not switch which epoch/candidate). Selection is explicit + URL-encoded
+(cold deep-link hydrates tree + detail). Only one epoch exists in the live data —
+degrade gracefully but structure all-epochs-first.
+
+**MANDATORY FIXES — all four variants:**
+1. **Promote gate on the candidate page** (N lacked it; L has it) — the stacked,
+   non-overlapping gate on every generation detail.
+2. **Patch node → per-candidate diff.** In a candidate's lifecycle the "patch"
+   node must be clickable → that candidate's SIDE-BY-SIDE diff (its own patches:
+   `/api/files/{epoch}/{gen}/patches`, baseline `/api/mutations/{epoch}/{id}`
+   `.baseline.content`). Reuse L's mutation-viewer diff component. (N's patch node
+   was dead → per-candidate mutation view was missing.)
+3. **ALL match-ups for a candidate** (O bug): show EVERY matchup the candidate was
+   in — filter `/api/tournaments`.matchups where `champion==gen || challenger==gen`.
+   v0 must show v0-vs-v1 AND v0-vs-v2, not one.
+4. **Board view first-class** (L lacked it in nav): the per-board cross-candidate
+   view is reachable from the tree's Boards group.
+5. **Board entry → INLINE side-by-side transcript** (N + elsewhere): selecting a
+   run on the board view shows the transcript INLINE within the board view —
+   ideally two candidates' transcripts on that board side by side — NOT a
+   navigation to a separate run page. `/api/conversation/{run_id}` per candidate.
+6. **Trellis vs heatmap — de-duplicate.** They overlap (both = per-board ×
+   per-generation loss). DECISION: the compact board×generation drift-loss
+   **heatmap stays at the EPOCH overview**; the board **trellis (small-multiples)
+   moves into the Boards view**. Never both on one page.
+7. Adopt **M's spacing/proportion** and **L's mutation-viewer** quality throughout.
+
+Per-variant personalities:
+- **P "Console III"** — direct N successor: dense data-ink, Monokai default +
+  Technical typeface, a collapsible NESTED tree sidebar, single detail pane. Main line.
+- **Q "Atlas IV"** — N content + L mutation viewer + **M's roomy spacing**;
+  Solarized-Dark default + Sans typeface; nested tree sidebar; the comfortable take.
+- **R "Strata"** — **Miller-columns** navigation (cascading columns: Environment ▸
+  Epoch ▸ {Generations|Boards|Mutations|Publication} ▸ item ▸ detail) instead of a
+  nested accordion — a distinct data-model-tree metaphor. Solarized-Dark + Display.
+- **S "Lens"** — tree sidebar + **comparison-first detail**: first-class side-by-side
+  (champion vs challenger transcripts on a board; two candidates' lifecycle/matchups).
+  Solarized-Light + Editorial.
