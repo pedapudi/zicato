@@ -3669,6 +3669,60 @@ test('lifecycle DAG: de-crowded to ONE concise key line + a "?" info hovercard (
     'the baseline DAG omits the gate key (it has no gate)');
 });
 
+// the key line's text baseline y, and the LOWEST node-box bottom edge across
+// the whole figure (rect boxes: y + height; board circles: cy + r, plus the
+// `champ N · Δ` cmp sublabel below a circle when present).
+function keyLineYOf(svgNode) {
+  const k = svgNode.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).includes('ezn-dag-key'))[0];
+  return k ? +k.getAttribute('y') : null;
+}
+function lowestNodeBottomOf(svgNode) {
+  let bottom = -Infinity;
+  // every rect node box (PARENT/PATCH/Σ/GATE/TERMINAL and the "no board" box).
+  for (const r of svgNode.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'rect' && (n.getAttribute('class') || '').split(/\s+/).includes('ezn-node-box'))) {
+    bottom = Math.max(bottom, +r.getAttribute('y') + +r.getAttribute('height'));
+  }
+  // every board circle (+ its radius), and any cmp sublabel below it.
+  for (const c of svgNode.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'circle' && (n.getAttribute('class') || '').split(/\s+/).includes('ezn-board-disc'))) {
+    bottom = Math.max(bottom, +c.getAttribute('cy') + +c.getAttribute('r'));
+  }
+  for (const t of svgNode.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).includes('ezn-board-cmp'))) {
+    bottom = Math.max(bottom, +t.getAttribute('y'));
+  }
+  return bottom;
+}
+
+test('lifecycle DAG: the key line clears the node row at a SINGLE board node (no overlap)', () => {
+  // the not-yet-run / "no board entries scored" state — a single neutral box.
+  // The fan span is 0 here, the worst case for the old flat KEY_PAD: the key
+  // line used to render right through the node boxes. It must now sit strictly
+  // below the lowest node box's bottom edge, with a readable margin.
+  const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: [], decision: 'rejected', championId: 'v0' });
+  const ky = keyLineYOf(svgNode);
+  assert(ky != null, 'a single-node DAG still carries the key line');
+  const lowest = lowestNodeBottomOf(svgNode);
+  assert(ky > lowest + 6, `the key line y (${ky}) is strictly below the lowest node box bottom (${lowest}) with a margin`);
+  // and it stays within the figure's derived viewBox height.
+  const h = +svgNode.getAttribute('height');
+  assert(ky <= h, `the key line y (${ky}) is within the derived viewBox height (${h})`);
+});
+
+test('lifecycle DAG: the key line clears the node row with MANY board nodes (no overlap at the bottom-most node)', () => {
+  const entries = Array.from({ length: 7 }, (_, i) => ({ entry_id: 'b' + i, drift_loss: 10 + i, pass_fail: i % 2 }));
+  const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected',
+    championId: 'v0', championLoss: { b0: 5, b6: 9 } });
+  const ky = keyLineYOf(svgNode);
+  assert(ky != null, 'a many-node DAG carries the key line');
+  const lowest = lowestNodeBottomOf(svgNode);
+  assert(ky > lowest + 6, `the key line y (${ky}) is strictly below the bottom-most node (${lowest}) — including its cmp sublabel`);
+  const h = +svgNode.getAttribute('height');
+  assert(ky <= h, `the key line y (${ky}) is within the derived viewBox height (${h})`);
+});
+
 // ====================================================================
 // HOVERCARD — the styled, theme-aware replacement for native <title>.
 // ====================================================================

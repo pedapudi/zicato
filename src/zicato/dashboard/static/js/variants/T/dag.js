@@ -167,11 +167,22 @@ export function rungProgression(spec) {
 // centre so it always aligns with the board nodes regardless of entry count.
 const ROW_PITCH = 46; // px between adjacent board-fan rows (internal viewBox units).
 const HEAD_PAD = 40;  // top band reserved for the column heads.
-// bottom band reserved for the per-disc cmp sublabel + the ONE concise key
-// line. Trimmed from 40→26 now that the verbose how-to prose moved into the "?"
-// info hovercard (the figure no longer carries two stacked prose blocks), so
-// removing the prose doesn't leave a gap.
-const KEY_PAD = 26;
+// the TALLEST node box height in the figure — the Σ/GATE/TERMINAL spine boxes
+// (48px) and the slightly shorter PARENT/PATCH boxes (44px) — so the key line's
+// vertical clearance is computed from the SAME geometry the boxes actually use
+// (never a mismatched hardcoded value). A box centred at cy spans cy ± NODE_BOX_H/2.
+const NODE_BOX_H = 48;
+// gap below the lowest node box's bottom edge before the key line's baseline,
+// and the key line's own line height — both feed BOTH the key-line y and the
+// reserved bottom band (KEY_PAD), so the key line is ALWAYS clear of the boxes.
+const KEY_GAP = 16;
+const KEY_LINE_H = 12;
+// bottom band reserved for the per-disc cmp sublabel + the ONE concise key line.
+// Must reserve room for the key line BELOW the lowest node box's bottom edge:
+// half a node box + a comfortable gap + the line height. (An earlier de-crowd
+// trimmed this to a flat 26, which is < a box half (24) and let the key line
+// render through the node boxes when the fan span was small — the bug this fixes.)
+const KEY_PAD = NODE_BOX_H / 2 + KEY_GAP + KEY_LINE_H;
 
 export function lifecycleDag(spec) {
   const o = spec || {};
@@ -467,7 +478,15 @@ export function lifecycleDag(spec) {
   // hovercards — detail on demand, a clean figure at a glance. Skipped for a
   // baseline (no gate). Theme-aware (CSS), no motion.
   if (!baseline) {
-    const ky = h - 8;
+    // CLEARANCE: pin the key line's baseline BELOW the lowest node box's bottom
+    // edge — `fanBot` is the bottom-most board circle's centre AND (since
+    // fanBot ≥ midY) at/below the Σ/GATE/TERMINAL spine boxes, so
+    // `fanBot + NODE_BOX_H/2` is the lowest box edge for ANY node count; a
+    // KEY_GAP below that is the key baseline. It also clears each board circle's
+    // `champ N · Δ` sublabel (≈ fanBot + r + 11 = fanBot + 23 < fanBot + 24).
+    // KEY_PAD reserves the matching room in the derived height `h`, so the key
+    // line never overlaps a node box whether the fan has 1 row or many.
+    const ky = fanBot + NODE_BOX_H / 2 + KEY_GAP;
     const key = svgEl('text', { class: 'ezn-dag-key', x: w / 2, y: ky, 'text-anchor': 'middle', 'data-cz': 'lc-key' }, [
       'Δ vs champion · + = worse · lower loss better · hover nodes for detail',
     ]);
