@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import ast
 import shutil
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
 
 from zicato.core.types import MutationPoint, Patch
 from zicato.epoch.snapshot_scope import copytree_ignore
 from zicato.mutation.enumerator import enumerate_mutations
-from zicato.mutation.markers import parse_marker_line
+from zicato.mutation.markers import is_end_marker, parse_marker_line
 from zicato.mutation.validator import validate_patches
 
 #: A ``shutil.copytree``-compatible ``ignore`` callable. When a caller
@@ -243,6 +244,74 @@ def _reindent_python_literal(literal: str, indent: str) -> str:
     return "".join(out)
 
 
+def _region_base_indent(original_body: str) -> str:
+    """Return the leading-whitespace indent of a ``:code`` region's body.
+
+    The region body is the verbatim source between the ``:code`` and
+    ``:end`` markers, sliced out by whole lines. Every line of that body
+    sits at (or deeper than) one common base indent — the indent of the
+    enclosing suite. That base indent is the anchor the applier MUST
+    re-attach the replacement to: the marker comments around the region
+    carry the same indent, so a replacement written at any other column
+    leaves the region body mis-aligned with the ``:end`` marker / the
+    statements that follow and the file stops parsing.
+
+    Returns the indent of the first non-blank body line. An all-blank
+    body (or empty body) returns the empty string.
+    """
+    for line in original_body.splitlines():
+        stripped = line.lstrip(" \t")
+        if stripped:
+            return line[: len(line) - len(stripped)]
+    return ""
+
+
+def _reindent_code_region(new_content: str, indent: str) -> str:
+    """Re-anchor a ``:code`` replacement body to ``indent``.
+
+    A ``:code`` region is real Python control flow that the proposer
+    rewrites verbatim. A proposer working from a truncated preview cannot
+    reliably reproduce the region's exact leading indent — it routinely
+    emits the new block at column 0, or one level too deep, or with the
+    surrounding marker comments accidentally included. Any of those leaves
+    the snapshot unparseable, which in turn makes the file fail to
+    re-enumerate (the mutation id "vanishes") and reads as having dropped
+    every top-level import (a syntax error yields an empty import set).
+
+    The applier owns the indent so a ``:code`` replace can never shift the
+    block off its column. The transform:
+
+    1. Drops any marker lines (the opening ``:code`` marker or the closing
+       ``:end`` sentinel) the proposer mistakenly echoed back — only the
+       region BODY belongs between the markers.
+    2. Dedents the remaining lines to a common baseline
+       (:func:`textwrap.dedent`) so the proposer's own relative indentation
+       (nested ``if`` / ``for`` bodies) is preserved.
+    3. Re-anchors every non-blank line to ``indent``.
+
+    Blank lines are emitted empty so no trailing whitespace is introduced.
+    The transform is idempotent: a body that already sits at ``indent``
+    with no stray markers round-trips unchanged.
+    """
+    raw_lines = new_content.splitlines()
+    # Drop any marker lines the proposer echoed back — the body is the
+    # region's interior only; the markers are owned by the surrounding
+    # file and re-emitted by the applier.
+    kept = [
+        line for line in raw_lines if parse_marker_line(line) is None and not is_end_marker(line)
+    ]
+    if not kept:
+        return ""
+    dedented = textwrap.dedent("\n".join(kept))
+    out: list[str] = []
+    for line in dedented.splitlines():
+        if line.strip():
+            out.append(indent + line)
+        else:
+            out.append("")
+    return "\n".join(out) + "\n"
+
+
 def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     """Replace a span point's content with ``new_content``.
 
@@ -279,15 +348,20 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
 
     if point.kind == "code":
         # Pointed code region: the body is verbatim source between the
-        # markers. Write ``new_content`` unchanged — no string-literal
-        # wrapping and no indent re-anchoring (the block already carries
-        # its own indentation; the proposer owns getting it right). Only
-        # the trailing-newline guard below applies so the closing marker
-        # line is not merged onto the body's last line.
-        middle = new_content
-        if not middle.endswith("\n"):
-            if "".join(lines[point.line_start - 1 : point.line_end]).endswith("\n"):
-                middle = middle + "\n"
+        # markers. The proposer rewrites real Python control flow, but it
+        # cannot reliably reproduce the region's leading indent (it works
+        # from a preview and routinely emits the block at column 0, or one
+        # level too deep, or with the surrounding marker comments echoed
+        # back). The applier owns the indent: it strips any stray marker
+        # lines, dedents the body to a common baseline, and re-anchors it
+        # to the original region's indent so the replacement stays
+        # syntactically valid in place and the region re-enumerates. Only
+        # the BODY between the markers is rewritten; the ``:code`` /
+        # ``:end`` markers (which live just outside the body span) are
+        # untouched, so the mutation id keeps resolving.
+        original_body = "".join(lines[point.line_start - 1 : point.line_end])
+        indent = _region_base_indent(original_body)
+        middle = _reindent_code_region(new_content, indent)
         point.file.write_text(before + middle + after, encoding="utf-8")
         return
 

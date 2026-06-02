@@ -123,6 +123,91 @@ def test_apply_replace_code_region(tmp_path: Path) -> None:
     assert ns["slug"]("Hello World") == "hello-world"  # type: ignore[operator]
 
 
+def test_apply_replace_code_region_reindents_misindented_body(tmp_path: Path) -> None:
+    """A ``code`` replacement the proposer emits at the wrong indent (or at
+    column 0, multi-line) is re-anchored to the region's indent so the file
+    still parses, retains its imports, and re-enumerates."""
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    file_path = src / "tools.py"
+    _write(
+        file_path,
+        """
+        from __future__ import annotations
+
+        import os
+
+
+        def slug(topic):
+            # zicato:mutable:code id="slug_logic"
+            s = topic.lower().replace(" ", "_")
+            # zicato:mutable:end
+            return s
+        """,
+    )
+    # Proposer emits a multi-line body at column 0 (no leading indent) —
+    # the dominant real failure mode. Without re-anchoring this produces an
+    # ``unexpected indent`` SyntaxError.
+    new_body = "s = topic.strip().lower()\n" 'for ch in " /":\n' '    s = s.replace(ch, "-")\n'
+    patches = [_patch(pid="p1", mutation_id="slug_logic", op="replace", new_content=new_body)]
+    apply_patches(src, patches, tgt)
+
+    out = (tgt / "tools.py").read_text(encoding="utf-8")
+    # File still parses (the body was re-anchored to the region's indent).
+    ast.parse(out)
+    # Top-level imports are intact — a parseable file enumerates them.
+    assert "from __future__ import annotations" in out
+    assert "import os" in out
+    # Markers preserved → id re-resolves as a code point.
+    points = enumerate_mutations([tgt])
+    by_id = {p.id: p for p in points}
+    assert by_id["slug_logic"].kind == "code"
+    # The rewritten body is live.
+    ns: dict[str, object] = {}
+    exec(out, ns)  # noqa: S102 — controlled test source
+    assert ns["slug"]("Hello World") == "hello-world"  # type: ignore[operator]
+
+
+def test_apply_replace_code_region_strips_echoed_markers(tmp_path: Path) -> None:
+    """A ``code`` replacement that echoes the surrounding marker comments
+    back has them stripped — only the body lands between the real markers,
+    so the id keeps resolving and the markers are not duplicated."""
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    file_path = src / "tools.py"
+    _write(
+        file_path,
+        """
+        import os
+
+
+        def slug(topic):
+            # zicato:mutable:code id="slug_logic"
+            s = topic.lower()
+            # zicato:mutable:end
+            return s
+        """,
+    )
+    # Proposer echoes the markers back inside its replacement (common).
+    new_body = (
+        '# zicato:mutable:code id="slug_logic"\n'
+        's = topic.strip().lower().replace(" ", "_")\n'
+        "# zicato:mutable:end\n"
+    )
+    patches = [_patch(pid="p1", mutation_id="slug_logic", op="replace", new_content=new_body)]
+    apply_patches(src, patches, tgt)
+
+    out = (tgt / "tools.py").read_text(encoding="utf-8")
+    ast.parse(out)
+    assert "import os" in out
+    # The marker appears exactly once (not duplicated by the echo).
+    assert out.count('# zicato:mutable:code id="slug_logic"') == 1
+    assert out.count("# zicato:mutable:end") == 1
+    points = enumerate_mutations([tgt])
+    by_id = {p.id: p for p in points}
+    assert by_id["slug_logic"].kind == "code"
+
+
 def test_apply_replace_plus_joined_span_preserves_operator(tmp_path: Path) -> None:
     """Replacing a ``+``-joined pointed sub-clause keeps the operator so
     the clause stays a distinct literal and its marker keeps resolving."""

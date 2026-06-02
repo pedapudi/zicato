@@ -221,6 +221,63 @@ def test_agent_module_enumerated_points_apply_and_reimport(tmp_path: Path) -> No
     assert mod._slugify_topic("Hello World") == "hello-world"  # type: ignore[attr-defined]
 
 
+def test_agent_realistic_misindented_slug_fix_applies_and_reimports(tmp_path: Path) -> None:
+    """The proposer's realistic, MIS-INDENTED multi-line slug fix applies to
+    a fresh copy of the real agent.py: the file still parses, retains its
+    top-level imports, the ``:code`` id re-resolves, and the patched module
+    re-imports with the new slug logic live.
+
+    This is the end-to-end reproduction of BUG A — before the applier
+    re-anchored ``:code`` bodies, a column-0 multi-line replacement of
+    ``topic_slugify_logic`` produced an unparseable agent.py that dropped
+    every top-level import and stopped re-enumerating.
+    """
+    import importlib.util
+
+    from zicato.core.types import Patch
+    from zicato.mutation.applier import apply_patches
+    from zicato.mutation.enumerator import enumerate_mutations
+
+    tgt = tmp_path / "agent_copy"
+    # A realistic proposer body: strip + suffix-normalize, emitted at the
+    # wrong (column-0) indent across multiple lines.
+    new_content = (
+        'slug = topic.strip().lower().replace(" ", "_").replace("/", "_")\n'
+        'for suffix in ("_presentation", "_slideshow"):\n'
+        "    if slug.endswith(suffix):\n"
+        "        slug = slug[: -len(suffix)]\n"
+    )
+    patch = Patch(
+        id="p1",
+        mutation_id="topic_slugify_logic",
+        op="replace",
+        new_content=new_content,
+        new_numeric=None,
+        new_enum=None,
+        rationale="strip suffix + unify slug",
+    )
+    apply_patches(AGENT_DIR, [patch], tgt)
+
+    patched = (tgt / "agent.py").read_text()
+    import ast as _ast
+
+    _ast.parse(patched)  # still valid Python
+    # Top-level imports survive.
+    assert "from __future__ import annotations" in patched
+    assert "import os" in patched
+    assert "from typing import Any" in patched
+    # The ``:code`` id still resolves after the apply.
+    by_id = {p.id: p for p in enumerate_mutations([tgt])}
+    assert by_id["topic_slugify_logic"].kind == "code"
+
+    # Re-import the patched module and prove the new logic is live.
+    spec = importlib.util.spec_from_file_location("t1_agent_misindent_under_test", tgt / "agent.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod._slugify_topic("Cool Topic Presentation") == "cool_topic"  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # board.jsonl — lazy validation via zicato.board.jsonl.load_board
 # ---------------------------------------------------------------------------

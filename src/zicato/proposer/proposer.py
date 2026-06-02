@@ -92,6 +92,7 @@ async def propose_experiment(
     workspace_root: Path | None = None,
     validate_experiment: ExperimentValidator | None = None,
     meta_loop_emitter: MetaLoopEmitter | None = None,
+    custom_judge_names: frozenset[str] | None = None,
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -170,6 +171,13 @@ async def propose_experiment(
         ``max_retries + 1`` LLM calls total, so the per-run wall-clock
         budget is still honoured. When omitted, no post-parse validation
         runs and the proposer behaves exactly as before.
+    custom_judge_names:
+        Names of the custom judges declared on the active board /
+        ``per_judge_weights``, forwarded to
+        :func:`~zicato.proposer.structured.parse_experiment_json` so a
+        ``drift:<judge_name>`` metric in the hypothesis validates against
+        a declared custom judge (not just the built-in goldfive drift
+        kinds). ``None`` keeps the built-in-only behaviour.
 
     Returns
     -------
@@ -287,6 +295,7 @@ async def propose_experiment(
                 parent_gen=parent_generation_id,
                 new_gen=new_generation_id,
                 mutations_by_id=mutations_by_id,
+                custom_judge_names=custom_judge_names,
             )
         except ExperimentParseError as exc:
             err = str(exc)

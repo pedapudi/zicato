@@ -231,6 +231,88 @@ def test_schema_validates_drift_namespace_kind_inside_metric_movement() -> None:
     assert "unknown drift kind" in str(exc.value)
 
 
+def test_drift_metric_accepts_declared_custom_judge_name() -> None:
+    """A ``drift:<name>`` metric validates when ``<name>`` is a declared
+    custom judge, even though it is not a built-in goldfive drift kind."""
+    payload = {
+        "hypothesis": _base_hypothesis(
+            expected_metric_movements=[
+                {
+                    "metric_name": "drift:file_findability",
+                    "direction": "decrease",
+                    "magnitude": "medium",
+                }
+            ]
+        ),
+        "patches": _ok_patches(),
+    }
+    exp = parse_experiment_json(
+        response_text=json.dumps(payload),
+        epoch_id="ep",
+        parent_gen="v0",
+        new_gen="v1",
+        mutations_by_id=_mp(),
+        custom_judge_names=frozenset({"file_findability"}),
+    )
+    names = {m.metric_name for m in exp.hypothesis.expected_metric_movements}
+    assert names == {"drift:file_findability"}
+
+
+def test_drift_metric_rejects_custom_judge_name_when_not_declared() -> None:
+    """``drift:file_findability`` is still rejected when the judge is not
+    declared (no ``custom_judge_names`` threaded) — it is neither a
+    built-in drift kind nor a known judge."""
+    payload = {
+        "hypothesis": _base_hypothesis(
+            expected_metric_movements=[
+                {
+                    "metric_name": "drift:file_findability",
+                    "direction": "decrease",
+                    "magnitude": "medium",
+                }
+            ]
+        ),
+        "patches": _ok_patches(),
+    }
+    with pytest.raises(ExperimentParseError) as exc:
+        parse_experiment_json(
+            response_text=json.dumps(payload),
+            epoch_id="ep",
+            parent_gen="v0",
+            new_gen="v1",
+            mutations_by_id=_mp(),
+        )
+    assert "unknown drift kind" in str(exc.value)
+
+
+def test_drift_metric_rejects_bogus_kind_even_with_judges_declared() -> None:
+    """A genuinely-unknown drift kind is still rejected even when other
+    custom judges are declared — only the declared names are accepted."""
+    payload = {
+        "hypothesis": _base_hypothesis(
+            expected_metric_movements=[
+                {
+                    "metric_name": "drift:bogus_kind",
+                    "direction": "decrease",
+                    "magnitude": "small",
+                }
+            ]
+        ),
+        "patches": _ok_patches(),
+    }
+    with pytest.raises(ExperimentParseError) as exc:
+        parse_experiment_json(
+            response_text=json.dumps(payload),
+            epoch_id="ep",
+            parent_gen="v0",
+            new_gen="v1",
+            mutations_by_id=_mp(),
+            custom_judge_names=frozenset({"file_findability"}),
+        )
+    assert "unknown drift kind" in str(exc.value)
+    assert "bogus_kind" in str(exc.value)
+
+
 def test_schema_accepts_non_drift_namespace_without_kind_registry_check() -> None:
     """``cost:`` / ``rubric:`` / ``latency:`` / ``schema:`` / custom namespaces
     are not constrained by the goldfive drift-kind registry."""

@@ -245,6 +245,32 @@ def _load_loss_summary(workspace_dir: Path, epoch_id: str, parent_gen: str) -> s
     return "(loss summary unavailable)"
 
 
+def _load_custom_judge_names(workspace_dir: Path) -> frozenset[str]:
+    """Return the names of custom judges declared by the active contract.
+
+    The union of every board entry's ``JudgeSpec.name`` and every
+    ``per_judge_weights`` key. These are valid ``drift:<judge_name>``
+    metric targets in a proposer hypothesis. Best-effort: any load failure
+    yields the empty set, so the proposer falls back to built-in-only
+    drift-kind validation rather than crashing.
+    """
+    try:
+        from zicato import workspace_loader  # noqa: PLC0415
+
+        board = workspace_loader.load_current_board(workspace_dir)
+        weights = workspace_loader.load_current_scoring(workspace_dir)
+    except Exception:  # noqa: BLE001 — advisory; never block a manual propose
+        return frozenset()
+    names: set[str] = set()
+    for entry in board:
+        for judge in getattr(entry, "judges", ()) or ():
+            judge_name = getattr(judge, "name", None)
+            if judge_name:
+                names.add(str(judge_name))
+    names.update(str(k) for k in (getattr(weights, "per_judge_weights", None) or {}))
+    return frozenset(names)
+
+
 # The historic in-line serializer used to live here; the per-patch
 # storage layout makes that obsolete. Writes now go through
 # :func:`zicato.epoch.journal.write_experiment`. We keep the import
@@ -378,6 +404,12 @@ def propose_cmd(
     aux_call_llm = _resolve_aux_llm(config)
     model = config.get("auxiliary_model", "")
 
+    # Custom judges declared on the board / per_judge_weights are valid
+    # ``drift:<judge_name>`` metric targets in a hypothesis. Best-effort:
+    # if the board/scoring cannot be loaded the proposer falls back to
+    # built-in-only drift-kind validation.
+    custom_judge_names = _load_custom_judge_names(workspace_dir)
+
     try:
         experiment = asyncio.run(
             propose_experiment(
@@ -392,6 +424,7 @@ def propose_cmd(
                 model=model,
                 max_retries=max_retries,
                 forbidden_ids=brief.forbidden_ids,
+                custom_judge_names=custom_judge_names,
             )
         )
     except ProposerError as exc:

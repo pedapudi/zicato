@@ -289,6 +289,7 @@ def parse_experiment_json(
     parent_gen: str,
     new_gen: str,
     mutations_by_id: Mapping[str, MutationPoint],
+    custom_judge_names: frozenset[str] | None = None,
 ) -> Experiment:
     """Lift a raw proposer response into a typed :class:`Experiment`.
 
@@ -309,6 +310,16 @@ def parse_experiment_json(
         Live mutation-point manifest — used to validate that each
         ``patches[*].mutation_id`` resolves, and to range-check
         ``set_numeric`` values against per-mutation metadata.
+    custom_judge_names:
+        Names of the custom judges declared on the active board /
+        ``per_judge_weights``. A ``drift:<name>`` metric in
+        ``expected_metric_movements`` validates when ``<name>`` is either
+        a built-in goldfive :class:`DriftKind` or one of these declared
+        judge names — a custom judge emits its signal under the
+        ``"custom"`` drift kind but is addressed by its own name in a
+        hypothesis. ``None`` (the default) is treated as the empty set,
+        so callers that don't thread the contract's judges keep the
+        built-in-only behaviour.
 
     Returns
     -------
@@ -378,21 +389,30 @@ def parse_experiment_json(
             )
         )
 
+    judge_names = custom_judge_names or frozenset()
     metric_movements: list[ExpectedMetricMovement] = []
     for i, mv in enumerate(raw_metric_movements):
         metric_name = mv["metric_name"]
         # Validate drift-namespace metric names against the registered
-        # goldfive kind set (defense in depth — the schema bounds the
-        # direction/magnitude domains but not the kind set). Other
-        # namespaces are accepted as-is; the convention is namespace-
-        # prefixed names but we don't lock down the namespace registry
-        # here so harnesses can add new namespaces freely.
+        # goldfive kind set AND the board's declared custom judges
+        # (defense in depth — the schema bounds the direction/magnitude
+        # domains but not the kind set). A custom judge emits its signal
+        # under the single ``"custom"`` goldfive drift kind, but a
+        # hypothesis addresses it by its own ``judge_name`` (e.g.
+        # ``drift:file_findability``), so a declared judge name is a valid
+        # ``drift:`` metric even though it is not a built-in DriftKind. A
+        # name that is neither a built-in kind nor a declared judge is
+        # still rejected. Other namespaces are accepted as-is; the
+        # convention is namespace-prefixed names but we don't lock down
+        # the namespace registry here so harnesses can add new namespaces
+        # freely.
         if metric_name.startswith("drift:"):
             bare = metric_name[len("drift:") :]
-            if bare not in GOLDFIVE_DRIFT_KINDS:
+            if bare not in GOLDFIVE_DRIFT_KINDS and bare not in judge_names:
                 raise ExperimentParseError(
                     f"hypothesis.expected_metric_movements[{i}]: unknown drift "
-                    f"kind {bare!r} in metric_name {metric_name!r}"
+                    f"kind {bare!r} in metric_name {metric_name!r} "
+                    f"(not a built-in drift kind and not a declared board judge)"
                 )
         metric_movements.append(
             ExpectedMetricMovement(

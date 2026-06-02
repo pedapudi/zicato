@@ -110,6 +110,32 @@ class EvolveRoundOutcome:
     health_critical: bool = False
 
 
+def _declared_custom_judge_names(board: list[Any], weights: Any) -> frozenset[str]:
+    """Return the names of the custom judges declared by the contract.
+
+    A custom judge is addressable in a proposer hypothesis as a
+    ``drift:<judge_name>`` metric even though, on the goldfive side, it
+    emits under the single ``"custom"`` drift kind. The set of valid
+    judge names is the union of:
+
+    * every ``JudgeSpec.name`` on every board entry (``board[*].judges``);
+    * every key of :attr:`ScoringWeights.per_judge_weights`.
+
+    Threaded into :func:`zicato.proposer.proposer.propose_experiment` so
+    the hypothesis validator accepts ``drift:<judge_name>`` for a declared
+    judge and still rejects a genuinely-unknown drift kind.
+    """
+    names: set[str] = set()
+    for entry in board:
+        for judge in getattr(entry, "judges", ()) or ():
+            judge_name = getattr(judge, "name", None)
+            if judge_name:
+                names.add(str(judge_name))
+    per_judge = getattr(weights, "per_judge_weights", None) or {}
+    names.update(str(k) for k in per_judge)
+    return frozenset(names)
+
+
 # ---------------------------------------------------------------------------
 # Contract-hash auto-epoching
 # ---------------------------------------------------------------------------
@@ -484,6 +510,10 @@ async def evolve_once(
     board, disable_drift, judge_only = workspace_loader.load_current_board_with_meta(workspace_root)
     weights = workspace_loader.load_current_scoring(workspace_root)
     brief = workspace_loader.load_current_brief(workspace_root)
+    # Custom judges declared on the board / per_judge_weights are valid
+    # ``drift:<judge_name>`` metric targets in a proposer hypothesis even
+    # though they are not built-in goldfive drift kinds.
+    custom_judge_names = _declared_custom_judge_names(board, weights)
     # The per-epoch tournament structure (gauntlet by default). It lives
     # on the frozen ScoringWeights; reading it off the loaded weights
     # keeps it in lockstep with the contract hash. The gauntlet path
@@ -666,6 +696,7 @@ async def evolve_once(
             workspace_root=workspace_root,
             validate_experiment=_validate_experiment_post_apply,
             meta_loop_emitter=meta_loop_emitter,
+            custom_judge_names=custom_judge_names,
         )
     except ProposerError as exc:
         # The proposer exhausted its bounded retries without producing a
@@ -1039,6 +1070,7 @@ async def _propose_and_apply_challenger(
     beater: HeartbeatBeater | None,
     round_index: int,
     meta_loop_emitter: Any,
+    custom_judge_names: frozenset[str] = frozenset(),
 ) -> _AppliedChallenger | None:
     """Propose + apply ONE challenger child of the champion.
 
@@ -1107,6 +1139,7 @@ async def _propose_and_apply_challenger(
             workspace_root=workspace_root,
             validate_experiment=_validate,
             meta_loop_emitter=meta_loop_emitter,
+            custom_judge_names=custom_judge_names,
         )
     except ProposerError as exc:
         log.warning(
@@ -1230,6 +1263,7 @@ async def _evolve_multi_challenger(
     # the same vN). The first id matches what the gauntlet path would mint.
     base_id = _next_generation_id(workspace_root, epoch_id)
     base_n = _round_n_from_generation_id(base_id)
+    custom_judge_names = _declared_custom_judge_names(board, weights)
     for offset in range(field_n):
         next_id = f"v{base_n + offset}" if base_n is not None else base_id
         challenger = await _propose_and_apply_challenger(
@@ -1247,6 +1281,7 @@ async def _evolve_multi_challenger(
             beater=beater,
             round_index=round_index,
             meta_loop_emitter=meta_loop_emitter,
+            custom_judge_names=custom_judge_names,
         )
         if challenger is not None:
             applied.append(challenger)
