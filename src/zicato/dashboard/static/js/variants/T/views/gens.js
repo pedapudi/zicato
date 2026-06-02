@@ -28,6 +28,28 @@ import { gatedSwap, section, empty, verdictPill, normaliseDecision, decisionFor 
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing, buildLiveRacingModel } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
+// Does the LIVE run (active tournament / heartbeat) belong to the epoch being
+// VIEWED? The live topology is the ACTIVE epoch's — adopting it under a
+// different epoch's header (e.g. a closed e0 while e1 races) is BUG 2. Keyed
+// off the active tournament's epoch_id, falling back to the heartbeat's epoch
+// id. When NEITHER live signal carries an epoch tag it is a legacy
+// single-epoch payload, so we trust it for the viewed epoch (mirrors
+// views/epoch.js's `liveForThisEpoch` guard). A run must also actually be
+// running for this to be true.
+function liveBelongsToEpoch(epochId) {
+  const running = deriveLiveStatus({
+    heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
+  }).running;
+  if (!running) return false;
+  const at = state.activeTournament;
+  const hb = state.heartbeat;
+  const atEpoch = (at && at.epoch_id != null) ? at.epoch_id : null;
+  const hbEpoch = (hb && hb.epoch_id != null) ? hb.epoch_id : null;
+  if (atEpoch != null) return String(atEpoch) === String(epochId);
+  if (hbEpoch != null) return String(hbEpoch) === String(epochId);
+  return true; // no epoch tag ⇒ legacy single-epoch payload, trust it.
+}
+
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading generations…' }));
   const epochId = (params && params.epochId) || null;
@@ -50,15 +72,23 @@ export async function render(host, ctx, params) {
   // bracket / standings / racing ladder instead of the gauntlet ladder.
   const tournament = (ep && ep.tournament && typeof ep.tournament === 'object') ? ep.tournament : null;
   let structure = (tournament && tournament.structure) || 'gauntlet';
+  // THE PER-EPOCH LIVE GUARD. The live topology (active-tournament / heartbeat /
+  // active-runs) belongs to the ACTIVE epoch only. We treat the run as live FOR
+  // THIS VIEW only when the epoch on screen IS the active one — keyed off the
+  // active tournament's epoch_id (and/or the heartbeat's, when it carries one).
+  // Viewing a NON-active (e.g. closed e0) epoch while a different epoch (e1)
+  // races must render e0's COMPLETED structure, never e1's live "being seeded"
+  // ladder leaking onto e0. (epoch.js already guards its racing funnel the same
+  // way.) When the live signals carry NO epoch tag it is a legacy single-epoch
+  // payload — trust it for the viewed epoch.
+  const isLiveForThisEpoch = liveBelongsToEpoch(id);
   // a LIVE non-gauntlet run governs the dispatch even if the epoch contract
-  // has not yet recorded its structure block (the active-tournament names it).
+  // has not yet recorded its structure block (the active-tournament names it) —
+  // but ONLY when that live run is for the epoch being viewed.
   const liveStruct = (state.activeTournament && state.activeTournament.structure) || null;
-  const liveActive = deriveLiveStatus({
-    heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
-  }).running;
-  if (structure === 'gauntlet' && liveActive && liveStruct && isNonGauntlet(liveStruct)) structure = liveStruct;
+  if (structure === 'gauntlet' && isLiveForThisEpoch && liveStruct && isNonGauntlet(liveStruct)) structure = liveStruct;
   if (isNonGauntlet(structure)) {
-    await renderConfiguredStructure(host, ctx, id, ep, bracket, structure, tournament && tournament.params);
+    await renderConfiguredStructure(host, ctx, id, ep, bracket, structure, tournament && tournament.params, isLiveForThisEpoch);
     return;
   }
   const experiments = (ep && Array.isArray(ep.experiments)) ? ep.experiments : [];
@@ -156,13 +186,21 @@ export async function render(host, ctx, params) {
 // `tournaments[]` array on /api/tournaments and fetch its full structure
 // state; when that is empty (a pre-feature index) derive the crowning-pair id
 // so a completed tournament still resolves via the loss-file fallback chain.
-async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, params) {
-  // is a run live right now? (the same structure-agnostic verdict the chrome reads)
+async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, params, isLiveForThisEpoch) {
+  // is a run live right now? (the same structure-agnostic verdict the chrome
+  // reads) — but adopting the LIVE topology is gated on the run belonging to
+  // the epoch ON SCREEN (BUG 2). When viewing a non-active epoch we never read
+  // the live active-tournament; we fall through to the COMPLETED record below,
+  // so a closed e0 shows its own bracket and never e1's live "being seeded"
+  // ladder. The caller passes `isLiveForThisEpoch`; recompute defensively when
+  // it is omitted (a direct call).
+  const liveForThisEpoch = isLiveForThisEpoch == null ? liveBelongsToEpoch(id) : !!isLiveForThisEpoch;
   const status = deriveLiveStatus({
     heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
   });
-  // the LIVE topology (full {structure,phase,competitors,rounds,standings}).
-  const liveRaw = status.running ? await D.activeTournament() : null;
+  // the LIVE topology (full {structure,phase,competitors,rounds,standings}) —
+  // adopted ONLY for the active epoch's view.
+  const liveRaw = (liveForThisEpoch && status.running) ? await D.activeTournament() : null;
   // RACING — the live active-tournament `rounds` are EMPTY until each matchup
   // COMPLETES, so a plain normalize would yield no rungs and the ladder would
   // sit on the "being seeded" empty state for the whole race. Build a
@@ -229,7 +267,7 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
         : 'The configured tournament structure for this epoch. Open a match or competitor for its candidate detail, promote gate, per-board scoring, and patch diff.' }),
     ]));
     if (!shown) {
-      nodes.push(empty(status.running
+      nodes.push(empty((liveForThisEpoch && status.running)
         ? 'A run is starting — the live tournament topology is not available yet.'
         : (tournamentId ? 'The tournament structure is unavailable (the index may not be built).'
                         : 'No tournament has run for this structure yet.')));

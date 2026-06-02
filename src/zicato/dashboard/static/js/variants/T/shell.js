@@ -579,7 +579,7 @@ export function mountShell(root) {
 // epoch_id, /api/workspace.epochs, /api/epoch, AND the currently-routed epochId
 // — so an existing epoch ALWAYS lists, and the empty state shows only when there
 // are genuinely zero epochs across all of them.
-async function buildTreeModel(route) {
+export async function buildTreeModel(route) {
   const [ws, lin, ep, brk] = await Promise.all([D.workspace(), D.lineage(), D.epoch(), D.bracket()]);
   const epochs = [];
   const seen = new Set();
@@ -614,46 +614,62 @@ async function buildTreeModel(route) {
     for (const e of epochs) e.current = e.id === fallbackCurrentId;
   }
 
-  // Generations + boards: the live data has one epoch, so we resolve the
-  // current epoch's bundle from /api/lineage + /api/epoch.board. Other epochs
-  // appear as nodes that resolve their bundle when selected (degrade
-  // gracefully — structure all-epochs-first).
+  // Generations + boards: the workspace can carry MORE THAN ONE epoch, so we
+  // resolve EACH epoch node's bundle from /api/lineage filtered by THAT node's
+  // epoch_id (never the single current-epoch assumption that left the
+  // non-current epoch's GENERATIONS node empty). The contract-scoped extras
+  // (/api/epoch.board + /api/epoch.experiments + the bracket's champion
+  // lineage) belong to the epoch /api/epoch resolved (and, when no epoch tag is
+  // present, to the routed/sole epoch — the legacy single-epoch case), so they
+  // attach only to that node; every OTHER epoch node still fills its own
+  // generations from the lineage. This degrades gracefully — an epoch with no
+  // lineage rows and no contract extras resolves to an honest empty group.
   const byEpoch = {};
-  for (const e of epochs) byEpoch[e.id] = { gens: [], boards: [] };
-  // Resolve the bundle for the focused epoch: the contract's own epoch when
-  // /api/epoch resolved, else the routed epoch (so the publication / a deep-link
-  // route fills its generations from /api/lineage even when /api/epoch is sparse
-  // for a non-current epoch).
-  const bundleId = (ep && ep.epoch_id != null) ? ep.epoch_id : routeEpochId;
-  if (bundleId != null && Object.prototype.hasOwnProperty.call(byEpoch, bundleId)) {
-    const id = bundleId;
-    // The CURRENT champion = the LAST id in champion_lineage (the epoch's
-    // reigning generation). Every OTHER promoted generation is a FORMER
-    // champion (it held the title, then was succeeded). When the lineage is
-    // absent, fall back to the last-promoted generation as the current champion
-    // so a pre-feature index still disambiguates one current crown.
-    const lineage = (brk && Array.isArray(brk.champion_lineage)) ? brk.champion_lineage.map(String) : [];
-    const currentChampionId = lineage.length ? lineage[lineage.length - 1] : null;
+  // the epoch the contract extras (board + experiments) belong to: the
+  // contract's own epoch when /api/epoch resolved, else the routed epoch (so a
+  // deep-link / the publication route still attaches the board to its node).
+  const contractEpochId = (ep && ep.epoch_id != null) ? ep.epoch_id : routeEpochId;
+  // The CURRENT champion = the LAST id in champion_lineage (the epoch's
+  // reigning generation). Every OTHER promoted generation is a FORMER champion
+  // (it held the title, then was succeeded). When the lineage is absent, fall
+  // back to the last-promoted generation as the current champion so a
+  // pre-feature index still disambiguates one current crown. (The bracket is
+  // fetched for the contract epoch, so the lineage applies to that epoch's
+  // champion disambiguation.)
+  const lineage = (brk && Array.isArray(brk.champion_lineage)) ? brk.champion_lineage.map(String) : [];
+  const currentChampionId = lineage.length ? lineage[lineage.length - 1] : null;
+  for (const e of epochs) {
+    const id = e.id;
+    // THE PER-EPOCH FIX: each node lists its OWN generations — the lineage rows
+    // tagged with THIS epoch_id (keeping the `!g.epoch_id` tolerance for an old
+    // single-epoch workspace whose rows omit the tag).
     const linForEpoch = (lin && Array.isArray(lin.generations))
-      ? lin.generations.filter((g) => !g.epoch_id || g.epoch_id === id) : [];
+      ? lin.generations.filter((g) => (id === contractEpochId ? !g.epoch_id || g.epoch_id === id : g.epoch_id === id)) : [];
+    const isContractEpoch = id === contractEpochId;
     // Preserve the tri-state `promoted` (true / false / null) so the tree can
     // render an unscored child as PENDING rather than a default rejected (Class
-    // B). A pre-feature row that omits the field reads null ⇒ pending.
+    // B). A pre-feature row that omits the field reads null ⇒ pending. The
+    // /api/epoch experiments are a fallback ONLY for the contract epoch (they
+    // describe its run); other epochs rely on the lineage alone.
     const gensList = linForEpoch.length
       ? linForEpoch.map((g) => ({ id: g.generation_id, promoted: g.promoted == null ? null : !!g.promoted, parent: g.parent_generation_id || null }))
-      : (ep && Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({
+      : (isContractEpoch && ep && Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({
           id: x.generation_id, parent: x.parent_generation_id || null,
           promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null),
         })) : []);
-    // disambiguate the CURRENT champion (♚) from FORMER champions (hollow crown).
+    // disambiguate the CURRENT champion (♚) from FORMER champions (hollow
+    // crown) — the champion lineage applies to the contract epoch's bracket.
     const fallbackCurrent = currentChampionId == null
       ? (gensList.filter((g) => g.promoted === true).map((g) => g.id).pop() || null)
       : currentChampionId;
     for (const g of gensList) {
-      g.currentChampion = g.promoted === true && String(g.id) === String(fallbackCurrent);
-      g.formerChampion = g.promoted === true && !g.currentChampion;
+      const champ = isContractEpoch && g.promoted === true && String(g.id) === String(fallbackCurrent);
+      g.currentChampion = champ;
+      g.formerChampion = g.promoted === true && !champ;
     }
-    const boardList = (ep && Array.isArray(ep.board) ? ep.board : []).map((b) => ({
+    // Boards come from the epoch contract — attach them only to the contract
+    // epoch's node (the other epochs' boards resolve when that epoch is viewed).
+    const boardList = (isContractEpoch && ep && Array.isArray(ep.board) ? ep.board : []).map((b) => ({
       id: b.entry_id || b.id, kindTag: KIND_TAG[b.kind] || null,
     })).filter((b) => b.id);
     byEpoch[id] = { gens: gensList, boards: boardList };

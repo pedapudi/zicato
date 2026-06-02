@@ -4172,4 +4172,128 @@ test('fleet cards: digest-gated — identical workspace + trajectories do NOT re
   assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op repaint');
 });
 
+// CROSS-EPOCH BUG 1 — the tree lists EVERY epoch's generations.
+//
+// buildTreeModel used a SINGLE current-epoch `bundleId`, so expanding a
+// non-current epoch (e0) showed an EMPTY "Generations" node even though
+// /api/lineage carries e0's rows. Now each epoch node fills its OWN gens from
+// the lineage filtered by THAT node's epoch_id — neither epoch empty, no
+// cross-contamination.
+// ====================================================================
+
+test('tree model (cross-epoch): EVERY epoch node lists its OWN generations (e0 not empty, e1 not empty, no leak)', async () => {
+  freshState();
+  // the WHOLE-workspace lineage spans BOTH epochs; the contract is the CURRENT
+  // (e1) epoch. /api/workspace names both so both become tree nodes.
+  const F = twoEpochFixture(TWO_EP_NEW);
+  F['/api/workspace'] = {
+    current_epoch_id: TWO_EP_NEW,
+    epochs: [
+      { epoch_id: TWO_EP_OLD, generation_count: 5, promoted_count: 2, closed: true, goal: 'e0' },
+      { epoch_id: TWO_EP_NEW, generation_count: 3, promoted_count: 1, closed: false, goal: 'e1' },
+    ],
+    sparkline: [],
+  };
+  installFixtureMap(F);
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  // route at the CURRENT epoch (e1) — the OLD epoch (e0) is the non-current one.
+  const model = await shell.buildTreeModel(router.parseRoute(`#/e/${TWO_EP_NEW}`));
+
+  // both epochs are nodes.
+  const ids = model.epochs.map((e) => e.id).sort();
+  assert(ids.includes(TWO_EP_OLD) && ids.includes(TWO_EP_NEW), 'both epochs are tree nodes');
+
+  // e0 (NON-current) lists ITS OWN 5 generations — NOT empty.
+  const e0 = model.byEpoch[TWO_EP_OLD];
+  assert(e0 && Array.isArray(e0.gens), 'the non-current e0 node has a gens bundle');
+  assertEqual(e0.gens.length, 5, 'e0 lists its OWN 5 generations (not an empty Generations node)');
+  assertDeep(e0.gens.map((g) => g.id).sort(), ['v0', 'v1', 'v2', 'v3', 'v4'], 'e0’s gens are exactly its own field {v0..v4}');
+
+  // e1 (current) lists ITS OWN 3 generations — no cross-contamination from e0.
+  const e1 = model.byEpoch[TWO_EP_NEW];
+  assert(e1 && Array.isArray(e1.gens), 'the current e1 node has a gens bundle');
+  assertEqual(e1.gens.length, 3, 'e1 lists its OWN 3 generations');
+  assertDeep(e1.gens.map((g) => g.id).sort(), ['v0', 'v1', 'v2'], 'e1’s gens are exactly its own field {v0,v1,v2} (no e0 leak)');
+
+  // the current-epoch marker stays on e1; e0’s board node is empty (its board
+  // resolves when e0 is viewed — the boards/mutation/publication children are
+  // not regressed).
+  assert(model.epochs.find((e) => e.id === TWO_EP_NEW).current, 'e1 keeps the current marker');
+  assert(Array.isArray(e1.boards) && e1.boards.length >= 1, 'the contract (e1) node still lists its boards');
+});
+
+// ====================================================================
+// CROSS-EPOCH BUG 2 — Match-ups live state is gated to the ACTIVE epoch.
+//
+// gens.js read deriveLiveStatus() from the GLOBAL state and adopted the LIVE
+// topology regardless of which epoch was viewed — so a CLOSED e0's Match-ups
+// showed e1's live "being seeded" ladder. The live topology is now adopted
+// ONLY when the viewed epoch IS the active one (state.activeTournament.epoch_id).
+// ====================================================================
+
+test('gens (cross-epoch): a NON-active epoch’s Match-ups renders the COMPLETED structure, NOT the active epoch’s live ladder', async () => {
+  freshState();
+  // e1 is racing LIVE (a running active-tournament tagged epoch_id=e1); we VIEW
+  // the CLOSED e0. e0 must show its COMPLETED racing ladder, never e1's live
+  // "being seeded" empty state and never the LIVE pill.
+  const F = twoEpochFixture(TWO_EP_OLD);
+  installFixtureMap(F);
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0:rung0_m0', generation_id: 'v1', epoch_id: TWO_EP_NEW });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.3 }];
+  coreState.state.activeTournament = { epoch_id: TWO_EP_NEW, structure: 'racing', phase: 'running' };
+
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_OLD });
+
+  // NO live leak from e1 onto e0.
+  assertEqual(allByClass(host, 'dt-live-pill').length, 0, 'NO LIVE pill on the closed e0 view (e1’s live run does not leak)');
+  assert(!/being seeded|is being seeded|run is starting/i.test(host.textContent), 'NOT e1’s live "being seeded"/"starting" empty state under e0');
+  // e0 renders its OWN completed racing ladder (reconstructed from its records).
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(ladder, 'e0 renders its OWN completed racing ladder (not the live topology)');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+});
+
+test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live progressive ladder (no regression)', async () => {
+  freshState();
+  // VIEW the ACTIVE e1 while it races live — the live progressive racing ladder
+  // must still render (the racing-ladder redesign is preserved).
+  const F = twoEpochFixture(TWO_EP_NEW);
+  F['/api/active-tournament'] = {
+    epoch_id: TWO_EP_NEW, tournament_id: `tourn_${TWO_EP_NEW}_v1`, structure: 'racing', phase: 'running',
+    structure_params: { field_size: 3, eta: 2, board_fraction: 0.25 },
+    round_index: 0, total_rounds: 2,
+    competitors: [
+      { generation_id: 'v0', seed: 1, role: 'champion' },
+      { generation_id: 'v1', seed: 2, role: 'challenger' },
+      { generation_id: 'v2', seed: 3, role: 'challenger' },
+    ],
+    rounds: [], standings: [], champion_lineage: ['v0'],
+  };
+  installFixtureMap(F);
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', generation_id: 'v1', epoch_id: TWO_EP_NEW });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  coreState.state.activeTournament = { epoch_id: TWO_EP_NEW, structure: 'racing', phase: 'running' };
+
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_NEW });
+
+  assert(allByClass(host, 'dt-live-pill')[0], 'the active e1 view carries the LIVE pill');
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(ladder, 'the live progressive racing ladder renders for the active epoch');
+  assert(!/being seeded/i.test(host.textContent), 'NOT the "being seeded" empty state once the live field exists');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+});
+
 await run();
