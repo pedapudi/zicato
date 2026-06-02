@@ -143,7 +143,11 @@ beyond plain OUTCOME expectations:
 
 - A board-level `board_meta` header line carrying `disable_drift`
   (`user_steer`, `user_pause`) — drift kinds suppressed for every run
-  on this board.
+  on this board — and `judge_only: true`. In judge-only mode goldfive
+  JUDGES the presentation agent (drift / process judges stay armed) but
+  does ZERO steering: no goal-derivation LLM call, no planner
+  replanning, no drift-triggered refine. The presentation agent is meant
+  to be evaluated as-is, not actively steered, so this board opts in.
 - PROCESS `judges` on `transformers_lay_audience` and
   `picky_stakeholder_emulated`. Where an `expectation` grades the
   finished output, a judge observes *how* the run unfolds and reports

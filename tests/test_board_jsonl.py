@@ -389,7 +389,7 @@ def test_save_board_round_trips_disable_drift(tmp_path: Path) -> None:
     assert header["board_meta"] is True
     assert header["disable_drift"] == ["off_topic", "tool_error"]
 
-    entries, parsed_disable = load_board_with_meta(board_file)
+    entries, parsed_disable, _judge_only = load_board_with_meta(board_file)
     assert entries == [entry]
     assert parsed_disable == disable
 
@@ -402,6 +402,82 @@ def test_save_board_no_header_when_disable_drift_empty(tmp_path: Path) -> None:
     lines = board_file.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     assert "board_meta" not in lines[0]
+
+
+def test_save_board_round_trips_judge_only(tmp_path: Path) -> None:
+    """Board-level ``judge_only`` round-trips via the ``board_meta`` header."""
+    entry = BoardEntry(id="e", kind="single_turn", wall_clock_budget_seconds=30, input="i")
+    board_file = tmp_path / "board.jsonl"
+    save_board([entry], board_file, judge_only=True)
+
+    first_line = board_file.read_text(encoding="utf-8").splitlines()[0]
+    header = json.loads(first_line)
+    assert header["board_meta"] is True
+    assert header["judge_only"] is True
+
+    entries, parsed_disable, parsed_judge_only = load_board_with_meta(board_file)
+    assert entries == [entry]
+    assert parsed_disable == ()
+    assert parsed_judge_only is True
+
+
+def test_save_board_round_trips_disable_drift_and_judge_only(tmp_path: Path) -> None:
+    """Both board-level fields coexist on one ``board_meta`` header."""
+    entry = BoardEntry(id="e", kind="single_turn", wall_clock_budget_seconds=30, input="i")
+    board_file = tmp_path / "board.jsonl"
+    disable = (DriftKind.OFF_TOPIC,)
+    save_board([entry], board_file, disable_drift=disable, judge_only=True)
+
+    header = json.loads(board_file.read_text(encoding="utf-8").splitlines()[0])
+    assert header["disable_drift"] == ["off_topic"]
+    assert header["judge_only"] is True
+
+    _entries, parsed_disable, parsed_judge_only = load_board_with_meta(board_file)
+    assert parsed_disable == disable
+    assert parsed_judge_only is True
+
+
+def test_judge_only_absent_parses_false(tmp_path: Path) -> None:
+    """A ``board_meta`` header without ``judge_only`` parses as False."""
+    board_file = tmp_path / "board.jsonl"
+    _write_lines(
+        board_file,
+        [
+            json.dumps({"board_meta": True, "disable_drift": ["off_topic"]}),
+            json.dumps({"id": "e", "kind": "single_turn", "input": "i", "budget_s": 30}),
+        ],
+    )
+    _entries, _disable, parsed_judge_only = load_board_with_meta(board_file)
+    assert parsed_judge_only is False
+
+
+def test_save_board_no_header_when_fully_default_with_judge_only_false(tmp_path: Path) -> None:
+    """``judge_only`` False AND empty ``disable_drift`` writes NO header line.
+
+    This is the byte-identical-to-today guard: a fully-default board must
+    not gain a ``board_meta`` line just because the ``judge_only`` field
+    now exists in the schema.
+    """
+    entry = BoardEntry(id="e", kind="single_turn", wall_clock_budget_seconds=30, input="i")
+    board_file = tmp_path / "board.jsonl"
+    save_board([entry], board_file, judge_only=False)
+    lines = board_file.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert "board_meta" not in lines[0]
+
+
+def test_judge_only_non_bool_value_raises(tmp_path: Path) -> None:
+    """A non-boolean ``judge_only`` header value is a clear load error."""
+    board_file = tmp_path / "board.jsonl"
+    _write_lines(
+        board_file,
+        [
+            json.dumps({"board_meta": True, "judge_only": "yes"}),
+            json.dumps({"id": "e", "kind": "single_turn", "input": "i", "budget_s": 30}),
+        ],
+    )
+    with pytest.raises(ValueError, match="judge_only.*must be a JSON boolean"):
+        load_board_with_meta(board_file)
 
 
 def test_save_board_emits_only_kind_relevant_keys(tmp_path: Path) -> None:
@@ -482,7 +558,7 @@ def test_remove_entry_preserves_disable_drift_header(tmp_path: Path) -> None:
     disable = (DriftKind.BLOCKED,)
     save_board([a, b], board_file, disable_drift=disable)
     remove_entry(board_file, "a")
-    entries, parsed_disable = load_board_with_meta(board_file)
+    entries, parsed_disable, _judge_only = load_board_with_meta(board_file)
     assert [e.id for e in entries] == ["b"]
     assert parsed_disable == disable
 

@@ -219,7 +219,7 @@ def _load_board(
     try:
         from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
 
-        entries, disable_drift = load_board_with_meta(bpath)
+        entries, disable_drift, _judge_only = load_board_with_meta(bpath)
         views: list[BoardEntryView] = []
         for e in entries:
             exp_kind = e.expectation.kind if e.expectation is not None else ""

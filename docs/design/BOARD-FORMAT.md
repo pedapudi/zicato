@@ -55,22 +55,39 @@ Plus the per-kind fields in §2.
 
 A board MAY begin with an optional **`board_meta` header line** — the
 first line of the JSONL, discriminated by `"board_meta": true`. It
-carries board-wide configuration; today that is the `disable_drift`
-list (§4.2). The header line is NOT a board entry and is parsed
-separately by the loader. If present, it MUST be the first line; a
-`board_meta` object anywhere else is a load error.
+carries board-wide configuration: the `disable_drift` list (§4.2) and
+the `judge_only` flag (§1.0.1). The header line is NOT a board entry and
+is parsed separately by the loader. If present, it MUST be the first
+line; a `board_meta` object anywhere else is a load error.
 
 The real presentation board's header line is exactly:
 
 ```json
-{"board_meta": true, "disable_drift": ["user_steer", "user_pause"]}
+{"board_meta": true, "disable_drift": ["user_steer", "user_pause"], "judge_only": true}
 ```
 
 `disable_drift` is a list of short lowercase `goldfive.DriftKind` wire
-tokens (see §4.2). When a board has no metadata to record (an empty
-`disable_drift`), the writer emits **no** header line at all and the
-first line is the first entry — so a board with no header is the
-common, fully-valid case.
+tokens (see §4.2). When a board is fully default — an empty
+`disable_drift` AND `judge_only` false — the writer emits **no** header
+line at all and the first line is the first entry, so a board with no
+header is the common, fully-valid case (byte-identical to a board
+written before either field existed).
+
+#### 1.0.1 `judge_only`
+
+`judge_only` (boolean, default `false`) selects **judge-only**
+evaluation. When `true`, goldfive still JUDGES the wrapped agent — the
+drift and process judges stay armed exactly as in the default mode — but
+does ZERO steering: no goal-derivation LLM call, no planner replanning,
+and no drift-triggered refine. The native agent tree still runs (so
+there is a transcript to judge); only goldfive's own steering machinery
+is disabled. The default (`false`) leaves the steering path unchanged
+and byte-identical.
+
+`judge_only` folds into the epoch **contract hash** (§10 / see
+`docs/design/EPOCHS-AND-JOURNALING.md`), so flipping it opens a new
+epoch. Authoring it from Python sets `Board.judge_only`; on disk it is a
+key on the `board_meta` header. A non-boolean value is a load error.
 
 ### 1.1 `id`
 

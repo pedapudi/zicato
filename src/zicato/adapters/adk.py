@@ -57,6 +57,24 @@ turned into a live goldfive ``Judge``. Inline judges run on zicato's
 own dependencies. When the entry declares no custom judges and the
 board suppresses nothing, the assembled list equals goldfive's default
 set, so behaviour is byte-identical to a plain ``goldfive.run`` call.
+
+Judge-only mode
+---------------
+
+A board may opt into *judge-only* evaluation via its board-level
+``judge_only`` flag (``Board.judge_only`` → ``board_meta`` header →
+stamped onto each entry's ``context`` by the tournament runner →
+:func:`_entry_judge_only`). In judge-only mode goldfive still JUDGES the
+wrapped agent — the drift / process judges stay armed exactly as above —
+but does ZERO steering: no goal-derivation LLM call, no planner
+replanning, no drift-triggered refine. This is implemented by spreading
+:func:`_judge_only_overrides` (a one-task ``StaticPlanner`` so the native
+agent tree still runs on goldfive's overlay path and produces a
+transcript, plus a ``LiteralGoalDeriver`` so the entry input becomes the
+goal verbatim) into every ``goldfive.run`` call for the entry. The
+default (``judge_only`` False) leaves the steering path untouched and
+byte-identical. The flag folds into the epoch contract hash, so flipping
+it opens a new epoch.
 """
 
 from __future__ import annotations
@@ -255,6 +273,97 @@ def _entry_disable_drift(entry: BoardEntry) -> tuple[Any, ...]:
     return tuple(token for token in raw.replace(",", " ").split() if token)
 
 
+#: ``BoardEntry.context`` key the tournament runner stamps the
+#: board-level ``judge_only`` flag under. Kept in sync with
+#: ``zicato.tournament.runner._JUDGE_ONLY_CONTEXT_KEY`` — the two ends
+#: meet on this single string.
+_JUDGE_ONLY_CONTEXT_KEY = "judge_only"
+
+
+def _entry_judge_only(entry: BoardEntry) -> bool:
+    """Return whether ``entry`` should run in judge-only (no-steering) mode.
+
+    ``judge_only`` is a board-LEVEL setting (``Board.judge_only``), but
+    the :class:`~zicato.adapters.base.RunnableHarness` Protocol hands the
+    adapter a :class:`BoardEntry`, not the owning ``Board``. The
+    tournament runner therefore stamps the flag onto every entry's
+    :attr:`~zicato.core.BoardEntry.context` mapping under
+    :data:`_JUDGE_ONLY_CONTEXT_KEY` (see
+    ``zicato.tournament.runner._stamp_judge_only``) — ``context`` is the
+    one per-entry channel that survives the runner -> subprocess worker
+    -> :func:`zicato.core.validate_board_entry` round-trip.
+
+    The value is the lowercase wire string ``"true"`` / ``"false"``.
+    Returns ``False`` when the entry carries no such key (the default,
+    steering-on path).
+    """
+    raw = (getattr(entry, "context", {}) or {}).get(_JUDGE_ONLY_CONTEXT_KEY)
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() == "true"
+
+
+def _judge_only_overrides(agent: Any) -> dict[str, Any]:
+    """Build the ``goldfive.run`` kwargs that turn STEERING off, JUDGING on.
+
+    Judge-only evaluation keeps goldfive's drift / process judges armed
+    (``reasoning_drift_mode="judge"`` is goldfive's default and is left
+    untouched) while removing every steering LLM call:
+
+    * ``goal_deriver=LiteralGoalDeriver()`` — the entry input becomes the
+      goal verbatim, so no ``goal_derive`` LLM call fires (goldfive's
+      default :class:`LLMGoalDeriver` would call the LLM here).
+    * ``planner=StaticPlanner(<one task>)`` — installs a single static
+      task assigned to the root agent so the native agent tree runs on
+      goldfive's overlay path (``invoke_passthrough``) and produces a
+      transcript to judge. :class:`StaticPlanner.generate` returns that
+      fixed plan; its ``refine`` / ``handle_turn`` return ``None``, so a
+      drift-triggered refine and per-turn replanning both yield NO LLM
+      call. (Goldfive's default :class:`LLMPlanner` would replan/refine
+      via the LLM.) ``PassthroughPlanner`` is deliberately NOT used: its
+      ``generate`` returns ``None`` and aborts the run with an empty
+      transcript, leaving nothing to judge.
+
+    Symbols are imported lazily so the optional goldfive dependency stays
+    out of this module's import time (matching the lazy-import discipline
+    used at the call sites).
+
+    Empirically (goldfive installed in zicato's ``.venv``): with this set
+    the only ``goldfive_llm_call_start`` events carry judge names
+    (e.g. ``judge_goal_drift``); the steering ``goal_derive`` /
+    ``refine`` / ``refine_steer`` call names never appear. The
+    ``goal_derived`` / ``plan_revised`` *bookkeeping* events still fire
+    once (literal goal recorded; the static plan's "initial plan install"
+    revision) but neither is LLM-driven — the discriminating signal is
+    the LLM-call name, which is what judge-only suppresses.
+    """
+    from goldfive import StaticPlanner  # noqa: PLC0415
+    from goldfive.goal_deriver import LiteralGoalDeriver  # noqa: PLC0415
+    from goldfive.types import Plan, Task  # noqa: PLC0415
+
+    one_task_plan = Plan(
+        id="zicato-judge-only",
+        run_id="",
+        goal_ids=("g1",),
+        tasks=(
+            Task(
+                id="t1",
+                title="accomplish the user's request",
+                description="accomplish the user's request",
+                # The overlay's passthrough dispatch routes to the agent
+                # whose name matches the task assignee — the root agent.
+                assignee_agent_id=agent.name,
+            ),
+        ),
+        edges=(),
+        summary="judge-only: run the native agent tree once, no steering",
+    )
+    return {
+        "planner": StaticPlanner(one_task_plan),
+        "goal_deriver": LiteralGoalDeriver(),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Concrete RunnableHarness
 # ---------------------------------------------------------------------------
@@ -411,6 +520,12 @@ class ADKRunnableHarness:
             disable_drift=_entry_disable_drift(entry),
             aux_call_llm=config.auxiliary_call_llm,
         )
+        # Judge-only mode: spread in the no-steering overrides
+        # (StaticPlanner + LiteralGoalDeriver) so goldfive judges without
+        # deriving goals, replanning, or refining. Judges stay armed in
+        # both paths. When off (the default), the call is byte-identical
+        # to the legacy steering path.
+        overrides = _judge_only_overrides(self._agent) if _entry_judge_only(entry) else {}
         outcome = await goldfive.run(
             self._agent,
             entry.input,
@@ -418,6 +533,7 @@ class ADKRunnableHarness:
             call_llm=config.harness_call_llm,
             judges=judges,
             runtime=_goldfive_runtime(),
+            **overrides,
         )
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
         transcript = _outcome_transcript(outcome)
@@ -477,6 +593,9 @@ class ADKRunnableHarness:
             aux_call_llm=config.auxiliary_call_llm,
         )
         agent = self._agent
+        # Judge-only overrides (no-steering) applied to every per-turn
+        # goldfive.run call; empty dict on the default steering path.
+        overrides = _judge_only_overrides(agent) if _entry_judge_only(entry) else {}
 
         class _PerTurnCaller:
             """Thin wrapper that calls ``goldfive.run`` per scripted turn.
@@ -500,6 +619,7 @@ class ADKRunnableHarness:
                     call_llm=config.harness_call_llm,
                     judges=judges,
                     runtime=_goldfive_runtime(),
+                    **overrides,
                 )
                 transcript = _outcome_transcript(outcome)
                 return transcript[-1] if transcript else ""
@@ -561,6 +681,9 @@ class ADKRunnableHarness:
             aux_call_llm=config.auxiliary_call_llm,
         )
         agent = self._agent
+        # Judge-only overrides (no-steering) applied to every per-turn
+        # goldfive.run call; empty dict on the default steering path.
+        overrides = _judge_only_overrides(agent) if _entry_judge_only(entry) else {}
 
         class _PerTurnCaller:
             """Thin wrapper that calls ``goldfive.run`` per emulated turn.
@@ -584,6 +707,7 @@ class ADKRunnableHarness:
                     call_llm=config.harness_call_llm,
                     judges=judges,
                     runtime=_goldfive_runtime(),
+                    **overrides,
                 )
                 transcript = _outcome_transcript(outcome)
                 return transcript[-1] if transcript else ""

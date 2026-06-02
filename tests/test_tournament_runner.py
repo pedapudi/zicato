@@ -38,11 +38,36 @@ from zicato.core import (
     RuntimeConfig,
     ScoringWeights,
 )
+from zicato.core import BoardEntry as _BoardEntry
 from zicato.tournament.runner import (
     TournamentResult,
+    _stamp_judge_only,
     run_fast_mode,
     run_tournament,
 )
+
+
+def test_stamp_judge_only_sets_context_key() -> None:
+    """``_stamp_judge_only`` stamps ``context['judge_only']='true'`` per entry."""
+    from zicato.tournament.runner import _JUDGE_ONLY_CONTEXT_KEY
+
+    entries = [
+        _BoardEntry(id="a", kind="single_turn", wall_clock_budget_seconds=5, input="x"),
+        _BoardEntry(id="b", kind="single_turn", wall_clock_budget_seconds=5, input="y"),
+    ]
+    stamped = _stamp_judge_only(entries, True)
+    assert all(e.context[_JUDGE_ONLY_CONTEXT_KEY] == "true" for e in stamped)
+
+
+def test_stamp_judge_only_false_leaves_board_unchanged() -> None:
+    """``judge_only=False`` returns the board untouched (byte-identical path)."""
+    entries = [
+        _BoardEntry(id="a", kind="single_turn", wall_clock_budget_seconds=5, input="x"),
+    ]
+    result = _stamp_judge_only(entries, False)
+    assert result is entries
+    assert "judge_only" not in result[0].context
+
 
 # ---------------------------------------------------------------------------
 # Fixtures and stubs
@@ -1187,7 +1212,7 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
         + "\n",
         encoding="utf-8",
     )
-    entries, disable_drift = load_board_with_meta(board_path)
+    entries, disable_drift, _judge_only = load_board_with_meta(board_path)
     assert len(entries) == 1
     # The header parsed into a board-level DriftKind tuple.
     assert tuple(str(k) for k in disable_drift) == ("tool_error",)

@@ -385,6 +385,49 @@ def _stamp_disable_drift(
     return stamped
 
 
+#: ``BoardEntry.context`` key under which the board-level ``judge_only``
+#: flag is threaded to the adapter. Mirrors
+#: :data:`_DISABLE_DRIFT_CONTEXT_KEY` exactly — ``context`` is the one
+#: per-entry channel that survives the
+#: runner -> args-file -> subprocess-worker -> ``validate_board_entry`` ->
+#: adapter round-trip. Kept in sync with
+#: ``zicato.adapters.adk._JUDGE_ONLY_CONTEXT_KEY`` — the two ends meet on
+#: this single string. The value is the lowercase wire form ``"true"`` /
+#: ``"false"`` (``context`` is a string-valued mapping).
+_JUDGE_ONLY_CONTEXT_KEY = "judge_only"
+
+
+def _stamp_judge_only(
+    board: list[BoardEntry],
+    judge_only: bool,
+) -> list[BoardEntry]:
+    """Return ``board`` with the board-level ``judge_only`` flag on each entry.
+
+    ``judge_only`` is a board-level setting (``Board.judge_only``) but the
+    adapter is only ever handed a :class:`BoardEntry`. This stamps the
+    flag onto every entry's :attr:`~zicato.core.BoardEntry.context`
+    mapping under :data:`_JUDGE_ONLY_CONTEXT_KEY` so it threads end-to-end
+    — through the subprocess worker's entry (de)serialisation — to
+    :func:`zicato.adapters.adk._entry_judge_only`.
+
+    When ``judge_only`` is ``False`` the board is returned UNCHANGED,
+    mirroring :func:`_stamp_disable_drift`'s "empty → untouched"
+    behaviour: a default board (steering on) is byte-identical to today
+    and any per-entry ``context['judge_only']`` an author set directly is
+    left alone. When ``True`` the board-level setting is authoritative
+    and overwrites any per-entry value. :class:`BoardEntry` is frozen, so
+    each affected entry is rebuilt via :func:`dataclasses.replace`.
+    """
+    if not judge_only:
+        return board
+    stamped: list[BoardEntry] = []
+    for entry in board:
+        context = dict(entry.context)
+        context[_JUDGE_ONLY_CONTEXT_KEY] = "true"
+        stamped.append(replace(entry, context=context))
+    return stamped
+
+
 def _runtime_state() -> tuple[Any, Any] | None:
     """Lazy-import runtime state helpers; return None if unavailable.
 
@@ -1526,6 +1569,7 @@ async def run_tournament(
     workspace_root: Path,
     epoch_id: str,
     disable_drift: tuple[Any, ...] = (),
+    judge_only: bool = False,
     round_index: int = 0,
     total_rounds: int = 0,
 ) -> TournamentResult:
@@ -1557,6 +1601,11 @@ async def run_tournament(
     # the adapter (running in a subprocess worker) can suppress the named
     # built-in judges. A no-op when the board has no board_meta header.
     board = _stamp_disable_drift(board, disable_drift)
+    # Same threading for the board-level judge_only flag: the adapter
+    # selects no-steering evaluation per entry off this context key. A
+    # no-op when judge_only is False (the default), so the steering path
+    # stays byte-identical.
+    board = _stamp_judge_only(board, judge_only)
 
     # Best-effort tournament-state publication for the live dashboard.
     rt = _runtime_state()
@@ -1650,6 +1699,7 @@ async def run_fast_mode(
     epoch_id: str,
     parent_historical_agg: dict[str, Any],
     disable_drift: tuple[Any, ...] = (),
+    judge_only: bool = False,
     round_index: int = 0,
     total_rounds: int = 0,
 ) -> TournamentResult:
@@ -1693,8 +1743,10 @@ async def run_fast_mode(
 
     assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
 
-    # Same board-level disable_drift threading as the full A/B path.
+    # Same board-level disable_drift / judge_only threading as the full
+    # A/B path.
     board = _stamp_disable_drift(board, disable_drift)
+    board = _stamp_judge_only(board, judge_only)
 
     # Best-effort tournament-state publication for the live dashboard.
     # Fast mode pre-fills both sides: the challenger rows are queued

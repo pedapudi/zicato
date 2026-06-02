@@ -635,6 +635,236 @@ def test_entry_disable_drift_reads_context() -> None:
     assert _entry_disable_drift(plain) == ()
 
 
+def test_entry_judge_only_reads_context() -> None:
+    """``_entry_judge_only`` reads the board-level flag off ``entry.context``.
+
+    ``judge_only`` is a board-LEVEL setting; the tournament runner stamps
+    it onto each entry's ``context['judge_only']`` as the wire string
+    ``"true"`` (see ``zicato.tournament.runner._stamp_judge_only``). The
+    adapter reads that one channel.
+    """
+    from zicato.adapters.adk import _JUDGE_ONLY_CONTEXT_KEY, _entry_judge_only
+
+    on = _EntryStub(
+        id="e",
+        kind="single_turn",
+        wall_clock_budget_seconds=5,
+        context={_JUDGE_ONLY_CONTEXT_KEY: "true"},
+    )
+    assert _entry_judge_only(on) is True
+
+    off = _EntryStub(
+        id="e",
+        kind="single_turn",
+        wall_clock_budget_seconds=5,
+        context={_JUDGE_ONLY_CONTEXT_KEY: "false"},
+    )
+    assert _entry_judge_only(off) is False
+
+    # a plain BoardEntry with no judge_only in context -> False.
+    plain = BoardEntry(id="e", kind="single_turn", wall_clock_budget_seconds=5, input="x")
+    assert _entry_judge_only(plain) is False
+
+
+@pytest.mark.asyncio
+async def test_run_single_turn_judge_only_spreads_overrides_into_goldfive_run(
+    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """judge_only ON spreads the no-steering overrides into ``goldfive.run``.
+
+    The wiring contract (fast, deterministic, no real goldfive stack):
+
+    * judge_only ON → the call carries ``planner`` + ``goal_deriver``
+      overrides (the no-steering set built by ``_judge_only_overrides``),
+      AND still carries ``judges=`` — judging stays armed.
+    * judge_only OFF → the call carries NEITHER override key (byte-
+      identical to the legacy steering path), and still carries
+      ``judges=``.
+
+    The empirical proof that this override set actually removes steering
+    while the native tree still executes lives in
+    ``test_run_single_turn_judge_only_no_steering_empirical`` below.
+    """
+    generation_root, entrypoint = inner_harness
+    adapter = ADKHarnessAdapter(
+        entrypoint=entrypoint,
+        mutable_trees=[generation_root / "demo_inner"],
+    )
+    runnable = adapter.load(generation_root)
+
+    import goldfive
+
+    seen: dict[str, Any] = {}
+
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
+        seen.clear()
+        seen.update(kwargs)
+        return _FakeOutcome({"t1": "reply"})
+
+    monkeypatch.setattr(goldfive, "run", fake_goldfive_run)
+    config = _runtime_config(tmp_path)
+
+    # --- judge_only ON ---
+    entry_on = BoardEntry(
+        id="e-on",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="hello",
+        context={"judge_only": "true"},
+    )
+    entry_on.validate()
+    await runnable.run(entry_on, sinks=[object()], config=config)
+    assert (
+        "planner" in seen and "goal_deriver" in seen
+    ), "judge_only ON must spread the no-steering overrides into goldfive.run"
+    assert "judges" in seen, "judges must stay armed in judge_only mode"
+
+    # --- judge_only OFF (default) ---
+    entry_off = BoardEntry(
+        id="e-off",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="hello",
+    )
+    entry_off.validate()
+    await runnable.run(entry_off, sinks=[object()], config=config)
+    assert "planner" not in seen and "goal_deriver" not in seen, (
+        "judge_only OFF must NOT pass any steering override — byte-identical " "to the legacy path"
+    )
+    assert "judges" in seen, "judges must stay armed on the default path too"
+
+
+def _goldfive_event_kinds(sink: Any) -> tuple[set[str], int]:
+    """Return (payload-kind set, count of goldfive_llm_call_start events).
+
+    goldfive's :class:`InMemorySink` collects events as protobuf messages
+    OR plain dicts (the overlay path emits some inner-tree events as
+    dicts). This normalises both: the discriminant of a goldfive ``Event``
+    is the single *non-envelope* oneof field name (``goal_derived``,
+    ``run_completed``, ``goldfive_llm_call_start``, ...) — or the ``kind``
+    string on a dict-shaped overlay event. The second return value counts
+    ``goldfive_llm_call_start`` events: every steering LLM call (goal
+    derivation, planner refine) shows up there, so a count of ZERO is the
+    empirical signature of "no steering LLM call fired".
+    """
+    from google.protobuf.json_format import MessageToDict  # noqa: PLC0415
+
+    envelope = {"event_id", "run_id", "sequence", "emitted_at", "session_id"}
+    kinds: set[str] = set()
+    llm_call_starts = 0
+    for ev in sink.events:
+        if isinstance(ev, dict):
+            d = ev
+            if "kind" in d and "payload" in d:
+                kinds.add(str(d["kind"]))
+                if str(d["kind"]) == "goldfive_llm_call_start":
+                    llm_call_starts += 1
+                continue
+        else:
+            d = MessageToDict(ev, preserving_proto_field_name=True)
+        for key in d:
+            if key not in envelope:
+                kinds.add(key)
+        if d.get("goldfive_llm_call_start") is not None:
+            llm_call_starts += 1
+    return kinds, llm_call_starts
+
+
+@pytest.mark.asyncio
+async def test_run_single_turn_judge_only_no_steering_empirical(
+    inner_harness: tuple[Path, str], tmp_path: Path
+) -> None:
+    """EMPIRICAL acceptance contract: judge_only judges WITHOUT steering.
+
+    This drives a REAL ``goldfive.run`` (no monkeypatch) through the
+    adapter with a minimal ``LlmAgent`` and a stub ``call_llm``, exactly
+    as goldfive's own ``test_adk_wrap_passthrough`` does. Events are
+    captured via goldfive's :class:`InMemorySink` (passed as the run's
+    sink). The simplification vs a full multi-agent tree: a single-leaf
+    agent is enough to prove the override set yields
+    execution-without-steering — the discriminating signal is the LLM-call
+    surface, not the agent's internal fan-out.
+
+    Acceptance contract asserted:
+
+    (a) judge_only ON →
+        * the native agent tree EXECUTED (overlay events present:
+          ``agent_invocation_started`` / ``task_started``) and the run
+          ``run_completed`` (NOT ``run_aborted``);
+        * ZERO ``goldfive_llm_call_start`` events — no steering LLM call
+          (goal derivation, planner refine) fired at all.
+    (b) judge_only OFF (the legacy steering path) →
+        * a steering LLM call DID fire (``goldfive_llm_call_start`` >= 1,
+          the default ``LLMGoalDeriver``'s ``goal_derive`` call), proving
+          the two paths differ and that ON genuinely removed steering.
+
+    The stub ``call_llm`` returns prose (not planner JSON) so the legacy
+    LLMPlanner cannot parse it and the OFF run aborts after its first
+    steering call — that is fine: the contract is about the PRESENCE of a
+    steering LLM call on the OFF path and its ABSENCE on the ON path.
+    """
+    import goldfive
+    from goldfive import InMemorySink
+
+    from zicato.adapters.adk import _entry_judge_only, _judge_only_overrides
+
+    agent = LlmAgent(name="greeter", instruction="Make a presentation.", model="fake-model")
+
+    async def stub_call_llm(
+        system: Any = None, user: Any = None, model: Any = None, **_: Any
+    ) -> str:
+        return "Slide 1: Waffles. Slide 2: Done."
+
+    # --- judge_only ON: drive the real goldfive.run with the overrides. ---
+    on_entry = _EntryStub(
+        id="e-on",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="Make a presentation about waffles.",
+        context={"judge_only": "true"},
+    )
+    assert _entry_judge_only(on_entry) is True
+    sink_on = InMemorySink()
+    await goldfive.run(
+        agent,
+        on_entry.input,
+        sinks=[sink_on],
+        call_llm=stub_call_llm,
+        judges=[],  # judges stay armed in real usage; empty here keeps the stub deterministic
+        **_judge_only_overrides(agent),
+    )
+    kinds_on, llm_calls_on = _goldfive_event_kinds(sink_on)
+
+    assert llm_calls_on == 0, (
+        f"judge_only ON must fire ZERO steering LLM calls; saw {llm_calls_on}. "
+        f"kinds={sorted(kinds_on)}"
+    )
+    assert (
+        "run_completed" in kinds_on
+    ), f"judge_only ON: the native agent must execute to completion; kinds={sorted(kinds_on)}"
+    assert "run_aborted" not in kinds_on
+    assert kinds_on & {
+        "agent_invocation_started",
+        "task_started",
+        "pin_resolved",
+    }, f"judge_only ON: expected overlay execution events; kinds={sorted(kinds_on)}"
+
+    # --- judge_only OFF: the legacy steering path fires a steering call. ---
+    sink_off = InMemorySink()
+    await goldfive.run(
+        agent,
+        "Make a presentation about waffles.",
+        sinks=[sink_off],
+        call_llm=stub_call_llm,
+        judges=[],
+    )
+    _kinds_off, llm_calls_off = _goldfive_event_kinds(sink_off)
+    assert llm_calls_off >= 1, (
+        "judge_only OFF (steering default) must fire at least one steering LLM "
+        f"call (goal derivation); saw {llm_calls_off}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_enforces_wall_clock_budget(
     inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path

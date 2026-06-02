@@ -310,10 +310,20 @@ class Board:
         header line (see :mod:`zicato.board.jsonl`); a board with no
         ``disable_drift`` writes no header line at all so simple boards
         stay header-free.
+    judge_only:
+        Board-level flag selecting *judge-only* evaluation: goldfive
+        still JUDGES the wrapped agent (drift / process judges stay
+        armed) but does ZERO steering — no goal-derivation LLM call, no
+        planner replanning, no drift-triggered refine. ``False`` by
+        default (steering on, byte-identical to today). Persisted in the
+        same ``board_meta`` header as :attr:`disable_drift`; a board that
+        is fully default (no ``disable_drift`` and ``judge_only`` False)
+        writes no header line at all.
     """
 
     entries: list[BoardEntry] = field(default_factory=list)
     disable_drift: tuple[DriftKind, ...] = ()
+    judge_only: bool = False
 
     def add(self, entry: BoardEntry) -> Board:
         """Append ``entry`` and return ``self`` for chaining.
@@ -337,12 +347,18 @@ class Board:
         Delegates to :func:`zicato.board.jsonl.save_board` so the on-disk
         format stays in sync with the rest of the system. The parent
         directory must already exist; the writer is atomic (sibling
-        ``.tmp`` + rename). :attr:`disable_drift` is persisted as the
-        leading ``board_meta`` header line when non-empty.
+        ``.tmp`` + rename). :attr:`disable_drift` and :attr:`judge_only`
+        are persisted as the leading ``board_meta`` header line when
+        either is non-default.
         """
         from zicato.board.jsonl import save_board  # noqa: PLC0415
 
-        save_board(self.entries, Path(path), disable_drift=self.disable_drift)
+        save_board(
+            self.entries,
+            Path(path),
+            disable_drift=self.disable_drift,
+            judge_only=self.judge_only,
+        )
 
     @classmethod
     def load(cls, path: Path) -> Board:
@@ -350,12 +366,16 @@ class Board:
 
         Delegates to :func:`zicato.board.jsonl.load_board_with_meta` for
         parsing, validation, duplicate-id detection, and recovery of the
-        board-level :attr:`disable_drift` header.
+        board-level :attr:`disable_drift` / :attr:`judge_only` header.
         """
         from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
 
-        entries, disable_drift = load_board_with_meta(Path(path))
-        return cls(entries=list(entries), disable_drift=disable_drift)
+        entries, disable_drift, judge_only = load_board_with_meta(Path(path))
+        return cls(
+            entries=list(entries),
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+        )
 
 
 __all__ = ["Board", "Entry"]

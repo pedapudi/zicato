@@ -98,7 +98,7 @@ def tournament_cmd(
 
     resolved_epoch_id = epoch or _resolve_epoch_id(workspace_root)
     try:
-        board, disable_drift = loader.load_current_board_with_meta(workspace_root)
+        board, disable_drift, judge_only = loader.load_current_board_with_meta(workspace_root)
         weights = loader.load_current_scoring(workspace_root)
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -133,6 +133,7 @@ def tournament_cmd(
                 workspace_root=workspace_root,
                 epoch_id=resolved_epoch_id,
                 disable_drift=disable_drift,
+                judge_only=judge_only,
             )
         )
     else:
@@ -150,6 +151,7 @@ def tournament_cmd(
                 epoch_id=resolved_epoch_id,
                 parent_historical_agg=parent_historical,
                 disable_drift=disable_drift,
+                judge_only=judge_only,
             )
         )
 

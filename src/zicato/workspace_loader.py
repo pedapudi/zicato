@@ -110,14 +110,16 @@ def load_current_board(workspace_root: Path) -> list[BoardEntry]:
 
 def load_current_board_with_meta(
     workspace_root: Path,
-) -> tuple[list[BoardEntry], tuple[Any, ...]]:
-    """Load the current epoch's board plus its board-level ``disable_drift``.
+) -> tuple[list[BoardEntry], tuple[Any, ...], bool]:
+    """Load the current epoch's board plus its board-level metadata.
 
     Like :func:`load_current_board` but also returns the board-level
-    ``disable_drift`` tuple parsed from the board's ``board_meta`` header
-    (empty when the board has no header). The tournament runner needs the
-    suppression set to thread it onto each board entry, so this is the
-    loader the orchestrator and the ``zicato tournament`` command use.
+    ``disable_drift`` tuple and the ``judge_only`` flag parsed from the
+    board's ``board_meta`` header (empty / ``False`` when the board has
+    no header). The tournament runner needs the suppression set to
+    thread it onto each board entry, and the judge-only flag to select
+    no-steering evaluation, so this is the loader the orchestrator and
+    the ``zicato tournament`` command use.
     """
     eid = _resolve_current_epoch(workspace_root)
     path = board_path(workspace_root, eid)

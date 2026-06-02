@@ -486,10 +486,11 @@ def _make_cli_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     loader_mod = types.SimpleNamespace(
         load_workspace_config=lambda root: {"mutable_trees": []},
         load_current_board=lambda root: _board(),
-        # The CLI threads board-level disable_drift, so it loads the board
-        # via load_current_board_with_meta; this board has no board_meta
-        # header, so the suppression tuple is empty.
-        load_current_board_with_meta=lambda root: (_board(), ()),
+        # The CLI threads board-level disable_drift + judge_only, so it
+        # loads the board via load_current_board_with_meta; this board has
+        # no board_meta header, so the suppression tuple is empty and
+        # judge_only is False (steering on, the default).
+        load_current_board_with_meta=lambda root: (_board(), (), False),
         load_current_scoring=lambda root: ScoringWeights(regression_gate_enabled=True),
     )
     adapter_factory_mod = types.SimpleNamespace(

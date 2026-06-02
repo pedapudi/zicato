@@ -130,6 +130,7 @@ def _canon_board_meta(board_path: Path) -> str:
     """
     judges: object = []
     disable_drift = False
+    judge_only = False
 
     from zicato.board import jsonl as _board_jsonl  # noqa: PLC0415
 
@@ -142,14 +143,21 @@ def _canon_board_meta(board_path: Path) -> str:
         if meta is not None:
             judges = _meta_get(meta, "judges", [])
             disable_drift = bool(_meta_get(meta, "disable_drift", False))
+            judge_only = bool(_meta_get(meta, "judge_only", False))
     else:
-        judges, disable_drift = _scan_raw_board_meta(board_path)
+        judges, disable_drift, judge_only = _scan_raw_board_meta(board_path)
 
-    return json.dumps(
-        {"judges": _canon_judges(judges), "disable_drift": bool(disable_drift)},
-        sort_keys=True,
-        ensure_ascii=False,
-    )
+    canon: dict[str, object] = {
+        "judges": _canon_judges(judges),
+        "disable_drift": bool(disable_drift),
+    }
+    # ``judge_only`` is folded into the contract hash so flipping it opens
+    # a new epoch. It is added ONLY when True so a board that never set it
+    # — every board written before the flag existed — hashes byte-for-byte
+    # identically to before, keeping stored epoch hashes stable.
+    if judge_only:
+        canon["judge_only"] = True
+    return json.dumps(canon, sort_keys=True, ensure_ascii=False)
 
 
 def _meta_get(meta: object, key: str, default: object) -> object:
@@ -159,19 +167,21 @@ def _meta_get(meta: object, key: str, default: object) -> object:
     return getattr(meta, key, default)
 
 
-def _scan_raw_board_meta(board_path: Path) -> tuple[object, bool]:
+def _scan_raw_board_meta(board_path: Path) -> tuple[object, bool, bool]:
     """Best-effort scan for a board-level metadata object in raw JSONL.
 
     A board-level object is a JSON line carrying ``judges`` and/or
-    ``disable_drift`` but no entry ``id`` (entry rows always have one).
-    Returns ``([], False)`` when no such line exists.
+    ``disable_drift`` / ``judge_only`` but no entry ``id`` (entry rows
+    always have one). Returns ``([], False, False)`` when no such line
+    exists.
     """
     judges: object = []
     disable_drift = False
+    judge_only = False
     try:
         text = board_path.read_text(encoding="utf-8")
     except OSError:
-        return judges, disable_drift
+        return judges, disable_drift, judge_only
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -186,7 +196,9 @@ def _scan_raw_board_meta(board_path: Path) -> tuple[object, bool]:
             judges = payload["judges"]
         if "disable_drift" in payload:
             disable_drift = bool(payload["disable_drift"])
-    return judges, disable_drift
+        if "judge_only" in payload:
+            judge_only = bool(payload["judge_only"])
+    return judges, disable_drift, judge_only
 
 
 def _canon_judges(judges: object) -> object:

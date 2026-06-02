@@ -94,6 +94,23 @@ def _coerce_disable_drift(raw: Any, where: str) -> tuple[DriftKind, ...]:
     return tuple(out)
 
 
+def _coerce_judge_only(raw: Any, where: str) -> bool:
+    """Coerce a raw ``judge_only`` header value into a bool.
+
+    The wire form is a JSON boolean. A missing key is handled by the
+    caller (defaults to ``False``); anything present that is not a real
+    bool raises with a clear, line-anchored message so a typo'd header
+    surfaces at load time rather than silently selecting/deselecting
+    judge-only mode.
+    """
+    if not isinstance(raw, bool):
+        raise ValueError(
+            f"{where}: 'judge_only' must be a JSON boolean (true/false), "
+            f"got {type(raw).__name__}"
+        )
+    return raw
+
+
 def _reject_legacy_expectation(payload: Mapping[str, Any], where: str) -> None:
     """Raise a clear migration error if an entry carries the legacy schema.
 
@@ -111,7 +128,9 @@ def _reject_legacy_expectation(payload: Mapping[str, Any], where: str) -> None:
         )
 
 
-def load_board_with_meta(path: Path) -> tuple[list[BoardEntry], tuple[DriftKind, ...]]:
+def load_board_with_meta(
+    path: Path,
+) -> tuple[list[BoardEntry], tuple[DriftKind, ...], bool]:
     """Parse a JSONL board file into entries plus board-level metadata.
 
     Parameters
@@ -121,10 +140,11 @@ def load_board_with_meta(path: Path) -> tuple[list[BoardEntry], tuple[DriftKind,
 
     Returns
     -------
-    tuple[list[BoardEntry], tuple[DriftKind, ...]]
-        The validated entries (one per non-blank, non-header line) and
-        the board-level ``disable_drift`` tuple (empty when the file has
-        no ``board_meta`` header).
+    tuple[list[BoardEntry], tuple[DriftKind, ...], bool]
+        The validated entries (one per non-blank, non-header line), the
+        board-level ``disable_drift`` tuple (empty when the file has no
+        ``board_meta`` header), and the board-level ``judge_only`` flag
+        (``False`` when the header is absent or omits the key).
 
     Raises
     ------
@@ -141,6 +161,7 @@ def load_board_with_meta(path: Path) -> tuple[list[BoardEntry], tuple[DriftKind,
     entries: list[BoardEntry] = []
     seen_ids: set[str] = set()
     disable_drift: tuple[DriftKind, ...] = ()
+    judge_only = False
     seen_any_row = False
 
     with path.open("r", encoding="utf-8") as fh:
@@ -168,6 +189,10 @@ def load_board_with_meta(path: Path) -> tuple[list[BoardEntry], tuple[DriftKind,
                 disable_drift = _coerce_disable_drift(
                     payload.get("disable_drift", []), f"{path}: line {line_no}"
                 )
+                if "judge_only" in payload:
+                    judge_only = _coerce_judge_only(
+                        payload["judge_only"], f"{path}: line {line_no}"
+                    )
                 seen_any_row = True
                 continue
 
@@ -190,27 +215,39 @@ def load_board_with_meta(path: Path) -> tuple[list[BoardEntry], tuple[DriftKind,
             seen_ids.add(entry.id)
             entries.append(entry)
 
-    return entries, disable_drift
+    return entries, disable_drift, judge_only
 
 
 def load_board(path: Path) -> list[BoardEntry]:
     """Parse a JSONL board file into validated :class:`BoardEntry` rows.
 
     Thin wrapper over :func:`load_board_with_meta` for the common case
-    where the caller does not need the board-level ``disable_drift``
-    metadata. See :func:`load_board_with_meta` for the full contract and
-    the list of conditions that raise :class:`ValueError`.
+    where the caller does not need the board-level ``disable_drift`` /
+    ``judge_only`` metadata. See :func:`load_board_with_meta` for the
+    full contract and the list of conditions that raise
+    :class:`ValueError`.
     """
-    entries, _disable_drift = load_board_with_meta(path)
+    entries, _disable_drift, _judge_only = load_board_with_meta(path)
     return entries
 
 
-def _board_meta_to_dict(disable_drift: tuple[DriftKind, ...]) -> dict[str, Any]:
-    """Build the ``board_meta`` header object for a board's metadata."""
-    return {
+def _board_meta_to_dict(
+    disable_drift: tuple[DriftKind, ...],
+    judge_only: bool,
+) -> dict[str, Any]:
+    """Build the ``board_meta`` header object for a board's metadata.
+
+    ``judge_only`` is emitted only when ``True`` so a board that sets
+    only ``disable_drift`` (or that predates the judge-only flag) keeps
+    a header that is byte-identical to the pre-judge_only format.
+    """
+    out: dict[str, Any] = {
         _BOARD_META_KEY: True,
         "disable_drift": [k.value for k in disable_drift],
     }
+    if judge_only:
+        out["judge_only"] = True
+    return out
 
 
 def _entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
@@ -297,6 +334,7 @@ def save_board(
     path: Path,
     *,
     disable_drift: tuple[DriftKind, ...] = (),
+    judge_only: bool = False,
 ) -> None:
     """Serialize a list of :class:`BoardEntry` to ``path`` as JSONL.
 
@@ -314,9 +352,15 @@ def save_board(
     path:
         Destination path. Parent directory must already exist.
     disable_drift:
-        Board-level drift kinds to suppress. When non-empty, written as a
-        leading ``board_meta`` header line; when empty (the default), no
-        header line is written.
+        Board-level drift kinds to suppress.
+    judge_only:
+        Board-level judge-only flag (goldfive judges without steering).
+
+        The ``board_meta`` header line is written only when *something*
+        is non-default — ``disable_drift`` is non-empty OR ``judge_only``
+        is ``True``. A fully-default board (no suppressed drift, steering
+        on) writes NO header line at all, byte-identical to a board saved
+        before the ``judge_only`` flag existed.
 
     Raises
     ------
@@ -332,8 +376,8 @@ def save_board(
 
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as fh:
-        if disable_drift:
-            fh.write(json.dumps(_board_meta_to_dict(disable_drift), ensure_ascii=False))
+        if disable_drift or judge_only:
+            fh.write(json.dumps(_board_meta_to_dict(disable_drift, judge_only), ensure_ascii=False))
             fh.write("\n")
         for entry in entries:
             row = _entry_to_dict(entry)
@@ -383,8 +427,8 @@ def remove_entry(path: Path, entry_id: str) -> None:
 
     The file is rewritten without the matching row. Raises if no row
     has the given id (rather than silently no-op'ing) so the CLI can
-    surface a clear error. Any board-level ``disable_drift`` header is
-    preserved across the rewrite.
+    surface a clear error. Any board-level ``disable_drift`` /
+    ``judge_only`` header is preserved across the rewrite.
 
     Parameters
     ----------
@@ -401,11 +445,11 @@ def remove_entry(path: Path, entry_id: str) -> None:
         If no entry with ``entry_id`` is present.
     """
     path = Path(path)
-    entries, disable_drift = load_board_with_meta(path)
+    entries, disable_drift, judge_only = load_board_with_meta(path)
     new_entries = [e for e in entries if e.id != entry_id]
     if len(new_entries) == len(entries):
         raise ValueError(f"{path}: no entry with id {entry_id!r} to remove")
-    save_board(new_entries, path, disable_drift=disable_drift)
+    save_board(new_entries, path, disable_drift=disable_drift, judge_only=judge_only)
 
 
 __all__ = [

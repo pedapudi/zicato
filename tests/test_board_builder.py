@@ -304,6 +304,34 @@ def test_board_disable_drift_round_trips(tmp_path: Path) -> None:
     assert reloaded.entries == board.entries
 
 
+def test_board_judge_only_defaults_false() -> None:
+    """A bare :class:`Board` has ``judge_only`` False (steering on)."""
+    assert Board().judge_only is False
+
+
+def test_board_judge_only_round_trips(tmp_path: Path) -> None:
+    """Board-level ``judge_only`` survives a save / load cycle."""
+    board = Board(judge_only=True)
+    board.add(Entry(id="e1", input="x", budget_s=30))
+    path = tmp_path / "b.jsonl"
+    board.save(path)
+
+    reloaded = Board.load(path)
+    assert reloaded.judge_only is True
+    assert reloaded.entries == board.entries
+
+
+def test_board_default_save_has_no_header_line(tmp_path: Path) -> None:
+    """A fully-default board writes no ``board_meta`` line (byte-identical)."""
+    board = Board()
+    board.add(Entry(id="e1", input="x", budget_s=30))
+    path = tmp_path / "b.jsonl"
+    board.save(path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert "board_meta" not in lines[0]
+
+
 def test_board_save_load_round_trip_with_judges(tmp_path: Path) -> None:
     """A board whose entries carry PROCESS judges round-trips through JSONL."""
     board = Board()
