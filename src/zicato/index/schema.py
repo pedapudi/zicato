@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
@@ -151,7 +151,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       structure_params_json TEXT,
       competitors_json TEXT,
       rounds_json TEXT,
-      standings_json TEXT
+      standings_json TEXT,
+      field_status_json TEXT
     )
     """,
     """
@@ -232,6 +233,17 @@ _V3_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 _V4_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("runs", "match_id", "TEXT"),
     ("loss_profiles", "match_id", "TEXT"),
+)
+
+
+#: Columns added in v5 (the live proposing-step tracker). The
+#: per-challenger field-status records — applied vs rejected + reason —
+#: are persisted alongside the settled bracket so a completed epoch's
+#: candidate-generation step survives for post-hoc viewing (the same
+#: incremental-open ALTER pattern as the earlier waves; legacy rows gain
+#: it as ``NULL``, a full ``zicato reindex`` re-derives what it can).
+_V5_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("tournaments", "field_status_json", "TEXT"),
 )
 
 
@@ -341,6 +353,14 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
 
     if current < 4:
         for table, column, ddl_type in _V4_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+    if current < 5:
+        for table, column, ddl_type in _V5_ADDED_COLUMNS:
             if not _table_exists(conn, table):
                 continue
             if column in _column_names(conn, table):

@@ -341,3 +341,124 @@ def test_gauntlet_does_not_take_multi_path(monkeypatch: pytest.MonkeyPatch, tmp_
     # Gauntlet leaves only v0 + v1 — no second challenger was proposed.
     gens = workspace / "epochs" / epoch_id / "generations"
     assert not (gens / "v2").exists()
+
+
+def test_field_status_records_applied_challengers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The settled ActiveTournament envelope carries a ``field_status``
+    record per challenger the proposer minted, each ``status="applied"``
+    with a seed — the proposing-step tracker's live data source."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_valid_proposer_response(), _valid_proposer_response()]
+            ),
+        )
+    )
+
+    from zicato.runtime.state import read_active_tournament
+
+    active = read_active_tournament(workspace)
+    assert active is not None
+    by_gen = {f["generation_id"]: f for f in active.field_status}
+    assert set(by_gen) == {"v1", "v2"}
+    for gid in ("v1", "v2"):
+        assert by_gen[gid]["status"] == "applied"
+        assert by_gen[gid]["reason"] == ""
+        assert by_gen[gid]["seed"] >= 2
+    # Seeds match the competitor seeding (challengers 2, 3 in mint order).
+    assert {by_gen["v1"]["seed"], by_gen["v2"]["seed"]} == {2, 3}
+
+    # The structure endpoint surfaces field_status for the current epoch.
+    from zicato.dashboard.state_reader import WorkspacePaths, build_tournament_structure
+
+    paths = WorkspacePaths(workspace)
+    struct = build_tournament_structure(paths, epoch_id, active.tournament_id)
+    struct_by_gen = {f["generation_id"]: f for f in struct["field_status"]}
+    assert set(struct_by_gen) == {"v1", "v2"}
+    assert all(f["status"] == "applied" for f in struct["field_status"])
+
+
+def test_field_status_when_all_challengers_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When the proposer cannot mint a single valid challenger, the round
+    rejects but still PUBLISHES the proposing-phase envelope with a
+    ``field_status`` of rejected entries (+ reason) so the dashboard reads
+    "N proposed · 0 applied — all rejected" instead of an idle state."""
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0},
+        canned_pass_by_gen={"v0": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    # Empty proposer responses exhaust the (zero-retry) budget for every
+    # challenger, so the whole field is rejected with a reason.
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(["", ""]),
+            max_proposer_retries=0,
+        )
+    )
+
+    assert outcome.tournament_decision == "rejected"
+
+    from zicato.runtime.state import read_active_tournament
+
+    active = read_active_tournament(workspace)
+    assert active is not None
+    assert active.phase == "proposing"
+    # Two challengers were attempted; none applied.
+    assert len(active.field_status) == 2
+    assert all(f["status"] == "rejected" for f in active.field_status)
+    assert all(f["reason"] for f in active.field_status), "each rejection carries a reason"
+    applied = [f for f in active.field_status if f["status"] == "applied"]
+    assert applied == []
+
+    # The structure endpoint surfaces the all-rejected field post-hoc.
+    from zicato.dashboard.state_reader import WorkspacePaths, build_tournament_structure
+
+    paths = WorkspacePaths(workspace)
+    struct = build_tournament_structure(paths, epoch_id, active.tournament_id)
+    assert len(struct["field_status"]) == 2
+    assert all(f["status"] == "rejected" for f in struct["field_status"])
+
+
+def test_field_status_absent_is_empty_and_back_compatible() -> None:
+    """An ActiveTournament with no ``field_status`` (old data / gauntlet)
+    loads as an empty list and round-trips byte-identically when the key
+    is absent from the source dict."""
+    from zicato.runtime.state import ActiveTournament
+
+    legacy = {
+        "tournament_id": "t1",
+        "parent_generation_id": "v0",
+        "child_generation_id": "v1",
+        "epoch_id": "e1",
+        "started_at": "2026-06-01T00:00:00Z",
+    }
+    t = ActiveTournament.from_dict(legacy)
+    assert t.field_status == []
+    # Present in to_dict() as an (additive) empty list.
+    assert t.to_dict()["field_status"] == []

@@ -1054,6 +1054,27 @@ class _AppliedChallenger:
     generation: Generation
 
 
+def _short_reject_reason(attempts: list[str]) -> str:
+    """Condense a proposer's attempt log into one short tracker reason.
+
+    The proposer records one message per failed attempt (empty response /
+    invalid JSON / post-apply validation / mutation_id no longer resolves
+    / forbidden-id violation). For the dashboard's proposing-step tracker
+    we want a single short string, so take the LAST attempt's message
+    (the final reason the proposer gave up) and trim it to a hovercard
+    length. Empty list ⇒ empty string (caller falls back to ``str(exc)``).
+    """
+    if not attempts:
+        return ""
+    last = str(attempts[-1]).strip()
+    # Collapse internal whitespace/newlines so the tracker reads as one line.
+    last = " ".join(last.split())
+    limit = 160
+    if len(last) > limit:
+        last = last[: limit - 1].rstrip() + "…"
+    return last
+
+
 async def _propose_and_apply_challenger(
     *,
     workspace_root: Path,
@@ -1070,8 +1091,9 @@ async def _propose_and_apply_challenger(
     beater: HeartbeatBeater | None,
     round_index: int,
     meta_loop_emitter: Any,
+    seed: int,
     custom_judge_names: frozenset[str] = frozenset(),
-) -> _AppliedChallenger | None:
+) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
     """Propose + apply ONE challenger child of the champion.
 
     Reuses the same propose → post-apply-validate → derive pipeline the
@@ -1079,10 +1101,16 @@ async def _propose_and_apply_challenger(
     ``validate_experiment`` hook applies the patch set into a fresh child
     snapshot and runs ``validate_post_apply``), so a challenger in the
     field is a real lineage child of the current champion. Returns the
-    applied challenger, or ``None`` when the proposer exhausted its retry
+    applied challenger (or ``None`` when the proposer exhausted its retry
     budget or the patch set failed post-apply validation — in which case
-    the round simply runs a narrower field rather than crashing (the
-    SelectionStrategy still resolves over whatever applied cleanly).
+    the round simply runs a narrower field rather than crashing; the
+    SelectionStrategy still resolves over whatever applied cleanly) PAIRED
+    with a structured **field-status** record for the dashboard's
+    proposing-step tracker: ``{generation_id, status: "applied" |
+    "rejected", reason, seed}``. The reason is the same short string the
+    evolve log carries (empty response / invalid JSON / post-apply
+    validation / mutation_id no longer resolves) so a rejected challenger
+    is visible on the dashboard rather than silently dropped.
     """
     from zicato.epoch import write_experiment  # noqa: PLC0415
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
@@ -1142,6 +1170,7 @@ async def _propose_and_apply_challenger(
             custom_judge_names=custom_judge_names,
         )
     except ProposerError as exc:
+        reason = _short_reject_reason(exc.attempts) or str(exc)
         log.warning(
             "multi-challenger field: proposer could not produce a valid "
             "challenger for %s/%s (%s); the field runs without it",
@@ -1149,7 +1178,12 @@ async def _propose_and_apply_challenger(
             next_id,
             "; ".join(exc.attempts) or exc,
         )
-        return None
+        return None, {
+            "generation_id": next_id,
+            "status": "rejected",
+            "reason": reason,
+            "seed": seed,
+        }
 
     mutations_by_id = {m.id: m for m in mutations}
     for patch in experiment.patches:
@@ -1178,11 +1212,19 @@ async def _propose_and_apply_challenger(
         snapshot_root=child_snapshot,
         created_at=_now_iso(),
     )
-    return _AppliedChallenger(
-        generation_id=next_id,
-        snapshot_root=child_snapshot,
-        experiment=experiment,
-        generation=child_gen,
+    return (
+        _AppliedChallenger(
+            generation_id=next_id,
+            snapshot_root=child_snapshot,
+            experiment=experiment,
+            generation=child_gen,
+        ),
+        {
+            "generation_id": next_id,
+            "status": "applied",
+            "reason": "",
+            "seed": seed,
+        },
     )
 
 
@@ -1257,6 +1299,11 @@ async def _evolve_multi_challenger(
     # sequence so each challenger is a distinct vN child of the champion;
     # a proposer that fails for one challenger simply narrows the field.
     applied: list[_AppliedChallenger] = []
+    # Per-challenger proposing-step outcomes (applied vs rejected + reason),
+    # collected in mint order so the dashboard's proposing-step tracker can
+    # render the field forming live and post-hoc. Persisted onto the live
+    # ActiveTournament envelope (publish + settle) as ``field_status``.
+    field_status: list[dict[str, Any]] = []
     # Mint ids monotonically from the highest existing vN so every
     # challenger gets a distinct id even when a proposer attempt fails
     # before it derives a snapshot (so _next_generation_id can't re-pick
@@ -1266,7 +1313,9 @@ async def _evolve_multi_challenger(
     custom_judge_names = _declared_custom_judge_names(board, weights)
     for offset in range(field_n):
         next_id = f"v{base_n + offset}" if base_n is not None else base_id
-        challenger = await _propose_and_apply_challenger(
+        # Seed mirrors competitors_meta: champion is seed 1, challengers
+        # follow in mint order (seed 2, 3, …) regardless of apply outcome.
+        challenger, status = await _propose_and_apply_challenger(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             parent_id=parent_id,
@@ -1281,15 +1330,32 @@ async def _evolve_multi_challenger(
             beater=beater,
             round_index=round_index,
             meta_loop_emitter=meta_loop_emitter,
+            seed=offset + 2,
             custom_judge_names=custom_judge_names,
         )
+        field_status.append(status)
         if challenger is not None:
             applied.append(challenger)
 
     if not applied:
         # The whole field failed to apply — nothing to run. Record a
         # rejection-shaped outcome so the round still produces a clean
-        # return value and the loop continues.
+        # return value and the loop continues. Still persist the
+        # field-status so the dashboard's proposing-step tracker reads
+        # "N proposed · 0 applied — all rejected" rather than an empty
+        # idle state (the recent all-failed run that prompted this).
+        _publish_active_tournament(
+            workspace_root,
+            tournament_id=f"tourn_{epoch_id}_{base_id}",
+            epoch_id=epoch_id,
+            structure=tournament_spec.structure,
+            structure_params=dict(tournament_spec.params),
+            competitors=[{"generation_id": parent_id, "seed": 1, "role": "champion"}],
+            round_index=round_index,
+            total_rounds=total_rounds,
+            field_status=field_status,
+            phase="proposing",
+        )
         return EvolveRoundOutcome(
             parent_generation_id=parent_id,
             proposed_generation_id="",
@@ -1396,6 +1462,7 @@ async def _evolve_multi_challenger(
         competitors=competitors_meta,
         round_index=round_index,
         total_rounds=total_rounds,
+        field_status=field_status,
     )
 
     # --- Drive the strategy to a crowned decision.
@@ -1428,6 +1495,7 @@ async def _evolve_multi_challenger(
         decision=decision,
         round_index=round_index,
         total_rounds=total_rounds,
+        field_status=field_status,
     )
 
     # --- Per-challenger OutcomeRecord audit. Each challenger records the
@@ -1619,6 +1687,8 @@ def _publish_active_tournament(
     competitors: list[dict[str, Any]],
     round_index: int,
     total_rounds: int,
+    field_status: list[dict[str, Any]] | None = None,
+    phase: str = "running",
 ) -> None:
     """Best-effort: publish the live ActiveTournament envelope at start.
 
@@ -1644,12 +1714,13 @@ def _publish_active_tournament(
                 child_generation_id="",
                 epoch_id=epoch_id,
                 started_at=_now_iso(),
-                phase="running",
+                phase=phase,
                 round_index=round_index,
                 total_rounds=total_rounds,
                 structure=structure,
                 structure_params=dict(structure_params),
                 competitors=[dict(c) for c in competitors],
+                field_status=[dict(f) for f in (field_status or [])],
             ),
         )
     except Exception as exc:  # noqa: BLE001 — live state is best-effort
@@ -1668,6 +1739,7 @@ def _settle_active_tournament(
     decision: Any,
     round_index: int,
     total_rounds: int,
+    field_status: list[dict[str, Any]] | None = None,
 ) -> None:
     """Best-effort: rewrite the live envelope with the settled bracket.
 
@@ -1731,6 +1803,7 @@ def _settle_active_tournament(
                 competitors=[dict(c) for c in competitors],
                 rounds=rounds,
                 standings=standings,
+                field_status=[dict(f) for f in (field_status or [])],
             ),
         )
     except Exception as exc:  # noqa: BLE001 — live state is best-effort

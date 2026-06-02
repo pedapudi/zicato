@@ -26,7 +26,8 @@
 // is honoured in CSS (the JS only adds/keeps stable nodes; CSS gates ALL motion).
 
 import { el, patchText, patchClass } from '../../core/dom.js';
-import { isNum, survivalFunnel, swissLadder, elimBracket } from './svg.js';
+import { isNum, survivalFunnel, swissLadder, elimBracket, proposingTracker, proposingDigest } from './svg.js';
+import { fieldStatus as readFieldStatus } from './data.js';
 import {
   racingModel, swissModel, elimModel, normalizeStructure,
   buildLiveSwissModel, buildLiveElimModel,
@@ -421,8 +422,23 @@ export class LiveController {
     const fig = structureEligible(at, heartbeat)
       ? this._buildLiveFigure(at, heartbeat, activeRuns) : null;
     if (!fig) {
-      // no LIVE topology for the CURRENT run — drop any prior figure, show the
-      // honest progress state (never a stale/foreign topology).
+      // No LIVE topology yet for the CURRENT run. Before falling back to the
+      // bland placeholder, render the PROPOSING-STEP TRACKER when the field is
+      // being minted — the per-challenger applied/rejected outcomes — so the
+      // candidate-generation step is visible (and an all-rejected field reads
+      // as "0 applied — all rejected", never an idle/empty state). Scoped to
+      // the current epoch (liveBelongsToEpoch) and digest-gated like the figure.
+      const prop = this._buildProposingTracker(at, heartbeat);
+      if (prop) {
+        const { node, digest } = prop;
+        if (digest === this._funnelDigest && this._funnelHost.firstChild) return;
+        this._funnelDigest = digest;
+        clear(this._funnelHost);
+        if (node.classList) node.classList.add('dt-live-enter');
+        this._funnelHost.appendChild(node);
+        return;
+      }
+      // no field topology AND no proposing field — the honest placeholder.
       if (this._funnelDigest !== 'none') {
         this._funnelDigest = 'none';
         clear(this._funnelHost);
@@ -482,6 +498,21 @@ export class LiveController {
       return { node, digest: 'elim|' + elimDigest(model) };
     }
     return null;
+  }
+
+  // Build the proposing-step tracker + its digest from the active tournament's
+  // `field_status`. Returns null when there is no field to show (so the caller
+  // falls through to the placeholder): either no active tournament for the
+  // CURRENT epoch, or a tournament that already has a running structure figure
+  // (handled before this is reached). Structure-agnostic — the field is minted
+  // identically for racing / swiss / elim.
+  _buildProposingTracker(at, heartbeat) {
+    if (!at || typeof at !== 'object') return null;
+    if (!liveBelongsToEpoch(at, heartbeat)) return null;
+    const fs = readFieldStatus(at);
+    if (!fs.length) return null;
+    const node = proposingTracker({ fieldStatus: fs, onCompetitor: this.onCompetitor || undefined });
+    return { node, digest: proposingDigest(fs) };
   }
 }
 

@@ -1,22 +1,6 @@
 // variants/T/svg.js — dependency-free SVG data-viz primitives (Console).
 //
 // Self-contained for Variant N ("Console II"). Mark CSS classes are `dn-*` and
-// are styled — scoped under the variant root — by css/variants/N/console.css.
-//
-// Console is the dense, data-ink-maximal observatory: high data-ink, minimal
-// chrome, small multiples packed tight, and — crucially for the convergence
-// brief — NO pan/zoom viewports. Every mark fits its container. Three marks
-// matter most here:
-//   * a NON-COLLIDING bumps lineage (clickable nodes, de-collided lanes);
-//   * a THEME-AWARE heatmap (opacity over a token fill, so it reads in
-//     solarized-light / solarized-dark / monokai — never a hardcoded hex);
-//   * a fit-to-width Tufte SANKEY (thin flows, direct labels, no viewport).
-//
-// Conventions:
-//   * Lower drift/loss is BETTER (the gate ranks by it). Polarity-aware
-//     helpers treat DOWN as good.
-//   * Every primitive is total: empty/NaN input yields a quiet empty mark.
-//   * Colours come from CSS custom properties (`--v2-*`) so the palette is
 //     themed in one place, swapped by the [data-n-theme] attribute.
 
 import { svgEl, el } from '../../core/dom.js';
@@ -27,8 +11,6 @@ export const NS = 'http://www.w3.org/2000/svg';
 // Wire a mark with the styled, theme-aware HOVERCARD instead of a native,
 // off-brand <title> tooltip (positioned card on hover/focus; keyboard- and
 // reduced-motion-aware; a transient overlay, NOT part of the digest-gated
-// render — see hovercard.js). Returns the node so it composes inline where a
-// `[title(...)]` child used to sit. `tip` is a string or a () => string.
 function hov(node, tip) { attachHovercard(node, tip); return node; }
 
 // ---- numeric helpers ------------------------------------------------
@@ -146,10 +128,6 @@ export function sparkline(opts) {
 // ---- bumps chart (lineage as ranked lanes) --------------------------
 //
 // Champion lineage as a spine in its OWN lane; rejected challengers branch
-// into a distinct offset lane so nothing collides. Within each lane we run a
-// de-collision pass on the x positions so two nodes that share a generation
-// index never overdraw (F's v1/v2 collided — they MUST NOT here). Clickable.
-//
 // opts: { width, height, nodes:[{id, x, promoted, scalar, parent}], onClick }
 export function bumps(opts) {
   const o = opts || {};
@@ -273,12 +251,6 @@ export function jitterColumn(ys, step) {
 // ---- theme-aware heatmap --------------------------------------------
 //
 // Small-multiples heatmap: rows × cols coloured by value. Console makes it
-// THEME-SAFE — the cell fill is the themed ink token at a value-driven
-// OPACITY (instead of a hardcoded hex ramp), so a high-loss cell reads as
-// "more ink" in every theme (solarized-light / -dark / monokai). Hover →
-// exact value. Click → drill.
-//
-// opts: { rows, cols, value(rowId,colId), cellW, cellH, labelWidth,
 //         headHeight, onClick }
 export function heatmap(opts) {
   const o = opts || {};
@@ -323,14 +295,6 @@ export function heatmap(opts) {
       // Theme-aware, HIGHER-CONTRAST cell scale. Two contrast axes, both driven
       // by the same per-theme CSS tokens (so it stays correct across all 16
       // themes, light and dark):
-      //   (1) HUE — the fill is a color-mix from a COOL low-drift token
-      //       (--v2-hm-cool ← accent) toward a HOT high-drift token
-      //       (--v2-hm-hot ← bad), so a high cell reads as a distinctly hotter
-      //       colour, not merely denser ink;
-      //   (2) DENSITY — a value-driven fill-opacity on top, widened vs the old
-      //       0.18→1.0 ramp.
-      // Both use an eased intensity e = t^0.8 so MID values separate more. The
-      // low non-empty floor (cool token, opacity ~0.30) stays clearly distinct
       // from an EMPTY cell (the flat --v2-cell-empty token at full opacity).
       const cls = t == null ? 'dn-hm-cell dn-hm-empty' : 'dn-hm-cell';
       const tc = t == null ? null : Math.max(0, Math.min(1, t));
@@ -358,18 +322,6 @@ export function heatmap(opts) {
 // ---- value dot-plot with a reference line ---------------------------
 //
 // Per-board scoring (the D dot-plot the brief insists must read in all three
-// themes, esp. monokai): absolute per-entry loss, with a reference line at
-// the champion's level. Dots below the reference are 'good', above 'bad'. A
-// pass/fail/timeout glyph trails each row. Click → drill.
-//
-// opts: { width, rowHeight, labelWidth,
-//         items:[{label, value, id, pass, timeout, context}],
-//         reference:{value,label}, onClick }
-//
-// `context` (optional, per item) is a short tournament-context tag — the rung /
-// round / matchup the board run executed in — rendered as a DIM secondary line
-// beneath the board name so duplicate board rows (the same entry raced in
-// several rungs/rounds) are distinguishable at a glance. The whole row stays
 // clickable; onClick receives the full item (carrying id/run/gen for routing).
 export function valueDotPlot(opts) {
   const o = opts || {};
@@ -633,28 +585,6 @@ export function pairedSlopegraph(opts) {
 // ---- racing ladder (DATA-DRIVEN successive-halving) -----------------
 //
 // One column per rung from the structure payload's `rounds[]`, escalating
-// left→right to a final CHAMPION-GATE column. Each rung shows its FULL field
-// racing on a `board_fraction` of the board (shown in the column head), with
-// the `cut[]` worst-by-η struck through (✕) and the `survivors[]` carried
-// forward (↑); faint connectors trace each survivor into the next rung, so
-// the operator reads the halving + the budget escalation at a glance. The
-// lone final survivor flows into a champion-gate seat (♛). A `live` race
-// leaves pending rungs neutral (nobody is cut until the rung's results land)
-// and the gate reads "deciding…" rather than crowning a not-yet-committed
-// winner.
-//
-// FIT-TO-WIDTH (width:100% + viewBox), theme-aware (token classes), no
-// pan/zoom — the same discipline as every other Console mark.
-//
-// opts: { rungs:[{label, competitors, survivors, cut, board_fraction, deltas,
-//         match_id, pending}], championId, live, gateState, gateDelta,
-//         onCompetitor(genId), title }
-//
-//   gateState — the champion-gate resolution, one of:
-//     'crowned'  — the survivor cleared the gate → NEW champion (♚, dn-good box)
-//     'stands'   — the survivor lost the gate → champion stands (no crown)
-//     'deciding' — a LIVE race; the gate has not committed → "deciding…"
-//     'pending'  — no final gate recorded yet → "tbd"
 //   (absent ⇒ inferred from championId + live, preserving the old behavior.)
 export function racingLadder(opts) {
   const o = opts || {};
@@ -669,8 +599,6 @@ export function racingLadder(opts) {
   // The CHAMPION / v0 BENCHMARK reference. The per-rung deltas are Δ-vs-champion
   // (the reigning v0 the field is raced against), but v0 itself is NOT one of the
   // rung competitors, which is confusing. We draw a persistent labelled pace line
-  // at Δ=0 across the figure so the reader sees the benchmark the deltas are
-  // measured against, and that v0 defends at the champion-gate.
   const benchId = o.benchmarkId != null ? String(o.benchmarkId)
     : (o.championId != null ? String(o.championId) : null);
   const benchH = benchId ? 18 : 0;
@@ -801,11 +729,6 @@ export function racingLadder(opts) {
   // ── the trailing champion-gate column ───────────────────────────────
   //
   // The gate is the full-board confirmation duel: the lone survivor faces the
-  // reigning champion. Its STATE drives the seat:
-  //   crowned  — survivor cleared the gate → NEW champion ♚ (good box)
-  //   stands   — survivor lost → "champion stands" (no crown)
-  //   deciding — LIVE, not committed → "deciding…"
-  //   pending  — no final gate yet → "tbd"
   // When gateState is absent, infer from championId + live (legacy callers).
   const gx = ladderW + colGap + 2;
   const gateHead = svgEl('text', { x: gx + gateW / 2, y: headTop + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
@@ -863,24 +786,6 @@ export function racingLadder(opts) {
 // ---- racing SURVIVAL FUNNEL (the at-a-glance epoch hero) -------------
 //
 // The successive-halving field rendered as a FLOW that narrows at each cut:
-// the field flows N → N/2 → … → 1 → champion-gate, the flow's width ∝ the
-// surviving field size. ELIMINATED competitors peel off as labelled dead-end
-// branches (✕) at the rung where they were cut; SURVIVORS (↑) continue, the
-// surviving flow thickening toward the gate. The terminal champion-gate crowns
-// the lone survivor (♚) when promoted, else reads "champion stands"; a LIVE
-// race leaves the pending stage neutral and the gate "deciding…".
-//
-// This is COMPLEMENTARY to racingLadder (the detailed Match-ups ladder): the
-// funnel is the compact epoch-overview hero, the ladder the per-rung detail.
-//
-// FIT-TO-WIDTH (responsive viewBox + width:100%, NO pan/zoom), token-themed
-// across every theme — the same discipline as every other Console mark.
-//
-// opts: { rungs:[{label, competitors, survivors, cut, board_fraction, deltas,
-//         pending}], championId, live, gateState, gateDelta,
-//         onCompetitor(genId), title }
-//
-//   gateState — 'crowned' | 'stands' | 'deciding' | 'pending'
 //     (absent ⇒ inferred from championId + live).
 export function survivalFunnel(opts) {
   const o = opts || {};
@@ -892,8 +797,6 @@ export function survivalFunnel(opts) {
   // THREE STACKED HEADER BASELINES, top→down, so nothing collides (BUG: the
   // benchmark/descriptive line shared a baseline + x-range with the first rung
   // header → garbled "▸ vs champion v0RUNG 1"):
-  //   benchY  — the full-width benchmark/descriptive line (its OWN row, left-anchored)
-  //   headY   — the per-column rung headers ("RUNG 0", "champion-gate"), centred per stage
   //   subY    — the per-column sublabels ("4 field · 43/100 board"), centred per stage
   const benchY = 12;
   const headY = 30;
@@ -936,7 +839,6 @@ export function survivalFunnel(opts) {
   // ── the flowing band: one trapezoid per stage, narrowing at each cut ──
   // entering width = |competitors|; leaving width = |survivors| (the field
   // carried to the next stage). A pending (live, undecided) stage keeps a
-  // straight neutral band — nobody has been cut yet.
   rungs.forEach((rung, j) => {
     const comps = Array.isArray(rung.competitors) ? rung.competitors : [];
     const cut = new Set(Array.isArray(rung.cut) ? rung.cut.map(String) : []);
@@ -1083,13 +985,6 @@ function funnelRunner(svg, o, sid, rung, j, x, cy, verdict) {
 // ---- swiss STANDINGS LADDER (DATA-DRIVEN, live + completed) ----------
 //
 // The swiss analogue of racingLadder/survivalFunnel: a column per round (its
-// pairings), the accumulating Copeland-point standings, and the leader → a
-// champion-gate (a swiss winner that does not beat the incumbent is NOT
-// promoted). A live round fills in board-by-board (k/N + a bar, never struck);
-// queued future rounds are dimmed. Fit-to-width, token-themed.
-// opts: { rounds:[{label,queued,pairings:[{a,b,winner,delta,bye,done,total,
-//   inflight,pending}]}], standings:[{id,points,wins,draws,losses,rank}],
-//   championId, benchmarkId, live, gateState, gateDelta, onCompetitor }
 //   gateState ∈ 'crowned'|'stands'|'deciding'|'pending' (else inferred).
 export function swissLadder(opts) {
   const o = opts || {};
@@ -1244,12 +1139,6 @@ export function swissLadder(opts) {
 // ---- elim BRACKET TREE (DATA-DRIVEN single/double, live + completed) -
 //
 // The elimination analogue of survivalFunnel/racingLadder: a real bracket tree
-// (matches as nodes, winners advancing right) ending in a champion-gate node
-// where the bracket winner must beat the incumbent to be promoted. Double-elim
-// stacks a losers' band beneath. A live match fills in (k/N + a bar, never
-// struck); queued matches are dimmed. Single vs double via the model `losers`.
-// Fit-to-width, token-themed. opts:
-//   { winners:[{label,matches:[…]}], losers:[…]|null, championId, benchmarkId,
 //     live, gateState, gateDelta, onMatch, onCompetitor }
 export function elimBracket(opts) {
   const o = opts || {};
@@ -1421,14 +1310,6 @@ export function elimBracket(opts) {
 // ---- Tufte Sankey (fit-to-width, NO viewport) -----------------------
 //
 // THE convergence brief's headline figure: the causal flow
-//   PATCH (mutation points) → DRIFT KINDS (per-board loss) → GATE verdict
-// re-skinned Tufte. It is laid out to FIT the container width (responsive,
-// no pan/zoom), with thin flows, direct in-place labels, restrained
-// improve/regress colour, and no decorative gradients/shadows. The layout
-// math is the same proportional-throughput algorithm the original sankey
-// used, re-implemented here so Variant N stays self-contained.
-//
-// opts: { width, height, patch:[{id,label,sub,value}], drift:[…], gate:[…],
 //         links:[{source,target,value,cls}], onNode(node) }
 export function layoutSankey(spec) {
   const colW = spec.nodeW || 150;
@@ -1535,8 +1416,6 @@ export function sankey(opts) {
   // nodes — thin bars + direct in-place labels. FIX #5: the per-board node's
   // LABEL and its loss VALUE must never overlap. The label sits on the top
   // baseline (truncated short so it cannot run under the value); the loss value
-  // gets its OWN element, right-aligned to the column's outer edge on the same
-  // baseline (own anchor), and any descriptive sub sits one line below. So
   // "picky_stakeholder_emu…" and its "642" can never collide.
   const nodeLayer = svgEl('g', { class: 'dn-sankey-nodes' });
   for (const n of nodes) {
@@ -1589,11 +1468,6 @@ export function smallMultiple(caption, mark, sub) {
 // ---- SIDE-BY-SIDE line diff (mutation view, fix #2) -----------------
 //
 // Two columns — champion baseline (left) | challenger new (right) — line-diffed
-// by the classic LCS so common lines align row-for-row and changed lines are
-// marked. Both arguments are STRINGS (the "[object Object]" bug = passing the
-// `baseline` object instead of `.baseline.content`). Returns a DOM node (NOT an
-// SVG) — a real two-column table so long lines wrap inside each cell.
-//
 // opts: { baseline: string, challenger: string, leftLabel, rightLabel }
 export function sideBySideDiff(opts) {
   const o = opts || {};
@@ -1658,4 +1532,75 @@ function lcsDiff(a, b) {
     } else out.push(cur);
   }
   return out;
+}
+
+// ---- proposing-step tracker -----------------------------------------
+//
+// The candidate-generation step rendered as the field FORMS: one row per
+// `onCompetitor(gid)` (optional) makes an applied row a drill-in affordance.
+export function proposingTracker(opts) {
+  const o = opts || {};
+  const list = (Array.isArray(o.fieldStatus) ? o.fieldStatus : []).filter((f) => f && f.generation_id);
+  const applied = list.filter((f) => f.status === 'applied').length;
+  const proposed = list.length;
+  const allRejected = proposed > 0 && applied === 0;
+  const onCompetitor = typeof o.onCompetitor === 'function' ? o.onCompetitor : null;
+
+  // headline counts — never an empty/idle read for a field that minted rows.
+  let head;
+  if (proposed === 0) {
+    head = 'minting the field…';
+  } else {
+    head = `${proposed} proposed · ${applied} applied`;
+    if (allRejected) head += ' — all rejected';
+  }
+
+  const rows = list.map((f) => {
+    const ok = f.status === 'applied';
+    const glyph = el('span', {
+      class: 'dn-prop-glyph ' + (ok ? 'dn-prop-ok' : 'dn-prop-bad'),
+      'aria-hidden': 'true', text: ok ? '✓' : '✗',
+    });
+    const gid = el('span', { class: 'dn-prop-gen', text: shortLabel(String(f.generation_id), 16) });
+    const verdict = el('span', {
+      class: 'dn-prop-verdict ' + (ok ? 'dn-prop-ok' : 'dn-prop-bad'),
+      text: ok ? 'applied' : 'rejected',
+    });
+    const reasonText = ok
+      ? `${f.generation_id} applied cleanly`
+      : `${f.generation_id} rejected: ${f.reason || 'no reason recorded'}`;
+    const row = el('div', {
+      class: 'dn-prop-row ' + (ok ? 'dn-prop-row-ok' : 'dn-prop-row-bad'),
+      role: 'listitem',
+    }, [glyph, gid, verdict]);
+    // The reason lives on the existing hovercard (inline-elided rows stay tidy).
+    hov(row, reasonText);
+    if (ok && onCompetitor) {
+      row.classList.add('dn-prop-clickable');
+      row.tabIndex = 0;
+      row.addEventListener('click', () => onCompetitor(String(f.generation_id)));
+      row.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onCompetitor(String(f.generation_id)); }
+      });
+    }
+    return row;
+  });
+
+  const headNode = el('div', {
+    class: 'dn-prop-head' + (allRejected ? ' dn-prop-head-allbad' : ''),
+    text: head,
+  });
+  const listNode = el('div', { class: 'dn-prop-list', role: 'list' }, rows);
+  return el('div', { class: 'dn-prop-tracker', role: 'group', 'aria-label': 'Proposed field' }, [
+    el('div', { class: 'dn-prop-caption dn-faint', text: 'proposed field' }),
+    headNode,
+    listNode,
+  ]);
+}
+
+// A stable digest of the proposing-step field so the live hero can
+// digest-gate the tracker swap (a no-op heartbeat writes ZERO DOM).
+export function proposingDigest(fieldStatus) {
+  const list = Array.isArray(fieldStatus) ? fieldStatus : [];
+  return 'prop|' + list.map((f) => (f && f.generation_id) + ':' + (f && f.status)).join(',');
 }

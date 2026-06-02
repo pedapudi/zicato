@@ -142,6 +142,46 @@ export function tournamentStructure(epochId, tournamentId) {
   return cachedJson(`/api/tournament-structure/${enc(epochId)}/${enc(tournamentId)}`);
 }
 
+// The per-challenger proposing-step outcomes from either the live
+// active-tournament payload or a completed tournament-structure payload.
+// Each entry is {generation_id, status: "applied"|"rejected", reason,
+// seed?}. Absent / malformed (old data, gauntlet) reads as [] so callers
+// render an honest empty tracker rather than throwing.
+export function fieldStatus(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  const fs = payload.field_status;
+  if (!Array.isArray(fs)) return [];
+  const out = [];
+  for (const f of fs) {
+    if (!f || typeof f !== 'object') continue;
+    const gid = f.generation_id;
+    if (gid == null || gid === '') continue;
+    out.push({
+      generation_id: String(gid),
+      status: f.status === 'applied' ? 'applied' : 'rejected',
+      reason: f.reason == null ? '' : String(f.reason),
+      seed: (typeof f.seed === 'number') ? f.seed : null,
+    });
+  }
+  return out;
+}
+
+// Roll a field_status list into the tracker's headline counts:
+// {proposed, applied, rejected, allRejected}. allRejected is true only
+// when a non-empty field minted zero applied challengers — the
+// "0 applied — all rejected" state the live hero must not mistake for idle.
+export function fieldStatusSummary(fs) {
+  const list = Array.isArray(fs) ? fs : [];
+  const applied = list.filter((f) => f && f.status === 'applied').length;
+  const rejected = list.length - applied;
+  return {
+    proposed: list.length,
+    applied,
+    rejected,
+    allRejected: list.length > 0 && applied === 0,
+  };
+}
+
 export function perJudgeTrend(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/per-judge-trend`);
 }

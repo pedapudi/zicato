@@ -527,6 +527,14 @@ class ActiveTournament:
     competitors: list[dict[str, Any]] = field(default_factory=list)
     rounds: list[dict[str, Any]] = field(default_factory=list)
     standings: list[dict[str, Any]] = field(default_factory=list)
+    # ── NEW: per-challenger proposing-step outcomes ──
+    # The minting outcome for every challenger the proposer attempted this
+    # round: ``{generation_id, status: "applied"|"rejected", reason, seed?}``.
+    # Lets the dashboard render the candidate-generation step (the field
+    # forming) live and post-hoc — a field where every challenger failed
+    # reads as "N proposed · 0 applied". Defaults empty so an old
+    # active_tournament.json (and the gauntlet path) loads byte-identical.
+    field_status: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -546,6 +554,7 @@ class ActiveTournament:
             "competitors": [dict(c) for c in self.competitors],
             "rounds": [dict(r) for r in self.rounds],
             "standings": [dict(s) for s in self.standings],
+            "field_status": [dict(f) for f in self.field_status],
         }
 
     @classmethod
@@ -574,6 +583,7 @@ class ActiveTournament:
             competitors=[dict(c) for c in d.get("competitors", []) if isinstance(c, dict)],
             rounds=[dict(r) for r in d.get("rounds", []) if isinstance(r, dict)],
             standings=[dict(s) for s in d.get("standings", []) if isinstance(s, dict)],
+            field_status=[dict(f) for f in d.get("field_status", []) if isinstance(f, dict)],
         )
 
 

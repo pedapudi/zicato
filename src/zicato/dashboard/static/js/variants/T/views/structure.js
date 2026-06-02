@@ -1,15 +1,6 @@
 // variants/T/views/structure.js — the configured tournament STRUCTURE.
 //
 // The match-ups page (views/gens.js) renders the gauntlet ladder for the
-// default structure. When the epoch's contract names a NON-gauntlet
-// structure (single_elim / double_elim / swiss / racing), this module
-// renders the ACTUAL configured topology from the new
-// /api/tournament-structure response (§3.2): a fit-to-width bracket for
-// the elimination structures, a round-by-round standings table for swiss,
-// and a successive-halving rung ladder for racing.
-//
-// Every renderer is driven by the structure payload and degrades gracefully
-// when a field is absent. The SVG marks reuse svg.js's fit-to-width discipline
 // (width:100% + viewBox, no pan/zoom, token-themed, page-scale aware).
 
 import { el } from '../../../core/dom.js';
@@ -58,12 +49,6 @@ export function isNonGauntlet(structure) {
 // Normalize EITHER shape — the LIVE /api/active-tournament (carries `phase`
 // while in flight) OR the COMPLETED /api/tournament-structure — into ONE
 // renderer input. They already share the {structure, competitors, rounds,
-// standings} shape; this just stamps `live` (so the renderers can suppress
-// "rejected"/"eliminated" verdicts for an in-flight tournament — the promote
-// decision only commits at the very end, so a half-finished record would
-// otherwise mislabel the eventual winner as a dead branch).
-//
-//   st   — the raw structure payload (live or completed), or null.
 //   live — true when this came from /api/active-tournament with a non-idle phase.
 export function normalizeStructure(st, live) {
   if (!st || typeof st !== 'object') return null;
@@ -76,6 +61,10 @@ export function normalizeStructure(st, live) {
     competitors: Array.isArray(st.competitors) ? st.competitors : [],
     rounds: Array.isArray(st.rounds) ? st.rounds : [],
     standings: Array.isArray(st.standings) ? st.standings : [],
+    // the per-challenger proposing-step outcomes (applied/rejected + reason),
+    // carried through so the "Proposed field" section + the live tracker can
+    // read them from a normalized structure too.
+    field_status: Array.isArray(st.field_status) ? st.field_status : [],
     // the epoch's champion succession; the LAST id is the reigning champion
     // (the promoted survivor of a settled racing tournament). Carried through
     // so the racing renderer can confirm the gate's crowned id.
@@ -89,28 +78,6 @@ export function normalizeStructure(st, live) {
 // ── RECONSTRUCT a racing ladder from the per-challenger records ─────
 //
 // A racing tournament is persisted as ONE record PER CHALLENGER on
-// `/api/tournaments` → `{champion_lineage, tournaments:[…]}` — NOT as a single
-// assembled-rung record. Each entry is the FLATTENED view from one
-// challenger's seat:
-//
-//   { tournament_id:"<epoch>:<champ>-><chall>", structure:"racing",
-//     competitors:[champ, chall, …], standings:[],
-//     rounds:[ {match_id:"rung0_m2", opponent, won, delta_scalar}, … ] }
-//
-// `match_id` encodes the rung: `rungN_*` → rung N; `racing-final` → the
-// full-board champion gate. We AGGREGATE every racing record of the epoch and
-// GROUP its matches by that prefix to rebuild the successive-halving ladder:
-//
-//   • field(rung N)     = challengers that have a `rungN_*` match.
-//   • survivors(rung N) = those that ALSO appear at rung N+1 (or in the final).
-//   • cut(rung N)       = the rest.
-//   • champion gate     = the lone survivor's `racing-final` match vs champion;
-//     `won` (Δ negative ⇒ lower loss) ⇒ promoted, confirmed by `champion_lineage`.
-//
-// The result is normalized into the SAME {structure, competitors, rounds,
-// standings} shape the LIVE `/api/active-tournament` produces (rung rounds
-// carrying competitors/survivors/cut/board_fraction + a `racing-final` gate
-// round), so a single renderer handles both. Returns null when the payload
 // carries no racing records.
 export function reconstructRacing(brk, epochId) {
   if (!brk || typeof brk !== 'object') return null;
@@ -118,11 +85,6 @@ export function reconstructRacing(brk, epochId) {
   // SCOPE TO THE VIEWED EPOCH. /api/tournaments can carry records from MORE than
   // the epoch on screen (the workspace's whole history), so we MUST drop any
   // record that does not belong to `epochId` — otherwise a prior epoch's
-  // COMPLETED racing ladder reconstructs and renders under the current epoch's
-  // header (e.g. e0's survival funnel shown while e1 is still proposing). A
-  // record names its epoch via an explicit `epoch_id`, or as the prefix of its
-  // tournament_id (`<epoch>:<champ>-><chall>` or `tourn_<epoch>_<gen>`). When a
-  // record carries NO epoch signal at all we keep it (legacy single-epoch
   // payloads), but a record whose epoch is KNOWN and DIFFERENT is always dropped.
   const inEpoch = (t) => {
     if (epochId == null) return true;
@@ -142,8 +104,6 @@ export function reconstructRacing(brk, epochId) {
   // FAST PATH — an ASSEMBLED record. Some readers (and the test harness) carry
   // a single tournament whose rounds ALREADY hold the rung field with
   // {competitors, survivors, cut} arrays (the same shape the LIVE
-  // /api/active-tournament uses). When such a record is present, use its rounds
-  // verbatim — there is nothing to aggregate — and only synthesise the
   // champion-gate from `champion_lineage` if the record has no `racing-final`.
   const assembled = racing.find((t) => (Array.isArray(t.rounds) ? t.rounds : []).some((r) => {
     const m = (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : null;
@@ -196,7 +156,6 @@ export function reconstructRacing(brk, epochId) {
   // The challenger of a record is the child id — the suffix of the
   // `<epoch>:<champion>-><challenger>` tournament id, falling back to
   // competitors[1] (parent, child, …opponents). The champion is the opponent
-  // each rung match was dueled against (competitors[0]).
   const championOf = (t) => {
     const comps = Array.isArray(t.competitors) ? t.competitors.map(String) : [];
     return comps.length ? comps[0] : null;
@@ -344,7 +303,6 @@ export function structureDigest(st) {
         // progressive LIVE racing fields: the queued flag + each lane's
         // boards-done / in-flight count / partial Δ. Including these makes the
         // gated swap fire when a board lands (real progress) but stay STABLE on a
-        // no-op heartbeat that changes nothing (same counts ⇒ same digest).
         m.queued ? 'Q' : '',
         // progressive LIVE swiss/elim per-MATCH board progress (done/total/
         // inflight + pending) — a board landing fires the swap; a steady beat keeps
@@ -360,6 +318,10 @@ export function structureDigest(st) {
       ]),
     ]),
     standings: (Array.isArray(st.standings) ? st.standings : []).map((s) => [s.generation_id, s.rank, s.scalar, s.wins, s.losses, s.status]),
+    // the proposing-step field — so the "Proposed field" section's gated
+    // swap fires when a challenger is minted / applied / rejected, but stays
+    // stable on a no-op heartbeat.
+    field_status: (Array.isArray(st.field_status) ? st.field_status : []).map((f) => [f && f.generation_id, f && f.status]),
     source: st.source,
   });
 }
@@ -367,21 +329,55 @@ export function structureDigest(st) {
 // ── the structure render dispatch ──────────────────────────────────
 //
 // Returns an array of DOM nodes (sections) for the configured structure.
-// `ctx` carries navigate/href; `epochId` routes a competitor / match to
-// the candidate page (the gate is per-match, §3.3).
 export function renderStructure(st, ctx, epochId) {
   const structure = String((st && st.structure) || 'gauntlet');
-  if (structure === 'swiss') return renderSwiss(st, ctx, epochId);
-  if (structure === 'racing') return renderRacing(st, ctx, epochId);
+  let nodes;
+  if (structure === 'swiss') nodes = renderSwiss(st, ctx, epochId);
+  else if (structure === 'racing') nodes = renderRacing(st, ctx, epochId);
   // single_elim + double_elim share the bracket renderer.
-  return renderBracket(st, ctx, epochId, structure);
+  else nodes = renderBracket(st, ctx, epochId, structure);
+  // The PROPOSED FIELD section leads so a completed epoch's proposing
+  // outcomes are visible (e.g. "4 proposed · 0 applied — all rejected" with
+  // per-challenger reasons). Absent field_status ⇒ no section (back-compat).
+  const proposed = proposedFieldSection(st, ctx, epochId);
+  return proposed ? [proposed, ...nodes] : nodes;
+}
+
+// Read the per-challenger proposing outcomes off a tournament-structure
+// payload (the v5 `field_status`). Returns the normalized list — same shape
+// data.fieldStatus() produces — or [] when absent / malformed (old data,
+export function fieldStatusOf(st) {
+  const fs = st && st.field_status;
+  if (!Array.isArray(fs)) return [];
+  const out = [];
+  for (const f of fs) {
+    if (!f || typeof f !== 'object') continue;
+    const gid = f.generation_id;
+    if (gid == null || gid === '') continue;
+    out.push({
+      generation_id: String(gid),
+      status: f.status === 'applied' ? 'applied' : 'rejected',
+      reason: f.reason == null ? '' : String(f.reason),
+      seed: (typeof f.seed === 'number') ? f.seed : null,
+    });
+  }
+  return out;
+}
+
+// The "Proposed field" section: the candidate-generation step for one
+// tournament, rendered via the shared proposingTracker so an applied row
+// drills into its candidate and a rejected row shows the reason on the
+function proposedFieldSection(st, ctx, epochId) {
+  const fs = fieldStatusOf(st);
+  if (!fs.length) return null;
+  const onCompetitor = (gen) => { if (gen && ctx && ctx.navigate) ctx.navigate('candidate', { epochId, gen }); };
+  const tracker = svg.proposingTracker({ fieldStatus: fs, onCompetitor });
+  return section('Proposed field', tracker);
 }
 
 // single/double elimination — derive the bracket model from a normalized elim
 // `st`: winners' band, optional losers' band, champion-gate state + benchmark.
 // A bracket winner that does not beat the incumbent is NOT promoted ('stands').
-// Null when `st` is not elim. → { winners, losers, championId, benchmarkId,
-// gateState, gateDelta, live, hasMatches }
 export function elimModel(st) {
   if (!st || (String(st.structure) !== 'single_elim' && String(st.structure) !== 'double_elim')) return null;
   const live = !!st.live;
@@ -468,8 +464,6 @@ function splitBand(rounds, keep) {
 // swiss — derive the model from a normalized swiss `st`: a column per round (its
 // pairings), the accumulating Copeland-point standings (win 1, draw ½), and the
 // champion-gate state (the leader must beat the incumbent to be promoted). Null
-// when `st` is not swiss. → { rounds, standings:[{id,points,wins,draws,losses,
-// rank}], championId, benchmarkId, gateState, gateDelta, live, hasRounds }
 export function swissModel(st) {
   if (!st || String(st.structure) !== 'swiss') return null;
   const live = !!st.live;
@@ -616,13 +610,6 @@ function renderSwiss(st, ctx, epochId) {
 // ---- racing — derive the rung/gate model from a normalized payload ─
 //
 // Both the Match-ups ladder (renderRacing, below) AND the epoch-overview
-// survival funnel (views/epoch.js) need the SAME derived view of a racing
-// `st`: the ordered rung list (field/survivors/cut/Δ/board-fraction +
-// pending flag) and the resolved champion-gate (state + crowned id + Δ). This
-// is the single source of that derivation so the funnel and the ladder never
-// disagree. Returns null when `st` is not a racing payload.
-//
-//   → { rungs, championId, gateState, gateDelta, live, hasRungs }
 //   gateState ∈ 'crowned' | 'stands' | 'deciding' | 'pending'.
 export function racingModel(st) {
   if (!st || String(st.structure) !== 'racing') return null;
@@ -678,8 +665,6 @@ export function racingModel(st) {
   // THE BENCHMARK (champion v0) the field is raced against. Every rung Δ is
   // Δ-vs-this-id, and this id defends at the champion-gate — so the funnel /
   // ladder can show it as a persistent reference even though it is NOT one of
-  // the rung competitors. It is the gate's champion seat (competitors[0]), else
-  // the seed competitor common to every rung, else the first promoted lineage
   // entry. Distinct from `championId`, which is the eventual SURVIVOR/crowned id.
   let benchmarkId = null;
   if (gateMatch && Array.isArray(gateMatch.competitors) && gateMatch.competitors.length) {
@@ -702,42 +687,6 @@ export function racingModel(st) {
 // ── BUILD a PROGRESSIVE live racing model ───────────────────────────
 //
 // THE BUG this fixes: during an IN-FLIGHT racing run the live
-// /api/active-tournament `rounds` array is EMPTY until each matchup COMPLETES,
-// so the plain normalizeStructure() produced no rungs and renderRacing() sat on
-// the "the race is being seeded" empty state for the whole race — never filling
-// progressively, then only showing results after completion.
-//
-// This builds an ACCUMULATING racing `st` from the UNION of every live signal,
-// so the ladder fills rung-by-rung WHILE the race runs and never discards a
-// completed rung:
-//
-//   • FIELD — `competitors` (champion + challenger lanes), available from the
-//     very start. The challengers are the rung-0 field; the champion is the
-//     persistent benchmark (NOT a rung competitor).
-//   • COMPLETED rungs — any `rounds` the active-tournament has committed are
-//     carried VERBATIM (survivors ↑ / cuts ✗), so a finished rung persists when
-//     the next rung starts.
-//   • ACTIVE rung — derived from the heartbeat `phase` (`…:rung0_m3` → rung 0).
-//     If `rounds` has not yet recorded that rung, we SYNTHESISE a pending rung
-//     whose field is the survivors of the previous completed rung (or the whole
-//     challenger field at rung 0). Its per-lane board progress is driven by
-//     /api/active-runs filtered to THIS epoch's gens (attributed to the active
-//     rung since active-runs' own `rung`/`match_id` are usually null mid-phase),
-//     and a partial Δ-vs-champion from partial_challenger_agg−partial_champion_agg.
-//   • QUEUED future rungs — the remaining successive-halving rungs (from
-//     structure_params field_size/eta) shown as `queued` so the whole shape is
-//     legible from the start.
-//
-// The result is the SAME normalized {structure, competitors, rounds, …} shape
-// the renderers already consume — renderRacing()/racingModel() handle it without
-// special-casing. Each synthesised rung match carries a `progress` map
-// (gen → {done,total,inflight,partialDelta}) + `queued` flag the ladder reads.
-// Returns null when `at` is not a live racing payload.
-//
-//   at         — the raw /api/active-tournament object.
-//   heartbeat  — /api/heartbeat ({ phase, generation_id, … }).
-//   activeRuns — /api/active-runs (in-flight board units).
-//   epochGens  — the set/array of generation ids that belong to THIS epoch
 //                (so foreign in-flight runs are not attributed to this race).
 export function buildLiveRacingModel({ at, heartbeat, activeRuns, epochGens } = {}) {
   if (!at || typeof at !== 'object' || String(at.structure) !== 'racing') return null;
@@ -940,11 +889,6 @@ function inflightByGen(activeRuns, epochGens) {
 // ── BUILD a PROGRESSIVE live ROUND-BASED model (swiss + elim) ───────
 //
 // The swiss/elim analogue of buildLiveRacingModel: an ACCUMULATING `st` from
-// COMPLETED rounds (verbatim — winners persist, never blanked), the ACTIVE round
-// (each undecided match tagged `pending` with per-board done/total/inflight from
-// /api/active-runs), and QUEUED future rounds. Same normalized shape the
-// renderers consume. `byeDecides` lets elim treat a bye as decided; `minRounds`
-// extends the walk for swiss (structure_params.rounds). Null when `at` carries
 // no field/rounds.
 function buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, byeDecides, minRounds) {
   const competitors = Array.isArray(at.competitors) ? at.competitors : [];
@@ -1019,14 +963,6 @@ export function buildLiveElimModel({ at, heartbeat, activeRuns, epochGens } = {}
 // ── ONE candidate's PATH through the racing tournament ──────────────
 //
 // The lifecycle DAG (views/candidate.js) shows a small rung-progression strip
-// relating a candidate's board runs to the tournament rounds even when the
-// per-run records carry no rung tags. This derives that path for ONE candidate
-// (genId) from the SAME per-challenger /api/tournaments records the racing
-// ladder reconstructs from: rung 0 → rung 1 → racing-final, each with the
-// candidate's Δ-vs-champion at that rung and a won/cut/promoted/rejected
-// verdict. Returns null when the candidate ran no racing matches (gauntlet, or
-// a candidate that never raced) — the strip is then suppressed.
-//
 //   → { stages:[{ label, kind:'rung'|'final', delta, verdict }] } | null
 export function candidateProgression(brk, genId) {
   if (!brk || typeof brk !== 'object' || genId == null) return null;
@@ -1089,8 +1025,6 @@ function renderRacing(st, ctx, epochId) {
   // Split the rounds into RUNG rounds (`rungN`) and the lone CHAMPION-GATE
   // round (`racing-final`). The gate is NOT a rung — it is the full-board
   // confirmation duel between the lone survivor and the champion; rendering it
-  // as a rung would invent a phantom column. Both the reconstructed completed
-  // record and the LIVE `/api/active-tournament` use this same shape.
   const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
   const gateRound = rounds.find((r) => String(firstMatch(r).match_id || '') === 'racing-final') || null;
   const rungRounds = rounds.filter((r) => String(firstMatch(r).match_id || '') !== 'racing-final');
@@ -1121,8 +1055,6 @@ function renderRacing(st, ctx, epochId) {
   // The CHAMPION-GATE outcome.
   //   • settled (idle): the gate match's winner/decision crowns the survivor;
   //     `champion_lineage`'s last id confirms a promotion.
-  //   • live: the gate has NOT committed — crown nobody; show the leading
-  //     survivor of the final rung and let the gate read "deciding…".
   const gateMatch = gateRound ? firstMatch(gateRound) : null;
   const finalRungSurvivors = (() => {
     for (let i = rungs.length - 1; i >= 0; i--) {

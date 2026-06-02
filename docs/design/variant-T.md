@@ -453,6 +453,35 @@ and branches:
     both. `reconstructRacing` also passes an already-assembled record (the LIVE
     shape, or a test fixture) straight through.
 
+### The proposing-step tracker (the field forming)
+
+Before any matchup runs, the orchestrator **mints a field** of challengers —
+each is a real lineage child of the champion that either **applies** cleanly or
+is **rejected** (empty response / invalid JSON / post-apply validation /
+`mutation_id` no longer resolves). Those per-challenger outcomes used to hit
+only the evolve log, so a run whose whole field failed looked *idle* on the
+dashboard. They are now captured as a **`field_status`** record per challenger —
+`{generation_id, status: "applied"|"rejected", reason, seed}` — persisted onto
+the live `ActiveTournament` envelope (`/api/active-tournament`) AND surfaced on
+the per-epoch `/api/tournament-structure` (lifted from the retained
+`phase="completed"` envelope for a settled epoch). `field_status` is additive:
+absent ⇒ `[]`, byte-identical for old data and the gauntlet path.
+
+`svg.proposingTracker({fieldStatus, onCompetitor})` renders it (DOM, token-
+themed `dn-prop-*`, no hardcoded hex): one row per challenger — `vN ✓ applied` /
+`vN ✗ rejected` — the reason on the existing hovercard, an applied row drilling
+into its candidate. The headline reads the field's shape honestly: *"N proposed
+· k applied"*, and a non-empty field that minted **zero** applied challengers
+reads *"— all rejected"* (the `dn-prop-head-allbad` state) — never an empty/idle
+hero. It renders in two places:
+- the **live hero** (`live.js` `_buildProposingTracker`): during the proposing
+  phase (and the early tournament phase, before a structure topology exists) it
+  replaces the bland "the field fills in…" placeholder. Digest-gated
+  (`svg.proposingDigest`), current-epoch-scoped (`liveBelongsToEpoch`), and
+  structure-agnostic (racing / swiss / elim mint a field identically).
+- the **structure view** (`views/structure.js` `proposedFieldSection`): a leading
+  **"Proposed field"** section so a completed epoch's proposing outcomes survive.
+
 A **structure pill** (`dt-structure-pill`: "structure · Swiss (4 rounds)" etc.)
 labels the configured structure in both the **epoch** header (`views/epoch.js`)
 and the **match-ups** header. The SVG marks follow T's fit-to-width discipline

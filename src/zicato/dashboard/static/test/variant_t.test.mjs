@@ -1604,6 +1604,94 @@ test('structure: swiss renders the standings LADDER hero + per-round pairings', 
   assert(allByClass(host, 'dt-swiss-pairings').length === 2, 'a pairings table per round (2 rounds)');
 });
 
+test('structure: the "Proposed field" section renders applied ✓ / rejected ✗ + reasons from field_status', async () => {
+  freshState();
+  const payload = JSON.parse(JSON.stringify(SWISS_STRUCT));
+  payload.field_status = [
+    { generation_id: 'v1', status: 'applied', reason: '', seed: 2 },
+    { generation_id: 'v2', status: 'rejected', reason: 'proposer returned invalid JSON', seed: 3 },
+  ];
+  installFixtureMap(structFixture('swiss', payload, 'tourn_e0_sw'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  // the Proposed field tracker rendered with the headline counts.
+  const tracker = allByClass(host, 'dn-prop-tracker')[0];
+  assert(tracker, 'the "Proposed field" tracker rendered');
+  const head = allByClass(host, 'dn-prop-head')[0];
+  assert(head && head.textContent.includes('2 proposed') && head.textContent.includes('1 applied'),
+    'the headline reads "2 proposed · 1 applied"');
+  // one applied row (✓) and one rejected row (✗).
+  const okRows = allByClass(host, 'dn-prop-row-ok');
+  const badRows = allByClass(host, 'dn-prop-row-bad');
+  assertEqual(okRows.length, 1, 'one applied row');
+  assertEqual(badRows.length, 1, 'one rejected row');
+  assert(okRows[0].textContent.includes('✓') && okRows[0].textContent.includes('v1'), 'the applied row shows ✓ + v1');
+  assert(badRows[0].textContent.includes('✗') && badRows[0].textContent.includes('v2'), 'the rejected row shows ✗ + v2');
+  // the rejection reason is reachable via the hovercard (attached to the row).
+  const hc = await import('../js/variants/T/hovercard.js');
+  hc.show(badRows[0], 'x'); // prime the card surface (the row carries a hovercard binding)
+  assert(svg.proposingTracker, 'the shared proposingTracker renderer is exported for reuse');
+});
+
+test('structure: a completed field where ALL challengers rejected reads "0 applied — all rejected", not empty', async () => {
+  freshState();
+  const payload = JSON.parse(JSON.stringify(SWISS_STRUCT));
+  payload.field_status = [
+    { generation_id: 'v1', status: 'rejected', reason: 'empty response', seed: 2 },
+    { generation_id: 'v2', status: 'rejected', reason: 'post-apply validation failed', seed: 3 },
+    { generation_id: 'v3', status: 'rejected', reason: 'mutation_id no longer resolves', seed: 4 },
+    { generation_id: 'v4', status: 'rejected', reason: 'empty response', seed: 5 },
+  ];
+  installFixtureMap(structFixture('swiss', payload, 'tourn_e0_sw'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  const head = allByClass(host, 'dn-prop-head')[0];
+  assert(head, 'the headline rendered');
+  assert(head.textContent.includes('4 proposed') && head.textContent.includes('0 applied'),
+    'the headline reads "4 proposed · 0 applied"');
+  assert(/all rejected/i.test(head.textContent), 'the headline reads "all rejected" (not an empty/idle state)');
+  assert((head.getAttribute('class') || '').includes('dn-prop-head-allbad'), 'the all-rejected headline carries the bad-state class');
+  assertEqual(allByClass(host, 'dn-prop-row-ok').length, 0, 'NO applied rows for an all-rejected field');
+  assertEqual(allByClass(host, 'dn-prop-row-bad').length, 4, 'all four challengers render as rejected rows');
+});
+
+test('structure: an absent field_status renders NO "Proposed field" section (back-compat)', async () => {
+  freshState();
+  // SWISS_STRUCT carries no field_status → no tracker section.
+  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assertEqual(allByClass(host, 'dn-prop-tracker').length, 0, 'no proposing tracker when field_status is absent');
+});
+
+test('data.fieldStatus / fieldStatusSummary: normalize + roll up the proposing field', () => {
+  const raw = {
+    field_status: [
+      { generation_id: 'v1', status: 'applied', reason: '', seed: 2 },
+      { generation_id: 'v2', status: 'rejected', reason: 'invalid JSON', seed: 3 },
+      { generation_id: '', status: 'applied' },          // dropped (no id)
+      'garbage',                                          // dropped (not an object)
+      { generation_id: 'v3', status: 'weird' },           // status coerced to rejected
+    ],
+  };
+  const fs = data.fieldStatus(raw);
+  assertEqual(fs.length, 3, 'only well-formed, identified rows survive');
+  assertEqual(fs[2].status, 'rejected', 'an unknown status coerces to rejected');
+  assertDeep(data.fieldStatus({}), [], 'absent field_status → empty list');
+  assertDeep(data.fieldStatus(null), [], 'null payload → empty list');
+  const sum = data.fieldStatusSummary(fs);
+  assertEqual(sum.proposed, 3, 'proposed count');
+  assertEqual(sum.applied, 1, 'applied count');
+  assertEqual(sum.rejected, 2, 'rejected count');
+  assertEqual(sum.allRejected, false, 'not all rejected (one applied)');
+  const allBad = data.fieldStatusSummary([{ generation_id: 'v1', status: 'rejected' }]);
+  assertEqual(allBad.allRejected, true, 'a non-empty zero-applied field is allRejected');
+  assertEqual(data.fieldStatusSummary([]).allRejected, false, 'an empty field is NOT allRejected (idle, not failed)');
+});
+
 test('structure: racing renders a fit-to-width rung ladder with cuts + board fractions', async () => {
   freshState();
   installFixtureMap(structFixture('racing', RACING_STRUCT, 'tourn_e0_rc'));
@@ -4357,6 +4445,111 @@ test('live hero: a COMPLETED/idle racing tournament renders NO funnel (the funne
 
   const root = mountLiveShell('#/');
   assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'NO racing funnel for a COMPLETED tournament (the live hero funnel is running-only)');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+// ---- (b3) the PROPOSING-STEP TRACKER in the live hero ----
+//
+// During the proposing phase (and the early tournament phase before a
+// structure topology exists) the live hero shows the field FORMING — the
+// per-challenger applied/rejected outcomes — instead of the bland
+// placeholder. Structure-agnostic, digest-gated, current-epoch-scoped.
+
+// a CURRENT-epoch proposing-phase active-tournament carrying field_status:
+// two challengers minted, one applied, one rejected. No structure topology
+// yet (rounds empty) — so the tracker leads, not a figure.
+const HERO_PROPOSING_E3 = {
+  structure: 'swiss', phase: 'proposing', epoch_id: HERO_EPOCH,
+  structure_params: { rounds: 3 },
+  competitors: [{ generation_id: 'v0', seed: 1, role: 'champion' }],
+  rounds: [], standings: [],
+  field_status: [
+    { generation_id: 'v1', status: 'applied', reason: '', seed: 2 },
+    { generation_id: 'v2', status: 'rejected', reason: 'proposer returned invalid JSON', seed: 3 },
+  ],
+};
+
+test('live hero: the PROPOSING phase shows the proposing-step tracker (applied ✓ / rejected ✗) instead of the bland placeholder', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = HERO_PROPOSING_E3;
+
+  const root = mountLiveShell('#/');
+  const tracker = allByClass(root, 'dn-prop-tracker')[0];
+  assert(tracker, 'the proposing-step tracker renders in the live hero during the proposing phase');
+  // the bland placeholder is REPLACED by the tracker.
+  assertEqual(allByClass(root, 'dt-live-hero-nofunnel').length, 0, 'the bland "field fills in…" placeholder is replaced by the tracker');
+  // no structure figure yet (rounds empty).
+  assertEqual(svgsByClass(root, 'dn-funnel').length + svgsByClass(root, 'dn-swissladder').length + svgsByClass(root, 'dn-elimbracket').length, 0, 'no structure figure while only the field is forming');
+  // one applied (✓ v1) + one rejected (✗ v2) row.
+  assertEqual(allByClass(root, 'dn-prop-row-ok').length, 1, 'one applied row');
+  assertEqual(allByClass(root, 'dn-prop-row-bad').length, 1, 'one rejected row');
+  assert(tracker.textContent.includes('2 proposed') && tracker.textContent.includes('1 applied'), 'the headline counts the minted field');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+test('live hero: an ALL-REJECTED proposing field reads "0 applied — all rejected", NOT an idle/empty hero', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [];
+  const allBad = JSON.parse(JSON.stringify(HERO_PROPOSING_E3));
+  allBad.field_status = [
+    { generation_id: 'v1', status: 'rejected', reason: 'empty response', seed: 2 },
+    { generation_id: 'v2', status: 'rejected', reason: 'empty response', seed: 3 },
+    { generation_id: 'v3', status: 'rejected', reason: 'post-apply validation failed', seed: 4 },
+    { generation_id: 'v4', status: 'rejected', reason: 'mutation_id no longer resolves', seed: 5 },
+  ];
+  coreState.state.activeTournament = allBad;
+
+  const root = mountLiveShell('#/');
+  const head = allByClass(root, 'dn-prop-head')[0];
+  assert(head, 'the proposing-step tracker headline rendered (NOT an empty hero)');
+  assert(head.textContent.includes('4 proposed') && head.textContent.includes('0 applied'), 'the headline reads "4 proposed · 0 applied"');
+  assert(/all rejected/i.test(head.textContent), 'the all-rejected field reads "all rejected"');
+  assertEqual(allByClass(root, 'dn-prop-row-ok').length, 0, 'no applied rows');
+  assertEqual(allByClass(root, 'dn-prop-row-bad').length, 4, 'all four rejected rows render');
+  assertEqual(allByClass(root, 'dt-live-hero-nofunnel').length, 0, 'NOT the idle/empty placeholder');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+test('live hero: the proposing-step tracker is DIGEST-GATED (a no-op heartbeat does not rebuild it) and current-epoch SCOPED', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = HERO_PROPOSING_E3;
+
+  const root = mountLiveShell('#/');
+  const trackerBefore = allByClass(root, 'dn-prop-tracker')[0];
+  assert(trackerBefore, 'the tracker mounted');
+  // a STEADY re-tick with identical field_status does NOT rebuild the tracker.
+  coreState.state._changed();
+  assert(allByClass(root, 'dn-prop-tracker')[0] === trackerBefore, 'an identical re-tick does NOT rebuild the tracker (digest-gated, no flash)');
+  // a REAL change (v2 now applies) rebuilds it.
+  const next = JSON.parse(JSON.stringify(HERO_PROPOSING_E3));
+  next.field_status[1].status = 'applied';
+  coreState.state.activeTournament = next;
+  coreState.state._changed();
+  const trackerAfter = allByClass(root, 'dn-prop-tracker')[0];
+  assert(trackerAfter && trackerAfter !== trackerBefore, 'a real field-status change rebuilds the tracker');
+  assertEqual(allByClass(root, 'dn-prop-row-ok').length, 2, 'both challengers now read as applied');
+
+  // CURRENT-EPOCH SCOPED: a foreign-epoch field_status must NOT render.
+  const foreign = JSON.parse(JSON.stringify(HERO_PROPOSING_E3));
+  foreign.epoch_id = '2026-06-01_e1';
+  coreState.state.activeTournament = foreign;
+  const root2 = mountLiveShell('#/');
+  assertEqual(allByClass(root2, 'dn-prop-tracker').length, 0, 'a foreign-epoch proposing field is NOT shown (current-epoch scoped)');
+  assert(allByClass(root2, 'dt-live-hero-nofunnel').length >= 1, 'the foreign-epoch case falls back to the honest placeholder');
 
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;

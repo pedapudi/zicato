@@ -613,8 +613,8 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
         "tournament_id, epoch_id, parent_generation_id, child_generation_id, "
         "decision, parent_scalar, child_scalar, delta_scalar, rejection_reason, "
         "ran_at, structure, structure_params_json, competitors_json, rounds_json, "
-        "standings_json) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "standings_json, field_status_json) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(tournament_id) DO UPDATE SET "
         "epoch_id = excluded.epoch_id, "
         "parent_generation_id = excluded.parent_generation_id, "
@@ -629,7 +629,12 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
         "structure_params_json = excluded.structure_params_json, "
         "competitors_json = excluded.competitors_json, "
         "rounds_json = excluded.rounds_json, "
-        "standings_json = excluded.standings_json",
+        "standings_json = excluded.standings_json, "
+        # Keep any field-status the settle path may have written: the
+        # per-experiment crowning record does not carry the proposing
+        # outcomes, so COALESCE preserves an existing value rather than
+        # clobbering it with this row's empty list.
+        "field_status_json = COALESCE(tournaments.field_status_json, excluded.field_status_json)",
         (
             tournament_id,
             experiment.epoch_id,
@@ -645,6 +650,7 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
             json.dumps({}),
             json.dumps(competitors),
             json.dumps(rounds),
+            json.dumps([]),
             json.dumps([]),
         ),
     )

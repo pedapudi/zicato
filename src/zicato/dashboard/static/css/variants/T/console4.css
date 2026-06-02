@@ -1795,6 +1795,31 @@
     gap: 18px; align-items: start; }
   .dt-live-hero-funnel { min-width: 0; }
   .dt-live-hero-nofunnel { font-size: 11.5px; padding: 12px 0; }
+
+  /* ---- the proposing-step tracker (the field forming) ---- */
+  /* Rendered in the live hero during the proposing phase + in the structure
+     view as the "Proposed field" section. Theme-aware (every colour is a
+     --v2-* token); applied rows lean good, rejected rows lean bad. */
+  .dn-prop-tracker { min-width: 0; }
+  .dn-prop-caption { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; margin-bottom: 5px; }
+  .dn-prop-head { font-size: 12.5px; color: var(--v2-ink); margin-bottom: 8px; font-weight: 600; }
+  .dn-prop-head-allbad { color: var(--v2-bad); }
+  .dn-prop-list { display: flex; flex-direction: column; gap: 4px; }
+  .dn-prop-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+    border: 1px solid var(--v2-rule); border-radius: 5px; background: var(--v2-panel);
+    font-size: 12px; }
+  .dn-prop-row-ok { border-left: 3px solid var(--v2-good); }
+  .dn-prop-row-bad { border-left: 3px solid var(--v2-bad); background: var(--v2-bad-soft); }
+  .dn-prop-glyph { font-family: var(--v2-mono); font-weight: 700; width: 1em; text-align: center; }
+  .dn-prop-gen { font-family: var(--v2-mono); color: var(--v2-ink); flex: 1 1 auto; }
+  .dn-prop-verdict { font-size: 11px; letter-spacing: 0.02em; }
+  .dn-prop-ok { color: var(--v2-good); }
+  .dn-prop-bad { color: var(--v2-bad); }
+  .dn-prop-clickable { cursor: pointer; }
+  .dn-prop-clickable:hover { border-color: var(--v2-accent); }
+  .dn-prop-clickable:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
+
   .dt-live-hero-ticker { min-width: 0; }
   .dt-live-hero-tickerhead { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase;
     letter-spacing: 0.06em; margin-bottom: 5px; }

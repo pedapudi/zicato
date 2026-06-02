@@ -168,6 +168,8 @@ def test_tournaments_columns_match_contract() -> None:
         "competitors_json",
         "rounds_json",
         "standings_json",
+        # v5: the per-challenger proposing-step outcomes.
+        "field_status_json",
     ]
     conn.close()
 

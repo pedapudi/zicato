@@ -278,6 +278,90 @@ def test_structure_reader_unknown_tournament_empty(swiss_workspace: Path) -> Non
     assert st["structure"] == "gauntlet"
     assert st["rounds"] == []
     assert st["competitors"] == []
+    # field_status is always present (additive) and empty here.
+    assert st["field_status"] == []
+
+
+def test_structure_reader_pre_v5_index_field_status_empty(swiss_workspace: Path) -> None:
+    """The hand-built swiss index has no ``field_status_json`` column (a
+    pre-v5 shape); the reader degrades it to an empty list rather than
+    failing the resolution."""
+    st = build_tournament_structure(WorkspacePaths(swiss_workspace), EPOCH, SWISS_TOURN)
+    assert st["source"] == "index"
+    assert st["field_status"] == []
+
+
+def test_structure_reader_enriches_field_status_from_active(swiss_workspace: Path) -> None:
+    """When the index row carries the settled bracket but no proposing
+    outcomes, a matching live ``active_tournament.json`` (retained with
+    phase=completed) lifts its ``field_status`` onto the resolved
+    structure — so a just-completed epoch's proposing step survives."""
+    from zicato.runtime.state import ActiveTournament, write_active_tournament
+
+    write_active_tournament(
+        swiss_workspace,
+        ActiveTournament(
+            tournament_id=SWISS_TOURN,
+            parent_generation_id="",
+            child_generation_id="v1",
+            epoch_id=EPOCH,
+            started_at="2026-06-01T00:30:00Z",
+            phase="completed",
+            structure="swiss",
+            competitors=[
+                {"generation_id": "v0", "seed": 1, "role": "champion"},
+                {"generation_id": "v1", "seed": 2, "role": "challenger"},
+            ],
+            field_status=[
+                {"generation_id": "v1", "status": "applied", "reason": "", "seed": 2},
+            ],
+        ),
+    )
+    st = build_tournament_structure(WorkspacePaths(swiss_workspace), EPOCH, SWISS_TOURN)
+    # The settled bracket still comes from the index…
+    assert st["source"] == "index"
+    assert st["standings"][0]["generation_id"] == "v1"
+    # …but field_status is lifted from the live envelope.
+    assert [f["generation_id"] for f in st["field_status"]] == ["v1"]
+    assert st["field_status"][0]["status"] == "applied"
+
+
+def test_active_tournament_route_surfaces_field_status(
+    swiss_workspace: Path, static_dir: Path
+) -> None:
+    """``/api/active-tournament`` carries the per-challenger field_status
+    so the live hero can render the proposing-step tracker."""
+    from zicato.runtime.state import ActiveTournament, write_active_tournament
+
+    write_active_tournament(
+        swiss_workspace,
+        ActiveTournament(
+            tournament_id=SWISS_TOURN,
+            parent_generation_id="",
+            child_generation_id="",
+            epoch_id=EPOCH,
+            started_at="2026-06-01T00:30:00Z",
+            phase="proposing",
+            structure="swiss",
+            field_status=[
+                {"generation_id": "v1", "status": "rejected", "reason": "invalid JSON", "seed": 2},
+                {
+                    "generation_id": "v2",
+                    "status": "rejected",
+                    "reason": "empty response",
+                    "seed": 3,
+                },
+            ],
+        ),
+    )
+    app = create_app(swiss_workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        r = c.get("/api/active-tournament")
+        assert r.status_code == 200
+        fs = r.json()["field_status"]
+        assert [f["generation_id"] for f in fs] == ["v1", "v2"]
+        assert all(f["status"] == "rejected" for f in fs)
+        assert fs[0]["reason"] == "invalid JSON"
 
 
 # ---------------------------------------------------------------------------

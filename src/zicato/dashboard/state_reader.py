@@ -2007,6 +2007,7 @@ def _empty_tournament_structure(epoch_id: str, tournament_id: str, source: str) 
         "competitors": [],
         "rounds": [],
         "standings": [],
+        "field_status": [],
         "source": source,
     }
 
@@ -2039,6 +2040,22 @@ def _structure_from_index(
         competitors = _opt_json(r["competitors_json"])
         rounds = _opt_json(r["rounds_json"])
         standings = _opt_json(r["standings_json"])
+        # ``field_status_json`` is a v5 column. A real index is migrated to
+        # v5 on open, but a hand-built / pre-migration index may lack the
+        # column — query it separately and degrade to an empty list rather
+        # than letting a missing column fail the whole resolution.
+        field_status: Any = None
+        try:
+            fs_rows = _query(
+                conn,
+                "SELECT field_status_json FROM tournaments "
+                "WHERE epoch_id = ? AND tournament_id = ? LIMIT 1",
+                (epoch_id, tournament_id),
+            )
+            if fs_rows:
+                field_status = _opt_json(fs_rows[0]["field_status_json"])
+        except sqlite3.Error:
+            field_status = None
         # A row that exists but carries no structure internals (a gauntlet
         # row, or a NULL-backfilled pre-feature row) is not a useful
         # structure read; fall through so the active/loss-file links can
@@ -2053,6 +2070,7 @@ def _structure_from_index(
             "competitors": competitors if isinstance(competitors, list) else [],
             "rounds": rounds if isinstance(rounds, list) else [],
             "standings": standings if isinstance(standings, list) else [],
+            "field_status": field_status if isinstance(field_status, list) else [],
             "source": "index",
         }
     finally:
@@ -2078,6 +2096,7 @@ def _structure_from_active(
     competitors = active.get("competitors")
     rounds = active.get("rounds")
     standings = active.get("standings")
+    field_status = active.get("field_status")
     return {
         "epoch_id": active.get("epoch_id") or epoch_id,
         "tournament_id": tournament_id,
@@ -2086,6 +2105,7 @@ def _structure_from_active(
         "competitors": competitors if isinstance(competitors, list) else [],
         "rounds": rounds if isinstance(rounds, list) else [],
         "standings": standings if isinstance(standings, list) else [],
+        "field_status": field_status if isinstance(field_status, list) else [],
         "source": "active",
     }
 
@@ -2129,6 +2149,12 @@ def _structure_from_loss_files(
     standings.append(
         {"generation_id": challenger, "rank": 2, "scalar": child_scalar, "role": "challenger"}
     )
+    # The challenger applied (it has a settled scalar), so the proposing
+    # step is reconstructed as a single applied entry — never an empty
+    # idle tracker for a tournament that actually ran.
+    field_status: list[dict[str, Any]] = [
+        {"generation_id": challenger, "status": "applied", "reason": "", "seed": 2}
+    ]
     match: dict[str, Any] = {
         "match_id": "r0_m0",
         "competitors": [c for c in (champion, challenger) if c],
@@ -2146,6 +2172,7 @@ def _structure_from_loss_files(
         "competitors": competitors,
         "rounds": [{"round_index": 0, "label": "Round 1", "matches": [match]}],
         "standings": standings,
+        "field_status": field_status,
         "source": "loss_files",
     }
 
@@ -2187,8 +2214,31 @@ def build_tournament_structure(
     for resolver in (_structure_from_index, _structure_from_active, _structure_from_loss_files):
         result = resolver(paths, epoch_id, tournament_id)
         if result is not None:
-            return result
+            return _enrich_field_status(paths, epoch_id, tournament_id, result)
     return _empty_tournament_structure(epoch_id, tournament_id, "loss_files")
+
+
+def _enrich_field_status(
+    paths: WorkspacePaths, epoch_id: str, tournament_id: str, result: dict[str, Any]
+) -> dict[str, Any]:
+    """Backfill ``field_status`` from the live envelope when the resolved
+    structure lacks it.
+
+    The per-experiment index row carries the settled bracket but not the
+    proposing-step outcomes (the per-challenger applied/rejected records
+    live only on ``active_tournament.json``, which the multi-challenger
+    path retains with ``phase="completed"``). So when the winning resolver
+    is the index (or any source whose ``field_status`` is empty) but the
+    live envelope still matches this coordinate, lift its ``field_status``
+    onto the result so a just-completed epoch's proposing step survives.
+    Purely additive — never overwrites a non-empty field-status.
+    """
+    if result.get("field_status"):
+        return result
+    active = _structure_from_active(paths, epoch_id, tournament_id)
+    if active is not None and active.get("field_status"):
+        result["field_status"] = active["field_status"]
+    return result
 
 
 def _latest_round_report(directory: Path) -> Path | None:
