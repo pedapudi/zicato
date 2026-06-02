@@ -23,10 +23,20 @@ export async function render(host, ctx) {
   const spark = (ws && Array.isArray(ws.sparkline)) ? ws.sparkline : [];
   const live = !!state.activeTournament;
 
+  // Each fleet card's hero trendline is that epoch's OWN real per-generation
+  // best-scalar trajectory — fetched PER epoch (keyed on epoch_id), never the
+  // single currently-loaded contract and never a fabricated curve. The backend
+  // scopes /api/score-trajectory by `?epoch=<id>`; missing/short series degrade
+  // to an honest "no trajectory yet" placeholder downstream.
+  const trajs = await Promise.all(rows.map((r) => D.scoreTrajectory(r.epoch_id)));
+  const trajByEpoch = new Map();
+  rows.forEach((r, i) => trajByEpoch.set(r.epoch_id, epochTrajectoryValues(trajs[i])));
+
   const digest = JSON.stringify({
     live, cur: current,
     rows: rows.map((r) => [r.epoch_id, r.generation_count || 0, r.promoted_count || 0,
-      svg.isNum(r.best_scalar) ? r.best_scalar.toFixed(3) : null, !!r.closed]),
+      svg.isNum(r.best_scalar) ? r.best_scalar.toFixed(3) : null, !!r.closed,
+      (trajByEpoch.get(r.epoch_id) || []).map((v) => v.toFixed(3))]),
     trend: spark.map((p) => (p && svg.isNum(p.scalar) ? p.scalar.toFixed(3) : null)),
     health: health ? (Array.isArray(health.findings) ? health.findings.length : 0) : -1,
   });
@@ -42,7 +52,7 @@ export async function render(host, ctx) {
 
     const fleet = rows.length === 0
       ? empty('No epochs recorded in this workspace yet.')
-      : el('div', { class: 'dn-fleet' }, rows.map((r) => fleetCard(r, r.epoch_id === current, ctx)));
+      : el('div', { class: 'dn-fleet' }, rows.map((r) => fleetCard(r, r.epoch_id === current, ctx, trajByEpoch.get(r.epoch_id) || [])));
     nodes.push(section('Fleet · ' + rows.length + ' epoch' + (rows.length === 1 ? '' : 's'), fleet));
 
     if (health) nodes.push(healthPanel(health));
@@ -82,10 +92,9 @@ function statTile(value, key, foot) {
   ].filter(Boolean));
 }
 
-function fleetCard(row, isCurrent, ctx) {
+function fleetCard(row, isCurrent, ctx, sparkVals) {
   const liveHere = isCurrent && state.activeTournament && state.activeTournament.epoch_id === row.epoch_id;
   const st = isCurrent ? (liveHere ? 'live' : 'open') : (row.closed ? 'closed' : 'open');
-  const sparkVals = sparkForEpoch(row);
   const head = el('div', { class: 'dn-fleet-head' }, [
     el('span', { class: 'dn-fleet-id', text: row.epoch_id }),
     el('span', { class: 'dn-chip dn-chip-' + (liveHere ? 'live' : st), text: liveHere ? 'running' : st }),
@@ -114,18 +123,18 @@ function miniStat(k, v, tone) {
   ]);
 }
 
-function sparkForEpoch(row) {
-  const def = state.epochDef;
-  if (def && def.epoch_id === row.epoch_id && Array.isArray(def.experiments)) {
-    const vals = [];
-    for (const e of def.experiments) {
-      const s = e && e.outcome && e.outcome.scalar_score;
-      if (svg.isNum(s)) vals.push(s);
-    }
-    if (vals.length >= 2) return vals;
+// This epoch's REAL per-generation best-scalar trajectory, in generation
+// order, from the per-epoch /api/score-trajectory payload. NEVER fabricates a
+// curve: when the epoch has fewer than 2 real points, the card shows the
+// honest "no trajectory yet" placeholder instead (see fleetCard).
+function epochTrajectoryValues(traj) {
+  const points = (traj && Array.isArray(traj.points)) ? traj.points : [];
+  const vals = [];
+  for (const p of points) {
+    const s = p && p.scalar;
+    if (svg.isNum(s)) vals.push(s);
   }
-  if (svg.isNum(row.best_scalar)) return [row.best_scalar * 1.18, row.best_scalar * 1.06, row.best_scalar];
-  return [];
+  return vals;
 }
 
 function healthPanel(hr) {

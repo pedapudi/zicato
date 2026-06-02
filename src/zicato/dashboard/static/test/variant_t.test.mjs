@@ -3973,4 +3973,130 @@ test('Tier2 (Class B): decisionFor never defaults null/absent → rejected', () 
   assertEqual(ui.decisionFor({}), 'baseline', 'empty (no parent) → baseline, never rejected');
 });
 
+// ====================================================================
+// Fleet cards (Environment view): each epoch card's hero sparkline shows
+// that epoch's OWN real per-generation trajectory — NEVER a fabricated
+// `[best×1.18, best×1.06, best]` curve (which renders shape-identical for
+// every epoch and would surface fabricated numbers).
+// ====================================================================
+
+// A two-epoch workspace whose two epochs have DIFFERENT real trajectories
+// (different scalars AND different lengths). scoreTrajectory is scoped per
+// epoch via `?epoch=<id>`, so each card must source ITS id's points.
+const FLEET_E0 = '2026-06-01_e0';
+const FLEET_E1 = '2026-06-02_e1';
+const FLEET_FIXTURE = {
+  '/api/workspace': { current_epoch_id: FLEET_E1, epochs: [
+    { epoch_id: FLEET_E0, generation_count: 5, promoted_count: 1, best_scalar: 46.813, closed: true, goal: 'e0 goal' },
+    { epoch_id: FLEET_E1, generation_count: 9, promoted_count: 0, best_scalar: 20.500, closed: false, goal: 'e1 goal' },
+  ], sparkline: [{ epoch_id: FLEET_E0, scalar: 46.813 }, { epoch_id: FLEET_E1, scalar: 20.500 }] },
+  '/api/health-report': { healthy: true, findings: [] },
+  // distinct scalars; e0 has 3 points, e1 has 5 — different series AND length.
+  [`/api/score-trajectory?epoch=${FLEET_E0}`]: { epoch_id: FLEET_E0, points: [
+    { generation_id: 'v0', scalar: 55.9 }, { generation_id: 'v1', scalar: 50.0 }, { generation_id: 'v4', scalar: 46.813 },
+  ] },
+  [`/api/score-trajectory?epoch=${FLEET_E1}`]: { epoch_id: FLEET_E1, points: [
+    { generation_id: 'v0', scalar: 56.2 }, { generation_id: 'v1', scalar: 53.5 }, { generation_id: 'v3', scalar: 50.07 },
+    { generation_id: 'v7', scalar: 40.5 }, { generation_id: 'v8', scalar: 20.500 },
+  ] },
+};
+function installFleetFetch(F) {
+  globalThis.fetch = async (path) => {
+    const v = lookupFixture(F || FLEET_FIXTURE, path);
+    if (v !== undefined) return { ok: true, json: async () => v };
+    return { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
+  };
+}
+// the value series each card's sparkline drew, read back from the SVG path's
+// M/L vertices (one vertex per finite value) — the only DOM-visible proof of
+// the series, and enough to compare length + shape across cards.
+function sparkPointCount(card) {
+  const path = card.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'path' && (n.getAttribute('class') || '').includes('dn-spark-line'))[0];
+  if (!path) return 0;
+  const d = path.getAttribute('d') || '';
+  return (d.match(/[ML]/g) || []).length;
+}
+
+test('fleet cards: two epochs with DIFFERENT real trajectories render DIFFERENT sparklines (per-epoch, keyed on epoch_id)', async () => {
+  freshState(); installFleetFetch();
+  const home = await import('../js/variants/T/views/home.js');
+  const host = document.createElement('div');
+  await home.render(host, { navigate() {}, href: router.href }, {});
+
+  const cards = allByClass(host, 'dn-fleet-card');
+  assertEqual(cards.length, 2, 'one fleet card per epoch');
+  const c0 = sparkPointCount(cards[0]);
+  const c1 = sparkPointCount(cards[1]);
+  assertEqual(c0, 3, 'e0 card sparkline draws its 3 REAL generation points');
+  assertEqual(c1, 5, 'e1 card sparkline draws its 5 REAL generation points');
+  assert(c0 !== c1, 'the two cards render visibly different series (different length) — not one shared synthetic curve');
+
+  // and the series are sourced from the PER-EPOCH endpoint (?epoch=<id>), so
+  // they reflect each epoch's real data rather than the single current contract.
+  assert(host.textContent.includes(FLEET_E0) && host.textContent.includes(FLEET_E1), 'both epoch cards rendered');
+});
+
+test('fleet cards: NO fabricated [best×1.18, best×1.06, best] fallback — an epoch with <2 real points shows the honest placeholder', async () => {
+  freshState();
+  // e0 keeps a real 3-point trajectory; e1 has only ONE real point (<2).
+  const F = JSON.parse(JSON.stringify(FLEET_FIXTURE));
+  F[`/api/score-trajectory?epoch=${FLEET_E1}`] = { epoch_id: FLEET_E1, points: [{ generation_id: 'v0', scalar: 56.2 }] };
+  installFleetFetch(F);
+  const home = await import('../js/variants/T/views/home.js');
+  const host = document.createElement('div');
+  await home.render(host, { navigate() {}, href: router.href }, {});
+
+  const cards = allByClass(host, 'dn-fleet-card');
+  assertEqual(cards.length, 2, 'one fleet card per epoch');
+  // e1 (one real point) → the honest "no trajectory yet" placeholder, NO path.
+  assertEqual(sparkPointCount(cards[1]), 0, 'an epoch with <2 real points draws NO sparkline path');
+  const placeholder = cards[1].querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').includes('dn-faint') && (n.textContent || '').includes('no trajectory yet'))[0];
+  assert(placeholder, 'it shows the existing honest "no trajectory yet" placeholder');
+
+  // e1 best_scalar is 20.500; the FABRICATED fallback would have produced the
+  // descending [20.5×1.18, 20.5×1.06, 20.5] curve (3 points). Prove it is GONE.
+  assert(sparkPointCount(cards[1]) !== 3, 'no synthetic 3-point [×1.18,×1.06,×1] curve is produced');
+  // e0 still draws its real 3-point series unchanged.
+  assertEqual(sparkPointCount(cards[0]), 3, 'the other epoch still draws its real trajectory');
+});
+
+test('fleet cards: existing rendering preserved — stats, epoch links, current-epoch highlight, and the real cross-epoch sparkline', async () => {
+  freshState(); installFleetFetch();
+  const home = await import('../js/variants/T/views/home.js');
+  const host = document.createElement('div');
+  await home.render(host, { navigate() {}, href: router.href }, {});
+
+  const cards = allByClass(host, 'dn-fleet-card');
+  // stats: best / gens / promoted are still on each card.
+  assert(cards[0].textContent.includes('46.813') && cards[0].textContent.includes('5'), 'e0 card keeps its best + gen stats');
+  // each card links to its epoch view.
+  assertEqual(cards[0].getAttribute('href'), router.href('epoch', { epochId: FLEET_E0 }), 'e0 card links to the e0 epoch view');
+  assertEqual(cards[1].getAttribute('href'), router.href('epoch', { epochId: FLEET_E1 }), 'e1 card links to the e1 epoch view');
+  // the current epoch (e1) is highlighted.
+  assert((cards[1].getAttribute('class') || '').includes('dn-is-current'), 'the current epoch card is highlighted');
+  assert(!(cards[0].getAttribute('class') || '').includes('dn-is-current'), 'the non-current epoch card is not highlighted');
+
+  // the cross-epoch trajectory sparkline is REAL workspace data (one point per
+  // epoch from ws.sparkline), NOT fabricated.
+  assert(host.textContent.includes('Cross-epoch trajectory'), 'the cross-epoch trajectory panel rendered');
+  assert(host.textContent.includes('best scalar per epoch'), 'it is the per-epoch (workspace) series, left intact');
+});
+
+test('fleet cards: digest-gated — identical workspace + trajectories do NOT rebuild the DOM (heartbeat no-op)', async () => {
+  freshState(); installFleetFetch();
+  const home = await import('../js/variants/T/views/home.js');
+  const host = document.createElement('div');
+  await home.render(host, { navigate() {}, href: router.href }, {});
+  const digest1 = host.getAttribute('data-t-digest');
+  const first = host.firstChild;
+  const writes1 = host.innerHTMLWriteCount();
+  assert(host.children.length > 0, 'environment painted');
+  await home.render(host, { navigate() {}, href: router.href }, {});
+  assertEqual(host.getAttribute('data-t-digest'), digest1, 'digest unchanged on the no-op repaint');
+  assert(host.firstChild === first, 'no clear-and-rebuild on the no-op repaint');
+  assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op repaint');
+});
+
 await run();
