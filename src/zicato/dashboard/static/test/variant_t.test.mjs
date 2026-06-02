@@ -5894,4 +5894,240 @@ test('font loader: every typeface family used in the CSS is requested by app_T.j
   assert(/display=swap/.test(appJs), 'fonts are requested with display=swap');
 });
 
+// ====================================================================
+// LIVE-RUN UX wave — five coordinated fixes on the live/structure/svg surface.
+// ====================================================================
+
+// (1) proportional trellis glyphs — the round status marks render as TRUE
+// circles (equal x/y scale) even when the bars stretch to fill a WIDE cell.
+test('svg.genDots: status glyphs are FIXED-ASPECT (1:1 viewBox, equal x/y) — round, not stretched, at a wide card', () => {
+  // a WIDE card: the row is an HTML flex container (no non-uniform SVG stretch),
+  // each glyph a 1:1-aspect SVG so the mark keeps equal x/y scale.
+  const row = svg.genDots({ width: 800, height: 14, cells: [
+    { label: 'v0', pass: 1, ran: true }, { label: 'v1', pass: 0, ran: true },
+    { label: 'v2', timeout: true, ran: true }, { label: 'v3', ran: false },
+  ] });
+  // the row spans the full width (flex, width:100%) but is NOT itself a
+  // preserveAspectRatio:'none' svg (which is what sheared the old glyphs).
+  assert(row.localName !== 'svg', 'genDots returns an HTML flex row, not a stretched svg');
+  const glyphs = svgsByClass(row, 'dn-glyph');
+  assertEqual(glyphs.length, 4, 'one fixed-aspect glyph svg per candidate');
+  for (const g of glyphs) {
+    const vb = (g.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+    assertEqual(vb[2], vb[3], 'the glyph viewBox is SQUARE (1:1) → equal x/y scale → a true circle');
+    assertEqual(g.getAttribute('preserveAspectRatio'), 'xMidYMid meet', 'the glyph keeps its aspect (no shear)');
+    assertEqual(g.getAttribute('width'), g.getAttribute('height'), 'the glyph is painted at a 1:1 box');
+  }
+});
+
+test('svg.sparkbar: bars still SPAN the width (stretch) but the verdict glyph is a SEPARATE fixed-aspect overlay (true triangle)', () => {
+  const node = svg.sparkbar({ width: 800, height: 30, verdict: 'promoted', bars: [
+    { label: 'v0', value: 10 }, { label: 'v1', value: 20 }, { label: 'v2', value: 5 },
+  ] });
+  // a wrapper holds the stretched bars + the fixed-aspect glyph.
+  assert(node.localName !== 'svg', 'a verdict sparkbar returns a positioning wrapper (bars + glyph)');
+  const bars = svgsByClass(node, 'dn-sparkbar')[0];
+  assert(bars, 'the bars layer is present');
+  assertEqual(bars.getAttribute('preserveAspectRatio'), 'none', 'the BARS still fill the cell width (stretch is fine for rectangles)');
+  assertEqual(bars.getAttribute('width'), '100%', 'the bars span the full card width');
+  const glyph = svgsByClass(node, 'dn-sparkbar-verdict')[0];
+  assert(glyph, 'the verdict glyph rides in its own overlay svg');
+  const vb = (glyph.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+  assertEqual(vb[2], vb[3], 'the verdict glyph viewBox is SQUARE → a true (un-sheared) triangle');
+  assertEqual(glyph.getAttribute('width'), glyph.getAttribute('height'), 'the verdict glyph is a 1:1 box');
+});
+
+// (2) candidate page + trellis are live-aware (current-epoch-scoped, digest-gated).
+const LIVE_UX_EPOCH = '2026-06-02_e9';
+function liveUxFixture() {
+  return {
+    '/api/epoch': {
+      epoch_id: LIVE_UX_EPOCH, closed: false, goal: 'g',
+      tournament: { structure: 'swiss', params: { rounds: 3 } },
+      experiments: [
+        { generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } },
+        { generation_id: 'v1', parent_generation_id: 'v0', outcome: {} },
+      ],
+      board: [
+        { id: 'b0', kind: 'single_turn', budget_s: 180, weight: 1 },
+        { id: 'b1', kind: 'single_turn', budget_s: 180, weight: 1 },
+      ],
+    },
+    '/api/lineage': { generations: [
+      { generation_id: 'v0', epoch_id: LIVE_UX_EPOCH, parent_generation_id: '', promoted: true },
+      { generation_id: 'v1', epoch_id: LIVE_UX_EPOCH, parent_generation_id: 'v0', promoted: null },
+    ] },
+    '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 50 }] },
+    '/api/tournaments': { epoch_id: LIVE_UX_EPOCH, champion_lineage: ['v0'], matchups: [] },
+    [`/api/generation/${LIVE_UX_EPOCH}/v0/per-entry`]: { entries: [{ entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: 1 }] },
+    [`/api/generation/${LIVE_UX_EPOCH}/v1/per-entry`]: { entries: [] },
+  };
+}
+
+test('candidate page (LIVE): in-flight board runs for THIS candidate show "N running" with progress; foreign-epoch runs ignored; structure-aware pending label', async () => {
+  freshState();
+  installFixtureMap(liveUxFixture());
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  // a CURRENT-epoch run in flight on v1 (swiss).
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: LIVE_UX_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b1', run_id: 'rr1', progress: 0.5, epoch_id: LIVE_UX_EPOCH }];
+  coreState.state.activeTournament = { epoch_id: LIVE_UX_EPOCH, structure: 'swiss', phase: 'running' };
+
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH, gen: 'v1' });
+  assert(allByClass(host, 'dn-board-inflight')[0], 'the candidate shows its in-flight board run card');
+  assert(/board running|boards running/.test(host.textContent), 'reads "N board(s) running"');
+  assert(/50%/.test(host.textContent), 'the in-flight board shows its progress (50%)');
+  // a swiss candidate awaiting the gate must NOT read "racing".
+  assert(!/⋯ racing/.test(host.textContent), 'the pending terminal label is structure-aware (swiss → not "racing")');
+  assert(/⋯ competing/.test(host.textContent), 'a swiss candidate reads "⋯ competing"');
+
+  // FOREIGN-epoch run must NOT light up this candidate.
+  freshState();
+  installFixtureMap(liveUxFixture());
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: 'some_other_epoch' });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b1', run_id: 'rr1', progress: 0.5 }];
+  coreState.state.activeTournament = { epoch_id: 'some_other_epoch', structure: 'swiss', phase: 'running' };
+  const host2 = document.createElement('div');
+  await candidate.render(host2, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH, gen: 'v1' });
+  assertEqual(allByClass(host2, 'dn-board-inflight').length, 0, 'a FOREIGN-epoch run does not light up this candidate');
+
+  coreState.state.heartbeat = { phase: 'idle' }; coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+test('board trellis (LIVE): in-flight cells light up from state.activeRuns (current epoch); a no-op beat does NOT rebuild; foreign epoch ignored', async () => {
+  freshState();
+  installFixtureMap(liveUxFixture());
+  const boards = await import('../js/variants/T/views/boards.js');
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: LIVE_UX_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b1', run_id: 'rr1', progress: 0.4, epoch_id: LIVE_UX_EPOCH }];
+  coreState.state.activeTournament = { epoch_id: LIVE_UX_EPOCH, structure: 'swiss', phase: 'running' };
+
+  const host = document.createElement('div');
+  await boards.render(host, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH });
+  const lit = allByClass(host, 'dn-trellis-live');
+  assertEqual(lit.length, 1, 'exactly the in-flight entry (b1) cell lights up');
+  assert(/running/.test(host.textContent), 'the lit cell carries an in-flight "running" tag');
+  const digestAfterFirst = host.getAttribute('data-t-digest');
+
+  // a NO-OP beat (identical live state) must NOT rebuild the trellis DOM.
+  const trellisBefore = allByClass(host, 'dn-trellis')[0];
+  await boards.render(host, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH });
+  assertEqual(host.getAttribute('data-t-digest'), digestAfterFirst, 'a no-op beat leaves the digest unchanged');
+  assert(allByClass(host, 'dn-trellis')[0] === trellisBefore, 'a no-op beat does NOT rebuild the trellis (node identity preserved)');
+
+  // FOREIGN-epoch run ignored — no lit cell.
+  freshState();
+  installFixtureMap(liveUxFixture());
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: 'foreign_e' });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b1', run_id: 'rr1', progress: 0.4 }];
+  coreState.state.activeTournament = { epoch_id: 'foreign_e', structure: 'swiss', phase: 'running' };
+  const host2 = document.createElement('div');
+  await boards.render(host2, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH });
+  assertEqual(allByClass(host2, 'dn-trellis-live').length, 0, 'a foreign-epoch run does not light up the trellis');
+
+  coreState.state.heartbeat = { phase: 'idle' }; coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+// (3) Match-ups live swiss — the ACTIVE round's pairings show in-flight progress
+// (NOT "being seeded"); "being seeded" only with no competitors.
+test('Match-ups (LIVE swiss): active-round pairings show in-flight board progress (NOT "being seeded"); accumulating points; seeded-empty only with no field', async () => {
+  freshState();
+  const F = liveUxFixture();
+  F['/api/active-tournament'] = {
+    epoch_id: LIVE_UX_EPOCH, structure: 'swiss', phase: 'running', structure_params: { rounds: 3, board_size: 4 },
+    competitors: [
+      { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' },
+      { generation_id: 'v2', role: 'challenger' }, { generation_id: 'v3', role: 'challenger' },
+    ],
+    rounds: [
+      { round_index: 0, label: 'Round 1', matches: [
+        { match_id: 'sw_r0_m0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'win' },
+        { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'] },  // in flight
+      ] },
+    ],
+    standings: [], champion_lineage: ['v0'],
+  };
+  installFixtureMap(F);
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v2', epoch_id: LIVE_UX_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v2', entry_id: 'b0', run_id: 'rr', progress: 1, epoch_id: LIVE_UX_EPOCH }];
+  coreState.state.activeTournament = F['/api/active-tournament'];
+
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH });
+  assert(allByClass(host, 'dt-live-pill')[0], 'the live pill is shown');
+  assert(svgsByClass(host, 'dn-swissladder')[0], 'the live swiss ladder renders (NOT a being-seeded empty)');
+  assert(!/being seeded/i.test(host.textContent), 'NOT "being seeded" once the field + active round exist');
+  // the in-flight pairing reads its board progress (running), not a bare "—".
+  assert(allByClass(host, 'dn-pairing-live')[0], 'the in-flight pairing shows live progress in the dense table');
+  assert(/running/.test(host.textContent), 'the active pairing reads "running"');
+  // a decided pairing's winner accumulates a Copeland point (v1 beat v0).
+  assert(host.textContent.includes('v1'), 'the decided pairing winner (v1) is shown');
+
+  // "being seeded" ONLY when there is NO competitor/round yet.
+  freshState();
+  const F2 = liveUxFixture();
+  F2['/api/active-tournament'] = { epoch_id: LIVE_UX_EPOCH, structure: 'swiss', phase: 'running', structure_params: { rounds: 3 }, competitors: [], rounds: [], standings: [] };
+  installFixtureMap(F2);
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: '', epoch_id: LIVE_UX_EPOCH });
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = F2['/api/active-tournament'];
+  const host2 = document.createElement('div');
+  await gens.render(host2, { navigate() {}, href: router.href }, { epochId: LIVE_UX_EPOCH });
+  assert(/being seeded|run is starting|fills in/i.test(host2.textContent), '"being seeded"/starting shows ONLY when no competitor/round exists yet');
+
+  coreState.state.heartbeat = { phase: 'idle' }; coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+// (4) the live hero BLOOMS from the proposed field → the live ladder once the
+// tournament is running (proposing tracker is the SEED of the ladder).
+test('live hero (BLOOM): a RUNNING swiss with the applied field as competitors (no round scored yet) shows the live LADDER, not the proposing tracker', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  // the tournament has STARTED (running) — the applied field (v1..v3) are
+  // competitors but no pairing has scored yet. The hero must BLOOM into the
+  // ladder seeded by these competitors, not stay on the proposing tracker.
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  coreState.state.activeTournament = {
+    structure: 'swiss', phase: 'running', epoch_id: HERO_EPOCH, structure_params: { rounds: 3 },
+    competitors: [
+      { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' },
+      { generation_id: 'v2', role: 'challenger' }, { generation_id: 'v3', role: 'challenger' },
+    ],
+    rounds: [], standings: [], champion_lineage: ['v0'],
+    field_status: [
+      { generation_id: 'v1', status: 'applied', seed: 2 },
+      { generation_id: 'v2', status: 'applied', seed: 3 },
+      { generation_id: 'v3', status: 'applied', seed: 4 },
+    ],
+  };
+
+  const root = mountLiveShell('#/');
+  assert(svgsByClass(root, 'dn-swissladder')[0], 'the hero BLOOMED into the live swiss ladder (applied field → competitors)');
+  assertEqual(allByClass(root, 'dn-prop-tracker').length, 0, 'the proposing tracker is REPLACED by the ladder once the tournament runs');
+  assertEqual(allByClass(root, 'dt-live-hero-nofunnel').length, 0, 'not the bland placeholder');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+// (5) the lifecycle DAG's pending terminal label is STRUCTURE-AWARE.
+test('lifecycle DAG: the pending terminal label is structure-aware (swiss → "⋯ competing", elim → "⋯ in bracket", racing → "⋯ racing", unknown → "⋯ awaiting gate")', () => {
+  const entries = [{ entry_id: 'b0', drift_loss: 10, pass_fail: 1 }];
+  const swiss = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries, structure: 'swiss' });
+  assert(swiss.textContent.includes('⋯ competing'), 'a pending swiss candidate reads "⋯ competing"');
+  assert(!swiss.textContent.includes('⋯ racing'), 'a pending swiss candidate does NOT read "racing"');
+
+  const elim = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries, structure: 'single_elim' });
+  assert(elim.textContent.includes('⋯ in bracket'), 'a pending elim candidate reads "⋯ in bracket"');
+
+  const racing = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries, structure: 'racing' });
+  assert(racing.textContent.includes('⋯ racing'), 'a pending racing candidate still reads "⋯ racing"');
+
+  const unknown = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries });
+  assert(unknown.textContent.includes('⋯ awaiting gate'), 'an unknown structure degrades to "⋯ awaiting gate"');
+});
+
 await run();

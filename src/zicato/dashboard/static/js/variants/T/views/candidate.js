@@ -24,12 +24,14 @@
 // /api/run/{e}/{g}/{entry}/{expectations,per-judge}.
 
 import { el } from '../../../core/dom.js';
+import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
-import { candidateProgression } from './structure.js';
+import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
+import { deriveLiveStatus } from '../livestatus.js';
 
 export async function render(host, ctx, params, route) {
   params = params || {};
@@ -71,14 +73,33 @@ export async function render(host, ctx, params, route) {
   const championScalar = championId ? scalarByGen.get(championId) : null;
   const allMatchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
 
+  // The epoch's CONFIGURED tournament structure — a LIVE non-gauntlet run for
+  // THIS epoch governs even before the contract records the block. Used for the
+  // structure-aware pending terminal label on the lifecycle DAG.
+  const tournament = (ep && ep.tournament && typeof ep.tournament === 'object') ? ep.tournament : null;
+  let structure = (tournament && tournament.structure) || 'gauntlet';
+  const liveStruct = (state.activeTournament && state.activeTournament.structure) || null;
+
+  // LIVE in-flight board runs, CURRENT-EPOCH-SCOPED. A run in flight for a
+  // FOREIGN epoch must not light up this candidate's board/dot-plot, so the set
+  // is gated on the live run belonging to the viewed epoch (mirrors gens.js).
+  const liveStatus = deriveLiveStatus({
+    heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
+  });
+  const epochInflight = inflightForActiveEpoch(state.activeRuns, {
+    heartbeat: state.heartbeat, activeTournament: state.activeTournament,
+    running: liveStatus.running, epochId,
+  });
+  if (structure === 'gauntlet' && liveStruct && epochInflight.length) structure = liveStruct;
+
   // Resolve each side's full panel data (cached). Side B only when comparing.
   // The primary side (A) honours the entry drill-down param; the compare side
   // (B) reads its lifecycle clean.
-  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, bracket);
-  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, bracket) : null;
+  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, bracket, epochInflight);
+  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, bracket, epochInflight) : null;
 
   const digest = JSON.stringify({
-    epochId, genId, cmpId, entry: params.entry || null,
+    epochId, genId, cmpId, entry: params.entry || null, structure,
     a: candidateDigest(sideA), b: sideB ? candidateDigest(sideB) : null,
   });
 
@@ -106,8 +127,8 @@ export async function render(host, ctx, params, route) {
     ].filter(Boolean)));
 
     nodes.push(splitFrame({
-      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId) },
-      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true) } : null,
+      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId, structure) },
+      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true, structure) } : null,
       emptyTitle: 'no comparison',
       emptyPrompt: 'Choose a candidate above to compare its lifecycle, gate, match-ups and per-board scoring against ' + genId + '.',
     }));
@@ -117,7 +138,7 @@ export async function render(host, ctx, params, route) {
 
 // Resolve one candidate's full panel data (all cached reads). `entryParam`
 // only applies to the primary (A) side's drill-down.
-async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, bracket) {
+async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, bracket, epochInflight) {
   const node = genList.find((g) => g.id === genId) || { id: genId, parent: null, promoted: null };
   const baseline = !node.parent;
   const exp = experiments.find((x) => x.generation_id === genId) || null;
@@ -194,11 +215,16 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
     drillRow = entries.find((e) => e.entry_id === entryParam) || null;
   }
 
+  // LIVE — this candidate's in-flight board runs (current-epoch-scoped set,
+  // filtered to THIS gen). Drives the BOARD lifecycle node + the per-board
+  // dot-plot's "N running" live indicators.
+  const inflight = inflightForEntryGen(epochInflight, null, genId);
+
   return {
     node, baseline, decision, mpts, entries, mine, gateSpecs, gates,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
-    entryParam, exps, judges, drillRow,
+    entryParam, exps, judges, drillRow, inflight,
   };
 }
 
@@ -267,6 +293,13 @@ function candidateDigest(s) {
     drill: s.entryParam || null,
     drillExp: s.exps && Array.isArray(s.exps.outcomes) ? s.exps.outcomes.map((o) => [o.kind, o.passed, o.judge_name, o.detail]) : null,
     drillJudge: s.judges && Array.isArray(s.judges.judges) ? s.judges.judges.map((j) => [j.judge_name, j.weighted_loss]) : null,
+    // LIVE in-flight board runs for this candidate — folded into the digest so a
+    // beat that advances progress repaints, but a no-op heartbeat stays equal.
+    inflight: Array.isArray(s.inflight) ? s.inflight.map((r) => {
+      const pr = runProgressRatio(r);
+      return [r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : r.entry || null),
+        r.run_id || null, pr != null ? pr.toFixed(2) : null];
+    }).sort() : null,
   };
 }
 
@@ -276,7 +309,7 @@ function candidateDigest(s) {
 // SPLIT-LAYOUT flag — true for BOTH panes whenever a comparison is shown — and
 // drives the figure viewBox WIDTH (so A and B scale identically), independent
 // of the per-side `cmpId` (which is null on B but the layout is still split).
-function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow) {
+function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structure) {
   const opts = cmpId ? { cmp: cmpId } : undefined;
   const node = s.node;
   const genId = node.id;
@@ -312,6 +345,10 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow) {
 
   dagCard.appendChild(lifecycleDag({
     genId, parentId: node.parent, baseline, promoted: node.promoted, decision: s.decision,
+    // structure-aware pending terminal label (swiss → "⋯ competing", elim → "⋯
+    // in bracket", racing → "⋯ racing"), so an in-flight non-racing candidate
+    // does not wrongly read "racing".
+    structure,
     deltaScalar: s.primaryDelta, patchPoints: s.mpts, entries: s.entries,
     // candidate-vs-champion comparison (so the circles + Σ explain the Δ the
     // gate sees) and the gate-rule explanation (which of the 3 rules decided).
@@ -336,6 +373,45 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow) {
   // a glance with detail on demand (de-crowd).
   dagCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: baseline ? 'parent → patch → board → Σ → gate → terminal · click a board node → its drill-down' : 'parent → patch → board → Σ → gate → terminal · hover the “?” for how to read it' }));
   host.appendChild(section('Lifecycle · cause → effect → verdict', dagCard));
+
+  // ---- LIVE — this candidate's in-flight board runs (current-epoch-scoped) ----
+  // A candidate mid-run reads "N running" with per-board progress, NOT a static
+  // page. Rendered for ANY structure (active-runs is structure-agnostic); the
+  // dot-plot below covers COMPLETED boards, this covers the ones still running.
+  const inflight = Array.isArray(s.inflight) ? s.inflight : [];
+  if (inflight.length) {
+    const liveCard = el('div', { class: 'dn-panel dn-board-inflight' });
+    liveCard.appendChild(el('div', { class: 'dn-inflight-head' }, [
+      el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
+      el('span', { class: 'dn-inflight-count', text: String(inflight.length) + (inflight.length === 1 ? ' board running' : ' boards running') }),
+      el('span', { class: 'dn-faint', text: ' for this candidate' }),
+    ]));
+    const tbl = el('table', { class: 'dn-board-table dn-inflight-table' });
+    tbl.appendChild(el('thead', null, [el('tr', null, [
+      el('th', { text: 'board' }), el('th', { text: 'run' }), el('th', { text: 'progress' }),
+    ])]));
+    const tbody = el('tbody');
+    for (const r of inflight) {
+      const eid = r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : (r.entry != null ? r.entry : '—'));
+      const pr = runProgressRatio(r);
+      const pct = pr != null ? Math.round(pr * 100) : null;
+      const row = el('tr', { class: 'dn-inflight-row' }, [
+        el('td', { class: 'dn-mono', text: String(eid) }),
+        el('td', { class: 'dn-mono dn-faint', text: r.run_id ? String(r.run_id) : 'pending' }),
+        el('td', null, [
+          el('span', { class: 'dn-progress' }, [
+            el('span', { class: 'dn-progress-fill', style: 'width:' + (pct != null ? pct : 6) + '%' + (pct == null ? ';opacity:0.4' : '') }),
+          ]),
+          el('span', { class: 'dn-mono dn-faint dn-progress-pct', text: pct != null ? ' ' + pct + '%' : ' running…' }),
+        ]),
+      ]);
+      if (eid !== '—') { row.style.cursor = 'pointer'; row.addEventListener('click', () => ctx.navigate('board', { epochId, entry: eid, gen: genId })); }
+      tbody.appendChild(row);
+    }
+    tbl.appendChild(tbody);
+    liveCard.appendChild(tbl);
+    host.appendChild(section('Live · boards running for this candidate', liveCard));
+  }
 
   // ---- per-board scoring dot-plot ----
   // Each per-entry record carries the tournament context it ran in (match_id /

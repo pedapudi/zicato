@@ -705,6 +705,9 @@
   .dn-trellis-cell { margin: 0; padding: 8px 10px; border: 1px solid var(--v2-rule); border-radius: 4px;
     background: var(--v2-panel); transition: border-color 0.12s; }
   .dn-trellis-cell:hover { border-color: var(--v2-accent); }
+  /* LIVE — a trellis cell with in-flight runs (current epoch) lights up. */
+  .dn-trellis-cell.dn-trellis-live { border-color: var(--v2-accent); box-shadow: inset 0 0 0 1px var(--v2-accent); }
+  .dn-trellis-live-tag { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; font-family: var(--v2-mono); font-size: 9px; color: var(--v2-accent); }
   .dn-trellis-cap { display: flex; flex-direction: column; gap: 2px; margin-bottom: 5px; }
   .dn-trellis-id { font-family: var(--v2-mono); font-size: 11.5px; color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dn-trellis-meta { display: flex; align-items: center; gap: 4px; font-size: 10px; }
@@ -715,9 +718,21 @@
   .dn-trellis-tags { color: var(--v2-ink-faint); }
   .dn-trellis-preview { font-size: 10px; margin-top: 4px; font-style: italic; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+  /* sparkbar verdict overlay — the bars stretch to fill width, the glyph keeps
+     its 1:1 aspect (a TRUE triangle, never sheared into an oval/wedge). */
+  .dn-sparkbar-wrap { position: relative; display: block; }
+  .dn-sparkbar-verdict { position: absolute; top: 1px; right: 1px; pointer-events: auto; }
+
+  /* genDots — a flex row of equal-flex slots, each a fixed-aspect 1:1 glyph SVG
+     so the round status marks render proportionally (no width-stretch ovals)
+     while the row still spans the cell width and aligns under the bars. */
+  .dn-genrow { display: flex; align-items: center; width: 100%; gap: 0; }
+  .dn-genrow-slot { flex: 1 1 0; display: flex; align-items: center; justify-content: center; min-width: 0; }
+  .dn-glyph { display: block; flex: none; }
+
   .dn-glyph-pass { fill: var(--v2-good); }
   .dn-glyph-fail { stroke: var(--v2-bad); stroke-width: 1.3; }
-  .dn-glyph-timeout { fill: var(--v2-caution); font-size: 9px; }
+  .dn-glyph-timeout { fill: var(--v2-caution); font-size: 7px; }
   .dn-glyph-none { fill: none; stroke: var(--v2-ink-faint); stroke-width: 0.8; }
 
   .dn-vbar { fill: var(--v2-accent); opacity: 0.85; }
@@ -1654,6 +1669,10 @@
     text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 6px; }
   .dt-swiss-round-h:first-child { margin-top: 0; }
   .dt-swiss-pairings { margin-bottom: 10px; }
+  /* LIVE — an in-flight swiss pairing (no committed winner) shows its board
+     progress instead of a bare "—". */
+  .dt-swiss-pairings .dn-pairing-inflight-row { background: color-mix(in srgb, var(--v2-accent) 6%, transparent); }
+  .dn-pairing-live { display: inline-flex; align-items: center; gap: 5px; color: var(--v2-accent); }
 
   /* swiss STANDINGS LADDER (the swiss hero — analogous to the racing ladder):
      per-round pairings + accumulating Copeland-point standings → champion-gate.
@@ -1893,6 +1912,7 @@
     .dt-live-hero-dot { animation: none; }
     .dt-live-enter { animation: none; }
     .dt-ticker-row { animation: none; }
+    .dn-inflight-pulse { animation: none; }
     .dn-funnel-band, .dn-funnel-runner, .dn-funnel-deadedge,
     .dn-raceladder-runner, .dn-raceladder-edge, .dn-raceladder-bar,
     .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge, .dn-swissladder-bar,

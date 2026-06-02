@@ -46,6 +46,73 @@ export function isNonGauntlet(structure) {
   return s === 'single_elim' || s === 'double_elim' || s === 'swiss' || s === 'racing';
 }
 
+// ── shared LIVE-AWARENESS helpers (epoch-scoped, pure) ────────────────
+//
+// The candidate page + board trellis must reflect IN-FLIGHT board runs (which
+// candidate×board is running now), but ONLY for the ACTIVE epoch — a live run
+// in e1 must not light up e0's static cells. These helpers are pure (they take
+// the raw live signals, never AppState) so they unit-test without a DOM, and
+// they mirror the per-epoch guard views/gens.js + views/epoch.js already use.
+
+// Does the live run (active tournament / heartbeat) belong to the VIEWED epoch?
+// Keyed off the active-tournament's epoch_id, falling back to the heartbeat's.
+// When NEITHER live signal carries an epoch tag it is a legacy single-epoch
+// payload, so we trust it for the viewed epoch.
+export function liveBelongsToEpoch(epochId, { heartbeat, activeTournament } = {}) {
+  if (epochId == null) return false;
+  const atEpoch = (activeTournament && activeTournament.epoch_id != null) ? activeTournament.epoch_id : null;
+  const hbEpoch = (heartbeat && heartbeat.epoch_id != null) ? heartbeat.epoch_id : null;
+  if (atEpoch != null) return String(atEpoch) === String(epochId);
+  if (hbEpoch != null) return String(hbEpoch) === String(epochId);
+  return true;
+}
+
+// The in-flight board-units scoped to the ACTIVE epoch — [] when the live run
+// (if any) does not belong to the viewed epoch, so a foreign-epoch run never
+// leaks in. `running` gates it: an idle workspace yields no in-flight set.
+export function inflightForActiveEpoch(activeRuns, { heartbeat, activeTournament, running, epochId } = {}) {
+  if (!running) return [];
+  if (!liveBelongsToEpoch(epochId, { heartbeat, activeTournament })) return [];
+  return Array.isArray(activeRuns) ? activeRuns.filter((r) => r && typeof r === 'object') : [];
+}
+
+// Pull the board-entry id off an in-flight run record (payloads vary).
+function runEntryId(r) {
+  if (!r || typeof r !== 'object') return null;
+  return r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : (r.entry != null ? r.entry : null));
+}
+// Pull the generation id off an in-flight run record.
+function runGenId(r) {
+  if (!r || typeof r !== 'object') return null;
+  return r.generation_id != null ? r.generation_id : (r.gen != null ? r.gen : null);
+}
+
+// Filter in-flight runs to a single candidate×board cell (gen + entry). Either
+// key may be omitted to filter on just the other.
+export function inflightForEntryGen(runs, entryId, genId) {
+  const list = Array.isArray(runs) ? runs : [];
+  return list.filter((r) => {
+    if (entryId != null && runEntryId(r) !== entryId) return false;
+    if (genId != null && String(runGenId(r)) !== String(genId)) return false;
+    return true;
+  });
+}
+
+// A normalised 0..1 progress ratio for an in-flight run (some payloads send
+// 0..100 — clamp + normalise; fall back to elapsed/budget).
+export function runProgressRatio(r) {
+  let p = r && (r.progress != null ? r.progress : r.fraction);
+  if (!svg.isNum(p)) {
+    if (r && svg.isNum(r.elapsed_seconds) && svg.isNum(r.budget_seconds) && r.budget_seconds > 0) {
+      p = r.elapsed_seconds / r.budget_seconds;
+    } else return null;
+  }
+  if (p > 1) p = p / 100;
+  if (p < 0) p = 0;
+  if (p > 1) p = 1;
+  return p;
+}
+
 // Normalize EITHER the LIVE /api/active-tournament OR the COMPLETED
 // /api/tournament-structure into ONE renderer input. `live` ⇒ the payload came
 // from active-tournament with a non-idle phase.
@@ -637,11 +704,30 @@ function renderSwiss(st, ctx, epochId) {
       for (const m of matches) {
         const comps = Array.isArray(m.competitors) ? m.competitors : [];
         const delta = svg.isNum(m.delta_scalar) ? m.delta_scalar : null;
-        tbody.appendChild(el('tr', null, [
+        // LIVE — an in-flight pairing (no committed winner yet) reads its board
+        // progress (k/N) + in-flight count, NOT a bare "—". The progressive
+        // builder stamps done/total/inflight/queued on the active round's
+        // matches; a completed match leaves them undefined and renders as before.
+        const inflight = m.pending && !m.winner;
+        const queued = !!m.queued && !m.winner && !m.bye;
+        let winnerCell;
+        if (m.winner) winnerCell = el('td', { class: 'dn-mono', text: m.winner });
+        else if (m.bye) winnerCell = el('td', { class: 'dn-mono', text: 'bye' });
+        else if (queued) winnerCell = el('td', { class: 'dn-mono dn-faint', text: 'queued' });
+        else if (inflight) {
+          const done = svg.isNum(m.done) ? m.done : 0;
+          const total = svg.isNum(m.total) ? m.total : null;
+          const inf = svg.isNum(m.inflight) ? m.inflight : 0;
+          winnerCell = el('td', { class: 'dn-mono dn-pairing-live' }, [
+            el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
+            el('span', { text: total != null ? `running · ${done}/${total}` : (inf ? `running · ${inf} board${inf === 1 ? '' : 's'}` : 'running…') }),
+          ]);
+        } else winnerCell = el('td', { class: 'dn-mono', text: '—' });
+        tbody.appendChild(el('tr', { class: inflight ? 'dn-pairing-inflight-row' : '' }, [
           el('td', { class: 'dn-mono' }, [
             linkGen(comps[0], ctx, epochId), comps.length > 1 ? el('span', { class: 'dn-faint', text: ' vs ' }) : null, comps.length > 1 ? linkGen(comps[1], ctx, epochId) : null,
           ].filter(Boolean)),
-          el('td', { class: 'dn-mono', text: m.winner || (m.bye ? 'bye' : '—') }),
+          winnerCell,
           el('td', { class: 'dn-num dn-mono ' + (delta > 0 ? 'dn-bad-t' : delta < 0 ? 'dn-good-t' : ''), text: svg.isNum(delta) ? svg.fmtSigned(delta, 1) : '—' }),
         ]));
       }
@@ -974,12 +1060,38 @@ function buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, byeDecides, m
     rounds.push({ round_index: raw && raw.round_index != null ? raw.round_index : ri, label: (raw && raw.label) || `Round ${ri + 1}`, queued, matches });
   }
 
+  // BLOOM the ladder from the applied FIELD: when the tournament is running but
+  // no round has scored yet (no committed winner anywhere) AND the payload
+  // carries no standings, seed a zero-point standings row per competitor so the
+  // swiss ladder shows the applied challengers as live competitors immediately —
+  // not a "being seeded" empty (the proposing tracker is the SEED of the ladder,
+  // not a dead-end list). Once ANY pairing scores, swissModel accumulates the
+  // real Copeland points from the pairings — so this seed never masks progress.
+  let standings = Array.isArray(at.standings) ? at.standings : [];
+  const anyScored = rounds.some((r) => (Array.isArray(r.matches) ? r.matches : []).some((m) => m && (m.winner || m.decision)));
+  // the bloom only fires once the TOURNAMENT phase has started — during the
+  // proposing phase the field is still being minted, so the hero keeps the
+  // proposing-step tracker (the SEED of the ladder) rather than blooming early.
+  const isProposing = /(^|[:_-])propos/i.test(phase);
+  // a real field has at least one CHALLENGER (not just the champion seat) —
+  // otherwise there is nothing yet to seed the ladder with.
+  const challengerCount = competitors.filter((c) => c && c.generation_id != null && String(c.role || '').toLowerCase() !== 'champion').length;
+  if (!standings.length && !anyScored && !isProposing && challengerCount > 0) {
+    standings = competitors
+      .filter((c) => c && c.generation_id != null)
+      .map((c) => ({
+        generation_id: String(c.generation_id),
+        points: 0, wins: 0, draws: 0, losses: 0,
+        status: String(c.role || '').toLowerCase() === 'champion' ? 'champion' : '',
+      }));
+  }
+
   return normalizeStructure({
     structure: String(at.structure),
     structure_params: params,
     competitors,
     rounds,
-    standings: Array.isArray(at.standings) ? at.standings : [],
+    standings,
     champion_lineage: Array.isArray(at.champion_lineage) ? at.champion_lineage : [],
     phase: at.phase != null ? at.phase : (heartbeat && heartbeat.phase) || 'running',
     source: 'live',

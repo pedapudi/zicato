@@ -974,3 +974,52 @@ is **digest-gated** + **fit-to-width** + **theme-token-only** (all 16 themes).
 A small shared `svg.clickable(node, fn)` helper (click + Enter/Space) was
 introduced and applied across the SVG marks, collapsing the repeated
 cursor/click/keydown wiring.
+
+## Live-run legibility wave — proportional glyphs · candidate/trellis live-awareness · Match-ups progressive fill · hero bloom · structure-aware pending label
+
+Five coordinated fixes on the shared live/structure/svg surface so an in-flight
+run reads correctly everywhere. All stay **digest-gated**, **current-epoch-scoped**
+(`liveBelongsToEpoch` / `inflightForActiveEpoch`), theme-token-only, and
+fit-to-width.
+
+1. **Proportional trellis glyphs** (`svg.genDots`, `svg.sparkbar`). The trellis
+   card stretches non-uniformly to fill its grid column, so a `preserveAspectRatio:'none'`
+   SVG sheared the round status marks into ovals. `genDots` now returns an **HTML
+   flex row** of equal-flex slots, each holding a **fixed 1:1-viewBox glyph SVG**
+   (`xMidYMid meet`) — the row still spans the cell width and the glyphs align
+   under their bars, but every mark renders as a true circle. The `sparkbar`
+   verdict triangle moved out of the stretched bars layer into a **separate
+   1:1-aspect overlay SVG** (`.dn-sparkbar-verdict`) pinned to the corner via an
+   HTML wrapper; the bars themselves still stretch (rectangles, fine).
+
+2. **Candidate page + board trellis live-awareness.** New shared, pure helpers in
+   `views/structure.js`: `liveBelongsToEpoch(epochId, {heartbeat,activeTournament})`,
+   `inflightForActiveEpoch(...)`, `inflightForEntryGen(runs, entry, gen)`,
+   `runProgressRatio(r)`. `views/candidate.js` now shows a **"N boards running"**
+   live card (per-board progress, click → board drill-down) for the viewed
+   candidate, and `views/boards.js` lights up in-flight **trellis cells**
+   (`.dn-trellis-live` + a running tag). Both are current-epoch-scoped (a foreign
+   run never leaks) and fold the in-flight set into the digest, so a no-op beat
+   rebuilds nothing.
+
+3. **Match-ups live swiss — progressive fill.** The swiss dense pairings table
+   (`renderSwiss`) now renders the active round's **in-flight pairings** with board
+   progress (`running · k/N`) instead of a bare dash; queued pairings read "queued".
+   The ladder/bracket/funnel already filled progressively from the live models;
+   "being seeded" now shows only before any competitor/round exists.
+
+4. **Live hero bloom.** `buildLiveRoundModel` (swiss/elim) now **seeds zero-point
+   standings from the applied competitors** once the tournament phase is RUNNING
+   (and no pairing has scored yet, and there is at least one challenger). This
+   makes `swissModel.hasRounds` true, so the hero **blooms** from the proposing
+   tracker into the live standings ladder the moment the field is applied — the
+   tracker is the seed of the ladder, not a dead-end. Guarded against the
+   proposing phase so the tracker still leads while the field is being minted;
+   once any pairing scores, the real accumulating Copeland points take over.
+
+5. **Structure-aware pending terminal label** (`dag.js`). `lifecycleDag` takes a
+   `structure` option; the pending terminal node reads racing / competing (swiss) /
+   in bracket (elim) / at gate (gauntlet) / awaiting gate (unknown) — never a
+   hardcoded "racing" for a non-racing candidate. `views/candidate.js` derives the
+   structure from the epoch contract (a live non-gauntlet run governs when in
+   flight) and threads it in.

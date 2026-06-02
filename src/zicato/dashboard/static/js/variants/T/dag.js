@@ -184,6 +184,21 @@ const KEY_LINE_H = 12;
 // render through the node boxes when the fan span was small — the bug this fixes.)
 const KEY_PAD = NODE_BOX_H / 2 + KEY_GAP + KEY_LINE_H;
 
+// The pending TERMINAL label is STRUCTURE-AWARE: a swiss/elim candidate awaiting
+// the gate must not read "racing". racing → "⋯ racing", swiss → "⋯ competing",
+// single/double elim → "⋯ in bracket"; an unknown/absent structure degrades to a
+// neutral "⋯ awaiting gate".
+function pendingTermLabel(structure) {
+  switch (String(structure || '').toLowerCase()) {
+    case 'racing': return '⋯ racing';
+    case 'swiss': return '⋯ competing';
+    case 'single_elim':
+    case 'double_elim': return '⋯ in bracket';
+    case 'gauntlet': return '⋯ at gate';
+    default: return '⋯ awaiting gate';
+  }
+}
+
 export function lifecycleDag(spec) {
   const o = spec || {};
   const entries = Array.isArray(o.entries) ? o.entries : [];
@@ -462,7 +477,7 @@ export function lifecycleDag(spec) {
   let termLabel, termSub, termCls;
   if (baseline) { termLabel = 'seed'; termSub = 'defines floor'; termCls = 'ezn-baseline'; }
   else if (promoted) { termLabel = '♛ promoted'; termSub = 'new champion'; termCls = 'ezn-promoted'; }
-  else if (pending) { termLabel = '⋯ racing'; termSub = 'awaiting gate'; termCls = 'ezn-running'; }
+  else if (pending) { termLabel = pendingTermLabel(o.structure); termSub = 'awaiting gate'; termCls = 'ezn-running'; }
   else { termLabel = '✕ dead branch'; termSub = 'champion stands'; termCls = 'ezn-rejected'; }
   edgeLayer.appendChild(svgEl('path', { d: flow(X.gate + 0.06 * w, midY, X.term - 0.045 * w, midY), class: 'ezn-edge ' + (promoted ? 'ezn-edge-good' : pending ? 'ezn-edge-neutral' : 'ezn-edge-bad'), fill: 'none' }));
   rectNode(nodeLayer, X.term, midY, 0.1 * w, 48, termLabel, termSub, termCls);

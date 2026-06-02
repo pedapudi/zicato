@@ -399,6 +399,10 @@ export function sparkbar(opts) {
   const footH = 2;
   // FIT-TO-WIDTH inside its trellis cell: width:100% + viewBox (height is the
   // density-scaled intrinsic dimension).
+  // The BARS layer stretches non-uniformly to fill the cell width (bars are
+  // rectangles — stretching them is fine). The verdict GLYPH must stay a true
+  // triangle, so it rides in a SEPARATE fixed-aspect overlay (see below), NOT
+  // inside this `preserveAspectRatio:'none'` viewBox.
   const svg = svgEl('svg', { class: 'dn-sparkbar', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none', role: 'img' });
   if (bars.length === 0) {
     svg.appendChild(svgEl('line', { x1: pad, y1: h - footH, x2: w - pad, y2: h - footH, class: 'dn-spark-empty' }));
@@ -425,40 +429,61 @@ export function sparkbar(opts) {
     }
   });
   svg.appendChild(svgEl('line', { x1: pad, y1: y0, x2: w - pad, y2: y0, class: 'dn-sparkbar-foot' }));
-  if (o.verdict === 'promoted' || o.verdict === 'rejected') {
-    const good = o.verdict === 'promoted';
-    const gx = w - pad - 3; const gy = pad + 4; const r = 3.2;
-    const tri = good ? `${gx},${gy - r} ${gx - r},${gy + r} ${gx + r},${gy + r}` : `${gx},${gy + r} ${gx - r},${gy - r} ${gx + r},${gy - r}`;
-    svg.appendChild(hov(svgEl('polygon', { points: tri, class: 'dn-verdict-glyph ' + (good ? 'dn-good' : 'dn-bad') }), o.verdict));
-  }
-  return svg;
+  if (o.verdict !== 'promoted' && o.verdict !== 'rejected') return svg;
+
+  // The verdict triangle as a FIXED-ASPECT (1:1 viewBox) overlay so it renders
+  // as a true triangle — never sheared by the bars' non-uniform width stretch.
+  // The bars SVG + the glyph SVG share an HTML positioning wrapper; the glyph
+  // pins to the top-right corner (where it sat inside the old stretched viewBox).
+  const good = o.verdict === 'promoted';
+  const r = 3.2;
+  const tri = good ? `5,${5 - r} ${5 - r},${5 + r} ${5 + r},${5 + r}` : `5,${5 + r} ${5 - r},${5 - r} ${5 + r},${5 - r}`;
+  const gsz = 12;
+  const glyph = svgEl('svg', { class: 'dn-sparkbar-verdict', width: gsz, height: gsz, viewBox: '0 0 10 10', preserveAspectRatio: 'xMidYMid meet', role: 'img' });
+  glyph.appendChild(svgEl('polygon', { points: tri, class: 'dn-verdict-glyph ' + (good ? 'dn-good' : 'dn-bad') }));
+  hov(glyph, o.verdict);
+  return el('div', { class: 'dn-sparkbar-wrap' }, [svg, glyph]);
 }
 
-// A row of pass/fail/timeout glyphs.
+// A row of pass/fail/timeout glyphs — PROPORTIONAL (true circles, no oval
+// distortion). The round status marks must NOT inherit the trellis cell's
+// non-uniform width stretch, so each glyph is a FIXED 1:1-aspect SVG laid out
+// in an HTML flex row (one equal-flex cell per candidate, glyphs aligned under
+// their bars). The row still spans the full cell width; only the inner glyphs
+// keep their aspect, so a ✓/✕/⏱/○ renders round, never elliptical.
 export function genDots(opts) {
   const o = opts || {};
   const cells = Array.isArray(o.cells) ? o.cells : [];
-  const w = o.width || 200;
   const h = o.height || 14;
-  const pad = 2;
-  const svg = svgEl('svg', { class: 'dn-genrow', width: '100%', height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'none', role: 'img' });
-  const n = Math.max(1, cells.length);
-  const slot = (w - 2 * pad) / n;
-  cells.forEach((c, i) => { svg.appendChild(outcomeGlyph(c, pad + slot * (i + 0.5), h / 2)); });
-  return svg;
+  const row = el('div', { class: 'dn-genrow', role: 'img' });
+  // a fixed mark side so the 1:1 viewBox never stretches with the cell width;
+  // capped by the row height so dense rows stay compact.
+  const mark = Math.max(8, Math.min(h, 14));
+  for (const c of cells) {
+    const slot = el('span', { class: 'dn-genrow-slot' });
+    slot.appendChild(outcomeGlyph(c, mark));
+    row.appendChild(slot);
+  }
+  if (!cells.length) row.appendChild(el('span', { class: 'dn-genrow-slot' }));
+  return row;
 }
 
-function outcomeGlyph(d, x, cy) {
-  if (d && d.ran === false) return hov(svgEl('circle', { cx: x, cy, r: 2.2, class: 'dn-glyph-none' }), 'no run');
-  if (d.timeout) return hov(svgEl('text', { x, y: cy + 3, class: 'dn-glyph-timeout', 'text-anchor': 'middle' }, ['⏱']), 'budget exceeded (timeout)');
-  if (d.pass === true || d.pass === 1) return hov(svgEl('circle', { cx: x, cy, r: 2.4, class: 'dn-glyph-pass' }), 'passed');
-  if (d.pass === false || d.pass === 0) {
-    const g = svgEl('g', null);
-    g.appendChild(svgEl('line', { x1: x - 2.4, y1: cy - 2.4, x2: x + 2.4, y2: cy + 2.4, class: 'dn-glyph-fail' }));
-    g.appendChild(svgEl('line', { x1: x - 2.4, y1: cy + 2.4, x2: x + 2.4, y2: cy - 2.4, class: 'dn-glyph-fail' }));
-    return hov(g, 'failed');
+// One fixed-aspect (1:1 viewBox) glyph SVG, so the mark renders as a TRUE
+// circle / square-cornered cross regardless of the parent's width stretch.
+function outcomeGlyph(d, side) {
+  const s = side || 14;
+  const svg = svgEl('svg', { class: 'dn-glyph', width: s, height: s, viewBox: '0 0 10 10', preserveAspectRatio: 'xMidYMid meet', role: 'img' });
+  const cx = 5, cy = 5;
+  if (d && d.ran === false) { svg.appendChild(svgEl('circle', { cx, cy, r: 2.2, class: 'dn-glyph-none' })); return hov(svg, 'no run'); }
+  if (d && d.timeout) { svg.appendChild(svgEl('text', { x: cx, y: cy + 3.2, class: 'dn-glyph-timeout', 'text-anchor': 'middle' }, ['⏱'])); return hov(svg, 'budget exceeded (timeout)'); }
+  if (d && (d.pass === true || d.pass === 1)) { svg.appendChild(svgEl('circle', { cx, cy, r: 2.6, class: 'dn-glyph-pass' })); return hov(svg, 'passed'); }
+  if (d && (d.pass === false || d.pass === 0)) {
+    svg.appendChild(svgEl('line', { x1: cx - 2.6, y1: cy - 2.6, x2: cx + 2.6, y2: cy + 2.6, class: 'dn-glyph-fail' }));
+    svg.appendChild(svgEl('line', { x1: cx - 2.6, y1: cy + 2.6, x2: cx + 2.6, y2: cy - 2.6, class: 'dn-glyph-fail' }));
+    return hov(svg, 'failed');
   }
-  return hov(svgEl('circle', { cx: x, cy, r: 2.2, class: 'dn-glyph-none' }), 'no predicate');
+  svg.appendChild(svgEl('circle', { cx, cy, r: 2.2, class: 'dn-glyph-none' }));
+  return hov(svg, 'no predicate');
 }
 
 // ---- horizontal value bars (per-judge losses) ----------------------
