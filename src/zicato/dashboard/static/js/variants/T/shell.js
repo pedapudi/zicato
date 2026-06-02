@@ -305,7 +305,7 @@ function wireRailHandle(handle, root) {
 
 // ---- the colour SWATCH DROPDOWN (Change 6) --------------------------
 //
-// Thirteen themes is too many for an inline button row, so the colour picker is
+// Sixteen themes is too many for an inline button row, so the colour picker is
 // a dropdown. The CLOSED control is a button showing the current theme's swatch
 // strip + name. Opening reveals a listbox; each option is a row with its own
 // swatch strip (ground · surface · ink · improve · regress — the legibility
@@ -415,7 +415,7 @@ export function mountShell(root) {
 
   _crumbHost = el('nav', { class: 'dt-crumbs', 'aria-label': 'Breadcrumb' });
 
-  // COLOUR PICKER — a SWATCH DROPDOWN (Change 6). Thirteen themes now, so the inline
+  // COLOUR PICKER — a SWATCH DROPDOWN (Change 6). Sixteen themes now, so the inline
   // buttons are replaced by a keyboard-accessible dropdown: each option shows a
   // small swatch strip (ground · surface · ink · improve · regress) plus the
   // theme name; the closed control echoes the current theme's swatch + name.

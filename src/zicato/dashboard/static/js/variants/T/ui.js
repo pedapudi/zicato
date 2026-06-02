@@ -30,7 +30,7 @@ export function gatedSwap(host, digest, build) {
 
 // ---- colour themes (monokai is the default) -------------------------
 //
-// THIRTEEN themes now: the three originals plus ten Gogh palettes
+// SIXTEEN themes now: the three originals plus thirteen Gogh palettes
 // (https://gogh-co.github.io/Gogh/), each mapped to T's `--v2-*` token
 // contract in console4.css. Because there are many, the colour picker is a
 // SWATCH DROPDOWN (not inline buttons): each option shows a 5-swatch strip
@@ -51,6 +51,9 @@ export const COLOR_THEMES = [
   ['zenburn',         'zenburn',          ['#3A3A3A', '#424241', '#DCDCCC', '#8FB28F', '#CC9393']],
   ['selenized-black', 'selenized black',  ['#181818', '#202020', '#DEDEDE', '#83C746', '#FF5E56']],
   ['relaxed',         'relaxed',          ['#353A44', '#3D424B', '#F7F7F7', '#A0AC77', '#BC5653']],
+  ['espresso',        'espresso',         ['#323232', '#3A3A3A', '#FFFFFF', '#A5C261', '#D25252']],
+  ['dracula',         'dracula',          ['#282A36', '#343746', '#F8F8F2', '#50FA7B', '#FF5555']],
+  ['ubuntu',          'ubuntu',           ['#300A24', '#3D1530', '#EEEEEC', '#8AE234', '#CC0000']],
 ];
 const COLOR_IDS = COLOR_THEMES.map((t) => t[0]);
 export const DEFAULT_COLOR = 'monokai';

@@ -60,11 +60,12 @@ Six operator-requested changes, all scoped to Variant T:
    (default Technical); the dropped `sans` id normalises to Technical.
 4. **Scale RESET affordance.** A small keyboard-accessible `⟲` button beside the
    scale pill snaps the page scale back to 100 % and persists (`resetScale()`).
-5. **Ten Gogh colour themes** (real palettes from gogh-co.github.io/Gogh),
-   bringing the total to **thirteen** (monokai stays default). See the chrome
-   section below for the palette→token mapping. Round 9 added four more —
-   **Paper** (light), **Zenburn**, **Selenized Black**, **Relaxed** (dark).
-6. **Colour picker is a SWATCH DROPDOWN.** With thirteen themes, the inline colour
+5. **Thirteen Gogh colour themes** (real palettes from gogh-co.github.io/Gogh),
+   bringing the total to **sixteen** (monokai stays default). See the chrome
+   section below for the palette→token mapping. Round 9 added four —
+   **Paper** (light), **Zenburn**, **Selenized Black**, **Relaxed** (dark);
+   round 10 added three more dark themes — **Espresso**, **Dracula**, **Ubuntu**.
+6. **Colour picker is a SWATCH DROPDOWN.** With sixteen themes, the inline colour
    buttons become a keyboard-accessible dropdown; each option shows a 5-swatch
    preview strip (ground · surface · ink · improve · regress) + the theme name,
    and the closed trigger echoes the current theme's swatch + name. (The
@@ -97,7 +98,7 @@ Three operator-requested changes, all CSS/JS-only and scoped to Variant T:
      `structure.candidateProgression()` from the same per-challenger
      `/api/tournaments` records the racing ladder uses. So even with no per-run
      tags the candidate still relates to the rounds/rungs. The builder is
-     `dag.rungProgression()`; theme-aware across the 13 themes; suppressed for a
+     `dag.rungProgression()`; theme-aware across the 16 themes; suppressed for a
      gauntlet candidate (no rungs).
    - **Gauntlet unchanged.** A gauntlet candidate runs each entry exactly once →
      every group has size 1 → no expansion, no progression strip; identical to
@@ -335,7 +336,7 @@ cut*:
 The funnel is **racing-specific**: gauntlet keeps its reel; swiss / single- /
 double-elim keep their strip + Match-ups ladder, all unchanged. It is
 **fit-to-width** (width:100% + responsive viewBox, no pan/zoom), **token-themed**
-(`--v2-*`, legible across all 13 themes incl. the light Paper / Selenized swatches),
+(`--v2-*`, legible across all 16 themes incl. the light Paper / Selenized swatches),
 and scales with the page-scale pill — the same discipline as every other Console
 mark.
 
@@ -644,7 +645,7 @@ ellipsis (title tooltip carries the full id + per-rung note); rows are spaced by
 the density-scaled fan step. For a **GAUNTLET** candidate (one run per entry) every
 group has size 1 → dedupe is a no-op, no badge, no raced marker — rendering is
 unchanged. The DAG stays fit-to-width (`width:100%` + viewBox), theme-aware
-across the 13 themes, and scales with the page-scale pill.
+across the 16 themes, and scales with the page-scale pill.
 
 ## Render discipline (carried forward)
 
