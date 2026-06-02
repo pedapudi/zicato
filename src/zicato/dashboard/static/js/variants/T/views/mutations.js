@@ -32,12 +32,15 @@ export async function render(host, ctx, params) {
   // (that single challenger's side-by-side diff for that site).
   const pinnedGen = (params && params.gen) || null;
 
-  const ep = await D.epoch();
+  // Class A: the mutation surface is keyed by the VIEWED epoch (route param
+  // first), so opening a non-current epoch reads ITS surface.
+  const routeEpoch = (params && params.epochId) || null;
+  const ep = await D.epoch(routeEpoch);
   if (!ep || ep.epoch_id == null) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Mutation surface' }), empty('No current epoch.')]);
     return;
   }
-  const epochId = ep.epoch_id;
+  const epochId = routeEpoch || ep.epoch_id;
 
   const mut = await D.mutations(epochId);
   const gens = (mut && Array.isArray(mut.generations)) ? mut.generations : [];

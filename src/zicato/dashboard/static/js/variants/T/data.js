@@ -73,9 +73,51 @@ export function invalidateLive() {
 
 export function workspace() { return cachedJson('/api/workspace'); }
 export function healthReport() { return cachedJson('/api/health-report'); }
-export function scoreTrajectory() { return cachedJson('/api/score-trajectory'); }
 export function lineage() { return cachedJson('/api/lineage'); }
-export function bracket() { return cachedJson('/api/tournaments'); }
+
+// ---- epoch-scoped reads --------------------------------------------
+//
+// /api/lineage is workspace-GLOBAL (every generation across every epoch),
+// but each row carries `epoch_id`. The Console screens must show only the
+// gens of the epoch they are VIEWING — not always the current one — so the
+// cross-epoch leakage (Class A) is fixed at the read layer: filter the
+// global lineage to one epoch, deduped by generation id. Fall back to the
+// unfiltered list ONLY when NO row carries an epoch_id (a pre-feature
+// payload), so a single-epoch workspace keeps working unchanged.
+export async function generationsForEpoch(epochId) {
+  const lin = await lineage();
+  const gens = (lin && Array.isArray(lin.generations)) ? lin.generations : [];
+  if (!gens.length) return [];
+  const anyTagged = gens.some((g) => g && g.epoch_id != null);
+  const rows = (anyTagged && epochId != null)
+    ? gens.filter((g) => g && g.epoch_id === epochId)
+    : gens;
+  const seen = new Set();
+  const out = [];
+  for (const g of rows) {
+    const id = g && g.generation_id;
+    if (id == null || seen.has(id)) continue;
+    seen.add(id);
+    out.push(g);
+  }
+  return out;
+}
+
+// The epoch CONTRACT, score TRAJECTORY, and BRACKET — backend-scoped to the
+// CURRENT epoch when called with no argument (unchanged), or to a NAMED epoch
+// when given an id (the `?epoch=<id>` backend scoping is the only true fix for
+// viewing a non-current epoch). Each remains a thin, cached, failure-tolerant
+// GET; the `?epoch` variant caches under its own key so the current-epoch and
+// scoped reads never collide.
+export function epoch(epochId) {
+  return cachedJson(epochId != null ? `/api/epoch?epoch=${enc(epochId)}` : '/api/epoch');
+}
+export function scoreTrajectory(epochId) {
+  return cachedJson(epochId != null ? `/api/score-trajectory?epoch=${enc(epochId)}` : '/api/score-trajectory');
+}
+export function bracket(epochId) {
+  return cachedJson(epochId != null ? `/api/tournaments?epoch=${enc(epochId)}` : '/api/tournaments');
+}
 
 // The LIVE tournament state during a run (§ live racing/swiss/elim): the
 // SAME structure shape as /api/tournament-structure ({structure, phase,
@@ -89,12 +131,6 @@ export function bracket() { return cachedJson('/api/tournaments'); }
 export async function activeTournament() {
   try { return await fetchJson('/api/active-tournament'); } catch (err) { return null; }
 }
-
-// The FULL epoch contract — goal, brief, board, scoring, experiments.
-// The response also carries the new `tournament: {structure, params}`
-// block (§3.1) when the epoch's scoring.json names a structure, so the
-// epoch view can label the structure without a second fetch.
-export function epoch() { return cachedJson('/api/epoch'); }
 
 // The actual configured tournament STRUCTURE for one tournament — the
 // full bracket / standings / racing state (§3.2). Resolves from the

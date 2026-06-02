@@ -24,15 +24,17 @@ export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading board trellis…' }));
   const epochParam = (params && params.epochId) || null;
 
-  const [ep, lin] = await Promise.all([D.epoch(), D.lineage()]);
+  // Class A: scope to the viewed epoch (route param first).
+  const ep = await D.epoch(epochParam);
   const epochId = epochParam || (ep && ep.epoch_id) || null;
   if (!ep || ep.epoch_id == null) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Boards' }), empty('No current epoch.')]);
     return;
   }
   const board = Array.isArray(ep.board) ? ep.board : [];
-  const gens = (lin && Array.isArray(lin.generations) && lin.generations.length)
-    ? lin.generations.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted }))
+  const rows = await D.generationsForEpoch(epochId);
+  const gens = rows.length
+    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
     : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' })) : []);
 
   const perEntries = await Promise.all(gens.map((g) => D.perEntry(epochId, g.id)));

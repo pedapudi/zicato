@@ -514,6 +514,12 @@
   .dn-pill.dn-rejected { color: var(--v2-bad); border-color: var(--v2-bad); background: var(--v2-bad-soft); }
   .dn-pill.dn-deferred { color: var(--v2-caution); border-color: var(--v2-caution); }
   .dn-pill.dn-baseline { color: var(--v2-ink-soft); border-color: var(--v2-rule); }
+  /* PENDING (Class B): an in-flight / not-yet-raced candidate — visually
+     distinct from rejected. Uses the live/racing accent (theme-aware across
+     every theme), never the bad/red, so an unscored candidate never reads as a
+     dead branch. */
+  .dn-pill.dn-pending { color: var(--v2-accent); border-color: var(--v2-accent);
+    background: color-mix(in srgb, var(--v2-accent) 14%, transparent); }
 
   /* themed link/button (the E "open transcript" bug fix — never unstyled) */
   a.dn-linkbtn { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-mono);
@@ -891,6 +897,9 @@
   .ezn-edge-soft { stroke: var(--v2-rule); stroke-width: 1; }
   .ezn-edge-good { stroke: var(--v2-good); }
   .ezn-edge-bad { stroke: var(--v2-bad); }
+  /* a still-racing (pending) lifecycle edge — the live/racing accent, never
+     the bad/red (Class B). */
+  .ezn-edge-neutral { stroke: var(--v2-accent); stroke-dasharray: 4 3; }
   .ezn-node-box { fill: var(--v2-panel); stroke: var(--v2-rule); stroke-width: 1; }
   .ezn-node-id { fill: var(--v2-ink); font: 600 11px var(--v2-mono); text-anchor: middle; }
   .ezn-node-sub { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); text-anchor: middle; }
@@ -902,6 +911,9 @@
   .ezn-patch .ezn-node-box { stroke: var(--v2-accent); }
   .ezn-baseline .ezn-node-box { stroke: var(--v2-rule); }
   .ezn-neutral .ezn-node-box { stroke: var(--v2-rule); }
+  /* PENDING / racing lifecycle node (Class B): the live accent, not red. */
+  .ezn-running .ezn-node-box { stroke: var(--v2-accent); }
+  .ezn-running .ezn-node-id { fill: var(--v2-accent); }
   .ezn-board-disc { fill: var(--v2-panel); stroke: var(--v2-flat); stroke-width: 1.4; }
   .ezn-board-node.ezn-promoted .ezn-board-disc { stroke: var(--v2-good); fill: var(--v2-good-soft); }
   .ezn-board-node.ezn-rejected .ezn-board-disc { stroke: var(--v2-bad); }
@@ -1376,6 +1388,7 @@
   .dt-match-card:hover { transform: translateY(-1px); box-shadow: 0 3px 12px color-mix(in srgb, var(--v2-ink) 16%, transparent); }
   .dt-match-card.dt-match-won { border-left-color: var(--v2-good); }
   .dt-match-card.dt-match-lost { border-left-color: var(--v2-bad); }
+  .dt-match-card.dt-match-pending { border-left-color: var(--v2-accent); }
   .dt-match-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .dt-match-versus { display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--v2-mono); min-width: 0; }
   .dt-match-chall { font-size: 13.5px; color: var(--v2-accent); font-weight: 700;
@@ -1399,6 +1412,7 @@
     letter-spacing: 0.06em; color: var(--v2-ink-faint); }
   .dt-match-won .dt-match-open { color: var(--v2-good); }
   .dt-match-lost .dt-match-open { color: var(--v2-bad); }
+  .dt-match-pending .dt-match-open { color: var(--v2-accent); }
 
   /* ── configured tournament STRUCTURE (bracket / standings / racing) ──
      All marks read from CSS tokens so they theme across every swatch;

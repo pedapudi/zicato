@@ -112,8 +112,11 @@ export function buildTree(host, model, route, toggles, ctx, onToggle) {
         // ♛ "champion" badge for any promoted generation (back-compat).
         const isCurrent = g.currentChampion === true;
         const isFormer = g.formerChampion === true;
-        const legacyChamp = g.promoted && g.currentChampion === undefined && g.formerChampion === undefined;
-        let kind = 'gen', glyph = (g.parent ? '↳' : '◆'), tag = (g.parent ? 'rejected' : 'seed');
+        const legacyChamp = g.promoted === true && g.currentChampion === undefined && g.formerChampion === undefined;
+        // Class B: a child with no recorded outcome (promoted == null) is still
+        // racing — tag it "pending", NEVER "rejected/dead branch".
+        const childTag = g.parent ? (g.promoted == null ? 'pending' : (g.promoted === false ? 'rejected' : 'promoted')) : 'seed';
+        let kind = 'gen', glyph = (g.parent ? '↳' : '◆'), tag = childTag;
         if (isCurrent || legacyChamp) { kind = 'gen-champ'; glyph = '♚'; tag = 'champion'; }
         else if (isFormer) { kind = 'gen-former'; glyph = '♔'; tag = 'former champion'; }
         tree.appendChild(leafRow({

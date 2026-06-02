@@ -18,7 +18,7 @@ import { el, clearChildren } from '../../../core/dom.js';
 import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, normaliseDecision, densityTokens } from '../ui.js';
+import { gatedSwap, section, empty, stat, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
 
 // In-flight board-units for THIS entry, read from /api/active-runs (folded
 // into AppState by /api/environment). Each carries a generation_id / run_id /
@@ -57,8 +57,10 @@ export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading board entry…' }));
   const entryId = params && params.entry;
   const selGen = (params && params.gen) || null;
+  const routeEpoch = (params && params.epochId) || null;
 
-  const [ep, lin, traj] = await Promise.all([D.epoch(), D.lineage(), D.scoreTrajectory()]);
+  // Class A: scope every read to the viewed epoch (route param first).
+  const ep = await D.epoch(routeEpoch);
   if (!ep || ep.epoch_id == null) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Board entry' }), empty('No current epoch.')]);
     return;
@@ -68,12 +70,13 @@ export async function render(host, ctx, params) {
       empty('No board entry selected — open one from the Boards trellis or the epoch heatmap.')]);
     return;
   }
-  const epochId = ep.epoch_id;
+  const epochId = routeEpoch || ep.epoch_id;
   const board = Array.isArray(ep.board) ? ep.board : [];
   const def = board.find((b) => (b.entry_id || b.id) === entryId) || null;
 
-  const genList = (lin && Array.isArray(lin.generations) && lin.generations.length)
-    ? lin.generations.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted }))
+  const [rows0, traj] = await Promise.all([D.generationsForEpoch(epochId), D.scoreTrajectory(epochId)]);
+  const genList = rows0.length
+    ? rows0.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
     : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' })) : []);
 
   const scalarByGen = new Map();
@@ -318,9 +321,12 @@ function transcriptColumn(sel, conv, championId) {
     return col;
   }
   const role = sel.gen === championId ? 'champion' : (sel.parent ? 'challenger' : 'seed');
+  // Class B: the pill's COLOUR follows the candidate's decision, so an unscored
+  // challenger reads pending (neutral), never rejected.
+  const pillCls = decisionFor({ promoted: sel.promoted, parent: sel.parent });
   col.appendChild(el('div', { class: 'dn-xscript-head' }, [
     el('span', { class: 'dn-mono', text: sel.gen + (sel.promoted ? ' ♛' : '') }),
-    el('span', { class: 'dn-pill dn-' + (sel.promoted ? 'promoted' : sel.parent ? 'rejected' : 'baseline'), text: role }),
+    el('span', { class: 'dn-pill dn-' + pillCls, text: role }),
     el('span', { class: 'dn-faint dn-mono', text: svg.isNum(sel.loss) ? ' · loss ' + svg.fmt(sel.loss, 1) : '' }),
   ]));
 

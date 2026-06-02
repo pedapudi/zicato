@@ -258,9 +258,40 @@ export function normaliseDecision(outcome) {
   return raw || null;
 }
 
+// The ONE place that turns a generation's tri-state outcome into a decision
+// label. `promoted` is tri-state in lineage: `true` (won the gate), `false`
+// (lost), or `null`/absent (in-flight / not yet raced). The Class-B bug was
+// treating an ABSENT outcome as `'rejected'` ("dead branch") on candidates
+// that have not raced yet — so this NEVER defaults null/absent to rejected:
+//   * no parent                          → 'baseline' (the seed / loss floor)
+//   * promoted === true                  → 'promoted'
+//   * promoted === false                 → 'rejected'
+//   * a resolved NEGATIVE outcome/gate   → 'rejected'
+//   * a resolved POSITIVE outcome/gate   → 'promoted'
+//   * otherwise (promoted == null, no resolved decision) → 'pending'
+export function decisionFor(spec) {
+  const s = spec || {};
+  // A seed (no parent) defines the loss floor — it is the baseline, never a
+  // verdict. An explicit `baseline:true` also forces it.
+  if (s.baseline === true || (s.baseline == null && s.parent == null)) return 'baseline';
+  if (s.promoted === true) return 'promoted';
+  if (s.promoted === false) return 'rejected';
+  // promoted is null/absent — defer to any RESOLVED expectation / gate decision.
+  const resolved = resolvedDecision(s.exp, s.gate);
+  if (resolved === 'promoted') return 'promoted';
+  if (resolved === 'rejected') return 'rejected';
+  if (resolved === 'deferred') return 'deferred';
+  // genuinely unresolved (in-flight / not yet raced) → pending, NOT rejected.
+  return 'pending';
+}
+
+function resolvedDecision(exp, gate) {
+  return normaliseDecision(exp && (exp.outcome || exp)) || normaliseDecision(gate);
+}
+
 export function verdictPill(decision) {
   const d = decision || 'baseline';
-  const label = d === 'baseline' ? 'seed (v0)' : d;
+  const label = d === 'baseline' ? 'seed (v0)' : d === 'pending' ? 'racing…' : d;
   return el('span', { class: `dn-pill dn-${d}`, text: label });
 }
 

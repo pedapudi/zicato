@@ -123,11 +123,25 @@ FIXTURE['/api/conversation/run_v0_waffles'] = {
   annotations: [],
 };
 
+// Resolve a fetch path against a fixture map: try the EXACT path first (so an
+// explicit `?epoch=<id>` fixture wins — the genuine multi-epoch scoping case),
+// then fall back to the query-LESS base path. The Tier-1 views now request
+// `/api/epoch?epoch=<id>` etc.; for a single-epoch fixture (every existing
+// test) `<id>` is the current epoch, so the scoped read is byte-identical to
+// the base — the fallback serves it from the base fixture, unchanged.
+function lookupFixture(F, path) {
+  if (Object.prototype.hasOwnProperty.call(F, path)) return F[path];
+  const q = path.indexOf('?');
+  if (q >= 0) {
+    const base = path.slice(0, q);
+    if (Object.prototype.hasOwnProperty.call(F, base)) return F[base];
+  }
+  return undefined;
+}
 function installFetch() {
   globalThis.fetch = async (path) => {
-    if (Object.prototype.hasOwnProperty.call(FIXTURE, path)) {
-      return { ok: true, json: async () => FIXTURE[path] };
-    }
+    const v = lookupFixture(FIXTURE, path);
+    if (v !== undefined) return { ok: true, json: async () => v };
     return { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
   };
 }
@@ -552,9 +566,12 @@ function installManyFetch(roundN) {
   MANY[`/api/generation/${MANY_EPOCH}/v0/per-entry`] = { entries: [{ entry_id: 'b1', drift_loss: 50 }] };
   for (const g of gens) MANY[`/api/generation/${MANY_EPOCH}/${g.generation_id}/per-entry`] =
     MANY[`/api/generation/${MANY_EPOCH}/${g.generation_id}/per-entry`] || { entries: [{ entry_id: 'b1', drift_loss: 50 }] };
-  globalThis.fetch = async (path) => (Object.prototype.hasOwnProperty.call(MANY, path)
-    ? { ok: true, json: async () => MANY[path] }
-    : { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) });
+  globalThis.fetch = async (path) => {
+    const v = lookupFixture(MANY, path);
+    return v !== undefined
+      ? { ok: true, json: async () => v }
+      : { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
+  };
 }
 
 test('reel: fit-to-width — a fixed-width viewBox; many-round ticks compress and never exceed the viewBox', () => {
@@ -1208,7 +1225,8 @@ function structFixture(structure, payload, tournamentId) {
 
 function installFixtureMap(F) {
   globalThis.fetch = async (path) => {
-    if (Object.prototype.hasOwnProperty.call(F, path)) return { ok: true, json: async () => F[path] };
+    const v = lookupFixture(F, path);
+    if (v !== undefined) return { ok: true, json: async () => v };
     return { ok: false, status: 404, json: async () => ({ error: 'nf' }) };
   };
 }
@@ -2000,9 +2018,12 @@ test('tree (BUG 2): /api/lineage generations across an epoch make the tree LIST 
     '/api/tournaments': { epoch_id: PUB_EPOCH, champion_lineage: ['v0'], matchups: [] },
     // NB: /api/epoch is deliberately absent → 404 (the publication-route case).
   };
-  globalThis.fetch = async (path) => (Object.prototype.hasOwnProperty.call(F, path)
-    ? { ok: true, json: async () => F[path] }
-    : { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) });
+  globalThis.fetch = async (path) => {
+    const v = lookupFixture(F, path);
+    return v !== undefined
+      ? { ok: true, json: async () => v }
+      : { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
+  };
 
   // mount the live shell on the PUBLICATION route for this epoch.
   const root = mountLiveShell(`#/e/${PUB_EPOCH}/paper`);
@@ -2029,9 +2050,12 @@ test('tree (BUG 2): the "No epochs" empty state shows ONLY when there are genuin
     '/api/lineage': { generations: [] },
     '/api/tournaments': { matchups: [] },
   };
-  globalThis.fetch = async (path) => (Object.prototype.hasOwnProperty.call(F, path)
-    ? { ok: true, json: async () => F[path] }
-    : { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) });
+  globalThis.fetch = async (path) => {
+    const v = lookupFixture(F, path);
+    return v !== undefined
+      ? { ok: true, json: async () => v }
+      : { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
+  };
 
   const root = mountLiveShell('#/');
   await new Promise((r) => setTimeout(r, 0));
@@ -3361,6 +3385,179 @@ test('board view (live): the transcript pane DOES re-render when the selected ge
   assert(scrollV0 !== scrollV1, 'the transcript scroll container was rebuilt for the new selection');
   assert(host.textContent.includes('Here is a structured outline'), 'the v0 transcript turn rendered after switching selection');
   coreState.state.activeRuns = [];
+});
+
+// ====================================================================
+// TIER 1 (Class A) — the DRILL-DOWN views are scoped to the VIEWED epoch.
+// TIER 2 (Class B) — an unscored candidate (promoted:null) renders PENDING,
+//                    never rejected / dead-branch.
+//
+// Two epochs share /api/lineage with COLLIDING gen ids: a COMPLETED e0
+// (v0..v2, v1 promoted) and an in-flight e1 (v0 + an UNSCORED v1 with
+// promoted:null). The `?epoch=<id>` backend reads return the SCOPED contract /
+// trajectory / bracket per epoch; /api/lineage is global, so the views must
+// filter it by epoch_id (generationsForEpoch) and dedupe by gen id.
+// ====================================================================
+const SC_OLD = '2026-06-01_e0';
+const SC_NEW = '2026-06-02_e1';
+function scopeFixture() {
+  const lineage = [
+    { generation_id: 'v0', epoch_id: SC_OLD, parent_generation_id: '', promoted: true },
+    { generation_id: 'v1', epoch_id: SC_OLD, parent_generation_id: 'v0', promoted: true },
+    { generation_id: 'v2', epoch_id: SC_OLD, parent_generation_id: 'v1', promoted: false },
+    // e1: a seed v0 + an UNSCORED challenger v1 (promoted == null → pending).
+    { generation_id: 'v0', epoch_id: SC_NEW, parent_generation_id: '', promoted: true },
+    { generation_id: 'v1', epoch_id: SC_NEW, parent_generation_id: 'v0', promoted: null },
+  ];
+  const F = { '/api/lineage': { generations: lineage } };
+  // per-epoch scoped contract / trajectory / bracket (keyed by the ?epoch= path).
+  const contract = (id, gens) => ({
+    epoch_id: id, closed: id === SC_OLD, goal: 'g',
+    experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
+      outcome: g.promoted === true ? { decision: 'promoted' } : g.promoted === false ? { decision: 'rejected' } : {} })),
+    board: [{ id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
+  });
+  const traj = (gens) => ({ points: gens.map((g, i) => ({ generation_id: g.generation_id, scalar: 40 + i })) });
+  const oldGens = lineage.filter((g) => g.epoch_id === SC_OLD);
+  const newGens = lineage.filter((g) => g.epoch_id === SC_NEW);
+  F[`/api/epoch?epoch=${SC_OLD}`] = contract(SC_OLD, oldGens);
+  F[`/api/epoch?epoch=${SC_NEW}`] = contract(SC_NEW, newGens);
+  F[`/api/score-trajectory?epoch=${SC_OLD}`] = traj(oldGens);
+  F[`/api/score-trajectory?epoch=${SC_NEW}`] = traj(newGens);
+  F[`/api/tournaments?epoch=${SC_OLD}`] = { epoch_id: SC_OLD, champion_lineage: ['v0', 'v1'], matchups: [
+    { champion: 'v0', challenger: 'v1', decision: 'promoted', delta_scalar: -5 },
+    { champion: 'v1', challenger: 'v2', decision: 'rejected', delta_scalar: 4 },
+  ] };
+  // e1: the challenger v1 has run no gate yet → NO decision (pending).
+  F[`/api/tournaments?epoch=${SC_NEW}`] = { epoch_id: SC_NEW, champion_lineage: ['v0'], matchups: [
+    { champion: 'v0', challenger: 'v1' },
+  ] };
+  // per-entry profiles for every (epoch, gen) so a leak would surface as columns.
+  for (const g of lineage) {
+    F[`/api/generation/${g.epoch_id}/${g.generation_id}/per-entry`] = {
+      epoch_id: g.epoch_id, generation_id: g.generation_id,
+      entries: [{ entry_id: 'waffles_single', run_id: `r_${g.epoch_id}_${g.generation_id}`, drift_loss: 50, pass_fail: 0 }],
+    };
+  }
+  F[`/api/epoch/${SC_NEW}/analysis`] = { analysis_md: '' };
+  F[`/api/epoch/${SC_OLD}/analysis`] = { analysis_md: '' };
+  return F;
+}
+
+test('Tier1 (cross-epoch): candidate view scopes to the viewed epoch (only e1 gens; correct champion)', async () => {
+  freshState();
+  installFixtureMap(scopeFixture());
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW, gen: 'v1' });
+  assert(host.textContent.includes('Candidate v1'), 'e1 v1 rendered');
+  // the compare picker lists ONLY e1's field {v0, v1} — never e0's v2.
+  const opts = allByClass(host, 'dt-cmp-opt');
+  const optText = host.textContent;
+  assert(!optText.includes('v2'), 'no leaked e0-only generation (v2) on the e1 candidate view');
+});
+
+test('Tier2 (Class B): an UNSCORED e1 candidate (promoted:null) renders PENDING, not dead-branch', async () => {
+  freshState();
+  installFixtureMap(scopeFixture());
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW, gen: 'v1' });
+  // the verdict pill reads pending (racing…), never rejected.
+  assert(allByClass(host, 'dn-pending').length >= 1, 'a pending verdict pill rendered for the unscored challenger');
+  assert(!allByClass(host, 'dn-rejected').some((n) => /seed|v1/.test(n.textContent)), 'no rejected pill');
+  // the lifecycle DAG terminal must NOT say "dead branch / champion stands".
+  assert(!host.textContent.includes('dead branch'), 'the DAG terminal is NOT "✕ dead branch" for a pending candidate');
+  assert(host.textContent.includes('racing') || host.textContent.includes('awaiting gate'), 'the DAG terminal reads a racing/awaiting-gate state');
+});
+
+test('Tier1 (cross-epoch): gens view scopes to the viewed epoch; pending candidate in the roster', async () => {
+  freshState();
+  installFixtureMap(scopeFixture());
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW });
+  assert(host.textContent.includes(`Generations · ${SC_NEW}`), 'the gens page heads with e1');
+  // the roster lists e1's {v0, v1} only — not e0's v2.
+  const monos = allByClass(host, 'dn-mono').map((n) => n.textContent);
+  assert(!host.textContent.includes('v2'), 'no leaked e0 generation v2 in the e1 roster');
+  // the unscored v1 row carries a PENDING pill (not rejected).
+  assert(allByClass(host, 'dn-pending').length >= 1, 'the unscored challenger reads pending in the roster');
+});
+
+test('Tier1 (cross-epoch): switching the epoch param changes the data (e0 ↔ e1)', async () => {
+  freshState();
+  installFixtureMap(scopeFixture());
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await gens.render(host, ctx, { epochId: SC_OLD });
+  assert(host.textContent.includes('v2'), 'e0 view shows its own generation v2');
+  assert(host.textContent.includes(`Generations · ${SC_OLD}`), 'heads with e0');
+  await gens.render(host, ctx, { epochId: SC_NEW });
+  assert(host.textContent.includes(`Generations · ${SC_NEW}`), 'switched to e1');
+  assert(!host.textContent.includes('v2'), 'e2-only generation gone after switching to e1');
+});
+
+test('Tier1 (cross-epoch): boards view scopes to the viewed epoch (no e0 candidate columns)', async () => {
+  freshState();
+  installFixtureMap(scopeFixture());
+  const boards = await import('../js/variants/T/views/boards.js');
+  const host = document.createElement('div');
+  await boards.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW });
+  assert(host.textContent.includes(`Boards · ${SC_NEW}`), 'the boards page heads with e1');
+  // e1 has exactly 2 candidates (v0, v1); a leak would report e0's 3.
+  assert(host.textContent.includes('2') && !host.textContent.includes('field of 8'), 'e1 candidate count is its own (2), not leaked');
+});
+
+test('Tier1 (cross-epoch): board (per-entry) view scopes to the viewed epoch', async () => {
+  freshState();
+  installFixtureMap(scopeFixture());
+  const board = await import('../js/variants/T/views/board.js');
+  const host = document.createElement('div');
+  await board.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW, entry: 'waffles_single' });
+  assert(host.textContent.includes('Board · waffles_single'), 'the board entry view rendered for e1');
+  // the per-candidate breakdown lists e1's {v0, v1} only — never e0's v2.
+  assert(!host.textContent.includes('v2'), 'no leaked e0 generation v2 in the e1 board breakdown');
+});
+
+test('Tier1 (cross-epoch): publication view scopes lineage/figures to the viewed epoch', async () => {
+  freshState();
+  installFixtureMap(scopeFixture());
+  const publication = await import('../js/variants/T/views/publication.js');
+  const host = document.createElement('div');
+  await publication.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW });
+  // the aggregate-scores table lists e1's own gens only; v2 belongs to e0.
+  assert(!host.textContent.includes('v2'), 'no leaked e0 generation v2 in the e1 publication figures');
+  // the unscored challenger reads "racing…", never "rejected".
+  assert(!/rejected/.test(host.textContent) || host.textContent.includes('racing'), 'an unscored gen reads racing, not a default rejected');
+});
+
+test('Tier2 (Class B): the tree tags an unscored child PENDING, not rejected', () => {
+  const host = document.createElement('div');
+  const model = {
+    epochs: [{ id: SC_NEW, current: true }],
+    byEpoch: { [SC_NEW]: {
+      gens: [{ id: 'v0', promoted: true, parent: null }, { id: 'v1', promoted: null, parent: 'v0' }],
+      boards: [{ id: 'waffles_single' }],
+    } },
+  };
+  const toggles = new Set(['e:' + SC_NEW, 'e:' + SC_NEW + '/gens']);
+  const route = router.parseRoute(`#/e/${SC_NEW}`);
+  tree.buildTree(host, model, route, toggles, { navigate() {}, href: router.href }, () => {});
+  const tags = allByClass(host, 'dt-tag').map((n) => n.textContent);
+  assert(tags.includes('pending'), 'the unscored child v1 is tagged "pending"');
+  assert(!tags.includes('rejected'), 'the unscored child v1 is NOT tagged "rejected"');
+});
+
+test('Tier2 (Class B): decisionFor never defaults null/absent → rejected', () => {
+  assertEqual(ui.decisionFor({ promoted: null, parent: 'v0' }), 'pending', 'null + no resolved decision → pending');
+  assertEqual(ui.decisionFor({ promoted: true, parent: 'v0' }), 'promoted', 'promoted:true → promoted');
+  assertEqual(ui.decisionFor({ promoted: false, parent: 'v0' }), 'rejected', 'promoted:false → rejected');
+  assertEqual(ui.decisionFor({ parent: null }), 'baseline', 'no parent → baseline');
+  assertEqual(ui.decisionFor({ promoted: null, parent: 'v0', exp: { outcome: { decision: 'rejected' } } }), 'rejected', 'null + resolved negative outcome → rejected');
+  assertEqual(ui.decisionFor({ promoted: null, parent: 'v0', gate: { decision: 'promoted' } }), 'promoted', 'null + resolved gate promote → promoted');
+  assertEqual(ui.decisionFor({}), 'baseline', 'empty (no parent) → baseline, never rejected');
 });
 
 await run();

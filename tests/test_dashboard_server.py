@@ -2548,3 +2548,167 @@ def test_build_workspace_view_promoted_count_reads_experiments(workspace: Path) 
     row = next(r for r in view["epochs"] if r["epoch_id"] == "2026-05-16_e0")
     assert row["promoted_count"] >= 1, "the promoted generation must be counted"
     assert row["generation_count"] >= 1, "v1 must show up in generation_count"
+
+
+# ---------------------------------------------------------------------------
+# Cross-epoch scoping — ``?epoch=<id>`` resolves a NON-current epoch
+# (Class A: the dashboard must view a completed epoch while another is live).
+# ---------------------------------------------------------------------------
+
+
+def _add_second_epoch(workspace: Path, epoch_id: str = "2026-05-17_e1") -> str:
+    """Add a SECOND, non-current epoch to the fixture workspace.
+
+    The fixture's current epoch is ``2026-05-16_e0``; this layers a distinct
+    epoch with its own contract, lineage rows, and index rows so a
+    ``?epoch=<id>`` read can be checked against the current-epoch default.
+    """
+    epoch_dir = workspace / "epochs" / epoch_id
+    for gen in ("v0", "v1"):
+        (epoch_dir / "generations" / gen).mkdir(parents=True, exist_ok=True)
+    _write(
+        epoch_dir / "board.jsonl",
+        json.dumps(
+            {
+                "id": "second_board_entry",
+                "kind": "single_turn",
+                "input": "A different board for the second epoch.",
+                "wall_clock_budget_seconds": 240,
+                "weight": 2.0,
+                "tags": ["e1"],
+                "expectation": {"kind": "rubric"},
+            }
+        )
+        + "\n",
+    )
+    _write(epoch_dir / "brief.md", "# Second epoch brief\nDifferent goal.\n")
+    _write_json(epoch_dir / "scoring.json", {"weights": {"drift_loss": 1.0}})
+    _write_json(epoch_dir / "config.json", {"contract_hash": "h2", "closed": True})
+
+    # lineage.json: both epochs share gen ids (v0/v1) — a leak would surface.
+    _write_json(
+        workspace / "lineage.json",
+        {
+            "epochs": [
+                {
+                    "id": "2026-05-16_e0",
+                    "generations": [
+                        {
+                            "id": "v0",
+                            "parent_id": None,
+                            "promoted": True,
+                            "created_at": "2026-05-16T04:00:00Z",
+                        },
+                    ],
+                },
+                {
+                    "id": epoch_id,
+                    "generations": [
+                        {
+                            "id": "v0",
+                            "parent_id": None,
+                            "promoted": True,
+                            "created_at": "2026-05-17T04:00:00Z",
+                        },
+                        {
+                            "id": "v1",
+                            "parent_id": "v0",
+                            "promoted": True,
+                            "created_at": "2026-05-17T04:30:00Z",
+                        },
+                    ],
+                },
+            ]
+        },
+    )
+
+    # index rows for the second epoch (its own generations / tournament / runs).
+    conn = sqlite3.connect(workspace / "index.db")
+    conn.executemany(
+        "INSERT INTO generations VALUES(?,?,?,?)",
+        [(epoch_id, "v0", None, 1), (epoch_id, "v1", "v0", 1)],
+    )
+    conn.execute(
+        "INSERT INTO tournaments VALUES(?,?,?,?,?,?,?,?,?,?)",
+        ("t2", epoch_id, "v0", "v1", "promoted", 0.9, 0.4, -0.5, None, "2026-05-17T04:30:00Z"),
+    )
+    conn.executemany(
+        "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?)",
+        [
+            ("r2", epoch_id, "v0", "second_board_entry", 0.9, "fail", "{}"),
+            ("r3", epoch_id, "v1", "second_board_entry", 0.4, "pass", "{}"),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO runs VALUES(?,?,?,?,?,?,?,?)",
+        [
+            ("r2", epoch_id, "v0", "second_board_entry", "", "", 0, 100),
+            ("r3", epoch_id, "v1", "second_board_entry", "", "", 0, 100),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    return epoch_id
+
+
+def test_epoch_view_scoped_to_non_current_epoch(client: TestClient, workspace: Path) -> None:
+    """``/api/epoch?epoch=<non-current>`` returns THAT epoch's contract."""
+    e1 = _add_second_epoch(workspace)
+
+    # omitted ⇒ current epoch (unchanged).
+    current = client.get("/api/epoch").json()
+    assert current["epoch_id"] == "2026-05-16_e0"
+    assert current["contract_hash"] == "h1"
+    assert current["board"][0]["id"] == "waffles_single"
+
+    # scoped ⇒ the SECOND epoch's own contract / board.
+    scoped = client.get(f"/api/epoch?epoch={e1}").json()
+    assert scoped["epoch_id"] == e1
+    assert scoped["contract_hash"] == "h2"
+    assert scoped["closed"] is True
+    assert scoped["board"][0]["id"] == "second_board_entry"
+    assert scoped["board"][0]["id"] != "waffles_single"
+
+
+def test_score_trajectory_scoped_to_non_current_epoch(client: TestClient, workspace: Path) -> None:
+    """``/api/score-trajectory?epoch=<id>`` plots only that epoch's gens."""
+    e1 = _add_second_epoch(workspace)
+
+    current = client.get("/api/score-trajectory").json()
+    assert current["epoch_id"] == "2026-05-16_e0"
+    assert {p["generation_id"] for p in current["points"]} == {"v0", "v1"}
+
+    scoped = client.get(f"/api/score-trajectory?epoch={e1}").json()
+    assert scoped["epoch_id"] == e1
+    # the second epoch's gens — its own v0/v1, scored from its own loss profiles.
+    assert {p["generation_id"] for p in scoped["points"]} == {"v0", "v1"}
+    scalars = {p["generation_id"]: p["scalar"] for p in scoped["points"]}
+    assert scalars["v1"] == pytest.approx(0.4)
+    assert scalars["v0"] == pytest.approx(0.9)
+
+
+def test_tournaments_scoped_to_non_current_epoch(client: TestClient, workspace: Path) -> None:
+    """``/api/tournaments?epoch=<id>`` returns that epoch's matchups."""
+    e1 = _add_second_epoch(workspace)
+
+    current = client.get("/api/tournaments").json()
+    assert current["epoch_id"] == "2026-05-16_e0"
+    assert any(m.get("decision") == "rejected" for m in current["matchups"])
+
+    scoped = client.get(f"/api/tournaments?epoch={e1}").json()
+    assert scoped["epoch_id"] == e1
+    assert scoped["matchups"], "the second epoch has its own matchup"
+    assert scoped["matchups"][0]["champion"] == "v0"
+    assert scoped["matchups"][0]["challenger"] == "v1"
+    assert scoped["matchups"][0]["decision"] == "promoted"
+
+
+def test_scoped_endpoints_reject_unknown_and_traversal(client: TestClient) -> None:
+    """A bogus / path-traversing ``?epoch=`` is a 404 on every scoped route."""
+    for route in ("/api/epoch", "/api/score-trajectory", "/api/tournaments"):
+        assert client.get(f"{route}?epoch=does-not-exist").status_code == 404
+        # path-traversal must never escape the workspace.
+        assert client.get(f"{route}?epoch=../secrets").status_code == 404
+        assert client.get(f"{route}?epoch=..").status_code == 404
+        # an EMPTY value is treated as omitted → current epoch (200).
+        assert client.get(f"{route}?epoch=").status_code == 200

@@ -24,7 +24,7 @@ import { el } from '../../../core/dom.js';
 import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, verdictPill, normaliseDecision } from '../ui.js';
+import { gatedSwap, section, empty, verdictPill, normaliseDecision, decisionFor } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
@@ -32,12 +32,16 @@ export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading generations…' }));
   const epochId = (params && params.epochId) || null;
 
-  const [ep, lin, traj, bracket] = await Promise.all([D.epoch(), D.lineage(), D.scoreTrajectory(), D.bracket()]);
+  // Class A: scope every read to the VIEWED epoch (route param first).
+  const ep = await D.epoch(epochId);
   const id = epochId || (ep && ep.epoch_id) || null;
   if (!id) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Generations' }), empty('No epoch selected.')]);
     return;
   }
+  const [rows, traj, bracket] = await Promise.all([
+    D.generationsForEpoch(id), D.scoreTrajectory(id), D.bracket(id),
+  ]);
 
   // The CONFIGURED tournament structure for this epoch (§3.1). Default to
   // gauntlet — the existing ladder render below — when the contract names
@@ -58,9 +62,9 @@ export async function render(host, ctx, params) {
     return;
   }
   const experiments = (ep && Array.isArray(ep.experiments)) ? ep.experiments : [];
-  const gens = (lin && Array.isArray(lin.generations) && lin.generations.length)
-    ? lin.generations.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' }));
+  const gens = rows.length
+    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null) }));
 
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
@@ -120,7 +124,8 @@ export async function render(host, ctx, params) {
       for (const g of gens) {
         const sc = scalarByGen.get(g.id);
         const baseline = !g.parent;
-        const decision = baseline ? 'baseline' : (g.promoted ? 'promoted' : 'rejected');
+        // Class B: an unscored candidate is PENDING, not rejected.
+        const decision = decisionFor({ promoted: g.promoted, parent: g.parent });
         const delta = (svg.isNum(sc) && svg.isNum(champScalar) && !baseline) ? sc - champScalar : null;
         tbody.appendChild(el('tr', { class: g.promoted ? 'dn-board-champ' : '' }, [
           el('td', { class: 'dn-mono', text: g.id + (g.promoted ? ' ♛' : '') }),
@@ -246,16 +251,18 @@ function championBanner(championId, champScalar, defended, total, promoted, ctx,
 // Δscalar · a ONE-LINE (truncated) hypothesis · decisive-driver judge · status
 // link. Clicking opens that challenger's candidate detail.
 function matchCard(m, gate, ctx, epochId) {
-  const dec = String(m.decision || (gate && gate.decision) || 'rejected').toLowerCase();
-  const won = dec.includes('promot');
-  const verdict = dec.includes('promot') ? 'promoted' : dec.includes('defer') ? 'deferred' : 'rejected';
+  // Class B: a round with no resolved decision (match-up + gate both unset) is
+  // still racing — PENDING, not a default "rejected/dead branch".
+  const verdict = normaliseDecision(m) || normaliseDecision(gate) || 'pending';
+  const won = verdict === 'promoted';
   const delta = svg.isNum(m.delta_scalar) ? m.delta_scalar
     : (gate && svg.isNum(gate.delta_scalar) ? gate.delta_scalar : null);
   const driver = gate && gate.primary_driver && gate.primary_driver.judge ? gate.primary_driver.judge : null;
   const idea = m.hypothesis_core_idea ? String(m.hypothesis_core_idea) : null;
 
+  const pending = verdict === 'pending';
   return el('a', {
-    class: 'dt-match-card' + (won ? ' dt-match-won' : ' dt-match-lost'),
+    class: 'dt-match-card' + (won ? ' dt-match-won' : pending ? ' dt-match-pending' : ' dt-match-lost'),
     href: ctx.href('candidate', { epochId, gen: m.challenger }),
     'aria-label': 'Round ' + m.champion + ' vs ' + m.challenger + ' — open challenger ' + m.challenger,
   }, [
@@ -282,7 +289,7 @@ function matchCard(m, gate, ctx, epochId) {
       'decisive driver · ', el('span', { class: 'dn-mono', text: driver }),
     ]) : null,
     el('div', { class: 'dt-match-foot' }, [
-      el('span', { class: 'dt-match-open', text: won ? 'new champion → open' : 'dead branch → open' }),
+      el('span', { class: 'dt-match-open', text: won ? 'new champion → open' : pending ? 'racing… → open' : 'dead branch → open' }),
     ]),
   ].filter(Boolean));
 }

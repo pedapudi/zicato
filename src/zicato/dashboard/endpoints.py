@@ -87,6 +87,29 @@ def _int_query(request: Request, name: str) -> int | None:
         return None
 
 
+def _epoch_query(request: Request) -> str | None:
+    """The optional ``?epoch=<id>`` scoping param, or ``None`` when omitted.
+
+    Malformed / path-traversing values are rejected here (``_BadEpoch``) so the
+    handler can answer ``404`` before touching the workspace; the state reader
+    re-validates against the on-disk epoch set. An empty/whitespace value is
+    treated as omitted (current epoch).
+    """
+    raw = request.query_params.get("epoch")
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    if not _is_safe_id(raw):
+        raise _BadEpoch(raw)
+    return raw
+
+
+class _BadEpoch(Exception):
+    """A malformed / path-unsafe ``?epoch=`` value."""
+
+
 # ---------------------------------------------------------------------------
 # GET endpoints
 # ---------------------------------------------------------------------------
@@ -124,8 +147,14 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         limit = state_reader.clamp_run_log_limit(_int_query(request, "run-log-limit"))
         return JSONResponse(state_reader.build_environment(paths, run_log_limit=limit))
 
-    async def api_epoch(_request: Request) -> JSONResponse:
-        return JSONResponse(state_reader.build_epoch_view(paths))
+    async def api_epoch(request: Request) -> JSONResponse:
+        # Optional ``?epoch=<id>`` scopes the contract to a NON-current epoch
+        # (the dashboard's cross-epoch view); omitted ⇒ current (byte-identical).
+        try:
+            epoch_id = _epoch_query(request)
+            return JSONResponse(state_reader.build_epoch_view(paths, epoch_id))
+        except (_BadEpoch, ValueError):
+            return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
     async def api_lineage(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.build_lineage_view(paths))
@@ -321,8 +350,12 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     async def api_heartbeat(_request: Request) -> JSONResponse:
         return JSONResponse(state_reader.read_heartbeat_dict(paths))
 
-    async def api_tournaments(_request: Request) -> JSONResponse:
-        return JSONResponse(state_reader.build_bracket(paths))
+    async def api_tournaments(request: Request) -> JSONResponse:
+        try:
+            epoch_id = _epoch_query(request)
+            return JSONResponse(state_reader.build_bracket(paths, epoch_id))
+        except (_BadEpoch, ValueError):
+            return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
     async def api_tournament_structure(request: Request) -> JSONResponse:
         """Full bracket / standings / racing state for one tournament.
@@ -440,9 +473,14 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
         q = request.query_params.get("q", "")
         return JSONResponse(state_reader.build_search_results(paths, q))
 
-    async def api_score_trajectory(_request: Request) -> JSONResponse:
+    async def api_score_trajectory(request: Request) -> JSONResponse:
         # The environment-wide evolution curve — scalar per generation.
-        return JSONResponse(state_reader.build_score_trajectory(paths))
+        # Optional ``?epoch=<id>`` scopes to a non-current epoch.
+        try:
+            epoch_id = _epoch_query(request)
+            return JSONResponse(state_reader.build_score_trajectory(paths, epoch_id))
+        except (_BadEpoch, ValueError):
+            return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
     async def api_drift_movements(request: Request) -> JSONResponse:
         generation_id = request.path_params["generation_id"]

@@ -27,7 +27,7 @@ import { el } from '../../../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
-import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, densityTokens } from '../ui.js';
+import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression } from './structure.js';
 
@@ -37,16 +37,22 @@ export async function render(host, ctx, params, route) {
   const cmpTarget = (route && route.cmp) || params.cmp || null;
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading candidate…' }));
 
-  const [ep, lin, traj, bracket] = await Promise.all([D.epoch(), D.lineage(), D.scoreTrajectory(), D.bracket()]);
+  // Class A: derive the VIEWED epoch from the route param first, the current
+  // epoch only as a fallback — and scope every read to it.
+  const routeEpoch = params.epochId || null;
+  const ep = await D.epoch(routeEpoch);
   if (!ep || ep.epoch_id == null) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Candidate' }), empty('No current epoch.')]);
     return;
   }
-  const epochId = ep.epoch_id;
+  const epochId = routeEpoch || ep.epoch_id;
+  const [rows, traj, bracket] = await Promise.all([
+    D.generationsForEpoch(epochId), D.scoreTrajectory(epochId), D.bracket(epochId),
+  ]);
   const experiments = Array.isArray(ep.experiments) ? ep.experiments : [];
-  const genList = (lin && Array.isArray(lin.generations) && lin.generations.length)
-    ? lin.generations.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' }));
+  const genList = rows.length
+    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null) }));
   const allIds = genList.map((g) => g.id);
   const genId = (params.gen && allIds.includes(params.gen)) ? params.gen : (allIds[allIds.length - 1] || params.gen || null);
 
@@ -112,10 +118,12 @@ export async function render(host, ctx, params, route) {
 // Resolve one candidate's full panel data (all cached reads). `entryParam`
 // only applies to the primary (A) side's drill-down.
 async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, bracket) {
-  const node = genList.find((g) => g.id === genId) || { id: genId, parent: null, promoted: false };
+  const node = genList.find((g) => g.id === genId) || { id: genId, parent: null, promoted: null };
   const baseline = !node.parent;
   const exp = experiments.find((x) => x.generation_id === genId) || null;
-  const decision = baseline ? 'baseline' : (node.promoted ? 'promoted' : (exp ? normaliseDecision(exp.outcome) || 'rejected' : 'rejected'));
+  // Class B: an unscored candidate (promoted == null, no resolved outcome) is
+  // PENDING, never "rejected/dead branch".
+  const decision = decisionFor({ promoted: node.promoted, parent: node.parent, exp });
   const mpts = exp && exp.hypothesis && Array.isArray(exp.hypothesis.mutation_points) ? exp.hypothesis.mutation_points.length
     : (exp && Array.isArray(exp.mutation_points) ? exp.mutation_points.length : null);
 
@@ -284,7 +292,10 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
   const tbody = el('tbody');
   for (const m of mine) {
     const asChamp = m.champion === genId;
-    const dec = m.decision || 'rejected';
+    // Class B: a match-up with no recorded decision is still racing — PENDING,
+    // not a default "rejected". `normaliseDecision` reads the matchup's own
+    // decision field; absent ⇒ pending.
+    const dec = normaliseDecision(m) || 'pending';
     const other = asChamp ? m.challenger : m.champion;
     const tr = el('tr', null, [
       el('td', null, [el('span', { class: 'dn-mono', text: `${m.champion} → ${m.challenger}` })]),
@@ -311,7 +322,8 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
 // (c) a SEPARATE champion-vs-challenger scalar-components comparison block.
 function gatePanel(gate, champion, challenger) {
   const card = el('div', { class: 'dn-panel dn-gate' });
-  const decision = normaliseDecision(gate) || gate.decision || 'rejected';
+  // Class B: a gate with no resolved decision is still pending, not rejected.
+  const decision = normaliseDecision(gate) || 'pending';
   card.appendChild(el('div', { class: 'dn-gate-head' }, [
     el('div', { class: 'dn-gate-decision' }, [verdictPill(decision)]),
     el('div', { class: 'dn-row dn-gate-deltas' }, [

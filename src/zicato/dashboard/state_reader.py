@@ -178,6 +178,44 @@ def read_current_epoch(paths: WorkspacePaths) -> str | None:
     return text or None
 
 
+def list_epoch_ids(paths: WorkspacePaths) -> list[str]:
+    """Every epoch id on disk (the ``epochs/`` subdirectories), sorted.
+
+    The set of epochs a ``?epoch=<id>`` request may legally resolve to.
+    Returns an empty list when the workspace has no ``epochs/`` directory.
+    """
+    if not paths.epochs.is_dir():
+        return []
+    return sorted(d.name for d in paths.epochs.iterdir() if d.is_dir())
+
+
+def _resolve_epoch_id(paths: WorkspacePaths, epoch_id: str | None) -> str | None:
+    """Validate + resolve the epoch a scoped build should read.
+
+    ``None`` resolves to the current epoch (the unchanged default — every
+    existing caller). A given id is validated against the on-disk epoch set
+    and rejected (``ValueError``) when unknown or path-unsafe, so a
+    ``?epoch=../foo`` cannot escape the workspace. The validated id is
+    returned verbatim.
+    """
+    if epoch_id is None:
+        return read_current_epoch(paths)
+    # reject path-traversal / separators outright — an epoch id is a single
+    # directory name, never a path.
+    if (
+        not isinstance(epoch_id, str)
+        or not epoch_id
+        or "/" in epoch_id
+        or "\\" in epoch_id
+        or epoch_id in (".", "..")
+        or "\x00" in epoch_id
+    ):
+        raise ValueError(f"invalid epoch id: {epoch_id!r}")
+    if epoch_id not in list_epoch_ids(paths):
+        raise ValueError(f"unknown epoch id: {epoch_id!r}")
+    return epoch_id
+
+
 # ---------------------------------------------------------------------------
 # Runtime state — heartbeat / lock / active runs / active tournament
 # ---------------------------------------------------------------------------
@@ -939,8 +977,12 @@ def _tournament_block_from_scoring(scoring: Any) -> dict[str, Any] | None:
     }
 
 
-def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
-    """The current epoch's full evaluation contract.
+def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
+    """An epoch's full evaluation contract.
+
+    ``epoch_id`` defaults to the CURRENT epoch (unchanged behaviour); given a
+    validated id, the view resolves THAT epoch instead — the only true fix for
+    viewing a non-current epoch from the dashboard.
 
     Matches the Rust ``epoch::build_epoch_view`` shape: no current epoch
     yields ``{"epoch_id": null}``; every other component degrades to
@@ -969,7 +1011,7 @@ def build_epoch_view(paths: WorkspacePaths) -> dict[str, Any]:
       exists on disk; the frontend can link directly to
       ``/api/epoch/{id}/analysis.html``.
     """
-    epoch_id = read_current_epoch(paths)
+    epoch_id = _resolve_epoch_id(paths, epoch_id)
     if epoch_id is None:
         return {"epoch_id": None}
 
@@ -1459,9 +1501,13 @@ def _champion_lineage(generations: list[dict[str, Any]]) -> list[str]:
     return chain
 
 
-def build_bracket(paths: WorkspacePaths) -> dict[str, Any]:
-    """``GET /api/tournaments`` — the bracket for the current epoch."""
-    epoch_id = read_current_epoch(paths)
+def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
+    """``GET /api/tournaments`` — the bracket for an epoch.
+
+    ``epoch_id`` defaults to the current epoch; a validated id scopes to that
+    epoch instead.
+    """
+    epoch_id = _resolve_epoch_id(paths, epoch_id)
     try:
         conn = _open_index(paths.index_db)
     except _IndexAbsent:
@@ -2210,8 +2256,11 @@ def _mean_drift_loss_per_generation(
     return sum(entry_means) / len(entry_means), len(entry_means)
 
 
-def build_score_trajectory(paths: WorkspacePaths) -> dict[str, Any]:
+def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
     """``GET /api/score-trajectory`` — the scalar across generations.
+
+    ``epoch_id`` defaults to the current epoch; a validated id scopes the
+    trajectory to that epoch's generations instead.
 
     The environment-wide evolution curve: one point per generation, in
     lineage (creation) order, plotting the generation's aggregate
@@ -2230,7 +2279,7 @@ def build_score_trajectory(paths: WorkspacePaths) -> dict[str, Any]:
     promoted, scalar, entry_count, created_at}], "note"?}``. Degrades to
     an empty ``points`` list (never raises) when the index is absent.
     """
-    epoch_id = read_current_epoch(paths)
+    epoch_id = _resolve_epoch_id(paths, epoch_id)
     # Lineage order is authoritative for the x-axis — the index's
     # ``generations`` rows can carry empty ``created_at`` strings.
     lineage = build_lineage_view(paths)

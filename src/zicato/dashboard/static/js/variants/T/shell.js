@@ -636,19 +636,22 @@ async function buildTreeModel(route) {
     const currentChampionId = lineage.length ? lineage[lineage.length - 1] : null;
     const linForEpoch = (lin && Array.isArray(lin.generations))
       ? lin.generations.filter((g) => !g.epoch_id || g.epoch_id === id) : [];
+    // Preserve the tri-state `promoted` (true / false / null) so the tree can
+    // render an unscored child as PENDING rather than a default rejected (Class
+    // B). A pre-feature row that omits the field reads null ⇒ pending.
     const gensList = linForEpoch.length
-      ? linForEpoch.map((g) => ({ id: g.generation_id, promoted: !!g.promoted, parent: g.parent_generation_id || null }))
+      ? linForEpoch.map((g) => ({ id: g.generation_id, promoted: g.promoted == null ? null : !!g.promoted, parent: g.parent_generation_id || null }))
       : (ep && Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({
           id: x.generation_id, parent: x.parent_generation_id || null,
-          promoted: normaliseDecision(x.outcome) === 'promoted',
+          promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null),
         })) : []);
     // disambiguate the CURRENT champion (♚) from FORMER champions (hollow crown).
     const fallbackCurrent = currentChampionId == null
-      ? (gensList.filter((g) => g.promoted).map((g) => g.id).pop() || null)
+      ? (gensList.filter((g) => g.promoted === true).map((g) => g.id).pop() || null)
       : currentChampionId;
     for (const g of gensList) {
-      g.currentChampion = g.promoted && String(g.id) === String(fallbackCurrent);
-      g.formerChampion = g.promoted && !g.currentChampion;
+      g.currentChampion = g.promoted === true && String(g.id) === String(fallbackCurrent);
+      g.formerChampion = g.promoted === true && !g.currentChampion;
     }
     const boardList = (ep && Array.isArray(ep.board) ? ep.board : []).map((b) => ({
       id: b.entry_id || b.id, kindTag: KIND_TAG[b.kind] || null,

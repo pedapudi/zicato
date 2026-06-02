@@ -17,7 +17,7 @@ export function verdictClass(verdict) {
   if (v.includes('promot')) return 'ezn-promoted';
   if (v.includes('reject')) return 'ezn-rejected';
   if (v.includes('defer')) return 'ezn-deferred';
-  if (v === 'running' || v.includes('flight') || v === 'live') return 'ezn-running';
+  if (v === 'running' || v === 'pending' || v.includes('flight') || v === 'live') return 'ezn-running';
   if (v === 'baseline' || v === 'seed') return 'ezn-baseline';
   return 'ezn-neutral';
 }
@@ -313,10 +313,17 @@ export function lifecycleDag(spec) {
   rectNode(nodeLayer, X.gate, midY, 0.12 * w, 48, baseline ? 'BASELINE' : 'GATE', gateSub, verdictClass(dec));
 
   const promoted = dec === 'promoted' || (baseline && o.promoted === true);
-  const termLabel = baseline ? 'seed' : (promoted ? '♛ promoted' : '✕ dead branch');
-  const termCls = baseline ? 'ezn-baseline' : (promoted ? 'ezn-promoted' : 'ezn-rejected');
-  edgeLayer.appendChild(svgEl('path', { d: flow(X.gate + 0.06 * w, midY, X.term - 0.045 * w, midY), class: 'ezn-edge ' + (promoted ? 'ezn-edge-good' : 'ezn-edge-bad'), fill: 'none' }));
-  rectNode(nodeLayer, X.term, midY, 0.1 * w, 48, termLabel, baseline ? 'defines floor' : (promoted ? 'new champion' : 'champion stands'), termCls);
+  // Class B: a PENDING candidate (in-flight / not yet raced — promoted == null,
+  // no resolved decision) must NOT read "✕ dead branch / champion stands". Show
+  // a non-terminal racing/awaiting-gate state instead.
+  const pending = !baseline && !promoted && (dec === 'pending' || dec === 'running' || (o.promoted == null && (!dec || dec === 'running' || dec === 'pending')));
+  let termLabel, termSub, termCls;
+  if (baseline) { termLabel = 'seed'; termSub = 'defines floor'; termCls = 'ezn-baseline'; }
+  else if (promoted) { termLabel = '♛ promoted'; termSub = 'new champion'; termCls = 'ezn-promoted'; }
+  else if (pending) { termLabel = '⋯ racing'; termSub = 'awaiting gate'; termCls = 'ezn-running'; }
+  else { termLabel = '✕ dead branch'; termSub = 'champion stands'; termCls = 'ezn-rejected'; }
+  edgeLayer.appendChild(svgEl('path', { d: flow(X.gate + 0.06 * w, midY, X.term - 0.045 * w, midY), class: 'ezn-edge ' + (promoted ? 'ezn-edge-good' : pending ? 'ezn-edge-neutral' : 'ezn-edge-bad'), fill: 'none' }));
+  rectNode(nodeLayer, X.term, midY, 0.1 * w, 48, termLabel, termSub, termCls);
 
   svg.appendChild(edgeLayer);
   svg.appendChild(nodeLayer);

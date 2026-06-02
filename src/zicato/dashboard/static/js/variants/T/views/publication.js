@@ -15,7 +15,7 @@ import { el } from '../../../core/dom.js';
 import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, empty, subhead, renderMarkdown, densityTokens } from '../ui.js';
+import { gatedSwap, empty, subhead, renderMarkdown, decisionFor, densityTokens } from '../ui.js';
 
 // Parse analysis_md into { eyebrow, title, meta:[{label,value}], abstract,
 // body } — the same marker scheme K uses.
@@ -79,13 +79,14 @@ export async function render(host, ctx, params) {
     return;
   }
 
-  const [analysis, lin, traj, bracket] = await Promise.all([
-    D.analysis(epochId), D.lineage(), D.scoreTrajectory(), D.bracket(),
+  // Class A: scope lineage / trajectory / bracket to THIS epoch.
+  const [analysis, rows, traj, bracket] = await Promise.all([
+    D.analysis(epochId), D.generationsForEpoch(epochId), D.scoreTrajectory(epochId), D.bracket(epochId),
   ]);
   const md = (analysis && typeof analysis.analysis_md === 'string') ? analysis.analysis_md : '';
 
-  const gens = (lin && Array.isArray(lin.generations) && lin.generations.length)
-    ? lin.generations.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted })) : [];
+  const gens = rows.length
+    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted })) : [];
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
   const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
@@ -203,7 +204,7 @@ function figureFor(name, figures) {
 // BAR CHART, side by side (not two redundant blocks).
 function aggregateScoresFigure(gens, scalarByGen) {
   const fig = el('figure', { class: 'dn-paper-fig dn-scores-fig' });
-  const items = gens.map((g) => ({ id: g.id, label: g.id, promoted: g.promoted, value: scalarByGen.get(g.id) }))
+  const items = gens.map((g) => ({ id: g.id, label: g.id, promoted: g.promoted, parent: g.parent, value: scalarByGen.get(g.id) }))
     .filter((it) => svg.isNum(it.value));
   if (!items.length) {
     fig.appendChild(el('figcaption', { class: 'dn-paper-figcap dn-faint', text: 'Figure · aggregate generation scores (no trajectory data yet).' }));
@@ -220,10 +221,13 @@ function aggregateScoresFigure(gens, scalarByGen) {
   tbl.appendChild(el('thead', null, [el('tr', null, [el('th', { text: 'generation' }), el('th', { class: 'dn-num', text: 'scalar (loss)' }), el('th', { text: 'outcome' })])]));
   const tbody = el('tbody');
   for (const it of items) {
+    // Class B: an unscored candidate reads pending, never rejected.
+    const dec = decisionFor({ promoted: it.promoted, parent: it.parent });
+    const label = dec === 'promoted' ? 'promoted ♛' : dec === 'baseline' ? 'seed' : dec === 'pending' ? 'racing…' : dec;
     tbody.appendChild(el('tr', null, [
       el('td', { class: 'dn-mono', text: it.label }),
       el('td', { class: 'dn-num dn-mono', text: svg.fmt(it.value, 2) }),
-      el('td', { text: it.promoted ? 'promoted ♛' : 'rejected' }),
+      el('td', { text: label }),
     ]));
   }
   tbl.appendChild(tbody);
