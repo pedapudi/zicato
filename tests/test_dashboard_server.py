@@ -1883,6 +1883,128 @@ def test_conversation_genuinely_absent_gen_entry_still_404(
         assert r.status_code == 404
 
 
+def test_run_transcript_gen_entry_primary_resolves_reuse_run_id_pair(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The (epoch, gen, entry) route is PRIMARY: it resolves the gen×entry's
+    own events.jsonl directly, independent of how any run_id was minted.
+
+    The champion v0×waffles_single pair's per-entry run record is a
+    successive-halving REUSE record (a ``loss.json`` carrying a distinct
+    ``run_id`` with no events of its own). Resolving the transcript by the
+    deterministic triple must still land on the one real
+    ``v0/runs/waffles_single/events.jsonl`` (the 1-line fixture transcript),
+    never 404.
+    """
+    _install_stub_transcript(monkeypatch)
+    _write_json(
+        workspace
+        / "epochs"
+        / "2026-05-16_e0"
+        / "generations"
+        / "v0"
+        / "runs"
+        / "waffles_single"
+        / "loss.json",
+        {"run_id": "reuse_rung2_v0_0000", "entry_id": "waffles_single", "drift_loss": 60.5},
+    )
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        r = c.get("/api/run/2026-05-16_e0/v0/waffles_single/transcript")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["event_count"] == 1
+        assert body["generation_id"] == "v0"
+        assert body["entry_id"] == "waffles_single"
+
+
+def test_run_transcript_run_disambiguator_selects_specific_rung(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``?run=`` disambiguates when a gen×entry has MULTIPLE runs (re-races).
+
+    Racing re-races a gen×entry across rungs; each rung lands in its own
+    nested sub-directory under ``runs/<entry>/``. The default resolves to
+    the entry's own ``runs/<entry>/events.jsonl``; ``?run=<rung-run-id>``
+    selects the nested rung whose loss.json carries that run id.
+    """
+    _install_stub_transcript(monkeypatch)
+    base = workspace / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "runs" / "waffles_single"
+    # A nested rung directory with its OWN events.jsonl (2 lines) + a
+    # loss.json stamping the rung's run_id. The entry's own events.jsonl
+    # already exists in the fixture (3 lines).
+    rung = base / "rung3"
+    _write(
+        rung / "events.jsonl",
+        "\n".join(
+            [
+                json.dumps({"runId": "rung3_run", "sequence": "0", "runStarted": {}}),
+                json.dumps({"runId": "rung3_run", "sequence": "1", "steeringDecisionMade": {}}),
+            ]
+        )
+        + "\n",
+    )
+    _write_json(rung / "loss.json", {"run_id": "rung3_run", "entry_id": "waffles_single"})
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        # Default → the entry's own 3-line events.jsonl.
+        r = c.get("/api/run/2026-05-16_e0/v1/waffles_single/transcript")
+        assert r.status_code == 200, r.text
+        assert r.json()["event_count"] == 3
+        # Disambiguated → the nested rung's 2-line events.jsonl.
+        r2 = c.get("/api/run/2026-05-16_e0/v1/waffles_single/transcript?run=rung3_run")
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["event_count"] == 2
+
+
+def test_run_transcript_genuinely_absent_pair_is_honest_empty(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuinely-absent gen×entry returns the honest empty (no fabrication).
+
+    The triple resolves to nothing when no events.jsonl exists for the pair —
+    the route answers 200 with zero turns (the frontend renders the honest
+    "could not be reconstructed" message) and never borrows a sibling's
+    transcript.
+    """
+    _install_stub_transcript(monkeypatch)
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        r = c.get("/api/run/2026-05-16_e0/v1/no_such_entry/transcript")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["event_count"] == 0
+        assert body["turns"] == []
+        # The conversation route 404s for a run with no events AND no real
+        # gen×entry — the honest hard-absence on the back-compat path.
+        r2 = c.get(
+            "/api/conversation/no_such_run",
+            params={"gen": "v1", "entry": "no_such_entry"},
+        )
+        assert r2.status_code == 404
+
+
+def test_conversation_gen_entry_primary_prefers_triple_over_run_id(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``/api/conversation`` is gen×entry-FIRST when coordinates are known.
+
+    Even when the opaque run_id is unresolvable, supplying ``?gen=&entry=``
+    resolves straight to the gen×entry events.jsonl — the deterministic
+    triple is the primary key, the run_id only a disambiguator.
+    """
+    _install_stub_transcript(monkeypatch)
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        r = c.get(
+            "/api/conversation/totally_unknown_run",
+            params={"gen": "v0", "entry": "waffles_single"},
+        )
+        assert r.status_code == 200, r.text
+        # v0/runs/waffles_single/events.jsonl is the 1-line fixture.
+        assert r.json()["event_count"] == 1
+
+
 def test_matchup_conversations_endpoint(
     workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

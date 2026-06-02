@@ -2703,6 +2703,89 @@ def find_generation_entry_events(
     return None
 
 
+def resolve_transcript_events(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    *,
+    run_id: str | None = None,
+    match_id: str | None = None,
+) -> Path | None:
+    """PRIMARY transcript resolver: ``(epoch, gen, entry)`` → events.jsonl.
+
+    The deterministic triple is the primary key — the events file lives at
+    ``epochs/<epoch>/generations/<gen>/runs/<entry>/events.jsonl`` and the
+    pane always knows all three coordinates. A ``run_id`` / ``match_id`` is
+    only a DISAMBIGUATOR: when a gen×entry has MULTIPLE runs (e.g.
+    successive-halving racing re-races a champion across rungs, each rung
+    landing in its own sub-directory), the disambiguator selects a specific
+    rung's events file. With no disambiguator we DEFAULT to the entry's own
+    ``runs/<entry>/events.jsonl`` — the gen×entry's one canonical transcript.
+
+    Resolution, strict to this entry's own run directory (never a sibling's):
+
+    1. Default: ``generations/<gen>/runs/<entry>/events.jsonl`` for the
+       requested ``epoch_id`` (then any epoch carrying that generation, since
+       a generation id is unique workspace-wide).
+    2. Disambiguator: when ``run_id`` / ``match_id`` is given, prefer a
+       nested ``runs/<entry>/<disambiguator>/events.jsonl`` (or any nested
+       run dir whose own ``runId`` / loss.json ``run_id`` / ``match_id``
+       matches) before falling back to (1).
+
+    Returns ``None`` only when no events.jsonl exists for this gen×entry at
+    all — the genuine-absence case the honest "could not be reconstructed"
+    message is reserved for.
+    """
+    if not paths.epochs.is_dir():
+        return None
+
+    # Locate this entry's run directory. Prefer the requested epoch; a
+    # generation id is unique workspace-wide, so fall back to any epoch that
+    # carries it (covers a mis-scoped epoch_id from the caller).
+    run_dir: Path | None = None
+    primary = paths.epochs / epoch_id / "generations" / generation_id / "runs" / entry_id
+    if primary.is_dir() or (primary / "events.jsonl").exists():
+        run_dir = primary
+    else:
+        for epoch_d in paths.epochs.iterdir():
+            cand = epoch_d / "generations" / generation_id / "runs" / entry_id
+            if cand.is_dir() or (cand / "events.jsonl").exists():
+                run_dir = cand
+                break
+    if run_dir is None:
+        return None
+
+    disambiguator = run_id or match_id
+    if disambiguator:
+        # A specific rung was requested. First a directly-named nested dir,
+        # then any nested run dir whose events/loss carry the disambiguator.
+        nested = run_dir / disambiguator / "events.jsonl"
+        if nested.exists():
+            return nested
+        if run_dir.is_dir():
+            for child in sorted(run_dir.iterdir()):
+                if not child.is_dir():
+                    continue
+                ev = child / "events.jsonl"
+                if not ev.exists():
+                    continue
+                if _run_id_of_events_file(ev) == disambiguator:
+                    return ev
+                loss = _read_json_value(child / "loss.json")
+                if isinstance(loss, dict) and (
+                    loss.get("run_id") == disambiguator or loss.get("match_id") == disambiguator
+                ):
+                    return ev
+        # Disambiguator did not match a specific rung — fall through to the
+        # entry's own canonical events file rather than 404-ing.
+
+    own = run_dir / "events.jsonl"
+    if own.exists():
+        return own
+    return None
+
+
 def find_generation_run(
     paths: WorkspacePaths, generation_id: str, entry_id: str
 ) -> tuple[str, Path] | None:

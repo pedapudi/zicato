@@ -197,24 +197,29 @@ export function perJudgeForRun(epochId, genId, entryId) {
   return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/per-judge`);
 }
 
-// The reconstructed transcript for a run. In successive-halving racing the
-// fixed champion is re-raced across rungs, so a given run_id can be a
-// score-REUSE record with no events.jsonl of its own — only its gen×entry
-// carries the one real transcript. When the caller knows the run's
-// coordinates (the champion side always does), pass gen+entry so the backend
-// can fall back to the gen×entry events.jsonl rather than 404-ing.
+// Back-compat run_id-keyed transcript read. Resolution is now gen×entry-FIRST
+// on the backend: when the caller knows the run's coordinates (the panes
+// always do), pass gen+entry so the deterministic triple is the primary key
+// and the opaque run_id is only a disambiguator. Kept for the few callers
+// that hold only a run_id; prefer runTranscript() when the triple is known.
 export function conversation(runId, gen, entry) {
   let url = `/api/conversation/${enc(runId)}`;
   if (gen && entry) url += `?gen=${enc(gen)}&entry=${enc(entry)}`;
   return cachedJson(url);
 }
 
-// Resolve a transcript directly by its (epoch, gen, entry) coordinates,
-// independent of any run_id. The fallback path for a reuse-record run_id
-// whose own /api/conversation lookup yields no transcript: the gen×entry
-// always resolves to the one real events.jsonl on disk.
-export function runTranscript(epochId, genId, entryId) {
-  return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/transcript`);
+// PRIMARY transcript accessor: resolve directly by the deterministic
+// (epoch, gen, entry) triple — the events file lives at
+// generations/<gen>/runs/<entry>/events.jsonl, so this always lands on the
+// one real transcript on disk, independent of how any run_id was minted.
+// An optional runId is passed only as a DISAMBIGUATOR (?run=) for the
+// successive-halving case where a gen×entry has been re-raced across rungs
+// and carries multiple run records; the backend defaults to the entry's own
+// events.jsonl when it is omitted or does not match a specific rung.
+export function runTranscript(epochId, genId, entryId, runId) {
+  let url = `/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/transcript`;
+  if (runId) url += `?run=${enc(runId)}`;
+  return cachedJson(url);
 }
 
 function enc(s) { return encodeURIComponent(s == null ? '' : String(s)); }

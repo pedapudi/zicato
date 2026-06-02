@@ -443,6 +443,49 @@ test('board view: a GENUINELY-absent champion transcript still shows the honest 
     'the honest "unavailable" message is preserved for a genuinely-absent gen×entry');
 });
 
+test('board view: BOTH sides resolve by (epoch, gen, entry) PRIMARY even when the per-record run_id has no events', async () => {
+  freshState();
+  // The deterministic triple is the primary key: BOTH the challenger (v1)
+  // and the champion (v0) resolve via /api/run/<epoch>/<gen>/<entry>/transcript
+  // even though NEITHER per-entry run_id resolves through /api/conversation
+  // (both are reuse / index-only records with no events of their own). The
+  // panes must render both transcripts from the gen×entry events.jsonl —
+  // never the run_id-first path.
+  installFetchWith(
+    {
+      [`/api/run/${EPOCH_ID}/v1/waffles_single/transcript`]: {
+        epoch_id: EPOCH_ID, generation_id: 'v1', entry_id: 'waffles_single', run_id: 'real_v1_run',
+        turns: [
+          { seq: 0, role: 'user', agent: 'operator', text: 'Make a presentation about waffles.' },
+          { seq: 1, role: 'agent', agent: 'coordinator', text: 'Challenger by-triple transcript.' },
+        ],
+        annotations: [], event_count: 12, complete: true,
+      },
+      [`/api/run/${EPOCH_ID}/v0/waffles_single/transcript`]: {
+        epoch_id: EPOCH_ID, generation_id: 'v0', entry_id: 'waffles_single', run_id: 'real_v0_run',
+        turns: [
+          { seq: 0, role: 'user', agent: 'operator', text: 'Make a presentation about waffles.' },
+          { seq: 1, role: 'agent', agent: 'coordinator', text: 'Champion by-triple transcript.' },
+        ],
+        annotations: [], event_count: 31, complete: true,
+      },
+    },
+    // Both run_id-keyed lookups are suppressed — the run_id-first path would 404.
+    ['/api/conversation/run_v1_waffles', '/api/conversation/run_v0_waffles'],
+  );
+  const board = await import('../js/variants/T/views/board.js');
+  const bhost = document.createElement('div');
+  await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+  const cols = allByClass(bhost, 'dn-xscript-col');
+  assert(cols.length === 2, 'two transcript columns');
+  assert(bhost.textContent.includes('Challenger by-triple transcript'),
+    'challenger side resolved by the (epoch, gen, entry) triple, not its run_id');
+  assert(bhost.textContent.includes('Champion by-triple transcript'),
+    'champion side resolved by the (epoch, gen, entry) triple, not its run_id');
+  assert(!bhost.textContent.includes('could not be reconstructed'),
+    'no honest-absence message when the gen×entry transcript exists for both sides');
+});
+
 test('board view: the per-pane transcript host split (live-beat scroll fix) is preserved', async () => {
   freshState(); installFetch();
   const board = await import('../js/variants/T/views/board.js');

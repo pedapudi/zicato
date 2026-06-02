@@ -686,26 +686,29 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                 {"error": "transcript reconstruction unavailable"},
                 status_code=503,
             )
-        events_path = state_reader.find_run_events_path(paths, run_id)
-        # Successive-halving fallback: a REUSED champion run_id (re-raced
-        # across rungs) has a score-reuse record but NO events.jsonl of its
-        # own — only its gen×entry carries the one real transcript. When the
-        # caller supplies the run's coordinates via ``?gen=&entry=`` (the
-        # champion side always knows them), resolve directly to that
-        # gen×entry events.jsonl so the transcript renders rather than 404.
-        # ``find_run_events_path`` already attempts a loss.json-derived
-        # fallback; the query params are the explicit, index-independent
-        # path for the same recovery.
-        if events_path is None:
-            gen = request.query_params.get("gen")
-            entry = request.query_params.get("entry")
-            if gen and entry and _is_safe_id(gen) and _is_safe_id(entry):
-                # Strict gen×entry resolution: the events file must live in
-                # the requested entry's own run directory. (The shared
-                # find_generation_run helper falls back to ANY run dir under
-                # the generation, which is right for the L4 diff but would
-                # fabricate a transcript for a genuinely-absent entry here.)
+        # Back-compat run_id route, but gen×entry-FIRST when the coordinates
+        # are known. The deterministic triple is the primary key: when the
+        # caller supplies ``?gen=&entry=`` (and optionally ``?epoch=``), we
+        # resolve straight to ``generations/<gen>/runs/<entry>/events.jsonl``
+        # — strict to that entry's own run dir, with the run_id only a
+        # disambiguator. This inverts the prior run_id-first order, which
+        # kept failing on reused / index-only run_ids. We fall back to the
+        # opaque run_id lookup only when the triple is absent or resolves to
+        # nothing (a pure-run_id caller with no coordinates).
+        gen = request.query_params.get("gen")
+        entry = request.query_params.get("entry")
+        epoch_q = request.query_params.get("epoch")
+        events_path: Path | None = None
+        if gen and entry and _is_safe_id(gen) and _is_safe_id(entry):
+            epoch_for = epoch_q if (epoch_q and _is_safe_id(epoch_q)) else ""
+            events_path = state_reader.resolve_transcript_events(
+                paths, epoch_for, gen, entry, run_id=run_id
+            )
+            if events_path is None:
+                # Strict to the entry's own run dir — never a sibling's.
                 events_path = state_reader.find_generation_entry_events(paths, gen, entry)
+        if events_path is None:
+            events_path = state_reader.find_run_events_path(paths, run_id)
         if events_path is None:
             return JSONResponse({"error": f"no events for run {run_id}"}, status_code=404)
         try:
@@ -775,19 +778,38 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                 },
                 status_code=200,
             )
-        # Resolve the events.jsonl path through the explicit
-        # (epoch, generation, entry) tuple — find_generation_run does the
-        # walk but ignores the epoch. We can call it directly: the
-        # generation id is unique within the workspace, and that helper
-        # already returns the right ``(run_id, events_path)``.
-        located = state_reader.find_generation_run(paths, generation_id, entry_id)
-        if located is None:
+        # PRIMARY resolution: the deterministic (epoch, gen, entry) triple
+        # → ``generations/<gen>/runs/<entry>/events.jsonl``, strict to this
+        # entry's OWN run directory (never a sibling's). An optional
+        # ``?run=`` / ``?match=`` disambiguator selects a specific rung when
+        # a gen×entry has multiple runs (successive-halving re-races);
+        # without one we DEFAULT to the entry's own canonical events file.
+        # This inverts the old run_id-first order: the triple — which the
+        # pane always knows — is now the primary key, eliminating the
+        # run_id-reuse / index-only / multiple-records failure class.
+        run_q = request.query_params.get("run")
+        match_q = request.query_params.get("match")
+        run_q = run_q if (run_q and _is_safe_id(run_q)) else None
+        match_q = match_q if (match_q and _is_safe_id(match_q)) else None
+        events_path = state_reader.resolve_transcript_events(
+            paths,
+            epoch_id,
+            generation_id,
+            entry_id,
+            run_id=run_q,
+            match_id=match_q,
+        )
+        if events_path is None:
+            # Genuine absence: no events.jsonl exists for this gen×entry at
+            # all. Return an honest empty 200 (the frontend renders the
+            # "could not be reconstructed" message) rather than a hard 404,
+            # matching the zero-turn-complete-run path.
             return JSONResponse(
                 {
                     "epoch_id": epoch_id,
                     "generation_id": generation_id,
                     "entry_id": entry_id,
-                    "run_id": None,
+                    "run_id": run_q,
                     "turns": [],
                     "annotations": [],
                     "event_count": 0,
@@ -795,7 +817,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                 },
                 status_code=200,
             )
-        run_id, events_path = located
+        run_id = run_q or entry_id
         try:
             transcript = reconstruct_transcript(events_path, partial_ok=True)
             payload = transcript.to_dict()

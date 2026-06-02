@@ -331,7 +331,11 @@ function transcriptColumn(sel, conv, championId) {
   ]));
 
   const turns = (conv && Array.isArray(conv.turns)) ? conv.turns : [];
-  if (!sel.runId) { col.appendChild(empty('No run id for this candidate on this board.')); return col; }
+  // The transcript is keyed on the (epoch, gen, entry) triple, NOT the
+  // per-entry run_id — so a candidate whose row carries no run_id can still
+  // render its transcript when the gen×entry events.jsonl exists. Only fall
+  // through to the honest messages when the triple genuinely resolves to
+  // nothing.
   if (conv && conv.error) { col.appendChild(empty(conv.error)); return col; }
   if (!conv) { col.appendChild(empty('Transcript unavailable (could not be reconstructed).')); return col; }
   if (!turns.length) { col.appendChild(empty('No turns reconstructed for this run.')); return col; }
@@ -364,23 +368,27 @@ function transcriptColumn(sel, conv, championId) {
   return col;
 }
 
-// Resolve one side's transcript with a successive-halving fallback. The
-// primary lookup is by the candidate's run_id (carried by the per-entry
-// row). In racing the fixed champion (e.g. v0) is RE-RACED across rungs, so
-// its per-entry row may point at a score-REUSE run_id with no events.jsonl of
-// its own — /api/conversation then yields nothing. The candidate always knows
-// its gen + entry, so fall back to the gen×entry transcript, which always
-// resolves to the one real events.jsonl on disk. We pass gen+entry on the
-// first call too (the backend uses them as a same-request fallback); if that
-// still comes back empty we make the explicit by-(epoch, gen, entry) call.
-// A genuinely-absent gen×entry stays empty → the honest "unavailable" message.
+// Resolve one side's transcript by the DETERMINISTIC (epoch, gen, entry)
+// triple FIRST — the pane already knows all three. The events file lives at
+// generations/<gen>/runs/<entry>/events.jsonl, so the gen×entry transcript
+// always resolves to the one real events.jsonl on disk regardless of how the
+// per-entry row's run_id was minted. This inverts the old run_id-FIRST order,
+// which kept failing whenever the run_id was a successive-halving reuse
+// record, an index-only id, or one of several records for a re-raced pair.
+//
+// The candidate's run_id is only a DISAMBIGUATOR: when a gen×entry has been
+// re-raced across rungs (multiple runs under one entry), it picks the
+// specific rung. We pass it along so the backend can select that rung, then
+// fall back to the run_id-keyed /api/conversation ONLY when the triple
+// genuinely resolves to nothing (e.g. a pre-feature workspace). A
+// genuinely-absent gen×entry stays empty → the honest "unavailable" message.
 async function resolveTranscript(epochId, entryId, sel) {
   if (!sel || !sel.gen) return null;
-  let conv = sel.runId ? await D.conversation(sel.runId, sel.gen, entryId) : null;
-  if (!hasTurns(conv)) {
-    const byEntry = await D.runTranscript(epochId, sel.gen, entryId);
-    if (hasTurns(byEntry)) conv = byEntry;
-    else if (conv == null) conv = byEntry;
+  let conv = await D.runTranscript(epochId, sel.gen, entryId, sel.runId);
+  if (!hasTurns(conv) && sel.runId) {
+    const byRun = await D.conversation(sel.runId, sel.gen, entryId);
+    if (hasTurns(byRun)) conv = byRun;
+    else if (conv == null) conv = byRun;
   }
   return conv;
 }
