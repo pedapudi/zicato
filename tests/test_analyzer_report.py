@@ -1384,39 +1384,3 @@ def test_paper_table_code_cells_wrap_long_paths() -> None:
     block = fragment[block_open:block_end]
     assert "overflow-wrap: anywhere" in block
     assert "word-break: break-word" in block
-
-
-def test_dashboard_analysis_host_breaks_long_paths_and_scrolls_tables() -> None:
-    """The dashboard's analysis host scopes the same wrapping/scrolling
-    rules to the embedded analysis fragment.
-
-    The fragment ships its own paper-scoped CSS, but the dashboard's
-    ``.phase0-analysis-host`` wrapper layers a defensive overflow rule
-    in case the fragment is dropped into a future surface that bypasses
-    the paper rules. Regression for Task #196.
-    """
-    css_path = (
-        Path(__file__).resolve().parent.parent
-        / "src"
-        / "zicato"
-        / "dashboard"
-        / "static"
-        / "css"
-        / "components.css"
-    )
-    css = css_path.read_text(encoding="utf-8")
-    # The host wrapper itself scrolls.
-    host_idx = css.find(".phase0-analysis-host {")
-    assert host_idx >= 0
-    host_block = css[host_idx : css.find("}", host_idx)]
-    assert "overflow-x: auto" in host_block
-    # And the host scope cascades the break-anywhere rule onto ``<code>``
-    # cells in the embedded analysis fragment.
-    assert ".phase0-analysis-host .paper figure.paper-table table td code" in css
-    assert ".phase0-analysis-host .paper figure.paper-table table th code" in css
-    # The host-scoped figure overflow rule is also present so the inner
-    # table scrolls inside the dashboard card.
-    scope_idx = css.find(".phase0-analysis-host .paper figure.paper-table {")
-    assert scope_idx >= 0
-    scope_block = css[scope_idx : css.find("}", scope_idx)]
-    assert "overflow-x: auto" in scope_block

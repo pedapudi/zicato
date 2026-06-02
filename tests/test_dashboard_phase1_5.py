@@ -138,7 +138,7 @@ def static_dir(tmp_path: Path) -> Path:
     d = tmp_path / "static_phase15"
     d.mkdir()
     (d / "index.html").write_text("<!doctype html><title>zicato</title>", encoding="utf-8")
-    (d / "app.js").write_text("// app", encoding="utf-8")
+    (d / "app_T.js").write_text("// app", encoding="utf-8")
     return d
 
 

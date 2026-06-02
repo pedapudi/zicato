@@ -338,7 +338,7 @@ def static_dir(tmp_path: Path) -> Path:
     d = tmp_path / "static"
     d.mkdir()
     (d / "index.html").write_text("<!doctype html><title>zicato</title>", encoding="utf-8")
-    (d / "app.js").write_text("// app", encoding="utf-8")
+    (d / "app_T.js").write_text("// app", encoding="utf-8")
     return d
 
 
@@ -1474,14 +1474,14 @@ def test_static_root(client: TestClient) -> None:
 
 
 def test_static_asset_root_relative(client: TestClient) -> None:
-    # index.html references app.js at the document root.
-    r = client.get("/app.js")
+    # index.html references app_T.js at the document root.
+    r = client.get("/app_T.js")
     assert r.status_code == 200
     assert "// app" in r.text
 
 
 def test_static_asset_under_static_prefix(client: TestClient) -> None:
-    r = client.get("/static/app.js")
+    r = client.get("/static/app_T.js")
     assert r.status_code == 200
 
 
@@ -2711,24 +2711,29 @@ def test_api_contract_diff_endpoint_rejects_unsafe_id(client: TestClient) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Phase-0 redesign: static shell structure
+# Variant T (Console IV) — the sole shipping UI: static shell structure
 # ---------------------------------------------------------------------------
 
 
-def test_phase0_shell_present_in_index_html() -> None:
-    """The phase-0 shell containers are present in the served ``index.html``."""
+def test_variant_t_mount_present_in_index_html() -> None:
+    """The served ``index.html`` mounts Variant T and nothing else.
+
+    Variant T paints its entire shell at runtime into ``#variant-root``;
+    the static page only carries that host + the ``app_T.js`` bootstrap.
+    The retired v1 (phase0) and v2 (Notebook/Bench) shells must be gone.
+    """
     import zicato.dashboard as _dashboard_pkg
 
     index_path = Path(_dashboard_pkg.__file__).resolve().parent / "static" / "index.html"
     html = index_path.read_text(encoding="utf-8")
-    assert 'id="phase0-shell"' in html, "phase-0 shell container must be present"
-    # The clean-slate navigation rework dropped the sidebar; the top bar
-    # is the single chrome surface.
-    assert 'id="phase0-topbar"' in html, "phase-0 top bar must be present"
-    # Each L0..L4 view container must be wired so the shell can switch
-    # between them without re-fetching the HTML.
-    for level in ("workspace", "epoch", "generation", "round", "run"):
-        assert f'id="phase0-view-{level}"' in html, f"phase0 view container for {level!r} missing"
+    assert 'id="variant-root"' in html, "Variant-T mount #variant-root must be present"
+    assert "'app_T.js'" in html, "Variant-T entry app_T.js must be loaded by the bootstrap"
+    # The retired shells and their fallback bootstrap must be gone.
+    assert "phase0-shell" not in html, "retired v1 phase0 shell must not be in index.html"
+    assert "v2-root" not in html, "retired v2 root must not be in index.html"
+    assert (
+        "'app.js'" not in html and "'app2.js'" not in html
+    ), "retired v1/v2 entries must not be referenced by the bootstrap"
 
 
 def test_build_workspace_view_promoted_count_reads_experiments(workspace: Path) -> None:

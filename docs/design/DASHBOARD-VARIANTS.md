@@ -15,6 +15,22 @@
 > endpoints. Nothing here is invented data; all marks bind to the live contract
 > documented in the working brief.
 
+## Retirement record
+
+- **2026-06-01 — bake-off field archived.** Variants **A–W** (the bake-off
+  field) were removed from `main` and preserved at the git tag
+  `dashboard-bakeoff-2026-06-01`. **Variant T (Console IV)** stayed on `main`
+  as the converged, default UI (`app_T.js` + `js/variants/T/` +
+  `css/variants/T/console4.css`).
+- **2026-06-02 — latent fallback shells retired.** The two remaining
+  pre-bake-off UIs — **v1** (the "phase0" clean-slate shell: `app.js`,
+  `js/views/phase0_*.js`, `css/phase0_*.css`) and **v2** (the "Notebook/Bench"
+  shell: `app2.js`, `js/v2/`, `css/v2/`) — were removed from `main` and
+  preserved at the git tag `dashboard-v1-v2-archive-2026-06-02`. The
+  `?ui=v1|v2` bootstrap branches and the phase0/v2 static markup were dropped
+  from `index.html`. **Variant T is now the sole shipping UI** — there is no
+  fallback shell in the tree.
+
 ## The six rounds at a glance
 
 | Round | Variants | Theme |

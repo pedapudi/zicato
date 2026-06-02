@@ -1,8 +1,8 @@
 """Run the dashboard's JavaScript test harness from pytest.
 
-The dashboard frontend is a modular ES-module app: a thin ``app.js``
-entry point plus the core spine, the shared component library and the
-render layer under ``static/js/``. JavaScript behaviour — the
+The dashboard frontend is a modular ES-module app: a thin ``app_T.js``
+entry point (Variant T, the sole shipping UI) plus the core spine and
+the Variant-T view modules under ``static/js/``. JavaScript behaviour — the
 incremental render spine, the append-only log tail, matchup-click
 survival across a state delta — is not reachable from the pure-parsing
 structural tests in ``test_dashboard_ui.py``, so it has its own
