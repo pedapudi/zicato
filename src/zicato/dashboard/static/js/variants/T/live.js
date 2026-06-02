@@ -41,7 +41,13 @@ import { racingModel, normalizeStructure } from './views/structure.js';
 // `label` is the headline ("rung 2 of 3"); `detail` is the matchup tally
 // ("m/n matchups" / "field of N"); `fraction` drives a determinate bar.
 export function liveProgress({ activeTournament, heartbeat, status } = {}) {
-  const at = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
+  const rawAt = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
+  // SCOPE TO THE CURRENT RUN: ignore an active-tournament retained from a
+  // DIFFERENT (foreign) epoch — its rung/round topology must not drive the live
+  // progress of the current run (e.g. e1's completed racing ladder leaking "rung
+  // k of N" while e3 is proposing). Fall through to the heartbeat phase string
+  // ("proposing field…") for the honest current-run state.
+  const at = (rawAt && liveBelongsToEpoch(rawAt, heartbeat)) ? rawAt : null;
   const structure = (status && status.structure) || (at && at.structure) || null;
   const phase = (heartbeat && heartbeat.phase) || (status && status.phase) || null;
 
@@ -117,7 +123,14 @@ function normalizeForModel(at) {
 // it small + plain means the diff is cheap and the snapshot is trivially cloned
 // across ticks. Each in-flight run is keyed by run_id (or gen|entry).
 export function liveSnapshot({ heartbeat, activeRuns, activeTournament, status } = {}) {
-  const at = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
+  const rawAt = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
+  // SCOPE TO THE CURRENT RUN: a foreign-epoch active-tournament must not feed the
+  // activity ticker — otherwise a prior epoch's retained rung topology replays as
+  // "rung cut · vN eliminated" events under the current run (leaking foreign
+  // competitor ids). The in-flight RUNS are kept regardless (active-runs is
+  // ground truth for the current run); only the tournament-derived rung/lineage
+  // signal is dropped when the tournament belongs to a different epoch.
+  const at = (rawAt && liveBelongsToEpoch(rawAt, heartbeat)) ? rawAt : null;
   const runs = Array.isArray(activeRuns) ? activeRuns : [];
   const phase = (heartbeat && heartbeat.phase) || (status && status.phase) || null;
 
@@ -393,16 +406,22 @@ export class LiveController {
     }
 
     // ── the survival funnel: digest-gated swap (animate only on real change) ──
-    this._updateFunnel(activeTournament);
+    // The funnel is RACING-ONLY and CURRENT-RUN-ONLY (see _funnelEligible): a
+    // swiss/elim live tournament, a completed/idle tournament, or a stale/foreign
+    // active-tournament from a PRIOR epoch must NOT render the racing funnel.
+    this._updateFunnel(activeTournament, heartbeat);
     return true;
   }
 
-  _updateFunnel(activeTournament) {
+  _updateFunnel(activeTournament, heartbeat) {
     const at = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
-    const st = at ? normalizeStructure(at, true) : null;
-    const model = (st && String(st.structure) === 'racing') ? racingModel(st) : null;
+    const model = funnelEligible(at, heartbeat) ? racingModel(normalizeStructure(at, true)) : null;
     if (!model || !model.hasRungs) {
-      // no racing topology — drop any prior funnel (structure changed / absent).
+      // no LIVE racing topology for the CURRENT run — drop any prior funnel and
+      // show an honest progress state (never a stale/foreign racing funnel).
+      // The "field fills in…" copy reads correctly for both a racing run still
+      // proposing/filling its first rung AND any non-racing live structure
+      // (swiss/elim), whose round-based progress the hero shows above.
       if (this._funnelDigest !== 'none') {
         this._funnelDigest = 'none';
         clear(this._funnelHost);
@@ -427,6 +446,46 @@ export class LiveController {
 }
 
 function clear(node) { while (node && node.firstChild) node.removeChild(node.firstChild); }
+
+// ── the funnel-eligibility gate ──────────────────────────────────────
+//
+// The racing survival funnel is meaningful ONLY for a LIVE racing tournament
+// that belongs to the CURRENT run. It renders iff ALL hold:
+//   (1) there IS an active tournament,
+//   (2) its `structure === 'racing'`,
+//   (3) its `phase` is a RUNNING phase (not completed/complete/done/idle/empty
+//       — a settled tournament keeps its topology but must not show the LIVE
+//       funnel in the hero), AND
+//   (4) it is SCOPED TO THE CURRENT live epoch: its `epoch_id` matches the
+//       heartbeat's `epoch_id` (the epoch of the active run). A stale/foreign
+//       active-tournament retained from a PRIOR epoch (e.g. e1's completed
+//       racing ladder while e3 is proposing) is rejected here so the hero never
+//       falls back to a prior epoch's funnel.
+//
+// Epoch scoping is permissive ONLY when neither side names an epoch (legacy
+// single-epoch payloads): a KNOWN-and-DIFFERENT epoch pair is always rejected.
+// This mirrors the Match-ups view's live-adoption guard (viewed epoch == active
+// epoch) in views/structure.js.
+function funnelEligible(at, heartbeat) {
+  if (!at || typeof at !== 'object') return false;
+  if (String(at.structure) !== 'racing') return false;
+  const phase = String(at.phase == null ? '' : at.phase).trim().toLowerCase();
+  const running = phase === 'running' || (phase !== '' && phase !== 'idle'
+    && phase !== 'complete' && phase !== 'completed' && phase !== 'done');
+  if (!running) return false;
+  return liveBelongsToEpoch(at, heartbeat);
+}
+
+// The active-tournament belongs to the current run iff its epoch matches the
+// heartbeat's epoch. When EITHER side carries no epoch_id we cannot prove the
+// tournament is foreign, so we keep it (legacy single-epoch tolerance); a pair
+// of KNOWN-and-DIFFERENT epoch_ids is always rejected.
+function liveBelongsToEpoch(at, heartbeat) {
+  const tEpoch = (at && at.epoch_id != null && String(at.epoch_id) !== '') ? String(at.epoch_id) : null;
+  const hbEpoch = (heartbeat && heartbeat.epoch_id != null && String(heartbeat.epoch_id) !== '') ? String(heartbeat.epoch_id) : null;
+  if (tEpoch == null || hbEpoch == null) return true;
+  return tEpoch === hbEpoch;
+}
 
 // a stable digest of the funnel-relevant model so the swap fires only on a real
 // rung/cut/gate change (a steady tick is a true no-op).

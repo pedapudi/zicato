@@ -3832,6 +3832,150 @@ test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a 
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;
 });
 
+// ---- (b2) the hero is STRUCTURE-AWARE + SCOPED TO THE CURRENT TOURNAMENT ----
+//
+// The racing survival funnel is meaningful ONLY for a LIVE racing tournament
+// that belongs to the CURRENT run. These tests pin the gate (structure===racing
+// AND running AND current-epoch): a swiss live tournament shows round-based
+// progress with NO funnel; a current-epoch PROPOSING phase with a stale racing
+// active-tournament from a DIFFERENT epoch shows the honest proposing/empty
+// state (no funnel, no leaked foreign competitor ids); a completed/idle
+// tournament shows no funnel.
+
+const HERO_EPOCH = '2026-06-02_e3';
+
+// a LIVE racing tournament that names the CURRENT epoch — the funnel SHOULD show.
+const HERO_LIVE_RACING_E3 = JSON.parse(JSON.stringify(HERO_LIVE_RACING));
+HERO_LIVE_RACING_E3.epoch_id = HERO_EPOCH;
+
+// a STALE/FOREIGN completed racing tournament retained from a PRIOR epoch (e1):
+// it carries v6/v8 survivors + v5/v7 cuts + a "vs champion v0" gate — exactly
+// the prior-epoch funnel the bug leaked into e3's proposing hero.
+const HERO_STALE_RACING_E1 = {
+  structure: 'racing', phase: 'completed', epoch_id: '2026-06-01_e1',
+  structure_params: { rungs: [{ fraction: 0.5 }, { fraction: 1.0 }] },
+  champion_lineage: ['v0'],
+  competitors: [
+    { generation_id: 'v0', role: 'champion' }, { generation_id: 'v5', role: 'challenger' },
+    { generation_id: 'v6', role: 'challenger' }, { generation_id: 'v7', role: 'challenger' },
+    { generation_id: 'v8', role: 'challenger' },
+  ],
+  rounds: [
+    { round_index: 0, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v5', 'v6', 'v7', 'v8'], survivors: ['v6', 'v8'], cut: ['v5', 'v7'], board_fraction: 0.5 }] },
+    { round_index: 1, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0', 'v6'], winner: 'v0', decision: 'rejected', board_fraction: 1.0 }] },
+  ],
+  standings: [],
+};
+
+// a LIVE swiss tournament for the current epoch — round-based, NO racing funnel.
+const HERO_LIVE_SWISS_E3 = {
+  structure: 'swiss', phase: 'running', epoch_id: HERO_EPOCH,
+  structure_params: { rounds: 3 },
+  competitors: [
+    { generation_id: 'v0' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' },
+  ],
+  rounds: [
+    { round_index: 0, label: 'Round 1', matches: [
+      { match_id: 'sw_r0_m0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'win' },
+      { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'], winner: 'v3', decision: 'win' },
+    ] },
+    { round_index: 1, label: 'Round 2', matches: [
+      { match_id: 'sw_r1_m0', competitors: ['v1', 'v3'] },
+      { match_id: 'sw_r1_m1', competitors: ['v0', 'v2'] },
+    ] },
+    { round_index: 2, label: 'Round 3', matches: [
+      { match_id: 'sw_r2_m0', competitors: ['v1', 'v2'] },
+      { match_id: 'sw_r2_m1', competitors: ['v0', 'v3'] },
+    ] },
+  ],
+  standings: [],
+};
+
+test('live hero: a LIVE RACING tournament for the CURRENT epoch renders the survival funnel', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  coreState.state.activeTournament = HERO_LIVE_RACING_E3;
+
+  const root = mountLiveShell('#/');
+  const funnel = svgsByClass(root, 'dn-funnel')[0];
+  assert(funnel, 'the survival funnel renders for a LIVE racing tournament whose epoch matches the heartbeat');
+  // the funnel was eligible → no "field fills in…" placeholder fallback.
+  assert(allByClass(root, 'dt-live-hero-nofunnel').length === 0, 'no empty/proposing placeholder when the racing funnel is live');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+test('live hero: a LIVE SWISS tournament shows ROUND-based progress and NO racing funnel', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1', generation_id: 'v1', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  coreState.state.activeTournament = HERO_LIVE_SWISS_E3;
+
+  const root = mountLiveShell('#/');
+  const hero = allByClass(root, 'dt-live-hero')[0];
+  assert(hero && (hero.getAttribute('class') || '').includes('dt-live-on'), 'the live hero is shown for a running swiss tournament');
+  // the round-based progress line is present ("round k of N").
+  const proglab = allByClass(root, 'dt-live-hero-proglab')[0];
+  assert(proglab && /round\s+\d+\s+of\s+\d+/.test(proglab.textContent), 'the swiss hero shows a round-based progress label (round k of N)');
+  // the activity ticker still streams.
+  assert(allByClass(root, 'dt-ticker')[0], 'the activity ticker renders for a swiss run');
+  // CRITICAL: NO racing survival funnel for a swiss structure.
+  assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'NO racing survival funnel for a LIVE swiss tournament');
+  // the structure-agnostic placeholder is shown instead of a funnel.
+  assert(allByClass(root, 'dt-live-hero-nofunnel').length >= 1, 'the swiss hero shows the structure-agnostic progress placeholder, not a funnel');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+test('live hero: a CURRENT-EPOCH PROPOSING phase with a STALE racing tournament from a DIFFERENT epoch shows the proposing/empty state — NOT the prior epoch funnel', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  // the current run is e3 PROPOSING; the active-tournament is e1's COMPLETED racer.
+  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = HERO_STALE_RACING_E1;
+
+  const root = mountLiveShell('#/');
+  const hero = allByClass(root, 'dt-live-hero')[0];
+  assert(hero && (hero.getAttribute('class') || '').includes('dt-live-on'), 'the hero is live during the proposing phase (an active-tournament running)');
+  // CRITICAL: NO racing funnel for a stale/foreign-epoch tournament.
+  assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'NO racing funnel while the current epoch is proposing with only a foreign-epoch active-tournament');
+  // the honest proposing/empty placeholder is shown.
+  assert(allByClass(root, 'dt-live-hero-nofunnel').length >= 1, 'the hero shows the honest proposing/empty progress state');
+  // the progress label reflects the CURRENT run (proposing), not "rung k of N".
+  const proglab = allByClass(root, 'dt-live-hero-proglab')[0];
+  assert(proglab && /propos/i.test(proglab.textContent), 'the progress label reads the current proposing phase, not a stale rung count');
+  assert(proglab && !/rung\s+\d+\s+of\s+\d+/.test(proglab.textContent), 'the progress label does NOT leak the stale rung count');
+  // no leaked prior-epoch competitor ids anywhere in the hero (e.g. v5/v6/v7/v8).
+  const heroText = hero.textContent || '';
+  assert(!/v5|v6|v7|v8/.test(heroText), 'no leaked prior-epoch competitor ids (foreign survivors/cuts) appear in the hero');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+test('live hero: a COMPLETED/idle racing tournament renders NO funnel (the funnel is live-only)', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  // an in-flight unit keeps the hero "live", but the tournament itself is completed.
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  const completed = JSON.parse(JSON.stringify(HERO_LIVE_RACING_E3));
+  completed.phase = 'completed';
+  coreState.state.activeTournament = completed;
+
+  const root = mountLiveShell('#/');
+  assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'NO racing funnel for a COMPLETED tournament (the live hero funnel is running-only)');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
 // ---- (c) reduced-motion suppresses the animations ----
 
 test('live motion: prefers-reduced-motion suppresses the live animation classes/transitions (the reduced-motion CSS gate)', () => {
