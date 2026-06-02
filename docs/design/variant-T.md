@@ -873,3 +873,42 @@ label deltas as vs-v0, and `racingModel.benchmarkId` is distinct from
 `championId`; **(e)** idle hides the hero and the static completed funnel renders
 unchanged; **(f)** the engine's pure derivations (`liveProgress`,
 `deriveActivity`, the append-only capped de-duping `ActivityTicker`).
+
+## Swiss + elim visuals — parallel to racing (live + completed)
+
+Swiss and single/double-elimination now have the same visualization caliber as
+racing — a completed STRUCTURE-page figure *and* a live, progressively-filling
+hero — mirroring the racing ladder/funnel pattern.
+
+1. **Completed visuals** (`svg.js` + `views/structure.js`):
+   - **Swiss → `swissLadder(model)`** (a standings ladder): one column per swiss
+     round (its pairings, `a v b → winner ↑`), the **accumulating Copeland-point
+     standings** (win 1 / draw ½, leader marked ♔), and the leader flowing into a
+     **champion-gate** node. A swiss winner that does not beat the incumbent is
+     NOT promoted — the gate reads *"champion stands"*. `swissModel(st)` derives
+     it (prefers the payload's standings, else accumulates from the pairings).
+   - **Elim → `elimBracket(model)`** (a real bracket tree): matches as nodes,
+     winners advancing right (✦), a terminal **champion-gate** node; **double-elim**
+     stacks a **losers' band** beneath the winners' tree (one SVG, not two).
+     `elimModel(st)` splits the winners'/losers' bands by `bracket_slot` and
+     resolves the gate.
+   - Both are fit-to-width (`width:100%` + `viewBox`, no pan/zoom), token-themed
+     across all 16 themes (no hardcoded hex), and digest-gated.
+
+2. **Live progressive models** (`views/structure.js`): `buildLiveSwissModel(...)`
+   and `buildLiveElimModel(...)` (thin wrappers over a shared `buildLiveRoundModel`),
+   analogous to `buildLiveRacingModel`. They ACCUMULATE: completed rounds are
+   carried verbatim (winners persist, never blanked); the ACTIVE round's
+   undecided pairings/matches fill in board-by-board (`pending` + per-board
+   `done/total/inflight` attributed from `/api/active-runs` to the competitors'
+   gens); future rounds are `queued`. `gens.js` builds the right model per the
+   live structure.
+
+3. **The live hero is structure-dispatched** (`live.js`): with the SAME
+   current-epoch + running gate as racing (`structureEligible` → `liveBelongsToEpoch`),
+   `_buildLiveFigure` dispatches racing → the survival funnel, swiss → a live
+   `swissLadder`, elim → a live `elimBracket`; anything else / completed /
+   stale-foreign shows the honest progress placeholder. Each figure is
+   **digest-gated** (a steady heartbeat writes ZERO DOM; a board landing fires
+   the swap) and its value/position changes ease via CSS transitions gated behind
+   `prefers-reduced-motion`.

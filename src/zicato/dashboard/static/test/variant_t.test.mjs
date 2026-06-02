@@ -1548,19 +1548,22 @@ test('structure: single-elim renders a fit-to-width bracket (real rounds + stand
   assert(host.textContent.includes('Single elimination'), 'the pill names single-elim');
   assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO gauntlet champion-defends banner for a non-gauntlet structure');
 
-  const bracket = svgsByClass(host, 'dn-sbracket')[0];
+  const bracket = svgsByClass(host, 'dn-elimbracket')[0];
   assert(bracket, 'a bracket SVG rendered');
   assertEqual(bracket.getAttribute('width'), '100%', 'the bracket is fit-to-width (width:100%)');
   assert((bracket.getAttribute('viewBox') || '').startsWith('0 0 '), 'the bracket carries a viewBox so it scales to its pane');
   assert(!hasScrollWrapperAncestor(bracket, host), 'no horizontal-scroll wrapper around the bracket');
   // both bracket rounds rendered as columns (heads) and the winners are marked.
   assert(host.textContent.includes('Semifinal') && host.textContent.includes('Final'), 'both bracket rounds render as columns');
+  // the bracket tree ends in a champion-gate node (the bracket winner defends).
+  assert(bracket.textContent.toLowerCase().includes('champion-gate'), 'the bracket carries a champion-gate node');
+  assert(allByClass(bracket, 'dn-elimbracket-gate').length >= 1, 'a champion-gate seat is drawn');
   // a standings leaderboard rendered too.
   assert(allByClass(host, 'dt-standings').length >= 1, 'a standings leaderboard rendered');
   assert(host.textContent.includes('champion'), 'the standings names the champion status');
 });
 
-test('structure: double-elim splits into winners + losers bands', async () => {
+test('structure: double-elim renders one bracket tree with a stacked losers’ band', async () => {
   freshState();
   const DE = JSON.parse(JSON.stringify(SE_STRUCT));
   DE.structure = 'double_elim';
@@ -1573,21 +1576,32 @@ test('structure: double-elim splits into winners + losers bands', async () => {
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Double elimination'), 'the pill names double-elim');
-  assert(host.textContent.includes('Winners’ bracket'), 'a winners-bracket band rendered');
-  assert(host.textContent.includes('Losers’ bracket'), 'a losers-bracket band rendered from the LB slots');
-  assertEqual(svgsByClass(host, 'dn-sbracket').length, 2, 'two bracket SVGs — one per band');
+  // one bracket SVG holds BOTH bands (winners' tree + the stacked losers' band).
+  assertEqual(svgsByClass(host, 'dn-elimbracket').length, 1, 'a single bracket-tree SVG holds both bands');
+  const bracket = svgsByClass(host, 'dn-elimbracket')[0];
+  assert(/losers/i.test(bracket.textContent), 'the losers’ bracket band rendered from the LB slots');
+  assert(bracket.textContent.toLowerCase().includes('champion-gate'), 'the double-elim bracket ends in a champion-gate node');
 });
 
-test('structure: swiss renders the standings hero + per-round pairings', async () => {
+test('structure: swiss renders the standings LADDER hero + per-round pairings', async () => {
   freshState();
   installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
   const gens = await import('../js/variants/T/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Swiss'), 'the pill names swiss');
-  assert(allByClass(host, 'dt-standings').length >= 1, 'the swiss standings leaderboard rendered');
-  assert(allByClass(host, 'dt-swiss-pairings').length === 2, 'a pairings table per round (2 rounds)');
+  // the swiss standings LADDER (the racing-analogue hero) rendered.
+  const ladder = svgsByClass(host, 'dn-swissladder')[0];
+  assert(ladder, 'the swiss standings ladder SVG rendered');
+  assertEqual(ladder.getAttribute('width'), '100%', 'the swiss ladder is fit-to-width (width:100%)');
+  assert((ladder.getAttribute('viewBox') || '').startsWith('0 0 '), 'the swiss ladder carries a viewBox');
+  // the ladder shows the accumulating standings + the champion-gate node.
+  assert(allByClass(ladder, 'dn-swissladder-stand').length >= 1, 'the accumulating Copeland-point standings rendered');
+  assert(ladder.textContent.toLowerCase().includes('standings'), 'the ladder labels the standings column');
+  assert(ladder.textContent.toLowerCase().includes('champion-gate'), 'the ladder ends in a champion-gate node');
   assert(host.textContent.includes('Round 1') && host.textContent.includes('Round 2'), 'both swiss rounds render');
+  // the dense per-round pairings table is retained below the ladder.
+  assert(allByClass(host, 'dt-swiss-pairings').length === 2, 'a pairings table per round (2 rounds)');
 });
 
 test('structure: racing renders a fit-to-width rung ladder with cuts + board fractions', async () => {
@@ -2220,6 +2234,268 @@ test('live racing (e2e): the match-ups page fills progressively from competitors
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
+});
+
+// ====================================================================
+// SWISS + ELIM — completed structure visuals (swissLadder / elimBracket)
+// and progressive LIVE models (buildLiveSwissModel / buildLiveElimModel),
+// parallel to the racing ladder/funnel. The completed views build a model
+// from /api/tournament-structure rounds/standings; the live models
+// accumulate completed rounds, fill the active round board-by-board, and
+// queue the future — exactly the racing-ladder discipline.
+// ====================================================================
+
+// ---- completed SWISS → the standings ladder -------------------------
+
+test('swiss (completed): swissModel + renderSwiss produce the standings ladder (rounds + Copeland standings + champion-gate)', () => {
+  const st = STRUCT.normalizeStructure(SWISS_STRUCT, false);
+  const model = STRUCT.swissModel(st);
+  assert(model && model.hasRounds, 'a swiss model was derived');
+  assertEqual(model.rounds.length, 2, 'both swiss rounds are in the model');
+  assert(model.standings.length >= 1, 'the accumulating Copeland-point standings are present');
+  // v1 won both pairings → leads the standings.
+  assertEqual(String(model.standings[0].id), 'v1', 'the swiss leader (v1, 2 wins) tops the standings');
+  assert(svg.isNum(model.standings[0].points), 'the leader carries Copeland points');
+
+  const nodes = STRUCT.renderStructure(st, { navigate() {}, href: router.href }, EPOCH_ID);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const ladder = svgsByClass(host, 'dn-swissladder')[0];
+  assert(ladder, 'the swiss standings ladder SVG rendered');
+  assertEqual(ladder.getAttribute('width'), '100%', 'the swiss ladder is fit-to-width');
+  assert(ladder.textContent.toLowerCase().includes('round 1') && ladder.textContent.toLowerCase().includes('round 2'), 'a column per swiss round');
+  assert(allByClass(ladder, 'dn-swissladder-stand').length >= 1, 'the standings column rendered');
+  assert(ladder.textContent.toLowerCase().includes('champion-gate'), 'the leader flows into a champion-gate node');
+});
+
+test('swiss (completed): a swiss winner that does NOT beat the incumbent is NOT promoted (gate "stands")', () => {
+  // the leader is the incumbent v0 itself / lineage unchanged → no promotion.
+  const sw = JSON.parse(JSON.stringify(SWISS_STRUCT));
+  sw.champion_lineage = ['v0'];
+  sw.standings = [
+    { generation_id: 'v0', rank: 1, points: 2, wins: 2, losses: 0, status: 'champion' },
+    { generation_id: 'v1', rank: 2, points: 1, wins: 1, losses: 1, status: 'alive' },
+  ];
+  const st = STRUCT.normalizeStructure(sw, false);
+  const model = STRUCT.swissModel(st);
+  assertEqual(model.gateState, 'stands', 'the incumbent leading the swiss → champion stands (no new crown)');
+  assertEqual(model.championId, null, 'no challenger is crowned when the incumbent wins the swiss');
+  const node = svg.swissLadder({ rounds: model.rounds, standings: model.standings, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+  assert(/champion stands/.test(node.textContent), 'the gate reads "champion stands"');
+});
+
+// ---- completed ELIM → the bracket tree ------------------------------
+
+test('elim (completed): single-elim → elimModel + a bracket tree with a champion-gate', () => {
+  const st = STRUCT.normalizeStructure(SE_STRUCT, false);
+  const model = STRUCT.elimModel(st);
+  assert(model && model.hasMatches, 'a single-elim model was derived');
+  assertEqual(model.losers, null, 'single-elim has NO losers band');
+  assertEqual(model.winners.length, 2, 'two winners-bracket rounds (semifinal + final)');
+  const node = svg.elimBracket({ winners: model.winners, losers: model.losers, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onMatch() {} });
+  assertEqual(node.localName, 'svg', 'the bracket is an SVG');
+  assertEqual(node.getAttribute('width'), '100%', 'fit-to-width');
+  assert(node.textContent.includes('Semifinal') && node.textContent.includes('Final'), 'both rounds render as columns');
+  assert(/✦/.test(node.textContent), 'match winners are marked ✦');
+  assert(node.textContent.toLowerCase().includes('champion-gate'), 'the bracket ends in a champion-gate node');
+  assertEqual(svgsByClass(node, 'dn-sbracket').length, 0, 'the new bracket tree is dn-elimbracket (not the old dn-sbracket)');
+});
+
+test('elim (completed): double-elim → ONE bracket tree carrying the losers’ band', () => {
+  const DE = JSON.parse(JSON.stringify(SE_STRUCT));
+  DE.structure = 'double_elim';
+  DE.rounds.push({ round_index: 2, label: 'LB Round 1', matches: [
+    { match_id: 'LB-R0-0', competitors: ['v0', 'v2'], winner: 'v0', decision: 'rejected', bracket_slot: 'LB-R0-0', bye: false },
+  ] });
+  const st = STRUCT.normalizeStructure(DE, false);
+  const model = STRUCT.elimModel(st);
+  assert(Array.isArray(model.losers) && model.losers.length >= 1, 'double-elim carries a losers band in the model');
+  const node = svg.elimBracket({ winners: model.winners, losers: model.losers, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onMatch() {} });
+  assert(/losers/i.test(node.textContent), 'the losers’ bracket band renders inside the one bracket SVG');
+  assert(node.textContent.includes('Semifinal'), 'the winners band still renders');
+});
+
+// ---- progressive LIVE swiss model -----------------------------------
+
+// a live swiss field: v0..v3, round 0 PAIRED but undecided (no winners yet),
+// rounds 1+2 not yet paired (the contract names 3 rounds).
+function liveSwissField(extra) {
+  return Object.assign({
+    structure: 'swiss', phase: 'running', epoch_id: HERO_EPOCH,
+    structure_params: { rounds: 3, board_size: 4 },
+    round_index: 0,
+    competitors: [{ generation_id: 'v0' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' }],
+    rounds: [
+      { round_index: 0, label: 'Round 1', matches: [
+        { match_id: 'sw_r0_m0', competitors: ['v0', 'v1'] },
+        { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'] },
+      ] },
+    ],
+    standings: [],
+    champion_lineage: ['v0'],
+  }, extra || {});
+}
+
+test('live swiss model: a paired-but-undecided round fills in board-by-board (active round, not empty)', () => {
+  const model = STRUCT.buildLiveSwissModel({
+    at: liveSwissField(),
+    heartbeat: { phase: 'tournament:round_0', generation_id: 'v1' },
+    activeRuns: [
+      { generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 0.5 },
+      { generation_id: 'v1', entry_id: 'b1', run_id: 'r1', progress: 0.0 },
+    ],
+    epochGens: ['v0', 'v1', 'v2', 'v3'],
+  });
+  assert(model && model.live, 'a live swiss model built from the field');
+  const m = STRUCT.swissModel(model);
+  assert(m.rounds.length >= 3, 'all three swiss rounds present (active + queued)');
+  const r0 = m.rounds[0];
+  assertEqual(r0.queued, false, 'round 0 is the ACTIVE round (not queued)');
+  const p0 = r0.pairings[0];
+  assert(p0.pending, 'an undecided active pairing is pending (not struck as decided)');
+  assert(p0.inflight >= 1 || p0.done >= 1, 'the active pairing carries in-flight board progress');
+  assert(m.rounds[1].queued && m.rounds[2].queued, 'the future swiss rounds are queued');
+
+  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, HERO_EPOCH);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const ladder = svgsByClass(host, 'dn-swissladder')[0];
+  assert(ladder, 'the live swiss ladder rendered (not the being-seeded empty state)');
+  assert(!/being seeded/i.test(host.textContent), 'NOT the being-seeded placeholder once pairings exist');
+});
+
+test('live swiss model: a completed round PERSISTS when the next round starts (accumulation)', () => {
+  const at = liveSwissField({
+    round_index: 1,
+    rounds: [
+      { round_index: 0, label: 'Round 1', matches: [
+        { match_id: 'sw_r0_m0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'win' },
+        { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'], winner: 'v3', decision: 'win' },
+      ] },
+      { round_index: 1, label: 'Round 2', matches: [
+        { match_id: 'sw_r1_m0', competitors: ['v1', 'v3'] },
+        { match_id: 'sw_r1_m1', competitors: ['v0', 'v2'] },
+      ] },
+    ],
+  });
+  const model = STRUCT.buildLiveSwissModel({
+    at, heartbeat: { phase: 'tournament:round_1', generation_id: 'v1' },
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.3 }],
+    epochGens: ['v0', 'v1', 'v2', 'v3'],
+  });
+  const m = STRUCT.swissModel(model);
+  // round 0 is carried verbatim — its winners persist.
+  const r0 = m.rounds[0];
+  assert(r0.pairings.every((p) => p.winner && !p.pending), 'the completed round-0 pairings persist with their winners (no blanking)');
+  assertEqual(m.rounds[1].queued, false, 'round 1 is now the active round');
+  // standings accumulate v1 + v3 as the round-0 winners.
+  const v1 = m.standings.find((s) => s.id === 'v1');
+  assert(v1 && v1.points >= 1, 'round-0 winner v1 has accumulated a Copeland point');
+});
+
+test('live swiss model: a no-op repeat render leaves the swiss-ladder node identity unchanged (digest-gated)', () => {
+  const heartbeat = { phase: 'tournament:round_0', generation_id: 'v1' };
+  const activeRuns = [{ generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 0.5 }];
+  const epochGens = ['v0', 'v1', 'v2', 'v3'];
+  const a = STRUCT.buildLiveSwissModel({ at: liveSwissField(), heartbeat, activeRuns, epochGens });
+  const b = STRUCT.buildLiveSwissModel({ at: liveSwissField(), heartbeat, activeRuns, epochGens });
+  assertEqual(STRUCT.structureDigest(a), STRUCT.structureDigest(b), 'two identical live swiss ticks share a digest');
+  const c = STRUCT.buildLiveSwissModel({ at: liveSwissField(), heartbeat, activeRuns: [{ generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens });
+  assert(STRUCT.structureDigest(a) !== STRUCT.structureDigest(c), 'a board landing changes the swiss digest');
+
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  ui.gatedSwap(host, STRUCT.structureDigest(a), () => STRUCT.renderStructure(a, ctx, HERO_EPOCH));
+  const first = svgsByClass(host, 'dn-swissladder')[0];
+  ui.gatedSwap(host, STRUCT.structureDigest(b), () => STRUCT.renderStructure(b, ctx, HERO_EPOCH));
+  const second = svgsByClass(host, 'dn-swissladder')[0];
+  assert(first === second, 'the swiss-ladder node identity is preserved across a no-op tick');
+});
+
+// ---- progressive LIVE elim model ------------------------------------
+
+function liveElimField(extra) {
+  return Object.assign({
+    structure: 'single_elim', phase: 'running', epoch_id: HERO_EPOCH,
+    structure_params: { board_size: 4 },
+    round_index: 0,
+    competitors: [
+      { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' },
+      { generation_id: 'v2', role: 'challenger' }, { generation_id: 'v3', role: 'challenger' },
+    ],
+    rounds: [
+      { round_index: 0, label: 'Semifinal', matches: [
+        { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], bracket_slot: 'WB-R0-0' },
+        { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], bracket_slot: 'WB-R0-1' },
+      ] },
+    ],
+    standings: [],
+    champion_lineage: ['v0'],
+  }, extra || {});
+}
+
+test('live elim model: an undecided round fills in board-by-board (active round, not empty)', () => {
+  const model = STRUCT.buildLiveElimModel({
+    at: liveElimField(),
+    heartbeat: { phase: 'tournament:round_0', generation_id: 'v1' },
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
+    epochGens: ['v0', 'v1', 'v2', 'v3'],
+  });
+  assert(model && model.live, 'a live elim model built from the field');
+  const m = STRUCT.elimModel(model);
+  assert(m.hasMatches, 'the active round has matches');
+  const active = m.winners[0].matches.find((mm) => (mm.competitors || []).includes('v1'));
+  assert(active && active.pending, 'an undecided active match is pending (not struck as decided)');
+  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, HERO_EPOCH);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const bracket = svgsByClass(host, 'dn-elimbracket')[0];
+  assert(bracket, 'the live bracket rendered (not the being-seeded empty state)');
+  assert(!/being seeded/i.test(host.textContent), 'NOT the being-seeded placeholder once matches exist');
+});
+
+test('live elim model: a completed round PERSISTS when the next round starts (accumulation)', () => {
+  const at = liveElimField({
+    round_index: 1,
+    rounds: [
+      { round_index: 0, label: 'Semifinal', matches: [
+        { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], winner: 'v0', decision: 'win', bracket_slot: 'WB-R0-0' },
+        { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], winner: 'v1', decision: 'win', bracket_slot: 'WB-R0-1' },
+      ] },
+      { round_index: 1, label: 'Final', matches: [
+        { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], bracket_slot: 'WB-R1-0' },
+      ] },
+    ],
+  });
+  const model = STRUCT.buildLiveElimModel({
+    at, heartbeat: { phase: 'tournament:round_1', generation_id: 'v1' },
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.3 }],
+    epochGens: ['v0', 'v1', 'v2', 'v3'],
+  });
+  const m = STRUCT.elimModel(model);
+  const r0 = m.winners[0];
+  assert(r0.matches.every((mm) => mm.winner && !mm.pending), 'the completed semifinal matches persist with their winners (no blanking)');
+  const fin = m.winners[1].matches[0];
+  assert(fin.pending, 'the active final is pending (filling in)');
+});
+
+test('live elim model: a no-op repeat render leaves the bracket node identity unchanged (digest-gated)', () => {
+  const heartbeat = { phase: 'tournament:round_0', generation_id: 'v1' };
+  const activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }];
+  const epochGens = ['v0', 'v1', 'v2', 'v3'];
+  const a = STRUCT.buildLiveElimModel({ at: liveElimField(), heartbeat, activeRuns, epochGens });
+  const b = STRUCT.buildLiveElimModel({ at: liveElimField(), heartbeat, activeRuns, epochGens });
+  assertEqual(STRUCT.structureDigest(a), STRUCT.structureDigest(b), 'two identical live elim ticks share a digest');
+  const c = STRUCT.buildLiveElimModel({ at: liveElimField(), heartbeat, activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens });
+  assert(STRUCT.structureDigest(a) !== STRUCT.structureDigest(c), 'a board landing changes the elim digest');
+
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  ui.gatedSwap(host, STRUCT.structureDigest(a), () => STRUCT.renderStructure(a, ctx, HERO_EPOCH));
+  const first = svgsByClass(host, 'dn-elimbracket')[0];
+  ui.gatedSwap(host, STRUCT.structureDigest(b), () => STRUCT.renderStructure(b, ctx, HERO_EPOCH));
+  const second = svgsByClass(host, 'dn-elimbracket')[0];
+  assert(first === second, 'the bracket node identity is preserved across a no-op tick');
 });
 
 // ---- (c) the richer racing ladder render ----------------------------
@@ -3053,6 +3329,27 @@ test('survival funnel: marks are token-themed in the scoped stylesheet (legible 
   assert(/\.dn-funnel-name\.dn-bad[^}]*var\(--v2-bad\)/.test(css), 'cuts use the --v2-bad token');
   assert(/\.dn-funnel-gatebox\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the crowned gate uses the --v2-good token');
   assert(/\.dn-funnel-pending[^}]*var\(--v2-rule/.test(css), 'a pending (live) stage uses a neutral rule token');
+});
+
+// (f2) the swiss-ladder + elim-bracket marks are token-themed (all 16 themes)
+// with NO hardcoded hex — and the live transitions are reduced-motion gated.
+test('swiss ladder + elim bracket: token-themed in the scoped stylesheet, no hardcoded hex, reduced-motion gated', () => {
+  const css = readCss();
+  // swiss ladder
+  assert(/\.dn-swissladder-head\s*\{/.test(css), '.dn-swissladder-head is styled');
+  assert(/\.dn-swissladder-standlab\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the swiss leader uses the --v2-good token');
+  assert(/\.dn-swissladder-gatebox\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the crowned swiss gate uses the --v2-good token');
+  assert(/\.dn-swissladder-bar[^}]*var\(--v2-accent\)/.test(css), 'the live swiss progress bar uses the accent token');
+  // elim bracket
+  assert(/\.dn-elimbracket-box\s*\{[^}]*var\(--v2-/.test(css), 'the elim match box reads a --v2-* token');
+  assert(/\.dn-elimbracket-seat\.dn-win[^}]*var\(--v2-good\)/.test(css), 'the elim match winner uses the --v2-good token');
+  assert(/\.dn-elimbracket-gatebox\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the crowned elim gate uses the --v2-good token');
+  // NO hardcoded hex in the swiss/elim rules (token-only).
+  const slice = css.slice(css.indexOf('.dn-swissladder-head'), css.indexOf('.dn-elimbracket-bench') + 80);
+  assert(!/#[0-9a-fA-F]{3,6}\b/.test(slice), 'the swiss/elim mark rules carry NO hardcoded hex (theme-token only)');
+  // reduced-motion gate covers the new live transitions.
+  const rm = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert(/\.dn-swissladder/.test(rm) && /\.dn-elimbracket/.test(rm), 'the swiss/elim live transitions are suppressed under reduced motion');
 });
 
 // ====================================================================
@@ -3908,7 +4205,7 @@ test('live hero: a LIVE RACING tournament for the CURRENT epoch renders the surv
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;
 });
 
-test('live hero: a LIVE SWISS tournament shows ROUND-based progress and NO racing funnel', () => {
+test('live hero: a LIVE SWISS tournament shows the SWISS LADDER + round-based progress, NOT the racing funnel', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
   coreState.state.setHeartbeat({ phase: 'tournament:round_1', generation_id: 'v1', epoch_id: HERO_EPOCH });
@@ -3923,10 +4220,99 @@ test('live hero: a LIVE SWISS tournament shows ROUND-based progress and NO racin
   assert(proglab && /round\s+\d+\s+of\s+\d+/.test(proglab.textContent), 'the swiss hero shows a round-based progress label (round k of N)');
   // the activity ticker still streams.
   assert(allByClass(root, 'dt-ticker')[0], 'the activity ticker renders for a swiss run');
-  // CRITICAL: NO racing survival funnel for a swiss structure.
+  // the LIVE SWISS LADDER renders (the swiss analogue of the racing funnel) —
+  // NOT the racing funnel and NOT just the text placeholder.
+  const ladder = svgsByClass(root, 'dn-swissladder')[0];
+  assert(ladder, 'the live swiss standings ladder rendered in the hero');
   assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'NO racing survival funnel for a LIVE swiss tournament');
-  // the structure-agnostic placeholder is shown instead of a funnel.
-  assert(allByClass(root, 'dt-live-hero-nofunnel').length >= 1, 'the swiss hero shows the structure-agnostic progress placeholder, not a funnel');
+  assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'NO elim bracket for a LIVE swiss tournament');
+  assertEqual(allByClass(root, 'dt-live-hero-nofunnel').length, 0, 'no text placeholder once the swiss ladder is live');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+// a LIVE single-elim tournament for the current epoch — bracket, NO funnel.
+const HERO_LIVE_ELIM_E3 = {
+  structure: 'single_elim', phase: 'running', epoch_id: HERO_EPOCH,
+  structure_params: { board_size: 4 },
+  champion_lineage: ['v0'],
+  competitors: [
+    { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' },
+    { generation_id: 'v2', role: 'challenger' }, { generation_id: 'v3', role: 'challenger' },
+  ],
+  rounds: [
+    { round_index: 0, label: 'Semifinal', matches: [
+      { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], winner: 'v0', decision: 'win', bracket_slot: 'WB-R0-0' },
+      { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], bracket_slot: 'WB-R0-1' },
+    ] },
+    { round_index: 1, label: 'Final', matches: [
+      { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], bracket_slot: 'WB-R1-0' },
+    ] },
+  ],
+  standings: [],
+};
+
+test('live hero: a LIVE ELIM tournament renders the BRACKET tree, NOT the racing funnel or swiss ladder', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  coreState.state.activeTournament = HERO_LIVE_ELIM_E3;
+
+  const root = mountLiveShell('#/');
+  const bracket = svgsByClass(root, 'dn-elimbracket')[0];
+  assert(bracket, 'the live elim bracket rendered in the hero');
+  assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'NO racing funnel for a LIVE elim tournament');
+  assertEqual(svgsByClass(root, 'dn-swissladder').length, 0, 'NO swiss ladder for a LIVE elim tournament');
+  assertEqual(allByClass(root, 'dt-live-hero-nofunnel').length, 0, 'no text placeholder once the bracket is live');
+  // the completed semifinal (v0 advanced) persists alongside the filling final.
+  assert(/✦/.test(bracket.textContent), 'the decided semifinal match winner is marked ✦');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+test('live hero: racing STILL renders the funnel (no swiss/elim regression), and a foreign-epoch elim shows the honest empty state', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  // racing for the current epoch → the funnel (unchanged).
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
+  coreState.state.activeTournament = HERO_LIVE_RACING_E3;
+  let root = mountLiveShell('#/');
+  assert(svgsByClass(root, 'dn-funnel')[0], 'racing still renders the survival funnel');
+  assertEqual(svgsByClass(root, 'dn-swissladder').length, 0, 'no swiss ladder for a racing run');
+  assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'no elim bracket for a racing run');
+
+  // a FOREIGN-epoch elim (current epoch proposing) → no elim topology in the hero.
+  const foreignElim = JSON.parse(JSON.stringify(HERO_LIVE_ELIM_E3));
+  foreignElim.epoch_id = '2026-06-01_e1';
+  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = foreignElim;
+  root = mountLiveShell('#/');
+  assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'NO elim bracket for a foreign-epoch tournament while the current epoch proposes');
+  assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'no funnel either — honest empty');
+  assert(allByClass(root, 'dt-live-hero-nofunnel').length >= 1, 'the hero shows the honest proposing/empty state');
+  const heroText = (allByClass(root, 'dt-live-hero')[0] || {}).textContent || '';
+  assert(!/v2\b|v3\b/.test(heroText) || /propos/i.test(heroText), 'no foreign-epoch bracket topology leaks into the proposing hero');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+test('live hero: a PROPOSING current run (no tournament) shows the honest proposing state — no swiss/elim/racing topology', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+  const root = mountLiveShell('#/');
+  assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'no racing funnel while proposing');
+  assertEqual(svgsByClass(root, 'dn-swissladder').length, 0, 'no swiss ladder while proposing');
+  assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'no elim bracket while proposing');
+  assert(allByClass(root, 'dt-live-hero-nofunnel').length >= 1, 'the honest proposing placeholder is shown');
 
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;

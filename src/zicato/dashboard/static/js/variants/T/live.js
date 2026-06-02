@@ -26,8 +26,11 @@
 // is honoured in CSS (the JS only adds/keeps stable nodes; CSS gates ALL motion).
 
 import { el, patchText, patchClass } from '../../core/dom.js';
-import { isNum, survivalFunnel } from './svg.js';
-import { racingModel, normalizeStructure } from './views/structure.js';
+import { isNum, survivalFunnel, swissLadder, elimBracket } from './svg.js';
+import {
+  racingModel, swissModel, elimModel, normalizeStructure,
+  buildLiveSwissModel, buildLiveElimModel,
+} from './views/structure.js';
 
 // ── tournament-level progress ────────────────────────────────────────
 //
@@ -405,70 +408,98 @@ export class LiveController {
       patchClass(this._progFill, 'dt-live-hero-progfill-pending', pct == null);
     }
 
-    // ── the survival funnel: digest-gated swap (animate only on real change) ──
-    // The funnel is RACING-ONLY and CURRENT-RUN-ONLY (see _funnelEligible): a
-    // swiss/elim live tournament, a completed/idle tournament, or a stale/foreign
-    // active-tournament from a PRIOR epoch must NOT render the racing funnel.
-    this._updateFunnel(activeTournament, heartbeat);
+    // ── the structure FIGURE: digest-gated swap (animate only on real change) ──
+    // STRUCTURE-DISPATCHED + CURRENT-RUN-ONLY (see structureEligible): racing →
+    // funnel, swiss → live standings ladder, elim → live bracket; anything else /
+    // completed / stale-foreign shows the honest placeholder.
+    this._updateStructure(activeTournament, heartbeat, activeRuns);
     return true;
   }
 
-  _updateFunnel(activeTournament, heartbeat) {
+  _updateStructure(activeTournament, heartbeat, activeRuns) {
     const at = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
-    const model = funnelEligible(at, heartbeat) ? racingModel(normalizeStructure(at, true)) : null;
-    if (!model || !model.hasRungs) {
-      // no LIVE racing topology for the CURRENT run — drop any prior funnel and
-      // show an honest progress state (never a stale/foreign racing funnel).
-      // The "field fills in…" copy reads correctly for both a racing run still
-      // proposing/filling its first rung AND any non-racing live structure
-      // (swiss/elim), whose round-based progress the hero shows above.
+    const fig = structureEligible(at, heartbeat)
+      ? this._buildLiveFigure(at, heartbeat, activeRuns) : null;
+    if (!fig) {
+      // no LIVE topology for the CURRENT run — drop any prior figure, show the
+      // honest progress state (never a stale/foreign topology).
       if (this._funnelDigest !== 'none') {
         this._funnelDigest = 'none';
         clear(this._funnelHost);
-        this._funnelHost.appendChild(el('p', { class: 'dn-faint dt-live-hero-nofunnel', text: 'the field fills in as the first rung runs…' }));
+        this._funnelHost.appendChild(el('p', { class: 'dn-faint dt-live-hero-nofunnel', text: 'the field fills in as the first round runs…' }));
       }
       return;
     }
-    const digest = funnelDigest(model);
+    const { node, digest } = fig;
     if (digest === this._funnelDigest && this._funnelHost.firstChild) return; // no real change → no DOM, no flash.
     this._funnelDigest = digest;
     clear(this._funnelHost);
-    const fig = survivalFunnel({
-      rungs: model.rungs, championId: model.championId, benchmarkId: model.benchmarkId,
-      live: model.live, gateState: model.gateState, gateDelta: model.gateDelta,
-      onCompetitor: this.onCompetitor || undefined,
-    });
     // a one-shot entrance class lets CSS ease the new figure in (reduced-motion
     // suppresses it) — never an infinite/repaint loop.
-    if (fig.classList) fig.classList.add('dt-live-enter');
-    this._funnelHost.appendChild(fig);
+    if (node.classList) node.classList.add('dt-live-enter');
+    this._funnelHost.appendChild(node);
+  }
+
+  // Build the live structure figure (racing funnel / swiss ladder / elim bracket)
+  // + its digest; the epoch gen scope is the live field. Null when no topology yet.
+  _buildLiveFigure(at, heartbeat, activeRuns) {
+    const structure = String(at.structure || '');
+    const epochGens = (Array.isArray(at.competitors) ? at.competitors : [])
+      .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
+    const gens = epochGens.length ? epochGens : null;
+    const onCompetitor = this.onCompetitor || undefined;
+
+    if (structure === 'racing') {
+      const model = racingModel(normalizeStructure(at, true));
+      if (!model || !model.hasRungs) return null;
+      const node = survivalFunnel({
+        rungs: model.rungs, championId: model.championId, benchmarkId: model.benchmarkId,
+        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta, onCompetitor,
+      });
+      return { node, digest: 'racing|' + structDigest(model.rungs, model) };
+    }
+    if (structure === 'swiss') {
+      const st = buildLiveSwissModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
+      const model = swissModel(st);
+      if (!model || !model.hasRounds) return null;
+      const node = swissLadder({
+        rounds: model.rounds, standings: model.standings,
+        championId: model.championId, benchmarkId: model.benchmarkId,
+        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta, onCompetitor,
+      });
+      return { node, digest: 'swiss|' + swissDigest(model) };
+    }
+    if (structure === 'single_elim' || structure === 'double_elim') {
+      const st = buildLiveElimModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
+      const model = elimModel(st);
+      if (!model || !model.hasMatches) return null;
+      const node = elimBracket({
+        winners: model.winners, losers: model.losers,
+        championId: model.championId, benchmarkId: model.benchmarkId,
+        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta,
+        onCompetitor, onMatch: onCompetitor ? (m) => { const g = m.winner || (Array.isArray(m.competitors) && m.competitors[0]); if (g) onCompetitor(String(g)); } : undefined,
+      });
+      return { node, digest: 'elim|' + elimDigest(model) };
+    }
+    return null;
   }
 }
 
 function clear(node) { while (node && node.firstChild) node.removeChild(node.firstChild); }
 
-// ── the funnel-eligibility gate ──────────────────────────────────────
+// ── the structure-figure eligibility gate ────────────────────────────
 //
-// The racing survival funnel is meaningful ONLY for a LIVE racing tournament
-// that belongs to the CURRENT run. It renders iff ALL hold:
-//   (1) there IS an active tournament,
-//   (2) its `structure === 'racing'`,
-//   (3) its `phase` is a RUNNING phase (not completed/complete/done/idle/empty
-//       — a settled tournament keeps its topology but must not show the LIVE
-//       funnel in the hero), AND
-//   (4) it is SCOPED TO THE CURRENT live epoch: its `epoch_id` matches the
-//       heartbeat's `epoch_id` (the epoch of the active run). A stale/foreign
-//       active-tournament retained from a PRIOR epoch (e.g. e1's completed
-//       racing ladder while e3 is proposing) is rejected here so the hero never
-//       falls back to a prior epoch's funnel.
-//
-// Epoch scoping is permissive ONLY when neither side names an epoch (legacy
-// single-epoch payloads): a KNOWN-and-DIFFERENT epoch pair is always rejected.
-// This mirrors the Match-ups view's live-adoption guard (viewed epoch == active
-// epoch) in views/structure.js.
-function funnelEligible(at, heartbeat) {
+// A LIVE structure figure (racing funnel / swiss ladder / elim bracket) renders
+// iff: (1) there is an active tournament, (2) its `structure` is one we draw,
+// (3) its `phase` is RUNNING (not completed/done/idle — a settled tournament
+// keeps its topology but must not show the LIVE figure), and (4) it is scoped to
+// the CURRENT live epoch (its `epoch_id` matches the heartbeat's). A stale/foreign
+// tournament from a prior epoch is rejected here. Epoch scoping is permissive
+// only when neither side names an epoch; a known-and-different pair is rejected.
+function structureEligible(at, heartbeat) {
   if (!at || typeof at !== 'object') return false;
-  if (String(at.structure) !== 'racing') return false;
+  const s = String(at.structure);
+  if (s !== 'racing' && s !== 'swiss' && s !== 'single_elim' && s !== 'double_elim') return false;
   const phase = String(at.phase == null ? '' : at.phase).trim().toLowerCase();
   const running = phase === 'running' || (phase !== '' && phase !== 'idle'
     && phase !== 'complete' && phase !== 'completed' && phase !== 'done');
@@ -487,11 +518,29 @@ function liveBelongsToEpoch(at, heartbeat) {
   return tEpoch === hbEpoch;
 }
 
-// a stable digest of the funnel-relevant model so the swap fires only on a real
-// rung/cut/gate change (a steady tick is a true no-op).
-function funnelDigest(model) {
+// stable digests of the structure-relevant model so the swap fires only on a
+// real change (a steady heartbeat writes ZERO DOM): each captures the gate + the
+// per-rung/round/match progress (a board landing fires it; a no-op stays equal).
+function structDigest(rungs, model) {
   return JSON.stringify({
     b: model.benchmarkId || null, c: model.championId || null, g: model.gateState || null,
-    r: (model.rungs || []).map((r) => [r.match_id, (r.competitors || []).join('/'), (r.survivors || []).join('/'), (r.cut || []).join('/'), r.pending]),
+    r: (rungs || []).map((r) => [r.match_id, (r.competitors || []).join('/'), (r.survivors || []).join('/'), (r.cut || []).join('/'), r.pending,
+      r.live_progress ? Object.keys(r.live_progress).sort().map((k) => { const p = r.live_progress[k]; return k + ':' + (p.done || 0) + '/' + (p.total == null ? '?' : p.total) + ':' + (p.inflight || 0); }).join(',') : '']),
+  });
+}
+function swissDigest(model) {
+  return JSON.stringify({
+    b: model.benchmarkId || null, c: model.championId || null, g: model.gateState || null,
+    s: (model.standings || []).map((s) => [s.id, s.points, s.wins, s.draws, s.losses, s.rank]),
+    r: (model.rounds || []).map((r) => [r.label, r.queued,
+      (r.pairings || []).map((p) => [p.a, p.b, p.winner, p.bye, p.pending, p.done, p.total, p.inflight])]),
+  });
+}
+function elimDigest(model) {
+  const band = (rs) => (rs || []).map((r) => [r.label, r.queued,
+    (r.matches || []).map((m) => [m.match_id, m.bracket_slot, (m.competitors || []).join('/'), m.winner, m.decision, m.bye, m.pending, m.done, m.total, m.inflight, m.queued])]);
+  return JSON.stringify({
+    b: model.benchmarkId || null, c: model.championId || null, g: model.gateState || null,
+    w: band(model.winners), l: band(model.losers),
   });
 }

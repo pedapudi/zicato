@@ -25,7 +25,7 @@ import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, normaliseDecision, decisionFor } from '../ui.js';
-import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing, buildLiveRacingModel } from './structure.js';
+import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing, buildLiveRacingModel, buildLiveSwissModel, buildLiveElimModel } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
 // Does the LIVE run (active tournament / heartbeat) belong to the epoch being
@@ -209,14 +209,24 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   // partial aggregates + any completed rounds, so the ladder fills rung-by-rung
   // and never discards a finished rung. The epoch gen scope is the live field
   // itself (only the field's gens race), so foreign in-flight runs are excluded.
+  // SWISS + ELIM share racing's problem: the live `rounds` carry pairings whose
+  // winner only lands as boards complete, so a plain normalize shows empty/being-
+  // seeded pairings. The progressive builders accumulate completed rounds, fill
+  // the active round board-by-board, and queue the future (racing's discipline).
   let liveSt;
-  if (liveRaw && String(liveRaw.structure) === 'racing') {
+  const liveStructure = liveRaw ? String(liveRaw.structure) : null;
+  if (liveRaw && (liveStructure === 'racing' || liveStructure === 'swiss'
+      || liveStructure === 'single_elim' || liveStructure === 'double_elim')) {
     const epochGens = (Array.isArray(liveRaw.competitors) ? liveRaw.competitors : [])
       .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
-    liveSt = buildLiveRacingModel({
+    const args = {
       at: liveRaw, heartbeat: state.heartbeat, activeRuns: state.activeRuns,
       epochGens: epochGens.length ? epochGens : null,
-    }) || normalizeStructure(liveRaw, true);
+    };
+    const built = liveStructure === 'racing' ? buildLiveRacingModel(args)
+      : liveStructure === 'swiss' ? buildLiveSwissModel(args)
+      : buildLiveElimModel(args);
+    liveSt = built || normalizeStructure(liveRaw, true);
   } else {
     liveSt = normalizeStructure(liveRaw, true);
   }

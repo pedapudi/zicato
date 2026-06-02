@@ -8,12 +8,9 @@
 // the elimination structures, a round-by-round standings table for swiss,
 // and a successive-halving rung ladder for racing.
 //
-// Every renderer is driven by the structure payload and degrades
-// gracefully when a field is absent (the live workspace is gauntlet-only,
-// so the non-gauntlet renderers are exercised with mock payloads in the
-// test suite). The SVG marks reuse svg.js's fit-to-width discipline
-// (width:100% + viewBox, no pan/zoom, token-themed across all 9 themes,
-// scaling with the page-scale pill).
+// Every renderer is driven by the structure payload and degrades gracefully
+// when a field is absent. The SVG marks reuse svg.js's fit-to-width discipline
+// (width:100% + viewBox, no pan/zoom, token-themed, page-scale aware).
 
 import { el } from '../../../core/dom.js';
 import * as svg from '../svg.js';
@@ -349,6 +346,12 @@ export function structureDigest(st) {
         // gated swap fire when a board lands (real progress) but stay STABLE on a
         // no-op heartbeat that changes nothing (same counts ⇒ same digest).
         m.queued ? 'Q' : '',
+        // progressive LIVE swiss/elim per-MATCH board progress (done/total/
+        // inflight + pending) — a board landing fires the swap; a steady beat keeps
+        // the digest stable.
+        (svg.isNum(m.done) || svg.isNum(m.total) || svg.isNum(m.inflight) || m.pending)
+          ? 'P' + (m.done || 0) + '/' + (m.total == null ? '?' : m.total) + ':' + (m.inflight || 0) + (m.pending ? ':p' : '')
+          : '',
         m.live_progress ? Object.keys(m.live_progress).sort().map((g) => {
           const p = m.live_progress[g];
           return g + ':' + (p.done || 0) + '/' + (p.total == null ? '?' : p.total) + ':' + (p.inflight || 0)
@@ -374,64 +377,215 @@ export function renderStructure(st, ctx, epochId) {
   return renderBracket(st, ctx, epochId, structure);
 }
 
-// ---- single / double elimination — a fit-to-width bracket ----------
+// single/double elimination — derive the bracket model from a normalized elim
+// `st`: winners' band, optional losers' band, champion-gate state + benchmark.
+// A bracket winner that does not beat the incumbent is NOT promoted ('stands').
+// Null when `st` is not elim. → { winners, losers, championId, benchmarkId,
+// gateState, gateDelta, live, hasMatches }
+export function elimModel(st) {
+  if (!st || (String(st.structure) !== 'single_elim' && String(st.structure) !== 'double_elim')) return null;
+  const live = !!st.live;
+  const isDouble = String(st.structure) === 'double_elim';
+  const rounds = (Array.isArray(st.rounds) ? st.rounds : []);
+  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  // a match carries its progressive live fields (done/total/inflight/queued) so
+  // the bracket tree can fill in board-by-board; map every match through verbatim.
+  const winners = splitBand(rounds, (slot) => !slot.startsWith('LB'));
+  const losers = isDouble ? splitBand(rounds, (slot) => slot.startsWith('LB')) : null;
+
+  // the bracket champion: the winner of the LAST winners'/grand-final match.
+  const wbFinal = winners.length ? winners[winners.length - 1] : null;
+  const finalMatch = wbFinal && Array.isArray(wbFinal.matches) && wbFinal.matches.length
+    ? wbFinal.matches[wbFinal.matches.length - 1] : null;
+  // the incumbent (benchmark) the bracket winner must beat at the gate.
+  let benchmarkId = null;
+  const champComp = (Array.isArray(st.competitors) ? st.competitors : []).find((c) => String(c.role || '').toLowerCase() === 'champion');
+  if (champComp && champComp.generation_id != null) benchmarkId = String(champComp.generation_id);
+  if (!benchmarkId && lineage.length) benchmarkId = lineage[0];
+
+  let championId = null;
+  let gateState = live ? 'deciding' : (finalMatch && finalMatch.winner ? 'settled' : 'pending');
+  if (!live && finalMatch && finalMatch.winner) {
+    const winner = String(finalMatch.winner);
+    const promoted = String(finalMatch.decision || '').toLowerCase() === 'promoted'
+      || (lineage.length && lineage[lineage.length - 1] === winner && winner !== benchmarkId);
+    if (promoted && winner !== benchmarkId) { championId = winner; gateState = 'crowned'; }
+    else gateState = 'stands';
+  }
+  const gateDelta = (finalMatch && svg.isNum(finalMatch.delta_scalar)) ? finalMatch.delta_scalar : null;
+  const hasMatches = winners.some((r) => r.matches.length) || (losers && losers.some((r) => r.matches.length));
+  return { winners, losers, championId, benchmarkId, gateState, gateDelta, live, hasMatches };
+}
 
 function renderBracket(st, ctx, epochId, structure) {
-  const rounds = (st && Array.isArray(st.rounds)) ? st.rounds : [];
+  const model = elimModel(st) || { winners: splitBand((st && st.rounds) || [], () => true), losers: null, live: !!(st && st.live) };
   const open = (m) => {
     // open the (decided) winner's candidate, else the first competitor.
     const gen = m.winner || (Array.isArray(m.competitors) && m.competitors[0]) || null;
     if (gen) ctx.navigate('candidate', { epochId, gen });
   };
+  const openGen = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
   const nodes = [];
-  if (structure === 'double_elim') {
-    // Split the rounds into the winners' / losers' bands by bracket_slot
-    // prefix; the grand final (GF) rides with the winners' band.
-    const wb = splitBand(rounds, (slot) => !slot.startsWith('LB'));
-    const lb = splitBand(rounds, (slot) => slot.startsWith('LB'));
-    const wbCard = el('div', { class: 'dn-panel dn-figpane' });
-    wbCard.appendChild(wb.length ? svg.structureBracket({ rounds: wb, onMatch: open }) : empty('No winners-bracket matches yet.'));
-    nodes.push(section('Winners’ bracket', wbCard));
-    if (lb.length) {
-      const lbCard = el('div', { class: 'dn-panel dn-figpane' });
-      lbCard.appendChild(svg.structureBracket({ rounds: lb, onMatch: open }));
-      nodes.push(section('Losers’ bracket', lbCard));
-    }
-  } else {
-    const card = el('div', { class: 'dn-panel dn-figpane' });
-    card.appendChild(rounds.length ? svg.structureBracket({ rounds, onMatch: open }) : empty('No bracket rounds recorded yet.'));
-    nodes.push(section('Bracket · click a match to open the candidate', card));
+  const card = el('div', { class: 'dn-panel dn-figpane' });
+  card.appendChild(model.hasMatches !== false && model.winners.length
+    ? svg.elimBracket({
+        winners: model.winners, losers: model.losers,
+        championId: model.championId, benchmarkId: model.benchmarkId,
+        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta,
+        onMatch: open, onCompetitor: openGen,
+      })
+    : empty(model.live ? 'The bracket is being seeded — matches fill in as runs land.' : 'No bracket rounds recorded yet.'));
+  if (model.winners.length) {
+    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ♚`
+      : model.gateState === 'stands' ? ' · champion-gate: champion stands'
+      : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
+    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+      'winners advance right; ✦ = match winner · the bracket winner must beat the incumbent at the champion-gate ♚'
+      + (model.losers && model.losers.length ? ' · the losers’ bracket gives a second life (double-elim)' : '')
+      + gateNote
+      + (model.live ? ' · LIVE — the winner is not committed until the final gate' : '') }));
   }
+  nodes.push(section(structure === 'double_elim'
+    ? (model.live ? 'Bracket · LIVE — winners’ + losers’ tree' : 'Bracket · winners’ + losers’ tree')
+    : (model.live ? 'Bracket · LIVE — click a match to open the candidate' : 'Bracket · click a match to open the candidate'), card));
   const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
   if (standings) nodes.push(section('Standings', standings));
   return nodes;
 }
 
 // Re-shape the structure rounds keeping only matches whose bracket_slot
-// passes `keep`; drops any round left empty.
+// passes `keep`; drops any round left empty. Carries the progressive live
+// fields (done/total/inflight/queued/pending) through verbatim.
 function splitBand(rounds, keep) {
   const out = [];
   for (const r of (Array.isArray(rounds) ? rounds : [])) {
     const matches = (Array.isArray(r.matches) ? r.matches : []).filter((m) => keep(String(m.bracket_slot || '')));
-    if (matches.length) out.push({ round_index: r.round_index, label: r.label, matches });
+    if (matches.length) out.push({ round_index: r.round_index, label: r.label, queued: !!r.queued, matches });
   }
   return out;
 }
 
-// ---- swiss — a standings table (hero) + per-round pairings ---------
+// swiss — derive the model from a normalized swiss `st`: a column per round (its
+// pairings), the accumulating Copeland-point standings (win 1, draw ½), and the
+// champion-gate state (the leader must beat the incumbent to be promoted). Null
+// when `st` is not swiss. → { rounds, standings:[{id,points,wins,draws,losses,
+// rank}], championId, benchmarkId, gateState, gateDelta, live, hasRounds }
+export function swissModel(st) {
+  if (!st || String(st.structure) !== 'swiss') return null;
+  const live = !!st.live;
+  const rawRounds = Array.isArray(st.rounds) ? st.rounds : [];
+  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+
+  const rounds = rawRounds.map((r) => {
+    const matches = Array.isArray(r.matches) ? r.matches : [];
+    return {
+      label: r.label || `Round ${(r.round_index || 0) + 1}`,
+      queued: !!r.queued,
+      pairings: matches.map((m) => {
+        const comps = Array.isArray(m.competitors) ? m.competitors.map(String) : [];
+        return {
+          a: comps[0] != null ? comps[0] : null,
+          b: comps.length > 1 ? comps[1] : null,
+          winner: m.winner || null,
+          bye: !!m.bye,
+          delta: svg.isNum(m.delta_scalar) ? m.delta_scalar : null,
+          done: svg.isNum(m.done) ? m.done : null,
+          total: svg.isNum(m.total) ? m.total : null,
+          inflight: svg.isNum(m.inflight) ? m.inflight : 0,
+          pending: !!m.pending,
+        };
+      }),
+    };
+  });
+
+  // Copeland-point standings: the payload's standings, else accumulated from the
+  // completed pairings (win = 1, draw = 0.5).
+  let standings;
+  const raw = Array.isArray(st.standings) ? st.standings : [];
+  if (raw.length) {
+    standings = raw.map((s) => ({
+      id: String(s.generation_id),
+      points: svg.isNum(s.points) ? s.points
+        : (svg.isNum(s.wins) ? s.wins + 0.5 * (svg.isNum(s.draws) ? s.draws : 0) : null),
+      wins: svg.isNum(s.wins) ? s.wins : 0,
+      draws: svg.isNum(s.draws) ? s.draws : 0,
+      losses: svg.isNum(s.losses) ? s.losses : 0,
+      rank: svg.isNum(s.rank) ? s.rank : null,
+      status: String(s.status || '').toLowerCase(),
+    }));
+  } else {
+    const tally = new Map();   // id → { points, wins, draws, losses }
+    const bump = (id) => { if (!tally.has(id)) tally.set(id, { points: 0, wins: 0, draws: 0, losses: 0 }); return tally.get(id); };
+    for (const r of rounds) {
+      for (const p of r.pairings) {
+        if (p.a != null) bump(p.a);
+        if (p.b != null) bump(p.b);
+        if (!p.winner || p.pending) continue;
+        const w = String(p.winner);
+        const loser = w === p.a ? p.b : p.a;
+        if (p.b == null || p.bye) { const e = bump(w); e.points += 1; e.wins += 1; continue; }
+        if (w === 'draw' || w === 'tie') { bump(p.a).points += 0.5; bump(p.a).draws += 1; bump(p.b).points += 0.5; bump(p.b).draws += 1; continue; }
+        const we = bump(w); we.points += 1; we.wins += 1;
+        if (loser != null) { const le = bump(loser); le.losses += 1; }
+      }
+    }
+    standings = [...tally.entries()].map(([id, t]) => ({ id, points: t.points, wins: t.wins, draws: t.draws, losses: t.losses, rank: null, status: '' }));
+  }
+  // sort by points desc (then wins desc) → rank.
+  standings.sort((a, b) => (b.points || 0) - (a.points || 0) || (b.wins || 0) - (a.wins || 0) || String(a.id).localeCompare(String(b.id)));
+  standings.forEach((s, i) => { if (s.rank == null) s.rank = i + 1; });
+
+  // the incumbent (benchmark) the swiss winner must beat at the gate.
+  let benchmarkId = null;
+  const champComp = (Array.isArray(st.competitors) ? st.competitors : []).find((c) => String(c.role || '').toLowerCase() === 'champion');
+  if (champComp && champComp.generation_id != null) benchmarkId = String(champComp.generation_id);
+  if (!benchmarkId && lineage.length) benchmarkId = lineage[0];
+
+  const leader = standings.length ? standings[0].id : null;
+  let championId = null;
+  let gateState = live ? 'deciding' : (standings.length ? 'settled' : 'pending');
+  if (!live && standings.length) {
+    const promotedLeader = lineage.length && leader && lineage[lineage.length - 1] === leader && leader !== benchmarkId;
+    const champStatus = standings.find((s) => s.status === 'champion');
+    if (promotedLeader || (champStatus && String(champStatus.id) !== benchmarkId)) {
+      championId = promotedLeader ? leader : (champStatus ? champStatus.id : null);
+      gateState = championId ? 'crowned' : 'stands';
+    } else gateState = 'stands';
+  }
+  return {
+    rounds, standings, championId, benchmarkId, gateState, gateDelta: null, live,
+    hasRounds: rounds.some((r) => r.pairings.length) || standings.length > 0,
+  };
+}
 
 function renderSwiss(st, ctx, epochId) {
   const nodes = [];
-  const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
-  const sCard = el('div', { class: 'dn-panel' });
-  sCard.appendChild(standings || empty('No standings recorded yet.'));
-  nodes.push(section('Standings · the Swiss leaderboard', sCard));
+  const model = swissModel(st) || { rounds: [], standings: [], live: !!(st && st.live), hasRounds: false };
+  const open = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
+  const lCard = el('div', { class: 'dn-panel dn-figpane' });
+  lCard.appendChild(model.hasRounds
+    ? svg.swissLadder({
+        rounds: model.rounds, standings: model.standings,
+        championId: model.championId, benchmarkId: model.benchmarkId,
+        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta,
+        onCompetitor: open,
+      })
+    : empty(model.live ? 'The swiss is being seeded — pairings fill in as runs land.' : 'No swiss rounds recorded yet.'));
+  if (model.hasRounds) {
+    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ♚`
+      : model.gateState === 'stands' ? ' · champion-gate: champion stands'
+      : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
+    lCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+      'each round pairs the field; Copeland points accumulate (win 1 / draw ½) · ♔ = swiss leader → the leader must beat the incumbent at the champion-gate ♚'
+      + gateNote
+      + (model.live ? ' · LIVE — the winner is not committed until the final gate' : '') }));
+  }
+  nodes.push(section(model.live ? 'Swiss standings ladder · LIVE — pairings + accumulating points' : 'Swiss standings ladder · pairings + accumulating points', lCard));
 
+  // the dense per-round pairings table, retained below the ladder.
   const rounds = (st && Array.isArray(st.rounds)) ? st.rounds : [];
-  const pCard = el('div', { class: 'dn-panel' });
-  if (!rounds.length) {
-    pCard.appendChild(empty('No rounds paired yet.'));
-  } else {
+  if (rounds.length) {
+    const pCard = el('div', { class: 'dn-panel' });
     for (const r of rounds) {
       pCard.appendChild(el('div', { class: 'dt-swiss-round-h', text: r.label || `Round ${(r.round_index || 0) + 1}` }));
       const matches = Array.isArray(r.matches) ? r.matches : [];
@@ -454,8 +608,8 @@ function renderSwiss(st, ctx, epochId) {
       tbl.appendChild(tbody);
       pCard.appendChild(tbl);
     }
+    nodes.push(section('Pairings · round by round', pCard));
   }
-  nodes.push(section('Pairings · round by round', pCard));
   return nodes;
 }
 
@@ -763,6 +917,103 @@ export function buildLiveRacingModel({ at, heartbeat, activeRuns, epochGens } = 
     phase: at.phase != null ? at.phase : (heartbeat && heartbeat.phase) || 'running',
     source: 'live',
   }, true);
+}
+
+// shared: attribute in-flight /api/active-runs to per-gen board units (gen →
+// { count, sumProgress }), scoped to this epoch's gens. The swiss/elim builders
+// fold these into per-pairing/per-match done counts.
+function inflightByGen(activeRuns, epochGens) {
+  const genSet = epochGens ? new Set([...epochGens].map(String)) : null;
+  const map = new Map();
+  for (const r of (Array.isArray(activeRuns) ? activeRuns : [])) {
+    const g = String(r.generation_id || r.gen || '');
+    if (!g) continue;
+    if (genSet && !genSet.has(g)) continue;
+    const p = svg.isNum(r.progress) ? r.progress : 0;
+    const cur = map.get(g) || { count: 0, sumProgress: 0 };
+    cur.count += 1; cur.sumProgress += p;
+    map.set(g, cur);
+  }
+  return map;
+}
+
+// ── BUILD a PROGRESSIVE live ROUND-BASED model (swiss + elim) ───────
+//
+// The swiss/elim analogue of buildLiveRacingModel: an ACCUMULATING `st` from
+// COMPLETED rounds (verbatim — winners persist, never blanked), the ACTIVE round
+// (each undecided match tagged `pending` with per-board done/total/inflight from
+// /api/active-runs), and QUEUED future rounds. Same normalized shape the
+// renderers consume. `byeDecides` lets elim treat a bye as decided; `minRounds`
+// extends the walk for swiss (structure_params.rounds). Null when `at` carries
+// no field/rounds.
+function buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, byeDecides, minRounds) {
+  const competitors = Array.isArray(at.competitors) ? at.competitors : [];
+  const rawRounds = Array.isArray(at.rounds) ? at.rounds : [];
+  const params = (at.structure_params && typeof at.structure_params === 'object')
+    ? at.structure_params : (at.params && typeof at.params === 'object' ? at.params : {});
+  if (!competitors.length && !rawRounds.length) return null;
+
+  const phase = String((heartbeat && heartbeat.phase) || at.phase || '');
+  let activeRound = null;
+  { const m = /round[_:]?(\d+)/.exec(phase); if (m) activeRound = Number(m[1]); }
+  if (activeRound == null && svg.isNum(at.round_index)) activeRound = at.round_index;
+  const roundDone = (r) => {
+    const ms = Array.isArray(r.matches) ? r.matches : [];
+    return ms.length > 0 && ms.every((m) => m && (m.winner || m.decision || (byeDecides && m.bye)));
+  };
+  if (activeRound == null) {
+    const idx = rawRounds.findIndex((r) => !roundDone(r));
+    activeRound = idx >= 0 ? idx : rawRounds.length;
+  }
+  const inflight = inflightByGen(activeRuns, epochGens);
+  const boardSize = svg.isNum(params.board_size) ? params.board_size
+    : (svg.isNum(at.board_size) ? at.board_size : null);
+  // swiss walks a fixed contract length (so future rounds queue); elim walks the
+  // recorded rounds only (the bracket shape is fixed by what was seeded).
+  const totalRounds = Math.max(minRounds ? params.rounds || 0 : 0, rawRounds.length,
+    (activeRound != null ? activeRound + 1 : 0), 1);
+
+  const fillMatch = (m, isActive, queued) => {
+    const comps = Array.isArray(m.competitors) ? m.competitors.map(String) : [];
+    if (m.winner || m.decision || (byeDecides && m.bye)) return m;
+    let done = 0; let inf = 0;
+    for (const g of comps) { const u = inflight.get(g); if (u) { inf += u.count; done += Math.floor(u.sumProgress); } }
+    return Object.assign({}, m, { winner: null, pending: true,
+      inflight: isActive ? inf : 0, done: isActive ? done : 0, total: boardSize, queued });
+  };
+
+  const rounds = [];
+  for (let ri = 0; ri < totalRounds; ri++) {
+    const raw = rawRounds[ri] || null;
+    if (raw && roundDone(raw)) { rounds.push(raw); continue; }
+    const isActive = ri === activeRound;
+    const queued = !isActive;
+    const matches = (raw && Array.isArray(raw.matches) ? raw.matches : []).map((m) => fillMatch(m, isActive, queued));
+    rounds.push({ round_index: raw && raw.round_index != null ? raw.round_index : ri, label: (raw && raw.label) || `Round ${ri + 1}`, queued, matches });
+  }
+
+  return normalizeStructure({
+    structure: String(at.structure),
+    structure_params: params,
+    competitors,
+    rounds,
+    standings: Array.isArray(at.standings) ? at.standings : [],
+    champion_lineage: Array.isArray(at.champion_lineage) ? at.champion_lineage : [],
+    phase: at.phase != null ? at.phase : (heartbeat && heartbeat.phase) || 'running',
+    source: 'live',
+  }, true);
+}
+
+// Progressive live swiss/elim models — thin wrappers over the shared round-based
+// builder. Null when `at` is not the matching structure.
+export function buildLiveSwissModel({ at, heartbeat, activeRuns, epochGens } = {}) {
+  if (!at || typeof at !== 'object' || String(at.structure) !== 'swiss') return null;
+  return buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, false, true);
+}
+export function buildLiveElimModel({ at, heartbeat, activeRuns, epochGens } = {}) {
+  if (!at || typeof at !== 'object'
+    || (String(at.structure) !== 'single_elim' && String(at.structure) !== 'double_elim')) return null;
+  return buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, true, false);
 }
 
 // ── ONE candidate's PATH through the racing tournament ──────────────
