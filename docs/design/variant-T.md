@@ -567,11 +567,14 @@ digest so it stays live-updating + flash-free on the same SSE/poll cadence.
   with its yellow, so `good` is nudged to a true sage green and `accent` to
   Zenburn's canonical cyan `#8cd0d3` (the yml cyan `#93bea3` is a near-neutral
   grey-green), keeping improve/caution/accent separable.
-- **Typeface — inline buttons** (only three, so no dropdown needed):
-  **Editorial** (+ Source Serif 4) · **Technical** (default; + JetBrains Mono) ·
-  **Display** (+ Archivo Narrow), swapped via `[data-t-type]`, persisted
-  (`zicato.T.typeface`). The old redundant **Sans** option is dropped (Technical
-  already gives an Open-Sans body; the `sans` id normalises to Technical). Google
+- **Typeface — inline buttons** (only three, so no dropdown needed) — three
+  genuinely distinct voices, body included (serif · technical-mono · display):
+  **Editorial** (Source Serif 4 throughout — body, headings & publication: a
+  typeset literary voice) · **Technical** (default; Open Sans body + JetBrains
+  Mono for data / labels / code) · **Display** (Space Grotesk geometric body +
+  Archivo Narrow condensed headings & big numerals — a punchy headline voice),
+  swapped via `[data-t-type]`, persisted (`zicato.T.typeface`). The old redundant
+  **Sans** option is dropped (the `sans` id normalises to Technical). Google
   Fonts loaded in `app_T.js` with `display=swap` and system fallbacks — the only
   external dep.
 - **Density — removed; COZY baked in.** There is no density picker. The **cozy**

@@ -375,9 +375,13 @@
 
 /* ===================  the three typeface themes  ===================
  *
- * Editorial / Technical / Display (the old redundant "Sans" is dropped —
- * Technical already gives an Open-Sans body). All Open-Sans-based for the BODY;
- * the typeface picker swaps the heading / data / publication voices via
+ * Editorial / Technical / Display — three genuinely DIFFERENT voices, body
+ * included, so toggling the picker is immediately recognizable:
+ *   Editorial — a reading SERIF throughout (body + headings + publication).
+ *   Technical — Open Sans body + JetBrains Mono for data / labels / code.
+ *   Display   — a characterful geometric sans body + a condensed display face
+ *               for headings & big numerals.
+ * The picker swaps --v2-sans / --v2-mono / --n-font-head / --n-font-paper via
  * [data-t-type] on the root. Google Fonts are loaded in app_T.js (display=swap);
  * every family lists a system fallback so a slow / blocked font never breaks
  * layout. Default: Technical.
@@ -386,7 +390,8 @@
   --n-font-base: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --n-font-mono-real: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   --n-font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
-  --n-font-display: "Archivo Narrow", "Open Sans", system-ui, sans-serif;
+  --n-font-display: "Archivo Narrow", "Space Grotesk", "Open Sans", system-ui, sans-serif;
+  --n-font-geo: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
 
   /* Technical (DEFAULT): Open Sans body + JetBrains Mono data/labels/code. */
   --v2-sans: var(--n-font-base);
@@ -394,9 +399,12 @@
   --n-font-head: var(--n-font-base);
   --n-font-paper: var(--n-font-base);
 }
+/* Editorial: a reading SERIF for the WHOLE panel — body, headings, and
+ * publication all read like a typeset document. Data labels stay serif too,
+ * leaning on Source Serif 4's tabular figures. */
 #variant-root[data-variant="T"][data-t-type="editorial"] {
-  --v2-sans: var(--n-font-base);
-  --v2-mono: var(--n-font-mono-real);
+  --v2-sans: var(--n-font-serif);
+  --v2-mono: var(--n-font-serif);
   --n-font-head: var(--n-font-serif);
   --n-font-paper: var(--n-font-serif);
 }
@@ -406,11 +414,13 @@
   --n-font-head: var(--n-font-base);
   --n-font-paper: var(--n-font-base);
 }
+/* Display: a geometric grotesque BODY (Space Grotesk — clearly NOT Open Sans)
+ * with a condensed display face (Archivo Narrow) for headings & big numerals. */
 #variant-root[data-variant="T"][data-t-type="display"] {
-  --v2-sans: var(--n-font-base);
+  --v2-sans: var(--n-font-geo);
   --v2-mono: var(--n-font-mono-real);
   --n-font-head: var(--n-font-display);
-  --n-font-paper: var(--n-font-base);
+  --n-font-paper: var(--n-font-geo);
 }
 
 /* ===================  the COZY spacing baseline (density removed)  ===================

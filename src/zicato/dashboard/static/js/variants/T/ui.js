@@ -80,12 +80,14 @@ export function persistColor(t) {
 // ---- typeface themes (Technical is the default) ---------------------
 //
 // Each maps to a `[data-t-type]` value the stylesheet keys on (swapping the
-// --n-font-* custom properties). All are Open-Sans-based for the body; the
-// distinction is the heading / data voice. (The old "Sans" option is dropped —
-// it was redundant with Technical's Open-Sans body; Technical now covers it.)
-//   Editorial — Open Sans body + Source Serif 4 headings & publication.
+// --n-font-* custom properties). The three are genuinely DIFFERENT voices —
+// body included — so toggling the picker is immediately recognizable as
+// serif · technical-mono · display.
+//   Editorial — Source Serif 4 throughout (body + headings + publication): a
+//               typeset, literary reading voice.
 //   Technical — Open Sans body + JetBrains Mono for data / labels / code.
-//   Display   — Open Sans body + Archivo Narrow (condensed) headings & big nums.
+//   Display   — Space Grotesk geometric body + Archivo Narrow (condensed)
+//               headings & big numerals: a punchy headline voice.
 export const TYPE_THEMES = [
   ['editorial', 'Editorial'],
   ['technical', 'Technical'],

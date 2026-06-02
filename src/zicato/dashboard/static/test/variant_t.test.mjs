@@ -4959,4 +4959,85 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
   coreState.state.activeTournament = null;
 });
 
+// ---- typeface VOICES: the three are genuinely distinct, body included -----
+//
+// Editorial = serif throughout, Display = a geometric/display sans body, and
+// Technical is UNCHANGED (Open Sans body + JetBrains Mono). Asserted against
+// the resolved --n-font-* / --v2-* token strings declared in the scoped CSS.
+test('typeface voices: editorial=serif body, display=display body, technical UNCHANGED — resolved from the CSS tokens', () => {
+  const css = readCss();
+  // Pull the base block (where --n-font-* primitives are declared) so we can
+  // resolve var(...) references the per-type blocks point at.
+  const baseM = css.match(/#variant-root\[data-variant="T"\]\s*\{([^}]*)\}/);
+  assert(baseM, 'the base [data-variant="T"] token block exists');
+  const baseBlock = baseM[1];
+  function declIn(block, name) {
+    const m = block.match(new RegExp('--' + name + '\\s*:\\s*([^;]+);'));
+    return m ? m[1].trim() : null;
+  }
+  // resolve a single level of var(--x) against the base block.
+  function resolve(block, name) {
+    const raw = declIn(block, name);
+    if (!raw) return null;
+    const v = raw.match(/^var\(--([a-z0-9-]+)\)$/);
+    return v ? declIn(baseBlock, v[1]) : raw;
+  }
+  function typeBlock(id) {
+    const m = css.match(new RegExp('#variant-root\\[data-variant="T"\\]\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
+    assert(m, 'the ' + id + ' typeface block exists');
+    return m[1];
+  }
+  const ed = typeBlock('editorial');
+  const tech = typeBlock('technical');
+  const disp = typeBlock('display');
+
+  // base primitives.
+  const openSans = resolve(baseBlock, 'n-font-base');
+  const jetbrains = resolve(baseBlock, 'n-font-mono-real');
+  assert(/Open Sans/.test(openSans), 'base body is Open Sans');
+  assert(/JetBrains Mono/.test(jetbrains), 'base mono is JetBrains Mono');
+
+  // Technical is UNCHANGED: Open Sans body + JetBrains Mono.
+  assertEqual(resolve(tech, 'v2-sans'), openSans, 'technical body (--v2-sans) is Open Sans');
+  assertEqual(resolve(tech, 'n-font-paper'), openSans, 'technical publication is Open Sans');
+  assertEqual(resolve(tech, 'n-font-head'), openSans, 'technical headings are Open Sans');
+  assertEqual(resolve(tech, 'v2-mono'), jetbrains, 'technical data/labels are JetBrains Mono');
+
+  // Editorial: the BODY is a SERIF, distinct from Open Sans.
+  const edSans = resolve(ed, 'v2-sans');
+  const edPaper = resolve(ed, 'n-font-paper');
+  assert(/Source Serif 4/.test(edSans), 'editorial body (--v2-sans) is a serif (Source Serif 4)');
+  assert(/serif/.test(edSans), 'editorial body stack ends in a serif fallback');
+  assert(edSans !== openSans, 'editorial body is NOT Open Sans');
+  assert(/Source Serif 4/.test(edPaper) && /serif/.test(edPaper), 'editorial publication voice is serif');
+  assert(/Source Serif 4|serif/.test(resolve(ed, 'n-font-head')), 'editorial headings are serif');
+
+  // Display: the BODY is the display/geometric family, distinct from both
+  // Open Sans and the serif; headings are the condensed display face.
+  const dispSans = resolve(disp, 'v2-sans');
+  const dispPaper = resolve(disp, 'n-font-paper');
+  const dispHead = resolve(disp, 'n-font-head');
+  assert(/Space Grotesk/.test(dispSans), 'display body (--v2-sans) is the geometric display family (Space Grotesk)');
+  assert(dispSans !== openSans, 'display body is NOT Open Sans');
+  assert(!/Source Serif 4/.test(dispSans) && dispSans !== edSans, 'display body is NOT the editorial serif');
+  assert(/Space Grotesk/.test(dispPaper), 'display publication voice is the geometric family');
+  assert(/Archivo Narrow/.test(dispHead), 'display headings/big-nums are the condensed display face (Archivo Narrow)');
+
+  // the three bodies are mutually distinct.
+  assert(edSans !== dispSans && edSans !== openSans && dispSans !== openSans,
+    'editorial / technical / display bodies are three distinct families');
+});
+
+// any newly-added font family is actually loaded by app_T.js's Google-Fonts loader.
+test('font loader: every typeface family used in the CSS is requested by app_T.js', async () => {
+  const fs = await import('node:fs');
+  const appJs = fs.readFileSync(new URL('../app_T.js', import.meta.url), 'utf8');
+  // the loader builds a Google Fonts css2 URL with &family=Name+Parts:...
+  const loaded = [...appJs.matchAll(/family=([A-Za-z0-9+]+)/g)].map((m) => m[1].replace(/\+/g, ' '));
+  for (const fam of ['Open Sans', 'JetBrains Mono', 'Source Serif 4', 'Space Grotesk', 'Archivo Narrow']) {
+    assert(loaded.includes(fam), 'app_T.js loads the ' + fam + ' family (display=swap)');
+  }
+  assert(/display=swap/.test(appJs), 'fonts are requested with display=swap');
+});
+
 await run();

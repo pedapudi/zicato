@@ -39,9 +39,10 @@ function ensureStylesheet() {
 }
 
 // The ONLY external dependency the brief permits: Google Fonts (fonts only).
-// Open Sans (body, all themes) + Source Serif 4 (Editorial) + JetBrains Mono
-// (Technical, T's default) + Archivo Narrow (Display). `display=swap` so a slow
-// font never blocks paint; system fallbacks live in the stylesheet.
+// Open Sans (Technical body) + Source Serif 4 (Editorial — body & headings) +
+// JetBrains Mono (Technical data/labels/code) + Space Grotesk (Display body) +
+// Archivo Narrow (Display headings & big nums). `display=swap` so a slow font
+// never blocks paint; system fallbacks live in the stylesheet.
 function ensureFonts() {
   const id = 'console4-T-fonts';
   if (document.getElementById(id)) return;
@@ -52,6 +53,7 @@ function ensureFonts() {
     + '?family=Open+Sans:ital,wght@0,400;0,600;0,700;1,400'
     + '&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400'
     + '&family=JetBrains+Mono:wght@400;500;700'
+    + '&family=Space+Grotesk:wght@400;500;700'
     + '&family=Archivo+Narrow:wght@500;600;700'
     + '&display=swap';
   document.head.appendChild(link);
