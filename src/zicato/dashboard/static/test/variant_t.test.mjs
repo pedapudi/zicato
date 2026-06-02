@@ -3004,4 +3004,75 @@ test('live engine: the ActivityTicker is append-only, newest-on-top, capped, and
   assert([...rows].some((r) => r === a3Node), 'a surviving row keeps its node identity (no repaint)');
 });
 
+// ---- TOGGLE: the board-detail transcript button collapses when re-clicked ----
+
+test('board view (a): clicking "show inline" reveals the transcript and the button reads "showing"', async () => {
+  freshState(); installFetch();
+  const board = await import('../js/variants/T/views/board.js');
+
+  // collapsed: no gen selected — the row button reads "show inline →" and its
+  // href carries the gen (clicking it OPENS that candidate's transcript).
+  const closed = document.createElement('div');
+  await board.render(closed, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
+  assert(allByClass(closed, 'dn-xscript-grid').length === 0, 'no inline transcript pane while collapsed');
+  const closedBtns = allByClass(closed, 'dn-board-run');
+  assert(closedBtns.length && closedBtns.every((n) => (n.textContent || '').includes('show inline')), 'every candidate row button reads "show inline →" when collapsed');
+  // the v1 candidate's button carries the v1 gen (clicking it OPENS that transcript).
+  const v1Btn = closedBtns.find((n) => /\/board\/waffles_single\/v1\b/.test(n.getAttribute('href') || ''));
+  assert(v1Btn, 'the "show inline" href carries the gen (opens the transcript)');
+
+  // selected: that gen is open — the transcript renders and its button flips to
+  // "showing ↓" (current behaviour).
+  freshState(); installFetch();
+  const open = document.createElement('div');
+  await board.render(open, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+  assert(allByClass(open, 'dn-xscript-grid')[0], 'the inline transcript pane rendered for the selected candidate');
+  const onBtn = allByClass(open, 'dn-board-run').find((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-linkbtn-on'));
+  assert(onBtn, 'the selected candidate button is marked active (dn-linkbtn-on)');
+  assert((onBtn.textContent || '').includes('showing'), 'the active button reads "showing ↓"');
+});
+
+test('board view (b): clicking the "showing" button again hides the transcript + clears the selection/route', async () => {
+  freshState(); installFetch();
+  const board = await import('../js/variants/T/views/board.js');
+
+  // open on v1.
+  const host = document.createElement('div');
+  await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+  const onBtn = allByClass(host, 'dn-board-run').find((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-linkbtn-on'));
+  assert(onBtn && (onBtn.textContent || '').includes('showing'), 'the v1 button is the active "showing ↓" control');
+
+  // TOGGLE: the active "showing ↓" button's href DROPS the gen — clicking it
+  // routes back to the bare board (selection cleared), so the transcript closes
+  // and a reload of that route does NOT reopen it.
+  const offHref = onBtn.getAttribute('href') || '';
+  assert(/\/board\/waffles_single(\b|$)/.test(offHref) && !/\/board\/waffles_single\/v1\b/.test(offHref),
+    'the active button href collapses to the bare board route (no gen) — toggles the selection OFF');
+
+  // re-render at the collapsed route the toggle points to: the transcript is gone
+  // and the button is back to "show inline →".
+  freshState(); installFetch();
+  const reloaded = document.createElement('div');
+  await board.render(reloaded, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
+  assert(allByClass(reloaded, 'dn-xscript-grid').length === 0, 'the inline transcript is hidden after toggling off');
+  const backBtn = allByClass(reloaded, 'dn-board-run').find((n) => (n.textContent || '').includes('show inline'));
+  assert(backBtn, 'the button returned to "show inline →" after the toggle');
+  assert(allByClass(reloaded, 'dn-linkbtn-on').length === 0, 'no candidate button is marked active after toggling off');
+
+  // the dot-plot stays consistent: clicking the already-selected candidate's dot
+  // also collapses it (drops the gen).
+  freshState(); installFetch();
+  let dotNav = null;
+  const dotHost = document.createElement('div');
+  await board.render(dotHost, { navigate: (v, p) => { dotNav = { v, p }; }, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+  const dots = dotHost.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-dotrow'));
+  // find the v1 dot row (its label/value group is clickable) and click it.
+  const v1dot = dots.find((n) => (n.textContent || '').includes('v1'));
+  if (v1dot) {
+    v1dot.dispatchEvent({ type: 'click' });
+    assert(dotNav && dotNav.v === 'board' && dotNav.p.entry === 'waffles_single' && dotNav.p.gen == null,
+      'clicking the already-selected candidate dot collapses it (navigates to the board with no gen)');
+  }
+});
+
 await run();

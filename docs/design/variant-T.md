@@ -239,7 +239,12 @@ detail host holds the destination view.
    (`views/board.js`), keyed by entry id.
 5. **Board entry → inline side-by-side transcript** — selecting a candidate on
    the board view shows its transcript INLINE, side by side with the champion's
-   on that board (`/api/conversation/{run_id}` per candidate); no run page.
+   on that board (`/api/conversation/{run_id}` per candidate); no run page. The
+   per-candidate transcript control is a **toggle**: the selected candidate's
+   button reads "showing ↓" and its href drops the gen, so re-clicking it (or its
+   dot in the plot) collapses the transcript back to "show inline →" by routing
+   to the bare board (`#/e/<epoch>/board/<entry>`) — the selection clears and a
+   reload of that route does not reopen it.
 6. **Trellis vs heatmap de-dup** — heatmap stays at the epoch overview
    (`views/epoch.js`); the trellis lives in the Boards view (`views/boards.js`).
    Never both on one page.

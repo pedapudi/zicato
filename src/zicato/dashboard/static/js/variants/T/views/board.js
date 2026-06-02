@@ -212,7 +212,9 @@ export async function render(host, ctx, params) {
         width: 560, rowHeight: bdt.dotRow, labelWidth: 140, items,
         reference: champLoss != null ? { value: champLoss, label: `champion ${championId}` } : null,
         // fix #5: select → INLINE transcript on THIS view (same entry, +gen).
-        onClick: (it) => ctx.navigate('board', { epochId, entry: entryId, gen: it.id }),
+        // TOGGLE: clicking the already-selected candidate's dot collapses it
+        // (drop the gen) — kept consistent with the breakdown-row button.
+        onClick: (it) => ctx.navigate('board', it.id === selGen ? { epochId, entry: entryId } : { epochId, entry: entryId, gen: it.id }),
       }));
       scoreCard.appendChild(el('div', { class: 'dn-legend' }, [
         champLoss != null ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champion ${championId} = ${svg.fmt(champLoss, 1)}`]) : null,
@@ -241,7 +243,10 @@ export async function render(host, ctx, params) {
         el('td', { class: passClass(r.pass), text: passLabel(r.pass) }),
         el('td', { class: 'dn-mono', text: r.timeout ? 'timed out' : 'ok' }),
         el('td', null, [r.ran
-          ? el('a', { class: 'dn-linkbtn dn-board-run' + (isSel ? ' dn-linkbtn-on' : ''), href: ctx.href('board', { epochId, entry: entryId, gen: r.gen }), text: isSel ? 'showing ↓' : 'show inline →' })
+          // TOGGLE: an already-selected candidate's button collapses its inline
+          // transcript — its href drops the gen (back to the bare board route),
+          // so clicking "showing ↓" closes it and a reload won't reopen it.
+          ? el('a', { class: 'dn-linkbtn dn-board-run' + (isSel ? ' dn-linkbtn-on' : ''), href: ctx.href('board', isSel ? { epochId, entry: entryId } : { epochId, entry: entryId, gen: r.gen }), text: isSel ? 'showing ↓' : 'show inline →' })
           : el('span', { class: 'dn-faint', text: 'no run' })]),
       ]));
     }
