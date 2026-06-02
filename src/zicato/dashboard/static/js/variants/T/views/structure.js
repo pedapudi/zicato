@@ -490,7 +490,29 @@ export function racingModel(st) {
     championId = finalRungSurvivors[0];
   }
   const gateDelta = (gateMatch && svg.isNum(gateMatch.delta_scalar)) ? gateMatch.delta_scalar : null;
-  return { rungs, championId, gateState, gateDelta, live, hasRungs: rungs.length > 0 };
+
+  // THE BENCHMARK (champion v0) the field is raced against. Every rung Δ is
+  // Δ-vs-this-id, and this id defends at the champion-gate — so the funnel /
+  // ladder can show it as a persistent reference even though it is NOT one of
+  // the rung competitors. It is the gate's champion seat (competitors[0]), else
+  // the seed competitor common to every rung, else the first promoted lineage
+  // entry. Distinct from `championId`, which is the eventual SURVIVOR/crowned id.
+  let benchmarkId = null;
+  if (gateMatch && Array.isArray(gateMatch.competitors) && gateMatch.competitors.length) {
+    benchmarkId = String(gateMatch.competitors[0]);
+  }
+  if (!benchmarkId && rungs.length) {
+    // the id present in EVERY rung's competitors (the seed champion).
+    const sets = rungs.map((r) => new Set((r.competitors || []).map(String)));
+    const common = [...sets[0]].filter((c) => sets.every((s) => s.has(c)));
+    if (common.length === 1) benchmarkId = common[0];
+    else if (common.length > 1 && lineage.length) {
+      benchmarkId = common.find((c) => c === lineage[0]) || null;
+    }
+  }
+  if (!benchmarkId && lineage.length) benchmarkId = lineage[0];
+
+  return { rungs, championId, benchmarkId, gateState, gateDelta, live, hasRungs: rungs.length > 0 };
 }
 
 // ── ONE candidate's PATH through the racing tournament ──────────────
@@ -624,10 +646,14 @@ function renderRacing(st, ctx, epochId) {
     championId = finalRungSurvivors[0];
   }
   const gateDelta = (gateMatch && svg.isNum(gateMatch.delta_scalar)) ? gateMatch.delta_scalar : null;
+  // the champion v0 the field is raced against (the persistent benchmark line) —
+  // distinct from championId (the eventual survivor). Reuse racingModel's
+  // derivation so the ladder + funnel agree on the benchmark id.
+  const benchmarkId = (racingModel(st) || {}).benchmarkId || null;
   const card = el('div', { class: 'dn-panel dn-figpane' });
   card.appendChild(rungs.length
     ? svg.racingLadder({
-        rungs, championId, live, gateState, gateDelta,
+        rungs, championId, benchmarkId, live, gateState, gateDelta,
         onCompetitor: (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); },
       })
     : empty(live ? 'The race is being seeded — the first rung fills in as runs land.' : 'No rungs evaluated yet.'));
@@ -637,7 +663,8 @@ function renderRacing(st, ctx, epochId) {
       : gateState === 'deciding' ? ' · champion-gate: deciding…'
       : '';
     card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'each rung races the field on a fraction of the board, then cuts the worst by η · ✕ = cut · ↑ = survives · ♚ = champion-gate winner · click a competitor → open'
+      (benchmarkId ? `the field is raced vs the champion v0 = ${benchmarkId}; every rung Δ is Δ-vs-v0 and v0 defends at the champion-gate · ` : '')
+      + 'each rung races the field on a fraction of the board, then cuts the worst by η · ✕ = cut · ↑ = survives · ♚ = champion-gate winner · click a competitor → open'
       + gateNote
       + (live ? ' · LIVE — the eventual winner is not committed until the final gate' : '') }));
   }

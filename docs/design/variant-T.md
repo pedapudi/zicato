@@ -714,3 +714,91 @@ gap, so a label never overlaps the disc; a **GAUNTLET** candidate (one run per
 entry) renders unchanged (one node per entry, multiplicity 1, no badge, no raced
 marker); and `.ezn-board-mult` / `.ezn-board-raced` are themed via the scoped
 `--v2-*` token contract.
+
+## Round 8 — the LIVE-RUN display (animated, SSE-driven) + the champion benchmark
+
+A live `evolve` run felt **static**: the surfaces were digest-gated (good — no
+flashing) but there was no motion or sense of progress, and updates lagged on
+the poll tick. Round 8 makes a live run feel **alive** without re-introducing
+flashing — the rule is **animate actual state *changes* (transitions / deltas),
+never repaint-loop**, and **prefer push (SSE) over poll**. JS/CSS only.
+
+A new module `js/variants/T/live.js` is the structure-agnostic live engine; the
+shell owns ONE persistent `LiveController` (the live hero + activity ticker) that
+the SSE-driven `refreshLive()` patches **in place** on every tick.
+
+1. **SSE-driven real-time.** The core already pushes the heartbeat/state on the
+   `/events` stream and fires `state:changed` directly on each `heartbeat` frame.
+   The shell now calls `refreshLive()` on **every** `state:changed` tick (not on
+   the 400 ms re-dispatch debounce), so live state — phase, tournament progress,
+   funnel, activity — updates **sub-second**. `refreshLive()` is distinct from the
+   coarse status-pill digest gate: it must run even when the status digest is
+   unchanged (a steady heartbeat can still carry progress / active-runs deltas),
+   and is itself **diff-gated** internally so an identical re-tick writes ZERO
+   DOM. Digest-gating still governs *structure*; only *values / positions* animate.
+
+2. **Animated funnel/ladder.** While a run is live the hero renders the racing
+   survival funnel; a real rung/cut/gate change re-builds the funnel (its own
+   `funnelDigest` gate — a steady tick is a true no-op), and the freshly-built
+   figure carries a one-shot `dt-live-enter` entrance class (CSS `dt-live-fade`
+   eases it in, never an infinite loop). The funnel band + each runner/edge carry
+   `opacity`/`transform` transitions, so the band narrows and cut competitors peel
+   off as the field thins. Idle → the static completed funnel, unchanged.
+
+3. **Animated live progress.** The hero's **tournament-level progress** indicator
+   (`liveProgress`) reads `rung k of N · m/n matchups` (racing) or `round k of N`
+   (others) with a **determinate** bar whose `width` is patched in place (a CSS
+   `width` transition animates it smoothly toward 100%; an unknown fraction shows a
+   thin pending bar). The per-board in-flight bars keep their `dn-progress-fill`
+   width transition.
+
+4. **Live activity ticker.** `deriveActivity(prev, next)` is a **pure** diff of two
+   `liveSnapshot`s → the events that fired between ticks (matchup started, run
+   completed, rung cut ✕, survivor ↑, champion-gate decided / promotion ♚, phase
+   change), newest-first + toned (good/bad/neutral). The `ActivityTicker` is
+   **append-only**: new rows are *prepended*, the list is capped (oldest trimmed),
+   surviving rows are left untouched and de-duped by id — so it grows without
+   flashing or reordering. Each new row slides in once (`dt-ticker-in`).
+
+5. **Pulsing status + count-ups + cell fills.** The hero's LIVE pill **breathes**
+   (a subtle `dt-run-pulse` ring on `dt-live-hero-dot`), the current phase reads
+   prominently, the progress bar transitions as results land, and heatmap cells
+   carry a `fill` transition so a cell flashes once as a run completes.
+
+6. **Live-run hero.** While a run is active the shell leads with a focal
+   `dt-live-hero` panel — current phase + tournament progress + the animating
+   funnel + the in-flight unit count + the activity ticker — a persistent home
+   that survives view navigation. When idle the hero hides (`dt-live-on` /
+   `dt-hero-live` absent) and the normal summary leads.
+
+7. **v0 / champion-benchmark clarity (racing ladder + funnel).** The racing
+   ladder/funnel show challengers raced **vs the champion (v0)**, but v0 was not
+   shown, so the Δ-vs-champion deltas were confusing. `racingModel` now derives a
+   `benchmarkId` (the champion v0 — the gate's champion seat / the seed common to
+   every rung / the first lineage entry), **distinct** from the `championId` (the
+   eventual survivor). `svg.racingLadder` draws a persistent labelled **v0 pace
+   line** at Δ=0 (`dn-raceladder-bench` + a dashed `dn-raceladder-bench-line`);
+   `svg.survivalFunnel` carries a `dn-funnel-bench` caption and the gate sub-label
+   reads **"vs champion v0"** — both making explicit that every rung Δ is vs v0 and
+   that v0 defends at the champion-gate.
+
+**`prefers-reduced-motion`.** ALL of the above motion is gated behind a single
+`@media (prefers-reduced-motion: reduce)` block at the end of `console4.css`:
+the breathing dot, the funnel/ladder entrance, the ticker slide-in, the progress
+`width` transition, and the funnel band / ladder runner transitions all collapse
+to `animation: none` / `transition: none` (instant, no motion). Every animation is
+GPU-friendly (`transform` / `opacity` / `width`) and never causes layout thrash or
+re-introduces the digest flashing.
+
+**Tests** (`test/variant_t.test.mjs`, mocking live state/SSE payloads):
+**(a)** an active-tournament (racing, running) renders the live hero + funnel and
+the ticker lists events; **(b)** a phase/active-runs update mutates the live
+surfaces *without* a full repaint — the phase/progress/ticker-list nodes keep
+identity, an identical re-tick appends NO rows + does NOT rebuild the funnel
+(digest-gated), and a real change appends rows + eases the new funnel in;
+**(c)** the reduced-motion CSS gate suppresses every live animation class;
+**(d)** the racing ladder + funnel show the champion/benchmark (v0) reference and
+label deltas as vs-v0, and `racingModel.benchmarkId` is distinct from
+`championId`; **(e)** idle hides the hero and the static completed funnel renders
+unchanged; **(f)** the engine's pure derivations (`liveProgress`,
+`deriveActivity`, the append-only capped de-duping `ActivityTicker`).

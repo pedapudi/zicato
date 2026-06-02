@@ -183,7 +183,7 @@ export async function render(host, ctx, params) {
         ].filter(Boolean));
         card.appendChild(head);
         card.appendChild(svg.survivalFunnel({
-          rungs: m.rungs, championId: m.championId, live: m.live,
+          rungs: m.rungs, championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
           gateState: m.gateState, gateDelta: m.gateDelta,
           onCompetitor: (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); },
         }));
@@ -191,7 +191,8 @@ export async function render(host, ctx, params) {
           : m.gateState === 'stands' ? ' · champion-gate: champion stands'
           : m.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
         card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-          'successive halving — each rung races the field on a growing board fraction, then cuts the worst by η · ✕ = cut · ↑ = survives · ♚ = crowned at the full-board gate · click a competitor → open'
+          (m.benchmarkId ? `the field is raced vs the champion v0 = ${m.benchmarkId}; every Δ is Δ-vs-v0 and v0 defends at the gate · ` : '')
+          + 'successive halving — each rung races the field on a growing board fraction, then cuts the worst by η · ✕ = cut · ↑ = survives · ♚ = crowned at the full-board gate · click a competitor → open'
           + gateNote
           + (m.live ? ' · LIVE — the eventual winner is not committed until the final gate' : '') }));
         card.appendChild(el('a', { class: 'dn-linkbtn dt-struct-strip-link', href: ctx.href('gens', { epochId }), text: 'See Match-ups →' }));

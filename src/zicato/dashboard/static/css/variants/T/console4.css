@@ -1511,8 +1511,115 @@
   .dt-swiss-round-h:first-child { margin-top: 0; }
   .dt-swiss-pairings { margin-bottom: 10px; }
 
+  /* ====================================================================
+   * LIVE-RUN display — animate state CHANGES, never repaint-loop. All
+   * motion below is GPU-friendly (transform / opacity / width) and gated
+   * behind prefers-reduced-motion (the single block at the very end of
+   * this file → instant, no transitions/animations under reduced motion).
+   * ==================================================================== */
+
+  /* the v0 / champion BENCHMARK reference on the racing ladder + funnel:
+   * a persistent labelled pace line at Δ=0, so the reader sees the champion
+   * the per-rung deltas are measured against (v0 is the benchmark, not a rung
+   * competitor; it defends at the champion-gate). */
+  .dn-raceladder-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
+  .dn-raceladder-bench-line { stroke: var(--v2-accent); stroke-width: 1; stroke-dasharray: 3 3;
+    opacity: 0.45; vector-effect: non-scaling-stroke; }
+  .dn-funnel-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
+
+  /* a freshly-built funnel/ladder eases in (one-shot — never infinite). */
+  .dt-live-enter { animation: dt-live-fade 0.34s ease-out; }
+  @keyframes dt-live-fade {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  /* the surviving funnel band + each runner ease their position/width as the
+   * field thins (the band narrows, survivors slide forward, cuts peel off). */
+  .dn-funnel-band { transition: opacity 0.3s ease; }
+  .dn-funnel-runner, .dn-funnel-deadedge { transition: opacity 0.3s ease, transform 0.3s ease; }
+  .dn-raceladder-runner, .dn-raceladder-edge { transition: opacity 0.3s ease; }
+
+  /* ---- the LIVE-RUN HERO (the animated home of a live run) ---- */
+  /* hidden until the controller flags a live run (the .dt-live-on class). */
+  .dt-hero-host { display: none; }
+  .dt-hero-host.dt-hero-live { display: block; }
+  .dt-live-hero { display: none; }
+  .dt-live-hero.dt-live-on {
+    display: block;
+    margin: 0; padding: 14px 40px 16px;
+    border-bottom: 1px solid var(--v2-rule);
+    background: color-mix(in srgb, var(--v2-good) 6%, var(--v2-paper));
+  }
+  .dt-live-hero-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .dt-live-hero-pill { display: inline-flex; align-items: center; gap: 6px;
+    padding: 2px 9px; border-radius: 10px; border: 1px solid var(--v2-good);
+    background: color-mix(in srgb, var(--v2-good) 12%, transparent);
+    font-family: var(--v2-mono); font-size: 10px; letter-spacing: 0.08em;
+    color: var(--v2-good); font-weight: 700; }
+  /* the breathing dot — subtle, GPU-friendly (opacity + box-shadow ring). */
+  .dt-live-hero-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-good);
+    box-shadow: 0 0 0 0 var(--v2-good); animation: dt-run-pulse 1.8s ease-out infinite; }
+  .dt-live-hero-phase { font-family: var(--v2-mono); font-size: 13px; color: var(--v2-ink);
+    font-weight: 600; }
+  .dt-live-hero-count { font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-faint); }
+  /* the determinate tournament-progress bar — width transitions smoothly. */
+  .dt-live-hero-prog { margin: 10px 0 12px; max-width: 520px; }
+  .dt-live-hero-progrow { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px;
+    font-family: var(--v2-mono); font-size: 11px; }
+  .dt-live-hero-proglab { color: var(--v2-ink-soft); font-weight: 600; }
+  .dt-live-hero-progbar { display: block; width: 100%; height: 8px; border-radius: 5px;
+    background: var(--v2-rule-soft); overflow: hidden; }
+  .dt-live-hero-progfill { display: block; height: 100%; width: 0%; background: var(--v2-good);
+    transition: width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1); }
+  .dt-live-hero-progfill-pending { opacity: 0.45; }
+  /* the hero body: the funnel beside the activity ticker. */
+  .dt-live-hero-body { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
+    gap: 18px; align-items: start; }
+  .dt-live-hero-funnel { min-width: 0; }
+  .dt-live-hero-nofunnel { font-size: 11.5px; padding: 12px 0; }
+  .dt-live-hero-ticker { min-width: 0; }
+  .dt-live-hero-tickerhead { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; margin-bottom: 5px; }
+
+  /* ---- the activity ticker (append-only, newest on top, no flash) ---- */
+  .dt-ticker { max-height: 200px; overflow-y: auto; border: 1px solid var(--v2-rule);
+    border-radius: 5px; background: var(--v2-panel); padding: 4px; }
+  .dt-ticker-empty { font-size: 11px; padding: 8px 6px; font-style: italic; }
+  .dt-ticker-list { display: flex; flex-direction: column; gap: 1px; }
+  .dt-ticker-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 5px;
+    font-family: var(--v2-mono); font-size: 10.5px; line-height: 1.5; border-radius: 3px;
+    color: var(--v2-ink-soft);
+    /* each NEW row slides in once (prepended at top); surviving rows untouched. */
+    animation: dt-ticker-in 0.3s ease-out; }
+  .dt-ticker-glyph { flex: 0 0 auto; width: 11px; text-align: center; color: var(--v2-ink-faint); }
+  .dt-ticker-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-ticker-good { color: var(--v2-good); }
+  .dt-ticker-good .dt-ticker-glyph { color: var(--v2-good); }
+  .dt-ticker-bad { color: var(--v2-bad); }
+  .dt-ticker-bad .dt-ticker-glyph { color: var(--v2-bad); }
+  @keyframes dt-ticker-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* count-up / value-landing flash on the in-flight progress + heatmap cells:
+   * a cell that fills (a run completed) flashes once via a transition on fill. */
+  .dn-hm-cell { transition: fill 0.4s ease, stroke 0.12s; }
+
+  /* THE REDUCED-MOTION GATE — instant, no transitions, no animations. Every
+   * live-run motion above collapses to a static state. */
+  @media (prefers-reduced-motion: reduce) {
+    .dt-live-hero-dot { animation: none; }
+    .dt-live-enter { animation: none; }
+    .dt-ticker-row { animation: none; }
+    .dn-funnel-band, .dn-funnel-runner, .dn-funnel-deadedge,
+    .dn-raceladder-runner, .dn-raceladder-edge,
+    .dt-live-hero-progfill, .dn-hm-cell { transition: none; }
+  }
+
   @media (max-width: 1080px) {
     .dt-split { grid-template-columns: 1fr; gap: 18px; }
+    .dt-live-hero-body { grid-template-columns: 1fr; }
   }
   @media (max-width: 900px) {
     .dn-xscript-grid { grid-template-columns: 1fr; }

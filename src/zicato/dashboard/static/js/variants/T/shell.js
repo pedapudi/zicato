@@ -31,6 +31,7 @@ import { invalidateLive } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { normaliseDecision } from './ui.js';
 import { deriveLiveStatus, liveStatusDigest } from './livestatus.js';
+import { LiveController } from './live.js';
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
@@ -75,6 +76,8 @@ let _railHandle = null;        // the draggable rail-resize handle (Change 2)
 let _railDragging = false;     // true while a live rail drag is in flight
 let _backBtn = null;
 let _renderToken = 0;
+let _live = null;             // the persistent LIVE-RUN controller (live hero + ticker)
+let _heroHost = null;         // the persistent host the live hero leads from
 let _lastViewKey = null;
 let _lastCrumbDigest = null;
 let _lastStatusDigest = null;
@@ -523,6 +526,24 @@ export function mountShell(root) {
     title: 'Drag to resize the side panel',
   });
   wireRailHandle(_railHandle, root);
+
+  // THE LIVE-RUN HERO. A persistent, shell-owned focal panel that LEADS the
+  // page while a run is in flight (current phase + tournament progress + the
+  // animating survival funnel + in-flight count + the activity ticker), so a
+  // live run has an animated home that survives view navigation. It is hidden
+  // (display:none via the absence of `.dt-live-on`) when idle, so the normal
+  // summary leads. SSE-driven: refreshLive() patches it IN PLACE on every tick.
+  _live = new LiveController({
+    onCompetitor: (gen) => {
+      if (!gen) return;
+      const r = parseRoute(location.hash);
+      const epochId = (r.params && r.params.epochId) || state.epoch.id || null;
+      if (epochId) navigate('candidate', { epochId, gen });
+    },
+  });
+  _heroHost = el('div', { class: 'dt-hero-host' }, [_live.node]);
+  root.appendChild(_heroHost);
+
   root.appendChild(el('div', { class: 'dt-body' }, [_treeHost, _railHandle, _viewHost]));
 
   applyTheme(readColor());
@@ -697,6 +718,30 @@ function renderStatus() {
   }
 }
 
+// THE SSE-DRIVEN LIVE REFRESH. Distinct from renderStatus (which is gated on the
+// COARSE status digest): the live hero must update on EVERY tick (a steady
+// heartbeat that does not change the status digest can still carry progress /
+// active-runs deltas), so it is driven separately and is itself diff-gated
+// internally — a steady tick with identical live state writes ZERO DOM (the
+// ticker appends nothing, the funnel's digest is unchanged, the progress key is
+// unchanged). Because the SSE `heartbeat` frame fires `state._changed()`
+// directly (core/sse.js), this runs sub-second — push, not poll.
+function refreshLive() {
+  if (!_live) return;
+  const status = deriveLiveStatus({
+    heartbeat: state.heartbeat,
+    activeRuns: state.activeRuns,
+    activeTournament: state.activeTournament,
+  });
+  _live.update({
+    status,
+    heartbeat: state.heartbeat,
+    activeRuns: state.activeRuns,
+    activeTournament: state.activeTournament,
+  });
+  if (_heroHost) patchClass(_heroHost, 'dt-hero-live', !!status.running);
+}
+
 // Enable/disable the back control: it is inert at the environment root (no
 // parent to climb to) and active everywhere else.
 function renderBack(route) {
@@ -715,6 +760,7 @@ async function dispatch() {
 
   renderCrumbs(route);
   renderStatus();
+  refreshLive();
   renderBack(route);
   renderTree(route);
 
@@ -745,6 +791,12 @@ async function dispatch() {
 let _reRenderTimer = null;
 function onStateChanged() {
   renderStatus();
+  // SSE-DRIVEN: refresh the live surfaces on EVERY tick (sub-second — the SSE
+  // heartbeat frame fires state:changed directly), so live state (phase /
+  // progress / funnel / activity) animates as it lands rather than waiting on
+  // the 400 ms re-dispatch debounce. The hero patches in place (no full
+  // repaint); the structure swap inside it stays digest-gated.
+  refreshLive();
   if (_reRenderTimer != null) return;
   _reRenderTimer = setTimeout(() => {
     _reRenderTimer = null;

@@ -717,23 +717,43 @@ export function racingLadder(opts) {
   const rowH = 18;
   const headH = 34;
   const top = 6;
+  // The CHAMPION / v0 BENCHMARK reference. The per-rung deltas are Δ-vs-champion
+  // (the reigning v0 the field is raced against), but v0 itself is NOT one of the
+  // rung competitors, which is confusing. We draw a persistent labelled pace line
+  // at Δ=0 across the figure so the reader sees the benchmark the deltas are
+  // measured against, and that v0 defends at the champion-gate.
+  const benchId = o.benchmarkId != null ? String(o.benchmarkId)
+    : (o.championId != null ? String(o.championId) : null);
+  const benchH = benchId ? 18 : 0;
   const maxRows = Math.max(1, ...rungs.map((r) => (Array.isArray(r.competitors) ? r.competitors.length : 0)), 1);
   // a trailing champion-gate column rides after the last rung.
   const ladderW = rungs.length * colW + Math.max(0, rungs.length - 1) * colGap;
   const w = Math.max(colW, ladderW + colGap + gateW) + 8;
-  const h = top + headH + maxRows * rowH + 8;
+  const h = top + benchH + headH + maxRows * rowH + 8;
   const svg = svgEl('svg', {
     class: 'dn-raceladder', width: '100%', height: h,
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
   });
+  // the benchmark pace line + label spanning the whole ladder.
+  if (benchId) {
+    const by = top + 10;
+    svg.appendChild(svgEl('line', {
+      x1: 2, y1: by + 4, x2: w - 4, y2: by + 4, class: 'dn-raceladder-bench-line',
+    }, [title(`champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`)]));
+    const bt = svgEl('text', { x: 4, y: by, class: 'dn-raceladder-bench' });
+    bt.textContent = `▸ vs champion v0 = ${shortLabel(benchId, 16)} · Δ pace 0 (every Δ is vs v0)`;
+    svg.appendChild(bt);
+  }
   if (rungs.length === 0) {
     const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'no rungs yet';
     svg.appendChild(t);
     return svg;
   }
+  // everything below the benchmark band is offset by benchH.
+  const headTop = top + benchH;
   const colX = (j) => j * (colW + colGap) + 2;
-  const rowY = (i) => top + headH + i * rowH + rowH / 2;
+  const rowY = (i) => headTop + headH + i * rowH + rowH / 2;
   // cache each competitor's row index per rung so connectors can be drawn from
   // a survivor's seat in rung j to the same competitor's seat in rung j+1.
   const rowIndex = rungs.map((rung) => {
@@ -761,11 +781,11 @@ export function racingLadder(opts) {
 
   rungs.forEach((rung, j) => {
     const x = colX(j);
-    const head = svgEl('text', { x: x + colW / 2, y: top + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
+    const head = svgEl('text', { x: x + colW / 2, y: headTop + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
     head.textContent = shortLabel(rung.label || `Rung ${j + 1}`, 16);
     svg.appendChild(head);
     if (isNum(rung.board_fraction)) {
-      const sub = svgEl('text', { x: x + colW / 2, y: top + 26, class: 'dn-raceladder-frac', 'text-anchor': 'middle' });
+      const sub = svgEl('text', { x: x + colW / 2, y: headTop + 26, class: 'dn-raceladder-frac', 'text-anchor': 'middle' });
       sub.textContent = `board ${(rung.board_fraction * 100).toFixed(0)}%`;
       svg.appendChild(sub);
     }
@@ -818,7 +838,7 @@ export function racingLadder(opts) {
   //   pending  — no final gate yet → "tbd"
   // When gateState is absent, infer from championId + live (legacy callers).
   const gx = ladderW + colGap + 2;
-  const gateHead = svgEl('text', { x: gx + gateW / 2, y: top + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
+  const gateHead = svgEl('text', { x: gx + gateW / 2, y: headTop + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
   gateHead.textContent = 'champion-gate';
   svg.appendChild(gateHead);
   const cy = rowY(0);
@@ -916,6 +936,17 @@ export function survivalFunnel(opts) {
     svg.appendChild(t);
     return svg;
   }
+  // CHAMPION / v0 BENCHMARK caption — make explicit that the field is raced vs
+  // the reigning champion (v0), that every Δ is vs v0, and that v0 defends at
+  // the gate. v0 is the benchmark, not one of the rung competitors.
+  const benchId = o.benchmarkId != null ? String(o.benchmarkId)
+    : (o.championId != null ? String(o.championId) : null);
+  if (benchId) {
+    const bt = svgEl('text', { x: 2, y: 12, class: 'dn-funnel-bench' },
+      [title(`champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`)]);
+    bt.textContent = `▸ vs champion v0 = ${shortLabel(benchId, 18)} · every Δ is vs v0`;
+    svg.appendChild(bt);
+  }
   const midY = top + laneH / 2;
   // the entering field of stage 0 sets the maximum flow width (100% lane).
   const field0 = Math.max(1, (Array.isArray(rungs[0].competitors) ? rungs[0].competitors.length : 1));
@@ -1007,7 +1038,7 @@ export function survivalFunnel(opts) {
   gHead.textContent = 'champion-gate';
   svg.appendChild(gHead);
   const gSub = svgEl('text', { x: gx + gateW / 2, y: top - 4, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
-  gSub.textContent = 'full board · vs champion';
+  gSub.textContent = benchId ? 'full board · vs champion v0' : 'full board · vs champion';
   svg.appendChild(gSub);
 
   const clickId = champId || seatId;

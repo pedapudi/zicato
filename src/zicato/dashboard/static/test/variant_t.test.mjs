@@ -2722,4 +2722,286 @@ test('up button: the upper-left control reads "up" (not "back"), labels itself "
   assertEqual(location.hash, `#/e/${EPOCH_ID}/gens`, 'clicking "up" navigates to the parent route (candidate → generations)');
 });
 
+// ====================================================================
+// LIVE-RUN display — SSE-driven, animated funnel/ladder transitions,
+// tournament progress, the activity ticker, and the live hero, PLUS the
+// champion/benchmark (v0) reference in the racing ladder.
+//   (a) an active-tournament (racing, running) → the live hero + funnel
+//       render and the activity ticker lists events;
+//   (b) feeding a phase/active-runs update MUTATES the live surfaces
+//       WITHOUT a full repaint (node identity preserved / digest gates
+//       structure);
+//   (c) under prefers-reduced-motion the animation classes/transitions
+//       are suppressed (the reduced-motion CSS gate);
+//   (d) the racing ladder shows the champion/benchmark (v0) reference and
+//       labels deltas as vs-v0;
+//   (e) idle (no active run) renders the static views unchanged;
+//   (f) the live engine's derivations (progress, activity diff, ticker).
+// ====================================================================
+
+const live = await import('../js/variants/T/live.js');
+
+// the LIVE racing active-tournament topology used to drive the hero: rung 0 has
+// cut v2/v3 and carried v0/v1; rung 1 is still racing (no cut yet); v0 is the
+// champion the field is raced against (the benchmark seat in every rung).
+const HERO_LIVE_RACING = {
+  structure: 'racing', phase: 'running',
+  structure_params: { rungs: [{ fraction: 0.5 }, { fraction: 1.0 }] },
+  champion_lineage: ['v0'],
+  competitors: [
+    { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' },
+    { generation_id: 'v2', role: 'challenger' }, { generation_id: 'v3', role: 'challenger' },
+  ],
+  rounds: [
+    { round_index: 0, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v0', 'v1'], cut: ['v2', 'v3'], board_fraction: 0.5, deltas: { v1: -0.2, v2: 1.0, v3: 2.0 } }] },
+    { round_index: 1, label: 'Rung 2', matches: [{ match_id: 'rung2', competitors: ['v0', 'v1'], survivors: [], cut: [], board_fraction: 1.0 }] },
+  ],
+  standings: [],
+};
+
+// ---- (a) the live hero + funnel render; the ticker lists events ----
+
+test('live hero: an active-tournament (racing, running) renders the live hero + funnel and the activity ticker lists events', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1' });
+  coreState.state.activeRuns = [
+    { generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 },
+    { generation_id: 'v0', entry_id: 'b1', run_id: 'r2', progress: 0.3 },
+  ];
+  coreState.state.activeTournament = HERO_LIVE_RACING;
+
+  const root = mountLiveShell('#/');
+  // the hero host is flagged live + the hero panel carries the .dt-live-on class.
+  const heroHost = allByClass(root, 'dt-hero-host')[0];
+  assert(heroHost && (heroHost.getAttribute('class') || '').includes('dt-hero-live'), 'the hero host is flagged live during a run');
+  const hero = allByClass(root, 'dt-live-hero')[0];
+  assert(hero && (hero.getAttribute('class') || '').includes('dt-live-on'), 'the live hero is shown (dt-live-on) for a running tournament');
+  // the prominent phase reads the structure+phase label.
+  const phase = allByClass(root, 'dt-live-hero-phase')[0];
+  assert(phase && phase.textContent.includes('racing'), 'the hero names the current phase (racing)');
+  // the tournament-level progress indicator: "rung k of N".
+  const proglab = allByClass(root, 'dt-live-hero-proglab')[0];
+  assert(proglab && /rung\s+\d+\s+of\s+\d+/.test(proglab.textContent), 'the hero shows a tournament-level "rung k of N" progress label');
+  // the determinate progress bar carries a width.
+  const fill = allByClass(root, 'dt-live-hero-progfill')[0];
+  assert(fill && /%/.test(fill.style.cssText || ''), 'the progress bar fill carries a width');
+  // the in-flight unit count.
+  const count = allByClass(root, 'dt-live-hero-count')[0];
+  assert(count && count.textContent.includes('2'), 'the hero shows the in-flight unit count (2)');
+  // the survival funnel rendered inside the hero.
+  const funnel = svgsByClass(root, 'dn-funnel')[0];
+  assert(funnel, 'the survival funnel rendered inside the live hero');
+  // the activity ticker lists events derived from the live state.
+  const ticker = allByClass(root, 'dt-ticker')[0];
+  assert(ticker, 'the activity ticker rendered');
+  const rows = allByClass(root, 'dt-ticker-row');
+  assert(rows.length >= 1, 'the ticker lists at least one live activity event');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+// ---- (b) a live update MUTATES the surfaces without a full repaint ----
+
+test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a full repaint (node identity preserved; structure digest gates the funnel)', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1' });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.2 }];
+  coreState.state.activeTournament = HERO_LIVE_RACING;
+
+  const root = mountLiveShell('#/');
+  const phaseNodeBefore = allByClass(root, 'dt-live-hero-phase')[0];
+  const fillNodeBefore = allByClass(root, 'dt-live-hero-progfill')[0];
+  const funnelBefore = svgsByClass(root, 'dn-funnel')[0];
+  const tickerListBefore = allByClass(root, 'dt-ticker-list')[0];
+  assert(phaseNodeBefore && fillNodeBefore && funnelBefore && tickerListBefore, 'the live surfaces mounted');
+  const rowsBefore = allByClass(root, 'dt-ticker-row').length;
+
+  // a STEADY re-tick with IDENTICAL live state writes no new ticker rows and
+  // does NOT rebuild the funnel (the structure digest is unchanged → no flash).
+  coreState.state._changed();
+  assertEqual(allByClass(root, 'dt-ticker-row').length, rowsBefore, 'an identical re-tick appends NO ticker rows (no flash)');
+  assert(svgsByClass(root, 'dn-funnel')[0] === funnelBefore, 'an identical re-tick does NOT rebuild the funnel (digest-gated structure)');
+  // the persistent phase / progress / ticker-list nodes keep identity.
+  assert(allByClass(root, 'dt-live-hero-phase')[0] === phaseNodeBefore, 'the phase node keeps identity across a re-tick (patched in place)');
+  assert(allByClass(root, 'dt-live-hero-progfill')[0] === fillNodeBefore, 'the progress-fill node keeps identity (its width is patched, not rebuilt)');
+  assert(allByClass(root, 'dt-ticker-list')[0] === tickerListBefore, 'the ticker list keeps identity (append-only)');
+
+  // now a REAL change: rung 2 resolves (v0 cut, v1 survives) + a run completes.
+  const next = JSON.parse(JSON.stringify(HERO_LIVE_RACING));
+  next.rounds[1].matches[0].survivors = ['v1'];
+  next.rounds[1].matches[0].cut = ['v0'];
+  coreState.state.activeTournament = next;
+  coreState.state.activeRuns = [];   // the in-flight run completed.
+  coreState.state.setHeartbeat({ phase: 'tournament:round_2:racing-final' });
+  coreState.state._changed();
+
+  // the funnel rebuilt (the structure digest changed) — but the ticker LIST and
+  // the phase node are still the SAME persistent nodes (mutated, not replaced).
+  assert(allByClass(root, 'dt-ticker-list')[0] === tickerListBefore, 'the ticker list is still the same node after a real change (append-only growth)');
+  assert(allByClass(root, 'dt-live-hero-phase')[0] === phaseNodeBefore, 'the phase node is still the same node (patched, not rebuilt)');
+  assert(allByClass(root, 'dt-ticker-row').length > rowsBefore, 'a real change (rung cut + run completed) appended new ticker rows');
+  // the newly-built funnel carries the one-shot entrance animation class.
+  const funnelAfter = svgsByClass(root, 'dn-funnel')[0];
+  assert((funnelAfter.getAttribute('class') || '').includes('dt-live-enter'), 'a freshly-built funnel carries the one-shot entrance class (eases in, never repaint-loops)');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+// ---- (c) reduced-motion suppresses the animations ----
+
+test('live motion: prefers-reduced-motion suppresses the live animation classes/transitions (the reduced-motion CSS gate)', () => {
+  const css = readCss().replace(/\s+/g, ' ');
+  // the reduced-motion block exists and zeroes the live motion.
+  assert(/@media \(prefers-reduced-motion: reduce\) \{[^}]*\.dt-live-hero-dot \{ animation: none/.test(css)
+    || /@media \(prefers-reduced-motion: reduce\) \{[^@]*\.dt-live-hero-dot\b[^}]*animation: none/.test(css),
+    'the breathing live dot is stilled under reduced motion');
+  // each live animation/transition has a reduced-motion suppression.
+  const rm = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert(rm.includes('.dt-live-enter') && /\.dt-live-enter[^;{}]*\{?[^}]*animation: none/.test(rm) || rm.includes('.dt-live-enter'), 'the funnel/ladder entrance is suppressed under reduced motion');
+  assert(rm.includes('.dt-ticker-row'), 'the ticker-row slide-in is suppressed under reduced motion');
+  assert(rm.includes('.dt-live-hero-progfill'), 'the progress-bar width transition is suppressed under reduced motion');
+  assert(/\.dn-funnel-band/.test(rm) && /\.dn-raceladder-runner/.test(rm), 'the funnel band + ladder runner transitions are suppressed under reduced motion');
+  // sanity: the un-gated rules DO carry motion (so reduced-motion is a real gate).
+  assert(/\.dt-ticker-row \{[^}]*animation: dt-ticker-in/.test(css), 'the ticker row animates by default (gated off only under reduced motion)');
+  assert(/@keyframes dt-live-fade/.test(css) && /@keyframes dt-ticker-in/.test(css), 'the live keyframes are defined');
+});
+
+// ---- (d) the racing ladder shows the champion/benchmark (v0) reference ----
+
+test('racing ladder: shows the champion/benchmark (v0) reference and labels the rung deltas as vs-v0', () => {
+  const rungs = [
+    { match_id: 'rung0', label: 'Rung 1', competitors: ['v1', 'v2', 'v3'], survivors: ['v3'], cut: ['v1', 'v2'], board_fraction: 0.5, deltas: { v1: 5, v2: 2, v3: -1 } },
+    { match_id: 'rung1', label: 'Rung 2', competitors: ['v3'], survivors: ['v3'], cut: [], board_fraction: 1.0, deltas: { v3: -2 } },
+  ];
+  const node = svg.racingLadder({ rungs, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
+  // a persistent benchmark label naming v0 + a dashed pace line.
+  const bench = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-raceladder-bench') && n.localName === 'text')[0];
+  assert(bench, 'the ladder carries a persistent champion/benchmark label');
+  assert(bench.textContent.includes('v0'), 'the benchmark label names the champion v0');
+  assert(/vs\s+champion\s+v0|every\s+Δ\s+is\s+vs\s+v0|Δ\s+is\s+vs\s+v0/i.test(bench.textContent), 'the benchmark label makes explicit that deltas are vs v0');
+  const line = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-raceladder-bench-line'))[0];
+  assert(line && line.localName === 'line', 'a dashed v0 pace line spans the ladder');
+});
+
+test('racing ladder: the racingModel derives the champion/benchmark (v0) seat distinct from the survivor', () => {
+  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+  const model = STRUCT.racingModel(st);
+  assert(model, 'a racing model was derived');
+  assertEqual(model.benchmarkId, 'v0', 'the benchmark is the champion v0 (the seat the field is raced against)');
+  assertEqual(model.championId, 'v3', 'the champion (eventual survivor) is v3 — distinct from the benchmark v0');
+});
+
+test('survival funnel: carries the champion/benchmark (v0) reference + labels the gate vs champion v0', () => {
+  const rungs = [
+    { match_id: 'rung0', label: 'Rung 1', competitors: ['v1', 'v2', 'v3'], survivors: ['v3'], cut: ['v1', 'v2'], board_fraction: 0.5, deltas: { v3: -1 } },
+  ];
+  const node = svg.survivalFunnel({ rungs, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
+  const bench = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-funnel-bench'))[0];
+  assert(bench && bench.textContent.includes('v0'), 'the funnel carries a champion/benchmark caption naming v0');
+  const gateSubs = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-funnel-sub'));
+  assert(gateSubs.some((n) => /vs champion v0/.test(n.textContent)), 'the gate sub-label reads "vs champion v0"');
+});
+
+// ---- (e) idle renders the static views unchanged ----
+
+test('live: idle (no active run) hides the live hero — the normal summary leads', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  coreState.state.connected = true; coreState.state.connecting = false;
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  const root = mountLiveShell('#/');
+  const heroHost = allByClass(root, 'dt-hero-host')[0];
+  assert(heroHost && !(heroHost.getAttribute('class') || '').includes('dt-hero-live'), 'the hero host is NOT flagged live when idle');
+  const hero = allByClass(root, 'dt-live-hero')[0];
+  assert(hero && !(hero.getAttribute('class') || '').includes('dt-live-on'), 'the live hero is hidden (no dt-live-on) when idle');
+  // the idle hero adds NO ticker rows.
+  assertEqual(allByClass(root, 'dt-ticker-row').length, 0, 'no activity rows accumulate while idle');
+});
+
+test('live: an idle racing epoch still renders the static completed funnel/summary (the live hero does not interfere)', async () => {
+  freshState();
+  installFixtureMap({
+    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
+      experiments: RACING_PER_CHALLENGER.map((t) => ({ generation_id: t.tournament_id.split('->')[1], parent_generation_id: 'v0', outcome: { decision: 'rejected' } })), board: [] },
+    '/api/lineage': { generations: [{ generation_id: 'v0', epoch_id: RC_EPOCH, parent_generation_id: '', promoted: true }] },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': RACING_TOURNAMENTS,
+  });
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
+  // the static completed funnel still renders (idle view unchanged) + names v0.
+  const funnel = svgsByClass(host, 'dn-funnel')[0];
+  assert(funnel, 'the static completed survival funnel renders when idle');
+  assert(allByClass(host, 'dt-live-pill').length === 0, 'no LIVE pill on an idle epoch funnel');
+});
+
+// ---- (f) the live engine's pure derivations ----
+
+test('live engine: liveProgress derives "rung k of N · m/n matchups" + a fraction for a racing tournament', () => {
+  const prog = live.liveProgress({
+    activeTournament: HERO_LIVE_RACING,
+    heartbeat: { phase: 'tournament:round_1:rung1_m0' },
+    status: { running: true, structure: 'racing' },
+  });
+  assertEqual(prog.kind, 'racing', 'a racing topology yields racing progress');
+  assert(/rung\s+\d+\s+of\s+2/.test(prog.label), 'the label reads "rung k of N"');
+  assert(typeof prog.fraction === 'number' && prog.fraction >= 0 && prog.fraction <= 1, 'a determinate 0..1 fraction');
+});
+
+test('live engine: deriveActivity diffs two snapshots into events (matchup started, run completed, rung cut, gate decided)', () => {
+  const s0 = live.liveSnapshot({
+    status: { running: true, structure: 'racing' },
+    heartbeat: { phase: 'tournament:round_0:rung0_m0' },
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }],
+    activeTournament: { structure: 'racing', rounds: [{ matches: [{ match_id: 'rung0', survivors: [], cut: [] }] }] },
+  });
+  const s1 = live.liveSnapshot({
+    status: { running: true, structure: 'racing' },
+    heartbeat: { phase: 'tournament:round_0:rung0_m1' },
+    activeRuns: [{ generation_id: 'v2', entry_id: 'b0', run_id: 'r2' }],   // r1 done, r2 started
+    activeTournament: { structure: 'racing', rounds: [
+      { matches: [{ match_id: 'rung0', survivors: ['v2'], cut: ['v1'] }] },
+      { matches: [{ match_id: 'racing-final', winner: 'v2', decision: 'promoted' }] },
+    ] },
+  });
+  const { events } = live.deriveActivity(s0, s1, 0);
+  const kinds = events.map((e) => e.kind);
+  assert(kinds.includes('matchup'), 'a started matchup event (r2 entered)');
+  assert(kinds.includes('run'), 'a completed-run event (r1 left)');
+  assert(kinds.includes('cut'), 'a rung-cut event (v1 eliminated)');
+  assert(kinds.includes('gate'), 'a champion-gate decided event');
+  // newest-first ordering.
+  assert(events.length >= 4, 'all the deltas surfaced as events');
+  // the cut event is toned bad, the gate-promotion good.
+  assert(events.find((e) => e.kind === 'cut').tone === 'bad', 'a cut is toned regress (bad)');
+  assert(events.find((e) => e.kind === 'gate').tone === 'good', 'a promotion is toned improve (good)');
+});
+
+test('live engine: the ActivityTicker is append-only, newest-on-top, capped, and de-dups by id', () => {
+  const t = new live.ActivityTicker({ cap: 3 });
+  // first batch (newest-first input).
+  t.push([{ id: 'a3', kind: 'phase', text: 'three' }, { id: 'a2', kind: 'phase', text: 'two' }, { id: 'a1', kind: 'phase', text: 'one' }]);
+  let rows = t._list.children;
+  assertEqual(rows.length, 3, 'three rows after the first batch');
+  assert(rows[0].textContent.includes('three'), 'newest (a3) is on top');
+  const a3Node = rows[0];
+  // a duplicate id is ignored; a new id prepends; the cap trims the oldest.
+  t.push([{ id: 'a4', kind: 'cut', text: 'four', tone: 'bad' }, { id: 'a3', kind: 'phase', text: 'three-dup' }]);
+  rows = t._list.children;
+  assertEqual(rows.length, 3, 'the cap (3) trimmed the oldest row');
+  assert(rows[0].textContent.includes('four'), 'the new event (a4) is newest-on-top');
+  assert(!t._list.textContent.includes('three-dup'), 'a duplicate id (a3) was NOT re-added');
+  // surviving rows keep identity (append-only — no repaint).
+  assert([...rows].some((r) => r === a3Node), 'a surviving row keeps its node identity (no repaint)');
+});
+
 await run();
