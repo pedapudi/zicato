@@ -1617,6 +1617,78 @@ test('live-status: isActivePhase distinguishes running phases from idle/terminal
   assertEqual(livestatus.isActivePhase(null), false, 'an absent phase is not active');
 });
 
+// ---- (a′) terminal-TAIL phases read as idle (the false-LIVE bug) ----
+
+test('live-status: isActivePhase treats terminal-TAIL phase paths as idle', () => {
+  // the terminal signal lives in the tail segment, not the head.
+  assertEqual(livestatus.isActivePhase('evolve_n_rounds:done'), false, 'evolve_n_rounds:done is terminal (tail = done)');
+  assertEqual(livestatus.isActivePhase('tournament:round_0:done'), false, 'a tournament path ending in :done is terminal');
+  assertEqual(livestatus.isActivePhase('evolve_n_rounds:completed'), false, 'a :completed tail is terminal');
+  // genuinely-active phases keep no idle token in any segment.
+  assertEqual(livestatus.isActivePhase('tournament:round_0:rung0_m3'), true, 'an in-flight tournament rung is active');
+  assertEqual(livestatus.isActivePhase('proposing:field'), true, 'a proposing phase is active');
+});
+
+// ---- (a″) heartbeat-staleness gates the live read ----
+
+test('live-status: a STALE heartbeat + terminal phase + 0 runs + completed tournament reads idle/done (no false LIVE)', () => {
+  // mirrors the real completed-run case: frozen terminal heartbeat from a
+  // finished process, no in-flight units, a completed (not running) tournament.
+  const now = 1_000_000_000_000; // fixed epoch ms for determinism
+  const status = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'evolve_n_rounds:done', last_heartbeat: now - 120_000 /* 2 min old */ },
+    activeRuns: [],
+    activeTournament: { structure: 'racing', phase: 'completed' },
+  }, now);
+  assertEqual(status.running, false, 'a stale terminal heartbeat with nothing in flight is NOT live');
+  assert(status.label === 'idle' || status.label === 'done', 'a finished run reads idle/done, not a running label');
+});
+
+test('live-status: a FRESH heartbeat + active phase reads as RUNNING', () => {
+  const now = 1_000_000_000_000;
+  const status = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'tournament:round_0:rung0_m3', last_heartbeat: now - 2_000 /* 2s old, fresh */ },
+    activeRuns: [],
+    activeTournament: { structure: 'racing', phase: 'running' },
+  }, now);
+  assertEqual(status.running, true, 'a fresh heartbeat on an active phase is live');
+});
+
+test('live-status: an in-flight active-run forces RUNNING even with an old timestamp (ground truth)', () => {
+  const now = 1_000_000_000_000;
+  const status = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'evolve_n_rounds:done', last_heartbeat: now - 600_000 /* 10 min old */ },
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
+    activeTournament: null,
+  }, now);
+  assertEqual(status.running, true, 'an actively-running unit is ground truth — live even if the heartbeat looks dead');
+  assertEqual(status.inFlight, 1, 'the in-flight unit is counted');
+});
+
+test('live-status: a completed active-tournament ALONE (no fresh phase, no runs) does NOT read live', () => {
+  const now = 1_000_000_000_000;
+  const status = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'idle', last_heartbeat: now - 5_000 },
+    activeRuns: [],
+    activeTournament: { structure: 'swiss', phase: 'completed' },
+  }, now);
+  assertEqual(status.running, false, 'a completed tournament is not a running signal');
+});
+
+test('live-status: an unparseable/absent heartbeat timestamp does NOT force-stale (falls back to phase/in-flight)', () => {
+  const now = 1_000_000_000_000;
+  // no timestamp at all → must not be treated as stale; an active phase stays live.
+  const noTs = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'proposing:field' }, activeRuns: [], activeTournament: null,
+  }, now);
+  assertEqual(noTs.running, true, 'an active phase with no timestamp still reads live (no force-stale)');
+  // a garbage timestamp also falls back rather than force-staling.
+  const badTs = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'tournament:round_0:rung0_m3', last_heartbeat: 'not-a-date' }, activeRuns: [], activeTournament: null,
+  }, now);
+  assertEqual(badTs.running, true, 'an unparseable timestamp falls back to the live phase signal');
+});
+
 // ---- (b′) the chrome status pill reflects the running state, digest-gated ----
 
 test('live-status: the chrome RUN badge lights for a live racing run and the status digest is gated (no flash)', () => {

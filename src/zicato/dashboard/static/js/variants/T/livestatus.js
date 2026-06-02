@@ -23,16 +23,52 @@
 // non-empty is treated as an active phase.
 const IDLE_PHASES = new Set(['idle', 'done', 'complete', 'completed', 'finished', 'stopped', 'error']);
 
+// Heartbeat-staleness window. The supervisor rewrites the heartbeat on a short
+// cadence (a few seconds); a FROZEN heartbeat from a dead/finished process must
+// stop reading "live". ~30s is a few × the heartbeat interval — long enough to
+// tolerate a slow tick, short enough that a completed run reads idle promptly.
+const STALE_HEARTBEAT_MS = 30_000;
+
 // Is a heartbeat `phase` string a NON-idle (i.e. running) phase?
+//
+// The phase may be a colon-delimited path (`tournament:round_0:rung0_m3`,
+// `evolve_n_rounds:done`). The TERMINAL signal lives in the TAIL segment
+// (`…:done`), not just the head — so a phase is idle when its FULL string, its
+// HEAD segment, OR ITS TAIL (or any) segment is in IDLE_PHASES. Genuinely-active
+// phases (`tournament:round_0:rung0_m3`, `proposing:field`) keep no idle token
+// in any segment and stay active.
 export function isActivePhase(phase) {
   if (phase == null) return false;
   const p = String(phase).trim().toLowerCase();
   if (p === '') return false;
-  // the phase may be a colon-delimited path (`tournament:round_0:rung0_m3`);
-  // the FIRST segment names the stage.
-  const head = p.split(':')[0];
-  if (IDLE_PHASES.has(p) || IDLE_PHASES.has(head)) return false;
+  if (IDLE_PHASES.has(p)) return false;
+  const segs = p.split(':');
+  for (const seg of segs) {
+    if (IDLE_PHASES.has(seg)) return false;
+  }
   return true;
+}
+
+// Parse a heartbeat timestamp into epoch ms. Tolerates an ISO-8601 string or a
+// numeric epoch (ms, or seconds — values that small are scaled up). Returns NaN
+// when the value is absent/unparseable, so callers can fall back rather than
+// force-stale.
+function parseHeartbeatTs(value) {
+  if (value == null) return NaN;
+  if (typeof value === 'number') {
+    if (!isFinite(value)) return NaN;
+    // epoch seconds (10-digit) vs ms (13-digit): scale sub-1e12 values up.
+    return value < 1e12 ? value * 1000 : value;
+  }
+  const s = String(value).trim();
+  if (s === '') return NaN;
+  // a bare numeric string is an epoch value too.
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    return n < 1e12 ? n * 1000 : n;
+  }
+  const ms = Date.parse(s);
+  return isFinite(ms) ? ms : NaN;
 }
 
 // Build a short, readable label from the heartbeat phase + the structure.
@@ -101,7 +137,9 @@ function prettyStructure(structure) {
 //   heartbeat        — the /api/heartbeat object (or state.heartbeat).
 //   activeRuns       — the /api/active-runs array (or state.activeRuns).
 //   activeTournament — the /api/active-tournament object (or null).
-export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {}) {
+//   now              — current epoch ms (defaults to Date.now(); injectable for
+//                      deterministic tests).
+export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {}, now = Date.now()) {
   const hb = (heartbeat && typeof heartbeat === 'object') ? heartbeat : null;
   const phase = hb ? hb.phase : null;
   const runs = Array.isArray(activeRuns) ? activeRuns : [];
@@ -111,10 +149,26 @@ export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {
   const inFlight = runs.length;
   const tournamentRunning = !!(at && String(at.phase || '').toLowerCase() === 'running');
 
-  // ANY of the three signals means a run is in flight — the heartbeat phase is
-  // the primary signal (it covers proposing + every tournament structure), and
-  // the in-flight count / active-tournament corroborate it.
-  const running = phaseActive || inFlight > 0 || tournamentRunning;
+  // Heartbeat freshness: a FROZEN heartbeat from a dead/finished process must
+  // not read "live" forever. Read the timestamp from any of the known fields.
+  // If it is unparseable/absent we do NOT force-stale — a live run without a
+  // clean timestamp should still show live off the phase/in-flight signals.
+  const hbTs = hb
+    ? parseHeartbeatTs(hb.last_heartbeat != null ? hb.last_heartbeat
+        : hb.emitted_at != null ? hb.emitted_at
+        : hb.ts != null ? hb.ts
+        : hb.updated_at)
+    : NaN;
+  const heartbeatStale = isFinite(hbTs) && (now - hbTs) > STALE_HEARTBEAT_MS;
+  // The phase signal only counts as live while the heartbeat is FRESH — a
+  // terminal/active phase frozen on a dead process is not live.
+  const phaseLive = phaseActive && !heartbeatStale;
+
+  // A run is live only when (active phase AND fresh heartbeat) OR there is at
+  // least one in-flight board-unit OR the active-tournament is "running". An
+  // actively-running unit is ground truth, so in-flight forces live even when
+  // the timestamp looks old.
+  const running = phaseLive || inFlight > 0 || tournamentRunning;
 
   const structure = at && at.structure ? String(at.structure) : null;
   const label = running
@@ -128,6 +182,7 @@ export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {
     inFlight,
     tournamentRunning,
     phaseActive,
+    heartbeatStale,
     label,
   };
 }
