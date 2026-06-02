@@ -4296,6 +4296,74 @@ test('svg.valueDotPlot: duplicate board rows get DISTINCT context lines + onClic
     'onClick receives the specific run (entry_id + run_id + gen)');
 });
 
+test('svg.heatmap: higher-contrast theme-aware cell scale — wider range, monotonic, low≠empty', () => {
+  // A 1×4 board×gen matrix: one EMPTY cell + three valued cells spanning the
+  // drift range (low / mid / high). value(rowId,colId) returns the drift loss.
+  const cellVal = { 'b/lo': 10, 'b/mid': 55, 'b/hi': 100 }; // 'b/empty' → null
+  const rows = [{ id: 'b', label: 'board' }];
+  const cols = [
+    { id: 'empty', label: 'g-empty' },
+    { id: 'lo', label: 'g-lo' },
+    { id: 'mid', label: 'g-mid' },
+    { id: 'hi', label: 'g-hi' },
+  ];
+  let clicked = null;
+  const hm = svg.heatmap({
+    rows, cols,
+    value: (r, c) => (c === 'empty' ? null : cellVal[`${r}/${c}`]),
+    onClick: (r, c) => { clicked = [r, c]; },
+  });
+  const cells = allByClass(hm, 'dn-hm-cell');
+  assertEqual(cells.length, 4, 'four cells rendered (1 empty + 3 valued)');
+  const empty = cells.find((c) => c.classList.contains('dn-hm-empty'));
+  const valued = cells.filter((c) => !c.classList.contains('dn-hm-empty'));
+  assert(empty, 'the null cell carries the dn-hm-empty token');
+  assertEqual(valued.length, 3, 'three valued cells (lo/mid/hi)');
+
+  // helpers to read the two contrast axes off a cell
+  const opOf = (c) => parseFloat(c.getAttribute('fill-opacity'));
+  const mixOf = (c) => parseFloat(c.getAttribute('data-hm-mix'));
+  const [lo, mid, hi] = valued; // rendered in col order lo,mid,hi
+
+  // (1) MONOTONIC in drift on BOTH axes (opacity density AND cool→hot mix).
+  assert(opOf(lo) < opOf(mid) && opOf(mid) < opOf(hi), 'fill-opacity is monotonic in drift');
+  assert(mixOf(lo) < mixOf(mid) && mixOf(mid) < mixOf(hi), 'cool→hot mix is monotonic in drift');
+
+  // (2) WIDER contrast than the OLD opacity-only ramp. The old scale was a
+  // SINGLE ink at op = 0.18 + 0.82*t with NO colour axis (mix spread = 0). The
+  // new scale adds a cool→hot mix spanning a wide range, so the combined
+  // high-vs-low contrast metric is strictly greater than the old one.
+  const OLD_op = (t) => 0.18 + 0.82 * t; // the previous mapping, for reference
+  const tLo = 0, tHi = 1; // lo is the min (t=0), hi is the max (t=1)
+  const oldContrast = OLD_op(tHi) - OLD_op(tLo);            // = 0.82, opacity only
+  const newOpContrast = opOf(hi) - opOf(lo);                // density axis
+  const newMixContrast = (mixOf(hi) - mixOf(lo)) / 100;     // hue axis, normalised
+  const newContrast = newOpContrast + newMixContrast;       // combined two-axis metric
+  assert(newContrast > oldContrast,
+    `new combined contrast ${newContrast.toFixed(3)} > old opacity-only ${oldContrast.toFixed(3)}`);
+  assert(newMixContrast > 0.5, 'the cool→hot hue axis alone spans a wide range (>0.5)');
+
+  // (3) the densest cell reads as clearly "most drift" — near-full opacity and
+  // (almost) fully the HOT token.
+  assert(opOf(hi) > 0.95, 'the highest-drift cell is near-opaque');
+  assert(mixOf(hi) > 95, 'the highest-drift cell is almost entirely the HOT token');
+
+  // (4) the LOWEST non-empty cell stays clearly distinct from an EMPTY one:
+  // it carries a value-driven mix + opacity (the cool token at a visible
+  // floor), whereas the empty cell has NO mix and uses the flat empty token.
+  assert(opOf(lo) >= 0.28, 'the lowest valued cell sits at a visible opacity floor (≠ near-invisible)');
+  assert(empty.getAttribute('data-hm-mix') == null, 'the empty cell carries NO cool→hot mix');
+  assert(empty.getAttribute('fill-opacity') == null, 'the empty cell carries NO value-driven opacity');
+  // the inline fill on a valued cell is a theme-token color-mix (no hardcoded hex).
+  assert(/color-mix\(in srgb, var\(--v2-hm-hot\)/.test(lo.style.cssText || ''),
+    'valued cells fill via a theme-token cool→hot color-mix (theme-aware, no hex)');
+
+  // (5) the onClick affordance + tooltip survive.
+  hi.dispatchEvent({ type: 'click' });
+  assertDeep(clicked, ['b', 'hi'], 'cell onClick fires with (rowId, colId)');
+  assertEqual(hi.style.cursor, 'pointer', 'clickable cells show a pointer cursor');
+});
+
 test('candidate view: per-board dot-plot click → board drill-down for THAT run; duplicate rungs disambiguated', async () => {
   freshState(); installFetch();
   const candidate = await import('../js/variants/T/views/candidate.js');

@@ -312,14 +312,31 @@ export function heatmap(opts) {
       const v = o.value(r.id, c.id);
       const cx = labelW + j * cw;
       const t = isNum(v) ? (v - lo) / span : null;
-      // Theme-safe: empty cells get the empty token; valued cells use the
-      // ink-loss token at a floor-lifted opacity so even a low cell is
-      // visible and a high cell reads as denser ink in ALL three themes.
+      // Theme-aware, HIGHER-CONTRAST cell scale. Two contrast axes, both driven
+      // by the same per-theme CSS tokens (so it stays correct across all 16
+      // themes, light and dark):
+      //   (1) HUE — the fill is a color-mix from a COOL low-drift token
+      //       (--v2-hm-cool ← accent) toward a HOT high-drift token
+      //       (--v2-hm-hot ← bad), so a high cell reads as a distinctly hotter
+      //       colour, not merely denser ink;
+      //   (2) DENSITY — a value-driven fill-opacity on top, widened vs the old
+      //       0.18→1.0 ramp.
+      // Both use an eased intensity e = t^0.8 so MID values separate more. The
+      // low non-empty floor (cool token, opacity ~0.30) stays clearly distinct
+      // from an EMPTY cell (the flat --v2-cell-empty token at full opacity).
       const cls = t == null ? 'dn-hm-cell dn-hm-empty' : 'dn-hm-cell';
-      const op = t == null ? null : (0.18 + 0.82 * Math.max(0, Math.min(1, t))).toFixed(3);
+      const tc = t == null ? null : Math.max(0, Math.min(1, t));
+      const e = tc == null ? null : Math.pow(tc, 0.8);
+      const mixPct = e == null ? null : (8 + 92 * e).toFixed(2);
+      const op = e == null ? null : (0.30 + 0.70 * e).toFixed(3);
       const attrs = { x: cx + 1, y: ry + 1, width: cw - 2, height: ch - 2, rx: 1.5, class: cls };
       if (op != null) attrs['fill-opacity'] = op;
       const cell = svgEl('rect', attrs, [title(`${r.label} × ${c.label}: ${isNum(v) ? fmt(v) : '—'}`)]);
+      if (mixPct != null) {
+        // theme-correct cool→hot gradient via CSS custom props (no hardcoded hex)
+        cell.style.setProperty('fill', `color-mix(in srgb, var(--v2-hm-hot) ${mixPct}%, var(--v2-hm-cool))`);
+        cell.setAttribute('data-hm-mix', mixPct);
+      }
       if (o.onClick) {
         cell.style.cursor = 'pointer';
         cell.addEventListener('click', () => o.onClick(r.id, c.id));

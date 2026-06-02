@@ -663,10 +663,20 @@
   .dn-bump-node:focus { outline: none; stroke: var(--v2-ink); stroke-width: 1.8; }
   .dn-bump-label { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); }
 
-  /* theme-aware heatmap: ink fill at value-driven opacity (reads in all themes) */
+  /* theme-aware heatmap: HIGHER-CONTRAST cool→hot cell scale.
+     The cell fill is a per-cell color-mix (set inline by svg.js heatmap())
+     between a COOL low-drift token and a HOT high-drift token, on top of a
+     value-driven fill-opacity. Both tokens default to the theme's own
+     accent/bad inks so the gradient stays correct across all 16 themes (light
+     + dark) without per-theme overrides; a theme can still re-point them.
+     The empty cell keeps the flat --v2-cell-empty token so a low (cool) cell
+     stays clearly distinct from an empty one. The cool/hot tokens default to
+     the theme's accent/bad inks (so no per-theme overrides are needed) but a
+     theme could re-point --v2-hm-cool / --v2-hm-hot if desired. */
+  & { --v2-hm-cool: var(--v2-accent); --v2-hm-hot: var(--v2-bad); }
   .dn-hm-col { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
   .dn-hm-row { fill: var(--v2-ink-soft); font: 10.5px var(--v2-mono); }
-  .dn-hm-cell { fill: var(--v2-ink); stroke: var(--v2-paper); stroke-width: 1; transition: stroke 0.12s; }
+  .dn-hm-cell { fill: var(--v2-hm-cool); stroke: var(--v2-paper); stroke-width: 1; transition: stroke 0.12s; }
   .dn-hm-cell.dn-hm-empty { fill: var(--v2-cell-empty); fill-opacity: 1; }
   .dn-hm-cell:hover { stroke: var(--v2-accent); stroke-width: 1.5; }
 
