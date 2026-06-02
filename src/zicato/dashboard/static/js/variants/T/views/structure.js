@@ -118,8 +118,27 @@ export function normalizeStructure(st, live) {
 export function reconstructRacing(brk, epochId) {
   if (!brk || typeof brk !== 'object') return null;
   const all = Array.isArray(brk.tournaments) ? brk.tournaments : [];
+  // SCOPE TO THE VIEWED EPOCH. /api/tournaments can carry records from MORE than
+  // the epoch on screen (the workspace's whole history), so we MUST drop any
+  // record that does not belong to `epochId` — otherwise a prior epoch's
+  // COMPLETED racing ladder reconstructs and renders under the current epoch's
+  // header (e.g. e0's survival funnel shown while e1 is still proposing). A
+  // record names its epoch via an explicit `epoch_id`, or as the prefix of its
+  // tournament_id (`<epoch>:<champ>-><chall>` or `tourn_<epoch>_<gen>`). When a
+  // record carries NO epoch signal at all we keep it (legacy single-epoch
+  // payloads), but a record whose epoch is KNOWN and DIFFERENT is always dropped.
+  const inEpoch = (t) => {
+    if (epochId == null) return true;
+    const want = String(epochId);
+    if (t && t.epoch_id != null) return String(t.epoch_id) === want;
+    const tid = String((t && t.tournament_id) || '');
+    if (tid.indexOf(want) >= 0) return true;
+    // a record whose tournament_id plainly names a DIFFERENT epoch is excluded;
+    // one with no recognisable epoch token is kept (cannot prove it is foreign).
+    return !/(^tourn_|:)/.test(tid);
+  };
   const racing = all.filter((t) => t && String(t.structure) === 'racing'
-    && Array.isArray(t.rounds) && t.rounds.length);
+    && Array.isArray(t.rounds) && t.rounds.length && inEpoch(t));
   if (!racing.length) return null;
   const lineageIds = Array.isArray(brk.champion_lineage) ? brk.champion_lineage.map(String) : [];
 

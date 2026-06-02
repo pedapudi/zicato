@@ -3075,4 +3075,224 @@ test('board view (b): clicking the "showing" button again hides the transcript +
   }
 });
 
+// ====================================================================
+// CROSS-EPOCH LEAKAGE + survival-funnel header collision (live-run fixes).
+//
+//   BUG 1 — the epoch overview's gens/heatmap-columns must be scoped to the
+//     VIEWED epoch. /api/lineage spans the whole workspace; viewing e1 must NOT
+//     leak e0's generations into the heatmap (no duplicate v0/v1 columns, no
+//     inflated "field of N").
+//   BUG 2 — the racing strip must follow the ACTIVE epoch. When the viewed
+//     epoch has no tournament/funnel data (proposing) the strip shows the honest
+//     "field fills in" empty state, NEVER a prior epoch's completed funnel.
+//   BUG 3 — the survival-funnel rung headers + the benchmark/descriptive line
+//     get DISTINCT y baselines (and each rung header its own column x), so they
+//     never overlap each other or the descriptive line.
+// ====================================================================
+
+// two epochs on /api/lineage: a COMPLETED e0 (v0..v4) and a NEW e1 (v0..v2).
+const TWO_EP_OLD = '2026-06-01_e0';
+const TWO_EP_NEW = '2026-06-02_e1';
+function twoEpochFixture(viewedEpoch, opts) {
+  const o = opts || {};
+  // the WHOLE-workspace lineage — both epochs, with COLLIDING ids (both have v0..).
+  const lineage = [
+    { generation_id: 'v0', epoch_id: TWO_EP_OLD, parent_generation_id: '', promoted: true },
+    { generation_id: 'v1', epoch_id: TWO_EP_OLD, parent_generation_id: 'v0', promoted: false },
+    { generation_id: 'v2', epoch_id: TWO_EP_OLD, parent_generation_id: 'v0', promoted: false },
+    { generation_id: 'v3', epoch_id: TWO_EP_OLD, parent_generation_id: 'v0', promoted: false },
+    { generation_id: 'v4', epoch_id: TWO_EP_OLD, parent_generation_id: 'v0', promoted: true },
+    { generation_id: 'v0', epoch_id: TWO_EP_NEW, parent_generation_id: '', promoted: true },
+    { generation_id: 'v1', epoch_id: TWO_EP_NEW, parent_generation_id: 'v0', promoted: false },
+    { generation_id: 'v2', epoch_id: TWO_EP_NEW, parent_generation_id: 'v0', promoted: false },
+  ];
+  // per-entry profiles for BOTH epochs (so a leak would also leak loss columns).
+  const perEntry = {};
+  for (const g of lineage) {
+    perEntry[`/api/generation/${g.epoch_id}/${g.generation_id}/per-entry`] = {
+      epoch_id: g.epoch_id, generation_id: g.generation_id,
+      entries: [{ entry_id: 'waffles_single', run_id: `r_${g.epoch_id}_${g.generation_id}`, drift_loss: 50, pass_fail: 0 }],
+    };
+  }
+  const F = {
+    '/api/epoch': {
+      epoch_id: viewedEpoch, closed: viewedEpoch === TWO_EP_OLD, goal: 'g',
+      tournament: { structure: 'racing', params: { eta: 2, board_fraction: 0.25 } },
+      // ep.experiments is also epoch-scoped to the VIEWED epoch (the API returns
+      // the contract for the current epoch) — used as the fallback path.
+      experiments: lineage.filter((g) => g.epoch_id === viewedEpoch).map((g) => ({
+        generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
+        outcome: { decision: g.promoted ? 'baseline' : 'rejected' },
+      })),
+      board: [{ id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
+    },
+    '/api/lineage': { generations: lineage },
+    '/api/score-trajectory': { points: lineage.filter((g) => g.epoch_id === viewedEpoch).map((g, i) => ({ generation_id: g.generation_id, scalar: 50 + i })) },
+    // the COMPLETED tournaments record carries ONLY e0's racing ladder (per the
+    // per-challenger shape) — e1 has none yet.
+    '/api/tournaments': {
+      epoch_id: TWO_EP_OLD, structure: 'racing', structure_params: { eta: 2, board_fraction: 0.25 },
+      champion_lineage: ['v0', 'v4'],
+      matchups: [],
+      tournaments: [
+        { tournament_id: `${TWO_EP_OLD}:v0->v1`, structure: 'racing', competitors: ['v0', 'v1'], standings: [], rounds: [{ match_id: 'rung0_m0', opponent: 'v0', won: false, delta_scalar: 3 }] },
+        { tournament_id: `${TWO_EP_OLD}:v0->v4`, structure: 'racing', competitors: ['v0', 'v4'], standings: [], rounds: [
+          { match_id: 'rung0_m3', opponent: 'v0', won: true, delta_scalar: -1 },
+          { match_id: 'racing-final', opponent: 'v0', won: true, delta_scalar: -5 },
+        ] },
+      ],
+    },
+  };
+  if (o.activeTournament) F['/api/active-tournament'] = o.activeTournament;
+  Object.assign(F, perEntry);
+  return F;
+}
+
+// ---- BUG 1: the epoch view is scoped to the viewed epoch (no leak) ---
+
+test('epoch view (cross-epoch): viewing e1 shows ONLY e1 gens — no leaked e0 columns, deduped by id, field count correct', async () => {
+  freshState();
+  // e1 is the new epoch; the active racing tournament is e1's (proposing — no rungs).
+  installFixtureMap(twoEpochFixture(TWO_EP_NEW, {
+    activeTournament: { tournament_id: `tourn_${TWO_EP_NEW}_v1`, epoch_id: TWO_EP_NEW, structure: 'racing', phase: 'running', rounds: [], standings: [], competitors: [] },
+  }));
+  coreState.state.heartbeat = { phase: 'idle' };  // not "running" → no live status; the funnel falls to reconstruct
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_NEW });
+
+  // the heatmap columns = the gens. e1 has exactly v0,v1,v2 — and they must each
+  // appear ONCE (no duplicate v0/v1 from e0). v3/v4 belong to e0 and must be absent.
+  const hm = svgsByClass(host, 'dn-heatmap')[0];
+  assert(hm, 'the heatmap rendered on the e1 epoch view');
+  // column headers are the per-generation labels on the heatmap; count the v-id labels.
+  const colLabels = hm.querySelectorAll('[class]')
+    .filter((n) => n.localName === 'text' && /^v\d+$/.test((n.textContent || '').trim()))
+    .map((n) => (n.textContent || '').trim());
+  const cols = colLabels.filter((s, i) => colLabels.indexOf(s) === i); // distinct
+  // every v-id label that is a COLUMN appears once; there are NO e0-only ids (v3,v4).
+  const colCounts = {};
+  for (const c of colLabels) colCounts[c] = (colCounts[c] || 0) + 1;
+  for (const id of Object.keys(colCounts)) {
+    if (/^v[0-2]$/.test(id)) continue;            // v0..v2 are e1's own field
+    assert(!/^v[34]$/.test(id), `no leaked e0-only column ${id} on the e1 view`);
+  }
+  // no id appears as a column more than the number of header rows it legitimately
+  // owns — a leak would DOUBLE v0/v1/v2. Assert the distinct column set is exactly e1's.
+  assertDeep(cols.sort(), ['v0', 'v1', 'v2'], 'the e1 heatmap columns are EXACTLY e1’s field {v0,v1,v2} (deduped, no leak)');
+
+  // the structure strip's "field of N" must read e1's field of 3, NOT a leaked 8.
+  assert(host.textContent.includes('field of 3'), 'the structure strip reads e1’s field of 3 (not a cross-epoch field of 8)');
+  assert(!host.textContent.includes('field of 8'), 'NO inflated cross-epoch "field of 8"');
+});
+
+test('epoch view (cross-epoch): viewing e0 is unchanged — its full field {v0..v4} still renders (no regression)', async () => {
+  freshState();
+  installFixtureMap(twoEpochFixture(TWO_EP_OLD));
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_OLD });
+
+  const hm = svgsByClass(host, 'dn-heatmap')[0];
+  assert(hm, 'the heatmap rendered on the e0 epoch view');
+  const colLabels = hm.querySelectorAll('[class]')
+    .filter((n) => n.localName === 'text' && /^v\d+$/.test((n.textContent || '').trim()))
+    .map((n) => (n.textContent || '').trim());
+  const cols = colLabels.filter((s, i) => colLabels.indexOf(s) === i).sort();
+  assertDeep(cols, ['v0', 'v1', 'v2', 'v3', 'v4'], 'e0 still shows its FULL field {v0..v4} (unchanged)');
+  assert(host.textContent.includes('field of 5'), 'e0 reads its own field of 5');
+});
+
+// ---- BUG 2: a proposing epoch shows the empty state, not e0's funnel -
+
+test('epoch view (cross-epoch): a PROPOSING e1 shows the honest empty state — NOT e0’s completed funnel', async () => {
+  freshState();
+  // e1 is proposing: the active tournament is e1's with NO rungs yet; the
+  // COMPLETED /api/tournaments still carries e0's full racing ladder. The strip
+  // must NOT reconstruct e0's funnel under the e1 header.
+  installFixtureMap(twoEpochFixture(TWO_EP_NEW, {
+    activeTournament: { tournament_id: `tourn_${TWO_EP_NEW}_v1`, epoch_id: TWO_EP_NEW, structure: 'racing', phase: 'running', rounds: [], standings: [], competitors: [] },
+  }));
+  // even with a LIVE racing heartbeat, the active topology has no rungs → no funnel.
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0:rung0_m0', generation_id: 'v1' });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'waffles_single', run_id: 'r1' }];
+  coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
+
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_NEW });
+
+  // NO funnel SVG (the empty-state branch was taken — the funnel data is absent).
+  assertEqual(svgsByClass(host, 'dn-funnel').length, 0, 'NO survival funnel while e1 is proposing (empty-state branch, not e0’s funnel)');
+  // the honest "fills in once the field runs" empty copy is shown instead.
+  assert(/no rungs have raced yet|fills in once the field runs/i.test(host.textContent), 'the proposing/empty state copy renders');
+  // e0’s crowned survivor (v4) must NOT bleed into the e1 strip as a champion ♚.
+  assert(!host.textContent.includes('♚ v4'), 'e0’s crowned champion ♚ v4 does NOT leak into the e1 strip');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+});
+
+test('reconstructRacing (cross-epoch): scoped to the viewed epoch — a foreign epoch’s records are dropped', () => {
+  // the tournaments payload carries ONLY e0 racing records; reconstructing for e1
+  // must return null (no funnel), but reconstructing for e0 still rebuilds it.
+  const brk = twoEpochFixture(TWO_EP_NEW)['/api/tournaments'];
+  assertEqual(STRUCT.reconstructRacing(brk, TWO_EP_NEW), null, 'no e1 racing record → null (the e0 records are NOT adopted under e1)');
+  const e0 = STRUCT.reconstructRacing(brk, TWO_EP_OLD);
+  assert(e0 && e0.structure === 'racing', 'the e0 ladder still reconstructs from its own records');
+});
+
+// ---- BUG 3: the funnel header labels do NOT collide -------------------
+
+test('survival funnel (no-collide): the benchmark line + the rung headers + the sublabels sit on DISTINCT y baselines', () => {
+  const rungs = [
+    { label: 'Rung 0', competitors: ['v1', 'v2', 'v3', 'v4'], survivors: ['v3', 'v4'], cut: ['v1', 'v2'], board_fraction: 0.25, deltas: {} },
+    { label: 'Rung 1', competitors: ['v3', 'v4'], survivors: ['v3'], cut: ['v4'], board_fraction: 0.5, deltas: {} },
+  ];
+  const node = svg.survivalFunnel({ rungs, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned', gateDelta: -5, onCompetitor() {} });
+
+  const yOf = (n) => Number(n.getAttribute('y'));
+  const xOf = (n) => Number(n.getAttribute('x'));
+  const byClass = (cls) => node.querySelectorAll('[class]').filter((n) => n.localName === 'text' && (n.getAttribute('class') || '').split(/\s+/).includes(cls));
+
+  const bench = byClass('dn-funnel-bench')[0];
+  const heads = byClass('dn-funnel-head');
+  const subs = byClass('dn-funnel-sub');
+  assert(bench, 'the benchmark/descriptive line rendered');
+  assert(heads.length >= 3, 'a header per rung column + the champion-gate header (≥3)');
+  assert(subs.length >= 3, 'a sublabel per rung + the gate');
+
+  const benchY = yOf(bench);
+  const headYs = heads.map(yOf);
+  const subYs = subs.map(yOf);
+  // (1) the benchmark line is ABOVE every rung header (its own baseline).
+  for (const hy of headYs) assert(benchY < hy, 'the benchmark line sits strictly above the rung headers (separate baseline)');
+  // (2) all rung headers share ONE baseline, the sublabels another, distinct from it
+  //     and from the benchmark — three separate rows.
+  const headBaseline = headYs[0];
+  for (const hy of headYs) assertEqual(hy, headBaseline, 'every rung/gate header shares the one header baseline');
+  const subBaseline = subYs[0];
+  for (const sy of subYs) assertEqual(sy, subBaseline, 'every sublabel shares the one sub baseline');
+  assert(headBaseline !== benchY && subBaseline !== benchY && headBaseline !== subBaseline,
+    'benchmark / header / sub occupy THREE distinct y baselines (no shared baseline → no collision)');
+
+  // (3) each rung/gate header is centred on its OWN column x — no two headers
+  //     share the same x (they march left→right across the stages + gate).
+  const headXs = heads.map(xOf).sort((a, b) => a - b);
+  for (let i = 1; i < headXs.length; i++) {
+    assert(headXs[i] > headXs[i - 1], 'adjacent rung/gate headers occupy distinct, increasing column x positions (no overlap)');
+  }
+  // (4) the benchmark line is left-anchored (x near the origin) on its own row, so
+  //     it cannot run into a centred rung header on the SAME baseline.
+  assert(xOf(bench) < headXs[0], 'the benchmark line starts left of the first rung header (its own row)');
+});
+
 await run();

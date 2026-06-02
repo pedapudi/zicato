@@ -919,7 +919,16 @@ export function survivalFunnel(opts) {
   const stageW = 150;
   const stageGap = 20;
   const gateW = 132;
-  const top = 30;
+  // THREE STACKED HEADER BASELINES, top→down, so nothing collides (BUG: the
+  // benchmark/descriptive line shared a baseline + x-range with the first rung
+  // header → garbled "▸ vs champion v0RUNG 1"):
+  //   benchY  — the full-width benchmark/descriptive line (its OWN row, left-anchored)
+  //   headY   — the per-column rung headers ("RUNG 0", "champion-gate"), centred per stage
+  //   subY    — the per-column sublabels ("4 field · 43/100 board"), centred per stage
+  const benchY = 12;
+  const headY = 30;
+  const subY = 42;
+  const top = 56;           // the flow lane begins below all three header rows
   const laneH = 132;        // the vertical band the surviving flow occupies
   const deadH = 18;         // per-eliminated-branch row height below the lane
   // the widest stack of dead-end branches across stages bounds the figure height.
@@ -942,7 +951,7 @@ export function survivalFunnel(opts) {
   const benchId = o.benchmarkId != null ? String(o.benchmarkId)
     : (o.championId != null ? String(o.championId) : null);
   if (benchId) {
-    const bt = svgEl('text', { x: 2, y: 12, class: 'dn-funnel-bench' },
+    const bt = svgEl('text', { x: 2, y: benchY, class: 'dn-funnel-bench' },
       [title(`champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`)]);
     bt.textContent = `▸ vs champion v0 = ${shortLabel(benchId, 18)} · every Δ is vs v0`;
     svg.appendChild(bt);
@@ -975,11 +984,13 @@ export function survivalFunnel(opts) {
       points: `${x0},${midY - hIn} ${x1},${midY - hOut} ${x1},${midY + hOut} ${x0},${midY + hIn}`,
       class: cls,
     }, [title(`${rung.label || 'rung ' + j}: ${enterN} in → ${pending ? '…' : leaveN + ' survive'}${isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : ''}`)]));
-    // stage label + board fraction above the band.
-    const head = svgEl('text', { x: x0 + stageW / 2, y: top - 16, class: 'dn-funnel-head', 'text-anchor': 'middle' });
+    // stage label + board fraction above the band — on the dedicated header /
+    // sub baselines (headY / subY), CENTRED on this stage's column x, so they
+    // never overlap each other, an adjacent column, or the benchmark line.
+    const head = svgEl('text', { x: x0 + stageW / 2, y: headY, class: 'dn-funnel-head', 'text-anchor': 'middle' });
     head.textContent = shortLabel(rung.label || `Rung ${j}`, 16);
     svg.appendChild(head);
-    const sub = svgEl('text', { x: x0 + stageW / 2, y: top - 4, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
+    const sub = svgEl('text', { x: x0 + stageW / 2, y: subY, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
     sub.textContent = `${enterN} field` + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}/100 board` : '');
     svg.appendChild(sub);
 
@@ -1034,10 +1045,10 @@ export function survivalFunnel(opts) {
     points: `${lastX},${midY - flowH} ${gx},${midY - 11} ${gx},${midY + 11} ${lastX},${midY + flowH}`,
     class: 'dn-funnel-band dn-funnel-gateflow' + (crowned ? ' dn-good' : ''),
   }));
-  const gHead = svgEl('text', { x: gx + gateW / 2, y: top - 16, class: 'dn-funnel-head', 'text-anchor': 'middle' });
+  const gHead = svgEl('text', { x: gx + gateW / 2, y: headY, class: 'dn-funnel-head', 'text-anchor': 'middle' });
   gHead.textContent = 'champion-gate';
   svg.appendChild(gHead);
-  const gSub = svgEl('text', { x: gx + gateW / 2, y: top - 4, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
+  const gSub = svgEl('text', { x: gx + gateW / 2, y: subY, class: 'dn-funnel-sub', 'text-anchor': 'middle' });
   gSub.textContent = benchId ? 'full board · vs champion v0' : 'full board · vs champion';
   svg.appendChild(gSub);
 

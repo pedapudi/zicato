@@ -33,9 +33,25 @@ export async function render(host, ctx, params) {
   const experiments = Array.isArray(ep.experiments) ? ep.experiments : [];
   const board = Array.isArray(ep.board) ? ep.board : [];
 
-  const gens = (lin && Array.isArray(lin.generations) && lin.generations.length)
-    ? lin.generations.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted }))
+  // SCOPE TO THE VIEWED EPOCH: /api/lineage spans the WHOLE workspace (e0+e1+…),
+  // so we MUST filter to generations whose epoch_id matches the epoch on screen —
+  // otherwise a sibling epoch's generations leak in and the heatmap renders
+  // duplicate `v0 v1 …` columns and an inflated "field of N". When the lineage
+  // payload has no rows for this epoch (or carries no epoch_id at all) we fall
+  // back to the already epoch-scoped `ep.experiments`. Dedupe by id regardless,
+  // so a column id can never appear twice.
+  const lineageRows = (lin && Array.isArray(lin.generations)) ? lin.generations : [];
+  const scopedLineage = lineageRows.filter((g) => g && g.epoch_id === epochId);
+  const rawGens = scopedLineage.length
+    ? scopedLineage.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted }))
     : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' }));
+  const gens = [];
+  const seenGen = new Set();
+  for (const g of rawGens) {
+    if (g.id == null || seenGen.has(g.id)) continue;
+    seenGen.add(g.id);
+    gens.push(g);
+  }
 
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
@@ -92,8 +108,16 @@ export async function render(host, ctx, params) {
     const status = deriveLiveStatus({
       heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
     });
+    // The LIVE topology belongs to the ACTIVE epoch — only adopt it when that
+    // is the epoch ON SCREEN. Otherwise the active (e.g. e1) tournament would
+    // render under a DIFFERENT epoch's (e.g. e0's) header. When it is not for
+    // this epoch we fall through to the epoch-scoped reconstruction (which is
+    // itself filtered to `epochId`), so each epoch only ever shows its own data.
     const liveRaw = status.running ? await D.activeTournament() : null;
-    const liveSt = normalizeStructure(liveRaw, true);
+    const liveForThisEpoch = (liveRaw && liveRaw.epoch_id != null)
+      ? String(liveRaw.epoch_id) === String(epochId)
+      : !!liveRaw; // no epoch tag ⇒ legacy single-epoch payload, trust it.
+    const liveSt = liveForThisEpoch ? normalizeStructure(liveRaw, true) : null;
     const racingSt = (liveSt && liveSt.live) ? liveSt : reconstructRacing(bracket, epochId);
     const model = racingModel(racingSt);
     if (model && model.hasRungs) racingFunnel = { st: racingSt, model };
