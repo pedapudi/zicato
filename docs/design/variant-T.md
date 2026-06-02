@@ -245,6 +245,20 @@ detail host holds the destination view.
    dot in the plot) collapses the transcript back to "show inline →" by routing
    to the bare board (`#/e/<epoch>/board/<entry>`) — the selection clears and a
    reload of that route does not reopen it.
+
+   **Live-beat render discipline (per-pane digest hosts).** The board view paints
+   into TWO persistent sub-hosts under its mount: a `board-upper` host (page head,
+   stats, the in-flight "N running" card, the dot-plot, the breakdown table) and a
+   `board-xscript` host (the inline side-by-side transcript). Each is gated on its
+   OWN digest. The upper digest folds in the live in-flight set INCLUDING each
+   run's advancing `progressRatio` — it SHOULD repaint every beat. The transcript
+   digest folds in ONLY `[selGen, the resolved candidates, their transcript
+   content]` — it deliberately EXCLUDES the in-flight set, so a beat that merely
+   advances in-flight progress is a true no-op for the transcript host: its scroll
+   containers are not recreated and scroll position is preserved. The transcript
+   pane re-renders only when the selection or transcript content actually changes.
+   This mirrors `compare.js`'s per-side hosts (each side's digest gate fires
+   independently). See the `board view (live)` tests in `test/variant_t.test.mjs`.
 6. **Trellis vs heatmap de-dup** — heatmap stays at the epoch overview
    (`views/epoch.js`); the trellis lives in the Boards view (`views/boards.js`).
    Never both on one page.

@@ -3295,4 +3295,72 @@ test('survival funnel (no-collide): the benchmark line + the rung headers + the 
   assert(xOf(bench) < headXs[0], 'the benchmark line starts left of the first rung header (its own row)');
 });
 
+// ---- LIVE-BEAT: the inline transcript pane survives an in-flight-only beat ----
+//
+// During a live run the in-flight progressRatio advances every SSE beat. The
+// regression: that advanced the OUTER view digest, tearing down and rebuilding
+// the whole board view — INCLUDING the open transcript scroll containers, which
+// reset to the top. The fix splits the transcript into its OWN per-pane digest
+// host keyed ONLY on [selGen, transcript content], independent of the in-flight
+// set. These pin that a progress-only beat does NOT recreate the transcript DOM
+// while the dot-plot / in-flight portion DOES update — and that the transcript
+// pane DOES re-render when the selection or transcript content actually change.
+
+test('board view (live): an in-flight-only beat does NOT tear down the inline transcript (no scroll reset), but the in-flight/dot-plot portion DOES update', async () => {
+  freshState(); installFetch();
+  const board = await import('../js/variants/T/views/board.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+
+  // beat 1: a candidate is in flight on this entry at 30% AND v1's transcript is open.
+  coreState.state.activeRuns = [{ entry_id: 'waffles_single', generation_id: 'v2', run_id: 'run_v2_waffles', progress: 0.3 }];
+  await board.render(host, ctx, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+
+  const xhostBefore = host.querySelector(':scope > [data-node="board-xscript"]');
+  const upperBefore = host.querySelector(':scope > [data-node="board-upper"]');
+  assert(xhostBefore && upperBefore, 'the board view split into a persistent upper host + a transcript host');
+  const xdigestBefore = xhostBefore.getAttribute('data-t-digest');
+  const updigestBefore = upperBefore.getAttribute('data-t-digest');
+  const scrollBefore = allByClass(host, 'dn-xscript-scroll')[0];
+  assert(scrollBefore, 'the inline transcript scroll container rendered (transcript is open)');
+  assert(host.textContent.includes('30%'), 'beat 1 shows the in-flight candidate at 30%');
+
+  // beat 2: SAME selection + SAME transcript, but the in-flight progress advanced to 65%.
+  coreState.state.activeRuns = [{ entry_id: 'waffles_single', generation_id: 'v2', run_id: 'run_v2_waffles', progress: 0.65 }];
+  await board.render(host, ctx, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+
+  const xhostAfter = host.querySelector(':scope > [data-node="board-xscript"]');
+  const scrollAfter = allByClass(host, 'dn-xscript-scroll')[0];
+  // PRIMARY: the transcript host's digest is unchanged and the scroll container
+  // is the SAME node (not recreated) — so scroll position is preserved.
+  assertEqual(xhostAfter.getAttribute('data-t-digest'), xdigestBefore, 'the transcript digest is UNCHANGED across an in-flight-only beat');
+  assert(scrollAfter === scrollBefore, 'the inline transcript scroll container is the SAME DOM node (not torn down on a progress beat)');
+  // the in-flight / upper portion DID update (digest changed) and now shows 65%.
+  assert(upperBefore.getAttribute('data-t-digest') !== updigestBefore, 'the upper (dot-plot / in-flight) digest DID change as progress advanced');
+  assert(host.textContent.includes('65%'), 'the in-flight portion repainted to 65%');
+  coreState.state.activeRuns = [];
+});
+
+test('board view (live): the transcript pane DOES re-render when the selected gen changes', async () => {
+  freshState(); installFetch();
+  const board = await import('../js/variants/T/views/board.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+
+  await board.render(host, ctx, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+  const xhost = host.querySelector(':scope > [data-node="board-xscript"]');
+  const xdigestV1 = xhost.getAttribute('data-t-digest');
+  const scrollV1 = allByClass(host, 'dn-xscript-scroll')[0];
+  assert(host.textContent.includes('Drafting an outline'), 'v1 transcript turn rendered');
+
+  // selecting a DIFFERENT candidate changes the transcript digest → the pane re-renders.
+  await board.render(host, ctx, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v0' });
+  const xdigestV0 = xhost.getAttribute('data-t-digest');
+  const scrollV0 = allByClass(host, 'dn-xscript-scroll')[0];
+  assert(xdigestV0 !== xdigestV1, 'the transcript digest CHANGED when the selected gen changed (v1 → v0)');
+  assert(scrollV0 !== scrollV1, 'the transcript scroll container was rebuilt for the new selection');
+  assert(host.textContent.includes('Here is a structured outline'), 'the v0 transcript turn rendered after switching selection');
+  coreState.state.activeRuns = [];
+});
+
 await run();

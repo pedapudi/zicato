@@ -14,7 +14,7 @@
 // Bind: /api/generation/{e}/{g}/per-entry pivoted by entry_id across gens;
 //       /api/conversation/{run_id} per candidate (the two inline transcripts).
 
-import { el } from '../../../core/dom.js';
+import { el, clearChildren } from '../../../core/dom.js';
 import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
@@ -126,20 +126,46 @@ export async function render(host, ctx, params) {
   const inflight = inflightForEntry(state.activeRuns, entryId);
   const ranCount = rows.filter((r) => r.ran).length;
 
-  const digest = JSON.stringify({
+  // Two SEPARATE digests, two SEPARATE persistent sub-hosts (the live-beat
+  // scroll-reset fix). The OUTER (upper) digest folds in everything that should
+  // repaint live — the in-flight set + its advancing progressRatio, the
+  // dot-plot, the breakdown table. The TRANSCRIPT digest folds in ONLY the
+  // selected candidates and their transcript content. Because the in-flight
+  // fields are EXCLUDED from the transcript digest, a beat that only advances
+  // in-flight progress repaints the upper host but leaves the transcript host
+  // (and its scroll position) untouched — mirrors compare.js's per-side hosts.
+  const upperDigest = JSON.stringify({
     epochId, entryId, selGen,
     def: def ? [def.kind, def.weight, def.budget_s] : null,
     champ: championId,
     rows: rows.map((r) => [r.gen, svg.isNum(r.loss) ? r.loss.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId]),
-    left: leftSel ? [leftSel.gen, transcriptDigest(leftConv)] : null,
-    right: rightSel ? [rightSel.gen, transcriptDigest(rightConv)] : null,
     inflight: inflight.map((r) => {
       const pr = progressRatio(r);
       return [r.generation_id || r.gen || null, r.run_id || null, pr != null ? pr.toFixed(2) : null];
     }),
   });
+  const xscriptDigest = JSON.stringify({
+    epochId, entryId, selGen, champ: championId,
+    left: leftSel ? [leftSel.gen, transcriptDigest(leftConv)] : null,
+    right: rightSel ? [rightSel.gen, transcriptDigest(rightConv)] : null,
+  });
 
-  gatedSwap(host, digest, () => {
+  // Persistent sub-hosts: created ONCE under `host`, reused every render so the
+  // transcript host survives an upper-only (in-flight) repaint. An earlier
+  // error/empty route may have written `host` directly via gatedSwap; if our
+  // persistent scaffold is absent (or was torn down), (re)build it.
+  let upperHost = host.querySelector(':scope > [data-node="board-upper"]');
+  let xscriptHost = host.querySelector(':scope > [data-node="board-xscript"]');
+  if (!upperHost || !xscriptHost) {
+    clearChildren(host);
+    upperHost = el('div', { 'data-node': 'board-upper' });
+    xscriptHost = el('div', { 'data-node': 'board-xscript' });
+    host.appendChild(upperHost);
+    host.appendChild(xscriptHost);
+    host.removeAttribute('data-t-digest');
+  }
+
+  gatedSwap(upperHost, upperDigest, () => {
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
       el('h1', { class: 'dn-h1', text: 'Board · ' + entryId }),
@@ -253,15 +279,21 @@ export async function render(host, ctx, params) {
     tbl.appendChild(tbody);
     tblCard.appendChild(tbl);
     nodes.push(section('Breakdown · select a candidate to read its transcript inline', tblCard));
-
-    // fix #5 — the INLINE side-by-side transcript pane (no navigation away).
-    if (selGen) {
-      nodes.push(section(
-        `Transcripts · ${leftSel ? leftSel.gen : selGen} vs ${rightSel ? rightSel.gen : '—'} on ${entryId}`,
-        sideBySideTranscripts(leftSel, leftConv, rightSel, rightConv, championId),
-      ));
-    }
     return nodes;
+  });
+
+  // fix #5 — the INLINE side-by-side transcript pane, gated on its OWN digest in
+  // its OWN persistent host. A beat that only advanced in-flight progress leaves
+  // upperDigest changed but xscriptDigest unchanged, so this gatedSwap is a true
+  // no-op: the transcript scroll containers are NOT recreated and the scroll
+  // position is preserved. The pane re-renders only when selGen / the resolved
+  // candidates / their transcript content actually change.
+  gatedSwap(xscriptHost, xscriptDigest, () => {
+    if (!selGen) return [];
+    return [section(
+      `Transcripts · ${leftSel ? leftSel.gen : selGen} vs ${rightSel ? rightSel.gen : '—'} on ${entryId}`,
+      sideBySideTranscripts(leftSel, leftConv, rightSel, rightConv, championId),
+    )];
   });
 }
 
