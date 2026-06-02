@@ -123,7 +123,7 @@ import shutil
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -234,6 +234,15 @@ class TournamentResult:
     outcome: GateOutcome
     per_entry_losses: dict[str, tuple[LossProfile, LossProfile]]
     champion_eval_mode: str = "full"
+    #: Additive per-generation cache provenance for THIS duel: the count
+    #: of board units reused from the cache (``cached``) vs genuinely
+    #: executed (``fresh``), keyed by generation id. Lets a structure-
+    #: agnostic caller (the orchestrator) attribute reuse to the CHAMPION
+    #: specifically — a generation appears on either side across a
+    #: swiss/elim field, and only the champion's reuse drives the
+    #: ``champion_eval_mode`` provenance. A gauntlet/ad-hoc caller can
+    #: ignore it. Empty for legacy callers.
+    unit_provenance: dict[str, _UnitProvenance] = field(default_factory=dict)
 
 
 class _ProgressBumpingSink:
@@ -1288,6 +1297,9 @@ async def _run_full_board_unit(
     epoch_id: str,
     scorer: _IncrementalScorer | None = None,
     match_id: str = "",
+    replicate_index: int = 0,
+    force_fresh: bool = False,
+    provenance: dict[str, _UnitProvenance] | None = None,
 ) -> tuple[LossProfile, LossProfile]:
     """Run ONE board entry's champion + challenger concurrently.
 
@@ -1321,7 +1333,7 @@ async def _run_full_board_unit(
     instead, which treats it as a hard tournament error.
     """
     parent_result, child_result = await asyncio.gather(
-        _run_single(
+        _run_unit_cache_first(
             adapter=adapter,
             generation=parent_gen,
             entry=entry,
@@ -1330,9 +1342,12 @@ async def _run_full_board_unit(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             side="parent",
+            replicate_index=replicate_index,
             match_id=match_id,
+            force_fresh=force_fresh,
+            provenance=provenance,
         ),
-        _run_single(
+        _run_unit_cache_first(
             adapter=adapter,
             generation=child_gen,
             entry=entry,
@@ -1341,7 +1356,10 @@ async def _run_full_board_unit(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             side="child",
+            replicate_index=replicate_index,
             match_id=match_id,
+            force_fresh=force_fresh,
+            provenance=provenance,
         ),
         return_exceptions=True,
     )
@@ -1370,6 +1388,9 @@ async def _run_board_units_full(
     workspace_root: Path,
     epoch_id: str,
     match_id: str = "",
+    replicate_index: int = 0,
+    force_fresh: bool = False,
+    provenance: dict[str, _UnitProvenance] | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Run every board entry as a full-mode board unit, bounded concurrency.
 
@@ -1424,6 +1445,9 @@ async def _run_board_units_full(
                 epoch_id=epoch_id,
                 scorer=scorer,
                 match_id=match_id,
+                replicate_index=replicate_index,
+                force_fresh=force_fresh,
+                provenance=provenance,
             )
 
     results = await asyncio.gather(
@@ -1454,6 +1478,10 @@ async def _run_board_units_fast(
     config: RuntimeConfig,
     workspace_root: Path,
     epoch_id: str,
+    match_id: str = "",
+    replicate_index: int = 0,
+    force_fresh: bool = False,
+    provenance: dict[str, _UnitProvenance] | None = None,
 ) -> dict[str, LossProfile]:
     """Run every board entry as a fast-mode board unit, bounded concurrency.
 
@@ -1482,7 +1510,7 @@ async def _run_board_units_fast(
 
     async def _bounded(entry: BoardEntry) -> LossProfile:
         async with semaphore:
-            child_loss = await _run_single(
+            child_loss = await _run_unit_cache_first(
                 adapter=adapter,
                 generation=child_gen,
                 entry=entry,
@@ -1494,6 +1522,10 @@ async def _run_board_units_fast(
                 # "child" for the rare case an ActiveTournament file does
                 # exist, and a benign no-op otherwise.
                 side="child",
+                replicate_index=replicate_index,
+                match_id=match_id,
+                force_fresh=force_fresh,
+                provenance=provenance,
             )
             # Score this board unit the instant it settles — concurrently
             # with the sibling board units still running.
@@ -1661,6 +1693,10 @@ async def run_tournament(
         # (child) runs CONCURRENTLY. ``config.parallelism`` bounds the
         # number of board units in flight — up to 2*parallelism run
         # subprocesses at once (champion + challenger per unit).
+        # The gauntlet full A/B path forces a fresh evaluation of both
+        # sides (the orchestrator routes a cache-eligible round through
+        # ``run_fast_mode`` instead). Both sides are still persisted so a
+        # later fast round / structure can reuse them.
         parent_losses, child_losses = await _run_board_units_full(
             adapter=adapter,
             parent_gen=parent_gen,
@@ -1670,6 +1706,7 @@ async def run_tournament(
             config=config,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
+            force_fresh=True,
         )
     finally:
         if rt is not None:
@@ -1877,55 +1914,220 @@ async def run_fast_mode(
     )
 
 
-#: Sentinel returned by :func:`_resolve_cached_champion_losses` when fast
-#: mode was requested but the champion's cached per-board scalars do not
-#: cover the boards this duel needs. The caller degrades to a full
-#: champion run (and stamps ``champion_eval_mode="fast-degraded"``).
-_CHAMPION_CACHE_MISS = object()
-
-
-def _resolve_cached_champion_losses(
-    *,
-    generation: Generation,
-    board: list[BoardEntry],
+def _unit_loss_path(
     workspace_root: Path,
     epoch_id: str,
-) -> dict[str, LossProfile] | None:
-    """Resolve a champion side from cached per-board ``loss.json`` files.
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int,
+) -> Path:
+    """Return the per-replicate cache path for ONE board unit's ``loss.json``.
 
-    This is the SHARED fast-mode champion-resolution decision used by
-    BOTH the gauntlet path (:func:`run_fast_mode`, indirectly) and the
-    multi-challenger path (:func:`run_matchup`), so the fast logic is
-    structure-agnostic and not duplicated. The champion was scored on
-    the full board when it became champion, so every per-board
-    ``loss.json`` it needs already exists on disk; for a racing rung's
-    growing board SUBSET we simply read back the subset's profiles. The
-    canonical per-entry ``loss.json`` carries the FULL reducer output
-    (drift counts + namespaced metrics), so re-aggregating any subset of
-    them is exact — not a lossy reconstruction from the cached aggregate.
+    A **board unit** is the atomic, contract-fixed quantum
+    ``(generation_id, board_entry_id, replicate_index)`` — under a fixed
+    contract its result is immutable, so it must be evaluated AT MOST
+    ONCE and reused everywhere (every pairing, every round, every
+    structure, the gate, later evolve rounds).
 
-    Returns the ``{entry_id: LossProfile}`` map for ``board`` when EVERY
-    needed entry has a readable cached champion profile (the champion is
-    then NOT executed). Returns ``None`` when any needed entry is
-    missing or unreadable — the caller degrades to a full champion run
-    once (which re-writes the cache for subsequent rounds), preserving
-    the existing seed/first-champion degradation.
+    Replicate 0 maps to the canonical ``runs/<entry>/loss.json`` the
+    worker writes (back-compat: existing caches, the seed champion's
+    full-board scoring, and every single-replicate run land there).
+    Replicate r>0 maps to a sibling ``runs/<entry>/loss.r<r>.json`` so
+    the additional noise samples cache per replicate without colliding
+    with the canonical file. The directory is the same per-entry run
+    directory either way; only the filename varies by replicate.
     """
     from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
 
+    canonical = loss_profile_path(workspace_root, epoch_id, generation_id, entry_id)
+    if replicate_index <= 0:
+        return canonical
+    return canonical.with_name(f"loss.r{replicate_index}.json")
+
+
+def _resolve_cached_unit(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int,
+) -> LossProfile | None:
+    """Resolve ONE board unit from its persisted per-replicate ``loss.json``.
+
+    The universal, structure-agnostic cache lookup keyed on
+    ``(generation_id, entry_id, replicate_index)`` within the epoch. A
+    generation is immutable and belongs to exactly one epoch/contract, so
+    the on-disk ``epochs/<epoch>/generations/<gen>/runs/<entry>/loss.json``
+    (per replicate) IS the contract-scoped cache for that unit — a
+    different contract is a fresh epoch with fresh generations, a natural
+    miss (no cross-contract reuse).
+
+    Returns the cached :class:`LossProfile` on a HIT (the unit is then
+    NOT executed), or ``None`` on a MISS — the file is absent or
+    unreadable. An unreadable file is a miss, not a crash: the caller
+    re-runs the unit and re-persists, so the next need is a hit.
+
+    This resolves for ANY generation — the champion AND every challenger
+    — replacing the champion-only ``_resolve_cached_champion_losses``: a
+    competitor's board run is reused across all its pairings/rounds, the
+    champion is reused if already evaluated under this epoch/contract, and
+    prior evals carry across ``--rounds`` in the same epoch.
+    """
     _, reducer_module = _telemetry_helpers()
-    resolved: dict[str, LossProfile] = {}
-    for entry in board:
-        path = loss_profile_path(workspace_root, epoch_id, generation.id, entry.id)
-        if not path.exists():
-            return None
-        try:
-            resolved[entry.id] = reducer_module.read_loss_profile(path)
-        except (OSError, KeyError, ValueError, json.JSONDecodeError):
-            # An unreadable cached profile is a cache miss, not a crash —
-            # degrade to a full champion run.
-            return None
-    return resolved
+    path = _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
+    if not path.exists():
+        return None
+    try:
+        return reducer_module.read_loss_profile(path)  # type: ignore[no-any-return]
+    except (OSError, KeyError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _persist_unit_loss(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int,
+    loss: LossProfile,
+) -> None:
+    """Persist ONE board unit's loss to its per-replicate cache path.
+
+    Called after a genuine cache MISS runs the unit, so the next need for
+    the same ``(generation, entry, replicate)`` is a HIT. For replicate 0
+    the canonical worker-written ``loss.json`` already exists; rewriting
+    it with the identical profile is idempotent (and makes the cache
+    consistent even when the unit ran via a test stub that did not write).
+    For replicate r>0 this is the only writer of the sibling
+    ``loss.r<r>.json``. Best-effort: a write failure degrades the next
+    lookup to another (correct) MISS rather than aborting the tournament.
+    """
+    _, reducer_module = _telemetry_helpers()
+    writer = getattr(reducer_module, "write_loss_profile", None)
+    if not callable(writer):
+        # The reducer in this environment exposes no writer (e.g. a test
+        # stub that only reads). Nothing to persist — the next lookup is a
+        # correct MISS, and the worker's own canonical loss.json (when the
+        # real worker ran) is still on disk for replicate 0.
+        return
+    path = _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
+    try:
+        writer(loss, path)
+    except OSError as exc:  # noqa: BLE001 — cache persist is best-effort
+        log.debug(
+            "unit-loss cache persist skipped for %s/%s r%d: %s",
+            generation_id,
+            entry_id,
+            replicate_index,
+            exc,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _UnitProvenance:
+    """Per-generation tally of cached-vs-fresh board-unit evaluations.
+
+    Additive runtime provenance: how many of a generation's board units
+    this duel were reused from the cache (``cached``) vs genuinely
+    executed (``fresh``). Surfaced on :attr:`TournamentResult.unit_provenance`
+    so a structure-agnostic caller can attribute reuse to the CHAMPION
+    specifically and to the journal so an operator sees how much a fast
+    round reused. Never a contract input.
+    """
+
+    cached: int = 0
+    fresh: int = 0
+
+    def with_hit(self) -> _UnitProvenance:
+        return _UnitProvenance(cached=self.cached + 1, fresh=self.fresh)
+
+    def with_miss(self) -> _UnitProvenance:
+        return _UnitProvenance(cached=self.cached, fresh=self.fresh + 1)
+
+
+def _record_provenance(
+    provenance: dict[str, _UnitProvenance] | None,
+    generation_id: str,
+    *,
+    cached: bool,
+) -> None:
+    """Fold one board unit's cached/fresh outcome into the per-gen tally."""
+    if provenance is None:
+        return
+    current = provenance.get(generation_id, _UnitProvenance())
+    provenance[generation_id] = current.with_hit() if cached else current.with_miss()
+
+
+async def _run_unit_cache_first(
+    *,
+    adapter: Any,
+    generation: Generation,
+    entry: BoardEntry,
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    side: str,
+    replicate_index: int = 0,
+    match_id: str = "",
+    force_fresh: bool = False,
+    provenance: dict[str, _UnitProvenance] | None = None,
+) -> LossProfile:
+    """Cache-first wrapper around :func:`_run_single` for ONE board unit.
+
+    The single choke point through which EVERY board unit — champion and
+    challenger, every structure (gauntlet / racing / swiss / elim /
+    round-robin), every round — is evaluated. Before executing the unit
+    it consults :func:`_resolve_cached_unit`:
+
+    * HIT → the persisted per-replicate result is reused; ``_run_single``
+      is NOT called (no agent run);
+    * MISS → ``_run_single`` runs the unit once, and the result is
+      persisted via :func:`_persist_unit_loss` so the next need is a hit.
+
+    ``force_fresh`` (the ``--mode full`` semantics) bypasses the cache
+    read: the unit is always re-run and re-persisted (noise re-sampling /
+    debugging). The cache is otherwise always-on — ``fast`` (the default)
+    is simply "do not force fresh".
+
+    ``provenance`` (when supplied) accumulates the per-generation
+    cached-vs-fresh tally for the round.
+    """
+    if not force_fresh:
+        cached = _resolve_cached_unit(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=generation.id,
+            entry_id=entry.id,
+            replicate_index=replicate_index,
+        )
+        if cached is not None:
+            _record_provenance(provenance, generation.id, cached=True)
+            return cached
+
+    loss = await _run_single(
+        adapter=adapter,
+        generation=generation,
+        entry=entry,
+        weights=weights,
+        config=config,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        side=side,
+        match_id=match_id,
+    )
+    _persist_unit_loss(
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        generation_id=generation.id,
+        entry_id=entry.id,
+        replicate_index=replicate_index,
+        loss=loss,
+    )
+    _record_provenance(provenance, generation.id, cached=False)
+    return loss
 
 
 async def _run_replicated(
@@ -1941,7 +2143,7 @@ async def _run_replicated(
     replicates: int,
     match_id: str = "",
     fast: bool = False,
-) -> tuple[dict[str, LossProfile], dict[str, LossProfile], str]:
+) -> tuple[dict[str, LossProfile], dict[str, LossProfile], str, dict[str, _UnitProvenance]]:
     """Run a paired board ``replicates`` times, averaging per-entry losses.
 
     The §9-lever-1 replication knob. ``replicates == 1`` is the current
@@ -1957,57 +2159,77 @@ async def _run_replicated(
     over it — so the per-run subprocess isolation, scoring, and failure
     surfacing are unchanged.
 
-    Fast-mode champion resolution (structure-agnostic)
-    --------------------------------------------------
-    When ``fast`` is set the ``left`` side is the tournament's CHAMPION,
-    and :func:`_resolve_cached_champion_losses` decides — via the SHARED
-    cached-or-run helper — whether its per-board scalars can be reused
-    from disk. On a cache HIT the champion is NOT executed at all: only
-    the challenger (``right``) runs each replicate, and the cached
-    champion profiles are paired with it. On a cache MISS (the
-    seed/first champion with no cached aggregate, or a racing subset not
-    yet covered) the duel DEGRADES to a full champion run once — which
-    re-writes the cache for subsequent rounds. ``replicates`` averages
-    only the live (challenger, and full-mode champion) runs; reused
-    cached champion profiles are constant across replicates.
+    Cache-first board-unit evaluation (structure-agnostic)
+    ------------------------------------------------------
+    Every board unit ``(generation, entry, replicate)`` of BOTH sides
+    routes through :func:`_run_unit_cache_first`, so the cache is the
+    universal evaluator — not a champion-only shortcut. ``fast`` (the
+    default ``--mode fast``) is the always-on cache: a unit already
+    persisted under this epoch/contract is reused; a genuine miss runs
+    once and is persisted for the next need. The champion (``left``) is
+    therefore reused if already evaluated under this epoch (its seed /
+    prior-round eval) and evaluated once WITH the field otherwise — and a
+    competitor's board run is reused across every pairing/round/structure
+    and across multiple ``--rounds`` in the same epoch.
 
-    Returns ``(left_losses, right_losses, champion_eval_mode)`` where the
-    mode is ``"fast"`` (cache reused), ``"fast-degraded"`` (fast asked,
-    no cache — champion run), or ``"full"`` (fast not requested).
+    ``fast=False`` is ``--mode full`` — it forces a fresh evaluation of
+    EVERY unit (``force_fresh``), re-running and re-persisting both sides
+    regardless of any cache (noise re-sampling / debugging).
+
+    Replicate-aware / incremental: each replicate index keys a distinct
+    cache slot, so requesting R replicates when r<R already exist runs
+    only the missing ``R-r`` (the cached samples are reused, never
+    re-run).
+
+    The returned ``champion_eval_mode`` is derived from the LEFT side's
+    cached-vs-fresh provenance, preserving the journal's existing
+    vocabulary: ``"full"`` when fast was not requested; ``"fast"`` when
+    every left unit was reused from the cache; ``"fast-degraded"`` when
+    fast was requested but at least one left unit had to run live (the
+    seed/first champion, or a not-yet-covered subset). The right side's
+    provenance does not affect the champion-eval label.
+
+    Returns ``(left_losses, right_losses, champion_eval_mode,
+    unit_provenance)`` where ``unit_provenance`` is the per-generation
+    cached-vs-fresh tally over both sides.
     """
-    cached_champion: dict[str, LossProfile] | None = None
-    if fast:
-        cached_champion = _resolve_cached_champion_losses(
-            generation=left_gen,
-            board=board,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-        )
+    force_fresh = not fast
+    replicate_count = max(1, replicates)
+    provenance: dict[str, _UnitProvenance] = {}
 
-    if fast and cached_champion is not None:
-        # Cache HIT: run ONLY the challenger; reuse the cached champion
-        # per-board scalars. The champion side is never executed.
-        runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
-        for _ in range(max(1, replicates)):
-            right_losses = await _run_board_units_fast(
-                adapter=adapter,
-                child_gen=right_gen,
-                board=board,
-                weights=weights,
-                config=config,
+    # Champion-eval provenance is decided from the cache state of the LEFT
+    # side BEFORE any unit runs: in fast mode the duel is "fast" iff every
+    # left unit (across every replicate slot it needs) is already
+    # persisted under this epoch — the champion was evaluated in a prior
+    # round / its seed scoring — so no left unit will run live. Otherwise
+    # at least one left unit must run → "fast-degraded". Full mode
+    # (force_fresh) always re-runs the champion → "full". This snapshot is
+    # taken pre-run because a MISS re-persists immediately; reading it
+    # afterwards would always look cached.
+    if force_fresh:
+        mode = "full"
+    else:
+        left_fully_cached = all(
+            _resolve_cached_unit(
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
+                generation_id=left_gen.id,
+                entry_id=entry.id,
+                replicate_index=r,
             )
-            runs.append((cached_champion, right_losses))
-        if len(runs) == 1:
-            return cached_champion, runs[0][1], "fast"
-        right_avg = _average_losses([r[1] for r in runs])
-        return cached_champion, right_avg, "fast"
+            is not None
+            for r in range(replicate_count)
+            for entry in board
+        )
+        mode = "fast" if left_fully_cached else "fast-degraded"
 
-    # Full champion run (full mode, or fast degraded to full on a cache
-    # miss). The champion + challenger run concurrently per board unit.
-    runs = []
-    for _ in range(max(1, replicates)):
+    runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
+    for replicate_index in range(replicate_count):
+        # Each replicate keys a distinct cache slot; the same board-unit
+        # runner handles champion + challenger cache-first, so an existing
+        # replicate is reused (incremental) and only missing slots run.
+        # Subprocess isolation, scoring, and failure surfacing are
+        # unchanged.
         left_losses, right_losses = await _run_board_units_full(
             adapter=adapter,
             parent_gen=left_gen,
@@ -2018,14 +2240,17 @@ async def _run_replicated(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             match_id=match_id,
+            replicate_index=replicate_index,
+            force_fresh=force_fresh,
+            provenance=provenance,
         )
         runs.append((left_losses, right_losses))
-    mode = "fast-degraded" if fast else "full"
+
     if len(runs) == 1:
-        return runs[0][0], runs[0][1], mode
+        return runs[0][0], runs[0][1], mode, provenance
     left_avg = _average_losses([r[0] for r in runs])
     right_avg = _average_losses([r[1] for r in runs])
-    return left_avg, right_avg, mode
+    return left_avg, right_avg, mode, provenance
 
 
 def _average_losses(
@@ -2131,7 +2356,7 @@ async def run_matchup(
         subset = set(board_subset)
         board = [e for e in board if e.id in subset]
 
-    left_losses, right_losses, champion_eval_mode = await _run_replicated(
+    left_losses, right_losses, champion_eval_mode, unit_provenance = await _run_replicated(
         adapter=adapter,
         left_gen=left_gen,
         right_gen=right_gen,
@@ -2170,6 +2395,7 @@ async def run_matchup(
         outcome=outcome,
         per_entry_losses=per_entry_losses,
         champion_eval_mode=champion_eval_mode,
+        unit_provenance=unit_provenance,
     )
 
 

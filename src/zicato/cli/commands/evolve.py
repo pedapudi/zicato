@@ -33,13 +33,20 @@ Usage::
         --harness-call-llm my_pkg.llms:harness_call_llm \\
         --auxiliary-call-llm my_pkg.llms:aux_call_llm
 
-The ``--mode`` flag picks between full A/B tournaments and inline
-fast-mode keep/discard. The default is ``fast``: the parent/champion
-is scored once and its cached aggregate (``gen_score.json``) is reused
-every round instead of being re-run, which is materially cheaper.
-Fast mode falls back to scoring the parent when no cached aggregate
-exists yet, so a fresh epoch's first round still works. Pass
-``--mode full`` to re-run both parent and child every round.
+The ``--mode`` flag picks between cache-first and force-fresh
+board-unit evaluation. The default is ``fast``: a board unit —
+``(generation, board_entry, replicate)`` under the epoch's frozen
+contract — is evaluated AT MOST ONCE and its persisted ``loss.json``
+is reused everywhere (every pairing, every round, every structure, the
+gate, later ``--rounds`` in the same epoch). The only genuine runs are
+cache misses. This generalizes the former champion-only shortcut: the
+champion is reused if it was already evaluated under this epoch
+(otherwise it is evaluated once WITH the field and then cached), and
+every challenger's board run is reused across all its pairings too. A
+fresh epoch (a contract change rolls a new epoch with new generations)
+is a clean miss — there is no cross-contract reuse. Pass ``--mode
+full`` to bypass the cache and force a fresh evaluation of every unit
+(noise re-sampling / debugging).
 
 The two ``--*-call-llm`` options accept dotted import paths in either
 ``pkg.mod:attr`` or ``pkg.mod.attr`` form — the same convention the
@@ -487,9 +494,11 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     default="fast",
     show_default=True,
     help=(
-        "fast (default) = child vs the champion's cached aggregate, "
-        "re-scoring the champion only when no cache exists yet; "
-        "full = re-run both parent and child every round."
+        "fast (default) = cache-first: every (generation, entry, "
+        "replicate) board unit is evaluated at most once and reused "
+        "across all pairings/rounds/structures; only cache misses run. "
+        "full = bypass the cache and force a fresh evaluation of every "
+        "unit (noise re-sampling / debugging)."
     ),
 )
 @click.option(

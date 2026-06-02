@@ -310,6 +310,64 @@ def test_fast_swiss_reuses_cached_champion(monkeypatch: pytest.MonkeyPatch, tmp_
     assert crowned_oc["champion_eval_mode"] == "fast"
 
 
+def test_swiss_runs_each_gen_entry_at_most_once_over_multiple_rounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A Swiss field over ``rounds_n > 1`` runs each (gen, entry) at most once.
+
+    A 2-challenger Swiss with ``rounds_n=2`` schedules MULTIPLE round-robin
+    rounds plus the champion-gate — every competitor appears in several
+    pairings. The cache-first board-unit runner executes each DISTINCT
+    ``(gen, entry)`` unit exactly once; every later pairing/round/the gate
+    resolves its competitors from the persisted ``loss.json``. With a
+    single-entry board the distinct unit count is exactly the number of
+    competitors (champion + challengers), NOT pairings x sides.
+    """
+    from collections import Counter
+
+    from tests.test_example_target_1_racing import _install_caching_telemetry_stubs
+
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=2)
+    _install_stub_adapter_factory(monkeypatch)
+    # The caching stub persists each run's loss.json and logs every
+    # actually-executed generation — a cache HIT never reaches it, so the
+    # log IS the board-unit execution count.
+    run_log: list[str] = []
+    _install_caching_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+        champion_run_log=run_log,
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_valid_proposer_response(), _valid_proposer_response()]
+            ),
+            # fast (the default) is the always-on cache; assert it explicitly.
+            fast_mode=True,
+        )
+    )
+
+    # The board has ONE entry; the field is v0 + v1 + v2 = 3 competitors. A
+    # naive per-pairing-per-round count would be far higher (multiple
+    # round-robin rounds + the gate, two sides each). Cache-first collapses
+    # it to exactly the distinct competitors, each run ONCE: v0 runs once
+    # (no pre-seed, so the first pairing it appears in seeds its cache via
+    # degrade-to-full) and is reused thereafter; each challenger runs once
+    # across every round + the gate.
+    counts = Counter(run_log)
+    assert all(c == 1 for c in counts.values()), counts
+    assert set(counts) == {"v0", "v1", "v2"}, counts
+    assert outcome.tournament_decision == "promoted"
+
+
 def test_gauntlet_does_not_take_multi_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A gauntlet epoch (field_size == 1) keeps the single-challenger path
     — proving the dispatch only diverts when the field is wider."""

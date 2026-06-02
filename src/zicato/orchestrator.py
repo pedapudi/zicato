@@ -1395,14 +1395,17 @@ async def _evolve_multi_challenger(
         ]
         return champion, challengers
 
-    # --- Champion-eval mode provenance. The runtime fast knob is applied
-    # per matchup by run_matchup, which reports back the resolved mode
-    # (``fast`` = cached champion reused, ``fast-degraded`` = no cache so
-    # the champion ran once, ``full`` = fast not requested). We collect
-    # the resolved modes across every matchup so the journal can record
-    # how the champion was evaluated this round — a RUNTIME provenance
-    # field, never a contract input.
-    champion_eval_modes: list[str] = []
+    # --- Champion-eval mode provenance. With the cache-first board-unit
+    # runner, ``run_matchup`` reports a per-generation cached-vs-fresh
+    # tally (``unit_provenance``) over BOTH sides of each duel. The
+    # round-level champion-eval mode is attributed to the CHAMPION
+    # (``parent_id``) specifically: a challenger-vs-challenger duel runs
+    # challengers fresh (they are new generations and MUST run), which
+    # says nothing about champion reuse. We therefore accumulate only the
+    # champion's tally across every matchup it appears in — a RUNTIME
+    # provenance field, never a contract input.
+    champion_cached_units = 0
+    champion_fresh_units = 0
 
     # --- run_matchup: one duel via the board-unit runner + unchanged gate.
     async def _run_matchup(m: Matchup) -> MatchupResult:
@@ -1431,7 +1434,14 @@ async def _evolve_multi_challenger(
             total_rounds=total_rounds,
             match_id=m.matchup_id,
         )
-        champion_eval_modes.append(result.champion_eval_mode)
+        # Attribute the CHAMPION's cached-vs-fresh board-unit tally for
+        # this matchup (if the champion played in it). ``nonlocal`` so the
+        # closure mutates the round-level accumulators.
+        nonlocal champion_cached_units, champion_fresh_units
+        champ_prov = result.unit_provenance.get(parent_id)
+        if champ_prov is not None:
+            champion_cached_units += champ_prov.cached
+            champion_fresh_units += champ_prov.fresh
         # Cache both sides' aggregates for fast-mode reuse, mirroring the
         # gauntlet path's _cache_gen_score calls.
         _cache_gen_score(workspace_root, epoch_id, m.left.generation_id, result.parent_agg)
@@ -1531,13 +1541,17 @@ async def _evolve_multi_challenger(
     parent_scalar = float(champion_agg.get("scalar", 0.0)) if champion_agg else 0.0
 
     # Resolve a single round-level champion-eval provenance from the
-    # per-matchup modes run_matchup reported. ``fast-degraded`` dominates
-    # (the champion ran live at least once this round to seed the cache);
-    # otherwise ``fast`` iff every matchup reused the cache; else
-    # ``full``. Recorded on each challenger's OutcomeRecord for the
-    # journal — never a contract input.
+    # CHAMPION's accumulated cached-vs-fresh board-unit tally. ``full``
+    # when fast was not requested; ``fast`` when the champion was reused
+    # for every board unit it needed (no fresh champion run this round);
+    # ``fast-degraded`` when the champion had to run live at least once
+    # (the seed/first champion, or a not-yet-covered subset) to seed the
+    # cache. Recorded on each challenger's OutcomeRecord for the journal —
+    # never a contract input.
     resolved_champion_eval_mode = _resolve_round_champion_mode(
-        champion_eval_modes, fast_requested=fast_mode
+        champion_cached_units,
+        champion_fresh_units,
+        fast_requested=fast_mode,
     )
 
     finalised_by_id: dict[str, Experiment] = {}
@@ -1636,29 +1650,38 @@ async def _evolve_multi_challenger(
     )
 
 
-def _resolve_round_champion_mode(modes: list[str], *, fast_requested: bool) -> str:
-    """Collapse per-matchup champion-eval modes into one round-level mode.
+def _resolve_round_champion_mode(
+    champion_cached_units: int,
+    champion_fresh_units: int,
+    *,
+    fast_requested: bool,
+) -> str:
+    """Collapse the CHAMPION's cached-vs-fresh tally into a round-level mode.
 
-    ``modes`` is what each :func:`zicato.tournament.runner.run_matchup`
-    reported (``"fast"`` / ``"fast-degraded"`` / ``"full"``). The
-    round-level provenance is:
+    With the cache-first board-unit runner, the champion's reuse is
+    measured directly: ``champion_cached_units`` board units were reused
+    from the cache and ``champion_fresh_units`` were executed live across
+    every matchup the champion appeared in this round. The round-level
+    provenance is:
 
-    * ``"full"`` when fast was not requested (or no matchup ran);
-    * ``"fast-degraded"`` when fast was requested but at least one matchup
-      had to run the champion live for lack of a cache (the seed/first
+    * ``"full"`` when fast was not requested (or the champion never
+      played a board unit this round);
+    * ``"fast-degraded"`` when fast was requested but the champion had to
+      run at least one board unit live for lack of a cache (the seed/first
       champion, or a not-yet-covered racing subset);
-    * ``"fast"`` when fast was requested and EVERY matchup reused the
-      champion's cached per-board scalars.
+    * ``"fast"`` when fast was requested and EVERY champion board unit was
+      reused from the cache (no fresh champion run this round).
 
     A RUNTIME provenance value only — it is recorded in the journal and
     never folds into the contract hash.
     """
-    if not fast_requested or not modes:
+    if not fast_requested:
         return "full"
-    if any(m == "fast-degraded" for m in modes):
+    if champion_fresh_units > 0:
         return "fast-degraded"
-    if all(m == "fast" for m in modes):
+    if champion_cached_units > 0:
         return "fast"
+    # Fast requested but the champion played no board unit this round.
     return "full"
 
 

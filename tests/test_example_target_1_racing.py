@@ -67,35 +67,47 @@ def _preseed_champion_cache(
     champion_id: str,
     drift_loss: float,
     pass_fail: bool,
+    replicates: int = 1,
 ) -> None:
-    """Write the champion's full-board ``loss.json`` (the fast cache).
+    """Write the champion's full-board ``loss.json`` (the cache-first store).
+
+    Models the per-board (per-replicate) ``loss.json`` a PRIOR full round
+    under this epoch/contract would have persisted for the champion. The
+    cache-first board-unit runner reuses each ``(gen, entry, replicate)``
+    unit, so a duel that requests ``R`` replicates needs all ``R`` of the
+    champion's replicate slots present to reuse it without a fresh run —
+    exactly what a prior full round at the same ``replicates`` produced.
+    ``replicates`` therefore defaults to 1 (single-slot) but is set to the
+    contract's value for a replicated structure.
 
     Must run BEFORE ``_install_caching_telemetry_stubs`` swaps the reducer
     in ``sys.modules`` — it imports the REAL reducer's writer.
     """
     from zicato.board.jsonl import load_board as _load_board_file
     from zicato.core.types import LossProfile
-    from zicato.core.workspace import board_path, loss_profile_path
+    from zicato.core.workspace import board_path
     from zicato.telemetry.reducer import write_loss_profile
+    from zicato.tournament.runner import _unit_loss_path
 
     for entry in _load_board_file(board_path(workspace, epoch_id)):
-        write_loss_profile(
-            LossProfile(
-                run_id=f"r-{champion_id}-{entry.id}",
-                entry_id=entry.id,
-                generation_id=champion_id,
-                epoch_id=epoch_id,
-                drift_counts=(),
-                plan_revisions=0,
-                task_failure_ratio=0.0,
-                runtime_ms=100,
-                wall_clock_budget_exceeded=False,
-                expectation_result=None,
-                drift_loss=drift_loss,
-                pass_fail=pass_fail,
-            ),
-            loss_profile_path(workspace, epoch_id, champion_id, entry.id),
-        )
+        for replicate_index in range(max(1, replicates)):
+            write_loss_profile(
+                LossProfile(
+                    run_id=f"r-{champion_id}-{entry.id}-r{replicate_index}",
+                    entry_id=entry.id,
+                    generation_id=champion_id,
+                    epoch_id=epoch_id,
+                    drift_counts=(),
+                    plan_revisions=0,
+                    task_failure_ratio=0.0,
+                    runtime_ms=100,
+                    wall_clock_budget_exceeded=False,
+                    expectation_result=None,
+                    drift_loss=drift_loss,
+                    pass_fail=pass_fail,
+                ),
+                _unit_loss_path(workspace, epoch_id, champion_id, entry.id, replicate_index),
+            )
 
 
 def _install_caching_telemetry_stubs(
@@ -419,7 +431,12 @@ def test_fast_racing_reuses_cached_champion_and_records_provenance(
     _install_stub_adapter_factory(monkeypatch)
     # Pre-seed the champion (v0) cache the way a prior full round would —
     # BEFORE the reducer stub is installed (it imports the real writer).
-    _preseed_champion_cache(workspace, epoch_id, champion_id="v0", drift_loss=2.0, pass_fail=True)
+    # The racing contract requests replicates=2, so a prior full round
+    # would have persisted BOTH replicate slots for every champion unit;
+    # seed both so the cache-first runner reuses the champion outright.
+    _preseed_champion_cache(
+        workspace, epoch_id, champion_id="v0", drift_loss=2.0, pass_fail=True, replicates=2
+    )
     # Strictly-descending challenger losses keep the rung cuts deterministic;
     # v1 is the best arm.
     champion_runs: list[str] = []
