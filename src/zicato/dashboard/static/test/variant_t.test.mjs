@@ -3533,6 +3533,57 @@ test('Tier1 (cross-epoch): publication view scopes lineage/figures to the viewed
   assert(!/rejected/.test(host.textContent) || host.textContent.includes('racing'), 'an unscored gen reads racing, not a default rejected');
 });
 
+// ---- HEADER SCOPING: the epoch view's H1 + STATE pill read the ROUTED epoch.
+//
+// THE BUG. Viewing a NON-current epoch (e0, closed) while e1 is the live/current
+// epoch leaked the CURRENT epoch into the epoch view's HEADER: the `Epoch <id>`
+// H1 read e1's id and the STATE pill read e1's "open" — even though the
+// breadcrumb, tree, structure ladder, heatmap and gen-derived stats correctly
+// showed e0. Root cause: the header read `D.epoch()` (always the current epoch)
+// instead of the routed `D.epoch(epochId)`. With per-epoch `?epoch=<id>`
+// contracts (e0 closed → "closed" + e0's objective; e1 open → "open"), the H1
+// and STATE pill must now match the ROUTED epoch, not the current one.
+test('Tier1 (header scoping): the epoch view H1 + STATE pill read the ROUTED epoch, not the current one', async () => {
+  freshState();
+  // distinct per-epoch contracts: e0 (SC_OLD) is closed with its own objective;
+  // e1 (SC_NEW) is the live/current epoch, open. The scoped `?epoch=<id>` reads
+  // return each epoch's own contract; bare `D.epoch()` would return e1 (current).
+  const F = scopeFixture();
+  F[`/api/epoch?epoch=${SC_OLD}`] = { ...F[`/api/epoch?epoch=${SC_OLD}`], closed: true, goal: 'Sharpen e0’s drift floor.' };
+  F[`/api/epoch?epoch=${SC_NEW}`] = { ...F[`/api/epoch?epoch=${SC_NEW}`], closed: false, goal: 'e1 live objective.' };
+  // bare `/api/epoch` (the CURRENT epoch) resolves to e1 — a leak would surface
+  // e1's id/state/objective in the e0 header.
+  F['/api/epoch'] = F[`/api/epoch?epoch=${SC_NEW}`];
+  installFixtureMap(F);
+
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  // route AT e0 (the NON-current epoch) while e1 is current.
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: SC_OLD });
+
+  const h1 = allByClass(host, 'dn-h1')[0];
+  assert(h1, 'the epoch H1 rendered');
+  assertEqual(h1.textContent, `Epoch ${SC_OLD}`, 'the H1 reads the ROUTED epoch (e0), not the current one (e1)');
+  assert(!h1.textContent.includes(SC_NEW), 'the current epoch id (e1) does NOT leak into the e0 header');
+
+  // the STATE pill (the stat row's "state" tile) reads e0's "closed", not e1's "open".
+  const stats = allByClass(host, 'dn-stat').map((n) => n.textContent);
+  assert(stats.some((t) => t.includes('closed') && t.includes('state')), 'the STATE pill reads e0’s "closed"');
+  assert(!stats.some((t) => t.includes('open') && t.includes('state')), 'the STATE pill is NOT e1’s "open"');
+
+  // the OBJECTIVE is e0's, not e1's.
+  assert(host.textContent.includes('Sharpen e0’s drift floor.'), 'the objective is e0’s');
+  assert(!host.textContent.includes('e1 live objective.'), 'e1’s objective does NOT leak into the e0 header');
+
+  // and switching the route to e1 flips the header to e1 / open (the converse).
+  const host2 = document.createElement('div');
+  await epoch.render(host2, { navigate() {}, href: router.href }, { epochId: SC_NEW });
+  assertEqual(allByClass(host2, 'dn-h1')[0].textContent, `Epoch ${SC_NEW}`, 'routing to e1 heads with e1');
+  const stats2 = allByClass(host2, 'dn-stat').map((n) => n.textContent);
+  assert(stats2.some((t) => t.includes('open') && t.includes('state')), 'e1’s STATE pill reads "open"');
+  assert(!stats2.some((t) => t.includes('closed') && t.includes('state')), 'e1 is not "closed"');
+});
+
 test('Tier2 (Class B): the tree tags an unscored child PENDING, not rejected', () => {
   const host = document.createElement('div');
   const model = {

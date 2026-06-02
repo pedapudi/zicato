@@ -24,12 +24,22 @@ import { structurePill, isNonGauntlet, structureLabel, reconstructRacing, normal
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
 
-  const [ep, lin, traj, bracket] = await Promise.all([D.epoch(), D.lineage(), D.scoreTrajectory(), D.bracket()]);
+  // Class A — HEADER SCOPING: derive the VIEWED epoch from the route param
+  // FIRST, then fetch its contract via the epoch-SCOPED accessor (`?epoch=<id>`)
+  // — NEVER bare `D.epoch()`, which always returns the CURRENT epoch. The H1,
+  // the OBJECTIVE, the STATE (open/closed) pill, the structure pill, the board,
+  // and every stat below read from THIS scoped contract, so viewing e0 shows
+  // e0's identity/state/objective even while e1 is the live epoch. The lineage /
+  // trajectory / bracket reads are likewise scoped to the routed id below.
+  const routeEpoch = (params && params.epochId) || null;
+  const [ep, lin, traj, bracket] = await Promise.all([
+    D.epoch(routeEpoch), D.lineage(), D.scoreTrajectory(routeEpoch), D.bracket(routeEpoch),
+  ]);
   if (!ep || ep.epoch_id == null) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Epoch' }), empty('No current epoch.')]);
     return;
   }
-  const epochId = ep.epoch_id;
+  const epochId = routeEpoch || ep.epoch_id;
   const experiments = Array.isArray(ep.experiments) ? ep.experiments : [];
   const board = Array.isArray(ep.board) ? ep.board : [];
 
