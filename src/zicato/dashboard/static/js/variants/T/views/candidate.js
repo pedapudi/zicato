@@ -130,6 +130,33 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const pe = await D.perEntry(epochId, genId);
   const entries = (pe && Array.isArray(pe.entries)) ? pe.entries : [];
 
+  // The CHAMPION's per-board loss on the SAME boards/slice — so each lifecycle
+  // circle, and the Σ node, can show candidate-vs-champion · Δ (the comparison
+  // the gate actually performs). Matched by entry_id. When the candidate IS the
+  // champion (or there is no champion / no parent), there is nothing to compare.
+  let championLoss = {}, championSigma = null;
+  if (championId && championId !== genId && !baseline) {
+    const champPe = await D.perEntry(epochId, championId);
+    const champEntries = (champPe && Array.isArray(champPe.entries)) ? champPe.entries : [];
+    // representative (last) champion loss per entry_id — the racing-final /
+    // full-board run, mirroring the lifecycle node's representative pick.
+    const champByEntry = new Map();
+    for (const ce of champEntries) {
+      if (ce && ce.entry_id != null && svg.isNum(ce.drift_loss)) champByEntry.set(ce.entry_id, ce.drift_loss);
+    }
+    // restrict to the candidate's slice (its sampled boards) so Σ aligns.
+    const sliceIds = new Set(entries.filter((e) => e && e.entry_id != null).map((e) => e.entry_id));
+    let cs = 0, any = false;
+    for (const id of sliceIds) {
+      if (champByEntry.has(id)) { championLoss[id] = champByEntry.get(id); cs += champByEntry.get(id); any = true; }
+    }
+    championSigma = any ? cs : null;
+  }
+  // the candidate's Σ over its own slice (matches the lifecycle total).
+  let candidateSigma = null;
+  for (const e of entries) if (e && svg.isNum(e.drift_loss)) candidateSigma = (candidateSigma || 0) + e.drift_loss;
+  const deltaSigma = (svg.isNum(candidateSigma) && svg.isNum(championSigma)) ? candidateSigma - championSigma : null;
+
   // the candidate's PATH through the tournament rungs (rung 0 → rung 1 →
   // racing-final, each Δ + won/cut) — relates board runs to the rounds even
   // when the per-run records carry no rung tags. null for a gauntlet candidate.
@@ -150,6 +177,13 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const gates = await Promise.all(gateSpecs.map((k) => D.gate(epochId, k.champ, k.chall)));
   const primaryGate = gates.find((g, i) => g && gateSpecs[i].role === 'as challenger') || null;
   const primaryDelta = primaryGate && svg.isNum(primaryGate.delta_scalar) ? primaryGate.delta_scalar : null;
+  // The gate EXPLANATION for the lifecycle GATE node: which of the 3 rules was
+  // the primary driver + the decisive numbers, read from the SAME gate payload
+  // the Promote-gate panel renders (D.gate). The deciding rule is the first
+  // rule that FIRED / failed (rules short-circuit in order); the scalar-margin
+  // detail carries "needs ≤ <margin>", a monotonicity rule carries the
+  // regressed predicate / namespace in its detail.
+  const gateExplain = primaryGate ? deriveGateExplain(primaryGate) : null;
 
   let exps = null, judges = null, drillRow = null;
   if (entryParam) {
@@ -163,7 +197,48 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   return {
     node, baseline, decision, mpts, entries, mine, gateSpecs, gates,
     primaryDelta, championId, championScalar, scalarByGen, progression,
+    championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow,
+  };
+}
+
+// Read one gate payload (D.gate) into the lifecycle GATE node's explanation:
+// the deciding rule (first fired / failed, since rules short-circuit in order),
+// its label, the Δ scalar, the promote margin (parsed from the scalar-margin
+// rule's detail), and — for a monotonicity rejection — the regressed
+// predicate / namespace (parsed from that rule's detail). This is the data that
+// resolves "smaller Σ but rejected": a challenger can lose on rule 2 / 3 even
+// when its scalar is better.
+function deriveGateExplain(gate) {
+  const rules = Array.isArray(gate.rules) ? gate.rules : [];
+  const decision = normaliseDecision(gate) || 'pending';
+  // the deciding rule: the first that fired, else the first failed, else the
+  // first non-pass — rules short-circuit in declared order.
+  const deciding = rules.find((r) => r && r.fired)
+    || rules.find((r) => r && String(r.status) === 'fail')
+    || rules.find((r) => r && String(r.status) !== 'pass' && String(r.status) !== 'not_reached')
+    || null;
+  const deltaScalar = svg.isNum(gate.delta_scalar) ? gate.delta_scalar : null;
+  let margin = null, regressed = null;
+  if (deciding && deciding.detail) {
+    const det = String(deciding.detail);
+    // scalar-margin detail carries "needs ≤ -0.01" (the promote margin).
+    const mm = /needs\s*[≤<]=?\s*(-?\d+(?:\.\d+)?)/i.exec(det);
+    if (mm) margin = parseFloat(mm[1]);
+    // a monotonicity detail names the regressed predicate / namespace, e.g.
+    // "regressed `no_fabricated_numbers`" or "namespace `agent.tools` regressed".
+    const rb = /`([^`]+)`/.exec(det);
+    if (rb) regressed = rb[1];
+  }
+  // the gate's own primary_driver (a judge name) is the fallback regressed
+  // identifier when a monotonicity rule named no predicate in its detail.
+  if (!regressed && gate.primary_driver && gate.primary_driver.judge) regressed = gate.primary_driver.judge;
+  return {
+    decision,
+    decidingRule: deciding ? (deciding.id || null) : null,
+    decidingLabel: deciding ? (deciding.label || deciding.id || null) : null,
+    deltaScalar, margin, regressed,
+    reason: gate.reason || null,
   };
 }
 
@@ -173,6 +248,15 @@ function candidateDigest(s) {
     champScalar: svg.isNum(s.championScalar) ? s.championScalar.toFixed(3) : null,
     delta: svg.isNum(s.primaryDelta) ? s.primaryDelta.toFixed(3) : null,
     mpts: s.mpts,
+    // the candidate-vs-champion comparison + gate-rule explanation surfaced on
+    // the lifecycle DAG — part of the digest so a change repaints (no flashing).
+    champLoss: s.championLoss ? Object.keys(s.championLoss).sort().map((k) => [k, s.championLoss[k].toFixed(3)]) : null,
+    candSigma: svg.isNum(s.candidateSigma) ? s.candidateSigma.toFixed(3) : null,
+    champSigma: svg.isNum(s.championSigma) ? s.championSigma.toFixed(3) : null,
+    deltaSigma: svg.isNum(s.deltaSigma) ? s.deltaSigma.toFixed(3) : null,
+    gateExplain: s.gateExplain ? [s.gateExplain.decidingRule, s.gateExplain.decision,
+      svg.isNum(s.gateExplain.deltaScalar) ? s.gateExplain.deltaScalar.toFixed(3) : null,
+      svg.isNum(s.gateExplain.margin) ? s.gateExplain.margin.toFixed(3) : null, s.gateExplain.regressed] : null,
     entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null]),
     progression: s.progression && Array.isArray(s.progression.stages)
       ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
@@ -226,12 +310,16 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
   dagCard.appendChild(lifecycleDag({
     genId, parentId: node.parent, baseline, promoted: node.promoted, decision: s.decision,
     deltaScalar: s.primaryDelta, patchPoints: s.mpts, entries: s.entries,
+    // candidate-vs-champion comparison (so the circles + Σ explain the Δ the
+    // gate sees) and the gate-rule explanation (which of the 3 rules decided).
+    championId, championLoss: s.championLoss, championSigma: s.championSigma,
+    candidateSigma: s.candidateSigma, deltaSigma: s.deltaSigma, gateExplain: s.gateExplain,
     width: cmpId ? 560 : 900, height: Math.max(Math.round(300 * dt.sizeScale), Math.round(120 * dt.sizeScale) + s.entries.length * dt.dagRowStep),
     onEntry: (eid) => ctx.navigate('candidate', { epochId, gen: genId, entry: eid }, opts),
     onRun: (eid) => ctx.navigate('board', { epochId, entry: eid, gen: genId }),
     onPatch: baseline ? null : () => ctx.navigate('diff', { epochId, gen: genId }),
   }));
-  dagCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: baseline ? 'parent → patch → board (one node per entry, colour = pass/fail/timeout) → Σ → gate → terminal · click a board node → its drill-down' : 'parent → patch → board → Σ → gate → terminal · click the PATCH node → this candidate’s side-by-side diff · hover/click a re-raced board node → its per-run losses (by rung); click a run → its transcript' }));
+  dagCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: baseline ? 'parent → patch → board (one node per entry, colour = pass/fail/timeout) → Σ → gate → terminal · click a board node → its drill-down' : 'parent → patch → board → Σ → gate → terminal · each board circle shows this candidate’s drift loss vs the champion’s on the same board (Δ, positive = worse) · Σ sums those losses on the slice · the GATE compares Σ-vs-champion under a 3-rule test (hover it to see which rule decided) · click the PATCH node → this candidate’s side-by-side diff · hover/click a re-raced board node → its per-run losses (by rung)' }));
   host.appendChild(section('Lifecycle · cause → effect → verdict', dagCard));
 
   // ---- per-board scoring dot-plot ----

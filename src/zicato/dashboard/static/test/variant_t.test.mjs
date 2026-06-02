@@ -2819,6 +2819,157 @@ test('lifecycle BOARD node: with NO rung tags (legacy data) the per-run losses s
     'no rung labels are fabricated when the records carry no match_id/rung');
 });
 
+// ====================================================================
+// Lifecycle DAG — SELF-EXPLANATORY per-board loss, Σ aggregation, and the
+// gate Δ-vs-champion decision. The motivating confusion: a candidate whose
+// Σ "looks smaller" still gets rejected because the gate compares
+// challenger-vs-champion (Δ, positive = worse) on the SAME boards and applies
+// a 3-rule test. We surface the champion comparison + the deciding rule.
+// ====================================================================
+
+test('lifecycle BOARD circle: exposes the champion comparison (champion loss + signed Δ) for its board', () => {
+  const entries = [
+    { entry_id: 'waffles_single', drift_loss: 60.5, pass_fail: 0 },
+    { entry_id: 'picky_stakeholder_emulated', drift_loss: 642.5, pass_fail: 0 },
+  ];
+  // the champion scored LOWER on both boards → the challenger's Δ is positive
+  // (worse) on each, even though one of its raw losses (60.5) is identical.
+  const championLoss = { waffles_single: 60.5, picky_stakeholder_emulated: 105.5 };
+  const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360,
+    championId: 'v0', championLoss });
+  const nodes = boardNodesOf(svgNode);
+  const byKey = {}; for (const n of nodes) byKey[n.getAttribute('data-key')] = n;
+
+  // each circle carries a candidate-vs-champion sublabel with the champion loss
+  // and the signed Δ (challenger − champion).
+  const picky = childByClass(byKey['picky_stakeholder_emulated'], 'ezn-board-cmp');
+  assert(picky, 'a board circle carries a champion-comparison sublabel');
+  assertEqual(picky.getAttribute('data-champ-loss'), svg.fmt(105.5, 1), 'the sublabel exposes the champion’s loss on this board');
+  assertEqual(picky.getAttribute('data-delta'), svg.fmtSigned(642.5 - 105.5, 1), 'the sublabel exposes the signed Δ (challenger − champion)');
+  assert((picky.getAttribute('class') || '').includes('ezn-cmp-worse'), 'a positive Δ (worse than champion) is coloured with the worse token');
+  assert(/champ/.test(picky.textContent) && /Δ/.test(picky.textContent), 'the sublabel reads "champ N · Δ ±X"');
+
+  // the tooltip also spells out the comparison + the "lower is better" cue.
+  const tip = byKey['waffles_single'].childNodes[0];
+  assert(/lower is better/.test(tip.textContent), 'the circle tooltip states drift loss is lower-is-better');
+  assert(/champion v0/.test(tip.textContent) && /Δ/.test(tip.textContent), 'the circle tooltip names the champion + the Δ');
+
+  // an EVEN board (identical loss) is neither worse nor better.
+  const even = dag.lifecycleDag({ genId: 'v1', parentId: 'v0',
+    entries: [{ entry_id: 'b', drift_loss: 60.5, pass_fail: 0 }], decision: 'rejected',
+    championId: 'v0', championLoss: { b: 60.5 } });
+  const evCmp = childByClass(boardNodesOf(even)[0], 'ezn-board-cmp');
+  assert((evCmp.getAttribute('class') || '').includes('ezn-cmp-even'), 'an equal-loss board is coloured even (neither worse nor better)');
+});
+
+test('lifecycle Σ node: exposes candidate-Σ vs champion-Σ and the Δ between them (what the gate sees)', () => {
+  const entries = [
+    { entry_id: 'waffles_single', drift_loss: 60.5, pass_fail: 0 },
+    { entry_id: 'picky_stakeholder_emulated', drift_loss: 642.5, pass_fail: 0 },
+  ];
+  const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360,
+    championId: 'v0', candidateSigma: 703.0, championSigma: 166.0, deltaSigma: 537.0 });
+  // the Σ node carries the candidate Σ, the champion Σ, and the Δ.
+  const agg = svgNode.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'g' && n.getAttribute('data-cand-sigma') != null)[0];
+  assert(agg, 'the Σ node renders');
+  assertEqual(agg.getAttribute('data-cand-sigma'), svg.fmt(703.0, 1), 'the Σ node exposes the candidate Σ over the slice');
+  assertEqual(agg.getAttribute('data-champ-sigma'), svg.fmt(166.0, 1), 'the Σ node exposes the champion Σ over the same slice');
+  assertEqual(agg.getAttribute('data-delta-sigma'), svg.fmtSigned(537.0, 1), 'the Σ node exposes the Δ (candidate − champion) the gate acts on');
+  assert((agg.getAttribute('class') || '').includes('ezn-cmp-worse'), 'a positive Σ Δ tints the node as worse');
+  const title = agg.childNodes.filter((n) => n.localName === 'title')[0];
+  assert(title && /summed over this rung’s board slice/.test(title.textContent), 'the Σ tooltip explains the aggregation over the slice');
+  assert(title && /SAME boards/.test(title.textContent), 'the Σ tooltip links Σ→GATE: the gate compares these scalars on the same boards');
+});
+
+test('lifecycle GATE node: names the deciding rule + the Δ — a POSITIVE Δ rejection explains "worse than champion"', () => {
+  const entries = [{ entry_id: 'b', drift_loss: 100, pass_fail: 0 }];
+  const gateExplain = { decision: 'rejected', decidingRule: 'scalar_margin', decidingLabel: 'Scalar margin',
+    deltaScalar: 75.71, margin: -0.01, regressed: null, reason: 'challenger regressed: loss rose by 75.71' };
+  const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360,
+    deltaScalar: 75.71, gateExplain });
+  const gate = svgNode.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).includes('ezn-gate-node'))[0];
+  assert(gate, 'the GATE node carries the gate-node marker');
+  assertEqual(gate.getAttribute('data-deciding-rule'), 'scalar_margin', 'the GATE node names the deciding rule');
+  assertEqual(gate.getAttribute('data-delta-scalar'), svg.fmtSigned(75.71, 2), 'the GATE node carries the decisive Δ scalar');
+  assertEqual(gate.getAttribute('data-margin'), svg.fmt(-0.01, 2), 'the GATE node carries the promote margin');
+  const title = gate.childNodes.filter((n) => n.localName === 'title')[0];
+  assert(title, 'the GATE node carries an explanatory tooltip');
+  assert(/3-rule/.test(title.textContent), 'the tooltip frames the gate as a 3-rule test');
+  assert(/SCALAR-MARGIN rule/i.test(title.textContent), 'the tooltip names the scalar-margin rule as the decider');
+  assert(/worse than champion/.test(title.textContent), 'a positive-Δ rejection explains it is WORSE than the champion');
+  assert(/\+75\.7/.test(title.textContent), 'the tooltip shows the decisive +Δ');
+});
+
+test('lifecycle GATE node: a MONOTONICITY rejection explains the regressed predicate even when the scalar is BETTER', () => {
+  const entries = [{ entry_id: 'b', drift_loss: 10, pass_fail: 0 }];
+  // scalar is BETTER (Δ negative) yet the candidate is rejected because it
+  // regressed a previously-passing predicate (rule 2). This is the "smaller Σ
+  // but rejected" case made legible.
+  const gateExplain = { decision: 'rejected', decidingRule: 'pass_rate_monotonicity', decidingLabel: 'Pass-rate monotonicity',
+    deltaScalar: -5.0, margin: null, regressed: 'no_fabricated_numbers', reason: 'regressed a passing predicate' };
+  const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360,
+    deltaScalar: -5.0, gateExplain });
+  const gate = svgNode.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).includes('ezn-gate-node'))[0];
+  assertEqual(gate.getAttribute('data-deciding-rule'), 'pass_rate_monotonicity', 'the deciding rule is the monotonicity rule');
+  assertEqual(gate.getAttribute('data-regressed'), 'no_fabricated_numbers', 'the GATE node carries the regressed predicate');
+  const title = gate.childNodes.filter((n) => n.localName === 'title')[0];
+  assert(/Scalar may be better, BUT/.test(title.textContent), 'the tooltip says the scalar is better BUT it still failed a rule');
+  assert(/no_fabricated_numbers/.test(title.textContent), 'the tooltip names the regressed predicate');
+  assert(/rule 2/.test(title.textContent), 'the tooltip identifies it as the pass-rate-monotonicity rule (rule 2)');
+});
+
+test('lifecycle DAG: a KEY beneath the figure states the circle / Σ / gate-Δ semantics (self-explanatory), and is omitted for a baseline', () => {
+  const entries = [{ entry_id: 'b', drift_loss: 10, pass_fail: 0 }];
+  const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360, championId: 'v0' });
+  const key = svgNode.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-dag-key'))[0];
+  assert(key, 'the DAG carries a key/legend beneath the figure');
+  const t = key.textContent;
+  assert(/per-board drift loss/.test(t) && /lower better/.test(t), 'the key states circles = per-board drift loss (lower better)');
+  assert(/Σ = their sum/.test(t), 'the key states Σ = the sum of those losses on the slice');
+  assert(/challenger − champion/.test(t) && /positive = worse/.test(t), 'the key states GATE Δ = challenger − champion (positive = worse)');
+  assert(/no pass-rate\/namespace regression/.test(t), 'the key states promote requires no pass-rate/namespace regression');
+  // a baseline (seed) has no gate, so no key.
+  const seed = dag.lifecycleDag({ genId: 'v0', parentId: null, baseline: true, entries, decision: 'baseline', height: 360 });
+  assert(!seed.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-dag-key'))[0],
+    'the baseline DAG omits the gate key (it has no gate)');
+});
+
+test('lifecycle DAG (integration): the candidate view feeds the champion comparison + gate-rule explanation into the DAG — "smaller-looking" rejected v1 explains worse-than-champion', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  // v1 is the rejected challenger vs champion v0; gate fired the scalar-margin
+  // rule with Δ +75.71 (needs ≤ -0.01).
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+
+  const dagSvg = svgsByClass(host, 'ezn-dag')[0];
+  assert(dagSvg, 'the lifecycle DAG rendered for v1');
+  // a board circle shows the champion comparison (waffles: both 60.5 → Δ 0;
+  // picky: 642.5 vs 105.5 → +537).
+  const cmps = dagSvg.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-board-cmp'));
+  assert(cmps.length >= 1, 'a board circle in the rendered DAG carries the champion comparison');
+  const pickyCmp = dagSvg.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').includes('ezn-board-cmp') && n.getAttribute('data-champ-loss') === svg.fmt(105.5, 1))[0];
+  assert(pickyCmp && pickyCmp.getAttribute('data-delta') === svg.fmtSigned(642.5 - 105.5, 1),
+    'the rendered circle exposes the champion loss + Δ for the picky board');
+
+  // the GATE node explains the scalar-margin rejection with the +Δ.
+  const gate = dagSvg.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('ezn-gate-node'))[0];
+  assert(gate, 'the rendered DAG GATE node carries the gate-node marker');
+  assertEqual(gate.getAttribute('data-deciding-rule'), 'scalar_margin', 'the rendered GATE node names the scalar-margin rule');
+  const gtitle = gate.childNodes.filter((n) => n.localName === 'title')[0];
+  assert(/worse than champion/.test(gtitle.textContent), 'the rendered GATE explains the rejection as worse-than-champion (resolves "smaller Σ but rejected")');
+
+  // the Σ node carries the candidate-vs-champion Σ Δ.
+  const agg = dagSvg.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'g' && (n.getAttribute('class') || '').includes('ezn-node') && n.getAttribute('data-cand-sigma'))[0];
+  assert(agg, 'the rendered Σ node carries the candidate Σ');
+  assert(agg.getAttribute('data-champ-sigma') && agg.getAttribute('data-delta-sigma'), 'the rendered Σ node carries the champion Σ + the Δ');
+});
+
 test('lifecycle RUNG-PROGRESSION strip: reconstructs rung0→rung1→final (Δ + won/cut) from the per-challenger structure record', () => {
   // v3’s racing path from RACING_TOURNAMENTS: rung0 won → rung1 → racing-final promoted.
   const prog = STRUCT.candidateProgression(RACING_TOURNAMENTS, 'v3');

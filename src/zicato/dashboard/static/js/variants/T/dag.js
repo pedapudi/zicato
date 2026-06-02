@@ -24,6 +24,18 @@ export function verdictClass(verdict) {
 
 function clip(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
+// A signed Δ, formatted with an explicit sign + a worse/better word — the
+// gate convention is challenger − champion, so POSITIVE = worse (loss rose).
+function signedDelta(d, digits) {
+  if (!isNum(d)) return '—';
+  const dd = digits == null ? 1 : digits;
+  return (d > 0 ? '+' : '') + d.toFixed(dd);
+}
+function worseBetter(d) {
+  if (!isNum(d) || d === 0) return 'even';
+  return d > 0 ? 'worse' : 'better';
+}
+
 function flow(x1, y1, x2, y2) {
   const mx = (x1 + x2) / 2;
   return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
@@ -242,6 +254,13 @@ export function lifecycleDag(spec) {
     };
   });
 
+  // the CHAMPION's per-board loss on the SAME slice (entry_id → loss), passed
+  // from the view (D.perEntry of the champion). Used to show, on each circle and
+  // at Σ, the candidate-vs-champion Δ the gate actually sees (challenger −
+  // champion; POSITIVE = worse). Absent for a baseline / when no champion data.
+  const champLoss = o.championLoss && typeof o.championLoss === 'object' ? o.championLoss : {};
+  const champId = o.championId || 'champion';
+
   const total = board.reduce((a, e) => a + (isNum(e.drift_loss) ? e.drift_loss : 0), 0) || 1;
   const step = board.length > 1 ? (fanBot - fanTop) / (board.length - 1) : 0;
   if (board.length === 0) {
@@ -260,6 +279,12 @@ export function lifecycleDag(spec) {
       edgeLayer.appendChild(svgEl('path', { d: flow(X.board + r, y, X.agg - 0.05 * w, midY), class: 'ezn-edge ' + (cls === 'ezn-promoted' ? 'ezn-edge-good' : 'ezn-edge-bad'), 'stroke-width': Math.max(1, contrib * 12), fill: 'none' }));
       const raced = e.mult > 1;
       const taggedRuns = raced && e.runs.some((rn) => rn.rung || rn.match_id);
+      // the champion's loss on THIS board+slice (matched by entry_id), and the
+      // gate-convention Δ (challenger − champion; positive = worse). Surfaced as
+      // a small `champ N · Δ ±X` sublabel under the disc + in the tooltip so the
+      // circle is self-explanatory: how this candidate scored vs the champion.
+      const cl = isNum(champLoss[e.entry_id]) ? champLoss[e.entry_id] : null;
+      const dLoss = (cl != null && isNum(e.drift_loss)) ? (e.drift_loss - cl) : null;
       const children = [
         svgEl('title', null),
         svgEl('circle', { cx: X.board, cy: y, r, class: 'ezn-board-disc' }),
@@ -268,6 +293,15 @@ export function lifecycleDag(spec) {
         // representative loss INSIDE the disc.
         svgEl('text', { x: X.board, y: y + 3, class: 'ezn-board-loss', 'text-anchor': 'middle' }, [isNum(e.drift_loss) ? fmt(e.drift_loss, 0) : '—']),
       ];
+      // the candidate-vs-champion sublabel BELOW the disc (only when we have the
+      // champion's loss on the same board). Δ coloured worse=bad / better=good.
+      if (cl != null) {
+        const dCls = dLoss > 0 ? 'ezn-cmp-worse' : dLoss < 0 ? 'ezn-cmp-better' : 'ezn-cmp-even';
+        children.push(svgEl('text', {
+          x: X.board, y: y + r + 11, class: 'ezn-board-cmp ' + dCls, 'text-anchor': 'middle',
+          'data-champ-loss': fmt(cl, 1), 'data-delta': signedDelta(dLoss, 1),
+        }, ['champ ' + fmt(cl, 0) + ' · Δ ' + signedDelta(dLoss, 0)]));
+      }
       if (raced) {
         // rung-multiplicity badge to the RIGHT of the disc — makes it clear the
         // SAME entry was re-raced across rungs (not a random duplicate).
@@ -285,7 +319,8 @@ export function lifecycleDag(spec) {
         'aria-label': `${e.entry_id} drift loss ${isNum(e.drift_loss) ? fmt(e.drift_loss) : '—'}` + (raced ? ` · ${e.mult} per-run losses across rungs` : ''),
       }, children);
       const tt = g.childNodes[0];
-      if (tt) tt.textContent = `${e.entry_id}: loss ${isNum(e.drift_loss) ? fmt(e.drift_loss) : '—'}`
+      if (tt) tt.textContent = `${e.entry_id} · drift loss (lower is better): this ${isNum(e.drift_loss) ? fmt(e.drift_loss) : '—'}`
+        + (cl != null ? ` · champion ${champId} ${fmt(cl, 1)} · Δ ${signedDelta(dLoss, 1)} (${worseBetter(dLoss)})` : '')
         + (raced ? ` · ${e.mult} runs — ` + e.runs.map((rn) => (rn.rung ? rn.rung + ': ' : '') + (isNum(rn.drift_loss) ? fmt(rn.drift_loss, 1) : '—')).join(' · ') + ' (representative = full-board run)' : '')
         + (e.wall_clock_budget_exceeded ? ' · timed out' : '')
         + (e.pass_fail === 0 ? ' · failed' : e.pass_fail === 1 ? ' · passed' : '');
@@ -306,11 +341,76 @@ export function lifecycleDag(spec) {
     });
   }
 
-  rectNode(nodeLayer, X.agg, midY, 0.1 * w, 48, 'Σ loss', entries.length ? fmt(total, 0) : '—', 'ezn-neutral');
+  // ---- Σ node: the aggregate of the per-board losses over the rung's slice,
+  // PLUS the champion's Σ on the same slice and the Δ between them (this is the
+  // score the gate compares). A sublabel + rich tooltip make the circles→Σ
+  // linkage legible ("these per-board losses sum to Σ; lower is better") and
+  // expose the Δ-vs-champion the gate acts on.
+  const candSigma = isNum(o.candidateSigma) ? o.candidateSigma : (entries.length ? total : null);
+  const champSigma = isNum(o.championSigma) ? o.championSigma : null;
+  const sigmaDelta = isNum(o.deltaSigma) ? o.deltaSigma
+    : (candSigma != null && champSigma != null ? candSigma - champSigma : null);
+  const aggSub = candSigma != null
+    ? (champSigma != null ? fmt(candSigma, 0) + ' · Δ ' + signedDelta(sigmaDelta, 0) : fmt(candSigma, 0))
+    : '—';
+  const aggNode = rectNode(nodeLayer, X.agg, midY, 0.1 * w, 48, 'Σ loss', aggSub, 'ezn-neutral');
+  if (sigmaDelta != null) {
+    const sCls = sigmaDelta > 0 ? 'ezn-cmp-worse' : sigmaDelta < 0 ? 'ezn-cmp-better' : 'ezn-cmp-even';
+    aggNode.classList.add(sCls);
+  }
+  aggNode.setAttribute('data-cand-sigma', candSigma != null ? fmt(candSigma, 1) : '');
+  if (champSigma != null) aggNode.setAttribute('data-champ-sigma', fmt(champSigma, 1));
+  if (sigmaDelta != null) aggNode.setAttribute('data-delta-sigma', signedDelta(sigmaDelta, 1));
+  aggNode.appendChild(svgEl('title', null, [
+    'Σ loss — the per-board drift losses summed over this rung’s board slice (lower is better).'
+    + (candSigma != null ? ` Candidate Σ ${fmt(candSigma, 1)}` : '')
+    + (champSigma != null ? ` vs champion ${champId} Σ ${fmt(champSigma, 1)} · Δ ${signedDelta(sigmaDelta, 1)} (${worseBetter(sigmaDelta)})` : '')
+    + '. The gate compares these scalars on the SAME boards — Δ = challenger − champion, positive = worse.',
+  ]));
 
   edgeLayer.appendChild(svgEl('path', { d: flow(X.agg + 0.05 * w, midY, X.gate - 0.06 * w, midY), class: 'ezn-edge ' + (verdictClass(dec) === 'ezn-promoted' ? 'ezn-edge-good' : 'ezn-edge-bad'), fill: 'none' }));
   const gateSub = baseline ? 'no gate (seed)' : (isNum(o.deltaScalar) ? (o.deltaScalar >= 0 ? '+' : '') + fmt(o.deltaScalar, 1) + ' Δ' : dec);
-  rectNode(nodeLayer, X.gate, midY, 0.12 * w, 48, baseline ? 'BASELINE' : 'GATE', gateSub, verdictClass(dec));
+  const gateNode = rectNode(nodeLayer, X.gate, midY, 0.12 * w, 48, baseline ? 'BASELINE' : 'GATE', gateSub, verdictClass(dec));
+  // ---- GATE node: the 3-rule acceptance test, made self-explanatory. The
+  // promote gate is NOT "smallest Σ wins": a challenger is accepted only if it
+  // (1) beats the champion's scalar by the promote margin (Δ < margin), AND
+  // (2) regresses no previously-passing predicate (pass-rate monotonicity), AND
+  // (3) regresses no namespace (namespace monotonicity). Rules short-circuit in
+  // order, so a challenger with a BETTER scalar can still be rejected by rule 2
+  // or 3. `o.gateExplain` (assembled in the view from D.gate) names which rule
+  // was the PRIMARY DRIVER and carries the decisive numbers.
+  if (!baseline) {
+    const gx = o.gateExplain || null;
+    let gateTip;
+    if (gx && gx.decidingRule) {
+      const verb = (gx.decision === 'promoted') ? 'promoted' : 'rejected';
+      gateTip = `Promote gate — a 3-rule test (scalar margin · pass-rate monotonicity · namespace monotonicity), short-circuiting in order. `;
+      if (gx.decidingRule === 'scalar_margin') {
+        gateTip += `Decided by the SCALAR-MARGIN rule: Δ scalar ${signedDelta(gx.deltaScalar, 1)} vs champion ${champId}`
+          + (isNum(gx.margin) ? ` (needs ≤ ${fmt(gx.margin, 2)})` : '')
+          + ` → ${gx.deltaScalar > 0 ? 'worse than champion → fails the scalar-margin rule → ' : ''}${verb}.`;
+      } else if (gx.decidingRule === 'pass_rate_monotonicity') {
+        gateTip += `Scalar may be better, BUT it regressed a previously-passing predicate`
+          + (gx.regressed ? ` (\`${gx.regressed}\`)` : '') + ` — fails the pass-rate-monotonicity rule (rule 2) → ${verb}.`;
+      } else if (gx.decidingRule === 'namespace_monotonicity') {
+        gateTip += `Scalar may be better, BUT it regressed a namespace`
+          + (gx.regressed ? ` (\`${gx.regressed}\`)` : '') + ` — fails the namespace-monotonicity rule (rule 3) → ${verb}.`;
+      } else {
+        gateTip += `Primary driver: ${gx.decidingLabel || gx.decidingRule} → ${verb}.`;
+      }
+      if (gx.reason) gateTip += ` (${gx.reason})`;
+      gateNode.setAttribute('data-deciding-rule', gx.decidingRule);
+      if (gx.decidingLabel) gateNode.setAttribute('data-deciding-label', gx.decidingLabel);
+      if (isNum(gx.deltaScalar)) gateNode.setAttribute('data-delta-scalar', signedDelta(gx.deltaScalar, 2));
+      if (isNum(gx.margin)) gateNode.setAttribute('data-margin', fmt(gx.margin, 2));
+      if (gx.regressed) gateNode.setAttribute('data-regressed', gx.regressed);
+    } else {
+      gateTip = 'Promote gate — a 3-rule acceptance test: (1) beat the champion’s scalar by the promote margin, (2) no pass-rate regression, (3) no namespace regression. Δ = challenger − champion on the same boards; positive = worse.';
+    }
+    gateNode.classList.add('ezn-gate-node');
+    gateNode.setAttribute('data-cz', 'lc-gate');
+    gateNode.appendChild(svgEl('title', null, [gateTip]));
+  }
 
   const promoted = dec === 'promoted' || (baseline && o.promoted === true);
   // Class B: a PENDING candidate (in-flight / not yet raced — promoted == null,
@@ -327,5 +427,17 @@ export function lifecycleDag(spec) {
 
   svg.appendChild(edgeLayer);
   svg.appendChild(nodeLayer);
+
+  // ---- the KEY beneath the DAG: states the semantics so the figure reads on
+  // its own — circles = per-board drift loss (lower better) · Σ = their sum on
+  // the slice · GATE Δ = challenger − champion on the SAME boards (positive =
+  // worse) · promote requires beating the champion AND no pass-rate / namespace
+  // regression. Skipped for a baseline (no gate). Theme-aware (CSS), no motion.
+  if (!baseline) {
+    const key = svgEl('text', { class: 'ezn-dag-key', x: w / 2, y: h - 6, 'text-anchor': 'middle', 'data-cz': 'lc-key' }, [
+      'circles = per-board drift loss (lower better) · Σ = their sum on the slice · GATE Δ = challenger − champion on the same boards (positive = worse) · promote requires beating champion AND no pass-rate/namespace regression',
+    ]);
+    svg.appendChild(key);
+  }
   return svg;
 }

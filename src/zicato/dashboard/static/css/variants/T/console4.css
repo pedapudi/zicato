@@ -993,6 +993,20 @@
   /* rung-multiplicity badge: the SAME entry re-raced across rungs (racing). */
   .ezn-board-mult { fill: var(--v2-ink-faint); font: 600 8.5px var(--v2-mono); font-variant-numeric: tabular-nums; }
   .ezn-board-raced .ezn-board-disc { stroke-dasharray: 3 2; }
+  /* per-board candidate-vs-champion sublabel (champ N · Δ ±X), under the disc.
+     Δ coloured worse=bad / better=good / even=faint — theme-aware (CSS vars). */
+  .ezn-board-cmp { font: 8px var(--v2-mono); font-variant-numeric: tabular-nums; text-anchor: middle; fill: var(--v2-ink-faint); }
+  .ezn-cmp-worse, .ezn-board-cmp.ezn-cmp-worse { fill: var(--v2-bad); }
+  .ezn-cmp-better, .ezn-board-cmp.ezn-cmp-better { fill: var(--v2-good); }
+  .ezn-cmp-even, .ezn-board-cmp.ezn-cmp-even { fill: var(--v2-ink-faint); }
+  /* the Σ node tints its sublabel by the Δ-vs-champion sign (worse/better). */
+  .ezn-cmp-worse .ezn-node-sub { fill: var(--v2-bad); }
+  .ezn-cmp-better .ezn-node-sub { fill: var(--v2-good); }
+  /* the GATE node carries a help cursor — its tooltip explains the 3-rule test. */
+  .ezn-gate-node { cursor: help; }
+  /* the KEY beneath the DAG — states the circle / Σ / gate-Δ semantics so the
+     figure reads on its own. Faint, mono, wraps via tspan-free single line. */
+  .ezn-dag-key { fill: var(--v2-ink-faint); font: 8.5px var(--v2-mono); letter-spacing: 0.01em; }
   .ezn-board-node { cursor: pointer; }
   .ezn-board-node:hover .ezn-board-disc { stroke-width: 2.2; }
   .ezn-board-node:focus { outline: none; }
