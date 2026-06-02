@@ -106,8 +106,8 @@ export async function render(host, ctx, params, route) {
     ].filter(Boolean)));
 
     nodes.push(splitFrame({
-      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true) },
-      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false) } : null,
+      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId) },
+      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true) } : null,
       emptyTitle: 'no comparison',
       emptyPrompt: 'Choose a candidate above to compare its lifecycle, gate, match-ups and per-board scoring against ' + genId + '.',
     }));
@@ -272,8 +272,11 @@ function candidateDigest(s) {
 
 // Paint ONE candidate's full lifecycle panel into `host`. `cmpId`, when set, is
 // the compare target to PRESERVE while drilling into a sub-node. `isPrimary`
-// gates the entry drill-down (B reads its lifecycle clean).
-function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
+// gates the entry drill-down (B reads its lifecycle clean). `narrow` is the
+// SPLIT-LAYOUT flag — true for BOTH panes whenever a comparison is shown — and
+// drives the figure viewBox WIDTH (so A and B scale identically), independent
+// of the per-side `cmpId` (which is null on B but the layout is still split).
+function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow) {
   const opts = cmpId ? { cmp: cmpId } : undefined;
   const node = s.node;
   const genId = node.id;
@@ -303,7 +306,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
   if (s.progression && Array.isArray(s.progression.stages) && s.progression.stages.length) {
     dagCard.appendChild(el('div', { class: 'dn-rungprog-strip' }, [
       el('span', { class: 'dn-rungprog-cap dn-faint', text: 'tournament path' }),
-      rungProgression({ stages: s.progression.stages, width: cmpId ? 480 : 720 }),
+      rungProgression({ stages: s.progression.stages, width: narrow ? 480 : 720 }),
     ]));
   }
 
@@ -319,8 +322,10 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
     // baseline (full board) and a racing challenger (deduped slice) render with
     // IDENTICAL per-row spacing and a spine centred on the fan — neither side
     // stretched/compressed, no large empty top band. Only `width` (the internal
-    // viewBox width, narrower in the compare split) is still supplied.
-    width: cmpId ? 560 : 900,
+    // viewBox width, narrower in the compare split) is still supplied. Keyed on
+    // the split-layout flag (true for BOTH compare panes) — NOT the per-side
+    // `cmpId` — so A and B fit-to-width at the SAME scale (no shrunken B pane).
+    width: narrow ? 560 : 900,
     onEntry: (eid) => ctx.navigate('candidate', { epochId, gen: genId, entry: eid }, opts),
     onRun: (eid) => ctx.navigate('board', { epochId, entry: eid, gen: genId }),
     onPatch: baseline ? null : () => ctx.navigate('diff', { epochId, gen: genId }),

@@ -332,6 +332,42 @@ test('candidate view: "compare with…" SPLITS the detail into TWO candidates si
   assert(allByClass(host2, 'dn-gate').length >= 1, 'a promote gate appears within the split');
 });
 
+// the compare panes are EQUAL-WIDTH columns, so BOTH lifecycle DAGs must use the
+// SAME (narrow) viewBox width — otherwise the fit-to-width B pane scales down vs
+// A and renders smaller with an empty top band. The DAG width is keyed on the
+// SPLIT-LAYOUT flag (true for both A and B), not the per-side cmpId (null on B).
+function dagViewBoxWidths(host) {
+  return allByClass(host, 'ezn-dag').map((svg) => {
+    const vb = (svg.getAttribute('viewBox') || '').split(/\s+/);
+    return Number(vb[2]);
+  });
+}
+
+test('candidate COMPARE view: BOTH lifecycle DAGs share the SAME (narrow, 560) viewBox width', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' }, { params: { epochId: EPOCH_ID, gen: 'v1' }, cmp: 'v2' });
+
+  const widths = dagViewBoxWidths(host);
+  assert(widths.length === 2, 'two lifecycle DAGs (A and B) in the compare view');
+  assertEqual(widths[0], widths[1], 'the A and B DAGs share an identical viewBox width (equal scale, no shrunken B pane)');
+  assertEqual(widths[0], 560, 'both compare panes use the NARROW 560-unit viewBox');
+});
+
+test('candidate SINGLE view: the lone lifecycle DAG uses the WIDE (900) viewBox width', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+
+  const widths = dagViewBoxWidths(host);
+  assert(widths.length === 1, 'a single lifecycle DAG in the non-compare view');
+  assertEqual(widths[0], 900, 'the single-candidate view keeps the WIDE 900-unit viewBox');
+});
+
 // ---- FIX #4 + #5: board reachable from tree; INLINE side-by-side transcript ----
 
 test('board view: reachable from the tree and selecting a run shows the transcript INLINE side by side', async () => {
