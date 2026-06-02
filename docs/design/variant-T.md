@@ -71,6 +71,39 @@ Six operator-requested changes, all scoped to Variant T:
    and the closed trigger echoes the current theme's swatch + name. (The
    typeface picker stays as inline buttons — only three options.)
 
+## Round-12 changes (styled hovercards replace native tooltips · de-crowded DAG)
+
+Two scoped changes, CSS/JS-only:
+
+1. **Styled, theme-aware HOVERCARD replaces the native SVG `<title>` tooltip**
+   (`js/variants/T/hovercard.js`, new). The browser-default `<title>` tooltip is
+   unstyled OS chrome — off-brand, unthemed, and unable to carry formatted
+   detail. The hovercard is a small dependency-light helper: given a target +
+   content it shows a positioned, **token-styled** card (`--v2-panel` bg,
+   `--v2-ink` text, `--v2-rule` border, the mono face, subtle shadow/radius) on
+   `mouseenter`/`focus` and hides on `mouseleave`/`blur`/`Escape`. It is mounted
+   INSIDE `#variant-root` so it inherits the live per-theme tokens (correct
+   across all 16 themes, light + dark), is positioned with viewport flip/clamp so
+   it never clips, honours `prefers-reduced-motion`, and is keyboard-accessible
+   (focusable target + `role="tooltip"` linked via `aria-describedby`). Crucially
+   it is a **transient OVERLAY, not part of the digest-gated render** — showing/
+   hiding only toggles a class on the singleton card, so it can never trigger a
+   repaint loop or the SSE-heartbeat flashing bug. Every `<title>` site across
+   `dag.js` (per-board `champ N · Δ` detail, the Σ explanation, the GATE 3-rule
+   explanation, per-run rows, the patch node, the rung-progression strip) and
+   `svg.js` (heatmap cell, dot-plot dot + reference rule, bumps, sparkbar, value
+   bars, slopegraph, racing ladder, survival funnel, round-robin matrix, race
+   strip, sankey) was converted.
+
+2. **De-crowded the lifecycle DAG.** The figure previously carried two long,
+   largely-redundant always-on prose blocks (the `ezn-dag-key` legend line + a
+   verbose view caption). These collapse into **ONE concise key line** — *"Δ vs
+   champion · + = worse · lower loss better · hover nodes for detail"* — plus a
+   small focusable **"?" info affordance** (top-right) whose hovercard carries the
+   full parent→patch→…→terminal walkthrough, the 3-rule gate detail and the
+   click/hover affordances. The candidate-view caption is likewise reduced to one
+   short line. `KEY_PAD` was trimmed (40→26) so removing the prose leaves no gap.
+
 ## Round-11 changes (lifecycle ↔ rungs · resizable rail · "up")
 
 Three operator-requested changes, all CSS/JS-only and scoped to Variant T:

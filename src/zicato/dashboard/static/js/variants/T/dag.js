@@ -11,6 +11,7 @@
 
 import { svgEl } from '../../core/dom.js';
 import { isNum, fmt } from './svg.js';
+import { attachHovercard } from './hovercard.js';
 
 export function verdictClass(verdict) {
   const v = String(verdict || '').toLowerCase();
@@ -94,7 +95,7 @@ function perRunStack(e, x, cy, o) {
     // rung label (only when the backend tagged it — never fabricated).
     if (tag) rowG.appendChild(svgEl('text', { x: x + pad + 12, y: ry, class: 'ezn-board-run-rung', 'text-anchor': 'start' }, [clip(tag, 12)]));
     rowG.appendChild(svgEl('text', { x: x + panelW - pad, y: ry, class: 'ezn-board-run-loss', 'text-anchor': 'end' }, [isNum(rn.drift_loss) ? fmt(rn.drift_loss, 1) : '—']));
-    rowG.appendChild(svgEl('title', null, [(tag ? tag + ' — ' : '') + 'loss ' + (isNum(rn.drift_loss) ? fmt(rn.drift_loss, 2) : '—')]));
+    attachHovercard(rowG, (tag ? tag + ' — ' : '') + 'loss ' + (isNum(rn.drift_loss) ? fmt(rn.drift_loss, 2) : '—'));
     if (o.onRun || o.onEntry) {
       rowG.style.cursor = 'pointer';
       rowG.setAttribute('tabindex', '0');
@@ -150,7 +151,7 @@ export function rungProgression(spec) {
     g.appendChild(svgEl('text', { x, y: 14, class: 'ezn-rungprog-label', 'text-anchor': 'middle' }, [clip(st.label || ('rung ' + i), 14)]));
     const sub = isNum(st.delta) ? (st.delta >= 0 ? '+' : '') + fmt(st.delta, 1) + ' Δ' : (st.verdict || '');
     g.appendChild(svgEl('text', { x, y: midY + 20, class: 'ezn-rungprog-sub', 'text-anchor': 'middle' }, [clip(sub, 14)]));
-    if (st.verdict) g.appendChild(svgEl('title', null, [(st.label || 'rung') + ' — ' + st.verdict + (isNum(st.delta) ? ' (Δ ' + fmt(st.delta, 2) + ')' : '')]));
+    if (st.verdict) attachHovercard(g, (st.label || 'rung') + ' — ' + st.verdict + (isNum(st.delta) ? ' (Δ ' + fmt(st.delta, 2) + ')' : ''));
     svg.appendChild(g);
   });
   return svg;
@@ -166,7 +167,11 @@ export function rungProgression(spec) {
 // centre so it always aligns with the board nodes regardless of entry count.
 const ROW_PITCH = 46; // px between adjacent board-fan rows (internal viewBox units).
 const HEAD_PAD = 40;  // top band reserved for the column heads.
-const KEY_PAD = 40;   // bottom band reserved for the per-disc cmp sublabel + legend line.
+// bottom band reserved for the per-disc cmp sublabel + the ONE concise key
+// line. Trimmed from 40→26 now that the verbose how-to prose moved into the "?"
+// info hovercard (the figure no longer carries two stacked prose blocks), so
+// removing the prose doesn't leave a gap.
+const KEY_PAD = 26;
 
 export function lifecycleDag(spec) {
   const o = spec || {};
@@ -266,7 +271,7 @@ export function lifecycleDag(spec) {
     patchNode.setAttribute('tabindex', '0');
     patchNode.setAttribute('role', 'button');
     patchNode.setAttribute('aria-label', 'Open this candidate’s patch diff');
-    patchNode.appendChild(svgEl('title', null, ['Open this candidate’s side-by-side patch diff']));
+    attachHovercard(patchNode, 'Open this candidate’s side-by-side patch diff');
     patchNode.addEventListener('click', () => o.onPatch());
     patchNode.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onPatch(); } });
   }
@@ -312,7 +317,6 @@ export function lifecycleDag(spec) {
       const cl = isNum(champLoss[e.entry_id]) ? champLoss[e.entry_id] : null;
       const dLoss = (cl != null && isNum(e.drift_loss)) ? (e.drift_loss - cl) : null;
       const children = [
-        svgEl('title', null),
         svgEl('circle', { cx: X.board, cy: y, r, class: 'ezn-board-disc' }),
         // label to the LEFT of the disc, vertically centred, never on the circle.
         svgEl('text', { x: X.board + labelDX, y: y + 3, class: 'ezn-board-label', 'text-anchor': 'end' }, [clip(e.entry_id, 18)]),
@@ -344,12 +348,13 @@ export function lifecycleDag(spec) {
         tabindex: (o.onEntry || raced) ? '0' : null,
         'aria-label': `${e.entry_id} drift loss ${isNum(e.drift_loss) ? fmt(e.drift_loss) : '—'}` + (raced ? ` · ${e.mult} per-run losses across rungs` : ''),
       }, children);
-      const tt = g.childNodes[0];
-      if (tt) tt.textContent = `${e.entry_id} · drift loss (lower is better): this ${isNum(e.drift_loss) ? fmt(e.drift_loss) : '—'}`
+      // the styled hovercard carries the per-board champ-comparison detail
+      // (replacing the old native <title>): "champ N · Δ ±X" + per-run losses.
+      attachHovercard(g, `${e.entry_id} · drift loss (lower is better): this ${isNum(e.drift_loss) ? fmt(e.drift_loss) : '—'}`
         + (cl != null ? ` · champion ${champId} ${fmt(cl, 1)} · Δ ${signedDelta(dLoss, 1)} (${worseBetter(dLoss)})` : '')
         + (raced ? ` · ${e.mult} runs — ` + e.runs.map((rn) => (rn.rung ? rn.rung + ': ' : '') + (isNum(rn.drift_loss) ? fmt(rn.drift_loss, 1) : '—')).join(' · ') + ' (representative = full-board run)' : '')
         + (e.wall_clock_budget_exceeded ? ' · timed out' : '')
-        + (e.pass_fail === 0 ? ' · failed' : e.pass_fail === 1 ? ' · passed' : '');
+        + (e.pass_fail === 0 ? ' · failed' : e.pass_fail === 1 ? ' · passed' : ''));
       // a raced node toggles its expansion on click of the DISC (clicking a
       // per-run row still drills into that run/transcript); a gauntlet node
       // clicks straight through to its drill-down (unchanged).
@@ -387,12 +392,11 @@ export function lifecycleDag(spec) {
   aggNode.setAttribute('data-cand-sigma', candSigma != null ? fmt(candSigma, 1) : '');
   if (champSigma != null) aggNode.setAttribute('data-champ-sigma', fmt(champSigma, 1));
   if (sigmaDelta != null) aggNode.setAttribute('data-delta-sigma', signedDelta(sigmaDelta, 1));
-  aggNode.appendChild(svgEl('title', null, [
+  attachHovercard(aggNode,
     'Σ loss — the per-board drift losses summed over this rung’s board slice (lower is better).'
     + (candSigma != null ? ` Candidate Σ ${fmt(candSigma, 1)}` : '')
     + (champSigma != null ? ` vs champion ${champId} Σ ${fmt(champSigma, 1)} · Δ ${signedDelta(sigmaDelta, 1)} (${worseBetter(sigmaDelta)})` : '')
-    + '. The gate compares these scalars on the SAME boards — Δ = challenger − champion, positive = worse.',
-  ]));
+    + '. The gate compares these scalars on the SAME boards — Δ = challenger − champion, positive = worse.');
 
   edgeLayer.appendChild(svgEl('path', { d: flow(X.agg + 0.05 * w, midY, X.gate - 0.06 * w, midY), class: 'ezn-edge ' + (verdictClass(dec) === 'ezn-promoted' ? 'ezn-edge-good' : 'ezn-edge-bad'), fill: 'none' }));
   const gateSub = baseline ? 'no gate (seed)' : (isNum(o.deltaScalar) ? (o.deltaScalar >= 0 ? '+' : '') + fmt(o.deltaScalar, 1) + ' Δ' : dec);
@@ -435,7 +439,8 @@ export function lifecycleDag(spec) {
     }
     gateNode.classList.add('ezn-gate-node');
     gateNode.setAttribute('data-cz', 'lc-gate');
-    gateNode.appendChild(svgEl('title', null, [gateTip]));
+    // the full 3-rule GATE explanation now lives in the styled hovercard.
+    attachHovercard(gateNode, gateTip);
   }
 
   const promoted = dec === 'promoted' || (baseline && o.promoted === true);
@@ -454,16 +459,32 @@ export function lifecycleDag(spec) {
   svg.appendChild(edgeLayer);
   svg.appendChild(nodeLayer);
 
-  // ---- the KEY beneath the DAG: states the semantics so the figure reads on
-  // its own — circles = per-board drift loss (lower better) · Σ = their sum on
-  // the slice · GATE Δ = challenger − champion on the SAME boards (positive =
-  // worse) · promote requires beating the champion AND no pass-rate / namespace
-  // regression. Skipped for a baseline (no gate). Theme-aware (CSS), no motion.
+  // ---- the KEY beneath the DAG. DE-CROWDED: where the figure once carried two
+  // long, largely-redundant always-on prose blocks (this legend line + a verbose
+  // view caption), it now reads with ONE short key line plus a "?" affordance.
+  // The full how-to walkthrough (parent → patch → … → terminal, the 3-rule gate,
+  // the click/hover affordances) moved into the "?" hovercard + the GATE/Σ
+  // hovercards — detail on demand, a clean figure at a glance. Skipped for a
+  // baseline (no gate). Theme-aware (CSS), no motion.
   if (!baseline) {
-    const key = svgEl('text', { class: 'ezn-dag-key', x: w / 2, y: h - 6, 'text-anchor': 'middle', 'data-cz': 'lc-key' }, [
-      'circles = per-board drift loss (lower better) · Σ = their sum on the slice · GATE Δ = challenger − champion on the same boards (positive = worse) · promote requires beating champion AND no pass-rate/namespace regression',
+    const ky = h - 8;
+    const key = svgEl('text', { class: 'ezn-dag-key', x: w / 2, y: ky, 'text-anchor': 'middle', 'data-cz': 'lc-key' }, [
+      'Δ vs champion · + = worse · lower loss better · hover nodes for detail',
     ]);
     svg.appendChild(key);
+
+    // the "?" info affordance — opens the FULL walkthrough in a hovercard. A
+    // small focusable badge top-right of the figure; keyboard-accessible.
+    const infoG = svgEl('g', { class: 'ezn-dag-info', 'data-cz': 'lc-info', role: 'button', 'aria-label': 'How to read this lifecycle figure' });
+    infoG.appendChild(svgEl('circle', { cx: w - 14, cy: 14, r: 8, class: 'ezn-dag-info-badge' }));
+    infoG.appendChild(svgEl('text', { x: w - 14, y: 18, class: 'ezn-dag-info-mark', 'text-anchor': 'middle' }, ['?']));
+    attachHovercard(infoG,
+      'How to read this lifecycle: parent → patch → board (one node per entry, colour = pass/fail/timeout) → Σ → gate → terminal. '
+      + 'Each board circle = this candidate’s drift loss vs the champion’s on the SAME board (Δ, positive = worse); '
+      + 'Σ sums those losses on the slice; the GATE compares Σ-vs-champion under a 3-rule test '
+      + '(scalar margin · pass-rate monotonicity · namespace monotonicity — hover the GATE to see which rule decided). '
+      + 'Click the PATCH node → this candidate’s side-by-side diff; hover/click a re-raced board node → its per-run losses (by rung).');
+    svg.appendChild(infoG);
   }
   return svg;
 }

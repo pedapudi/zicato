@@ -1015,9 +1015,61 @@
   .ezn-cmp-better .ezn-node-sub { fill: var(--v2-good); }
   /* the GATE node carries a help cursor — its tooltip explains the 3-rule test. */
   .ezn-gate-node { cursor: help; }
-  /* the KEY beneath the DAG — states the circle / Σ / gate-Δ semantics so the
-     figure reads on its own. Faint, mono, wraps via tspan-free single line. */
+  /* the KEY beneath the DAG — ONE short, faint, mono line (the verbose how-to
+     moved into the "?" info hovercard + the GATE/Σ hovercards, de-crowding the
+     figure). */
   .ezn-dag-key { fill: var(--v2-ink-faint); font: 8.5px var(--v2-mono); letter-spacing: 0.01em; }
+  /* the "?" info affordance top-right of the DAG — opens the full how-to in the
+     hovercard. Themed via the rule/accent/panel tokens (no hardcoded hex). */
+  .ezn-dag-info { cursor: help; }
+  .ezn-dag-info:focus { outline: none; }
+  .ezn-dag-info-badge { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1; }
+  .ezn-dag-info:hover .ezn-dag-info-badge,
+  .ezn-dag-info:focus .ezn-dag-info-badge { stroke: var(--v2-accent); }
+  .ezn-dag-info-mark { fill: var(--v2-ink-faint); font: 600 10px var(--v2-mono); }
+  .ezn-dag-info:hover .ezn-dag-info-mark,
+  .ezn-dag-info:focus .ezn-dag-info-mark { fill: var(--v2-accent); }
+  /* ── the styled, theme-aware HOVERCARD (replaces native <title> tooltips) ──
+   * A transient OVERLAY mounted inside the variant root, so it inherits the
+   * per-theme tokens and reads correctly across all 16 themes (light + dark).
+   * Position is fixed (set inline by hovercard.js, flipped/clamped to the
+   * viewport). Hidden by default; shown via the .dn-hovercard-on class. It is
+   * NOT part of any digest-gated panel, so toggling it never repaints a figure.
+   * Token-only: panel bg, ink text, rule border, mono face — no hardcoded hex.
+   */
+  .dn-hovercard {
+    position: fixed;
+    z-index: 60;
+    top: 0; left: 0;
+    max-width: 320px;
+    padding: 8px 10px;
+    background: var(--v2-panel);
+    color: var(--v2-ink);
+    border: 1px solid var(--v2-rule);
+    border-radius: 6px;
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--v2-rule) 60%, transparent),
+                0 1px 3px color-mix(in srgb, var(--v2-rule) 80%, transparent);
+    font: 11px/1.45 var(--v2-mono);
+    letter-spacing: 0.01em;
+    pointer-events: none;            /* never steals hover from the target */
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(2px);
+    transition: opacity 120ms ease, transform 120ms ease, visibility 0s linear 120ms;
+  }
+  .dn-hovercard.dn-hovercard-on {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    transition: opacity 120ms ease, transform 120ms ease, visibility 0s;
+  }
+  .dn-hovercard-line { margin: 0; }
+  .dn-hovercard-line + .dn-hovercard-line { margin-top: 3px; }
+  /* honour reduced-motion: no fade/slide, just an instant show/hide. */
+  @media (prefers-reduced-motion: reduce) {
+    .dn-hovercard, .dn-hovercard.dn-hovercard-on { transition: none; transform: none; }
+  }
+
   .ezn-board-node { cursor: pointer; }
   .ezn-board-node:hover .ezn-board-disc { stroke-width: 2.2; }
   .ezn-board-node:focus { outline: none; }

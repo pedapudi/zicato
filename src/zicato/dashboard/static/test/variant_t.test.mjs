@@ -829,6 +829,23 @@ test('density removed: no picker, no density APIs; cozy is the permanent baselin
 // ====================================================================
 
 const dag = await import('../js/variants/T/dag.js');
+const hovercard = await import('../js/variants/T/hovercard.js');
+
+// Drive the hovercard like a browser would: fire `mouseenter` on a wired node,
+// read the live card text, then fire `mouseleave` to hide it. Returns the text
+// the styled card surfaced (so a test can assert the SAME explanation the old
+// native <title> carried now lives in the hovercard, not in a <title>).
+function hovercardTextOf(node) {
+  hovercard.hide();
+  node.dispatchEvent({ type: 'mouseenter', target: node });
+  const text = hovercard.cardText();
+  node.dispatchEvent({ type: 'mouseleave', target: node });
+  return text;
+}
+// assert a node carries NO native <title> child (the off-brand tooltip is gone).
+function hasNativeTitle(node) {
+  return node.childNodes.filter((n) => n.localName === 'title').length > 0;
+}
 
 // helpers to read the painted SVG of a view -------------------------
 function svgsByClass(host, cls) {
@@ -3115,10 +3132,15 @@ test('lifecycle BOARD circle: exposes the champion comparison (champion loss + s
   assert((picky.getAttribute('class') || '').includes('ezn-cmp-worse'), 'a positive Δ (worse than champion) is coloured with the worse token');
   assert(/champ/.test(picky.textContent) && /Δ/.test(picky.textContent), 'the sublabel reads "champ N · Δ ±X"');
 
-  // the tooltip also spells out the comparison + the "lower is better" cue.
-  const tip = byKey['waffles_single'].childNodes[0];
-  assert(/lower is better/.test(tip.textContent), 'the circle tooltip states drift loss is lower-is-better');
-  assert(/champion v0/.test(tip.textContent) && /Δ/.test(tip.textContent), 'the circle tooltip names the champion + the Δ');
+  // the detail now lives in the styled HOVERCARD (not a native <title>): the
+  // board node is hovercard-wired and surfaces the comparison + "lower is
+  // better" cue on hover.
+  const boardNode = byKey['waffles_single'];
+  assert(hovercard.hasHovercard(boardNode), 'the board circle is wired with the hovercard (not a native <title>)');
+  assert(!hasNativeTitle(boardNode), 'the board circle carries NO native <title> tooltip');
+  const tipText = hovercardTextOf(boardNode);
+  assert(/lower is better/.test(tipText), 'the hovercard states drift loss is lower-is-better');
+  assert(/champion v0/.test(tipText) && /Δ/.test(tipText), 'the hovercard names the champion + the Δ');
 
   // an EVEN board (identical loss) is neither worse nor better.
   const even = dag.lifecycleDag({ genId: 'v1', parentId: 'v0',
@@ -3143,9 +3165,12 @@ test('lifecycle Σ node: exposes candidate-Σ vs champion-Σ and the Δ between 
   assertEqual(agg.getAttribute('data-champ-sigma'), svg.fmt(166.0, 1), 'the Σ node exposes the champion Σ over the same slice');
   assertEqual(agg.getAttribute('data-delta-sigma'), svg.fmtSigned(537.0, 1), 'the Σ node exposes the Δ (candidate − champion) the gate acts on');
   assert((agg.getAttribute('class') || '').includes('ezn-cmp-worse'), 'a positive Σ Δ tints the node as worse');
-  const title = agg.childNodes.filter((n) => n.localName === 'title')[0];
-  assert(title && /summed over this rung’s board slice/.test(title.textContent), 'the Σ tooltip explains the aggregation over the slice');
-  assert(title && /SAME boards/.test(title.textContent), 'the Σ tooltip links Σ→GATE: the gate compares these scalars on the same boards');
+  // the Σ explanation now lives in the styled hovercard, not a native <title>.
+  assert(hovercard.hasHovercard(agg), 'the Σ node is wired with the hovercard');
+  assert(!hasNativeTitle(agg), 'the Σ node carries NO native <title>');
+  const sigmaTip = hovercardTextOf(agg);
+  assert(/summed over this rung’s board slice/.test(sigmaTip), 'the Σ hovercard explains the aggregation over the slice');
+  assert(/SAME boards/.test(sigmaTip), 'the Σ hovercard links Σ→GATE: the gate compares these scalars on the same boards');
 });
 
 test('lifecycle GATE node: names the deciding rule + the Δ — a POSITIVE Δ rejection explains "worse than champion"', () => {
@@ -3160,12 +3185,15 @@ test('lifecycle GATE node: names the deciding rule + the Δ — a POSITIVE Δ re
   assertEqual(gate.getAttribute('data-deciding-rule'), 'scalar_margin', 'the GATE node names the deciding rule');
   assertEqual(gate.getAttribute('data-delta-scalar'), svg.fmtSigned(75.71, 2), 'the GATE node carries the decisive Δ scalar');
   assertEqual(gate.getAttribute('data-margin'), svg.fmt(-0.01, 2), 'the GATE node carries the promote margin');
-  const title = gate.childNodes.filter((n) => n.localName === 'title')[0];
-  assert(title, 'the GATE node carries an explanatory tooltip');
-  assert(/3-rule/.test(title.textContent), 'the tooltip frames the gate as a 3-rule test');
-  assert(/SCALAR-MARGIN rule/i.test(title.textContent), 'the tooltip names the scalar-margin rule as the decider');
-  assert(/worse than champion/.test(title.textContent), 'a positive-Δ rejection explains it is WORSE than the champion');
-  assert(/\+75\.7/.test(title.textContent), 'the tooltip shows the decisive +Δ');
+  // the GATE explanation now lives in the styled hovercard, not a native <title>.
+  assert(hovercard.hasHovercard(gate), 'the GATE node is wired with the hovercard');
+  assert(!hasNativeTitle(gate), 'the GATE node carries NO native <title> tooltip');
+  const gateTip = hovercardTextOf(gate);
+  assert(gateTip, 'the GATE node exposes an explanation via the hovercard');
+  assert(/3-rule/.test(gateTip), 'the hovercard frames the gate as a 3-rule test');
+  assert(/SCALAR-MARGIN rule/i.test(gateTip), 'the hovercard names the scalar-margin rule as the decider');
+  assert(/worse than champion/.test(gateTip), 'a positive-Δ rejection explains it is WORSE than the champion');
+  assert(/\+75\.7/.test(gateTip), 'the hovercard shows the decisive +Δ');
 });
 
 test('lifecycle GATE node: a MONOTONICITY rejection explains the regressed predicate even when the scalar is BETTER', () => {
@@ -3181,26 +3209,139 @@ test('lifecycle GATE node: a MONOTONICITY rejection explains the regressed predi
     (n.getAttribute('class') || '').split(/\s+/).includes('ezn-gate-node'))[0];
   assertEqual(gate.getAttribute('data-deciding-rule'), 'pass_rate_monotonicity', 'the deciding rule is the monotonicity rule');
   assertEqual(gate.getAttribute('data-regressed'), 'no_fabricated_numbers', 'the GATE node carries the regressed predicate');
-  const title = gate.childNodes.filter((n) => n.localName === 'title')[0];
-  assert(/Scalar may be better, BUT/.test(title.textContent), 'the tooltip says the scalar is better BUT it still failed a rule');
-  assert(/no_fabricated_numbers/.test(title.textContent), 'the tooltip names the regressed predicate');
-  assert(/rule 2/.test(title.textContent), 'the tooltip identifies it as the pass-rate-monotonicity rule (rule 2)');
+  const monoTip = hovercardTextOf(gate);
+  assert(!hasNativeTitle(gate), 'the GATE node carries NO native <title>');
+  assert(/Scalar may be better, BUT/.test(monoTip), 'the hovercard says the scalar is better BUT it still failed a rule');
+  assert(/no_fabricated_numbers/.test(monoTip), 'the hovercard names the regressed predicate');
+  assert(/rule 2/.test(monoTip), 'the hovercard identifies it as the pass-rate-monotonicity rule (rule 2)');
 });
 
-test('lifecycle DAG: a KEY beneath the figure states the circle / Σ / gate-Δ semantics (self-explanatory), and is omitted for a baseline', () => {
+test('lifecycle DAG: de-crowded to ONE concise key line + a "?" info hovercard (the verbose how-to is gone from the figure), omitted for a baseline', () => {
   const entries = [{ entry_id: 'b', drift_loss: 10, pass_fail: 0 }];
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360, championId: 'v0' });
-  const key = svgNode.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-dag-key'))[0];
-  assert(key, 'the DAG carries a key/legend beneath the figure');
-  const t = key.textContent;
-  assert(/per-board drift loss/.test(t) && /lower better/.test(t), 'the key states circles = per-board drift loss (lower better)');
-  assert(/Σ = their sum/.test(t), 'the key states Σ = the sum of those losses on the slice');
-  assert(/challenger − champion/.test(t) && /positive = worse/.test(t), 'the key states GATE Δ = challenger − champion (positive = worse)');
-  assert(/no pass-rate\/namespace regression/.test(t), 'the key states promote requires no pass-rate/namespace regression');
-  // a baseline (seed) has no gate, so no key.
+
+  // exactly ONE always-on key line — short, de-crowded (the old two-block verbose
+  // prose is consolidated into this single line + the "?" hovercard).
+  const keys = svgNode.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-dag-key'));
+  assertEqual(keys.length, 1, 'the DAG carries exactly ONE concise key line');
+  const t = keys[0].textContent;
+  assert(/Δ vs champion/.test(t) && /\+ = worse/.test(t), 'the key line states "Δ vs champion · + = worse"');
+  assert(/lower loss better/.test(t) && /hover nodes for detail/.test(t), 'the key line states lower-loss-better + the hover-for-detail cue');
+  // the OLD verbose two-block prose is no longer crowding the figure as a key.
+  assert(!/Σ = their sum on the slice/.test(t), 'the verbose "Σ = their sum on the slice" prose is no longer in the always-on key');
+  assert(!/no pass-rate\/namespace regression/.test(t), 'the verbose pass-rate/namespace prose is no longer in the always-on key');
+
+  // the full how-to walkthrough moved into the focusable "?" info affordance,
+  // surfaced via the hovercard (detail on demand, not always-on prose).
+  const info = svgNode.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('ezn-dag-info'))[0];
+  assert(info, 'the DAG carries a "?" info affordance');
+  assert(hovercard.hasHovercard(info), 'the "?" affordance is wired with the hovercard');
+  assertEqual(info.getAttribute('tabindex'), '0', 'the "?" affordance is keyboard-focusable');
+  const howto = hovercardTextOf(info);
+  assert(/parent → patch → board/.test(howto), 'the hovercard carries the parent→patch→board walkthrough');
+  assert(/3-rule test/.test(howto), 'the hovercard carries the 3-rule gate detail');
+  assert(/per-run losses/.test(howto), 'the hovercard carries the hover/click affordance detail');
+
+  // a baseline (seed) has no gate, so no key + no info affordance.
   const seed = dag.lifecycleDag({ genId: 'v0', parentId: null, baseline: true, entries, decision: 'baseline', height: 360 });
   assert(!seed.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-dag-key'))[0],
     'the baseline DAG omits the gate key (it has no gate)');
+});
+
+// ====================================================================
+// HOVERCARD — the styled, theme-aware replacement for native <title>.
+// ====================================================================
+
+test('hovercard: the heatmap cell uses the hovercard (NOT a native <title>), and surfaces "row × col: value"', () => {
+  const node = svg.heatmap({
+    rows: [{ id: 'r1', label: 'board one' }],
+    cols: [{ id: 'c1', label: 'gen one' }],
+    value: (r, c) => (r === 'r1' && c === 'c1' ? 12.5 : null),
+  });
+  const cell = node.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).includes('dn-hm-cell'))[0];
+  assert(cell, 'a heatmap cell rendered');
+  assert(hovercard.hasHovercard(cell), 'the heatmap cell is wired with the hovercard');
+  assert(!hasNativeTitle(cell), 'the heatmap cell carries NO native <title>');
+  const tip = hovercardTextOf(cell);
+  assert(/board one × gen one/.test(tip), 'the hovercard reads "row × col"');
+  assert(/12\.5/.test(tip), 'the hovercard carries the cell value');
+});
+
+test('hovercard: the per-board dot-plot dot + reference rule use the hovercard, not a native <title>', () => {
+  const node = svg.valueDotPlot({
+    items: [{ label: 'waffles', value: 60.5, id: 'waffles' }],
+    reference: { value: 50, label: 'champion v0' },
+  });
+  // the per-board dot.
+  const dot = node.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).includes('dn-dot'))[0];
+  assert(dot, 'a dot-plot dot rendered');
+  assert(hovercard.hasHovercard(dot) && !hasNativeTitle(dot), 'the dot uses the hovercard, not a native <title>');
+  assert(/waffles/.test(hovercardTextOf(dot)), 'the dot hovercard names the board');
+  // the reference rule.
+  const ref = node.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').includes('dn-ref-rule'))[0];
+  assert(ref, 'a reference rule rendered');
+  assert(hovercard.hasHovercard(ref) && !hasNativeTitle(ref), 'the reference rule uses the hovercard, not a native <title>');
+  assert(/champion v0/.test(hovercardTextOf(ref)), 'the reference-rule hovercard names the champion reference');
+});
+
+test('hovercard: NO native <title> remains on the interactive marks of the lifecycle DAG, heatmap, or dot-plot', () => {
+  const dagSvg = dag.lifecycleDag({ genId: 'v1', parentId: 'v0',
+    entries: [{ entry_id: 'b', drift_loss: 10, pass_fail: 0 }], decision: 'rejected',
+    championId: 'v0', championLoss: { b: 5 }, candidateSigma: 10, championSigma: 5, deltaSigma: 5 });
+  const hm = svg.heatmap({ rows: [{ id: 'r', label: 'r' }], cols: [{ id: 'c', label: 'c' }], value: () => 1 });
+  const dp = svg.valueDotPlot({ items: [{ label: 'x', value: 1 }], reference: { value: 2, label: 'ref' } });
+  for (const [name, root] of [['DAG', dagSvg], ['heatmap', hm], ['dot-plot', dp]]) {
+    const titles = root.querySelectorAll('[class]').filter((n) => n.localName === 'title')
+      .concat(root.childNodes ? [] : []);
+    // walk for any <title> descendant.
+    const anyTitle = (function find(n) {
+      if (!n || !n.childNodes) return false;
+      for (const c of n.childNodes) { if (c.localName === 'title') return true; if (find(c)) return true; }
+      return false;
+    })(root);
+    assert(!anyTitle, `the ${name} has NO native <title> left (replaced by the hovercard)`);
+  }
+});
+
+test('hovercard: show on mouseenter/focus, hide on mouseleave/blur/Escape — and the card is theme-token styled', () => {
+  // build any wired mark.
+  const node = svg.heatmap({ rows: [{ id: 'r', label: 'row' }], cols: [{ id: 'c', label: 'col' }], value: () => 7 })
+    .querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-hm-cell'))[0];
+  hovercard.hide();
+  assert(!hovercard.isShown(), 'the hovercard starts hidden');
+  // mouseenter shows it.
+  node.dispatchEvent({ type: 'mouseenter', target: node });
+  assert(hovercard.isShown(), 'mouseenter shows the hovercard');
+  assert(/row × col: 7/.test(hovercard.cardText()), 'the shown card carries the mark detail');
+  // mouseleave hides it.
+  node.dispatchEvent({ type: 'mouseleave', target: node });
+  assert(!hovercard.isShown(), 'mouseleave hides the hovercard');
+  // focus shows; blur hides (keyboard path).
+  node.dispatchEvent({ type: 'focus', target: node });
+  assert(hovercard.isShown(), 'focus shows the hovercard (keyboard-accessible)');
+  node.dispatchEvent({ type: 'blur', target: node });
+  assert(!hovercard.isShown(), 'blur hides the hovercard');
+
+  // the card is THEME-TOKEN styled (no hardcoded hex) — assert the CSS contract.
+  const css = readCss();
+  assert(/\.dn-hovercard\b/.test(css), 'the stylesheet defines the .dn-hovercard');
+  const block = css.slice(css.indexOf('.dn-hovercard {'), css.indexOf('.dn-hovercard-line'));
+  assert(/var\(--v2-panel\)/.test(block), 'the hovercard background uses the --v2-panel token');
+  assert(/var\(--v2-ink\)/.test(block), 'the hovercard text uses the --v2-ink token');
+  assert(/var\(--v2-rule\)/.test(block), 'the hovercard border uses the --v2-rule token');
+  assert(/var\(--v2-mono\)/.test(block), 'the hovercard uses the mono font token');
+  assert(!/#[0-9a-fA-F]{3,6}\b/.test(block), 'the hovercard block carries NO hardcoded hex colour');
+  assert(/prefers-reduced-motion/.test(css), 'the hovercard honours prefers-reduced-motion');
+});
+
+test('hovercard: the target is keyboard-accessible (focusable + aria-describedby links the card)', () => {
+  const cell = svg.heatmap({ rows: [{ id: 'r', label: 'row' }], cols: [{ id: 'c', label: 'col' }], value: () => 1 })
+    .querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-hm-cell'))[0];
+  assertEqual(cell.getAttribute('tabindex'), '0', 'a wired mark with no tabindex is made focusable');
+  assert((cell.getAttribute('aria-describedby') || '').length > 0, 'the mark links the hovercard via aria-describedby');
 });
 
 test('lifecycle DAG (integration): the candidate view feeds the champion comparison + gate-rule explanation into the DAG — "smaller-looking" rejected v1 explains worse-than-champion', async () => {
@@ -3226,8 +3367,9 @@ test('lifecycle DAG (integration): the candidate view feeds the champion compari
   const gate = dagSvg.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('ezn-gate-node'))[0];
   assert(gate, 'the rendered DAG GATE node carries the gate-node marker');
   assertEqual(gate.getAttribute('data-deciding-rule'), 'scalar_margin', 'the rendered GATE node names the scalar-margin rule');
-  const gtitle = gate.childNodes.filter((n) => n.localName === 'title')[0];
-  assert(/worse than champion/.test(gtitle.textContent), 'the rendered GATE explains the rejection as worse-than-champion (resolves "smaller Σ but rejected")');
+  assert(hovercard.hasHovercard(gate) && !hasNativeTitle(gate), 'the rendered GATE uses the hovercard, not a native <title>');
+  const gtitle = hovercardTextOf(gate);
+  assert(/worse than champion/.test(gtitle), 'the rendered GATE explains the rejection as worse-than-champion (resolves "smaller Σ but rejected")');
 
   // the Σ node carries the candidate-vs-champion Σ Δ.
   const agg = dagSvg.querySelectorAll('[class]').filter((n) =>

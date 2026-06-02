@@ -20,8 +20,16 @@
 //     themed in one place, swapped by the [data-n-theme] attribute.
 
 import { svgEl, el } from '../../core/dom.js';
+import { attachHovercard } from './hovercard.js';
 
 export const NS = 'http://www.w3.org/2000/svg';
+
+// Wire a mark with the styled, theme-aware HOVERCARD instead of a native,
+// off-brand <title> tooltip (positioned card on hover/focus; keyboard- and
+// reduced-motion-aware; a transient overlay, NOT part of the digest-gated
+// render — see hovercard.js). Returns the node so it composes inline where a
+// `[title(...)]` child used to sit. `tip` is a string or a () => string.
+function hov(node, tip) { attachHovercard(node, tip); return node; }
 
 // ---- numeric helpers ------------------------------------------------
 
@@ -129,7 +137,7 @@ export function sparkline(opts) {
         : null;
       const cls = improved === null ? 'dn-spark-dot'
         : improved ? 'dn-spark-dot dn-good' : 'dn-spark-dot dn-bad';
-      svg.appendChild(svgEl('circle', { cx: x(lastI), cy: y(raw[lastI]), r: 2.2, class: cls }, [title(fmt(raw[lastI]))]));
+      svg.appendChild(hov(svgEl('circle', { cx: x(lastI), cy: y(raw[lastI]), r: 2.2, class: cls }), fmt(raw[lastI])));
     }
   }
   return svg;
@@ -209,8 +217,8 @@ export function bumps(opts) {
     const cy = laneY(n);
     const px = nodeX(n);
     const cls = 'dn-bump-node ' + (n.promoted ? 'dn-promoted' : 'dn-rejected');
-    const c = svgEl('circle', { cx: px, cy, r: n.promoted ? 4.5 : 3.5, class: cls, tabindex: o.onClick ? '0' : null },
-      [title(`${n.id}${isNum(n.scalar) ? ' · ' + fmt(n.scalar) : ''} · ${n.promoted ? 'promoted' : 'rejected'}`)]);
+    const c = hov(svgEl('circle', { cx: px, cy, r: n.promoted ? 4.5 : 3.5, class: cls, tabindex: o.onClick ? '0' : null }),
+      `${n.id}${isNum(n.scalar) ? ' · ' + fmt(n.scalar) : ''} · ${n.promoted ? 'promoted' : 'rejected'}`);
     if (o.onClick) {
       c.style.cursor = 'pointer';
       c.addEventListener('click', () => o.onClick(n));
@@ -331,7 +339,7 @@ export function heatmap(opts) {
       const op = e == null ? null : (0.30 + 0.70 * e).toFixed(3);
       const attrs = { x: cx + 1, y: ry + 1, width: cw - 2, height: ch - 2, rx: 1.5, class: cls };
       if (op != null) attrs['fill-opacity'] = op;
-      const cell = svgEl('rect', attrs, [title(`${r.label} × ${c.label}: ${isNum(v) ? fmt(v) : '—'}`)]);
+      const cell = hov(svgEl('rect', attrs), `${r.label} × ${c.label}: ${isNum(v) ? fmt(v) : '—'}`);
       if (mixPct != null) {
         // theme-correct cool→hot gradient via CSS custom props (no hardcoded hex)
         cell.style.setProperty('fill', `color-mix(in srgb, var(--v2-hm-hot) ${mixPct}%, var(--v2-hm-cool))`);
@@ -390,8 +398,8 @@ export function valueDotPlot(opts) {
 
   if (ref != null) {
     const rx = x(ref);
-    svg.appendChild(svgEl('line', { x1: rx, x2: rx, y1: 2, y2: h - 2, class: 'dn-ref-rule' },
-      [title(`${(o.reference.label || 'reference')}: ${fmt(ref)}`)]));
+    svg.appendChild(hov(svgEl('line', { x1: rx, x2: rx, y1: 2, y2: h - 2, class: 'dn-ref-rule' }),
+      `${(o.reference.label || 'reference')}: ${fmt(ref)}`));
   }
   items.forEach((d, i) => {
     const cy = i * rh + rh / 2 + 4;
@@ -418,8 +426,8 @@ export function valueDotPlot(opts) {
       const good = ref != null ? d.value < ref : false;
       const worse = ref != null ? d.value > ref : false;
       const cls = 'dn-dot ' + (good ? 'dn-good' : worse ? 'dn-bad' : '');
-      g.appendChild(svgEl('circle', { cx: dx, cy, r: 3.2, class: cls },
-        [title(`${d.label}: ${fmt(d.value)}${ref != null ? ` (vs champ ${fmt(ref)})` : ''}`)]));
+      g.appendChild(hov(svgEl('circle', { cx: dx, cy, r: 3.2, class: cls }),
+        `${d.label}: ${fmt(d.value)}${ref != null ? ` (vs champ ${fmt(ref)})` : ''}`));
       g.appendChild(outcomeGlyph(d, w - glyphW + 2, cy));
     } else {
       const t = svgEl('text', { x: x(lo) + 6, y: cy + 3, class: 'dn-dot-missing' });
@@ -466,10 +474,10 @@ export function sparkbar(opts) {
     if (isNum(b.value)) {
       const y = yTop(b.value);
       const cls = 'dn-sparkbar-bar' + (b.timeout ? ' dn-timeout' : '') + (b.fail ? ' dn-fail' : '');
-      svg.appendChild(svgEl('rect', { x: cx - bw / 2, y: Math.min(y, y0), width: bw, height: Math.max(1, Math.abs(y0 - y)), class: cls },
-        [title(`${b.label}: ${fmt(b.value)}${b.timeout ? ' · timed out' : ''}${b.fail ? ' · failed' : ''}`)]));
+      svg.appendChild(hov(svgEl('rect', { x: cx - bw / 2, y: Math.min(y, y0), width: bw, height: Math.max(1, Math.abs(y0 - y)), class: cls }),
+        `${b.label}: ${fmt(b.value)}${b.timeout ? ' · timed out' : ''}${b.fail ? ' · failed' : ''}`));
     } else {
-      svg.appendChild(svgEl('line', { x1: cx, y1: y0 - 1, x2: cx, y2: y0 - 4, class: 'dn-sparkbar-missing' }, [title(`${b.label}: no run`)]));
+      svg.appendChild(hov(svgEl('line', { x1: cx, y1: y0 - 1, x2: cx, y2: y0 - 4, class: 'dn-sparkbar-missing' }), `${b.label}: no run`));
     }
   });
   svg.appendChild(svgEl('line', { x1: pad, y1: y0, x2: w - pad, y2: y0, class: 'dn-sparkbar-foot' }));
@@ -477,7 +485,7 @@ export function sparkbar(opts) {
     const good = o.verdict === 'promoted';
     const gx = w - pad - 3; const gy = pad + 4; const r = 3.2;
     const tri = good ? `${gx},${gy - r} ${gx - r},${gy + r} ${gx + r},${gy + r}` : `${gx},${gy + r} ${gx - r},${gy - r} ${gx + r},${gy - r}`;
-    svg.appendChild(svgEl('polygon', { points: tri, class: 'dn-verdict-glyph ' + (good ? 'dn-good' : 'dn-bad') }, [title(o.verdict)]));
+    svg.appendChild(hov(svgEl('polygon', { points: tri, class: 'dn-verdict-glyph ' + (good ? 'dn-good' : 'dn-bad') }), o.verdict));
   }
   return svg;
 }
@@ -497,16 +505,16 @@ export function genDots(opts) {
 }
 
 function outcomeGlyph(d, x, cy) {
-  if (d && d.ran === false) return svgEl('circle', { cx: x, cy, r: 2.2, class: 'dn-glyph-none' }, [title('no run')]);
-  if (d.timeout) return svgEl('text', { x, y: cy + 3, class: 'dn-glyph-timeout', 'text-anchor': 'middle' }, [title('budget exceeded (timeout)'), '⏱']);
-  if (d.pass === true || d.pass === 1) return svgEl('circle', { cx: x, cy, r: 2.4, class: 'dn-glyph-pass' }, [title('passed')]);
+  if (d && d.ran === false) return hov(svgEl('circle', { cx: x, cy, r: 2.2, class: 'dn-glyph-none' }), 'no run');
+  if (d.timeout) return hov(svgEl('text', { x, y: cy + 3, class: 'dn-glyph-timeout', 'text-anchor': 'middle' }, ['⏱']), 'budget exceeded (timeout)');
+  if (d.pass === true || d.pass === 1) return hov(svgEl('circle', { cx: x, cy, r: 2.4, class: 'dn-glyph-pass' }), 'passed');
   if (d.pass === false || d.pass === 0) {
-    const g = svgEl('g', null, [title('failed')]);
+    const g = svgEl('g', null);
     g.appendChild(svgEl('line', { x1: x - 2.4, y1: cy - 2.4, x2: x + 2.4, y2: cy + 2.4, class: 'dn-glyph-fail' }));
     g.appendChild(svgEl('line', { x1: x - 2.4, y1: cy + 2.4, x2: x + 2.4, y2: cy - 2.4, class: 'dn-glyph-fail' }));
-    return g;
+    return hov(g, 'failed');
   }
-  return svgEl('circle', { cx: x, cy, r: 2.2, class: 'dn-glyph-none' }, [title('no predicate')]);
+  return hov(svgEl('circle', { cx: x, cy, r: 2.2, class: 'dn-glyph-none' }), 'no predicate');
 }
 
 // ---- horizontal value bars (per-judge losses) ----------------------
@@ -534,7 +542,7 @@ export function valueBars(opts) {
     lbl.textContent = shortLabel(String(d.label), 20);
     svg.appendChild(lbl);
     const bx = x(Math.abs(d.value));
-    svg.appendChild(svgEl('rect', { x: x0, y: cy - 4, width: Math.max(1, bx - x0), height: 8, rx: 1, class: 'dn-vbar' }, [title(`${d.label}: ${fmt(d.value)}`)]));
+    svg.appendChild(hov(svgEl('rect', { x: x0, y: cy - 4, width: Math.max(1, bx - x0), height: 8, rx: 1, class: 'dn-vbar' }), `${d.label}: ${fmt(d.value)}`));
     const vt = svgEl('text', { x: bx + 4, y: cy + 3, class: 'dn-vbar-val' });
     vt.textContent = fmt(d.value, 1);
     svg.appendChild(vt);
@@ -593,14 +601,14 @@ export function pairedSlopegraph(opts) {
     const g = svgEl('g', { class: 'dn-pslope-series' });
     if (ay != null && by != null) {
       const line = svgEl('line', { x1: leftX, y1: ay, x2: rightX, y2: by, class: 'dn-pslope-line ' + dirCls });
-      line.appendChild(title(`${s.label}: ${fmt(s.a)} → ${fmt(s.b)} (${fmtSigned(s.b - s.a)}; ${verdict})`));
+      hov(line, `${s.label}: ${fmt(s.a)} → ${fmt(s.b)} (${fmtSigned(s.b - s.a)}; ${verdict})`);
       g.appendChild(line);
       g.appendChild(svgEl('circle', { cx: leftX, cy: ay, r: 2.4, class: 'dn-pslope-node ' + dirCls }));
       g.appendChild(svgEl('circle', { cx: rightX, cy: by, r: 2.4, class: 'dn-pslope-node ' + dirCls }));
     } else if (ay != null) {
-      g.appendChild(svgEl('circle', { cx: leftX, cy: ay, r: 2.4, class: 'dn-pslope-node dn-flat' }, [title(`${s.label}: champion only ${fmt(s.a)}`)]));
+      g.appendChild(hov(svgEl('circle', { cx: leftX, cy: ay, r: 2.4, class: 'dn-pslope-node dn-flat' }), `${s.label}: champion only ${fmt(s.a)}`));
     } else if (by != null) {
-      g.appendChild(svgEl('circle', { cx: rightX, cy: by, r: 2.4, class: 'dn-pslope-node dn-flat' }, [title(`${s.label}: challenger only ${fmt(s.b)}`)]));
+      g.appendChild(hov(svgEl('circle', { cx: rightX, cy: by, r: 2.4, class: 'dn-pslope-node dn-flat' }), `${s.label}: challenger only ${fmt(s.b)}`));
     }
     const ll = leftLabels[i];
     if (isNum(s.a)) {
@@ -696,10 +704,10 @@ export function structureBracket(opts) {
       const winner = m.winner || '';
       const decided = !!winner;
       const g = svgEl('g', { class: 'dn-sbracket-match', tabindex: o.onMatch ? '0' : null });
-      g.appendChild(svgEl('rect', {
+      g.appendChild(hov(svgEl('rect', {
         x, y, width: colW, height: matchH, rx: 3,
         class: 'dn-sbracket-box' + (m.bye ? ' dn-bye' : ''),
-      }, [title(`${m.bracket_slot || m.match_id || ''}${comps.length ? ': ' + comps.join(' vs ') : ''}${winner ? ' → ' + winner : ''}`)]));
+      }), `${m.bracket_slot || m.match_id || ''}${comps.length ? ': ' + comps.join(' vs ') : ''}${winner ? ' → ' + winner : ''}`));
       // two competitor seats stacked inside the box (top + bottom)
       const seats = comps.length ? comps : ['tbd'];
       seats.slice(0, 2).forEach((cid, k) => {
@@ -784,9 +792,9 @@ export function racingLadder(opts) {
   // the benchmark pace line + label spanning the whole ladder.
   if (benchId) {
     const by = top + 10;
-    svg.appendChild(svgEl('line', {
+    svg.appendChild(hov(svgEl('line', {
       x1: 2, y1: by + 4, x2: w - 4, y2: by + 4, class: 'dn-raceladder-bench-line',
-    }, [title(`champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`)]));
+    }), `champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`));
     const bt = svgEl('text', { x: 4, y: by, class: 'dn-raceladder-bench' });
     bt.textContent = `▸ vs champion v0 = ${shortLabel(benchId, 16)} · Δ pace 0 (every Δ is vs v0)`;
     svg.appendChild(bt);
@@ -861,8 +869,8 @@ export function racingLadder(opts) {
       // partial Δ-vs-champion (live), else the committed rung Δ.
       const partial = lane && isNum(lane.partialDelta) ? lane.partialDelta : null;
       const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : partial;
-      const t = svgEl('text', { x: x + 6, y: cy + 3, class: cls },
-        [title(`${sid} · rung ${j + 1}${isNum(rung.board_fraction) ? ` · board ${(rung.board_fraction * 100).toFixed(0)}%` : ''}${delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : ''} · ${verdict}`)]);
+      const t = hov(svgEl('text', { x: x + 6, y: cy + 3, class: cls }),
+        `${sid} · rung ${j + 1}${isNum(rung.board_fraction) ? ` · board ${(rung.board_fraction * 100).toFixed(0)}%` : ''}${delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : ''} · ${verdict}`);
       // the lane label: a live lane reads "v3 · k/N", a queued lane "v3 · queued".
       const laneSuffix = eliminated ? ' ✕' : survived ? ' ↑'
         : (lane ? ' · ' + laneProgressText(lane) : (queued ? '' : ''));
@@ -946,7 +954,7 @@ export function racingLadder(opts) {
     label = 'tbd';
     tip = 'awaiting the final survivor';
   }
-  const gt = svgEl('text', { x: gx + 6, y: cy + 3, class: 'dn-raceladder-gatelab' + (crowned ? ' dn-good' : '') }, [title(tip)]);
+  const gt = hov(svgEl('text', { x: gx + 6, y: cy + 3, class: 'dn-raceladder-gatelab' + (crowned ? ' dn-good' : '') }), tip);
   gt.textContent = label;
   gateG.appendChild(gt);
   if (clickId && o.onCompetitor) {
@@ -1019,8 +1027,8 @@ export function survivalFunnel(opts) {
   const benchId = o.benchmarkId != null ? String(o.benchmarkId)
     : (o.championId != null ? String(o.championId) : null);
   if (benchId) {
-    const bt = svgEl('text', { x: 2, y: benchY, class: 'dn-funnel-bench' },
-      [title(`champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`)]);
+    const bt = hov(svgEl('text', { x: 2, y: benchY, class: 'dn-funnel-bench' }),
+      `champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`);
     bt.textContent = `▸ vs champion v0 = ${shortLabel(benchId, 18)} · every Δ is vs v0`;
     svg.appendChild(bt);
   }
@@ -1048,10 +1056,10 @@ export function survivalFunnel(opts) {
     const hOut = bandHalf(leaveN);
     const cls = 'dn-funnel-band' + (pending ? ' dn-funnel-pending' : '');
     // a trapezoid: left edge full enter-height, right edge narrowed to leave-height.
-    svg.appendChild(svgEl('polygon', {
+    svg.appendChild(hov(svgEl('polygon', {
       points: `${x0},${midY - hIn} ${x1},${midY - hOut} ${x1},${midY + hOut} ${x0},${midY + hIn}`,
       class: cls,
-    }, [title(`${rung.label || 'rung ' + j}: ${enterN} in → ${pending ? '…' : leaveN + ' survive'}${isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : ''}`)]));
+    }), `${rung.label || 'rung ' + j}: ${enterN} in → ${pending ? '…' : leaveN + ' survive'}${isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : ''}`));
     // stage label + board fraction above the band — on the dedicated header /
     // sub baselines (headY / subY), CENTRED on this stage's column x, so they
     // never overlap each other, an adjacent column, or the benchmark line.
@@ -1142,7 +1150,7 @@ export function survivalFunnel(opts) {
     label = 'tbd';
     tip = 'awaiting the final survivor';
   }
-  const gt = svgEl('text', { x: gx + gateW / 2, y: midY + 4, class: 'dn-funnel-gatelab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }, [title(tip)]);
+  const gt = hov(svgEl('text', { x: gx + gateW / 2, y: midY + 4, class: 'dn-funnel-gatelab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }), tip);
   gt.textContent = label;
   gateG.appendChild(gt);
   if (clickId && o.onCompetitor) {
@@ -1167,7 +1175,7 @@ function funnelRunner(svg, o, sid, rung, j, x, cy, verdict) {
     + (delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : '')
     + ` · ${verdict}`;
   const g = svgEl('g', { class: 'dn-funnel-runner', tabindex: o.onCompetitor ? '0' : null });
-  const t = svgEl('text', { x, y: cy + 3, class: cls }, [title(tip)]);
+  const t = hov(svgEl('text', { x, y: cy + 3, class: cls }), tip);
   t.textContent = shortLabel(sid, 13) + glyph;
   g.appendChild(t);
   if (o.onCompetitor) {
@@ -1238,8 +1246,8 @@ export function roundRobinMatrix(opts) {
       const rl = loss[rid]; const cl = loss[cid];
       let cls = 'dn-rr-cell dn-flat';
       if (isNum(rl) && isNum(cl)) cls = 'dn-rr-cell ' + (rl < cl ? 'dn-good' : rl > cl ? 'dn-bad' : 'dn-flat');
-      svg.appendChild(svgEl('rect', { x: cx + 1, y: ry + 1, width: cw - 2, height: cw - 2, rx: 1, class: cls },
-        [title(`${rid} vs ${cid}: ${isNum(rl) ? fmt(rl) : '—'} vs ${isNum(cl) ? fmt(cl) : '—'} — row ${isNum(rl) && isNum(cl) ? (rl < cl ? 'wins' : rl > cl ? 'loses' : 'ties') : '?'}`)]));
+      svg.appendChild(hov(svgEl('rect', { x: cx + 1, y: ry + 1, width: cw - 2, height: cw - 2, rx: 1, class: cls }),
+        `${rid} vs ${cid}: ${isNum(rl) ? fmt(rl) : '—'} vs ${isNum(cl) ? fmt(cl) : '—'} — row ${isNum(rl) && isNum(cl) ? (rl < cl ? 'wins' : rl > cl ? 'loses' : 'ties') : '?'}`));
     });
   });
   return svg;
@@ -1262,8 +1270,8 @@ export function raceLanes(opts) {
   if (lo === hi) hi += 1;
   const x = scale([lo, hi], [labelW + 6, w - 10]);
   const best = vals.length ? Math.min(...vals) : null;
-  if (best != null) svg.appendChild(svgEl('line', { x1: x(best), x2: x(best), y1: 14, y2: h - 4, class: 'dn-race-finish' }, [title(`leader: ${fmt(best)}`)]));
-  if (isNum(o.cut)) svg.appendChild(svgEl('line', { x1: x(o.cut), x2: x(o.cut), y1: 14, y2: h - 4, class: 'dn-race-cut' }, [title(`elimination cut: ${fmt(o.cut)}`)]));
+  if (best != null) svg.appendChild(hov(svgEl('line', { x1: x(best), x2: x(best), y1: 14, y2: h - 4, class: 'dn-race-finish' }), `leader: ${fmt(best)}`));
+  if (isNum(o.cut)) svg.appendChild(hov(svgEl('line', { x1: x(o.cut), x2: x(o.cut), y1: 14, y2: h - 4, class: 'dn-race-cut' }), `elimination cut: ${fmt(o.cut)}`));
   const head = svgEl('text', { x: labelW + 6, y: 10, class: 'dn-race-head' });
   head.textContent = 'loss → (left = ahead)';
   svg.appendChild(head);
@@ -1275,7 +1283,7 @@ export function raceLanes(opts) {
     svg.appendChild(lbl);
     if (isNum(r.loss)) {
       const cls = 'dn-race-dot' + (r.eliminated ? ' dn-bad' : ' dn-good');
-      svg.appendChild(svgEl('circle', { cx: x(r.loss), cy, r: 3.4, class: cls }, [title(`${r.id}: ${fmt(r.loss)}${r.eliminated ? ' · eliminated' : ' · survives'}`)]));
+      svg.appendChild(hov(svgEl('circle', { cx: x(r.loss), cy, r: 3.4, class: cls }), `${r.id}: ${fmt(r.loss)}${r.eliminated ? ' · eliminated' : ' · survives'}`));
     }
   });
   return svg;
@@ -1392,7 +1400,7 @@ export function sankey(opts) {
       + `C ${mx} ${l.sy - l.hwS}, ${mx} ${l.ty - l.hwT}, ${l.tx} ${l.ty - l.hwT} `
       + `L ${l.tx} ${l.ty + l.hwT} `
       + `C ${mx} ${l.ty + l.hwT}, ${mx} ${l.sy + l.hwS}, ${l.sx} ${l.sy + l.hwS} Z`;
-    linkLayer.appendChild(svgEl('path', { d, class: 'dn-sankey-ribbon ' + (l.cls || ''), fill: 'currentColor' }, [title(`${l.source} → ${l.target}: ${fmt(l.value, 1)}`)]));
+    linkLayer.appendChild(hov(svgEl('path', { d, class: 'dn-sankey-ribbon ' + (l.cls || ''), fill: 'currentColor' }), `${l.source} → ${l.target}: ${fmt(l.value, 1)}`));
   }
   svg.appendChild(linkLayer);
   // nodes — thin bars + direct in-place labels. FIX #5: the per-board node's
@@ -1404,7 +1412,7 @@ export function sankey(opts) {
   const nodeLayer = svgEl('g', { class: 'dn-sankey-nodes' });
   for (const n of nodes) {
     const g = svgEl('g', { class: 'dn-sankey-node ' + (n.cls || ''), tabindex: o.onNode ? '0' : null });
-    g.appendChild(svgEl('rect', { x: n.x, y: n.y, width: 6, height: n.h, rx: 1, class: 'dn-sankey-bar' }, [title(`${n.label}${isNum(n.value) ? ' · ' + fmt(n.value, 1) : ''}`)]));
+    g.appendChild(hov(svgEl('rect', { x: n.x, y: n.y, width: 6, height: n.h, rx: 1, class: 'dn-sankey-bar' }), `${n.label}${isNum(n.value) ? ' · ' + fmt(n.value, 1) : ''}`));
     const anchor = n.stage === 'gate' ? 'end' : 'start';
     const lx = n.stage === 'gate' ? n.x - 6 : n.x + 12;
     const ty = n.y + n.h / 2;

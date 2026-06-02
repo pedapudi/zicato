@@ -325,7 +325,11 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
     onRun: (eid) => ctx.navigate('board', { epochId, entry: eid, gen: genId }),
     onPatch: baseline ? null : () => ctx.navigate('diff', { epochId, gen: genId }),
   }));
-  dagCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: baseline ? 'parent → patch → board (one node per entry, colour = pass/fail/timeout) → Σ → gate → terminal · click a board node → its drill-down' : 'parent → patch → board → Σ → gate → terminal · each board circle shows this candidate’s drift loss vs the champion’s on the same board (Δ, positive = worse) · Σ sums those losses on the slice · the GATE compares Σ-vs-champion under a 3-rule test (hover it to see which rule decided) · click the PATCH node → this candidate’s side-by-side diff · hover/click a re-raced board node → its per-run losses (by rung)' }));
+  // ONE concise caption — the verbose parent→patch→…→terminal walkthrough, the
+  // 3-rule gate detail and the click/hover affordances moved into the figure's
+  // "?" info hovercard (and the GATE/Σ hovercards), so the figure reads clean at
+  // a glance with detail on demand (de-crowd).
+  dagCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: baseline ? 'parent → patch → board → Σ → gate → terminal · click a board node → its drill-down' : 'parent → patch → board → Σ → gate → terminal · hover the “?” for how to read it' }));
   host.appendChild(section('Lifecycle · cause → effect → verdict', dagCard));
 
   // ---- per-board scoring dot-plot ----
