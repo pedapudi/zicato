@@ -1,14 +1,8 @@
 // variants/T/views/epoch.js — EPOCH OVERVIEW: the dense substrate of one epoch.
 //
-// Console IV's epoch overview leads with the OBJECTIVE, the collapsible
-// proposer brief, the SLIM REEL (the rounds along the champion spine — adopted
-// from V, trimmed to a compact fit-to-width spine), then the COMPACT
-// board×generation drift-loss HEATMAP. The slim reel REPLACES the old lineage
-// BUMPS (same champion-vs-challenger-over-rounds story — we show one, never
-// both). Per the round-5 de-dup decision (fix #6) the heatmap STAYS here at the
-// epoch overview; the board TRELLIS (small-multiples) lives in the Boards view
-// (views/boards.js) — never both on one page.
-//
+// Leads with the OBJECTIVE, the collapsible proposer brief, the SLIM REEL
+// (rounds along the champion spine; for a non-gauntlet structure a compact
+// structure OVERVIEW instead), then the board×generation drift-loss HEATMAP.
 // Data: /api/epoch, /api/lineage, /api/tournaments, /api/score-trajectory,
 // /api/generation/{e}/{g}/per-entry.
 
@@ -19,18 +13,14 @@ import * as svg from '../svg.js';
 import { reel, reelDigest } from '../reel.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
-import { structurePill, isNonGauntlet, structureLabel, reconstructRacing, normalizeStructure, racingModel, structureDigest } from './structure.js';
+import { structurePill, isNonGauntlet, structureLabel, reconstructRacing, normalizeStructure, racingModel, swissOverviewModel, elimModel, buildLiveSwissModel, buildLiveElimModel, structureDigest } from './structure.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
 
-  // Class A — HEADER SCOPING: derive the VIEWED epoch from the route param
-  // FIRST, then fetch its contract via the epoch-SCOPED accessor (`?epoch=<id>`)
-  // — NEVER bare `D.epoch()`, which always returns the CURRENT epoch. The H1,
-  // the OBJECTIVE, the STATE (open/closed) pill, the structure pill, the board,
-  // and every stat below read from THIS scoped contract, so viewing e0 shows
-  // e0's identity/state/objective even while e1 is the live epoch. The lineage /
-  // trajectory / bracket reads are likewise scoped to the routed id below.
+  // HEADER SCOPING: derive the VIEWED epoch from the route param, then fetch its
+  // contract via the epoch-SCOPED accessor (NEVER bare `D.epoch()`, which returns
+  // the CURRENT epoch) so viewing e0 shows e0 even while e1 is live.
   const routeEpoch = (params && params.epochId) || null;
   const [ep, lin, traj, bracket] = await Promise.all([
     D.epoch(routeEpoch), D.lineage(), D.scoreTrajectory(routeEpoch), D.bracket(routeEpoch),
@@ -43,13 +33,9 @@ export async function render(host, ctx, params) {
   const experiments = Array.isArray(ep.experiments) ? ep.experiments : [];
   const board = Array.isArray(ep.board) ? ep.board : [];
 
-  // SCOPE TO THE VIEWED EPOCH: /api/lineage spans the WHOLE workspace (e0+e1+…),
-  // so we MUST filter to generations whose epoch_id matches the epoch on screen —
-  // otherwise a sibling epoch's generations leak in and the heatmap renders
-  // duplicate `v0 v1 …` columns and an inflated "field of N". When the lineage
-  // payload has no rows for this epoch (or carries no epoch_id at all) we fall
-  // back to the already epoch-scoped `ep.experiments`. Dedupe by id regardless,
-  // so a column id can never appear twice.
+  // SCOPE TO THE VIEWED EPOCH: /api/lineage spans the whole workspace, so filter
+  // to this epoch's generations (fall back to the scoped ep.experiments; dedupe
+  // by id) — otherwise a sibling epoch's gens leak into the heatmap + field count.
   const lineageRows = (lin && Array.isArray(lin.generations)) ? lin.generations : [];
   const scopedLineage = lineageRows.filter((g) => g && g.epoch_id === epochId);
   const rawGens = scopedLineage.length
@@ -105,32 +91,47 @@ export async function render(host, ctx, params) {
   const structure = (tournament && tournament.structure) || 'gauntlet';
   const nonGauntlet = isNonGauntlet(structure);
 
-  // ---- RACING survival-funnel data (LIVE-FIRST, else reconstructed) ----
-  // For a racing epoch the structure strip renders an interactive survival
-  // FUNNEL (field → cuts → survivor → champion-gate). It needs the SAME
-  // rung/gate model the Match-ups ladder uses: prefer the LIVE
-  // /api/active-tournament topology while a run is in flight (the pending rung
-  // stays neutral, the gate "deciding…"), else REUSE reconstructRacing() to
-  // rebuild the completed ladder from the per-challenger /api/tournaments
-  // records. Resolved to null (→ static summary) when there are no rungs yet.
+  // ---- NON-GAUNTLET OVERVIEW data (LIVE-FIRST, else completed record) ----
+  // Each non-gauntlet structure renders a compact at-a-glance overview from the
+  // SAME normalized `st` the Match-ups ladder uses: the LIVE active-tournament
+  // topology when a run for THIS epoch is in flight, else the completed record
+  // (reconstructRacing for racing; the matching /api/tournaments entry for
+  // swiss/elim). Null (→ honest brief line) when there is no data.
   let racingFunnel = null;
-  if (structure === 'racing') {
+  let swissOver = null;
+  let elimOver = null;
+  if (nonGauntlet) {
     const status = deriveLiveStatus({
       heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
     });
-    // The LIVE topology belongs to the ACTIVE epoch — only adopt it when that
-    // is the epoch ON SCREEN. Otherwise the active (e.g. e1) tournament would
-    // render under a DIFFERENT epoch's (e.g. e0's) header. When it is not for
-    // this epoch we fall through to the epoch-scoped reconstruction (which is
-    // itself filtered to `epochId`), so each epoch only ever shows its own data.
     const liveRaw = status.running ? await D.activeTournament() : null;
     const liveForThisEpoch = (liveRaw && liveRaw.epoch_id != null)
-      ? String(liveRaw.epoch_id) === String(epochId)
-      : !!liveRaw; // no epoch tag ⇒ legacy single-epoch payload, trust it.
-    const liveSt = liveForThisEpoch ? normalizeStructure(liveRaw, true) : null;
-    const racingSt = (liveSt && liveSt.live) ? liveSt : reconstructRacing(bracket, epochId);
-    const model = racingModel(racingSt);
-    if (model && model.hasRungs) racingFunnel = { st: racingSt, model };
+      ? String(liveRaw.epoch_id) === String(epochId) : !!liveRaw;
+    if (structure === 'racing') {
+      const liveSt = liveForThisEpoch ? normalizeStructure(liveRaw, true) : null;
+      const racingSt = (liveSt && liveSt.live) ? liveSt : reconstructRacing(bracket, epochId);
+      const model = racingModel(racingSt);
+      if (model && model.hasRungs) racingFunnel = { st: racingSt, model };
+    } else {
+      let st = null;
+      if (liveForThisEpoch && liveRaw && String(liveRaw.structure) === structure) {
+        const epochGens = (Array.isArray(liveRaw.competitors) ? liveRaw.competitors : [])
+          .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
+        const args = { at: liveRaw, heartbeat: state.heartbeat, activeRuns: state.activeRuns, epochGens: epochGens.length ? epochGens : null };
+        st = (structure === 'swiss' ? buildLiveSwissModel(args) : buildLiveElimModel(args)) || normalizeStructure(liveRaw, true);
+      }
+      if (!st) {
+        const tournaments = (bracket && Array.isArray(bracket.tournaments)) ? bracket.tournaments : [];
+        const rec = tournaments.filter((t) => t && String(t.structure) === structure).pop();
+        if (rec) st = normalizeStructure({
+          structure, structure_params: rec.structure_params || (tournament && tournament.params) || {},
+          competitors: rec.competitors, rounds: rec.rounds, standings: rec.standings,
+          champion_lineage: bracket && bracket.champion_lineage, source: 'index',
+        }, false);
+      }
+      if (st && structure === 'swiss') { const m = swissOverviewModel(st); if (m) swissOver = { st, model: m }; }
+      else if (st) { const m = elimModel(st); if (m && m.hasMatches !== false && m.winners.length) elimOver = { st, model: m }; }
+    }
   }
 
   const digest = JSON.stringify({
@@ -138,6 +139,8 @@ export async function render(host, ctx, params) {
     structure: tournament ? [tournament.structure, JSON.stringify(tournament.params || {})] : null,
     nonGauntlet,
     racingFunnel: racingFunnel ? structureDigest(racingFunnel.st) : null,
+    swissOver: swissOver ? structureDigest(swissOver.st) : null,
+    elimOver: elimOver ? structureDigest(elimOver.st) : null,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
     reel: reelDigest(reelSpec),
     loss: [...lossLookup.entries()].sort(),
@@ -183,15 +186,9 @@ export async function render(host, ctx, params) {
     nodes.push(section('Operator’s brief to the proposer', briefDetails));
 
     // ---- the structure-aware reel ------------------------------------
-    // GAUNTLET keeps the slim reel: rounds along the champion spine (replaces
-    // bumps). Fit-to-width, no pan/zoom: the ticks compress as rounds grow.
-    // Clicking a station → that round's candidate; the seed → the champion.
-    // The per-challenger detail lives in the generations match cards.
-    //
-    // For a NON-gauntlet epoch the champion-spine reel is the WRONG story
-    // (racing is successive halving, not N sequential title defences), so we
-    // swap in a compact structure strip ("racing · field of N · M rungs") with
-    // a "see Match-ups" affordance that opens the real ladder/bracket.
+    // GAUNTLET keeps the slim reel (rounds along the champion spine). A
+    // NON-gauntlet epoch swaps in a compact structure OVERVIEW (the survival
+    // funnel / swiss bump+bar / elim mini-bracket) with a "See Match-ups" link.
     if (nonGauntlet) {
       const fieldN = gens.length;
       const params = (tournament && tournament.params) || {};
@@ -201,46 +198,69 @@ export async function render(host, ctx, params) {
       if (structure === 'racing' && rungs) facts.push(el('span', { class: 'dt-struct-strip-fact', text: `${rungs} rung${rungs === 1 ? '' : 's'}` }));
       else if (structure === 'swiss' && svg.isNum(params.rounds)) facts.push(el('span', { class: 'dt-struct-strip-fact', text: `${params.rounds} round${params.rounds === 1 ? '' : 's'}` }));
 
-      if (structure === 'racing' && racingFunnel) {
-        // ---- the interactive SURVIVAL FUNNEL (the epoch hero) ----
-        // field → cuts → survivor → champion-gate, the flow narrowing at each
-        // cut; eliminated competitors peel off as ✕ branches, survivors (↑)
-        // ride the thickening flow toward the gate. LIVE: pending rung neutral
-        // + gate "deciding…". Click a competitor → its candidate.
-        const m = racingFunnel.model;
-        // the card keeps the `dt-struct-strip` facts header (so it still reads
-        // as the structure strip) and adds the funnel figure below it.
-        const card = el('div', { class: 'dn-panel dn-figpane dt-funnel-card dt-struct-strip' });
-        const head = el('div', { class: 'dt-struct-strip-row' }, [
-          ...facts,
-          m.live ? el('span', { class: 'dt-live-pill', text: 'LIVE' }) : null,
-        ].filter(Boolean));
-        card.appendChild(head);
-        card.appendChild(svg.survivalFunnel({
-          rungs: m.rungs, championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
-          gateState: m.gateState, gateDelta: m.gateDelta,
-          onCompetitor: (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); },
-        }));
-        const gateNote = m.gateState === 'crowned' ? ` · champion-gate: ${m.championId} promoted ♚`
-          : m.gateState === 'stands' ? ' · champion-gate: champion stands'
-          : m.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
-        card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-          (m.benchmarkId ? `the field is raced vs the champion v0 = ${m.benchmarkId}; every Δ is Δ-vs-v0 and v0 defends at the gate · ` : '')
-          + 'successive halving — each rung races the field on a growing board fraction, then cuts the worst by η · ✕ = cut · ↑ = survives · ♚ = crowned at the full-board gate · click a competitor → open'
-          + gateNote
-          + (m.live ? ' · LIVE — the eventual winner is not committed until the final gate' : '') }));
+      // helper: a structure-overview card (facts header + LIVE pill + figure +
+      // caption + "See Match-ups →"). Each structure passes its figure + caption.
+      const overviewCard = (live, figure, caption) => {
+        const card = el('div', { class: 'dn-panel dn-figpane dt-struct-over dt-struct-strip' });
+        card.appendChild(el('div', { class: 'dt-struct-strip-row' }, [
+          ...facts, live ? el('span', { class: 'dt-live-pill', text: 'LIVE' }) : null,
+        ].filter(Boolean)));
+        card.appendChild(figure);
+        if (caption) card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: caption }));
         card.appendChild(el('a', { class: 'dn-linkbtn dt-struct-strip-link', href: ctx.href('gens', { epochId }), text: 'See Match-ups →' }));
-        nodes.push(section('Tournament structure · ' + structureLabel(structure, params), card));
+        return card;
+      };
+      const open = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
+      // shared champion-gate suffix for every overview caption.
+      const gateNote = (m, crown) => (m.gateState === 'crowned' ? ` · champion-gate: ${m.championId} promoted ${crown}`
+        : m.gateState === 'stands' ? ' · champion-gate: champion stands'
+        : m.gateState === 'deciding' ? ' · champion-gate: deciding…' : '')
+        + (m.live ? ' · LIVE — the winner is not committed until the gate' : '');
+      const pushOverview = (m, fig, caption) =>
+        nodes.push(section('Tournament structure · ' + structureLabel(structure, params), overviewCard(m.live, fig, caption)));
+
+      if (structure === 'racing' && racingFunnel) {
+        // the interactive SURVIVAL FUNNEL (field → cuts → survivor → gate).
+        const m = racingFunnel.model;
+        pushOverview(m, svg.survivalFunnel({
+          rungs: m.rungs, championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
+          gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
+        }), (m.benchmarkId ? `the field is raced vs the champion v0 = ${m.benchmarkId}; every Δ is Δ-vs-v0 and v0 defends at the gate · ` : '')
+          + 'successive halving — each rung races the field on a growing board fraction, then cuts the worst by η · ✕ = cut · ↑ = survives · ♚ = crowned at the full-board gate · click a competitor → open'
+          + gateNote(m, '♚'));
+      } else if (structure === 'swiss' && swissOver) {
+        // the SWISS OVERVIEW: standings bump chart + ranked Copeland bar.
+        const m = swissOver.model;
+        pushOverview(m, svg.swissOverview({
+          series: m.series, bars: m.bars, labels: m.labels,
+          championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
+          gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
+        }), 'each line tracks one competitor’s standings rank round-to-round (rank 1 = top) — the leader emerges as lines cross · the bar ranks final Copeland points (win 1 / draw ½) · ♔ = leader · ♛ = promoted'
+          + gateNote(m, '♛'));
+      } else if ((structure === 'single_elim' || structure === 'double_elim') && elimOver) {
+        // the ELIM OVERVIEW: a compact mini-bracket — elimBracket at small scale.
+        const m = elimOver.model;
+        const isDouble = !!(m.losers && m.losers.length);
+        pushOverview(m, svg.elimBracket({
+          compact: true, winners: m.winners, losers: m.losers,
+          championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
+          gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
+        }), 'the bracket shape + who advanced — ✦ = match winner · the bracket winner must beat the incumbent at the champion-gate ♚'
+          + (isDouble ? ' · the losers’ bracket gives a second life (double-elim)' : '')
+          + gateNote(m, '♚'));
       } else {
-        // DEGRADE: no rung records yet (e.g. a racing epoch that has not run,
-        // or a non-racing structure) → a tidy static "field of N" summary.
+        // NO DATA (no record yet, or mid-proposing) → an HONEST brief line — the
+        // structure facts + a pointer to Match-ups, NEVER the old negative
+        // "this epoch is not a gauntlet" placeholder.
         const stripCard = el('div', { class: 'dn-panel dt-struct-strip' });
         stripCard.appendChild(el('div', { class: 'dt-struct-strip-row' }, facts));
         stripCard.appendChild(el('a', { class: 'dn-linkbtn dt-struct-strip-link', href: ctx.href('gens', { epochId }), text: 'See Match-ups →' }));
-        stripCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-          structure === 'racing'
-            ? 'no rungs have raced yet — the survival funnel fills in once the field runs · the full ladder / standings live in Match-ups'
-            : 'this epoch is not a gauntlet — the champion-spine reel does not describe it · the full ladder / bracket / standings live in Match-ups' }));
+        const line = structure === 'racing'
+          ? 'no rungs have raced yet — the survival funnel fills in once the field runs · the full ladder / standings live in Match-ups'
+          : structure === 'swiss'
+            ? 'no swiss rounds have scored yet — the standings overview fills in as pairings land · the full ladder lives in Match-ups'
+            : 'the bracket has not been seeded yet — the mini-bracket fills in as matches land · the full bracket lives in Match-ups';
+        stripCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: line }));
         nodes.push(section('Tournament structure · ' + structureLabel(structure, params), stripCard));
       }
     } else {

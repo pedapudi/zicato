@@ -13,6 +13,16 @@ export const NS = 'http://www.w3.org/2000/svg';
 // reduced-motion-aware; a transient overlay, NOT part of the digest-gated
 function hov(node, tip) { attachHovercard(node, tip); return node; }
 
+// Wire a node as a pointer/keyboard activatable control (click + Enter/Space).
+// Returns the node. No-op when `fn` is falsy.
+function clickable(node, fn) {
+  if (!fn) return node;
+  node.style.cursor = 'pointer';
+  node.addEventListener('click', () => fn());
+  node.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); fn(); } });
+  return node;
+}
+
 // ---- numeric helpers ------------------------------------------------
 
 export function isNum(v) { return typeof v === 'number' && isFinite(v); }
@@ -126,8 +136,7 @@ export function sparkline(opts) {
 }
 
 // ---- bumps chart (lineage as ranked lanes) --------------------------
-//
-// Champion lineage as a spine in its OWN lane; rejected challengers branch
+// Champion lineage on its own spine lane; rejected challengers branch off.
 // opts: { width, height, nodes:[{id, x, promoted, scalar, parent}], onClick }
 export function bumps(opts) {
   const o = opts || {};
@@ -197,11 +206,7 @@ export function bumps(opts) {
     const cls = 'dn-bump-node ' + (n.promoted ? 'dn-promoted' : 'dn-rejected');
     const c = hov(svgEl('circle', { cx: px, cy, r: n.promoted ? 4.5 : 3.5, class: cls, tabindex: o.onClick ? '0' : null }),
       `${n.id}${isNum(n.scalar) ? ' · ' + fmt(n.scalar) : ''} · ${n.promoted ? 'promoted' : 'rejected'}`);
-    if (o.onClick) {
-      c.style.cursor = 'pointer';
-      c.addEventListener('click', () => o.onClick(n));
-      c.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onClick(n); } });
-    }
+    clickable(c, o.onClick && (() => o.onClick(n)));
     svg.appendChild(c);
     const t = svgEl('text', { x: px, y: cy + 16, class: 'dn-bump-label', 'text-anchor': 'middle' });
     t.textContent = shortLabel(n.id);
@@ -248,10 +253,7 @@ export function jitterColumn(ys, step) {
   return out;
 }
 
-// ---- theme-aware heatmap --------------------------------------------
-//
-// Small-multiples heatmap: rows × cols coloured by value. Console makes it
-//         headHeight, onClick }
+// ---- theme-aware heatmap (rows × cols coloured by value) ------------
 export function heatmap(opts) {
   const o = opts || {};
   const rows = Array.isArray(o.rows) ? o.rows : [];
@@ -309,20 +311,14 @@ export function heatmap(opts) {
         cell.style.setProperty('fill', `color-mix(in srgb, var(--v2-hm-hot) ${mixPct}%, var(--v2-hm-cool))`);
         cell.setAttribute('data-hm-mix', mixPct);
       }
-      if (o.onClick) {
-        cell.style.cursor = 'pointer';
-        cell.addEventListener('click', () => o.onClick(r.id, c.id));
-      }
+      clickable(cell, o.onClick && (() => o.onClick(r.id, c.id)));
       svg.appendChild(cell);
     });
   });
   return svg;
 }
 
-// ---- value dot-plot with a reference line ---------------------------
-//
-// Per-board scoring (the D dot-plot the brief insists must read in all three
-// clickable; onClick receives the full item (carrying id/run/gen for routing).
+// ---- value dot-plot with a reference line (clickable; onClick → full item) --
 export function valueDotPlot(opts) {
   const o = opts || {};
   const items = (Array.isArray(o.items) ? o.items : []).filter((d) => d);
@@ -386,11 +382,7 @@ export function valueDotPlot(opts) {
       t.textContent = 'no run';
       g.appendChild(t);
     }
-    if (o.onClick) {
-      g.style.cursor = 'pointer';
-      g.addEventListener('click', () => o.onClick(d));
-      g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onClick(d); } });
-    }
+    clickable(g, o.onClick && (() => o.onClick(d)));
     svg.appendChild(g);
   });
   return svg;
@@ -576,7 +568,7 @@ export function pairedSlopegraph(opts) {
       tx.textContent = `${fmt(s.b, 1)}  ${shortLabel(s.label, 14)}`;
       g.appendChild(tx);
     }
-    if (o.onClick) { g.style.cursor = 'pointer'; g.addEventListener('click', () => o.onClick(s)); }
+    clickable(g, o.onClick && (() => o.onClick(s)));
     svg.appendChild(g);
   });
   return svg;
@@ -596,14 +588,12 @@ export function racingLadder(opts) {
   const rowH = 18;
   const headH = 34;
   const top = 6;
-  // The CHAMPION / v0 BENCHMARK reference. The per-rung deltas are Δ-vs-champion
-  // (the reigning v0 the field is raced against), but v0 itself is NOT one of the
-  // rung competitors, which is confusing. We draw a persistent labelled pace line
+  // the v0 BENCHMARK reference (the reigning champion the field is raced vs; NOT
+  // a rung competitor) — drawn as a persistent labelled pace line at Δ=0.
   const benchId = o.benchmarkId != null ? String(o.benchmarkId)
     : (o.championId != null ? String(o.championId) : null);
   const benchH = benchId ? 18 : 0;
   const maxRows = Math.max(1, ...rungs.map((r) => (Array.isArray(r.competitors) ? r.competitors.length : 0)), 1);
-  // a trailing champion-gate column rides after the last rung.
   const ladderW = rungs.length * colW + Math.max(0, rungs.length - 1) * colGap;
   const w = Math.max(colW, ladderW + colGap + gateW) + 8;
   const h = top + benchH + headH + maxRows * rowH + 8;
@@ -717,11 +707,7 @@ export function racingLadder(opts) {
         dt.textContent = fmtSigned(delta, delta !== 0 && Math.abs(delta) < 0.1 ? 3 : 1);
         g.appendChild(dt);
       }
-      if (o.onCompetitor) {
-        g.style.cursor = 'pointer';
-        g.addEventListener('click', () => o.onCompetitor(sid));
-        g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(sid); } });
-      }
+      clickable(g, o.onCompetitor && (() => o.onCompetitor(sid)));
       svg.appendChild(g);
     });
   });
@@ -774,11 +760,7 @@ export function racingLadder(opts) {
   const gt = hov(svgEl('text', { x: gx + 6, y: cy + 3, class: 'dn-raceladder-gatelab' + (crowned ? ' dn-good' : '') }), tip);
   gt.textContent = label;
   gateG.appendChild(gt);
-  if (clickId && o.onCompetitor) {
-    gateG.style.cursor = 'pointer';
-    gateG.addEventListener('click', () => o.onCompetitor(clickId));
-    gateG.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(clickId); } });
-  }
+  clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(clickId)));
   svg.appendChild(gateG);
   return svg;
 }
@@ -794,10 +776,7 @@ export function survivalFunnel(opts) {
   const stageW = 150;
   const stageGap = 20;
   const gateW = 132;
-  // THREE STACKED HEADER BASELINES, top→down, so nothing collides (BUG: the
-  // benchmark/descriptive line shared a baseline + x-range with the first rung
-  // header → garbled "▸ vs champion v0RUNG 1"):
-  //   subY    — the per-column sublabels ("4 field · 43/100 board"), centred per stage
+  // three stacked header baselines (bench / head / sub) so nothing collides.
   const benchY = 12;
   const headY = 30;
   const subY = 42;
@@ -949,11 +928,7 @@ export function survivalFunnel(opts) {
   const gt = hov(svgEl('text', { x: gx + gateW / 2, y: midY + 4, class: 'dn-funnel-gatelab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }), tip);
   gt.textContent = label;
   gateG.appendChild(gt);
-  if (clickId && o.onCompetitor) {
-    gateG.style.cursor = 'pointer';
-    gateG.addEventListener('click', () => o.onCompetitor(clickId));
-    gateG.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(clickId); } });
-  }
+  clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(clickId)));
   svg.appendChild(gateG);
   return svg;
 }
@@ -974,11 +949,7 @@ function funnelRunner(svg, o, sid, rung, j, x, cy, verdict) {
   const t = hov(svgEl('text', { x, y: cy + 3, class: cls }), tip);
   t.textContent = shortLabel(sid, 13) + glyph;
   g.appendChild(t);
-  if (o.onCompetitor) {
-    g.style.cursor = 'pointer';
-    g.addEventListener('click', () => o.onCompetitor(sid));
-    g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(sid); } });
-  }
+  clickable(g, o.onCompetitor && (() => o.onCompetitor(sid)));
   svg.appendChild(g);
 }
 
@@ -1064,12 +1035,8 @@ export function swissLadder(opts) {
         g.appendChild(svgEl('rect', { x: x + 6, y: cy + 7, width: barW, height: 2, rx: 1, class: 'dn-swissladder-bar-bg' }));
         g.appendChild(svgEl('rect', { x: x + 6, y: cy + 7, width: Math.max(1, barW * frac), height: 2, rx: 1, class: 'dn-swissladder-bar dn-swissladder-bar-live' }));
       }
-      if (o.onCompetitor) {
-        g.style.cursor = 'pointer';
-        const open = p.winner || p.a || p.b;
-        g.addEventListener('click', () => { if (open) o.onCompetitor(String(open)); });
-        g.addEventListener('keydown', (ev) => { if ((ev.key === 'Enter' || ev.key === ' ') && open) { ev.preventDefault(); o.onCompetitor(String(open)); } });
-      }
+      { const open = p.winner || p.a || p.b;
+        clickable(g, (o.onCompetitor && open) && (() => o.onCompetitor(String(open)))); }
       svg.appendChild(g);
     });
   });
@@ -1092,11 +1059,7 @@ export function swissLadder(opts) {
     const pts = svgEl('text', { x: sx + standW - 6, y: cy + 3, 'text-anchor': 'end', class: 'dn-swissladder-pts' + (isLeader ? ' dn-good' : '') });
     pts.textContent = isNum(s.points) ? fmt(s.points, s.points % 1 ? 1 : 0) : '—';
     g.appendChild(pts);
-    if (o.onCompetitor) {
-      g.style.cursor = 'pointer';
-      g.addEventListener('click', () => o.onCompetitor(sid));
-      g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(sid); } });
-    }
+    clickable(g, o.onCompetitor && (() => o.onCompetitor(sid)));
     svg.appendChild(g);
   });
 
@@ -1127,11 +1090,7 @@ export function swissLadder(opts) {
   const gt = hov(svgEl('text', { x: gx + 6, y: cy + 3, class: 'dn-swissladder-gatelab' + (crowned ? ' dn-good' : '') }), tip);
   gt.textContent = label;
   gateG.appendChild(gt);
-  if (clickId && o.onCompetitor) {
-    gateG.style.cursor = 'pointer';
-    gateG.addEventListener('click', () => o.onCompetitor(String(clickId)));
-    gateG.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(String(clickId)); } });
-  }
+  clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(String(clickId))));
   svg.appendChild(gateG);
   return svg;
 }
@@ -1145,12 +1104,16 @@ export function elimBracket(opts) {
   const winners = (Array.isArray(o.winners) ? o.winners : []).filter((r) => r && Array.isArray(r.matches));
   const losers = Array.isArray(o.losers) ? o.losers.filter((r) => r && Array.isArray(r.matches)) : null;
   const live = !!o.live;
-  const colW = 138;
-  const colGap = 30;
-  const matchH = 40;
-  const matchGap = 14;
-  const gateW = 120;
-  const top = 22;
+  // COMPACT mode (the epoch-card mini-bracket overview) shrinks the geometry +
+  // tags the root `dn-elimbracket-compact` so it reads as a glance, not the full
+  // Match-ups tree. Same marks, same class family — one renderer, two scales.
+  const compact = !!o.compact;
+  const colW = compact ? 96 : 138;
+  const colGap = compact ? 18 : 30;
+  const matchH = compact ? 26 : 40;
+  const matchGap = compact ? 8 : 14;
+  const gateW = compact ? 96 : 120;
+  const top = compact ? 20 : 22;
   const benchId = o.benchmarkId != null ? String(o.benchmarkId) : (o.championId != null ? String(o.championId) : null);
   const benchH = benchId ? 16 : 0;
   const wbMax = Math.max(1, ...winners.map((r) => r.matches.length || 0), 1);
@@ -1162,13 +1125,14 @@ export function elimBracket(opts) {
   const lbBand = (losers && losers.length) ? lbHeadH + lbMax * (matchH + matchGap) : 0;
   const h = wbBand + lbBand + 12;
   const svg = svgEl('svg', {
-    class: 'dn-elimbracket', width: '100%', height: h,
+    class: 'dn-elimbracket' + (compact ? ' dn-elimbracket-compact' : ''), width: '100%', height: h,
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
   });
   if (benchId) {
     const bt = hov(svgEl('text', { x: 4, y: 12, class: 'dn-elimbracket-bench' }),
       `incumbent champion = ${benchId} · the bracket winner must beat the incumbent at the champion-gate to be promoted`);
-    bt.textContent = `▸ incumbent champion = ${shortLabel(benchId, 18)} · defends at the gate`;
+    bt.textContent = (compact ? `▸ incumbent = ${shortLabel(benchId, 16)} · defends at the gate`
+      : `▸ incumbent champion = ${shortLabel(benchId, 18)} · defends at the gate`);
     svg.appendChild(bt);
   }
   if (winners.length === 0) {
@@ -1250,11 +1214,7 @@ export function elimBracket(opts) {
       b.textContent = 'bye';
       g.appendChild(b);
     }
-    if (o.onMatch) {
-      g.style.cursor = 'pointer';
-      g.addEventListener('click', () => o.onMatch(m));
-      g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onMatch(m); } });
-    }
+    clickable(g, o.onMatch && (() => o.onMatch(m)));
     svg.appendChild(g);
   }
 
@@ -1289,11 +1249,7 @@ export function elimBracket(opts) {
   const gt = hov(svgEl('text', { x: gx + 6, y: gateCy + 3, class: 'dn-elimbracket-gatelab' + (crowned ? ' dn-good' : '') }), tip);
   gt.textContent = label;
   gateG.appendChild(gt);
-  if (clickId && o.onCompetitor) {
-    gateG.style.cursor = 'pointer';
-    gateG.addEventListener('click', () => o.onCompetitor(String(clickId)));
-    gateG.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onCompetitor(String(clickId)); } });
-  }
+  clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(String(clickId))));
   svg.appendChild(gateG);
 
   // ── the losers' band (double-elim only) ──
@@ -1307,10 +1263,129 @@ export function elimBracket(opts) {
   return svg;
 }
 
-// ---- Tufte Sankey (fit-to-width, NO viewport) -----------------------
-//
-// THE convergence brief's headline figure: the causal flow
-//         links:[{source,target,value,cls}], onNode(node) }
+// ---- COMPACT SWISS OVERVIEW (epoch-card hero) ----------------------
+// (1) a STANDINGS BUMP CHART — one line per competitor, x = round, y = rank
+//     (1 at top); lines cross as the leader emerges (champion line bold).
+// (2) a RANKED COPELAND-POINT BAR — final standings, leader ♔, gate verdict.
+//   { series:[{id,champion,ranks}], bars:[{id,points,wins,draws,losses,leader,
+//     champion}], labels, championId, benchmarkId, gateState, gateDelta, live,
+//     onCompetitor(id) }
+export function swissOverview(opts) {
+  const o = opts || {};
+  const series = (Array.isArray(o.series) ? o.series : []).filter((s) => s && Array.isArray(s.ranks));
+  const bars = (Array.isArray(o.bars) ? o.bars : []).filter((b) => b);
+  const labels = Array.isArray(o.labels) ? o.labels : [];
+  const live = !!o.live;
+  const w = 640;
+  const nR = Math.max(1, labels.length);
+  const nC = Math.max(1, series.length, bars.length);
+  // bump panel geometry
+  const bumpTop = 26;
+  const rowH = 22;
+  const bumpH = bumpTop + nC * rowH + 10;
+  const padL = 96;          // left gutter for the round-0 competitor labels
+  const padR = 120;         // right gutter for the final-rank labels
+  const barTop = bumpH + 30;
+  const barH = 18;
+  const barGap = 8;
+  const barBandH = bars.length * (barH + barGap);
+  const h = barTop + barBandH + 14;
+  const svg = svgEl('svg', {
+    class: 'dn-swissover', width: '100%', height: h,
+    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
+  });
+  if (!series.length && !bars.length) {
+    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no swiss rounds yet';
+    svg.appendChild(t);
+    return svg;
+  }
+
+  // panel (1): the standings BUMP CHART
+  const ttl = svgEl('text', { x: 2, y: 14, class: 'dn-swissover-title' });
+  ttl.textContent = 'standings by round' + (live ? ' · LIVE' : '');
+  svg.appendChild(ttl);
+  const X = scale([0, Math.max(1, nR - 1)], [padL, w - padR]);
+  const Y = scale([1, Math.max(2, nC)], [bumpTop, bumpTop + (nC - 1) * rowH]);
+  labels.forEach((lab, j) => {
+    const x = X(j);
+    const tk = svgEl('text', { x, y: bumpTop - 8, class: 'dn-swissover-round', 'text-anchor': j === 0 ? 'start' : (j === labels.length - 1 ? 'end' : 'middle') });
+    tk.textContent = shortLabel(String(lab), 8);
+    svg.appendChild(tk);
+    svg.appendChild(svgEl('line', { x1: x, x2: x, y1: bumpTop - 4, y2: bumpTop + (nC - 1) * rowH + 4, class: 'dn-swissover-grid' }));
+  });
+  // one polyline per competitor; champion emphasised.
+  series.forEach((s) => {
+    const pts = [];
+    s.ranks.forEach((r, j) => { if (isNum(r)) pts.push([X(j), Y(r)]); });
+    if (!pts.length) return;
+    const champ = !!s.champion;
+    const cls = 'dn-swissover-line' + (champ ? ' dn-swissover-line-champ' : '');
+    const d = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+    const path = clickable(hov(svgEl('path', { d, class: cls, fill: 'none', tabindex: o.onCompetitor ? '0' : null }),
+      `${s.id}${champ ? ' · champion' : ''} · finishes rank ${s.ranks[s.ranks.length - 1] || '?'}`),
+      o.onCompetitor && (() => o.onCompetitor(s.id)));
+    svg.appendChild(path);
+    // end-dots (start + final rank) + left name label + right rank label.
+    const [x0, y0] = pts[0];
+    const [xn, yn] = pts[pts.length - 1];
+    const dotCls = 'dn-swissover-dot' + (champ ? ' dn-swissover-dot-champ' : '');
+    const r = champ ? 3.4 : 2.6;
+    svg.appendChild(svgEl('circle', { cx: x0, cy: y0, r, class: dotCls }));
+    svg.appendChild(svgEl('circle', { cx: xn, cy: yn, r, class: dotCls }));
+    const lL = svgEl('text', { x: x0 - 6, y: y0 + 3, class: 'dn-swissover-name' + (champ ? ' dn-swissover-name-champ' : ''), 'text-anchor': 'end' });
+    lL.textContent = shortLabel(s.id, 11) + (champ ? ' ♛' : '');
+    svg.appendChild(lL);
+    const lR = svgEl('text', { x: xn + 6, y: yn + 3, class: 'dn-swissover-rank', 'text-anchor': 'start' });
+    lR.textContent = '#' + (s.ranks[s.ranks.length - 1] || '?');
+    svg.appendChild(lR);
+  });
+
+  // ── panel (2): the RANKED COPELAND-POINT BAR ──
+  const bt = svgEl('text', { x: 2, y: barTop - 10, class: 'dn-swissover-title' });
+  bt.textContent = 'Copeland points · final standings';
+  svg.appendChild(bt);
+  const maxPts = Math.max(1, ...bars.map((b) => b.points || 0));
+  const champId = o.championId ? String(o.championId) : null;
+  const gateState = o.gateState || (live ? 'deciding' : 'pending');
+  const barX0 = padL;
+  const barMaxW = w - padR - barX0;
+  bars.forEach((b, i) => {
+    const y = barTop + i * (barH + barGap);
+    const bw = Math.max(2, barMaxW * ((b.points || 0) / maxPts));
+    const g = svgEl('g', { class: 'dn-swissover-barrow', tabindex: o.onCompetitor ? '0' : null });
+    const lab = svgEl('text', { x: barX0 - 6, y: y + barH / 2 + 3, class: 'dn-swissover-barname' + (b.leader ? ' dn-swissover-name-champ' : ''), 'text-anchor': 'end' });
+    lab.textContent = (i + 1) + '. ' + shortLabel(b.id, 9) + (b.leader ? ' ♔' : '');
+    g.appendChild(lab);
+    g.appendChild(svgEl('rect', { x: barX0, y, width: barMaxW, height: barH, rx: 3, class: 'dn-swissover-bar-bg' }));
+    g.appendChild(hov(svgEl('rect', { x: barX0, y, width: bw, height: barH, rx: 3, class: 'dn-swissover-bar' + (b.leader ? ' dn-swissover-bar-lead' : '') }),
+      `${b.id} · ${fmt(b.points, b.points % 1 ? 1 : 0)} pts · ${b.wins}W ${b.draws}D ${b.losses}L`));
+    const pv = svgEl('text', { x: barX0 + bw + 5, y: y + barH / 2 + 3, class: 'dn-swissover-barval' });
+    pv.textContent = fmt(b.points, b.points % 1 ? 1 : 0) + ' pts';
+    g.appendChild(pv);
+    clickable(g, o.onCompetitor && (() => o.onCompetitor(b.id)));
+    svg.appendChild(g);
+  });
+  // the champion-gate verdict, anchored at the bottom-right.
+  const crowned = gateState === 'crowned' && !!champId;
+  const vy = barTop + barBandH + 4;
+  let verdict;
+  if (crowned) verdict = `♛ ${shortLabel(champId, 12)} promoted`;
+  else if (gateState === 'stands') verdict = 'champion stands';
+  else if (gateState === 'deciding') verdict = 'gate deciding…';
+  else verdict = '';
+  if (verdict) {
+    const vt = svgEl('text', { x: w - padR, y: vy, class: 'dn-swissover-verdict' + (crowned ? ' dn-good' : ''), 'text-anchor': 'end' });
+    vt.textContent = verdict + (isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '');
+    svg.appendChild(vt);
+  }
+  return svg;
+}
+
+// The compact ELIM mini-bracket (epoch overview) is just elimBracket at a small
+// scale — call svg.elimBracket({ compact: true, …elimModel(st) }) directly.
+
+// ---- Tufte Sankey (fit-to-width) — the causal patch→drift→gate flow -
 export function layoutSankey(spec) {
   const colW = spec.nodeW || 150;
   const top = spec.top || 30;
@@ -1442,11 +1517,7 @@ export function sankey(opts) {
       sub.textContent = shortLabel(String(n.sub), 24);
       g.appendChild(sub);
     }
-    if (o.onNode) {
-      g.style.cursor = 'pointer';
-      g.addEventListener('click', () => o.onNode(n));
-      g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onNode(n); } });
-    }
+    clickable(g, o.onNode && (() => o.onNode(n)));
     nodeLayer.appendChild(g);
   }
   svg.appendChild(nodeLayer);
@@ -1465,9 +1536,7 @@ export function smallMultiple(caption, mark, sub) {
   ]);
 }
 
-// ---- SIDE-BY-SIDE line diff (mutation view, fix #2) -----------------
-//
-// Two columns — champion baseline (left) | challenger new (right) — line-diffed
+// ---- SIDE-BY-SIDE line diff (champion baseline | challenger new) ----
 // opts: { baseline: string, challenger: string, leftLabel, rightLabel }
 export function sideBySideDiff(opts) {
   const o = opts || {};

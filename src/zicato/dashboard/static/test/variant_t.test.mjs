@@ -1735,6 +1735,83 @@ test('structure: the epoch view shows the structure pill from the epoch tourname
   assert(host.textContent.includes('Swiss'), 'the epoch pill names the configured swiss structure');
 });
 
+// ---- the EPOCH-VIEW non-gauntlet OVERVIEW (replaces the negative placeholder) ----
+
+test('epoch overview (swiss): the structure section renders the standings BUMP chart + ranked Copeland bar + gate verdict — "not a gauntlet" is GONE', async () => {
+  freshState();
+  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+
+  // the negative placeholder is gone — replaced by a real overview.
+  assert(!host.textContent.includes('not a gauntlet'), 'the negative "not a gauntlet" placeholder is GONE');
+
+  // the swiss overview SVG rendered, fit-to-width.
+  const over = svgsByClass(host, 'dn-swissover')[0];
+  assert(over, 'the swiss overview SVG rendered in the epoch structure section');
+  assertEqual(over.getAttribute('width'), '100%', 'the swiss overview is fit-to-width (width:100%)');
+  assert((over.getAttribute('viewBox') || '').startsWith('0 0 '), 'the swiss overview carries a viewBox so it scales');
+  assert(!hasScrollWrapperAncestor(over, host), 'no horizontal-scroll wrapper around the overview');
+
+  // (1) the bump chart: one line per competitor that has ranks (v0, v1, v2 all
+  // appear in the pairings; all three are ranked across the two scored rounds).
+  const lines = allByClass(over, 'dn-swissover-line');
+  assertEqual(lines.length, 3, 'one bump line per competitor (v0, v1, v2)');
+  assert(allByClass(over, 'dn-swissover-line-champ').length >= 1, 'the champion line is emphasised');
+
+  // (2) the ranked Copeland-point bar (the standings, one bar each).
+  assert(allByClass(over, 'dn-swissover-bar').length >= 2, 'the ranked Copeland bars rendered');
+  assert(over.textContent.includes('♔'), 'the leader is marked ♔ on the ranked bar');
+  assert(over.textContent.includes('pts'), 'the bars label Copeland points');
+
+  // the champion-gate verdict — v1 (status champion, ≠ incumbent v0) is promoted.
+  assert(over.textContent.includes('promoted') || over.textContent.includes('♛'),
+    'the champion-gate verdict (promoted ♛) is shown');
+
+  // "See Match-ups →" is retained for the full detail.
+  assert(host.textContent.includes('See Match-ups'), 'the See Match-ups link is retained');
+});
+
+test('epoch overview (single-elim): the structure section renders a compact MINI-BRACKET overview (not the negative placeholder)', async () => {
+  freshState();
+  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+
+  assert(!host.textContent.includes('not a gauntlet'), 'the negative placeholder is GONE for elim too');
+  // the mini-bracket reuses the dn-elimbracket renderer at a COMPACT scale.
+  const over = svgsByClass(host, 'dn-elimbracket-compact')[0];
+  assert(over, 'the elim mini-bracket overview SVG rendered (compact dn-elimbracket)');
+  assertEqual(over.getAttribute('width'), '100%', 'the mini-bracket is fit-to-width');
+  assert((over.getAttribute('viewBox') || '').startsWith('0 0 '), 'the mini-bracket carries a viewBox');
+  // both bracket rounds shape the mini-tree, and it ends in a champion-gate.
+  assert(over.textContent.includes('champion-gate'), 'the mini-bracket ends in a champion-gate node');
+  assert(allByClass(over, 'dn-elimbracket-match').length >= 2, 'the bracket matches render as mini-tree nodes');
+  assert(host.textContent.includes('See Match-ups'), 'the See Match-ups link is retained');
+});
+
+test('epoch overview (no data): an honest brief line renders — NEVER the negative "not a gauntlet" placeholder', async () => {
+  freshState();
+  // a swiss epoch with NO tournament records yet (mid-proposing / not run).
+  const F = {
+    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', tournament: { structure: 'swiss', params: { rounds: 3 } }, experiments: [], board: [] },
+    '/api/lineage': { generations: [] },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'swiss', champion_lineage: [], matchups: [], tournaments: [] },
+  };
+  installFixtureMap(F);
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+
+  assert(!host.textContent.includes('not a gauntlet'), 'no negative "not a gauntlet" placeholder even with no data');
+  assertEqual(svgsByClass(host, 'dn-swissover').length, 0, 'no overview figure when there is no swiss data');
+  assert(/no swiss rounds have scored yet/i.test(host.textContent), 'an honest brief line names the empty state');
+  assert(host.textContent.includes('See Match-ups'), 'the See Match-ups link is still offered');
+});
+
 test('structure: the data layer exposes tournamentStructure() + invalidates its cache live', async () => {
   assertEqual(typeof data.tournamentStructure, 'function', 'data.tournamentStructure() exists');
   // the live-invalidation set includes the new prefix.

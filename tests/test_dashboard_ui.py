@@ -249,11 +249,11 @@ def test_bundle_under_size_envelope(
     # A–W before them — were removed from `main` and archived at the git
     # tags `dashboard-v1-v2-archive-2026-06-02` and
     # `dashboard-bakeoff-2026-06-01` respectively, so the served bundle
-    # dropped sharply to Variant T alone. The fully integrated T-only
-    # bundle (index.html + style.css + icons.svg + the concatenated JS)
-    # was re-measured directly at 556,591 bytes; a 600 KB cap leaves
-    # ~43 KB of headroom for continued Variant-T iteration.
-    assert total < 600_000, f"bundle is {total} bytes, exceeds 600_000 envelope"
+    # dropped sharply to Variant T alone. The Variant-T feature set has since
+    # grown (per-structure epoch overviews, live trackers, the swiss/elim
+    # standings-bump + mini-bracket visualizations); the envelope is raised to
+    # 640 KB to leave headroom for continued Variant-T iteration.
+    assert total < 640_000, f"bundle is {total} bytes, exceeds 640_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

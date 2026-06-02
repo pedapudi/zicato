@@ -1727,6 +1727,44 @@
   .dn-elimbracket-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
 
   /* ====================================================================
+   * COMPACT structure OVERVIEW (epoch-card hero) — the swiss standings-bump
+   * chart + ranked Copeland bar, and the elim mini-bracket. All marks read
+   * --v2-* tokens (every theme, light + dark); the SVGs are fit-to-width.
+   * ==================================================================== */
+  .dt-struct-over .dt-struct-strip-row { margin-bottom: 8px; }
+  .dt-struct-over .dt-struct-strip-link { display: inline-block; margin-top: 8px; }
+
+  /* ---- swiss OVERVIEW: bump lines (champion bold) + ranked Copeland bar ---- */
+  .dn-swissover-title { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+  .dn-swissover-round, .dn-swissover-rank { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
+  .dn-swissover-barval, .dn-swissover-verdict { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
+  .dn-swissover-name, .dn-swissover-barname { fill: var(--v2-ink-soft); font: 10.5px var(--v2-mono); }
+  .dn-swissover-name-champ, .dn-swissover-verdict.dn-good { fill: var(--v2-good); font-weight: 700; }
+  .dn-swissover-grid { stroke: var(--v2-rule-soft); stroke-width: 1;
+    stroke-dasharray: 2 4; opacity: 0.5; vector-effect: non-scaling-stroke; }
+  .dn-swissover-line { stroke: var(--v2-accent); stroke-width: 1.4; opacity: 0.55;
+    vector-effect: non-scaling-stroke; transition: opacity 0.3s ease; }
+  .dn-swissover-line-champ { stroke: var(--v2-good); stroke-width: 2.4; opacity: 1; }
+  .dn-swissover-line:hover, .dn-swissover-line:focus { opacity: 1; stroke-width: 2.2; outline: none; }
+  .dn-swissover-dot { fill: var(--v2-accent); opacity: 0.7; }
+  .dn-swissover-dot-champ { fill: var(--v2-good); opacity: 1; }
+  .dn-swissover-bar-bg { fill: var(--v2-rule-soft); opacity: 0.5; }
+  .dn-swissover-bar { fill: var(--v2-accent); opacity: 0.8; transition: width 0.3s ease; }
+  .dn-swissover-bar-lead { fill: var(--v2-good); opacity: 0.9; }
+  .dn-swissover-barrow:hover .dn-swissover-bar,
+  .dn-swissover-barrow:focus .dn-swissover-bar { opacity: 1; outline: none; }
+  .dn-swissover-barrow:hover .dn-swissover-barname,
+  .dn-swissover-barrow:focus .dn-swissover-barname { fill: var(--v2-accent); }
+
+  /* ---- elim mini-bracket OVERVIEW: reuses the dn-elimbracket-* marks at a
+     compact scale (svg.elimOverview → svg.elimBracket compact:true). */
+  .dn-elimbracket-compact .dn-elimbracket-head { font-size: 9.5px; letter-spacing: 0.04em; }
+  .dn-elimbracket-compact .dn-elimbracket-seat { font-size: 10px; }
+  .dn-elimbracket-compact .dn-elimbracket-gatelab { font-size: 10.5px; }
+  .dn-elimbracket-compact .dn-elimbracket-bench { font-size: 9px; }
+
+  /* ====================================================================
    * LIVE-RUN display — animate state CHANGES, never repaint-loop. All
    * motion below is GPU-friendly (transform / opacity / width) and gated
    * behind prefers-reduced-motion (the single block at the very end of

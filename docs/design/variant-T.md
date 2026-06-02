@@ -941,3 +941,36 @@ hero — mirroring the racing ladder/funnel pattern.
    **digest-gated** (a steady heartbeat writes ZERO DOM; a board landing fires
    the swap) and its value/position changes ease via CSS transitions gated behind
    `prefers-reduced-motion`.
+
+## Non-gauntlet EPOCH OVERVIEW (replaces the negative placeholder)
+
+The epoch view's "Tournament structure" section previously showed a negative
+placeholder for non-gauntlet epochs (*"this epoch is not a gauntlet…"*). It now
+embeds a **compact, at-a-glance OVERVIEW** of the tournament (the full per-round
+detail still lives on Match-ups via the retained "See Match-ups →" link). Each
+overview resolves the SAME normalized `st` the Match-ups ladder uses —
+LIVE-first (`buildLiveSwissModel`/`buildLiveElimModel`/`reconstructRacing` for
+the epoch on screen), else the matching completed `/api/tournaments` record — and
+is **digest-gated** + **fit-to-width** + **theme-token-only** (all 16 themes).
+
+1. **Swiss overview** (`svg.swissOverview`, model `structure.swissOverviewModel`)
+   — the centerpiece. Two stacked panels: (a) a **standings BUMP CHART**, one
+   line per competitor, x = swiss round, y = standings RANK (1 at top); lines
+   cross round-to-round as challengers climb/fall so the leader visibly emerges
+   (the champion line is emphasised). Rank-per-round is derived by accumulating
+   Copeland points (win 1 / draw ½) and re-ranking after each *scored* round —
+   from the same `swissModel` rounds/standings, no refetch. (b) a **ranked
+   Copeland-point bar**, final standings sorted by points, leader ♔, with the
+   champion-gate verdict (promoted ♛ / "champion stands").
+2. **Elim overview** — a compact **mini-bracket** reusing the existing bracket
+   renderer at a small scale: `svg.elimBracket({ compact: true, …elimModel(st) })`
+   (the `compact` flag shrinks the geometry + tags `dn-elimbracket-compact`, so
+   there is ONE bracket renderer for both the Match-ups tree and the overview).
+3. **States.** Completed → the overview above; LIVE/in-progress → the same figure
+   built from the live progressive model (digest-gated); **no data** → an honest
+   brief line (e.g. *"no swiss rounds have scored yet…"*), NEVER the old negative
+   "not a gauntlet" placeholder.
+
+A small shared `svg.clickable(node, fn)` helper (click + Enter/Space) was
+introduced and applied across the SVG marks, collapsing the repeated
+cursor/click/keydown wiring.
