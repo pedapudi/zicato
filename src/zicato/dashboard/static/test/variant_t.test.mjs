@@ -1683,6 +1683,231 @@ test('live tournament: during a racing RUN the match-ups ladder fills from /api/
   coreState.state.activeTournament = null;
 });
 
+// ====================================================================
+// PROGRESSIVE LIVE RACING LADDER — buildLiveRacingModel().
+//
+// During an in-flight race /api/active-tournament.rounds is EMPTY until each
+// matchup COMPLETES, so the plain ladder sat on the "being seeded" empty state
+// for the whole race. The progressive model fills rung-by-rung from the UNION
+// of: competitors (field) + heartbeat phase (active rung) + /api/active-runs
+// (per-lane board progress) + partial_*_agg (partial Δ) + completed rounds —
+// and ACCUMULATES (a finished rung persists when the next starts).
+// ====================================================================
+
+// the live racing field shape per the brief: v0 champion + v5..v8 challengers,
+// rounds EMPTY (no matchup committed yet), partial aggregates landing.
+function liveRacingField(extra) {
+  return Object.assign({
+    structure: 'racing', phase: 'running',
+    structure_params: { field_size: 4, eta: 2, board_fraction: 0.25, board_size: 8 },
+    round_index: 0, total_rounds: 2,
+    competitors: [
+      { generation_id: 'v0', seed: 1, role: 'champion' },
+      { generation_id: 'v5', seed: 2, role: 'challenger' },
+      { generation_id: 'v6', seed: 3, role: 'challenger' },
+      { generation_id: 'v7', seed: 4, role: 'challenger' },
+      { generation_id: 'v8', seed: 5, role: 'challenger' },
+    ],
+    rounds: [],
+    standings: [],
+    champion_lineage: ['v0'],
+  }, extra || {});
+}
+
+// (a) competitors-only (rounds empty) → the field + rung-0 lanes render with
+// progress; NOT the "being seeded" empty state.
+test('live racing model: competitors-only (rounds empty) builds rung-0 lanes from the field — not the "being seeded" empty state', () => {
+  const at = liveRacingField();
+  const model = STRUCT.buildLiveRacingModel({
+    at,
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
+    activeRuns: [
+      { generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 },
+      { generation_id: 'v6', entry_id: 'b1', run_id: 'r1', progress: 0.9 },
+    ],
+    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
+  });
+  assert(model, 'a progressive live racing model was built from competitors alone');
+  assertEqual(model.live, true, 'the model is marked live');
+  const rungRounds = model.rounds.filter((r) => String(r.matches[0].match_id) !== 'racing-final');
+  assert(rungRounds.length >= 1, 'at least rung 0 is present from the field');
+  const r0 = rungRounds[0].matches[0];
+  assertDeep([...r0.competitors].sort(), ['v5', 'v6', 'v7', 'v8'], 'rung-0 field is the challenger set (champion v0 is the benchmark, not a lane)');
+  assert(r0.live_progress && r0.live_progress.v5 && r0.live_progress.v6, 'rung-0 carries per-lane live progress for the racing challengers');
+  assertEqual(r0.queued, false, 'rung-0 is the ACTIVE rung (not queued)');
+
+  // it renders rung-0 lanes (not the empty state) when fed to renderStructure.
+  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(ladder, 'a racing ladder SVG rendered from the competitors-only live model');
+  assert(!/being seeded/i.test(host.textContent), 'NOT the "being seeded" empty state once the field exists');
+  for (const id of ['v5', 'v6', 'v7', 'v8']) assert(ladder.textContent.includes(id), 'rung-0 names the live challenger lane — ' + id);
+});
+
+// (b) rung-0 partially done (active-runs at <1.0) → lanes show "k/N boards".
+test('live racing model: an in-flight rung shows per-lane "k/N boards" progress + a partial Δ', () => {
+  const at = liveRacingField({ partial_champion_agg: 12.0, partial_challenger_agg: 9.5 });
+  const model = STRUCT.buildLiveRacingModel({
+    at,
+    heartbeat: { phase: 'tournament:round_0:rung0_m2', generation_id: 'v5' },
+    activeRuns: [
+      { generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.5 },  // 1 of 2 board units done-ish
+      { generation_id: 'v5', entry_id: 'b1', run_id: 'r1', progress: 0.0 },
+    ],
+    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
+  });
+  const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
+  const laneV5 = r0.live_progress.v5;
+  assertEqual(laneV5.inflight, 2, 'v5 has two in-flight board units this rung');
+  assertEqual(laneV5.total, 2, 'the rung-0 board total is board_size·fraction = 8·0.25 = 2');
+  assertEqual(laneV5.partialDelta, -2.5, 'the partial Δ = partial_challenger_agg − partial_champion_agg = 9.5 − 12.0');
+
+  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(/boards/.test(ladder.textContent), 'a live lane reads "k/N boards" (progressive fill, not blank)');
+  assert(allByClass(ladder, 'dn-raceladder-bar').length >= 1, 'a per-lane in-flight progress bar renders');
+  assert(!/✕/.test(ladder.textContent), 'a mid-run lane is NOT struck through as cut');
+});
+
+// (c) rung-0 complete (rounds has rung0) → survivors ↑ / cuts ✗; then rung-1
+// starts (new active-runs) → rung-0's completed result is STILL present.
+test('live racing model: a completed rung ACCUMULATES — when rung-1 starts, rung-0 survivors/cuts persist (not discarded)', () => {
+  // rung-0 has COMPLETED (committed in rounds): v7,v8 survive, v5,v6 cut. The
+  // heartbeat now names rung-1 (active), with v7,v8 racing.
+  const at = liveRacingField({
+    round_index: 1,
+    rounds: [
+      { round_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v5', 'v6', 'v7', 'v8'], survivors: ['v7', 'v8'], cut: ['v5', 'v6'], board_fraction: 0.25 }] },
+    ],
+  });
+  const model = STRUCT.buildLiveRacingModel({
+    at,
+    heartbeat: { phase: 'tournament:round_1:rung1_m0', generation_id: 'v7' },
+    activeRuns: [{ generation_id: 'v7', entry_id: 'b0', run_id: 'r0', progress: 0.3 }],
+    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
+  });
+  const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
+  // the COMPLETED rung-0 is carried verbatim — survivors/cuts persist.
+  assertDeep([...r0.cut].sort(), ['v5', 'v6'], 'the completed rung-0 cuts (v5,v6) persist when rung-1 starts');
+  assertDeep([...r0.survivors].sort(), ['v7', 'v8'], 'the completed rung-0 survivors (v7,v8) persist');
+  const r1 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung1').matches[0];
+  assertDeep([...r1.competitors].sort(), ['v7', 'v8'], 'rung-1 races ONLY the rung-0 survivors (the field narrowed by η)');
+  assertEqual(r1.queued, false, 'rung-1 is now the active rung');
+
+  // the rendered ladder keeps BOTH rungs — the cut marks survive the new tick.
+  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(/✕/.test(ladder.textContent), 'rung-0 cut marks (✕) are STILL present after rung-1 starts (accumulation, no discard)');
+  assert(/↑/.test(ladder.textContent), 'rung-0 survivor marks (↑) persist');
+  for (const id of ['v5', 'v6', 'v7', 'v8']) assert(ladder.textContent.includes(id), 'every competitor remains legible across rungs — ' + id);
+});
+
+// (d) a no-op repeat render (same digest) does NOT rebuild the ladder.
+test('live racing model: a no-op heartbeat (same progress) yields a STABLE digest — the ladder is not rebuilt', () => {
+  const heartbeat = { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' };
+  const activeRuns = [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }];
+  const epochGens = ['v0', 'v5', 'v6', 'v7', 'v8'];
+  const a = STRUCT.buildLiveRacingModel({ at: liveRacingField(), heartbeat, activeRuns, epochGens });
+  const b = STRUCT.buildLiveRacingModel({ at: liveRacingField(), heartbeat, activeRuns, epochGens });
+  assertEqual(STRUCT.structureDigest(a), STRUCT.structureDigest(b), 'two identical live ticks produce the SAME digest (digest-gated — no DOM rebuild)');
+
+  // a REAL change (a board landed → done count grows) MUST change the digest.
+  const c = STRUCT.buildLiveRacingModel({
+    at: liveRacingField(),
+    heartbeat,
+    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 1.0 }],
+    epochGens,
+  });
+  assert(STRUCT.structureDigest(a) !== STRUCT.structureDigest(c), 'a board landing (progress advanced) DOES change the digest');
+
+  // node-identity check: a gated re-render with the same digest keeps the ladder node.
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  ui.gatedSwap(host, STRUCT.structureDigest(a), () => STRUCT.renderStructure(a, ctx, EPOCH_ID));
+  const first = svgsByClass(host, 'dn-raceladder')[0];
+  ui.gatedSwap(host, STRUCT.structureDigest(b), () => STRUCT.renderStructure(b, ctx, EPOCH_ID));
+  const second = svgsByClass(host, 'dn-raceladder')[0];
+  assert(first === second, 'the ladder SVG node identity is preserved across a no-op tick (digest-gated, zero rebuild)');
+});
+
+// (e) champion-gate pending vs decided renders correctly (pending ≠ rejected).
+test('live racing model: the champion-gate is PENDING (deciding…) during the race — never "rejected"', () => {
+  const model = STRUCT.buildLiveRacingModel({
+    at: liveRacingField(),
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
+    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
+    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
+  });
+  const gate = model.rounds.find((r) => String(r.matches[0].match_id) === 'racing-final');
+  assert(gate, 'a champion-gate round is present');
+  assert(!gate.matches[0].decision, 'the live gate has NO committed decision (not promoted/rejected)');
+  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(/deciding/i.test(ladder.textContent), 'the live gate reads "deciding…"');
+  assert(!/rejected/i.test(ladder.textContent), 'a live undecided gate is NEVER labeled "rejected"');
+});
+
+// (f) the fully-completed race still renders the full ladder (no regression).
+test('live racing model: a fully-completed race (all rounds, no live) still reconstructs the full ladder (no regression)', () => {
+  // this is the existing reconstruct path — assert it is unaffected.
+  const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
+  assert(st && st.structure === 'racing', 'the completed reconstruction still yields a racing ladder');
+  const model = STRUCT.racingModel(st);
+  assert(model.hasRungs, 'the completed ladder has rungs');
+  assertEqual(model.gateState, 'crowned', 'the completed gate crowns the promoted survivor (not deciding/rejected)');
+  const nodes = STRUCT.renderStructure(st, { navigate() {}, href: router.href }, RC_EPOCH);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(ladder, 'the completed ladder still renders');
+  assert(/♚/.test(ladder.textContent), 'the completed gate still crowns the champion ♚');
+  assert(!/queued/.test(ladder.textContent), 'a completed ladder shows NO queued rungs');
+});
+
+// (g) end-to-end through the match-ups page: a live race with EMPTY rounds fills
+// progressively (the page no longer sits on "being seeded").
+test('live racing (e2e): the match-ups page fills progressively from competitors when active-tournament.rounds is empty', async () => {
+  freshState();
+  const at = liveRacingField({ partial_champion_agg: 10, partial_challenger_agg: 7 });
+  const F = {
+    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', tournament: { structure: 'racing', params: at.structure_params }, experiments: [], board: [] },
+    '/api/lineage': { generations: at.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: EPOCH_ID, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: false })) },
+    '/api/score-trajectory': { points: [] },
+    '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'racing', champion_lineage: ['v0'], matchups: [], tournaments: [] },
+    '/api/active-tournament': at,
+  };
+  installFixtureMap(F);
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' });
+  coreState.state.activeRuns = [
+    { generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.5 },
+    { generation_id: 'v6', entry_id: 'b1', run_id: 'r1', progress: 0.2 },
+  ];
+  coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
+
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+
+  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  assert(ladder, 'a racing ladder rendered on the match-ups page (not the empty state)');
+  assert(!/being seeded|No tournament has run|unavailable/i.test(host.textContent), 'NOT the "being seeded"/"nothing ran" empty state during a live race with empty rounds');
+  assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight tournament');
+  for (const id of ['v5', 'v6', 'v7', 'v8']) assert(ladder.textContent.includes(id), 'the full challenger field renders — ' + id);
+  assert(/boards|running/.test(ladder.textContent), 'lanes show live board progress');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+});
+
 // ---- (c) the richer racing ladder render ----------------------------
 
 test('racing ladder: renders rungs with board fractions, cut (✕) vs survivor (↑) marks, and a champion-gate', () => {

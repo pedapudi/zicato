@@ -71,6 +71,16 @@ function shortLabel(s, n) {
   return str.length > max ? str.slice(0, max - 1) + '…' : str;
 }
 
+// a live racing lane's progress label: "k/N boards" when the rung's board total
+// is known, else "k running" when only the in-flight count is known.
+function laneProgressText(lane) {
+  if (!lane) return '';
+  if (isNum(lane.total) && lane.total > 0) return `${lane.done || 0}/${lane.total} boards`;
+  if (lane.inflight) return `${lane.inflight} running`;
+  if (lane.done) return `${lane.done} boards`;
+  return 'racing';
+}
+
 // ---- sparkline ------------------------------------------------------
 
 export function sparkline(opts) {
@@ -781,8 +791,12 @@ export function racingLadder(opts) {
 
   rungs.forEach((rung, j) => {
     const x = colX(j);
-    const head = svgEl('text', { x: x + colW / 2, y: headTop + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
-    head.textContent = shortLabel(rung.label || `Rung ${j + 1}`, 16);
+    // a QUEUED future rung (live race, not yet started) is shown dimmed with its
+    // board-fraction label so the whole successive-halving shape is legible.
+    const queued = !!rung.queued;
+    const prog = (rung.live_progress && typeof rung.live_progress === 'object') ? rung.live_progress : null;
+    const head = svgEl('text', { x: x + colW / 2, y: headTop + 12, class: 'dn-raceladder-head' + (queued ? ' dn-raceladder-queued' : ''), 'text-anchor': 'middle' });
+    head.textContent = shortLabel(rung.label || `Rung ${j + 1}`, 16) + (queued ? ' · queued' : '');
     svg.appendChild(head);
     if (isNum(rung.board_fraction)) {
       const sub = svgEl('text', { x: x + colW / 2, y: headTop + 26, class: 'dn-raceladder-frac', 'text-anchor': 'middle' });
@@ -801,15 +815,32 @@ export function racingLadder(opts) {
       const eliminated = !pending && cutSet.has(sid);
       const survived = !pending && (surv.has(sid) || (!eliminated && surv.size === 0 && cutSet.size === 0));
       const racing = pending || (!eliminated && !survived);
-      const g = svgEl('g', { class: 'dn-raceladder-runner', tabindex: o.onCompetitor ? '0' : null });
+      const lane = prog ? prog[sid] : null;
+      const g = svgEl('g', { class: 'dn-raceladder-runner' + (queued ? ' dn-raceladder-lane-queued' : ''), tabindex: o.onCompetitor ? '0' : null });
       const cls = 'dn-raceladder-name'
-        + (eliminated ? ' dn-out dn-bad' : survived ? ' dn-good' : racing ? ' dn-racing' : '');
-      const verdict = eliminated ? 'cut' : survived ? 'survives' : 'racing';
-      const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : null;
+        + (eliminated ? ' dn-out dn-bad' : survived ? ' dn-good' : queued ? ' dn-raceladder-queued' : racing ? ' dn-racing' : '');
+      const verdict = eliminated ? 'cut' : survived ? 'survives'
+        : queued ? 'queued' : (lane ? 'racing · ' + laneProgressText(lane) : 'racing');
+      // partial Δ-vs-champion (live), else the committed rung Δ.
+      const partial = lane && isNum(lane.partialDelta) ? lane.partialDelta : null;
+      const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : partial;
       const t = svgEl('text', { x: x + 6, y: cy + 3, class: cls },
         [title(`${sid} · rung ${j + 1}${isNum(rung.board_fraction) ? ` · board ${(rung.board_fraction * 100).toFixed(0)}%` : ''}${delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : ''} · ${verdict}`)]);
-      t.textContent = shortLabel(sid, 14) + (eliminated ? ' ✕' : survived ? ' ↑' : '');
+      // the lane label: a live lane reads "v3 · k/N", a queued lane "v3 · queued".
+      const laneSuffix = eliminated ? ' ✕' : survived ? ' ↑'
+        : (lane ? ' · ' + laneProgressText(lane) : (queued ? '' : ''));
+      t.textContent = shortLabel(sid, lane ? 8 : 14) + laneSuffix;
       g.appendChild(t);
+      // a thin in-flight PROGRESS BAR under a live lane (boards done / total).
+      if (lane && (lane.inflight || lane.done)) {
+        const barW = colW - 12;
+        const frac = (isNum(lane.total) && lane.total > 0)
+          ? Math.min(1, (lane.done || 0) / lane.total)
+          : (lane.inflight ? 0.5 : 0);
+        g.appendChild(svgEl('rect', { x: x + 6, y: cy + 5, width: barW, height: 2, rx: 1, class: 'dn-raceladder-bar-bg' }));
+        g.appendChild(svgEl('rect', { x: x + 6, y: cy + 5, width: Math.max(1, barW * frac), height: 2, rx: 1,
+          class: 'dn-raceladder-bar' + (lane.inflight ? ' dn-raceladder-bar-live' : '') }));
+      }
       // the competitor's Δ-vs-champion at this rung, right-aligned in the column.
       if (delta != null) {
         const dt = svgEl('text', {

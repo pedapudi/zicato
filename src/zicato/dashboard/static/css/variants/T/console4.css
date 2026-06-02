@@ -1532,6 +1532,13 @@
   .dn-raceladder-name.dn-bad { fill: var(--v2-bad); }
   .dn-raceladder-name.dn-out { text-decoration: line-through; opacity: 0.85; }
   .dn-raceladder-name.dn-racing { fill: var(--v2-ink-soft); }
+  /* a QUEUED future rung (live race, not yet started) is dimmed */
+  .dn-raceladder-queued, .dn-raceladder-name.dn-raceladder-queued { fill: var(--v2-ink-faint); opacity: 0.7; }
+  .dn-raceladder-lane-queued { opacity: 0.7; }
+  /* per-lane in-flight board-progress bar under an actively-racing lane */
+  .dn-raceladder-bar-bg { fill: var(--v2-rule-soft); opacity: 0.6; }
+  .dn-raceladder-bar { fill: var(--v2-accent); opacity: 0.85; transition: width 0.3s ease; }
+  .dn-raceladder-bar-live { fill: var(--v2-accent); }
   /* each runner's Δ-vs-champion at the rung, right-aligned + token-themed */
   .dn-raceladder-delta { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
   .dn-raceladder-delta.dn-good { fill: var(--v2-good); }
@@ -1697,7 +1704,7 @@
     .dt-live-enter { animation: none; }
     .dt-ticker-row { animation: none; }
     .dn-funnel-band, .dn-funnel-runner, .dn-funnel-deadedge,
-    .dn-raceladder-runner, .dn-raceladder-edge,
+    .dn-raceladder-runner, .dn-raceladder-edge, .dn-raceladder-bar,
     .dt-live-hero-progfill, .dn-hm-cell { transition: none; }
   }
 

@@ -25,7 +25,7 @@ import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, normaliseDecision, decisionFor } from '../ui.js';
-import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing } from './structure.js';
+import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing, buildLiveRacingModel } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
 export async function render(host, ctx, params) {
@@ -163,7 +163,25 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   });
   // the LIVE topology (full {structure,phase,competitors,rounds,standings}).
   const liveRaw = status.running ? await D.activeTournament() : null;
-  const liveSt = normalizeStructure(liveRaw, true);
+  // RACING — the live active-tournament `rounds` are EMPTY until each matchup
+  // COMPLETES, so a plain normalize would yield no rungs and the ladder would
+  // sit on the "being seeded" empty state for the whole race. Build a
+  // PROGRESSIVE, accumulating model from the field (competitors) + the
+  // heartbeat's active rung + per-gen board progress (/api/active-runs) +
+  // partial aggregates + any completed rounds, so the ladder fills rung-by-rung
+  // and never discards a finished rung. The epoch gen scope is the live field
+  // itself (only the field's gens race), so foreign in-flight runs are excluded.
+  let liveSt;
+  if (liveRaw && String(liveRaw.structure) === 'racing') {
+    const epochGens = (Array.isArray(liveRaw.competitors) ? liveRaw.competitors : [])
+      .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
+    liveSt = buildLiveRacingModel({
+      at: liveRaw, heartbeat: state.heartbeat, activeRuns: state.activeRuns,
+      epochGens: epochGens.length ? epochGens : null,
+    }) || normalizeStructure(liveRaw, true);
+  } else {
+    liveSt = normalizeStructure(liveRaw, true);
+  }
   const liveUsable = !!(liveSt && liveSt.live);
 
   // the COMPLETED record (only fetched/reconstructed when NOT showing live).

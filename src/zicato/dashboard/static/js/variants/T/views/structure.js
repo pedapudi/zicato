@@ -343,7 +343,18 @@ export function structureDigest(st) {
     competitors: (Array.isArray(st.competitors) ? st.competitors : []).map((c) => [c.generation_id, c.seed, c.role]),
     rounds: (Array.isArray(st.rounds) ? st.rounds : []).map((r) => [
       r.round_index, r.label,
-      (Array.isArray(r.matches) ? r.matches : []).map((m) => [m.match_id, (m.competitors || []).join('/'), m.winner, m.decision, m.bracket_slot, m.bye, m.survivors && m.survivors.join('/'), m.cut && m.cut.join('/')]),
+      (Array.isArray(r.matches) ? r.matches : []).map((m) => [m.match_id, (m.competitors || []).join('/'), m.winner, m.decision, m.bracket_slot, m.bye, m.survivors && m.survivors.join('/'), m.cut && m.cut.join('/'),
+        // progressive LIVE racing fields: the queued flag + each lane's
+        // boards-done / in-flight count / partial Δ. Including these makes the
+        // gated swap fire when a board lands (real progress) but stay STABLE on a
+        // no-op heartbeat that changes nothing (same counts ⇒ same digest).
+        m.queued ? 'Q' : '',
+        m.live_progress ? Object.keys(m.live_progress).sort().map((g) => {
+          const p = m.live_progress[g];
+          return g + ':' + (p.done || 0) + '/' + (p.total == null ? '?' : p.total) + ':' + (p.inflight || 0)
+            + (svg.isNum(p.partialDelta) ? ':' + p.partialDelta.toFixed(2) : '');
+        }).join(',') : '',
+      ]),
     ]),
     standings: (Array.isArray(st.standings) ? st.standings : []).map((s) => [s.generation_id, s.rank, s.scalar, s.wins, s.losses, s.status]),
     source: st.source,
@@ -534,6 +545,226 @@ export function racingModel(st) {
   return { rungs, championId, benchmarkId, gateState, gateDelta, live, hasRungs: rungs.length > 0 };
 }
 
+// ── BUILD a PROGRESSIVE live racing model ───────────────────────────
+//
+// THE BUG this fixes: during an IN-FLIGHT racing run the live
+// /api/active-tournament `rounds` array is EMPTY until each matchup COMPLETES,
+// so the plain normalizeStructure() produced no rungs and renderRacing() sat on
+// the "the race is being seeded" empty state for the whole race — never filling
+// progressively, then only showing results after completion.
+//
+// This builds an ACCUMULATING racing `st` from the UNION of every live signal,
+// so the ladder fills rung-by-rung WHILE the race runs and never discards a
+// completed rung:
+//
+//   • FIELD — `competitors` (champion + challenger lanes), available from the
+//     very start. The challengers are the rung-0 field; the champion is the
+//     persistent benchmark (NOT a rung competitor).
+//   • COMPLETED rungs — any `rounds` the active-tournament has committed are
+//     carried VERBATIM (survivors ↑ / cuts ✗), so a finished rung persists when
+//     the next rung starts.
+//   • ACTIVE rung — derived from the heartbeat `phase` (`…:rung0_m3` → rung 0).
+//     If `rounds` has not yet recorded that rung, we SYNTHESISE a pending rung
+//     whose field is the survivors of the previous completed rung (or the whole
+//     challenger field at rung 0). Its per-lane board progress is driven by
+//     /api/active-runs filtered to THIS epoch's gens (attributed to the active
+//     rung since active-runs' own `rung`/`match_id` are usually null mid-phase),
+//     and a partial Δ-vs-champion from partial_challenger_agg−partial_champion_agg.
+//   • QUEUED future rungs — the remaining successive-halving rungs (from
+//     structure_params field_size/eta) shown as `queued` so the whole shape is
+//     legible from the start.
+//
+// The result is the SAME normalized {structure, competitors, rounds, …} shape
+// the renderers already consume — renderRacing()/racingModel() handle it without
+// special-casing. Each synthesised rung match carries a `progress` map
+// (gen → {done,total,inflight,partialDelta}) + `queued` flag the ladder reads.
+// Returns null when `at` is not a live racing payload.
+//
+//   at         — the raw /api/active-tournament object.
+//   heartbeat  — /api/heartbeat ({ phase, generation_id, … }).
+//   activeRuns — /api/active-runs (in-flight board units).
+//   epochGens  — the set/array of generation ids that belong to THIS epoch
+//                (so foreign in-flight runs are not attributed to this race).
+export function buildLiveRacingModel({ at, heartbeat, activeRuns, epochGens } = {}) {
+  if (!at || typeof at !== 'object' || String(at.structure) !== 'racing') return null;
+  const competitors = Array.isArray(at.competitors) ? at.competitors : [];
+  const rawRounds = Array.isArray(at.rounds) ? at.rounds : [];
+  const params = (at.structure_params && typeof at.structure_params === 'object')
+    ? at.structure_params : (at.params && typeof at.params === 'object' ? at.params : {});
+
+  // the field: challengers race; the champion is the benchmark seat (not a rung
+  // runner). Roles come from `competitors[].role`; fall back to seed order
+  // (seed 1 / first = champion) when roles are absent.
+  const championComp = competitors.find((c) => String(c.role || '').toLowerCase() === 'champion')
+    || (competitors.length ? competitors.slice().sort((a, b) => (svg.isNum(a.seed) ? a.seed : 1e9) - (svg.isNum(b.seed) ? b.seed : 1e9))[0] : null);
+  const championId = championComp ? String(championComp.generation_id) : null;
+  const challengerIds = competitors
+    .filter((c) => c !== championComp && c.generation_id != null)
+    .map((c) => String(c.generation_id));
+
+  // No field AND no rounds yet → nothing to show progressively (let the caller
+  // fall through to the honest "starting" placeholder).
+  if (!challengerIds.length && !rawRounds.length) return null;
+
+  const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
+  const rungIndexOf = (mid) => { const m = /^rung(\d+)/.exec(String(mid || '')); return m ? Number(m[1]) : null; };
+  const isFinal = (mid) => String(mid || '') === 'racing-final';
+
+  // index the COMPLETED rounds the active-tournament already recorded.
+  const completedRungs = new Map();  // rungIdx → round (verbatim)
+  let gateRound = null;
+  for (const r of rawRounds) {
+    const mid = firstMatch(r).match_id;
+    if (isFinal(mid)) { gateRound = r; continue; }
+    const ri = rungIndexOf(mid);
+    if (ri != null) completedRungs.set(ri, r);
+  }
+
+  // the ACTIVE rung index from the heartbeat phase (`…:rung2_m1` → 2).
+  const phase = String((heartbeat && heartbeat.phase) || at.phase || '');
+  let activeRung = null;
+  { const m = /rung(\d+)/.exec(phase); if (m) activeRung = Number(m[1]); }
+  // when the phase names no rung but a rounds index is present, fall to it.
+  if (activeRung == null && svg.isNum(at.round_index)) activeRung = at.round_index;
+
+  // the in-flight board units that belong to THIS epoch's gens. active-runs'
+  // own rung/match_id are usually null mid-phase, so we attribute them all to
+  // the heartbeat's active rung.
+  const genSet = epochGens ? new Set([...epochGens].map(String)) : null;
+  const runs = (Array.isArray(activeRuns) ? activeRuns : []).filter((r) => {
+    const g = String(r.generation_id || r.gen || '');
+    if (!g) return false;
+    return genSet ? genSet.has(g) : true;
+  });
+  // per-gen in-flight progress (boards executing right now).
+  const inflightByGen = new Map();   // gen → { count, sumProgress }
+  for (const r of runs) {
+    const g = String(r.generation_id || r.gen);
+    const p = svg.isNum(r.progress) ? r.progress : 0;
+    const cur = inflightByGen.get(g) || { count: 0, sumProgress: 0 };
+    cur.count += 1; cur.sumProgress += p;
+    inflightByGen.set(g, cur);
+  }
+
+  // partial aggregate Δ-vs-champion (challenger − champion) as boards land.
+  const champAgg = svg.isNum(at.partial_champion_agg) ? at.partial_champion_agg : null;
+  const challAgg = svg.isNum(at.partial_challenger_agg) ? at.partial_challenger_agg : null;
+  const partialDelta = (challAgg != null && champAgg != null) ? (challAgg - champAgg) : null;
+
+  // the per-rung board fraction (successive halving): rung N covers
+  // min(1, base·η^N). Honour structure_params.rungs[] fractions when given.
+  const eta = svg.isNum(params.eta) && params.eta >= 2 ? params.eta : 2;
+  const baseFrac = svg.isNum(params.board_fraction) && params.board_fraction > 0 ? params.board_fraction : null;
+  const rungsParam = Array.isArray(params.rungs) ? params.rungs : null;
+  const fracFor = (ri) => {
+    if (rungsParam && rungsParam[ri] && svg.isNum(rungsParam[ri].fraction)) return rungsParam[ri].fraction;
+    return baseFrac == null ? null : Math.min(1, baseFrac * Math.pow(eta, ri));
+  };
+  // total board units per rung for the k/N progress label, if the contract
+  // pins board_size; else null (the label degrades to just the in-flight count).
+  const boardSize = svg.isNum(params.board_size) ? params.board_size
+    : (svg.isNum(at.board_size) ? at.board_size : null);
+  const totalFor = (ri) => {
+    const f = fracFor(ri);
+    if (boardSize != null && f != null) return Math.max(1, Math.round(boardSize * f));
+    if (boardSize != null) return boardSize;
+    return null;
+  };
+
+  // how many rungs does the successive halving have? from explicit rungs[] or
+  // ceil(log_η(field_size)). At minimum, cover the active rung + every completed.
+  const fieldSize = svg.isNum(params.field_size) ? params.field_size : challengerIds.length;
+  let totalRungs = rungsParam ? rungsParam.length
+    : (svg.isNum(at.total_rounds) ? at.total_rounds
+      : (fieldSize > 1 ? Math.ceil(Math.log(fieldSize) / Math.log(eta)) : 1));
+  totalRungs = Math.max(totalRungs, (activeRung != null ? activeRung + 1 : 0),
+    completedRungs.size ? Math.max(...completedRungs.keys()) + 1 : 0, 1);
+
+  // walk rungs 0..totalRungs-1, deriving each rung's field from the survivors of
+  // the previous COMPLETED rung (so the field narrows by η as cuts land). The
+  // active rung gets live board progress; rungs after the active one are queued.
+  const rounds = [];
+  let runningField = challengerIds.slice();   // the field entering the current rung
+  for (let ri = 0; ri < totalRungs; ri++) {
+    if (completedRungs.has(ri)) {
+      // carry the committed rung VERBATIM — survivors/cuts persist untouched.
+      const r = completedRungs.get(ri);
+      const m = firstMatch(r);
+      rounds.push(r);
+      runningField = Array.isArray(m.survivors) && m.survivors.length
+        ? m.survivors.map(String) : runningField;
+      continue;
+    }
+    const field = runningField.slice();
+    if (!field.length) break;
+    const isActive = (activeRung != null) ? ri === activeRung
+      : (rounds.every((rr) => completedRungs.has(rr.round_index)) ? ri === completedRungs.size : false);
+    const queued = !isActive;
+    const frac = fracFor(ri);
+    const total = totalFor(ri);
+    // per-lane live progress for the ACTIVE rung.
+    const progress = {};
+    if (isActive) {
+      for (const g of field) {
+        const inf = inflightByGen.get(g);
+        if (inf) {
+          const done = Math.max(0, Math.floor(inf.sumProgress));
+          progress[g] = {
+            inflight: inf.count,
+            done,
+            total: total,
+            partialDelta: partialDelta,
+          };
+        } else {
+          progress[g] = { inflight: 0, done: 0, total: total, partialDelta: null };
+        }
+      }
+    }
+    rounds.push({
+      round_index: ri,
+      label: `Rung ${ri}`,
+      matches: [{
+        match_id: `rung${ri}`,
+        competitors: field,
+        survivors: [],
+        cut: [],
+        board_fraction: frac,
+        // progressive live fields (the ladder reads these; the completed-record
+        // path leaves them undefined and renders as before):
+        live_progress: isActive ? progress : null,
+        queued,
+      }],
+    });
+    // a queued/active rung has no committed survivors; the next rung's field is
+    // the η-cut of THIS field (best-effort: keep the whole field — the real cut
+    // lands when the rung completes and replaces this synthesised rung).
+    if (!isActive && !queued) runningField = field;
+  }
+
+  // the champion gate — carry a committed `racing-final` verbatim; else a
+  // pending gate the renderer reads as "deciding…" (NEVER "rejected" while live).
+  if (gateRound) {
+    rounds.push(gateRound);
+  } else {
+    rounds.push({
+      round_index: totalRungs,
+      label: 'Champion gate',
+      matches: [{ match_id: 'racing-final', competitors: [championId].filter(Boolean), board_fraction: 1.0 }],
+    });
+  }
+
+  return normalizeStructure({
+    structure: 'racing',
+    structure_params: params,
+    competitors,
+    rounds,
+    standings: Array.isArray(at.standings) ? at.standings : [],
+    champion_lineage: Array.isArray(at.champion_lineage) ? at.champion_lineage : [],
+    phase: at.phase != null ? at.phase : (heartbeat && heartbeat.phase) || 'running',
+    source: 'live',
+  }, true);
+}
+
 // ── ONE candidate's PATH through the racing tournament ──────────────
 //
 // The lifecycle DAG (views/candidate.js) shows a small rung-progression strip
@@ -625,6 +856,11 @@ function renderRacing(st, ctx, epochId) {
       cut: Array.isArray(m.cut) ? m.cut : [],
       deltas: (m.deltas && typeof m.deltas === 'object') ? m.deltas : null,
       board_fraction: svg.isNum(m.board_fraction) ? m.board_fraction : null,
+      // progressive LIVE fields (present only for the active/queued rungs of a
+      // live race) — the ladder shows each lane's "racing · k/N boards" + a
+      // partial Δ; queued rungs read "queued".
+      live_progress: (m.live_progress && typeof m.live_progress === 'object') ? m.live_progress : null,
+      queued: !!m.queued,
       // a rung with NO recorded survivors/cut yet is still in flight — the mark
       // shows its field as racing (neutral), never as eliminated.
       pending: !(Array.isArray(m.survivors) && m.survivors.length) && !(Array.isArray(m.cut) && m.cut.length),
