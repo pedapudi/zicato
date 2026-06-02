@@ -372,6 +372,90 @@ test('board view: a candidate row links INLINE (to board+gen), never to a separa
   assert(!href.includes('/run/'), 'no navigation to a separate run page');
 });
 
+// ---- successive-halving REUSE champion transcript: gen×entry fallback ----
+
+// Install a fetch that serves the base FIXTURE but lets a test OVERRIDE or
+// SUPPRESS specific paths — the reuse-champion case needs the champion's
+// /api/conversation to come back empty (the score-reuse run_id has no events
+// of its own) while a by-(epoch, gen, entry) transcript exists.
+function installFetchWith(overrides, suppress) {
+  const sup = new Set(suppress || []);
+  globalThis.fetch = async (path) => {
+    const base = path.indexOf('?') >= 0 ? path.slice(0, path.indexOf('?')) : path;
+    if (Object.prototype.hasOwnProperty.call(overrides, base)) {
+      return { ok: true, json: async () => overrides[base] };
+    }
+    if (sup.has(base)) return { ok: false, status: 404, json: async () => ({ error: 'suppressed: ' + base }) };
+    const v = lookupFixture(FIXTURE, path);
+    if (v !== undefined) return { ok: true, json: async () => v };
+    return { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
+  };
+}
+
+test('board view: a REUSED champion run (no own transcript) falls back to the gen×entry transcript', async () => {
+  freshState();
+  // The champion v0's per-entry run_id is a successive-halving REUSE record:
+  // /api/conversation/run_v0_waffles yields NO transcript. But the gen×entry
+  // /api/run/<epoch>/v0/waffles_single/transcript resolves the one real
+  // events.jsonl on disk. The champion side must render THAT, not "unavailable".
+  installFetchWith(
+    {
+      [`/api/run/${EPOCH_ID}/v0/waffles_single/transcript`]: {
+        epoch_id: EPOCH_ID, generation_id: 'v0', entry_id: 'waffles_single', run_id: 'real_v0_run',
+        turns: [
+          { seq: 0, role: 'user', agent: 'operator', text: 'Make a presentation about waffles.' },
+          { seq: 1, role: 'agent', agent: 'coordinator', text: 'Champion reused-rung transcript recovered.' },
+        ],
+        annotations: [], event_count: 31, complete: true,
+      },
+    },
+    ['/api/conversation/run_v0_waffles'],
+  );
+  const board = await import('../js/variants/T/views/board.js');
+  const bhost = document.createElement('div');
+  await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+  const cols = allByClass(bhost, 'dn-xscript-col');
+  assert(cols.length === 2, 'two transcript columns (challenger + champion)');
+  // Challenger (v1) side unchanged — its own /api/conversation still resolves.
+  assert(bhost.textContent.includes('Drafting an outline'), 'challenger transcript still renders from its own run_id');
+  // Champion (v0) side recovered via the gen×entry fallback, NOT "unavailable".
+  assert(bhost.textContent.includes('Champion reused-rung transcript recovered'),
+    'champion transcript recovered via the gen×entry fallback');
+  assert(!bhost.textContent.includes('could not be reconstructed'),
+    'the honest "unavailable" message is NOT shown when a gen×entry transcript exists');
+});
+
+test('board view: a GENUINELY-absent champion transcript still shows the honest "unavailable" message', async () => {
+  freshState();
+  // Both the reuse run_id AND the gen×entry transcript are absent — the
+  // honest "unavailable" message must remain (no false recovery).
+  installFetchWith(
+    {},
+    ['/api/conversation/run_v0_waffles', `/api/run/${EPOCH_ID}/v0/waffles_single/transcript`],
+  );
+  const board = await import('../js/variants/T/views/board.js');
+  const bhost = document.createElement('div');
+  await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+  const cols = allByClass(bhost, 'dn-xscript-col');
+  assert(cols.length === 2, 'two transcript columns');
+  assert(bhost.textContent.includes('Drafting an outline'), 'challenger side unchanged');
+  assert(bhost.textContent.includes('could not be reconstructed'),
+    'the honest "unavailable" message is preserved for a genuinely-absent gen×entry');
+});
+
+test('board view: the per-pane transcript host split (live-beat scroll fix) is preserved', async () => {
+  freshState(); installFetch();
+  const board = await import('../js/variants/T/views/board.js');
+  const bhost = document.createElement('div');
+  await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v1' });
+  // The two persistent sub-hosts (upper + transcript) must exist — the digest
+  // split that keeps a live beat from resetting the transcript scroll.
+  assert(bhost.querySelectorAll('[data-node]').filter((n) => n.getAttribute('data-node') === 'board-upper').length === 1,
+    'the upper (live) sub-host exists');
+  assert(bhost.querySelectorAll('[data-node]').filter((n) => n.getAttribute('data-node') === 'board-xscript').length === 1,
+    'the transcript sub-host exists (separate from the upper host)');
+});
+
 // ---- FIX #6: trellis in the Boards view, NOT the epoch overview ----
 
 test('de-dup: the trellis lives in the Boards view; the epoch overview has the heatmap only', async () => {

@@ -1803,6 +1803,86 @@ def test_conversation_resolves_by_run_id_not_dir_name(
         assert r2.json()["event_count"] == 2
 
 
+def test_conversation_reuse_run_id_falls_back_to_gen_entry_events(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A successive-halving REUSE run_id resolves to its gen×entry transcript.
+
+    In racing the fixed champion (v0) is re-raced across rungs, so the
+    same gen×entry yields multiple per-rung run records — only one rung
+    actually executed and emitted ``events.jsonl``; the rest are
+    score-reuse records carrying a distinct ``run_id`` written into a
+    ``runs/<entry>/loss.json`` but with NO transcript of their own. The
+    reuse ``run_id`` must fall back to the gen×entry events file.
+
+    The fixture's ``v0/runs/waffles_single/`` already carries a real
+    ``events.jsonl``. We add a ``loss.json`` there stamping a distinct
+    reuse run id; resolving that reuse run id must land on the real
+    events file (whose own runId is absent / different).
+    """
+    _install_stub_transcript(monkeypatch)
+    reuse_run_id = "reuse_rung2_v0_waffles_0000"
+    _write_json(
+        workspace
+        / "epochs"
+        / "2026-05-16_e0"
+        / "generations"
+        / "v0"
+        / "runs"
+        / "waffles_single"
+        / "loss.json",
+        {"run_id": reuse_run_id, "entry_id": "waffles_single", "drift_loss": 60.5, "pass_fail": 0},
+    )
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        # The reuse run id has no events.jsonl of its own, but the loss.json
+        # in v0/runs/waffles_single points at the real gen×entry transcript.
+        r = c.get(f"/api/conversation/{reuse_run_id}")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # The champion v0 events file is the single-line fixture transcript.
+        assert body["event_count"] == 1
+
+
+def test_conversation_query_gen_entry_fallback_resolves_transcript(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``/api/conversation/{run_id}?gen=&entry=`` falls back to gen×entry.
+
+    The explicit, index-independent recovery path the dashboard's
+    champion side uses: a run_id with no resolvable events, plus the
+    candidate's known gen + entry, resolves directly to the gen×entry
+    ``events.jsonl``.
+    """
+    _install_stub_transcript(monkeypatch)
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        r = c.get(
+            "/api/conversation/no_such_reuse_run",
+            params={"gen": "v0", "entry": "waffles_single"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["event_count"] == 1
+
+
+def test_conversation_genuinely_absent_gen_entry_still_404(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run_id with no events AND no real gen×entry stays a 404.
+
+    The honest "unavailable" case must survive the fallback — a
+    gen×entry that does not exist on disk does not fabricate a transcript.
+    """
+    _install_stub_transcript(monkeypatch)
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        r = c.get(
+            "/api/conversation/no_such_run",
+            params={"gen": "v0", "entry": "no_such_entry"},
+        )
+        assert r.status_code == 404
+
+
 def test_matchup_conversations_endpoint(
     workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

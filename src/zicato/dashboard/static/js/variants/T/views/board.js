@@ -116,8 +116,8 @@ export async function render(host, ctx, params) {
     }
     rightSel = rightGen ? rows.find((r) => r.gen === rightGen) || null : null;
     const convs = await Promise.all([
-      leftSel && leftSel.runId ? D.conversation(leftSel.runId) : Promise.resolve(null),
-      rightSel && rightSel.runId ? D.conversation(rightSel.runId) : Promise.resolve(null),
+      resolveTranscript(epochId, entryId, leftSel),
+      resolveTranscript(epochId, entryId, rightSel),
     ]);
     leftConv = convs[0]; rightConv = convs[1];
   }
@@ -362,6 +362,31 @@ function transcriptColumn(sel, conv, championId) {
   }
   col.appendChild(scroller);
   return col;
+}
+
+// Resolve one side's transcript with a successive-halving fallback. The
+// primary lookup is by the candidate's run_id (carried by the per-entry
+// row). In racing the fixed champion (e.g. v0) is RE-RACED across rungs, so
+// its per-entry row may point at a score-REUSE run_id with no events.jsonl of
+// its own — /api/conversation then yields nothing. The candidate always knows
+// its gen + entry, so fall back to the gen×entry transcript, which always
+// resolves to the one real events.jsonl on disk. We pass gen+entry on the
+// first call too (the backend uses them as a same-request fallback); if that
+// still comes back empty we make the explicit by-(epoch, gen, entry) call.
+// A genuinely-absent gen×entry stays empty → the honest "unavailable" message.
+async function resolveTranscript(epochId, entryId, sel) {
+  if (!sel || !sel.gen) return null;
+  let conv = sel.runId ? await D.conversation(sel.runId, sel.gen, entryId) : null;
+  if (!hasTurns(conv)) {
+    const byEntry = await D.runTranscript(epochId, sel.gen, entryId);
+    if (hasTurns(byEntry)) conv = byEntry;
+    else if (conv == null) conv = byEntry;
+  }
+  return conv;
+}
+
+function hasTurns(conv) {
+  return !!(conv && Array.isArray(conv.turns) && conv.turns.length);
 }
 
 function transcriptDigest(conv) {

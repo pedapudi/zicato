@@ -2574,6 +2574,60 @@ def _build_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
     return index
 
 
+# Cache: workspace epochs dir → {run_id: gen×entry events.jsonl path}. In
+# successive-halving racing the fixed champion (e.g. v0) is RE-RACED /
+# REUSED across rungs, so the same gen×entry yields MULTIPLE per-rung run
+# records — but only ONE rung actually executed and emitted its own
+# events.jsonl; the rest are score-reuse records carrying a distinct
+# ``run_id`` with NO transcript of their own. Each such record is written
+# as a ``runs/<entry>/loss.json`` carrying both its ``run_id`` and the
+# gen×entry it belongs to (the run directory it lives under). Mapping every
+# such ``run_id`` to its gen×entry ``events.jsonl`` lets a transcript-less
+# reuse run_id resolve to the one real transcript for that pair. Memoized
+# on the epochs-dir mtime, like the run-id index above.
+_REUSE_RUN_ID_INDEX_CACHE: dict[str, tuple[float, dict[str, Path]]] = {}
+
+
+def _build_reuse_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
+    """Scan ``runs/<entry>/loss.json`` → ``{run_id: gen×entry events.jsonl}``.
+
+    Every per-entry ``loss.json`` carries the ``run_id`` of the record it
+    settles, and lives in the ``generations/<gen>/runs/<entry>/`` directory
+    whose ``events.jsonl`` is the gen×entry's one real transcript. A
+    successive-halving reuse record's ``run_id`` differs from the run id
+    inside that ``events.jsonl`` (the run that actually executed), so this
+    index maps the reuse ``run_id`` onto the real transcript file. Only
+    pairs whose ``events.jsonl`` actually exists are indexed, so a resolve
+    through this map always lands on a readable transcript. Cached per
+    workspace, invalidated when the epochs dir mtime changes.
+    """
+    epochs = paths.epochs
+    cache_key = str(epochs)
+    try:
+        mtime = epochs.stat().st_mtime
+    except OSError:
+        return {}
+
+    cached = _REUSE_RUN_ID_INDEX_CACHE.get(cache_key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+
+    index: dict[str, Path] = {}
+    if epochs.is_dir():
+        for loss_path in epochs.glob("*/generations/*/runs/*/loss.json"):
+            events_path = loss_path.parent / "events.jsonl"
+            if not events_path.exists():
+                continue
+            loss = _read_json_value(loss_path)
+            if not isinstance(loss, dict):
+                continue
+            rid = loss.get("run_id")
+            if isinstance(rid, str) and rid and rid not in index:
+                index[rid] = events_path
+    _REUSE_RUN_ID_INDEX_CACHE[cache_key] = (mtime, index)
+    return index
+
+
 def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
     """Locate the ``events.jsonl`` for one run id.
 
@@ -2614,6 +2668,38 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
     indexed = _build_run_id_index(paths).get(run_id)
     if indexed is not None and indexed.exists():
         return indexed
+
+    # Final fallback: a successive-halving REUSE run_id — the fixed
+    # champion re-raced across rungs emits a per-rung loss.json carrying
+    # this run_id but NO events.jsonl of its own; only its gen×entry has
+    # the one real transcript. Map the reuse run_id → that gen×entry
+    # events.jsonl so the champion side renders rather than reporting
+    # "could not be reconstructed".
+    reused = _build_reuse_run_id_index(paths).get(run_id)
+    if reused is not None and reused.exists():
+        return reused
+    return None
+
+
+def find_generation_entry_events(
+    paths: WorkspacePaths, generation_id: str, entry_id: str
+) -> Path | None:
+    """STRICT ``(generation_id, entry_id)`` → events.jsonl resolution.
+
+    Unlike :func:`find_generation_run`, this requires the events file to
+    live in the entry's OWN run directory
+    (``generations/<gen>/runs/<entry>/events.jsonl``) — no fallback to an
+    arbitrary sibling run dir. This is the right primitive for the
+    successive-halving champion fallback: a genuinely-absent gen×entry
+    must NOT fabricate some other entry's transcript. Returns ``None`` when
+    no such file exists.
+    """
+    if not paths.epochs.is_dir():
+        return None
+    for epoch_dir in paths.epochs.iterdir():
+        events = epoch_dir / "generations" / generation_id / "runs" / entry_id / "events.jsonl"
+        if events.exists():
+            return events
     return None
 
 

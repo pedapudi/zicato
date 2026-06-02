@@ -687,6 +687,25 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
                 status_code=503,
             )
         events_path = state_reader.find_run_events_path(paths, run_id)
+        # Successive-halving fallback: a REUSED champion run_id (re-raced
+        # across rungs) has a score-reuse record but NO events.jsonl of its
+        # own — only its gen×entry carries the one real transcript. When the
+        # caller supplies the run's coordinates via ``?gen=&entry=`` (the
+        # champion side always knows them), resolve directly to that
+        # gen×entry events.jsonl so the transcript renders rather than 404.
+        # ``find_run_events_path`` already attempts a loss.json-derived
+        # fallback; the query params are the explicit, index-independent
+        # path for the same recovery.
+        if events_path is None:
+            gen = request.query_params.get("gen")
+            entry = request.query_params.get("entry")
+            if gen and entry and _is_safe_id(gen) and _is_safe_id(entry):
+                # Strict gen×entry resolution: the events file must live in
+                # the requested entry's own run directory. (The shared
+                # find_generation_run helper falls back to ANY run dir under
+                # the generation, which is right for the L4 diff but would
+                # fabricate a transcript for a genuinely-absent entry here.)
+                events_path = state_reader.find_generation_entry_events(paths, gen, entry)
         if events_path is None:
             return JSONResponse({"error": f"no events for run {run_id}"}, status_code=404)
         try:

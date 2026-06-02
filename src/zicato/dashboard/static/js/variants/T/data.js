@@ -197,9 +197,24 @@ export function perJudgeForRun(epochId, genId, entryId) {
   return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/per-judge`);
 }
 
-// The reconstructed transcript for a run.
-export function conversation(runId) {
-  return cachedJson(`/api/conversation/${enc(runId)}`);
+// The reconstructed transcript for a run. In successive-halving racing the
+// fixed champion is re-raced across rungs, so a given run_id can be a
+// score-REUSE record with no events.jsonl of its own — only its gen×entry
+// carries the one real transcript. When the caller knows the run's
+// coordinates (the champion side always does), pass gen+entry so the backend
+// can fall back to the gen×entry events.jsonl rather than 404-ing.
+export function conversation(runId, gen, entry) {
+  let url = `/api/conversation/${enc(runId)}`;
+  if (gen && entry) url += `?gen=${enc(gen)}&entry=${enc(entry)}`;
+  return cachedJson(url);
+}
+
+// Resolve a transcript directly by its (epoch, gen, entry) coordinates,
+// independent of any run_id. The fallback path for a reuse-record run_id
+// whose own /api/conversation lookup yields no transcript: the gen×entry
+// always resolves to the one real events.jsonl on disk.
+export function runTranscript(epochId, genId, entryId) {
+  return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/transcript`);
 }
 
 function enc(s) { return encodeURIComponent(s == null ? '' : String(s)); }
