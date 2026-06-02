@@ -171,12 +171,42 @@ def _quote_as_python_string(content: str, indent: str) -> str:
     return f'{indent}"""{escaped}"""'
 
 
-def _leading_indent(text: str) -> str:
-    """Return the leading-whitespace prefix of the first non-empty line."""
+def _literal_line_prefix(text: str) -> str:
+    """Return the first-line anchor prefix for a span replacement.
+
+    Normally a span's replacement is re-anchored to the first non-empty
+    line's leading whitespace (its indent). The one exception is an
+    explicit ``+``-joined concatenation — the form pointed sub-clauses use
+    to keep
+    adjacent clauses as separate AST literals, e.g.::
+
+        + "Pass the ``topic`` ..."
+
+    The enumerator slices the span out by whole lines, so its first line
+    carries that leading ``+`` operator. Dropping it on a replace would
+    merge the clause into its neighbour (adjacent literals implicitly
+    concatenate) and the span's own marker would stop resolving. So when
+    the span's first non-empty line opens with a ``+`` continuation
+    operator, the prefix (indent + ``+`` + the gap up to the opening
+    quote) is preserved verbatim. For every other span shape — kwarg
+    value, docstring, plain assignment — this returns exactly the leading
+    indent, byte-identical to the historical behaviour.
+    """
     for line in text.splitlines():
         stripped = line.lstrip()
-        if stripped:
-            return line[: len(line) - len(stripped)]
+        if not stripped:
+            continue
+        indent = line[: len(line) - len(stripped)]
+        if not stripped.startswith("+"):
+            return indent
+        # Leading ``+`` continuation: keep everything up to the opening
+        # quote so the operator survives the replace.
+        quote = len(line)
+        for i, ch in enumerate(line):
+            if ch in "\"'":
+                quote = i
+                break
+        return line[:quote]
     return ""
 
 
@@ -217,6 +247,12 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     """Replace a span point's content with ``new_content``.
 
     For file-kind points the new content overwrites the whole file.
+    For code-kind points (a ``# zicato:mutable:code`` region) the body
+    lines between the markers are replaced verbatim — the region is
+    real Python control flow, so ``new_content`` is fully-formed source
+    and the applier must not wrap it as a string literal. The proposer
+    is responsible for producing a block that parses in place (the
+    post-apply syntax check is the backstop).
     For span-kind points the policy depends on the file's syntax:
 
     * For ``.py`` files, the span is a Python string-literal expression
@@ -241,6 +277,20 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     before = "".join(lines[: point.line_start - 1])
     after = "".join(lines[point.line_end :])
 
+    if point.kind == "code":
+        # Pointed code region: the body is verbatim source between the
+        # markers. Write ``new_content`` unchanged — no string-literal
+        # wrapping and no indent re-anchoring (the block already carries
+        # its own indentation; the proposer owns getting it right). Only
+        # the trailing-newline guard below applies so the closing marker
+        # line is not merged onto the body's last line.
+        middle = new_content
+        if not middle.endswith("\n"):
+            if "".join(lines[point.line_start - 1 : point.line_end]).endswith("\n"):
+                middle = middle + "\n"
+        point.file.write_text(before + middle + after, encoding="utf-8")
+        return
+
     if point.file.suffix == ".py":
         # The original span's first-line indent is the syntactic anchor
         # the replacement MUST sit at — the enumerator bound the span to
@@ -251,7 +301,7 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
         # re-anchors it so a span replace can never shift the literal
         # off its column and break the enclosing block's indentation.
         original_span = "".join(lines[point.line_start - 1 : point.line_end])
-        indent = _leading_indent(original_span)
+        indent = _literal_line_prefix(original_span)
         if _looks_like_python_string_literal(new_content):
             middle = _reindent_python_literal(new_content, indent)
         else:

@@ -37,7 +37,7 @@ import hashlib
 from pathlib import Path
 
 from zicato.core.types import MutationPoint
-from zicato.mutation.markers import parse_marker_line
+from zicato.mutation.markers import is_end_marker, parse_marker_line
 
 
 def _content_hash(text: str) -> str:
@@ -103,15 +103,23 @@ def _enumerate_file(file_path: Path, source_root: Path) -> list[MutationPoint]:
             literal_line_set.add(line_no)
 
     # Walk markers in source order so file-level (top-of-module) markers
-    # are emitted before span markers within the same file.
-    for idx, raw_line in enumerate(lines):
-        parsed = parse_marker_line(raw_line.rstrip("\n").rstrip("\r"))
-        if parsed is None:
-            continue
+    # are emitted before span markers within the same file. The index is
+    # walked explicitly (not ``enumerate``) so a ``:code`` region can
+    # advance the cursor past its body in one step.
+    idx = 0
+    n = len(lines)
+    while idx < n:
+        raw_line = lines[idx]
         marker_line = idx + 1  # 1-indexed
+        stripped = raw_line.rstrip("\n").rstrip("\r")
+        parsed = parse_marker_line(stripped)
+        if parsed is None:
+            idx += 1
+            continue
         if marker_line in literal_line_set:
             # Inside a docstring / module-level string literal — operators
             # use this for marker-syntax examples; treat as documentation.
+            idx += 1
             continue
         if parsed.is_file:
             content = text
@@ -128,9 +136,53 @@ def _enumerate_file(file_path: Path, source_root: Path) -> list[MutationPoint]:
                     metadata=dict(parsed.metadata),
                 )
             )
+            idx += 1
+            continue
+        if parsed.is_code:
+            # Pointed code region: scan forward for the matching
+            # ``# zicato:mutable:end`` sentinel. The region BODY is the
+            # lines strictly between the opening and closing markers
+            # (exclusive of both); the proposer rewrites that block
+            # verbatim. An unterminated region (no ``:end`` before EOF)
+            # is silently dropped — the audit CLI surfaces the missing id
+            # the same way a dangling span marker is dropped.
+            end_idx: int | None = None
+            for scan in range(idx + 1, n):
+                if is_end_marker(lines[scan].rstrip("\n").rstrip("\r")):
+                    end_idx = scan
+                    break
+            if end_idx is None:
+                idx += 1
+                continue
+            body_start = idx + 2  # 1-indexed line after the opening marker
+            body_end = end_idx  # 1-indexed line before the closing marker
+            if body_end < body_start:
+                # Empty region (``:code`` immediately followed by
+                # ``:end``) — nothing mutable; skip past the sentinel.
+                idx = end_idx + 1
+                continue
+            code_text = "".join(lines[body_start - 1 : body_end])
+            points.append(
+                MutationPoint(
+                    id=parsed.id,
+                    kind="code",
+                    file=file_path,
+                    source_root=source_root,
+                    line_start=body_start,
+                    line_end=body_end,
+                    content=code_text,
+                    content_hash=_content_hash(code_text),
+                    metadata=dict(parsed.metadata),
+                )
+            )
+            # Advance past the whole region (including the sentinel) so
+            # any markers that happen to sit inside the body are not
+            # re-interpreted as independent points.
+            idx = end_idx + 1
             continue
         span = _resolve_span_for_marker(marker_line, literal_spans)
         if span is None:
+            idx += 1
             continue
         line_start, line_end = span
         # Slice the literal's lines out of the source. ast line numbers
@@ -149,6 +201,7 @@ def _enumerate_file(file_path: Path, source_root: Path) -> list[MutationPoint]:
                 metadata=dict(parsed.metadata),
             )
         )
+        idx += 1
     return points
 
 

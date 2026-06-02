@@ -75,7 +75,10 @@ def test_agent_module_exposes_root_agent_symbol() -> None:
 # ---------------------------------------------------------------------------
 
 
-_MARKER_RE = re.compile(r'#\s*zicato:mutable\s+id="([a-zA-Z0-9_]+)"')
+# Matches all three opening-marker variants (span / file / code) so the
+# count walk sees the pointed instruction spans AND the slug/path code
+# regions. The ``:end`` sentinel carries no id and is not matched.
+_MARKER_RE = re.compile(r'#\s*zicato:mutable(?::file|:code)?\s+id="([a-zA-Z0-9_]+)"')
 
 
 def _walk_python_files(root: Path) -> list[Path]:
@@ -83,25 +86,29 @@ def _walk_python_files(root: Path) -> list[Path]:
     return [p for p in sorted(root.rglob("*.py")) if "__pycache__" not in p.parts]
 
 
-def test_mutation_markers_minimum_count() -> None:
-    """The vendored agent declares at least 6 distinct mutation ids.
-
-    The dogfood-target plan asks for 6-12 distinct ids across the
-    annotated agent tree. The floor of 6 is the regression guard — if a
-    refactor accidentally strips markers, this test catches it. The
-    ceiling is not enforced in tests; the README's mutation-surface
-    table is the operator's source of truth on what is currently
-    exposed.
-    """
+def _marker_ids() -> set[str]:
     ids: set[str] = set()
     for py_file in _walk_python_files(AGENT_DIR):
         for line in py_file.read_text().splitlines():
             m = _MARKER_RE.search(line)
             if m is not None:
                 ids.add(m.group(1))
+    return ids
 
-    assert len(ids) >= 6, (
-        f"Expected at least 6 distinct zicato:mutable ids in {AGENT_DIR}, "
+
+def test_mutation_markers_minimum_count() -> None:
+    """The vendored agent declares an expanded mutation surface.
+
+    After splitting the broad instruction spans into pointed sub-clauses
+    and exposing the slug/path tool code as ``# zicato:mutable:code``
+    regions, the surface grew well past the original 6-id floor. We pin a
+    higher floor (12) as the regression guard — if a refactor strips the
+    pointed routing/topic spans or the slug/path code regions, this test
+    catches it.
+    """
+    ids = _marker_ids()
+    assert len(ids) >= 12, (
+        f"Expected at least 12 distinct zicato:mutable ids in {AGENT_DIR}, "
         f"got {len(ids)}: {sorted(ids)}"
     )
 
@@ -114,12 +121,7 @@ def test_mutation_ids_include_routing_and_specialist_instructions() -> None:
     primary mutation surface. This is a belt-and-braces check on top of
     the count assertion above.
     """
-    ids: set[str] = set()
-    for py_file in _walk_python_files(AGENT_DIR):
-        for line in py_file.read_text().splitlines():
-            m = _MARKER_RE.search(line)
-            if m is not None:
-                ids.add(m.group(1))
+    ids = _marker_ids()
 
     assert "coordinator_instruction" in ids
     # At least one specialist instruction must be present. We don't pin
@@ -135,6 +137,88 @@ def test_mutation_ids_include_routing_and_specialist_instructions() -> None:
         "At least one specialist instruction must carry a "
         "zicato:mutable marker. Found ids: " + repr(sorted(ids))
     )
+
+
+def test_mutation_ids_include_pointed_routing_and_topic_spans() -> None:
+    """The pointed instruction sub-clauses are individually addressable.
+
+    The dominant board failure is a write/read slug mismatch driven by
+    the coordinator's files_not_found routing and the developer's /
+    reviewer's topic-naming. Each of those sub-decisions must be its own
+    pointed mutation id so the proposer can rewrite it without disturbing
+    the rest of the instruction.
+    """
+    ids = _marker_ids()
+    for pointed in (
+        "coordinator_files_not_found_routing",
+        "web_developer_topic_naming",
+        "reviewer_read_path",
+    ):
+        assert pointed in ids, f"missing pointed span id {pointed!r}; found {sorted(ids)}"
+
+
+def test_slug_path_tool_code_is_mutable_code_surface() -> None:
+    """The slugify / output-path tool logic enumerates as ``code`` points.
+
+    This is the surface the proposer needs to actually fix the
+    file-finding failure: rewriting WHERE files are written and HOW they
+    are located. We enumerate through the real framework (not a regex)
+    so the assertion also proves the code regions are well-formed
+    (matched ``:code`` / ``:end`` pairs) and resolve to ``kind="code"``.
+    """
+    from zicato.mutation.enumerator import enumerate_mutations
+
+    points = enumerate_mutations([AGENT_DIR])
+    by_id = {p.id: p for p in points}
+
+    code_ids = {"topic_slugify_logic", "topic_output_dir_logic", "find_presentation_match_logic"}
+    for cid in code_ids:
+        assert cid in by_id, f"missing code-region id {cid!r}; found {sorted(by_id)}"
+        assert by_id[cid].kind == "code", f"{cid!r} should be kind=code, got {by_id[cid].kind!r}"
+
+    # The slug normalization that determines the on-disk path is in the
+    # mutable set and its current body is the live ``replace`` rule.
+    assert "replace(" in by_id["topic_slugify_logic"].content
+
+    # The pointed instruction sub-clauses enumerate as string spans, and
+    # the tool docstrings remain span points too — the full surface is a
+    # mix of span + code kinds.
+    kinds = {p.kind for p in points}
+    assert kinds == {"span", "code"}, kinds
+
+
+def test_agent_module_enumerated_points_apply_and_reimport(tmp_path: Path) -> None:
+    """An end-to-end check: a code-region patch applies to a fresh copy
+    of the agent package and the copy still imports side-effect free."""
+    import importlib.util
+
+    from zicato.core.types import Patch
+    from zicato.mutation.applier import apply_patches
+
+    tgt = tmp_path / "agent_copy"
+    patch = Patch(
+        id="p1",
+        mutation_id="topic_slugify_logic",
+        op="replace",
+        new_content='    slug = topic.strip().lower().replace(" ", "-").replace("/", "-")\n',
+        new_numeric=None,
+        new_enum=None,
+        rationale="unify write/read slug",
+    )
+    apply_patches(AGENT_DIR, [patch], tgt)
+
+    patched = (tgt / "agent.py").read_text()
+    assert 'replace(" ", "-")' in patched
+
+    # Import the patched module under a throwaway name and prove the
+    # lazy ``root_agent`` pattern survives (no eager ADK construction on
+    # import) and the rewritten slug logic is live.
+    spec = importlib.util.spec_from_file_location("t1_agent_patched_under_test", tgt / "agent.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert hasattr(mod, "build_agent_tree")
+    assert mod._slugify_topic("Hello World") == "hello-world"  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

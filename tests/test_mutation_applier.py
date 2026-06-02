@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import textwrap
 from pathlib import Path
 
@@ -78,6 +79,80 @@ def test_apply_replace_file_kind(tmp_path: Path) -> None:
 
     out = (tgt / "prompts.py").read_text(encoding="utf-8")
     assert out == new_body
+
+
+def test_apply_replace_code_region(tmp_path: Path) -> None:
+    """A ``code`` point replaces its body verbatim and stays importable."""
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    file_path = src / "tools.py"
+    _write(
+        file_path,
+        """
+        def slug(topic):
+            # zicato:mutable:code id="slug_logic"
+            s = topic.lower().replace(" ", "_")
+            # zicato:mutable:end
+            return s
+        """,
+    )
+    new_body = '    s = topic.strip().lower().replace(" ", "-")\n'
+    patches = [_patch(pid="p1", mutation_id="slug_logic", op="replace", new_content=new_body)]
+    apply_patches(src, patches, tgt)
+
+    # Source unchanged.
+    assert 'replace(" ", "_")' in file_path.read_text(encoding="utf-8")
+    out = (tgt / "tools.py").read_text(encoding="utf-8")
+    # New body landed verbatim (no string-literal wrapping).
+    assert 'topic.strip().lower().replace(" ", "-")' in out
+    assert 'replace(" ", "_")' not in out
+    # Markers preserved so the id still resolves; the file still parses
+    # and runs the new logic.
+    assert '# zicato:mutable:code id="slug_logic"' in out
+    assert "# zicato:mutable:end" in out
+    ast.parse(out)
+
+    # The mutation id still resolves and is still a code point.
+    points = enumerate_mutations([tgt])
+    by_id = {p.id: p for p in points}
+    assert by_id["slug_logic"].kind == "code"
+
+    # Execute the rewritten function to prove the body is live.
+    ns: dict[str, object] = {}
+    exec(out, ns)  # noqa: S102 — controlled test source
+    assert ns["slug"]("Hello World") == "hello-world"  # type: ignore[operator]
+
+
+def test_apply_replace_plus_joined_span_preserves_operator(tmp_path: Path) -> None:
+    """Replacing a ``+``-joined pointed sub-clause keeps the operator so
+    the clause stays a distinct literal and its marker keeps resolving."""
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    file_path = src / "agent.py"
+    _write(
+        file_path,
+        """
+        def make():
+            return dict(
+                instruction=(
+                    # zicato:mutable id="base"
+                    "base clause.\\n"
+                    # zicato:mutable id="clause"
+                    + "pointed clause."
+                ),
+            )
+        """,
+    )
+    patches = [_patch(pid="p1", mutation_id="clause", op="replace", new_content='"REWRITTEN."')]
+    apply_patches(src, patches, tgt)
+
+    out = (tgt / "agent.py").read_text(encoding="utf-8")
+    ast.parse(out)
+    # The leading ``+`` survived so the clause is still its own literal.
+    assert "+ " in out and "REWRITTEN." in out
+    points = enumerate_mutations([tgt])
+    ids = {p.id for p in points}
+    assert ids == {"base", "clause"}
 
 
 def test_apply_numeric(tmp_path: Path) -> None:

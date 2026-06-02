@@ -65,7 +65,16 @@ from zicato.core.drift_kinds import validate_drift_kind
 #:   top-of-file marker. Intended for prompt modules whose strings are
 #:   tightly coupled. Validator constraints (imports survive, syntax
 #:   parses) bound what a file-level rewrite can do.
-MutationKind = Literal["span", "file"]
+#: * ``"code"`` — a pointed code region delimited by a
+#:   ``# zicato:mutable:code`` opening marker and a
+#:   ``# zicato:mutable:end`` closing sentinel. The content is the
+#:   verbatim source lines BETWEEN the two markers (control flow, not a
+#:   string literal). Unlike ``"file"`` it exposes only the annotated
+#:   block — the surface needed to rewrite a tool's slugify / path
+#:   logic without handing the proposer the whole module. The applier
+#:   replaces the region body verbatim; the validator's post-apply
+#:   syntax + import checks bound what a code-region rewrite can do.
+MutationKind = Literal["span", "file", "code"]
 
 
 @dataclass(frozen=True, slots=True)

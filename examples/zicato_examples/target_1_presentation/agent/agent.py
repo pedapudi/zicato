@@ -13,35 +13,49 @@ specialists). The intent of vendoring is twofold:
 Mutation-point annotations
 --------------------------
 
-Every editable string in this file is preceded by a ``# zicato:mutable``
-marker. The marker syntax is::
+Editable regions in this file are preceded by a ``# zicato:mutable``
+marker. Three marker variants are used:
 
-    # zicato:mutable id="<stable-id>" role="<role>"
+* ``# zicato:mutable id="<id>" role="<role>"`` — a string-literal span
+  (an instruction sub-clause or a tool docstring). The marker binds to
+  the nearest string literal beneath it, so adjacent pointed clauses
+  are written as separate ``+``-joined literals, each with its own id.
+* ``# zicato:mutable:code id="<id>" role="<role>"`` ... a code region
+  closed by ``# zicato:mutable:end``. The body between the markers is
+  real Python control flow the proposer may rewrite verbatim. This is
+  how the slugify / output-path logic that determines WHERE files are
+  written and HOW they are located is exposed as mutable surface.
 
-The ``id`` is the stable handle the proposer uses to address the span
-across generations. The ``role`` is a hint the audit CLI surfaces so
-operators can group mutation points by purpose (``system_instruction``,
-``tool_description``, ``agent_description``, ``coordinator_routing``).
+The ``role`` hint the audit CLI surfaces groups points by purpose
+(``system_instruction``, ``coordinator_routing``, ``topic_naming``,
+``tool_description``, ``path_logic``).
 
-Span IDs declared in this file:
+String-span ids declared in this file:
 
-* ``researcher_instruction``                   — research_agent's ``instruction``
-* ``web_developer_instruction``                — web_developer_agent's ``instruction``
-* ``reviewer_instruction``                     — reviewer_agent's ``instruction``
-* ``debugger_instruction``                     — debugger_agent's ``instruction``
-* ``coordinator_instruction``                  — coordinator_agent's ``instruction``
-  (the ``coordinator_routing`` semantic — this is where the routing
-  flow lives)
-* ``write_webpage_tool_description``           — ``write_webpage`` tool docstring
+* ``researcher_instruction``                   — research_agent's instruction
+* ``web_developer_instruction``                — web_developer base instruction
+* ``web_developer_topic_naming``               — how the developer names/passes the topic
+* ``reviewer_instruction``                     — reviewer base instruction
+* ``reviewer_read_path``                       — reviewer read-path derivation + files_not_found
+* ``debugger_instruction``                     — debugger_agent's instruction
+* ``coordinator_instruction``                  — coordinator base routing flow
+* ``coordinator_files_not_found_routing``      — coordinator's files_not_found re-dispatch
+* ``write_webpage_tool_description``           — ``write_webpage`` docstring
 * ``read_presentation_files_tool_description`` — ``read_presentation_files`` docstring
 * ``find_presentation_files_tool_description`` — ``find_presentation_files`` docstring
-* ``patch_file_tool_description``              — ``patch_file`` tool docstring
+* ``patch_file_tool_description``              — ``patch_file`` docstring
 
-That is 9 distinct mutation ids — inside the 6-12 target range called
-out in the dogfood-target plan, with the routing instruction
-(``coordinator_instruction``) and one instruction per specialist
-covered, plus every tool's docstring exposed for description
-rewrites.
+Code-region ids declared in this file:
+
+* ``topic_slugify_logic``       — the topic → slug normalization rule
+* ``topic_output_dir_logic``    — slug → on-disk output directory path
+* ``find_presentation_match_logic`` — fuzzy match of a topic against ``output/``
+
+The two slug/path code regions are the surface the proposer needs to
+fix the dominant ``files_not_found`` failure: the write path and the
+read path both resolve through the same ``topic_output_dir_logic``
+helper, so a single coherent edit can make the developer's write slug
+and the reviewer's read slug agree.
 """
 
 from __future__ import annotations
@@ -100,13 +114,45 @@ def _output_base() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Slug / output-path logic — the WHERE-files-are-written and
+# HOW-they-are-located surface.
+#
+# The dominant board failure is a write/read slug mismatch: the
+# web_developer slugifies an embellished topic while the reviewer derives
+# its read path from a different topic string, so ``read_presentation_files``
+# returns ``files_not_found``. The fix lives in THIS logic, not just the
+# instructions — so the two helpers below carry ``# zicato:mutable:code``
+# regions the proposer can rewrite. Both the write tool and the read tool
+# resolve their directory through ``_topic_output_dir``, so a single edit
+# keeps the write slug and the read slug in lock-step.
+# ---------------------------------------------------------------------------
+
+
+def _slugify_topic(topic: str) -> str:
+    """Normalize ``topic`` into an on-disk directory-name slug."""
+    # zicato:mutable:code id="topic_slugify_logic" role="path_logic"
+    slug = topic.lower().replace(" ", "_").replace("/", "_")
+    # zicato:mutable:end
+    return slug
+
+
+def _topic_output_dir(topic: str) -> str:
+    """Resolve the absolute output directory for ``topic``."""
+    # zicato:mutable:code id="topic_output_dir_logic" role="path_logic"
+    slug = _slugify_topic(topic)
+    output_dir = os.path.join(_output_base(), slug)
+    # zicato:mutable:end
+    return output_dir
+
+
+# ---------------------------------------------------------------------------
 # Tools — write / read / patch the generated presentation files.
 #
 # Each tool function's docstring is annotated with a ``# zicato:mutable``
 # marker so the proposer can rewrite the tool *description* that ADK
-# surfaces to the LLM. The docstring is the only mutable surface here;
-# the function body is fixed (the proposer does not get to rewrite
-# Python control flow).
+# surfaces to the LLM. The slug/path control flow is mutable via the
+# ``# zicato:mutable:code`` regions above (and, for the fuzzy matcher,
+# inside ``find_presentation_files``).
 # ---------------------------------------------------------------------------
 
 
@@ -119,8 +165,7 @@ def write_webpage(topic: str, html_content: str, css_content: str, js_content: s
     output directory path on success.
     """
     try:
-        topic_filename = topic.lower().replace(" ", "_").replace("/", "_")
-        output_dir = os.path.join(_output_base(), topic_filename)
+        output_dir = _topic_output_dir(topic)
         os.makedirs(output_dir, exist_ok=True)
 
         with open(os.path.join(output_dir, "index.html"), "w") as f:
@@ -143,8 +188,7 @@ def read_presentation_files(topic: str) -> dict[str, str]:
     output directory for the given ``topic``. Missing files come back
     as ``<error reading ...>`` strings rather than raising.
     """
-    topic_filename = topic.lower().replace(" ", "_").replace("/", "_")
-    output_dir = os.path.join(_output_base(), topic_filename)
+    output_dir = _topic_output_dir(topic)
     files: dict[str, str] = {}
     for name in ("index.html", "styles.css", "script.js"):
         path = os.path.join(output_dir, name)
@@ -167,17 +211,18 @@ def find_presentation_files(topic: str) -> dict[str, Any]:
     ``_slideshow`` suffixes, equals it. On a match it reads the three
     presentation files and returns their contents.
     """
-    topic_slug = topic.lower().replace(" ", "_").replace("/", "_")
     base_dir = os.path.realpath(_output_base())
 
     if not os.path.isdir(base_dir):
         return {"found": False, "candidates": []}
 
-    suffixes = ("_interactive_presentation", "_presentation", "_slideshow")
     entries = sorted(
         name for name in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, name))
     )
 
+    # zicato:mutable:code id="find_presentation_match_logic" role="path_logic"
+    topic_slug = _slugify_topic(topic)
+    suffixes = ("_interactive_presentation", "_presentation", "_slideshow")
     match: str | None = None
     for name in entries:
         stripped = name
@@ -188,6 +233,7 @@ def find_presentation_files(topic: str) -> dict[str, Any]:
         if topic_slug and (topic_slug in name or stripped == topic_slug):
             match = name
             break
+    # zicato:mutable:end
 
     if match is None:
         return {"found": False, "candidates": entries}
@@ -230,8 +276,12 @@ def patch_file(path: str, new_content: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Agent tree — coordinator + four specialists. The mutation surface
-# lives in the ``instruction=`` and ``description=`` kwargs of each
-# Agent constructor; every such span is annotated.
+# lives in the ``instruction=`` kwarg of each Agent constructor. Where a
+# single instruction carries more than one independent decision, the
+# decision-specific clause is split into its own ``+``-joined string
+# literal with a pointed id so the proposer can rewrite just that
+# sub-decision (e.g. topic naming, the files_not_found routing) without
+# disturbing the rest of the instruction.
 # ---------------------------------------------------------------------------
 
 
@@ -276,8 +326,8 @@ def build_agent_tree(model: Any) -> Any:
     web_developer_agent = Agent(
         name="web_developer_agent",
         model=model,
-        # zicato:mutable id="web_developer_instruction" role="system_instruction"
         instruction=(
+            # zicato:mutable id="web_developer_instruction" role="system_instruction"
             "You are an expert Frontend Web Developer. Your goal is to "
             "take research on a topic and generate a stunning, "
             "interactive, single-page presentation slideshow.\nGenerate "
@@ -290,7 +340,8 @@ def build_agent_tree(model: Any) -> Any:
             "HTML, CSS, and JS using the `write_webpage` tool! Do not "
             "just print the code out, you must invoke the tool once "
             "everything is ready.\n"
-            "Pass the ``topic`` argument to ``write_webpage`` exactly as "
+            # zicato:mutable id="web_developer_topic_naming" role="topic_naming"
+            + "Pass the ``topic`` argument to ``write_webpage`` exactly as "
             "the coordinator gave it to you — the bare task title, with "
             "no ``_presentation`` suffix and no embellishments — because "
             "the reviewer will derive its read path from that same "
@@ -309,8 +360,8 @@ def build_agent_tree(model: Any) -> Any:
     reviewer_agent = Agent(
         name="reviewer_agent",
         model=model,
-        # zicato:mutable id="reviewer_instruction" role="system_instruction"
         instruction=(
+            # zicato:mutable id="reviewer_instruction" role="system_instruction"
             "You are a senior frontend code reviewer. You will be given "
             "the topic of a presentation that ``web_developer_agent`` "
             "just generated. Call the ``read_presentation_files`` tool "
@@ -320,6 +371,11 @@ def build_agent_tree(model: Any) -> Any:
             "of 'critical', 'major', or 'minor'. If there are no issues, "
             "return an empty list and say so explicitly so the "
             "coordinator knows to skip debugging.\n"
+            # zicato:mutable id="reviewer_read_path" role="topic_naming"
+            + "Derive the ``topic`` you pass to ``read_presentation_files`` "
+            "from the bare task title exactly as the coordinator gave it "
+            "to you — the same string the developer wrote under — so the "
+            "read path matches the write path.\n"
             "If ``read_presentation_files`` returns "
             "``<error reading ...>`` for ALL three files, the developer "
             "almost certainly wrote them under a different slug. Do NOT "
@@ -374,8 +430,8 @@ def build_agent_tree(model: Any) -> Any:
     return Agent(
         name="coordinator_agent",
         model=model,
-        # zicato:mutable id="coordinator_instruction" role="coordinator_routing"
         instruction=(
+            # zicato:mutable id="coordinator_instruction" role="coordinator_routing"
             "You are the Coordinator Agent. Your task is to work with "
             "the user to pick a topic for an interactive slideshow "
             "presentation.\nFirst, get a topic from the user.\nSecond, "
@@ -384,15 +440,19 @@ def build_agent_tree(model: Any) -> Any:
             "to provide it with the topic!\nThird, after researching, "
             "transfer control to the 'web_developer_agent' and provide "
             "it with all the researched materials. Instruct it to "
-            "generate and save the presentation codebase.\nFourth, "
-            "transfer control to the 'reviewer_agent' with the topic so "
+            "generate and save the presentation codebase. Pass the bare "
+            "task title as the topic, with no ``_presentation`` suffix "
+            "and no embellishments, so the reviewer's read path will "
+            "match.\nFourth, transfer control to the 'reviewer_agent' "
+            "with the SAME bare topic string you gave the developer so "
             "it can read the generated files and produce a structured "
             "critique.\nFifth, if ``write_webpage`` failed or the "
             "reviewer reported any critical issues, transfer control to "
             "the 'debugger_agent' with the reviewer's critique and have "
             "it patch the affected files. Skip this step when the "
             "reviewer reports no critical issues.\n"
-            "If the reviewer instead reports ``files_not_found``, "
+            # zicato:mutable id="coordinator_files_not_found_routing" role="coordinator_routing"
+            + "If the reviewer instead reports ``files_not_found``, "
             "transfer control to the 'debugger_agent' with the exact "
             "topic string the reviewer tried and ask it to call "
             "``find_presentation_files`` to locate the output. When the "
@@ -404,7 +464,8 @@ def build_agent_tree(model: Any) -> Any:
             "instructions to re-run ``write_webpage`` using the bare "
             "task title as the ``topic`` argument — no "
             "``_presentation`` suffix, no embellishments — so that the "
-            "reviewer's read path will match.\nFinally, report back to "
+            "reviewer's read path will match.\n"
+            "Finally, report back to "
             "the user when the task is complete.\nFlow: research → "
             "web_developer → reviewer → (if critical issues OR "
             "files_not_found) debugger → report."

@@ -56,11 +56,11 @@ from zicato.mutation.enumerator import enumerate_mutations
 #: consumes; ``kinds`` is the set of :data:`~zicato.core.types.MutationKind`
 #: values the op can be applied to. The applier in
 #: :mod:`zicato.mutation.applier` is the source of truth these rules
-#: mirror — ``replace`` works on any point, while ``set_numeric`` /
-#: ``set_enum`` locate a constant after the marker and so require a
-#: ``span`` point.
+#: mirror — ``replace`` works on any point (``span`` / ``file`` /
+#: ``code``), while ``set_numeric`` / ``set_enum`` locate a constant
+#: after the marker and so require a ``span`` point.
 _OP_RULES: dict[str, dict[str, object]] = {
-    "replace": {"payload": "new_content", "kinds": frozenset({"span", "file"})},
+    "replace": {"payload": "new_content", "kinds": frozenset({"span", "file", "code"})},
     "set_numeric": {"payload": "new_numeric", "kinds": frozenset({"span"})},
     "set_enum": {"payload": "new_enum", "kinds": frozenset({"span"})},
 }

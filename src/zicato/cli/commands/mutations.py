@@ -173,7 +173,7 @@ def _render_json(points: list[MutationPoint], show_mode: str) -> str:
 @click.option(
     "--kind",
     "kind_filter",
-    type=click.Choice(["span", "file"]),
+    type=click.Choice(["span", "file", "code"]),
     default=None,
     help="Restrict the listing to one mutation kind.",
 )

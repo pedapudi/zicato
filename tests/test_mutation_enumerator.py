@@ -7,7 +7,7 @@ import textwrap
 from pathlib import Path
 
 from zicato.mutation.enumerator import enumerate_mutations
-from zicato.mutation.markers import parse_marker_line
+from zicato.mutation.markers import is_end_marker, parse_marker_line
 
 
 def _write(path: Path, body: str) -> None:
@@ -20,6 +20,7 @@ def test_parse_marker_span_basic() -> None:
     assert parsed is not None
     assert parsed.id == "foo"
     assert parsed.is_file is False
+    assert parsed.is_code is False
     assert parsed.metadata == {}
 
 
@@ -28,6 +29,26 @@ def test_parse_marker_file_basic() -> None:
     assert parsed is not None
     assert parsed.id == "all_prompts"
     assert parsed.is_file is True
+    assert parsed.is_code is False
+
+
+def test_parse_marker_code_basic() -> None:
+    parsed = parse_marker_line('# zicato:mutable:code id="slug_logic" role="path_logic"')
+    assert parsed is not None
+    assert parsed.id == "slug_logic"
+    assert parsed.is_code is True
+    assert parsed.is_file is False
+    assert parsed.metadata == {"role": "path_logic"}
+
+
+def test_is_end_marker_detection() -> None:
+    assert is_end_marker("# zicato:mutable:end") is True
+    assert is_end_marker("    # zicato:mutable:end  ") is True
+    # An opening marker is not an end sentinel.
+    assert is_end_marker('# zicato:mutable:code id="x"') is False
+    assert is_end_marker("# just a comment") is False
+    # The end sentinel carries no id, so ``parse_marker_line`` rejects it.
+    assert parse_marker_line("# zicato:mutable:end") is None
 
 
 def test_parse_marker_with_metadata() -> None:
@@ -152,6 +173,105 @@ def test_enumerate_file_marker(tmp_path: Path) -> None:
     assert p.line_start == 1
     # File-level span covers the whole file.
     assert p.content == file_path.read_text(encoding="utf-8")
+
+
+def test_enumerate_code_region(tmp_path: Path) -> None:
+    root = tmp_path / "src"
+    file_path = root / "tools.py"
+    _write(
+        file_path,
+        """
+        def slug(topic):
+            # zicato:mutable:code id="slug_logic" role="path_logic"
+            s = topic.lower().replace(" ", "_")
+            s = s.strip("_")
+            # zicato:mutable:end
+            return s
+        """,
+    )
+    points = enumerate_mutations([root])
+    assert len(points) == 1
+    p = points[0]
+    assert p.id == "slug_logic"
+    assert p.kind == "code"
+    assert p.metadata == {"role": "path_logic"}
+    # The body is the two lines BETWEEN the markers, verbatim (the
+    # markers themselves are excluded).
+    assert 's = topic.lower().replace(" ", "_")' in p.content
+    assert 's = s.strip("_")' in p.content
+    assert "zicato:mutable" not in p.content
+    assert "return s" not in p.content
+    assert p.content_hash == hashlib.sha256(p.content.encode("utf-8")).hexdigest()
+
+
+def test_enumerate_code_region_unterminated_is_dropped(tmp_path: Path) -> None:
+    root = tmp_path / "src"
+    file_path = root / "tools.py"
+    _write(
+        file_path,
+        """
+        def slug(topic):
+            # zicato:mutable:code id="dangling"
+            s = topic.lower()
+            return s
+        """,
+    )
+    # No ``:end`` sentinel — the region is silently dropped (mirrors the
+    # dangling-span-marker behaviour).
+    assert enumerate_mutations([root]) == []
+
+
+def test_enumerate_code_region_does_not_reinterpret_inner_markers(tmp_path: Path) -> None:
+    root = tmp_path / "src"
+    file_path = root / "tools.py"
+    _write(
+        file_path,
+        """
+        def slug(topic):
+            # zicato:mutable:code id="outer"
+            label = "ignored span text"
+            return label
+            # zicato:mutable:end
+
+        # zicato:mutable id="after"
+        AFTER = "kept"
+        """,
+    )
+    points = enumerate_mutations([root])
+    ids = [p.id for p in points]
+    # The string literal inside the code region is NOT enumerated as its
+    # own span — the cursor advances past the whole region. The span
+    # marker AFTER the region's ``:end`` is enumerated normally.
+    assert ids == ["after", "outer"] or ids == ["outer", "after"]
+    assert set(ids) == {"outer", "after"}
+    outer = next(p for p in points if p.id == "outer")
+    assert outer.kind == "code"
+    after = next(p for p in points if p.id == "after")
+    assert after.kind == "span"
+
+
+def test_enumerate_mixed_span_file_code(tmp_path: Path) -> None:
+    """A file can carry span, code, and (in sibling files) file markers
+    side by side; existing span behaviour is unchanged."""
+    root = tmp_path / "src"
+    _write(
+        root / "tools.py",
+        '''
+        # zicato:mutable id="header"
+        HEADER = """h"""
+
+        def f(t):
+            # zicato:mutable:code id="body"
+            x = t.lower()
+            # zicato:mutable:end
+            return x
+        ''',
+    )
+    points = enumerate_mutations([root])
+    by_id = {p.id: p for p in points}
+    assert by_id["header"].kind == "span"
+    assert by_id["body"].kind == "code"
+    assert "x = t.lower()" in by_id["body"].content
 
 
 def test_enumerate_metadata_preserved(tmp_path: Path) -> None:

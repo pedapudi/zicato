@@ -420,6 +420,67 @@ def test_validate_patches_empty_batch_is_clean(tmp_path: Path) -> None:
     assert validate_patches([], source_root=src) == []
 
 
+def _code_surface(tmp_path: Path) -> Path:
+    """A surface with one ``# zicato:mutable:code`` region."""
+    src = tmp_path / "src"
+    _write(
+        src / "tools.py",
+        """
+        def slug(topic):
+            # zicato:mutable:code id="slug_logic"
+            s = topic.lower()
+            # zicato:mutable:end
+            return s
+        """,
+    )
+    return src
+
+
+def test_validate_patches_replace_accepts_code_point(tmp_path: Path) -> None:
+    """``replace`` is compatible with a ``code``-kind point."""
+    src = _code_surface(tmp_path)
+    patches = [
+        _full_patch(
+            pid="p1",
+            mutation_id="slug_logic",
+            op="replace",
+            new_content="    s = topic.strip().lower()\n",
+        )
+    ]
+    assert validate_patches(patches, source_root=src) == []
+
+
+def test_validate_patches_set_numeric_rejects_code_point(tmp_path: Path) -> None:
+    """``set_numeric`` / ``set_enum`` require a ``span`` point — a code
+    region has no constant-after-marker semantics."""
+    src = _code_surface(tmp_path)
+    errors = validate_patches(
+        [_full_patch(pid="p1", mutation_id="slug_logic", op="set_numeric", new_numeric=1.0)],
+        source_root=src,
+    )
+    assert len(errors) == 1
+    assert "incompatible" in errors[0]
+    assert "code" in errors[0]
+
+
+def test_validate_post_apply_code_region_round_trips(tmp_path: Path) -> None:
+    """A code-region replace survives the post-apply checks: the file
+    still parses, the id still resolves, imports survive."""
+    src = _code_surface(tmp_path)
+    tgt = tmp_path / "tgt"
+    pre = enumerate_mutations([src])
+    patches = [
+        _full_patch(
+            pid="p1",
+            mutation_id="slug_logic",
+            op="replace",
+            new_content="    s = topic.strip().lower().replace(' ', '-')\n",
+        )
+    ]
+    apply_patches(src, patches, tgt)
+    assert validate_post_apply(tgt, patches, pre) == []
+
+
 def test_validate_patches_is_side_effect_free(tmp_path: Path) -> None:
     """Pre-validation must not touch the source tree."""
 
