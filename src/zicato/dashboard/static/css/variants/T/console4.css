@@ -308,9 +308,10 @@
  * the palettes above. Notes on accent choices:
  *   Espresso — the palette's "cyan" #BED6FF is itself a pale blue; it reads as a
  *            clean accent on the dark ground, so accent keys off it directly.
- *   Dracula  — accent keys off the palette's cyan #8BE9FD (a bright sky cyan)
- *            so it stays distinct from the green improve / purple. Comment grey
- *            #6272A4 is the natural flat (unchanged) tone.
+ *   Dracula  — accent keys off the palette's signature purple #BD93F9, the
+ *            defining Dracula hue, so the LIVE pill / highlights / active state
+ *            carry the famous purple. Comment grey #6272A4 is the natural flat
+ *            (unchanged) tone; pink #FF79C6 + cyan #8BE9FD remain in palette.
  *   Ubuntu   — accent keys off the bright cyan #34E2E2 (the dim cyan #06989A is a
  *            muted teal); good keys off the bright green #8AE234 so the LIVE pill
  *            and improve marks read crisply on the signature aubergine ground. */
@@ -347,9 +348,9 @@
   --v2-good-soft:  #213A2A;
   --v2-bad:        #FF5555;
   --v2-bad-soft:   #3C2329;
-  --v2-caution:    #F1FA8C;
-  --v2-accent:     #8BE9FD;
-  --v2-flat:       #6272A4;
+  --v2-caution:    #F1FA8C;   /* dracula yellow */
+  --v2-accent:     #BD93F9;   /* dracula purple: signature accent — LIVE pill, highlights, active state */
+  --v2-flat:       #6272A4;   /* dracula comment: unchanged / muted */
   --v2-cell-empty: #2E303D;
 }
 

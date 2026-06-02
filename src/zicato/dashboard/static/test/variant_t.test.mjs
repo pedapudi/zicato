@@ -1228,6 +1228,19 @@ test('new themes: Espresso/Dracula/Ubuntu are registered with swatch strips, def
   assert(/--v2-paper:\s*#282A36/i.test(draculaBlock), 'dracula ground is the palette background #282A36');
   assert(/--v2-paper:\s*#300A24/i.test(ubuntuBlock), 'ubuntu ground is the signature aubergine #300A24');
 
+  // (c.1) Dracula maps to the CANONICAL palette with its SIGNATURE PURPLE as the
+  // accent (drives the LIVE pill / highlights / active state) — NOT cyan.
+  assert(/--v2-accent:\s*#BD93F9/i.test(draculaBlock), 'dracula accent is the signature purple #BD93F9 (not cyan)');
+  assert(!/--v2-accent:\s*#8BE9FD/i.test(draculaBlock), 'dracula accent is NOT the cyan #8BE9FD');
+  assert(/--v2-ink:\s*#F8F8F2/i.test(draculaBlock), 'dracula foreground is the palette fg #F8F8F2');
+  assert(/--v2-good:\s*#50FA7B/i.test(draculaBlock), 'dracula good keys off the palette green #50FA7B');
+  assert(/--v2-bad:\s*#FF5555/i.test(draculaBlock), 'dracula bad keys off the palette red #FF5555');
+  assert(/--v2-caution:\s*#F1FA8C/i.test(draculaBlock), 'dracula caution keys off the palette yellow #F1FA8C');
+  assert(/--v2-flat:\s*#6272A4/i.test(draculaBlock), 'dracula flat keys off the comment grey #6272A4');
+  for (const tok of contract) {
+    assert(draculaBlock.includes('--v2-' + tok + ':'), 'dracula defines --v2-' + tok);
+  }
+
   // (d) selecting each NEW theme applies it to the root attribute + persists.
   const root = document.createElement('div');
   shell.applyTheme('monokai', root);
