@@ -884,9 +884,14 @@ export function survivalFunnel(opts) {
         const sid = String(cid);
         const branchY = top + laneH + 6 + i * deadH;
         const elbowX = x0 + stageW * 0.5;
+        // anchor each branch ON the band's lower edge at the elbow x so it peels
+        // off the funnel with no gap. The lower edge runs from (x0, midY+hIn) to
+        // (x1, midY+hOut); at fraction f along the stage its y is interpolated.
+        const f = (elbowX - x0) / stageW;
+        const edgeYAtElbow = midY + hIn + (hOut - hIn) * f;
         // a dead-end branch from the band's lower edge down to the cut row.
         svg.appendChild(svgEl('path', {
-          d: `M${elbowX},${midY + hIn} V${branchY} H${x0 + stageW - 10}`,
+          d: `M${elbowX},${edgeYAtElbow} V${branchY} H${x0 + stageW - 10}`,
           class: 'dn-funnel-deadedge', fill: 'none',
         }));
         funnelRunner(svg, o, sid, rung, j, elbowX + 4, branchY - 1, 'cut');

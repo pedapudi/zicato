@@ -3343,6 +3343,89 @@ test('survival funnel: the SVG narrows N→…→1, marks cuts ✕ / survivors �
   assert(!txt.includes('tbd'), 'a settled gate is not the empty tbd skeleton');
 });
 
+// REGRESSION: the eliminated dead-end branches must START on the band's lower
+// edge (peel off the funnel) — NOT at the wide-edge depth `midY+hIn` placed at
+// the middle x, which leaves each connector dangling below the band in empty
+// space. Recompute the band's lower-edge y at the elbow x and assert the path
+// touches it; assert cut rows don't overlap; assert each stage's cuts anchor to
+// THAT stage's x-range.
+test('survival funnel: dead-end branches anchor ON the band lower edge at the elbow x (no detached cut connectors), per-stage + non-overlapping', () => {
+  const rungs = [
+    { label: 'Rung 0', competitors: ['v1', 'v2', 'v3', 'v4'], survivors: ['v3', 'v4'], cut: ['v1', 'v2'], board_fraction: 0.25, deltas: { v1: 25, v2: 3.3, v3: -0.16, v4: 0.002 } },
+    { label: 'Rung 1', competitors: ['v3', 'v4'], survivors: ['v3'], cut: ['v4'], board_fraction: 0.5, deltas: { v3: 1.0, v4: 1.25 } },
+  ];
+  const node = svg.survivalFunnel({ rungs, championId: 'v3', gateState: 'crowned', gateDelta: -32.19, onCompetitor() {} });
+
+  // mirror the renderer's geometry constants (svg.js survivalFunnel).
+  const stageW = 150, stageGap = 20, top = 56, laneH = 132, deadH = 18;
+  const midY = top + laneH / 2;
+  const stageX = (j) => j * (stageW + stageGap) + 2;
+  const field0 = Math.max(1, rungs[0].competitors.length);
+  const bandHalf = (n) => Math.max(6, (laneH / 2) * (Math.max(0, n) / field0));
+
+  // expected start point of each cut branch: ON the band's lower edge at elbowX.
+  const expected = []; // {x, y, stageX0, stageX1, branchY}
+  rungs.forEach((rung, j) => {
+    const x0 = stageX(j);
+    const x1 = x0 + stageW;
+    const hIn = bandHalf(rung.competitors.length);
+    const hOut = bandHalf(rung.survivors.length);
+    rung.cut.forEach((_cid, i) => {
+      const elbowX = x0 + stageW * 0.5;
+      const f = (elbowX - x0) / stageW;
+      const edgeY = midY + hIn + (hOut - hIn) * f;
+      const branchY = top + laneH + 6 + i * deadH;
+      expected.push({ x: elbowX, y: edgeY, x0, x1, branchY, stage: j });
+    });
+  });
+
+  const deadEdges = node.querySelectorAll('[class]')
+    .filter((n) => (n.getAttribute('class') || '').includes('dn-funnel-deadedge'));
+  assertEqual(deadEdges.length, expected.length, 'one dead-end branch per cut (v1,v2 @ rung0 + v4 @ rung1)');
+
+  // parse the "M x,y V branchY H stub" start point out of each path's d.
+  const starts = deadEdges.map((p) => {
+    const d = p.getAttribute('d') || '';
+    const m = d.match(/^M\s*([-\d.]+),([-\d.]+)\s*V\s*([-\d.]+)/);
+    assert(m, `dead-edge path is "M x,y V ..." (got: ${d})`);
+    return { x: parseFloat(m[1]), y: parseFloat(m[2]), branchY: parseFloat(m[3]) };
+  }).sort((a, b) => a.y - b.y || a.x - b.x);
+  const exp = expected.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+
+  const TOL = 0.01;
+  exp.forEach((e, i) => {
+    const s = starts[i];
+    // THE FIX: the connector touches the band's lower edge (not midY+hIn at the
+    // middle). At elbowX the lower edge is HIGHER than midY+hIn whenever the band
+    // narrows (hOut<hIn), so the buggy start y would be strictly below this.
+    assert(Math.abs(s.x - e.x) < TOL, `branch ${i} starts at the elbow x (${e.x}); got ${s.x}`);
+    assert(Math.abs(s.y - e.y) < TOL, `branch ${i} starts ON the band lower edge y=${e.y.toFixed(3)} (touches the band), got ${s.y.toFixed(3)}`);
+    assert(Math.abs(s.branchY - e.branchY) < TOL, `branch ${i} drops to its cut row branchY=${e.branchY}; got ${s.branchY}`);
+  });
+
+  // the buggy anchor (midY+hIn at the elbow) sat BELOW the true edge for the
+  // narrowing rung-0 band — assert we are not regressing to it.
+  const rung0hIn = bandHalf(rungs[0].competitors.length);
+  const rung0Buggy = midY + rung0hIn;
+  const rung0Edge = exp.find((e) => e.stage === 0).y;
+  assert(rung0Edge < rung0Buggy - TOL, 'sanity: the band lower edge at the elbow is ABOVE the old midY+hIn anchor (so the old code left a gap)');
+  starts.forEach((s, i) => assert(Math.abs(s.y - rung0Buggy) > TOL || exp[i].stage !== 0, 'no rung-0 branch anchors at the stale midY+hIn depth'));
+
+  // cut rows do not overlap: distinct branchY values stepped by deadH within a stage.
+  const byStage = {};
+  exp.forEach((e) => { (byStage[e.stage] ||= []).push(e.branchY); });
+  Object.values(byStage).forEach((ys) => {
+    const uniq = new Set(ys);
+    assertEqual(uniq.size, ys.length, 'cut rows within a stage have distinct branchY (no overlap)');
+    ys.slice().sort((a, b) => a - b).forEach((y, k, arr) => { if (k) assert(arr[k] - arr[k - 1] >= deadH - TOL, 'consecutive cut rows are spaced ≥ deadH apart'); });
+  });
+
+  // each stage's cuts anchor to THAT stage's x-range (no drift into the gap).
+  exp.forEach((e, i) => {
+    assert(e.x >= e.x0 - TOL && e.x <= e.x1 + TOL, `branch ${i} (stage ${e.stage}) anchors within its own stage's x-range [${e.x0}, ${e.x1}]`);
+  });
+});
+
 // (a) the racing epoch strip renders the funnel from the per-challenger records.
 test('survival funnel: the racing epoch strip renders the funnel (stages narrow N→…→1, cuts ✕, gate crowns v3)', async () => {
   freshState();
