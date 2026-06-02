@@ -66,8 +66,8 @@ Six operator-requested changes, all scoped to Variant T:
    **Paper** (light), **Zenburn**, **Selenized Black**, **Relaxed** (dark);
    round 10 added three more dark themes — **Espresso**, **Dracula**, **Ubuntu**.
 6. **Colour picker is a SWATCH DROPDOWN.** With sixteen themes, the inline colour
-   buttons become a keyboard-accessible dropdown; each option shows a 5-swatch
-   preview strip (ground · surface · ink · improve · regress) + the theme name,
+   buttons become a keyboard-accessible dropdown; each option shows a 6-swatch
+   preview strip (ground · surface · ink · improve · regress · accent) + the theme name,
    and the closed trigger echoes the current theme's swatch + name. (The
    typeface picker stays as inline buttons — only three options.)
 
@@ -501,8 +501,8 @@ digest so it stays live-updating + flash-free on the same SSE/poll cadence.
 - **Colour — a SWATCH DROPDOWN** of **thirteen** themes (round 10; +4 in round 9). The closed
   trigger (`.dt-cd-trigger`) shows the current theme's swatch strip + name;
   opening reveals a listbox (`.dt-cd-list`) with one `.dt-cd-option` per theme,
-  each a 5-swatch preview strip (`.dt-swatch-strip`: ground · surface · ink ·
-  improve · regress) + name. Keyboard-accessible: Enter/Space/ArrowDown open;
+  each a 6-swatch preview strip (`.dt-swatch-strip`: ground · surface · ink ·
+  improve · regress · accent) + name. Keyboard-accessible: Enter/Space/ArrowDown open;
   ArrowUp/ArrowDown move the active option; Enter/Space select; Esc closes; a
   click outside closes. Choosing a theme sets `[data-t-theme]` on the variant
   root (CSS-only re-skin), persists (`zicato.T.theme`), and updates the trigger.

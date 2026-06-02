@@ -33,27 +33,34 @@ export function gatedSwap(host, digest, build) {
 // SIXTEEN themes now: the three originals plus thirteen Gogh palettes
 // (https://gogh-co.github.io/Gogh/), each mapped to T's `--v2-*` token
 // contract in console4.css. Because there are many, the colour picker is a
-// SWATCH DROPDOWN (not inline buttons): each option shows a 5-swatch strip
-// (ground · surface · ink · improve · regress) as a legibility preview hint,
-// plus the theme name. The swatch tuples below FEED that preview — they mirror
-// the [paper, panel, ink, good, bad] tokens each theme defines in the CSS.
+// SWATCH DROPDOWN (not inline buttons): each option shows a 6-swatch strip
+// (ground · surface · ink · improve · regress · accent) as a legibility preview
+// hint, plus the theme name. The swatch tuples below FEED that preview — they
+// mirror the [paper, panel, ink, good, bad, accent] tokens each theme defines
+// in the CSS. The 6th element is the theme's signature accent (`--v2-accent`).
+//
+// NOTE: lunaria-eclipse's true --v2-accent (#BCDBFF, a pale blue) is visually
+// near-identical to its pale ink (#DFE2ED) — they would read as one swatch in
+// the 6-strip preview. So for THE PREVIEW ONLY we substitute a more distinct
+// hue from the Lunaria Eclipse Gogh palette (its magenta #C8429F). The live
+// --v2-accent token in console4.css is unchanged.
 export const COLOR_THEMES = [
-  ['monokai',         'monokai',          ['#1e1f1c', '#272822', '#f8f8f2', '#a6e22e', '#f92672']],
-  ['solarized-dark',  'solarized dark',   ['#04222B', '#0A2D38', '#93A1A1', '#8BB80E', '#E0483C']],
-  ['solarized-light', 'solarized light',  ['#FDF6E3', '#FBF1D6', '#586E75', '#6B9B0B', '#DC322F']],
-  ['google-light',    'google light',     ['#FFFFFF', '#F4F4F4', '#474A4E', '#34A853', '#EA4335']],
-  ['google-dark',     'google dark',      ['#202124', '#2C2D30', '#FFFFFF', '#34A853', '#EA4335']],
-  ['lunaria-light',   'lunaria light',    ['#EBE4E1', '#E2DCD9', '#363434', '#497D46', '#783C1F']],
-  ['lunaria-eclipse', 'lunaria eclipse',  ['#323F46', '#3B484F', '#DFE2ED', '#BEDBC1', '#BA9088']],
-  ['belafonte-day',   'belafonte day',    ['#D5CCBA', '#CCC3B2', '#34292D', '#858162', '#BE100E']],
-  ['belafonte-night', 'belafonte night',  ['#20111B', '#271821', '#D5CCBA', '#858162', '#BE100E']],
-  ['paper',           'paper',            ['#F2EEDE', '#E6E2D3', '#1A1A1A', '#216609', '#CC3E28']],
-  ['zenburn',         'zenburn',          ['#3A3A3A', '#424241', '#DCDCCC', '#8FB28F', '#CC9393']],
-  ['selenized-black', 'selenized black',  ['#181818', '#202020', '#DEDEDE', '#83C746', '#FF5E56']],
-  ['relaxed',         'relaxed',          ['#353A44', '#3D424B', '#F7F7F7', '#A0AC77', '#BC5653']],
-  ['espresso',        'espresso',         ['#323232', '#3A3A3A', '#FFFFFF', '#A5C261', '#D25252']],
-  ['dracula',         'dracula',          ['#282A36', '#343746', '#F8F8F2', '#50FA7B', '#FF5555']],
-  ['ubuntu',          'ubuntu',           ['#300A24', '#3D1530', '#EEEEEC', '#8AE234', '#CC0000']],
+  ['monokai',         'monokai',          ['#1e1f1c', '#272822', '#f8f8f2', '#a6e22e', '#f92672', '#66d9ef']],
+  ['solarized-dark',  'solarized dark',   ['#04222B', '#0A2D38', '#93A1A1', '#8BB80E', '#E0483C', '#2AA198']],
+  ['solarized-light', 'solarized light',  ['#FDF6E3', '#FBF1D6', '#586E75', '#6B9B0B', '#DC322F', '#268BD2']],
+  ['google-light',    'google light',     ['#FFFFFF', '#F4F4F4', '#474A4E', '#34A853', '#EA4335', '#1B9CB8']],
+  ['google-dark',     'google dark',      ['#202124', '#2C2D30', '#FFFFFF', '#34A853', '#EA4335', '#24C1E0']],
+  ['lunaria-light',   'lunaria light',    ['#EBE4E1', '#E2DCD9', '#363434', '#497D46', '#783C1F', '#3778A9']],
+  ['lunaria-eclipse', 'lunaria eclipse',  ['#323F46', '#3B484F', '#DFE2ED', '#BEDBC1', '#BA9088', '#C8429F']],
+  ['belafonte-day',   'belafonte day',    ['#D5CCBA', '#CCC3B2', '#34292D', '#858162', '#BE100E', '#426A79']],
+  ['belafonte-night', 'belafonte night',  ['#20111B', '#271821', '#D5CCBA', '#858162', '#BE100E', '#6F8E97']],
+  ['paper',           'paper',            ['#F2EEDE', '#E6E2D3', '#1A1A1A', '#216609', '#CC3E28', '#1E6FCC']],
+  ['zenburn',         'zenburn',          ['#3A3A3A', '#424241', '#DCDCCC', '#8FB28F', '#CC9393', '#8CD0D3']],
+  ['selenized-black', 'selenized black',  ['#181818', '#202020', '#DEDEDE', '#83C746', '#FF5E56', '#56D8C9']],
+  ['relaxed',         'relaxed',          ['#353A44', '#3D424B', '#F7F7F7', '#A0AC77', '#BC5653', '#7EAAC7']],
+  ['espresso',        'espresso',         ['#323232', '#3A3A3A', '#FFFFFF', '#A5C261', '#D25252', '#6C99BB']],
+  ['dracula',         'dracula',          ['#282A36', '#343746', '#F8F8F2', '#50FA7B', '#FF5555', '#BD93F9']],
+  ['ubuntu',          'ubuntu',           ['#300A24', '#3D1530', '#EEEEEC', '#8AE234', '#CC0000', '#34E2E2']],
 ];
 const COLOR_IDS = COLOR_THEMES.map((t) => t[0]);
 export const DEFAULT_COLOR = 'monokai';

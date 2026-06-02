@@ -1306,6 +1306,49 @@ test('colour picker is a SWATCH DROPDOWN: a closed trigger with the current swat
   assert(!(dd.getAttribute('class') || '').includes('dt-cd-open'), 'Escape closes the dropdown');
 });
 
+// ---- 6-SWATCH PREVIEW: every theme's strip shows SIX colours (adds accent) ----
+
+test('colour themes: every COLOR_THEMES tuple carries SIX valid-hex preview colours (ground · surface · ink · good · bad · accent)', () => {
+  assertEqual(ui.COLOR_THEMES.length, 16, 'theme count stays sixteen');
+  for (const [id, , swatches] of ui.COLOR_THEMES) {
+    assert(Array.isArray(swatches), id + ' has a swatch tuple');
+    assertEqual(swatches.length, 6, id + ' preview tuple has exactly six colours (got ' + swatches.length + ')');
+    for (const c of swatches) {
+      assert(/^#[0-9a-fA-F]{6}$/.test(c), id + ' swatch ' + c + ' is a valid 6-digit hex');
+    }
+  }
+  // dracula's 6th swatch (accent) is the signature purple.
+  const dracula = ui.COLOR_THEMES.find((t) => t[0] === 'dracula');
+  assertEqual(dracula[2][5].toUpperCase(), '#BD93F9', 'dracula 6th swatch is the signature purple #BD93F9');
+});
+
+test('colour picker renders SIX swatches per option (the 6-swatch strip) and SIX on the closed trigger', () => {
+  try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  shell.applyTheme('monokai');
+  const root = mountLiveShell('#/');
+
+  // closed trigger strip shows six swatches.
+  const trigger = allByClass(root, 'dt-cd-trigger')[0];
+  const triggerStrip = trigger.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-swatch-strip'))[0];
+  const triggerSwatches = triggerStrip.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dt-swatch'));
+  assertEqual(triggerSwatches.length, 6, 'the closed trigger shows six swatches');
+
+  // every option's strip shows exactly six swatches, matching its tuple.
+  const byId = new Map(ui.COLOR_THEMES.map((t) => [t[0], t]));
+  const options = allByClass(root, 'dt-cd-option');
+  assertEqual(options.length, 16, 'one option per theme (sixteen)');
+  for (const opt of options) {
+    const id = opt.getAttribute('data-theme');
+    const strip = opt.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dt-swatch-strip'))[0];
+    const swatches = strip.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dt-swatch'));
+    assertEqual(swatches.length, 6, id + ' option strip shows six swatches');
+    // the 6th rendered swatch carries the tuple's accent colour.
+    const accent = byId.get(id)[2][5];
+    assert((swatches[5].getAttribute('style') || '').toLowerCase().includes(accent.toLowerCase()),
+      id + ' 6th swatch carries its accent ' + accent);
+  }
+});
+
 // ---- (e) the layout is FLUID (not clamped to a narrow column) ------
 
 test('layout: the detail pane + compare grid are FLUID — not clamped to a narrow fixed max-width; the compare split uses the FULL content width', async () => {

@@ -308,8 +308,9 @@ function wireRailHandle(handle, root) {
 // Sixteen themes is too many for an inline button row, so the colour picker is
 // a dropdown. The CLOSED control is a button showing the current theme's swatch
 // strip + name. Opening reveals a listbox; each option is a row with its own
-// swatch strip (ground · surface · ink · improve · regress — the legibility
-// hint) + name. Fully keyboard-accessible: Enter/Space/ArrowDown open; within
+// swatch strip (ground · surface · ink · improve · regress · accent — the
+// legibility hint; rendered generically from the tuple, so it is swatch-count
+// agnostic) + name. Fully keyboard-accessible: Enter/Space/ArrowDown open; within
 // the open list ArrowUp/ArrowDown move the active option, Enter/Space select
 // (and apply), Esc closes back to the trigger; a click outside also closes.
 // Returns { node, setValue } so applyTheme() can keep the trigger + the
@@ -417,8 +418,8 @@ export function mountShell(root) {
 
   // COLOUR PICKER — a SWATCH DROPDOWN (Change 6). Sixteen themes now, so the inline
   // buttons are replaced by a keyboard-accessible dropdown: each option shows a
-  // small swatch strip (ground · surface · ink · improve · regress) plus the
-  // theme name; the closed control echoes the current theme's swatch + name.
+  // small swatch strip (ground · surface · ink · improve · regress · accent) plus
+  // the theme name; the closed control echoes the current theme's swatch + name.
   _colorDropdown = buildColorDropdown(readColor());
   const colorSwitch = _colorDropdown.node;
 
