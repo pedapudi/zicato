@@ -1503,6 +1503,15 @@ class OutcomeRecord:
     final_rank: int | None = None
     eliminated_in_round: int | None = None
     match_record: tuple[MatchOutcome, ...] = ()
+    # RUNTIME champion-eval provenance (NOT a contract input): how the
+    # champion side was evaluated this round under the ``--mode`` knob.
+    # ``"full"`` = the champion was run live; ``"fast"`` = its cached
+    # per-board scalars were reused and the champion was NOT executed;
+    # ``"fast-degraded"`` = fast was requested but no cache covered the
+    # needed boards, so the champion ran once to seed it. Defaults to
+    # ``"full"`` so older journals deserialize unchanged. Recorded purely
+    # for provenance — flipping fast↔full does not roll the epoch.
+    champion_eval_mode: str = "full"
 
 
 @dataclass(frozen=True, slots=True)

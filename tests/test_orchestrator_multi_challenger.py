@@ -254,6 +254,62 @@ def test_swiss_field_rejects_when_no_challenger_beats_champion(
         assert oc["structure"] == "swiss"
 
 
+def test_fast_swiss_reuses_cached_champion(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Fast mode composes with SWISS exactly as with racing/gauntlet.
+
+    With the champion's per-board ``loss.json`` cached, a fast Swiss round
+    runs only the challengers — the champion side is never executed — and
+    still crowns the strongest challenger. The resolved champion-eval mode
+    is recorded in the journal. This proves the runtime fast knob is
+    structure-agnostic (it threads through the multi-challenger path for
+    every structure, not just racing)."""
+    # Reuse the disk-backed caching telemetry stub + champion pre-seed
+    # helper from the racing end-to-end test — the only fast-mode harness
+    # difference vs the default stubs is that runs persist their loss.json
+    # and the cache resolver can read them back.
+    from tests.test_example_target_1_racing import (
+        _install_caching_telemetry_stubs,
+        _preseed_champion_cache,
+    )
+
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _install_stub_adapter_factory(monkeypatch)
+    # Pre-seed the champion (v0) full-board cache BEFORE installing the
+    # reducer stub.
+    _preseed_champion_cache(workspace, epoch_id, champion_id="v0", drift_loss=2.0, pass_fail=True)
+    champion_runs: list[str] = []
+    _install_caching_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+        champion_run_log=champion_runs,
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(
+                [_valid_proposer_response(), _valid_proposer_response()]
+            ),
+            fast_mode=True,
+        )
+    )
+
+    # The champion (v0) was NOT executed — the cached per-board scalars
+    # stood in for every Swiss matchup it appears in.
+    assert "v0" not in champion_runs, "fast swiss must not re-run the cached champion"
+    assert champion_runs, "the challengers still ran"
+    assert outcome.tournament_decision == "promoted"
+    crowned = outcome.proposed_generation_id
+    gens = workspace / "epochs" / epoch_id / "generations"
+    crowned_oc = json.loads((gens / crowned / "experiment.json").read_text())["outcome"]
+    assert crowned_oc["champion_eval_mode"] == "fast"
+
+
 def test_gauntlet_does_not_take_multi_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A gauntlet epoch (field_size == 1) keeps the single-challenger path
     — proving the dispatch only diverts when the field is wider."""

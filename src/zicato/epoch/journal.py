@@ -261,6 +261,7 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         final_rank=int(raw_rank) if raw_rank is not None else None,
         eliminated_in_round=int(raw_elim) if raw_elim is not None else None,
         match_record=match_record,
+        champion_eval_mode=str(d.get("champion_eval_mode", "full")),
     )
 
 

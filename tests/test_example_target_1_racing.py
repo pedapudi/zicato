@@ -59,6 +59,121 @@ from tests.test_orchestrator import (
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_1_presentation import mocks as _t1_mocks
 
+
+def _preseed_champion_cache(
+    workspace: Path,
+    epoch_id: str,
+    *,
+    champion_id: str,
+    drift_loss: float,
+    pass_fail: bool,
+) -> None:
+    """Write the champion's full-board ``loss.json`` (the fast cache).
+
+    Must run BEFORE ``_install_caching_telemetry_stubs`` swaps the reducer
+    in ``sys.modules`` — it imports the REAL reducer's writer.
+    """
+    from zicato.board.jsonl import load_board as _load_board_file
+    from zicato.core.types import LossProfile
+    from zicato.core.workspace import board_path, loss_profile_path
+    from zicato.telemetry.reducer import write_loss_profile
+
+    for entry in _load_board_file(board_path(workspace, epoch_id)):
+        write_loss_profile(
+            LossProfile(
+                run_id=f"r-{champion_id}-{entry.id}",
+                entry_id=entry.id,
+                generation_id=champion_id,
+                epoch_id=epoch_id,
+                drift_counts=(),
+                plan_revisions=0,
+                task_failure_ratio=0.0,
+                runtime_ms=100,
+                wall_clock_budget_exceeded=False,
+                expectation_result=None,
+                drift_loss=drift_loss,
+                pass_fail=pass_fail,
+            ),
+            loss_profile_path(workspace, epoch_id, champion_id, entry.id),
+        )
+
+
+def _install_caching_telemetry_stubs(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    canned_loss_by_gen: dict[str, float],
+    canned_pass_by_gen: dict[str, bool],
+    champion_run_log: list[str] | None = None,
+) -> None:
+    """Telemetry stub that PERSISTS each run's ``loss.json`` and reads it back.
+
+    The default ``_install_telemetry_stubs`` short-circuits
+    ``read_loss_profile`` to always raise, so the fast-mode champion-cache
+    resolver (which reads per-board ``loss.json`` from disk) can never find
+    a cache there. This variant writes a real ``loss.json`` for every run
+    via the canonical reducer and reads it back unchanged, so the
+    structure-agnostic fast path can reuse a cached champion exactly as it
+    will in production. ``champion_run_log`` (when supplied) records the
+    generation id of every run that actually executed, so a test can assert
+    the champion side did NOT run under fast mode.
+    """
+    import types as _types
+
+    import zicato.tournament.runner as _runner_mod
+    from zicato.core.types import DriftCount, ExpectationResult, LossProfile
+    from zicato.core.workspace import loss_profile_path
+    from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
+
+    # Keep the default stubs for sink path / harmonograf / adapter wiring.
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen=canned_loss_by_gen,
+        canned_pass_by_gen=canned_pass_by_gen,
+    )
+
+    async def _fake_run_single(
+        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+    ):
+        del adapter, weights, config, side, match_id
+        if champion_run_log is not None:
+            champion_run_log.append(generation.id)
+        expectation_result = (
+            ExpectationResult(kind="predicate", passed=True)
+            if entry.expectation is not None
+            else None
+        )
+        profile = LossProfile(
+            run_id=f"r-{generation.id}-{entry.id}",
+            entry_id=entry.id,
+            generation_id=generation.id,
+            epoch_id=epoch_id,
+            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            plan_revisions=0,
+            task_failure_ratio=0.0,
+            runtime_ms=100,
+            wall_clock_budget_exceeded=False,
+            expectation_result=expectation_result,
+            drift_loss=canned_loss_by_gen.get(generation.id, 0.0),
+            pass_fail=canned_pass_by_gen.get(generation.id),
+        )
+        # Persist the per-board loss.json so the fast champion-cache
+        # resolver can read it back on a later round, exactly like the real
+        # subprocess worker does.
+        write_loss_profile(
+            profile, loss_profile_path(workspace_root, epoch_id, generation.id, entry.id)
+        )
+        return profile
+
+    monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
+
+    # The runner resolves the reducer lazily via _telemetry_helpers(); point
+    # its read_loss_profile at the REAL on-disk reader so cached champion
+    # profiles round-trip (the default stub's reader always raises).
+    _real_reducer = _types.SimpleNamespace(read_loss_profile=read_loss_profile)
+    _sink_mod = __import__("sys").modules["zicato.telemetry.sink"]
+    monkeypatch.setattr(_runner_mod, "_telemetry_helpers", lambda: (_sink_mod, _real_reducer))
+
+
 EXAMPLE_DIR = Path(_t1_pkg.__file__).resolve().parent
 AGENT_DIR = EXAMPLE_DIR / "agent"
 BOARD_PATH = EXAMPLE_DIR / "board.jsonl"
@@ -286,3 +401,123 @@ def test_presentation_racing_field_rejects_when_no_arm_beats_champion(
         oc = json.loads((gens / gid / "experiment.json").read_text())["outcome"]
         assert oc["tournament_decision"] == "rejected", gid
         assert oc["structure"] == "racing", gid
+
+
+def test_fast_racing_reuses_cached_champion_and_records_provenance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fast mode under RACING reuses the champion's cached per-board scalars.
+
+    With the champion's per-board ``loss.json`` already on disk (it was
+    scored on the full board when it became champion), a fast racing round
+    runs ONLY the challengers across every rung — the champion side is
+    never executed — yet still produces the correct rung cuts + final gate.
+    The resolved champion-eval mode is recorded in the journal for
+    provenance.
+    """
+    workspace, epoch_id = _bootstrap_racing_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    # Pre-seed the champion (v0) cache the way a prior full round would —
+    # BEFORE the reducer stub is installed (it imports the real writer).
+    _preseed_champion_cache(workspace, epoch_id, champion_id="v0", drift_loss=2.0, pass_fail=True)
+    # Strictly-descending challenger losses keep the rung cuts deterministic;
+    # v1 is the best arm.
+    champion_runs: list[str] = []
+    _install_caching_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.4, "v2": 0.8, "v3": 1.2, "v4": 1.6},
+        canned_pass_by_gen={gid: True for gid in ("v0", *_CHALLENGER_IDS)},
+        champion_run_log=champion_runs,
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_example_aux_responder(),
+            fast_mode=True,
+        )
+    )
+
+    # --- The champion (v0) was NEVER executed this round — every run that
+    # fired was a challenger run. The cached per-board scalars stood in.
+    assert "v0" not in champion_runs, "fast racing must not re-run the cached champion"
+    assert champion_runs, "the challengers still ran"
+
+    # --- A challenger still won the rungs + cleared the gate, unchanged.
+    assert outcome.tournament_decision == "promoted"
+    assert outcome.proposed_generation_id == "v1"
+    crowned = outcome.proposed_generation_id
+
+    # --- Provenance: the resolved champion-eval mode is recorded in the
+    # journal (every challenger's OutcomeRecord carries it). Cache hit on
+    # every rung → "fast".
+    gens = workspace / "epochs" / epoch_id / "generations"
+    crowned_oc = json.loads((gens / crowned / "experiment.json").read_text())["outcome"]
+    assert crowned_oc["champion_eval_mode"] == "fast"
+
+
+def test_fast_racing_degrades_to_full_without_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fast racing with NO cached champion runs the champion once (degraded)."""
+    workspace, epoch_id = _bootstrap_racing_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    champion_runs: list[str] = []
+    # No champion cache pre-seeded → the seed champion has no aggregate yet,
+    # so fast must degrade to a full champion run (and cache it).
+    _install_caching_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 0.4, "v2": 0.8, "v3": 1.2, "v4": 1.6},
+        canned_pass_by_gen={gid: True for gid in ("v0", *_CHALLENGER_IDS)},
+        champion_run_log=champion_runs,
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_example_aux_responder(),
+            fast_mode=True,
+        )
+    )
+
+    # The champion ran live at least once (cache miss → degrade-to-full).
+    assert "v0" in champion_runs, "the seed champion with no cache must run once"
+    assert outcome.tournament_decision == "promoted"
+    gens = workspace / "epochs" / epoch_id / "generations"
+    crowned_oc = json.loads(
+        (gens / outcome.proposed_generation_id / "experiment.json").read_text()
+    )["outcome"]
+    assert crowned_oc["champion_eval_mode"] == "fast-degraded"
+
+
+def test_fast_mode_does_not_change_contract_hash(tmp_path: Path) -> None:
+    """Flipping fast↔full is a RUNTIME knob — it must NOT roll the epoch.
+
+    The contract hash is computed over board + brief + scoring + harness
+    identity; ``fast_mode`` is an ``evolve_once`` argument, never a
+    contract input. The hash for a given scoring.json is therefore
+    identical regardless of the champion-eval mode chosen at runtime.
+    """
+    workspace, epoch_id = _bootstrap_racing_workspace(tmp_path)
+    from zicato.epoch.contract import compute_contract_hash, resolve_contract_inputs
+
+    inputs = resolve_contract_inputs(workspace)
+    hash_a = compute_contract_hash(inputs)
+    # Re-resolving the SAME contract inputs (fast vs full does not touch any
+    # of them) yields the identical hash — there is no fast/full knob in the
+    # contract surface to perturb.
+    hash_b = compute_contract_hash(resolve_contract_inputs(workspace))
+    assert hash_a == hash_b
+    # The scoring contract carries the tournament STRUCTURE but no
+    # champion-eval mode field — fast is not contracted.
+    scoring = json.loads(RACING_SCORING_PATH.read_text())
+    assert "fast" not in json.dumps(scoring).lower().replace("fast_", "")
+    assert "champion_eval_mode" not in json.dumps(scoring)

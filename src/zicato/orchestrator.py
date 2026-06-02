@@ -584,6 +584,7 @@ async def evolve_once(
             loss_summary=loss_summary,
             disable_drift=disable_drift,
             judge_only=judge_only,
+            fast_mode=fast_mode,
             auxiliary_call_llm=auxiliary_call_llm,
             workspace_config=workspace_config,
             max_proposer_retries=max_proposer_retries,
@@ -1169,6 +1170,7 @@ async def _evolve_multi_challenger(
     loss_summary: str,
     disable_drift: tuple[Any, ...],
     judge_only: bool,
+    fast_mode: bool,
     auxiliary_call_llm: CallLLM,
     workspace_config: Any,
     max_proposer_retries: int,
@@ -1190,6 +1192,16 @@ async def _evolve_multi_challenger(
     is recorded as a dead branch, and the live ``ActiveTournament``
     envelope + per-challenger ``OutcomeRecord`` audit + v3 index columns
     are persisted per ``docs/design/TOURNAMENT-DATA-MODEL.md``.
+
+    ``fast_mode`` is the RUNTIME champion-eval knob (the ``--mode fast``
+    setting), threaded identically to ``disable_drift`` / ``judge_only``.
+    When set, every matchup reuses the champion's cached per-board
+    scalars instead of re-running the champion (see
+    :func:`zicato.tournament.runner.run_matchup`), so fast mode is
+    structure-agnostic — it composes with racing / swiss / elim exactly
+    as it does with the gauntlet. The resolved champion-eval mode is
+    RECORDED in the journal for provenance (it is never a contract
+    input, so flipping fast↔full does not roll the epoch).
     """
     from zicato.core.types import MatchOutcome  # noqa: PLC0415
     from zicato.epoch import (  # noqa: PLC0415
@@ -1282,6 +1294,15 @@ async def _evolve_multi_challenger(
         ]
         return champion, challengers
 
+    # --- Champion-eval mode provenance. The runtime fast knob is applied
+    # per matchup by run_matchup, which reports back the resolved mode
+    # (``fast`` = cached champion reused, ``fast-degraded`` = no cache so
+    # the champion ran once, ``full`` = fast not requested). We collect
+    # the resolved modes across every matchup so the journal can record
+    # how the champion was evaluated this round — a RUNTIME provenance
+    # field, never a contract input.
+    champion_eval_modes: list[str] = []
+
     # --- run_matchup: one duel via the board-unit runner + unchanged gate.
     async def _run_matchup(m: Matchup) -> MatchupResult:
         _beat(
@@ -1304,10 +1325,12 @@ async def _evolve_multi_challenger(
             replicates=m.replicates,
             disable_drift=disable_drift,
             judge_only=judge_only,
+            fast=fast_mode,
             round_index=round_index,
             total_rounds=total_rounds,
             match_id=m.matchup_id,
         )
+        champion_eval_modes.append(result.champion_eval_mode)
         # Cache both sides' aggregates for fast-mode reuse, mirroring the
         # gauntlet path's _cache_gen_score calls.
         _cache_gen_score(workspace_root, epoch_id, m.left.generation_id, result.parent_agg)
@@ -1404,6 +1427,16 @@ async def _evolve_multi_challenger(
     champion_agg = _first_aggregate_for(parent_id, decision)
     parent_scalar = float(champion_agg.get("scalar", 0.0)) if champion_agg else 0.0
 
+    # Resolve a single round-level champion-eval provenance from the
+    # per-matchup modes run_matchup reported. ``fast-degraded`` dominates
+    # (the champion ran live at least once this round to seed the cache);
+    # otherwise ``fast`` iff every matchup reused the cache; else
+    # ``full``. Recorded on each challenger's OutcomeRecord for the
+    # journal — never a contract input.
+    resolved_champion_eval_mode = _resolve_round_champion_mode(
+        champion_eval_modes, fast_requested=fast_mode
+    )
+
     finalised_by_id: dict[str, Experiment] = {}
     child_scalar_crown = parent_scalar
     for challenger in applied:
@@ -1425,6 +1458,7 @@ async def _evolve_multi_challenger(
             structure=tournament_spec.structure,
             final_rank=rank_by_id.get(gid),
             match_record=tuple(matches_by_gen.get(gid, ())),
+            champion_eval_mode=resolved_champion_eval_mode,
         )
         finalised = update_experiment_outcome(workspace_root, epoch_id, gid, outcome_record)
         finalised_by_id[gid] = finalised
@@ -1497,6 +1531,32 @@ async def _evolve_multi_challenger(
         health_summary=health_summary,
         health_critical=health_critical,
     )
+
+
+def _resolve_round_champion_mode(modes: list[str], *, fast_requested: bool) -> str:
+    """Collapse per-matchup champion-eval modes into one round-level mode.
+
+    ``modes`` is what each :func:`zicato.tournament.runner.run_matchup`
+    reported (``"fast"`` / ``"fast-degraded"`` / ``"full"``). The
+    round-level provenance is:
+
+    * ``"full"`` when fast was not requested (or no matchup ran);
+    * ``"fast-degraded"`` when fast was requested but at least one matchup
+      had to run the champion live for lack of a cache (the seed/first
+      champion, or a not-yet-covered racing subset);
+    * ``"fast"`` when fast was requested and EVERY matchup reused the
+      champion's cached per-board scalars.
+
+    A RUNTIME provenance value only — it is recorded in the journal and
+    never folds into the contract hash.
+    """
+    if not fast_requested or not modes:
+        return "full"
+    if any(m == "fast-degraded" for m in modes):
+        return "fast-degraded"
+    if all(m == "fast" for m in modes):
+        return "fast"
+    return "full"
 
 
 def _first_aggregate_for(gid: str, decision: Any) -> dict[str, Any] | None:

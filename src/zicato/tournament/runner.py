@@ -209,6 +209,22 @@ class TournamentResult:
     journaling. Fully JSON-serializable via
     :func:`dataclasses.asdict` + :func:`json.dumps` with
     ``default=str``.
+
+    ``champion_eval_mode`` records how the champion (parent / ``left``)
+    side was evaluated this duel — a RUNTIME provenance field, never a
+    contract input:
+
+    * ``"full"`` — the champion was run live (full A/B, or fast was not
+      requested);
+    * ``"fast"`` — the champion's cached per-board scalars were reused
+      and the champion was NOT executed;
+    * ``"fast-degraded"`` — fast was requested but no cached champion
+      aggregate covered the needed boards, so the champion was run live
+      once to seed the cache.
+
+    It carries no weight in the gate and is not folded into the contract
+    hash; it exists purely so the journal can attribute champion sample
+    freshness + cost per duel.
     """
 
     parent_generation_id: str
@@ -217,6 +233,7 @@ class TournamentResult:
     child_agg: dict[str, Any]
     outcome: GateOutcome
     per_entry_losses: dict[str, tuple[LossProfile, LossProfile]]
+    champion_eval_mode: str = "full"
 
 
 class _ProgressBumpingSink:
@@ -1685,6 +1702,7 @@ async def run_tournament(
         child_agg=child_agg,
         outcome=outcome,
         per_entry_losses=per_entry_losses,
+        champion_eval_mode="full",
     )
 
 
@@ -1855,7 +1873,59 @@ async def run_fast_mode(
         child_agg=child_agg,
         outcome=outcome,
         per_entry_losses={},
+        champion_eval_mode="fast",
     )
+
+
+#: Sentinel returned by :func:`_resolve_cached_champion_losses` when fast
+#: mode was requested but the champion's cached per-board scalars do not
+#: cover the boards this duel needs. The caller degrades to a full
+#: champion run (and stamps ``champion_eval_mode="fast-degraded"``).
+_CHAMPION_CACHE_MISS = object()
+
+
+def _resolve_cached_champion_losses(
+    *,
+    generation: Generation,
+    board: list[BoardEntry],
+    workspace_root: Path,
+    epoch_id: str,
+) -> dict[str, LossProfile] | None:
+    """Resolve a champion side from cached per-board ``loss.json`` files.
+
+    This is the SHARED fast-mode champion-resolution decision used by
+    BOTH the gauntlet path (:func:`run_fast_mode`, indirectly) and the
+    multi-challenger path (:func:`run_matchup`), so the fast logic is
+    structure-agnostic and not duplicated. The champion was scored on
+    the full board when it became champion, so every per-board
+    ``loss.json`` it needs already exists on disk; for a racing rung's
+    growing board SUBSET we simply read back the subset's profiles. The
+    canonical per-entry ``loss.json`` carries the FULL reducer output
+    (drift counts + namespaced metrics), so re-aggregating any subset of
+    them is exact — not a lossy reconstruction from the cached aggregate.
+
+    Returns the ``{entry_id: LossProfile}`` map for ``board`` when EVERY
+    needed entry has a readable cached champion profile (the champion is
+    then NOT executed). Returns ``None`` when any needed entry is
+    missing or unreadable — the caller degrades to a full champion run
+    once (which re-writes the cache for subsequent rounds), preserving
+    the existing seed/first-champion degradation.
+    """
+    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
+
+    _, reducer_module = _telemetry_helpers()
+    resolved: dict[str, LossProfile] = {}
+    for entry in board:
+        path = loss_profile_path(workspace_root, epoch_id, generation.id, entry.id)
+        if not path.exists():
+            return None
+        try:
+            resolved[entry.id] = reducer_module.read_loss_profile(path)
+        except (OSError, KeyError, ValueError, json.JSONDecodeError):
+            # An unreadable cached profile is a cache miss, not a crash —
+            # degrade to a full champion run.
+            return None
+    return resolved
 
 
 async def _run_replicated(
@@ -1870,7 +1940,8 @@ async def _run_replicated(
     epoch_id: str,
     replicates: int,
     match_id: str = "",
-) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
+    fast: bool = False,
+) -> tuple[dict[str, LossProfile], dict[str, LossProfile], str]:
     """Run a paired board ``replicates`` times, averaging per-entry losses.
 
     The §9-lever-1 replication knob. ``replicates == 1`` is the current
@@ -1885,8 +1956,57 @@ async def _run_replicated(
     The board-unit runner is reused verbatim — replication is a thin loop
     over it — so the per-run subprocess isolation, scoring, and failure
     surfacing are unchanged.
+
+    Fast-mode champion resolution (structure-agnostic)
+    --------------------------------------------------
+    When ``fast`` is set the ``left`` side is the tournament's CHAMPION,
+    and :func:`_resolve_cached_champion_losses` decides — via the SHARED
+    cached-or-run helper — whether its per-board scalars can be reused
+    from disk. On a cache HIT the champion is NOT executed at all: only
+    the challenger (``right``) runs each replicate, and the cached
+    champion profiles are paired with it. On a cache MISS (the
+    seed/first champion with no cached aggregate, or a racing subset not
+    yet covered) the duel DEGRADES to a full champion run once — which
+    re-writes the cache for subsequent rounds. ``replicates`` averages
+    only the live (challenger, and full-mode champion) runs; reused
+    cached champion profiles are constant across replicates.
+
+    Returns ``(left_losses, right_losses, champion_eval_mode)`` where the
+    mode is ``"fast"`` (cache reused), ``"fast-degraded"`` (fast asked,
+    no cache — champion run), or ``"full"`` (fast not requested).
     """
-    runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
+    cached_champion: dict[str, LossProfile] | None = None
+    if fast:
+        cached_champion = _resolve_cached_champion_losses(
+            generation=left_gen,
+            board=board,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+        )
+
+    if fast and cached_champion is not None:
+        # Cache HIT: run ONLY the challenger; reuse the cached champion
+        # per-board scalars. The champion side is never executed.
+        runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
+        for _ in range(max(1, replicates)):
+            right_losses = await _run_board_units_fast(
+                adapter=adapter,
+                child_gen=right_gen,
+                board=board,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+            )
+            runs.append((cached_champion, right_losses))
+        if len(runs) == 1:
+            return cached_champion, runs[0][1], "fast"
+        right_avg = _average_losses([r[1] for r in runs])
+        return cached_champion, right_avg, "fast"
+
+    # Full champion run (full mode, or fast degraded to full on a cache
+    # miss). The champion + challenger run concurrently per board unit.
+    runs = []
     for _ in range(max(1, replicates)):
         left_losses, right_losses = await _run_board_units_full(
             adapter=adapter,
@@ -1900,11 +2020,12 @@ async def _run_replicated(
             match_id=match_id,
         )
         runs.append((left_losses, right_losses))
+    mode = "fast-degraded" if fast else "full"
     if len(runs) == 1:
-        return runs[0]
+        return runs[0][0], runs[0][1], mode
     left_avg = _average_losses([r[0] for r in runs])
     right_avg = _average_losses([r[1] for r in runs])
-    return left_avg, right_avg
+    return left_avg, right_avg, mode
 
 
 def _average_losses(
@@ -1957,6 +2078,7 @@ async def run_matchup(
     round_index: int = 0,
     total_rounds: int = 0,
     match_id: str = "",
+    fast: bool = False,
 ) -> TournamentResult:
     """Run ONE duel between two generations, ending in the unchanged gate.
 
@@ -1981,6 +2103,17 @@ async def run_matchup(
     enabling per-run rung attribution in the dashboard. Empty string (the
     default) leaves runs untagged, which is exactly what the gauntlet path
     (via :func:`run_tournament`) does.
+
+    ``fast`` is the structure-agnostic fast-mode champion-eval knob (the
+    runtime ``--mode fast`` setting, threaded identically to
+    ``disable_drift`` / ``judge_only``). When set, the ``left`` side is
+    the CHAMPION and its per-board scalars are reused from the cached
+    per-entry ``loss.json`` instead of being re-run — across EVERY
+    structure that schedules matchups (racing / swiss / elim), exactly
+    as the gauntlet's :func:`run_fast_mode` reuses the champion. The
+    resolved mode (``"fast"`` / ``"fast-degraded"`` / ``"full"``) is
+    recorded on the returned :attr:`TournamentResult.champion_eval_mode`
+    for journal provenance; it never enters the gate or the contract.
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
@@ -1998,7 +2131,7 @@ async def run_matchup(
         subset = set(board_subset)
         board = [e for e in board if e.id in subset]
 
-    left_losses, right_losses = await _run_replicated(
+    left_losses, right_losses, champion_eval_mode = await _run_replicated(
         adapter=adapter,
         left_gen=left_gen,
         right_gen=right_gen,
@@ -2009,6 +2142,7 @@ async def run_matchup(
         epoch_id=epoch_id,
         replicates=replicates,
         match_id=match_id,
+        fast=fast,
     )
 
     left_agg = aggregate_generation_score(list(left_losses.values()), weights)
@@ -2035,6 +2169,7 @@ async def run_matchup(
         child_agg=right_agg,
         outcome=outcome,
         per_entry_losses=per_entry_losses,
+        champion_eval_mode=champion_eval_mode,
     )
 
 
