@@ -314,7 +314,13 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
     // gate sees) and the gate-rule explanation (which of the 3 rules decided).
     championId, championLoss: s.championLoss, championSigma: s.championSigma,
     candidateSigma: s.candidateSigma, deltaSigma: s.deltaSigma, gateExplain: s.gateExplain,
-    width: cmpId ? 560 : 900, height: Math.max(Math.round(300 * dt.sizeScale), Math.round(120 * dt.sizeScale) + s.entries.length * dt.dagRowStep),
+    // height is NO LONGER passed: lifecycleDag now DERIVES its viewBox height
+    // from the (deduped) board-node count × a fixed row pitch, so the seed/
+    // baseline (full board) and a racing challenger (deduped slice) render with
+    // IDENTICAL per-row spacing and a spine centred on the fan — neither side
+    // stretched/compressed, no large empty top band. Only `width` (the internal
+    // viewBox width, narrower in the compare split) is still supplied.
+    width: cmpId ? 560 : 900,
     onEntry: (eid) => ctx.navigate('candidate', { epochId, gen: genId, entry: eid }, opts),
     onRun: (eid) => ctx.navigate('board', { epochId, entry: eid, gen: genId }),
     onPatch: baseline ? null : () => ctx.navigate('diff', { epochId, gen: genId }),

@@ -641,11 +641,26 @@ summary.
 **Text spacing:** the entry label is **end-anchored to the LEFT of the disc**
 (`x = cx − (r + 8)`, `text-anchor="end"`) so it can never sit on the circle or on
 the loss text (which lives INSIDE the disc); long ids are clipped with an
-ellipsis (title tooltip carries the full id + per-rung note); rows are spaced by
-the density-scaled fan step. For a **GAUNTLET** candidate (one run per entry) every
-group has size 1 → dedupe is a no-op, no badge, no raced marker — rendering is
-unchanged. The DAG stays fit-to-width (`width:100%` + viewBox), theme-aware
-across the 16 themes, and scales with the page-scale pill.
+ellipsis (title tooltip carries the full id + per-rung note). For a **GAUNTLET**
+candidate (one run per entry) every group has size 1 → dedupe is a no-op, no
+badge, no raced marker — rendering is unchanged. The DAG stays fit-to-width
+(`width:100%` + viewBox), theme-aware across the 16 themes, and scales with the
+page-scale pill.
+
+**Normalized vertical geometry (seed/baseline matches the challenger).** The
+board fan uses a **constant per-node row pitch** (`ROW_PITCH`, viewBox units),
+NOT a fixed proportion of an arbitrary height. The internal viewBox height is
+**derived** from the deduped board-node count (`HEAD_PAD + ½·pitch + (N−1)·pitch
++ KEY_PAD`), and the structural spine (parent/patch/Σ/gate/terminal) is pinned to
+the board fan's **true vertical centre** `(fanTop + fanBot)/2`. A passed
+`o.height` is intentionally ignored — the figure is exactly as tall as its fan
+needs. This fixes the side-by-side compare where the **seed/baseline** (full
+board, more entries) used to stretch its fan over a taller range while the spine
+floated at the page centre, leaving a large empty top band — it diverged from a
+racing **challenger** (deduped slice, fewer entries). Both sides now render with
+**identical row spacing** and a spine aligned to the fan; only the labels/
+decoration differ (SEED vs TERMINAL, no gate Δ for the seed). The compare-split
+(narrower viewBox width) path is unchanged.
 
 ## Render discipline (carried forward)
 

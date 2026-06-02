@@ -922,14 +922,20 @@ test('contained: the publication view’s wide tables carry their OWN contained 
   for (const s of figSvgs) assertEqual(s.getAttribute('width'), '100%', 'each paper figure SVG is width:100% (contained within the paper column)');
 });
 
-// ---- (c) the fixed cozy SIZE tokens still drive a fit-to-width DAG ----
+// ---- (c) the lifecycle DAG DERIVES its height from the board-node count ----
 
-test('cozy SIZE tokens drive the lifecycle-DAG dimensions and it stays fit-to-width', () => {
+test('lifecycle DAG height is DERIVED from the (deduped) board-node count, not a passed token, and it stays fit-to-width', () => {
   const entries = [{ entry_id: 'b1', drift_loss: 10, pass_fail: 0 }, { entry_id: 'b2', drift_loss: 20, pass_fail: 1 }];
-  const ct = ui.densityTokens();   // the cozy baseline (no argument needed)
-  const h = Math.max(Math.round(300 * ct.sizeScale), Math.round(120 * ct.sizeScale) + entries.length * ct.dagRowStep);
-  const d = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: h });
-  assert(+d.getAttribute('height') === h, 'the painted DAG SVG height honours the cozy size token');
+  // a passed `height` is now IGNORED — the figure sizes itself to its nodes so
+  // both compare sides share identical row spacing.
+  const d = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 999 });
+  const hAttr = +d.getAttribute('height');
+  assert(hAttr !== 999, 'the passed height is NOT honoured verbatim — height is derived from node count');
+  assert(hAttr > 0 && hAttr < 300, 'a 2-node DAG is compact (height derived from 2 rows + padding, not a fixed 300+)');
+  // adding a node grows the height by exactly ONE row pitch (constant per-node).
+  const d3 = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: entries.concat([{ entry_id: 'b3', drift_loss: 30, pass_fail: 0 }]), decision: 'rejected' });
+  const grew = +d3.getAttribute('height') - hAttr;
+  assert(grew > 0, 'one more board node makes the figure taller by a constant row pitch (' + grew + 'px)');
   // fit-to-width holds (Problem 1): width:100% + a viewBox so it scales to the pane.
   assertEqual(d.getAttribute('width'), '100%', 'the DAG is width:100% (fit-to-width)');
   assert((d.getAttribute('viewBox') || '').startsWith('0 0 '), 'the DAG carries a viewBox');
@@ -2576,6 +2582,95 @@ test('lifecycle BOARD column: a GAUNTLET candidate (one run per entry) renders u
     assert(!childByClass(g, 'ezn-board-mult'), 'no spurious multiplicity badge on a gauntlet node');
     assert(!(g.getAttribute('class') || '').includes('ezn-board-raced'), 'a gauntlet node is not marked raced');
   }
+});
+
+// ====================================================================
+// Lifecycle DAG · NORMALIZED vertical layout. The seed/baseline (full
+// board, MORE entries) and a racing challenger (deduped slice, FEWER)
+// must render with the SAME per-node row pitch and a structural spine
+// centred on the board fan — neither side stretched/compressed, and no
+// large empty top band on the seed side.
+// ====================================================================
+
+// the y-centre of a board fan = the disc cy's; the spine y-centre = the centre
+// of the PARENT structural node (the first non-board ezn-node rect).
+function boardCysOf(svgNode) {
+  return boardNodesOf(svgNode)
+    .map((g) => +childByClass(g, 'ezn-board-disc').getAttribute('cy'))
+    .sort((a, b) => a - b);
+}
+function spineCenterY(svgNode) {
+  // the PARENT node carries the text "champion" / "no parent"; grab its rect.
+  const nodes = svgNode.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'g' && (n.getAttribute('class') || '').split(/\s+/).includes('ezn-node')
+    && !(n.getAttribute('class') || '').split(/\s+/).includes('ezn-board-node'));
+  const rect = nodes[0].querySelectorAll('[class]').filter((n) => n.localName === 'rect')[0];
+  return +rect.getAttribute('y') + +rect.getAttribute('height') / 2;
+}
+function rowPitchOf(svgNode) {
+  const cys = boardCysOf(svgNode);
+  return cys.length >= 2 ? cys[1] - cys[0] : null;
+}
+
+test('lifecycle DAG (normalized): the seed/baseline (N entries) and a challenger (M entries) share the SAME board-node row pitch', () => {
+  // a seed/baseline ran the FULL board (7 entries) — no parent.
+  const seedEntries = Array.from({ length: 7 }, (_, i) => ({ entry_id: 'b' + i, drift_loss: 10 + i, pass_fail: i % 2 }));
+  // a challenger ran a deduped slice (4 distinct entries).
+  const challEntries = Array.from({ length: 4 }, (_, i) => ({ entry_id: 'c' + i, drift_loss: 20 + i, pass_fail: i % 2 }));
+
+  const seed = dag.lifecycleDag({ genId: 'v0', parentId: '', baseline: true, entries: seedEntries });
+  const chall = dag.lifecycleDag({ genId: 'v8', parentId: 'v0', decision: 'rejected', entries: challEntries });
+
+  const seedPitch = rowPitchOf(seed);
+  const challPitch = rowPitchOf(chall);
+  assert(seedPitch != null && challPitch != null, 'both DAGs have a measurable multi-row board fan');
+  // the SAME constant pitch on both sides — the bug was the seed fan stretching.
+  assert(Math.abs(seedPitch - challPitch) < 0.5,
+    `the seed pitch (${seedPitch}) matches the challenger pitch (${challPitch}) — not stretched/compressed`);
+
+  // every adjacent gap on the SEED side is itself the same constant pitch (no
+  // divergent vertical spread among the seed's own rows).
+  const seedCys = boardCysOf(seed);
+  for (let i = 1; i < seedCys.length; i++) {
+    assert(Math.abs((seedCys[i] - seedCys[i - 1]) - seedPitch) < 0.5,
+      `seed row gap ${i} (${seedCys[i] - seedCys[i - 1]}) equals the constant pitch (${seedPitch})`);
+  }
+});
+
+test('lifecycle DAG (normalized): the structural spine is centred on the board fan’s TRUE centre for BOTH seed and challenger (no floating spine, no empty top band)', () => {
+  const seedEntries = Array.from({ length: 7 }, (_, i) => ({ entry_id: 'b' + i, drift_loss: 10 + i, pass_fail: i % 2 }));
+  const challEntries = Array.from({ length: 4 }, (_, i) => ({ entry_id: 'c' + i, drift_loss: 20 + i, pass_fail: i % 2 }));
+
+  for (const [label, spec] of [
+    ['seed', { genId: 'v0', parentId: '', baseline: true, entries: seedEntries }],
+    ['challenger', { genId: 'v8', parentId: 'v0', decision: 'rejected', entries: challEntries }],
+  ]) {
+    const svgNode = dag.lifecycleDag(spec);
+    const cys = boardCysOf(svgNode);
+    const fanCenter = (cys[0] + cys[cys.length - 1]) / 2;
+    const spineY = spineCenterY(svgNode);
+    assert(Math.abs(spineY - fanCenter) < 1.0,
+      `${label}: the spine y-centre (${spineY}) equals the board fan's centre (${fanCenter}) — spine aligned with the fan`);
+
+    // NO large empty top band: the first board row sits a small fixed distance
+    // below the column heads (one half-pitch + the header pad), NOT pushed to
+    // some arbitrary proportion of an inflated height.
+    const h = +svgNode.getAttribute('height');
+    assert(cys[0] < h * 0.5, `${label}: the first board row (${cys[0]}) is in the UPPER half — no big top gap (h=${h})`);
+    // and the figure's height closely fits the fan (top pad + fan + bottom pad),
+    // so it is NOT inflated well beyond the fan span (the old stretch symptom).
+    const fanSpan = cys[cys.length - 1] - cys[0];
+    assert(h - fanSpan < 120, `${label}: height (${h}) fits the fan span (${fanSpan}) closely — figure not inflated`);
+  }
+});
+
+test('lifecycle DAG (normalized): the seed is NOT laid out with a divergent vertical spread — adding height does not stretch it', () => {
+  const entries = Array.from({ length: 6 }, (_, i) => ({ entry_id: 'b' + i, drift_loss: 10 + i, pass_fail: i % 2 }));
+  const a = dag.lifecycleDag({ genId: 'v0', parentId: '', baseline: true, entries });
+  const b = dag.lifecycleDag({ genId: 'v0', parentId: '', baseline: true, entries, height: 1200 });
+  // a passed height cannot stretch the fan: identical pitch regardless.
+  assert(Math.abs(rowPitchOf(a) - rowPitchOf(b)) < 0.5, 'a passed height does NOT stretch the seed fan (constant pitch)');
+  assertEqual(a.getAttribute('height'), b.getAttribute('height'), 'the derived height is identical regardless of any passed height');
 });
 
 test('lifecycle BOARD column: the multiplicity badge style + raced disc marker are themed in the scoped stylesheet', () => {

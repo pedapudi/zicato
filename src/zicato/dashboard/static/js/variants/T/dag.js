@@ -156,18 +156,75 @@ export function rungProgression(spec) {
   return svg;
 }
 
+// fixed, density-independent vertical geometry — the SAME for a seed/baseline
+// (full board, more entries) and a racing challenger (deduped slice, fewer):
+// the board fan uses a CONSTANT per-node ROW PITCH (never a fixed proportion of
+// an arbitrary height), so 6 entries and 7 entries get identical comfortable
+// spacing — neither stretched nor compressed. The internal viewBox height is
+// SIZED TO the fan (header pad + N×pitch + key pad), eliminating the large
+// top gap, and the structural spine is centred on the fan's TRUE vertical
+// centre so it always aligns with the board nodes regardless of entry count.
+const ROW_PITCH = 46; // px between adjacent board-fan rows (internal viewBox units).
+const HEAD_PAD = 40;  // top band reserved for the column heads.
+const KEY_PAD = 40;   // bottom band reserved for the per-disc cmp sublabel + legend line.
+
 export function lifecycleDag(spec) {
   const o = spec || {};
   const entries = Array.isArray(o.entries) ? o.entries : [];
   const baseline = !!o.baseline || !o.parentId;
   const dec = baseline ? 'baseline' : (o.decision || 'running');
-  // `width` is now the viewBox's INTERNAL coordinate width — the SVG itself is
-  // rendered at width:100% (see the attrs below) so it FITS its pane and never
-  // overflows. A wider viewBox just means a finer internal grid (the figure is
-  // scaled down to fit by preserveAspectRatio); a narrower one (compare split)
-  // keeps labels legible at the smaller painted size.
+  // `width` is the viewBox's INTERNAL coordinate width — the SVG is rendered at
+  // width:100% (see the attrs below) so it FITS its pane and never overflows. A
+  // wider viewBox just means a finer internal grid (the figure is scaled down
+  // to fit by preserveAspectRatio); a narrower one (compare split) keeps labels
+  // legible at the smaller painted size.
   const w = o.width || 900;
-  const h = o.height || 360;
+
+  // DEDUPE to ONE node per distinct board ENTRY first (a racing candidate
+  // re-runs the SAME entry across rungs), because the FAN HEIGHT — and thus the
+  // whole figure's height — is normalized to the number of DISTINCT nodes, not
+  // the raw run count. (The full per-entry dedupe, carrying every run for the
+  // expansion panel, is finished below; here we only need the distinct count.)
+  const groups = [];
+  const byId = new Map();
+  for (const e of entries) {
+    const id = e == null ? '' : e.entry_id;
+    let grp = byId.get(id);
+    if (!grp) { grp = { entry_id: id, runs: [] }; byId.set(id, grp); groups.push(grp); }
+    grp.runs.push(e);
+  }
+  const board = groups.map((grp) => {
+    const rep = grp.runs[grp.runs.length - 1] || {};
+    return {
+      entry_id: grp.entry_id,
+      drift_loss: rep.drift_loss,
+      pass_fail: rep.pass_fail,
+      wall_clock_budget_exceeded: rep.wall_clock_budget_exceeded,
+      mult: grp.runs.length,
+      runs: grp.runs.map((rn) => ({
+        run_id: rn && rn.run_id != null ? rn.run_id : null,
+        drift_loss: rn ? rn.drift_loss : undefined,
+        pass_fail: rn ? rn.pass_fail : undefined,
+        wall_clock_budget_exceeded: rn ? !!rn.wall_clock_budget_exceeded : false,
+        // the rung tag, when the backend supplies it (else null → no label).
+        rung: rn && rn.rung != null ? String(rn.rung) : null,
+        match_id: rn && rn.match_id != null ? String(rn.match_id) : null,
+      })),
+    };
+  });
+
+  // NORMALIZED height: fixed pitch × node count + padding bands. `o.height`, if
+  // passed, acts only as a MINIMUM floor (keeps a tiny board from looking
+  // cramped) — it NEVER stretches the fan, so the seed and the challenger that
+  // differ only by entry count still share the exact same per-row spacing.
+  const nNodes = Math.max(board.length, 1);
+  const fanSpan = Math.max((nNodes - 1) * ROW_PITCH, 0);
+  // total height = header band + one row of half-pitch + the fan span + bottom
+  // band. Exactly as tall as the fan needs — no arbitrary minimum, which is what
+  // removes the empty top band on the seed side. `o.height` is intentionally
+  // ignored: the figure's height is DERIVED from the node count so the seed and
+  // the challenger that differ only by entry count share identical row spacing.
+  const h = HEAD_PAD + ROW_PITCH / 2 + fanSpan + KEY_PAD;
 
   const svg = svgEl('svg', {
     // FIT-TO-WIDTH: width:100% + a viewBox (no fixed pixel width that exceeds
@@ -180,9 +237,13 @@ export function lifecycleDag(spec) {
   const cols = { parent: 0.075, patch: 0.245, board: 0.46, agg: 0.66, gate: 0.82, term: 0.95 };
   const X = {};
   for (const k of Object.keys(cols)) X[k] = cols[k] * w;
-  const midY = h * 0.5;
-  const fanTop = h * 0.16;
-  const fanBot = h * 0.84;
+  // the board fan: first row sits one half-pitch below the header band, each
+  // subsequent row a CONSTANT pitch below. The spine (parent/patch/Σ/gate/
+  // terminal) is pinned to the fan's TRUE centre so it aligns with the fan for
+  // ANY entry count — no floating-in-the-middle, no detachment from the fan.
+  const fanTop = HEAD_PAD + ROW_PITCH / 2;
+  const fanBot = fanTop + fanSpan;
+  const midY = (fanTop + fanBot) / 2;
 
   const heads = [
     [X.parent, 'PARENT'], [X.patch, 'PATCH'], [X.board, 'BOARD'],
@@ -211,48 +272,13 @@ export function lifecycleDag(spec) {
   }
   edgeLayer.appendChild(svgEl('path', { d: flow(X.parent + 0.06 * w, midY, X.patch - 0.065 * w, midY), class: 'ezn-edge ezn-edge-spine', fill: 'none' }));
 
-  // DEDUPE to ONE node per distinct board ENTRY. A RACING candidate re-runs the
-  // SAME entry across rungs (rung0 slice → rung1 larger slice → racing-final
-  // full board), so the raw `entries` stream carries the same entry_id N times.
-  // The lifecycle keeps the clean cause→effect SUMMARY (one node per entry), but
-  // is NO LONGER LOSSY on the values: each deduped node EXPANDS (hover / click)
-  // to reveal its N per-run losses as a small inline stack + sparkline, and —
-  // when the per-entry records carry `match_id`/`rung` (a parallel backend
-  // change) — each per-run row is LABELLED by its rung/matchup (rung 0 / rung 1
-  // / final). When the rung fields are ABSENT (legacy data, e.g. the current
-  // e0), the expansion still lists the per-run losses but fabricates NO rung
-  // labels. For a gauntlet candidate (one run per entry) every group has size 1
-  // → no expansion, identical to the old single-node rendering.
-  const groups = [];
-  const byId = new Map();
-  for (const e of entries) {
-    const id = e == null ? '' : e.entry_id;
-    let grp = byId.get(id);
-    if (!grp) { grp = { entry_id: id, runs: [] }; byId.set(id, grp); groups.push(grp); }
-    grp.runs.push(e);
-  }
-  // representative = the LAST run for the entry (racing-final / full board). Its
-  // loss + pass/fail + timeout drive the node; multiplicity = the run count; and
-  // we carry EVERY run (loss + rung tag, when present) for the expansion panel.
-  const board = groups.map((grp) => {
-    const rep = grp.runs[grp.runs.length - 1] || {};
-    return {
-      entry_id: grp.entry_id,
-      drift_loss: rep.drift_loss,
-      pass_fail: rep.pass_fail,
-      wall_clock_budget_exceeded: rep.wall_clock_budget_exceeded,
-      mult: grp.runs.length,
-      runs: grp.runs.map((rn) => ({
-        run_id: rn && rn.run_id != null ? rn.run_id : null,
-        drift_loss: rn ? rn.drift_loss : undefined,
-        pass_fail: rn ? rn.pass_fail : undefined,
-        wall_clock_budget_exceeded: rn ? !!rn.wall_clock_budget_exceeded : false,
-        // the rung tag, when the backend supplies it (else null → no label).
-        rung: rn && rn.rung != null ? String(rn.rung) : null,
-        match_id: rn && rn.match_id != null ? String(rn.match_id) : null,
-      })),
-    };
-  });
+  // (`board` — the per-entry dedupe carrying every run for the expansion panel —
+  // was assembled up-front so the FAN HEIGHT could be normalized to the distinct
+  // node count. A RACING candidate re-runs the SAME entry across rungs, so the
+  // raw stream repeats an entry_id N times; the lifecycle keeps ONE node per
+  // entry but each deduped node EXPANDS to its N per-run losses, labelled by
+  // rung when the backend tags them. A gauntlet candidate has size-1 groups →
+  // no expansion, identical to a plain single-node rendering.)
 
   // the CHAMPION's per-board loss on the SAME slice (entry_id → loss), passed
   // from the view (D.perEntry of the champion). Used to show, on each circle and
