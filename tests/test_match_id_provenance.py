@@ -138,6 +138,100 @@ def test_run_matchup_threads_match_id_to_each_run(monkeypatch, tmp_path) -> None
     assert seen == ["rung0_m2", "rung0_m2"]
 
 
+def test_run_matchup_stamps_judge_only_onto_each_entry(monkeypatch, tmp_path) -> None:
+    """The racing/run_matchup path honours a board-level ``judge_only=True``.
+
+    Regression guard: ``judge_only`` was stamped by the gauntlet paths
+    (``run_tournament`` / ``run_fast_mode``) but NOT by ``run_matchup`` —
+    the racing / multi-challenger path — so racing entries reached the
+    adapter without the flag and the default steering planner ran despite
+    judge-only mode. We stub ``_run_single`` (no live LLM) and assert the
+    entries it receives carry ``judge_only`` in their context, i.e.
+    ``_stamp_judge_only`` ran on this path. FAILS on the pre-fix runner
+    (run_matchup had no judge_only parameter); passes after.
+    """
+    seen_contexts: list[dict[str, str]] = []
+
+    async def fake_run_single(
+        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+    ):
+        del adapter, generation, weights, config, workspace_root, epoch_id, side, match_id
+        seen_contexts.append(dict(entry.context))
+        return LossProfile(
+            run_id="run-x",
+            entry_id=entry.id,
+            generation_id="v0",
+            epoch_id="e0",
+            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            plan_revisions=0,
+            task_failure_ratio=0.0,
+            runtime_ms=1000,
+            wall_clock_budget_exceeded=False,
+            expectation_result=ExpectationResult(kind="predicate", passed=True),
+            drift_loss=1.0,
+            pass_fail=True,
+        )
+
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    asyncio.run(
+        run_matchup(
+            adapter=object(),
+            left_gen=_gen(tmp_path, "v0"),
+            right_gen=_gen(tmp_path, "v1"),
+            board=_board(),
+            weights=ScoringWeights(),
+            config=_config(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            judge_only=True,
+        )
+    )
+    # One entry, two sides (champion + challenger) => two runs, both stamped.
+    assert seen_contexts, "no board runs were scheduled"
+    assert all(ctx.get("judge_only") == "true" for ctx in seen_contexts)
+
+
+def test_run_matchup_default_leaves_judge_only_unset(monkeypatch, tmp_path) -> None:
+    """Default (steering) racing run is byte-identical: no judge_only stamp."""
+    seen_contexts: list[dict[str, str]] = []
+
+    async def fake_run_single(
+        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+    ):
+        del adapter, generation, weights, config, workspace_root, epoch_id, side, match_id
+        seen_contexts.append(dict(entry.context))
+        return LossProfile(
+            run_id="run-x",
+            entry_id=entry.id,
+            generation_id="v0",
+            epoch_id="e0",
+            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+            plan_revisions=0,
+            task_failure_ratio=0.0,
+            runtime_ms=1000,
+            wall_clock_budget_exceeded=False,
+            expectation_result=ExpectationResult(kind="predicate", passed=True),
+            drift_loss=1.0,
+            pass_fail=True,
+        )
+
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    asyncio.run(
+        run_matchup(
+            adapter=object(),
+            left_gen=_gen(tmp_path, "v0"),
+            right_gen=_gen(tmp_path, "v1"),
+            board=_board(),
+            weights=ScoringWeights(),
+            config=_config(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+    assert seen_contexts, "no board runs were scheduled"
+    assert all("judge_only" not in ctx for ctx in seen_contexts)
+
+
 def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> None:
     """_run_single rewrites loss.json with the match_id so reindex re-derives it.
 

@@ -1953,6 +1953,7 @@ async def run_matchup(
     board_subset: tuple[str, ...] | None = None,
     replicates: int = 1,
     disable_drift: tuple[Any, ...] = (),
+    judge_only: bool = False,
     round_index: int = 0,
     total_rounds: int = 0,
     match_id: str = "",
@@ -1986,6 +1987,13 @@ async def run_matchup(
     assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
 
     board = _stamp_disable_drift(board, disable_drift)
+    # Mirror the board-level judge_only threading the gauntlet path does in
+    # run_tournament / run_fast_mode: stamp the flag onto each entry's
+    # context so the adapter selects no-steering evaluation per entry. A
+    # no-op when judge_only is False (the default), so the steering path
+    # stays byte-identical. (Stamped before board_subset filtering so the
+    # surviving slice carries it too.)
+    board = _stamp_judge_only(board, judge_only)
     if board_subset is not None:
         subset = set(board_subset)
         board = [e for e in board if e.id in subset]
