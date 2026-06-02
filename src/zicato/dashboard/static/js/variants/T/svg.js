@@ -337,8 +337,15 @@ export function heatmap(opts) {
 // the champion's level. Dots below the reference are 'good', above 'bad'. A
 // pass/fail/timeout glyph trails each row. Click → drill.
 //
-// opts: { width, rowHeight, labelWidth, items:[{label,value,id,pass,timeout}],
+// opts: { width, rowHeight, labelWidth,
+//         items:[{label, value, id, pass, timeout, context}],
 //         reference:{value,label}, onClick }
+//
+// `context` (optional, per item) is a short tournament-context tag — the rung /
+// round / matchup the board run executed in — rendered as a DIM secondary line
+// beneath the board name so duplicate board rows (the same entry raced in
+// several rungs/rounds) are distinguishable at a glance. The whole row stays
+// clickable; onClick receives the full item (carrying id/run/gen for routing).
 export function valueDotPlot(opts) {
   const o = opts || {};
   const items = (Array.isArray(o.items) ? o.items : []).filter((d) => d);
@@ -371,10 +378,23 @@ export function valueDotPlot(opts) {
   }
   items.forEach((d, i) => {
     const cy = i * rh + rh / 2 + 4;
+    const hasCtx = d.context != null && String(d.context) !== '';
     const g = svgEl('g', { class: 'dn-dotrow', tabindex: o.onClick ? '0' : null });
-    const lbl = svgEl('text', { x: labelW, y: cy + 3, class: 'dn-dot-label', 'text-anchor': 'end' });
+    // With a context tag the name lifts onto its own baseline and the dim tag
+    // sits just beneath it (two stacked right-anchored lines inside the gutter).
+    const nameY = hasCtx ? cy - 2 : cy + 3;
+    const lbl = svgEl('text', { x: labelW, y: nameY, class: 'dn-dot-label', 'text-anchor': 'end' });
     lbl.textContent = d.label != null ? shortLabel(String(d.label), 22) : '';
     g.appendChild(lbl);
+    if (hasCtx) {
+      // theme-aware (uses the faint ink token), no extra stylesheet rule.
+      const ctx = svgEl('text', {
+        x: labelW, y: cy + 9, class: 'dn-dot-ctx', 'text-anchor': 'end',
+        fill: 'var(--v2-ink-faint)', 'font-size': '9px', 'font-family': 'var(--v2-mono)',
+      });
+      ctx.textContent = shortLabel(String(d.context), 22);
+      g.appendChild(ctx);
+    }
     if (isNum(d.value)) {
       const dx = x(d.value);
       g.appendChild(svgEl('line', { x1: x(lo), x2: dx, y1: cy, y2: cy, class: 'dn-dot-connector' }));

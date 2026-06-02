@@ -3963,6 +3963,79 @@ test('Tier2 (Class B): the tree tags an unscored child PENDING, not rejected', (
   assert(!tags.includes('rejected'), 'the unscored child v1 is NOT tagged "rejected"');
 });
 
+// ---- per-board dot-plot: tournament-context label + click → run drill-down ─
+
+test('candidate: tournamentContext derives rung/round/matchup labels (racing/gauntlet/swiss)', async () => {
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const tc = candidate.tournamentContext;
+  // racing: pre-formatted rung wins; raw rungN_* match_id → "rung N".
+  assertEqual(tc({ match_id: 'rung0_m2', rung: 'rung 0' }), 'rung 0', 'pre-formatted rung string is reused');
+  assertEqual(tc({ match_id: 'rung1_m1' }), 'rung 1', 'rung parsed from match_id when no pre-format');
+  // racing final → the champion gate.
+  assertEqual(tc({ match_id: 'racing-final' }), 'champion-gate', 'racing-final maps to champion-gate');
+  // gauntlet: roundN / gN → "round N".
+  assertEqual(tc({ match_id: 'round2' }), 'round 2', 'gauntlet round parsed');
+  assertEqual(tc({ match_id: 'g3' }), 'round 3', 'gauntlet gN parsed');
+  // swiss: roundN_mM → "round N · match M".
+  assertEqual(tc({ match_id: 'round1_m2' }), 'round 1 · match 2', 'swiss round·match parsed');
+  assertEqual(tc({ match_id: 'swiss_r0_m4' }), 'round 0 · match 4', 'swiss r/m prefix parsed');
+  // no context at all → null (row renders name-only).
+  assertEqual(tc({}), null, 'no match_id / rung → null');
+});
+
+test('svg.valueDotPlot: duplicate board rows get DISTINCT context lines + onClick carries the full item', () => {
+  let clicked = null;
+  const items = [
+    { label: 'q3_metrics_outline', value: 80, id: 'q3_metrics_outline', context: 'rung 0', entry_id: 'q3_metrics_outline', run_id: 'run_a', gen: 'v1' },
+    { label: 'q3_metrics_outline', value: 40, id: 'q3_metrics_outline', context: 'rung 1', entry_id: 'q3_metrics_outline', run_id: 'run_b', gen: 'v1' },
+  ];
+  const plot = svg.valueDotPlot({ items, reference: { value: 60, label: 'champion v0' }, onClick: (it) => { clicked = it; } });
+  // both rows render their board name…
+  const names = allByClass(plot, 'dn-dot-label').map((n) => n.textContent);
+  assertEqual(names.filter((t) => t === 'q3_metrics_outline').length, 2, 'BOTH duplicate board rows rendered');
+  // …with DISTINCT context tags (not two identical labels).
+  const ctxs = allByClass(plot, 'dn-dot-ctx').map((n) => n.textContent);
+  assert(ctxs.includes('rung 0') && ctxs.includes('rung 1'), 'each duplicate carries its own rung tag');
+  assertEqual(new Set(ctxs).size, 2, 'the two context tags are distinct');
+  // reference rule still drawn (existing behaviour unchanged).
+  assert(allByClass(plot, 'dn-ref-rule').length === 1, 'the champion reference line is still drawn');
+  // clicking a row fires onClick with the FULL item (entry_id/run_id/gen intact).
+  const rows = allByClass(plot, 'dn-dotrow');
+  assertEqual(rows.length, 2, 'two clickable dot rows');
+  rows[1].dispatchEvent({ type: 'click' });
+  assert(clicked && clicked.entry_id === 'q3_metrics_outline' && clicked.run_id === 'run_b' && clicked.gen === 'v1',
+    'onClick receives the specific run (entry_id + run_id + gen)');
+});
+
+test('candidate view: per-board dot-plot click → board drill-down for THAT run; duplicate rungs disambiguated', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  // same entry raced in TWO rungs (different match_id + rung) → two rows.
+  const path = `/api/generation/${EPOCH_ID}/v1/per-entry`;
+  const saved = FIXTURE[path];
+  FIXTURE[path] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
+    { entry_id: 'waffles_single', run_id: 'run_v1_w_r0', drift_loss: 80.0, pass_fail: 0, runtime_ms: 180000, wall_clock_budget_exceeded: false, match_id: 'rung0_m1', rung: 'rung 0' },
+    { entry_id: 'waffles_single', run_id: 'run_v1_w_r1', drift_loss: 40.0, pass_fail: 1, runtime_ms: 180000, wall_clock_budget_exceeded: false, match_id: 'rung1_m1', rung: 'rung 1' },
+  ] };
+  try {
+    const host = document.createElement('div');
+    let navTo = null;
+    const ctx = { navigate: (v, p, o) => { navTo = { v, p, o }; }, href: router.href };
+    await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+    // both rungs show as distinct context tags on the dot-plot.
+    const ctxs = allByClass(host, 'dn-dot-ctx').map((n) => n.textContent);
+    assert(ctxs.includes('rung 0') && ctxs.includes('rung 1'), 'the duplicate board rows show "rung 0" vs "rung 1"');
+    // clicking a dot row routes to the board drill-down for this entry + gen.
+    const rows = allByClass(host, 'dn-dotrow');
+    assert(rows.length >= 2, 'at least the two re-raced rows are clickable');
+    rows[0].dispatchEvent({ type: 'click' });
+    assert(navTo && navTo.v === 'board' && navTo.p.entry === 'waffles_single' && navTo.p.gen === 'v1' && navTo.p.epochId === EPOCH_ID,
+      'a dot-plot row click opens the board drill-down for that exact run (entry + gen)');
+  } finally {
+    FIXTURE[path] = saved;
+  }
+});
+
 test('Tier2 (Class B): decisionFor never defaults null/absent → rejected', () => {
   assertEqual(ui.decisionFor({ promoted: null, parent: 'v0' }), 'pending', 'null + no resolved decision → pending');
   assertEqual(ui.decisionFor({ promoted: true, parent: 'v0' }), 'promoted', 'promoted:true → promoted');

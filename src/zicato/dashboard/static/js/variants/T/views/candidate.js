@@ -235,22 +235,33 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary) {
   host.appendChild(section('Lifecycle · cause → effect → verdict', dagCard));
 
   // ---- per-board scoring dot-plot ----
+  // Each per-entry record carries the tournament context it ran in (match_id /
+  // rung). The SAME board entry can appear several times — raced across rungs /
+  // rounds — so we surface a short context tag per row to disambiguate the
+  // duplicates, and route a click to that SPECIFIC run's board drill-down.
   const scoreCard = el('div', { class: 'dn-panel' });
   if (s.entries.length) {
     const items = s.entries
       .filter((e) => svg.isNum(e.drift_loss))
       .sort((a, b) => b.drift_loss - a.drift_loss)
-      .map((e) => ({ label: e.entry_id, value: e.drift_loss, id: e.entry_id, pass: e.pass_fail, timeout: !!e.wall_clock_budget_exceeded }));
+      .map((e) => ({
+        label: e.entry_id, value: e.drift_loss, id: e.entry_id,
+        pass: e.pass_fail, timeout: !!e.wall_clock_budget_exceeded,
+        context: tournamentContext(e),
+        entry_id: e.entry_id, run_id: e.run_id || null, gen: genId,
+      }));
     scoreCard.appendChild(svg.valueDotPlot({
       width: cmpId ? 480 : 560, rowHeight: dt.dotRow, labelWidth: cmpId ? 160 : 200, items,
       reference: svg.isNum(championScalar) ? { value: championScalar, label: `champion ${championId}` } : null,
-      onClick: (it) => ctx.navigate('candidate', { epochId, gen: genId, entry: it.id }, opts),
+      // click a row (board name AND dot) → the board drill-down for THIS exact
+      // run: the board view opens its inline transcript for the selected gen.
+      onClick: (it) => ctx.navigate('board', { epochId, entry: it.entry_id || it.id, gen: it.gen || genId }),
     }));
     scoreCard.appendChild(el('div', { class: 'dn-legend' }, [
       svg.isNum(championScalar) ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champion ${championId} = ${svg.fmt(championScalar, 1)}`]) : null,
       el('span', null, [el('i', { class: 'dotact' }), 'pass']),
       el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-bad);' }), 'fail']),
-      el('span', { class: 'dn-faint', text: '⏱ timeout · click an entry → its drill-down' }),
+      el('span', { class: 'dn-faint', text: '⏱ timeout · dim tag = rung/round it ran in · click an entry → its drill-down' }),
     ].filter(Boolean)));
   } else {
     scoreCard.appendChild(empty('No per-entry scores for this candidate (the index may not be built).'));
@@ -421,6 +432,42 @@ function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges) {
   ].filter(Boolean)));
 
   return section('Entry · ' + entryId, card);
+}
+
+// Derive a short tournament-context tag for a per-entry record — the rung /
+// round / matchup the board run executed in. The per-entry records already
+// carry `match_id` (e.g. `rung0_m2`, `racing-final`, `round1_m2`, `g0`) and a
+// pre-formatted `rung` (e.g. "rung 0"); we read those rather than re-deriving
+// what the backend formatted. The same scheme `reconstructRacing` reads in
+// views/structure.js: `rungN_*` → rung N, `racing-final` → the champion gate.
+//   • racing : "rung 0" / "rung 1"; `racing-final` → "champion-gate".
+//   • gauntlet: `roundN`/`gN` → "round N".
+//   • swiss  : `roundN_mM` / `swiss_rN_mM` → "round N · match M".
+// Returns null when no context can be derived (so the row renders name-only).
+export function tournamentContext(rec) {
+  if (!rec) return null;
+  const mid = rec.match_id != null ? String(rec.match_id) : '';
+  // the champion gate (racing final) reads cleanest as its own label.
+  if (mid === 'racing-final') return 'champion-gate';
+
+  // prefer the backend's pre-formatted rung string when present.
+  const preRung = rec.rung != null ? String(rec.rung).trim() : '';
+  if (preRung) return preRung;
+
+  // racing: `rungN[_mM]` → "rung N".
+  let m = /^rung(\d+)/.exec(mid);
+  if (m) return 'rung ' + m[1];
+
+  // swiss: `roundN_mM` / `swiss_rN_mM` / `rN_mM` → "round N · match M".
+  m = /(?:^|_)(?:round[_-]?|r)(\d+)_m(\d+)/i.exec(mid);
+  if (m) return `round ${m[1]} · match ${m[2]}`;
+
+  // gauntlet / single- or double-elim: `roundN` / `gN` → "round N".
+  m = /^(?:round[_-]?|g)(\d+)/i.exec(mid);
+  if (m) return 'round ' + m[1];
+
+  // unknown shape: surface the raw match_id if we have one, else nothing.
+  return mid || null;
 }
 
 function clip(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
