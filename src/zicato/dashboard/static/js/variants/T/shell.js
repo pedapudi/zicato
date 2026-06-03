@@ -658,8 +658,8 @@ export async function buildTreeModel(route) {
           id: x.generation_id, parent: x.parent_generation_id || null,
           promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null),
         })) : []);
-    // disambiguate the CURRENT champion (♚) from FORMER champions (hollow
-    // crown) — the champion lineage applies to the contract epoch's bracket.
+    // disambiguate the CURRENT champion (♛) from FORMER champions (hollow
+    // crown ♔) — the champion lineage applies to the contract epoch's bracket.
     const fallbackCurrent = currentChampionId == null
       ? (gensList.filter((g) => g.promoted === true).map((g) => g.id).pop() || null)
       : currentChampionId;

@@ -23,6 +23,7 @@
 // selected node) writes ZERO DOM.
 
 import { el, clearChildren } from '../../core/dom.js';
+import { CROWN } from './svg.js';
 
 // `data` is the structural model the shell assembles once per dispatch:
 //   { epochs:[{id, current}], expanded:{ epochs:{<id>:{gens, boards}} },
@@ -106,10 +107,10 @@ export function buildTree(host, model, route, toggles, ctx, onToggle) {
       for (const g of bundle.gens) {
         const selected = (sel === 'candidate' || sel === 'diff') && p.epochId === epoch.id && p.gen === g.id;
         // Only the CURRENT champion (the last id in champion_lineage) gets the
-        // ♚ "champion" badge; a FORMER champion (held the title, then was
-        // succeeded) gets a distinct, dimmer hollow-crown "former" marker.
-        // Pre-feature models without the current/former split keep the legacy
-        // ♛ "champion" badge for any promoted generation (back-compat).
+        // solid-crown (CROWN.current) "champion" badge; a FORMER champion (held
+        // the title, then was succeeded) gets the distinct, dimmer hollow-crown
+        // (CROWN.former) "former" marker. Pre-feature models without the
+        // current/former split keep the solid crown for any promoted gen.
         const isCurrent = g.currentChampion === true;
         const isFormer = g.formerChampion === true;
         const legacyChamp = g.promoted === true && g.currentChampion === undefined && g.formerChampion === undefined;
@@ -117,8 +118,8 @@ export function buildTree(host, model, route, toggles, ctx, onToggle) {
         // racing — tag it "pending", NEVER "rejected/dead branch".
         const childTag = g.parent ? (g.promoted == null ? 'pending' : (g.promoted === false ? 'rejected' : 'promoted')) : 'seed';
         let kind = 'gen', glyph = (g.parent ? '↳' : '◆'), tag = childTag;
-        if (isCurrent || legacyChamp) { kind = 'gen-champ'; glyph = '♚'; tag = 'champion'; }
-        else if (isFormer) { kind = 'gen-former'; glyph = '♔'; tag = 'former champion'; }
+        if (isCurrent || legacyChamp) { kind = 'gen-champ'; glyph = CROWN.current; tag = 'champion'; }
+        else if (isFormer) { kind = 'gen-former'; glyph = CROWN.former; tag = 'former champion'; }
         else if (g.orphan === true) { kind = 'gen-orphan'; glyph = '◌'; tag = 'unscored'; }
         tree.appendChild(leafRow({
           depth: 3, kind, label: g.id, glyph, tag,

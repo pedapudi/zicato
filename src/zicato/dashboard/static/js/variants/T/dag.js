@@ -10,7 +10,7 @@
 // styled (scoped under the variant root) by css/variants/N/console.css.
 
 import { svgEl } from '../../core/dom.js';
-import { isNum, fmt } from './svg.js';
+import { isNum, fmt, CROWN } from './svg.js';
 import { attachHovercard } from './hovercard.js';
 
 export function verdictClass(verdict) {
@@ -476,7 +476,7 @@ export function lifecycleDag(spec) {
   const pending = !baseline && !promoted && (dec === 'pending' || dec === 'running' || (o.promoted == null && (!dec || dec === 'running' || dec === 'pending')));
   let termLabel, termSub, termCls;
   if (baseline) { termLabel = 'seed'; termSub = 'defines floor'; termCls = 'ezn-baseline'; }
-  else if (promoted) { termLabel = '♛ promoted'; termSub = 'new champion'; termCls = 'ezn-promoted'; }
+  else if (promoted) { termLabel = CROWN.current + ' promoted'; termSub = 'new champion'; termCls = 'ezn-promoted'; }
   else if (pending) { termLabel = pendingTermLabel(o.structure); termSub = 'awaiting gate'; termCls = 'ezn-running'; }
   else { termLabel = '✕ dead branch'; termSub = 'champion stands'; termCls = 'ezn-rejected'; }
   edgeLayer.appendChild(svgEl('path', { d: flow(X.gate + 0.06 * w, midY, X.term - 0.045 * w, midY), class: 'ezn-edge ' + (promoted ? 'ezn-edge-good' : pending ? 'ezn-edge-neutral' : 'ezn-edge-bad'), fill: 'none' }));

@@ -6,6 +6,8 @@
 import { el } from '../../../core/dom.js';
 import * as svg from '../svg.js';
 import { section, empty, verdictPill } from '../ui.js';
+import { structureStatusLabel } from '../livestatus.js';
+const CROWN = svg.CROWN;
 
 // A friendly label + key params for a structure.
 export function structureLabel(structure, params) {
@@ -493,11 +495,11 @@ function renderBracket(st, ctx, epochId, structure) {
       })
     : empty(model.live ? 'The bracket is being seeded — matches fill in as runs land.' : 'No bracket rounds recorded yet.'));
   if (model.winners.length) {
-    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ♚`
+    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
       : model.gateState === 'stands' ? ' · champion-gate: champion stands'
       : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
     card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'winners advance right; ✦ = match winner · the bracket winner must beat the incumbent at the champion-gate ♚'
+      'winners advance right; ✦ = match winner · the bracket winner must beat the incumbent at the champion-gate ' + CROWN.current
       + (model.losers && model.losers.length ? ' · the losers’ bracket gives a second life (double-elim)' : '')
       + gateNote
       + (model.live ? ' · LIVE — the winner is not committed until the final gate' : '') }));
@@ -702,11 +704,11 @@ function renderSwiss(st, ctx, epochId) {
       })
     : empty(model.live ? 'The swiss is being seeded — pairings fill in as runs land.' : 'No swiss rounds recorded yet.'));
   if (model.hasRounds) {
-    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ♛`
+    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
       : model.gateState === 'stands' ? ' · champion-gate: champion stands'
       : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
     lCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'each round pairs the field; Copeland points accumulate (win 1 / draw ½) · hover a pairing for its Δ scalar · ♛ = champion · ♔ = former champion (displaced incumbent) — the swiss leader must beat the incumbent at the champion-gate'
+      'each round pairs the field; Copeland points accumulate (win 1 / draw ½) · hover a pairing for its Δ scalar · ' + CROWN.current + ' = champion · ' + CROWN.former + ' = former champion (displaced incumbent) — the swiss leader must beat the incumbent at the champion-gate'
       + gateNote
       + (model.live ? ' · LIVE — the winner is not committed until the final gate' : '') }));
   }
@@ -791,189 +793,9 @@ export function racingModel(st) {
   return { rungs, championId, benchmarkId, gateState, gateDelta, live, hasRungs: rungs.length > 0 };
 }
 
-// ── BUILD a PROGRESSIVE live racing model (accumulating, epoch-scoped) ──
-export function buildLiveRacingModel({ at, heartbeat, activeRuns, epochGens } = {}) {
-  if (!at || typeof at !== 'object' || String(at.structure) !== 'racing') return null;
-  const competitors = Array.isArray(at.competitors) ? at.competitors : [];
-  const rawRounds = Array.isArray(at.rounds) ? at.rounds : [];
-  const params = (at.structure_params && typeof at.structure_params === 'object')
-    ? at.structure_params : (at.params && typeof at.params === 'object' ? at.params : {});
-
-  // the field: challengers race; the champion is the benchmark seat (not a rung
-  // runner). Roles come from `competitors[].role`; fall back to seed order
-  // (seed 1 / first = champion) when roles are absent.
-  const championComp = competitors.find((c) => String(c.role || '').toLowerCase() === 'champion')
-    || (competitors.length ? competitors.slice().sort((a, b) => (svg.isNum(a.seed) ? a.seed : 1e9) - (svg.isNum(b.seed) ? b.seed : 1e9))[0] : null);
-  const championId = championComp ? String(championComp.generation_id) : null;
-  const challengerIds = competitors
-    .filter((c) => c !== championComp && c.generation_id != null)
-    .map((c) => String(c.generation_id));
-
-  // No field AND no rounds yet → nothing to show progressively (let the caller
-  // fall through to the honest "starting" placeholder).
-  if (!challengerIds.length && !rawRounds.length) return null;
-
-  const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
-  const rungIndexOf = (mid) => { const m = /^rung(\d+)/.exec(String(mid || '')); return m ? Number(m[1]) : null; };
-  const isFinal = (mid) => String(mid || '') === 'racing-final';
-
-  // index the COMPLETED rounds the active-tournament already recorded.
-  const completedRungs = new Map();  // rungIdx → round (verbatim)
-  let gateRound = null;
-  for (const r of rawRounds) {
-    const mid = firstMatch(r).match_id;
-    if (isFinal(mid)) { gateRound = r; continue; }
-    const ri = rungIndexOf(mid);
-    if (ri != null) completedRungs.set(ri, r);
-  }
-
-  // the ACTIVE rung index from the heartbeat phase (`…:rung2_m1` → 2).
-  const phase = String((heartbeat && heartbeat.phase) || at.phase || '');
-  let activeRung = null;
-  { const m = /rung(\d+)/.exec(phase); if (m) activeRung = Number(m[1]); }
-  // when the phase names no rung but a rounds index is present, fall to it.
-  if (activeRung == null && svg.isNum(at.round_index)) activeRung = at.round_index;
-
-  // the in-flight board units that belong to THIS epoch's gens. active-runs'
-  // own rung/match_id are usually null mid-phase, so we attribute them all to
-  // the heartbeat's active rung.
-  const genSet = epochGens ? new Set([...epochGens].map(String)) : null;
-  const runs = (Array.isArray(activeRuns) ? activeRuns : []).filter((r) => {
-    const g = String(r.generation_id || r.gen || '');
-    if (!g) return false;
-    return genSet ? genSet.has(g) : true;
-  });
-  // per-gen in-flight progress (boards executing right now).
-  const inflightByGen = new Map();   // gen → { count, sumProgress }
-  for (const r of runs) {
-    const g = String(r.generation_id || r.gen);
-    const p = svg.isNum(r.progress) ? r.progress : 0;
-    const cur = inflightByGen.get(g) || { count: 0, sumProgress: 0 };
-    cur.count += 1; cur.sumProgress += p;
-    inflightByGen.set(g, cur);
-  }
-
-  // partial aggregate Δ-vs-champion (challenger − champion) as boards land.
-  const champAgg = svg.isNum(at.partial_champion_agg) ? at.partial_champion_agg : null;
-  const challAgg = svg.isNum(at.partial_challenger_agg) ? at.partial_challenger_agg : null;
-  const partialDelta = (challAgg != null && champAgg != null) ? (challAgg - champAgg) : null;
-
-  // the per-rung board fraction (successive halving): rung N covers
-  // min(1, base·η^N). Honour structure_params.rungs[] fractions when given.
-  const eta = svg.isNum(params.eta) && params.eta >= 2 ? params.eta : 2;
-  const baseFrac = svg.isNum(params.board_fraction) && params.board_fraction > 0 ? params.board_fraction : null;
-  const rungsParam = Array.isArray(params.rungs) ? params.rungs : null;
-  const fracFor = (ri) => {
-    if (rungsParam && rungsParam[ri] && svg.isNum(rungsParam[ri].fraction)) return rungsParam[ri].fraction;
-    return baseFrac == null ? null : Math.min(1, baseFrac * Math.pow(eta, ri));
-  };
-  // total board units per rung for the k/N progress label, if the contract
-  // pins board_size; else null (the label degrades to just the in-flight count).
-  const boardSize = svg.isNum(params.board_size) ? params.board_size
-    : (svg.isNum(at.board_size) ? at.board_size : null);
-  const totalFor = (ri) => {
-    const f = fracFor(ri);
-    if (boardSize != null && f != null) return Math.max(1, Math.round(boardSize * f));
-    if (boardSize != null) return boardSize;
-    return null;
-  };
-
-  // how many rungs does the successive halving have? from explicit rungs[] or
-  // ceil(log_η(field_size)). At minimum, cover the active rung + every completed.
-  const fieldSize = svg.isNum(params.field_size) ? params.field_size : challengerIds.length;
-  let totalRungs = rungsParam ? rungsParam.length
-    : (svg.isNum(at.total_rounds) ? at.total_rounds
-      : (fieldSize > 1 ? Math.ceil(Math.log(fieldSize) / Math.log(eta)) : 1));
-  totalRungs = Math.max(totalRungs, (activeRung != null ? activeRung + 1 : 0),
-    completedRungs.size ? Math.max(...completedRungs.keys()) + 1 : 0, 1);
-
-  // walk rungs 0..totalRungs-1: each rung's field is the survivors of the prior
-  // COMPLETED rung; the active rung gets live progress, later rungs are queued.
-  const rounds = [];
-  let runningField = challengerIds.slice();   // the field entering the current rung
-  for (let ri = 0; ri < totalRungs; ri++) {
-    if (completedRungs.has(ri)) {
-      // carry the committed rung VERBATIM — survivors/cuts persist untouched.
-      const r = completedRungs.get(ri);
-      const m = firstMatch(r);
-      rounds.push(r);
-      runningField = Array.isArray(m.survivors) && m.survivors.length
-        ? m.survivors.map(String) : runningField;
-      continue;
-    }
-    const field = runningField.slice();
-    if (!field.length) break;
-    const isActive = (activeRung != null) ? ri === activeRung
-      : (rounds.every((rr) => completedRungs.has(rr.round_index)) ? ri === completedRungs.size : false);
-    const queued = !isActive;
-    const frac = fracFor(ri);
-    const total = totalFor(ri);
-    // per-lane live progress for the ACTIVE rung.
-    const progress = {};
-    if (isActive) {
-      for (const g of field) {
-        const inf = inflightByGen.get(g);
-        if (inf) {
-          const done = Math.max(0, Math.floor(inf.sumProgress));
-          progress[g] = {
-            inflight: inf.count,
-            done,
-            total: total,
-            partialDelta: partialDelta,
-          };
-        } else {
-          progress[g] = { inflight: 0, done: 0, total: total, partialDelta: null };
-        }
-      }
-    }
-    rounds.push({
-      round_index: ri,
-      label: `Rung ${ri}`,
-      matches: [{
-        match_id: `rung${ri}`,
-        competitors: field,
-        survivors: [],
-        cut: [],
-        board_fraction: frac,
-        // progressive live fields (the ladder reads these; the completed-record
-        // path leaves them undefined and renders as before):
-        live_progress: isActive ? progress : null,
-        queued,
-      }],
-    });
-    // a queued/active rung has no committed survivors; the next rung's field is
-    // the η-cut of THIS field (best-effort: keep the whole field — the real cut
-    // lands when the rung completes and replaces this synthesised rung).
-    if (!isActive && !queued) runningField = field;
-  }
-
-  // the champion gate — carry a committed `racing-final` verbatim; else a
-  // pending gate the renderer reads as "deciding…" (NEVER "rejected" while live).
-  if (gateRound) {
-    rounds.push(gateRound);
-  } else {
-    rounds.push({
-      round_index: totalRungs,
-      label: 'Champion gate',
-      matches: [{ match_id: 'racing-final', competitors: [championId].filter(Boolean), board_fraction: 1.0 }],
-    });
-  }
-
-  return normalizeStructure({
-    structure: 'racing',
-    structure_params: params,
-    competitors,
-    rounds,
-    standings: Array.isArray(at.standings) ? at.standings : [],
-    champion_lineage: Array.isArray(at.champion_lineage) ? at.champion_lineage : [],
-    phase: at.phase != null ? at.phase : (heartbeat && heartbeat.phase) || 'running',
-    source: 'live',
-  }, true);
-}
-
 // shared: attribute in-flight /api/active-runs to per-gen board units (gen →
-// { count, sumProgress }), scoped to this epoch's gens. The swiss/elim builders
-// fold these into per-pairing/per-match done counts.
+// { count, sumProgress }), scoped to this epoch's gens. The unified live model
+// folds these into per-match done counts.
 function inflightByGen(activeRuns, epochGens) {
   const genSet = epochGens ? new Set([...epochGens].map(String)) : null;
   const map = new Map();
@@ -989,71 +811,121 @@ function inflightByGen(activeRuns, epochGens) {
   return map;
 }
 
-// ── BUILD a PROGRESSIVE live ROUND-BASED model (swiss + elim) ───────
+// ── BUILD the unified LIVE model — published rounds + active-runs overlay ──
 //
-// The swiss/elim analogue of buildLiveRacingModel: an ACCUMULATING `st` from
-// no field/rounds.
-function buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, byeDecides, minRounds) {
+// The backend now PUBLISHES the live tournament topology on
+// /api/active-tournament DURING the run: `rounds` (each round's matches, with
+// in-flight matches carrying `winner: null` + `pending: true`) and `standings`.
+// So the dashboard no longer SYNTHESISES rung/round topology from the field +
+// heartbeat — it consumes the published rounds verbatim and only OVERLAYS the
+// per-board PROGRESS that still lives in /api/active-runs (the contract pins
+// per-board progress there, not on the tournament).
+//
+// This ONE path serves racing / swiss / single_elim / double_elim — the prior
+// per-structure synthesis builders were workarounds for the missing live data
+// and are gone. Each published, still-pending match is stamped with the
+// in-flight board count + a partial `done` tally (and, for racing, a per-lane
+// `live_progress` map) so the ladder/bracket/funnel fills board-by-board
+// without flashing. A finished match is carried through untouched.
+//
+// Returns null only when the payload is not the matching structure OR carries
+// NEITHER competitors NOR rounds yet — the caller then shows the honest
+// "starting" placeholder.
+function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
+  if (!at || typeof at !== 'object') return null;
+  const structure = String(at.structure || '');
   const competitors = Array.isArray(at.competitors) ? at.competitors : [];
   const rawRounds = Array.isArray(at.rounds) ? at.rounds : [];
   const params = (at.structure_params && typeof at.structure_params === 'object')
     ? at.structure_params : (at.params && typeof at.params === 'object' ? at.params : {});
   if (!competitors.length && !rawRounds.length) return null;
 
-  const phase = String((heartbeat && heartbeat.phase) || at.phase || '');
-  let activeRound = null;
-  { const m = /round[_:]?(\d+)/.exec(phase); if (m) activeRound = Number(m[1]); }
-  if (activeRound == null && svg.isNum(at.round_index)) activeRound = at.round_index;
-  const roundDone = (r) => {
-    const ms = Array.isArray(r.matches) ? r.matches : [];
-    return ms.length > 0 && ms.every((m) => m && (m.winner || m.decision || (byeDecides && m.bye)));
-  };
-  if (activeRound == null) {
-    const idx = rawRounds.findIndex((r) => !roundDone(r));
-    activeRound = idx >= 0 ? idx : rawRounds.length;
-  }
+  const isRacing = structure === 'racing';
+  const isFinal = (mid) => String(mid || '') === 'racing-final';
+  const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
   const inflight = inflightByGen(activeRuns, epochGens);
+
+  // per-board total (k/N progress label): the contract pins board_size; for
+  // racing each rung covers a board fraction (board_fraction on the match).
   const boardSize = svg.isNum(params.board_size) ? params.board_size
     : (svg.isNum(at.board_size) ? at.board_size : null);
-  // swiss walks a fixed contract length (so future rounds queue); elim walks the
-  // recorded rounds only (the bracket shape is fixed by what was seeded).
-  const totalRounds = Math.max(minRounds ? params.rounds || 0 : 0, rawRounds.length,
-    (activeRound != null ? activeRound + 1 : 0), 1);
+  const totalFor = (m) => {
+    if (boardSize != null && isRacing && svg.isNum(m.board_fraction)) {
+      return Math.max(1, Math.round(boardSize * m.board_fraction));
+    }
+    return boardSize;
+  };
 
-  const fillMatch = (m, isActive, queued) => {
-    const comps = Array.isArray(m.competitors) ? m.competitors.map(String) : [];
-    if (m.winner || m.decision || (byeDecides && m.bye)) return m;
+  // a partial aggregate Δ-vs-champion (challenger − champion) for racing lanes.
+  const champAgg = svg.isNum(at.partial_champion_agg) ? at.partial_champion_agg : null;
+  const challAgg = svg.isNum(at.partial_challenger_agg) ? at.partial_challenger_agg : null;
+  const partialDelta = (challAgg != null && champAgg != null) ? (challAgg - champAgg) : null;
+
+  // a match is SETTLED when it carries a winner / decision (a racing rung is
+  // settled once survivors/cut land; a bye settles a swiss/elim slot).
+  const settled = (m) => !!(m.winner || m.decision
+    || (Array.isArray(m.survivors) && m.survivors.length)
+    || (Array.isArray(m.cut) && m.cut.length)
+    || m.bye);
+
+  // overlay in-flight board progress onto a still-pending PUBLISHED match.
+  const overlay = (m, queued) => {
+    if (settled(m)) return m;
+    const total = totalFor(m);
+    if (isRacing) {
+      // a racing rung's field is its competitors; surface a per-lane
+      // live_progress map so the ladder shows each lane racing k/N boards.
+      const field = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
+      const progress = {};
+      for (const g of field) {
+        const inf = inflight.get(g);
+        progress[g] = inf
+          ? { inflight: inf.count, done: Math.max(0, Math.floor(inf.sumProgress)), total, partialDelta }
+          : { inflight: 0, done: 0, total, partialDelta: null };
+      }
+      return Object.assign({}, m, { winner: null, pending: true, queued, live_progress: queued ? null : progress });
+    }
+    // swiss / elim: a per-match done/inflight tally over the pairing's gens.
+    const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
     let done = 0; let inf = 0;
     for (const g of comps) { const u = inflight.get(g); if (u) { inf += u.count; done += Math.floor(u.sumProgress); } }
     return Object.assign({}, m, { winner: null, pending: true,
-      inflight: isActive ? inf : 0, done: isActive ? done : 0, total: boardSize, queued });
+      inflight: queued ? 0 : inf, done: queued ? 0 : done, total, queued });
   };
 
-  const rounds = [];
-  for (let ri = 0; ri < totalRounds; ri++) {
-    const raw = rawRounds[ri] || null;
-    if (raw && roundDone(raw)) { rounds.push(raw); continue; }
-    const isActive = ri === activeRound;
-    const queued = !isActive;
-    const matches = (raw && Array.isArray(raw.matches) ? raw.matches : []).map((m) => fillMatch(m, isActive, queued));
-    rounds.push({ round_index: raw && raw.round_index != null ? raw.round_index : ri, label: (raw && raw.label) || `Round ${ri + 1}`, queued, matches });
-  }
+  // the ACTIVE round/rung is the first PUBLISHED round whose matches are not all
+  // settled; earlier rounds are committed, later ones queued. The heartbeat
+  // phase (`…:rung2_m1` / `…:round_2`) confirms it when present.
+  const roundSettled = (r) => {
+    const ms = Array.isArray(r.matches) ? r.matches : [];
+    return ms.length > 0 && ms.every(settled);
+  };
+  const phase = String((heartbeat && heartbeat.phase) || at.phase || '');
+  let activeIdx = null;
+  { const m = isRacing ? /rung(\d+)/.exec(phase) : /round[_:]?(\d+)/.exec(phase); if (m) activeIdx = Number(m[1]); }
+  if (activeIdx == null && svg.isNum(at.round_index)) activeIdx = at.round_index;
 
-  // BLOOM the ladder from the applied FIELD: when the tournament is running but
-  // no round has scored yet (no committed winner anywhere) AND the payload
-  // carries no standings, seed a zero-point standings row per competitor so the
-  // swiss ladder shows the applied challengers as live competitors immediately —
-  // not a "being seeded" empty (the proposing tracker is the SEED of the ladder,
-  // not a dead-end list). Once ANY pairing scores, swissModel accumulates the
-  // real Copeland points from the pairings — so this seed never masks progress.
+  const rounds = rawRounds.map((r, i) => {
+    if (roundSettled(r)) return r;
+    const m0 = firstMatch(r);
+    // the gate is never "active" until its rung field settles; keep it pending.
+    const isGate = isRacing && isFinal(m0.match_id);
+    const ri = svg.isNum(r.round_index) ? r.round_index : i;
+    const isActive = isGate ? false : (activeIdx != null ? ri === activeIdx
+      : rawRounds.slice(0, i).every(roundSettled));
+    const queued = !isActive;
+    const matches = (Array.isArray(r.matches) ? r.matches : []).map((m) => overlay(m, queued));
+    return { round_index: ri, label: r.label || (isRacing ? `Rung ${ri}` : `Round ${ri + 1}`), queued, matches };
+  });
+
+  // BLOOM the standings from the applied FIELD: when the run is past proposing
+  // but no match has scored yet AND the payload carries no standings, seed a
+  // zero-point row per competitor so the swiss/elim ladder shows the applied
+  // challengers as live competitors immediately — not a "being seeded" empty.
+  // Once any match scores, the structure model accumulates the real points.
   let standings = Array.isArray(at.standings) ? at.standings : [];
-  const anyScored = rounds.some((r) => (Array.isArray(r.matches) ? r.matches : []).some((m) => m && (m.winner || m.decision)));
-  // the bloom only fires once the TOURNAMENT phase has started — during the
-  // proposing phase the field is still being minted, so the hero keeps the
-  // proposing-step tracker (the SEED of the ladder) rather than blooming early.
+  const anyScored = rounds.some((r) => (Array.isArray(r.matches) ? r.matches : []).some(settled));
   const isProposing = /(^|[:_-])propos/i.test(phase);
-  // a real field has at least one CHALLENGER (not just the champion seat) —
-  // otherwise there is nothing yet to seed the ladder with.
   const challengerCount = competitors.filter((c) => c && c.generation_id != null && String(c.role || '').toLowerCase() !== 'champion').length;
   if (!standings.length && !anyScored && !isProposing && challengerCount > 0) {
     standings = competitors
@@ -1066,7 +938,7 @@ function buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, byeDecides, m
   }
 
   return normalizeStructure({
-    structure: String(at.structure),
+    structure,
     structure_params: params,
     competitors,
     rounds,
@@ -1077,16 +949,61 @@ function buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, byeDecides, m
   }, true);
 }
 
-// Progressive live swiss/elim models — thin wrappers over the shared round-based
-// builder. Null when `at` is not the matching structure.
+// Structure-typed wrappers over the ONE unified live-model builder. Each returns
+// null when `at` is not its structure, so the caller can dispatch by shape.
+export function buildLiveRacingModel({ at, heartbeat, activeRuns, epochGens } = {}) {
+  if (!at || typeof at !== 'object' || String(at.structure) !== 'racing') return null;
+  return buildLiveModel(at, heartbeat, activeRuns, epochGens);
+}
 export function buildLiveSwissModel({ at, heartbeat, activeRuns, epochGens } = {}) {
   if (!at || typeof at !== 'object' || String(at.structure) !== 'swiss') return null;
-  return buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, false, true);
+  return buildLiveModel(at, heartbeat, activeRuns, epochGens);
 }
 export function buildLiveElimModel({ at, heartbeat, activeRuns, epochGens } = {}) {
   if (!at || typeof at !== 'object'
     || (String(at.structure) !== 'single_elim' && String(at.structure) !== 'double_elim')) return null;
-  return buildLiveRoundModel(at, heartbeat, activeRuns, epochGens, true, false);
+  return buildLiveModel(at, heartbeat, activeRuns, epochGens);
+}
+
+// ── ONE candidate's MATCH-UPS from the LIVE published rounds ─────────
+//
+// The completed match-up feed (`/api/tournaments` → bracket.matchups) is EMPTY
+// until matches commit, so a candidate running its FIRST round read "did not
+// run in any round" even while the per-board scoring showed it racing `WB-R0-0`.
+// The backend now PUBLISHES the live rounds on /api/active-tournament, so derive
+// THIS candidate's match-ups from those rounds: every published match whose
+// `competitors` includes `genId`. The first competitor is the champion seat, the
+// rest are challengers (the gauntlet/elim/swiss convention the static feed uses);
+// `winner: null` ⇒ pending. Returns [] when the live payload carries no rounds
+// for this candidate (so the caller can fall back to the static feed). When
+// `genId` is null EVERY published match-up is returned (the caller filters per
+// candidate via the `champion`/`challenger` fields, exactly as for the static
+// feed).
+export function liveMatchupsForCandidate(at, genId) {
+  if (!at || typeof at !== 'object') return [];
+  const id = genId == null ? null : String(genId);
+  const rounds = Array.isArray(at.rounds) ? at.rounds : [];
+  const out = [];
+  for (const r of rounds) {
+    for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+      const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
+      if (id != null && comps.indexOf(id) < 0) continue;
+      // champion = the first seat; each other competitor is a challenger.
+      const champion = comps[0] != null ? comps[0] : null;
+      const challenger = comps.length > 1 ? comps[comps.length - 1] : (comps[0] || null);
+      // a racing rung is a multi-way cut, not a 1v1 — surface it as a row whose
+      // champion seat is the field's benchmark when present, else the first id.
+      out.push({
+        champion, challenger,
+        decision: m.decision || (m.winner ? 'promoted' : null),
+        delta_scalar: svg.isNum(m.delta_scalar) ? m.delta_scalar : null,
+        match_id: m.match_id || null,
+        hypothesis_core_idea: null,
+        live: true,
+      });
+    }
+  }
+  return out;
 }
 
 // ── ONE candidate's PATH through the racing tournament ──────────────
@@ -1222,13 +1139,13 @@ function renderRacing(st, ctx, epochId) {
       })
     : empty(live ? 'The race is being seeded — the first rung fills in as runs land.' : 'No rungs evaluated yet.'));
   if (rungs.length) {
-    const gateNote = gateState === 'crowned' ? ` · champion-gate: ${championId} promoted ♚`
+    const gateNote = gateState === 'crowned' ? ` · champion-gate: ${championId} promoted ${CROWN.current}`
       : gateState === 'stands' ? ' · champion-gate: champion stands'
       : gateState === 'deciding' ? ' · champion-gate: deciding…'
       : '';
     card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
       (benchmarkId ? `the field is raced vs the champion v0 = ${benchmarkId}; every rung Δ is Δ-vs-v0 and v0 defends at the champion-gate · ` : '')
-      + 'each rung races the field on a fraction of the board, then cuts the worst by η · ✕ = cut · ↑ = survives · ♚ = champion-gate winner · click a competitor → open'
+      + 'each rung races the field on a fraction of the board, then cuts the worst by η · ✕ = cut · ↑ = survives · ' + CROWN.current + ' = champion-gate winner · click a competitor → open'
       + gateNote
       + (live ? ' · LIVE — the eventual winner is not committed until the final gate' : '') }));
   }
@@ -1243,6 +1160,7 @@ function renderRacing(st, ctx, epochId) {
 function standingsTable(st, ctx, epochId, live) {
   const standings = (st && Array.isArray(st.standings)) ? st.standings.slice() : [];
   if (!standings.length) return null;
+  const structure = (st && st.structure) || 'gauntlet';
   standings.sort((a, b) => (svg.isNum(a.rank) ? a.rank : 1e9) - (svg.isNum(b.rank) ? b.rank : 1e9));
   const tbl = el('table', { class: 'dn-board-table dt-standings' });
   tbl.appendChild(el('thead', null, [el('tr', null, [
@@ -1251,15 +1169,19 @@ function standingsTable(st, ctx, epochId, live) {
   ])]));
   const tbody = el('tbody');
   for (const s of standings) {
-    let status = String(s.status || '').toLowerCase();
+    let raw = String(s.status || '').toLowerCase();
     // LIVE — the verdicts have not committed; a standing tagged champion /
     // eliminated mid-run is the EVENTUAL outcome read from a half-finished
-    // record. Treat everyone as still racing so nobody is mislabeled.
-    if (live && (status === 'champion' || status === 'eliminated')) status = 'racing';
+    // record. Treat everyone as still in contention so nobody is mislabeled —
+    // and route through the SHARED structure mapper so the in-contention word
+    // is structure-correct (elim → "in bracket", swiss → "playing", racing →
+    // "racing"), NEVER a blanket "racing" for a non-racing tournament.
+    if (live && (raw === 'champion' || raw === 'eliminated')) raw = 'competing';
+    const status = structureStatusLabel(raw, structure);
     const rowCls = status === 'champion' ? 'dn-board-champ' : status === 'eliminated' ? 'dt-standings-out' : '';
     tbody.appendChild(el('tr', { class: rowCls }, [
       el('td', { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' }),
-      el('td', { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ♛' : '') }),
+      el('td', { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
       el('td', null, [statusPill(status)]),
       el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' }),
       el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' }),
@@ -1275,7 +1197,7 @@ function statusPill(status) {
   const s = status || 'alive';
   // map the standings vocabulary onto verdict-pill semantics so the pill
   // reads in every theme: champion→promoted, eliminated→rejected, else→deferred
-  // (alive / racing — still in contention).
+  // (alive / playing / in bracket / racing — still in contention).
   const verdict = s === 'champion' ? 'promoted' : s === 'eliminated' ? 'rejected' : 'deferred';
   const pill = verdictPill(verdict);
   pill.textContent = s;

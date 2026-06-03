@@ -429,6 +429,31 @@ def test_per_entry_legacy_untagged_run_yields_null(tmp_path) -> None:
     assert entry["rung"] is None
 
 
+def test_per_entry_cached_provenance_keys_default_safely(tmp_path) -> None:
+    """The cached-champion provenance keys are additive + tolerant.
+
+    The per-entry payload always carries ``cached`` / ``source_epoch`` /
+    ``source_run`` so the dashboard can render a cached-champion badge. On an
+    index whose ``loss_profiles`` rows do NOT (yet) carry those columns the
+    read tolerates the absence — ``cached`` defaults to ``False`` and the
+    ``source_*`` fields to ``None``, never raising.
+    """
+    ws, eid = _build_workspace_with_tagged_run(tmp_path)
+    rebuild_index(ws)
+
+    payload = build_per_entry_for_generation(WorkspacePaths(ws), eid, "v1")
+    assert len(payload["entries"]) == 1
+    entry = payload["entries"][0]
+    # the keys are ALWAYS present (the UI reads them unconditionally)...
+    assert "cached" in entry
+    assert "source_epoch" in entry
+    assert "source_run" in entry
+    # ...and default safely for a freshly-executed (non-cached) run.
+    assert entry["cached"] is False
+    assert entry["source_epoch"] is None
+    assert entry["source_run"] is None
+
+
 def test_reindex_carries_match_id_into_index(tmp_path) -> None:
     """A full reindex re-derives match_id straight from loss.json."""
     from zicato.index.query import loss_profiles_for_generation

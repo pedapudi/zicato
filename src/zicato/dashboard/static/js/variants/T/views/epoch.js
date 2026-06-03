@@ -135,7 +135,7 @@ export async function render(host, ctx, params) {
   }
 
   const digest = JSON.stringify({
-    epochId, goal: ep.goal || '', briefLen: (ep.brief || '').length, closed: !!ep.closed,
+    epochId, goal: ep.goal || '', objective: objectiveText(ep), briefLen: (ep.brief || '').length, closed: !!ep.closed,
     structure: tournament ? [tournament.structure, JSON.stringify(tournament.params || {})] : null,
     nonGauntlet,
     racingFunnel: racingFunnel ? structureDigest(racingFunnel.st) : null,
@@ -153,7 +153,7 @@ export async function render(host, ctx, params) {
       el('h1', { class: 'dn-h1', text: `Epoch ${epochId}` }),
       el('div', { class: 'dn-objective' }, [
         el('div', { class: 'lab', text: 'objective' }),
-        el('div', { class: 'txt', text: ep.goal && ep.goal.trim() ? ep.goal : '(no objective recorded)' }),
+        el('div', { class: 'txt', text: objectiveText(ep) }),
       ]),
       tournament ? el('div', { class: 'dt-structure-line' }, [
         structurePill(tournament.structure, tournament.params),
@@ -190,7 +190,14 @@ export async function render(host, ctx, params) {
     // NON-gauntlet epoch swaps in a compact structure OVERVIEW (the survival
     // funnel / swiss bump+bar / elim mini-bracket) with a "See Match-ups" link.
     if (nonGauntlet) {
-      const fieldN = gens.length;
+      // TRUTHFUL "field of N": the real competitors are the champion + the
+      // APPLIED challengers (gens that actually entered the tournament), NOT the
+      // raw gen count — which includes unscored ORPHANS (proposed-but-dropped
+      // candidates with no scalar and no parent-lineage). A gen counts toward the
+      // field when it has a scalar (it was scored), is promoted, or is the seed/
+      // champion; an orphan (unscored, non-seed, non-promoted) is excluded.
+      const fieldN = gens.filter((g) =>
+        g.promoted || !g.parent || scalarByGen.has(g.id)).length;
       const params = (tournament && tournament.params) || {};
       const rungs = Array.isArray(params.rungs) ? params.rungs.length : null;
       const facts = [el('span', { class: 'dt-struct-strip-lab', text: structureLabel(structure, params) })];
@@ -226,8 +233,8 @@ export async function render(host, ctx, params) {
           rungs: m.rungs, championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
           gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
         }), (m.benchmarkId ? `the field is raced vs the champion v0 = ${m.benchmarkId}; every Δ is Δ-vs-v0 and v0 defends at the gate · ` : '')
-          + 'successive halving — each rung races the field on a growing board fraction, then cuts the worst by η · ✕ = cut · ↑ = survives · ♚ = crowned at the full-board gate · click a competitor → open'
-          + gateNote(m, '♚'));
+          + 'successive halving — each rung races the field on a growing board fraction, then cuts the worst by η · ✕ = cut · ↑ = survives · ' + svg.CROWN.current + ' = crowned at the full-board gate · click a competitor → open'
+          + gateNote(m, svg.CROWN.current));
       } else if (structure === 'swiss' && swissOver) {
         // the SWISS OVERVIEW: standings bump chart + ranked Copeland bar.
         const m = swissOver.model;
@@ -235,8 +242,8 @@ export async function render(host, ctx, params) {
           series: m.series, bars: m.bars, labels: m.labels,
           championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
           gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
-        }), 'each line tracks one competitor’s standings rank round-to-round (rank 1 = top) — the leader emerges as lines cross · the bar ranks final Copeland points (win 1 / draw ½) · ♛ = champion · ♔ = former champion (displaced incumbent)'
-          + gateNote(m, '♛'));
+        }), 'each line tracks one competitor’s standings rank round-to-round (rank 1 = top) — the leader emerges as lines cross · the bar ranks final Copeland points (win 1 / draw ½) · ' + svg.CROWN.current + ' = champion · ' + svg.CROWN.former + ' = former champion (displaced incumbent)'
+          + gateNote(m, svg.CROWN.current));
       } else if ((structure === 'single_elim' || structure === 'double_elim') && elimOver) {
         // the ELIM OVERVIEW: a compact mini-bracket — elimBracket at small scale.
         const m = elimOver.model;
@@ -245,9 +252,9 @@ export async function render(host, ctx, params) {
           compact: true, winners: m.winners, losers: m.losers,
           championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
           gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
-        }), 'the bracket shape + who advanced — ✦ = match winner · the bracket winner must beat the incumbent at the champion-gate ♚'
+        }), 'the bracket shape + who advanced — ✦ = match winner · the bracket winner must beat the incumbent at the champion-gate ' + svg.CROWN.current
           + (isDouble ? ' · the losers’ bracket gives a second life (double-elim)' : '')
-          + gateNote(m, '♚'));
+          + gateNote(m, svg.CROWN.current));
       } else {
         // NO DATA (no record yet, or mid-proposing) → an HONEST brief line — the
         // structure facts + a pointer to Match-ups, NEVER the old negative
@@ -296,4 +303,32 @@ export async function render(host, ctx, params) {
     nodes.push(section('Board entries × generations · drift loss (heatmap)', hmCard));
     return nodes;
   });
+}
+
+// The epoch OBJECTIVE line: the explicit `goal` if set, else a display-only
+// fallback to the epoch's OWN brief TITLE — the first H1 (`# …`) of brief.md,
+// stripping a leading "Epoch eN — " / "Epoch eN: " prefix. This reads the
+// epoch's self-contained brief (no cross-epoch reach), so an auto-rolled epoch
+// whose goal was never frozen no longer reads "(no objective recorded)". Only
+// when neither a goal nor a brief title exists does it fall back to the honest
+// "(no objective recorded)".
+export function objectiveText(ep) {
+  if (ep && typeof ep.goal === 'string' && ep.goal.trim()) return ep.goal.trim();
+  const title = briefTitle(ep && ep.brief);
+  return title || '(no objective recorded)';
+}
+
+// The first H1 of a brief, with a leading "Epoch eN — "/"Epoch eN: " prefix
+// stripped. Null when the brief has no H1.
+export function briefTitle(brief) {
+  if (!brief || typeof brief !== 'string') return null;
+  const lines = brief.replace(/\r\n/g, '\n').split('\n');
+  for (const raw of lines) {
+    const line = raw.trim();
+    const m = /^#\s+(.+)$/.exec(line);   // an H1 (NOT ## / ###)
+    if (m) {
+      return m[1].trim().replace(/^Epoch\s+\S+\s*[—:-]\s*/i, '').trim() || null;
+    }
+  }
+  return null;
 }

@@ -2355,18 +2355,20 @@ test('live tournament: during a racing RUN the match-ups ladder fills from /api/
 });
 
 // ====================================================================
-// PROGRESSIVE LIVE RACING LADDER — buildLiveRacingModel().
+// PROGRESSIVE LIVE RACING LADDER — buildLiveRacingModel() over the UNIFIED
+// buildLiveModel path.
 //
-// During an in-flight race /api/active-tournament.rounds is EMPTY until each
-// matchup COMPLETES, so the plain ladder sat on the "being seeded" empty state
-// for the whole race. The progressive model fills rung-by-rung from the UNION
-// of: competitors (field) + heartbeat phase (active rung) + /api/active-runs
-// (per-lane board progress) + partial_*_agg (partial Δ) + completed rounds —
-// and ACCUMULATES (a finished rung persists when the next starts).
+// The backend now PUBLISHES the live tournament topology on
+// /api/active-tournament DURING the run: `rounds` with each rung's matches (an
+// in-flight rung's match carries no survivors/cut + pending). The unified live
+// model consumes the published rounds verbatim and OVERLAYS the per-board
+// PROGRESS that still lives in /api/active-runs (per-lane k/N + a partial Δ),
+// then carries committed rungs through untouched (ACCUMULATION).
 // ====================================================================
 
-// the live racing field shape per the brief: v0 champion + v5..v8 challengers,
-// rounds EMPTY (no matchup committed yet), partial aggregates landing.
+// the live racing field shape per the NEW contract: v0 champion + v5..v8
+// challengers, the active rung-0 PUBLISHED (its field pending), partial
+// aggregates landing.
 function liveRacingField(extra) {
   return Object.assign({
     structure: 'racing', phase: 'running',
@@ -2379,15 +2381,19 @@ function liveRacingField(extra) {
       { generation_id: 'v7', seed: 4, role: 'challenger' },
       { generation_id: 'v8', seed: 5, role: 'challenger' },
     ],
-    rounds: [],
+    // the backend publishes the active rung + the (pending) champion gate live.
+    rounds: [
+      { round_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v5', 'v6', 'v7', 'v8'], survivors: [], cut: [], board_fraction: 0.25, pending: true }] },
+      { round_index: 1, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0'], board_fraction: 1.0, winner: null, pending: true }] },
+    ],
     standings: [],
     champion_lineage: ['v0'],
   }, extra || {});
 }
 
-// (a) competitors-only (rounds empty) → the field + rung-0 lanes render with
-// progress; NOT the "being seeded" empty state.
-test('live racing model: competitors-only (rounds empty) builds rung-0 lanes from the field — not the "being seeded" empty state', () => {
+// (a) published rung-0 (pending) → the field + rung-0 lanes render with progress
+// overlaid from active-runs; NOT the "being seeded" empty state.
+test('live racing model: published rung-0 (pending) renders the field with active-runs progress overlaid — not the "being seeded" empty state', () => {
   const at = liveRacingField();
   const model = STRUCT.buildLiveRacingModel({
     at,
@@ -2398,13 +2404,13 @@ test('live racing model: competitors-only (rounds empty) builds rung-0 lanes fro
     ],
     epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
   });
-  assert(model, 'a progressive live racing model was built from competitors alone');
+  assert(model, 'a live racing model was built from the published rounds');
   assertEqual(model.live, true, 'the model is marked live');
   const rungRounds = model.rounds.filter((r) => String(r.matches[0].match_id) !== 'racing-final');
-  assert(rungRounds.length >= 1, 'at least rung 0 is present from the field');
+  assert(rungRounds.length >= 1, 'at least rung 0 is present from the published rounds');
   const r0 = rungRounds[0].matches[0];
-  assertDeep([...r0.competitors].sort(), ['v5', 'v6', 'v7', 'v8'], 'rung-0 field is the challenger set (champion v0 is the benchmark, not a lane)');
-  assert(r0.live_progress && r0.live_progress.v5 && r0.live_progress.v6, 'rung-0 carries per-lane live progress for the racing challengers');
+  assertDeep([...r0.competitors].sort(), ['v5', 'v6', 'v7', 'v8'], 'rung-0 field is the published challenger set (champion v0 is the benchmark, not a lane)');
+  assert(r0.live_progress && r0.live_progress.v5 && r0.live_progress.v6, 'rung-0 carries per-lane live progress overlaid from active-runs');
   assertEqual(r0.queued, false, 'rung-0 is the ACTIVE rung (not queued)');
 
   // it renders rung-0 lanes (not the empty state) when fed to renderStructure.
@@ -2412,7 +2418,7 @@ test('live racing model: competitors-only (rounds empty) builds rung-0 lanes fro
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
   const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'a racing ladder SVG rendered from the competitors-only live model');
+  assert(ladder, 'a racing ladder SVG rendered from the published-rounds live model');
   assert(!/being seeded/i.test(host.textContent), 'NOT the "being seeded" empty state once the field exists');
   for (const id of ['v5', 'v6', 'v7', 'v8']) assert(ladder.textContent.includes(id), 'rung-0 names the live challenger lane — ' + id);
 });
@@ -2447,12 +2453,14 @@ test('live racing model: an in-flight rung shows per-lane "k/N boards" progress 
 // (c) rung-0 complete (rounds has rung0) → survivors ↑ / cuts ✗; then rung-1
 // starts (new active-runs) → rung-0's completed result is STILL present.
 test('live racing model: a completed rung ACCUMULATES — when rung-1 starts, rung-0 survivors/cuts persist (not discarded)', () => {
-  // rung-0 has COMPLETED (committed in rounds): v7,v8 survive, v5,v6 cut. The
-  // heartbeat now names rung-1 (active), with v7,v8 racing.
+  // rung-0 has COMPLETED (committed in the published rounds): v7,v8 survive,
+  // v5,v6 cut. The backend now publishes rung-1 (active), with v7,v8 racing.
   const at = liveRacingField({
     round_index: 1,
     rounds: [
       { round_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v5', 'v6', 'v7', 'v8'], survivors: ['v7', 'v8'], cut: ['v5', 'v6'], board_fraction: 0.25 }] },
+      { round_index: 1, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v7', 'v8'], survivors: [], cut: [], board_fraction: 0.5, pending: true }] },
+      { round_index: 2, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0'], board_fraction: 1.0, winner: null, pending: true }] },
     ],
   });
   const model = STRUCT.buildLiveRacingModel({
@@ -2539,13 +2547,13 @@ test('live racing model: a fully-completed race (all rounds, no live) still reco
   for (const n of nodes) host.appendChild(n);
   const ladder = svgsByClass(host, 'dn-raceladder')[0];
   assert(ladder, 'the completed ladder still renders');
-  assert(/♚/.test(ladder.textContent), 'the completed gate still crowns the champion ♚');
+  assert(/♛/.test(ladder.textContent), 'the completed gate still crowns the champion ♛');
   assert(!/queued/.test(ladder.textContent), 'a completed ladder shows NO queued rungs');
 });
 
-// (g) end-to-end through the match-ups page: a live race with EMPTY rounds fills
-// progressively (the page no longer sits on "being seeded").
-test('live racing (e2e): the match-ups page fills progressively from competitors when active-tournament.rounds is empty', async () => {
+// (g) end-to-end through the match-ups page: a live race with PUBLISHED rounds
+// fills progressively (the page no longer sits on "being seeded").
+test('live racing (e2e): the match-ups page fills progressively from the published live rounds', async () => {
   freshState();
   const at = liveRacingField({ partial_champion_agg: 10, partial_challenger_agg: 7 });
   const F = {
@@ -2660,8 +2668,10 @@ test('elim (completed): double-elim → ONE bracket tree carrying the losers’ 
 
 // ---- progressive LIVE swiss model -----------------------------------
 
-// a live swiss field: v0..v3, round 0 PAIRED but undecided (no winners yet),
-// rounds 1+2 not yet paired (the contract names 3 rounds).
+// a live swiss field per the NEW contract: v0..v3, the backend PUBLISHES the
+// active round 0 (paired but undecided) plus the next round 1 queued (its
+// pairings published as the bracket fills). Future rounds appear as the backend
+// publishes them — the dashboard renders what is published, no synthesis.
 function liveSwissField(extra) {
   return Object.assign({
     structure: 'swiss', phase: 'running', epoch_id: HERO_EPOCH,
@@ -2673,13 +2683,17 @@ function liveSwissField(extra) {
         { match_id: 'sw_r0_m0', competitors: ['v0', 'v1'] },
         { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'] },
       ] },
+      { round_index: 1, label: 'Round 2', matches: [
+        { match_id: 'sw_r1_m0', competitors: ['v0', 'v2'] },
+        { match_id: 'sw_r1_m1', competitors: ['v1', 'v3'] },
+      ] },
     ],
     standings: [],
     champion_lineage: ['v0'],
   }, extra || {});
 }
 
-test('live swiss model: a paired-but-undecided round fills in board-by-board (active round, not empty)', () => {
+test('live swiss model: the active published round fills in board-by-board (overlaid progress), later published rounds queue', () => {
   const model = STRUCT.buildLiveSwissModel({
     at: liveSwissField(),
     heartbeat: { phase: 'tournament:round_0', generation_id: 'v1' },
@@ -2689,15 +2703,15 @@ test('live swiss model: a paired-but-undecided round fills in board-by-board (ac
     ],
     epochGens: ['v0', 'v1', 'v2', 'v3'],
   });
-  assert(model && model.live, 'a live swiss model built from the field');
+  assert(model && model.live, 'a live swiss model built from the published rounds');
   const m = STRUCT.swissModel(model);
-  assert(m.rounds.length >= 3, 'all three swiss rounds present (active + queued)');
+  assert(m.rounds.length >= 2, 'the published swiss rounds present (active + queued)');
   const r0 = m.rounds[0];
   assertEqual(r0.queued, false, 'round 0 is the ACTIVE round (not queued)');
   const p0 = r0.pairings[0];
   assert(p0.pending, 'an undecided active pairing is pending (not struck as decided)');
-  assert(p0.inflight >= 1 || p0.done >= 1, 'the active pairing carries in-flight board progress');
-  assert(m.rounds[1].queued && m.rounds[2].queued, 'the future swiss rounds are queued');
+  assert(p0.inflight >= 1 || p0.done >= 1, 'the active pairing carries in-flight board progress overlaid from active-runs');
+  assert(m.rounds[1].queued, 'the next published swiss round is queued (board progress not overlaid yet)');
 
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, HERO_EPOCH);
   const host = document.createElement('div');
@@ -2858,7 +2872,7 @@ test('racing ladder: renders rungs with board fractions, cut (✕) vs survivor (
   assert(txt.includes('↑'), 'a survivor is marked ↑');
   // the trailing champion-gate column crowns the final survivor as champion.
   assert(txt.includes('champion-gate'), 'a champion-gate column is rendered');
-  assert(txt.includes('♚ v1') || txt.includes('♚'), 'the final survivor (v1) flows into the champion-gate seat as the new champion ♚');
+  assert(txt.includes('♛ v1') || txt.includes('♛'), 'the final survivor (v1) flows into the champion-gate seat as the new champion ♛');
   // survivor → next-rung connectors trace the halving.
   assert(allByClass(node, 'dn-raceladder-edge').length >= 1, 'survivor connectors trace the field into the next rung');
 });
@@ -2945,7 +2959,7 @@ test('racing reconstruct: groups the per-challenger records into rung0 {v1,v2,v3
 
 // ---- (b) the champion-gate crowns v3 (NOT "tbd") --------------------
 
-test('racing reconstruct: the champion-gate resolves v3 as the promoted champion ♚ (racing-final won + champion_lineage), NOT "tbd"', () => {
+test('racing reconstruct: the champion-gate resolves v3 as the promoted champion ♛ (racing-final won + champion_lineage), NOT "tbd"', () => {
   const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
   const gate = st.rounds.find((r) => String(r.matches[0].match_id) === 'racing-final');
   assert(gate, 'a racing-final champion-gate round was reconstructed');
@@ -2964,7 +2978,7 @@ test('racing reconstruct: the champion-gate resolves v3 as the promoted champion
   const ladder = svgsByClass(wrap, 'dn-raceladder')[0];
   assert(ladder, 'the racing ladder rendered from the reconstruction');
   assert(ladder.textContent.includes('champion-gate'), 'a champion-gate column rendered');
-  assert(ladder.textContent.includes('♚ v3'), 'the gate crowns v3 as the new champion ♚');
+  assert(ladder.textContent.includes('♛ v3'), 'the gate crowns v3 as the new champion ♛');
   assert(!ladder.textContent.includes('tbd'), 'the gate is NOT the empty "tbd" skeleton');
   assert(wrap.textContent.includes('v3 promoted'), 'the caption states the champion-gate outcome (v3 promoted)');
 });
@@ -3050,7 +3064,7 @@ test('racing reconstruct: the match-ups page rebuilds the full ladder from the p
   for (const id of ['v1', 'v2', 'v3', 'v4']) assert(ladder.textContent.includes(id), 'rung0 names the full field — ' + id);
   assert(ladder.textContent.includes('✕'), 'cut runners are struck ✕');
   assert(ladder.textContent.includes('↑'), 'survivors are marked ↑');
-  assert(ladder.textContent.includes('♚ v3'), 'the champion-gate crowns v3 as the new champion ♚ (not tbd)');
+  assert(ladder.textContent.includes('♛ v3'), 'the champion-gate crowns v3 as the new champion ♛ (not tbd)');
   assert(allByClass(host, 'dt-live-pill').length === 0, 'idle reconstruction carries NO live badge');
 });
 
@@ -3494,7 +3508,7 @@ test('lifecycle BOARD column: the multiplicity badge style + raced disc marker a
 // ====================================================================
 
 // the survival-funnel SVG primitive renders the field → cuts → survivor → gate.
-test('survival funnel: the SVG narrows N→…→1, marks cuts ✕ / survivors ↑, and crowns the gate ♚', () => {
+test('survival funnel: the SVG narrows N→…→1, marks cuts ✕ / survivors ↑, and crowns the gate ♛', () => {
   const rungs = [
     { label: 'Rung 0', competitors: ['v1', 'v2', 'v3', 'v4'], survivors: ['v3', 'v4'], cut: ['v1', 'v2'], board_fraction: 0.25, deltas: { v1: 25, v2: 3.3, v3: -0.16, v4: 0.002 } },
     { label: 'Rung 1', competitors: ['v3', 'v4'], survivors: ['v3'], cut: ['v4'], board_fraction: 0.5, deltas: { v3: 1.0, v4: 1.25 } },
@@ -3517,7 +3531,7 @@ test('survival funnel: the SVG narrows N→…→1, marks cuts ✕ / survivors �
   assert(deadEdges.length >= 3, 'eliminated competitors peel off as dead-end branches (v1,v2 at rung0 + v4 at rung1)');
   // the terminal champion-gate crowns the survivor.
   assert(txt.includes('champion-gate'), 'a terminal champion-gate stage rendered');
-  assert(txt.includes('♚ v3'), 'the crowned survivor is shown (♚ v3)');
+  assert(txt.includes('♛ v3'), 'the crowned survivor is shown (♛ v3)');
   assert(!txt.includes('tbd'), 'a settled gate is not the empty tbd skeleton');
 });
 
@@ -3635,7 +3649,7 @@ test('survival funnel: the racing epoch strip renders the funnel (stages narrow 
   for (const id of ['v1', 'v2', 'v3', 'v4']) assert(txt.includes(id), 'rung0 names the full field — ' + id);
   assert(txt.includes('✕'), 'eliminated competitors marked cut (✕) at their rung');
   assert(txt.includes('↑'), 'survivors marked (↑)');
-  assert(txt.includes('♚ v3'), 'the champion-gate crowns the survivor v3 (♚)');
+  assert(txt.includes('♛ v3'), 'the champion-gate crowns the survivor v3 (♛)');
   // the funnel does not duplicate the detailed ladder — it keeps the See Match-ups link.
   assert(host.textContent.includes('See Match-ups'), 'the funnel keeps the See Match-ups → affordance (complementary to the ladder)');
   assertEqual(svgsByClass(host, 'dn-raceladder').length, 0, 'the epoch hero is the funnel, NOT a duplicate of the Match-ups ladder');
@@ -6053,7 +6067,12 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
       { generation_id: 'v1', seed: 2, role: 'challenger' },
       { generation_id: 'v2', seed: 3, role: 'challenger' },
     ],
-    rounds: [], standings: [], champion_lineage: ['v0'],
+    // NEW contract: the backend publishes the active rung-0 + the pending gate.
+    rounds: [
+      { round_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v1', 'v2'], survivors: [], cut: [], board_fraction: 0.25, pending: true }] },
+      { round_index: 1, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0'], board_fraction: 1.0, winner: null, pending: true }] },
+    ],
+    standings: [], champion_lineage: ['v0'],
   };
   installFixtureMap(F);
   coreState.state.setHeartbeat({ phase: 'tournament:round_0:rung0_m1', generation_id: 'v1', epoch_id: TWO_EP_NEW });
@@ -6390,6 +6409,243 @@ test('lifecycle DAG: the pending terminal label is structure-aware (swiss → "�
 
   const unknown = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', decision: 'pending', entries });
   assert(unknown.textContent.includes('⋯ awaiting gate'), 'an unknown structure degrades to "⋯ awaiting gate"');
+});
+
+// ====================================================================
+// CONSOLIDATION WAVE — live tournament truthfulness + visual consistency.
+// ====================================================================
+
+// ---- Task 1: live bracket / ladder / funnel fill from PUBLISHED rounds ----
+
+test('live elim model: PUBLISHED single_elim rounds render the bracket (not "being seeded") with active-runs progress overlaid', () => {
+  const at = {
+    structure: 'single_elim', phase: 'running', epoch_id: HERO_EPOCH,
+    structure_params: { board_size: 4 }, round_index: 0,
+    competitors: [
+      { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' },
+      { generation_id: 'v2', role: 'challenger' }, { generation_id: 'v3', role: 'challenger' },
+    ],
+    rounds: [
+      { round_index: 0, label: 'Semifinal', matches: [
+        { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], bracket_slot: 'WB-R0-0', winner: null, pending: true },
+        { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], bracket_slot: 'WB-R0-1', winner: null, pending: true },
+      ] },
+    ],
+    standings: [], champion_lineage: ['v0'],
+  };
+  const model = STRUCT.buildLiveElimModel({
+    at, heartbeat: { phase: 'tournament:round_0', generation_id: 'v1' },
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
+    epochGens: ['v0', 'v1', 'v2', 'v3'],
+  });
+  assert(model && model.live, 'a live elim model built from the published rounds');
+  const m = STRUCT.elimModel(model);
+  assert(m.hasMatches, 'the published round has matches');
+  const active = m.winners[0].matches.find((mm) => (mm.competitors || []).includes('v1'));
+  assert(active && active.pending, 'the active published match is pending');
+  assert(active.inflight >= 1 || active.done >= 1, 'active-runs progress is overlaid onto the pending match');
+  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, HERO_EPOCH);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  assert(svgsByClass(host, 'dn-elimbracket')[0], 'the bracket SVG rendered from the published rounds');
+  assert(!/being seeded/i.test(host.textContent), 'NOT the "being seeded" state once the rounds are published');
+});
+
+// ---- Task 1: the candidate page's match-ups populate from LIVE rounds ----
+
+test('candidate match-ups: a candidate running its first round populates from the LIVE published rounds (NOT "did not run in any round")', async () => {
+  freshState();
+  const CM_EPOCH = '2026-06-02_cm';
+  const F = {
+    '/api/epoch': { epoch_id: CM_EPOCH, closed: false, goal: 'g',
+      tournament: { structure: 'single_elim', params: { board_size: 4 } },
+      experiments: [
+        { generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } },
+        { generation_id: 'v1', parent_generation_id: 'v0', outcome: {} },
+      ], board: [] },
+    '/api/lineage': { generations: [
+      { generation_id: 'v0', epoch_id: CM_EPOCH, parent_generation_id: '', promoted: true },
+      { generation_id: 'v1', epoch_id: CM_EPOCH, parent_generation_id: 'v0', promoted: null },
+    ] },
+    '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 50 }] },
+    // the COMPLETED bracket feed is EMPTY — nothing has committed yet.
+    '/api/tournaments': { epoch_id: CM_EPOCH, champion_lineage: ['v0'], matchups: [], tournaments: [] },
+    [`/api/generation/${CM_EPOCH}/v0/per-entry`]: { entries: [{ entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: 1 }] },
+    [`/api/generation/${CM_EPOCH}/v1/per-entry`]: { entries: [{ entry_id: 'b0', run_id: 'r1', drift_loss: 38, pass_fail: 1, match_id: 'WB-R0-0' }] },
+  };
+  installFixtureMap(F);
+  // a LIVE run for THIS epoch: the published rounds carry v0 vs v1 in flight.
+  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: CM_EPOCH });
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5, epoch_id: CM_EPOCH }];
+  coreState.state.activeTournament = {
+    epoch_id: CM_EPOCH, structure: 'single_elim', phase: 'running',
+    rounds: [{ round_index: 0, label: 'Semifinal', matches: [
+      { match_id: 'WB-R0-0', competitors: ['v0', 'v1'], bracket_slot: 'WB-R0-0', winner: null, pending: true },
+    ] }],
+    competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' }],
+  };
+
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: CM_EPOCH, gen: 'v1' });
+  assert(!/did not run in any tournament round/i.test(host.textContent),
+    'a live candidate is NOT reported as "did not run in any round" while it is plainly racing');
+  assert(host.textContent.includes('v0 → v1') || /v0.*v1/.test(host.textContent),
+    'the live match-up (v0 → v1) populates the candidate match-ups table');
+
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = []; coreState.state.activeTournament = null;
+});
+
+// ---- Task 2: structure-correct live status (no "racing" for elim) ----
+
+test('live status mapper: structure-correct labels — elim → "in bracket"/"competing", swiss → "playing", racing → "racing"; terminals pass through', () => {
+  assertEqual(livestatus.structureStatusLabel('competing', 'single_elim'), 'in bracket', 'elim in-contention reads "in bracket"');
+  assertEqual(livestatus.structureStatusLabel('competing', 'double_elim'), 'in bracket', 'double-elim too');
+  assertEqual(livestatus.structureStatusLabel('competing', 'swiss'), 'playing', 'swiss in-contention reads "playing"');
+  assertEqual(livestatus.structureStatusLabel('competing', 'racing'), 'racing', 'racing in-contention reads "racing"');
+  // terminals + alive pass through in EVERY structure.
+  for (const st of ['single_elim', 'swiss', 'racing']) {
+    assertEqual(livestatus.structureStatusLabel('champion', st), 'champion', 'champion passes through (' + st + ')');
+    assertEqual(livestatus.structureStatusLabel('eliminated', st), 'eliminated', 'eliminated passes through (' + st + ')');
+    assertEqual(livestatus.structureStatusLabel('alive', st), 'alive', 'alive passes through (' + st + ')');
+  }
+});
+
+test('standings table (LIVE elim): a mid-run champion/eliminated standing is NOT mislabeled "racing" — uses the elim word "in bracket"', () => {
+  const st = STRUCT.normalizeStructure({
+    structure: 'single_elim', phase: 'running',
+    rounds: [{ round_index: 0, label: 'Semifinal', matches: [
+      { match_id: 'WB-R0-0', competitors: ['v0', 'v1'], bracket_slot: 'WB-R0-0', winner: null, pending: true },
+    ] }],
+    standings: [
+      { generation_id: 'v0', rank: 1, scalar: 40, wins: 1, losses: 0, status: 'champion' },
+      { generation_id: 'v1', rank: 2, scalar: 45, wins: 0, losses: 1, status: 'eliminated' },
+    ],
+    competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' }],
+  }, true);
+  const nodes = STRUCT.renderStructure(st, { navigate() {}, href: router.href }, EPOCH_ID);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const standings = allByClass(host, 'dt-standings')[0];
+  assert(standings, 'the standings table rendered');
+  assert(!/racing/.test(standings.textContent), 'a LIVE elim standings table NEVER reads "racing"');
+  assert(/in bracket/.test(standings.textContent), 'a LIVE elim in-contention standing reads "in bracket"');
+});
+
+// ---- Task 3: cached-champion badge from provenance ----
+
+test('cached champion: per-entry cached/source_epoch surfaces a "cached · from <epoch>" badge + a fast eval-mode tag (no "no entries scored")', async () => {
+  freshState();
+  const CC_EPOCH = '2026-06-02_cc';
+  const F = {
+    '/api/epoch': { epoch_id: CC_EPOCH, closed: true, goal: 'g',
+      tournament: { structure: 'racing', params: {} },
+      experiments: [{ generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } }], board: [] },
+    '/api/lineage': { generations: [
+      { generation_id: 'v0', epoch_id: CC_EPOCH, parent_generation_id: '', promoted: true },
+    ] },
+    '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 50 }] },
+    '/api/tournaments': { epoch_id: CC_EPOCH, champion_lineage: ['v0'], matchups: [], tournaments: [] },
+    // the champion v0's per-board results are CACHED from a prior epoch.
+    [`/api/generation/${CC_EPOCH}/v0/per-entry`]: { entries: [
+      { entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: 1, cached: true, source_epoch: '2026-06-01_e0', source_run: 'run_prior' },
+    ] },
+  };
+  installFixtureMap(F);
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: CC_EPOCH, gen: 'v0' });
+  assert(/cached/i.test(host.textContent), 'a cached champion shows a "cached" badge');
+  assert(/2026-06-01_e0/.test(host.textContent), 'the badge names the source epoch');
+  assert(/fast — champion reused/.test(host.textContent), 'a fast-mode header tag reads "fast — champion reused"');
+  assert(!/no per-entry scores|no board entries scored/i.test(host.textContent),
+    'a cached champion does NOT read "no board entries scored"');
+});
+
+// ---- Task 4: objective falls back to the brief H1 title ----
+
+test('epoch objective: falls back to the brief H1 title (stripping "Epoch eN — ") when no explicit goal', async () => {
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  // explicit goal wins.
+  assertEqual(epoch.objectiveText({ goal: 'crisper slides', brief: '# Epoch e3 — Tighten oversight\n' }), 'crisper slides');
+  // no goal → the brief H1 title, prefix stripped.
+  assertEqual(epoch.objectiveText({ goal: '', brief: '# Epoch e3 — Tighten oversight\n\n## Goal\nx' }), 'Tighten oversight');
+  assertEqual(epoch.objectiveText({ goal: null, brief: '# Reduce hallucination\n' }), 'Reduce hallucination');
+  // an H2 is NOT a title; with no H1 and no goal → the honest placeholder.
+  assertEqual(epoch.objectiveText({ goal: '', brief: '## Goal\nx' }), '(no objective recorded)');
+  assertEqual(epoch.objectiveText({ goal: '', brief: '' }), '(no objective recorded)');
+  // a colon-separated prefix is also stripped.
+  assertEqual(epoch.briefTitle('# Epoch 2026-06-02_e1: Add a judge'), 'Add a judge');
+});
+
+// ---- Task 5: "field of N" excludes unscored orphans ----
+
+test('epoch overview: "field of N" counts champion + applied challengers, EXCLUDING unscored orphans', async () => {
+  freshState();
+  const FN_EPOCH = '2026-06-02_fn';
+  const F = {
+    '/api/epoch': { epoch_id: FN_EPOCH, closed: false, goal: 'g',
+      tournament: { structure: 'swiss', params: { rounds: 3 } },
+      experiments: [], board: [] },
+    '/api/lineage': { generations: [
+      { generation_id: 'v0', epoch_id: FN_EPOCH, parent_generation_id: '', promoted: true },
+      { generation_id: 'v1', epoch_id: FN_EPOCH, parent_generation_id: 'v0', promoted: false },
+      { generation_id: 'v2', epoch_id: FN_EPOCH, parent_generation_id: 'v0', promoted: false },
+      // v9 is an UNSCORED ORPHAN — proposed but never entered the tournament.
+      { generation_id: 'v9', epoch_id: FN_EPOCH, parent_generation_id: 'v0', promoted: null },
+    ] },
+    // v0/v1/v2 scored; v9 has NO scalar (orphan).
+    '/api/score-trajectory': { points: [
+      { generation_id: 'v0', scalar: 50 }, { generation_id: 'v1', scalar: 60 }, { generation_id: 'v2', scalar: 55 },
+    ] },
+    '/api/tournaments': { epoch_id: FN_EPOCH, champion_lineage: ['v0'], matchups: [], tournaments: [] },
+    [`/api/generation/${FN_EPOCH}/v0/per-entry`]: { entries: [] },
+    [`/api/generation/${FN_EPOCH}/v1/per-entry`]: { entries: [] },
+    [`/api/generation/${FN_EPOCH}/v2/per-entry`]: { entries: [] },
+    [`/api/generation/${FN_EPOCH}/v9/per-entry`]: { entries: [] },
+  };
+  installFixtureMap(F);
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: FN_EPOCH });
+  // the real field is {v0, v1, v2} = 3 (NOT 4 — the orphan v9 is excluded).
+  assert(/field of 3/.test(host.textContent), 'the field counts the real competitors (3), excluding the unscored orphan');
+  assert(!/field of 4/.test(host.textContent), 'the orphan v9 is NOT counted in the field');
+});
+
+// ---- Task 6: crown glyph is ♛ for current / ♔ for former everywhere ----
+
+test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no ♚ is emitted by any gate label', () => {
+  assertEqual(svg.CROWN.current, '♛', 'the current-champion crown is ♛');
+  assertEqual(svg.CROWN.former, '♔', 'the former-champion crown is ♔');
+
+  // a crowned racing gate (funnel + ladder) shows ♛, never ♚.
+  const rungs = [{ label: 'Rung 0', match_id: 'rung0', competitors: ['v1', 'v2'], survivors: ['v1'], cut: ['v2'], board_fraction: 0.5 }];
+  const funnel = svg.survivalFunnel({ rungs, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', gateDelta: -2 });
+  assert(funnel.textContent.includes('♛'), 'a crowned funnel gate emits ♛');
+  assert(!funnel.textContent.includes('♚'), 'a crowned funnel gate does NOT emit ♚');
+  const ladder = svg.racingLadder({ rungs, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', gateDelta: -2 });
+  assert(ladder.textContent.includes('♛') && !ladder.textContent.includes('♚'), 'a crowned racing ladder gate emits ♛, not ♚');
+
+  // a crowned elim bracket gate.
+  const winners = [{ round_index: 0, label: 'Final', matches: [{ match_id: 'WB-R0-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'WB-R0-0' }] }];
+  const bracket = svg.elimBracket({ winners, losers: null, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
+  assert(!bracket.textContent.includes('♚'), 'a crowned elim bracket gate does NOT emit ♚');
+
+  // the tree current/former champion glyphs.
+  const thost = document.createElement('div');
+  tree.buildTree(thost, {
+    epochs: [{ id: EPOCH_ID, current: true }],
+    byEpoch: { [EPOCH_ID]: { gens: [
+      { id: 'v0', promoted: true, parent: null, formerChampion: true },
+      { id: 'v6', promoted: true, parent: 'v0', currentChampion: true },
+    ], boards: [] } },
+  }, { view: 'gens', params: { epochId: EPOCH_ID } }, new Set(['e:' + EPOCH_ID, 'e:' + EPOCH_ID + '/gens']),
+    { navigate() {}, href: router.href }, () => {});
+  assert(thost.textContent.includes('♛'), 'the tree marks the current champion ♛');
+  assert(thost.textContent.includes('♔'), 'the tree marks the former champion ♔');
+  assert(!thost.textContent.includes('♚'), 'the tree emits no ♚');
 });
 
 await run();

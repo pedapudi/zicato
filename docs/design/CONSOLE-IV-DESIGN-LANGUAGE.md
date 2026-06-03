@@ -214,9 +214,9 @@ Recently-settled refinements within this grammar:
   transient round-leader *before* the gate decides — is the hollow crown `♔`.
   Once the gate crowns a winner, `♛` takes over (no double crown). This holds
   across the funnel, ladders, bump chart, standings, and the tree legend. *(The
-  source carries a residual mix of `♛`/`♚` for the crowned-champion glyph in a
-  few gate labels; the design intent is the single crown for the current
-  champion — see §9.)*
+  glyphs are now defined ONCE — `svg.js` exports `CROWN = { current: '♛', former:
+  '♔' }` and every emitter imports it, so the rule cannot drift. The historical
+  `♚`/`♛` mix in the gate labels is resolved — see §9.)*
 - **Survival-funnel cut labels: the connector leads INTO the label.** A cut
   competitor's dead-end branch drops from the band's lower edge and stops a few
   pixels *left* of its name (`H${labelX - 4}`) — the connector points into the
@@ -409,13 +409,14 @@ tournament structure. (The champion/challenger vs parent/child terminology is in
 A few places where the code's design rule was not fully settled and this
 document states the *intended* rule:
 
-- **`♛` vs `♚` for the crowned champion.** The intended single rule is `♛` for
-  the current champion and `♔` for a former champion (as the tree, swiss ladder,
-  bump chart and reel use). Some gate-crown labels in `svg.js` /
-  `views/structure.js` / `live.js` still emit `♚` for the just-crowned gate
-  winner. The semantic is the same (a champion was crowned); the glyph is
-  inconsistent across files. Documented here as the single-crown intent; the
-  code carries a residual mix.
+- **`♛` vs `♚` for the crowned champion. — RESOLVED.** The single rule is `♛` for
+  the current champion and `♔` for a former champion. The crown glyphs are now
+  defined ONCE — `svg.js` exports `CROWN = { current: '♛', former: '♔' }` — and
+  every emitter (`svg.js` funnel/ladder/bracket gate labels, `views/structure.js`
+  gate notes + legends + standings, `live.js` activity feed, `tree.js` badges,
+  `dag.js` terminal, `views/epoch.js` overview captions) imports it. No site
+  emits `♚` for the current/just-crowned champion any longer; the residual mix is
+  gone.
 - **`--v2-serif` / `--v2-display` as token names.** The task framing referenced
   per-theme `--v2-serif`/`--v2-display` tokens; the actual implementation
   exposes the typeface families through `--v2-sans` + `--v2-mono` (the two

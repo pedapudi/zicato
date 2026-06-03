@@ -3377,18 +3377,34 @@ def build_per_entry_for_generation(
 
     from zicato.selection.strategy import rung_for_match_id  # noqa: PLC0415
 
+    def _row_keys(row: Any) -> Any:
+        try:
+            return row.keys()
+        except AttributeError:
+            return ()
+
     def _match_id_of(row: Any) -> str | None:
         # ``match_id`` lands in schema v4. A stale index opened before
         # the migration ran would not carry the column; tolerate its
         # absence (and a NULL value) so an old index loads, not errors.
-        try:
-            keys = row.keys()
-        except AttributeError:
-            keys = ()
-        if "match_id" not in keys:
+        if "match_id" not in _row_keys(row):
             return None
         value = row["match_id"]
         return value if isinstance(value, str) and value else None
+
+    def _opt_str(row: Any, key: str) -> str | None:
+        # Tolerant read for the cached-champion provenance columns (``cached`` /
+        # ``source_epoch`` / ``source_run``), additive in a later schema. A
+        # stale index without the column loads unchanged (absence -> None).
+        if key not in _row_keys(row):
+            return None
+        value = row[key]
+        return value if isinstance(value, str) and value else None
+
+    def _opt_bool(row: Any, key: str) -> bool:
+        if key not in _row_keys(row):
+            return False
+        return bool(row[key]) if row[key] is not None else False
 
     entries = []
     for r in rows:
@@ -3410,6 +3426,15 @@ def build_per_entry_for_generation(
                 # for an untagged run (gauntlet duel / legacy run).
                 "match_id": match_id,
                 "rung": rung_for_match_id(match_id),
+                # Cached-champion provenance (additive). When the champion was
+                # reused in fast mode this row's scalar comes from a PRIOR
+                # epoch/run rather than a re-execution this round; the epoch's
+                # OWN loss.json / index materializes the provenance so this read
+                # stays epoch-local. ``cached`` False / ``source_*`` None for a
+                # freshly-executed run.
+                "cached": _opt_bool(r, "cached"),
+                "source_epoch": _opt_str(r, "source_epoch"),
+                "source_run": _opt_str(r, "source_run"),
             }
         )
 

@@ -26,7 +26,7 @@
 // is honoured in CSS (the JS only adds/keeps stable nodes; CSS gates ALL motion).
 
 import { el, patchText, patchClass } from '../../core/dom.js';
-import { isNum, survivalFunnel, swissLadder, elimBracket, proposingTracker, proposingDigest } from './svg.js';
+import { isNum, survivalFunnel, swissLadder, elimBracket, proposingTracker, proposingDigest, CROWN } from './svg.js';
 import { fieldStatus as readFieldStatus } from './data.js';
 import {
   racingModel, swissModel, elimModel, normalizeStructure,
@@ -219,7 +219,7 @@ export function deriveActivity(prev, next, seq) {
       // the champion gate decided.
       const dec = String(cur.decision || '').toLowerCase();
       if (dec && dec !== String(was.decision || '').toLowerCase()) {
-        if (dec.includes('promot')) push('gate', 'champion-gate · ' + label(cur.winner) + ' promoted ♚', 'good', cur.winner);
+        if (dec.includes('promot')) push('gate', 'champion-gate · ' + label(cur.winner) + ' promoted ' + CROWN.current, 'good', cur.winner);
         else push('gate', 'champion-gate · champion stands', 'neutral', cur.winner);
       }
       continue;
@@ -229,7 +229,7 @@ export function deriveActivity(prev, next, seq) {
   }
 
   // a promotion confirmed via lineage growth.
-  if (prev && next.lineageLen > prev.lineageLen) push('promote', 'promotion · the lineage advanced ♚', 'good');
+  if (prev && next.lineageLen > prev.lineageLen) push('promote', 'promotion · the lineage advanced ' + CROWN.current, 'good');
 
   // newest-first.
   out.reverse();
@@ -303,8 +303,8 @@ function glyphFor(ev) {
   switch (ev && ev.kind) {
     case 'cut': return '✕';
     case 'survive': return '↑';
-    case 'gate': return '♚';
-    case 'promote': return '♚';
+    case 'gate': return CROWN.current;
+    case 'promote': return CROWN.current;
     case 'run': return '✓';
     case 'matchup': return '▸';
     case 'phase': return '·';

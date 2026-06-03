@@ -30,7 +30,7 @@ import * as svg from '../svg.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
-import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
+import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
 export async function render(host, ctx, params, route) {
@@ -71,7 +71,24 @@ export async function render(host, ctx, params, route) {
   const champ = genList.find((g) => g.promoted) || genList.find((g) => !g.parent) || null;
   const championId = champ ? champ.id : null;
   const championScalar = championId ? scalarByGen.get(championId) : null;
-  const allMatchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
+  // The match-ups: the COMPLETED feed (bracket.matchups) UNION the LIVE published
+  // rounds (current-epoch-scoped). A candidate running its FIRST round shows up
+  // in the live rounds before any match commits to bracket.matchups, so a live
+  // run no longer reads "did not run in any round" while it is plainly racing.
+  const staticMatchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
+  const at = state.activeTournament;
+  const liveForThisEpoch = liveBelongsToEpoch(epochId, { heartbeat: state.heartbeat, activeTournament: at });
+  const liveMatchups = (at && liveForThisEpoch) ? liveMatchupsForCandidate(at, null) : [];
+  // dedupe by champion>challenger>match_id — the static feed wins (it has the
+  // hypothesis + committed decision); a live match only fills a NEW pair.
+  const seenMatch = new Set(staticMatchups.map((m) => `${m.champion}>${m.challenger}`));
+  const allMatchups = staticMatchups.slice();
+  for (const m of liveMatchups) {
+    const key = `${m.champion}>${m.challenger}`;
+    if (seenMatch.has(key)) continue;
+    seenMatch.add(key);
+    allMatchups.push(m);
+  }
 
   // The epoch's CONFIGURED tournament structure — a LIVE non-gauntlet run for
   // THIS epoch governs even before the contract records the block. Used for the
@@ -220,11 +237,24 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   // dot-plot's "N running" live indicators.
   const inflight = inflightForEntryGen(epochInflight, null, genId);
 
+  // CACHED-CHAMPION provenance (epoch-local): in fast mode the champion's
+  // per-board scalars are REUSED from a prior epoch/run rather than re-executed
+  // this round. The epoch's OWN per-entry rows carry `cached`/`source_epoch`/
+  // `source_run`, so a cached champion shows its results with a "cached · from
+  // <source_epoch>" badge — never "no board entries scored". The header tag
+  // reflects the eval mode: any cached entry ⇒ "fast — champion reused".
+  const cachedEntries = entries.filter((e) => e && e.cached);
+  const cached = cachedEntries.length > 0;
+  const cachedProvenance = cached ? {
+    sourceEpoch: cachedEntries.find((e) => e.source_epoch)?.source_epoch || null,
+    sourceRun: cachedEntries.find((e) => e.source_run)?.source_run || null,
+  } : null;
+
   return {
     node, baseline, decision, mpts, entries, mine, gateSpecs, gates,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
-    entryParam, exps, judges, drillRow, inflight,
+    entryParam, exps, judges, drillRow, inflight, cached, cachedProvenance,
   };
 }
 
@@ -283,7 +313,8 @@ function candidateDigest(s) {
     gateExplain: s.gateExplain ? [s.gateExplain.decidingRule, s.gateExplain.decision,
       svg.isNum(s.gateExplain.deltaScalar) ? s.gateExplain.deltaScalar.toFixed(3) : null,
       svg.isNum(s.gateExplain.margin) ? s.gateExplain.margin.toFixed(3) : null, s.gateExplain.regressed] : null,
-    entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null]),
+    entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null, !!e.cached]),
+    cached: s.cached ? [s.cachedProvenance && s.cachedProvenance.sourceEpoch, s.cachedProvenance && s.cachedProvenance.sourceRun] : null,
     progression: s.progression && Array.isArray(s.progression.stages)
       ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
     matchups: s.mine.map((m) => [m.champion, m.challenger, m.decision, svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null]),
@@ -323,6 +354,17 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     stat(node.parent || 'seed', 'parent'),
     el('div', { class: 'dn-stat' }, [verdictPill(baseline ? 'baseline' : s.decision)]),
   ]));
+
+  // CACHED-CHAMPION eval-mode tag: when this candidate's per-board results were
+  // REUSED (fast mode) rather than re-executed this round, surface the mode so a
+  // cached champion is never read as a fresh run. (full ⇒ no tag.)
+  if (s.cached) {
+    const src = s.cachedProvenance && s.cachedProvenance.sourceEpoch;
+    host.appendChild(el('div', { class: 'dn-cached-tag dn-faint', 'data-eval-mode': 'fast' }, [
+      el('span', { class: 'dn-cached-tag-pill', text: 'fast — champion reused' }),
+      src ? el('span', { class: 'dn-mono', text: ' · from ' + src }) : null,
+    ].filter(Boolean)));
+  }
 
   // ---- lifecycle DAG (patch node clickable → diff, fix #2) ----
   // FIT-TO-WIDTH: the DAG is a responsive SVG (width:100% + viewBox) painted
@@ -419,6 +461,16 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // rounds — so we surface a short context tag per row to disambiguate the
   // duplicates, and route a click to that SPECIFIC run's board drill-down.
   const scoreCard = el('div', { class: 'dn-panel' });
+  // a cached champion's per-board results are reused from a prior epoch/run —
+  // tag the section so it reads "cached · from <source_epoch>", never "no
+  // board entries scored".
+  if (s.cached) {
+    const src = s.cachedProvenance && s.cachedProvenance.sourceEpoch;
+    scoreCard.appendChild(el('div', { class: 'dn-cached-badge dn-faint' }, [
+      el('span', { class: 'dn-cached-badge-mark', text: 'cached' }),
+      el('span', { text: src ? ' · from ' + src : ' · champion results reused' }),
+    ]));
+  }
   if (s.entries.length) {
     const items = s.entries
       .filter((e) => svg.isNum(e.drift_loss))

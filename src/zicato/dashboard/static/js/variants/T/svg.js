@@ -8,6 +8,18 @@ import { attachHovercard } from './hovercard.js';
 
 export const NS = 'http://www.w3.org/2000/svg';
 
+// ── CROWN GLYPHS — the SINGLE source of truth (CONSOLE-IV §9) ─────────
+//
+// The rule, defined ONCE so it cannot drift across files again:
+//   CROWN.current — the CURRENT champion (the crowned survivor of the gate;
+//                   the last id in champion_lineage). Solid crown.
+//   CROWN.former  — a FORMER champion (the displaced incumbent) OR a transient
+//                   round-leader before the gate decides. Hollow crown.
+// A just-crowned gate winner IS the current champion, so gate labels use
+// CROWN.current too (the historical `♚` mix is retired). Every file that emits
+// a crown imports from here.
+export const CROWN = { current: '♛', former: '♔' };
+
 // Wire a mark with the styled, theme-aware HOVERCARD instead of a native,
 // off-brand <title> tooltip (positioned card on hover/focus; keyboard- and
 // reduced-motion-aware; a transient overlay, NOT part of the digest-gated
@@ -777,7 +789,7 @@ export function racingLadder(opts) {
   let label;
   let tip;
   if (crowned) {
-    label = '♚ ' + shortLabel(champId, 11);
+    label = CROWN.current + ' ' + shortLabel(champId, 11);
     tip = `${champId} cleared the gate → new champion${dStr}`;
   } else if (gateState === 'stands') {
     label = 'champion stands';
@@ -954,7 +966,7 @@ export function survivalFunnel(opts) {
   let label;
   let tip;
   if (crowned) {
-    label = '♚ ' + shortLabel(champId, 12);
+    label = CROWN.current + ' ' + shortLabel(champId, 12);
     tip = `${champId} cleared the full-board gate → crowned champion${dStr}`;
   } else if (gateState === 'stands') {
     label = 'champion stands';
@@ -1104,7 +1116,7 @@ export function swissLadder(opts) {
     const g = svgEl('g', { class: 'dn-swissladder-stand', tabindex: o.onCompetitor ? '0' : null });
     const lab = hov(svgEl('text', { x: sx + 6, y: cy + 3, class: 'dn-swissladder-standlab' + (emph ? ' dn-good' : (isFormer ? ' dn-faint' : '')) }),
       `${sid} · ${isNum(s.points) ? fmt(s.points, 1) : '?'} pts · ${s.wins || 0}W ${s.draws || 0}D ${s.losses || 0}L${isFormer ? ' · former champion' : ''}`);
-    lab.textContent = `${i + 1}. ${shortLabel(sid, 9)}` + (isChamp ? ' ♛' : (isFormer || isLeader ? ' ♔' : ''));
+    lab.textContent = `${i + 1}. ${shortLabel(sid, 9)}` + (isChamp ? ' ' + CROWN.current : (isFormer || isLeader ? ' ' + CROWN.former : ''));
     g.appendChild(lab);
     const pts = svgEl('text', { x: sx + standW - 6, y: cy + 3, 'text-anchor': 'end', class: 'dn-swissladder-pts' + (emph ? ' dn-good' : '') });
     pts.textContent = isNum(s.points) ? fmt(s.points, s.points % 1 ? 1 : 0) : '—';
@@ -1133,7 +1145,7 @@ export function swissLadder(opts) {
   const dStr = isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '';
   let label;
   let tip;
-  if (crowned) { label = '♛ ' + shortLabel(champId, 11); tip = `${champId} won the swiss + cleared the gate → new champion${dStr}`; }
+  if (crowned) { label = CROWN.current + ' ' + shortLabel(champId, 11); tip = `${champId} won the swiss + cleared the gate → new champion${dStr}`; }
   else if (gateState === 'stands') { label = 'champion stands'; tip = `the swiss winner did not beat the incumbent — champion stands${dStr}`; }
   else if (gateState === 'deciding') { label = 'deciding…'; tip = leaderId ? `${leaderId} leads — gate not yet committed` : 'the gate is deciding'; }
   else { label = 'tbd'; tip = 'awaiting the swiss leader'; }
@@ -1292,7 +1304,7 @@ export function elimBracket(opts) {
   const dStr = isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '';
   let label;
   let tip;
-  if (crowned) { label = '♚ ' + shortLabel(champId, 11); tip = `${champId} won the bracket + cleared the gate → new champion${dStr}`; }
+  if (crowned) { label = CROWN.current + ' ' + shortLabel(champId, 11); tip = `${champId} won the bracket + cleared the gate → new champion${dStr}`; }
   else if (gateState === 'stands') { label = 'champion stands'; tip = `the bracket winner did not beat the incumbent — champion stands${dStr}`; }
   else if (gateState === 'deciding') { label = 'deciding…'; tip = 'the gate is deciding'; }
   else { label = 'tbd'; tip = 'awaiting the bracket winner'; }
@@ -1393,7 +1405,7 @@ export function swissOverview(opts) {
     svg.appendChild(svgEl('circle', { cx: x0, cy: y0, r, class: dotCls }));
     svg.appendChild(svgEl('circle', { cx: xn, cy: yn, r, class: dotCls }));
     const lL = svgEl('text', { x: x0 - 6, y: y0 + 3, class: 'dn-swissover-name' + (champ ? ' dn-swissover-name-champ' : (former ? ' dn-swissover-name-former' : '')), 'text-anchor': 'end' });
-    lL.textContent = shortLabel(s.id, 11) + (champ ? ' ♛' : (former ? ' ♔' : ''));
+    lL.textContent = shortLabel(s.id, 11) + (champ ? ' ' + CROWN.current : (former ? ' ' + CROWN.former : ''));
     svg.appendChild(lL);
     const lR = svgEl('text', { x: xn + 6, y: yn + 3, class: 'dn-swissover-rank', 'text-anchor': 'start' });
     lR.textContent = '#' + (s.ranks[s.ranks.length - 1] || '?');
@@ -1419,7 +1431,7 @@ export function swissOverview(opts) {
     const lead = !champ && !former && b.leader && live;
     const g = svgEl('g', { class: 'dn-swissover-barrow', tabindex: o.onCompetitor ? '0' : null });
     const lab = svgEl('text', { x: barX0 - 6, y: y + barH / 2 + 3, class: 'dn-swissover-barname' + (champ ? ' dn-swissover-name-champ' : (former ? ' dn-swissover-name-former' : '')), 'text-anchor': 'end' });
-    lab.textContent = (i + 1) + '. ' + shortLabel(b.id, 9) + (champ ? ' ♛' : (former || lead ? ' ♔' : ''));
+    lab.textContent = (i + 1) + '. ' + shortLabel(b.id, 9) + (champ ? ' ' + CROWN.current : (former || lead ? ' ' + CROWN.former : ''));
     g.appendChild(lab);
     g.appendChild(svgEl('rect', { x: barX0, y, width: barMaxW, height: barH, rx: 3, class: 'dn-swissover-bar-bg' }));
     g.appendChild(hov(svgEl('rect', { x: barX0, y, width: bw, height: barH, rx: 3, class: 'dn-swissover-bar' + (champ || lead ? ' dn-swissover-bar-lead' : '') }),
@@ -1434,7 +1446,7 @@ export function swissOverview(opts) {
   const crowned = gateState === 'crowned' && !!champId;
   const vy = barTop + barBandH + 4;
   let verdict;
-  if (crowned) verdict = `♛ ${shortLabel(champId, 12)} promoted`;
+  if (crowned) verdict = `${CROWN.current} ${shortLabel(champId, 12)} promoted`;
   else if (gateState === 'stands') verdict = 'champion stands';
   else if (gateState === 'deciding') verdict = 'gate deciding…';
   else verdict = '';

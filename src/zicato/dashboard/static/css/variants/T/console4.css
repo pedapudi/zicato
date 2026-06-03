@@ -1604,6 +1604,20 @@
     padding: 2px 8px; border-radius: 10px; color: var(--v2-good);
     border: 1px solid var(--v2-good); background: color-mix(in srgb, var(--v2-good) 12%, transparent); }
 
+  /* CACHED-champion provenance: a fast-mode champion whose per-board results
+     were reused from a prior epoch/run (not re-executed this round). */
+  .dn-cached-tag { display: inline-flex; align-items: center; gap: 4px; margin: 6px 0 0;
+    font-family: var(--v2-mono); font-size: 11px; }
+  .dn-cached-tag-pill { padding: 2px 8px; border-radius: 10px; font-weight: 700; letter-spacing: 0.04em;
+    color: var(--v2-accent); border: 1px solid var(--v2-accent);
+    background: color-mix(in srgb, var(--v2-accent) 10%, transparent); }
+  .dn-cached-badge { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 8px;
+    font-family: var(--v2-mono); font-size: 11px; }
+  .dn-cached-badge-mark { font-family: var(--v2-mono); font-size: 9.5px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 6px; border-radius: 8px;
+    color: var(--v2-accent); border: 1px solid var(--v2-accent);
+    background: color-mix(in srgb, var(--v2-accent) 10%, transparent); }
+
 
   /* racing ladder (successive halving) */
   .dn-raceladder-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);

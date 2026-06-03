@@ -118,6 +118,36 @@ function roundDetail(segs, structure) {
   return null;
 }
 
+// ── the SINGLE structure-aware standings-status mapper ───────────────
+//
+// Map a RAW standings status (alive / eliminated / champion / competing,
+// per /api/active-tournament's `standings[].status`) onto the word the
+// standings table / pills show — STRUCTURE-CORRECT so a non-racing
+// tournament never borrows racing vocabulary. The terminal verdicts
+// (champion / eliminated) pass through unchanged in EVERY structure; only
+// the "still in contention" word is structure-specific:
+//   elim  → "in bracket" (a competitor still alive in the tree)
+//   swiss → "playing"
+//   racing→ "racing"
+//   else  → "alive"
+// This is the ONE place the mapping lives so the old `live && champion →
+// "racing"` leak (and any other structure-blind word) cannot recur.
+export function structureStatusLabel(rawStatus, structure) {
+  const s = String(rawStatus == null ? '' : rawStatus).trim().toLowerCase();
+  // terminal verdicts read identically in every structure.
+  if (s === 'champion') return 'champion';
+  if (s === 'eliminated') return 'eliminated';
+  if (s === 'alive') return 'alive';
+  // the "still competing" word is structure-specific. Raw 'competing' (or any
+  // other non-terminal token) maps to the structure's in-contention word.
+  const struct = String(structure || '').toLowerCase();
+  if (struct === 'single_elim' || struct === 'double_elim') return 'in bracket';
+  if (struct === 'swiss') return 'playing';
+  if (struct === 'racing') return 'racing';
+  // gauntlet / unknown: a neutral, structure-blind "alive".
+  return s === 'competing' ? 'alive' : (s || 'alive');
+}
+
 function prettyStructure(structure) {
   const s = String(structure || '').toLowerCase();
   switch (s) {

@@ -124,6 +124,10 @@ export async function render(host, ctx, params) {
       runId: (r && r.run_id) || (live && live.run_id) || null,
       ran: !!r,
       running: !!live,
+      // CACHED-champion provenance: this row's scalar was reused (fast mode)
+      // from a prior epoch/run, not re-executed this round.
+      cached: !!(r && r.cached),
+      sourceEpoch: (r && r.source_epoch) || null,
     });
   });
   // A candidate RUNNING on this entry with NO completed row yet (no per-entry
@@ -182,7 +186,7 @@ export async function render(host, ctx, params) {
     epochId, entryId, selGen,
     def: def ? [def.kind, def.weight, def.budget_s] : null,
     champ: championId,
-    rows: rows.map((r) => [r.gen, svg.isNum(r.loss) ? r.loss.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId, !!r.running]),
+    rows: rows.map((r) => [r.gen, svg.isNum(r.loss) ? r.loss.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId, !!r.running, !!r.cached, r.sourceEpoch || null]),
     inflight: inflight.map((r) => {
       const pr = progressRatio(r);
       return [r.generation_id || r.gen || null, r.run_id || null, pr != null ? pr.toFixed(2) : null];
@@ -317,7 +321,11 @@ export async function render(host, ctx, params) {
       // growing on disk, so its (epoch, gen, entry) transcript resolves live.
       const selectable = r.ran || r.running;
       tbody.appendChild(el('tr', { class: (r.promoted ? 'dn-board-champ' : '') + (isSel ? ' dn-board-sel' : '') + (r.running ? ' dn-board-running' : '') }, [
-        el('td', { class: 'dn-mono', text: r.gen + (r.promoted ? ' ♛' : '') }),
+        el('td', { class: 'dn-mono' }, [
+          el('span', { text: r.gen + (r.promoted ? ' ♛' : '') }),
+          r.cached ? el('span', { class: 'dn-cached-badge-mark', title: r.sourceEpoch ? 'cached · from ' + r.sourceEpoch : 'cached champion result',
+            text: r.sourceEpoch ? ' cached · ' + r.sourceEpoch : ' cached' }) : null,
+        ].filter(Boolean)),
         el('td', { class: 'dn-num dn-mono', text: svg.isNum(r.loss) ? svg.fmt(r.loss, 1) : (r.running ? 'running' : '—') }),
         el('td', { class: passClass(r.pass), text: r.running && !r.ran ? 'live' : passLabel(r.pass) }),
         el('td', { class: 'dn-mono', text: r.timeout ? 'timed out' : 'ok' }),
