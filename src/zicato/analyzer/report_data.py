@@ -511,6 +511,33 @@ def _cumulate_scalar(generations: list[GenerationView]) -> list[GenerationView]:
 # ---------------------------------------------------------------------------
 
 
+def _distill_brief_goal(brief: str) -> str:
+    """The first prose line of the brief's ``## Goal`` section, or ``""``.
+
+    The operator's goal lives in the proposer brief's ``## Goal`` section,
+    not in ``config.json`` (whose ``goal`` field is usually empty). This
+    mirrors the dashboard's epoch-objective distillation so the report
+    masthead names the same goal the rest of the UI shows. List items and
+    sub-headings are skipped so the summary reads as a sentence.
+    """
+    if not brief:
+        return ""
+    in_goal = False
+    for raw in brief.replace("\r\n", "\n").split("\n"):
+        line = raw.strip()
+        if line.startswith("#"):
+            heading = line.lstrip("#").strip()
+            if in_goal:
+                break  # a later heading closes the Goal section
+            if heading.lower() == "goal":
+                in_goal = True
+            continue
+        if not in_goal or not line or line[0] in "-*>":
+            continue
+        return line
+    return ""
+
+
 def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReportData:
     """Walk one epoch's workspace tree into a frozen :class:`EpochReportData`.
 
@@ -555,7 +582,7 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
         generations=tuple(generations),
         span_start=span_start,
         span_end=span_end,
-        goal=str(cfg.get("goal", "") or ""),
+        goal=str(cfg.get("goal", "") or "") or _distill_brief_goal(brief_text),
     )
 
 

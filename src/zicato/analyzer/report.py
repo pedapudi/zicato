@@ -1246,6 +1246,57 @@ def render_report_html_fragment(
 # ---------------------------------------------------------------------------
 
 
+def restamp_masthead(report_md: str, data: EpochReportData) -> str:
+    """Splice a freshly-rendered masthead over a report's title block.
+
+    The masthead (status / goal / generation counts) is fully data-derived,
+    so it can be regenerated without the auxiliary LLM. The title block runs
+    from the top of the document to the first level-2 heading (the Abstract);
+    everything from that heading on — the LLM narrative — is preserved
+    verbatim. A no-op (returns the input unchanged) on any document that is
+    not in the analyzer's ``<!-- META -->`` masthead format.
+    """
+    if "<!-- META -->" not in report_md:
+        return report_md
+    lines = report_md.split("\n")
+    body_idx = next((i for i, line in enumerate(lines) if line.startswith("## ")), None)
+    if body_idx is None:
+        return report_md
+    return render_title_block(data) + "\n\n" + "\n".join(lines[body_idx:])
+
+
+def restamp_persisted_report(workspace_root: Path, epoch_id: str) -> bool:
+    """Rewrite a persisted ``analysis.md``/``.html`` masthead from CURRENT data.
+
+    The comprehensive report is regenerated after every round, so the copy
+    on disk is frozen at the *last mid-run* pass — its masthead reads
+    "in progress" with pre-close counts even after the epoch closes. This
+    re-renders just the (deterministic) masthead from the epoch's current
+    config + generations and rewrites both files, leaving the expensive LLM
+    narrative untouched. Cheap, no LLM, idempotent. Returns ``True`` when the
+    file actually changed; a no-op (``False``) when absent, already current,
+    or not in masthead format.
+    """
+    md_path = analysis_path(workspace_root, epoch_id)
+    try:
+        report_md = md_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    data = gather_epoch_report_data(workspace_root, epoch_id)
+    new_md = restamp_masthead(report_md, data)
+    if new_md == report_md:
+        return False
+    md_path.write_text(new_md, encoding="utf-8")
+    try:
+        md_path.with_suffix(".html").write_text(
+            render_report_html(epoch_id, new_md, data=data),
+            encoding="utf-8",
+        )
+    except Exception as exc:  # noqa: BLE001 — HTML is non-critical
+        log.debug("epoch report: analysis.html re-stamp skipped (%s)", exc)
+    return True
+
+
 async def generate_epoch_report(
     workspace_root: Path,
     epoch_id: str,
@@ -1345,4 +1396,6 @@ __all__ = [
     "markdown_to_html",
     "render_report_html",
     "render_report_html_fragment",
+    "restamp_masthead",
+    "restamp_persisted_report",
 ]

@@ -373,7 +373,7 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
       nodes.push(empty((liveForThisEpoch && status.running)
         ? 'A run is starting — the live tournament topology is not available yet.'
         : (tournamentId ? 'The tournament structure is unavailable (the index may not be built).'
-                        : 'No tournament has run for this structure yet.')));
+                        : 'No completed tournament is recorded for this structure — any minted field appears on the epoch’s round timeline, but no bracket matches were committed (the run was torn down first).')));
       return nodes;
     }
     for (const n of renderStructure(shown, ctx, id)) nodes.push(n);

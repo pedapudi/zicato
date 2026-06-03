@@ -308,6 +308,18 @@ async def ensure_epoch_for_contract(
 
     await close_epoch_async(workspace_root, cur, aux_call_llm=aux_call_llm)
 
+    # The comprehensive report is regenerated every round, so the copy on disk
+    # is frozen at the last mid-run pass — masthead still reading "in progress"
+    # with pre-close counts. Now that the epoch is marked closed, re-stamp that
+    # (deterministic) masthead so the persisted analysis.md/.html reflect the
+    # final closed state. Cheap, no LLM; the narrative is left untouched.
+    try:
+        from zicato.analyzer import restamp_persisted_report  # noqa: PLC0415
+
+        restamp_persisted_report(workspace_root, cur)
+    except Exception as exc:  # noqa: BLE001 — best-effort, never block the roll
+        log.debug("post-close report re-stamp skipped: %s", exc)
+
     next_n = len(list_epochs(workspace_root))
     new_id = _create_epoch_from_contract(
         workspace_root,

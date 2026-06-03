@@ -1939,7 +1939,7 @@ test('structure: a missing structure payload degrades gracefully (no throw, hone
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Swiss'), 'the structure pill still names swiss');
-  assert(/No tournament|unavailable/i.test(host.textContent), 'an honest empty state renders rather than throwing');
+  assert(/No completed tournament|unavailable/i.test(host.textContent), 'an honest empty state renders rather than throwing');
 });
 
 test('structure: the epoch view shows the structure pill from the epoch tournament block', async () => {

@@ -1384,3 +1384,98 @@ def test_paper_table_code_cells_wrap_long_paths() -> None:
     block = fragment[block_open:block_end]
     assert "overflow-wrap: anywhere" in block
     assert "word-break: break-word" in block
+
+
+# ---------------------------------------------------------------------------
+# Goal fallback + masthead re-stamp (status / goal reflect reality on disk)
+# ---------------------------------------------------------------------------
+
+
+def test_goal_falls_back_to_brief_goal_section(tmp_path: Path) -> None:
+    """With an empty ``config.goal``, the report distils the goal from the
+    brief's ``## Goal`` section — the same source the dashboard objective
+    uses — rather than rendering "(no goal recorded)"."""
+    ws = tmp_path / ".zicato"
+    epoch = "2026-06-09_g"
+    edir = ws / "epochs" / epoch
+    edir.mkdir(parents=True)
+    _write(
+        edir / "config.json",
+        {
+            "id": epoch,
+            "name": "g",
+            "created_at": "2026-06-09T00:00:00Z",
+            "closed": False,
+            "goal": "",
+        },
+    )
+    (edir / "brief.md").write_text(
+        "# Epoch g\n\nintro prose\n\n## Goal\n\n"
+        "Keep the slide pass rate stable while cutting drift.\n\n"
+        "- a bullet that must NOT be picked as the goal\n\n## Methodology\n",
+        encoding="utf-8",
+    )
+    data = gather_epoch_report_data(ws, epoch)
+    assert data.goal == "Keep the slide pass rate stable while cutting drift."
+
+
+def test_restamp_persisted_report_refreshes_stale_masthead(tmp_path: Path) -> None:
+    """A report frozen mid-run ("in progress", empty goal) is re-stamped to
+    the now-closed status + brief-derived goal, leaving the narrative intact.
+    The re-stamp is idempotent."""
+    from zicato.analyzer.report import restamp_persisted_report
+    from zicato.core.workspace import analysis_path
+
+    ws = tmp_path / ".zicato"
+    epoch = "2026-06-09_h"
+    edir = ws / "epochs" / epoch
+    edir.mkdir(parents=True)
+    _write(
+        edir / "config.json",
+        {
+            "id": epoch,
+            "name": "h",
+            "created_at": "2026-06-09T00:00:00Z",
+            "closed": True,
+            "closed_at": "2026-06-09T05:00:00Z",
+            "goal": "",
+        },
+    )
+    (edir / "brief.md").write_text("## Goal\n\nStabilise the harness.\n", encoding="utf-8")
+    stale = (
+        "<!-- EYEBROW -->\nZicato improvement campaign · epoch analysis report\n\n"
+        f"# h\n\n<!-- META -->\n**Epoch id**: `{epoch}`  \n**Status**: in progress\n\n"
+        "### Goal\n\n_(no goal recorded)_\n\n"
+        "## Abstract\n\nUNIQUE-NARRATIVE-MARKER preserved verbatim.\n"
+    )
+    md_path = analysis_path(ws, epoch)
+    md_path.write_text(stale, encoding="utf-8")
+
+    assert restamp_persisted_report(ws, epoch) is True
+    out = md_path.read_text(encoding="utf-8")
+    assert "**Status**: closed" in out
+    assert "_(no goal recorded)_" not in out
+    assert "Stabilise the harness." in out
+    assert "UNIQUE-NARRATIVE-MARKER preserved verbatim." in out
+    # Idempotent: a second pass finds nothing to change.
+    assert restamp_persisted_report(ws, epoch) is False
+
+
+def test_restamp_is_noop_on_non_masthead_format(tmp_path: Path) -> None:
+    """A report not in the analyzer's ``<!-- META -->`` masthead format (e.g.
+    the close-path ``# Epoch analysis:`` layout) is left untouched."""
+    from zicato.analyzer.report import restamp_persisted_report
+    from zicato.core.workspace import analysis_path
+
+    ws = tmp_path / ".zicato"
+    epoch = "2026-06-09_k"
+    (ws / "epochs" / epoch).mkdir(parents=True)
+    _write(
+        ws / "epochs" / epoch / "config.json",
+        {"id": epoch, "name": "k", "closed": True, "goal": ""},
+    )
+    md_path = analysis_path(ws, epoch)
+    original = "# Epoch analysis: k\n\n**epoch**: `k`\n\n## Body\n\ntext\n"
+    md_path.write_text(original, encoding="utf-8")
+    assert restamp_persisted_report(ws, epoch) is False
+    assert md_path.read_text(encoding="utf-8") == original

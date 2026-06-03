@@ -37,7 +37,10 @@ from zicato.analyzer.aggregator import (
     aggregate_decision_events,
 )
 from zicato.analyzer.insights import analyze_epoch_telemetry, load_latest_insights
-from zicato.analyzer.report import generate_epoch_report
+from zicato.analyzer.report import (
+    generate_epoch_report,
+    restamp_persisted_report,
+)
 from zicato.analyzer.report_data import EpochReportData, gather_epoch_report_data
 
 __all__ = [
@@ -46,6 +49,7 @@ __all__ = [
     "analyze_epoch_telemetry",
     "load_latest_insights",
     "generate_epoch_report",
+    "restamp_persisted_report",
     "EpochReportData",
     "gather_epoch_report_data",
 ]
