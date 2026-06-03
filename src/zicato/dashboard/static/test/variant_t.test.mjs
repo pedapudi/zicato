@@ -1670,6 +1670,26 @@ test('structure: an absent field_status renders NO "Proposed field" section (bac
   assertEqual(allByClass(host, 'dn-prop-tracker').length, 0, 'no proposing tracker when field_status is absent');
 });
 
+test('structure: a COMPLETED, all-applied field renders NO "Proposed field" section (it would just be an empty one-liner)', async () => {
+  freshState();
+  const payload = JSON.parse(JSON.stringify(SWISS_STRUCT));
+  // every proposal applied + the run is complete (no live flag) → the ladder
+  // already shows the field, so the lone section is omitted rather than left
+  // reading as an empty "N proposed · N applied" line.
+  payload.field_status = [
+    { generation_id: 'v1', status: 'applied', reason: '', seed: 2 },
+    { generation_id: 'v2', status: 'applied', reason: '', seed: 3 },
+  ];
+  installFixtureMap(structFixture('swiss', payload, 'tourn_e0_sw'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assertEqual(allByClass(host, 'dn-prop-tracker').length, 0, 'no Proposed-field section when completed + all applied');
+  assert(!/Proposed field/.test(host.textContent), 'the "Proposed field" heading is not rendered');
+  // …but the ladder (the field is shown there) still renders.
+  assert(svgsByClass(host, 'dn-swissladder')[0], 'the swiss ladder still renders');
+});
+
 test('data.fieldStatus / fieldStatusSummary: normalize + roll up the proposing field', () => {
   const raw = {
     field_status: [

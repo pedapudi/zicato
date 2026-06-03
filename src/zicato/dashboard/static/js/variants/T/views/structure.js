@@ -422,19 +422,19 @@ export function fieldStatusOf(st) {
 function proposedFieldSection(st, ctx, epochId) {
   const fs = fieldStatusOf(st);
   if (!fs.length) return null;
-  const onCompetitor = (gen) => { if (gen && ctx && ctx.navigate) ctx.navigate('candidate', { epochId, gen }); };
+  const live = !!(st && st.live);
   const applied = fs.filter((f) => f.status === 'applied').length;
   const rejected = fs.length - applied;
-  // When EVERY proposal applied, the per-challenger tracker just re-lists the
-  // field the ladder/standings already show — collapse it to a one-line
-  // summary. Keep the full tracker only when there are rejections (the
-  // informative case: which proposals failed to apply, and why).
-  if (rejected === 0) {
-    return section('Proposed field', el('p', { class: 'dn-faint', style: 'font-size:12px;margin:0;',
-      text: `${fs.length} proposed · ${applied} applied — the full field entered the tournament (see the ladder below).` }));
-  }
+  // The proposing tracker earns its own section only when it has something to
+  // SAY: LIVE (proposals applying/rejecting in real time — the count + per-row
+  // states update as the field mints) or a COMPLETED run WITH REJECTIONS to
+  // triage (which proposals failed to apply, and why). A completed, all-applied
+  // field is already shown by the ladder/standings + the "field of N" pill, so a
+  // lone "N proposed · N applied" line just reads as an empty section — omit it.
+  if (!live && rejected === 0) return null;
+  const onCompetitor = (gen) => { if (gen && ctx && ctx.navigate) ctx.navigate('candidate', { epochId, gen }); };
   const tracker = svg.proposingTracker({ fieldStatus: fs, onCompetitor });
-  return section('Proposed field', tracker);
+  return section(live ? 'Proposed field · LIVE' : 'Proposed field', tracker);
 }
 
 // single/double elim — the bracket model: winners' band, optional losers' band,
