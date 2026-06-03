@@ -452,3 +452,67 @@ def test_epoch_route_carries_tournament_block(swiss_workspace: Path, static_dir:
     with TestClient(app) as c:
         body = c.get("/api/epoch").json()
         assert body["tournament"] == {"structure": "swiss", "params": {"rounds": 4}}
+
+
+def _index_no_tournament_rows(path: Path) -> None:
+    """A v3 index whose ``tournaments`` table has NO rows for the epoch — the
+    state a run torn down before any bracket completed leaves behind."""
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE generations(epoch_id TEXT, generation_id TEXT,
+            parent_generation_id TEXT, promoted INTEGER, created_at TEXT,
+            PRIMARY KEY(epoch_id, generation_id));
+        CREATE TABLE experiments(epoch_id TEXT, generation_id TEXT,
+            hypothesis_core_idea TEXT, PRIMARY KEY(epoch_id, generation_id));
+        CREATE TABLE tournaments(tournament_id TEXT PRIMARY KEY, epoch_id TEXT,
+            parent_generation_id TEXT, child_generation_id TEXT, decision TEXT,
+            parent_scalar REAL, child_scalar REAL, delta_scalar REAL,
+            rejection_reason TEXT, ran_at TEXT,
+            structure TEXT, structure_params_json TEXT, competitors_json TEXT,
+            rounds_json TEXT, standings_json TEXT);
+        """
+    )
+    conn.executemany(
+        "INSERT INTO generations VALUES(?,?,?,?,?)",
+        [
+            (EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z"),
+            (EPOCH, "v3", "v0", 0, "2026-06-01T00:10:00Z"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_tournaments_fall_back_to_configured_structure_with_no_rows(tmp_path: Path) -> None:
+    """When the index has ZERO tournament rows (e.g. a single_elim run torn down
+    before any bracket completed), ``/api/tournaments`` must report the
+    contract-frozen structure from scoring.json — NOT default to gauntlet."""
+    ws = tmp_path / ".zicato"
+    edir = ws / "epochs" / EPOCH
+    edir.mkdir(parents=True)
+    _write_json(edir / "config.json", {"contract_hash": "h", "closed": False, "goal": "g"})
+    _write_json(
+        edir / "scoring.json",
+        {"tournament": {"structure": "single_elim", "params": {"field_size": 4}}},
+    )
+    _index_no_tournament_rows(ws / "index.db")
+
+    out = build_bracket(WorkspacePaths(ws), EPOCH)
+    assert out["structure"] == "single_elim", "no rows ⇒ fall back to the configured structure"
+    assert out["structure_params"] == {"field_size": 4}
+    assert out["tournaments"] == [], "still no completed tournament to list"
+
+
+def test_tournaments_with_no_rows_and_no_config_stay_gauntlet(tmp_path: Path) -> None:
+    """No tournament rows AND no tournament block in scoring ⇒ gauntlet (the
+    back-compat default is preserved)."""
+    ws = tmp_path / ".zicato"
+    edir = ws / "epochs" / EPOCH
+    edir.mkdir(parents=True)
+    _write_json(edir / "config.json", {"contract_hash": "h", "closed": False, "goal": "g"})
+    _write_json(edir / "scoring.json", {"weights": {"drift_loss": 1.0}})
+    _index_no_tournament_rows(ws / "index.db")
+
+    out = build_bracket(WorkspacePaths(ws), EPOCH)
+    assert out["structure"] == "gauntlet"

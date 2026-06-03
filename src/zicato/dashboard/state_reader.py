@@ -1689,6 +1689,25 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
                 }
             )
 
+        # No tournament ROW resolved a non-gauntlet structure — e.g. a run torn
+        # down before any bracket completed leaves zero rows, so the scan above
+        # never overrides the gauntlet default. Fall back to the epoch's
+        # CONTRACT-FROZEN structure (scoring.json, then config.json's scoring)
+        # so the API agrees with the configured single_elim/swiss/racing rather
+        # than mislabelling the epoch gauntlet.
+        if epoch_structure == "gauntlet":
+            epoch_dir = paths.epochs / epoch_id
+            block = _tournament_block_from_scoring(_read_json_value(epoch_dir / "scoring.json"))
+            if block is None:
+                cfg = _read_json_value(epoch_dir / "config.json")
+                block = _tournament_block_from_scoring(
+                    cfg.get("scoring") if isinstance(cfg, dict) else None
+                )
+            if isinstance(block, dict) and block.get("structure"):
+                epoch_structure = block["structure"]
+                if not epoch_structure_params:
+                    epoch_structure_params = block.get("params") or {}
+
         return {
             "epoch_id": epoch_id,
             "structure": epoch_structure,
