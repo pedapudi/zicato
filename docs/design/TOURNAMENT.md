@@ -30,6 +30,16 @@ sixteen entrants pair off and a winner emerges. It is a
 **king-of-the-hill gauntlet**: there is one reigning champion at
 any moment, and challengers arrive one at a time to face it.
 
+> **Orthogonal: how challengers are generated.** This document is about
+> the *competition* — how a challenger earns promotion. What the
+> proposer *sees* when it synthesizes a challenger is a separate concern:
+> **experiment memory** feeds it a digest of prior experiment outcomes
+> (verdicts + Δscalars + touched mutation ids) so it stops re-proposing
+> known failures and builds on known wins. That digest is assembled and
+> threaded the same way regardless of structure — gauntlet here, or
+> Swiss / racing / elimination ([TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md)) —
+> and never touches the gate. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
+
 ### 1.1 King of the hill
 
 At the start of an epoch, the champion is `v0` — the inner

@@ -343,6 +343,29 @@ predicted the drift kinds are rarer and more valuable. Aggregating
 hypothesis match-rate across rounds is what the analysis pass uses to
 gauge whether the proposer is reasoning or guessing.
 
+### 3.4 The outcome feeds back into proposing (experiment memory)
+
+The `outcome` block is not only a backward-looking audit trail. Once it
+is written — and dual-written into the analytical index's `experiments`
+table (`tournament_decision`, `rejection_reason`, `scalar_score_delta`)
+— it becomes an input to the *next* round's proposer. A capped, curated
+digest of prior experiments (each one's `core_idea`, its `modulating`
+ids, its verdict, and its Δscalar) is surfaced to the proposer in a new
+`## What's already been tried` prompt section, so it stops re-proposing
+known failures and can deliberately build on known wins. The proposer's
+own pre-run hypothesis (§3.1) is what makes this digest legible: the
+record that began as "what the proposer was thinking" closes the loop as
+"what the proposer should remember it already tried".
+
+This is advisory context, not a constraint — it never enters the hard
+hypothesis schema, and the only mechanical gate on the proposer stays
+the brief's `## Forbidden` list (§7). It is scoped to the current
+evaluation contract (one epoch = one contract), because a Δscalar from a
+different board is not comparable. The full design — the two scopes
+(settled cross-round history plus intra-round sibling awareness in a
+multi-challenger field), the curation, and the contract scoping — is in
+[EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
+
 ## 4. The journal (running)
 
 `journal.md` is appended one section per experiment with a short,
@@ -963,3 +986,4 @@ the manual escape hatches:
 | Live dashboard that supersedes `analysis.html` during an `evolve` | [DASHBOARD.md](DASHBOARD.md) |
 | Git-backed storage that moves generation directories into a private repo | [STORAGE.md](STORAGE.md) |
 | Why mandatory structured hypothesis up front | [RATIONALE.md](RATIONALE.md) |
+| The experiment record fed back to the proposer (experiment memory) | [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md) |

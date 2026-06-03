@@ -63,6 +63,18 @@ is a response to one of them:
    classic tournament bracket assumes N independent entrants exist up
    front; zicato has a generator that emits them on demand, one (today)
    per round.
+
+   > **Orthogonal to this document: what the generator *knows*.** The
+   > proposer that synthesizes each challenger can be fed a digest of
+   > **prior experiment outcomes** (what was already tried this epoch and
+   > how it fared) so it stops re-proposing known failures and builds on
+   > known wins. This **experiment memory** changes candidate
+   > *generation*, not selection — it is shared identically by the
+   > gauntlet, Swiss, racing, and elimination structures and does not
+   > touch the gate. It is *not* intra-tournament adaptive generation
+   > (proposing challenger k+1 from the realised results of 0..k within
+   > one round — a separate, larger lever named and scoped out there).
+   > See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
 2. **Evaluation is expensive and noisy.** A "match" is running the
    whole board through a multi-agent system — many LLM calls, tool
    invocations, wall-clock minutes. And it is *stochastic*: the same

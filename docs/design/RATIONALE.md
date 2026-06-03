@@ -496,12 +496,69 @@ that drift counts don't catch quality issues that don't manifest as
 drift — but the pass/fail predicate is exactly the operator's hook
 for those cases.
 
-## 17. Cross-references
+## 17. Why the proposer reads prior experiment outcomes (memory, not just patterns)
+
+**Alternative considered.** Keep the proposer memoryless — it reads the
+current champion's loss summary, the freshly-detected patterns, and the
+static proposer brief, and proposes from those alone. Simpler prompt;
+the operator's brief is the only place "what we already tried" lives.
+
+**Chosen.** The proposer additionally reads a compact, capped digest of
+**prior experiments** — each one's `core_idea`, the mutation-point ids
+it touched, its verdict (`promoted` / `rejected` / `deferred`), the
+rejection reason, and its Δscalar — in a new `## What's already been
+tried` user-prompt section. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
+
+**Why.** Every other accumulating component in zicato learns across
+runs — the loss reducer, the pattern detectors, the analyzer — but the
+proposer does not. It is a **greedy hill-climb with amnesia**: it
+optimises the current champion's gradient with no record of the search
+it has already done. So it re-proposes mutations that were rejected
+rounds ago (the motivating pattern is still present and nothing says
+"we tried that; it regressed"), and it cannot deliberately extend a
+direction that already promoted. The history is on disk in every
+`experiment.json` and projected into the analytical index's
+`experiments` table; not feeding it back was leaving the cheapest
+available signal on the floor.
+
+This is consistent with §9. The operator-edited brief carries the
+*operator's* knowledge ("we tried tightening writer prompts three epochs
+ago; it was flat"). Experiment memory carries the *loop's own* settled
+record, mechanically and without the operator having to transcribe it.
+The two compose: the brief steers, the memory reports.
+
+The framing is **advisory, not constraining** — "avoid repeating these
+failures, build on these wins", never "only do X". It is user-prompt
+context exactly like patterns, never part of the hard hypothesis schema;
+the only hard gate on the proposer stays the brief's `## Forbidden`
+list. This is deliberate. A rejected experiment with a near-zero Δscalar
+is a toss-up, not a proven dead end, so the digest carries the signed
+magnitude verbatim rather than collapsing the verdict to a binary
+"rejected" flag — the proposer is trusted to read `-0.020` differently
+from `-0.300` and to revisit a marginal rejection when a new pattern
+justifies it.
+
+The cost is prompt size and a risk of over-anchoring (a timid proposer
+that refuses to revisit anything that failed once). Both are bounded by
+design: the digest is capped and curated (all wins, the sharpest recent
+rejections), rendered one compact line per experiment, and scoped to the
+current evaluation contract so a stale cross-board Δscalar never
+masquerades as comparable. The trade is the same easy one as the
+mandatory hypothesis (§3): a little more proposer context for a search
+that stops walking in circles.
+
+This is one of the autoresearch-inspired adoptions — alongside the
+per-run wall-clock budget (§8) and the operator-edited brief (§9) — that
+generalised cleanly onto the multi-agent target: a proposer that reasons
+over its own experiment history rather than re-deriving it each round.
+
+## 18. Cross-references
 
 | Topic | Document |
 |---|---|
 | Marker syntax, validator rules | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
 | Hypothesis schema, outcome block | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
+| Feeding prior experiment outcomes back to the proposer | [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md) |
 | Two-callable rule and emulator sealing | [EMULATOR.md](EMULATOR.md) |
 | Loss profile and goldfive integration | [TELEMETRY.md](TELEMETRY.md) |
 | Wall-clock budget semantics | [BOARD-FORMAT.md](BOARD-FORMAT.md), [SCORING.md](SCORING.md) |

@@ -99,6 +99,23 @@ appended to the same `experiment.json` recording actual drift
 movements, hypothesis match, score deltas, and tournament decision.
 See [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md#3-the-experiment).
 
+## Experiment memory
+
+The capped, curated digest of **prior experiments** surfaced to the
+proposer so it stops re-proposing known failures and builds on known
+wins — the fix for the proposer's memoryless greedy hill-climb. Each
+entry carries the experiment's `core_idea`, the mutation-point ids it
+touched, its verdict (`promoted` / `rejected` / `deferred` / in-flight),
+its rejection reason, and its signed Δscalar. Two scopes: settled
+cross-round history (read from the analytical index's `experiments`
+table) and intra-round sibling awareness (the hypotheses of the other
+challengers minted this round in a multi-challenger field, no outcomes
+yet). Rendered in the proposer's `## What's already been tried` user-
+prompt section. Advisory, not a constraint, and scoped to the current
+evaluation contract. Distinct from a *pattern* (a present-tense loss
+aggregate) and from the *proposer brief* (the operator's static
+steering). See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
+
 ## Expectation
 
 An **outcome** check on a board entry — a matcher run post-hoc on the

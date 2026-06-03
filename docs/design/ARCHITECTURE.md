@@ -484,6 +484,14 @@ hypothesis plus the patches that test it.
   §7.)
 - `adapter.mutation_points()` — the full mutation surface. The
   proposer addresses patches by mutation-point id.
+- A capped digest of **prior experiments** for the current epoch —
+  each settled experiment's `core_idea`, the mutation-point ids it
+  touched, its verdict, and its Δscalar — read from the analytical
+  index's `experiments` table (§4.11). This is **experiment memory**:
+  it stops the proposer from re-proposing known failures and lets it
+  build on known wins, turning the memoryless hill-climb into a search
+  that remembers what it already tried. Advisory context, scoped to
+  the current contract; see [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
 - The `auxiliary_call_llm` (distinct by identity or model from
   `harness_call_llm` — see §4.10).
 
@@ -935,6 +943,7 @@ breaking the third.
 | `Runner` | `Loss reducer` | A path to one `events.jsonl` that is a complete run (one `RunStarted`, one terminal event). |
 | `Loss reducer` | `Pattern detectors` | One `LossProfile` JSON per run, schema in §4.5. |
 | `Pattern detectors` | `Patch proposer` | A `list[Pattern]` reset on epoch boundaries. |
+| `Analytical index` (`experiments`) | `Patch proposer` | A capped `list[PriorExperiment]` for the current epoch (experiment memory) — settled verdicts + Δscalars + touched ids, scoped to the contract. Advisory; never gates. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md). |
 | `Patch proposer` | `Applier` | An `Experiment` (schema in §4.7) with patches addressing valid mutation-point ids. |
 | `Applier` | `Tournament` | A candidate `Generation` snapshot that passes all validator constraints in §4.8. |
 | `Tournament` | `Journal + outcome` | A `tournament_decision` with score deltas. |
@@ -970,6 +979,7 @@ thing that needs to change to adopt zicato for it".
 | Board entry schema — `expectations` + `judges`, multi-turn emulator | [BOARD-FORMAT.md](BOARD-FORMAT.md) |
 | Authoring boards — outcome vs process checks, builder, scoring weights | [BOARD-AUTHORING.md](BOARD-AUTHORING.md) |
 | Epoch concept, the proposer brief, experiment journaling, analysis pass | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
+| Experiment memory — feeding prior experiment outcomes back to the proposer | [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md) |
 | goldfive event capture, loss reducer, emulator audit lane | [TELEMETRY.md](TELEMETRY.md) |
 | Drift loss scalar, pass-rate, tournament promotion gate | [SCORING.md](SCORING.md) |
 | The tournament competition model — gauntlet, bracket, per-matchup detail, analytics | [TOURNAMENT.md](TOURNAMENT.md) |
