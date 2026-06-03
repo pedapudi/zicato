@@ -91,34 +91,25 @@ def _resolve_workspace(workspace: str) -> Path:
 
 
 def _load_weights(scoring_path: str | None) -> ScoringWeights:
-    """Load scoring weights from JSON, or return defaults."""
+    """Load scoring weights from JSON, or return defaults.
+
+    Delegates to :func:`zicato.workspace_loader._scoring_weights_from_dict`
+    — the SAME loader the contract canonicalizer and ``evolve`` use when
+    they re-derive the live scoring — so the ``ScoringWeights`` ``epoch
+    new`` freezes is byte-for-byte what a later ``evolve`` reconstructs
+    from the live ``scoring.json``. A field-by-field reimplementation
+    here historically dropped the ``tournament`` block, which made an
+    epoch created with a tournament structure auto-roll on the very next
+    ``evolve`` (the frozen hash was computed over a gauntlet default while
+    ``evolve`` recomputed over the real structure). Sharing one loader
+    keeps the two paths from drifting again.
+    """
     if scoring_path is None:
         return ScoringWeights()
+    from zicato.workspace_loader import _scoring_weights_from_dict  # noqa: PLC0415
+
     raw = json.loads(Path(scoring_path).read_text())
-    # We accept the same dict shape that lifecycle._scoring_to_dict
-    # produces; field-by-field with sensible defaults.
-    severity = raw.get("severity_weights")
-    if severity:
-        severity = {str(k): float(v) for k, v in severity.items()}
-        return ScoringWeights(
-            drift_weight=float(raw.get("drift_weight", 1.0)),
-            pass_weight=float(raw.get("pass_weight", 1.0)),
-            severity_weights=severity,
-            per_kind_weights={str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()},
-            plan_revision_weight=float(raw.get("plan_revision_weight", 0.5)),
-            runtime_weight=float(raw.get("runtime_weight", 0.0)),
-            promote_margin=float(raw.get("promote_margin", 0.01)),
-            pass_rate_monotonicity=bool(raw.get("pass_rate_monotonicity", True)),
-        )
-    return ScoringWeights(
-        drift_weight=float(raw.get("drift_weight", 1.0)),
-        pass_weight=float(raw.get("pass_weight", 1.0)),
-        per_kind_weights={str(k): float(v) for k, v in raw.get("per_kind_weights", {}).items()},
-        plan_revision_weight=float(raw.get("plan_revision_weight", 0.5)),
-        runtime_weight=float(raw.get("runtime_weight", 0.0)),
-        promote_margin=float(raw.get("promote_margin", 0.01)),
-        pass_rate_monotonicity=bool(raw.get("pass_rate_monotonicity", True)),
-    )
+    return _scoring_weights_from_dict(raw)
 
 
 def _adopt_contract_sources(

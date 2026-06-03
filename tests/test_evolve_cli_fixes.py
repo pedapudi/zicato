@@ -44,13 +44,19 @@ from zicato.runtime.paths import dashboard_endpoint_path
 # ---------------------------------------------------------------------------
 
 
-def _bootstrap_explicit_flow(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+def _bootstrap_explicit_flow(
+    tmp_path: Path, scoring_extra: dict | None = None
+) -> tuple[Path, Path, Path, Path]:
     """Run ``init`` + ``register`` and stage operator contract files.
 
     The contract files are deliberately staged in a directory that is
     NOT the conventional location next to the workspace, so the test
     actually exercises ``epoch new`` publishing them to the canonical
     place. Returns ``(workspace, board, brief, scoring)``.
+
+    ``scoring_extra`` is merged into the written ``scoring.json`` so a
+    caller can exercise extra contract surface (e.g. a ``tournament``
+    block) without duplicating the bootstrap.
     """
     workspace = tmp_path / ".zicato"
 
@@ -72,7 +78,10 @@ def _bootstrap_explicit_flow(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
         + "\n"
     )
     brief.write_text("# Brief\n- Be careful.\n")
-    scoring.write_text(json.dumps({"drift_weight": 1.0, "pass_weight": 1.0}))
+    scoring_doc: dict = {"drift_weight": 1.0, "pass_weight": 1.0}
+    if scoring_extra:
+        scoring_doc.update(scoring_extra)
+    scoring.write_text(json.dumps(scoring_doc))
 
     # The mutable source tree.
     agent = tmp_path / "agent"
@@ -176,6 +185,73 @@ def test_epoch_new_then_evolve_does_not_spuriously_roll_the_epoch(
         "epoch new froze a contract hash that differs from the live "
         "contract — evolve would spuriously roll the epoch"
     )
+
+
+def test_epoch_new_with_tournament_block_does_not_spuriously_roll(
+    tmp_path: Path,
+) -> None:
+    """A ``tournament`` block in scoring must not trigger an auto-roll.
+
+    Regression for #6: ``epoch new`` loaded the operator's scoring with a
+    field-by-field reader that dropped the ``tournament`` block, freezing
+    the epoch under the gauntlet default. ``evolve`` re-derives the live
+    contract through the shared scoring loader, which DOES honour the
+    block — so the frozen hash (gauntlet) differed from the live hash
+    (the real structure) and the very first ``evolve`` rolled the epoch.
+
+    Both paths must now produce a byte-identical contract hash.
+    """
+    workspace, board, brief, scoring = _bootstrap_explicit_flow(
+        tmp_path,
+        scoring_extra={
+            "tournament": {
+                "structure": "racing",
+                "params": {"rungs": [4, 2, 1], "eta": 3.0, "board_fraction": 0.5},
+            }
+        },
+    )
+
+    runner = CliRunner()
+    new_res = runner.invoke(
+        new_cmd,
+        [
+            "t1",
+            "--workspace",
+            str(workspace),
+            "--board",
+            str(board),
+            "--brief",
+            str(brief),
+            "--scoring",
+            str(scoring),
+        ],
+    )
+    assert new_res.exit_code == 0, new_res.output
+
+    epoch_id = current_epoch_id(workspace)
+    assert epoch_id is not None
+    stored_hash = load_epoch(workspace, epoch_id).contract_hash
+
+    # The hash ``evolve`` would recompute from the resolved live contract.
+    live_hash = compute_contract_hash(resolve_contract_inputs(workspace))
+    assert stored_hash == live_hash, (
+        "epoch new with a tournament block froze a contract hash that "
+        "differs from the live contract — evolve would spuriously roll"
+    )
+
+    # And the frozen epoch must actually carry the tournament structure,
+    # not the gauntlet default the old loader fell back to.
+    assert load_epoch(workspace, epoch_id).scoring.tournament_structure.structure == "racing"
+
+    # End-to-end: the evolve entry hook keeps the epoch (no roll).
+    from zicato.orchestrator import ensure_epoch_for_contract
+
+    async def _aux(_system: str, _user: str, _model: str) -> str:
+        return "stub analysis"
+
+    resolved = asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux))
+    assert resolved == epoch_id
+    assert current_epoch_id(workspace) == epoch_id
 
 
 def test_epoch_new_then_ensure_epoch_for_contract_keeps_the_epoch(
