@@ -22,11 +22,13 @@ Two design rules:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from zicato.core.types import EXPERIMENT_MEMORY_MAX_ENTRIES, PriorExperiment
 from zicato.index.schema import read_schema_version
 
 
@@ -416,6 +418,121 @@ def experiments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     )
 
 
+def _modulating_from_hypothesis_json(raw: Any) -> tuple[str, ...]:
+    """Lift the ``modulating`` ids out of a recorded ``hypothesis_json``.
+
+    Best-effort: the column holds the JSON-serialised
+    :class:`~zicato.core.types.HypothesisSpec`, whose ``modulating`` key
+    is the proposer's declared set of targeted mutation-point ids. A
+    ``NULL`` column, a non-string value, malformed JSON, or a missing /
+    non-list ``modulating`` key all degrade to the empty tuple — the
+    digest never raises on a single malformed row.
+    """
+    if not isinstance(raw, str) or not raw:
+        return ()
+    try:
+        decoded = json.loads(raw)
+    except (ValueError, TypeError):
+        return ()
+    if not isinstance(decoded, dict):
+        return ()
+    mod = decoded.get("modulating")
+    if not isinstance(mod, list | tuple):
+        return ()
+    return tuple(str(m) for m in mod)
+
+
+def prior_experiments_for_epoch(
+    db_path: Path,
+    epoch_id: str,
+    *,
+    max_entries: int = EXPERIMENT_MEMORY_MAX_ENTRIES,
+) -> list[PriorExperiment]:
+    """Return a curated digest of ``epoch_id``'s SETTLED prior experiments.
+
+    The experiment-memory surface (see
+    ``docs/design/EXPERIMENT-MEMORY.md`` §3.3) the orchestrator threads to
+    the proposer so it stops re-proposing known failures and builds on
+    known wins. Layered over :func:`experiments_for_epoch`:
+
+    * **Skip unsettled rows** (``tournament_decision IS NULL``) — an
+      experiment with no verdict carries no learning signal, and would
+      otherwise surface the current round's own just-written, outcome-less
+      experiment. (In-flight sibling entries come from the orchestrator's
+      field loop, not from the index.)
+    * Lift each row's ``modulating`` ids out of ``hypothesis_json``
+      (empty tuple on any decode failure — never raise).
+    * Curate + cap to ``max_entries``: **all** ``promoted`` wins
+      (most-recent-first — wins are rare and high-value, never dropped
+      while budget remains), then the most-recent ``rejected`` ordered by
+      sharpest regression (most-negative ``scalar_score_delta``) first,
+      then ``deferred`` if budget remains. Every entry is built with
+      ``same_contract=True`` — the reader is same-epoch (= same-contract)
+      only.
+
+    Tolerates a missing index the same way every selector here does: a
+    never-indexed workspace yields ``[]`` rather than raising
+    :class:`IndexNotBuiltError`.
+    """
+    if max_entries <= 0:
+        return []
+
+    rows = experiments_for_epoch(db_path, epoch_id)
+
+    promoted: list[PriorExperiment] = []
+    rejected: list[PriorExperiment] = []
+    deferred: list[PriorExperiment] = []
+    # ``experiments_for_epoch`` orders by ``generation_id`` ascending; the
+    # digest renders most-recent-first, so we walk the rows in reverse to
+    # build each block newest-first.
+    for row in reversed(rows):
+        decision = row["tournament_decision"]
+        if decision is None:
+            continue  # unsettled — no learning signal
+        delta = row["scalar_score_delta"]
+        entry = PriorExperiment(
+            generation_id=str(row["generation_id"]),
+            epoch_id=str(row["epoch_id"]),
+            core_idea=str(row["hypothesis_core_idea"] or ""),
+            modulating=_modulating_from_hypothesis_json(row["hypothesis_json"]),
+            decision=str(decision),
+            rejection_reason=str(row["rejection_reason"] or ""),
+            scalar_score_delta=None if delta is None else float(delta),
+            same_contract=True,
+        )
+        if decision == "promoted":
+            promoted.append(entry)
+        elif decision == "rejected":
+            rejected.append(entry)
+        elif decision == "deferred":
+            deferred.append(entry)
+        # extension point: a cross-contract branch (same contract_hash,
+        # different epoch — see EXPERIMENT-MEMORY.md §3.4) attaches here,
+        # yielding same_contract=False entries with scalar_score_delta=None.
+        # Not built this phase.
+
+    out: list[PriorExperiment] = []
+    out.extend(promoted[:max_entries])
+
+    # Rejections: take the K MOST RECENT (K = remaining budget — recency
+    # gates the window since an old marginal rejection is the weakest
+    # "avoid" signal), then within that window rank the sharpest
+    # regression (most-negative delta) first so the strongest signals are
+    # the most visible. A missing delta sorts as least-sharp (0.0) so a
+    # near-zero rejection is the first to fall off.
+    rejected_budget = max_entries - len(out)
+    if rejected_budget > 0:
+        window = rejected[:rejected_budget]
+        window.sort(
+            key=lambda e: (e.scalar_score_delta if e.scalar_score_delta is not None else 0.0)
+        )
+        out.extend(window)
+
+    if len(out) < max_entries:
+        out.extend(deferred[: max_entries - len(out)])
+    return out[:max_entries]
+
+
 def tournaments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     """Return every resolved tournament row under ``epoch_id``."""
     return _select(
@@ -475,6 +592,7 @@ __all__ = [
     "judge_losses_for_generation",
     "judge_loss_trend",
     "experiments_for_epoch",
+    "prior_experiments_for_epoch",
     "tournaments_for_epoch",
     "index_counts",
 ]

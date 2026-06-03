@@ -41,6 +41,7 @@ from zicato.core.types import (
     Experiment,
     Generation,
     OutcomeRecord,
+    PriorExperiment,
 )
 from zicato.core.workspace import (
     experiment_json_path,
@@ -679,6 +680,13 @@ async def evolve_once(
         last_child_snapshot["path"] = child
         return validate_post_apply(child, list(candidate.patches), mutations)
 
+    # Experiment memory: the settled cross-round digest for this epoch.
+    # Best-effort — a missing / stale index yields an empty list and the
+    # proposer simply runs without the ``## What's already been tried``
+    # section. The gauntlet field is a single challenger, so there are no
+    # in-flight siblings to concatenate here.
+    prior = _load_prior_experiments(workspace_root, resolved_epoch_id)
+
     proposer_validation_failed: ProposerError | None = None
     try:
         experiment = await propose_experiment(
@@ -697,6 +705,7 @@ async def evolve_once(
             validate_experiment=_validate_experiment_post_apply,
             meta_loop_emitter=meta_loop_emitter,
             custom_judge_names=custom_judge_names,
+            prior_experiments=prior,
         )
     except ProposerError as exc:
         # The proposer exhausted its bounded retries without producing a
@@ -1093,6 +1102,7 @@ async def _propose_and_apply_challenger(
     meta_loop_emitter: Any,
     seed: int,
     custom_judge_names: frozenset[str] = frozenset(),
+    prior_experiments: tuple[PriorExperiment, ...] = (),
 ) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
     """Propose + apply ONE challenger child of the champion.
 
@@ -1111,6 +1121,12 @@ async def _propose_and_apply_challenger(
     evolve log carries (empty response / invalid JSON / post-apply
     validation / mutation_id no longer resolves) so a rejected challenger
     is visible on the dashboard rather than silently dropped.
+
+    ``prior_experiments`` is the caller-assembled experiment-memory digest
+    threaded into the inner :func:`propose_experiment` call — the settled
+    cross-round history plus this round's already-minted in-flight
+    siblings — so each challenger diversifies away from both known
+    failures and its just-proposed cohort. Empty by default.
     """
     from zicato.epoch import write_experiment  # noqa: PLC0415
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
@@ -1168,6 +1184,7 @@ async def _propose_and_apply_challenger(
             validate_experiment=_validate,
             meta_loop_emitter=meta_loop_emitter,
             custom_judge_names=custom_judge_names,
+            prior_experiments=prior_experiments,
         )
     except ProposerError as exc:
         reason = _short_reject_reason(exc.attempts) or str(exc)
@@ -1311,6 +1328,14 @@ async def _evolve_multi_challenger(
     base_id = _next_generation_id(workspace_root, epoch_id)
     base_n = _round_n_from_generation_id(base_id)
     custom_judge_names = _declared_custom_judge_names(board, weights)
+    # Experiment memory: the settled cross-round digest, computed ONCE
+    # before the field is minted (it does not change as siblings apply).
+    # ``siblings`` accumulates an in-flight ``PriorExperiment`` per
+    # successfully-applied challenger so challenger k sees the hypotheses
+    # of challengers 0..k-1 this round and can diversify away from them; a
+    # challenger whose proposer failed contributes no sibling.
+    prior = tuple(_load_prior_experiments(workspace_root, epoch_id))
+    siblings: list[PriorExperiment] = []
     for offset in range(field_n):
         next_id = f"v{base_n + offset}" if base_n is not None else base_id
         # Seed mirrors competitors_meta: champion is seed 1, challengers
@@ -1332,10 +1357,24 @@ async def _evolve_multi_challenger(
             meta_loop_emitter=meta_loop_emitter,
             seed=offset + 2,
             custom_judge_names=custom_judge_names,
+            prior_experiments=prior + tuple(siblings),
         )
         field_status.append(status)
         if challenger is not None:
             applied.append(challenger)
+            hyp = challenger.experiment.hypothesis
+            siblings.append(
+                PriorExperiment(
+                    generation_id=challenger.generation_id,
+                    epoch_id=epoch_id,
+                    core_idea=hyp.core_idea,
+                    modulating=tuple(hyp.modulating),
+                    decision="in_flight",
+                    rejection_reason="",
+                    scalar_score_delta=None,
+                    same_contract=True,
+                )
+            )
 
     if not applied:
         # The whole field failed to apply — nothing to run. Record a
@@ -2873,6 +2912,37 @@ _INDEX_DB_RELPATH = "index.db"
 def _index_db_path(workspace_root: Path) -> Path:
     """Return the SQLite analytical index path for a workspace."""
     return workspace_root / _INDEX_DB_RELPATH
+
+
+def _load_prior_experiments(
+    workspace_root: Path,
+    epoch_id: str,
+) -> list[PriorExperiment]:
+    """Best-effort read of the epoch's settled experiment-memory digest.
+
+    The orchestrator threads the result into
+    :func:`zicato.proposer.proposer.propose_experiment` so the proposer
+    sees the ``## What's already been tried`` section. Mirrors
+    :func:`_ingest_experiment_into_index`: the :mod:`zicato.index` sibling
+    may be absent and a missing / stale index must never abort a round, so
+    any failure — a missing module, an unreadable database — is logged at
+    ``debug`` level and yields ``[]``. ``experiment.json`` on disk stays
+    canonical; an empty digest simply omits the prompt section.
+    """
+    try:
+        from zicato.index.query import prior_experiments_for_epoch  # noqa: PLC0415
+
+        return prior_experiments_for_epoch(_index_db_path(workspace_root), epoch_id)
+    except ImportError:
+        log.debug("zicato.index.query unavailable; proposer runs without experiment memory")
+        return []
+    except Exception as exc:  # noqa: BLE001 — experiment-memory read is best-effort
+        log.debug(
+            "prior_experiments_for_epoch skipped for %s: %s",
+            epoch_id,
+            exc,
+        )
+        return []
 
 
 def _ingest_experiment_into_index(

@@ -32,7 +32,7 @@ from __future__ import annotations
 import textwrap
 from collections.abc import Iterable
 
-from zicato.core.types import MutationPoint, Pattern
+from zicato.core.types import MutationPoint, Pattern, PriorExperiment
 
 #: Hard ceiling on a single mutation point's rendered content. A
 #: ``replace`` patch MUST faithfully reproduce every part of the span it
@@ -267,6 +267,75 @@ def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
     return "\n".join(lines)
 
 
+def _render_prior_experiment_line(pe: PriorExperiment) -> str:
+    """Render one prior experiment as a two-line compact entry.
+
+    The first line carries the verdict, Δscalar (omitted for an in-flight
+    sibling or a cross-contract entry whose number does not transfer), and
+    the bracketed targeted mutation-point ids (plus the symbolic rejection
+    reason for a rejected entry); the second line is the indented core
+    idea. See ``docs/design/EXPERIMENT-MEMORY.md`` §3.5.
+    """
+    ids = ", ".join(pe.modulating) if pe.modulating else "—"
+    verdict = pe.decision.upper().replace("_", "-")
+    # A cross-contract entry's Δscalar is measured against a different
+    # board and is not comparable, so it is omitted; an in-flight sibling
+    # has no outcome yet.
+    if pe.scalar_score_delta is not None and pe.same_contract:
+        head = f"- {pe.generation_id} {verdict} Δscalar={pe.scalar_score_delta:+.3f}  [{ids}]"
+    else:
+        head = f"- {pe.generation_id} {verdict}  [{ids}]"
+    if pe.decision == "rejected" and pe.rejection_reason:
+        head = f"{head}  ({pe.rejection_reason})"
+    return f"{head}\n    {pe.core_idea}"
+
+
+def render_prior_experiments_block(prior: Iterable[PriorExperiment]) -> str:
+    """Render the experiment-memory section body, or ``""`` when empty.
+
+    Groups the prior experiments by decision into the three compact
+    blocks of ``docs/design/EXPERIMENT-MEMORY.md`` §3.5 — promoted wins
+    first (build on these), then rejected failures (do not re-propose
+    unless something changed), then in-flight siblings minted this round
+    (diversify away from these). An empty input returns the empty string —
+    the proposer-side sentinel for "omit this section entirely", exactly
+    as the insights and pattern blocks behave.
+
+    The framing is deliberately advisory: it does not constrain the
+    proposer (forbidden-ids remains the only hard gate), it surfaces what
+    has already been attempted so re-proposing a rejected direction is a
+    deliberate choice rather than an accident of amnesia.
+    """
+    items = list(prior)
+    if not items:
+        return ""
+
+    promoted = [pe for pe in items if pe.decision == "promoted"]
+    rejected = [pe for pe in items if pe.decision == "rejected"]
+    in_flight = [pe for pe in items if pe.decision == "in_flight"]
+    deferred = [pe for pe in items if pe.decision == "deferred"]
+
+    blocks: list[str] = []
+    if promoted:
+        body = "\n".join(_render_prior_experiment_line(pe) for pe in promoted)
+        blocks.append(f"Already promoted (build on these — the direction worked):\n{body}")
+    if rejected:
+        body = "\n".join(_render_prior_experiment_line(pe) for pe in rejected)
+        blocks.append(
+            f"Already rejected (do NOT re-propose these unless something changed):\n{body}"
+        )
+    if deferred:
+        body = "\n".join(_render_prior_experiment_line(pe) for pe in deferred)
+        blocks.append(f"Deferred (neither won decisively — weak signal):\n{body}")
+    if in_flight:
+        body = "\n".join(_render_prior_experiment_line(pe) for pe in in_flight)
+        blocks.append(
+            f"Proposed this round, not yet evaluated (diversify away from these):\n{body}"
+        )
+
+    return "\n\n".join(blocks)
+
+
 def render_system_prompt(brief_text: str) -> str:
     """Build the system prompt with the proposer-brief body spliced in.
 
@@ -285,6 +354,7 @@ def render_user_prompt(
     mutations: Iterable[MutationPoint],
     feedback: str = "",
     insights: str = "",
+    prior_experiments: Iterable[PriorExperiment] = (),
 ) -> str:
     """Build the user prompt for one proposer call.
 
@@ -307,6 +377,17 @@ def render_user_prompt(
         prepended to the body so the next round's proposer sees the
         previous round's LLM-summarised observations alongside the
         detector patterns.
+    prior_experiments:
+        Optional iterable of :class:`PriorExperiment` — the
+        experiment-memory digest (settled cross-round history plus this
+        round's in-flight siblings) assembled by the orchestrator. When
+        non-empty, a ``## What's already been tried`` section is inserted
+        after ``## Recent telemetry insights`` and before
+        ``## Current loss summary`` so the proposer can avoid repeating
+        known failures and build on known wins. Empty (the default) omits
+        the section entirely, mirroring the insights and pattern blocks —
+        so a caller that supplies no prior experiments renders a
+        byte-identical prompt to before this surface existed.
     """
 
     body = USER_PROMPT_TEMPLATE.format(
@@ -314,6 +395,13 @@ def render_user_prompt(
         pattern_block=render_pattern_block(patterns),
         mutation_block=render_mutation_block(mutations),
     )
+    prior_block = render_prior_experiments_block(prior_experiments)
+    if prior_block:
+        prior_prefix = (
+            "## What's already been tried (this epoch — avoid repeating "
+            f"failures, build on wins)\n\n{prior_block}\n\n"
+        )
+        body = prior_prefix + body
     if insights.strip():
         insights_prefix = f"## Recent telemetry insights\n{insights.strip()}\n\n"
         body = insights_prefix + body
@@ -333,6 +421,7 @@ __all__ = [
     "USER_PROMPT_TEMPLATE",
     "render_pattern_block",
     "render_mutation_block",
+    "render_prior_experiments_block",
     "render_system_prompt",
     "render_user_prompt",
 ]

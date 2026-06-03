@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from zicato.aux_timeout import aux_call_timeout_s
-from zicato.core.types import Experiment, MutationPoint, Pattern
+from zicato.core.types import Experiment, MutationPoint, Pattern, PriorExperiment
 from zicato.proposer.brief import enforce_forbidden
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
 from zicato.proposer.structured import (
@@ -93,6 +93,7 @@ async def propose_experiment(
     validate_experiment: ExperimentValidator | None = None,
     meta_loop_emitter: MetaLoopEmitter | None = None,
     custom_judge_names: frozenset[str] | None = None,
+    prior_experiments: Iterable[PriorExperiment] = (),
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -178,6 +179,19 @@ async def propose_experiment(
         ``drift:<judge_name>`` metric in the hypothesis validates against
         a declared custom judge (not just the built-in goldfive drift
         kinds). ``None`` keeps the built-in-only behaviour.
+    prior_experiments:
+        The experiment-memory digest — settled cross-round history plus
+        this round's in-flight siblings — as a sequence of
+        :class:`~zicato.core.types.PriorExperiment`. Assembled by the
+        *caller* (the orchestrator reads the index for settled history
+        and injects the round's siblings); the proposer stays a pure
+        prompt-assembler over its inputs and does not read the index
+        itself. Threaded into :func:`render_user_prompt` so the proposer
+        sees a ``## What's already been tried`` section and can avoid
+        re-proposing known failures and build on known wins. Empty (the
+        default) omits the section entirely — every standalone caller
+        that pre-dates this surface keeps producing a byte-identical
+        prompt.
 
     Returns
     -------
@@ -211,6 +225,11 @@ async def propose_experiment(
 
         insights_block = load_latest_insights(workspace_root, epoch_id)
 
+    # Loop-invariant: the experiment-memory digest is rendered into every
+    # retry attempt unchanged. Materialise once so a generator caller is
+    # not exhausted on the first attempt.
+    prior_experiments_list = list(prior_experiments)
+
     feedback = ""
     attempt_errors: list[str] = []
 
@@ -222,6 +241,7 @@ async def propose_experiment(
             mutations=mutations_list,
             feedback=feedback,
             insights=insights_block,
+            prior_experiments=prior_experiments_list,
         )
         # Meta-loop bookends: one paired ``proposer_call_started`` /
         # ``proposer_call_completed`` per attempt. ``invocation_id`` is

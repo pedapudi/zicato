@@ -1523,6 +1523,69 @@ class OutcomeRecord:
     champion_eval_mode: str = "full"
 
 
+#: Hard cap on the number of settled prior experiments surfaced to the
+#: proposer's experiment-memory section (the ``## What's already been
+#: tried`` block). A long epoch can accumulate dozens of experiments; the
+#: digest is curated and capped to this many so the prompt stays small
+#: and the mutation manifest the proposer must read in full is not
+#: crowded out. Wins are never dropped by the cap; the sharpest recent
+#: rejections fill the remainder. See ``docs/design/EXPERIMENT-MEMORY.md``
+#: §3.3.
+EXPERIMENT_MEMORY_MAX_ENTRIES = 12
+
+
+@dataclass(frozen=True, slots=True)
+class PriorExperiment:
+    """One prior experiment as surfaced to the proposer's memory section.
+
+    A compact digest entry — what was tried, where, and how it fared —
+    assembled by the orchestrator (the index reader for settled history,
+    the field loop for in-flight siblings) and rendered into the
+    ``## What's already been tried`` user-prompt section. The proposer
+    reads it to avoid re-proposing known failures and to build on known
+    wins. It is advisory context only — never part of the hard schema or
+    the system prompt. See ``docs/design/EXPERIMENT-MEMORY.md`` §3.2.
+
+    Fields
+    ------
+    generation_id, epoch_id:
+        Lineage coordinates of the prior experiment's child generation.
+    core_idea:
+        One-sentence hypothesis core (the ``HypothesisSpec.core_idea`` the
+        proposer wrote for that experiment).
+    modulating:
+        The targeted mutation-point ids — the experiment's *declared*
+        ``HypothesisSpec.modulating`` set, lifted from the recorded
+        hypothesis.
+    decision:
+        The verdict: ``"promoted"`` / ``"rejected"`` / ``"deferred"`` for
+        a settled experiment, or ``"in_flight"`` for a sibling minted
+        this round but not yet run.
+    rejection_reason:
+        The symbolic reason when ``decision == "rejected"``; ``""``
+        otherwise.
+    scalar_score_delta:
+        The signed Δscalar (negative = the child scored the lower /
+        better loss). ``None`` when the experiment is unsettled /
+        in-flight or when the delta does not transfer (a cross-contract
+        entry — see :attr:`same_contract`).
+    same_contract:
+        ``True`` for a same-epoch (same-contract) entry whose Δscalar is
+        directly comparable; ``False`` for a cross-contract entry from a
+        different epoch under the same ``contract_hash``, which renders
+        without its Δscalar because the number does not transfer.
+    """
+
+    generation_id: str
+    epoch_id: str
+    core_idea: str
+    modulating: tuple[str, ...]
+    decision: str
+    rejection_reason: str
+    scalar_score_delta: float | None
+    same_contract: bool = True
+
+
 @dataclass(frozen=True, slots=True)
 class Experiment:
     """One generation's proposer output joined with its tournament outcome.
@@ -2048,6 +2111,8 @@ __all__ = [
     "TournamentStructure",
     "OutcomeRecord",
     "Experiment",
+    "PriorExperiment",
+    "EXPERIMENT_MEMORY_MAX_ENTRIES",
     # Epoch / generation
     "ScoringWeights",
     "EpochConfig",

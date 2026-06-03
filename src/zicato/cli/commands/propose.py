@@ -410,6 +410,14 @@ def propose_cmd(
     # built-in-only drift-kind validation.
     custom_judge_names = _load_custom_judge_names(workspace_dir)
 
+    # Experiment memory: feed the settled cross-round digest to the
+    # standalone propose path too so the debug command matches the loop.
+    # Best-effort — a missing / stale index yields an empty list and the
+    # prompt section is omitted.
+    from zicato.orchestrator import _load_prior_experiments  # noqa: PLC0415
+
+    prior = _load_prior_experiments(workspace_dir, epoch_id)
+
     try:
         experiment = asyncio.run(
             propose_experiment(
@@ -425,6 +433,7 @@ def propose_cmd(
                 max_retries=max_retries,
                 forbidden_ids=brief.forbidden_ids,
                 custom_judge_names=custom_judge_names,
+                prior_experiments=prior,
             )
         )
     except ProposerError as exc:
