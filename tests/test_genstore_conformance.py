@@ -127,7 +127,10 @@ def test_seed_generation_materialises_tree(store: GenerationStore, tmp_path: Pat
 
 
 def test_seed_generation_raises_for_missing_source(store: GenerationStore, tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError):
+    # The directory backend pins the message text; other backends share only
+    # the exception type.
+    match = "does not exist" if isinstance(store, DirectoryGenerationStore) else None
+    with pytest.raises(FileNotFoundError, match=match):
         store.seed_generation("e1", "v0", [tmp_path / "ghost"])
 
 
@@ -189,7 +192,10 @@ def test_derive_generation_leaves_parent_untouched(store: GenerationStore, tmp_p
 def test_derive_generation_raises_for_missing_parent(
     store: GenerationStore,
 ) -> None:
-    with pytest.raises(FileNotFoundError):
+    # The directory backend pins the message text; other backends share only
+    # the exception type.
+    match = "has no source tree" if isinstance(store, DirectoryGenerationStore) else None
+    with pytest.raises(FileNotFoundError, match=match):
         store.derive_generation("e1", "v0", "v1", [])
 
 

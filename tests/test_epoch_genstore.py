@@ -18,8 +18,6 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from zicato.core.types import Patch
 from zicato.epoch.genstore import (
     DirectoryGenerationStore,
@@ -98,16 +96,6 @@ def test_snapshot_root_is_pure_path_math(tmp_path: Path) -> None:
     assert not root.exists()
 
 
-def test_has_generation_false_before_materialisation(tmp_path: Path) -> None:
-    store = DirectoryGenerationStore(tmp_path)
-    assert store.has_generation("e1", "v0") is False
-
-
-def test_list_generations_empty_for_unknown_epoch(tmp_path: Path) -> None:
-    store = DirectoryGenerationStore(tmp_path)
-    assert store.list_generations("never_existed") == []
-
-
 # ---------------------------------------------------------------------------
 # seed_generation
 # ---------------------------------------------------------------------------
@@ -146,12 +134,6 @@ def test_seed_generation_copies_a_single_file(tmp_path: Path) -> None:
     root = store.seed_generation("e1", "v0", [src])
 
     assert (root / "config.py").read_text(encoding="utf-8") == "SETTING = 1\n"
-
-
-def test_seed_generation_raises_for_missing_source(tmp_path: Path) -> None:
-    store = DirectoryGenerationStore(tmp_path / "ws")
-    with pytest.raises(FileNotFoundError, match="does not exist"):
-        store.seed_generation("e1", "v0", [tmp_path / "ghost"])
 
 
 def test_list_generations_reports_seeded(tmp_path: Path) -> None:
@@ -203,30 +185,6 @@ def test_derive_generation_leaves_parent_untouched(tmp_path: Path) -> None:
     )
     assert "original" in parent_text
     assert "rewritten" not in parent_text
-
-
-def test_derive_generation_raises_for_missing_parent(tmp_path: Path) -> None:
-    store = DirectoryGenerationStore(tmp_path / "ws")
-    with pytest.raises(FileNotFoundError, match="has no source tree"):
-        store.derive_generation("e1", "v0", "v1", [])
-
-
-def test_derive_generation_is_all_or_nothing_on_bad_patch(tmp_path: Path) -> None:
-    """A malformed patch set leaves no child tree behind."""
-    store = DirectoryGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "src")
-    store.seed_generation("e1", "v0", [tree])
-
-    with pytest.raises(ValueError):
-        store.derive_generation(
-            "e1",
-            "v0",
-            "v1",
-            [_patch(pid="bad", mutation_id="does_not_exist", new_content='"""x"""')],
-        )
-
-    # No half-applied child tree was left behind.
-    assert store.has_generation("e1", "v1") is False
 
 
 def test_derive_generation_clears_stale_child_from_failed_round(tmp_path: Path) -> None:
