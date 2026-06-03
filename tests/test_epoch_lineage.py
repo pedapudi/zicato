@@ -199,6 +199,90 @@ def test_render_lineage_summary_populated(
     assert "(root)" in summary
 
 
+def test_append_to_lineage_records_round_index(
+    workspace: Path, board_file: Path, rubric_file: Path
+) -> None:
+    """A generation's birth round is persisted on its lineage row.
+
+    The seed (``v0``) is round 0; challengers carry the round that
+    minted them — here ``v1``/``v2`` minted in round 0, ``v3`` in round 1.
+    """
+    cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
+    seed = Generation(
+        id="v0",
+        epoch_id=cfg.id,
+        parent_id=None,
+        snapshot_root=workspace / "s0",
+        created_at="2026-04-08T10:00:00+00:00",
+        promoted=True,
+    )  # round_index defaults to 0 — the genesis seed.
+    c1 = Generation(
+        id="v1",
+        epoch_id=cfg.id,
+        parent_id="v0",
+        snapshot_root=workspace / "s1",
+        created_at="2026-04-08T11:00:00+00:00",
+        round_index=0,
+    )
+    c2 = Generation(
+        id="v2",
+        epoch_id=cfg.id,
+        parent_id="v0",
+        snapshot_root=workspace / "s2",
+        created_at="2026-04-08T11:30:00+00:00",
+        round_index=0,
+    )
+    c3 = Generation(
+        id="v3",
+        epoch_id=cfg.id,
+        parent_id="v1",
+        snapshot_root=workspace / "s3",
+        created_at="2026-04-08T12:00:00+00:00",
+        round_index=1,
+        promoted=True,
+    )
+    for g, parent in ((seed, None), (c1, "v0"), (c2, "v0"), (c3, "v1")):
+        append_to_lineage(workspace, cfg.id, g, parent)
+
+    data = load_lineage(workspace)
+    [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
+    by_id = {g["id"]: g for g in entry["generations"]}
+    assert by_id["v0"]["round_index"] == 0
+    assert by_id["v1"]["round_index"] == 0
+    assert by_id["v2"]["round_index"] == 0
+    assert by_id["v3"]["round_index"] == 1
+
+
+def test_append_to_lineage_round_index_survives_redefence(
+    workspace: Path, board_file: Path, rubric_file: Path
+) -> None:
+    """Re-recording a generation keeps its original BIRTH round.
+
+    A champion minted in round 1 that is re-appended later (a defence /
+    promotion update) is never re-stamped with a later round.
+    """
+    from dataclasses import replace
+
+    cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
+    g = Generation(
+        id="v1",
+        epoch_id=cfg.id,
+        parent_id="v0",
+        snapshot_root=workspace / "snap",
+        created_at="2026-04-08T11:00:00+00:00",
+        promoted=False,
+        round_index=1,
+    )
+    append_to_lineage(workspace, cfg.id, g, "v0")
+    # Re-record on promotion; the in-place update must keep round_index=1.
+    append_to_lineage(workspace, cfg.id, replace(g, promoted=True), "v0")
+    data = load_lineage(workspace)
+    [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
+    [recorded] = entry["generations"]
+    assert recorded["promoted"] is True
+    assert recorded["round_index"] == 1
+
+
 def test_close_marks_lineage_closed_at(
     workspace: Path, board_file: Path, rubric_file: Path
 ) -> None:

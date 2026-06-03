@@ -730,3 +730,159 @@ def test_backfill_recovers_champion_lineage_for_t6_chain(tmp_path: Path) -> None
     backfill_generations(ws)
     # After the backfill the full champion chain is recoverable.
     assert _spine() == ["v0", "v1", "v3"]
+
+
+# ---------------------------------------------------------------------------
+# round_index — birth round of a generation (v7)
+# ---------------------------------------------------------------------------
+
+
+def _seed_lineage_with_rounds(ws: Path, epoch_id: str) -> None:
+    """Seed v0 (round 0) + two challengers minted in rounds 0 and 1."""
+    seed = Generation(
+        id="v0",
+        epoch_id=epoch_id,
+        parent_id=None,
+        snapshot_root=Path("/tmp/snap/v0"),
+        created_at="2026-01-01T00:00:00Z",
+        promoted=True,
+    )  # genesis seed — round_index defaults to 0.
+    c1 = Generation(
+        id="v1",
+        epoch_id=epoch_id,
+        parent_id="v0",
+        snapshot_root=Path("/tmp/snap/v1"),
+        created_at="2026-01-02T00:00:00Z",
+        promoted=True,
+        round_index=0,
+    )
+    c2 = Generation(
+        id="v2",
+        epoch_id=epoch_id,
+        parent_id="v1",
+        snapshot_root=Path("/tmp/snap/v2"),
+        created_at="2026-01-03T00:00:00Z",
+        promoted=True,
+        round_index=1,
+    )
+    append_to_lineage(ws, epoch_id, seed, None)
+    append_to_lineage(ws, epoch_id, c1, "v0")
+    append_to_lineage(ws, epoch_id, c2, "v1")
+
+
+def test_rebuild_index_round_index_round_trips(tmp_path: Path) -> None:
+    """A generation's birth round survives a full rebuild + query."""
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# rubric\n", encoding="utf-8")
+    cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
+    eid = cfg.id
+    _seed_lineage_with_rounds(ws, eid)
+
+    db = rebuild_index(ws)
+    rows = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}
+    assert rows["v0"]["round_index"] == 0
+    assert rows["v1"]["round_index"] == 0
+    assert rows["v2"]["round_index"] == 1
+
+
+def test_rebuild_index_legacy_generation_reads_null_round_index(tmp_path: Path) -> None:
+    """A lineage row that predates the round_index field reads as null.
+
+    Simulates a legacy ``lineage.json`` whose generation dicts have no
+    ``round_index`` key by writing the document directly, then rebuilding.
+    The index column must be ``NULL`` (birth round unknown), not coerced
+    to 0.
+    """
+    import json
+
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# rubric\n", encoding="utf-8")
+    cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
+    eid = cfg.id
+
+    # Overwrite lineage.json with legacy-shaped rows (no round_index key).
+    lineage_path = ws / "lineage.json"
+    legacy = {
+        "epochs": [
+            {
+                "id": eid,
+                "name": "alpha",
+                "started_at": "2026-01-01T00:00:00Z",
+                "closed_at": "",
+                "v0_parent": None,
+                "generations": [
+                    {
+                        "id": "v0",
+                        "parent_id": None,
+                        "promoted": True,
+                        "created_at": "2026-01-01T00:00:00Z",
+                    },
+                    {
+                        "id": "v1",
+                        "parent_id": "v0",
+                        "promoted": True,
+                        "created_at": "2026-01-02T00:00:00Z",
+                    },
+                ],
+            }
+        ]
+    }
+    lineage_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    db = rebuild_index(ws)
+    rows = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}
+    assert rows["v0"]["round_index"] is None
+    assert rows["v1"]["round_index"] is None
+
+
+def test_backfill_fills_round_index_for_legacy_row(tmp_path: Path) -> None:
+    """backfill_generations gains round_index once lineage carries it.
+
+    A pre-v7 row has round_index NULL; after lineage records the birth
+    round, the backfill writes it through (and is then idempotent).
+    """
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# rubric\n", encoding="utf-8")
+    cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
+    eid = cfg.id
+    _seed_lineage_with_rounds(ws, eid)
+    db = rebuild_index(ws)
+
+    # Null out the round_index column to mimic a v6-era row.
+    import sqlite3
+
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute("UPDATE generations SET round_index = NULL")
+        conn.commit()
+    finally:
+        conn.close()
+    before = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}
+    assert before["v2"]["round_index"] is None
+
+    backfill_generations(ws)
+    after = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}
+    assert after["v1"]["round_index"] == 0
+    assert after["v2"]["round_index"] == 1
+    # Idempotent: a second pass changes nothing for round_index.
+    backfill_generations(ws)
+    again = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}
+    assert again["v2"]["round_index"] == 1

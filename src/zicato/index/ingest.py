@@ -270,6 +270,22 @@ def _upsert_epoch(
     )
 
 
+def _round_index_from_lineage_gen(gen: dict[str, Any]) -> int | None:
+    """Extract a generation's birth ``round_index`` from its lineage dict.
+
+    Legacy lineage rows predate the field, so an absent or non-integer
+    value reads as ``None`` (birth round unknown) — the index column is
+    nullable and consumers degrade on a null.
+    """
+    raw = gen.get("round_index")
+    if isinstance(raw, bool):
+        # ``bool`` is an ``int`` subclass; a stray boolean is not a round.
+        return None
+    if isinstance(raw, int):
+        return raw
+    return None
+
+
 def _upsert_generation(
     conn: sqlite3.Connection,
     epoch_id: str,
@@ -277,21 +293,30 @@ def _upsert_generation(
     parent_generation_id: str | None,
     promoted: bool,
     created_at: str,
+    round_index: int | None = None,
 ) -> None:
+    # ``round_index`` is the birth round of the generation. It is
+    # written via COALESCE so a partial upsert (e.g. the
+    # experiment-derived path, which does not know the round) never
+    # clobbers a value a lineage-derived pass already set. A legacy
+    # generation whose lineage row predates the field leaves it NULL —
+    # birth round unknown — which consumers read as absent.
     conn.execute(
         "INSERT INTO generations("
-        "epoch_id, generation_id, parent_generation_id, promoted, created_at) "
-        "VALUES(?, ?, ?, ?, ?) "
+        "epoch_id, generation_id, parent_generation_id, promoted, created_at, round_index) "
+        "VALUES(?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(epoch_id, generation_id) DO UPDATE SET "
         "parent_generation_id = excluded.parent_generation_id, "
         "promoted = excluded.promoted, "
-        "created_at = excluded.created_at",
+        "created_at = excluded.created_at, "
+        "round_index = COALESCE(excluded.round_index, generations.round_index)",
         (
             epoch_id,
             generation_id,
             parent_generation_id,
             1 if promoted else 0,
             created_at,
+            round_index,
         ),
     )
 
@@ -1131,6 +1156,7 @@ def _rebuild_epoch(
             parent_generation_id=meta.get("parent_id"),
             promoted=bool(meta.get("promoted", False)),
             created_at=str(meta.get("created_at", "")),
+            round_index=_round_index_from_lineage_gen(meta),
         )
         _ingest_experiment_into(conn, workspace_root, epoch_id, generation_id)
         for entry_id in _iter_run_entry_ids(workspace_root, epoch_id, generation_id):
@@ -1301,6 +1327,7 @@ def _upsert_owning_epoch_generation(
     parent_id: str | None = None
     promoted = False
     gen_created_at = ""
+    round_index: int | None = None
     try:
         from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
 
@@ -1314,6 +1341,7 @@ def _upsert_owning_epoch_generation(
                     parent_id = g.get("parent_id")
                     promoted = bool(g.get("promoted", False))
                     gen_created_at = str(g.get("created_at", ""))
+                    round_index = _round_index_from_lineage_gen(g)
             break
     except (OSError, json.JSONDecodeError):
         pass
@@ -1333,6 +1361,7 @@ def _upsert_owning_epoch_generation(
         parent_generation_id=parent_id,
         promoted=promoted,
         created_at=gen_created_at,
+        round_index=round_index,
     )
 
 
@@ -1416,10 +1445,15 @@ def backfill_generations(
                     parent = raw_parent if isinstance(raw_parent, str) else None
                     promoted = bool(g.get("promoted", False))
 
+                # ``round_index`` is owned by lineage.json (the birth
+                # round); reconcile it too so a legacy row gains it once
+                # lineage carries it. An absent value reads as None.
+                round_index = _round_index_from_lineage_gen(g)
+
                 # Read what the DB currently has so we only count a real
                 # rewrite, not a no-op upsert.
                 cur = conn.execute(
-                    "SELECT parent_generation_id, promoted, created_at "
+                    "SELECT parent_generation_id, promoted, created_at, round_index "
                     "FROM generations WHERE epoch_id = ? AND generation_id = ?",
                     (epoch_id, gid),
                 )
@@ -1427,20 +1461,27 @@ def backfill_generations(
                 created_at = ""
                 cur_parent: str | None = None
                 cur_promoted = 0
+                cur_round_index: int | None = None
                 if row is not None:
                     cur_parent = row[0] if row[0] is not None else None
                     cur_promoted = int(row[1] or 0)
                     created_at = row[2] if row[2] else ""
+                    cur_round_index = row[3] if row[3] is not None else None
                 # Prefer the existing created_at; fall back to lineage's,
                 # then to the empty string (matches the live writer's
                 # behaviour when timestamps are unavailable).
                 if not created_at:
                     created_at = str(g.get("created_at", ""))
 
+                # The upsert writes round_index via COALESCE, so it never
+                # nulls an existing value; a backfill is needed only when
+                # lineage supplies a value the DB row is missing.
+                round_index_needs_write = round_index is not None and cur_round_index is None
                 if (
                     row is not None
                     and cur_parent == parent
                     and cur_promoted == (1 if promoted else 0)
+                    and not round_index_needs_write
                 ):
                     continue
                 _upsert_generation(
@@ -1450,6 +1491,7 @@ def backfill_generations(
                     parent_generation_id=parent,
                     promoted=promoted,
                     created_at=created_at,
+                    round_index=round_index,
                 )
                 updated += 1
         conn.commit()

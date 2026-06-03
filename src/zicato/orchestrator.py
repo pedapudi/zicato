@@ -840,6 +840,7 @@ async def evolve_once(
         parent_id=parent_id,
         snapshot_root=child_snapshot,
         created_at=_now_iso(),
+        round_index=round_index,
     )
     # Fast mode reuses the parent/champion's cached aggregate instead of
     # re-running it every round. The very first round of a fresh epoch
@@ -951,6 +952,7 @@ async def evolve_once(
             snapshot_root=child_snapshot,
             created_at=child_gen.created_at,
             promoted=True,
+            round_index=child_gen.round_index,
         )
         append_to_lineage(workspace_root, resolved_epoch_id, promoted_gen, parent_id=parent_id)
         _set_current_generation(workspace_root, resolved_epoch_id, next_id)
@@ -964,6 +966,7 @@ async def evolve_once(
             snapshot_root=child_snapshot,
             created_at=child_gen.created_at,
             promoted=False,
+            round_index=child_gen.round_index,
         )
         append_to_lineage(workspace_root, resolved_epoch_id, rejected_gen, parent_id=parent_id)
 
@@ -1230,6 +1233,7 @@ async def _propose_and_apply_challenger(
         parent_id=parent_id,
         snapshot_root=child_snapshot,
         created_at=_now_iso(),
+        round_index=round_index,
     )
     return (
         _AppliedChallenger(
@@ -1683,6 +1687,7 @@ async def _evolve_multi_challenger(
             snapshot_root=challenger.snapshot_root,
             created_at=challenger.generation.created_at,
             promoted=is_crowned,
+            round_index=challenger.generation.round_index,
         )
         append_to_lineage(workspace_root, epoch_id, gen_record, parent_id=parent_id)
     if promoted_id is not None:

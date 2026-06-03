@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
@@ -68,6 +68,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       parent_generation_id TEXT,
       promoted INTEGER,
       created_at TEXT,
+      round_index INTEGER,
       PRIMARY KEY (epoch_id, generation_id)
     )
     """,
@@ -268,6 +269,18 @@ _V6_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+#: Columns added in v7 (per-generation evolve-round grouping). A
+#: generation row carries ``round_index`` — the evolve round that MINTED
+#: it (its birth round; the genesis seed ``v0`` is round 0). Consumers
+#: group an epoch's generations as ``Epoch -> Round -> {challengers minted
+#: that round}``. Same incremental-open ALTER pattern as the earlier
+#: waves: a pre-existing v6 database gains the column as ``NULL`` on open
+#: (legacy generations read as ``round_index IS NULL`` — birth round
+#: unknown), and a full ``zicato reindex`` re-derives it from
+#: ``lineage.json`` (which now carries ``round_index`` per generation).
+_V7_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "round_index", "INTEGER"),)
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     """Create every table + index + stamp the schema version.
 
@@ -390,6 +403,14 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
 
     if current < 6:
         for table, column, ddl_type in _V6_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+    if current < 7:
+        for table, column, ddl_type in _V7_ADDED_COLUMNS:
             if not _table_exists(conn, table):
                 continue
             if column in _column_names(conn, table):

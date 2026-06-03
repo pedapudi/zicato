@@ -1924,6 +1924,15 @@ class Generation:
         by a tournament. The epoch's current head is the most-recent
         promoted generation; ``promoted=False`` generations are dead
         branches kept for analysis.
+    round_index:
+        The evolve round that MINTED this generation — its birth round.
+        Round indices are zero-based (the first evolve round is ``0``),
+        and the epoch's genesis seed (``v0``) is round ``0``. A champion
+        carried into later rounds keeps its birth round; it is NOT
+        re-stamped each round it defends. Consumers group an epoch's
+        generations as ``Epoch -> Round -> {challengers minted that
+        round}``. Defaults to ``0`` so legacy callers (and the seed)
+        need not specify it.
     """
 
     id: str
@@ -1932,6 +1941,7 @@ class Generation:
     snapshot_root: Path
     created_at: str
     promoted: bool = False
+    round_index: int = 0
 
 
 # ---------------------------------------------------------------------------

@@ -180,11 +180,20 @@ def all_epochs(db_path: Path) -> list[sqlite3.Row]:
 
 
 def generations_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
-    """Return every generation under ``epoch_id``, oldest first."""
-    return _select(
+    """Return every generation under ``epoch_id``, oldest first.
+
+    ``round_index`` (the v7 birth-round column) is selected as an
+    optional column: a legacy index opened read-only without the
+    migration still loads each row with ``round_index`` present-but-null,
+    so a consumer can group ``Epoch -> Round -> {challengers}`` and
+    degrade on a null.
+    """
+    return _select_optional_columns(
         db_path,
-        "SELECT epoch_id, generation_id, parent_generation_id, promoted, created_at "
-        "FROM generations WHERE epoch_id = ? ORDER BY created_at, generation_id",
+        "generations",
+        ["epoch_id", "generation_id", "parent_generation_id", "promoted", "created_at"],
+        ["round_index"],
+        "WHERE epoch_id = ? ORDER BY created_at, generation_id",
         (epoch_id,),
     )
 

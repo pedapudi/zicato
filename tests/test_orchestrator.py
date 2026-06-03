@@ -422,6 +422,76 @@ def test_evolve_once_promotes_on_improvement(
     assert "swap the greeting string" in journal
 
 
+def test_evolve_round_stamps_birth_round_index_on_lineage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A minted challenger carries its round's index; carried champions keep theirs.
+
+    Round 0 mints v1 (promoted) — its birth round is 0. Round 1 mints v2
+    — its birth round is 1 — while v1 (carried forward as champion) keeps
+    its original birth round: a defending champion is NOT re-stamped each
+    round. (The bootstrap seeds v0's snapshot without a lineage row, so
+    the seed=0 invariant is covered by the lineage + index round-trip
+    tests rather than asserted here.)
+    """
+    from zicato.epoch.lineage import load_lineage
+    from zicato.orchestrator import evolve_once
+
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0, "v2": 0.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    # Round 0: v0 -> v1, promoted. Birth round of v1 is 0.
+    out0 = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            round_index=0,
+        )
+    )
+    assert out0.tournament_decision == "promoted"
+    assert out0.proposed_generation_id == "v1"
+
+    rounds0 = _lineage_round_index(load_lineage(workspace), epoch_id)
+    assert rounds0["v1"] == 0  # minted in round 0
+
+    # Round 1: v1 -> v2, promoted. Birth round of v2 is 1; v1 keeps its.
+    out1 = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            round_index=1,
+        )
+    )
+    assert out1.proposed_generation_id == "v2"
+
+    rounds1 = _lineage_round_index(load_lineage(workspace), epoch_id)
+    # The carried champion keeps its BIRTH round — not re-stamped to 1.
+    assert rounds1["v1"] == 0
+    # The newly-minted challenger carries the current round.
+    assert rounds1["v2"] == 1
+
+
+def _lineage_round_index(lineage: dict[str, Any], epoch_id: str) -> dict[str, int]:
+    """Map generation_id -> round_index for one epoch's lineage rows."""
+    for entry in lineage.get("epochs", []):
+        if entry.get("id") == epoch_id:
+            return {
+                g["id"]: g["round_index"]
+                for g in entry.get("generations", [])
+                if "round_index" in g
+            }
+    return {}
+
+
 def test_evolve_once_fast_mode_degrades_to_full_when_no_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

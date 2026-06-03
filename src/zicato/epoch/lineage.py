@@ -161,6 +161,11 @@ def append_to_lineage(
             g["parent_id"] = parent_id
             g["promoted"] = generation.promoted
             g["created_at"] = generation.created_at
+            # ``round_index`` is the BIRTH round of the generation; once
+            # set it never changes, so re-recording the same generation
+            # (e.g. a later defence) keeps the original value rather than
+            # re-stamping it with whatever the caller passes.
+            g["round_index"] = generation.round_index
             _save_raw(workspace_root, raw)
             return
     entry["generations"].append(
@@ -169,6 +174,7 @@ def append_to_lineage(
             "parent_id": parent_id,
             "promoted": generation.promoted,
             "created_at": generation.created_at,
+            "round_index": generation.round_index,
         }
     )
     _save_raw(workspace_root, raw)
