@@ -98,26 +98,43 @@ appears in that variant, not that it shares code.)
 - **Used by:** breadcrumb — A, B, C, E, F, G, H, I, J, K (and the round-3/4 IA
   base). Back/up control — T, U, V, W (round-6 fix). Q shipped the buggy version.
 
-### Color-theme system (solarized-light / solarized-dark / monokai)
-- **Encodes:** B's three-theme token system, ported as the operator's named
-  palettes; a visible switcher swaps a `data-…-theme` attribute on the variant
-  root (CSS-only re-skin, persisted to `localStorage`). Every mark reads with
-  sufficient contrast in all three; improve/regress/caution semantics hold.
+### Color-theme system (a 6-role token contract; 16 themes in T)
+- **Encodes:** B's themeable token system, ported and grown into a **six-role
+  semantic contract** — `--v2-paper / --v2-panel / --v2-ink / --v2-good /
+  --v2-bad / --v2-accent` (plus secondary `--v2-caution/flat/ink-soft/ink-faint/
+  rule/cell-empty`) — swapped via a `data-…-theme` attribute on the variant root
+  (CSS-only re-skin, persisted to `localStorage`). The improve/regress/accent
+  semantics hold across every theme; no mark carries hardcoded hex. In the
+  shipping UI **(T)** this is **sixteen** themes (monokai default), not three:
+  the three originals — monokai, solarized-dark, solarized-light — plus thirteen
+  palettes adapted from the Gogh terminal colour schemes
+  (gogh-co.github.io/Gogh: google-light/dark, lunaria-light/eclipse,
+  belafonte-day/night, paper, zenburn, selenized-black, relaxed, espresso,
+  dracula, ubuntu), each mapped onto the same 6-role contract. With sixteen
+  options the picker is a **swatch dropdown** (a 6-swatch preview strip + name
+  per option), not inline buttons.
 - **Binds:** none (presentation tokens).
-- **Used by:** B (the origin — Paper/Ink/Sepia), then the named three-theme
-  system across H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W. (A and D ship
-  bespoke palettes; D has a `prefers-color-scheme` dark mode.)
+- **Used by:** B (the origin — Paper/Ink/Sepia), then the token system across H,
+  I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W. (A and D ship bespoke palettes; D
+  has a `prefers-color-scheme` dark mode.)
+- **Source of truth:** the full role system + the sixteen themes are documented
+  in [CONSOLE-IV-DESIGN-LANGUAGE.md](CONSOLE-IV-DESIGN-LANGUAGE.md) §2.
 
-### Typeface themes (Open-Sans pairings)
-- **Encodes:** a second chrome picker offering four Open-Sans-based Google-Fonts
-  pairings, swapping `--…-font-*` family tokens via a `data-…-type` root
-  attribute (persisted): **Sans** (Open Sans throughout, tabular figures),
-  **Editorial** (+ Source Serif 4 headings & publication), **Technical**
-  (+ JetBrains Mono for data/labels/code), **Display** (+ Archivo Narrow or
-  Oswald condensed for headings & big numbers). Google Fonts is the only
+### Typeface themes (three distinct serif / mono / display voices)
+- **Encodes:** a second chrome picker swapping the family tokens (`--v2-sans` /
+  `--v2-mono`, plus the `--n-font-head` / `--n-font-paper` families) via a
+  `data-…-type` root attribute (persisted). In the shipping UI **(T)** the
+  picker is exactly **three genuinely distinct voices** (default **Technical**),
+  not Open-Sans variations: **Editorial** (Source Serif 4 throughout — body,
+  data, headings & publication), **Technical** (Open Sans body + JetBrains Mono
+  for data/labels/code), **Display** (Space Grotesk geometric body + Archivo
+  Narrow condensed headings & big numerals). The earlier redundant **Sans**
+  option was dropped (`sans` normalises to Technical). Google Fonts is the only
   permitted external dependency — fonts only, system fallbacks, `display=swap`.
 - **Binds:** none (presentation tokens).
 - **Used by:** L, M, N, O, P, Q, R, S, T, U, V, W. (Introduced in round 4.)
+- **Source of truth:** the typography system is documented in
+  [CONSOLE-IV-DESIGN-LANGUAGE.md](CONSOLE-IV-DESIGN-LANGUAGE.md) §3.
 
 ### Density / "roominess" picker
 - **Encodes:** a third chrome selector (compact · cozy · roomy) driving a root
