@@ -668,6 +668,16 @@ export async function buildTreeModel(route) {
       g.currentChampion = champ;
       g.formerChampion = g.promoted === true && !champ;
     }
+    // An ORPHAN is a parentless generation that nothing descends from and that
+    // never recorded an outcome — a stray from an aborted run, NOT the baseline
+    // seed. The true seed is the lineage ROOT that challengers build on (it is
+    // some other gen's parent), so labelling a childless, outcome-less, rootless
+    // gen "seed" is misleading; mark it so the tree can say "unscored".
+    const parentIds = new Set(gensList.map((g) => g.parent).filter(Boolean).map(String));
+    for (const g of gensList) {
+      g.orphan = !g.parent && g.promoted == null
+        && !g.currentChampion && !g.formerChampion && !parentIds.has(String(g.id));
+    }
     // Boards come from the epoch contract — attach them only to the contract
     // epoch's node (the other epochs' boards resolve when that epoch is viewed).
     const boardList = (isContractEpoch && ep && Array.isArray(ep.board) ? ep.board : []).map((b) => ({

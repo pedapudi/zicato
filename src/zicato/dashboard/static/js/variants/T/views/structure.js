@@ -423,6 +423,16 @@ function proposedFieldSection(st, ctx, epochId) {
   const fs = fieldStatusOf(st);
   if (!fs.length) return null;
   const onCompetitor = (gen) => { if (gen && ctx && ctx.navigate) ctx.navigate('candidate', { epochId, gen }); };
+  const applied = fs.filter((f) => f.status === 'applied').length;
+  const rejected = fs.length - applied;
+  // When EVERY proposal applied, the per-challenger tracker just re-lists the
+  // field the ladder/standings already show — collapse it to a one-line
+  // summary. Keep the full tracker only when there are rejections (the
+  // informative case: which proposals failed to apply, and why).
+  if (rejected === 0) {
+    return section('Proposed field', el('p', { class: 'dn-faint', style: 'font-size:12px;margin:0;',
+      text: `${fs.length} proposed · ${applied} applied — the full field entered the tournament (see the ladder below).` }));
+  }
   const tracker = svg.proposingTracker({ fieldStatus: fs, onCompetitor });
   return section('Proposed field', tracker);
 }
@@ -641,6 +651,18 @@ export function swissOverviewModel(st) {
   }
   if (!labels.length) return null;
 
+  // CHAMPION ROLES (distinguish the NEW champion from the displaced incumbent):
+  //   crownId  — the champion AFTER this epoch: the promoted winner (championId),
+  //              or the incumbent if it defended ('stands'). Gets the ♛ crown.
+  //   formerId — the incumbent it displaced (only when a NEW champion was crowned).
+  //              Gets a dim "former" mark so v0-was-champion / v6-is-champion reads
+  //              cleanly. (Without a crowning there is no "former".)
+  const crownId = model.championId
+    ? String(model.championId)
+    : (model.gateState === 'stands' && benchmarkId != null ? String(benchmarkId) : null);
+  const formerId = (crownId && benchmarkId != null && String(benchmarkId) !== crownId)
+    ? String(benchmarkId) : null;
+
   // one line per competitor, ordered by FINAL standing; pad missing early ranks.
   const finalOrder = model.standings.map((s) => String(s.id)).filter((id) => ranksById.has(id));
   for (const id of ranksById.keys()) if (!finalOrder.includes(id)) finalOrder.push(id);
@@ -648,7 +670,7 @@ export function swissOverviewModel(st) {
     const raw = ranksById.get(id) || [];
     const ranks = [];
     for (let i = 0; i < labels.length; i++) ranks.push(raw[i] != null ? raw[i] : (raw.length ? raw[raw.length - 1] : null));
-    return { id, champion: benchmarkId != null && id === String(benchmarkId), ranks };
+    return { id, crown: crownId != null && id === crownId, former: formerId != null && id === formerId, ranks };
   }).filter((s) => s.ranks.some((r) => r != null));
 
   const leaderId = model.standings.length ? String(model.standings[0].id) : null;
@@ -656,11 +678,12 @@ export function swissOverviewModel(st) {
     id: String(s.id), points: svg.isNum(s.points) ? s.points : 0,
     wins: s.wins || 0, draws: s.draws || 0, losses: s.losses || 0,
     leader: String(s.id) === leaderId,
-    champion: benchmarkId != null && String(s.id) === String(benchmarkId),
+    crown: crownId != null && String(s.id) === crownId,
+    former: formerId != null && String(s.id) === formerId,
   }));
   return {
     series, bars, labels,
-    championId: model.championId, benchmarkId, gateState: model.gateState,
+    championId: model.championId, benchmarkId, crownId, formerId, gateState: model.gateState,
     gateDelta: model.gateDelta, live: model.live,
   };
 }
@@ -679,63 +702,19 @@ function renderSwiss(st, ctx, epochId) {
       })
     : empty(model.live ? 'The swiss is being seeded — pairings fill in as runs land.' : 'No swiss rounds recorded yet.'));
   if (model.hasRounds) {
-    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ♚`
+    const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ♛`
       : model.gateState === 'stands' ? ' · champion-gate: champion stands'
       : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
     lCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'each round pairs the field; Copeland points accumulate (win 1 / draw ½) · ♔ = swiss leader → the leader must beat the incumbent at the champion-gate ♚'
+      'each round pairs the field; Copeland points accumulate (win 1 / draw ½) · hover a pairing for its Δ scalar · ♛ = champion · ♔ = former champion (displaced incumbent) — the swiss leader must beat the incumbent at the champion-gate'
       + gateNote
       + (model.live ? ' · LIVE — the winner is not committed until the final gate' : '') }));
   }
-  nodes.push(section(model.live ? 'Swiss standings ladder · LIVE — pairings + accumulating points' : 'Swiss standings ladder · pairings + accumulating points', lCard));
-
-  // the dense per-round pairings table, retained below the ladder.
-  const rounds = (st && Array.isArray(st.rounds)) ? st.rounds : [];
-  if (rounds.length) {
-    const pCard = el('div', { class: 'dn-panel' });
-    for (const r of rounds) {
-      pCard.appendChild(el('div', { class: 'dt-swiss-round-h', text: r.label || `Round ${(r.round_index || 0) + 1}` }));
-      const matches = Array.isArray(r.matches) ? r.matches : [];
-      const tbl = el('table', { class: 'dn-board-table dt-swiss-pairings' });
-      tbl.appendChild(el('thead', null, [el('tr', null, [
-        el('th', { text: 'pairing' }), el('th', { text: 'winner' }), el('th', { class: 'dn-num', text: 'Δ scalar' }),
-      ])]));
-      const tbody = el('tbody');
-      for (const m of matches) {
-        const comps = Array.isArray(m.competitors) ? m.competitors : [];
-        const delta = svg.isNum(m.delta_scalar) ? m.delta_scalar : null;
-        // LIVE — an in-flight pairing (no committed winner yet) reads its board
-        // progress (k/N) + in-flight count, NOT a bare "—". The progressive
-        // builder stamps done/total/inflight/queued on the active round's
-        // matches; a completed match leaves them undefined and renders as before.
-        const inflight = m.pending && !m.winner;
-        const queued = !!m.queued && !m.winner && !m.bye;
-        let winnerCell;
-        if (m.winner) winnerCell = el('td', { class: 'dn-mono', text: m.winner });
-        else if (m.bye) winnerCell = el('td', { class: 'dn-mono', text: 'bye' });
-        else if (queued) winnerCell = el('td', { class: 'dn-mono dn-faint', text: 'queued' });
-        else if (inflight) {
-          const done = svg.isNum(m.done) ? m.done : 0;
-          const total = svg.isNum(m.total) ? m.total : null;
-          const inf = svg.isNum(m.inflight) ? m.inflight : 0;
-          winnerCell = el('td', { class: 'dn-mono dn-pairing-live' }, [
-            el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
-            el('span', { text: total != null ? `running · ${done}/${total}` : (inf ? `running · ${inf} board${inf === 1 ? '' : 's'}` : 'running…') }),
-          ]);
-        } else winnerCell = el('td', { class: 'dn-mono', text: '—' });
-        tbody.appendChild(el('tr', { class: inflight ? 'dn-pairing-inflight-row' : '' }, [
-          el('td', { class: 'dn-mono' }, [
-            linkGen(comps[0], ctx, epochId), comps.length > 1 ? el('span', { class: 'dn-faint', text: ' vs ' }) : null, comps.length > 1 ? linkGen(comps[1], ctx, epochId) : null,
-          ].filter(Boolean)),
-          winnerCell,
-          el('td', { class: 'dn-num dn-mono ' + (delta > 0 ? 'dn-bad-t' : delta < 0 ? 'dn-good-t' : ''), text: svg.isNum(delta) ? svg.fmtSigned(delta, 1) : '—' }),
-        ]));
-      }
-      tbl.appendChild(tbody);
-      pCard.appendChild(tbl);
-    }
-    nodes.push(section('Pairings · round by round', pCard));
-  }
+  // ONE view: the ladder already lays out every round's pairings (with winners
+  // + Δ on hover) alongside the accumulating standings and the champion-gate —
+  // so the old standalone "Pairings · round by round" tables only duplicated the
+  // pairings. Collapsed into this single section.
+  nodes.push(section(model.live ? 'Swiss · LIVE — rounds, standings & champion-gate' : 'Swiss · rounds, standings & champion-gate', lCard));
   return nodes;
 }
 

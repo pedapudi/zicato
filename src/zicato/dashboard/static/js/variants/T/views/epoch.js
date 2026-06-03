@@ -235,7 +235,7 @@ export async function render(host, ctx, params) {
           series: m.series, bars: m.bars, labels: m.labels,
           championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
           gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
-        }), 'each line tracks one competitor’s standings rank round-to-round (rank 1 = top) — the leader emerges as lines cross · the bar ranks final Copeland points (win 1 / draw ½) · ♔ = leader · ♛ = promoted'
+        }), 'each line tracks one competitor’s standings rank round-to-round (rank 1 = top) — the leader emerges as lines cross · the bar ranks final Copeland points (win 1 / draw ½) · ♛ = champion · ♔ = former champion (displaced incumbent)'
           + gateNote(m, '♛'));
       } else if ((structure === 'single_elim' || structure === 'double_elim') && elimOver) {
         // the ELIM OVERVIEW: a compact mini-bracket — elimBracket at small scale.

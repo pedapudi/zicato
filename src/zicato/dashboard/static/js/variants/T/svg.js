@@ -1054,7 +1054,7 @@ export function swissLadder(opts) {
       const bWon = decided && p.winner === p.b;
       const progText = decided ? (p.winner === p.a ? ` · ${shortLabel(a, 8)} ↑` : ` · ${shortLabel(String(p.winner), 8)} ↑`)
         : queued ? ' · queued'
-        : inflight ? ' · ' + (isNum(p.total) && p.total > 0 ? `${p.done || 0}/${p.total} boards` : `${p.inflight || 0} running`)
+        : inflight ? ' · running' + (isNum(p.total) && p.total > 0 ? ` ${p.done || 0}/${p.total}` : (p.inflight ? ` · ${p.inflight} board${p.inflight === 1 ? '' : 's'}` : ''))
         : ' · pairing';
       const cls = 'dn-swissladder-pairlab' + (queued ? ' dn-swissladder-queued' : (inflight ? ' dn-racing' : ''));
       const t = hov(svgEl('text', { x: x + 6, y: cy + 3, class: cls }),
@@ -1084,16 +1084,25 @@ export function swissLadder(opts) {
   sHead.textContent = 'standings';
   svg.appendChild(sHead);
   const leaderId = standings.length ? String(standings[0].id) : null;
+  // distinguish the NEW champion (♛, accent) from the displaced incumbent
+  // (♔ "former", dim). A bare round-leader gets ♔ only while no champion is
+  // crowned yet (live).
+  const ladChampId = o.championId ? String(o.championId) : null;
+  const ladBenchId = o.benchmarkId != null ? String(o.benchmarkId) : null;
+  const ladFormerId = (ladChampId && ladBenchId && ladBenchId !== ladChampId) ? ladBenchId : null;
   standings.forEach((s, i) => {
     const cy = rowY(i);
     const sid = String(s.id);
-    const isLeader = sid === leaderId;
+    const isChamp = sid === ladChampId;
+    const isFormer = sid === ladFormerId;
+    const isLeader = sid === leaderId && !ladChampId;
+    const emph = isChamp || isLeader;
     const g = svgEl('g', { class: 'dn-swissladder-stand', tabindex: o.onCompetitor ? '0' : null });
-    const lab = hov(svgEl('text', { x: sx + 6, y: cy + 3, class: 'dn-swissladder-standlab' + (isLeader ? ' dn-good' : '') }),
-      `${sid} · ${isNum(s.points) ? fmt(s.points, 1) : '?'} pts · ${s.wins || 0}W ${s.draws || 0}D ${s.losses || 0}L`);
-    lab.textContent = `${i + 1}. ${shortLabel(sid, 9)}` + (isLeader ? ' ♔' : '');
+    const lab = hov(svgEl('text', { x: sx + 6, y: cy + 3, class: 'dn-swissladder-standlab' + (emph ? ' dn-good' : (isFormer ? ' dn-faint' : '')) }),
+      `${sid} · ${isNum(s.points) ? fmt(s.points, 1) : '?'} pts · ${s.wins || 0}W ${s.draws || 0}D ${s.losses || 0}L${isFormer ? ' · former champion' : ''}`);
+    lab.textContent = `${i + 1}. ${shortLabel(sid, 9)}` + (isChamp ? ' ♛' : (isFormer || isLeader ? ' ♔' : ''));
     g.appendChild(lab);
-    const pts = svgEl('text', { x: sx + standW - 6, y: cy + 3, 'text-anchor': 'end', class: 'dn-swissladder-pts' + (isLeader ? ' dn-good' : '') });
+    const pts = svgEl('text', { x: sx + standW - 6, y: cy + 3, 'text-anchor': 'end', class: 'dn-swissladder-pts' + (emph ? ' dn-good' : '') });
     pts.textContent = isNum(s.points) ? fmt(s.points, s.points % 1 ? 1 : 0) : '—';
     g.appendChild(pts);
     clickable(g, o.onCompetitor && (() => o.onCompetitor(sid)));
@@ -1120,7 +1129,7 @@ export function swissLadder(opts) {
   const dStr = isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '';
   let label;
   let tip;
-  if (crowned) { label = '♚ ' + shortLabel(champId, 11); tip = `${champId} won the swiss + cleared the gate → new champion${dStr}`; }
+  if (crowned) { label = '♛ ' + shortLabel(champId, 11); tip = `${champId} won the swiss + cleared the gate → new champion${dStr}`; }
   else if (gateState === 'stands') { label = 'champion stands'; tip = `the swiss winner did not beat the incumbent — champion stands${dStr}`; }
   else if (gateState === 'deciding') { label = 'deciding…'; tip = leaderId ? `${leaderId} leads — gate not yet committed` : 'the gate is deciding'; }
   else { label = 'tbd'; tip = 'awaiting the swiss leader'; }
@@ -1316,8 +1325,10 @@ export function swissOverview(opts) {
   const w = 640;
   const nR = Math.max(1, labels.length);
   const nC = Math.max(1, series.length, bars.length);
-  // bump panel geometry
-  const bumpTop = 26;
+  // bump panel geometry. bumpTop leaves a clear band under the section title
+  // (baseline y=14) so the round-axis labels (drawn at bumpTop-8) never collide
+  // with it.
+  const bumpTop = 42;
   const rowH = 22;
   const bumpH = bumpTop + nC * rowH + 10;
   const padL = 96;          // left gutter for the round-0 competitor labels
@@ -1347,7 +1358,11 @@ export function swissOverview(opts) {
   labels.forEach((lab, j) => {
     const x = X(j);
     const tk = svgEl('text', { x, y: bumpTop - 8, class: 'dn-swissover-round', 'text-anchor': j === 0 ? 'start' : (j === labels.length - 1 ? 'end' : 'middle') });
-    tk.textContent = shortLabel(String(lab), 8);
+    // compact axis ticks — "Swiss round 2" → "R2", "Champion gate" → "Gate" —
+    // so the labels never truncate to an ambiguous "Swiss r…".
+    const ls = String(lab);
+    const rm = ls.match(/(\d+)/);
+    tk.textContent = /gate/i.test(ls) ? 'Gate' : (/round/i.test(ls) && rm ? 'R' + rm[1] : shortLabel(ls, 8));
     svg.appendChild(tk);
     svg.appendChild(svgEl('line', { x1: x, x2: x, y1: bumpTop - 4, y2: bumpTop + (nC - 1) * rowH + 4, class: 'dn-swissover-grid' }));
   });
@@ -1356,11 +1371,14 @@ export function swissOverview(opts) {
     const pts = [];
     s.ranks.forEach((r, j) => { if (isNum(r)) pts.push([X(j), Y(r)]); });
     if (!pts.length) return;
-    const champ = !!s.champion;
-    const cls = 'dn-swissover-line' + (champ ? ' dn-swissover-line-champ' : '');
+    // The CURRENT champion's line is emphasised (bold + ♛); the displaced
+    // incumbent reads dim with a "former" mark so the two never look alike.
+    const champ = !!s.crown;
+    const former = !!s.former;
+    const cls = 'dn-swissover-line' + (champ ? ' dn-swissover-line-champ' : (former ? ' dn-swissover-line-former' : ''));
     const d = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
     const path = clickable(hov(svgEl('path', { d, class: cls, fill: 'none', tabindex: o.onCompetitor ? '0' : null }),
-      `${s.id}${champ ? ' · champion' : ''} · finishes rank ${s.ranks[s.ranks.length - 1] || '?'}`),
+      `${s.id}${champ ? ' · new champion' : (former ? ' · former champion' : '')} · finishes rank ${s.ranks[s.ranks.length - 1] || '?'}`),
       o.onCompetitor && (() => o.onCompetitor(s.id)));
     svg.appendChild(path);
     // end-dots (start + final rank) + left name label + right rank label.
@@ -1370,8 +1388,8 @@ export function swissOverview(opts) {
     const r = champ ? 3.4 : 2.6;
     svg.appendChild(svgEl('circle', { cx: x0, cy: y0, r, class: dotCls }));
     svg.appendChild(svgEl('circle', { cx: xn, cy: yn, r, class: dotCls }));
-    const lL = svgEl('text', { x: x0 - 6, y: y0 + 3, class: 'dn-swissover-name' + (champ ? ' dn-swissover-name-champ' : ''), 'text-anchor': 'end' });
-    lL.textContent = shortLabel(s.id, 11) + (champ ? ' ♛' : '');
+    const lL = svgEl('text', { x: x0 - 6, y: y0 + 3, class: 'dn-swissover-name' + (champ ? ' dn-swissover-name-champ' : (former ? ' dn-swissover-name-former' : '')), 'text-anchor': 'end' });
+    lL.textContent = shortLabel(s.id, 11) + (champ ? ' ♛' : (former ? ' ♔' : ''));
     svg.appendChild(lL);
     const lR = svgEl('text', { x: xn + 6, y: yn + 3, class: 'dn-swissover-rank', 'text-anchor': 'start' });
     lR.textContent = '#' + (s.ranks[s.ranks.length - 1] || '?');
@@ -1390,12 +1408,17 @@ export function swissOverview(opts) {
   bars.forEach((b, i) => {
     const y = barTop + i * (barH + barGap);
     const bw = Math.max(2, barMaxW * ((b.points || 0) / maxPts));
+    const champ = !!b.crown;
+    const former = !!b.former;
+    // a transient round-leader ♔ shows only BEFORE the gate decides; once a
+    // champion is crowned the ♛ takes over (no double crown).
+    const lead = !champ && !former && b.leader && live;
     const g = svgEl('g', { class: 'dn-swissover-barrow', tabindex: o.onCompetitor ? '0' : null });
-    const lab = svgEl('text', { x: barX0 - 6, y: y + barH / 2 + 3, class: 'dn-swissover-barname' + (b.leader ? ' dn-swissover-name-champ' : ''), 'text-anchor': 'end' });
-    lab.textContent = (i + 1) + '. ' + shortLabel(b.id, 9) + (b.leader ? ' ♔' : '');
+    const lab = svgEl('text', { x: barX0 - 6, y: y + barH / 2 + 3, class: 'dn-swissover-barname' + (champ ? ' dn-swissover-name-champ' : (former ? ' dn-swissover-name-former' : '')), 'text-anchor': 'end' });
+    lab.textContent = (i + 1) + '. ' + shortLabel(b.id, 9) + (champ ? ' ♛' : (former || lead ? ' ♔' : ''));
     g.appendChild(lab);
     g.appendChild(svgEl('rect', { x: barX0, y, width: barMaxW, height: barH, rx: 3, class: 'dn-swissover-bar-bg' }));
-    g.appendChild(hov(svgEl('rect', { x: barX0, y, width: bw, height: barH, rx: 3, class: 'dn-swissover-bar' + (b.leader ? ' dn-swissover-bar-lead' : '') }),
+    g.appendChild(hov(svgEl('rect', { x: barX0, y, width: bw, height: barH, rx: 3, class: 'dn-swissover-bar' + (champ || lead ? ' dn-swissover-bar-lead' : '') }),
       `${b.id} · ${fmt(b.points, b.points % 1 ? 1 : 0)} pts · ${b.wins}W ${b.draws}D ${b.losses}L`));
     const pv = svgEl('text', { x: barX0 + bw + 5, y: y + barH / 2 + 3, class: 'dn-swissover-barval' });
     pv.textContent = fmt(b.points, b.points % 1 ? 1 : 0) + ' pts';

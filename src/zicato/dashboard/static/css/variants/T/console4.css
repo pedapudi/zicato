@@ -1356,10 +1356,14 @@
   .dt-glyph-gen-champ { color: var(--v2-good); }
   /* a FORMER champion: dimmer hollow crown — held the title, then succeeded */
   .dt-glyph-gen-former { color: var(--v2-ink-faint); opacity: 0.85; }
+  /* an ORPHAN: a parentless stray that never scored (aborted run) — faintest */
+  .dt-glyph-gen-orphan { color: var(--v2-ink-faint); opacity: 0.6; }
   .dt-glyph-board { color: var(--v2-accent); }
   .dt-glyph-mutations, .dt-glyph-paper { color: var(--v2-ink-soft); }
   .dt-leaf[data-kind="gen-champ"] .dt-text { color: var(--v2-good); }
   .dt-leaf[data-kind="gen-former"] .dt-text { color: var(--v2-ink-soft); }
+  .dt-leaf[data-kind="gen-orphan"] .dt-text { color: var(--v2-ink-faint); }
+  .dt-tag-gen-orphan { color: var(--v2-ink-faint); border-color: var(--v2-rule); font-style: italic; }
   .dt-leaf .dt-text { font-family: var(--v2-mono); font-size: 11.5px; }
   .dt-leaf[data-kind="mutations"] .dt-text,
   .dt-leaf[data-kind="paper"] .dt-text { font-family: var(--v2-sans); font-size: 12px; }
@@ -1760,11 +1764,15 @@
   .dn-swissover-barval, .dn-swissover-verdict { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
   .dn-swissover-name, .dn-swissover-barname { fill: var(--v2-ink-soft); font: 10.5px var(--v2-mono); }
   .dn-swissover-name-champ, .dn-swissover-verdict.dn-good { fill: var(--v2-good); font-weight: 700; }
+  /* the displaced incumbent (former champion): dim, italic, never the accent */
+  .dn-swissover-name-former { fill: var(--v2-ink-faint); font-style: italic; }
   .dn-swissover-grid { stroke: var(--v2-rule-soft); stroke-width: 1;
     stroke-dasharray: 2 4; opacity: 0.5; vector-effect: non-scaling-stroke; }
   .dn-swissover-line { stroke: var(--v2-accent); stroke-width: 1.4; opacity: 0.55;
     vector-effect: non-scaling-stroke; transition: opacity 0.3s ease; }
   .dn-swissover-line-champ { stroke: var(--v2-good); stroke-width: 2.4; opacity: 1; }
+  .dn-swissover-line-former { stroke: var(--v2-ink-faint); stroke-width: 1.2; opacity: 0.4;
+    stroke-dasharray: 4 3; }
   .dn-swissover-line:hover, .dn-swissover-line:focus { opacity: 1; stroke-width: 2.2; outline: none; }
   .dn-swissover-dot { fill: var(--v2-accent); opacity: 0.7; }
   .dn-swissover-dot-champ { fill: var(--v2-good); opacity: 1; }

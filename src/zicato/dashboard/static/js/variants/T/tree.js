@@ -38,7 +38,7 @@ export function treeDigest(model, route, toggles) {
       const b = model.byEpoch[e.id] || { gens: [], boards: [] };
       // include the current/former champion split so the badge re-stamps when
       // the crown moves (a steady heartbeat with the same crown is a no-op).
-      return [e.id, b.gens.map((g) => [g.id, !!g.promoted, !!g.currentChampion, !!g.formerChampion]), b.boards.map((x) => x.id)];
+      return [e.id, b.gens.map((g) => [g.id, !!g.promoted, !!g.currentChampion, !!g.formerChampion, !!g.orphan]), b.boards.map((x) => x.id)];
     }),
     sel: [route ? route.view : 'home', p.epochId || '', p.gen || '', p.entry || '', p.mutId || '', p.gen2 || ''],
     open: [...toggles].sort(),
@@ -119,6 +119,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle) {
         let kind = 'gen', glyph = (g.parent ? '↳' : '◆'), tag = childTag;
         if (isCurrent || legacyChamp) { kind = 'gen-champ'; glyph = '♚'; tag = 'champion'; }
         else if (isFormer) { kind = 'gen-former'; glyph = '♔'; tag = 'former champion'; }
+        else if (g.orphan === true) { kind = 'gen-orphan'; glyph = '◌'; tag = 'unscored'; }
         tree.appendChild(leafRow({
           depth: 3, kind, label: g.id, glyph, tag,
           selected,

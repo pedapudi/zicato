@@ -1600,8 +1600,11 @@ test('structure: swiss renders the standings LADDER hero + per-round pairings', 
   assert(ladder.textContent.toLowerCase().includes('standings'), 'the ladder labels the standings column');
   assert(ladder.textContent.toLowerCase().includes('champion-gate'), 'the ladder ends in a champion-gate node');
   assert(host.textContent.includes('Round 1') && host.textContent.includes('Round 2'), 'both swiss rounds render');
-  // the dense per-round pairings table is retained below the ladder.
-  assert(allByClass(host, 'dt-swiss-pairings').length === 2, 'a pairings table per round (2 rounds)');
+  // the per-round pairings now live INSIDE the ladder (one lane per match); the
+  // standalone "Pairings · round by round" tables were collapsed away as a
+  // duplicate of the ladder's pairing columns.
+  assert(allByClass(ladder, 'dn-swissladder-pair').length >= 1, 'the ladder lays out the round pairings');
+  assert(allByClass(host, 'dt-swiss-pairings').length === 0, 'the redundant standalone pairings tables are gone');
 });
 
 test('structure: the "Proposed field" section renders applied ✓ / rejected ✗ + reasons from field_status', async () => {
@@ -6142,8 +6145,9 @@ test('Match-ups (LIVE swiss): active-round pairings show in-flight board progres
   assert(allByClass(host, 'dt-live-pill')[0], 'the live pill is shown');
   assert(svgsByClass(host, 'dn-swissladder')[0], 'the live swiss ladder renders (NOT a being-seeded empty)');
   assert(!/being seeded/i.test(host.textContent), 'NOT "being seeded" once the field + active round exist');
-  // the in-flight pairing reads its board progress (running), not a bare "—".
-  assert(allByClass(host, 'dn-pairing-live')[0], 'the in-flight pairing shows live progress in the dense table');
+  // the in-flight pairing reads its board progress (running) INSIDE the ladder
+  // (the dense tables were collapsed away) — a live progress bar + "running".
+  assert(svgsByClass(host, 'dn-swissladder')[0] && allByClass(host, 'dn-swissladder-bar-live')[0], 'the in-flight pairing shows a live progress bar in the ladder');
   assert(/running/.test(host.textContent), 'the active pairing reads "running"');
   // a decided pairing's winner accumulates a Copeland point (v1 beat v0).
   assert(host.textContent.includes('v1'), 'the decided pairing winner (v1) is shown');
