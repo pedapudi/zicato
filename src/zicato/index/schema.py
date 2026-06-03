@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
@@ -123,7 +123,10 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       wall_clock_budget_exceeded INTEGER,
       loss_json TEXT,
       tournament_id TEXT,
-      match_id TEXT
+      match_id TEXT,
+      cached INTEGER,
+      source_epoch TEXT,
+      source_run TEXT
     )
     """,
     """
@@ -247,6 +250,24 @@ _V5_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+#: Columns added in v6 (champion self-containment / carried-over
+#: provenance). A materialised champion's per-board ``loss_profiles`` row
+#: carries ``cached`` (1 when the result was carried forward from a prior
+#: epoch rather than run live this epoch) plus ``source_epoch`` /
+#: ``source_run`` naming where the live evaluation happened, so a reader
+#: can show the champion as scored-but-cached and never double-count it as
+#: a fresh evaluation. Same incremental-open ALTER pattern as the earlier
+#: waves: a pre-existing v5 database gains these as ``NULL`` columns on
+#: open (legacy rows read as not-cached — ``cached IS NULL`` is treated as
+#: fresh), and a full ``zicato reindex`` re-derives them from each run's
+#: ``loss.json`` (which now carries the provenance for materialised runs).
+_V6_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("loss_profiles", "cached", "INTEGER"),
+    ("loss_profiles", "source_epoch", "TEXT"),
+    ("loss_profiles", "source_run", "TEXT"),
+)
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     """Create every table + index + stamp the schema version.
 
@@ -361,6 +382,14 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
 
     if current < 5:
         for table, column, ddl_type in _V5_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+    if current < 6:
+        for table, column, ddl_type in _V6_ADDED_COLUMNS:
             if not _table_exists(conn, table):
                 continue
             if column in _column_names(conn, table):

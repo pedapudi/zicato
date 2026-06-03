@@ -27,6 +27,7 @@ from zicato.selection.strategy import (
     SelectionStrategy,
     Standing,
     _param_int,
+    pending_match_record,
 )
 
 
@@ -301,6 +302,45 @@ class SingleEliminationStrategy(SelectionStrategy):
                 )
             )
         return tuple(recs)
+
+    # -- live (in-flight) projection --------------------------------------
+
+    def _pending_round(self) -> RoundRecord | None:
+        # Mid bracket round: ``_pending`` holds the scheduled duels and
+        # ``_round_matches`` any byes already recorded for this round.
+        if self._pending:
+            matches = list(self._round_matches)
+            for mid, (left, right) in self._pending.items():
+                matches.append(
+                    pending_match_record(
+                        mid,
+                        (left.generation_id, right.generation_id),
+                        bracket_slot=mid,
+                    )
+                )
+            return RoundRecord(
+                round_index=self._round_index,
+                label=f"Round {self._round_index + 1}",
+                matches=tuple(matches),
+            )
+        # Final scheduled, result not yet landed.
+        if self._final_scheduled and self._final_result is None and self._survivor is not None:
+            assert self._champion is not None
+            return RoundRecord(
+                round_index=self._round_index,
+                label="Final",
+                matches=(
+                    pending_match_record(
+                        self._final_match_id,
+                        (self._champion.generation_id, self._survivor.generation_id),
+                        bracket_slot="final",
+                    ),
+                ),
+            )
+        return None
+
+    def _live_standings(self) -> tuple[Standing, ...]:
+        return self._standings(None)
 
 
 __all__ = ["SingleEliminationStrategy"]

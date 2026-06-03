@@ -229,6 +229,12 @@ class MatchRecord:
     survivors: tuple[str, ...] = ()
     cut: tuple[str, ...] = ()
     board_fraction: float | None = None
+    # In-flight marker: ``True`` for a scheduled-but-unresolved match in
+    # the live ``active_tournament`` envelope (``winner`` is still
+    # ``""`` / ``null``); ``False`` for every settled match. The settled
+    # ``rounds()`` view never sets it, so the durable record and the
+    # post-run envelope are unchanged.
+    pending: bool = False
 
 
 class SelectionStrategy(ABC):
@@ -292,6 +298,95 @@ class SelectionStrategy(ABC):
         this to emit their bracket / Swiss / racing progression.
         """
         return ()
+
+    # -- live (in-flight) projection --------------------------------------
+    #
+    # The settled :meth:`rounds` / :meth:`champion` views only materialise
+    # once a round (or the whole tournament) has resolved. The orchestrator
+    # publishes the live ``active_tournament`` envelope WHILE the
+    # tournament runs, so it needs the settled rounds PLUS the round that is
+    # currently scheduled-but-unresolved (its matches carry ``winner=""``
+    # and ``pending=True``) and the standings-so-far. ``live_rounds`` /
+    # ``live_standings`` are the ONE shared projection for that: the base
+    # composes them from two small per-strategy hooks
+    # (:meth:`_pending_round` / :meth:`_live_standings`) so the live and
+    # settled envelopes are byte-compatible shapes and every renderer works
+    # identically live and post-run. A structure that schedules nothing
+    # pending (the gauntlet, or a resolved strategy) yields exactly
+    # ``rounds`` / its settled standings — no special-casing in the
+    # orchestrator.
+
+    def live_rounds(self) -> tuple[RoundRecord, ...]:
+        """Settled rounds plus the current in-flight round (data-model §2.4).
+
+        The shared live projection: :meth:`rounds` (every round that has
+        closed) followed by — when a round is mid-flight — a single
+        :class:`RoundRecord` carrying the scheduled-but-unresolved matches
+        from :meth:`_pending_round`. Those matches have ``winner=""`` (the
+        live ``winner: null`` the orchestrator serialises) and
+        ``pending=True``. When nothing is pending the result is exactly
+        :meth:`rounds`.
+        """
+        pending = self._pending_round()
+        if pending is None:
+            return self.rounds()
+        return (*self.rounds(), pending)
+
+    def live_standings(self) -> tuple[Standing, ...]:
+        """The standings-so-far while the tournament is still running.
+
+        The shared live projection of :meth:`_live_standings` (the same
+        Copeland / scalar ordering the settled :meth:`champion` decision
+        uses, with no crowned generation yet). Empty by default — the
+        gauntlet has no meaningful pre-result standing.
+        """
+        return self._live_standings()
+
+    def _pending_round(self) -> RoundRecord | None:
+        """The current scheduled-but-unresolved round, or ``None``.
+
+        Default ``None`` (no in-flight round to project — the gauntlet,
+        which resolves in one shot, and any resolved strategy). A
+        multi-round strategy overrides this to project its pending
+        matchup map into a :class:`RoundRecord` whose matches carry
+        ``winner=""`` + ``pending=True``.
+        """
+        return None
+
+    def _live_standings(self) -> tuple[Standing, ...]:
+        """The standings-so-far (no crowned generation yet).
+
+        Default empty. A standings-bearing strategy overrides this to
+        return its in-progress ranking — typically ``self._standings(None)``
+        — so the live envelope shows the leaderboard climb.
+        """
+        return ()
+
+
+def pending_match_record(
+    match_id: str,
+    competitors: tuple[str, ...],
+    *,
+    bracket_slot: str = "",
+    board_fraction: float | None = None,
+) -> MatchRecord:
+    """Build a :class:`MatchRecord` for a scheduled-but-unresolved match.
+
+    The single constructor for an in-flight match across every structure:
+    ``winner=""`` (serialised as the contract's ``winner: null``),
+    ``decision=""``, ``pending=True``. Centralising it keeps every
+    strategy's :meth:`SelectionStrategy._pending_round` emitting the
+    identical pending shape.
+    """
+    return MatchRecord(
+        match_id=match_id,
+        competitors=competitors,
+        winner="",
+        decision="",
+        bracket_slot=bracket_slot,
+        board_fraction=board_fraction,
+        pending=True,
+    )
 
 
 def rung_for_match_id(match_id: str | None) -> str | None:
@@ -366,5 +461,6 @@ __all__ = [
     "RoundRecord",
     "MatchRecord",
     "SelectionStrategy",
+    "pending_match_record",
     "rung_for_match_id",
 ]

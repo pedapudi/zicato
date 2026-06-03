@@ -378,11 +378,19 @@ def _upsert_loss_profile(
     with the ``runs`` table.
     """
     match_id = getattr(profile, "match_id", "") or None
+    # Carried-over (cached) champion provenance (schema v6). ``cached``
+    # distinguishes a materialised carry-forward row from a fresh live
+    # evaluation so a reader never double-counts the champion; the
+    # ``source_*`` columns name where the live evaluation happened.
+    cached = 1 if getattr(profile, "cached", False) else 0
+    source_epoch = getattr(profile, "source_epoch", "") or None
+    source_run = getattr(profile, "source_run", "") or None
     conn.execute(
         "INSERT INTO loss_profiles("
         "run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
-        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id, match_id) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id, match_id, "
+        "cached, source_epoch, source_run) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(run_id) DO UPDATE SET "
         "epoch_id = excluded.epoch_id, "
         "generation_id = excluded.generation_id, "
@@ -393,7 +401,10 @@ def _upsert_loss_profile(
         "wall_clock_budget_exceeded = excluded.wall_clock_budget_exceeded, "
         "loss_json = excluded.loss_json, "
         "tournament_id = COALESCE(excluded.tournament_id, loss_profiles.tournament_id), "
-        "match_id = COALESCE(excluded.match_id, loss_profiles.match_id)",
+        "match_id = COALESCE(excluded.match_id, loss_profiles.match_id), "
+        "cached = excluded.cached, "
+        "source_epoch = COALESCE(excluded.source_epoch, loss_profiles.source_epoch), "
+        "source_run = COALESCE(excluded.source_run, loss_profiles.source_run)",
         (
             profile.run_id,
             profile.epoch_id,
@@ -406,6 +417,9 @@ def _upsert_loss_profile(
             json.dumps(asdict(profile), sort_keys=True),
             tournament_id,
             match_id,
+            cached,
+            source_epoch,
+            source_run,
         ),
     )
 

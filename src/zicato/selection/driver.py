@@ -32,12 +32,23 @@ RequestField = Callable[[int], Awaitable[tuple[Contestant, Sequence[Contestant]]
 #: the unchanged ``evaluate_gate``).
 RunMatchup = Callable[[Matchup], Awaitable[MatchupResult]]
 
+#: ``on_progress(strategy)`` is called once the strategy is seeded and
+#: again each time a batch of pending matchups has been scheduled — i.e.
+#: whenever the strategy's live (in-flight) view may have changed. The
+#: orchestrator uses it to publish the live ``active_tournament`` envelope
+#: with the in-flight bracket/ladder (``strategy.live_rounds()`` /
+#: ``live_standings()``) DURING the run, not just at settle. Best-effort
+#: by contract — a publish failure must never abort the resolution — so
+#: the driver swallows nothing itself; the callback owns its own safety.
+ProgressHook = Callable[[SelectionStrategy], None]
+
 
 async def resolve_tournament(
     strategy: SelectionStrategy,
     *,
     request_field: RequestField,
     run_matchup: RunMatchup,
+    on_progress: ProgressHook | None = None,
 ) -> SelectionDecision:
     """Drive ``strategy`` from a fresh field to a crowned decision.
 
@@ -49,6 +60,13 @@ async def resolve_tournament(
        ``strategy.resolved()`` or the strategy schedules nothing.
     4. Return ``strategy.champion()``.
 
+    ``on_progress`` (optional) is invoked right after the batch is
+    scheduled (the strategy's ``_pending`` is populated, so
+    ``live_rounds()`` carries the in-flight matchups) so the caller can
+    publish the live structure WHILE the round runs. It is a no-op when
+    omitted, preserving the historical signature for the driver's unit
+    tests.
+
     Each batch runs under the caller's concurrency (the same semaphore the
     runner already uses, applied inside ``run_matchup``); the driver only
     fans them out with :func:`asyncio.gather`.
@@ -59,10 +77,15 @@ async def resolve_tournament(
         batch = strategy.next_matchups()
         if not batch:
             break
+        # The pending batch is now reflected in the strategy's live view;
+        # publish it before the (potentially long) matchup runs so the
+        # dashboard's bracket/ladder/funnel exists live with winner=null.
+        if on_progress is not None:
+            on_progress(strategy)
         results = await asyncio.gather(*(run_matchup(m) for m in batch))
         for result in results:
             strategy.record_result(result)
     return strategy.champion()
 
 
-__all__ = ["resolve_tournament", "RequestField", "RunMatchup"]
+__all__ = ["resolve_tournament", "RequestField", "RunMatchup", "ProgressHook"]

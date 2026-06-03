@@ -28,6 +28,7 @@ from zicato.selection.strategy import (
     SelectionStrategy,
     Standing,
     _param_int,
+    pending_match_record,
 )
 
 
@@ -294,6 +295,43 @@ class SwissStrategy(SelectionStrategy):
                 )
             )
         return tuple(recs)
+
+    # -- live (in-flight) projection --------------------------------------
+
+    def _pending_round(self) -> RoundRecord | None:
+        # Mid Swiss round: ``_pending`` holds the scheduled pairings and
+        # ``_round_matches`` any byes already recorded for the round.
+        if self._pending:
+            matches = list(self._round_matches)
+            for mid, (left, right) in self._pending.items():
+                matches.append(
+                    pending_match_record(
+                        mid,
+                        (left.generation_id, right.generation_id),
+                    )
+                )
+            return RoundRecord(
+                round_index=self._round_index,
+                label=f"Swiss round {self._round_index + 1}",
+                matches=tuple(matches),
+            )
+        # Champion-gate scheduled but its result has not landed yet.
+        if self._final_scheduled and self._final_result is None and self._leader is not None:
+            assert self._champion is not None
+            return RoundRecord(
+                round_index=self._round_index,
+                label="Champion gate",
+                matches=(
+                    pending_match_record(
+                        self._final_match_id,
+                        (self._champion.generation_id, self._leader.generation_id),
+                    ),
+                ),
+            )
+        return None
+
+    def _live_standings(self) -> tuple[Standing, ...]:
+        return self._standings(None)
 
 
 __all__ = ["SwissStrategy"]

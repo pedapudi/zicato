@@ -1017,6 +1017,20 @@ class LossProfile:
     # default: ``()`` so profiles written before this field was added
     # load cleanly.
     per_judge_loss: tuple[JudgeLoss, ...] = ()
+    # Carried-over (cached) provenance. ``cached`` is ``True`` when this
+    # profile was NOT produced by a live run in its own epoch but
+    # MATERIALISED from a prior evaluation — the champion carried forward
+    # into a new epoch (baseline-seed reuse) or a fast-mode reuse. The
+    # per-board scalar (``drift_loss`` / ``pass_fail``) is the carried
+    # value; ``source_epoch`` / ``source_run`` name where it came from so
+    # the champion is consistent with the challengers (both materialised
+    # per board, distinguished only by this provenance) and the index
+    # never double-counts a cached champion as a fresh evaluation.
+    # Back-compat default: ``cached=False`` / empty sources for every
+    # freshly-run profile, so existing loss.json files load unchanged.
+    cached: bool = False
+    source_epoch: str = ""
+    source_run: str = ""
 
     def unified_metrics(self) -> tuple[MetricCount, ...]:
         """Return the merged metric view across drift_counts + metric_counts.

@@ -39,6 +39,7 @@ from zicato.selection.strategy import (
     Standing,
     _param_float,
     _param_int,
+    pending_match_record,
 )
 
 
@@ -324,6 +325,46 @@ class RacingStrategy(SelectionStrategy):
                 )
             )
         return tuple(recs)
+
+    # -- live (in-flight) projection --------------------------------------
+
+    def _pending_round(self) -> RoundRecord | None:
+        # Mid rung: ``_pending`` holds this rung's champion-vs-challenger
+        # duels. Emit one pending match per duel (keyed by the rung
+        # matchup id) carrying the rung's board fraction.
+        if self._pending:
+            fraction = self._rung_fraction()
+            matches = [
+                pending_match_record(
+                    mid,
+                    (left.generation_id, right.generation_id),
+                    board_fraction=fraction,
+                )
+                for mid, (left, right) in self._pending.items()
+            ]
+            return RoundRecord(
+                round_index=self._rung,
+                label=f"Rung {self._rung}",
+                matches=tuple(matches),
+            )
+        # Final full-board champion-gate scheduled, result not yet landed.
+        if self._final_scheduled and self._final_result is None and self._survivor is not None:
+            assert self._champion is not None
+            return RoundRecord(
+                round_index=self._rung + 1,
+                label="Champion gate",
+                matches=(
+                    pending_match_record(
+                        self._final_match_id,
+                        (self._champion.generation_id, self._survivor.generation_id),
+                        board_fraction=1.0,
+                    ),
+                ),
+            )
+        return None
+
+    def _live_standings(self) -> tuple[Standing, ...]:
+        return self._standings(None)
 
 
 __all__ = ["RacingStrategy"]

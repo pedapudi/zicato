@@ -37,6 +37,7 @@ from zicato.selection.strategy import (
     SelectionStrategy,
     Standing,
     _param_int,
+    pending_match_record,
 )
 
 
@@ -365,6 +366,44 @@ class DoubleEliminationStrategy(SelectionStrategy):
                 )
             )
         return tuple(recs)
+
+    # -- live (in-flight) projection --------------------------------------
+
+    def _pending_round(self) -> RoundRecord | None:
+        # Mid WB or LB round: the active pending map carries the scheduled
+        # duels and ``_round_matches`` any byes already recorded.
+        pending = self._wb_pending or self._lb_pending
+        if pending:
+            label = "Winners' bracket" if self._wb_pending else "Losers' bracket"
+            matches = list(self._round_matches)
+            for mid, (left, right) in pending.items():
+                matches.append(
+                    pending_match_record(
+                        mid,
+                        (left.generation_id, right.generation_id),
+                        bracket_slot=mid,
+                    )
+                )
+            return RoundRecord(
+                round_index=self._round_index,
+                label=label,
+                matches=tuple(matches),
+            )
+        # Grand final scheduled, result not yet landed.
+        if self._gf_scheduled and self._gf_result is None and self._champion is not None:
+            challenger = getattr(self, "_gf_challenger", None)
+            comp: tuple[str, ...] = (self._champion.generation_id,)
+            if challenger is not None:
+                comp = (self._champion.generation_id, challenger.generation_id)
+            return RoundRecord(
+                round_index=self._round_index,
+                label="Grand final",
+                matches=(pending_match_record(self._gf_match_id, comp, bracket_slot="GF"),),
+            )
+        return None
+
+    def _live_standings(self) -> tuple[Standing, ...]:
+        return self._standings(None)
 
 
 __all__ = ["DoubleEliminationStrategy"]

@@ -230,7 +230,7 @@ def loss_profiles_for_generation(
             "loss_json",
             "tournament_id",
         ),
-        ("match_id",),
+        ("match_id", "cached", "source_epoch", "source_run"),
         "WHERE epoch_id = ? AND generation_id = ? ORDER BY entry_id, run_id",
         (epoch_id, generation_id),
     )
@@ -281,7 +281,7 @@ def loss_profiles_for_tournament(db_path: Path, tournament_id: str) -> list[sqli
             "loss_json",
             "tournament_id",
         ),
-        ("match_id",),
+        ("match_id", "cached", "source_epoch", "source_run"),
         "WHERE tournament_id = ? ORDER BY entry_id, run_id",
         (tournament_id,),
     )

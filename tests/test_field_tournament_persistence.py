@@ -35,8 +35,8 @@ from zicato.dashboard.state_reader import (
 from zicato.index.ingest import ingest_field_tournament, rebuild_index
 from zicato.orchestrator import (
     _persist_field_tournament,
-    _serialise_settled_rounds,
-    _serialise_settled_standings,
+    _serialise_rounds,
+    _serialise_standings,
 )
 from zicato.selection import make_strategy
 from zicato.selection.strategy import Contestant, MatchupResult
@@ -118,8 +118,8 @@ def _field_record(strategy, decision, competitors, *, epoch_id: str, structure: 
         "structure": structure,
         "structure_params": {"field_size": 4},
         "competitors": competitors,
-        "rounds": _serialise_settled_rounds(strategy),
-        "standings": _serialise_settled_standings(decision),
+        "rounds": _serialise_rounds(strategy.rounds()),
+        "standings": _serialise_standings(decision.standings),
         "field_status": [
             {"generation_id": "v1", "status": "applied", "reason": "", "seed": 2},
             {"generation_id": "v2", "status": "applied", "reason": "", "seed": 3},
@@ -250,8 +250,8 @@ def test_persist_writes_durable_snapshot_and_dual_writes(tmp_path: Path) -> None
         structure="swiss",
         structure_params={"field_size": 4},
         competitors=competitors,
-        rounds=_serialise_settled_rounds(strategy),
-        standings=_serialise_settled_standings(decision),
+        rounds=_serialise_rounds(strategy.rounds()),
+        standings=_serialise_standings(decision.standings),
         field_status=[{"generation_id": "v1", "status": "applied", "reason": "", "seed": 2}],
         decision=decision,
     )
@@ -341,8 +341,8 @@ def _completed_swiss_workspace(tmp_path: Path, structure: str = "swiss") -> Path
     strategy, decision, competitors = _settle_swiss(structure)
     import json
 
-    rounds = _serialise_settled_rounds(strategy)
-    standings = _serialise_settled_standings(decision)
+    rounds = _serialise_rounds(strategy.rounds())
+    standings = _serialise_standings(decision.standings)
     # The per-challenger crowning rows (the old, empty-structure rows) plus
     # the one field row. The read path must serve the FIELD row for the
     # structure view and suppress the per-challenger ones.

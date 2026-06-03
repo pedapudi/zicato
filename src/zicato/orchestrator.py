@@ -33,7 +33,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -532,9 +532,7 @@ async def evolve_once(
     # The factory already enforced this but the runner re-checks.
     # We do nothing more here.
     if config.instance_id != instance_id:
-        from dataclasses import replace as _replace  # noqa: PLC0415
-
-        config = _replace(config, instance_id=instance_id)
+        config = replace(config, instance_id=instance_id)
 
     # --- 2. Parent generation ---
     # Materialise a v0 baseline snapshot from the registered mutable
@@ -932,6 +930,10 @@ async def evolve_once(
         # index carry it; gauntlet leaves the remaining fields at their
         # back-compat defaults (no bracket path to describe).
         structure=tournament_spec.structure,
+        # The runner's champion-eval provenance is authoritative
+        # (``full`` / ``fast`` / ``fast-degraded``); record it on the
+        # gauntlet path too so a fast round is not journalled as ``full``.
+        champion_eval_mode=tournament_result.champion_eval_mode,
     )
     finalised = update_experiment_outcome(
         workspace_root, resolved_epoch_id, next_id, outcome_record
@@ -1514,12 +1516,38 @@ async def _evolve_multi_challenger(
         field_status=field_status,
     )
 
+    # --- Live structure publish. Each time the driver schedules a batch
+    # of pending matchups, republish the envelope with the LIVE structure:
+    # the settled rounds plus the in-flight round (matches with
+    # ``winner: null`` + ``pending: true``) and the standings-so-far. This
+    # is what lets the dashboard's bracket/ladder/funnel exist DURING the
+    # run instead of showing "being seeded" until settle. The serialisation
+    # goes through the SAME _serialise_rounds / _serialise_standings the
+    # settle + durable-record producers use, so the shapes are
+    # byte-compatible. Best-effort — _publish_active_tournament never
+    # raises, so a publish failure cannot abort the resolution.
+    def _publish_live_structure(strat: Any) -> None:
+        _publish_active_tournament(
+            workspace_root,
+            tournament_id=tournament_id,
+            epoch_id=epoch_id,
+            structure=tournament_spec.structure,
+            structure_params=dict(tournament_spec.params),
+            competitors=competitors_meta,
+            round_index=round_index,
+            total_rounds=total_rounds,
+            field_status=field_status,
+            rounds=_serialise_rounds(strat.live_rounds()),
+            standings=_serialise_standings(strat.live_standings()),
+        )
+
     # --- Drive the strategy to a crowned decision.
     try:
         decision = await resolve_tournament(
             strategy,
             request_field=_request_field,
             run_matchup=_run_matchup,
+            on_progress=_publish_live_structure,
         )
     except Exception:
         # A failure mid-resolution leaves no settled bracket — clear the
@@ -1563,8 +1591,8 @@ async def _evolve_multi_challenger(
         structure=tournament_spec.structure,
         structure_params=dict(tournament_spec.params),
         competitors=competitors_meta,
-        rounds=_serialise_settled_rounds(strategy),
-        standings=_serialise_settled_standings(decision),
+        rounds=_serialise_rounds(strategy.rounds()),
+        standings=_serialise_standings(decision.standings),
         field_status=field_status or [],
         decision=decision,
     )
@@ -1773,16 +1801,29 @@ def _publish_active_tournament(
     total_rounds: int,
     field_status: list[dict[str, Any]] | None = None,
     phase: str = "running",
+    rounds: list[dict[str, Any]] | None = None,
+    standings: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Best-effort: publish the live ActiveTournament envelope at start.
+    """Best-effort: publish the live ActiveTournament envelope.
 
     Populates the structure envelope (``structure`` / ``structure_params``
     / ``competitors``) per the data-model doc so the dashboard can render
     a non-gauntlet field while it runs. ``parent_generation_id`` /
     ``child_generation_id`` are left empty for non-gauntlet structures
     (the data model's documented convention); ``competitors`` is the
-    authoritative field. Never raises — a live-state write failure must
-    not abort the round.
+    authoritative field.
+
+    ``rounds`` / ``standings`` carry the live (in-flight) structure when
+    supplied — the settled rounds PLUS the current scheduled round (its
+    matches with ``winner: null`` + ``pending: true``) and the
+    standings-so-far, both serialised through the SAME
+    :func:`_serialise_rounds` / :func:`_serialise_standings` path the
+    settle + durable-record producers use, so the dashboard's
+    bracket/ladder/funnel renderers work identically live and post-run.
+    Omitting them (e.g. the all-rejected publish, which has no field to
+    seed) leaves the envelope's ``rounds`` / ``standings`` empty.
+
+    Never raises — a live-state write failure must not abort the round.
     """
     try:
         from zicato.runtime.state import (  # noqa: PLC0415
@@ -1805,19 +1846,31 @@ def _publish_active_tournament(
                 structure_params=dict(structure_params),
                 competitors=[dict(c) for c in competitors],
                 field_status=[dict(f) for f in (field_status or [])],
+                rounds=[dict(r) for r in (rounds or [])],
+                standings=[dict(s) for s in (standings or [])],
             ),
         )
     except Exception as exc:  # noqa: BLE001 — live state is best-effort
         log.debug("active-tournament publish skipped: %s", exc)
 
 
-def _serialise_settled_rounds(strategy: Any) -> list[dict[str, Any]]:
-    """Project a strategy's settled ``rounds()`` to the dashboard shape.
+def _serialise_rounds(rounds: Any) -> list[dict[str, Any]]:
+    """Project a sequence of :class:`RoundRecord` to the dashboard shape.
 
     The single canonical serialisation of the round-by-round pairings
-    (data-model §2.4) — shared by the live ``active_tournament`` envelope
-    and the durable field-tournament snapshot so both carry byte-identical
-    rounds and the renderers (which already work live) work post-run.
+    (data-model §2.4), shared by ALL THREE producers so they carry
+    byte-identical shapes and the dashboard renderers work identically:
+
+    * the LIVE ``active_tournament`` envelope (``strategy.live_rounds()``
+      — settled rounds plus the in-flight round whose matches carry
+      ``winner: null`` + ``pending: true``);
+    * the SETTLED envelope at run end (``strategy.rounds()``);
+    * the DURABLE field-tournament snapshot (``strategy.rounds()``).
+
+    ``winner`` is emitted as ``None`` (the contract's ``winner: null``)
+    for a match that has not crowned a side — every ``pending`` match, and
+    any settled match the strategy left with an empty ``winner`` (a racing
+    rung, which cuts rather than crowns).
     """
     return [
         {
@@ -1827,7 +1880,7 @@ def _serialise_settled_rounds(strategy: Any) -> list[dict[str, Any]]:
                 {
                     "match_id": m.match_id,
                     "competitors": list(m.competitors),
-                    "winner": m.winner,
+                    "winner": (m.winner or None),
                     "decision": m.decision,
                     "delta_scalar": m.delta_scalar,
                     "bracket_slot": m.bracket_slot,
@@ -1835,20 +1888,24 @@ def _serialise_settled_rounds(strategy: Any) -> list[dict[str, Any]]:
                     "survivors": list(m.survivors),
                     "cut": list(m.cut),
                     "board_fraction": m.board_fraction,
+                    "pending": m.pending,
                 }
                 for m in r.matches
             ],
         }
-        for r in strategy.rounds()
+        for r in rounds
     ]
 
 
-def _serialise_settled_standings(decision: Any) -> list[dict[str, Any]]:
-    """Project a decision's settled ``standings`` to the dashboard shape.
+def _serialise_standings(standings: Any) -> list[dict[str, Any]]:
+    """Project a sequence of :class:`Standing` to the dashboard shape.
 
     The single canonical serialisation of the Copeland standings
-    (data-model §2.5), shared by the live envelope and the durable
-    field-tournament snapshot.
+    (data-model §2.5), shared by the live envelope
+    (``strategy.live_standings()``), the settled envelope, and the durable
+    field-tournament snapshot (both ``decision.standings``). The live
+    ``status`` is emitted raw (alive / eliminated / champion / competing);
+    the dashboard maps display labels.
     """
     return [
         {
@@ -1860,7 +1917,7 @@ def _serialise_settled_standings(decision: Any) -> list[dict[str, Any]]:
             "status": s.status,
             "role": s.role,
         }
-        for s in decision.standings
+        for s in standings
     ]
 
 
@@ -1963,8 +2020,8 @@ def _settle_active_tournament(
             write_active_tournament,
         )
 
-        rounds = _serialise_settled_rounds(strategy)
-        standings = _serialise_settled_standings(decision)
+        rounds = _serialise_rounds(strategy.rounds())
+        standings = _serialise_standings(decision.standings)
         write_active_tournament(
             workspace_root,
             ActiveTournament(
@@ -3318,12 +3375,14 @@ def _ensure_baseline_snapshot(
     # pre-seam flatten-into-v0 behaviour.
     seed_marker = _roll_seed_marker(workspace_root, epoch_id)
     seeded_from_roll = False
+    roll_source: tuple[str, str] | None = None  # (source_epoch, source_generation)
     if seed_marker.exists():
         seed_text = seed_marker.read_text(encoding="utf-8").strip()
         seed_source = Path(seed_text) if seed_text else None
         if seed_source is not None and seed_source.exists():
             store.seed_generation(epoch_id, "v0", sorted(seed_source.iterdir()))
             seeded_from_roll = True
+            roll_source = _source_epoch_generation(seed_source)
             log.info(
                 "epoch %s: seeded v0 from rolled predecessor snapshot %s",
                 epoch_id,
@@ -3378,6 +3437,174 @@ def _ensure_baseline_snapshot(
         "v0",
         proposed_at=baseline_gen.created_at,
     )
+
+    # Champion self-containment: when this epoch carried the champion
+    # forward from a rolled predecessor, MATERIALISE the carried-over
+    # per-board losses + aggregate into the new epoch's ``v0`` gen dir,
+    # each tagged ``cached: true`` with ``source_epoch`` / ``source_run``
+    # provenance. Without this the champion would be a hollow shell — only
+    # ``experiment.json`` + ``snapshot/`` — while the challengers carry
+    # their ``loss.json`` files, so the epoch would not be self-contained
+    # and a fast first round would degrade to a full champion re-run. With
+    # the losses materialised, the champion is consistent with the
+    # challengers (both materialised per-board, distinguished only by the
+    # ``cached`` provenance) and the cache-first runner reuses it from the
+    # very first round.
+    if roll_source is not None:
+        _materialize_carried_champion(
+            workspace_root,
+            epoch_id=epoch_id,
+            generation_id="v0",
+            source_epoch=roll_source[0],
+            source_generation=roll_source[1],
+        )
+
+
+def _source_epoch_generation(seed_source: Path) -> tuple[str, str] | None:
+    """Derive ``(source_epoch, source_generation)`` from a roll-seed snapshot path.
+
+    The cross-epoch roll-seed marker points at the predecessor's
+    promoted-head snapshot directory, of the form
+    ``…/epochs/<epoch>/generations/<gen>/snapshot``. This recovers the
+    ``(epoch, generation)`` pair so the champion's prior losses can be
+    materialised into the new epoch with honest provenance. Returns
+    ``None`` when the path does not match the expected layout (a
+    hand-built marker, a future relayout) — materialisation is then
+    skipped, which is a clean degrade rather than a crash.
+    """
+    parts = seed_source.parts
+    try:
+        # …/epochs/<epoch>/generations/<gen>/snapshot
+        snap_i = len(parts) - 1 - parts[::-1].index("snapshot")
+    except ValueError:
+        return None
+    # Expect ["generations", <gen>, "snapshot"] ending and an "epochs"
+    # marker two levels above the generation id.
+    if snap_i < 4 or parts[snap_i - 2] != "generations" or parts[snap_i - 4] != "epochs":
+        return None
+    source_generation = parts[snap_i - 1]
+    source_epoch = parts[snap_i - 3]
+    return source_epoch, source_generation
+
+
+def _materialize_carried_champion(
+    workspace_root: Path,
+    *,
+    epoch_id: str,
+    generation_id: str,
+    source_epoch: str,
+    source_generation: str,
+) -> None:
+    """Copy a carried-over champion's per-board losses + aggregate into this epoch.
+
+    Best-effort. Reads every per-board ``loss.json`` (and per-replicate
+    ``loss.r<r>.json``) the champion produced in ``source_epoch`` /
+    ``source_generation`` and rewrites each into THIS epoch's
+    ``generations/<generation_id>/runs/<entry>/`` with ``cached=True`` and
+    ``source_epoch`` / ``source_run`` provenance (``source_run`` is the
+    original run id, so the trail back to the live evaluation survives).
+    The champion's ``gen_score.json`` aggregate is likewise copied with the
+    same provenance fields so a fast first round reuses it. Each
+    materialised run is folded into the analytical index so the champion
+    reads as scored-but-cached within the epoch (the index's ``cached``
+    column keeps it from being double-counted as a fresh evaluation).
+
+    A missing source (the predecessor never scored its head), an
+    unreadable file, or an absent reducer degrades to "materialise what we
+    can" — never an abort. The champion's run id in the new epoch keeps
+    the canonical ``{generation_id}--{entry_id}`` form so the cache-first
+    runner finds it as a hit.
+    """
+    from zicato.core.workspace import run_dir  # noqa: PLC0415
+
+    try:
+        from zicato.telemetry.reducer import (  # noqa: PLC0415
+            read_loss_profile,
+            write_loss_profile,
+        )
+    except ImportError as exc:
+        # The reducer (de)serialisers are unavailable in this environment
+        # (e.g. a test that stubs out ``zicato.telemetry``). Materialising
+        # carried losses is best-effort — degrade to "carry nothing"
+        # rather than aborting the epoch's baseline seed.
+        log.debug("materialise champion: reducer unavailable (%s); skipping", exc)
+        return
+
+    src_gen_dir = generation_dir(workspace_root, source_epoch, source_generation)
+    src_runs_root = src_gen_dir / "runs"
+    materialised_entries: list[str] = []
+    if src_runs_root.exists():
+        for entry_dir in sorted(p for p in src_runs_root.iterdir() if p.is_dir()):
+            entry_id = entry_dir.name
+            dst_run_dir = run_dir(workspace_root, epoch_id, generation_id, entry_id)
+            any_for_entry = False
+            # Canonical loss.json (replicate 0) + any loss.r<r>.json siblings.
+            for src_loss in sorted(entry_dir.glob("loss*.json")):
+                try:
+                    profile = read_loss_profile(src_loss)
+                except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                    log.debug("materialise champion: unreadable %s: %s", src_loss, exc)
+                    continue
+                carried = replace(
+                    profile,
+                    generation_id=generation_id,
+                    epoch_id=epoch_id,
+                    run_id=f"{generation_id}--{entry_id}"
+                    + ("" if src_loss.name == "loss.json" else f"--{src_loss.stem}"),
+                    cached=True,
+                    source_epoch=source_epoch,
+                    source_run=profile.run_id,
+                )
+                try:
+                    write_loss_profile(carried, dst_run_dir / src_loss.name)
+                    any_for_entry = True
+                except OSError as exc:
+                    log.debug("materialise champion: write %s skipped: %s", src_loss.name, exc)
+            if any_for_entry:
+                materialised_entries.append(entry_id)
+
+    # Carry the aggregate (gen_score.json) with the same provenance so a
+    # fast first round reuses the champion rather than re-running it.
+    src_score = src_gen_dir / "gen_score.json"
+    if src_score.exists():
+        try:
+            raw = json.loads(src_score.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            log.debug("materialise champion: gen_score read skipped: %s", exc)
+            raw = None
+        if isinstance(raw, dict):
+            raw["generation_id"] = generation_id
+            raw["cached"] = True
+            raw["source_epoch"] = source_epoch
+            raw["source_run"] = source_generation
+            _cache_gen_score(workspace_root, epoch_id, generation_id, raw)
+
+    # Fold the materialised runs into the analytical index so the champion
+    # reads as scored-but-cached within the epoch.
+    for entry_id in materialised_entries:
+        try:
+            from zicato.index.ingest import ingest_run  # noqa: PLC0415
+
+            ingest_run(
+                workspace_root,
+                _index_db_path(workspace_root),
+                epoch_id,
+                generation_id,
+                entry_id,
+            )
+        except ImportError:
+            break
+        except Exception as exc:  # noqa: BLE001 — index dual-write is best-effort
+            log.debug("materialise champion: index ingest %s skipped: %s", entry_id, exc)
+    if materialised_entries:
+        log.info(
+            "epoch %s: materialised carried champion %s from %s/%s (%d board entries, cached)",
+            epoch_id,
+            generation_id,
+            source_epoch,
+            source_generation,
+            len(materialised_entries),
+        )
 
 
 def _load_historical_aggregate(

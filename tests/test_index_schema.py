@@ -131,6 +131,9 @@ def test_loss_profiles_columns_match_contract() -> None:
         "loss_json",
         "tournament_id",
         "match_id",
+        "cached",
+        "source_epoch",
+        "source_run",
     ]
     conn.close()
 

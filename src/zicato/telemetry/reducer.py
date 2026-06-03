@@ -1208,6 +1208,9 @@ def read_loss_profile(path: Path) -> LossProfile:
         adk_session_id=str(d.get("adk_session_id", "") or ""),
         match_id=str(d.get("match_id", "") or ""),
         per_judge_loss=per_judge_loss,
+        cached=bool(d.get("cached", False)),
+        source_epoch=str(d.get("source_epoch", "") or ""),
+        source_run=str(d.get("source_run", "") or ""),
     )
 
 
