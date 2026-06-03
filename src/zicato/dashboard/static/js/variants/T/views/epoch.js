@@ -251,8 +251,12 @@ export async function render(host, ctx, params) {
     // the winning mutation per step lives on hover. Derived from the SAME epoch
     // round model the spine timeline reads (single source). Only for ≥1 scored
     // round (else the descent has no floor to plot).
+    // The waterfall (and the spine, below) plot a TRAJECTORY across rounds — they
+    // need ≥2 rounds to mean anything. A single-round epoch (every run so far)
+    // has no descent to draw, so we skip both and show just the round's episode
+    // card; rendering an empty h=220 waterfall + a one-node spine read as broken.
     const waterfallSteps = waterfallModel(epochRounds);
-    if (waterfallSteps.some((s) => svg.isNum(s.to) || svg.isNum(s.from))) {
+    if (!single && waterfallSteps.some((s) => svg.isNum(s.to) || svg.isNum(s.from))) {
       timelineCard.appendChild(el('div', { class: 'dn-roundtl-waterfall dn-figpane' }, [
         svg.waterfall({ steps: waterfallSteps, onRound: drill, onCompetitor: open }),
       ]));

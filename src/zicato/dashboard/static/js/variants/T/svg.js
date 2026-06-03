@@ -1972,7 +1972,10 @@ export function roundTimeline(opts) {
     clickable(g, o.onRound && (() => o.onRound(r.round_index)));
     svg.appendChild(g);
   });
-  wrap.appendChild(el('div', { class: 'dn-roundtl-spineframe' }, [svg]));
+  // The spine plots a champion trajectory across rounds — meaningless for a
+  // single round (one node floating in a wide empty viewBox reads as broken).
+  // A single-round epoch shows just its episode card below.
+  if (!single) wrap.appendChild(el('div', { class: 'dn-roundtl-spineframe' }, [svg]));
 
   // ── one EPISODE card per round ──────────────────────────────────────
   const episodes = el('div', { class: 'dn-roundtl-episodes' + (single ? ' dn-roundtl-single' : '') });
