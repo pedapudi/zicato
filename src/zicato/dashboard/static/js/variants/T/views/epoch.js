@@ -10,10 +10,10 @@ import { el } from '../../../core/dom.js';
 import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { reel, reelDigest } from '../reel.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, reconstructRacing, normalizeStructure, racingModel, swissOverviewModel, elimModel, buildLiveSwissModel, buildLiveElimModel, structureDigest } from './structure.js';
+import { epochRoundModel, roundModelDigest } from './rounds.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
@@ -39,14 +39,21 @@ export async function render(host, ctx, params) {
   const lineageRows = (lin && Array.isArray(lin.generations)) ? lin.generations : [];
   const scopedLineage = lineageRows.filter((g) => g && g.epoch_id === epochId);
   const rawGens = scopedLineage.length
-    ? scopedLineage.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' }));
+    ? scopedLineage.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: !!g.promoted, round_index: svg.isNum(g.round_index) ? g.round_index : null }))
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted', round_index: svg.isNum(x.round_index) ? x.round_index : null }));
   const gens = [];
   const seenGen = new Set();
   for (const g of rawGens) {
     if (g.id == null || seenGen.has(g.id)) continue;
     seenGen.add(g.id);
     gens.push(g);
+  }
+  // carry round_index from the experiments fallback when the lineage rows lack it
+  // (the experiments fallback path may carry the stamp the bare lineage did not).
+  if (scopedLineage.length && experiments.length) {
+    const expRound = new Map();
+    for (const x of experiments) if (svg.isNum(x.round_index)) expRound.set(String(x.generation_id), x.round_index);
+    for (const g of gens) if (!svg.isNum(g.round_index) && expRound.has(String(g.id))) g.round_index = expRound.get(String(g.id));
   }
 
   const scalarByGen = new Map();
@@ -64,22 +71,9 @@ export async function render(host, ctx, params) {
   });
   for (const b of board) { const id = b.entry_id || b.id; if (id) entryIds.add(id); }
 
-  // ---- the slim reel's rounds (champion spine + ticks) ----
-  // The rounds are the actual tournament match-ups (round-ordered by ran_at);
-  // fall back to the rejected/promoted challenger lineage when there is no
-  // tournament payload. The champion is the promoted (or seed) generation.
+  // The reigning champion: the promoted (or seed) generation — round 0's seed.
   const champ = gens.find((g) => g.promoted) || gens.find((g) => !g.parent) || null;
   const championId = champ ? champ.id : null;
-  const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups.slice() : [];
-  matchups.sort((a, b) => String(a.ran_at || '').localeCompare(String(b.ran_at || '')));
-  const rounds = matchups.length
-    ? matchups.map((m) => ({ challenger: m.challenger, decision: m.decision, deltaScalar: m.delta_scalar }))
-    : gens.filter((g) => g.parent).map((g) => ({
-        challenger: g.id, decision: g.promoted ? 'promoted' : 'rejected',
-        deltaScalar: (svg.isNum(scalarByGen.get(g.id)) && svg.isNum(championId ? scalarByGen.get(championId) : NaN))
-          ? scalarByGen.get(g.id) - scalarByGen.get(championId) : null,
-      }));
-  const reelSpec = { championId, rounds };
 
   // The configured tournament structure (§3.1) — surfaced as a one-line
   // header pill. Absent ⇒ no pill (a gauntlet epoch that predates the
@@ -134,6 +128,14 @@ export async function render(host, ctx, params) {
     }
   }
 
+  // ---- THE EPOCH ROUND MODEL (the champion-spine timeline's source) ----
+  // The epoch is N evolve rounds along the champion spine. Derive the rounds
+  // from per-gen round_index, else the per-round field records, else the
+  // gauntlet matchups, else a single round 0 (every run so far). The timeline
+  // SUBSUMES the old gauntlet reel + the non-gauntlet structure strip — one
+  // renderer for all structures, degrading to a single episode for --rounds 1.
+  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId });
+
   const digest = JSON.stringify({
     epochId, goal: ep.goal || '', objective: objectiveText(ep), briefLen: (ep.brief || '').length, closed: !!ep.closed,
     structure: tournament ? [tournament.structure, JSON.stringify(tournament.params || {})] : null,
@@ -141,8 +143,8 @@ export async function render(host, ctx, params) {
     racingFunnel: racingFunnel ? structureDigest(racingFunnel.st) : null,
     swissOver: swissOver ? structureDigest(swissOver.st) : null,
     elimOver: elimOver ? structureDigest(elimOver.st) : null,
-    gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
-    reel: reelDigest(reelSpec),
+    gens: gens.map((g) => [g.id, g.parent, g.promoted, svg.isNum(g.round_index) ? g.round_index : null, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
+    rounds: roundModelDigest(epochRounds),
     loss: [...lossLookup.entries()].sort(),
     board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
   });
@@ -185,101 +187,73 @@ export async function render(host, ctx, params) {
     ]);
     nodes.push(section('Operator’s brief to the proposer', briefDetails));
 
-    // ---- the structure-aware reel ------------------------------------
-    // GAUNTLET keeps the slim reel (rounds along the champion spine). A
-    // NON-gauntlet epoch swaps in a compact structure OVERVIEW (the survival
-    // funnel / swiss bump+bar / elim mini-bracket) with a "See Match-ups" link.
-    if (nonGauntlet) {
-      // TRUTHFUL "field of N": the real competitors are the champion + the
-      // APPLIED challengers (gens that actually entered the tournament), NOT the
-      // raw gen count — which includes unscored ORPHANS (proposed-but-dropped
-      // candidates with no scalar and no parent-lineage). A gen counts toward the
-      // field when it has a scalar (it was scored), is promoted, or is the seed/
-      // champion; an orphan (unscored, non-seed, non-promoted) is excluded.
-      const fieldN = gens.filter((g) =>
-        g.promoted || !g.parent || scalarByGen.has(g.id)).length;
-      const params = (tournament && tournament.params) || {};
-      const rungs = Array.isArray(params.rungs) ? params.rungs.length : null;
-      const facts = [el('span', { class: 'dt-struct-strip-lab', text: structureLabel(structure, params) })];
-      facts.push(el('span', { class: 'dt-struct-strip-fact', text: `field of ${fieldN}` }));
-      if (structure === 'racing' && rungs) facts.push(el('span', { class: 'dt-struct-strip-fact', text: `${rungs} rung${rungs === 1 ? '' : 's'}` }));
-      else if (structure === 'swiss' && svg.isNum(params.rounds)) facts.push(el('span', { class: 'dt-struct-strip-fact', text: `${params.rounds} round${params.rounds === 1 ? '' : 's'}` }));
+    // ---- the CHAMPION-SPINE ROUND TIMELINE (the epoch overview hero) ----
+    // ONE renderer for ALL structures: the champion spine across the epoch's
+    // evolve rounds, each round an episode (incoming champion + a fan of that
+    // round's challengers + a COMPACT per-round structure figure + the gate
+    // outcome). This SUBSUMES the old gauntlet reel + non-gauntlet strip — a
+    // single round (--rounds 1, every run so far) degrades to ONE episode.
+    const params = (tournament && tournament.params) || {};
+    const open = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
+    const drill = (roundIndex) => ctx.navigate('gens', { epochId, round: roundIndex });
+    const single = epochRounds.length <= 1;
 
-      // helper: a structure-overview card (facts header + LIVE pill + figure +
-      // caption + "See Match-ups →"). Each structure passes its figure + caption.
-      const overviewCard = (live, figure, caption) => {
-        const card = el('div', { class: 'dn-panel dn-figpane dt-struct-over dt-struct-strip' });
-        card.appendChild(el('div', { class: 'dt-struct-strip-row' }, [
-          ...facts, live ? el('span', { class: 'dt-live-pill', text: 'LIVE' }) : null,
-        ].filter(Boolean)));
-        card.appendChild(figure);
-        if (caption) card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: caption }));
-        card.appendChild(el('a', { class: 'dn-linkbtn dt-struct-strip-link', href: ctx.href('gens', { epochId }), text: 'See Match-ups →' }));
-        return card;
-      };
-      const open = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
-      // shared champion-gate suffix for every overview caption.
-      const gateNote = (m, crown) => (m.gateState === 'crowned' ? ` · champion-gate: ${m.championId} promoted ${crown}`
-        : m.gateState === 'stands' ? ' · champion-gate: champion stands'
-        : m.gateState === 'deciding' ? ' · champion-gate: deciding…' : '')
-        + (m.live ? ' · LIVE — the winner is not committed until the gate' : '');
-      const pushOverview = (m, fig, caption) =>
-        nodes.push(section('Tournament structure · ' + structureLabel(structure, params), overviewCard(m.live, fig, caption)));
-
-      if (structure === 'racing' && racingFunnel) {
-        // the interactive SURVIVAL FUNNEL (field → cuts → survivor → gate).
-        const m = racingFunnel.model;
-        pushOverview(m, svg.survivalFunnel({
+    // The per-round STRUCTURE FIGURE. For a SINGLE round the aggregate
+    // (whole-epoch) model IS the round's tournament — reuse the live-first
+    // racing/swiss/elim models already built above. For MULTI-round epochs,
+    // normalize each round's own field-tournament record. Gauntlet → null (the
+    // spine + the challenger fan already tell that round's one-duel story).
+    const figureForRound = (r) => {
+      // normalize the round's OWN field-tournament record (multi-round path).
+      const stFromRef = r.tournamentRef
+        ? normalizeStructure({
+            structure: r.tournamentRef.structure || structure,
+            structure_params: r.tournamentRef.structure_params || params,
+            competitors: r.tournamentRef.competitors, rounds: r.tournamentRef.rounds,
+            standings: r.tournamentRef.standings,
+            champion_lineage: bracket && bracket.champion_lineage, source: 'index',
+          }, false)
+        : null;
+      // elim PARITY (#1): the per-round figure for elim is elimFlow (the
+      // generations-across-rounds slopegraph), matching racing→funnel /
+      // swiss→bump — NOT the compact mini-bracket. The full bracket tree lives
+      // in the round drill-down (Match-ups). Prefer the aggregate (live-first)
+      // model for a single round; fall back to the round's own record.
+      if (structure === 'racing') {
+        let m = single && racingFunnel ? racingFunnel.model : (stFromRef ? racingModel(stFromRef) : null);
+        if (m && m.hasRungs) return svg.survivalFunnel({
           rungs: m.rungs, championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
           gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
-        }), (m.benchmarkId ? `the field is raced vs the champion v0 = ${m.benchmarkId}; every Δ is Δ-vs-v0 and v0 defends at the gate · ` : '')
-          + 'successive halving — each rung races the field on a growing board fraction, then cuts the worst by η · ✕ = cut · ↑ = survives · ' + svg.CROWN.current + ' = crowned at the full-board gate · click a competitor → open'
-          + gateNote(m, svg.CROWN.current));
-      } else if (structure === 'swiss' && swissOver) {
-        // the SWISS OVERVIEW: standings bump chart + ranked Copeland bar.
-        const m = swissOver.model;
-        pushOverview(m, svg.swissOverview({
+        });
+      } else if (structure === 'swiss') {
+        const m = single && swissOver ? swissOver.model : (stFromRef ? swissOverviewModel(stFromRef) : null);
+        if (m) return svg.swissOverview({
           series: m.series, bars: m.bars, labels: m.labels,
           championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
           gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
-        }), 'each line tracks one competitor’s standings rank round-to-round (rank 1 = top) — the leader emerges as lines cross · the bar ranks final Copeland points (win 1 / draw ½) · ' + svg.CROWN.current + ' = champion · ' + svg.CROWN.former + ' = former champion (displaced incumbent)'
-          + gateNote(m, svg.CROWN.current));
-      } else if ((structure === 'single_elim' || structure === 'double_elim') && elimOver) {
-        // the ELIM OVERVIEW: a compact mini-bracket — elimBracket at small scale.
-        const m = elimOver.model;
-        const isDouble = !!(m.losers && m.losers.length);
-        pushOverview(m, svg.elimBracket({
-          compact: true, winners: m.winners, losers: m.losers,
-          championId: m.championId, benchmarkId: m.benchmarkId, live: m.live,
-          gateState: m.gateState, gateDelta: m.gateDelta, onCompetitor: open,
-        }), 'the bracket shape + who advanced — ✦ = match winner · the bracket winner must beat the incumbent at the champion-gate ' + svg.CROWN.current
-          + (isDouble ? ' · the losers’ bracket gives a second life (double-elim)' : '')
-          + gateNote(m, svg.CROWN.current));
-      } else {
-        // NO DATA (no record yet, or mid-proposing) → an HONEST brief line — the
-        // structure facts + a pointer to Match-ups, NEVER the old negative
-        // "this epoch is not a gauntlet" placeholder.
-        const stripCard = el('div', { class: 'dn-panel dt-struct-strip' });
-        stripCard.appendChild(el('div', { class: 'dt-struct-strip-row' }, facts));
-        stripCard.appendChild(el('a', { class: 'dn-linkbtn dt-struct-strip-link', href: ctx.href('gens', { epochId }), text: 'See Match-ups →' }));
-        const line = structure === 'racing'
-          ? 'no rungs have raced yet — the survival funnel fills in once the field runs · the full ladder / standings live in Match-ups'
-          : structure === 'swiss'
-            ? 'no swiss rounds have scored yet — the standings overview fills in as pairings land · the full ladder lives in Match-ups'
-            : 'the bracket has not been seeded yet — the mini-bracket fills in as matches land · the full bracket lives in Match-ups';
-        stripCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: line }));
-        nodes.push(section('Tournament structure · ' + structureLabel(structure, params), stripCard));
+        });
+      } else if (structure === 'single_elim' || structure === 'double_elim') {
+        const m = single && elimOver ? elimOver.model : (stFromRef ? elimModel(stFromRef) : null);
+        if (m && m.hasMatches !== false && m.winners.length) return svg.elimFlow({
+          winners: m.winners, championId: m.championId, benchmarkId: m.benchmarkId,
+          gateState: m.gateState, live: m.live, onCompetitor: open,
+        });
       }
-    } else {
-      const reelCard = el('div', { class: 'dn-panel' });
-      reelCard.appendChild(reel({
-        championId, rounds,
-        selected: null,
-        onSelect: (id) => ctx.navigate('candidate', { epochId, gen: id }),
-        onSeed: (id) => { if (id) ctx.navigate('candidate', { epochId, gen: id }); },
-      }));
-      nodes.push(section('Reel · the rounds along the champion spine', reelCard));
-    }
+      return null;
+    };
+
+    const timelineCard = el('div', { class: 'dn-panel' });
+    timelineCard.appendChild(svg.roundTimeline({
+      rounds: epochRounds, selected: null,
+      figureFor: figureForRound, onRound: drill, onCompetitor: open,
+    }));
+    timelineCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+      'one node per round on the champion spine — the descending loss floor reads as "is it improving?" · each episode is one round (incoming champion + its minted field + the tournament figure + the gate) · '
+      + svg.CROWN.current + ' = the round\'s champion · click a round → its full tournament (Match-ups)' }));
+    nodes.push(section(single
+      ? 'Round timeline · ' + structureLabel(structure, params)
+      : `Round timeline · the champion spine across ${epochRounds.length} rounds · ` + structureLabel(structure, params),
+      timelineCard));
 
     // ---- COMPACT board entries × generations heatmap (stays here, fix #6) ----
     const rows = [...entryIds].sort().map((id) => ({ id, label: id }));

@@ -1357,9 +1357,14 @@
   .dt-icon-env { background: var(--v2-accent); }
   .dt-icon-epoch { background: var(--v2-ink-soft); border-radius: 50%; }
   .dt-icon-group { background: transparent; }
+  /* a ROUND branch node (Epoch → Generations → Round N): a small accent bar */
+  .dt-icon-round { background: color-mix(in srgb, var(--v2-accent) 55%, transparent); border-radius: 1px; height: 8px; }
 
   .dt-glyph { width: 13px; text-align: center; flex: none; font-size: 10px; color: var(--v2-ink-faint); }
   .dt-glyph-gen-champ { color: var(--v2-good); }
+  /* a CARRIED-IN champion (a reference under a round, not a minted node) */
+  .dt-glyph-gen-carried { color: var(--v2-caution); opacity: 0.9; }
+  .dt-leaf[data-kind="gen-carried"] .dt-text { color: var(--v2-ink-soft); font-style: italic; }
   /* a FORMER champion: dimmer hollow crown — held the title, then succeeded */
   .dt-glyph-gen-former { color: var(--v2-ink-faint); opacity: 0.85; }
   /* an ORPHAN: a parentless stray that never scored (aborted run) — faintest */
@@ -1488,44 +1493,61 @@
   .dt-scale-reset:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
   .dt-scale-reset:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
 
-  /* ===================  the SLIM REEL (tr-*) — epoch view, adopted from V  ===================
+  /* ===================  the CHAMPION-SPINE ROUND TIMELINE (dn-roundtl-*)  ===================
    *
-   * A compact, fit-to-width champion spine: station 0 = the seed/champion, each
-   * tick = one round (challenger vs champion). A FIXED viewBox SVG at width:100%
-   * — NO pan/zoom; as rounds grow the ticks compress (the SVG never overflows).
-   * The vertical scale grows with the density picker (--dt-reel-scale) while the
-   * width stays fit-to-container. Hover / selection are CSS state swaps. */
-  .tr-reel { display: flex; flex-direction: column; gap: 6px; }
-  .tr-reel-empty { padding: 6px 0; }
-  .tr-reel-foot { font-size: 10.5px; margin: 2px 0 0; font-family: var(--v2-mono); }
-  .tr-strip-frame { width: 100%; }
-  .tr-strip { display: block; width: 100%; height: auto;
-    max-height: calc(120px * var(--dt-reel-scale, 1)); }
+   * The epoch overview hero for ALL structures (it SUBSUMES the old gauntlet
+   * reel + non-gauntlet structure strip). A fit-to-width champion SPINE (one
+   * node per round's champion, annotated with its loss so the descending floor
+   * reads at a glance) over a column of EPISODE cards (incoming champion + the
+   * round's minted challenger fan + a compact per-round structure figure + the
+   * gate outcome). A single round (--rounds 1) degrades to one episode. */
+  .dn-roundtl { display: flex; flex-direction: column; gap: 10px; }
+  .dn-roundtl-spineframe { width: 100%; }
+  .dn-roundtl-spine { display: block; width: 100%; height: auto;
+    max-height: calc(130px * var(--dt-reel-scale, 1)); }
+  .dn-roundtl-spineline { stroke: var(--v2-accent); stroke-width: 2.2; vector-effect: non-scaling-stroke; }
+  .dn-roundtl-axis { fill: var(--v2-ink-faint); font: 11px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+  .dn-roundtl-disc { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 2; }
+  .dn-roundtl-node.dn-roundtl-promote .dn-roundtl-disc { stroke: var(--v2-good); }
+  .dn-roundtl-glyph { fill: var(--v2-accent); font: 11px var(--v2-sans); }
+  .dn-roundtl-champid { fill: var(--v2-ink); font: 600 12px var(--n-font-head); letter-spacing: 0.02em; }
+  .dn-roundtl-loss { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); font-variant-numeric: tabular-nums; }
+  .dn-roundtl-rord { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
+  .dn-roundtl-node { cursor: pointer; }
+  .dn-roundtl-node:focus { outline: none; }
+  .dn-roundtl-node:hover .dn-roundtl-disc,
+  .dn-roundtl-node:focus .dn-roundtl-disc { stroke-width: 3; }
+  .dn-roundtl-node:hover .dn-roundtl-champid,
+  .dn-roundtl-node:focus .dn-roundtl-champid { fill: var(--v2-accent); }
+  .dn-roundtl-node.dn-roundtl-sel .dn-roundtl-disc { stroke-width: 3.2; fill: color-mix(in srgb, var(--v2-accent) 16%, var(--v2-panel)); }
 
-  .tr-spine { stroke: var(--v2-accent); stroke-width: 2.2; vector-effect: non-scaling-stroke; }
-  .tr-axis-lab { fill: var(--v2-ink-faint); font: 11px var(--v2-mono); text-transform: uppercase; letter-spacing: 0.06em; }
-
-  .tr-champ-disc { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 2; }
-  .tr-champ-glyph { fill: var(--v2-accent); font: 11px var(--v2-sans); }
-  .tr-champ-id { fill: var(--v2-ink); font: 600 12px var(--n-font-head); letter-spacing: 0.02em; }
-
-  .tr-tick { transition: r 0.12s ease; }
-  .tr-tick.tr-promote { fill: var(--v2-good); }
-  .tr-tick.tr-reject { fill: var(--v2-bad); }
-  .tr-tick-ord { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
-  .tr-tick-id { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
-
-  .tr-station { cursor: pointer; }
-  .tr-station:focus { outline: none; }
-  .tr-station:hover .tr-tick,
-  .tr-station:focus .tr-tick { stroke: var(--v2-accent); stroke-width: 2; }
-  .tr-station:hover .tr-tick-id,
-  .tr-station:focus .tr-tick-id { fill: var(--v2-ink); }
-  .tr-station:hover .tr-champ-disc,
-  .tr-station:focus .tr-champ-disc { stroke-width: 3; }
-  .tr-station.tr-sel .tr-tick { stroke: var(--v2-accent); stroke-width: 2.4; }
-  .tr-station.tr-sel .tr-tick-id { fill: var(--v2-accent); }
-  .tr-station.tr-sel .tr-champ-disc { stroke-width: 3.2; fill: color-mix(in srgb, var(--v2-accent) 16%, var(--v2-panel)); }
+  .dn-roundtl-episodes { display: flex; flex-direction: column; gap: 10px; }
+  .dn-roundtl-ep { border: 1px solid var(--v2-rule); border-left: 4px solid var(--v2-flat);
+    border-radius: 7px; padding: var(--dt-card-pad, 13px); background: var(--v2-panel); min-width: 0; }
+  .dn-roundtl-ep.dn-roundtl-ep-sel { border-left-color: var(--v2-accent); }
+  .dn-roundtl-single .dn-roundtl-ep { border-left-color: var(--v2-accent); }
+  .dn-roundtl-ephead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .dn-roundtl-eptag { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--v2-accent); font-weight: 700; }
+  .dn-roundtl-epchamp { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--v2-ink); }
+  .dn-roundtl-epcrown { color: var(--v2-caution); }
+  .dn-roundtl-epdrill { margin-left: auto; }
+  .dn-roundtl-fanrow { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .dn-roundtl-fanlab { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .dn-roundtl-fan { display: flex; gap: 6px; flex-wrap: wrap; }
+  .dn-roundtl-chip { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+    border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 8px; background: var(--v2-flat);
+    font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft);
+    transition: border-color 0.12s, color 0.12s; }
+  .dn-roundtl-chip:hover { border-color: var(--v2-accent); color: var(--v2-ink); }
+  .dn-roundtl-chip.dn-roundtl-chip-win { border-color: var(--v2-good); color: var(--v2-ink); }
+  .dn-roundtl-chipcrown { color: var(--v2-caution); }
+  .dn-roundtl-chiploss { font-variant-numeric: tabular-nums; }
+  .dn-roundtl-fig { margin-top: 10px; }
+  .dn-roundtl-gate { display: flex; align-items: center; gap: 7px; margin-top: 10px;
+    font-family: var(--v2-mono); font-size: 11px; color: var(--v2-ink-soft); }
+  .dn-roundtl-gate.dn-roundtl-gate-win { color: var(--v2-good); }
+  .dn-roundtl-gatemark { font-size: 13px; }
 
   /* ===================  the GENERATIONS match cards (adopted from W)  ===================
    *

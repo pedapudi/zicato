@@ -59,8 +59,11 @@ export function parseRoute(hash) {
   if (!group) return { view: 'epoch', params: { epochId }, cmp };
 
   switch (group) {
-    case 'gens':
-      return { view: 'gens', params: { epochId }, cmp };
+    case 'gens': {
+      // an optional `/r/<round>` drill scopes the Match-ups to ONE evolve round.
+      const round = (parts[3] === 'r' && parts[4] != null) ? parts[4] : null;
+      return { view: 'gens', params: { epochId, round }, cmp };
+    }
     case 'gen': {
       const gen = parts[3] || null;
       if (parts[4] === 'diff') return { view: 'diff', params: { epochId, gen, mutId: parts[5] || null }, cmp };
@@ -89,7 +92,9 @@ export function href(view, params, opts) {
   switch (view) {
     case 'home': base = PREFIX + '/'; break;
     case 'epoch': base = e || (PREFIX + '/'); break;
-    case 'gens': base = e ? `${e}/gens` : PREFIX + '/'; break;
+    case 'gens':
+      base = e ? (p.round != null ? `${e}/gens/r/${enc(p.round)}` : `${e}/gens`) : PREFIX + '/';
+      break;
     case 'candidate':
       if (!e || !p.gen) { base = e || PREFIX + '/'; break; }
       base = p.entry ? `${e}/gen/${enc(p.gen)}/${enc(p.entry)}` : `${e}/gen/${enc(p.gen)}`;
@@ -142,7 +147,10 @@ export function up(route) {
   switch (route ? route.view : 'home') {
     case 'home': return null;
     case 'epoch': return { view: 'home', params: {} };
-    case 'gens': return { view: 'epoch', params: { epochId: p.epochId } };
+    case 'gens':
+      // a round drill-down steps up to the full (all-rounds) Match-ups first.
+      if (p.round != null) return { view: 'gens', params: { epochId: p.epochId } };
+      return { view: 'epoch', params: { epochId: p.epochId } };
     case 'candidate':
       // an entry drill steps up to the bare candidate first.
       if (p.entry) return { view: 'candidate', params: { epochId: p.epochId, gen: p.gen } };
@@ -173,7 +181,9 @@ export function crumbTrail(route) {
     case 'epoch':
       return [home, { label: p.epochId || 'epoch', current: true }];
     case 'gens':
-      return [home, epoch, { label: 'generations', current: true }].filter(Boolean);
+      return p.round != null
+        ? [home, epoch, { label: 'generations', view: 'gens', params: { epochId: p.epochId } }, { label: 'round ' + p.round, current: true }].filter(Boolean)
+        : [home, epoch, { label: 'generations', current: true }].filter(Boolean);
     case 'candidate': {
       const trail = [home, epoch, { label: 'generations', view: 'gens', params: { epochId: p.epochId } }].filter(Boolean);
       if (p.entry) {

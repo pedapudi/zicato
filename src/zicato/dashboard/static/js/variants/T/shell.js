@@ -30,6 +30,7 @@ import * as D from './data.js';
 import { invalidateLive } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { normaliseDecision } from './ui.js';
+import { roundsForTree } from './views/rounds.js';
 import { deriveLiveStatus, liveStatusDigest, treeLiveSet } from './livestatus.js';
 import { LiveController } from './live.js';
 import {
@@ -653,10 +654,11 @@ export async function buildTreeModel(route) {
     // /api/epoch experiments are a fallback ONLY for the contract epoch (they
     // describe its run); other epochs rely on the lineage alone.
     const gensList = linForEpoch.length
-      ? linForEpoch.map((g) => ({ id: g.generation_id, promoted: g.promoted == null ? null : !!g.promoted, parent: g.parent_generation_id || null }))
+      ? linForEpoch.map((g) => ({ id: g.generation_id, promoted: g.promoted == null ? null : !!g.promoted, parent: g.parent_generation_id || null, round_index: Number.isInteger(g.round_index) ? g.round_index : null }))
       : (isContractEpoch && ep && Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({
           id: x.generation_id, parent: x.parent_generation_id || null,
           promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null),
+          round_index: Number.isInteger(x.round_index) ? x.round_index : null,
         })) : []);
     // disambiguate the CURRENT champion (♛) from FORMER champions (hollow
     // crown ♔) — the champion lineage applies to the contract epoch's bracket.
@@ -683,7 +685,20 @@ export async function buildTreeModel(route) {
     const boardList = (isContractEpoch && ep && Array.isArray(ep.board) ? ep.board : []).map((b) => ({
       id: b.entry_id || b.id, kindTag: KIND_TAG[b.kind] || null,
     })).filter((b) => b.id);
-    byEpoch[id] = { gens: gensList, boards: boardList };
+    // ROUND GROUPING (Task 5): Epoch → Round 0 / Round 1 / … → {challengers
+    // minted that round}. Derived from per-gen round_index (+ the field-record /
+    // matchup fallback for the contract epoch, where the bracket is in scope).
+    // Degrades to a single round 0 when round_index is absent and no records
+    // resolve — the tree then renders a flat list (the round node is suppressed
+    // below when there is only one round and no round_index stamp).
+    const epochStructure = (isContractEpoch && ep && ep.tournament && ep.tournament.structure) || 'gauntlet';
+    const treeRounds = roundsForTree({
+      gens: gensList,
+      bracket: isContractEpoch ? brk : null,
+      structure: epochStructure,
+      championId: fallbackCurrent,
+    });
+    byEpoch[id] = { gens: gensList, boards: boardList, rounds: treeRounds };
   }
   return { epochs, byEpoch, current };
 }

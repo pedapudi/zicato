@@ -27,6 +27,7 @@ import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, normaliseDecision, decisionFor } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, reconstructRacing, buildLiveRacingModel, buildLiveSwissModel, buildLiveElimModel } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
+import { epochRoundModel, roundModelDigest } from './rounds.js';
 
 // Does the LIVE run (active tournament / heartbeat) belong to the epoch being
 // VIEWED? The live topology is the ACTIVE epoch's — adopting it under a
@@ -64,6 +65,17 @@ export async function render(host, ctx, params) {
   const [rows, traj, bracket] = await Promise.all([
     D.generationsForEpoch(id), D.scoreTrajectory(id), D.bracket(id),
   ]);
+
+  // ── ROUND DRILL-DOWN (Task 4): the epoch timeline indexes rounds; a `round`
+  // param scopes THIS view to ONE evolve round's tournament. We render the
+  // selected round's field-tournament (its bracket tree / swiss ladder / racing
+  // ladder + the per-round flow + per-board scoring) via renderStructure. The
+  // full (all-rounds) Match-ups view is unchanged when no round is selected.
+  const roundParam = (params && params.round != null) ? params.round : null;
+  if (roundParam != null) {
+    await renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roundParam);
+    return;
+  }
 
   // The CONFIGURED tournament structure for this epoch (§3.1). Default to
   // gauntlet — the existing ladder render below — when the contract names
@@ -170,6 +182,91 @@ export async function render(host, ctx, params) {
       tblCard.appendChild(tbl);
     }
     nodes.push(section('Roster · click a candidate to open its detail', tblCard));
+    return nodes;
+  });
+}
+
+// ── ONE round's tournament — the round drill-down (Task 4) ──────────
+//
+// The epoch timeline (views/epoch.js) indexes the rounds along the champion
+// spine; clicking a round routes here with `?round`. We render JUST that
+// round's tournament: for a non-gauntlet structure, the round's field record
+// → renderStructure (the bracket tree / swiss ladder / racing ladder + the
+// per-round flow + per-board scoring); for gauntlet, the round's match card(s).
+// Degrades when round_index is absent (the round model falls back to field
+// records / matchups / a single round 0), and when the selected round is out of
+// range it reads as an honest empty.
+async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roundParam) {
+  const tournament = (ep && ep.tournament && typeof ep.tournament === 'object') ? ep.tournament : null;
+  const structure = (tournament && tournament.structure) || 'gauntlet';
+  const experiments = (ep && Array.isArray(ep.experiments)) ? ep.experiments : [];
+  const gens = rows.length
+    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, round_index: svg.isNum(g.round_index) ? g.round_index : null }))
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: normaliseDecision(x.outcome) === 'promoted' ? true : (normaliseDecision(x.outcome) === 'rejected' ? false : null), round_index: svg.isNum(x.round_index) ? x.round_index : null }));
+  const scalarByGen = new Map();
+  if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
+  const championId = (gens.find((g) => g.promoted) || gens.find((g) => !g.parent) || {}).id || null;
+
+  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId });
+  const want = String(roundParam);
+  const round = epochRounds.find((r) => String(r.round_index) === want) || null;
+
+  // normalize the round's own field-tournament record (non-gauntlet only).
+  const st = (round && round.tournamentRef)
+    ? normalizeStructure({
+        structure: round.tournamentRef.structure || structure,
+        structure_params: round.tournamentRef.structure_params || (tournament && tournament.params) || {},
+        competitors: round.tournamentRef.competitors, rounds: round.tournamentRef.rounds,
+        standings: round.tournamentRef.standings,
+        champion_lineage: bracket && bracket.champion_lineage, source: 'index',
+      }, false)
+    : null;
+
+  // the gauntlet match-ups for this round's challengers (no field record).
+  const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
+  const challengerSet = round ? new Set(round.challengers.map((c) => String(c.id))) : new Set();
+  const roundMatchups = matchups.filter((m) => challengerSet.has(String(m.challenger)));
+
+  const digest = JSON.stringify({
+    id, roundParam, structure, rounds: roundModelDigest(epochRounds),
+    st: st ? structureDigest(st) : null,
+    roundMatchups: roundMatchups.map((m) => [m.champion, m.challenger, m.decision, svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null]),
+  });
+  gatedSwap(host, digest, () => {
+    const nodes = [];
+    nodes.push(el('div', { class: 'dn-pagehead' }, [
+      el('h1', { class: 'dn-h1', text: `Match-ups · ${id} · round ${roundParam}` }),
+      el('div', { class: 'dt-structure-line' }, [structurePill(structure, (tournament && tournament.params) || (st && st.structure_params))]),
+      el('p', { class: 'dn-lede', text: 'One evolve round of this epoch: its incoming champion, the field minted that round, the tournament, and the gate. The epoch timeline indexes every round; this view shows ONE.' }),
+      el('a', { class: 'dn-linkbtn', href: ctx.href('gens', { epochId: id }), text: '← all rounds' }),
+    ]));
+    if (!round) {
+      nodes.push(empty(`No round ${roundParam} in this epoch (the timeline ran fewer rounds).`));
+      return nodes;
+    }
+    // the round's champion + minted field, at a glance.
+    nodes.push(championBanner(round.champion ? round.champion.id : championId,
+      round.champion ? round.champion.scalar : null,
+      round.challengers.length, round.challengers.length,
+      round.gateOutcome && round.gateOutcome.kind === 'promoted' ? 1 : 0, ctx, id));
+
+    if (st) {
+      // a non-gauntlet round: render its full tournament structure.
+      for (const n of renderStructure(st, ctx, id)) nodes.push(n);
+    } else if (roundMatchups.length) {
+      // a gauntlet round: one match card per challenger this round.
+      const cards = el('div', { class: 'dt-matchcards' });
+      for (const m of roundMatchups) cards.appendChild(matchCard(m, null, ctx, id));
+      nodes.push(section('Match-ups · this round', cards));
+    } else {
+      // no tournament record nor matchups → the minted field as a fan.
+      const cards = el('div', { class: 'dt-matchcards' });
+      for (const c of round.challengers) {
+        cards.appendChild(matchCard({ champion: round.champion ? round.champion.id : championId, challenger: c.id,
+          decision: c.promoted ? 'promoted' : null, delta_scalar: null }, null, ctx, id));
+      }
+      nodes.push(section('Field minted this round', round.challengers.length ? cards : empty('No challengers minted this round.')));
+    }
     return nodes;
   });
 }

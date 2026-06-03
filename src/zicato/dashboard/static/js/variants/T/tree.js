@@ -47,7 +47,13 @@ export function treeDigest(model, route, toggles, live) {
       const b = model.byEpoch[e.id] || { gens: [], boards: [] };
       // include the current/former champion split so the badge re-stamps when
       // the crown moves (a steady heartbeat with the same crown is a no-op).
-      return [e.id, b.gens.map((g) => [g.id, !!g.promoted, !!g.currentChampion, !!g.formerChampion, !!g.orphan]), b.boards.map((x) => x.id)];
+      // the round grouping (Task 5) folds in so the tree re-stamps when a gen's
+      // birth-round / a round's gate outcome changes, but stays stable on a beat.
+      const rounds = Array.isArray(b.rounds) ? b.rounds.map((r) => [
+        r.round_index, r.championId, r.gateOutcome ? r.gateOutcome.kind + ':' + (r.gateOutcome.gen || '') : '',
+        (Array.isArray(r.challengers) ? r.challengers : []).map((g) => g && g.id),
+      ]) : [];
+      return [e.id, b.gens.map((g) => [g.id, !!g.promoted, !!g.currentChampion, !!g.formerChampion, !!g.orphan, Number.isInteger(g.round_index) ? g.round_index : null]), b.boards.map((x) => x.id), rounds];
     }),
     sel: [route ? route.view : 'home', p.epochId || '', p.gen || '', p.entry || '', p.mutId || '', p.gen2 || ''],
     open: [...toggles].sort(),
@@ -65,6 +71,8 @@ export function routeOpenKeys(route) {
   keys.add(e);
   const v = route.view;
   if (v === 'gens' || v === 'candidate' || v === 'diff') keys.add(e + '/gens');
+  // a round-scoped gens view (or a round leaf) opens its round node.
+  if (v === 'gens' && p.round != null) keys.add(e + '/gens/r' + p.round);
   if (v === 'boards' || v === 'board') keys.add(e + '/boards');
   return keys;
 }
@@ -117,7 +125,10 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
       onToggle: () => onToggle(gKey),
     }));
     if (gOpen) {
-      for (const g of bundle.gens) {
+      // a generation LEAF row (the shared renderer for both the round-grouped
+      // and the flat-list layouts). `depth` lets the round layout indent one
+      // level deeper under its round node.
+      const genLeaf = (g, depth) => {
         const selected = (sel === 'candidate' || sel === 'diff') && p.epochId === epoch.id && p.gen === g.id;
         // Only the CURRENT champion (the last id in champion_lineage) gets the
         // solid-crown (CROWN.current) "champion" badge; a FORMER champion (held
@@ -134,11 +145,65 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
         if (isCurrent || legacyChamp) { kind = 'gen-champ'; glyph = CROWN.current; tag = 'champion'; }
         else if (isFormer) { kind = 'gen-former'; glyph = CROWN.former; tag = 'former champion'; }
         else if (g.orphan === true) { kind = 'gen-orphan'; glyph = '◌'; tag = 'unscored'; }
-        tree.appendChild(leafRow({
-          depth: 3, kind, label: g.id, glyph, tag,
+        return leafRow({
+          depth, kind, label: g.id, glyph, tag,
           selected, live: isLive(g.id),
           onSelect: () => ctx.navigate('candidate', { epochId: epoch.id, gen: g.id }),
-        }));
+        });
+      };
+
+      // ROUND GROUPING (Task 5): Epoch → Generations → Round 0 / Round 1 / …
+      // → {challengers minted that round}. We show the round layer ONLY when it
+      // SAYS something — there is real round structure (>1 round, OR a
+      // round_index stamp). A single round with no stamp degrades to today's
+      // FLAT list (no redundant "Round 0" wrapper). Each round node carries its
+      // gate outcome; the carried-in champion is shown as a reference
+      // (↑ from R{n-1}), not duplicated under the round.
+      const rounds = Array.isArray(bundle.rounds) ? bundle.rounds : [];
+      const stamped = bundle.gens.some((g) => Number.isInteger(g.round_index));
+      const showRounds = rounds.length > 1 || (stamped && rounds.length >= 1);
+      if (showRounds) {
+        const gensById = new Map(bundle.gens.map((g) => [String(g.id), g]));
+        rounds.forEach((r, ri) => {
+          const rKey = gKey + '/r' + r.round_index;
+          const rOpen = open.has(rKey) || routeOpenKeys(route).has(rKey)
+            // the round holding the selected candidate opens automatically.
+            || ((sel === 'candidate' || sel === 'diff') && p.epochId === epoch.id
+                && (r.challengers || []).some((g) => g && String(g.id) === String(p.gen)));
+          const promoted = r.gateOutcome && r.gateOutcome.kind === 'promoted';
+          const gateSub = promoted ? 'promoted ' + r.gateOutcome.gen : 'held';
+          tree.appendChild(branchRow({
+            key: rKey, depth: 3, kind: 'round', label: 'Round ' + r.round_index, sub: gateSub,
+            expandable: (r.challengers || []).length > 0, isOpen: rOpen,
+            selected: sel === 'gens' && p.epochId === epoch.id && String(p.round) === String(r.round_index),
+            onSelect: () => ctx.navigate('gens', { epochId: epoch.id, round: r.round_index }),
+            onToggle: () => onToggle(rKey),
+          }));
+          if (!rOpen) return;
+          // the carried-in champion (a reference, NOT a duplicated minted node).
+          if (ri > 0 && r.championId != null) {
+            tree.appendChild(leafRow({
+              depth: 4, kind: 'gen-carried', label: String(r.championId),
+              glyph: CROWN.current, tag: '↑ from R' + (r.round_index - 1),
+              selected: false, live: isLive(r.championId),
+              onSelect: () => ctx.navigate('candidate', { epochId: epoch.id, gen: r.championId }),
+            }));
+          }
+          for (const c of (r.challengers || [])) {
+            const g = gensById.get(String(c.id)) || c;
+            tree.appendChild(genLeaf(g, 4));
+          }
+        });
+        // ORPHANS / rejected proposals with no resolved birth round sit under a
+        // trailing bucket so nothing is dropped from the tree.
+        const placed = new Set();
+        for (const r of rounds) for (const c of (r.challengers || [])) placed.add(String(c.id));
+        const seedIds = new Set(rounds.map((r) => String(r.championId)));
+        const unplaced = bundle.gens.filter((g) => !placed.has(String(g.id)) && !seedIds.has(String(g.id)));
+        for (const g of unplaced) tree.appendChild(genLeaf(g, 4));
+      } else {
+        // DEGRADE: a flat list (today's layout) when there is no round structure.
+        for (const g of bundle.gens) tree.appendChild(genLeaf(g, 3));
       }
     }
 

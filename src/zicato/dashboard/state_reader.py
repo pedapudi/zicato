@@ -548,6 +548,21 @@ def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
                     if isinstance(legacy_promoted, bool):
                         promoted = legacy_promoted
 
+                # The evolve-round that MINTED this generation (its birth round
+                # within the epoch's outer loop). A separate stamp writes this to
+                # experiment.json; until it lands the field is simply absent and
+                # the dashboard derives the rounds from the field-tournament
+                # records / lineage instead. Read it tolerantly (int only).
+                round_index: int | None = None
+                if experiment is not None:
+                    raw_round = experiment.get("round_index")
+                    if isinstance(raw_round, bool):
+                        raw_round = None
+                    if isinstance(raw_round, int):
+                        round_index = raw_round
+                    elif isinstance(raw_round, str) and raw_round.strip().lstrip("-").isdigit():
+                        round_index = int(raw_round.strip())
+
                 created_at: str | None = None
                 if experiment is not None:
                     for key in ("proposed_at", "created_at"):
@@ -566,15 +581,19 @@ def build_lineage_view(paths: WorkspacePaths) -> dict[str, Any]:
                     except OSError:
                         created_at = None
 
-                generations.append(
-                    {
-                        "generation_id": generation_id,
-                        "epoch_id": epoch_id,
-                        "parent_generation_id": parent if isinstance(parent, str) else None,
-                        "promoted": promoted,
-                        "created_at": created_at,
-                    }
-                )
+                node: dict[str, Any] = {
+                    "generation_id": generation_id,
+                    "epoch_id": epoch_id,
+                    "parent_generation_id": parent if isinstance(parent, str) else None,
+                    "promoted": promoted,
+                    "created_at": created_at,
+                }
+                # Only surface round_index when the stamp is present, so a
+                # pre-feature payload stays byte-identical (the key is absent,
+                # not null) and the dashboard's lineage fallback kicks in.
+                if round_index is not None:
+                    node["round_index"] = round_index
+                generations.append(node)
 
     generations.sort(key=lambda g: (g["epoch_id"], g["generation_id"]))
     return {"generations": generations}

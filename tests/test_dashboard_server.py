@@ -425,6 +425,32 @@ def test_lineage_shape(client: TestClient) -> None:
             assert key in g
 
 
+def test_lineage_round_index_read(tmp_path: Path) -> None:
+    """build_lineage_view surfaces a generation's round_index when stamped,
+    and OMITS the key (not null) when the stamp is absent — so a pre-feature
+    experiment.json reads byte-identically and the dashboard's lineage fallback
+    kicks in."""
+    from zicato.dashboard.state_reader import WorkspacePaths, build_lineage_view
+
+    epoch_dir = tmp_path / "epochs" / "2026-06-02_e0"
+    for gen in ("v0", "v1", "v2"):
+        (epoch_dir / "generations" / gen).mkdir(parents=True, exist_ok=True)
+    # v1 is minted in round 1 (stamped); v2 has no stamp (pre-feature).
+    _write_json(
+        epoch_dir / "generations" / "v1" / "experiment.json",
+        {"parent_generation_id": "v0", "round_index": 1, "outcome": {"decision": "rejected"}},
+    )
+    _write_json(
+        epoch_dir / "generations" / "v2" / "experiment.json",
+        {"parent_generation_id": "v0", "outcome": {"decision": "rejected"}},
+    )
+    paths = WorkspacePaths(tmp_path)
+    gens = {g["generation_id"]: g for g in build_lineage_view(paths)["generations"]}
+    assert gens["v1"]["round_index"] == 1, "the stamped birth round is surfaced"
+    assert "round_index" not in gens["v2"], "an unstamped gen OMITS the key (not null)"
+    assert "round_index" not in gens["v0"], "a directory-only seed omits round_index"
+
+
 def test_active_runs_progress(client: TestClient) -> None:
     r = client.get("/api/active-runs")
     assert r.status_code == 200

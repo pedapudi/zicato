@@ -32,6 +32,7 @@ const tree = await import('../js/variants/T/tree.js');
 const compare = await import('../js/variants/T/compare.js');
 const livestatus = await import('../js/variants/T/livestatus.js');
 const coreState = await import('../js/core/state.js');
+const { svgEl } = await import('../js/core/dom.js');
 
 const EPOCH_ID = '2026-05-30_e0';
 
@@ -835,28 +836,33 @@ test('tree sidebar: digest-gated — same model + route + toggles yields the sam
 // compact MATCH CARDS on the generations page, and a DENSITY picker.
 // ====================================================================
 
-const reel = await import('../js/variants/T/reel.js');
+const rounds = await import('../js/variants/T/views/rounds.js');
 
-// ---- (a) the epoch view renders the slim reel, NOT the old bumps ----
+// ---- (a) the epoch view leads with the CHAMPION-SPINE ROUND TIMELINE ----
 
-test('epoch view: renders the SLIM REEL (champion spine + round ticks), NOT the old lineage-bumps', async () => {
+test('epoch view: leads with the CHAMPION-SPINE ROUND TIMELINE (one episode per round), NOT the old reel/bumps', async () => {
   freshState(); installFetch();
   const epoch = await import('../js/variants/T/views/epoch.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   await epoch.render(host, ctx, { epochId: EPOCH_ID });
 
-  assert(allByClass(host, 'tr-reel')[0], 'the slim reel rendered on the epoch view');
-  assert(allByClass(host, 'tr-spine')[0], 'the reel has the champion spine');
-  assert(allByClass(host, 'tr-station-seed')[0], 'the reel has the seed/champion station');
-  const ticks = allByClass(host, 'tr-tick');
-  assert(ticks.length >= 2, 'the reel has one round tick per challenger (≥2)');
-  assert(allByClass(host, 'dn-bumps').length === 0, 'the old lineage-bumps chart is GONE (replaced by the reel)');
+  assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline rendered on the epoch view');
+  assert(allByClass(host, 'dn-roundtl-spine')[0], 'the timeline has the champion spine');
+  // a gauntlet epoch with 2 rejected challengers → a SINGLE round 0 episode (the
+  // matchups fall under one round when there is no round_index stamp).
+  const episodes = allByClass(host, 'dn-roundtl-ep');
+  assert(episodes.length >= 1, 'the timeline renders ≥1 episode');
+  // the old reel + the lineage-bumps are GONE (subsumed by the timeline).
+  assert(allByClass(host, 'tr-reel').length === 0, 'the old slim reel is GONE (subsumed by the timeline)');
+  assert(allByClass(host, 'dn-bumps').length === 0, 'the old lineage-bumps chart is GONE');
+  // the champion-loss annotation reads on the spine.
+  assert(host.textContent.includes('loss floor'), 'the spine annotates the loss floor');
   // the heatmap stays on the epoch view (carried forward).
   assert(allByClass(host, 'dn-heatmap')[0], 'the board×generation heatmap is still present on the epoch view');
 });
 
-// ---- (b) the reel stays fit-to-width under a MANY-generation fixture ----
+// ---- (b) the timeline stays fit-to-width under a MANY-round fixture ----
 
 const MANY_EPOCH = '2026-05-31_many';
 function installManyFetch(roundN) {
@@ -866,7 +872,8 @@ function installManyFetch(roundN) {
   const points = [{ generation_id: 'v0', scalar: 100 }];
   for (let i = 1; i <= n; i++) {
     const id = 'v' + i;
-    gens.push({ generation_id: id, epoch_id: MANY_EPOCH, parent_generation_id: 'v0', promoted: false });
+    // a round_index stamp per challenger → one round per challenger (a deep spine).
+    gens.push({ generation_id: id, epoch_id: MANY_EPOCH, parent_generation_id: 'v0', promoted: false, round_index: i - 1 });
     matchups.push({ champion: 'v0', challenger: id, decision: 'rejected', delta_scalar: i * 1.5,
       ran_at: '2026-05-31T00:' + String(i).padStart(2, '0') + ':00', hypothesis_core_idea: 'Idea ' + i + '.' });
     points.push({ generation_id: id, scalar: 100 + i });
@@ -892,51 +899,55 @@ function installManyFetch(roundN) {
   };
 }
 
-test('reel: fit-to-width — a fixed-width viewBox; many-round ticks compress and never exceed the viewBox', () => {
-  // 11 rounds → 12 stations. Build the reel directly so we can read the SVG.
-  const rounds = [];
-  for (let i = 1; i <= 11; i++) rounds.push({ challenger: 'v' + i, decision: 'rejected', deltaScalar: i });
-  const node = reel.reel({ championId: 'v0', rounds, onSelect() {}, onSeed() {} });
-  const svgs = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('tr-strip') && n.localName === 'svg');
+function buildSpineRounds(n) {
+  const rs = [];
+  let champ = 'v0';
+  for (let i = 0; i < n; i++) {
+    rs.push({ round_index: i, champion: { id: champ, scalar: 100 - i }, structure: 'gauntlet',
+      challengers: [{ id: 'v' + (i + 1), scalar: 101 + i, promoted: false }], gateOutcome: { kind: 'held', gen: null } });
+  }
+  return rs;
+}
+
+test('round timeline: fit-to-width — a fixed-width viewBox; many-round spine nodes compress and never exceed the viewBox', () => {
+  // 11 rounds → 11 spine nodes. Build the timeline directly to read the SVG.
+  const node = svg.roundTimeline({ rounds: buildSpineRounds(11), onRound() {}, onCompetitor() {} });
+  const svgs = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-roundtl-spine') && n.localName === 'svg');
   const strip = svgs[0];
-  assert(strip, 'the reel SVG strip rendered');
-  const vb = strip.getAttribute('viewBox');
-  assertEqual(vb, '0 0 1000 92', 'the reel uses a FIXED-width viewBox (fit-to-width, no pan/zoom)');
+  assert(strip, 'the timeline SVG spine rendered');
+  assertEqual(strip.getAttribute('viewBox'), '0 0 1000 96', 'the spine uses a FIXED-width viewBox (fit-to-width, no pan/zoom)');
   const VBW = 1000;
 
   // every positioned element (x / cx / x2) stays within the fixed viewBox width.
-  const all = strip.querySelectorAll('[class]');
   let maxX = 0;
-  for (const elx of all) {
+  for (const elx of strip.querySelectorAll('[class]')) {
     const cx = elx.getAttribute('cx'); const x = elx.getAttribute('x'); const x2 = elx.getAttribute('x2');
     for (const v of [cx, x, x2]) { if (v != null && isFinite(+v)) { assert(+v <= VBW, 'no element exceeds the viewBox width (' + v + ' ≤ ' + VBW + ')'); maxX = Math.max(maxX, +v); } }
   }
   assert(maxX > 0 && maxX <= VBW, 'positions are bounded by the fixed viewBox');
 
-  // station spacing COMPRESSES with more rounds: 12 stations sit closer than 4.
-  const xsOf = (n) => {
-    const rs = [];
-    for (let i = 1; i <= n; i++) rs.push({ challenger: 'v' + i, decision: 'rejected', deltaScalar: i });
-    const nd = reel.reel({ championId: 'v0', rounds: rs, onSelect() {} });
-    const s = nd.querySelectorAll('[class]').filter((q) => (q.getAttribute('class') || '').includes('tr-tick') && q.localName === 'circle');
+  // node spacing COMPRESSES with more rounds: 11 nodes sit closer than 3.
+  const xsOf = (k) => {
+    const nd = svg.roundTimeline({ rounds: buildSpineRounds(k), onRound() {} });
+    const s = nd.querySelectorAll('[class]').filter((q) => (q.getAttribute('class') || '').includes('dn-roundtl-disc') && q.localName === 'circle');
     return s.map((c) => +c.getAttribute('cx')).sort((a, b) => a - b);
   };
   const few = xsOf(3); const many = xsOf(11);
-  const gapFew = few[1] - few[0];
-  const gapMany = many[1] - many[0];
-  assert(gapMany < gapFew, 'with more rounds the tick spacing compresses (' + gapMany.toFixed(1) + ' < ' + gapFew.toFixed(1) + ')');
+  assert((many[1] - many[0]) < (few[1] - few[0]), 'with more rounds the node spacing compresses');
 });
 
-test('epoch view: the reel fits to width with ~12 generations (no overflow / collision)', async () => {
+test('epoch view: the round timeline fits to width with ~11 rounds (one episode per round, no overflow)', async () => {
   freshState(); installManyFetch(11);
   const epoch = await import('../js/variants/T/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: MANY_EPOCH });
-  const ticks = allByClass(host, 'tr-tick');
-  assertEqual(ticks.length, 11, 'one tick per challenger round (11)');
-  const strip = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('tr-strip') && n.localName === 'svg')[0];
-  assertEqual(strip.getAttribute('viewBox'), '0 0 1000 92', 'still a fixed-width viewBox under many generations');
-  for (const c of ticks) assert(+c.getAttribute('cx') <= 1000, 'every round tick stays within the viewBox width');
+  const episodes = allByClass(host, 'dn-roundtl-ep');
+  assertEqual(episodes.length, 11, 'one episode per round (11 round_index stamps → 11 rounds)');
+  const strip = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-roundtl-spine') && n.localName === 'svg')[0];
+  assertEqual(strip.getAttribute('viewBox'), '0 0 1000 96', 'still a fixed-width viewBox under many rounds');
+  for (const c of strip.querySelectorAll('[class]').filter((q) => (q.getAttribute('class') || '').includes('dn-roundtl-disc'))) {
+    assert(+c.getAttribute('cx') <= 1000, 'every spine node stays within the viewBox width');
+  }
 });
 
 // ---- (c) the generations page renders the banner + match-card grid ----
@@ -975,7 +986,7 @@ test('match cards: do NOT render on the environment / workspace (home) view', as
   assert(host.textContent.includes('Environment'), 'the home/environment view rendered');
   assertEqual(allByClass(host, 'dt-match-card').length, 0, 'NO match cards on the environment view');
   assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO champion-defends banner on the environment view');
-  assertEqual(allByClass(host, 'tr-reel').length, 0, 'NO reel on the environment view');
+  assertEqual(allByClass(host, 'dn-roundtl').length, 0, 'NO round timeline on the environment view');
 });
 
 // ---- (e) CHANGE 2: the density picker is GONE; cozy is the baseline ----
@@ -1915,43 +1926,38 @@ test('structure: the epoch view shows the structure pill from the epoch tourname
 
 // ---- the EPOCH-VIEW non-gauntlet OVERVIEW (replaces the negative placeholder) ----
 
-test('epoch overview (swiss): the structure section renders the standings BUMP chart + ranked Copeland bar + gate verdict — "not a gauntlet" is GONE', async () => {
+test('epoch timeline (swiss): the round episode embeds the standings BUMP chart + ranked Copeland bar + gate verdict — "not a gauntlet" is GONE', async () => {
   freshState();
   installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
   const epoch = await import('../js/variants/T/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
-  // the negative placeholder is gone — replaced by a real overview.
+  // the negative placeholder is gone — replaced by the timeline + figure.
   assert(!host.textContent.includes('not a gauntlet'), 'the negative "not a gauntlet" placeholder is GONE');
+  assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline rendered for the swiss epoch');
 
-  // the swiss overview SVG rendered, fit-to-width.
+  // the swiss overview SVG is embedded as the episode figure, fit-to-width.
   const over = svgsByClass(host, 'dn-swissover')[0];
-  assert(over, 'the swiss overview SVG rendered in the epoch structure section');
+  assert(over, 'the swiss overview SVG is embedded as the swiss episode figure');
   assertEqual(over.getAttribute('width'), '100%', 'the swiss overview is fit-to-width (width:100%)');
   assert((over.getAttribute('viewBox') || '').startsWith('0 0 '), 'the swiss overview carries a viewBox so it scales');
   assert(!hasScrollWrapperAncestor(over, host), 'no horizontal-scroll wrapper around the overview');
 
-  // (1) the bump chart: one line per competitor that has ranks (v0, v1, v2 all
-  // appear in the pairings; all three are ranked across the two scored rounds).
-  const lines = allByClass(over, 'dn-swissover-line');
-  assertEqual(lines.length, 3, 'one bump line per competitor (v0, v1, v2)');
+  // (1) the bump chart: one line per competitor that has ranks.
+  assertEqual(allByClass(over, 'dn-swissover-line').length, 3, 'one bump line per competitor (v0, v1, v2)');
   assert(allByClass(over, 'dn-swissover-line-champ').length >= 1, 'the champion line is emphasised');
-
   // (2) the ranked Copeland-point bar (the standings, one bar each).
   assert(allByClass(over, 'dn-swissover-bar').length >= 2, 'the ranked Copeland bars rendered');
   assert(over.textContent.includes('♔'), 'the leader is marked ♔ on the ranked bar');
-  assert(over.textContent.includes('pts'), 'the bars label Copeland points');
-
-  // the champion-gate verdict — v1 (status champion, ≠ incumbent v0) is promoted.
+  // the champion-gate verdict.
   assert(over.textContent.includes('promoted') || over.textContent.includes('♛'),
     'the champion-gate verdict (promoted ♛) is shown');
-
-  // "See Match-ups →" is retained for the full detail.
-  assert(host.textContent.includes('See Match-ups'), 'the See Match-ups link is retained');
+  // the episode drills into the round's full Match-ups.
+  assert(host.textContent.includes('open round'), 'the episode keeps the "open round →" drill affordance');
 });
 
-test('epoch overview (single-elim): the structure section renders a compact MINI-BRACKET overview (not the negative placeholder)', async () => {
+test('epoch timeline (single-elim): the elim episode embeds the GENERATIONS-ACROSS-ROUNDS FLOW (elim parity), NOT the mini-bracket', async () => {
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
   const epoch = await import('../js/variants/T/views/epoch.js');
@@ -1959,18 +1965,18 @@ test('epoch overview (single-elim): the structure section renders a compact MINI
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
   assert(!host.textContent.includes('not a gauntlet'), 'the negative placeholder is GONE for elim too');
-  // the mini-bracket reuses the dn-elimbracket renderer at a COMPACT scale.
-  const over = svgsByClass(host, 'dn-elimbracket-compact')[0];
-  assert(over, 'the elim mini-bracket overview SVG rendered (compact dn-elimbracket)');
-  assertEqual(over.getAttribute('width'), '100%', 'the mini-bracket is fit-to-width');
-  assert((over.getAttribute('viewBox') || '').startsWith('0 0 '), 'the mini-bracket carries a viewBox');
-  // both bracket rounds shape the mini-tree, and it ends in a champion-gate.
-  assert(over.textContent.includes('champion-gate'), 'the mini-bracket ends in a champion-gate node');
-  assert(allByClass(over, 'dn-elimbracket-match').length >= 2, 'the bracket matches render as mini-tree nodes');
-  assert(host.textContent.includes('See Match-ups'), 'the See Match-ups link is retained');
+  assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline rendered for the elim epoch');
+  // ELIM PARITY (#1): the epoch hero leads with elimFlow (matching racing→funnel,
+  // swiss→bump), NOT the compact mini-bracket. The bracket tree lives in the
+  // round drill-down (Match-ups).
+  const flow = svgsByClass(host, 'dn-elimflow')[0];
+  assert(flow, 'the elim episode embeds the generations-across-rounds flow (elimFlow)');
+  assertEqual(flow.getAttribute('width'), '100%', 'the elim flow is fit-to-width');
+  assert((flow.getAttribute('viewBox') || '').startsWith('0 0 '), 'the elim flow carries a viewBox');
+  assertEqual(svgsByClass(host, 'dn-elimbracket-compact').length, 0, 'NO compact mini-bracket on the epoch overview (it is now elimFlow)');
 });
 
-test('epoch overview (no data): an honest brief line renders — NEVER the negative "not a gauntlet" placeholder', async () => {
+test('epoch timeline (no data): the timeline renders an honest empty — NEVER the negative "not a gauntlet" placeholder', async () => {
   freshState();
   // a swiss epoch with NO tournament records yet (mid-proposing / not run).
   const F = {
@@ -1985,9 +1991,10 @@ test('epoch overview (no data): an honest brief line renders — NEVER the negat
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
   assert(!host.textContent.includes('not a gauntlet'), 'no negative "not a gauntlet" placeholder even with no data');
-  assertEqual(svgsByClass(host, 'dn-swissover').length, 0, 'no overview figure when there is no swiss data');
-  assert(/no swiss rounds have scored yet/i.test(host.textContent), 'an honest brief line names the empty state');
-  assert(host.textContent.includes('See Match-ups'), 'the See Match-ups link is still offered');
+  assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline renders even with no data');
+  assertEqual(svgsByClass(host, 'dn-swissover').length, 0, 'no embedded swiss figure when there is no data');
+  // a no-data epoch degrades to a single round-0 episode with no minted field.
+  assert(/no challengers minted this round/i.test(host.textContent), 'the empty round reads "no challengers minted this round"');
 });
 
 test('structure: the data layer exposes tournamentStructure() + invalidates its cache live', async () => {
@@ -2246,7 +2253,7 @@ test('board view: an entry WITH completed results still renders the per-candidat
 // ====================================================================
 // STRUCTURE-AWARE polish (round: tournament structures render correctly
 // both DURING a live run and after).
-//   (a) the epoch reel is structure-aware (no gauntlet spine for racing);
+//   (a) the epoch round timeline leads with the per-round structure figure;
 //   (b) a LIVE /api/active-tournament fills the ladder (not "nothing ran")
 //       and in-flight competitors are not mislabeled rejected;
 //   (c) the richer racing ladder renders rungs with cut/survivor + board
@@ -2255,39 +2262,35 @@ test('board view: an entry WITH completed results still renders the per-candidat
 //       "champion ♚"; FORMER champions get a distinct "former" marker.
 // ====================================================================
 
-// ---- (a) the epoch reel is structure-aware --------------------------
+// ---- (a) the epoch round timeline subsumes the reel + structure strip --
 
-test('epoch reel: a NON-gauntlet (racing) epoch does NOT render the gauntlet champion-spine reel — it shows a structure strip instead', async () => {
+test('epoch timeline: a NON-gauntlet (racing) epoch leads with the round timeline (one renderer for all structures, no separate strip)', async () => {
   freshState();
   installFixtureMap(structFixture('racing', RACING_STRUCT, 'tourn_e0_rc'));
   const epoch = await import('../js/variants/T/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
-  // the gauntlet sequential-rounds reel (champion spine + r0…rN ticks) is GONE.
-  assertEqual(allByClass(host, 'tr-reel').length, 0, 'NO champion-spine reel for a racing epoch');
-  assertEqual(allByClass(host, 'tr-spine').length, 0, 'NO champion-spine line for a racing epoch');
-  assertEqual(allByClass(host, 'tr-tick').length, 0, 'NO sequential round ticks for a racing epoch');
-  // a compact structure strip stands in its place, naming the structure + field.
-  const strip = allByClass(host, 'dt-struct-strip')[0];
-  assert(strip, 'a compact structure strip replaced the reel');
-  assert(host.textContent.includes('Racing'), 'the strip names the racing structure');
-  assert(/field of \d+/.test(host.textContent), 'the strip names the field size');
-  assert(host.textContent.includes('rung'), 'the strip names the rung count for racing');
-  assert(host.textContent.includes('See Match-ups'), 'a "See Match-ups" affordance opens the real ladder');
+  // ONE timeline, for every structure — the old reel + structure strip are GONE.
+  assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline rendered for a racing epoch');
+  assert(allByClass(host, 'dn-roundtl-spine')[0], 'the timeline carries the champion spine');
+  assertEqual(allByClass(host, 'tr-reel').length, 0, 'NO gauntlet champion-spine reel for a racing epoch');
+  assertEqual(allByClass(host, 'dt-struct-strip').length, 0, 'NO standalone structure strip — folded into the timeline');
+  assert(host.textContent.includes('Racing'), 'the timeline names the racing structure');
   // the epoch overview structure is otherwise unchanged (objective + brief).
   assert(host.textContent.includes('objective'), 'the epoch overview keeps its objective block');
 });
 
-test('epoch reel: a GAUNTLET epoch STILL renders the champion-spine reel (regression — unchanged)', async () => {
+test('epoch timeline: a GAUNTLET epoch renders the round timeline (a single episode for --rounds 1), NOT the old reel', async () => {
   freshState(); installFetch();   // the default gauntlet fixture (no tournament block)
   const epoch = await import('../js/variants/T/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
-  assert(allByClass(host, 'tr-reel')[0], 'the gauntlet epoch keeps the champion-spine reel');
-  assert(allByClass(host, 'tr-spine')[0], 'the gauntlet reel keeps its champion spine');
-  assert(allByClass(host, 'tr-tick').length >= 2, 'the gauntlet reel keeps its per-round ticks');
-  assertEqual(allByClass(host, 'dt-struct-strip').length, 0, 'NO structure strip for a gauntlet epoch');
+  assert(allByClass(host, 'dn-roundtl')[0], 'the gauntlet epoch renders the round timeline');
+  assert(allByClass(host, 'dn-roundtl-spine')[0], 'the timeline keeps its champion spine');
+  assertEqual(allByClass(host, 'tr-reel').length, 0, 'the old reel is gone (subsumed)');
+  // a gauntlet single round → no embedded structure figure (the fan tells the story).
+  assertEqual(allByClass(host, 'dn-funnel').length, 0, 'NO structure figure embedded for a gauntlet round');
 });
 
 // ---- (b) a LIVE active-tournament fills the ladder during a run -----
@@ -3637,10 +3640,11 @@ test('survival funnel: the racing epoch strip renders the funnel (stages narrow 
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
 
-  // racing-specific: NO gauntlet champion-spine reel on a racing epoch.
+  // racing-specific: the round timeline (no old gauntlet reel) embeds the funnel.
   assertEqual(allByClass(host, 'tr-reel').length, 0, 'NO gauntlet reel for a racing epoch');
+  assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline renders for the racing epoch');
   const funnel = svgsByClass(host, 'dn-funnel')[0];
-  assert(funnel, 'the survival funnel rendered in the racing epoch structure strip');
+  assert(funnel, 'the survival funnel rendered as the racing episode figure');
   assert(funnel.getAttribute('width') === '100%' && (funnel.getAttribute('viewBox') || '').startsWith('0 0 '), 'the funnel is fit-to-width + responsive');
   assert(!hasScrollWrapperAncestor(funnel, host), 'no horizontal-scroll wrapper around the funnel (no pan/zoom)');
 
@@ -3650,9 +3654,9 @@ test('survival funnel: the racing epoch strip renders the funnel (stages narrow 
   assert(txt.includes('✕'), 'eliminated competitors marked cut (✕) at their rung');
   assert(txt.includes('↑'), 'survivors marked (↑)');
   assert(txt.includes('♛ v3'), 'the champion-gate crowns the survivor v3 (♛)');
-  // the funnel does not duplicate the detailed ladder — it keeps the See Match-ups link.
-  assert(host.textContent.includes('See Match-ups'), 'the funnel keeps the See Match-ups → affordance (complementary to the ladder)');
-  assertEqual(svgsByClass(host, 'dn-raceladder').length, 0, 'the epoch hero is the funnel, NOT a duplicate of the Match-ups ladder');
+  // the episode drills into the round's full Match-ups (the ladder lives there).
+  assert(host.textContent.includes('open round'), 'the episode keeps the "open round →" drill affordance');
+  assertEqual(svgsByClass(host, 'dn-raceladder').length, 0, 'the epoch hero is the funnel figure, NOT a duplicate of the Match-ups ladder');
 });
 
 // (b) a competitor is clickable → its candidate.
@@ -3703,7 +3707,7 @@ test('survival funnel: a LIVE racing run shows the in-progress funnel (pending s
 
   const funnel = svgsByClass(host, 'dn-funnel')[0];
   assert(funnel, 'the LIVE racing funnel rendered from /api/active-tournament');
-  assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight funnel');
+  assert(allByClass(host, 'dn-roundtl')[0], 'the live funnel is embedded in the round timeline');
   // the not-yet-decided rung stays neutral (a pending band, nobody struck).
   assert(allByClass(funnel, 'dn-funnel-pending').length >= 1, 'the pending (still-racing) stage renders neutral (no premature cut)');
   const struck = allByClass(host, 'dn-out');
@@ -3742,20 +3746,20 @@ test('survival funnel: with NO rung records the strip degrades to the static "fi
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
 
   assertEqual(svgsByClass(host, 'dn-funnel').length, 0, 'NO empty funnel when there are no rung records');
-  const strip = allByClass(host, 'dt-struct-strip')[0];
-  assert(strip, 'a tidy static structure strip degrades in place');
-  assert(host.textContent.includes('Racing'), 'the static summary still names the racing structure');
-  assert(host.textContent.includes('field of'), 'the static summary states the field size');
-  assert(host.textContent.includes('See Match-ups'), 'the static summary keeps the See Match-ups → link');
+  // the timeline degrades in place: a single round 0 episode (v0 → v1), no figure.
+  assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline degrades in place when there are no rung records');
+  assert(host.textContent.includes('Racing'), 'the timeline still names the racing structure');
+  assert(allByClass(host, 'dn-roundtl-ep').length >= 1, 'a single-round episode stands in for the empty race');
+  assert(host.textContent.includes('open round'), 'the episode keeps the "open round →" drill affordance');
 });
 
-// (e) a gauntlet epoch's reel/strip is unchanged (the funnel is racing-specific).
-test('survival funnel: a GAUNTLET epoch is unchanged — its champion-spine reel stays, NO funnel', async () => {
+// (e) a gauntlet epoch's timeline has no embedded funnel (the funnel is racing-specific).
+test('survival funnel: a GAUNTLET epoch renders the round timeline with NO embedded funnel', async () => {
   freshState(); installFetch();  // the default gauntlet fixture (no tournament block)
   const epoch = await import('../js/variants/T/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
-  assert(allByClass(host, 'tr-reel')[0], 'the gauntlet epoch keeps the champion-spine reel');
+  assert(allByClass(host, 'dn-roundtl')[0], 'the gauntlet epoch renders the round timeline');
   assertEqual(svgsByClass(host, 'dn-funnel').length, 0, 'NO survival funnel for a gauntlet epoch (racing-specific)');
   assertEqual(allByClass(host, 'dt-struct-strip').length, 0, 'NO structure strip for a gauntlet epoch');
 });
@@ -5294,9 +5298,11 @@ test('epoch view (cross-epoch): viewing e1 shows ONLY e1 gens — no leaked e0 c
   // owns — a leak would DOUBLE v0/v1/v2. Assert the distinct column set is exactly e1's.
   assertDeep(cols.sort(), ['v0', 'v1', 'v2'], 'the e1 heatmap columns are EXACTLY e1’s field {v0,v1,v2} (deduped, no leak)');
 
-  // the structure strip's "field of N" must read e1's field of 3, NOT a leaked 8.
-  assert(host.textContent.includes('field of 3'), 'the structure strip reads e1’s field of 3 (not a cross-epoch field of 8)');
-  assert(!host.textContent.includes('field of 8'), 'NO inflated cross-epoch "field of 8"');
+  // the timeline's challenger fan reflects e1's OWN minted field (v1, v2) — a
+  // leak would add e0's v3/v4 chips. The single-round episode lists exactly
+  // {v1, v2} (v0 is the carried champion on the spine, not a chip).
+  const chips = allByClass(host, 'dn-roundtl-chip').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
+  assertDeep(chips.filter((s, i) => chips.indexOf(s) === i).sort(), ['v1', 'v2'], 'the e1 challenger fan is EXACTLY e1’s minted field {v1,v2} (no leaked v3/v4)');
 });
 
 test('epoch view (cross-epoch): viewing e0 is unchanged — its full field {v0..v4} still renders (no regression)', async () => {
@@ -5317,7 +5323,9 @@ test('epoch view (cross-epoch): viewing e0 is unchanged — its full field {v0..
     .map((n) => (n.textContent || '').trim());
   const cols = colLabels.filter((s, i) => colLabels.indexOf(s) === i).sort();
   assertDeep(cols, ['v0', 'v1', 'v2', 'v3', 'v4'], 'e0 still shows its FULL field {v0..v4} (unchanged)');
-  assert(host.textContent.includes('field of 5'), 'e0 reads its own field of 5');
+  // e0's challenger fan is its own full minted field {v1..v4} (v0 carried on spine).
+  const chips = allByClass(host, 'dn-roundtl-chip').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
+  assertDeep(chips.filter((s, i) => chips.indexOf(s) === i).sort(), ['v1', 'v2', 'v3', 'v4'], 'e0 reads its own full challenger fan {v1..v4}');
 });
 
 // ---- BUG 2: a proposing epoch shows the empty state, not e0's funnel -
@@ -5339,12 +5347,12 @@ test('epoch view (cross-epoch): a PROPOSING e1 shows the honest empty state — 
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_NEW });
 
-  // NO funnel SVG (the empty-state branch was taken — the funnel data is absent).
-  assertEqual(svgsByClass(host, 'dn-funnel').length, 0, 'NO survival funnel while e1 is proposing (empty-state branch, not e0’s funnel)');
-  // the honest "fills in once the field runs" empty copy is shown instead.
-  assert(/no rungs have raced yet|fills in once the field runs/i.test(host.textContent), 'the proposing/empty state copy renders');
-  // e0’s crowned survivor (v4) must NOT bleed into the e1 strip as a champion ♚.
-  assert(!host.textContent.includes('♚ v4'), 'e0’s crowned champion ♚ v4 does NOT leak into the e1 strip');
+  // NO funnel SVG (e1 has no rung data — e0's reconstructed ladder must NOT leak).
+  assertEqual(svgsByClass(host, 'dn-funnel').length, 0, 'NO survival funnel while e1 is proposing (no leak of e0’s funnel)');
+  // the timeline still renders (its episode degrades to e1's own minted field).
+  assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline renders for the proposing e1 epoch');
+  // e0’s crowned survivor (v4) must NOT bleed into the e1 timeline as a champion ♚.
+  assert(!host.textContent.includes('♚ v4'), 'e0’s crowned champion ♚ v4 does NOT leak into the e1 timeline');
 
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = [];
@@ -6609,9 +6617,11 @@ test('epoch overview: "field of N" counts champion + applied challengers, EXCLUD
   const epoch = await import('../js/variants/T/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: FN_EPOCH });
-  // the real field is {v0, v1, v2} = 3 (NOT 4 — the orphan v9 is excluded).
-  assert(/field of 3/.test(host.textContent), 'the field counts the real competitors (3), excluding the unscored orphan');
-  assert(!/field of 4/.test(host.textContent), 'the orphan v9 is NOT counted in the field');
+  // the real field is the challenger fan {v1, v2} (v0 is the carried champion on
+  // the spine); the unscored orphan v9 is EXCLUDED from the minted field.
+  const chips = allByClass(host, 'dn-roundtl-chip').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
+  assertDeep(chips.filter((s, i) => chips.indexOf(s) === i).sort(), ['v1', 'v2'], 'the field is {v1,v2} — the unscored orphan v9 is excluded');
+  assert(!chips.includes('v9'), 'the orphan v9 is NOT a minted-field chip');
 });
 
 // ---- Task 6: crown glyph is ♛ for current / ♔ for former everywhere ----
@@ -6883,6 +6893,247 @@ test('Task 3 — a LIVE elim flow draws in-flight legs as DASHED (pending conven
     gateState: model.gateState, live: true,
   });
   assert(allByClass(flow, 'dn-elimflow-seg-pending').length >= 1, 'an in-flight (pending) leg is drawn with the pending (dashed) class');
+});
+
+// ====================================================================
+// EVOLVE ROUNDS (champion-spine round model + timeline + drill-down + tree).
+//   * the round model groups gens by round_index (+ field-record fallback);
+//   * the spine timeline renders one episode per round (champion-loss + figure
+//     + gate); --rounds 1 degrades to a single episode; elim uses elimFlow;
+//   * the round drill-down renders ONE round; the tree groups by round and
+//     degrades when round_index is absent.
+// ====================================================================
+
+// ---- (1) the round MODEL groups gens by round_index ----------------
+
+test('round model: groups generations by round_index — champion spine threads v0 → promoted', () => {
+  const gens = [
+    { id: 'v0', parent: null, promoted: true, round_index: null },
+    { id: 'v1', parent: 'v0', promoted: false, round_index: 0 },
+    { id: 'v2', parent: 'v0', promoted: true, round_index: 0 },   // promoted in round 0
+    { id: 'v3', parent: 'v2', promoted: false, round_index: 1 },  // minted in round 1
+    { id: 'v4', parent: 'v2', promoted: false, round_index: 1 },
+  ];
+  const scalarBy = new Map([['v0', 100], ['v1', 110], ['v2', 80], ['v3', 85], ['v4', 90]]);
+  const model = rounds.epochRoundModel({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v0' });
+  assertEqual(model.length, 2, 'two rounds (round_index 0 and 1)');
+  assertEqual(model[0].source, 'round_index', 'the model derives from the round_index stamp');
+  // round 0: champion v0 (loss 100), minted {v1, v2}, gate promotes v2.
+  assertEqual(model[0].champion.id, 'v0', 'round 0 champion is the seed v0');
+  assertEqual(model[0].champion.scalar, 100, 'round 0 champion carries its loss');
+  assertDeep(model[0].challengers.map((c) => c.id).sort(), ['v1', 'v2'], 'round 0 minted {v1,v2}');
+  assertEqual(model[0].gateOutcome.kind, 'promoted', 'round 0 promotes a challenger');
+  assertEqual(model[0].gateOutcome.gen, 'v2', 'round 0 promotes v2');
+  // round 1: champion is the carried-in (promoted) v2 — NOT re-minted.
+  assertEqual(model[1].champion.id, 'v2', 'round 1 champion is the carried-in v2 (spine threaded)');
+  assertDeep(model[1].challengers.map((c) => c.id).sort(), ['v3', 'v4'], 'round 1 minted {v3,v4}');
+  assert(!model[1].challengers.some((c) => c.id === 'v2'), 'the carried champion v2 is NOT a minted challenger of round 1');
+  assertEqual(model[1].gateOutcome.kind, 'held', 'round 1 holds (no promotion)');
+});
+
+// ---- the FIELD-RECORD fallback when round_index is ABSENT ----------
+
+test('round model: degrades to the per-round FIELD records when round_index is absent', () => {
+  const gens = [
+    { id: 'v0', parent: null, promoted: true, round_index: null },
+    { id: 'v1', parent: 'v0', promoted: false, round_index: null },
+    { id: 'v2', parent: 'v0', promoted: true, round_index: null },
+    { id: 'v3', parent: 'v2', promoted: false, round_index: null },
+  ];
+  const scalarBy = new Map([['v0', 100], ['v1', 110], ['v2', 80], ['v3', 90]]);
+  const bracket = { champion_lineage: ['v0', 'v2'], tournaments: [
+    // one FIELD record per round (swiss), each listing that round's competitors.
+    { tournament_id: 't0', structure: 'swiss', competitors: [{ generation_id: 'v0' }, { generation_id: 'v1' }, { generation_id: 'v2' }], rounds: [], standings: [] },
+    { tournament_id: 't1', structure: 'swiss', competitors: [{ generation_id: 'v2' }, { generation_id: 'v3' }], rounds: [], standings: [] },
+  ] };
+  const model = rounds.epochRoundModel({ gens, scalarBy, bracket, structure: 'swiss', championId: 'v0' });
+  assertEqual(model.length, 2, 'two rounds from the two field records');
+  assertEqual(model[0].source, 'field', 'the model derives from the field records');
+  assertEqual(model[0].champion.id, 'v0', 'round 0 champion is v0');
+  assertDeep(model[0].challengers.map((c) => c.id).sort(), ['v1', 'v2'], 'round 0 field minted {v1,v2}');
+  // round 1: v2 carried (it appeared in round 0), only v3 is fresh.
+  assertEqual(model[1].champion.id, 'v2', 'round 1 champion is the carried v2');
+  assertDeep(model[1].challengers.map((c) => c.id), ['v3'], 'round 1 field minted only the fresh v3 (v2 carried)');
+});
+
+test('round model: degrades to a SINGLE round 0 when neither round_index nor field records exist (--rounds 1, every run so far)', () => {
+  const gens = [
+    { id: 'v0', parent: null, promoted: true, round_index: null },
+    { id: 'v1', parent: 'v0', promoted: false, round_index: null },
+    { id: 'v2', parent: 'v0', promoted: false, round_index: null },
+  ];
+  const scalarBy = new Map([['v0', 70], ['v1', 146], ['v2', 72]]);
+  const bracket = { champion_lineage: ['v0'], matchups: [
+    { champion: 'v0', challenger: 'v1', decision: 'rejected', ran_at: 'a' },
+    { champion: 'v0', challenger: 'v2', decision: 'rejected', ran_at: 'b' },
+  ] };
+  const model = rounds.epochRoundModel({ gens, scalarBy, bracket, structure: 'gauntlet', championId: 'v0' });
+  // gauntlet matchups: each is its own single-challenger round (the spine reads
+  // r0 → r1), so two rounds — but a single-tournament epoch collapses to one.
+  assert(model.length >= 1, 'at least one round is produced');
+  assertEqual(model[0].champion.id, 'v0', 'round 0 champion is the seed');
+  // every challenger is accounted for across the rounds.
+  const allChallengers = model.flatMap((r) => r.challengers.map((c) => c.id));
+  assertDeep([...new Set(allChallengers)].sort(), ['v1', 'v2'], 'every challenger appears in the round model');
+});
+
+// ---- (2) the SPINE TIMELINE renders one episode per round ----------
+
+test('round timeline: renders one episode per round with the champion-loss annotation + gate outcome', () => {
+  const rs = [
+    { round_index: 0, champion: { id: 'v0', scalar: 100 }, structure: 'gauntlet',
+      challengers: [{ id: 'v1', scalar: 90, promoted: true }], gateOutcome: { kind: 'promoted', gen: 'v1' } },
+    { round_index: 1, champion: { id: 'v1', scalar: 90 }, structure: 'gauntlet',
+      challengers: [{ id: 'v2', scalar: 95, promoted: false }], gateOutcome: { kind: 'held', gen: null } },
+  ];
+  let drilled = null;
+  const node = svg.roundTimeline({ rounds: rs, onRound: (i) => { drilled = i; }, onCompetitor() {} });
+  // one spine node + one episode per round.
+  assertEqual(allByClass(node, 'dn-roundtl-disc').length, 2, 'one spine node per round');
+  assertEqual(allByClass(node, 'dn-roundtl-ep').length, 2, 'one episode per round');
+  // the descending loss floor reads on the spine (100 → 90).
+  const losses = allByClass(node, 'dn-roundtl-loss').map((n) => (n.textContent || '').trim());
+  assert(losses.includes('100.0') && losses.includes('90.0'), 'each spine node annotates the champion loss');
+  // the gate outcome reads on each episode (promoted / held).
+  assert(node.textContent.includes('v1 promoted'), 'round 0 episode shows the promoted gate outcome');
+  assert(node.textContent.includes('champion held'), 'round 1 episode shows the held gate outcome');
+  // clicking a spine node drills into that round.
+  const second = node.querySelectorAll('[data-round]').filter((n) => n.getAttribute('data-round') === '1' && n.localName === 'g')[0];
+  second.dispatchEvent(makeEvent('click'));
+  assertEqual(drilled, 1, 'clicking a spine node drills into that round');
+});
+
+test('round timeline: a SINGLE round degrades to ONE episode (≈ today’s overview)', () => {
+  const node = svg.roundTimeline({ rounds: [
+    { round_index: 0, champion: { id: 'v0', scalar: 70 }, structure: 'gauntlet',
+      challengers: [{ id: 'v1', scalar: 72, promoted: false }, { id: 'v2', scalar: 71, promoted: false }],
+      gateOutcome: { kind: 'held', gen: null } },
+  ], onRound() {} });
+  assertEqual(allByClass(node, 'dn-roundtl-ep').length, 1, 'a single round → exactly ONE episode');
+  assert(allByClass(node, 'dn-roundtl-single').length >= 1, 'the single-episode layout is flagged');
+  // its challenger fan still lists the minted field.
+  const chips = allByClass(node, 'dn-roundtl-chip').map((c) => { const m = allByClass(c, 'dn-mono')[0]; return m ? (m.textContent || '').trim() : ''; });
+  assertDeep(chips.sort(), ['v1', 'v2'], 'the single episode lists its challenger fan');
+});
+
+test('round timeline: the per-round structure figure is embedded via the figureFor callback', () => {
+  let asked = 0;
+  const fig = svgEl('svg', { class: 'dn-test-fig' });
+  const node = svg.roundTimeline({
+    rounds: [{ round_index: 0, champion: { id: 'v0', scalar: 70 }, structure: 'swiss', challengers: [{ id: 'v1', scalar: 71, promoted: false }], gateOutcome: { kind: 'held', gen: null } }],
+    figureFor: () => { asked += 1; return fig; }, onRound() {},
+  });
+  assert(asked === 1, 'figureFor is consulted once per round');
+  assert(allByClass(node, 'dn-test-fig')[0] || node.querySelectorAll('[class]').some((n) => n.getAttribute('class') === 'dn-test-fig'),
+    'the per-round structure figure is embedded in the episode');
+});
+
+// ---- ELIM PARITY (#1): the elim epoch episode uses elimFlow ---------
+
+test('elim parity: a single-elim epoch episode leads with elimFlow (NOT the mini-bracket)', async () => {
+  freshState();
+  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(svgsByClass(host, 'dn-elimflow')[0], 'the elim episode embeds the generations-across-rounds flow (elimFlow)');
+  assertEqual(svgsByClass(host, 'dn-elimbracket-compact').length, 0, 'NO mini-bracket on the epoch overview (elimFlow subsumes it)');
+});
+
+// ---- (4) the ROUND DRILL-DOWN renders ONE round --------------------
+
+test('round drill-down: the route carries a round param + renders ONE round’s tournament', async () => {
+  // the router parses /gens/r/<round> into a round param + hrefs round-trip.
+  const route = router.parseRoute(`#/e/${EPOCH_ID}/gens/r/1`);
+  assertEqual(route.view, 'gens', 'the round route is a gens view');
+  assertEqual(route.params.round, '1', 'the round param parses');
+  assertEqual(router.href('gens', { epochId: EPOCH_ID, round: 1 }), `#/e/${EPOCH_ID}/gens/r/1`, 'a round href round-trips');
+  // the bare gens href is unchanged (no round suffix).
+  assertEqual(router.href('gens', { epochId: EPOCH_ID }), `#/e/${EPOCH_ID}/gens`, 'the all-rounds gens href is unchanged');
+
+  freshState();
+  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, round: '0' });
+  // the round drill heads with the round + renders that round's bracket tree.
+  assert(host.textContent.includes('round 0'), 'the drill-down heads with the round');
+  assert(host.textContent.includes('all rounds'), 'a "← all rounds" affordance returns to the full Match-ups');
+  assert(svgsByClass(host, 'dn-elimbracket')[0], 'the round drill renders the FULL bracket tree (not the epoch-level flow)');
+});
+
+test('round drill-down: an out-of-range round reads an honest empty', async () => {
+  freshState();
+  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  const gens = await import('../js/variants/T/views/gens.js');
+  const host = document.createElement('div');
+  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, round: '7' });
+  assert(/No round 7/i.test(host.textContent), 'an out-of-range round reads an honest empty');
+});
+
+// ---- (5) the TREE groups generations by round ----------------------
+
+test('tree: groups generations by round when round_index is present (Round 0 / Round 1 nodes + gate outcome)', () => {
+  const model = { epochs: [{ id: EPOCH_ID, current: true }], byEpoch: { [EPOCH_ID]: {
+    gens: [
+      { id: 'v0', promoted: true, currentChampion: false, parent: null, round_index: 0 },
+      { id: 'v1', promoted: true, currentChampion: true, parent: 'v0', round_index: 0 },
+      { id: 'v2', promoted: false, parent: 'v1', round_index: 1 },
+    ],
+    boards: [],
+    rounds: [
+      { round_index: 0, championId: 'v0', gateOutcome: { kind: 'promoted', gen: 'v1' }, challengers: [{ id: 'v1', promoted: true }] },
+      { round_index: 1, championId: 'v1', gateOutcome: { kind: 'held', gen: null }, challengers: [{ id: 'v2', promoted: false }] },
+    ],
+  } } };
+  const route = router.parseRoute(`#/e/${EPOCH_ID}/gens`);
+  const host = document.createElement('div');
+  // expand the epoch + the generations group + both round nodes.
+  const toggles = new Set([`e:${EPOCH_ID}`, `e:${EPOCH_ID}/gens`, `e:${EPOCH_ID}/gens/r0`, `e:${EPOCH_ID}/gens/r1`]);
+  tree.buildTree(host, model, route, toggles, { navigate() {}, href: router.href }, () => {}, new Set());
+  const roundNodes = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'round');
+  assertEqual(roundNodes.length, 2, 'two Round nodes under Generations');
+  assert(host.textContent.includes('Round 0') && host.textContent.includes('Round 1'), 'the rounds are labelled');
+  // each round node shows its gate outcome.
+  assert(host.textContent.includes('promoted v1'), 'round 0 shows its gate outcome (promoted v1)');
+  assert(host.textContent.includes('held'), 'round 1 shows its held gate outcome');
+  // round 1 shows the carried-in champion as a reference (↑ from R0), not a duplicate.
+  assert(host.textContent.includes('↑ from R0'), 'the carried-in champion is shown as a reference (↑ from R0)');
+});
+
+test('tree: degrades to a FLAT generation list when round_index is absent (no redundant Round 0 wrapper)', () => {
+  const model = { epochs: [{ id: EPOCH_ID, current: true }], byEpoch: { [EPOCH_ID]: {
+    gens: [
+      { id: 'v0', promoted: true, parent: null, round_index: null },
+      { id: 'v1', promoted: false, parent: 'v0', round_index: null },
+    ],
+    boards: [],
+    // a single round (no stamp) → the tree must NOT wrap in a Round 0 node.
+    rounds: [{ round_index: 0, championId: 'v0', gateOutcome: { kind: 'held', gen: null }, challengers: [{ id: 'v1', promoted: false }] }],
+  } } };
+  const route = router.parseRoute(`#/e/${EPOCH_ID}/gens`);
+  const host = document.createElement('div');
+  const toggles = new Set([`e:${EPOCH_ID}`, `e:${EPOCH_ID}/gens`]);
+  tree.buildTree(host, model, route, toggles, { navigate() {}, href: router.href }, () => {}, new Set());
+  const roundNodes = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'round');
+  assertEqual(roundNodes.length, 0, 'NO round wrapper when there is a single round and no round_index stamp (flat list)');
+  // the gens still render as a flat list under Generations.
+  assert(host.textContent.includes('v0') && host.textContent.includes('v1'), 'the generations render flat');
+});
+
+test('tree digest: re-stamps when a round gate outcome changes, stable on a no-op', () => {
+  const mk = (gateGen) => ({ epochs: [{ id: EPOCH_ID, current: true }], byEpoch: { [EPOCH_ID]: {
+    gens: [{ id: 'v0', promoted: true, parent: null, round_index: 0 }, { id: 'v1', promoted: true, parent: 'v0', round_index: 0 }],
+    boards: [],
+    rounds: [{ round_index: 0, championId: 'v0', gateOutcome: { kind: 'promoted', gen: gateGen }, challengers: [{ id: 'v1', promoted: true }] }],
+  } } });
+  const route = router.parseRoute(`#/e/${EPOCH_ID}/gens`);
+  const toggles = new Set();
+  const d1 = tree.treeDigest(mk('v1'), route, toggles);
+  const d2 = tree.treeDigest(mk('v1'), route, toggles);
+  const d3 = tree.treeDigest(mk('v2'), route, toggles);
+  assertEqual(d1, d2, 'identical round model → a true digest no-op');
+  assert(d1 !== d3, 'a changed gate outcome re-stamps the digest');
 });
 
 await run();

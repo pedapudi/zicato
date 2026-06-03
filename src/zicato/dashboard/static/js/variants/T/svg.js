@@ -1905,3 +1905,157 @@ export function proposingDigest(fieldStatus) {
   const list = Array.isArray(fieldStatus) ? fieldStatus : [];
   return 'prop|' + list.map((f) => (f && f.generation_id) + ':' + (f && f.status)).join(',');
 }
+
+// ── the CHAMPION-SPINE ROUND TIMELINE — the epoch overview hero ──────
+//
+// The epoch is N evolve ROUNDS along a horizontal CHAMPION SPINE: one node per
+// round's incoming champion (v0 → promoted → …), each annotated with its loss so
+// the DESCENDING LOSS-FLOOR reads as the headline "is it improving?" signal.
+//
+// Each round is an EPISODE card below its spine node:
+//   incoming champion + a fan of that round's MINTED challengers + a COMPACT
+//   per-round STRUCTURE FIGURE (the caller passes it — swissOverview / survival
+//   funnel / elimFlow / a single duel) + the GATE OUTCOME (promoted onto the
+//   spine, or held). Clicking the episode (or its spine node) drills into that
+//   round's tournament.
+//
+// SUBSUMES the gauntlet reel: a single round (every run so far, --rounds 1)
+// degrades to ONE episode ≈ today's overview; N rounds → the full spine.
+//
+//   opts: {
+//     rounds: [{ round_index, champion:{id,scalar}, challengers:[{id,scalar,promoted}],
+//                structure, gateOutcome:{kind,gen} }],
+//     selected:   the selected round_index (or null),
+//     figureFor(round) → a DOM node (the per-round structure figure) | null,
+//     onRound(round_index), onCompetitor(genId),
+//   }
+export function roundTimeline(opts) {
+  const o = opts || {};
+  const rounds = Array.isArray(o.rounds) ? o.rounds : [];
+  const wrap = el('div', { class: 'dn-roundtl', role: 'group', 'aria-label': 'Champion-spine round timeline' });
+  if (!rounds.length) {
+    wrap.appendChild(el('p', { class: 'dn-empty', text: 'No rounds have run in this epoch yet — the timeline fills as the evolve loop mints fields.' }));
+    return wrap;
+  }
+  const single = rounds.length === 1;
+
+  // ── the fit-to-width SPINE (champion node per round) ────────────────
+  // A FIXED viewBox; the champion node of round 0 is the seed, each subsequent
+  // node the round's incoming (carried) champion. The loss annotation under each
+  // node lets the descending floor read at a glance.
+  const VBW = 1000;
+  const VBH = 96;
+  const spineY = 54;
+  const x0 = 64;
+  const xMax = VBW - 56;
+  const stationCount = Math.max(1, rounds.length);
+  const step = stationCount > 1 ? (xMax - x0) / (stationCount - 1) : 0;
+  const xAt = (i) => (stationCount > 1 ? x0 + i * step : (x0 + xMax) / 2);
+  const svg = svgEl('svg', {
+    class: 'dn-roundtl-spine', viewBox: `0 0 ${VBW} ${VBH}`,
+    preserveAspectRatio: 'xMidYMid meet', role: 'img',
+    'aria-label': `Champion spine across ${rounds.length} round${single ? '' : 's'}`,
+  });
+  if (stationCount > 1) {
+    svg.appendChild(svgEl('line', {
+      x1: xAt(0), y1: spineY, x2: xAt(stationCount - 1), y2: spineY, class: 'dn-roundtl-spineline',
+    }));
+  }
+  svg.appendChild(svgEl('text', { x: x0, y: 18, class: 'dn-roundtl-axis' }, ['champion spine · loss floor · rounds →']));
+
+  rounds.forEach((r, i) => {
+    const cx = xAt(i);
+    const champId = r.champion && r.champion.id != null ? String(r.champion.id) : 'seed';
+    const promoted = r.gateOutcome && r.gateOutcome.kind === 'promoted';
+    const selected = o.selected != null && String(o.selected) === String(r.round_index);
+    const g = svgEl('g', {
+      class: 'dn-roundtl-node' + (promoted ? ' dn-roundtl-promote' : '') + (selected ? ' dn-roundtl-sel' : ''),
+      tabindex: o.onRound ? '0' : null, role: o.onRound ? 'button' : null,
+      'data-round': String(r.round_index),
+      'aria-label': `Round ${r.round_index}: champion ${champId}`
+        + (isNum(r.champion && r.champion.scalar) ? `, loss ${fmt(r.champion.scalar, 1)}` : '')
+        + (promoted ? `, promoted ${r.gateOutcome.gen}` : ', champion held'),
+    }, [
+      svgEl('circle', { cx, cy: spineY, r: 8, class: 'dn-roundtl-disc' }),
+      svgEl('text', { x: cx, y: spineY + 3.5, class: 'dn-roundtl-glyph', 'text-anchor': 'middle' }, [CROWN.current]),
+      svgEl('text', { x: cx, y: spineY - 16, class: 'dn-roundtl-champid', 'text-anchor': 'middle' }, [shortLabel(champId, 10)]),
+      svgEl('text', { x: cx, y: spineY + 26, class: 'dn-roundtl-loss', 'text-anchor': 'middle' },
+        [isNum(r.champion && r.champion.scalar) ? fmt(r.champion.scalar, 1) : '·']),
+      svgEl('text', { x: cx, y: spineY + 38, class: 'dn-roundtl-rord', 'text-anchor': 'middle' }, ['r' + r.round_index]),
+    ]);
+    clickable(g, o.onRound && (() => o.onRound(r.round_index)));
+    svg.appendChild(g);
+  });
+  wrap.appendChild(el('div', { class: 'dn-roundtl-spineframe' }, [svg]));
+
+  // ── one EPISODE card per round ──────────────────────────────────────
+  const episodes = el('div', { class: 'dn-roundtl-episodes' + (single ? ' dn-roundtl-single' : '') });
+  rounds.forEach((r) => {
+    const champId = r.champion && r.champion.id != null ? String(r.champion.id) : 'seed';
+    const promoted = r.gateOutcome && r.gateOutcome.kind === 'promoted';
+    const selected = o.selected != null && String(o.selected) === String(r.round_index);
+    const card = el('div', {
+      class: 'dn-roundtl-ep' + (selected ? ' dn-roundtl-ep-sel' : ''),
+      'data-round': String(r.round_index), role: 'group',
+      'aria-label': `Round ${r.round_index} episode`,
+    });
+    // episode header: round ordinal + the incoming champion + a drill link.
+    const head = el('div', { class: 'dn-roundtl-ephead' }, [
+      el('span', { class: 'dn-roundtl-eptag', text: 'round ' + r.round_index }),
+      el('span', { class: 'dn-roundtl-epchamp' }, [
+        el('span', { class: 'dn-roundtl-epcrown', 'aria-hidden': 'true', text: CROWN.current }),
+        el('span', { class: 'dn-mono', text: champId }),
+        isNum(r.champion && r.champion.scalar)
+          ? el('span', { class: 'dn-faint', text: ' · loss ' + fmt(r.champion.scalar, 1) }) : null,
+      ].filter(Boolean)),
+    ]);
+    if (o.onRound) {
+      const link = el('button', { class: 'dn-linkbtn dn-roundtl-epdrill', type: 'button', text: 'open round →' });
+      link.addEventListener('click', () => o.onRound(r.round_index));
+      head.appendChild(link);
+    }
+    card.appendChild(head);
+
+    // the fan of MINTED challengers (chips) — each opens its candidate.
+    const fan = el('div', { class: 'dn-roundtl-fan' });
+    if (r.challengers.length) {
+      for (const c of r.challengers) {
+        const chip = el('button', {
+          class: 'dn-roundtl-chip' + (c.promoted ? ' dn-roundtl-chip-win' : ''),
+          type: 'button',
+          'aria-label': `Challenger ${c.id}` + (isNum(c.scalar) ? `, loss ${fmt(c.scalar, 1)}` : '')
+            + (c.promoted ? ' — promoted' : ''),
+        }, [
+          el('span', { class: 'dn-mono', text: shortLabel(String(c.id), 12) }),
+          c.promoted ? el('span', { class: 'dn-roundtl-chipcrown', 'aria-hidden': 'true', text: CROWN.current }) : null,
+          isNum(c.scalar) ? el('span', { class: 'dn-faint dn-roundtl-chiploss', text: fmt(c.scalar, 1) }) : null,
+        ].filter(Boolean));
+        if (o.onCompetitor) chip.addEventListener('click', () => o.onCompetitor(String(c.id)));
+        fan.appendChild(chip);
+      }
+    } else {
+      fan.appendChild(el('span', { class: 'dn-faint', text: 'no challengers minted this round' }));
+    }
+    card.appendChild(el('div', { class: 'dn-roundtl-fanrow' }, [
+      el('span', { class: 'dn-faint dn-roundtl-fanlab', text: 'field' }),
+      fan,
+    ]));
+
+    // the compact per-round structure figure (caller-built; null → omitted).
+    const fig = o.figureFor ? o.figureFor(r) : null;
+    if (fig) card.appendChild(el('div', { class: 'dn-roundtl-fig dn-figpane' }, [fig]));
+
+    // the GATE OUTCOME — promoted (merges onto the spine) or held.
+    card.appendChild(el('div', { class: 'dn-roundtl-gate' + (promoted ? ' dn-roundtl-gate-win' : '') }, [
+      el('span', { class: 'dn-roundtl-gatemark', 'aria-hidden': 'true', text: promoted ? CROWN.current : '=' }),
+      el('span', {
+        text: promoted
+          ? `${r.gateOutcome.gen} promoted → next round's champion`
+          : 'champion held — no promotion this round',
+      }),
+    ]));
+    episodes.appendChild(card);
+  });
+  wrap.appendChild(episodes);
+  return wrap;
+}
