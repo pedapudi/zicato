@@ -1157,174 +1157,6 @@ export function swissLadder(opts) {
   return svg;
 }
 
-// ---- elim BRACKET TREE (DATA-DRIVEN single/double, live + completed) -
-//
-// The elimination analogue of survivalFunnel/racingLadder: a real bracket tree
-//     live, gateState, gateDelta, onMatch, onCompetitor }
-export function elimBracket(opts) {
-  const o = opts || {};
-  const winners = (Array.isArray(o.winners) ? o.winners : []).filter((r) => r && Array.isArray(r.matches));
-  const losers = Array.isArray(o.losers) ? o.losers.filter((r) => r && Array.isArray(r.matches)) : null;
-  const live = !!o.live;
-  // COMPACT mode (the epoch-card mini-bracket overview) shrinks the geometry +
-  // tags the root `dn-elimbracket-compact` so it reads as a glance, not the full
-  // Match-ups tree. Same marks, same class family — one renderer, two scales.
-  const compact = !!o.compact;
-  const colW = compact ? 96 : 138;
-  const colGap = compact ? 18 : 30;
-  const matchH = compact ? 26 : 40;
-  const matchGap = compact ? 8 : 14;
-  const gateW = compact ? 96 : 120;
-  const top = compact ? 20 : 22;
-  const benchId = o.benchmarkId != null ? String(o.benchmarkId) : (o.championId != null ? String(o.championId) : null);
-  const benchH = benchId ? 16 : 0;
-  const wbMax = Math.max(1, ...winners.map((r) => r.matches.length || 0), 1);
-  const lbMax = losers ? Math.max(0, ...losers.map((r) => r.matches.length || 0)) : 0;
-  const treeW = winners.length * colW + Math.max(0, winners.length - 1) * colGap;
-  const w = Math.max(colW, treeW + colGap + gateW) + 8;
-  const wbBand = top + benchH + wbMax * (matchH + matchGap);
-  const lbHeadH = (losers && losers.length) ? 22 : 0;
-  const lbBand = (losers && losers.length) ? lbHeadH + lbMax * (matchH + matchGap) : 0;
-  const h = wbBand + lbBand + 12;
-  const svg = svgEl('svg', {
-    class: 'dn-elimbracket' + (compact ? ' dn-elimbracket-compact' : ''), width: '100%', height: h,
-    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
-  });
-  if (benchId) {
-    const bt = hov(svgEl('text', { x: 4, y: 12, class: 'dn-elimbracket-bench' }),
-      `incumbent champion = ${benchId} · the bracket winner must beat the incumbent at the champion-gate to be promoted`);
-    bt.textContent = (compact ? `▸ incumbent = ${shortLabel(benchId, 16)} · defends at the gate`
-      : `▸ incumbent champion = ${shortLabel(benchId, 18)} · defends at the gate`);
-    svg.appendChild(bt);
-  }
-  if (winners.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no bracket matches yet';
-    svg.appendChild(t);
-    return svg;
-  }
-  const colX = (j) => j * (colW + colGap) + 2;
-
-  // draw a band (winners' or losers') of match columns, returning each round's
-  // vertical centres so connectors + the gate can attach to the final match.
-  function drawBand(band, bandTop, bandH, cls) {
-    const centers = band.map((r) => {
-      const n = Math.max(1, r.matches.length);
-      const blockH = n * matchH + (n - 1) * matchGap;
-      const y0 = bandTop + Math.max(0, (bandH - blockH) / 2);
-      return r.matches.map((_, i) => y0 + i * (matchH + matchGap) + matchH / 2);
-    });
-    for (let j = 0; j < band.length - 1; j++) {
-      const cur = centers[j];
-      const nxt = centers[j + 1];
-      cur.forEach((cy, i) => {
-        const tgt = nxt[Math.floor(i / 2)];
-        if (tgt == null) return;
-        const x1 = colX(j) + colW;
-        const x2 = colX(j + 1);
-        const mx = (x1 + x2) / 2;
-        svg.appendChild(svgEl('path', { d: `M${x1},${cy} H${mx} V${tgt} H${x2}`, class: 'dn-elimbracket-edge ' + cls, fill: 'none' }));
-      });
-    }
-    band.forEach((r, j) => {
-      const x = colX(j);
-      const head = svgEl('text', { x: x + colW / 2, y: bandTop - 6, class: 'dn-elimbracket-head', 'text-anchor': 'middle' });
-      head.textContent = shortLabel(r.label || `Round ${j + 1}`, 18) + (r.queued ? ' · queued' : '');
-      svg.appendChild(head);
-      r.matches.forEach((m, i) => {
-        const cy = centers[j][i];
-        drawMatch(m, x, cy);
-      });
-    });
-    return centers;
-  }
-
-  function drawMatch(m, x, cy) {
-    const y = cy - matchH / 2;
-    const comps = Array.isArray(m.competitors) ? m.competitors : [];
-    const winner = m.winner || '';
-    const decided = !!winner && !m.pending;
-    const inflight = !!m.inflight || (isNum(m.total) && isNum(m.done) && m.done < m.total && !decided);
-    const queued = !!m.queued;
-    const g = svgEl('g', { class: 'dn-elimbracket-match' + (queued ? ' dn-elimbracket-queued' : ''), tabindex: o.onMatch ? '0' : null });
-    g.appendChild(hov(svgEl('rect', {
-      x, y, width: colW, height: matchH, rx: 3,
-      class: 'dn-elimbracket-box' + (m.bye ? ' dn-bye' : '') + (inflight ? ' dn-elimbracket-box-live' : ''),
-    }), `${m.bracket_slot || m.match_id || ''}${comps.length ? ': ' + comps.join(' vs ') : ''}${winner ? ' → ' + winner : (inflight ? ' · racing' : '')}`));
-    const seats = comps.length ? comps : ['tbd'];
-    seats.slice(0, 2).forEach((cid, k) => {
-      const sy = y + (k === 0 ? matchH * 0.30 : matchH * 0.66);
-      const won = cid === winner;
-      const seat = svgEl('text', {
-        x: x + 8, y: sy + 3,
-        class: 'dn-elimbracket-seat' + (won ? ' dn-win' : (decided ? ' dn-out' : (queued ? ' dn-elimbracket-queued' : ''))),
-      });
-      seat.textContent = shortLabel(String(cid), 13) + (won ? ' ✦' : '');
-      g.appendChild(seat);
-    });
-    if (inflight) {
-      const barW = colW - 12;
-      const frac = (isNum(m.total) && m.total > 0) ? Math.min(1, (m.done || 0) / m.total) : 0.5;
-      g.appendChild(svgEl('rect', { x: x + 6, y: y + matchH - 5, width: barW, height: 2, rx: 1, class: 'dn-elimbracket-bar-bg' }));
-      g.appendChild(svgEl('rect', { x: x + 6, y: y + matchH - 5, width: Math.max(1, barW * frac), height: 2, rx: 1, class: 'dn-elimbracket-bar dn-elimbracket-bar-live' }));
-      const pl = svgEl('text', { x: x + colW - 6, y: y + matchH - 7, 'text-anchor': 'end', class: 'dn-elimbracket-prog' });
-      pl.textContent = (isNum(m.total) && m.total > 0) ? `${m.done || 0}/${m.total}` : `${m.inflight || 0}…`;
-      g.appendChild(pl);
-    }
-    if (m.bye) {
-      const b = svgEl('text', { x: x + colW - 6, y: y + matchH - 6, class: 'dn-elimbracket-bye', 'text-anchor': 'end' });
-      b.textContent = 'bye';
-      g.appendChild(b);
-    }
-    clickable(g, o.onMatch && (() => o.onMatch(m)));
-    svg.appendChild(g);
-  }
-
-  const wbTop = top + benchH;
-  const wbCenters = drawBand(winners, wbTop, wbMax * (matchH + matchGap), 'dn-elimbracket-wb');
-
-  // ── the champion-gate node after the winners' final ──
-  const champId = o.championId ? String(o.championId) : null;
-  const gateState = o.gateState || (live ? 'deciding' : (champId ? 'crowned' : 'pending'));
-  const crowned = gateState === 'crowned' && !!champId;
-  const gx = treeW + colGap + 2;
-  const lastCol = wbCenters[wbCenters.length - 1] || [];
-  const gateCy = lastCol.length ? lastCol[Math.floor((lastCol.length - 1) / 2)] : wbTop + wbMax * (matchH + matchGap) / 2;
-  if (winners.length) {
-    const x1 = colX(winners.length - 1) + colW;
-    const mx = (x1 + gx) / 2;
-    svg.appendChild(svgEl('path', { d: `M${x1},${gateCy} H${mx} V${gateCy} H${gx}`, class: 'dn-elimbracket-edge dn-elimbracket-wb' + (crowned ? ' dn-elimbracket-edge-champ' : ''), fill: 'none' }));
-  }
-  const gateHead = svgEl('text', { x: gx + gateW / 2, y: wbTop - 6, class: 'dn-elimbracket-head', 'text-anchor': 'middle' });
-  gateHead.textContent = 'champion-gate';
-  svg.appendChild(gateHead);
-  const clickId = champId || null;
-  const gateG = svgEl('g', { class: 'dn-elimbracket-gate', tabindex: (clickId && o.onCompetitor) ? '0' : null });
-  gateG.appendChild(svgEl('rect', { x: gx, y: gateCy - matchH / 2, width: gateW, height: matchH, rx: 4, class: 'dn-elimbracket-gatebox' + (crowned ? ' dn-good' : '') }));
-  const dStr = isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '';
-  let label;
-  let tip;
-  if (crowned) { label = CROWN.current + ' ' + shortLabel(champId, 11); tip = `${champId} won the bracket + cleared the gate → new champion${dStr}`; }
-  else if (gateState === 'stands') { label = 'champion stands'; tip = `the bracket winner did not beat the incumbent — champion stands${dStr}`; }
-  else if (gateState === 'deciding') { label = 'deciding…'; tip = 'the gate is deciding'; }
-  else { label = 'tbd'; tip = 'awaiting the bracket winner'; }
-  const gt = hov(svgEl('text', { x: gx + 6, y: gateCy + 3, class: 'dn-elimbracket-gatelab' + (crowned ? ' dn-good' : '') }), tip);
-  gt.textContent = label;
-  gateG.appendChild(gt);
-  clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(String(clickId))));
-  svg.appendChild(gateG);
-
-  // ── the losers' band (double-elim only) ──
-  if (losers && losers.length) {
-    const lbTop = wbBand + lbHeadH;
-    const sep = svgEl('text', { x: 4, y: wbBand + 12, class: 'dn-elimbracket-bandhead' });
-    sep.textContent = 'LOSERS’ BRACKET';
-    svg.appendChild(sep);
-    drawBand(losers, lbTop, lbMax * (matchH + matchGap), 'dn-elimbracket-lb');
-  }
-  return svg;
-}
-
 // ---- elim FLOW (Tufte slopegraph / bipartite — generations across rounds) --
 //
 // The COMPANION to the bracket tree on the generations-overview page (Task 3):
@@ -1363,11 +1195,22 @@ export function elimFlow(opts) {
     if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), eliminatedAt: null, pendingAt: new Set() });
     return genState.get(k);
   };
+  // the per-round MATCHES (a two-lane convergence each): two competitors meet, the
+  // winner's lane continues, the loser's terminates. Captured here so the figure
+  // can draw the bracket-as-flow convergence node + carry the pairing onto HOVER.
+  const matchesByCol = rounds.map(() => []);
   rounds.forEach((r, ci) => {
     for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
       const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String).filter((c) => c && c !== 'tbd');
       const winner = m.winner ? String(m.winner) : null;
       const pending = !!m.pending || (!winner && !m.bye && !m.decision);
+      // a real two-lane convergence (not a bye / placeholder) is recorded for the
+      // match-node layer; a winner+loser pair, with the live state per leg.
+      if (comps.length >= 2 && !m.bye) {
+        const loser = winner ? comps.find((c) => c !== winner) || null : null;
+        matchesByCol[ci].push({ comps, winner, loser, pending, delta: isNum(m.delta_scalar) ? m.delta_scalar : null,
+          slot: m.bracket_slot || m.match_id || '' });
+      }
       for (const c of comps) {
         const g = ensure(c);
         g.played.add(ci);
@@ -1385,6 +1228,10 @@ export function elimFlow(opts) {
   gens.sort((a, b) => reach(b) - reach(a)
     || (a.id === champId ? -1 : b.id === champId ? 1 : 0)
     || a.id.localeCompare(b.id));
+  // lane index per generation id — so a match can draw a convergence between the
+  // two competitors' lanes (winner above/below the loser, whichever order).
+  const laneOf = new Map();
+  gens.forEach((g, li) => laneOf.set(g.id, li));
 
   // ── geometry: columns × lanes, fit-to-width ──
   const colW = 116;
@@ -1418,6 +1265,33 @@ export function elimFlow(opts) {
   const gateHead = svgEl('text', { x: gateX, y: top - 12, class: 'dn-elimflow-col', 'text-anchor': 'middle' });
   gateHead.textContent = 'champion-gate';
   svg.appendChild(gateHead);
+
+  // ── the MATCH CONVERGENCES (bracket-as-flow): at each round column the two
+  // competitors' lanes meet at a match node — a short bracket joining the two
+  // lane-ys to the node x. The winner's lane continues (good); the loser's
+  // terminates (✕, drawn on its lane below). The pairing + Δ live on HOVER. ──
+  matchesByCol.forEach((matches, ci) => {
+    const x = colX(ci);
+    for (const m of matches) {
+      const lys = m.comps.map((c) => laneOf.has(c) ? laneY(laneOf.get(c)) : null).filter((v) => v != null);
+      if (lys.length < 2) continue;
+      const yTop = Math.min(...lys);
+      const yBot = Math.max(...lys);
+      const ymid = (yTop + yBot) / 2;
+      // a small convergence elbow: the two lanes pinch toward the node at x.
+      const cls = 'dn-elimflow-conv' + (m.pending ? ' dn-elimflow-conv-pending' : '');
+      svg.appendChild(svgEl('path', {
+        d: `M${x - 8},${yTop} Q${x},${yTop} ${x},${ymid} Q${x},${yBot} ${x - 8},${yBot}`,
+        class: cls, fill: 'none',
+      }));
+      const tip = `${m.slot ? m.slot + ': ' : ''}${m.comps.join(' vs ')}`
+        + (m.winner ? ` → ${m.winner} ↑` : m.pending ? ' · racing' : '')
+        + (m.delta != null ? ` · Δ ${fmtSigned(m.delta, 2)}` : '');
+      const node = svgEl('circle', { cx: x, cy: ymid, r: m.pending ? 2.6 : 3,
+        class: 'dn-elimflow-convnode' + (m.pending ? ' dn-elimflow-pending' : m.winner ? ' dn-elimflow-good' : '') });
+      svg.appendChild(hov(node, tip));
+    }
+  });
 
   // ── one lane per generation: dots at each round it played, a segment to the
   // next column when it advanced, a ✕ where it was cut, the crown at the gate ──
@@ -1614,8 +1488,120 @@ export function swissOverview(opts) {
   return svg;
 }
 
-// The compact ELIM mini-bracket (epoch overview) is just elimBracket at a small
-// scale — call svg.elimBracket({ compact: true, …elimModel(st) }) directly.
+// ── the GAUNTLET DUEL FLOW — the field as Δ-vs-champion lanes ────────
+//
+// The gauntlet structure-flow that REPLACES the boxed champion banner + the
+// per-challenger match cards: the round's field as a column of lanes, each a
+// challenger DUELLING the reigning champion. A horizontal REFERENCE RULE at Δ=0
+// is the champion (the crowned gate node on the right); each challenger sits a
+// dot at its Δ-vs-champion — BELOW the rule (good, lower loss) when it improved,
+// ABOVE (bad) when it regressed — with a status glyph (↑ promoted / ✕ cut / ○
+// pending). The promoted challenger's lane reaches the crowned gate (♛). The
+// per-challenger hypothesis + the exact Δ live ON HOVER.
+//
+//   opts: {
+//     championId, championScalar,
+//     challengers: [{ id, delta, verdict:'promoted'|'rejected'|'pending',
+//                     hypothesis, driver }],
+//     onCompetitor(id).
+//   }
+export function duelFlow(opts) {
+  const o = opts || {};
+  const challengers = (Array.isArray(o.challengers) ? o.challengers : []).filter((c) => c && c.id != null);
+  const champId = o.championId != null ? String(o.championId) : null;
+  const w = o.width || 720;
+  const padTop = 30;
+  const padBottom = 20;
+  const laneGap = 26;
+  const gateW = 132;
+  const refX = 64;           // the champion reference rule x (Δ=0)
+  const fieldRight = w - gateW - 30;
+  const h = padTop + Math.max(1, challengers.length) * laneGap + padBottom;
+  const svg = svgEl('svg', {
+    class: 'dn-duelflow', width: '100%', height: h,
+    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
+    'aria-label': 'The field duelling the champion',
+  });
+  // the champion REFERENCE rule (Δ=0) — the spine the field is measured against.
+  svg.appendChild(hov(svgEl('line', { x1: refX, x2: fieldRight, y1: padTop - 8, y2: h - padBottom + 4, class: 'dn-duelflow-ref' }),
+    champId ? `champion ${champId}${isNum(o.championScalar) ? ' · loss ' + fmt(o.championScalar, 1) : ''} · Δ=0 reference` : 'champion · Δ=0 reference'));
+  svg.appendChild(svgEl('text', { x: refX, y: padTop - 14, class: 'dn-duelflow-axis', 'text-anchor': 'middle' }, ['vs champion · Δ=0']));
+  svg.appendChild(svgEl('text', { x: refX - 6, y: padTop + 4, class: 'dn-duelflow-dir dn-good', 'text-anchor': 'end' }, ['↓ better']));
+
+  if (!challengers.length) {
+    const t = svgEl('text', { x: (refX + fieldRight) / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no challenger has entered the ring';
+    svg.appendChild(t);
+  }
+  // Δ extent → horizontal offset from the reference rule (good below = magnitude
+  // pulls the dot toward the gate; bad above = pulls it away). We map |Δ| to a
+  // horizontal length so position+length encode the gap.
+  const deltas = challengers.map((c) => c.delta).filter(isNum).map(Math.abs);
+  const maxAbs = Math.max(1e-9, ...deltas, 1e-9);
+  const span = fieldRight - refX - 30;
+  const offsetOf = (d) => (isNum(d) ? (Math.min(1, Math.abs(d) / maxAbs)) * span : 0);
+
+  let promotedY = null;
+  challengers.forEach((c, i) => {
+    const cy = padTop + i * laneGap + laneGap / 2;
+    const verdict = c.verdict || 'pending';
+    const won = verdict === 'promoted';
+    const cut = verdict === 'rejected';
+    const good = isNum(c.delta) ? c.delta < 0 : won;
+    const bad = isNum(c.delta) ? c.delta > 0 : cut;
+    // the dot rides toward the GATE when it improved (good), away when it
+    // regressed (bad); a pending/no-Δ lane sits on the rule.
+    const dx = isNum(c.delta) ? (good ? refX + offsetOf(c.delta) : refX - 0) : refX;
+    // an improved (good) lane reaches toward the gate; a regressed lane stops short.
+    const cls = 'dn-duelflow-dot ' + (good ? 'dn-good' : bad ? 'dn-bad' : 'dn-duelflow-pending');
+    const glyph = won ? ' ↑' : cut ? ' ✕' : ' ○';
+    const g = svgEl('g', { class: 'dn-duelflow-lane', tabindex: o.onCompetitor ? '0' : null,
+      'aria-label': `${c.id} vs champion${isNum(c.delta) ? ', Δ ' + fmtSigned(c.delta, 1) : ''}, ${verdict}` });
+    // the lane line from the rule to the dot.
+    g.appendChild(svgEl('line', { x1: refX, x2: dx, y1: cy, y2: cy, class: 'dn-duelflow-laneline ' + (good ? 'dn-good' : bad ? 'dn-bad' : '') }));
+    const tip = `${c.id} vs ${champId || 'champion'}`
+      + (isNum(c.delta) ? ` · Δ ${fmtSigned(c.delta, 2)} (${good ? 'improved' : bad ? 'regressed' : 'flat'})` : '')
+      + ` · ${verdict}`
+      + (c.hypothesis ? ` · hypothesis: ${c.hypothesis}` : '')
+      + (c.driver ? ` · decisive driver: ${c.driver}` : '');
+    g.appendChild(hov(svgEl('circle', { cx: dx, cy, r: won ? 4.2 : 3.4, class: cls }), tip));
+    // the challenger label + status glyph at the left gutter.
+    const lbl = svgEl('text', { x: refX - 8, y: cy + 3, class: 'dn-duelflow-name ' + (good ? 'dn-good' : bad ? 'dn-bad' : ''), 'text-anchor': 'end' });
+    lbl.textContent = shortLabel(String(c.id), 11) + glyph;
+    g.appendChild(lbl);
+    // the Δ value, right-aligned just inside the field.
+    if (isNum(c.delta)) {
+      const dt = svgEl('text', { x: fieldRight - 4, y: cy + 3, class: 'dn-duelflow-delta ' + (good ? 'dn-good' : bad ? 'dn-bad' : ''), 'text-anchor': 'end' });
+      dt.textContent = fmtSigned(c.delta, Math.abs(c.delta) < 0.1 && c.delta !== 0 ? 2 : 1);
+      g.appendChild(dt);
+    }
+    clickable(g, o.onCompetitor && (() => o.onCompetitor(String(c.id))));
+    svg.appendChild(g);
+    if (won) promotedY = cy;
+  });
+
+  // ── the crowned CHAMPION GATE on the right ──
+  const gx = fieldRight + 18;
+  const gateCy = promotedY != null ? promotedY : padTop + (Math.max(1, challengers.length) * laneGap) / 2;
+  const promotedAny = challengers.some((c) => (c.verdict || '') === 'promoted');
+  const gateG = svgEl('g', { class: 'dn-duelflow-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });
+  gateG.appendChild(svgEl('rect', { x: gx, y: gateCy - 14, width: gateW, height: 28, rx: 5,
+    class: 'dn-duelflow-gatebox' + (promotedAny ? ' dn-good' : '') }));
+  // the converging flow from the promoted lane into the gate.
+  if (promotedY != null) {
+    svg.appendChild(svgEl('path', { d: `M${fieldRight},${promotedY} H${gx}`, class: 'dn-duelflow-gateflow dn-good', fill: 'none' }));
+  }
+  const gt = hov(svgEl('text', { x: gx + gateW / 2, y: gateCy + 4, class: 'dn-duelflow-gatelab' + (promotedAny ? ' dn-good' : ''), 'text-anchor': 'middle' }),
+    champId ? `champion-gate · ${promotedAny ? 'a challenger was promoted' : champId + ' defends the title'}` : 'champion-gate');
+  gt.textContent = (champId ? CROWN.current + ' ' + shortLabel(champId, 11) : 'champion-gate');
+  gateG.appendChild(gt);
+  clickable(gateG, (champId && o.onCompetitor) && (() => o.onCompetitor(champId)));
+  svg.appendChild(gateG);
+  return svg;
+}
+
+// The elim epoch overview + Match-ups both render the BRACKET-AS-FLOW
+// (`elimFlow`) — the seat/box bracket tree (`elimBracket`) is retired.
 
 // ---- Tufte Sankey (fit-to-width) — the causal patch→drift→gate flow -
 export function layoutSankey(spec) {
@@ -2058,4 +2044,174 @@ export function roundTimeline(opts) {
   });
   wrap.appendChild(episodes);
   return wrap;
+}
+
+// ── the LOSS-FLOOR WATERFALL — the epoch's descent across rounds ─────
+//
+// The headline "is it improving + what drove each gain" figure: each ROUND is a
+// step. A round that PROMOTED drops the running loss floor by its promotion Δ
+// (a downward step, `good` by DIRECTION — a lower floor is the better outcome);
+// a HELD round keeps the floor flat (no step). The running floor is annotated at
+// each station; the champion SPINE baseline runs in `--v2-accent`. The winning
+// mutation (the promoted gen) per step lives on HOVER.
+//
+//   opts: {
+//     steps: [{ round_index, from, to, delta, promoted, gen }],
+//        from/to = the loss floor BEFORE / AFTER the round; delta = to - from
+//        (negative = improvement); promoted = a gate promotion this round;
+//        gen = the promoted challenger (the winning mutation) | null.
+//     onRound(round_index), onCompetitor(genId).
+//   }
+export function waterfall(opts) {
+  const o = opts || {};
+  const steps = (Array.isArray(o.steps) ? o.steps : []).filter((s) => s);
+  const w = o.width || 720;
+  const padL = 56;
+  const padR = 18;
+  const padTop = 26;
+  const padBottom = 28;
+  const colW = steps.length ? (w - padL - padR) / steps.length : (w - padL - padR);
+  const barW = Math.max(8, Math.min(colW * 0.6, 54));
+  const h = (o.height || 220);
+  const svg = svgEl('svg', {
+    class: 'dn-waterfall', width: '100%', height: h,
+    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
+    'aria-label': 'Loss-floor descent across rounds',
+  });
+  if (!steps.length) {
+    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no rounds yet';
+    svg.appendChild(t);
+    return svg;
+  }
+  // the loss domain spans every from/to floor; lower loss sits LOWER on the y
+  // axis (a descent reads as a downward staircase).
+  const floors = [];
+  for (const s of steps) { if (isNum(s.from)) floors.push(s.from); if (isNum(s.to)) floors.push(s.to); }
+  let [lo, hi] = extent(floors);
+  lo = Math.min(lo, hi);
+  const pad = (hi - lo) * 0.12 || 1;
+  const y = scale([lo - pad, hi + pad], [h - padBottom, padTop]);
+  const colX = (i) => padL + i * colW + colW / 2;
+
+  // the SPINE baseline (accent): the champion floor connecting station to
+  // station — the structural highlight of the figure.
+  let spineD = '';
+  steps.forEach((s, i) => {
+    const cx = colX(i);
+    const yFrom = isNum(s.from) ? y(s.from) : null;
+    const yTo = isNum(s.to) ? y(s.to) : null;
+    if (yFrom != null) spineD += `${spineD ? 'L' : 'M'}${(cx - barW / 2).toFixed(1)},${yFrom.toFixed(1)} `;
+    if (yTo != null) spineD += `L${(cx + barW / 2).toFixed(1)},${yTo.toFixed(1)} `;
+  });
+  if (spineD) svg.appendChild(svgEl('path', { d: spineD.trim(), class: 'dn-waterfall-spine', fill: 'none' }));
+
+  svg.appendChild(svgEl('text', { x: padL - 2, y: padTop - 12, class: 'dn-waterfall-axis' }, ['loss floor ↓ improving · rounds →']));
+
+  steps.forEach((s, i) => {
+    const cx = colX(i);
+    const yFrom = isNum(s.from) ? y(s.from) : null;
+    const yTo = isNum(s.to) ? y(s.to) : null;
+    const improved = isNum(s.delta) && s.delta < 0;
+    const regressed = isNum(s.delta) && s.delta > 0;
+    const held = !s.promoted || !isNum(s.delta) || s.delta === 0;
+    const g = svgEl('g', {
+      class: 'dn-waterfall-step', tabindex: o.onRound ? '0' : null,
+      'aria-label': `Round ${s.round_index}: ` + (held ? 'champion held' : `${s.gen} promoted, Δ ${fmtSigned(s.delta, 1)}`),
+    });
+    // the step bar: from the incoming floor DOWN to the new floor (a promotion);
+    // a held round is a flat tick at the floor.
+    if (!held && yFrom != null && yTo != null) {
+      const yA = Math.min(yFrom, yTo);
+      const yB = Math.max(yFrom, yTo);
+      const cls = 'dn-waterfall-bar ' + (improved ? 'dn-good' : regressed ? 'dn-bad' : 'dn-flat');
+      g.appendChild(hov(svgEl('rect', { x: cx - barW / 2, y: yA, width: barW, height: Math.max(2, yB - yA), rx: 2, class: cls }),
+        `round ${s.round_index} · ${s.gen ? s.gen + ' promoted' : 'promoted'} · floor ${fmt(s.from, 1)} → ${fmt(s.to, 1)} · Δ ${fmtSigned(s.delta, 1)}`));
+      // the connector from the prior floor into this step's top.
+    } else if (yTo != null) {
+      g.appendChild(hov(svgEl('line', { x1: cx - barW / 2, x2: cx + barW / 2, y1: yTo, y2: yTo, class: 'dn-waterfall-held' }),
+        `round ${s.round_index} · champion held · floor ${fmt(s.to, 1)}`));
+    }
+    // the running-floor annotation under the station.
+    const flLbl = svgEl('text', { x: cx, y: (yTo != null ? yTo : h - padBottom) - 6, class: 'dn-waterfall-floor', 'text-anchor': 'middle' });
+    flLbl.textContent = isNum(s.to) ? fmt(s.to, 1) : '·';
+    g.appendChild(flLbl);
+    // the round ordinal on the x axis.
+    const rord = svgEl('text', { x: cx, y: h - padBottom + 14, class: 'dn-waterfall-rord', 'text-anchor': 'middle' });
+    rord.textContent = 'r' + s.round_index;
+    g.appendChild(rord);
+    // the winning-mutation glyph (the promoted gen) — a crown over a promoting step.
+    if (!held && s.gen != null && yTo != null) {
+      const cr = svgEl('text', { x: cx, y: y(s.to) - (isNum(s.from) && isNum(s.to) && s.to < s.from ? 8 : -14), class: 'dn-waterfall-crown', 'text-anchor': 'middle' });
+      cr.textContent = CROWN.current;
+      g.appendChild(cr);
+    }
+    clickable(g, o.onRound && (() => o.onRound(s.round_index)));
+    svg.appendChild(g);
+  });
+  return svg;
+}
+
+// ── the CHAMPION REIGN GANTT — tenure across rounds ─────────────────
+//
+// One BAR per champion spanning the rounds it HELD the title. The CURRENT
+// champion's bar is `--v2-accent` + ♛; every FORMER champion's bar is ink / dim
+// + ♔. The reign of one generation reads as a highlighted SEGMENT of the spine —
+// the candidate page passes a single generation's reign as the "reign ribbon".
+//
+//   opts: {
+//     reigns: [{ id, fromRound, toRound, current }]  — fromRound..toRound inclusive
+//     rounds: total round count (the x extent), or inferred from reigns.
+//     onCompetitor(id).
+//   }
+export function reignGantt(opts) {
+  const o = opts || {};
+  const reigns = (Array.isArray(o.reigns) ? o.reigns : []).filter((r) => r && r.id != null);
+  const w = o.width || 640;
+  const rowH = o.rowHeight || 22;
+  const padL = o.labelWidth || 120;
+  const padR = 18;
+  const top = 22;
+  const h = top + Math.max(1, reigns.length) * rowH + 10;
+  const svg = svgEl('svg', {
+    class: 'dn-reigngantt', width: '100%', height: h,
+    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
+    'aria-label': 'Champion reign across rounds',
+  });
+  if (!reigns.length) {
+    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no reign yet';
+    svg.appendChild(t);
+    return svg;
+  }
+  const maxRound = isNum(o.rounds) ? o.rounds
+    : Math.max(1, ...reigns.map((r) => (isNum(r.toRound) ? r.toRound : 0)));
+  const x = scale([0, Math.max(1, maxRound)], [padL + 4, w - padR]);
+  // round-axis ticks along the top.
+  for (let ri = 0; ri <= maxRound; ri++) {
+    const tx = x(ri);
+    const tk = svgEl('text', { x: tx, y: top - 8, class: 'dn-reigngantt-axis', 'text-anchor': 'middle' });
+    tk.textContent = 'r' + ri;
+    svg.appendChild(tk);
+    svg.appendChild(svgEl('line', { x1: tx, x2: tx, y1: top - 4, y2: h - 6, class: 'dn-reigngantt-grid' }));
+  }
+  reigns.forEach((r, i) => {
+    const cy = top + i * rowH + rowH / 2;
+    const x0 = x(isNum(r.fromRound) ? r.fromRound : 0);
+    const x1 = x(isNum(r.toRound) ? r.toRound : maxRound);
+    const current = !!r.current;
+    const g = svgEl('g', { class: 'dn-reigngantt-row', tabindex: o.onCompetitor ? '0' : null });
+    const lbl = svgEl('text', { x: padL - 8, y: cy + 3, class: 'dn-reigngantt-name' + (current ? ' dn-reigngantt-current' : ' dn-reigngantt-former'), 'text-anchor': 'end' });
+    lbl.textContent = shortLabel(String(r.id), 12) + ' ' + (current ? CROWN.current : CROWN.former);
+    g.appendChild(lbl);
+    const span = Math.max(4, x1 - x0);
+    g.appendChild(hov(svgEl('rect', {
+      x: x0, y: cy - rowH * 0.32, width: span, height: rowH * 0.64, rx: 3,
+      class: 'dn-reigngantt-bar' + (current ? ' dn-reigngantt-bar-current' : ' dn-reigngantt-bar-former'),
+    }), `${r.id} ${current ? CROWN.current + ' current champion' : CROWN.former + ' former champion'} · held r${isNum(r.fromRound) ? r.fromRound : 0}`
+      + (isNum(r.toRound) && r.toRound !== r.fromRound ? `–r${r.toRound}` : '')));
+    clickable(g, o.onCompetitor && (() => o.onCompetitor(String(r.id))));
+    svg.appendChild(g);
+  });
+  return svg;
 }

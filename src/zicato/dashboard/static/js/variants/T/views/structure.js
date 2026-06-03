@@ -478,56 +478,39 @@ export function elimModel(st) {
 
 function renderBracket(st, ctx, epochId, structure) {
   const model = elimModel(st) || { winners: splitBand((st && st.rounds) || [], () => true), losers: null, live: !!(st && st.live) };
-  const open = (m) => {
-    // open the (decided) winner's candidate, else the first competitor.
-    const gen = m.winner || (Array.isArray(m.competitors) && m.competitors[0]) || null;
-    if (gen) ctx.navigate('candidate', { epochId, gen });
-  };
   const openGen = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
   const nodes = [];
-  const card = el('div', { class: 'dn-panel dn-figpane' });
-  card.appendChild(model.hasMatches !== false && model.winners.length
-    ? svg.elimBracket({
-        winners: model.winners, losers: model.losers,
-        championId: model.championId, benchmarkId: model.benchmarkId,
-        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta,
-        onMatch: open, onCompetitor: openGen,
+
+  // the elim figure is the BRACKET-AS-FLOW (`elimFlow`) — the Tufte lane
+  // convergence that REPLACES the seat/box bracket tree (`elimBracket` retired):
+  // rounds as columns, one lane per generation; two lanes converge at a match
+  // node, the winner's lane continues (↑, good), the loser's terminates (✕,
+  // bad); the champion's lane reaches the crowned gate (♛). The losers' bracket
+  // of a double-elim re-converges as a second band of lanes (the same lanes
+  // re-entering later rounds). Pairing + Δ detail live on HOVER.
+  const isElim = structure === 'single_elim' || structure === 'double_elim';
+  const allBands = model.winners.concat(Array.isArray(model.losers) ? model.losers : []);
+  const flowCard = el('div', { class: 'dn-panel dn-figpane' });
+  flowCard.appendChild(model.hasMatches !== false && model.winners.length
+    ? svg.elimFlow({
+        winners: allBands, championId: model.championId, benchmarkId: model.benchmarkId,
+        gateState: model.gateState, live: model.live, onCompetitor: openGen,
       })
     : empty(model.live ? 'The bracket is being seeded — matches fill in as runs land.' : 'No bracket rounds recorded yet.'));
   if (model.winners.length) {
     const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
       : model.gateState === 'stands' ? ' · champion-gate: champion stands'
       : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
-    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'winners advance right; ✦ = match winner · the bracket winner must beat the incumbent at the champion-gate ' + CROWN.current
-      + (model.losers && model.losers.length ? ' · the losers’ bracket gives a second life (double-elim)' : '')
+    flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+      'each lane is a generation; two lanes converge at a match — the winner’s lane continues ↑, the loser’s ends with ✕ — and the champion’s lane reaches the gate ' + CROWN.current
+      + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
+      + (model.losers && model.losers.length ? ' · the losers’ bracket re-converges as a second band (double-elim)' : '')
       + gateNote
-      + (model.live ? ' · LIVE — the winner is not committed until the final gate' : '') }));
+      + (model.live ? ' · LIVE — in-flight legs are dashed' : '') }));
   }
   nodes.push(section(structure === 'double_elim'
-    ? (model.live ? 'Bracket · LIVE — winners’ + losers’ tree' : 'Bracket · winners’ + losers’ tree')
-    : (model.live ? 'Bracket · LIVE — click a match to open the candidate' : 'Bracket · click a match to open the candidate'), card));
-
-  // the COMPANION generations-across-rounds FLOW (Task 3) — the elim analogue of
-  // the racing survival funnel. Shown ALONGSIDE the bracket (not a toggle):
-  // rounds as columns, one lane per generation, each line continuing while it
-  // advances + terminating with ✕ when cut; the champion's lane reaches the gate
-  // crowned. Derived purely from the SAME elimModel (single source). Only when
-  // the bracket has matches to flow.
-  const isElim = structure === 'single_elim' || structure === 'double_elim';
-  if (isElim && model.hasMatches !== false && Array.isArray(model.winners) && model.winners.length) {
-    const flowCard = el('div', { class: 'dn-panel dn-figpane' });
-    flowCard.appendChild(svg.elimFlow({
-      winners: model.winners, championId: model.championId, benchmarkId: model.benchmarkId,
-      gateState: model.gateState, live: model.live, onCompetitor: openGen,
-    }));
-    flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'each lane is a generation; its line advances right while it wins and ends with ✕ when eliminated — the champion’s lane reaches the gate ' + CROWN.current
-      + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
-      + (model.live ? ' · LIVE — in-flight legs are dashed' : '') }));
-    nodes.push(section(model.live ? 'Generations across rounds · LIVE — survival trajectory'
-      : 'Generations across rounds · survival trajectory', flowCard));
-  }
+    ? (model.live ? 'Bracket flow · LIVE — winners’ + losers’ lanes' : 'Bracket flow · winners’ + losers’ lanes')
+    : (model.live ? 'Bracket flow · LIVE — lane convergences, click a lane to open the candidate' : 'Bracket flow · lane convergences, click a lane to open the candidate'), flowCard));
 
   const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
   if (standings) nodes.push(section('Standings', standings));

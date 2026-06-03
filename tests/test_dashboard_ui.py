@@ -256,7 +256,14 @@ def test_bundle_under_size_envelope(
     # and the elim generations-across-rounds flow (a new svg renderer + its CSS),
     # which push the served total just past the prior 640 KB line; the envelope
     # is raised to 680 KB to leave headroom for continued Variant-T iteration.
-    assert total < 680_000, f"bundle is {total} bytes, exceeds 680_000 envelope"
+    # The Console-IV de-chartjunk wave then turns the boxed widgets into
+    # data-graphics: it ADDS three in-language SVG renderers (the gauntlet
+    # `duelFlow`, the loss-floor `waterfall`, the champion `reignGantt`) + their
+    # CSS and enhances `elimFlow` into a bracket-as-flow with match convergences —
+    # net +~11 KB even after RETIRING the seat/box `elimBracket` renderer + the
+    # boxed champion-banner / match-card markup + their CSS. The envelope is
+    # raised to 720 KB to cover the added graphics with headroom.
+    assert total < 720_000, f"bundle is {total} bytes, exceeds 720_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

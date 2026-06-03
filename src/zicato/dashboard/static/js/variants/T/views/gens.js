@@ -140,17 +140,14 @@ export async function render(host, ctx, params) {
       el('p', { class: 'dn-lede', text: 'Every candidate in this epoch. Open one for its lifecycle, promote gate, all match-ups, per-board scoring, and patch diff.' }),
     ]));
 
-    // ── the champion-defends banner (adopted from W) ──────────────────
-    nodes.push(championBanner(championId, champScalar, matchups.length, gens.length, promotedCount, ctx, id));
-
-    // ── the responsive wrapping grid of compact match cards ───────────
-    const cards = el('div', { class: 'dt-matchcards' });
-    if (!matchups.length) {
-      cards.appendChild(empty('No challenger has entered the ring yet — the seed champion stands undefeated.'));
-    } else {
-      matchups.forEach((m, i) => cards.appendChild(matchCard(m, gates[i], ctx, id)));
-    }
-    nodes.push(section('Match-ups · the champion defends · one compact card per challenger round', cards));
+    // ── the round's structure-flow graphic (gauntlet → duel flow) ─────
+    // The field as Δ-vs-champion lanes (replaces the boxed banner + match
+    // cards): each challenger a lane vs the crowned champion-gate, Δ encoded
+    // good-below / bad-above the reference rule, status as a glyph; the per-
+    // challenger hypothesis + exact Δ on HOVER. The champion summary is a
+    // compact accent header integrated above the figure, not a boxed banner.
+    nodes.push(section('Field · the champion defends · Δ-vs-champion lanes (hover for the hypothesis + Δ)',
+      fieldFlow(championId, champScalar, matchups, gates, gens.length, promotedCount, ctx, id)));
 
     // ── the dense roster table (retained for the at-a-glance scan) ────
     const tblCard = el('div', { class: 'dn-panel' });
@@ -244,28 +241,27 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
       nodes.push(empty(`No round ${roundParam} in this epoch (the timeline ran fewer rounds).`));
       return nodes;
     }
-    // the round's champion + minted field, at a glance.
-    nodes.push(championBanner(round.champion ? round.champion.id : championId,
-      round.champion ? round.champion.scalar : null,
-      round.challengers.length, round.challengers.length,
-      round.gateOutcome && round.gateOutcome.kind === 'promoted' ? 1 : 0, ctx, id));
-
+    const roundChampId = round.champion ? round.champion.id : championId;
+    const roundChampScalar = round.champion ? round.champion.scalar : null;
     if (st) {
       // a non-gauntlet round: render its full tournament structure.
       for (const n of renderStructure(st, ctx, id)) nodes.push(n);
     } else if (roundMatchups.length) {
-      // a gauntlet round: one match card per challenger this round.
-      const cards = el('div', { class: 'dt-matchcards' });
-      for (const m of roundMatchups) cards.appendChild(matchCard(m, null, ctx, id));
-      nodes.push(section('Match-ups · this round', cards));
+      // a gauntlet round: the field as Δ-vs-champion lanes (structure-flow).
+      nodes.push(section('Field · this round · Δ-vs-champion lanes',
+        fieldFlow(roundChampId, roundChampScalar, roundMatchups, roundMatchups.map(() => null),
+          round.challengers.length, round.gateOutcome && round.gateOutcome.kind === 'promoted' ? 1 : 0, ctx, id)));
     } else {
-      // no tournament record nor matchups → the minted field as a fan.
-      const cards = el('div', { class: 'dt-matchcards' });
-      for (const c of round.challengers) {
-        cards.appendChild(matchCard({ champion: round.champion ? round.champion.id : championId, challenger: c.id,
-          decision: c.promoted ? 'promoted' : null, delta_scalar: null }, null, ctx, id));
-      }
-      nodes.push(section('Field minted this round', round.challengers.length ? cards : empty('No challengers minted this round.')));
+      // no tournament record nor matchups → the minted field as duel lanes.
+      const synthMatchups = round.challengers.map((c) => ({
+        champion: roundChampId, challenger: c.id,
+        decision: c.promoted ? 'promoted' : null, delta_scalar: null,
+      }));
+      nodes.push(section('Field minted this round',
+        round.challengers.length
+          ? fieldFlow(roundChampId, roundChampScalar, synthMatchups, synthMatchups.map(() => null),
+              round.challengers.length, round.gateOutcome && round.gateOutcome.kind === 'promoted' ? 1 : 0, ctx, id)
+          : empty('No challengers minted this round.')));
     }
     return nodes;
   });
@@ -385,74 +381,58 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   });
 }
 
-// The champion-defends banner: champion id · loss · N title defences · promoted.
-function championBanner(championId, champScalar, defended, total, promoted, ctx, epochId) {
-  if (!championId) {
-    return el('div', { class: 'dt-champ-banner dt-champ-empty' }, [
-      el('span', { class: 'dn-faint', text: 'No reigning champion yet — the seed has not been challenged.' }),
-    ]);
+// The gauntlet FIELD as a structure-flow GRAPHIC (replaces the boxed champion
+// banner + the per-challenger match cards). A compact ACCENT header integrated
+// above the duel-flow figure carries the champion summary; the figure itself is
+// `svg.duelFlow` — each challenger a lane vs the crowned champion-gate, its
+// Δ-vs-champion encoded good-below / bad-above the reference rule, status as a
+// glyph (↑ promoted / ✕ cut / ○ pending). The per-challenger hypothesis + exact
+// Δ live ON HOVER. Clicking a lane opens that challenger's candidate.
+function fieldFlow(championId, champScalar, matchups, gates, total, promoted, ctx, epochId) {
+  const wrap = el('div', { class: 'dn-panel dn-figpane dt-fieldflow' });
+
+  // the compact accent champion header — integrated with the graphic, not a box.
+  const head = el('div', { class: 'dt-fieldflow-head' });
+  if (championId) {
+    head.appendChild(el('a', {
+      class: 'dt-fieldflow-champ', href: ctx.href('candidate', { epochId, gen: championId }),
+      'aria-label': 'Champion ' + championId + ' — open its detail',
+    }, [
+      el('span', { class: 'dt-fieldflow-crown', 'aria-hidden': 'true', text: svg.CROWN.current }),
+      el('span', { class: 'dt-fieldflow-champid dn-mono', text: championId }),
+      el('span', { class: 'dt-fieldflow-champmeta dn-faint', text:
+        'defending · loss ' + (svg.isNum(champScalar) ? svg.fmt(champScalar, 1) : '—')
+        + ' · ' + matchups.length + ' challenger' + (matchups.length === 1 ? '' : 's')
+        + ' · ' + promoted + ' promoted' }),
+    ]));
+  } else {
+    head.appendChild(el('span', { class: 'dn-faint', text: 'No reigning champion yet — the seed has not been challenged.' }));
   }
-  return el('a', {
-    class: 'dt-champ-banner', href: ctx.href('candidate', { epochId, gen: championId }),
-    'aria-label': 'Champion ' + championId + ' — open its detail',
-  }, [
-    el('span', { class: 'dt-champ-crown', 'aria-hidden': 'true', text: '♛' }),
-    el('div', { class: 'dt-champ-body' }, [
-      el('div', { class: 'dt-champ-rank', text: 'CHAMPION · defending the title' }),
-      el('div', { class: 'dt-champ-id', text: championId }),
-      el('div', { class: 'dt-champ-meta' }, [
-        el('span', { text: 'loss ' + (svg.isNum(champScalar) ? svg.fmt(champScalar, 1) : '—') }),
-        el('span', { text: defended + ' title defence' + (defended === 1 ? '' : 's') }),
-        el('span', { text: total + ' generation' + (total === 1 ? '' : 's') + ' · ' + promoted + ' promoted' }),
-      ]),
-    ]),
-    el('span', { class: 'dt-champ-pill' }, [verdictPill('promoted')]),
-  ]);
-}
+  wrap.appendChild(head);
 
-// One compact challenger MATCH CARD: `<challenger> vs <champion>` · verdict ·
-// Δscalar · a ONE-LINE (truncated) hypothesis · decisive-driver judge · status
-// link. Clicking opens that challenger's candidate detail.
-function matchCard(m, gate, ctx, epochId) {
-  // Class B: a round with no resolved decision (match-up + gate both unset) is
-  // still racing — PENDING, not a default "rejected/dead branch".
-  const verdict = normaliseDecision(m) || normaliseDecision(gate) || 'pending';
-  const won = verdict === 'promoted';
-  const delta = svg.isNum(m.delta_scalar) ? m.delta_scalar
-    : (gate && svg.isNum(gate.delta_scalar) ? gate.delta_scalar : null);
-  const driver = gate && gate.primary_driver && gate.primary_driver.judge ? gate.primary_driver.judge : null;
-  const idea = m.hypothesis_core_idea ? String(m.hypothesis_core_idea) : null;
+  // the challenger lanes (one per match-up), Δ-vs-champion + verdict + hypothesis.
+  const challengers = matchups.map((m, i) => {
+    const gate = gates && gates[i] ? gates[i] : null;
+    const verdict = normaliseDecision(m) || normaliseDecision(gate) || 'pending';
+    const delta = svg.isNum(m.delta_scalar) ? m.delta_scalar
+      : (gate && svg.isNum(gate.delta_scalar) ? gate.delta_scalar : null);
+    const driver = gate && gate.primary_driver && gate.primary_driver.judge ? gate.primary_driver.judge : null;
+    return {
+      id: m.challenger, delta, verdict,
+      hypothesis: m.hypothesis_core_idea ? String(m.hypothesis_core_idea) : null,
+      driver,
+    };
+  });
 
-  const pending = verdict === 'pending';
-  return el('a', {
-    class: 'dt-match-card' + (won ? ' dt-match-won' : pending ? ' dt-match-pending' : ' dt-match-lost'),
-    href: ctx.href('candidate', { epochId, gen: m.challenger }),
-    'aria-label': 'Round ' + m.champion + ' vs ' + m.challenger + ' — open challenger ' + m.challenger,
-  }, [
-    el('div', { class: 'dt-match-head' }, [
-      el('span', { class: 'dt-match-versus' }, [
-        el('span', { class: 'dt-match-chall', text: m.challenger }),
-        el('span', { class: 'dt-match-vs', text: 'vs' }),
-        el('span', { class: 'dt-match-champ', text: m.champion }),
-      ]),
-      verdictPill(verdict),
-    ]),
-    el('div', { class: 'dt-match-score' }, [
-      el('span', { class: 'dt-match-delta ' + (svg.isNum(delta) ? (delta > 0 ? 'dn-bad-t' : delta < 0 ? 'dn-good-t' : '') : ''),
-        text: svg.isNum(delta) ? svg.fmtSigned(delta, 1) : '—' }),
-      el('span', { class: 'dt-match-delta-k', text: 'Δ scalar' }),
-    ]),
-    idea
-      ? el('div', { class: 'dt-match-idea', title: idea }, [
-          el('span', { class: 'dt-match-idea-lead', text: 'Hypothesis. ' }),
-          el('span', { class: 'dt-match-idea-txt', text: idea }),
-        ])
-      : el('div', { class: 'dt-match-idea dn-faint', text: 'No hypothesis recorded for this round.' }),
-    driver ? el('div', { class: 'dt-match-driver dn-faint' }, [
-      'decisive driver · ', el('span', { class: 'dn-mono', text: driver }),
-    ]) : null,
-    el('div', { class: 'dt-match-foot' }, [
-      el('span', { class: 'dt-match-open', text: won ? 'new champion → open' : pending ? 'racing… → open' : 'dead branch → open' }),
-    ]),
-  ].filter(Boolean));
+  if (!matchups.length) {
+    wrap.appendChild(empty('No challenger has entered the ring yet — the seed champion stands undefeated.'));
+    return wrap;
+  }
+  wrap.appendChild(svg.duelFlow({
+    championId, championScalar: champScalar, challengers,
+    onCompetitor: (id) => ctx.navigate('candidate', { epochId, gen: id }),
+  }));
+  wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+    'each lane is a challenger duelling the champion · ' + svg.CROWN.current + ' = the crowned champion-gate · a dot below the Δ=0 rule = improvement (good), above = regression (bad) · ↑ promoted · ✕ cut · ○ pending · hover a lane for its hypothesis + exact Δ · click → its candidate' }));
+  return wrap;
 }

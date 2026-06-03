@@ -967,28 +967,36 @@ test('epoch view: the round timeline fits to width with ~11 rounds (one episode 
 
 // ---- (c) the generations page renders the banner + match-card grid ----
 
-test('generations view: renders the champion-defends banner + one compact match card per challenger (wrapping grid)', async () => {
+test('generations view: the FIELD renders as the structure-flow graphic (duelFlow lanes) — NO dt-match-card / dt-champ-banner boxes', async () => {
   freshState(); installFetch();
   const gens = await import('../js/variants/T/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
-  const banner = allByClass(host, 'dt-champ-banner')[0];
-  assert(banner, 'the champion-defends banner rendered');
-  assert(host.textContent.includes('CHAMPION'), 'the banner names the champion role');
-  assert(host.textContent.includes('v0'), 'the banner shows the champion id (v0)');
-  assert(host.textContent.includes('title defence'), 'the banner shows the title-defence count');
+  // the boxed banner + match cards are RETIRED — the field is a data-graphic.
+  assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO dt-champ-banner box remains');
+  assertEqual(allByClass(host, 'dt-match-card').length, 0, 'NO dt-match-card boxes remain');
+  assertEqual(allByClass(host, 'dt-matchcards').length, 0, 'NO match-cards grid remains');
 
-  const grid = allByClass(host, 'dt-matchcards')[0];
-  assert(grid, 'a match-cards grid container rendered');
-  const cards = allByClass(host, 'dt-match-card');
-  assertEqual(cards.length, 2, 'one match card per challenger round (v0→v1, v0→v2)');
-  // each card carries the versus, a Δ, a one-line hypothesis, and a status link.
-  assert(host.textContent.includes('Enforce explicit slide-structure output'), 'the (one-line) hypothesis core idea is on a card');
-  assert(allByClass(host, 'dt-match-delta').length === 2, 'each card shows a Δscalar');
-  assert(allByClass(host, 'dt-match-open').length === 2, 'each card has a status link (dead-branch/promoted → open)');
-  // the decisive driver from the gate.
-  assert(host.textContent.includes('incorporates_feedback'), 'the decisive-driver judge appears on the v1 card');
+  // the integrated, compact accent CHAMPION header (not a boxed banner).
+  const head = allByClass(host, 'dt-fieldflow-champ')[0];
+  assert(head, 'the integrated champion header rendered');
+  assert(host.textContent.includes('v0'), 'the header shows the champion id (v0)');
+  assert(host.textContent.includes('defending'), 'the header reads defending');
+
+  // the duel-flow figure: one challenger LANE per match-up (v0→v1, v0→v2).
+  const flow = svgsByClass(host, 'dn-duelflow')[0];
+  assert(flow, 'the field renders as the duel-flow structure-graphic (dn-duelflow)');
+  const lanes = allByClass(flow, 'dn-duelflow-lane');
+  assertEqual(lanes.length, 2, 'one lane per challenger (v0→v1, v0→v2)');
+  // a Δ=0 champion reference rule + a crowned champion-gate.
+  assert(allByClass(flow, 'dn-duelflow-ref').length >= 1, 'the Δ=0 champion reference rule is drawn');
+  assert(allByClass(flow, 'dn-duelflow-gate').length >= 1, 'a crowned champion-gate node is drawn');
+  // the per-challenger hypothesis lives ON HOVER (the hovercard), not in a box:
+  // the dot is hovercard-wired and the hypothesis text is NOT in the visible DOM.
+  const dots = allByClass(flow, 'dn-duelflow-dot');
+  assert(dots.length >= 2 && dots.every((d) => d.getAttribute('data-hovercard') === '1'), 'each challenger dot is hovercard-wired (hypothesis + Δ on hover)');
+  assert(!host.textContent.includes('Enforce explicit slide-structure output'), 'the hypothesis is NOT a visible box/label — it lives on the hovercard');
 });
 
 // ---- (d) match cards must NOT appear on the environment / workspace view ----
@@ -1717,7 +1725,7 @@ test('structure helpers: label + non-gauntlet detection', () => {
   assert(STRUCT.structureLabel('racing', { rungs: [1, 2, 3] }).includes('3 rungs'), 'racing label names its rungs');
 });
 
-test('structure: single-elim renders a fit-to-width bracket (real rounds + standings)', async () => {
+test('structure: single-elim renders a fit-to-width bracket-as-FLOW (elimFlow lanes + standings)', async () => {
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
   const gens = await import('../js/variants/T/views/gens.js');
@@ -1729,22 +1737,24 @@ test('structure: single-elim renders a fit-to-width bracket (real rounds + stand
   assert(host.textContent.includes('Single elimination'), 'the pill names single-elim');
   assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO gauntlet champion-defends banner for a non-gauntlet structure');
 
-  const bracket = svgsByClass(host, 'dn-elimbracket')[0];
-  assert(bracket, 'a bracket SVG rendered');
-  assertEqual(bracket.getAttribute('width'), '100%', 'the bracket is fit-to-width (width:100%)');
-  assert((bracket.getAttribute('viewBox') || '').startsWith('0 0 '), 'the bracket carries a viewBox so it scales to its pane');
-  assert(!hasScrollWrapperAncestor(bracket, host), 'no horizontal-scroll wrapper around the bracket');
-  // both bracket rounds rendered as columns (heads) and the winners are marked.
+  // the seat/box bracket tree is RETIRED — the elim figure is the bracket-as-flow.
+  assertEqual(svgsByClass(host, 'dn-elimbracket').length, 0, 'the seat/box bracket tree (dn-elimbracket) is retired');
+  const flow = svgsByClass(host, 'dn-elimflow')[0];
+  assert(flow, 'the elim figure is the bracket-as-FLOW (dn-elimflow)');
+  assertEqual(flow.getAttribute('width'), '100%', 'the flow is fit-to-width (width:100%)');
+  assert((flow.getAttribute('viewBox') || '').startsWith('0 0 '), 'the flow carries a viewBox so it scales to its pane');
+  assert(!hasScrollWrapperAncestor(flow, host), 'no horizontal-scroll wrapper around the flow');
+  // both bracket rounds rendered as columns + the trailing champion-gate column.
   assert(host.textContent.includes('Semifinal') && host.textContent.includes('Final'), 'both bracket rounds render as columns');
-  // the bracket tree ends in a champion-gate node (the bracket winner defends).
-  assert(bracket.textContent.toLowerCase().includes('champion-gate'), 'the bracket carries a champion-gate node');
-  assert(allByClass(bracket, 'dn-elimbracket-gate').length >= 1, 'a champion-gate seat is drawn');
+  assert(flow.textContent.toLowerCase().includes('champion-gate'), 'the flow carries the champion-gate column');
+  // a two-lane convergence (a match node) is drawn — the bracket-as-flow.
+  assert(allByClass(flow, 'dn-elimflow-convnode').length >= 1, 'a match convergence node is drawn');
   // a standings leaderboard rendered too.
   assert(allByClass(host, 'dt-standings').length >= 1, 'a standings leaderboard rendered');
   assert(host.textContent.includes('champion'), 'the standings names the champion status');
 });
 
-test('structure: double-elim renders one bracket tree with a stacked losers’ band', async () => {
+test('structure: double-elim renders the bracket-as-FLOW with the losers’ band re-converging as a second band of lanes', async () => {
   freshState();
   const DE = JSON.parse(JSON.stringify(SE_STRUCT));
   DE.structure = 'double_elim';
@@ -1757,11 +1767,14 @@ test('structure: double-elim renders one bracket tree with a stacked losers’ b
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Double elimination'), 'the pill names double-elim');
-  // one bracket SVG holds BOTH bands (winners' tree + the stacked losers' band).
-  assertEqual(svgsByClass(host, 'dn-elimbracket').length, 1, 'a single bracket-tree SVG holds both bands');
-  const bracket = svgsByClass(host, 'dn-elimbracket')[0];
-  assert(/losers/i.test(bracket.textContent), 'the losers’ bracket band rendered from the LB slots');
-  assert(bracket.textContent.toLowerCase().includes('champion-gate'), 'the double-elim bracket ends in a champion-gate node');
+  // the seat/box bracket tree is retired — one flow SVG holds the winners' +
+  // losers' lanes (the losers' band re-converges as a second band of lanes).
+  assertEqual(svgsByClass(host, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired');
+  const flow = svgsByClass(host, 'dn-elimflow')[0];
+  assert(flow, 'the double-elim flow SVG rendered');
+  assert(flow.textContent.toLowerCase().includes('champion-gate'), 'the double-elim flow ends in the champion-gate column');
+  // the LB round columns are present (the losers' band re-converges).
+  assert(/LB Round 1|LB R/i.test(flow.textContent), 'the losers’ bracket rounds render as lanes');
 });
 
 test('structure: swiss renders the standings LADDER hero + per-round pairings', async () => {
@@ -2022,13 +2035,17 @@ test('structure: the data layer exposes tournamentStructure() + invalidates its 
 
 // ---- gauntlet REGRESSION: the default structure is unchanged --------
 
-test('gauntlet (default): the match-ups page still renders the champion banner + match cards (no structure pill)', async () => {
+test('gauntlet (default): the match-ups page renders the FIELD as the duel-flow graphic + integrated champion header (no structure pill)', async () => {
   freshState(); installFetch();  // the default gauntlet fixture (no tournament block)
   const gens = await import('../js/variants/T/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
-  assert(allByClass(host, 'dt-champ-banner').length === 1, 'the gauntlet champion-defends banner still renders');
-  assertEqual(allByClass(host, 'dt-match-card').length, 2, 'the gauntlet match cards still render (v0→v1, v0→v2)');
+  assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO boxed champion banner remains');
+  assertEqual(allByClass(host, 'dt-match-card').length, 0, 'NO match-card boxes remain');
+  assert(allByClass(host, 'dt-fieldflow-champ').length === 1, 'the integrated champion header renders');
+  const flow = svgsByClass(host, 'dn-duelflow')[0];
+  assert(flow, 'the field renders as the duel-flow structure-graphic');
+  assertEqual(allByClass(flow, 'dn-duelflow-lane').length, 2, 'one challenger lane per round (v0→v1, v0→v2)');
   assertEqual(allByClass(host, 'dn-sbracket').length, 0, 'NO bracket SVG for the gauntlet default');
   assertEqual(allByClass(host, 'dt-structure-pill').length, 0, 'NO structure pill for a gauntlet epoch with no tournament block');
 });
@@ -2695,24 +2712,27 @@ test('swiss (completed): a swiss winner that does NOT beat the incumbent is NOT 
   assert(/champion stands/.test(node.textContent), 'the gate reads "champion stands"');
 });
 
-// ---- completed ELIM → the bracket tree ------------------------------
+// ---- completed ELIM → the bracket-as-FLOW (elimBracket retired) -----
 
-test('elim (completed): single-elim → elimModel + a bracket tree with a champion-gate', () => {
+test('elim (completed): single-elim → elimModel + the bracket-as-FLOW with a champion-gate', () => {
   const st = STRUCT.normalizeStructure(SE_STRUCT, false);
   const model = STRUCT.elimModel(st);
   assert(model && model.hasMatches, 'a single-elim model was derived');
   assertEqual(model.losers, null, 'single-elim has NO losers band');
   assertEqual(model.winners.length, 2, 'two winners-bracket rounds (semifinal + final)');
-  const node = svg.elimBracket({ winners: model.winners, losers: model.losers, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onMatch() {} });
-  assertEqual(node.localName, 'svg', 'the bracket is an SVG');
+  assertEqual(typeof svg.elimBracket, 'undefined', 'the elimBracket renderer is deleted (retired)');
+  const node = svg.elimFlow({ winners: model.winners, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onCompetitor() {} });
+  assertEqual(node.localName, 'svg', 'the flow is an SVG');
   assertEqual(node.getAttribute('width'), '100%', 'fit-to-width');
   assert(node.textContent.includes('Semifinal') && node.textContent.includes('Final'), 'both rounds render as columns');
-  assert(/✦/.test(node.textContent), 'match winners are marked ✦');
-  assert(node.textContent.toLowerCase().includes('champion-gate'), 'the bracket ends in a champion-gate node');
-  assertEqual(svgsByClass(node, 'dn-sbracket').length, 0, 'the new bracket tree is dn-elimbracket (not the old dn-sbracket)');
+  // winner continues (↑/good), loser terminates (✕), champion → crowned gate.
+  assert(/✕/.test(node.textContent), 'an eliminated lane terminates with ✕');
+  assert(node.textContent.includes(svg.CROWN.current), 'the champion lane reaches the crowned gate ♛');
+  assert(node.textContent.toLowerCase().includes('champion-gate'), 'the flow carries the champion-gate column');
+  assert(allByClass(node, 'dn-elimflow-convnode').length >= 1, 'a two-lane match convergence node is drawn');
 });
 
-test('elim (completed): double-elim → ONE bracket tree carrying the losers’ band', () => {
+test('elim (completed): double-elim → ONE flow SVG carrying the losers’ band as re-converging lanes', () => {
   const DE = JSON.parse(JSON.stringify(SE_STRUCT));
   DE.structure = 'double_elim';
   DE.rounds.push({ round_index: 2, label: 'LB Round 1', matches: [
@@ -2721,8 +2741,8 @@ test('elim (completed): double-elim → ONE bracket tree carrying the losers’ 
   const st = STRUCT.normalizeStructure(DE, false);
   const model = STRUCT.elimModel(st);
   assert(Array.isArray(model.losers) && model.losers.length >= 1, 'double-elim carries a losers band in the model');
-  const node = svg.elimBracket({ winners: model.winners, losers: model.losers, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onMatch() {} });
-  assert(/losers/i.test(node.textContent), 'the losers’ bracket band renders inside the one bracket SVG');
+  const node = svg.elimFlow({ winners: model.winners.concat(model.losers), championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onCompetitor() {} });
+  assert(/LB Round 1|LB R/i.test(node.textContent), 'the losers’ bracket round renders as a re-converging lane column');
   assert(node.textContent.includes('Semifinal'), 'the winners band still renders');
 });
 
@@ -2866,8 +2886,8 @@ test('live elim model: an undecided round fills in board-by-board (active round,
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, HERO_EPOCH);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
-  const bracket = svgsByClass(host, 'dn-elimbracket')[0];
-  assert(bracket, 'the live bracket rendered (not the being-seeded empty state)');
+  const bracket = svgsByClass(host, 'dn-elimflow')[0];
+  assert(bracket, 'the live bracket-as-flow rendered (not the being-seeded empty state)');
   assert(!/being seeded/i.test(host.textContent), 'NOT the being-seeded placeholder once matches exist');
 });
 
@@ -2909,9 +2929,9 @@ test('live elim model: a no-op repeat render leaves the bracket node identity un
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   ui.gatedSwap(host, STRUCT.structureDigest(a), () => STRUCT.renderStructure(a, ctx, HERO_EPOCH));
-  const first = svgsByClass(host, 'dn-elimbracket')[0];
+  const first = svgsByClass(host, 'dn-elimflow')[0];
   ui.gatedSwap(host, STRUCT.structureDigest(b), () => STRUCT.renderStructure(b, ctx, HERO_EPOCH));
-  const second = svgsByClass(host, 'dn-elimbracket')[0];
+  const second = svgsByClass(host, 'dn-elimflow')[0];
   assert(first === second, 'the bracket node identity is preserved across a no-op tick');
 });
 
@@ -3832,25 +3852,26 @@ test('survival funnel: marks are token-themed in the scoped stylesheet (legible 
   assert(/\.dn-funnel-pending[^}]*var\(--v2-rule/.test(css), 'a pending (live) stage uses a neutral rule token');
 });
 
-// (f2) the swiss-ladder + elim-bracket marks are token-themed (all 16 themes)
+// (f2) the swiss-ladder + elim-FLOW marks are token-themed (all 16 themes)
 // with NO hardcoded hex — and the live transitions are reduced-motion gated.
-test('swiss ladder + elim bracket: token-themed in the scoped stylesheet, no hardcoded hex, reduced-motion gated', () => {
+test('swiss ladder + elim flow: token-themed in the scoped stylesheet, no hardcoded hex, reduced-motion gated', () => {
   const css = readCss();
   // swiss ladder
   assert(/\.dn-swissladder-head\s*\{/.test(css), '.dn-swissladder-head is styled');
   assert(/\.dn-swissladder-standlab\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the swiss leader uses the --v2-good token');
   assert(/\.dn-swissladder-gatebox\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the crowned swiss gate uses the --v2-good token');
   assert(/\.dn-swissladder-bar[^}]*var\(--v2-accent\)/.test(css), 'the live swiss progress bar uses the accent token');
-  // elim bracket
-  assert(/\.dn-elimbracket-box\s*\{[^}]*var\(--v2-/.test(css), 'the elim match box reads a --v2-* token');
-  assert(/\.dn-elimbracket-seat\.dn-win[^}]*var\(--v2-good\)/.test(css), 'the elim match winner uses the --v2-good token');
-  assert(/\.dn-elimbracket-gatebox\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the crowned elim gate uses the --v2-good token');
+  // elim flow (the bracket-as-flow — the seat/box tree is retired).
+  assert(!/\.dn-elimbracket/.test(css), 'the retired seat/box bracket CSS is gone');
+  assert(/\.dn-elimflow-seg\.dn-elimflow-good[^}]*var\(--v2-good\)/.test(css), 'an advancing elim-flow leg uses the --v2-good token');
+  assert(/\.dn-elimflow-dot\.dn-elimflow-bad[^}]*var\(--v2-bad\)/.test(css), 'an eliminated elim-flow dot uses the --v2-bad token');
+  assert(/\.dn-elimflow-convnode\.dn-elimflow-good[^}]*var\(--v2-good\)/.test(css), 'a decided match convergence node uses the --v2-good token');
   // NO hardcoded hex in the swiss/elim rules (token-only).
-  const slice = css.slice(css.indexOf('.dn-swissladder-head'), css.indexOf('.dn-elimbracket-bench') + 80);
+  const slice = css.slice(css.indexOf('.dn-swissladder-head'), css.indexOf('.dn-elimflow-lane:focus-visible') + 80);
   assert(!/#[0-9a-fA-F]{3,6}\b/.test(slice), 'the swiss/elim mark rules carry NO hardcoded hex (theme-token only)');
   // reduced-motion gate covers the new live transitions.
   const rm = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
-  assert(/\.dn-swissladder/.test(rm) && /\.dn-elimbracket/.test(rm), 'the swiss/elim live transitions are suppressed under reduced motion');
+  assert(/\.dn-swissladder/.test(rm) && /\.dn-elimflow/.test(rm), 'the swiss/elim live transitions are suppressed under reduced motion');
 });
 
 // ====================================================================
@@ -4808,7 +4829,7 @@ const HERO_LIVE_ELIM_E3 = {
   standings: [],
 };
 
-test('live hero: a LIVE ELIM tournament renders the BRACKET tree, NOT the racing funnel or swiss ladder', () => {
+test('live hero: a LIVE ELIM tournament renders the bracket-as-FLOW, NOT the racing funnel or swiss ladder', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
   coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH });
@@ -4816,13 +4837,14 @@ test('live hero: a LIVE ELIM tournament renders the BRACKET tree, NOT the racing
   coreState.state.activeTournament = HERO_LIVE_ELIM_E3;
 
   const root = mountLiveShell('#/');
-  const bracket = svgsByClass(root, 'dn-elimbracket')[0];
-  assert(bracket, 'the live elim bracket rendered in the hero');
+  const bracket = svgsByClass(root, 'dn-elimflow')[0];
+  assert(bracket, 'the live elim bracket-as-flow rendered in the hero');
+  assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired');
   assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'NO racing funnel for a LIVE elim tournament');
   assertEqual(svgsByClass(root, 'dn-swissladder').length, 0, 'NO swiss ladder for a LIVE elim tournament');
   assertEqual(allByClass(root, 'dt-live-hero-nofunnel').length, 0, 'no text placeholder once the bracket is live');
-  // the completed semifinal (v0 advanced) persists alongside the filling final.
-  assert(/✦/.test(bracket.textContent), 'the decided semifinal match winner is marked ✦');
+  // the eliminated semifinal lane terminates with ✕ alongside the filling final.
+  assert(/✕/.test(bracket.textContent), 'a decided semifinal eliminates a lane (✕)');
 
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;
@@ -6514,7 +6536,7 @@ test('live elim model: PUBLISHED single_elim rounds render the bracket (not "bei
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, HERO_EPOCH);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
-  assert(svgsByClass(host, 'dn-elimbracket')[0], 'the bracket SVG rendered from the published rounds');
+  assert(svgsByClass(host, 'dn-elimflow')[0], 'the bracket-as-flow SVG rendered from the published rounds');
   assert(!/being seeded/i.test(host.textContent), 'NOT the "being seeded" state once the rounds are published');
 });
 
@@ -6697,10 +6719,11 @@ test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no �
   const ladder = svg.racingLadder({ rungs, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', gateDelta: -2 });
   assert(ladder.textContent.includes('♛') && !ladder.textContent.includes('♚'), 'a crowned racing ladder gate emits ♛, not ♚');
 
-  // a crowned elim bracket gate.
+  // a crowned elim bracket-as-flow gate.
   const winners = [{ round_index: 0, label: 'Final', matches: [{ match_id: 'WB-R0-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'WB-R0-0' }] }];
-  const bracket = svg.elimBracket({ winners, losers: null, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
-  assert(!bracket.textContent.includes('♚'), 'a crowned elim bracket gate does NOT emit ♚');
+  const bracket = svg.elimFlow({ winners, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
+  assert(bracket.textContent.includes('♛'), 'a crowned elim flow gate emits ♛');
+  assert(!bracket.textContent.includes('♚'), 'a crowned elim flow gate does NOT emit ♚');
 
   // the tree current/former champion glyphs.
   const thost = document.createElement('div');
@@ -6924,14 +6947,14 @@ test('Task 3 — elimFlow: rounds as columns, one lane per generation; advancing
   assert(!flow.textContent.includes('♚'), 'no stray ♚ glyph literal');
 });
 
-test('Task 3 — the elim flow is a COMPANION section in the bracket render path; ABSENT for non-elim (racing)', () => {
-  // elim: the flow section renders ALONGSIDE the bracket (both present).
+test('Task 3 — the elim figure is the bracket-as-FLOW (elimFlow), the seat/box tree retired; ABSENT for non-elim (racing)', () => {
+  // elim: the bracket-as-flow IS the figure (no seat/box tree).
   const elimNodes = STRUCT.renderStructure(STRUCT.normalizeStructure(SE_STRUCT, false), { navigate() {}, href: router.href }, EPOCH_ID);
   const elimHost = document.createElement('div');
   for (const n of elimNodes) elimHost.appendChild(n);
-  assert(svgsByClass(elimHost, 'dn-elimbracket')[0], 'the bracket tree is present');
-  assert(svgsByClass(elimHost, 'dn-elimflow')[0], 'the generations-across-rounds flow is present ALONGSIDE the bracket (a companion, not a toggle)');
-  assert(/Generations across rounds/i.test(elimHost.textContent), 'the companion section carries its one-line caption/title');
+  assertEqual(svgsByClass(elimHost, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired');
+  assert(svgsByClass(elimHost, 'dn-elimflow')[0], 'the bracket-as-flow (elimFlow) is the elim figure');
+  assert(/Bracket flow/i.test(elimHost.textContent), 'the section carries its bracket-flow title');
 
   // racing: NO elim flow (it is elim-only).
   const racingNodes = STRUCT.renderStructure(STRUCT.normalizeStructure(RACING_STRUCT, false), { navigate() {}, href: router.href }, EPOCH_ID);
@@ -7115,10 +7138,14 @@ test('round drill-down: the route carries a round param + renders ONE round’s 
   const gens = await import('../js/variants/T/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, round: '0' });
-  // the round drill heads with the round + renders that round's bracket tree.
+  // the round drill heads with the round + renders that round's full tournament
+  // (the bracket-as-flow, with the match convergence nodes — the seat/box tree retired).
   assert(host.textContent.includes('round 0'), 'the drill-down heads with the round');
   assert(host.textContent.includes('all rounds'), 'a "← all rounds" affordance returns to the full Match-ups');
-  assert(svgsByClass(host, 'dn-elimbracket')[0], 'the round drill renders the FULL bracket tree (not the epoch-level flow)');
+  assertEqual(svgsByClass(host, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired in the round drill too');
+  const flow = svgsByClass(host, 'dn-elimflow')[0];
+  assert(flow, 'the round drill renders the bracket-as-flow (elimFlow)');
+  assert(allByClass(flow, 'dn-elimflow-convnode').length >= 1, 'the round drill shows the match convergence nodes');
 });
 
 test('round drill-down: an out-of-range round reads an honest empty', async () => {
@@ -7153,11 +7180,14 @@ test('tree: groups generations by round when round_index is present (Round 0 / R
   const roundNodes = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'round');
   assertEqual(roundNodes.length, 2, 'two Round nodes under Generations');
   assert(host.textContent.includes('Round 0') && host.textContent.includes('Round 1'), 'the rounds are labelled');
-  // each round node shows its gate outcome.
-  assert(host.textContent.includes('promoted v1'), 'round 0 shows its gate outcome (promoted v1)');
-  assert(host.textContent.includes('held'), 'round 1 shows its held gate outcome');
-  // round 1 shows the carried-in champion as a reference (↑ from R0), not a duplicate.
-  assert(host.textContent.includes('↑ from R0'), 'the carried-in champion is shown as a reference (↑ from R0)');
+  // the DEFENDING champion + gate outcome live in the ROUND HEADER (Task 3).
+  assert(host.textContent.includes('v0 defends'), 'round 0 header names the defending champion (v0 defends)');
+  assert(host.textContent.includes('▲ v1 promoted'), 'round 0 header shows its gate outcome (▲ v1 promoted)');
+  assert(host.textContent.includes('v1 defends') && host.textContent.includes('held'), 'round 1 header names v1 defends · — held');
+  // the carried-in champion is NOT duplicated as a ↑-reference child row.
+  assert(!host.textContent.includes('↑ from R0'), 'the carried-in champion is NOT a duplicate ↑-reference child (it lives in the round header)');
+  const carried = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'gen-carried');
+  assertEqual(carried.length, 0, 'no gen-carried reference rows remain');
 });
 
 test('tree: degrades to a FLAT generation list when round_index is absent (no redundant Round 0 wrapper)', () => {
@@ -7193,6 +7223,195 @@ test('tree digest: re-stamps when a round gate outcome changes, stable on a no-o
   const d3 = tree.treeDigest(mk('v2'), route, toggles);
   assertEqual(d1, d2, 'identical round model → a true digest no-op');
   assert(d1 !== d3, 'a changed gate outcome re-stamps the digest');
+});
+
+// ====================================================================
+// Console-IV de-chartjunk wave: the new in-language DATA-GRAPHICS, and a
+// guard that the figures the operator likes still render unchanged.
+// ====================================================================
+
+// ---- the GAUNTLET DUEL FLOW (duelFlow) — the field as Δ-vs-champion lanes ----
+
+test('duelFlow: the field renders as Δ-vs-champion lanes — good below / bad above the reference, status glyphs, a crowned gate, hypothesis on hover', () => {
+  const node = svg.duelFlow({
+    championId: 'v0', championScalar: 12.0,
+    challengers: [
+      { id: 'v1', delta: -3.2, verdict: 'promoted', hypothesis: 'tighten the slide structure', driver: 'incorporates_feedback' },
+      { id: 'v2', delta: 1.4, verdict: 'rejected', hypothesis: 'add a summary slide' },
+      { id: 'v3', delta: null, verdict: 'pending', hypothesis: 'racing' },
+    ],
+    onCompetitor() {},
+  });
+  assertEqual(node.getAttribute('class'), 'dn-duelflow', 'duelFlow is its own renderer');
+  assertEqual(node.getAttribute('width'), '100%', 'fit-to-width');
+  assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'a viewBox so it scales to its pane');
+  // the Δ=0 champion reference rule + a crowned champion-gate.
+  assert(allByClass(node, 'dn-duelflow-ref').length >= 1, 'the Δ=0 champion reference rule is drawn');
+  assert(allByClass(node, 'dn-duelflow-gate').length >= 1, 'a crowned champion-gate node is drawn');
+  assert(node.textContent.includes(svg.CROWN.current), 'the gate carries the current crown ♛');
+  // one lane per challenger; the improved one good, the regressed one bad.
+  const lanes = allByClass(node, 'dn-duelflow-lane');
+  assertEqual(lanes.length, 3, 'one lane per challenger');
+  const goodDots = allByClass(node, 'dn-duelflow-dot').filter((d) => (d.getAttribute('class') || '').includes('dn-good'));
+  const badDots = allByClass(node, 'dn-duelflow-dot').filter((d) => (d.getAttribute('class') || '').includes('dn-bad'));
+  assert(goodDots.length >= 1, 'the improved challenger reads --v2-good (below the rule)');
+  assert(badDots.length >= 1, 'the regressed challenger reads --v2-bad (above the rule)');
+  // status glyphs ↑ / ✕ / ○.
+  assert(node.textContent.includes('↑') && node.textContent.includes('✕') && node.textContent.includes('○'), 'status glyphs ↑ promoted / ✕ cut / ○ pending');
+  // the hypothesis lives ON HOVER (the dot is hovercard-wired), not as a visible box.
+  const dots = allByClass(node, 'dn-duelflow-dot');
+  assert(dots.every((d) => d.getAttribute('data-hovercard') === '1'), 'each lane dot is hovercard-wired');
+  assert(!node.textContent.includes('tighten the slide structure'), 'the hypothesis is NOT a visible label — it is on the hovercard');
+});
+
+// ---- elimFlow CONVERGENCE: winner continues / loser ✕ / champion → gate ----
+
+test('elimFlow convergence: two lanes meet at a match node; the winner continues (good), the loser ✕, the champion → crowned gate', () => {
+  const winners = [
+    { round_index: 0, label: 'Semifinal', matches: [
+      { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], winner: 'v0', decision: 'win', delta_scalar: -1.2, bracket_slot: 'WB-R0-0' },
+      { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], winner: 'v1', decision: 'win', delta_scalar: -0.8, bracket_slot: 'WB-R0-1' },
+    ] },
+    { round_index: 1, label: 'Final', matches: [
+      { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', delta_scalar: -2.0, bracket_slot: 'WB-R1-0' },
+    ] },
+  ];
+  const node = svg.elimFlow({ winners, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
+  // a two-lane match CONVERGENCE node per decided match.
+  const convs = allByClass(node, 'dn-elimflow-convnode');
+  assert(convs.length >= 3, 'a convergence node per match (2 semis + 1 final)');
+  assert(convs.filter((c) => (c.getAttribute('class') || '').includes('dn-elimflow-good')).length >= 1, 'a decided match convergence reads --v2-good');
+  // the winner CONTINUES (an advancing good leg), the loser TERMINATES (✕).
+  assert(allByClass(node, 'dn-elimflow-good').length >= 1, 'the winner lane continues (good)');
+  assert(node.textContent.includes('✕'), 'a losing lane terminates with ✕');
+  // the champion reaches the crowned gate ♛.
+  assert(node.textContent.includes(svg.CROWN.current), 'the champion lane reaches the crowned gate ♛');
+  assert(node.textContent.toLowerCase().includes('champion-gate'), 'the trailing gate column');
+  // the convergence node is hovercard-wired (the pairing + Δ on hover).
+  assert(convs.every((c) => c.getAttribute('data-hovercard') === '1'), 'each convergence node is hovercard-wired (pairing + Δ on hover)');
+});
+
+// ---- the LOSS-FLOOR WATERFALL — steps good-coloured + spine accent + hover ----
+
+test('waterfall: rounds as downward steps (good by direction), a held round flat, the running floor annotated, the spine accent, hover detail', () => {
+  const steps = [
+    { round_index: 0, from: 20, to: 14, delta: -6, promoted: true, gen: 'v1' },
+    { round_index: 1, from: 14, to: 14, delta: 0, promoted: false, gen: null },
+    { round_index: 2, from: 14, to: 9, delta: -5, promoted: true, gen: 'v3' },
+  ];
+  const node = svg.waterfall({ steps, onRound() {}, onCompetitor() {} });
+  assertEqual(node.getAttribute('class'), 'dn-waterfall', 'waterfall is its own renderer');
+  assertEqual(node.getAttribute('width'), '100%', 'fit-to-width');
+  assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'a viewBox');
+  // the promotion steps are good-coloured; a held round is a flat tick.
+  assert(allByClass(node, 'dn-waterfall-bar').filter((b) => (b.getAttribute('class') || '').includes('dn-good')).length >= 2, 'each promotion step is good-coloured (lower floor = improvement)');
+  assert(allByClass(node, 'dn-waterfall-held').length >= 1, 'a held round is a flat tick (no step)');
+  // the spine baseline is accent.
+  assert(allByClass(node, 'dn-waterfall-spine').length >= 1, 'the champion spine baseline is drawn (accent)');
+  // the running floor is annotated + the winning mutation glyph (crown) per step.
+  assert(allByClass(node, 'dn-waterfall-floor').length >= 1, 'the running floor is annotated at each station');
+  assert(node.textContent.includes(svg.CROWN.current), 'the winning-mutation crown marks a promoting step');
+  // the step is hovercard-wired (the winning mutation per step on hover).
+  const bars = allByClass(node, 'dn-waterfall-bar');
+  assert(bars.length >= 2 && bars.every((b) => b.getAttribute('data-hovercard') === '1'), 'each step bar is hovercard-wired (winning mutation on hover)');
+});
+
+test('waterfallModel: derives from the epoch round model — a promotion drops the floor, a held round holds it flat', () => {
+  const r = [
+    { round_index: 0, champion: { id: 'v0', scalar: 20 }, challengers: [{ id: 'v1', scalar: 14, promoted: true }], gateOutcome: { kind: 'promoted', gen: 'v1' } },
+    { round_index: 1, champion: { id: 'v1', scalar: 14 }, challengers: [{ id: 'v2', scalar: 16, promoted: false }], gateOutcome: { kind: 'held', gen: null } },
+  ];
+  const steps = rounds.waterfallModel(r);
+  assertEqual(steps.length, 2, 'one step per round');
+  assertEqual(steps[0].from, 20); assertEqual(steps[0].to, 14); assertEqual(steps[0].delta, -6);
+  assert(steps[0].promoted === true && steps[0].gen === 'v1', 'a promotion step carries its winning mutation');
+  assertEqual(steps[1].from, 14); assertEqual(steps[1].to, 14);
+  assert(steps[1].promoted === false, 'a held round is flat (no step)');
+});
+
+// ---- the CHAMPION REIGN GANTT — bars + ♛ current / ♔ former ----
+
+test('reignGantt: one bar per champion across rounds — current accent + ♛, former dim + ♔', () => {
+  const node = svg.reignGantt({
+    reigns: [
+      { id: 'v0', fromRound: 0, toRound: 1, current: false },
+      { id: 'v3', fromRound: 2, toRound: 4, current: true },
+    ],
+    rounds: 4, onCompetitor() {},
+  });
+  assertEqual(node.getAttribute('class'), 'dn-reigngantt', 'reignGantt is its own renderer');
+  assertEqual(node.getAttribute('width'), '100%', 'fit-to-width');
+  // one bar per champion; current is accent + ♛, former is dim + ♔.
+  assert(allByClass(node, 'dn-reigngantt-bar-current').length === 1, 'the current champion bar reads accent');
+  assert(allByClass(node, 'dn-reigngantt-bar-former').length === 1, 'the former champion bar reads dim ink');
+  assert(node.textContent.includes(svg.CROWN.current), 'the current champion carries ♛');
+  assert(node.textContent.includes(svg.CROWN.former), 'the former champion carries ♔');
+  // hovercard-wired bars (the tenure on hover).
+  const bars = allByClass(node, 'dn-reigngantt-bar');
+  assert(bars.length === 2 && bars.every((b) => b.getAttribute('data-hovercard') === '1'), 'each reign bar is hovercard-wired');
+});
+
+test('reignModel: succession order, last champion flagged current', () => {
+  const r = [
+    { round_index: 0, champion: { id: 'v0' } },
+    { round_index: 1, champion: { id: 'v0' } },
+    { round_index: 2, champion: { id: 'v3' } },
+  ];
+  const reigns = rounds.reignModel(r);
+  assertEqual(reigns.length, 2, 'one entry per champion in succession');
+  assertDeep([reigns[0].id, reigns[0].fromRound, reigns[0].toRound, reigns[0].current], ['v0', 0, 1, false]);
+  assertDeep([reigns[1].id, reigns[1].fromRound, reigns[1].toRound, reigns[1].current], ['v3', 2, 2, true]);
+});
+
+// ---- the reign ribbon shows ONLY for a generation that became champion ----
+
+test('candidate: the reign ribbon (reignGantt) shows ONLY for a generation that became champion', async () => {
+  freshState(); installFetch();
+  const cand = await import('../js/variants/T/views/candidate.js');
+  // v0 is the seed champion (round 0) → it has a reign → the ribbon shows.
+  const hostChamp = document.createElement('div');
+  await cand.render(hostChamp, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v0' });
+  assert(svgsByClass(hostChamp, 'dn-reigngantt')[0], 'the champion v0 shows its reign ribbon');
+  assert(allByClass(hostChamp, 'dn-reignribbon').length >= 1, 'the reign ribbon panel renders for a champion');
+
+  // v2 (a rejected challenger, never champion) → NO reign ribbon.
+  const hostChall = document.createElement('div');
+  await cand.render(hostChall, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v2' });
+  assertEqual(svgsByClass(hostChall, 'dn-reigngantt').length, 0, 'a never-champion candidate shows NO reign ribbon');
+});
+
+// ---- the LOSS-FLOOR WATERFALL is the epoch round-timeline headline figure ----
+
+test('epoch view: the round timeline leads with the loss-floor WATERFALL headline figure', async () => {
+  freshState(); installFetch();
+  const epoch = await import('../js/variants/T/views/epoch.js');
+  const host = document.createElement('div');
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(svgsByClass(host, 'dn-waterfall')[0], 'the epoch round-timeline section carries the loss-floor waterfall');
+  // it sits within the round-timeline section (alongside the spine + episodes).
+  assert(svgsByClass(host, 'dn-roundtl-spine')[0], 'the champion-spine timeline is still present');
+});
+
+// ---- GUARD: the figures the operator LIKES still render unchanged ----
+
+test('liked figures untouched: heatmap / valueDotPlot / lifecycleDag still render their own marks', async () => {
+  const dag = await import('../js/variants/T/dag.js');
+  // heatmap
+  const hm = svg.heatmap({
+    rows: [{ id: 'b1', label: 'b1' }], cols: [{ id: 'v1', label: 'v1' }],
+    value: () => 0.5,
+  });
+  assertEqual(hm.getAttribute('class'), 'dn-heatmap', 'heatmap renderer unchanged');
+  assert(allByClass(hm, 'dn-hm-cell').length >= 1, 'the heatmap still draws its cells');
+  // valueDotPlot
+  const dp = svg.valueDotPlot({ items: [{ label: 'b1', value: 8 }, { label: 'b2', value: 12 }], reference: { value: 10, label: 'champ' } });
+  assertEqual(dp.getAttribute('class'), 'dn-valdot', 'valueDotPlot renderer unchanged');
+  assert(allByClass(dp, 'dn-ref-rule').length >= 1, 'the dot-plot still draws its reference rule');
+  assert(allByClass(dp, 'dn-dot').length >= 2, 'the dot-plot still draws its dots');
+  // lifecycleDag
+  const d = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: [{ entry_id: 'b1', drift_loss: 10, pass_fail: 0 }], decision: 'rejected' });
+  assertEqual(d.getAttribute('width'), '100%', 'the lifecycle DAG renderer unchanged (width:100%)');
+  assert((d.getAttribute('viewBox') || '').startsWith('0 0 '), 'the lifecycle DAG keeps its viewBox');
 });
 
 await run();

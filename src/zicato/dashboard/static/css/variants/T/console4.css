@@ -1549,65 +1549,6 @@
   .dn-roundtl-gate.dn-roundtl-gate-win { color: var(--v2-good); }
   .dn-roundtl-gatemark { font-size: 13px; }
 
-  /* ===================  the GENERATIONS match cards (adopted from W)  ===================
-   *
-   * A champion-defends banner + a RESPONSIVE WRAPPING GRID of COMPACT challenger
-   * match cards (auto-fill, minmax(--dt-card-min, 1fr)) — one per round. Cards
-   * stay short (the full hypothesis lives on the candidate page), so the grid
-   * wraps tidily for 3 OR ~30 generations. These appear on the generations page
-   * only — never on the environment / workspace view. */
-  .dt-champ-banner { display: flex; align-items: center; gap: 16px; text-decoration: none;
-    border: 1.5px solid var(--v2-accent); border-radius: 9px;
-    padding: calc(var(--dt-card-pad, 13px) + 1px) calc(var(--dt-card-pad, 13px) + 5px);
-    margin: 4px 0 6px; background: color-mix(in srgb, var(--v2-panel) 82%, var(--v2-accent));
-    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; }
-  .dt-champ-banner:hover { transform: translateY(-1px); box-shadow: 0 4px 16px color-mix(in srgb, var(--v2-accent) 28%, transparent); }
-  .dt-champ-banner.dt-champ-empty { border-color: var(--v2-rule); background: var(--v2-panel);
-    cursor: default; transform: none; box-shadow: none; }
-  .dt-champ-crown { font-size: 28px; line-height: 1; color: var(--v2-caution); flex: none; }
-  .dt-champ-body { flex: 1; min-width: 0; }
-  .dt-champ-rank { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.12em;
-    text-transform: uppercase; color: var(--v2-accent); font-weight: 700; }
-  .dt-champ-id { font-family: var(--n-font-head); font-size: 23px; font-weight: 700; color: var(--v2-ink); line-height: 1.08; }
-  .dt-champ-meta { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 4px; font-family: var(--v2-mono);
-    font-size: 11px; color: var(--v2-ink-soft); font-variant-numeric: tabular-nums; }
-  .dt-champ-pill { flex: none; }
-
-  .dt-matchcards { display: grid; gap: var(--dt-card-gap, 14px);
-    grid-template-columns: repeat(auto-fill, minmax(var(--dt-card-min, 240px), 1fr)); }
-  .dt-match-card { display: flex; flex-direction: column; gap: 8px; text-decoration: none;
-    border: 1px solid var(--v2-rule); border-left: 4px solid var(--v2-flat); border-radius: 7px;
-    padding: var(--dt-card-pad, 13px) calc(var(--dt-card-pad, 13px) + 2px); background: var(--v2-panel);
-    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; min-width: 0; }
-  .dt-match-card:hover { transform: translateY(-1px); box-shadow: 0 3px 12px color-mix(in srgb, var(--v2-ink) 16%, transparent); }
-  .dt-match-card.dt-match-won { border-left-color: var(--v2-good); }
-  .dt-match-card.dt-match-lost { border-left-color: var(--v2-bad); }
-  .dt-match-card.dt-match-pending { border-left-color: var(--v2-accent); }
-  .dt-match-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .dt-match-versus { display: inline-flex; align-items: baseline; gap: 6px; font-family: var(--v2-mono); min-width: 0; }
-  .dt-match-chall { font-size: 13.5px; color: var(--v2-accent); font-weight: 700;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dt-match-vs { font-size: 9.5px; color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.06em; flex: none; }
-  .dt-match-champ { font-size: 12px; color: var(--v2-ink-soft); flex: none; }
-  .dt-match-score { display: flex; align-items: baseline; gap: 8px; }
-  .dt-match-delta { font-family: var(--n-font-head); font-size: 21px; font-weight: 700;
-    font-variant-numeric: tabular-nums; color: var(--v2-ink); }
-  .dt-match-delta.dn-good-t { color: var(--v2-good); }
-  .dt-match-delta.dn-bad-t { color: var(--v2-bad); }
-  .dt-match-delta-k { font-family: var(--v2-mono); font-size: 9px; text-transform: uppercase;
-    letter-spacing: 0.05em; color: var(--v2-ink-faint); }
-  /* the hypothesis stays ONE truncated line — the full text lives on the candidate page */
-  .dt-match-idea { font-size: 11.5px; line-height: 1.4; color: var(--v2-ink-soft);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dt-match-idea-lead { font-weight: 700; color: var(--v2-ink); }
-  .dt-match-driver { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dt-match-foot { margin-top: 1px; padding-top: 7px; border-top: 1px solid var(--v2-rule-soft); }
-  .dt-match-open { font-family: var(--v2-mono); font-size: 9.5px; text-transform: uppercase;
-    letter-spacing: 0.06em; color: var(--v2-ink-faint); }
-  .dt-match-won .dt-match-open { color: var(--v2-good); }
-  .dt-match-lost .dt-match-open { color: var(--v2-bad); }
-  .dt-match-pending .dt-match-open { color: var(--v2-accent); }
-
   /* ── configured tournament STRUCTURE (bracket / standings / racing) ──
      All marks read from CSS tokens so they theme across every swatch;
      the SVGs are fit-to-width (width:100% + viewBox in svg.js) so they
@@ -1769,41 +1710,6 @@
   .dn-swissladder-gate:focus .dn-swissladder-gatelab { fill: var(--v2-accent); outline: none; }
   .dn-swissladder-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
 
-  /* elim BRACKET TREE (the single/double-elimination hero — a real tree with a
-     champion-gate node + a stacked losers' band for double-elim). Token-themed,
-     fit-to-width (width:100% + viewBox). */
-  .dn-elimbracket-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
-    text-transform: uppercase; letter-spacing: 0.05em; }
-  .dn-elimbracket-bandhead { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono);
-    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
-  .dn-elimbracket-edge { stroke: var(--v2-rule); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
-  .dn-elimbracket-edge.dn-elimbracket-lb { stroke-dasharray: 4 3; opacity: 0.8; }
-  .dn-elimbracket-edge-champ { stroke: var(--v2-good); }
-  .dn-elimbracket-box { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1;
-    transition: stroke 0.12s; }
-  .dn-elimbracket-box.dn-bye { stroke-dasharray: 3 2; }
-  .dn-elimbracket-box.dn-elimbracket-box-live { stroke: var(--v2-accent); stroke-width: 1.3; }
-  .dn-elimbracket-queued .dn-elimbracket-box { opacity: 0.7; }
-  .dn-elimbracket-match:hover .dn-elimbracket-box,
-  .dn-elimbracket-match:focus .dn-elimbracket-box { stroke: var(--v2-accent); stroke-width: 1.6; outline: none; }
-  .dn-elimbracket-seat { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
-  .dn-elimbracket-seat.dn-win { fill: var(--v2-good); font-weight: 700; }
-  .dn-elimbracket-seat.dn-out { fill: var(--v2-ink-faint); text-decoration: line-through; }
-  .dn-elimbracket-seat.dn-elimbracket-queued { fill: var(--v2-ink-faint); opacity: 0.7; }
-  .dn-elimbracket-bar-bg { fill: var(--v2-rule-soft); opacity: 0.6; }
-  .dn-elimbracket-bar { fill: var(--v2-accent); opacity: 0.85; transition: width 0.3s ease; }
-  .dn-elimbracket-bar-live { fill: var(--v2-accent); }
-  .dn-elimbracket-prog { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); }
-  .dn-elimbracket-bye { fill: var(--v2-ink-faint); font: italic 9px var(--v2-mono); }
-  .dn-elimbracket-gatebox { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1; }
-  .dn-elimbracket-gatebox.dn-good { stroke: var(--v2-good); stroke-width: 1.4;
-    fill: color-mix(in srgb, var(--v2-good) 10%, transparent); }
-  .dn-elimbracket-gatelab { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
-  .dn-elimbracket-gatelab.dn-good { fill: var(--v2-good); font-weight: 700; }
-  .dn-elimbracket-gate:hover .dn-elimbracket-gatelab,
-  .dn-elimbracket-gate:focus .dn-elimbracket-gatelab { fill: var(--v2-accent); outline: none; }
-  .dn-elimbracket-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
-
   /* ---- elim FLOW (generations across rounds — the slopegraph companion) ----
    * Rounds as columns, one lane per generation; advancing legs read --v2-good,
    * eliminations read --v2-bad (✕), pending (live) legs dash. All --v2-* tokens.*/
@@ -1829,6 +1735,97 @@
   .dn-elimflow-lane:hover .dn-elimflow-name,
   .dn-elimflow-lane:focus .dn-elimflow-name { fill: var(--v2-accent); outline: none; }
   .dn-elimflow-lane:focus-visible { outline: 2px solid var(--v2-accent); }
+  /* the bracket-as-flow MATCH CONVERGENCE: two lanes pinch toward the match node.*/
+  .dn-elimflow-conv { stroke: var(--v2-rule); stroke-width: 1.4; opacity: 0.7;
+    vector-effect: non-scaling-stroke; }
+  .dn-elimflow-conv-pending { stroke: var(--v2-ink-faint); stroke-dasharray: 4 3; }
+  .dn-elimflow-convnode { fill: var(--v2-ink-soft); vector-effect: non-scaling-stroke; }
+  .dn-elimflow-convnode.dn-elimflow-good { fill: var(--v2-good); }
+  .dn-elimflow-convnode.dn-elimflow-pending { fill: var(--v2-ink-faint); }
+
+  /* ---- the GAUNTLET DUEL FLOW (the field as Δ-vs-champion lanes) ----
+   * Each challenger a lane vs the crowned champion-gate; a dot below the Δ=0
+   * reference rule reads --v2-good (improvement), above reads --v2-bad. The
+   * accent gate is the one structural highlight. All --v2-* tokens. */
+  .dt-fieldflow-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 8px; }
+  .dt-fieldflow-champ { display: inline-flex; align-items: baseline; gap: 7px;
+    text-decoration: none; color: var(--v2-ink); border-bottom: 2px solid var(--v2-accent);
+    padding-bottom: 2px; }
+  .dt-fieldflow-champ:hover { color: var(--v2-accent); }
+  .dt-fieldflow-crown { color: var(--v2-caution); }
+  .dt-fieldflow-champid { font-weight: 700; }
+  .dt-fieldflow-champmeta { font-size: 11px; }
+  .dn-duelflow-ref { stroke: var(--v2-ink-faint); stroke-width: 1.2; stroke-dasharray: 3 3;
+    vector-effect: non-scaling-stroke; }
+  .dn-duelflow-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.05em; }
+  .dn-duelflow-dir { font: 9px var(--v2-mono); }
+  .dn-duelflow-dir.dn-good { fill: var(--v2-good); }
+  .dn-duelflow-laneline { stroke: var(--v2-rule); stroke-width: 1.4; opacity: 0.55;
+    vector-effect: non-scaling-stroke; }
+  .dn-duelflow-laneline.dn-good { stroke: var(--v2-good); opacity: 0.7; }
+  .dn-duelflow-laneline.dn-bad { stroke: var(--v2-bad); opacity: 0.7; }
+  .dn-duelflow-dot { vector-effect: non-scaling-stroke; }
+  .dn-duelflow-dot.dn-good { fill: var(--v2-good); }
+  .dn-duelflow-dot.dn-bad { fill: var(--v2-bad); }
+  .dn-duelflow-dot.dn-duelflow-pending { fill: var(--v2-ink-faint); }
+  .dn-duelflow-name { fill: var(--v2-ink-soft); font: 10.5px var(--v2-mono); }
+  .dn-duelflow-name.dn-good { fill: var(--v2-good); font-weight: 700; }
+  .dn-duelflow-name.dn-bad { fill: var(--v2-ink-faint); }
+  .dn-duelflow-delta { font: 10px var(--v2-mono); font-variant-numeric: tabular-nums;
+    fill: var(--v2-ink-soft); }
+  .dn-duelflow-delta.dn-good { fill: var(--v2-good); }
+  .dn-duelflow-delta.dn-bad { fill: var(--v2-bad); }
+  .dn-duelflow-gatebox { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 1.6; }
+  .dn-duelflow-gatebox.dn-good { stroke: var(--v2-good); }
+  .dn-duelflow-gatelab { fill: var(--v2-accent); font: 600 12px var(--v2-mono); }
+  .dn-duelflow-gatelab.dn-good { fill: var(--v2-good); }
+  .dn-duelflow-gateflow { vector-effect: non-scaling-stroke; }
+  .dn-duelflow-gateflow.dn-good { stroke: var(--v2-good); stroke-width: 2; }
+  .dn-duelflow-lane { cursor: pointer; }
+  .dn-duelflow-lane:hover .dn-duelflow-name,
+  .dn-duelflow-lane:focus .dn-duelflow-name { fill: var(--v2-accent); outline: none; }
+  .dn-duelflow-lane:focus-visible { outline: 2px solid var(--v2-accent); }
+
+  /* ---- the LOSS-FLOOR WATERFALL (the epoch's descent across rounds) ----
+   * Each round a step sized by its promotion Δ — improvement reads --v2-good,
+   * regression --v2-bad, a held round is flat. The accent spine is the floor. */
+  .dn-waterfall-axis { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.04em; }
+  .dn-waterfall-spine { stroke: var(--v2-accent); stroke-width: 2; opacity: 0.85;
+    vector-effect: non-scaling-stroke; }
+  .dn-waterfall-bar { stroke: none; }
+  .dn-waterfall-bar.dn-good { fill: var(--v2-good); fill-opacity: 0.8; }
+  .dn-waterfall-bar.dn-bad { fill: var(--v2-bad); fill-opacity: 0.8; }
+  .dn-waterfall-bar.dn-flat { fill: var(--v2-flat); fill-opacity: 0.6; }
+  .dn-waterfall-held { stroke: var(--v2-ink-faint); stroke-width: 2;
+    vector-effect: non-scaling-stroke; }
+  .dn-waterfall-floor { fill: var(--v2-ink); font: 10px var(--v2-mono);
+    font-variant-numeric: tabular-nums; }
+  .dn-waterfall-rord { fill: var(--v2-ink-faint); font: 10px var(--v2-mono); }
+  .dn-waterfall-crown { fill: var(--v2-caution); font: 11px var(--v2-sans); }
+  .dn-waterfall-step { cursor: pointer; }
+  .dn-waterfall-step:hover .dn-waterfall-bar { fill-opacity: 1; }
+  .dn-waterfall-step:focus-visible { outline: 2px solid var(--v2-accent); }
+
+  /* ---- the CHAMPION REIGN GANTT (tenure across rounds — the reign ribbon) ----
+   * The current champion's bar reads --v2-accent + ♛; a former champion's bar is
+   * dim ink + ♔. All --v2-* tokens. */
+  .dn-reignribbon { margin-top: 12px; }
+  .dn-reignribbon-cap { font-size: 11px; margin-bottom: 6px; }
+  .dn-reigngantt-axis { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
+  .dn-reigngantt-grid { stroke: var(--v2-rule-soft); stroke-width: 0.6;
+    vector-effect: non-scaling-stroke; }
+  .dn-reigngantt-name { font: 10.5px var(--v2-mono); }
+  .dn-reigngantt-name.dn-reigngantt-current { fill: var(--v2-accent); font-weight: 700; }
+  .dn-reigngantt-name.dn-reigngantt-former { fill: var(--v2-ink-faint); }
+  .dn-reigngantt-bar { stroke: none; }
+  .dn-reigngantt-bar.dn-reigngantt-bar-current { fill: var(--v2-accent); fill-opacity: 0.85; }
+  .dn-reigngantt-bar.dn-reigngantt-bar-former { fill: var(--v2-ink-faint); fill-opacity: 0.45; }
+  .dn-reigngantt-row { cursor: pointer; }
+  .dn-reigngantt-row:hover .dn-reigngantt-bar { fill-opacity: 1; }
+  .dn-reigngantt-row:focus-visible { outline: 2px solid var(--v2-accent); }
 
   /* ====================================================================
    * COMPACT structure OVERVIEW (epoch-card hero) — the swiss standings-bump
@@ -1865,13 +1862,6 @@
   .dn-swissover-barrow:hover .dn-swissover-barname,
   .dn-swissover-barrow:focus .dn-swissover-barname { fill: var(--v2-accent); }
 
-  /* ---- elim mini-bracket OVERVIEW: reuses the dn-elimbracket-* marks at a
-     compact scale (svg.elimOverview → svg.elimBracket compact:true). */
-  .dn-elimbracket-compact .dn-elimbracket-head { font-size: 9.5px; letter-spacing: 0.04em; }
-  .dn-elimbracket-compact .dn-elimbracket-seat { font-size: 10px; }
-  .dn-elimbracket-compact .dn-elimbracket-gatelab { font-size: 10.5px; }
-  .dn-elimbracket-compact .dn-elimbracket-bench { font-size: 9px; }
-
   /* ====================================================================
    * LIVE-RUN display — animate state CHANGES, never repaint-loop. All
    * motion below is GPU-friendly (transform / opacity / width) and gated
@@ -1901,7 +1891,7 @@
   .dn-raceladder-runner, .dn-raceladder-edge { transition: opacity 0.3s ease; }
   /* swiss/elim live figures ease their value/position changes the same way. */
   .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge { transition: opacity 0.3s ease, transform 0.3s ease; }
-  .dn-elimbracket-match, .dn-elimbracket-edge { transition: opacity 0.3s ease; }
+  .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv { transition: opacity 0.3s ease; }
 
   /* ---- the LIVE-RUN HERO (the animated home of a live run) ---- */
   /* hidden until the controller flags a live run (the .dt-live-on class). */
@@ -2038,7 +2028,7 @@
     .dn-funnel-band, .dn-funnel-runner, .dn-funnel-deadedge,
     .dn-raceladder-runner, .dn-raceladder-edge, .dn-raceladder-bar,
     .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge, .dn-swissladder-bar,
-    .dn-elimbracket-match, .dn-elimbracket-edge, .dn-elimbracket-bar,
+    .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv,
     .dt-live-hero-progfill, .dt-live-match-fill, .dn-hm-cell { transition: none; }
   }
 

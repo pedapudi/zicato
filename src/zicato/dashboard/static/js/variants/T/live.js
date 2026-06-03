@@ -26,7 +26,7 @@
 // is honoured in CSS (the JS only adds/keeps stable nodes; CSS gates ALL motion).
 
 import { el, patchText, patchClass } from '../../core/dom.js';
-import { isNum, survivalFunnel, swissLadder, elimBracket, proposingTracker, proposingDigest, CROWN } from './svg.js';
+import { isNum, survivalFunnel, swissLadder, elimFlow, proposingTracker, proposingDigest, CROWN } from './svg.js';
 import { fieldStatus as readFieldStatus } from './data.js';
 import {
   racingModel, swissModel, elimModel, normalizeStructure,
@@ -589,11 +589,11 @@ export class LiveController {
       const st = buildLiveElimModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
       const model = elimModel(st);
       if (!model || !model.hasMatches) return null;
-      const node = elimBracket({
-        winners: model.winners, losers: model.losers,
+      const node = elimFlow({
+        winners: model.winners.concat(Array.isArray(model.losers) ? model.losers : []),
         championId: model.championId, benchmarkId: model.benchmarkId,
-        live: model.live, gateState: model.gateState, gateDelta: model.gateDelta,
-        onCompetitor, onMatch: onCompetitor ? (m) => { const g = m.winner || (Array.isArray(m.competitors) && m.competitors[0]); if (g) onCompetitor(String(g)); } : undefined,
+        live: model.live, gateState: model.gateState,
+        onCompetitor,
       });
       return { node, digest: 'elim|' + elimDigest(model) };
     }

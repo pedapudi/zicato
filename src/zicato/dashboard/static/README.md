@@ -4,66 +4,76 @@ Vanilla HTML / CSS / JS source for the zicato dashboard. The standalone
 Python dashboard service (`zicato.dashboard.server`) serves these files
 off disk from `/` and `/static/...`.
 
-No build step. No framework. No external network. Everything in this
-directory must remain self-contained — no Google Fonts, no CDN, no
-remote scripts. The renderer mirrors the palette and typography of
-`zicato/epoch/html_report.py` so `analysis.html` and the live
-dashboard read as siblings.
+No build step. No framework. No external network (the sole exception is
+Google Fonts, loaded by `app_T.js` with `display=swap` + system
+fallbacks). Everything else in this directory must remain self-contained
+— no CDN, no remote scripts.
+
+The shipping UI is **Console IV** (the bake-off convergence winner,
+code-named **Variant T**); its design language is documented in
+`docs/design/CONSOLE-IV-DESIGN-LANGUAGE.md`. It is self-contained under
+`js/variants/T/**` + `css/variants/T/console4.css`, reusing only the
+shared `js/core/*` data spine. Exactly one UI loads at a time.
 
 ## Files
 
-The frontend is a modular ES-module app — a thin entry point plus the
-core spine, a shared component library and the render layer. No build
-step, no framework, no external network. The full contracts every
+The frontend is a modular ES-module app — a thin entry point (`app_T.js`)
+plus the shared core spine (`js/core/**`) and the Variant-T UI
+(`js/variants/T/**`). No build step. The full contracts every core
 module codes against are pinned in `js/CONTRACTS.md`.
 
-- `index.html` — single-page shell. Top-level `<svg>` elements are
-  declared here so the JS modules can populate them via
-  `createElementNS`. Loads `style.css` and `app.js` (as a module).
-- `style.css` — all styling. CSS custom properties drive light + dark
-  themes; the dark branch lives under `@media (prefers-color-scheme:
-  dark)`. Includes a print stylesheet (snapshot-only).
-- `app.js` — the thin entry point. Imports the core spine, wires the
-  event bus (state mutation / route change → render), and bootstraps.
-- `js/core/` — the data/render spine. `state.js` (the single AppState),
-  `bus.js` (pub/sub), `router.js` (hash routing + deep links),
-  `api.js` (the consolidated `/api/environment` read + drill fetches),
-  `sse.js` (EventSource + typed deltas), `dom.js` (the incremental,
-  keyed, no-flash render primitives — `mount`, `reconcileList`,
-  `appendRows`, `patch*`), `format.js`, `harmonograf.js`.
-- `js/components/index.js` — the shared component library: cards,
-  tables, badges, the diff renderer, the line chart, progress meters.
-- `js/views/` — the render layer. `phase0_shell.js` paints the chrome
-  (header / footer / breadcrumb / sidebar Live Activity card + the
-  view-container visibility switch); `phase0_router.js` is the
-  hash-router for the L0..L4 hierarchy; `phase0_workspace.js`,
-  `phase0_epoch.js`, `phase0_generation.js`, `phase0_round.js`,
-  `phase0_run.js` paint one level each. `shared.js` holds the
-  cross-view helpers (`predictedGateVerdict`, the entry-status bucket,
-  the data-quality summary); `mock.js` is the offline `?mock=1`
-  snapshot.
-- `js/CONTRACTS.md` — the pinned frontend contracts: the
-  `/api/environment` shape, the SSE delta types, the AppState shape,
-  the component API, per-view specs, the routes.
+- `index.html` — single-page shell hosting `#variant-root`. Loads the
+  variant CSS + `app_T.js` (as a module).
+- `app_T.js` — the thin entry point for Console IV. Loads Google Fonts,
+  imports the core spine + the Variant-T shell, wires the event bus
+  (state mutation / route change → render), and bootstraps.
+- `js/core/` — the data/render spine shared by the variant. `state.js`
+  (the single AppState), `bus.js` (pub/sub), `router.js` (hash routing +
+  deep links), `api.js` (the consolidated environment read + drill
+  fetches), `sse.js` (EventSource + typed deltas), `dom.js` (the keyed,
+  no-flash `el`/`svgEl` render primitives), `format.js`,
+  `harmonograf.js`, `hypothesis_block.js`.
+- `js/variants/T/` — the Console IV UI. `shell.js` (chrome + the
+  tree-sidebar ↔ detail-pane router host + the page-scale pill),
+  `router.js` (the hierarchical hash routes), `tree.js` (the data-model
+  TREE sidebar, round-grouped), `svg.js` (the data-viz primitives —
+  `heatmap`, `valueDotPlot`, `sparkbar`/`genDots`, the structure figures
+  `survivalFunnel`/`racingLadder`/`swissLadder`/`swissOverview`/
+  `elimFlow`/`duelFlow`, the epoch figures `roundTimeline`/`waterfall`/
+  `reignGantt`, the `sankey`, the side-by-side diff), `dag.js` (the
+  lifecycle DAG), `live.js` + `livestatus.js` (the live-run controller +
+  status), `hovercard.js` (the singleton hover-for-detail card),
+  `compare.js` (the side-by-side compare picker + split frame), `ui.js`
+  (digest-gated swap, pills, themes), `data.js` (the per-epoch read
+  accessors). `js/variants/T/views/**` paints one detail pane each
+  (`home`, `epoch`, `gens`, `candidate`, `board`, `boards`, `rounds`,
+  `structure`, `mutations`, `publication`, `diff`).
+- `css/variants/T/console4.css` — all Console IV styling: the
+  sixteen-theme `--v2-*` six-role token contract (swapped by
+  `[data-t-theme]`), the typeface tokens (`[data-t-type]`), and every
+  fit-to-width SVG mark's classes (`dn-*` / `dt-*`).
+- `js/CONTRACTS.md` — the pinned frontend contracts (the API shape, the
+  SSE delta types, the AppState shape, the routes).
 - `test/` — a dependency-free JS/DOM test harness. `harness.mjs` is a
-  minimal DOM + assertion runner; `*.test.mjs` files verify the render
-  spine (incremental updates, the append-only no-flash log tail,
-  matchup-click survival across a state delta). Run with
-  `node test/run-all.mjs`; also driven from `tests/test_dashboard_js.py`.
-  The `test/` directory is a dev tool and is NOT shipped in the wheel.
+  minimal DOM + assertion runner; `variant_t.test.mjs` + `core.test.mjs`
+  verify the render spine, the figures, and the digest discipline. Run
+  with `node test/run-all.mjs`; also driven from
+  `tests/test_dashboard_js.py`. The `test/` directory is a dev tool and
+  is NOT shipped in the wheel.
 - `icons.svg` — inline-able sprite. Reference via
   `<use href="/static/icons.svg#icon-name"/>`.
 
-### The structural no-flash render spine
+### The structural no-flash render spine (digest-gating)
 
-A delta NEVER rebuilds a panel's `innerHTML`. After the api/sse layer
-folds new data into AppState, the render layer patches only the
-affected DOM nodes — keyed by a stable `data-*` id — via the
-`core/dom.js` primitives. Because nodes keep identity across a
-re-render, their event listeners survive (the matchup-click fix) and
-the browser does not repaint an unchanged subtree (no flashing). The
-activity-log tail is strictly append-only: `appendRows` adds only
-genuinely-new keyed rows and never clears the host.
+A no-op SSE heartbeat NEVER rebuilds the DOM. Each pane computes a stable
+digest of only its structural/content data (timestamps + heartbeat fields
+excluded) and writes via `ui.gatedSwap(host, digest, build)`: when the
+digest equals the one the host last painted and the host still has
+children, nothing is written — a steady heartbeat is a true no-op, so
+scroll position, focus and the hovercard survive. Live state animates
+*values / positions* (CSS transitions, never `animation: …infinite`),
+while digest-gating governs *structure*. See
+`docs/design/CONSOLE-IV-DESIGN-LANGUAGE.md` §6.
 
 ## Environment-view data flow
 
@@ -114,8 +124,9 @@ for the structural test in `tests/test_dashboard_ui.py`.
 
 ## Size envelope
 
-Total bundle (index.html + style.css + app.js + icons.svg) is held
-under an uncompressed envelope by the structural test in
+Total bundle (index.html + the Variant-T CSS + `app_T.js` + the
+`js/**` modules + icons.svg) is held under an uncompressed envelope
+by the structural test in
 `tests/test_dashboard_ui.py`. It is a localhost-served vanilla bundle
 with no network cost; the guard exists only to keep the bundle from
 drifting unboundedly.

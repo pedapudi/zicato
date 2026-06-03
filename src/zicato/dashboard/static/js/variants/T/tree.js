@@ -171,7 +171,13 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
             || ((sel === 'candidate' || sel === 'diff') && p.epochId === epoch.id
                 && (r.challengers || []).some((g) => g && String(g.id) === String(p.gen)));
           const promoted = r.gateOutcome && r.gateOutcome.kind === 'promoted';
-          const gateSub = promoted ? 'promoted ' + r.gateOutcome.gen : 'held';
+          // the DEFENDING champion lives in the ROUND HEADER (e.g. "v3 defends ·
+          // — held" / "▲ v6 promoted"), NOT as a duplicate ↑-reference child row.
+          // The champion's full node still appears under its own BIRTH round.
+          const champLabel = r.championId != null ? String(r.championId) : null;
+          const gateSub = champLabel
+            ? (promoted ? champLabel + ' defends · ▲ ' + r.gateOutcome.gen + ' promoted' : champLabel + ' defends · — held')
+            : (promoted ? '▲ ' + r.gateOutcome.gen + ' promoted' : '— held');
           tree.appendChild(branchRow({
             key: rKey, depth: 3, kind: 'round', label: 'Round ' + r.round_index, sub: gateSub,
             expandable: (r.challengers || []).length > 0, isOpen: rOpen,
@@ -180,15 +186,9 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
             onToggle: () => onToggle(rKey),
           }));
           if (!rOpen) return;
-          // the carried-in champion (a reference, NOT a duplicated minted node).
-          if (ri > 0 && r.championId != null) {
-            tree.appendChild(leafRow({
-              depth: 4, kind: 'gen-carried', label: String(r.championId),
-              glyph: CROWN.current, tag: '↑ from R' + (r.round_index - 1),
-              selected: false, live: isLive(r.championId),
-              onSelect: () => ctx.navigate('candidate', { epochId: epoch.id, gen: r.championId }),
-            }));
-          }
+          // the carried-in champion is shown in the round HEADER (above), not as a
+          // duplicated ↑-reference child — only the round's MINTED challengers
+          // appear as children.
           for (const c of (r.challengers || [])) {
             const g = gensById.get(String(c.id)) || c;
             tree.appendChild(genLeaf(g, 4));

@@ -196,6 +196,50 @@ export function roundModelDigest(rounds) {
   ]));
 }
 
+// The LOSS-FLOOR WATERFALL steps from an epoch round model. Each round is a
+// step: `from` = the incoming champion's loss floor, `to` = the OUTGOING floor
+// (the promoted challenger's loss when the gate promoted, else the floor holds);
+// `delta` = to - from (negative = the floor dropped = an improvement); `promoted`
+// flags a gate promotion; `gen` is the winning mutation (the promoted challenger).
+// PURE — plain rounds[] → plain steps[] — so it unit-tests without a DOM.
+export function waterfallModel(rounds) {
+  const list = Array.isArray(rounds) ? rounds : [];
+  return list.map((r) => {
+    const from = r.champion && isNum(r.champion.scalar) ? r.champion.scalar : null;
+    const promoted = !!(r.gateOutcome && r.gateOutcome.kind === 'promoted' && r.gateOutcome.gen != null);
+    const gen = promoted ? r.gateOutcome.gen : null;
+    // the outgoing floor: the promoted challenger's loss when known, else the
+    // incoming floor holds (a held round keeps the floor flat).
+    let to = from;
+    if (promoted && gen != null) {
+      const winner = (Array.isArray(r.challengers) ? r.challengers : []).find((c) => String(c.id) === String(gen));
+      if (winner && isNum(winner.scalar)) to = winner.scalar;
+    }
+    const delta = (isNum(from) && isNum(to)) ? to - from : null;
+    return { round_index: r.round_index, from, to, delta, promoted: promoted && delta != null && delta !== 0, gen };
+  });
+}
+
+// The CHAMPION REIGN model from an epoch round model: one entry per champion in
+// succession order, each spanning the rounds it held the title. A generation is
+// the round's champion when it is that round's carried-in `champion.id`; its
+// reign runs from the first such round to the last consecutive one. The LAST
+// champion (the still-reigning one) is flagged `current`. PURE.
+//   → [{ id, fromRound, toRound, current }]
+export function reignModel(rounds) {
+  const list = Array.isArray(rounds) ? rounds : [];
+  const reigns = [];
+  for (const r of list) {
+    const id = r.champion && r.champion.id != null ? String(r.champion.id) : null;
+    if (id == null) continue;
+    const last = reigns[reigns.length - 1];
+    if (last && last.id === id) last.toRound = r.round_index;
+    else reigns.push({ id, fromRound: r.round_index, toRound: r.round_index, current: false });
+  }
+  if (reigns.length) reigns[reigns.length - 1].current = true;
+  return reigns;
+}
+
 // Group an epoch's generations BY their birth round (for the tree). Returns
 // [{ round_index, challengers:[gen], gateOutcome, championId, source }] using
 // the SAME derivation as epochRoundModel, but each `challengers` entry is the

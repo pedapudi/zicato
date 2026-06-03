@@ -13,7 +13,7 @@ import * as svg from '../svg.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, reconstructRacing, normalizeStructure, racingModel, swissOverviewModel, elimModel, buildLiveSwissModel, buildLiveElimModel, structureDigest } from './structure.js';
-import { epochRoundModel, roundModelDigest } from './rounds.js';
+import { epochRoundModel, roundModelDigest, waterfallModel } from './rounds.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
@@ -145,6 +145,7 @@ export async function render(host, ctx, params) {
     elimOver: elimOver ? structureDigest(elimOver.st) : null,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, svg.isNum(g.round_index) ? g.round_index : null, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
     rounds: roundModelDigest(epochRounds),
+    waterfall: waterfallModel(epochRounds).map((s) => [s.round_index, svg.isNum(s.from) ? s.from.toFixed(2) : null, svg.isNum(s.to) ? s.to.toFixed(2) : null, s.promoted, s.gen]),
     loss: [...lossLookup.entries()].sort(),
     board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
   });
@@ -243,6 +244,22 @@ export async function render(host, ctx, params) {
     };
 
     const timelineCard = el('div', { class: 'dn-panel' });
+
+    // ── the LOSS-FLOOR WATERFALL (the headline "is it improving + what drove
+    // each gain" figure) — one step per round, sized by its promotion Δ; a held
+    // round is flat. The running floor is annotated; the spine baseline is accent;
+    // the winning mutation per step lives on hover. Derived from the SAME epoch
+    // round model the spine timeline reads (single source). Only for ≥1 scored
+    // round (else the descent has no floor to plot).
+    const waterfallSteps = waterfallModel(epochRounds);
+    if (waterfallSteps.some((s) => svg.isNum(s.to) || svg.isNum(s.from))) {
+      timelineCard.appendChild(el('div', { class: 'dn-roundtl-waterfall dn-figpane' }, [
+        svg.waterfall({ steps: waterfallSteps, onRound: drill, onCompetitor: open }),
+      ]));
+      timelineCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:6px 0 10px;', text:
+        'the loss-floor descent across rounds — each step a promotion Δ (good = lower floor), a held round flat · the spine baseline is the champion floor · hover a step for its winning mutation' }));
+    }
+
     timelineCard.appendChild(svg.roundTimeline({
       rounds: epochRounds, selected: null,
       figureFor: figureForRound, onRound: drill, onCompetitor: open,

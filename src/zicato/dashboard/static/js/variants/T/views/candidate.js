@@ -31,6 +31,7 @@ import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch } from './structure.js';
+import { epochRoundModel, reignModel } from './rounds.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
 export async function render(host, ctx, params, route) {
@@ -109,6 +110,14 @@ export async function render(host, ctx, params, route) {
   });
   if (structure === 'gauntlet' && liveStruct && epochInflight.length) structure = liveStruct;
 
+  // the CHAMPION REIGN model (the "reign ribbon"): one bar per champion across
+  // the epoch's rounds — shown on a candidate panel only when THAT generation
+  // became champion. Derived from the SAME epoch round model the timeline reads.
+  const reigns = reignModel(epochRoundModel({
+    gens: genList.map((g) => ({ id: g.id, parent: g.parent, promoted: g.promoted })),
+    scalarBy: scalarByGen, bracket, structure, championId,
+  }));
+
   // Resolve each side's full panel data (cached). Side B only when comparing.
   // The primary side (A) honours the entry drill-down param; the compare side
   // (B) reads its lifecycle clean.
@@ -117,6 +126,7 @@ export async function render(host, ctx, params, route) {
 
   const digest = JSON.stringify({
     epochId, genId, cmpId, entry: params.entry || null, structure,
+    reigns: reigns.map((r) => [r.id, r.fromRound, r.toRound, r.current]),
     a: candidateDigest(sideA), b: sideB ? candidateDigest(sideB) : null,
   });
 
@@ -144,8 +154,8 @@ export async function render(host, ctx, params, route) {
     ].filter(Boolean)));
 
     nodes.push(splitFrame({
-      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId, structure) },
-      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true, structure) } : null,
+      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId, structure, reigns) },
+      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true, structure, reigns) } : null,
       emptyTitle: 'no comparison',
       emptyPrompt: 'Choose a candidate above to compare its lifecycle, gate, match-ups and per-board scoring against ' + genId + '.',
     }));
@@ -340,7 +350,7 @@ function candidateDigest(s) {
 // SPLIT-LAYOUT flag — true for BOTH panes whenever a comparison is shown — and
 // drives the figure viewBox WIDTH (so A and B scale identically), independent
 // of the per-side `cmpId` (which is null on B but the layout is still split).
-function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structure) {
+function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structure, reigns) {
   const opts = cmpId ? { cmp: cmpId } : undefined;
   const node = s.node;
   const genId = node.id;
@@ -354,6 +364,21 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     stat(node.parent || 'seed', 'parent'),
     el('div', { class: 'dn-stat' }, [verdictPill(baseline ? 'baseline' : s.decision)]),
   ]));
+
+  // ── the REIGN RIBBON — shown ONLY for a generation that became champion.
+  // A reignGantt across the epoch's rounds, with THIS generation's tenure the
+  // highlighted (accent / ♛ current, ink / ♔ former) segment of the spine.
+  const reignList = Array.isArray(reigns) ? reigns : [];
+  if (reignList.some((r) => String(r.id) === String(genId))) {
+    const maxRound = Math.max(1, ...reignList.map((r) => (svg.isNum(r.toRound) ? r.toRound : 0)));
+    host.appendChild(el('div', { class: 'dn-panel dn-figpane dn-reignribbon' }, [
+      el('div', { class: 'dn-reignribbon-cap dn-faint', text: genId + ' reign · its tenure across the epoch’s rounds' }),
+      svg.reignGantt({
+        reigns: reignList, rounds: maxRound,
+        onCompetitor: (id) => { if (id && String(id) !== String(genId)) ctx.navigate('candidate', { epochId, gen: id }, opts); },
+      }),
+    ]));
+  }
 
   // CACHED-CHAMPION eval-mode tag: when this candidate's per-board results were
   // REUSED (fast mode) rather than re-executed this round, surface the mode so a
