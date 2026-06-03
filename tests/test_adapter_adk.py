@@ -715,8 +715,8 @@ async def test_run_single_turn_judge_only_spreads_overrides_into_goldfive_run(
     entry_on.validate()
     await runnable.run(entry_on, sinks=[object()], config=config)
     assert (
-        "planner" in seen and "goal_deriver" in seen
-    ), "judge_only ON must spread the no-steering overrides into goldfive.run"
+        "planner" in seen and "goal_deriver" in seen and "steerer" in seen
+    ), "judge_only ON must spread the no-steering, no-refine overrides into goldfive.run"
     assert "judges" in seen, "judges must stay armed in judge_only mode"
 
     # --- judge_only OFF (default) ---
@@ -728,9 +728,9 @@ async def test_run_single_turn_judge_only_spreads_overrides_into_goldfive_run(
     )
     entry_off.validate()
     await runnable.run(entry_off, sinks=[object()], config=config)
-    assert "planner" not in seen and "goal_deriver" not in seen, (
-        "judge_only OFF must NOT pass any steering override — byte-identical " "to the legacy path"
-    )
+    assert (
+        "planner" not in seen and "goal_deriver" not in seen and "steerer" not in seen
+    ), "judge_only OFF must NOT pass any steering override — byte-identical to the legacy path"
     assert "judges" in seen, "judges must stay armed on the default path too"
 
 
@@ -806,7 +806,11 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
     import goldfive
     from goldfive import InMemorySink
 
-    from zicato.adapters.adk import _entry_judge_only, _judge_only_overrides
+    from zicato.adapters.adk import (
+        _entry_judge_only,
+        _goldfive_runtime,
+        _judge_only_overrides,
+    )
 
     agent = LlmAgent(name="greeter", instruction="Make a presentation.", model="fake-model")
 
@@ -825,13 +829,15 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
     )
     assert _entry_judge_only(on_entry) is True
     sink_on = InMemorySink()
+    gf_runtime = _goldfive_runtime()
     await goldfive.run(
         agent,
         on_entry.input,
         sinks=[sink_on],
         call_llm=stub_call_llm,
         judges=[],  # judges stay armed in real usage; empty here keeps the stub deterministic
-        **_judge_only_overrides(agent),
+        runtime=gf_runtime,
+        **_judge_only_overrides(agent, stub_call_llm, gf_runtime),
     )
     kinds_on, llm_calls_on = _goldfive_event_kinds(sink_on)
 
@@ -1347,3 +1353,179 @@ async def test_run_single_turn_forwards_runtime_to_goldfive_run(
     runtime = seen["runtime"]
     assert runtime is not None
     assert runtime.agent.call_timeout_ms == 1_800_000
+
+
+# ---------------------------------------------------------------------------
+# Judge-only steerer: observe + judge, ZERO refine attempts
+# ---------------------------------------------------------------------------
+
+
+def _drift_detected_and_judgement_counts(sink: Any) -> tuple[int, int, int]:
+    """Return (drift_detected, judgement_emitted, refine_attempted) counts.
+
+    Normalises goldfive's :class:`InMemorySink` events (protobuf messages
+    or plain dicts) the same way :func:`_goldfive_event_kinds` does, then
+    counts the three event kinds the judge-only no-refine contract turns
+    on: a custom-judge verdict must still emit ``drift_detected`` +
+    ``judgement_emitted`` (the scalar signal zicato's reducer reads) while
+    firing ZERO ``refine_attempted`` (the abort-spiral trigger).
+    """
+    from google.protobuf.json_format import MessageToDict  # noqa: PLC0415
+
+    drift_detected = 0
+    judgement_emitted = 0
+    refine_attempted = 0
+    for ev in sink.events:
+        if isinstance(ev, dict):
+            kind = str(ev.get("kind", ""))
+            if kind == "drift_detected":
+                drift_detected += 1
+            elif kind == "judgement_emitted":
+                judgement_emitted += 1
+            elif kind == "refine_attempted":
+                refine_attempted += 1
+            continue
+        d = MessageToDict(ev, preserving_proto_field_name=True)
+        if d.get("drift_detected") is not None:
+            drift_detected += 1
+        if d.get("judgement_emitted") is not None:
+            judgement_emitted += 1
+        if d.get("refine_attempted") is not None:
+            refine_attempted += 1
+    return drift_detected, judgement_emitted, refine_attempted
+
+
+class _RefineRecordingPlanner:
+    """A planner whose ``refine`` records that it was invoked at all.
+
+    The discriminating signal for the judge-only contract is whether
+    ``refine`` is reached. A control :class:`DefaultSteerer` routes a
+    CRITICAL custom drift into the refine ladder and calls this; the
+    judge-only steerer must NOT.
+    """
+
+    def __init__(self) -> None:
+        self.refine_calls = 0
+
+    async def generate(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+        return None
+
+    async def refine(self, *args: Any, **kwargs: Any) -> Any:
+        self.refine_calls += 1
+        return None
+
+    async def handle_turn(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+        return None
+
+
+class _CriticalFabricationJudge:
+    """Stub of the board's CRITICAL ``no_fabricated_numbers`` judge.
+
+    Emits a drift-flavoured CRITICAL verdict every time it is evaluated —
+    exactly the shape that, on the live emulated path, was promoted to a
+    ``custom`` drift, escalated through the refine ladder, and spun the
+    run to the wall-clock budget.
+    """
+
+    name = "no_fabricated_numbers"
+
+    async def evaluate(self, ctx: Any) -> Any:
+        from goldfive.judges import JudgeVerdict  # noqa: PLC0415
+        from goldfive.types import DriftKind, DriftSeverity  # noqa: PLC0415
+
+        return JudgeVerdict(
+            drift_emitted=True,
+            drift_kind=DriftKind.CUSTOM,
+            severity=DriftSeverity.CRITICAL,
+            detail="The agent fabricated specific metric values it was not given.",
+        )
+
+
+def _judge_only_test_session() -> Any:
+    """Build a minimal bound-ready :class:`Session` carrying a live task.
+
+    A non-empty task is required so the CRITICAL drift has a concrete
+    target for the control steerer's ladder to refine against.
+    """
+    from goldfive.types import Goal, Plan, Session, Task  # noqa: PLC0415
+
+    task = Task(id="t1", title="Draft the Q3 metrics deck", description="draft")
+    goal = Goal(id="g1", summary="produce a Q3 metrics deck")
+    plan = Plan(
+        id="p1",
+        run_id="r1",
+        goal_ids=("g1",),
+        tasks=(task,),
+        edges=(),
+        summary="one-task plan",
+    )
+    session = Session(run_id="r1", goals=[goal], plan=plan, current_task_id="t1")
+    return session
+
+
+@pytest.mark.asyncio
+async def test_judge_only_steerer_emits_drift_but_never_refines() -> None:
+    """Judge-only: a CRITICAL custom-judge verdict scores WITHOUT refining.
+
+    Drives ``evaluate_judges`` directly on the judge-only steerer with the
+    stub CRITICAL ``no_fabricated_numbers`` judge. The contract:
+
+    * ``drift_detected`` IS emitted — the ``custom``-kind drift zicato's
+      reducer attributes to the judge by ``judge_name`` for the scalar;
+    * ``judgement_emitted`` IS emitted — the paired judgement envelope;
+    * ``refine_attempted`` is NEVER emitted AND the bound planner's
+      ``refine`` is NEVER called — zero refine attempts, so no
+      ``HUMAN_INTERVENTION_REQUIRED`` escalation and no wall-clock spin.
+
+    The control half proves the assertion is load-bearing: a plain
+    :class:`DefaultSteerer` with the SAME judge + planner DOES reach
+    ``refine`` (the live behaviour this fix removes).
+    """
+    from goldfive import InMemorySink
+    from goldfive.judges.base import JudgeContext
+    from goldfive.steerer import DefaultSteerer
+
+    from zicato.adapters.adk import _build_judge_only_steerer
+
+    judge = _CriticalFabricationJudge()
+
+    # --- judge-only steerer: observe + judge, NO refine ---
+    jo_sink = InMemorySink()
+    jo_steerer = _build_judge_only_steerer(call_llm=None, runtime=_goldfive_runtime())
+    jo_planner = _RefineRecordingPlanner()
+    jo_steerer.bind(sinks=[jo_sink], planner=jo_planner)
+    jo_steerer.set_judges([judge])
+    jo_session = _judge_only_test_session()
+    jo_ctx = JudgeContext(
+        plan=jo_session.plan,
+        session_state=jo_session,
+        current_task_id="t1",
+    )
+    await jo_steerer.evaluate_judges(jo_ctx, session=jo_session, run_id="r1")
+
+    jo_drift, jo_judgement, jo_refine = _drift_detected_and_judgement_counts(jo_sink)
+    assert jo_drift >= 1, "judge-only must still emit drift_detected (the scalar signal)"
+    assert jo_judgement >= 1, "judge-only must still emit judgement_emitted"
+    assert jo_refine == 0, f"judge-only must fire ZERO refine_attempted; saw {jo_refine}"
+    assert (
+        jo_planner.refine_calls == 0
+    ), f"judge-only must NEVER call planner.refine; called {jo_planner.refine_calls}x"
+
+    # --- control: a plain DefaultSteerer DOES reach refine on the same drift ---
+    ctrl_sink = InMemorySink()
+    ctrl_steerer = DefaultSteerer()
+    ctrl_planner = _RefineRecordingPlanner()
+    ctrl_steerer.bind(sinks=[ctrl_sink], planner=ctrl_planner)
+    ctrl_steerer.set_judges([judge])
+    ctrl_session = _judge_only_test_session()
+    ctrl_ctx = JudgeContext(
+        plan=ctrl_session.plan,
+        session_state=ctrl_session,
+        current_task_id="t1",
+    )
+    await ctrl_steerer.evaluate_judges(ctrl_ctx, session=ctrl_session, run_id="r1")
+
+    assert ctrl_planner.refine_calls >= 1, (
+        "control DefaultSteerer must reach planner.refine on a CRITICAL drift "
+        "(proves the judge-only assertion bites)"
+    )

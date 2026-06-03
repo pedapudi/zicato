@@ -70,11 +70,39 @@ but does ZERO steering: no goal-derivation LLM call, no planner
 replanning, no drift-triggered refine. This is implemented by spreading
 :func:`_judge_only_overrides` (a one-task ``StaticPlanner`` so the native
 agent tree still runs on goldfive's overlay path and produces a
-transcript, plus a ``LiteralGoalDeriver`` so the entry input becomes the
-goal verbatim) into every ``goldfive.run`` call for the entry. The
-default (``judge_only`` False) leaves the steering path untouched and
+transcript, a ``LiteralGoalDeriver`` so the entry input becomes the goal
+verbatim, AND a :class:`_JudgeOnlySteerer` that suppresses the refine
+loop) into every ``goldfive.run`` call for the entry. The default
+(``judge_only`` False) leaves the steering path untouched and
 byte-identical. The flag folds into the epoch contract hash, so flipping
 it opens a new epoch.
+
+Why the steerer override is required
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``StaticPlanner`` alone does NOT yield zero refine attempts. goldfive
+dispatches EVERY non-INFO drift through ``DriftObserver.handle_drift`` →
+the cancel + refine ladder, regardless of which planner is installed. A
+``StaticPlanner`` makes ``planner.refine`` return ``None``, but goldfive
+treats a ``None`` refine as *handler exhaustion* and escalates to
+``DRIFT_KIND_HUMAN_INTERVENTION_REQUIRED`` — emitting ``refine_attempted``
+/ ``refine_failed`` and (under the ``multi_turn_emulated`` persona, where
+a CRITICAL ``no_fabricated_numbers`` judge keeps re-firing) spinning to
+the wall-clock budget and aborting the run. ``SteeringConfig.observation_only``
+does not help either: it gates only the three steer *injection* points
+while ``planner.refine`` still runs.
+
+The custom-judge SCORING signal that zicato's reducer reads is the
+``custom``-kind ``DriftDetected`` event (attributed to its ``judge_name``
+via the paired ``JudgementEmitted``) — and ``handle_drift`` emits that
+``DriftDetected`` *before* it enters the ladder. So judge-only suppresses
+the refine loop WITHOUT losing the scalar by overriding ``handle_drift``
+to emit the ``DriftDetected`` and return, skipping the cancel / promote /
+refine machinery entirely. ``JudgementEmitted`` is published upstream in
+``DefaultSteerer.evaluate_judges`` and is unaffected. Net effect under
+judge-only on EVERY board-run path — gauntlet, multi-challenger, and
+``multi_turn_emulated`` — is pure observe + judge: ZERO ``steering``
+decisions and ZERO ``refine_attempted`` events.
 """
 
 from __future__ import annotations
@@ -303,12 +331,107 @@ def _entry_judge_only(entry: BoardEntry) -> bool:
     return str(raw).strip().lower() == "true"
 
 
-def _judge_only_overrides(agent: Any) -> dict[str, Any]:
+def _build_judge_only_steerer(call_llm: Any, runtime: Any) -> Any:
+    """Build the :class:`DefaultSteerer` subclass that suppresses refine.
+
+    Under judge-only the goal is ZERO steering AND ZERO refine attempts
+    while the scoring signal is preserved. The ``StaticPlanner`` alone
+    does not achieve that: goldfive dispatches every non-INFO drift
+    through ``DriftObserver.handle_drift`` → the cancel + refine ladder,
+    and a ``StaticPlanner.refine`` returning ``None`` is treated as
+    handler exhaustion → ``HUMAN_INTERVENTION_REQUIRED`` escalation (which
+    emits ``refine_attempted`` / ``refine_failed`` and, on the persona
+    path, spins to the wall-clock budget).
+
+    The fix is a steerer whose drift observer's ``handle_drift`` emits the
+    ``DriftDetected`` event — the SAME signal zicato's reducer reads to
+    attribute custom-judge loss by ``judge_name`` — and then returns,
+    skipping the entire cancel / promote / refine machinery. This mirrors
+    goldfive's own "emit for observability, skip dispatch" early-return
+    pattern (used on its redundant-verdict and concurrent-refine guards).
+    ``JudgementEmitted`` is published earlier in
+    ``DefaultSteerer.evaluate_judges`` and is therefore unaffected, so the
+    paired judgement + custom drift the reducer needs both still land.
+
+    Detection stays fully wired. ``goldfive.wrap`` builds its default
+    steerer with the judge call_llm + the runtime's drift configs (see
+    its ``resolved_steerer = DefaultSteerer(...)`` branch); passing an
+    explicit ``steerer=`` SKIPS that construction, so this factory must
+    reproduce the same wiring or the built-in goal-/reasoning-drift
+    detectors silently go inert and the scalar changes. We therefore
+    thread the adapter's harness ``call_llm`` (which is exactly what
+    ``goldfive.wrap`` resolves the judge callable to when the caller
+    passes ``call_llm=`` explicitly, as the adapter does) and the
+    resolved ``runtime`` into the same constructor kwargs. The ONLY
+    behavioural delta from goldfive's default steerer is the neutered
+    ``handle_drift`` — detectors fire and emit ``DriftDetected`` exactly
+    as before; only the refine ladder is skipped.
+
+    Imported lazily so the optional goldfive dependency stays out of this
+    module's import time. The subclass is defined inside the factory so
+    the ``DefaultSteerer`` base symbol is resolved at call time.
+    """
+    from goldfive.steerer import DefaultSteerer  # noqa: PLC0415
+
+    class _JudgeOnlySteerer(DefaultSteerer):
+        """``DefaultSteerer`` that observes + judges but never refines.
+
+        Rebinds the bound :class:`~goldfive.drift_observer.DriftObserver`'s
+        ``handle_drift`` to a variant that emits ``DriftDetected`` (so the
+        scalar reducer still sees the custom-judge-attributed drift) and
+        returns before the refine ladder. Everything else — judge
+        invocation, ``JudgementEmitted`` emission, sink fan-out, the
+        built-in detector wiring — is inherited unchanged.
+        """
+
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            observer = self.drift
+
+            # ``DriftObserver.handle_drift`` is the single chokepoint every
+            # drift (built-in detector OR custom-judge verdict) flows
+            # through before the cancel + refine ladder. Replace it on the
+            # instance with an observe-only variant. ``_emit_drift_detected``
+            # is the canonical ``DriftDetected`` emit the reducer keys on.
+            async def _observe_only_handle_drift(drift: Any, session: Any) -> None:
+                await observer._emit_drift_detected(session, drift)
+
+            observer.handle_drift = _observe_only_handle_drift  # type: ignore[method-assign]
+
+    # Mirror ``goldfive.wrap``'s default-steerer construction so the
+    # built-in goal-/reasoning-drift detectors stay wired identically.
+    # Each config field is read defensively: a goldfive RuntimeConfig
+    # revision that renames a sub-config must not crash judge-only — a
+    # missing field falls back to the steerer's own default.
+    kwargs: dict[str, Any] = {}
+    if call_llm is not None:
+        kwargs["goal_drift_call_llm"] = call_llm
+        kwargs["reasoning_drift_call_llm"] = call_llm
+    goal_drift = getattr(runtime, "goal_drift", None)
+    if goal_drift is not None:
+        kwargs["goal_drift_config"] = goal_drift
+    tool_loops = getattr(runtime, "tool_loops", None)
+    if tool_loops is not None:
+        kwargs["tool_loop_config"] = tool_loops
+    reasoning_drift = getattr(runtime, "reasoning_drift", None)
+    if reasoning_drift is not None:
+        kwargs["reasoning_drift_config"] = reasoning_drift
+        mode = getattr(reasoning_drift, "mode", None)
+        if mode is not None:
+            kwargs["reasoning_drift_mode"] = mode
+    steering = getattr(runtime, "steering", None)
+    if steering is not None:
+        kwargs["steering_config"] = steering
+    return _JudgeOnlySteerer(**kwargs)
+
+
+def _judge_only_overrides(agent: Any, call_llm: Any, runtime: Any) -> dict[str, Any]:
     """Build the ``goldfive.run`` kwargs that turn STEERING off, JUDGING on.
 
     Judge-only evaluation keeps goldfive's drift / process judges armed
     (``reasoning_drift_mode="judge"`` is goldfive's default and is left
-    untouched) while removing every steering LLM call:
+    untouched) while removing every steering LLM call AND every refine
+    attempt:
 
     * ``goal_deriver=LiteralGoalDeriver()`` — the entry input becomes the
       goal verbatim, so no ``goal_derive`` LLM call fires (goldfive's
@@ -317,12 +440,20 @@ def _judge_only_overrides(agent: Any) -> dict[str, Any]:
       task assigned to the root agent so the native agent tree runs on
       goldfive's overlay path (``invoke_passthrough``) and produces a
       transcript to judge. :class:`StaticPlanner.generate` returns that
-      fixed plan; its ``refine`` / ``handle_turn`` return ``None``, so a
-      drift-triggered refine and per-turn replanning both yield NO LLM
-      call. (Goldfive's default :class:`LLMPlanner` would replan/refine
-      via the LLM.) ``PassthroughPlanner`` is deliberately NOT used: its
-      ``generate`` returns ``None`` and aborts the run with an empty
-      transcript, leaving nothing to judge.
+      fixed plan; its ``refine`` / ``handle_turn`` return ``None``, so no
+      replanning LLM call ever fires. (Goldfive's default
+      :class:`LLMPlanner` would replan/refine via the LLM.)
+      ``PassthroughPlanner`` is deliberately NOT used: its ``generate``
+      returns ``None`` and aborts the run with an empty transcript,
+      leaving nothing to judge.
+    * ``steerer=_build_judge_only_steerer()`` — a :class:`DefaultSteerer`
+      subclass whose ``handle_drift`` emits ``DriftDetected`` (preserving
+      the custom-judge scoring signal) but skips the cancel + refine
+      ladder. WITHOUT this, the ``StaticPlanner``'s ``None`` refine is
+      mis-read by goldfive as handler exhaustion → ``refine_attempted`` /
+      ``refine_failed`` → ``HUMAN_INTERVENTION_REQUIRED`` escalation,
+      which is exactly the ``multi_turn_emulated`` abort spiral this mode
+      must avoid. See :func:`_build_judge_only_steerer`.
 
     Symbols are imported lazily so the optional goldfive dependency stays
     out of this module's import time (matching the lazy-import discipline
@@ -331,11 +462,11 @@ def _judge_only_overrides(agent: Any) -> dict[str, Any]:
     Empirically (goldfive installed in zicato's ``.venv``): with this set
     the only ``goldfive_llm_call_start`` events carry judge names
     (e.g. ``judge_goal_drift``); the steering ``goal_derive`` /
-    ``refine`` / ``refine_steer`` call names never appear. The
+    ``refine`` / ``refine_steer`` call names never appear, and NO
+    ``refine_attempted`` event is emitted on any path. The
     ``goal_derived`` / ``plan_revised`` *bookkeeping* events still fire
     once (literal goal recorded; the static plan's "initial plan install"
-    revision) but neither is LLM-driven — the discriminating signal is
-    the LLM-call name, which is what judge-only suppresses.
+    revision) but neither is LLM-driven nor a refine.
     """
     from goldfive import StaticPlanner  # noqa: PLC0415
     from goldfive.goal_deriver import LiteralGoalDeriver  # noqa: PLC0415
@@ -361,6 +492,7 @@ def _judge_only_overrides(agent: Any) -> dict[str, Any]:
     return {
         "planner": StaticPlanner(one_task_plan),
         "goal_deriver": LiteralGoalDeriver(),
+        "steerer": _build_judge_only_steerer(call_llm, runtime),
     }
 
 
@@ -525,14 +657,19 @@ class ADKRunnableHarness:
         # deriving goals, replanning, or refining. Judges stay armed in
         # both paths. When off (the default), the call is byte-identical
         # to the legacy steering path.
-        overrides = _judge_only_overrides(self._agent) if _entry_judge_only(entry) else {}
+        gf_runtime = _goldfive_runtime()
+        overrides = (
+            _judge_only_overrides(self._agent, config.harness_call_llm, gf_runtime)
+            if _entry_judge_only(entry)
+            else {}
+        )
         outcome = await goldfive.run(
             self._agent,
             entry.input,
             sinks=sinks,
             call_llm=config.harness_call_llm,
             judges=judges,
-            runtime=_goldfive_runtime(),
+            runtime=gf_runtime,
             **overrides,
         )
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
@@ -593,9 +730,17 @@ class ADKRunnableHarness:
             aux_call_llm=config.auxiliary_call_llm,
         )
         agent = self._agent
-        # Judge-only overrides (no-steering) applied to every per-turn
-        # goldfive.run call; empty dict on the default steering path.
-        overrides = _judge_only_overrides(agent) if _entry_judge_only(entry) else {}
+        gf_runtime = _goldfive_runtime()
+        # Judge-only overrides (no-steering, no-refine) applied to every
+        # per-turn goldfive.run call; empty dict on the default steering
+        # path. Built ONCE (the judge-only steerer is reused across turns,
+        # which goldfive explicitly supports — it unwires per-run state at
+        # each run boundary).
+        overrides = (
+            _judge_only_overrides(agent, config.harness_call_llm, gf_runtime)
+            if _entry_judge_only(entry)
+            else {}
+        )
 
         class _PerTurnCaller:
             """Thin wrapper that calls ``goldfive.run`` per scripted turn.
@@ -618,7 +763,7 @@ class ADKRunnableHarness:
                     sinks=sinks,
                     call_llm=config.harness_call_llm,
                     judges=judges,
-                    runtime=_goldfive_runtime(),
+                    runtime=gf_runtime,
                     **overrides,
                 )
                 transcript = _outcome_transcript(outcome)
@@ -681,9 +826,22 @@ class ADKRunnableHarness:
             aux_call_llm=config.auxiliary_call_llm,
         )
         agent = self._agent
-        # Judge-only overrides (no-steering) applied to every per-turn
-        # goldfive.run call; empty dict on the default steering path.
-        overrides = _judge_only_overrides(agent) if _entry_judge_only(entry) else {}
+        gf_runtime = _goldfive_runtime()
+        # Judge-only overrides (no-steering, no-refine) applied to every
+        # per-turn goldfive.run call; empty dict on the default steering
+        # path. This is the path the picky-stakeholder persona runs on —
+        # without the refine-suppressing steerer in these overrides the
+        # CRITICAL no_fabricated_numbers judge's verdict was promoted to a
+        # drift, the StaticPlanner's None-refine was mis-read as handler
+        # exhaustion, and the run escalated to HUMAN_INTERVENTION_REQUIRED
+        # and spun to the 900s wall-clock. Built ONCE; the judge-only
+        # steerer is reused across turns (goldfive supports a shared
+        # steerer — it unwires per-run state at each run boundary).
+        overrides = (
+            _judge_only_overrides(agent, config.harness_call_llm, gf_runtime)
+            if _entry_judge_only(entry)
+            else {}
+        )
 
         class _PerTurnCaller:
             """Thin wrapper that calls ``goldfive.run`` per emulated turn.
@@ -706,7 +864,7 @@ class ADKRunnableHarness:
                     sinks=sinks,
                     call_llm=config.harness_call_llm,
                     judges=judges,
-                    runtime=_goldfive_runtime(),
+                    runtime=gf_runtime,
                     **overrides,
                 )
                 transcript = _outcome_transcript(outcome)

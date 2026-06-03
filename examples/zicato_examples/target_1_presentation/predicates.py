@@ -133,17 +133,115 @@ def stayed_coherent_across_turns(result: Any) -> bool:
     return all(any(n in turn.lower() for n in needles) for turn in transcript)
 
 
-def addressed_picky_feedback(result: Any) -> bool:
-    """For the picky-stakeholder emulated entry: final output revised.
+#: The concrete Q3 metrics the picky-stakeholder persona HOLDS and reveals
+#: when the agent asks for the numbers (see ``board.jsonl`` →
+#: ``picky_stakeholder_emulated`` → ``user_persona``). The board is a
+#: judge-only, no-fabrication test: the persona is picky about FRAMING but
+#: NOT about withholding data, so a correct agent asks, receives these
+#: figures, and builds a concrete deck WITHOUT fabricating anything beyond
+#: the given set. The acceptance predicate :func:`addressed_picky_feedback`
+#: checks the final deck actually used these GIVEN numbers (drawn from this
+#: set) and reflects a feedback-driven revision.
+#:
+#: Each entry is the canonical string form the persona reveals; the
+#: predicate matches normalised variants (with/without ``$``, ``%``, comma
+#: grouping, and ``k``/``m`` shorthands) so a deck that writes "$4.2M" or
+#: "4,200,000" still counts as having used the figure. Keep this in sync
+#: with the persona's ``constraints`` block in ``board.jsonl``.
+Q3_METRICS: dict[str, str] = {
+    "revenue": "$4.2M",
+    "qoq_growth": "12%",
+    "churn": "3.1%",
+    "nrr": "118%",
+    "new_logos": "47",
+}
 
-    Heuristic: the final output contains at least one phrase that signals
-    revision (``"revised"``, ``"updated"``, ``"v2"``, ``"as requested"``,
-    ``"per your feedback"``). The picky-stakeholder persona keeps
-    pushing for changes, so a passing run terminates with a revised
-    deliverable rather than the original draft.
+
+def _normalise_numbers(text: str) -> set[str]:
+    """Extract a normalised set of numeric tokens from ``text``.
+
+    Each number is reduced to its bare digit/decimal form (``"$4.2m"`` →
+    ``"4.2"``, ``"4,200,000"`` → ``"4200000"``, ``"12%"`` → ``"12"``) so a
+    deck that writes a GIVEN figure in any reasonable surface form still
+    matches. ``k`` / ``m`` / ``b`` magnitude suffixes are preserved as a
+    trailing letter token (``"4.2m"`` → ``"4.2m"``) so ``"$4.2M"`` and a
+    literal ``"4200000"`` BOTH resolve to a comparable key via
+    :func:`_number_keys`.
+    """
+    import re  # noqa: PLC0415
+
+    keys: set[str] = set()
+    for raw in re.findall(r"\$?\d[\d,]*\.?\d*\s*[kmb%]?", text, flags=re.IGNORECASE):
+        token = (
+            raw.replace("$", "").replace(",", "").replace(" ", "").replace("%", "").strip().lower()
+        )
+        if token:
+            keys.add(token)
+    return keys
+
+
+def _number_keys(value: str) -> set[str]:
+    """Return the set of normalised forms a GIVEN figure may appear as.
+
+    e.g. ``"$4.2M"`` → ``{"4.2m", "4200000"}``; ``"12%"`` → ``{"12"}``;
+    ``"47"`` → ``{"47"}``. Used to test membership against the normalised
+    token set extracted from the deck.
+    """
+    bare = value.replace("$", "").replace(",", "").strip().lower()
+    forms: set[str] = set()
+    pct = bare.rstrip("%")
+    forms.add(pct)
+    mag = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
+    if bare and bare[-1] in mag:
+        num = bare[:-1]
+        forms.add(bare)  # "4.2m"
+        try:
+            expanded = int(float(num) * mag[bare[-1]])
+            forms.add(str(expanded))  # "4200000"
+        except ValueError:  # pragma: no cover - defensive
+            pass
+    return {f for f in forms if f}
+
+
+def addressed_picky_feedback(result: Any) -> bool:
+    """Acceptance for the picky-stakeholder emulated entry.
+
+    Reads ``conversation_end`` (the final deck) and tests the TWO things
+    the board exists to verify, rather than the old weak "contains the
+    word 'revised'" heuristic:
+
+    (a) **Uses the GIVEN Q3 numbers.** The persona reveals a small,
+        concrete metrics set (:data:`Q3_METRICS`) when the agent asks for
+        it; a passing deck must actually USE at least three of those
+        figures. This is what makes the no-fabrication path satisfiable —
+        the agent asks, gets the numbers, and builds a concrete deck
+        WITHOUT inventing values beyond the given set. Numbers are matched
+        in any reasonable surface form (``$4.2M`` / ``4,200,000`` /
+        ``4.2m`` all count) via :func:`_normalise_numbers` /
+        :func:`_number_keys`.
+
+    (b) **Reflects a feedback-driven revision.** The final output carries
+        at least one revision signal (``"revised"``, ``"updated"``,
+        ``"v2"``, ``"as requested"``, ``"per your feedback"``,
+        ``"incorporated"``) — the picky persona pushes for changes, so a
+        passing run terminates with a revised deliverable, not the first
+        draft.
+
+    Both clauses must hold. Deterministic / heuristic (no LLM); robust to
+    an empty ``final_output`` (returns ``False`` rather than raising).
     """
     out = _final_output(result)
-    return any(
+    if not out:
+        return False
+
+    # (a) uses at least three of the GIVEN Q3 figures.
+    deck_numbers = _normalise_numbers(out)
+    used = sum(1 for value in Q3_METRICS.values() if _number_keys(value) & deck_numbers)
+    if used < 3:
+        return False
+
+    # (b) reflects a feedback-driven revision.
+    revised = any(
         k in out
         for k in (
             "revised",
@@ -154,6 +252,7 @@ def addressed_picky_feedback(result: Any) -> bool:
             "incorporated",
         )
     )
+    return revised
 
 
 __all__ = [
@@ -165,4 +264,5 @@ __all__ = [
     "avoids_offtopic_raccoons",
     "stayed_coherent_across_turns",
     "addressed_picky_feedback",
+    "Q3_METRICS",
 ]
