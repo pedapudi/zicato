@@ -194,6 +194,38 @@ def board_path(workspace_root: Path, epoch_id: str) -> Path:
     return _epoch_root(workspace_root, epoch_id) / "board.jsonl"
 
 
+def field_tournaments_dir(workspace_root: Path, epoch_id: str) -> Path:
+    """Path to an epoch's durable field-tournament snapshot directory.
+
+    A non-gauntlet structure (swiss / single-elim / double-elim / racing)
+    settles ONE field record per round's tournament — the round-by-round
+    pairings + the Copeland standings + the proposing field-status — which
+    the per-challenger ``experiment.json`` audit cannot reconstruct on its
+    own. The orchestrator writes that settled field structure here so the
+    analytical index can re-derive it on ``zicato reindex`` (the
+    files-are-canonical rule) and the dashboard renders the ladder /
+    bracket post-run rather than blank.
+
+    One file per field tournament: ``field-{first_challenger}.json``,
+    keyed on the round's first applied challenger so a multi-round epoch
+    keeps a snapshot per round without clobbering earlier ones. The
+    directory is created lazily by the writer; readers tolerate its
+    absence (a pure-gauntlet epoch never writes one).
+    """
+    return _epoch_root(workspace_root, epoch_id) / "tournaments"
+
+
+def field_tournament_path(workspace_root: Path, epoch_id: str, first_challenger_id: str) -> Path:
+    """Path to one round's durable field-tournament snapshot JSON.
+
+    See :func:`field_tournaments_dir`. ``first_challenger_id`` is the
+    round's first applied challenger — the same stable key the runtime
+    ``active_tournament`` tournament id is minted from — so the snapshot
+    is idempotent across rebuilds and unique per round.
+    """
+    return field_tournaments_dir(workspace_root, epoch_id) / f"field-{first_challenger_id}.json"
+
+
 def scoring_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to one epoch's frozen scoring-weights JSON."""
     return _epoch_root(workspace_root, epoch_id) / "scoring.json"
@@ -250,5 +282,7 @@ __all__ = [
     "rubric_path",
     "board_path",
     "scoring_path",
+    "field_tournaments_dir",
+    "field_tournament_path",
     "assert_distinct_callables",
 ]

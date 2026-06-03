@@ -1507,6 +1507,28 @@ async def _evolve_multi_challenger(
         total_rounds=total_rounds,
         field_status=field_status,
     )
+    # Durably persist the settled FIELD structure (one record per round's
+    # non-gauntlet tournament). The runtime ``active_tournament`` envelope
+    # above is EPHEMERAL — it is overwritten by the next round and cleared
+    # on a crash — so a completed swiss / elim epoch would render blank from
+    # the index alone. The field record carries the same shape the live
+    # envelope does, so the dashboard's structure renderers serve the ladder
+    # post-run unchanged. Keyed on the round's first applied challenger so a
+    # multi-round epoch keeps a snapshot per round.
+    first_challenger_id = applied[0].generation_id
+    _persist_field_tournament(
+        workspace_root,
+        field_tournament_id=f"{epoch_id}:field:{first_challenger_id}",
+        first_challenger_id=first_challenger_id,
+        epoch_id=epoch_id,
+        structure=tournament_spec.structure,
+        structure_params=dict(tournament_spec.params),
+        competitors=competitors_meta,
+        rounds=_serialise_settled_rounds(strategy),
+        standings=_serialise_settled_standings(decision),
+        field_status=field_status or [],
+        decision=decision,
+    )
 
     # --- Per-challenger OutcomeRecord audit. Each challenger records the
     # matches it played (opponent, win/loss, delta), its final rank, and
@@ -1750,6 +1772,132 @@ def _publish_active_tournament(
         log.debug("active-tournament publish skipped: %s", exc)
 
 
+def _serialise_settled_rounds(strategy: Any) -> list[dict[str, Any]]:
+    """Project a strategy's settled ``rounds()`` to the dashboard shape.
+
+    The single canonical serialisation of the round-by-round pairings
+    (data-model §2.4) — shared by the live ``active_tournament`` envelope
+    and the durable field-tournament snapshot so both carry byte-identical
+    rounds and the renderers (which already work live) work post-run.
+    """
+    return [
+        {
+            "round_index": r.round_index,
+            "label": r.label,
+            "matches": [
+                {
+                    "match_id": m.match_id,
+                    "competitors": list(m.competitors),
+                    "winner": m.winner,
+                    "decision": m.decision,
+                    "delta_scalar": m.delta_scalar,
+                    "bracket_slot": m.bracket_slot,
+                    "bye": m.bye,
+                    "survivors": list(m.survivors),
+                    "cut": list(m.cut),
+                    "board_fraction": m.board_fraction,
+                }
+                for m in r.matches
+            ],
+        }
+        for r in strategy.rounds()
+    ]
+
+
+def _serialise_settled_standings(decision: Any) -> list[dict[str, Any]]:
+    """Project a decision's settled ``standings`` to the dashboard shape.
+
+    The single canonical serialisation of the Copeland standings
+    (data-model §2.5), shared by the live envelope and the durable
+    field-tournament snapshot.
+    """
+    return [
+        {
+            "generation_id": s.generation_id,
+            "rank": s.rank,
+            "scalar": s.scalar,
+            "wins": s.wins,
+            "losses": s.losses,
+            "status": s.status,
+            "role": s.role,
+        }
+        for s in decision.standings
+    ]
+
+
+def _persist_field_tournament(
+    workspace_root: Path,
+    *,
+    field_tournament_id: str,
+    first_challenger_id: str,
+    epoch_id: str,
+    structure: str,
+    structure_params: dict[str, Any],
+    competitors: list[dict[str, Any]],
+    rounds: list[dict[str, Any]],
+    standings: list[dict[str, Any]],
+    field_status: list[dict[str, Any]],
+    decision: Any,
+) -> None:
+    """Best-effort: durably persist the settled FIELD-level structure.
+
+    Writes the round's settled field record — round pairings, Copeland
+    standings, competitors, proposing field-status, the crowning verdict —
+    to its durable ``tournaments/field-*.json`` snapshot AND dual-writes it
+    into the analytical index as ONE field-level ``tournaments`` row. The
+    snapshot is the canonical source (so ``zicato reindex`` re-derives the
+    row); the dual-write puts the swiss / elim ladder in the index the
+    moment the round settles. A no-op for a degenerate two-competitor
+    (gauntlet) field — the per-challenger row already covers it. Never
+    raises: a durable-state write failure must not abort the round.
+    """
+    if len(competitors) < 3:
+        return
+    crowning_delta: float | None = None
+    for r in reversed(rounds):
+        matches = r.get("matches") or []
+        if matches:
+            crowning_delta = matches[-1].get("delta_scalar")
+            break
+    champion_id = next(
+        (c.get("generation_id") for c in competitors if str(c.get("role", "")) == "champion"),
+        "",
+    )
+    record: dict[str, Any] = {
+        "tournament_id": field_tournament_id,
+        "epoch_id": epoch_id,
+        "structure": structure,
+        "structure_params": dict(structure_params),
+        "competitors": [dict(c) for c in competitors],
+        "rounds": rounds,
+        "standings": standings,
+        "field_status": [dict(f) for f in field_status],
+        "promoted_generation_id": decision.promoted_generation_id or "",
+        "champion_generation_id": champion_id or "",
+        "decision": getattr(decision, "decision", "") or "",
+        "reason": getattr(decision, "reason", "") or "",
+        "delta_scalar": crowning_delta,
+        "ran_at": _now_iso(),
+    }
+    try:
+        from zicato.core.workspace import field_tournament_path  # noqa: PLC0415
+
+        path = field_tournament_path(workspace_root, epoch_id, first_challenger_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 — durable snapshot is best-effort
+        log.debug("field-tournament snapshot skipped: %s", exc)
+        return
+    try:
+        from zicato.index.ingest import ingest_field_tournament  # noqa: PLC0415
+
+        ingest_field_tournament(workspace_root, _index_db_path(workspace_root), record)
+    except ImportError:
+        log.debug("zicato.index.ingest unavailable; skipping field-tournament dual-write")
+    except Exception as exc:  # noqa: BLE001 — index write is best-effort
+        log.debug("field-tournament index dual-write skipped: %s", exc)
+
+
 def _settle_active_tournament(
     workspace_root: Path,
     *,
@@ -1776,40 +1924,8 @@ def _settle_active_tournament(
             write_active_tournament,
         )
 
-        rounds = [
-            {
-                "round_index": r.round_index,
-                "label": r.label,
-                "matches": [
-                    {
-                        "match_id": m.match_id,
-                        "competitors": list(m.competitors),
-                        "winner": m.winner,
-                        "decision": m.decision,
-                        "delta_scalar": m.delta_scalar,
-                        "bracket_slot": m.bracket_slot,
-                        "bye": m.bye,
-                        "survivors": list(m.survivors),
-                        "cut": list(m.cut),
-                        "board_fraction": m.board_fraction,
-                    }
-                    for m in r.matches
-                ],
-            }
-            for r in strategy.rounds()
-        ]
-        standings = [
-            {
-                "generation_id": s.generation_id,
-                "rank": s.rank,
-                "scalar": s.scalar,
-                "wins": s.wins,
-                "losses": s.losses,
-                "status": s.status,
-                "role": s.role,
-            }
-            for s in decision.standings
-        ]
+        rounds = _serialise_settled_rounds(strategy)
+        standings = _serialise_settled_standings(decision)
         write_active_tournament(
             workspace_root,
             ActiveTournament(

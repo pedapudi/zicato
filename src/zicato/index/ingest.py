@@ -656,6 +656,85 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
     )
 
 
+def _upsert_field_tournament(conn: sqlite3.Connection, record: dict[str, Any]) -> None:
+    """Write the FIELD-level ``tournaments`` row for a settled tournament.
+
+    Unlike :func:`_upsert_tournament` (one row PER CHALLENGER, describing
+    that challenger's crowning duel), this writes ONE row for the whole
+    round's tournament: the settled round-by-round pairings
+    (``rounds_json``), the Copeland standings (``standings_json``), the
+    full competitor field (``competitors_json``), and the proposing
+    field-status (``field_status_json``) — the same shape the runtime
+    ``active_tournament`` envelope carries, so the dashboard's structure
+    renderers (which already consume that shape live) render the swiss /
+    elim ladder post-run unchanged.
+
+    The ``tournament_id`` is the field-level id
+    ``"{epoch_id}:field:{first_challenger}"`` — stable per round and
+    idempotent across rebuilds. The legacy per-matchup
+    ``parent_generation_id`` / ``child_generation_id`` columns are left
+    EMPTY: a field row is not a champion-vs-challenger duel, and a
+    populated ``child_generation_id`` would collide with the per-challenger
+    crowning row for the same generation (both keyed on the promoted id)
+    and pollute the per-matchup ladder. The crowning verdict survives in
+    ``decision`` and in the standings' ``champion`` status row. The
+    per-challenger rows remain the gauntlet view's source and keep their
+    own crowning columns untouched.
+
+    A no-op for a degenerate two-competitor (gauntlet) field — the
+    per-challenger row already covers it.
+    """
+    competitors = record.get("competitors") or []
+    if len(competitors) < 3:
+        # A pure gauntlet (champion + one challenger) needs no field row;
+        # the per-challenger crowning row is the whole picture.
+        return
+    tournament_id = str(record.get("tournament_id") or "")
+    epoch_id = str(record.get("epoch_id") or "")
+    if not tournament_id or not epoch_id:
+        return
+    conn.execute(
+        "INSERT INTO tournaments("
+        "tournament_id, epoch_id, parent_generation_id, child_generation_id, "
+        "decision, parent_scalar, child_scalar, delta_scalar, rejection_reason, "
+        "ran_at, structure, structure_params_json, competitors_json, rounds_json, "
+        "standings_json, field_status_json) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(tournament_id) DO UPDATE SET "
+        "epoch_id = excluded.epoch_id, "
+        "parent_generation_id = excluded.parent_generation_id, "
+        "child_generation_id = excluded.child_generation_id, "
+        "decision = excluded.decision, "
+        "delta_scalar = excluded.delta_scalar, "
+        "rejection_reason = excluded.rejection_reason, "
+        "ran_at = excluded.ran_at, "
+        "structure = excluded.structure, "
+        "structure_params_json = excluded.structure_params_json, "
+        "competitors_json = excluded.competitors_json, "
+        "rounds_json = excluded.rounds_json, "
+        "standings_json = excluded.standings_json, "
+        "field_status_json = excluded.field_status_json",
+        (
+            tournament_id,
+            epoch_id,
+            "",
+            "",
+            str(record.get("decision") or ""),
+            None,
+            None,
+            record.get("delta_scalar"),
+            str(record.get("reason") or ""),
+            str(record.get("ran_at") or ""),
+            str(record.get("structure") or "gauntlet"),
+            json.dumps(record.get("structure_params") or {}),
+            json.dumps(list(competitors)),
+            json.dumps(record.get("rounds") or []),
+            json.dumps(record.get("standings") or []),
+            json.dumps(record.get("field_status") or []),
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Source-file readers
 # ---------------------------------------------------------------------------
@@ -701,6 +780,34 @@ def _iter_run_entry_ids(workspace_root: Path, epoch_id: str, generation_id: str)
     if not runs_root.exists():
         return []
     return sorted(child.name for child in runs_root.iterdir() if child.is_dir())
+
+
+def _load_field_tournaments(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
+    """Read an epoch's durable field-tournament snapshots from disk.
+
+    One ``field-*.json`` per round under the epoch's ``tournaments/``
+    directory (written by the orchestrator at settle time). Each holds the
+    settled field structure — round pairings, Copeland standings,
+    competitors, proposing field-status — for one non-gauntlet round.
+    Returns an empty list when the directory is absent (a pure-gauntlet
+    epoch) or unreadable; an individual unparseable file is skipped.
+    """
+    from zicato.core.workspace import field_tournaments_dir  # noqa: PLC0415
+
+    root = field_tournaments_dir(workspace_root, epoch_id)
+    if not root.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for child in sorted(root.iterdir()):
+        if not child.is_file() or child.suffix != ".json":
+            continue
+        try:
+            record = json.loads(child.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(record, dict):
+            out.append(record)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1015,6 +1122,13 @@ def _rebuild_epoch(
         for entry_id in _iter_run_entry_ids(workspace_root, epoch_id, generation_id):
             _ingest_run_into(conn, workspace_root, epoch_id, generation_id, entry_id)
 
+    # Field-level tournament rows: re-derive each non-gauntlet round's
+    # settled structure from its durable snapshot so the swiss / elim
+    # ladder survives a full rebuild (the per-challenger experiment audit
+    # cannot reconstruct the round pairings + standings on its own).
+    for record in _load_field_tournaments(workspace_root, epoch_id):
+        _upsert_field_tournament(conn, record)
+
 
 def _open_for_write(workspace_root: Path, db_path: Path | None) -> tuple[sqlite3.Connection, Path]:
     """Open (creating + schema-applying if needed) the index for a write.
@@ -1104,6 +1218,34 @@ def ingest_experiment(
     try:
         _upsert_owning_epoch_generation(conn, workspace_root, epoch_id, generation_id)
         _ingest_experiment_into(conn, workspace_root, epoch_id, generation_id)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ingest_field_tournament(
+    workspace_root: Path,
+    db_path: Path | None,
+    record: dict[str, Any],
+) -> None:
+    """Incrementally upsert one round's FIELD-level ``tournaments`` row.
+
+    ``record`` is the settled field structure the orchestrator wrote to
+    the round's durable ``field-*.json`` snapshot — the same shape the
+    runtime ``active_tournament`` envelope carries (``tournament_id`` /
+    ``epoch_id`` / ``structure`` / ``competitors`` / ``rounds`` /
+    ``standings`` / ``field_status`` / the crowning verdict). This is the
+    live dual-write companion to :func:`ingest_experiment`: the
+    orchestrator calls it at settle time so the swiss / elim ladder is in
+    the index immediately, without waiting for a full ``zicato reindex``.
+
+    A no-op for a degenerate two-competitor (gauntlet) field. Idempotent —
+    the write is a keyed upsert on the field-level ``tournament_id``. When
+    the database does not exist yet it is created with the schema applied.
+    """
+    conn, _ = _open_for_write(workspace_root, db_path)
+    try:
+        _upsert_field_tournament(conn, record)
         conn.commit()
     finally:
         conn.close()
@@ -1523,6 +1665,7 @@ __all__ = [
     "rebuild_index",
     "ingest_run",
     "ingest_experiment",
+    "ingest_field_tournament",
     "backfill_generations",
     "repair_epoch_goals",
     "backfill_tournament_fk",

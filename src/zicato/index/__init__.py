@@ -34,6 +34,7 @@ from __future__ import annotations
 from zicato.index.ingest import (
     backfill_generations,
     ingest_experiment,
+    ingest_field_tournament,
     ingest_run,
     rebuild_index,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "rebuild_index",
     "ingest_run",
     "ingest_experiment",
+    "ingest_field_tournament",
     "backfill_generations",
     "open_index",
 ]

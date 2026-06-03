@@ -1559,6 +1559,11 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
             "ORDER BY t.ran_at ASC, t.tournament_id ASC",
             (epoch_id,),
         )
+        # The per-matchup ladder is the per-challenger crowning rows only.
+        # A FIELD-level row (``{epoch}:field:{...}``) is the whole-tournament
+        # structure record, not a champion-vs-challenger duel (it carries no
+        # parent/child), so it is excluded here — it surfaces through the
+        # structure-aware ``tournaments[]`` envelope below instead.
         matchups = [
             {
                 "champion": r["parent_generation_id"],
@@ -1570,6 +1575,7 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
                 "ran_at": r["ran_at"],
             }
             for r in tour_rows
+            if not _is_field_tournament_id(r["tournament_id"])
         ]
 
         # Structure-aware envelope (§3.1). Read the v3 columns
@@ -1584,6 +1590,23 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
             "ORDER BY ran_at ASC, tournament_id ASC",
             (epoch_id,),
         )
+        # FIELD-level rows (``{epoch}:field:{first_challenger}``) carry the
+        # whole round's settled structure — round pairings + Copeland
+        # standings + competitor field — for swiss / elim. When one exists
+        # for a structure, the per-challenger ``{epoch}:{parent}->{child}``
+        # rows of THAT structure are NOT the structure view's source (they
+        # flatten one challenger's crowning duel, the wrong shape for the
+        # ladder), so we drop them from the structure list and let the
+        # field record stand. The per-challenger rows remain in the index
+        # (the gauntlet matchup list + crowning columns still read them);
+        # they are merely excluded from this structure-aware envelope.
+        # Racing has no field record, so its per-challenger rows survive —
+        # ``reconstructRacing`` aggregates them on the read side.
+        field_structures = {
+            _normalize_structure(r["structure"])
+            for r in struct_rows
+            if _is_field_tournament_id(r["tournament_id"])
+        }
         tournaments: list[dict[str, Any]] = []
         epoch_structure = "gauntlet"
         epoch_structure_params: dict[str, Any] = {}
@@ -1597,6 +1620,10 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
             if structure != "gauntlet":
                 epoch_structure = structure
                 epoch_structure_params = params
+            # Suppress a per-challenger row whose structure has a field
+            # record — the field record is the authoritative view.
+            if structure in field_structures and not _is_field_tournament_id(r["tournament_id"]):
+                continue
             competitors = _opt_json(r["competitors_json"])
             rounds = _opt_json(r["rounds_json"])
             standings = _opt_json(r["standings_json"])
@@ -1996,6 +2023,18 @@ def build_matchup_grid(
         base["scalar"] = scalar
 
     return base
+
+
+def _is_field_tournament_id(tournament_id: str | None) -> bool:
+    """True for a FIELD-level tournament id (``"{epoch}:field:{...}"``).
+
+    The orchestrator settles one field record per non-gauntlet round under
+    this id form; the per-challenger crowning rows use the
+    ``"{epoch}:{parent}->{child}"`` form instead. The marker is the
+    ``":field:"`` segment, which the per-challenger ``->`` form never
+    carries.
+    """
+    return ":field:" in str(tournament_id or "")
 
 
 def _empty_tournament_structure(epoch_id: str, tournament_id: str, source: str) -> dict[str, Any]:
