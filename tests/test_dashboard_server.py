@@ -1732,6 +1732,49 @@ def test_conversation_missing_run_is_404(
         assert r.status_code == 404
 
 
+def test_run_transcript_resolves_inflight_run_without_loss_json(
+    workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An IN-FLIGHT run's transcript resolves from its still-growing events file.
+
+    The workspace fixture has v1/waffles_single mid-run: an active_runs
+    record points at a growing ``events.jsonl`` and NO ``loss.json`` has
+    been written yet (the reducer writes it only after scoring). The
+    by-(epoch, gen, entry) transcript route must resolve straight to that
+    ``generations/v1/runs/waffles_single/events.jsonl`` — the deterministic
+    triple, no loss.json round-trip — so the dashboard can read the partial
+    transcript of a candidate that is still running. This is the backend
+    half of the live-transcript feature.
+    """
+    _install_stub_transcript(monkeypatch)
+    epoch_id = "2026-05-16_e0"
+    loss = (
+        workspace
+        / "epochs"
+        / epoch_id
+        / "generations"
+        / "v1"
+        / "runs"
+        / "waffles_single"
+        / "loss.json"
+    )
+    assert not loss.exists(), "precondition: the in-flight run has NO loss.json yet"
+
+    app = create_app(workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        # Resolve by the deterministic (epoch, gen, entry) triple — the path
+        # the board view's resolveTranscript() takes for a running candidate.
+        r = c.get(f"/api/run/{epoch_id}/v1/waffles_single/transcript")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # The growing events.jsonl resolved (3 lines in the fixture) — the
+        # in-flight transcript is served WITHOUT a loss.json.
+        assert body["event_count"] == 3, body
+        assert body["epoch_id"] == epoch_id
+        assert body["generation_id"] == "v1"
+        assert body["entry_id"] == "waffles_single"
+
+
 def test_conversation_resolves_by_run_id_not_dir_name(
     workspace: Path, static_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

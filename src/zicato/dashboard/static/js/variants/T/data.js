@@ -43,6 +43,29 @@ export function invalidate(prefix) {
   }
 }
 
+// Bust the cached transcript reads for ONE (epoch, gen, entry) run so the next
+// fetch re-reads the still-growing events.jsonl. invalidateLive() only fires on
+// a VIEW change, never on a no-op beat (that is the scroll-reset fix); but a
+// candidate RUNNING on the board the operator is already watching must have its
+// transcript re-read as new turns land, without busting every cached read. This
+// drops just the two cache keys a live transcript flows through — the gen×entry
+// /api/run/.../transcript (the primary path) and, when the row carried a run_id,
+// the /api/conversation/<run_id> fallback. The transcript host stays digest-
+// gated on CONTENT (transcriptDigest), so a re-read that yields no new turn is
+// still a no-op repaint — scroll is preserved.
+export function invalidateRunTranscript(epochId, genId, entryId, runId) {
+  const run = `/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/transcript`;
+  for (const key of [..._cache.keys()]) {
+    if (key === run || key.startsWith(run + '?')) _cache.delete(key);
+  }
+  if (runId) {
+    const conv = `/api/conversation/${enc(runId)}`;
+    for (const key of [..._cache.keys()]) {
+      if (key === conv || key.startsWith(conv + '?')) _cache.delete(key);
+    }
+  }
+}
+
 // Bust the keys that can change while a run is live. The consolidated
 // environment read (handled by core/api) is always fresh; these are the
 // per-resource drill-downs we cache. The ACM analysis + mutation surface are

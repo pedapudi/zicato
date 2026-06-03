@@ -535,6 +535,161 @@ test('board view: the per-pane transcript host split (live-beat scroll fix) is p
     'the transcript sub-host exists (separate from the upper host)');
 });
 
+// ---- LIVE TRANSCRIPT: a RUNNING candidate streams its transcript inline ----
+//
+// In every tournament mode the operator can select a candidate that is
+// currently RUNNING on a board entry and read its transcript as the run
+// produces turns. The active-runs feed (structure-agnostic) carries the
+// running candidate's run_id / generation_id; its events.jsonl is already
+// growing on disk, so the gen×entry transcript resolves PARTIALLY mid-flight.
+
+// A fetch whose run-transcript / conversation response can be SWAPPED between
+// renders, so a test can simulate a live transcript GROWING a turn. `getRun`
+// returns the current run-transcript payload (keyed by the base path).
+function installGrowableFetch(runPayloads, suppress) {
+  const sup = new Set(suppress || []);
+  globalThis.fetch = async (path) => {
+    const base = path.indexOf('?') >= 0 ? path.slice(0, path.indexOf('?')) : path;
+    if (Object.prototype.hasOwnProperty.call(runPayloads, base)) {
+      const v = runPayloads[base];
+      return { ok: true, json: async () => (typeof v === 'function' ? v() : v) };
+    }
+    if (sup.has(base)) return { ok: false, status: 404, json: async () => ({ error: 'suppressed: ' + base }) };
+    const v = lookupFixture(FIXTURE, path);
+    if (v !== undefined) return { ok: true, json: async () => v };
+    return { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
+  };
+}
+
+// (a) A RUNNING candidate (active-run carries run_id; NO loss.json / no
+// per-entry row) resolves a PARTIAL transcript and is SELECTABLE.
+test('board view (LIVE): a RUNNING candidate with no scored row resolves a PARTIAL transcript and is selectable', async () => {
+  freshState();
+  // v3 is RUNNING on waffles_single: it is in active-runs (carrying its
+  // run_id) but has NO per-entry record in ANY generation's pivot — no
+  // loss.json yet. Its partial transcript resolves by the (epoch, gen, entry)
+  // triple from the still-growing events.jsonl.
+  installGrowableFetch({
+    [`/api/run/${EPOCH_ID}/v3/waffles_single/transcript`]: {
+      epoch_id: EPOCH_ID, generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live',
+      turns: [
+        { seq: 0, role: 'user', agent: 'operator', text: 'Make a presentation about waffles.' },
+        { seq: 1, role: 'agent', agent: 'coordinator', text: 'Live partial turn so far.' },
+      ],
+      annotations: [], event_count: 4, complete: false,  // PARTIAL: no terminal event yet
+    },
+  });
+  // lineage carries v3 as a running challenger (so role/parent resolve).
+  FIXTURE['/api/lineage'].generations.push({ generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false });
+  coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.4, epoch_id: EPOCH_ID }];
+
+  const board = await import('../js/variants/T/views/board.js');
+  const ctx = { navigate() {}, href: router.href };
+
+  // FIRST: render WITHOUT a selection — the running candidate is a SELECTABLE
+  // breakdown row ("watch live →" linking to board+v3), not "no run".
+  const unsel = document.createElement('div');
+  await board.render(unsel, ctx, { epochId: EPOCH_ID, entry: 'waffles_single' });
+  const links = allByClass(unsel, 'dn-board-run').map((a) => a.getAttribute('href') || '');
+  assert(links.some((h) => h.includes('/board/') && h.includes('v3')), 'the RUNNING candidate v3 is a selectable transcript row');
+  assert(unsel.textContent.includes('watch live'), 'the running candidate reads "watch live →"');
+
+  // THEN: select it — its PARTIAL transcript renders (the still-growing
+  // events.jsonl), not "unavailable", and reads as a live/streaming column.
+  const bhost = document.createElement('div');
+  await board.render(bhost, ctx, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' });
+  assert(bhost.textContent.includes('Live partial turn so far'), 'the partial transcript of the running candidate rendered');
+  assert(!bhost.textContent.includes('could not be reconstructed'), 'no honest-absence message for a running candidate with a partial transcript');
+  assert(allByClass(bhost, 'dn-xscript-live')[0], 'the running candidate column carries a live marker');
+
+  // cleanup the shared fixture mutation.
+  FIXTURE['/api/lineage'].generations = FIXTURE['/api/lineage'].generations.filter((g) => g.generation_id !== 'v3');
+  coreState.state.activeRuns = [];
+});
+
+// (b) The transcript host repaints when the live conversation GAINS a turn, but
+// NOT on a progress-only beat.
+test('board view (LIVE): the transcript host repaints on a NEW TURN but NOT on a progress-only beat', async () => {
+  freshState();
+  let turnCount = 1;  // the live transcript grows between renders when we bump this.
+  installGrowableFetch({
+    [`/api/run/${EPOCH_ID}/v3/waffles_single/transcript`]: () => ({
+      epoch_id: EPOCH_ID, generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live',
+      turns: Array.from({ length: turnCount }, (_, i) => ({ seq: i, role: i % 2 ? 'agent' : 'user', agent: 'coordinator', text: 'turn #' + i })),
+      annotations: [], event_count: turnCount * 2, complete: false,
+    }),
+  });
+  FIXTURE['/api/lineage'].generations.push({ generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false });
+  coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.4, epoch_id: EPOCH_ID }];
+
+  const board = await import('../js/variants/T/views/board.js');
+  const bhost = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  const params = { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v3' };
+
+  await board.render(bhost, ctx, params);
+  const xhost = bhost.querySelectorAll('[data-node]').filter((n) => n.getAttribute('data-node') === 'board-xscript')[0];
+  assert(xhost, 'the transcript sub-host exists');
+  const digestAfterFirst = xhost.getAttribute('data-t-digest');
+
+  // PROGRESS-ONLY beat: same turns, only progress advanced. The transcript
+  // digest (content-gated) must NOT change — no repaint, scroll preserved.
+  coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'waffles_single', run_id: 'run_v3_live', progress: 0.7, epoch_id: EPOCH_ID }];
+  data.invalidate();  // mimic a beat: caches dropped; transcript re-fetched (same content).
+  await board.render(bhost, ctx, params);
+  assertEqual(xhost.getAttribute('data-t-digest'), digestAfterFirst, 'a PROGRESS-ONLY beat does NOT repaint the transcript host (content unchanged)');
+
+  // NEW-TURN beat: the live transcript gained a turn → the content signal
+  // changes → the transcript host repaints.
+  turnCount = 3;
+  data.invalidate();
+  await board.render(bhost, ctx, params);
+  assert(xhost.getAttribute('data-t-digest') !== digestAfterFirst, 'a NEW-TURN beat DOES repaint the transcript host (content grew)');
+  assert(xhost.textContent.includes('turn #2'), 'the newly-arrived turn rendered');
+
+  FIXTURE['/api/lineage'].generations = FIXTURE['/api/lineage'].generations.filter((g) => g.generation_id !== 'v3');
+  coreState.state.activeRuns = [];
+});
+
+// (c) The live card + transcript path is STRUCTURE-AGNOSTIC — it is driven by
+// active-runs, not by any tournament structure. Verify for swiss + elim.
+for (const structure of ['swiss', 'single_elim']) {
+  test(`board view (LIVE): the live transcript path is structure-agnostic (${structure})`, async () => {
+    freshState();
+    const F = {
+      '/api/epoch': {
+        epoch_id: EPOCH_ID, closed: false, goal: 'g',
+        tournament: { structure, params: {} },
+        experiments: [{ generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } }],
+        board: [{ id: 'waffles_single', kind: 'single_turn', input_preview: 'x', budget_s: 180, weight: 1 }],
+      },
+      '/api/lineage': { generations: [
+        { generation_id: 'v0', epoch_id: EPOCH_ID, parent_generation_id: '', promoted: true },
+        { generation_id: 'v9', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false },
+      ] },
+      '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 70.94 }] },
+      '/api/tournaments': { epoch_id: EPOCH_ID, structure, champion_lineage: ['v0'], matchups: [] },
+      [`/api/run/${EPOCH_ID}/v9/waffles_single/transcript`]: {
+        epoch_id: EPOCH_ID, generation_id: 'v9', entry_id: 'waffles_single', run_id: 'run_v9_live',
+        turns: [{ seq: 0, role: 'agent', agent: 'coordinator', text: `${structure} live turn` }],
+        annotations: [], event_count: 2, complete: false,
+      },
+    };
+    installFixtureMap(F);
+    coreState.state.activeRuns = [{ generation_id: 'v9', entry_id: 'waffles_single', run_id: 'run_v9_live', progress: 0.3, epoch_id: EPOCH_ID }];
+
+    const board = await import('../js/variants/T/views/board.js');
+    const bhost = document.createElement('div');
+    await board.render(bhost, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single', gen: 'v9' });
+
+    assert(bhost.textContent.includes('candidate running') || bhost.textContent.includes('candidates running'), `the live card renders under ${structure}`);
+    assert(bhost.textContent.includes(`${structure} live turn`), `the running candidate's live transcript renders under ${structure} (structure-agnostic)`);
+    assert(allByClass(bhost, 'dn-xscript-live')[0], `the live marker renders under ${structure}`);
+
+    coreState.state.activeRuns = [];
+  });
+}
+
 // ---- FIX #6: trellis in the Boards view, NOT the epoch overview ----
 
 test('de-dup: the trellis lives in the Boards view; the epoch overview has the heatmap only', async () => {
