@@ -31,8 +31,16 @@ import { CROWN } from './svg.js';
 // `route` is the parsed route (drives the highlighted node + open path).
 // `ctx`  carries navigate(view, params) + href(view, params).
 // `toggles` is a Set of manually-opened node keys (owned by the shell).
-export function treeDigest(model, route, toggles) {
+// `live` is the LIVE-ACTIVITY set — the gen ids and/or board-entry ids that
+// currently have an in-flight run (derived from state.activeRuns). It drives a
+// subtle pulsing badge on the running rows. It is folded into the digest as a
+// SORTED set so the badge re-stamps when a gen/entry ENTERS or LEAVES the set,
+// but a steady heartbeat with the SAME set is a no-op (the pulse is CSS-animated,
+// so an unchanged set needs no DOM). A null/absent set is treated as empty.
+export function treeDigest(model, route, toggles, live) {
   const p = (route && route.params) || {};
+  const liveSet = live instanceof Set ? [...live].map(String).sort()
+    : (Array.isArray(live) ? live.map(String).sort() : []);
   return JSON.stringify({
     epochs: model.epochs.map((e) => [e.id, !!e.current]),
     by: model.epochs.map((e) => {
@@ -43,6 +51,7 @@ export function treeDigest(model, route, toggles) {
     }),
     sel: [route ? route.view : 'home', p.epochId || '', p.gen || '', p.entry || '', p.mutId || '', p.gen2 || ''],
     open: [...toggles].sort(),
+    live: liveSet,
   });
 }
 
@@ -60,9 +69,13 @@ export function routeOpenKeys(route) {
   return keys;
 }
 
-export function buildTree(host, model, route, toggles, ctx, onToggle) {
+export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
   clearChildren(host);
   const open = new Set([...toggles, ...routeOpenKeys(route)]);
+  // the live-activity set: gen / entry ids currently running (state.activeRuns).
+  const liveSet = live instanceof Set ? live
+    : new Set((Array.isArray(live) ? live : []).map(String));
+  const isLive = (id) => id != null && liveSet.has(String(id));
   const p = (route && route.params) || {};
   const sel = route ? route.view : 'home';
 
@@ -123,7 +136,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle) {
         else if (g.orphan === true) { kind = 'gen-orphan'; glyph = '◌'; tag = 'unscored'; }
         tree.appendChild(leafRow({
           depth: 3, kind, label: g.id, glyph, tag,
-          selected,
+          selected, live: isLive(g.id),
           onSelect: () => ctx.navigate('candidate', { epochId: epoch.id, gen: g.id }),
         }));
       }
@@ -145,7 +158,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle) {
         const selected = sel === 'board' && p.epochId === epoch.id && p.entry === b.id;
         tree.appendChild(leafRow({
           depth: 3, kind: 'board', label: b.id, glyph: '▦', tag: b.kindTag || null,
-          selected,
+          selected, live: isLive(b.id),
           onSelect: () => ctx.navigate('board', { epochId: epoch.id, entry: b.id }),
         }));
       }
@@ -213,6 +226,10 @@ function leafRow(o) {
   const label = el('button', { class: 'dt-label', type: 'button' }, [
     el('span', { class: 'dt-glyph dt-glyph-' + o.kind, 'aria-hidden': 'true', text: o.glyph || '·' }),
     el('span', { class: 'dt-text', text: o.label }),
+    // a subtle, CSS-pulsing ● clue on rows with LIVE activity (a running gen or
+    // board entry). It is a clue, not a banner — reuses the dn-inflight-pulse
+    // animation. Re-stamped only when the row ENTERS/LEAVES the live set (digest).
+    o.live ? el('span', { class: 'dt-node-pulse dn-inflight-pulse', title: 'running', 'aria-label': 'running' }) : null,
     o.tag ? el('span', { class: 'dt-tag dt-tag-' + o.kind, text: o.tag }) : null,
   ].filter(Boolean));
   if (o.selected) label.setAttribute('aria-current', 'true');

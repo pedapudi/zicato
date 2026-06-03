@@ -507,6 +507,28 @@ function renderBracket(st, ctx, epochId, structure) {
   nodes.push(section(structure === 'double_elim'
     ? (model.live ? 'Bracket · LIVE — winners’ + losers’ tree' : 'Bracket · winners’ + losers’ tree')
     : (model.live ? 'Bracket · LIVE — click a match to open the candidate' : 'Bracket · click a match to open the candidate'), card));
+
+  // the COMPANION generations-across-rounds FLOW (Task 3) — the elim analogue of
+  // the racing survival funnel. Shown ALONGSIDE the bracket (not a toggle):
+  // rounds as columns, one lane per generation, each line continuing while it
+  // advances + terminating with ✕ when cut; the champion's lane reaches the gate
+  // crowned. Derived purely from the SAME elimModel (single source). Only when
+  // the bracket has matches to flow.
+  const isElim = structure === 'single_elim' || structure === 'double_elim';
+  if (isElim && model.hasMatches !== false && Array.isArray(model.winners) && model.winners.length) {
+    const flowCard = el('div', { class: 'dn-panel dn-figpane' });
+    flowCard.appendChild(svg.elimFlow({
+      winners: model.winners, championId: model.championId, benchmarkId: model.benchmarkId,
+      gateState: model.gateState, live: model.live, onCompetitor: openGen,
+    }));
+    flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+      'each lane is a generation; its line advances right while it wins and ends with ✕ when eliminated — the champion’s lane reaches the gate ' + CROWN.current
+      + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
+      + (model.live ? ' · LIVE — in-flight legs are dashed' : '') }));
+    nodes.push(section(model.live ? 'Generations across rounds · LIVE — survival trajectory'
+      : 'Generations across rounds · survival trajectory', flowCard));
+  }
+
   const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
   if (standings) nodes.push(section('Standings', standings));
   return nodes;
@@ -831,7 +853,7 @@ function inflightByGen(activeRuns, epochGens) {
 // Returns null only when the payload is not the matching structure OR carries
 // NEITHER competitors NOR rounds yet — the caller then shows the honest
 // "starting" placeholder.
-function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
+export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   if (!at || typeof at !== 'object') return null;
   const structure = String(at.structure || '');
   const competitors = Array.isArray(at.competitors) ? at.competitors : [];
@@ -963,6 +985,117 @@ export function buildLiveElimModel({ at, heartbeat, activeRuns, epochGens } = {}
   if (!at || typeof at !== 'object'
     || (String(at.structure) !== 'single_elim' && String(at.structure) !== 'double_elim')) return null;
   return buildLiveModel(at, heartbeat, activeRuns, epochGens);
+}
+
+// ── the MATCH-GROUPED LIVE BLOCKS — one block per IN-FLIGHT match ────
+//
+// The live-hero "what's running" hero (Task 1) groups the live state BY the
+// in-flight match so it is obvious which boards are running, in EVERY structure.
+// This is the pure data derivation: it consumes the UNIFIED live model
+// (buildLiveModel's published rounds + active-runs overlay — the single source)
+// and emits one block per ACTIVE (pending, not queued) match. A block is either:
+//   * pairwise (swiss / elim / gauntlet): two sides, each a board ENTRY with a
+//     0..1 progress ratio + an outcome ('done'/'pending'/'queued'); or
+//   * rung-field (racing): one entry per lane in the rung's field.
+//
+// `entries[].outcome` ∈ 'pending' (still running) | 'queued' (not started) and,
+// once the match settles, the side's verdict is read off the model: 'win' (the
+// winner / a survivor → ✓), 'loss' (the loser / a cut → ✗), 'timeout' (⏱). A
+// SETTLED match is NOT a block (it is no longer "running"); only in-flight
+// matches surface here. Returns [] when nothing is in flight.
+//
+// Pure (model → plain array) so it unit-tests without a DOM and the hero can
+// digest-gate on it.
+export function liveMatchBlocks(model) {
+  if (!model || typeof model !== 'object') return null;
+  const structure = String(model.structure || '');
+  if (!structure) return null;
+  const isRacing = structure === 'racing';
+  const isFinal = (mid) => String(mid || '') === 'racing-final';
+  const rounds = Array.isArray(model.rounds) ? model.rounds : [];
+
+  // a match has SETTLED when it carries a winner / decision / survivors / cut /
+  // bye — the same predicate buildLiveModel uses; settled matches are not "live".
+  const settled = (m) => !!(m.winner || m.decision
+    || (Array.isArray(m.survivors) && m.survivors.length)
+    || (Array.isArray(m.cut) && m.cut.length)
+    || m.bye);
+  // an entry's progress ratio from a per-board done/total tally (0..1, clamped).
+  const ratio = (done, total) => {
+    if (!svg.isNum(total) || total <= 0) return null;
+    const r = (svg.isNum(done) ? done : 0) / total;
+    return r < 0 ? 0 : (r > 1 ? 1 : r);
+  };
+
+  const blocks = [];
+  for (const r of rounds) {
+    if (r.queued) continue; // a future, not-yet-started round carries no LIVE block.
+    const matches = Array.isArray(r.matches) ? r.matches : [];
+    for (const m of matches) {
+      if (m.queued) continue;        // a queued match in the active round is not running.
+      if (settled(m)) continue;      // a settled match is no longer in flight.
+      const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
+      if (isRacing) {
+        // a racing rung block: one entry per lane in the field; the per-lane
+        // live_progress carries the board done/total tally.
+        const prog = (m.live_progress && typeof m.live_progress === 'object') ? m.live_progress : {};
+        const entries = comps.map((g) => {
+          const lp = prog[g] || {};
+          return {
+            id: g, done: svg.isNum(lp.done) ? lp.done : 0,
+            total: svg.isNum(lp.total) ? lp.total : (svg.isNum(m.total) ? m.total : null),
+            inflight: svg.isNum(lp.inflight) ? lp.inflight : 0,
+            ratio: ratio(lp.done, lp.total != null ? lp.total : m.total),
+            outcome: 'pending',
+          };
+        });
+        blocks.push({
+          kind: 'rung', structure, match_id: m.match_id || null,
+          label: (r.label || `rung ${svg.isNum(r.round_index) ? r.round_index : ''}`).trim()
+            + (entries.length ? ` · field of ${entries.length}` : ''),
+          entries,
+        });
+        continue;
+      }
+      // pairwise (swiss / elim / gauntlet): a two-sided duel. Split the per-match
+      // done tally evenly across the two seats (the contract pins per-match
+      // done/total, not per-seat), so each side reads the same board progress.
+      const total = svg.isNum(m.total) ? m.total : null;
+      const done = svg.isNum(m.done) ? m.done : 0;
+      const seats = comps.length ? comps : ['tbd'];
+      const entries = seats.slice(0, 2).map((g) => ({
+        id: g, done, total, inflight: svg.isNum(m.inflight) ? m.inflight : 0,
+        ratio: ratio(done, total), outcome: 'pending',
+      }));
+      const tag = isFinal(m.match_id)
+        ? 'champion-gate'
+        : (m.bracket_slot ? String(m.bracket_slot)
+          : (r.label || (`round ${svg.isNum(r.round_index) ? r.round_index : ''}`)).trim());
+      blocks.push({
+        kind: 'pair', structure, match_id: m.match_id || null,
+        label: tag + (seats.length >= 2 ? ` · ${seats[0]} vs ${seats[1]}` : (seats.length ? ` · ${seats[0]}` : '')),
+        entries,
+      });
+    }
+  }
+  return blocks;
+}
+
+// A stable digest of the live match blocks — the live CONTENT (which matches
+// exist + each board entry's progress BUCKET, not the raw float). Bucketed to
+// ~10% so a steady heartbeat with no real progress is a no-op (the bars animate
+// via CSS, the DOM is not rebuilt every tick). Mirrors the board-detail
+// live-transcript render discipline.
+export function liveMatchBlocksDigest(blocks) {
+  const list = Array.isArray(blocks) ? blocks : [];
+  return JSON.stringify(list.map((b) => [
+    b.kind, b.match_id, b.label,
+    (Array.isArray(b.entries) ? b.entries : []).map((e) => [
+      e.id, e.outcome,
+      // bucket the progress so only a REAL bucket change re-stamps the DOM.
+      svg.isNum(e.ratio) ? Math.round(e.ratio * 10) : (e.inflight ? 'r' : 'q'),
+    ]),
+  ]));
 }
 
 // ── ONE candidate's MATCH-UPS from the LIVE published rounds ─────────

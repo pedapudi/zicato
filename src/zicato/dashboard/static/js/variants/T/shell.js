@@ -30,7 +30,7 @@ import * as D from './data.js';
 import { invalidateLive } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { normaliseDecision } from './ui.js';
-import { deriveLiveStatus, liveStatusDigest } from './livestatus.js';
+import { deriveLiveStatus, liveStatusDigest, treeLiveSet } from './livestatus.js';
 import { LiveController } from './live.js';
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
@@ -691,14 +691,28 @@ export async function buildTreeModel(route) {
 async function renderTree(route) {
   if (!_treeHost) return;
   const model = await buildTreeModel(route);
-  const digest = treeDigest(model, route, _toggles);
+  // the LIVE-ACTIVITY set (running gen / board-entry ids) drives a subtle pulse
+  // on the active rows. Gated on the structure-agnostic running verdict +, when
+  // tagged, scoped to the viewed epoch. Folded into the digest so the pulse
+  // re-stamps when the set changes — a steady beat with the same set is a no-op.
+  const status = deriveLiveStatus({
+    heartbeat: state.heartbeat,
+    activeRuns: state.activeRuns,
+    activeTournament: state.activeTournament,
+  });
+  const routeEpochId = (route && route.params) ? route.params.epochId : null;
+  const live = treeLiveSet({
+    activeRuns: state.activeRuns, running: status.running,
+    epochId: routeEpochId != null ? routeEpochId : model.current,
+  });
+  const digest = treeDigest(model, route, _toggles, live);
   if (digest === _lastTreeDigest && _treeHost.firstChild) return;
   _lastTreeDigest = digest;
   buildTree(_treeHost, model, route, _toggles, _ctx, (key) => {
     if (_toggles.has(key)) _toggles.delete(key); else _toggles.add(key);
     _lastTreeDigest = null;
     renderTree(parseRoute(location.hash));
-  });
+  }, live);
 }
 
 function renderCrumbs(route) {

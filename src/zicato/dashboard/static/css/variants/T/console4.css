@@ -1374,6 +1374,13 @@
   .dt-leaf[data-kind="mutations"] .dt-text,
   .dt-leaf[data-kind="paper"] .dt-text { font-family: var(--v2-sans); font-size: 12px; }
 
+  /* the LIVE-ACTIVITY pulse (Task 2): a subtle clue on a running gen / board
+   * row. It reuses the dn-inflight-pulse animation; sized small + nudged to the
+   * right so it reads as a clue, not a banner. The pulse is CSS-animated, so an
+   * unchanged live set needs no DOM (the tree digest re-stamps only on a set
+   * change). Reduced-motion drops the animation (it keeps a static dot). */
+  .dt-node-pulse { width: 6px; height: 6px; margin-left: auto; }
+
   .dt-sub { font-family: var(--v2-mono); font-size: 9px; color: var(--v2-ink-faint); margin-left: auto; padding-left: 6px; }
   .dt-tag { font-family: var(--v2-mono); font-size: 8.5px; padding: 0 5px; border-radius: 7px;
     border: 1px solid var(--v2-rule); color: var(--v2-ink-faint); margin-left: auto; white-space: nowrap; }
@@ -1775,6 +1782,32 @@
   .dn-elimbracket-gate:focus .dn-elimbracket-gatelab { fill: var(--v2-accent); outline: none; }
   .dn-elimbracket-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
 
+  /* ---- elim FLOW (generations across rounds — the slopegraph companion) ----
+   * Rounds as columns, one lane per generation; advancing legs read --v2-good,
+   * eliminations read --v2-bad (✕), pending (live) legs dash. All --v2-* tokens.*/
+  .dn-elimflow-col { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.04em; }
+  .dn-elimflow-name { fill: var(--v2-ink-soft); font: 10.5px var(--v2-mono); }
+  .dn-elimflow-name.dn-elimflow-good { fill: var(--v2-good); font-weight: 700; }
+  .dn-elimflow-name.dn-elimflow-bad { fill: var(--v2-ink-faint); }
+  .dn-elimflow-name.dn-elimflow-former { fill: var(--v2-ink-faint); font-style: italic; }
+  .dn-elimflow-seg { stroke: var(--v2-good); stroke-width: 1.8; opacity: 0.55;
+    vector-effect: non-scaling-stroke; }
+  .dn-elimflow-seg.dn-elimflow-good { stroke: var(--v2-good); opacity: 0.7; }
+  .dn-elimflow-seg-pending { stroke: var(--v2-ink-faint); stroke-dasharray: 4 3; opacity: 0.6; }
+  .dn-elimflow-dot { vector-effect: non-scaling-stroke; }
+  .dn-elimflow-dot.dn-elimflow-good { fill: var(--v2-good); }
+  .dn-elimflow-dot.dn-elimflow-bad { fill: var(--v2-bad); }
+  .dn-elimflow-dot.dn-elimflow-pending { fill: var(--v2-ink-faint); }
+  .dn-elimflow-cut { font: 11px var(--v2-mono); font-weight: 700; }
+  .dn-elimflow-cut.dn-elimflow-bad { fill: var(--v2-bad); }
+  .dn-elimflow-gate { fill: var(--v2-ink-soft); font: 12px var(--v2-mono); }
+  .dn-elimflow-gate.dn-elimflow-good { fill: var(--v2-good); font-weight: 700; }
+  .dn-elimflow-gate.dn-elimflow-former { fill: var(--v2-ink-faint); }
+  .dn-elimflow-lane:hover .dn-elimflow-name,
+  .dn-elimflow-lane:focus .dn-elimflow-name { fill: var(--v2-accent); outline: none; }
+  .dn-elimflow-lane:focus-visible { outline: 2px solid var(--v2-accent); }
+
   /* ====================================================================
    * COMPACT structure OVERVIEW (epoch-card hero) — the swiss standings-bump
    * chart + ranked Copeland bar, and the elim mini-bracket. All marks read
@@ -1881,6 +1914,39 @@
   .dt-live-hero-progfill { display: block; height: 100%; width: 0%; background: var(--v2-good);
     transition: width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1); }
   .dt-live-hero-progfill-pending { opacity: 0.45; }
+  /* ---- the MATCH-GROUPED "what's running" block (the hero, Task 1) ---- */
+  /* One block per in-flight match; each board entry shows a live progress bar
+   * (CSS width transition — the DOM is not rebuilt every tick) + an outcome
+   * glyph once it settles. Hidden until at least one match is in flight. */
+  .dt-live-hero-matches { display: none; margin: 0 0 14px; }
+  .dt-live-hero-matches.dt-live-hero-matches-on { display: block; }
+  .dt-live-hero-matcheshead { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; margin-bottom: 6px; }
+  .dt-live-matches { display: flex; flex-wrap: wrap; gap: 10px; }
+  .dt-live-matches-empty { font-size: 11.5px; padding: 6px 0; }
+  .dt-live-match { flex: 1 1 240px; min-width: 0; border: 1px solid var(--v2-rule); border-radius: 6px;
+    background: var(--v2-panel); padding: 8px 10px; }
+  .dt-live-match-head { font-family: var(--v2-mono); font-size: 11px; font-weight: 600; color: var(--v2-ink-soft);
+    margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-live-match-rows { display: flex; flex-direction: column; gap: 4px; }
+  .dt-live-match-row { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr) auto;
+    align-items: center; gap: 8px; border-radius: 4px; padding: 1px 2px; }
+  .dt-live-match-row[tabindex] { cursor: pointer; }
+  .dt-live-match-row[tabindex]:hover { background: var(--v2-rule-soft); }
+  .dt-live-match-row:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
+  .dt-live-match-name { font-size: 11.5px; color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .dt-live-match-bar { display: block; height: 7px; border-radius: 4px; background: var(--v2-rule-soft);
+    overflow: hidden; }
+  .dt-live-match-bar-queued { opacity: 0.5; }
+  .dt-live-match-fill { display: block; height: 100%; width: 0%; background: var(--v2-good);
+    transition: width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1); }
+  .dt-live-match-fill-live { background: var(--v2-good); }
+  .dt-live-match-state { font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-faint);
+    text-align: right; min-width: 2.6em; }
+  .dt-live-match-state.dn-good { color: var(--v2-good); }
+  .dt-live-match-state.dn-bad { color: var(--v2-bad); }
+
   /* the hero body: the funnel beside the activity ticker. */
   .dt-live-hero-body { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
     gap: 18px; align-items: start; }
@@ -1951,7 +2017,7 @@
     .dn-raceladder-runner, .dn-raceladder-edge, .dn-raceladder-bar,
     .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge, .dn-swissladder-bar,
     .dn-elimbracket-match, .dn-elimbracket-edge, .dn-elimbracket-bar,
-    .dt-live-hero-progfill, .dn-hm-cell { transition: none; }
+    .dt-live-hero-progfill, .dt-live-match-fill, .dn-hm-cell { transition: none; }
   }
 
   @media (max-width: 1080px) {

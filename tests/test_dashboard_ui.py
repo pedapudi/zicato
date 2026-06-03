@@ -251,9 +251,12 @@ def test_bundle_under_size_envelope(
     # `dashboard-bakeoff-2026-06-01` respectively, so the served bundle
     # dropped sharply to Variant T alone. The Variant-T feature set has since
     # grown (per-structure epoch overviews, live trackers, the swiss/elim
-    # standings-bump + mini-bracket visualizations); the envelope is raised to
-    # 640 KB to leave headroom for continued Variant-T iteration.
-    assert total < 640_000, f"bundle is {total} bytes, exceeds 640_000 envelope"
+    # standings-bump + mini-bracket visualizations). Integration wave 8 adds the
+    # match-grouped live "what's running" block, the tree live-activity pulse,
+    # and the elim generations-across-rounds flow (a new svg renderer + its CSS),
+    # which push the served total just past the prior 640 KB line; the envelope
+    # is raised to 680 KB to leave headroom for continued Variant-T iteration.
+    assert total < 680_000, f"bundle is {total} bytes, exceeds 680_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

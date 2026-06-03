@@ -19,7 +19,7 @@
 //     destination into the MAIN DETAIL PANE (rail host unchanged);
 //   * pickers (monokai + Technical defaults) switch + persist; digest no-op.
 
-import { installDom, test, run, assert, assertEqual, assertDeep } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
 installDom();
 
@@ -6646,6 +6646,243 @@ test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no �
   assert(thost.textContent.includes('♛'), 'the tree marks the current champion ♛');
   assert(thost.textContent.includes('♔'), 'the tree marks the former champion ♔');
   assert(!thost.textContent.includes('♚'), 'the tree emits no ♚');
+});
+
+// =====================================================================
+// INTEGRATION WAVE 8 — the LIVE match-grouped block (Task 1), the tree
+// live-activity pulse (Task 2), and the elim generations-across-rounds
+// flow (Task 3). All build on the consolidated live machinery
+// (buildLiveModel + the published rounds + active-runs overlay) and the
+// shared CROWN / glyph vocabulary — no per-structure synthesis, no new
+// glyph literals.
+// =====================================================================
+
+// ── Task 1 — the match-grouped "what's running" block ──
+
+// a LIVE swiss field with an ACTIVE round (round 1 pending) the block groups by.
+const LIVE_SWISS_BLOCK = {
+  structure: 'swiss', phase: 'running', epoch_id: HERO_EPOCH,
+  structure_params: { board_size: 4, rounds: 3 },
+  competitors: [{ generation_id: 'v0' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' }],
+  rounds: [
+    { round_index: 0, label: 'Round 1', matches: [
+      { match_id: 'sw_r0_m0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'win' },
+      { match_id: 'sw_r0_m1', competitors: ['v2', 'v3'], winner: 'v3', decision: 'win' },
+    ] },
+    { round_index: 1, label: 'Round 2', matches: [
+      { match_id: 'sw_r1_m0', competitors: ['v1', 'v3'] },
+      { match_id: 'sw_r1_m1', competitors: ['v0', 'v2'] },
+    ] },
+  ],
+  standings: [], champion_lineage: ['v0'],
+};
+
+test('Task 1 — match blocks (swiss): one block per IN-FLIGHT match, two sides, with per-board progress; settled rounds are NOT blocks', () => {
+  const model = STRUCT.buildLiveSwissModel({
+    at: LIVE_SWISS_BLOCK,
+    heartbeat: { phase: 'tournament:round_1', generation_id: 'v1', epoch_id: HERO_EPOCH },
+    activeRuns: [
+      { generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 2.0 }, // 2 of 4 boards done
+      { generation_id: 'v1', entry_id: 'b1', run_id: 'r1', progress: 0.0 },
+    ],
+    epochGens: ['v0', 'v1', 'v2', 'v3'],
+  });
+  const blocks = STRUCT.liveMatchBlocks(model);
+  // round 0 is settled (winners decided) → no block; round 1 is the active round
+  // with TWO pending pairings → two blocks.
+  assertEqual(blocks.length, 2, 'one block per IN-FLIGHT match (the two pending round-2 pairings); settled round 0 is excluded');
+  for (const b of blocks) {
+    assertEqual(b.kind, 'pair', 'a swiss block is a pairwise (two-sided) block');
+    assertEqual(b.entries.length, 2, 'a pairwise block shows two sides');
+  }
+  const v1v3 = blocks.find((b) => b.entries.some((e) => e.id === 'v1') && b.entries.some((e) => e.id === 'v3'));
+  assert(v1v3, 'a block names the in-flight pairing v1 vs v3');
+  assert(/v1 vs v3/.test(v1v3.label), 'the block header names the match — "… · v1 vs v3"');
+  const e = v1v3.entries.find((x) => x.id === 'v1');
+  assertEqual(e.total, 4, 'the side carries the board total (board_size)');
+  assert(svg.isNum(e.ratio) && e.ratio > 0, 'the side carries a live progress ratio from active-runs (2/4 boards done)');
+});
+
+test('Task 1 — match blocks (elim): blocks group by in-flight WB match, named WB-R0-0 · v0 vs v3', () => {
+  const model = STRUCT.buildLiveElimModel({
+    at: liveElimField(),
+    heartbeat: { phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH },
+    activeRuns: [
+      { generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 0.25 },
+      { generation_id: 'v1', entry_id: 'b1', run_id: 'r1', progress: 0.75 },
+    ],
+    epochGens: ['v0', 'v1', 'v2', 'v3'],
+  });
+  const blocks = STRUCT.liveMatchBlocks(model);
+  assertEqual(blocks.length, 2, 'two in-flight WB-R0 matches → two blocks');
+  const wb0 = blocks.find((b) => /WB-R0-0/.test(b.label));
+  assert(wb0, 'a block is named by its bracket slot WB-R0-0');
+  assert(/v0 vs v3/.test(wb0.label), 'the elim block header reads "WB-R0-0 · v0 vs v3"');
+});
+
+test('Task 1 — match blocks (racing): a rung-FIELD block (one entry per lane), header "rung 0 · field of N"', () => {
+  const model = STRUCT.buildLiveRacingModel({
+    at: liveRacingField(),
+    heartbeat: { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5', epoch_id: '2026-06-02_eR' },
+    activeRuns: [
+      { generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 },
+      { generation_id: 'v6', entry_id: 'b1', run_id: 'r1', progress: 0.9 },
+    ],
+    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
+  });
+  const blocks = STRUCT.liveMatchBlocks(model);
+  const rung = blocks.find((b) => b.kind === 'rung');
+  assert(rung, 'racing yields a rung-field block (not a pairwise block)');
+  assertEqual(rung.entries.length, 4, 'the rung block shows one entry per lane in the field of 4');
+  assert(/field of 4/.test(rung.label), 'the header reads "rung … · field of 4"');
+  const v5 = rung.entries.find((e) => e.id === 'v5');
+  assert(v5 && svg.isNum(v5.ratio), 'a lane carries its live progress ratio');
+});
+
+test('Task 1 — the match-grouped block RENDERS: one DOM block per match, a progress bar + a state per side; clickable', () => {
+  let opened = null;
+  const node = live.liveMatchGroupedBlocks(
+    STRUCT.liveMatchBlocks(STRUCT.buildLiveSwissModel({
+      at: LIVE_SWISS_BLOCK,
+      heartbeat: { phase: 'tournament:round_1', epoch_id: HERO_EPOCH },
+      activeRuns: [{ generation_id: 'v1', entry_id: 'b0', progress: 0.5 }],
+      epochGens: ['v0', 'v1', 'v2', 'v3'],
+    })),
+    (id) => { opened = id; },
+  );
+  const host = document.createElement('div');
+  host.appendChild(node);
+  assertEqual(allByClass(host, 'dt-live-match').length, 2, 'one DOM block per in-flight match');
+  assert(allByClass(host, 'dt-live-match-fill').length >= 2, 'each side has an animated progress fill');
+  // the fill width is set inline (CSS-animated; the DOM is not rebuilt per tick).
+  const fill = allByClass(host, 'dt-live-match-fill')[0];
+  assert(/width:\s*\d+%/.test(fill.style.cssText), 'the progress fill width is set in the style (CSS width transition, not a node swap)');
+  // a side row is clickable → opens the candidate.
+  const row = allByClass(host, 'dt-live-match-row')[0];
+  row.dispatchEvent(makeEvent('click'));
+  assert(opened != null, 'clicking a side opens the candidate');
+});
+
+test('Task 1 — the block is digest-gated on the live CONTENT: a no-op heartbeat is a no-op; a progress-bucket change re-stamps', () => {
+  const at = LIVE_SWISS_BLOCK;
+  const beat = (progress) => STRUCT.liveMatchBlocksDigest(STRUCT.liveMatchBlocks(STRUCT.buildLiveSwissModel({
+    at, heartbeat: { phase: 'tournament:round_1', epoch_id: HERO_EPOCH },
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', progress }],
+    epochGens: ['v0', 'v1', 'v2', 'v3'],
+  })));
+  // board_size 4: progress 0.5 → done 0 vs 0.55 → still bucket 0 (no rebuild),
+  // but a real bucket jump (progress that lands a board) re-stamps.
+  assertEqual(beat(0.0), beat(0.0), 'identical state → identical digest (a no-op heartbeat writes ZERO DOM)');
+  const d0 = beat(0.0);
+  const dBig = beat(3.5); // ~3-4 of 4 boards done → a real progress bucket
+  assert(d0 !== dBig, 'a real per-board progress change re-stamps the digest');
+});
+
+// ── Task 2 — the tree live-activity pulse ──
+
+test('Task 2 — tree pulse: a running gen / board entry gets a CSS pulse badge; the digest re-stamps on set change but NOT on a no-op beat', () => {
+  const model = {
+    epochs: [{ id: EPOCH_ID, current: true }],
+    byEpoch: { [EPOCH_ID]: {
+      gens: [{ id: 'v0', promoted: true, parent: null, currentChampion: true }, { id: 'v1', promoted: null, parent: 'v0' }],
+      boards: [{ id: 'b0' }, { id: 'b1' }],
+    } },
+    current: EPOCH_ID,
+  };
+  const route = { view: 'gens', params: { epochId: EPOCH_ID } };
+  const toggles = new Set(['e:' + EPOCH_ID, 'e:' + EPOCH_ID + '/gens', 'e:' + EPOCH_ID + '/boards']);
+  const ctx = { navigate() {}, href: router.href };
+
+  // v1 + b0 are running → the badge appears on those rows only.
+  const liveSet = new Set(['v1', 'b0']);
+  const host = document.createElement('div');
+  tree.buildTree(host, model, route, toggles, ctx, () => {}, liveSet);
+  const pulses = allByClass(host, 'dt-node-pulse');
+  assert(pulses.length === 2, 'exactly the two running rows (v1, b0) get a pulse badge');
+  assert(pulses.every((p) => (p.getAttribute('class') || '').includes('dn-inflight-pulse')), 'the pulse REUSES dn-inflight-pulse (the existing CSS-animated clue)');
+
+  // digest discipline: same set → same digest (no-op beat); set change → new digest.
+  const dA = tree.treeDigest(model, route, toggles, liveSet);
+  const dA2 = tree.treeDigest(model, route, toggles, new Set(['b0', 'v1'])); // same set, different order
+  assertEqual(dA, dA2, 'a steady beat with the SAME live set (order-insensitive) is a digest no-op');
+  const dB = tree.treeDigest(model, route, toggles, new Set(['v1'])); // b0 LEAVES the running set
+  assert(dA !== dB, 'a gen/entry LEAVING the running set re-stamps the digest');
+  const dC = tree.treeDigest(model, route, toggles, new Set(['v1', 'b0', 'v0'])); // v0 ENTERS
+  assert(dA !== dC, 'a gen/entry ENTERING the running set re-stamps the digest');
+
+  // idle (empty set) → no pulse.
+  const idle = document.createElement('div');
+  tree.buildTree(idle, model, route, toggles, ctx, () => {}, new Set());
+  assertEqual(allByClass(idle, 'dt-node-pulse').length, 0, 'an idle workspace shows no pulse');
+});
+
+test('Task 2 — treeLiveSet: derives the running gen+entry ids from active-runs, gated on running + scoped to the epoch', () => {
+  const runs = [
+    { generation_id: 'v1', entry_id: 'b0', epoch_id: EPOCH_ID },
+    { generation_id: 'v2', entry_id: 'b1' }, // no epoch tag → kept (legacy tolerance)
+    { generation_id: 'v9', entry_id: 'bX', epoch_id: 'OTHER' }, // foreign epoch → dropped
+  ];
+  const set = livestatus.treeLiveSet({ activeRuns: runs, running: true, epochId: EPOCH_ID });
+  assert(set.has('v1') && set.has('b0'), 'the running gen + entry of the viewed epoch are in the set');
+  assert(set.has('v2') && set.has('b1'), 'an untagged run is kept (legacy single-epoch tolerance)');
+  assert(!set.has('v9') && !set.has('bX'), 'a foreign-epoch run is excluded');
+  const idle = livestatus.treeLiveSet({ activeRuns: runs, running: false, epochId: EPOCH_ID });
+  assertEqual(idle.size, 0, 'an idle workspace (running=false) yields the empty set');
+});
+
+// ── Task 3 — the elim generations-across-rounds flow ──
+
+test('Task 3 — elimFlow: rounds as columns, one lane per generation; advancing lines + a terminating ✕, the crown at the gate', () => {
+  const model = STRUCT.elimModel(STRUCT.normalizeStructure(SE_STRUCT, false));
+  const flow = svg.elimFlow({
+    winners: model.winners, championId: model.championId, benchmarkId: model.benchmarkId,
+    gateState: model.gateState, live: false, onCompetitor() {},
+  });
+  assertEqual(flow.getAttribute('class'), 'dn-elimflow', 'the flow is its own renderer (dn-elimflow)');
+  assert((flow.getAttribute('width') || '') === '100%' && (flow.getAttribute('viewBox') || ''), 'fit-to-width: width:100% + a viewBox');
+  // rounds-as-columns headers + the gate column.
+  const cols = allByClass(flow, 'dn-elimflow-col').map((c) => c.textContent);
+  assert(cols.some((t) => /Semifinal|R0/.test(t)) && cols.some((t) => /Final|R1/.test(t)), 'rounds are columns (R0 · R1 · …)');
+  assert(cols.some((t) => /champion-gate/i.test(t)), 'the champion-gate is the trailing column');
+  // an advancing leg (good) + a terminating ✕ (bad) exist.
+  assert(allByClass(flow, 'dn-elimflow-good').length >= 1, 'an advancing line/marker reads --v2-good');
+  assert(flow.textContent.includes('✕'), 'an eliminated generation terminates with ✕');
+  // the champion (v1) reaches the gate with the current crown; v0 (displaced
+  // incumbent / benchmark) reads the former crown.
+  assertEqual(String(model.championId), 'v1', 'v1 is the bracket champion');
+  assert(flow.textContent.includes(svg.CROWN.current), 'the champion lane reaches the gate marked ♛ (CROWN.current)');
+  assert(flow.textContent.includes(svg.CROWN.former), 'the displaced incumbent (benchmark v0) reads ♔ (CROWN.former)');
+  assert(!flow.textContent.includes('♚'), 'no stray ♚ glyph literal');
+});
+
+test('Task 3 — the elim flow is a COMPANION section in the bracket render path; ABSENT for non-elim (racing)', () => {
+  // elim: the flow section renders ALONGSIDE the bracket (both present).
+  const elimNodes = STRUCT.renderStructure(STRUCT.normalizeStructure(SE_STRUCT, false), { navigate() {}, href: router.href }, EPOCH_ID);
+  const elimHost = document.createElement('div');
+  for (const n of elimNodes) elimHost.appendChild(n);
+  assert(svgsByClass(elimHost, 'dn-elimbracket')[0], 'the bracket tree is present');
+  assert(svgsByClass(elimHost, 'dn-elimflow')[0], 'the generations-across-rounds flow is present ALONGSIDE the bracket (a companion, not a toggle)');
+  assert(/Generations across rounds/i.test(elimHost.textContent), 'the companion section carries its one-line caption/title');
+
+  // racing: NO elim flow (it is elim-only).
+  const racingNodes = STRUCT.renderStructure(STRUCT.normalizeStructure(RACING_STRUCT, false), { navigate() {}, href: router.href }, EPOCH_ID);
+  const racingHost = document.createElement('div');
+  for (const n of racingNodes) racingHost.appendChild(n);
+  assertEqual(svgsByClass(racingHost, 'dn-elimflow').length, 0, 'the elim flow is ABSENT for a non-elim (racing) structure');
+});
+
+test('Task 3 — a LIVE elim flow draws in-flight legs as DASHED (pending convention) from the published rounds', () => {
+  const model = STRUCT.elimModel(STRUCT.buildLiveElimModel({
+    at: liveElimField(),
+    heartbeat: { phase: 'tournament:round_0', epoch_id: HERO_EPOCH },
+    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', progress: 0.5 }],
+    epochGens: ['v0', 'v1', 'v2', 'v3'],
+  }));
+  const flow = svg.elimFlow({
+    winners: model.winners, championId: model.championId, benchmarkId: model.benchmarkId,
+    gateState: model.gateState, live: true,
+  });
+  assert(allByClass(flow, 'dn-elimflow-seg-pending').length >= 1, 'an in-flight (pending) leg is drawn with the pending (dashed) class');
 });
 
 await run();

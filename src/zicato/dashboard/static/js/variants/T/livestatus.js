@@ -217,6 +217,33 @@ export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {
   };
 }
 
+// ── the TREE LIVE-ACTIVITY set (Task 2) ──────────────────────────────
+//
+// The set of gen ids AND board-entry ids that currently have an in-flight run,
+// derived purely from /api/active-runs (the ground-truth in-flight board units).
+// The tree sidebar pulses the rows in this set. It is gated on `running` — an
+// idle workspace yields the empty set so no stale pulse lingers — and optionally
+// scoped to a viewed epoch when the active-runs records carry an epoch tag (a
+// foreign-epoch run must not light up the viewed epoch's rows; records with no
+// epoch tag are kept, the legacy single-epoch tolerance). Returns a Set of
+// string ids (both the generation_id and the entry_id of each in-flight run).
+export function treeLiveSet({ activeRuns, running, epochId } = {}) {
+  const out = new Set();
+  if (!running) return out;
+  const runs = Array.isArray(activeRuns) ? activeRuns : [];
+  const want = epochId == null ? null : String(epochId);
+  for (const r of runs) {
+    if (!r || typeof r !== 'object') continue;
+    // drop a run whose epoch is KNOWN-and-DIFFERENT from the viewed epoch.
+    if (want != null && r.epoch_id != null && String(r.epoch_id) !== want) continue;
+    const gen = r.generation_id != null ? r.generation_id : r.gen;
+    const entry = r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : r.entry);
+    if (gen != null && String(gen) !== '') out.add(String(gen));
+    if (entry != null && String(entry) !== '') out.add(String(entry));
+  }
+  return out;
+}
+
 // A stable digest of the derived status so the chrome only re-stamps on a real
 // change (digest-gated — a steady heartbeat ping writes ZERO DOM).
 export function liveStatusDigest(conn, status) {

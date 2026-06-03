@@ -30,7 +30,8 @@ import { isNum, survivalFunnel, swissLadder, elimBracket, proposingTracker, prop
 import { fieldStatus as readFieldStatus } from './data.js';
 import {
   racingModel, swissModel, elimModel, normalizeStructure,
-  buildLiveSwissModel, buildLiveElimModel,
+  buildLiveSwissModel, buildLiveElimModel, buildLiveModel,
+  liveMatchBlocks, liveMatchBlocksDigest,
 } from './views/structure.js';
 
 // ── tournament-level progress ────────────────────────────────────────
@@ -312,6 +313,67 @@ function glyphFor(ev) {
   }
 }
 
+// ── the MATCH-GROUPED "what's running" block (Task 1) ────────────────
+//
+// One DOM block per in-flight match, each board entry showing a live progress
+// bar (animated via CSS width) + an outcome glyph once it settles. The bars are
+// set via style.setProperty so a re-render is not required to advance them — but
+// the host is digest-gated on the live CONTENT (the bucketed progress) so the
+// DOM is rebuilt only on a real bucket change, never on a no-op heartbeat. This
+// complements (does not replace) the "N units running" count + the activity
+// ticker: the ticker is the STREAM, this is the STATE.
+//
+// `blocks` is liveMatchBlocks(model)'s output; `onCompetitor(id)` opens a
+// candidate. Pure: returns a detached node.
+function blockOutcomeGlyph(outcome) {
+  switch (outcome) {
+    case 'win': return '✓';
+    case 'loss': return '✗';
+    case 'timeout': return '⏱';
+    case 'queued': return '·';
+    default: return '';
+  }
+}
+
+export function liveMatchGroupedBlocks(blocks, onCompetitor) {
+  const list = Array.isArray(blocks) ? blocks : [];
+  const wrap = el('div', { class: 'dt-live-matches' });
+  if (!list.length) {
+    wrap.appendChild(el('p', { class: 'dn-faint dt-live-matches-empty', text: 'no matches in flight right now…' }));
+    return wrap;
+  }
+  for (const b of list) {
+    const block = el('div', { class: 'dt-live-match dt-live-match-' + (b.kind || 'pair'), 'data-match': b.match_id || '' });
+    block.appendChild(el('div', { class: 'dt-live-match-head', text: b.label || (b.match_id || 'match') }));
+    const rows = el('div', { class: 'dt-live-match-rows' });
+    for (const e of (Array.isArray(b.entries) ? b.entries : [])) {
+      const queued = e.outcome === 'queued';
+      const settled = e.outcome === 'win' || e.outcome === 'loss' || e.outcome === 'timeout';
+      const row = el('div', { class: 'dt-live-match-row', tabindex: onCompetitor ? '0' : null });
+      const name = el('span', { class: 'dt-live-match-name dn-mono', text: String(e.id) });
+      const fill = el('span', { class: 'dt-live-match-fill' + (e.inflight ? ' dt-live-match-fill-live' : '') });
+      const pct = isNum(e.ratio) ? Math.round(Math.max(0, Math.min(1, e.ratio)) * 100) : (e.inflight ? 50 : 0);
+      fill.style.setProperty('width', pct + '%');
+      const bar = el('span', { class: 'dt-live-match-bar' + (queued ? ' dt-live-match-bar-queued' : ''), 'aria-hidden': 'true' }, [fill]);
+      const stateText = settled ? blockOutcomeGlyph(e.outcome)
+        : queued ? 'queued'
+        : (isNum(e.total) && e.total > 0 ? `${e.done || 0}/${e.total}` : (e.inflight ? `${e.inflight}…` : 'running'));
+      const glyph = el('span', { class: 'dt-live-match-state' + (e.outcome === 'win' ? ' dn-good' : e.outcome === 'loss' ? ' dn-bad' : ''), text: stateText });
+      row.appendChild(name);
+      row.appendChild(bar);
+      row.appendChild(glyph);
+      if (onCompetitor && e.id && e.id !== 'tbd') {
+        row.addEventListener('click', () => onCompetitor(String(e.id)));
+        row.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onCompetitor(String(e.id)); } });
+      }
+      rows.appendChild(row);
+    }
+    block.appendChild(rows);
+    wrap.appendChild(block);
+  }
+  return wrap;
+}
+
 // ── the LIVE-RUN HERO + controller ───────────────────────────────────
 //
 // A persistent, shell-owned focal panel that LEADS the page while a run is in
@@ -336,6 +398,7 @@ export class LiveController {
     this._seq = 0;
     this._prevSnap = null;
     this._funnelDigest = null;
+    this._matchesDigest = null;
     this._lastProgressKey = null;
     this.ticker = new ActivityTicker({ cap: o.cap || 40 });
     this._build();
@@ -361,6 +424,14 @@ export class LiveController {
       this._progBar,
     ]);
 
+    // the MATCH-GROUPED "what's running" block — the hero, grouped by in-flight
+    // match so it is obvious which boards are running in EVERY structure (Task 1).
+    this._matchesHost = el('div', { class: 'dt-live-hero-matches' }, [
+      el('div', { class: 'dt-live-hero-matcheshead dn-faint', text: 'what’s running' }),
+      el('div', { class: 'dt-live-hero-matchesbody' }),
+    ]);
+    this._matchesBody = this._matchesHost.childNodes[1];
+
     this._funnelHost = el('div', { class: 'dt-live-hero-funnel dn-figpane' });
     this._tickerHost = el('div', { class: 'dt-live-hero-ticker' }, [
       el('div', { class: 'dt-live-hero-tickerhead dn-faint', text: 'live activity' }),
@@ -368,7 +439,7 @@ export class LiveController {
     ]);
 
     const body = el('div', { class: 'dt-live-hero-body' }, [this._funnelHost, this._tickerHost]);
-    this.node = el('section', { class: 'dt-live-hero', 'aria-label': 'Live run', role: 'region' }, [head, prog, body]);
+    this.node = el('section', { class: 'dt-live-hero', 'aria-label': 'Live run', role: 'region' }, [head, prog, this._matchesHost, body]);
   }
 
   // Drive the hero from the current live state. Returns true when a run is live
@@ -383,7 +454,7 @@ export class LiveController {
     this._seq = seq;
     if (events.length) this.ticker.push(events);
     this._prevSnap = running ? snap : null;
-    if (!running) { this._funnelDigest = null; return false; }
+    if (!running) { this._funnelDigest = null; this._matchesDigest = null; return false; }
 
     // ── prominent phase ──
     patchText(this._phase, (status && status.label) || (heartbeat && heartbeat.phase) || 'running');
@@ -409,12 +480,41 @@ export class LiveController {
       patchClass(this._progFill, 'dt-live-hero-progfill-pending', pct == null);
     }
 
+    // ── the MATCH-GROUPED "what's running" block: digest-gated on live CONTENT ──
+    // (which matches exist + each board's progress BUCKET) so the DOM is rebuilt
+    // only on a real change, never on a no-op heartbeat; the bars animate via CSS.
+    this._updateMatches(activeTournament, heartbeat, activeRuns);
+
     // ── the structure FIGURE: digest-gated swap (animate only on real change) ──
     // STRUCTURE-DISPATCHED + CURRENT-RUN-ONLY (see structureEligible): racing →
     // funnel, swiss → live standings ladder, elim → live bracket; anything else /
     // completed / stale-foreign shows the honest placeholder.
     this._updateStructure(activeTournament, heartbeat, activeRuns);
     return true;
+  }
+
+  // Build the match-grouped "what's running" block from the UNIFIED live model
+  // (buildLiveModel — the single source the structure figures use too) and swap
+  // it in ONLY when the live-content digest changes. A steady heartbeat with the
+  // same matches + the same progress buckets writes ZERO DOM (the bars are
+  // CSS-animated). Hidden when the current run has no live topology yet.
+  _updateMatches(activeTournament, heartbeat, activeRuns) {
+    const at = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
+    let blocks = [];
+    if (structureEligible(at, heartbeat)) {
+      const epochGens = (Array.isArray(at.competitors) ? at.competitors : [])
+        .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
+      const model = buildLiveModel(at, heartbeat, activeRuns, epochGens.length ? epochGens : null);
+      blocks = liveMatchBlocks(model) || [];
+    }
+    const digest = liveMatchBlocksDigest(blocks);
+    patchClass(this._matchesHost, 'dt-live-hero-matches-on', blocks.length > 0);
+    if (digest === this._matchesDigest && this._matchesBody.firstChild) return; // no real change → no DOM.
+    this._matchesDigest = digest;
+    clear(this._matchesBody);
+    const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined);
+    if (node.classList) node.classList.add('dt-live-enter');
+    this._matchesBody.appendChild(node);
   }
 
   _updateStructure(activeTournament, heartbeat, activeRuns) {

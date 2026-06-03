@@ -1325,6 +1325,162 @@ export function elimBracket(opts) {
   return svg;
 }
 
+// ---- elim FLOW (Tufte slopegraph / bipartite — generations across rounds) --
+//
+// The COMPANION to the bracket tree on the generations-overview page (Task 3):
+// the elimination analogue of the racing survival funnel. The tree shows
+// who-played-whom; this shows each generation's SURVIVAL TRAJECTORY through the
+// rounds.
+//
+//   * ROUNDS are columns (R0 · R1 · … · champion-gate).
+//   * ONE LANE per generation (a horizontal row).
+//   * a generation's line CONTINUES to the next column when it WON (advanced),
+//     drawn with --v2-good; it TERMINATES with ✕ (--v2-bad) when ELIMINATED.
+//   * the champion's line reaches the gate marked with CROWN.current; the
+//     displaced incumbent (benchmark) reads CROWN.former.
+//   * a still-pending (live) leg is drawn dashed (the pending convention).
+//
+// Derived PURELY from elimModel(st)'s winners rounds + competitors (single
+// source — no new data path). `opts`:
+//   { winners:[{label, matches:[{competitors, winner, decision, pending, bye}]}],
+//     championId, benchmarkId, gateState, live, onCompetitor(id) }
+export function elimFlow(opts) {
+  const o = opts || {};
+  const rounds = (Array.isArray(o.winners) ? o.winners : []).filter((r) => r && Array.isArray(r.matches));
+  const live = !!o.live;
+  const champId = o.championId != null ? String(o.championId) : null;
+  const benchId = o.benchmarkId != null ? String(o.benchmarkId) : null;
+
+  // ── derive each generation's per-round state from the winners rounds ──
+  // For each round we record, per competitor that PLAYED in it: advanced (won),
+  // eliminated (lost a decided match), or pending (the match is still in flight).
+  // R = rounds.length columns + 1 gate column.
+  const nCols = rounds.length;
+  // gen id → { firstCol, lastCol, eliminatedAt, advancedThrough:Set, pendingAt:Set }
+  const genState = new Map();
+  const ensure = (id) => {
+    const k = String(id);
+    if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), eliminatedAt: null, pendingAt: new Set() });
+    return genState.get(k);
+  };
+  rounds.forEach((r, ci) => {
+    for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+      const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String).filter((c) => c && c !== 'tbd');
+      const winner = m.winner ? String(m.winner) : null;
+      const pending = !!m.pending || (!winner && !m.bye && !m.decision);
+      for (const c of comps) {
+        const g = ensure(c);
+        g.played.add(ci);
+        if (pending) { g.pendingAt.add(ci); continue; }
+        if (m.bye) { g.advanced.add(ci); continue; }
+        if (winner && c === winner) g.advanced.add(ci);
+        else if (winner) { if (g.eliminatedAt == null) g.eliminatedAt = ci; }
+      }
+    }
+  });
+  const gens = [...genState.values()];
+  // order lanes: survivors / champion first (by deepest round reached), then the
+  // earlier-eliminated; the champion lane floats to the top.
+  const reach = (g) => (g.eliminatedAt == null ? nCols + 1 : g.eliminatedAt);
+  gens.sort((a, b) => reach(b) - reach(a)
+    || (a.id === champId ? -1 : b.id === champId ? 1 : 0)
+    || a.id.localeCompare(b.id));
+
+  // ── geometry: columns × lanes, fit-to-width ──
+  const colW = 116;
+  const padL = 16;
+  const padR = 116;          // gutter for the lane labels + gate marks
+  const top = 30;
+  const laneH = 22;
+  const w = padL + Math.max(1, nCols) * colW + padR + 8;
+  const h = top + Math.max(1, gens.length) * laneH + 18;
+  const svg = svgEl('svg', {
+    class: 'dn-elimflow', width: '100%', height: h,
+    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
+  });
+  if (!nCols || !gens.length) {
+    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no bracket rounds yet';
+    svg.appendChild(t);
+    return svg;
+  }
+  const colX = (ci) => padL + ci * colW + 8;       // a round column's node x
+  const gateX = padL + nCols * colW + 8;           // the champion-gate column x
+  const laneY = (li) => top + li * laneH + laneH / 2;
+
+  // round-axis headers (R0 · R1 · … · champion-gate).
+  rounds.forEach((r, ci) => {
+    const hx = colX(ci);
+    const head = svgEl('text', { x: hx, y: top - 12, class: 'dn-elimflow-col', 'text-anchor': 'middle' });
+    head.textContent = shortLabel(r.label || `R${ci}`, 12);
+    svg.appendChild(head);
+  });
+  const gateHead = svgEl('text', { x: gateX, y: top - 12, class: 'dn-elimflow-col', 'text-anchor': 'middle' });
+  gateHead.textContent = 'champion-gate';
+  svg.appendChild(gateHead);
+
+  // ── one lane per generation: dots at each round it played, a segment to the
+  // next column when it advanced, a ✕ where it was cut, the crown at the gate ──
+  gens.forEach((g, li) => {
+    const y = laneY(li);
+    const isChamp = champId != null && g.id === champId;
+    const isFormer = benchId != null && g.id === benchId && !isChamp;
+    const lane = svgEl('g', { class: 'dn-elimflow-lane', tabindex: o.onCompetitor ? '0' : null });
+
+    // the lane's played columns, sorted.
+    const cols = [...g.played].sort((a, b) => a - b);
+    for (const ci of cols) {
+      const x = colX(ci);
+      const advanced = g.advanced.has(ci);
+      const pending = g.pendingAt.has(ci);
+      const eliminated = g.eliminatedAt === ci;
+      // the node dot at this round.
+      const dotCls = 'dn-elimflow-dot ' + (eliminated ? 'dn-elimflow-bad' : advanced ? 'dn-elimflow-good' : 'dn-elimflow-pending');
+      lane.appendChild(hov(svgEl('circle', { cx: x, cy: y, r: 2.8, class: dotCls }),
+        `${g.id} · ${rounds[ci] ? (rounds[ci].label || 'R' + ci) : 'R' + ci} · ${eliminated ? 'eliminated' : advanced ? 'advanced' : 'racing'}`));
+      // a segment to the NEXT column (a later round, or the gate) when advanced.
+      if (advanced || pending) {
+        const nextCi = cols.find((c) => c > ci);
+        const toX = (nextCi != null) ? colX(nextCi)
+          : (ci === nCols - 1 ? gateX : null); // last winners round → gate
+        if (toX != null) {
+          const segCls = 'dn-elimflow-seg ' + (pending ? 'dn-elimflow-seg-pending' : 'dn-elimflow-good');
+          lane.appendChild(svgEl('line', { x1: x, y1: y, x2: toX, y2: y, class: segCls }));
+        }
+      }
+    }
+
+    // the terminating ✕ at the elimination column.
+    if (g.eliminatedAt != null) {
+      const x = colX(g.eliminatedAt) + 8;
+      const xm = svgEl('text', { x, y: y + 3.2, class: 'dn-elimflow-cut dn-elimflow-bad', 'text-anchor': 'start' });
+      xm.textContent = '✕';
+      lane.appendChild(xm);
+    } else if (isChamp || isFormer || g.advanced.size) {
+      // a survivor reaching the gate column: the champion gets CROWN.current, the
+      // displaced incumbent CROWN.former; any other survivor a neutral arrival.
+      const gx = gateX;
+      const crowned = isChamp && (o.gateState === 'crowned' || (!o.gateState && !live));
+      const mark = isChamp ? CROWN.current : isFormer ? CROWN.former : '→';
+      const cls = 'dn-elimflow-gate' + (crowned ? ' dn-elimflow-good' : isFormer ? ' dn-elimflow-former' : '');
+      const gm = hov(svgEl('text', { x: gx + 6, y: y + 3.2, class: cls, 'text-anchor': 'start' }),
+        isChamp ? `${g.id} · champion ${CROWN.current}` : isFormer ? `${g.id} · former champion (displaced incumbent)` : `${g.id} · reached the gate`);
+      gm.textContent = mark;
+      lane.appendChild(gm);
+    }
+
+    // the lane label at the right gutter.
+    const lblCls = 'dn-elimflow-name' + (isChamp ? ' dn-elimflow-good' : isFormer ? ' dn-elimflow-former' : g.eliminatedAt != null ? ' dn-elimflow-bad' : '');
+    const lbl = svgEl('text', { x: w - 6, y: y + 3.2, class: lblCls, 'text-anchor': 'end' });
+    lbl.textContent = shortLabel(g.id, 11) + (isChamp ? ' ' + CROWN.current : isFormer ? ' ' + CROWN.former : '');
+    lane.appendChild(lbl);
+
+    clickable(lane, o.onCompetitor && (() => o.onCompetitor(g.id)));
+    svg.appendChild(lane);
+  });
+  return svg;
+}
+
 // ---- COMPACT SWISS OVERVIEW (epoch-card hero) ----------------------
 // (1) a STANDINGS BUMP CHART — one line per competitor, x = round, y = rank
 //     (1 at top); lines cross as the leader emerges (champion line bold).
