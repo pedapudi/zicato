@@ -896,12 +896,16 @@ export function survivalFunnel(opts) {
         // (x1, midY+hOut); at fraction f along the stage its y is interpolated.
         const f = (elbowX - x0) / stageW;
         const edgeYAtElbow = midY + hIn + (hOut - hIn) * f;
-        // a dead-end branch from the band's lower edge down to the cut row.
+        const labelX = elbowX + 12;
+        // a dead-end branch that drops from the band's lower edge and then a SHORT
+        // stub that stops just LEFT of the label — the connector must lead INTO
+        // the cut name, never run through it (it used to extend the full stage
+        // width at the label's own baseline, slashing across the text).
         svg.appendChild(svgEl('path', {
-          d: `M${elbowX},${edgeYAtElbow} V${branchY} H${x0 + stageW - 10}`,
+          d: `M${elbowX},${edgeYAtElbow} V${branchY} H${labelX - 4}`,
           class: 'dn-funnel-deadedge', fill: 'none',
         }));
-        funnelRunner(svg, o, sid, rung, j, elbowX + 4, branchY - 1, 'cut');
+        funnelRunner(svg, o, sid, rung, j, labelX, branchY, 'cut');
       });
     }
   });

@@ -1649,11 +1649,13 @@
   /* eliminated dead-end branches peeling off below the lane */
   .dn-funnel-deadedge { stroke: var(--v2-bad); stroke-width: 1.1;
     vector-effect: non-scaling-stroke; opacity: 0.55; stroke-dasharray: 2 2; }
-  /* competitor labels — survivors (good), cuts (struck, bad), racing (neutral) */
+  /* competitor labels — survivors (good ↑), cuts (bad ✕), racing (neutral). The
+     ✕ glyph + bad colour already mark a cut, so NO strikethrough — a line
+     through the name reads as the connector slashing the text. */
   .dn-funnel-name { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
   .dn-funnel-name.dn-good { fill: var(--v2-good); font-weight: 600; }
   .dn-funnel-name.dn-bad { fill: var(--v2-bad); }
-  .dn-funnel-name.dn-out { text-decoration: line-through; opacity: 0.9; }
+  .dn-funnel-name.dn-out { opacity: 0.8; }
   .dn-funnel-name.dn-racing { fill: var(--v2-ink-soft); }
   .dn-funnel-runner:hover .dn-funnel-name,
   .dn-funnel-runner:focus .dn-funnel-name { fill: var(--v2-accent); outline: none; }
