@@ -36,6 +36,21 @@ const { svgEl } = await import('../js/core/dom.js');
 
 const EPOCH_ID = '2026-05-30_e0';
 
+// Stamp a FRESH `last_heartbeat` on a heartbeat fixture so the live-status
+// staleness gate (deriveLiveStatus) reads it as a live orchestrator pulse.
+// A real SSE heartbeat always carries this stamp; these UI fixtures elide it,
+// and after the dead-run-shows-LIVE fix a heartbeat with no ageable timestamp
+// reads STALE (not live). Use this for any fixture that should drive a LIVE
+// proposing/tournament render off the heartbeat phase alone (no in-flight
+// active-runs to act as ground truth). Respects an explicit `last_heartbeat`
+// already on the object (e.g. a deliberately-stale fixture).
+function freshHb(hb) {
+  if (hb && hb.last_heartbeat == null) {
+    return { ...hb, last_heartbeat: new Date().toISOString() };
+  }
+  return hb;
+}
+
 const FIXTURE = {
   '/api/epoch': {
     epoch_id: EPOCH_ID, closed: false, goal: 'Make the presentation agent crisper.',
@@ -2039,13 +2054,14 @@ test('live-status: a live RACING run (non-idle phase + in-flight runs + tourname
   assert(status.label.includes('rung 0'), 'the readable label derives the rung from the phase string');
 });
 
-test('live-status: the heartbeat phase ALONE (proposing) lights the running state even before a tournament exists', () => {
+test('live-status: a FRESH heartbeat phase ALONE (proposing) lights the running state even before a tournament exists', () => {
+  const now = 1_000_000_000_000;
   const status = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'proposing:field', generation_id: null },
+    heartbeat: { phase: 'proposing:field', generation_id: null, last_heartbeat: now - 2_000 /* fresh */ },
     activeRuns: [],
     activeTournament: null,
-  });
-  assertEqual(status.running, true, 'a non-idle proposing phase ⇒ running even with no tournament + no active-runs');
+  }, now);
+  assertEqual(status.running, true, 'a fresh non-idle proposing phase ⇒ running even with no tournament + no active-runs');
   assert(status.label.includes('proposing'), 'the proposing phase yields a readable "proposing …" label');
   assertEqual(status.inFlight, 0, 'no board-units in flight during proposing');
 });
@@ -2148,18 +2164,59 @@ test('live-status: a completed active-tournament ALONE (no fresh phase, no runs)
   assertEqual(status.running, false, 'a completed tournament is not a running signal');
 });
 
-test('live-status: an unparseable/absent heartbeat timestamp does NOT force-stale (falls back to phase/in-flight)', () => {
-  const now = 1_000_000_000_000;
-  // no timestamp at all → must not be treated as stale; an active phase stays live.
+test('live-status: a heartbeat with NO parseable timestamp reads NOT live (missing ts ⇒ stale, never default-to-live)', () => {
+  // a realistic 2026 epoch-ms `now` (>1e12) so a numeric `last_heartbeat`
+  // delta is read as ms, not rescaled from "seconds".
+  const now = 1_780_455_964_000;
+  // THE BUG: a killed run leaves a heartbeat whose ts cannot be parsed. It must
+  // NOT default to live off an active phase — a heartbeat that cannot be aged
+  // out is stale, not fresh.
   const noTs = livestatus.deriveLiveStatus({
-    heartbeat: { phase: 'proposing:field' }, activeRuns: [], activeTournament: null,
+    heartbeat: { phase: 'tournament:round_0:final' }, activeRuns: [], activeTournament: null,
   }, now);
-  assertEqual(noTs.running, true, 'an active phase with no timestamp still reads live (no force-stale)');
-  // a garbage timestamp also falls back rather than force-staling.
+  assertEqual(noTs.running, false, 'an active phase with NO timestamp reads NOT live (missing ts ⇒ stale)');
+  assertEqual(noTs.heartbeatStale, true, 'a heartbeat with no parseable timestamp is flagged stale');
+  // a garbage timestamp is likewise unparseable ⇒ stale ⇒ not live.
   const badTs = livestatus.deriveLiveStatus({
     heartbeat: { phase: 'tournament:round_0:rung0_m3', last_heartbeat: 'not-a-date' }, activeRuns: [], activeTournament: null,
   }, now);
-  assertEqual(badTs.running, true, 'an unparseable timestamp falls back to the live phase signal');
+  assertEqual(badTs.running, false, 'an unparseable timestamp reads NOT live (stale)');
+});
+
+test('live-status: a heartbeat OLDER than STALE_HEARTBEAT_MS reads NOT live (the one staleness rule)', () => {
+  const now = 1_780_455_964_000;
+  // just past the staleness window on an otherwise-active phase ⇒ not live.
+  const old = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'tournament:round_0:final', last_heartbeat: now - (livestatus.STALE_HEARTBEAT_MS + 1_000) },
+    activeRuns: [],
+    activeTournament: null,
+  }, now);
+  assertEqual(old.running, false, 'an active phase with a too-old timestamp reads NOT live');
+  assertEqual(old.heartbeatStale, true, 'a too-old heartbeat is flagged stale');
+  // a FRESH timestamp on the same active phase reads live (the positive case).
+  const fresh = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'tournament:round_0:final', last_heartbeat: now - 2_000 },
+    activeRuns: [],
+    activeTournament: null,
+  }, now);
+  assertEqual(fresh.running, true, 'a fresh timestamp on an active phase reads LIVE');
+  assertEqual(fresh.heartbeatStale, false, 'a fresh heartbeat is not stale');
+});
+
+test('live-status: a DEAD run (stale phase + frozen active_tournament phase:running, 0 in-flight) reads NOT live — the repro', () => {
+  const now = 1_780_455_964_000;
+  // the exact on-disk shape a killed run leaves: a stale heartbeat with an
+  // active-looking phase, an orphaned active_tournament.json still saying
+  // phase:"running", and ZERO in-flight board-units. The frozen tournament
+  // file must NOT keep it live now that the orchestrator heartbeat is stale.
+  const dead = livestatus.deriveLiveStatus({
+    heartbeat: { phase: 'tournament:round_0:final', generation_id: 'v3', epoch_id: '2026-06-03_e3', last_heartbeat: now - 800_000 /* ~13 min */ },
+    activeRuns: [],
+    activeTournament: { structure: 'single_elim', phase: 'running' },
+  }, now);
+  assertEqual(dead.running, false, 'a dead run with a frozen running-tournament file but a stale heartbeat is NOT live');
+  assertEqual(dead.tournamentRunning, true, 'the frozen tournament file is still reported as phase:running');
+  assert(dead.label === 'idle' || dead.label === 'done', 'the dead run reads idle/done, not a running label');
 });
 
 // ---- (b′) the chrome status pill reflects the running state, digest-gated ----
@@ -4786,7 +4843,7 @@ test('live hero: racing STILL renders the funnel (no swiss/elim regression), and
   // a FOREIGN-epoch elim (current epoch proposing) → no elim topology in the hero.
   const foreignElim = JSON.parse(JSON.stringify(HERO_LIVE_ELIM_E3));
   foreignElim.epoch_id = '2026-06-01_e1';
-  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.setHeartbeat(freshHb({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH }));
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = foreignElim;
   root = mountLiveShell('#/');
@@ -4803,7 +4860,7 @@ test('live hero: racing STILL renders the funnel (no swiss/elim regression), and
 test('live hero: a PROPOSING current run (no tournament) shows the honest proposing state — no swiss/elim/racing topology', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
-  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.setHeartbeat(freshHb({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH }));
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
   const root = mountLiveShell('#/');
@@ -4820,7 +4877,7 @@ test('live hero: a CURRENT-EPOCH PROPOSING phase with a STALE racing tournament 
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
   // the current run is e3 PROPOSING; the active-tournament is e1's COMPLETED racer.
-  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.setHeartbeat(freshHb({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH }));
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = HERO_STALE_RACING_E1;
 
@@ -4884,7 +4941,7 @@ const HERO_PROPOSING_E3 = {
 test('live hero: the PROPOSING phase shows the proposing-step tracker (applied ✓ / rejected ✗) instead of the bland placeholder', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
-  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.setHeartbeat(freshHb({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH }));
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = HERO_PROPOSING_E3;
 
@@ -4907,7 +4964,7 @@ test('live hero: the PROPOSING phase shows the proposing-step tracker (applied �
 test('live hero: an ALL-REJECTED proposing field reads "0 applied — all rejected", NOT an idle/empty hero', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
-  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.setHeartbeat(freshHb({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH }));
   coreState.state.activeRuns = [];
   const allBad = JSON.parse(JSON.stringify(HERO_PROPOSING_E3));
   allBad.field_status = [
@@ -4934,7 +4991,7 @@ test('live hero: an ALL-REJECTED proposing field reads "0 applied — all reject
 test('live hero: the proposing-step tracker is DIGEST-GATED (a no-op heartbeat does not rebuild it) and current-epoch SCOPED', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
-  coreState.state.setHeartbeat({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH });
+  coreState.state.setHeartbeat(freshHb({ phase: 'proposing:field', generation_id: '', epoch_id: HERO_EPOCH }));
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = HERO_PROPOSING_E3;
 
@@ -6359,7 +6416,9 @@ test('Match-ups (LIVE swiss): active-round pairings show in-flight board progres
   const F2 = liveUxFixture();
   F2['/api/active-tournament'] = { epoch_id: LIVE_UX_EPOCH, structure: 'swiss', phase: 'running', structure_params: { rounds: 3 }, competitors: [], rounds: [], standings: [] };
   installFixtureMap(F2);
-  coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: '', epoch_id: LIVE_UX_EPOCH });
+  // a genuinely-live just-started run carries a FRESH heartbeat (the staleness
+  // gate now reads a no-timestamp heartbeat as stale ⇒ not live).
+  coreState.state.setHeartbeat(freshHb({ phase: 'tournament:round_0', generation_id: '', epoch_id: LIVE_UX_EPOCH }));
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = F2['/api/active-tournament'];
   const host2 = document.createElement('div');

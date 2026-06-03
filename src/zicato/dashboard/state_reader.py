@@ -222,12 +222,44 @@ def _resolve_epoch_id(paths: WorkspacePaths, epoch_id: str | None) -> str | None
 
 
 def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
-    """The heartbeat as a plain dict, or ``None`` when absent."""
+    """The heartbeat as a plain dict, or ``None`` when absent.
+
+    Always surfaces an AGEABLE ``last_heartbeat`` so the dashboard's
+    staleness gate can decide live-vs-stale. The :class:`Heartbeat`
+    writer stamps a fresh ``last_heartbeat`` on every bump, but a record
+    that landed on disk with an absent / empty / unparseable stamp (e.g.
+    a hand-edited file, a torn-down run, or a producer that omitted it)
+    would otherwise leave the frontend with no timestamp to age out —
+    and a dead run would read LIVE forever. When the on-disk
+    ``last_heartbeat`` is not a usable ISO timestamp we fall back to the
+    heartbeat file's mtime so the API always returns an ageable value.
+    """
     try:
         hb = read_heartbeat(paths.root)
     except Exception:
         return None
-    return hb.to_dict() if hb is not None else None
+    if hb is None:
+        return None
+    out = hb.to_dict()
+    if _parse_iso(out.get("last_heartbeat")) is None:
+        out["last_heartbeat"] = _heartbeat_file_mtime_iso(paths)
+    return out
+
+
+def _heartbeat_file_mtime_iso(paths: WorkspacePaths) -> str:
+    """ISO-8601 UTC mtime of ``heartbeat.json``, or current time on error.
+
+    The fallback ageable timestamp when a heartbeat record carries no
+    usable ``last_heartbeat``. The file's mtime is the freshest moment
+    the heartbeat was rewritten — exactly the staleness signal we want.
+    Degrades to "now" only when the file cannot be stat'd, which keeps
+    the record from spuriously reading stale on a transient stat error.
+    """
+    try:
+        mtime = paths.heartbeat.stat().st_mtime
+        return _iso(_dt.datetime.fromtimestamp(mtime, _dt.UTC))
+    except OSError:
+        return _iso(_utc_now())
 
 
 def read_lock_dict(paths: WorkspacePaths) -> dict[str, Any] | None:

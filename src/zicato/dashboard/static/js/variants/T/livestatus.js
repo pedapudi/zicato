@@ -27,7 +27,7 @@ const IDLE_PHASES = new Set(['idle', 'done', 'complete', 'completed', 'finished'
 // cadence (a few seconds); a FROZEN heartbeat from a dead/finished process must
 // stop reading "live". ~30s is a few × the heartbeat interval — long enough to
 // tolerate a slow tick, short enough that a completed run reads idle promptly.
-const STALE_HEARTBEAT_MS = 30_000;
+export const STALE_HEARTBEAT_MS = 30_000;
 
 // Is a heartbeat `phase` string a NON-idle (i.e. running) phase?
 //
@@ -51,8 +51,8 @@ export function isActivePhase(phase) {
 
 // Parse a heartbeat timestamp into epoch ms. Tolerates an ISO-8601 string or a
 // numeric epoch (ms, or seconds — values that small are scaled up). Returns NaN
-// when the value is absent/unparseable, so callers can fall back rather than
-// force-stale.
+// when the value is absent/unparseable; a NaN result means the heartbeat has no
+// ageable timestamp and is therefore treated as STALE (not live), never fresh.
 function parseHeartbeatTs(value) {
   if (value == null) return NaN;
   if (typeof value === 'number') {
@@ -179,26 +179,41 @@ export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {
   const inFlight = runs.length;
   const tournamentRunning = !!(at && String(at.phase || '').toLowerCase() === 'running');
 
-  // Heartbeat freshness: a FROZEN heartbeat from a dead/finished process must
-  // not read "live" forever. Read the timestamp from any of the known fields.
-  // If it is unparseable/absent we do NOT force-stale — a live run without a
-  // clean timestamp should still show live off the phase/in-flight signals.
+  // Heartbeat freshness: a FROZEN heartbeat from a dead/torn-down process must
+  // NOT read "live" — no matter how its phase/tournament file froze. Read the
+  // timestamp from any of the known fields (the backend stamps `last_heartbeat`
+  // and, when the on-disk record carries no usable stamp, falls back to the
+  // file mtime in the same field).
+  //
+  // THE ONE STALENESS RULE: a heartbeat is FRESH only when it carries a
+  // PARSEABLE timestamp AND that timestamp is within STALE_HEARTBEAT_MS of now.
+  // A missing/unparseable timestamp is NOT fresh (it is stale) — it must never
+  // default to live. This closes the dead-run-shows-LIVE bug: a killed run
+  // leaves a heartbeat whose ts cannot be aged out, so treating "no readable
+  // ts" as fresh let an active/terminal phase (and a frozen
+  // active_tournament.json with phase:"running") read live forever.
   const hbTs = hb
     ? parseHeartbeatTs(hb.last_heartbeat != null ? hb.last_heartbeat
         : hb.emitted_at != null ? hb.emitted_at
         : hb.ts != null ? hb.ts
         : hb.updated_at)
     : NaN;
-  const heartbeatStale = isFinite(hbTs) && (now - hbTs) > STALE_HEARTBEAT_MS;
-  // The phase signal only counts as live while the heartbeat is FRESH — a
-  // terminal/active phase frozen on a dead process is not live.
-  const phaseLive = phaseActive && !heartbeatStale;
+  const heartbeatFresh = isFinite(hbTs) && (now - hbTs) <= STALE_HEARTBEAT_MS;
+  // `heartbeatStale` is the public flag the chrome/digest read: a heartbeat
+  // that EXISTS but is not fresh (old OR untimestamped) is stale.
+  const heartbeatStale = hb != null && !heartbeatFresh;
 
-  // A run is live only when (active phase AND fresh heartbeat) OR there is at
-  // least one in-flight board-unit OR the active-tournament is "running". An
-  // actively-running unit is ground truth, so in-flight forces live even when
-  // the timestamp looks old.
-  const running = phaseLive || inFlight > 0 || tournamentRunning;
+  // The orchestrator-derived live signals (the heartbeat `phase` and the
+  // active-tournament `phase === "running"`) only count as live while the
+  // heartbeat is FRESH — both are written by the same orchestrator process, so
+  // a frozen heartbeat means a frozen tournament file too. An in-flight
+  // board-unit is the one exception: those records are bumped by per-run
+  // worker beaters independent of the orchestrator heartbeat, so a present
+  // active-run is ground truth and forces live on its own.
+  const phaseLive = phaseActive && heartbeatFresh;
+  const tournamentLive = tournamentRunning && heartbeatFresh;
+
+  const running = phaseLive || inFlight > 0 || tournamentLive;
 
   const structure = at && at.structure ? String(at.structure) : null;
   const label = running

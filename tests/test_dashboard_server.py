@@ -409,6 +409,76 @@ def test_heartbeat_endpoint(client: TestClient) -> None:
     assert r.json()["phase"] == "tournament"
 
 
+def test_read_heartbeat_dict_falls_back_to_mtime_for_unageable_stamp(tmp_path: Path) -> None:
+    """A heartbeat whose ``last_heartbeat`` is not a usable ISO timestamp must
+    still surface an AGEABLE timestamp (the file mtime) so the dashboard's
+    staleness gate can age out a dead/torn-down run instead of reading it LIVE.
+    """
+    import datetime as _dt
+    import os
+
+    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+
+    ws = tmp_path / "ws"
+    runtime = ws / ".zicato" / "runtime"
+    runtime.mkdir(parents=True)
+    hb_path = runtime / "heartbeat.json"
+    # A record whose mandatory `last_heartbeat` is present (so `from_dict`
+    # accepts it) but is NOT a parseable ISO timestamp — exactly the kind of
+    # frozen/garbage stamp a torn-down run can leave behind.
+    hb_path.write_text(
+        json.dumps(
+            {
+                "pid": 4242,
+                "instance_id": "default",
+                "started_at": "2026-06-03T01:56:49Z",
+                "last_heartbeat": "not-a-timestamp",
+                "phase": "tournament:round_0:final",
+                "epoch_id": "2026-06-03_e3",
+                "generation_id": "v3",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Stamp a known mtime ~13 minutes in the past so we can assert the fallback.
+    mtime = _dt.datetime(2026, 6, 3, 3, 6, 4, tzinfo=_dt.UTC).timestamp()
+    os.utime(hb_path, (mtime, mtime))
+
+    out = read_heartbeat_dict(WorkspacePaths(ws / ".zicato"))
+    assert out is not None
+    # The unageable stamp is replaced by the file mtime as an ISO-8601 string.
+    assert out["last_heartbeat"] == "2026-06-03T03:06:04Z"
+    # Other fields pass through unchanged.
+    assert out["phase"] == "tournament:round_0:final"
+    assert out["pid"] == 4242
+
+
+def test_read_heartbeat_dict_preserves_a_usable_stamp(tmp_path: Path) -> None:
+    """A heartbeat that already carries a parseable ISO ``last_heartbeat`` is
+    returned verbatim — the mtime fallback only fires for an unageable stamp.
+    """
+    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+
+    ws = tmp_path / "ws"
+    runtime = ws / ".zicato" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "heartbeat.json").write_text(
+        json.dumps(
+            {
+                "pid": 7,
+                "instance_id": "default",
+                "started_at": "2026-06-03T01:56:49Z",
+                "last_heartbeat": "2026-06-03T03:30:00Z",
+                "phase": "proposing:field",
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = read_heartbeat_dict(WorkspacePaths(ws / ".zicato"))
+    assert out is not None
+    assert out["last_heartbeat"] == "2026-06-03T03:30:00Z"
+
+
 def test_lineage_shape(client: TestClient) -> None:
     r = client.get("/api/lineage")
     assert r.status_code == 200
