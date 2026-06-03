@@ -1510,38 +1510,54 @@ export function duelFlow(opts) {
   const challengers = (Array.isArray(o.challengers) ? o.challengers : []).filter((c) => c && c.id != null);
   const champId = o.championId != null ? String(o.championId) : null;
   const w = o.width || 720;
-  const padTop = 30;
-  const padBottom = 20;
+  const padTop = 34;
+  const padBottom = 22;
   const laneGap = 26;
-  const gateW = 132;
-  const refX = 64;           // the champion reference rule x (Δ=0)
-  const fieldRight = w - gateW - 30;
+  const nameW = 60;                              // left gutter for challenger labels
+  const gateW = 124;
+  const plotLeft = nameW + 18;                   // start of the measured band
+  const fieldRight = w - gateW - 28;             // end of the improvement zone (before the gate)
+  // The Δ=0 rule sits inside the band with a regression zone to its LEFT and a
+  // (larger) improvement zone to its RIGHT running toward the gate.
+  const refX = Math.round(plotLeft + 0.34 * (fieldRight - plotLeft));
+  const leftSpan = refX - plotLeft;              // |Δ| range for regressions (left)
+  const rightSpan = fieldRight - refX;           // |Δ| range for improvements (right)
   const h = padTop + Math.max(1, challengers.length) * laneGap + padBottom;
   const svg = svgEl('svg', {
     class: 'dn-duelflow', width: '100%', height: h,
     viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
     'aria-label': 'The field duelling the champion',
   });
-  // the champion REFERENCE rule (Δ=0) — the spine the field is measured against.
-  svg.appendChild(hov(svgEl('line', { x1: refX, x2: fieldRight, y1: padTop - 8, y2: h - padBottom + 4, class: 'dn-duelflow-ref' }),
+  // the champion REFERENCE rule (Δ=0) — a VERTICAL spine the field is measured
+  // against: a lane reaches RIGHT toward the gate when it improved, LEFT when it
+  // regressed; the bar length encodes |Δ|.
+  svg.appendChild(hov(svgEl('line', { x1: refX, x2: refX, y1: padTop - 10, y2: h - padBottom + 4, class: 'dn-duelflow-ref' }),
     champId ? `champion ${champId}${isNum(o.championScalar) ? ' · loss ' + fmt(o.championScalar, 1) : ''} · Δ=0 reference` : 'champion · Δ=0 reference'));
-  svg.appendChild(svgEl('text', { x: refX, y: padTop - 14, class: 'dn-duelflow-axis', 'text-anchor': 'middle' }, ['vs champion · Δ=0']));
-  svg.appendChild(svgEl('text', { x: refX - 6, y: padTop + 4, class: 'dn-duelflow-dir dn-good', 'text-anchor': 'end' }, ['↓ better']));
+  svg.appendChild(svgEl('text', { x: refX, y: padTop - 16, class: 'dn-duelflow-axis', 'text-anchor': 'middle' }, ['champion · Δ=0']));
+  svg.appendChild(svgEl('text', { x: plotLeft, y: padTop - 16, class: 'dn-duelflow-dir dn-bad', 'text-anchor': 'start' }, ['← worse']));
+  svg.appendChild(svgEl('text', { x: fieldRight, y: padTop - 16, class: 'dn-duelflow-dir dn-good', 'text-anchor': 'end' }, ['better → (gate)']));
 
   if (!challengers.length) {
     const t = svgEl('text', { x: (refX + fieldRight) / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
     t.textContent = 'no challenger has entered the ring';
     svg.appendChild(t);
   }
-  // Δ extent → horizontal offset from the reference rule (good below = magnitude
-  // pulls the dot toward the gate; bad above = pulls it away). We map |Δ| to a
-  // horizontal length so position+length encode the gap.
+  // |Δ| → a SIGNED horizontal offset from the rule: improvements (Δ<0) ride RIGHT
+  // toward the gate, regressions (Δ>0) ride LEFT, magnitude scaled to the largest
+  // |Δ| in the field so the lanes are comparable. A pending / no-Δ lane sits on
+  // the rule.
   const deltas = challengers.map((c) => c.delta).filter(isNum).map(Math.abs);
-  const maxAbs = Math.max(1e-9, ...deltas, 1e-9);
-  const span = fieldRight - refX - 30;
-  const offsetOf = (d) => (isNum(d) ? (Math.min(1, Math.abs(d) / maxAbs)) * span : 0);
+  const maxAbs = Math.max(1e-9, ...deltas);
+  // Reserve a margin at each band edge so the OUTBOARD Δ label never collides
+  // with the name gutter (left) or the gate (right) even at the max |Δ|.
+  const labelPad = 32;
+  const offsetOf = (d) => {
+    if (!isNum(d) || d === 0) return 0;
+    const frac = Math.min(1, Math.abs(d) / maxAbs);
+    return d < 0 ? frac * Math.max(12, rightSpan - labelPad) : -(frac * Math.max(12, leftSpan - labelPad));
+  };
 
-  let promotedY = null;
+  let promotedX = null, promotedY = null;
   challengers.forEach((c, i) => {
     const cy = padTop + i * laneGap + laneGap / 2;
     const verdict = c.verdict || 'pending';
@@ -1549,35 +1565,36 @@ export function duelFlow(opts) {
     const cut = verdict === 'rejected';
     const good = isNum(c.delta) ? c.delta < 0 : won;
     const bad = isNum(c.delta) ? c.delta > 0 : cut;
-    // the dot rides toward the GATE when it improved (good), away when it
-    // regressed (bad); a pending/no-Δ lane sits on the rule.
-    const dx = isNum(c.delta) ? (good ? refX + offsetOf(c.delta) : refX - 0) : refX;
-    // an improved (good) lane reaches toward the gate; a regressed lane stops short.
+    const dx = refX + offsetOf(c.delta);
     const cls = 'dn-duelflow-dot ' + (good ? 'dn-good' : bad ? 'dn-bad' : 'dn-duelflow-pending');
     const glyph = won ? ' ↑' : cut ? ' ✕' : ' ○';
     const g = svgEl('g', { class: 'dn-duelflow-lane', tabindex: o.onCompetitor ? '0' : null,
       'aria-label': `${c.id} vs champion${isNum(c.delta) ? ', Δ ' + fmtSigned(c.delta, 1) : ''}, ${verdict}` });
-    // the lane line from the rule to the dot.
+    // the lane bar from the rule out to the dot — its direction IS the sign of Δ.
     g.appendChild(svgEl('line', { x1: refX, x2: dx, y1: cy, y2: cy, class: 'dn-duelflow-laneline ' + (good ? 'dn-good' : bad ? 'dn-bad' : '') }));
     const tip = `${c.id} vs ${champId || 'champion'}`
       + (isNum(c.delta) ? ` · Δ ${fmtSigned(c.delta, 2)} (${good ? 'improved' : bad ? 'regressed' : 'flat'})` : '')
       + ` · ${verdict}`
       + (c.hypothesis ? ` · hypothesis: ${c.hypothesis}` : '')
       + (c.driver ? ` · decisive driver: ${c.driver}` : '');
-    g.appendChild(hov(svgEl('circle', { cx: dx, cy, r: won ? 4.2 : 3.4, class: cls }), tip));
-    // the challenger label + status glyph at the left gutter.
-    const lbl = svgEl('text', { x: refX - 8, y: cy + 3, class: 'dn-duelflow-name ' + (good ? 'dn-good' : bad ? 'dn-bad' : ''), 'text-anchor': 'end' });
-    lbl.textContent = shortLabel(String(c.id), 11) + glyph;
+    g.appendChild(hov(svgEl('circle', { cx: dx, cy, r: won ? 4.4 : 3.4, class: cls }), tip));
+    // the challenger label + status glyph in the left gutter.
+    const lbl = svgEl('text', { x: nameW, y: cy + 3, class: 'dn-duelflow-name ' + (good ? 'dn-good' : bad ? 'dn-bad' : ''), 'text-anchor': 'end' });
+    lbl.textContent = shortLabel(String(c.id), 9) + glyph;
     g.appendChild(lbl);
-    // the Δ value, right-aligned just inside the field.
-    if (isNum(c.delta)) {
-      const dt = svgEl('text', { x: fieldRight - 4, y: cy + 3, class: 'dn-duelflow-delta ' + (good ? 'dn-good' : bad ? 'dn-bad' : ''), 'text-anchor': 'end' });
-      dt.textContent = fmtSigned(c.delta, Math.abs(c.delta) < 0.1 && c.delta !== 0 ? 2 : 1);
+    // the Δ value, just OUTBOARD of the dot (away from the rule) so it never
+    // collides with the spine.
+    if (isNum(c.delta) && c.delta !== 0) {
+      const rightward = c.delta < 0;
+      const dt = svgEl('text', { x: dx + (rightward ? 7 : -7), y: cy + 3,
+        class: 'dn-duelflow-delta ' + (good ? 'dn-good' : bad ? 'dn-bad' : ''),
+        'text-anchor': rightward ? 'start' : 'end' });
+      dt.textContent = fmtSigned(c.delta, Math.abs(c.delta) < 0.1 ? 2 : 1);
       g.appendChild(dt);
     }
     clickable(g, o.onCompetitor && (() => o.onCompetitor(String(c.id))));
     svg.appendChild(g);
-    if (won) promotedY = cy;
+    if (won) { promotedX = dx; promotedY = cy; }
   });
 
   // ── the crowned CHAMPION GATE on the right ──
@@ -1587,9 +1604,9 @@ export function duelFlow(opts) {
   const gateG = svgEl('g', { class: 'dn-duelflow-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });
   gateG.appendChild(svgEl('rect', { x: gx, y: gateCy - 14, width: gateW, height: 28, rx: 5,
     class: 'dn-duelflow-gatebox' + (promotedAny ? ' dn-good' : '') }));
-  // the converging flow from the promoted lane into the gate.
+  // the converging flow from the promoted lane's dot into the gate.
   if (promotedY != null) {
-    svg.appendChild(svgEl('path', { d: `M${fieldRight},${promotedY} H${gx}`, class: 'dn-duelflow-gateflow dn-good', fill: 'none' }));
+    svg.appendChild(svgEl('path', { d: `M${promotedX != null ? promotedX : fieldRight},${promotedY} H${gx}`, class: 'dn-duelflow-gateflow dn-good', fill: 'none' }));
   }
   const gt = hov(svgEl('text', { x: gx + gateW / 2, y: gateCy + 4, class: 'dn-duelflow-gatelab' + (promotedAny ? ' dn-good' : ''), 'text-anchor': 'middle' }),
     champId ? `champion-gate · ${promotedAny ? 'a challenger was promoted' : champId + ' defends the title'}` : 'champion-gate');

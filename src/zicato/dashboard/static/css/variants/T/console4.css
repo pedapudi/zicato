@@ -1755,8 +1755,7 @@
   .dt-fieldflow-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
     margin-bottom: 8px; }
   .dt-fieldflow-champ { display: inline-flex; align-items: baseline; gap: 7px;
-    text-decoration: none; color: var(--v2-ink); border-bottom: 2px solid var(--v2-accent);
-    padding-bottom: 2px; }
+    text-decoration: none; color: var(--v2-ink); }
   .dt-fieldflow-champ:hover { color: var(--v2-accent); }
   .dt-fieldflow-crown { color: var(--v2-caution); }
   .dt-fieldflow-champid { font-weight: 700; }

@@ -253,9 +253,14 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
           round.challengers.length, round.gateOutcome && round.gateOutcome.kind === 'promoted' ? 1 : 0, ctx, id)));
     } else {
       // no tournament record nor matchups → the minted field as duel lanes.
+      // Derive each challenger's Δ-vs-champion from its own scalar so the lanes
+      // encode magnitude+direction (rather than collapsing onto the rule); falls
+      // back to null when a scalar is missing.
       const synthMatchups = round.challengers.map((c) => ({
         champion: roundChampId, challenger: c.id,
-        decision: c.promoted ? 'promoted' : null, delta_scalar: null,
+        decision: c.promoted ? 'promoted' : null,
+        delta_scalar: (svg.isNum(c.scalar) && svg.isNum(roundChampScalar))
+          ? c.scalar - roundChampScalar : null,
       }));
       nodes.push(section('Field minted this round',
         round.challengers.length
@@ -433,6 +438,6 @@ function fieldFlow(championId, champScalar, matchups, gates, total, promoted, ct
     onCompetitor: (id) => ctx.navigate('candidate', { epochId, gen: id }),
   }));
   wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-    'each lane is a challenger duelling the champion · ' + svg.CROWN.current + ' = the crowned champion-gate · a dot below the Δ=0 rule = improvement (good), above = regression (bad) · ↑ promoted · ✕ cut · ○ pending · hover a lane for its hypothesis + exact Δ · click → its candidate' }));
+    'each lane is a challenger duelling the champion · the vertical rule is the champion (Δ=0) · a lane reaching RIGHT toward the ' + svg.CROWN.current + ' gate improved on the champion (good); one reaching LEFT regressed (bad); bar length = |Δ| · ↑ promoted · ✕ cut · ○ pending · hover a lane for its hypothesis + exact Δ · click → its candidate' }));
   return wrap;
 }
