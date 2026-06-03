@@ -40,6 +40,24 @@ from zicato.mutation.validator import validate_patches
 CopytreeIgnore = Callable[[str, list[str]], set[str]]
 
 
+def _write_text_writable(file_path: Path, content: str) -> None:
+    """Write ``content`` to ``file_path``, restoring user-write first.
+
+    The copied child tree inherits file modes from ``source_root``. When
+    the parent snapshot is read-only (mode ``0o444``, as happens for
+    immutable / archived mutable trees), the inherited copies are also
+    read-only and ``Path.write_text`` raises ``PermissionError``. Add the
+    owner-write bit before writing so a patch can land on top of a
+    read-only snapshot. The chmod is guarded for existence — every patch
+    op edits a file that already exists, but staying defensive keeps the
+    helper safe for any future create path.
+    """
+
+    if file_path.exists():
+        file_path.chmod(file_path.stat().st_mode | 0o200)
+    file_path.write_text(content, encoding="utf-8")
+
+
 def _format_numeric(value: float) -> str:
     """Render a numeric replacement value back into Python source.
 
@@ -127,7 +145,7 @@ def _replace_node_text(
     # AST exposes column offsets in characters for ``ast.parse``-d source.
     before = "".join(lines[: line_start - 1]) + lines[line_start - 1][:col_start]
     after = lines[line_end - 1][col_end:] + "".join(lines[line_end:])
-    file_path.write_text(before + new_text + after, encoding="utf-8")
+    _write_text_writable(file_path, before + new_text + after)
 
 
 def _looks_like_python_string_literal(text: str) -> bool:
@@ -341,7 +359,7 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     text = point.file.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     if point.kind == "file":
-        point.file.write_text(new_content, encoding="utf-8")
+        _write_text_writable(point.file, new_content)
         return
     before = "".join(lines[: point.line_start - 1])
     after = "".join(lines[point.line_end :])
@@ -362,7 +380,7 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
         original_body = "".join(lines[point.line_start - 1 : point.line_end])
         indent = _region_base_indent(original_body)
         middle = _reindent_code_region(new_content, indent)
-        point.file.write_text(before + middle + after, encoding="utf-8")
+        _write_text_writable(point.file, before + middle + after)
         return
 
     if point.file.suffix == ".py":
@@ -393,7 +411,7 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
         # the line below in the new file.
         if "".join(lines[point.line_start - 1 : point.line_end]).endswith("\n"):
             middle = middle + "\n"
-    point.file.write_text(before + middle + after, encoding="utf-8")
+    _write_text_writable(point.file, before + middle + after)
 
 
 def _build_index(points: list[MutationPoint]) -> dict[str, MutationPoint]:

@@ -678,3 +678,34 @@ def test_span_replace_already_correct_indent_is_idempotent(tmp_path: Path) -> No
     ast.parse(out)
     assert "Rewritten docstring." in out
     assert "import os" in out
+
+
+def test_apply_replace_onto_read_only_snapshot(tmp_path: Path) -> None:
+    """A patch lands even when the source file is mode 0o444.
+
+    The copied child tree inherits file modes from ``source_root``. When
+    the parent snapshot is read-only (an immutable / archived mutable
+    tree), the inherited copy is read-only too and a naive ``write_text``
+    would raise ``PermissionError``. The applier must restore owner-write
+    before writing.
+    """
+
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    file_path = src / "prompts.py"
+    _write(
+        file_path,
+        '''
+        # zicato:mutable id="instr"
+        INSTR = """original"""
+    ''',
+    )
+    # Make the source file read-only so the copied target inherits 0o444.
+    file_path.chmod(0o444)
+
+    patches = [_patch(pid="p1", mutation_id="instr", op="replace", new_content='"""rewritten"""')]
+    apply_patches(src, patches, tgt)
+
+    new_text = (tgt / "prompts.py").read_text(encoding="utf-8")
+    assert "rewritten" in new_text
+    assert "original" not in new_text
