@@ -376,7 +376,14 @@ export function valueDotPlot(opts) {
       const cls = 'dn-dot ' + (good ? 'dn-good' : worse ? 'dn-bad' : '');
       g.appendChild(hov(svgEl('circle', { cx: dx, cy, r: 3.2, class: cls }),
         `${d.label}: ${fmt(d.value)}${ref != null ? ` (vs champ ${fmt(ref)})` : ''}`));
-      g.appendChild(outcomeGlyph(d, w - glyphW + 2, cy));
+      // outcomeGlyph() returns a fixed 1:1-aspect <svg> sized `gsz`; position it
+      // at the row's right edge via the nested-svg x/y attrs (NOT by passing the
+      // chart x-coordinate as the size — that blew each glyph up to ~chart width).
+      const gsz = glyphW - 4;
+      const gl = outcomeGlyph(d, gsz);
+      gl.setAttribute('x', w - glyphW + 2);
+      gl.setAttribute('y', cy - gsz / 2);
+      g.appendChild(gl);
     } else {
       const t = svgEl('text', { x: x(lo) + 6, y: cy + 3, class: 'dn-dot-missing' });
       t.textContent = 'no run';
