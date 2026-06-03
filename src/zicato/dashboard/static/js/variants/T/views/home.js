@@ -11,6 +11,7 @@ import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty } from '../ui.js';
+import { deriveLiveStatus } from '../livestatus.js';
 
 function fmt(v, d = 3) { return svg.isNum(v) ? v.toFixed(d) : '—'; }
 
@@ -21,7 +22,16 @@ export async function render(host, ctx) {
   const rows = (ws && Array.isArray(ws.epochs)) ? ws.epochs : [];
   const current = ws ? ws.current_epoch_id : null;
   const spark = (ws && Array.isArray(ws.sparkline)) ? ws.sparkline : [];
-  const live = !!state.activeTournament;
+  // Liveness is GATED on heartbeat freshness, never raw presence of
+  // active_tournament.json — a torn-down run leaves that file on disk, and
+  // reading it as "LIVE / tournament running" forever is the stale-live bug
+  // class. deriveLiveStatus applies the STALE_HEARTBEAT_MS gate (the same one
+  // gens.js uses), so a dead orchestrator correctly reads idle.
+  const live = deriveLiveStatus({
+    heartbeat: state.heartbeat,
+    activeRuns: state.activeRuns,
+    activeTournament: state.activeTournament,
+  }).running;
 
   // Each fleet card's hero trendline is that epoch's OWN real per-generation
   // best-scalar trajectory — fetched PER epoch (keyed on epoch_id), never the
@@ -52,7 +62,7 @@ export async function render(host, ctx) {
 
     const fleet = rows.length === 0
       ? empty('No epochs recorded in this workspace yet.')
-      : el('div', { class: 'dn-fleet' }, rows.map((r) => fleetCard(r, r.epoch_id === current, ctx, trajByEpoch.get(r.epoch_id) || [])));
+      : el('div', { class: 'dn-fleet' }, rows.map((r) => fleetCard(r, r.epoch_id === current, ctx, trajByEpoch.get(r.epoch_id) || [], live)));
     nodes.push(section('Fleet · ' + rows.length + ' epoch' + (rows.length === 1 ? '' : 's'), fleet));
 
     if (health) nodes.push(healthPanel(health));
@@ -92,8 +102,11 @@ function statTile(value, key, foot) {
   ].filter(Boolean));
 }
 
-function fleetCard(row, isCurrent, ctx, sparkVals) {
-  const liveHere = isCurrent && state.activeTournament && state.activeTournament.epoch_id === row.epoch_id;
+function fleetCard(row, isCurrent, ctx, sparkVals, live) {
+  // "running" requires the GATED live flag (fresh heartbeat) — not just an
+  // active_tournament.json whose epoch_id matches. A stale file must not paint
+  // the current epoch's chip "running" after the orchestrator has exited.
+  const liveHere = isCurrent && !!live && state.activeTournament && state.activeTournament.epoch_id === row.epoch_id;
   const st = isCurrent ? (liveHere ? 'live' : 'open') : (row.closed ? 'closed' : 'open');
   const head = el('div', { class: 'dn-fleet-head' }, [
     el('span', { class: 'dn-fleet-id', text: row.epoch_id }),

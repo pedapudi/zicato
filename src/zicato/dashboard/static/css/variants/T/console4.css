@@ -1521,11 +1521,16 @@
   .dn-roundtl-node:focus .dn-roundtl-champid { fill: var(--v2-accent); }
   .dn-roundtl-node.dn-roundtl-sel .dn-roundtl-disc { stroke-width: 3.2; fill: color-mix(in srgb, var(--v2-accent) 16%, var(--v2-panel)); }
 
-  .dn-roundtl-episodes { display: flex; flex-direction: column; gap: 10px; }
-  .dn-roundtl-ep { border: 1px solid var(--v2-rule); border-left: 4px solid var(--v2-flat);
-    border-radius: 7px; padding: var(--dt-card-pad, 13px); background: var(--v2-panel); min-width: 0; }
-  .dn-roundtl-ep.dn-roundtl-ep-sel { border-left-color: var(--v2-accent); }
-  .dn-roundtl-single .dn-roundtl-ep { border-left-color: var(--v2-accent); }
+  /* Episodes sit DIRECTLY on the section panel as open data-blocks — no
+     box-in-box, no decorative left rail (that callout idiom is chartjunk and
+     the accent belongs to the champion spine, not card trim). Multiple rounds
+     are separated by a single hairline; a single round just sits on the paper. */
+  .dn-roundtl-episodes { display: flex; flex-direction: column; }
+  .dn-roundtl-ep { min-width: 0; }
+  .dn-roundtl-ep + .dn-roundtl-ep { border-top: 1px solid var(--v2-rule);
+    margin-top: 16px; padding-top: 16px; }
+  /* Selection is a small accent marker on the round tag — not a full-height rail. */
+  .dn-roundtl-ep.dn-roundtl-ep-sel .dn-roundtl-eptag::before { content: '\25b8\00a0'; color: var(--v2-accent); }
   .dn-roundtl-ephead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .dn-roundtl-eptag { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.12em;
     text-transform: uppercase; color: var(--v2-accent); font-weight: 700; }
