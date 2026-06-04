@@ -251,6 +251,15 @@ def test_swiss_field_rejects_when_no_challenger_beats_champion(
     )
 
     assert outcome.tournament_decision == "rejected"
+    # Issue #10: on a rejection the round-summary scalars come from the gate's
+    # CROWNING matchup (champion vs the leading challenger) — NOT the child=parent
+    # fallback that reported delta 0.0 while the gate's reason cited a real
+    # regression. So parent != child and the delta is the actual (non-zero,
+    # positive = worse) regression, consistent with rejection_reason.
+    assert outcome.delta_scalar != 0.0, "rejection delta must be the real regression, not 0.0"
+    assert outcome.delta_scalar > 0.0, "the leading challenger regressed (loss rose)"
+    assert outcome.child_scalar > outcome.parent_scalar, "challenger loss is above the champion's"
+    assert outcome.rejection_reason, "a rejection carries the gate's reason"
     # Champion stands — the promoted head is still v0 (no marker advance).
     from zicato.orchestrator import _resolve_current_generation
 

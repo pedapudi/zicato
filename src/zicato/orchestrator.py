@@ -1754,14 +1754,41 @@ async def _evolve_multi_challenger(
         phase=f"done:round_{round_index}:{tournament_id}:{bookkeeping_decision}",
     )
 
+    # The round summary's champion/challenger scalars MUST come from the gate's
+    # CROWNING matchup — the same champion-vs-leader duel the rejection_reason is
+    # built from — not the per-pairing standings aggregate (`_first_aggregate_for`,
+    # which averages across all of the champion's pairings) and not the
+    # child-defaults-to-parent fallback (which reports delta 0.0 on a rejection
+    # even though the gate measured a real regression — issue #10). Resolve the
+    # crowning matchup's champion (the parent side) + challenger scalars; fall
+    # back to the aggregate only when no crowning duel ran.
+    summary_parent_scalar = parent_scalar
+    summary_child_scalar = child_scalar_crown
+    summary_child_id = promoted_id or applied[0].generation_id
+    crowning = (
+        next(
+            (m for m in decision.matchups if m.matchup_id == decision.crowning_matchup_id),
+            None,
+        )
+        if decision.crowning_matchup_id
+        else None
+    )
+    if crowning is not None:
+        champ_is_left = crowning.left_id == parent_id
+        summary_parent_scalar = crowning.left_scalar() if champ_is_left else crowning.right_scalar()
+        summary_child_scalar = crowning.right_scalar() if champ_is_left else crowning.left_scalar()
+        # On a rejection the "proposed" gen reported is the LEADING challenger that
+        # reached the gate (the one the reason is about), not an arbitrary applied[0].
+        summary_child_id = promoted_id or (crowning.right_id if champ_is_left else crowning.left_id)
+
     return EvolveRoundOutcome(
         parent_generation_id=parent_id,
-        proposed_generation_id=(promoted_id or applied[0].generation_id),
+        proposed_generation_id=summary_child_id,
         tournament_decision=bookkeeping_decision,
         rejection_reason=("" if promoted_id is not None else decision.reason),
-        parent_scalar=parent_scalar,
-        child_scalar=child_scalar_crown,
-        delta_scalar=child_scalar_crown - parent_scalar,
+        parent_scalar=summary_parent_scalar,
+        child_scalar=summary_child_scalar,
+        delta_scalar=summary_child_scalar - summary_parent_scalar,
         health_summary=health_summary,
         health_critical=health_critical,
     )
