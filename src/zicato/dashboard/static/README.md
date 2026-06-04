@@ -38,7 +38,7 @@ module codes against are pinned in `js/CONTRACTS.md`.
   `router.js` (the hierarchical hash routes), `tree.js` (the data-model
   TREE sidebar, round-grouped), `svg.js` (the data-viz primitives —
   `heatmap`, `valueDotPlot`, `sparkbar`/`genDots`, the structure figures
-  `survivalFunnel`/`racingLadder`/`swissLadder`/`swissOverview`/
+  `survivalFunnel`/`swissLadder`/`swissOverview`/
   `elimFlow`/`duelFlow`, the epoch figures `roundTimeline`/`waterfall`/
   `reignGantt`, the `sankey`, the side-by-side diff), `dag.js` (the
   lifecycle DAG), `live.js` + `livestatus.js` (the live-run controller +

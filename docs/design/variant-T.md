@@ -420,13 +420,15 @@ and branches:
     leaderboard rides below.
   - **`swiss`** — a **standings table** hero (`dt-standings`, reusing
     `dn-board-table`) + a per-round **pairings** list from `rounds[]`.
-  - **`racing`** — a **successive-halving rung ladder**
-    (`svg.racingLadder`): one column per rung, escalating left→right to a
-    trailing **champion-gate** column. Each rung shows its full field racing on
-    its `board_fraction` of the board (shown in the column head, escalating ×η),
-    each runner's **Δ-vs-champion** right-aligned, the `cut[]` worst-by-η struck
-    through (✕ = cut, ↑ = survives) and faint survivor→next-rung **connectors**
-    that trace the halving. The lone final survivor flows into the
+  - **`racing`** — a **successive-halving survival funnel**
+    (`svg.survivalFunnel`, the SAME figure as the epoch hero — racing is unified
+    on the funnel): one trapezoid stage per rung, narrowing left→right to a
+    trailing **champion-gate**. Each rung shows its full field racing on
+    its `board_fraction` of the board (shown in the stage head, escalating ×η),
+    each runner's **Δ-vs-champion** on hover, the `cut[]` worst-by-η peeling off
+    as labelled dead-end branches (✕ = cut, ↑ = survives). A live rung's lanes
+    read `k/N boards` + a partial Δ and grow an in-flight progress bar. The lone
+    final survivor flows into the
     **champion-gate** seat; when the gate is settled and won it crowns the **new
     champion ♚** (a `dn-good` box, confirmed against `champion_lineage`), else it
     reads **"champion stands"**. A **live** race leaves a pending rung neutral
@@ -876,16 +878,15 @@ the SSE-driven `refreshLive()` patches **in place** on every tick.
    that survives view navigation. When idle the hero hides (`dt-live-on` /
    `dt-hero-live` absent) and the normal summary leads.
 
-7. **v0 / champion-benchmark clarity (racing ladder + funnel).** The racing
-   ladder/funnel show challengers raced **vs the champion (v0)**, but v0 was not
+7. **v0 / champion-benchmark clarity (survival funnel).** The racing
+   funnel shows challengers raced **vs the champion (v0)**, but v0 was not
    shown, so the Δ-vs-champion deltas were confusing. `racingModel` now derives a
    `benchmarkId` (the champion v0 — the gate's champion seat / the seed common to
    every rung / the first lineage entry), **distinct** from the `championId` (the
-   eventual survivor). `svg.racingLadder` draws a persistent labelled **v0 pace
-   line** at Δ=0 (`dn-raceladder-bench` + a dashed `dn-raceladder-bench-line`);
-   `svg.survivalFunnel` carries a `dn-funnel-bench` caption and the gate sub-label
-   reads **"vs champion v0"** — both making explicit that every rung Δ is vs v0 and
-   that v0 defends at the champion-gate.
+   eventual survivor). `svg.survivalFunnel` carries a `dn-funnel-bench` caption and
+   the gate sub-label reads **"vs champion v0"** — making explicit that every rung Δ
+   is vs v0 and that v0 defends at the champion-gate. v0 is the benchmark, never a
+   rung lane — the model strips it from every rung's competitors.
 
 **`prefers-reduced-motion`.** ALL of the above motion is gated behind a single
 `@media (prefers-reduced-motion: reduce)` block at the end of `console4.css`:

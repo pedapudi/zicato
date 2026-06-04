@@ -1909,20 +1909,20 @@ test('data.fieldStatus / fieldStatusSummary: normalize + roll up the proposing f
   assertEqual(data.fieldStatusSummary([]).allRejected, false, 'an empty field is NOT allRejected (idle, not failed)');
 });
 
-test('structure: racing renders a fit-to-width rung ladder with cuts + board fractions', async () => {
+test('structure: racing renders a fit-to-width survival funnel with cuts + board fractions', async () => {
   freshState();
   installFixtureMap(structFixture('racing', RACING_STRUCT, 'tourn_e0_rc'));
   const gens = await import('../js/variants/T/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Racing'), 'the pill names racing');
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'a racing-ladder SVG rendered');
-  assertEqual(ladder.getAttribute('width'), '100%', 'the racing ladder is fit-to-width (width:100%)');
-  assert((ladder.getAttribute('viewBox') || '').startsWith('0 0 '), 'the racing ladder carries a viewBox');
-  assert(!hasScrollWrapperAncestor(ladder, host), 'no horizontal-scroll wrapper around the racing ladder');
-  assert(host.textContent.includes('board 50%'), 'a rung shows its board fraction (budget escalation)');
-  assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs render as columns');
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
+  assert(ladder, 'a survival-funnel SVG rendered');
+  assertEqual(ladder.getAttribute('width'), '100%', 'the survival funnel is fit-to-width (width:100%)');
+  assert((ladder.getAttribute('viewBox') || '').startsWith('0 0 '), 'the survival funnel carries a viewBox');
+  assert(!hasScrollWrapperAncestor(ladder, host), 'no horizontal-scroll wrapper around the survival funnel');
+  assert(host.textContent.includes('50/100 board'), 'a rung shows its board fraction (budget escalation)');
+  assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs render as stages');
 });
 
 test('structure: a missing structure payload degrades gracefully (no throw, honest empty)', async () => {
@@ -2416,9 +2416,9 @@ test('live tournament: during a racing RUN the match-ups ladder fills from /api/
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
-  // the ladder rendered from the LIVE record — NOT an empty "nothing ran" state.
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'the racing ladder rendered from the live active-tournament');
+  // the funnel rendered from the LIVE record — NOT an empty "nothing ran" state.
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
+  assert(ladder, 'the survival funnel rendered from the live active-tournament');
   assert(!/No tournament has run|unavailable/i.test(host.textContent), 'NOT the empty "nothing ran yet" state during a live run');
   assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight tournament');
   assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs (incl. the still-racing one) render');
@@ -2498,8 +2498,8 @@ test('live racing model: published rung-0 (pending) renders the field with activ
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'a racing ladder SVG rendered from the published-rounds live model');
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
+  assert(ladder, 'a survival funnel SVG rendered from the published-rounds live model');
   assert(!/being seeded/i.test(host.textContent), 'NOT the "being seeded" empty state once the field exists');
   for (const id of ['v5', 'v6', 'v7', 'v8']) assert(ladder.textContent.includes(id), 'rung-0 names the live challenger lane — ' + id);
 });
@@ -2525,9 +2525,9 @@ test('live racing model: an in-flight rung shows per-lane "k/N boards" progress 
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
   assert(/boards/.test(ladder.textContent), 'a live lane reads "k/N boards" (progressive fill, not blank)');
-  assert(allByClass(ladder, 'dn-raceladder-bar').length >= 1, 'a per-lane in-flight progress bar renders');
+  assert(allByClass(ladder, 'dn-funnel-bar').length >= 1, 'a per-lane in-flight progress bar renders');
   assert(!/✕/.test(ladder.textContent), 'a mid-run lane is NOT struck through as cut');
 });
 
@@ -2562,7 +2562,7 @@ test('live racing model: a completed rung ACCUMULATES — when rung-1 starts, ru
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
   assert(/✕/.test(ladder.textContent), 'rung-0 cut marks (✕) are STILL present after rung-1 starts (accumulation, no discard)');
   assert(/↑/.test(ladder.textContent), 'rung-0 survivor marks (↑) persist');
   for (const id of ['v5', 'v6', 'v7', 'v8']) assert(ladder.textContent.includes(id), 'every competitor remains legible across rungs — ' + id);
@@ -2590,10 +2590,10 @@ test('live racing model: a no-op heartbeat (same progress) yields a STABLE diges
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   ui.gatedSwap(host, STRUCT.structureDigest(a), () => STRUCT.renderStructure(a, ctx, EPOCH_ID));
-  const first = svgsByClass(host, 'dn-raceladder')[0];
+  const first = svgsByClass(host, 'dn-funnel')[0];
   ui.gatedSwap(host, STRUCT.structureDigest(b), () => STRUCT.renderStructure(b, ctx, EPOCH_ID));
-  const second = svgsByClass(host, 'dn-raceladder')[0];
-  assert(first === second, 'the ladder SVG node identity is preserved across a no-op tick (digest-gated, zero rebuild)');
+  const second = svgsByClass(host, 'dn-funnel')[0];
+  assert(first === second, 'the funnel SVG node identity is preserved across a no-op tick (digest-gated, zero rebuild)');
 });
 
 // (e) champion-gate pending vs decided renders correctly (pending ≠ rejected).
@@ -2610,7 +2610,7 @@ test('live racing model: the champion-gate is PENDING (deciding…) during the r
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
   assert(/deciding/i.test(ladder.textContent), 'the live gate reads "deciding…"');
   assert(!/rejected/i.test(ladder.textContent), 'a live undecided gate is NEVER labeled "rejected"');
 });
@@ -2626,10 +2626,10 @@ test('live racing model: a fully-completed race (all rounds, no live) still reco
   const nodes = STRUCT.renderStructure(st, { navigate() {}, href: router.href }, RC_EPOCH);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'the completed ladder still renders');
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
+  assert(ladder, 'the completed funnel still renders');
   assert(/♛/.test(ladder.textContent), 'the completed gate still crowns the champion ♛');
-  assert(!/queued/.test(ladder.textContent), 'a completed ladder shows NO queued rungs');
+  assert(!/queued/.test(ladder.textContent), 'a completed funnel shows NO queued rungs');
 });
 
 // (g) end-to-end through the match-ups page: a live race with PUBLISHED rounds
@@ -2656,8 +2656,8 @@ test('live racing (e2e): the match-ups page fills progressively from the publish
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'a racing ladder rendered on the match-ups page (not the empty state)');
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
+  assert(ladder, 'a survival funnel rendered on the match-ups page (not the empty state)');
   assert(!/being seeded|No tournament has run|unavailable/i.test(host.textContent), 'NOT the "being seeded"/"nothing ran" empty state during a live race with empty rounds');
   assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight tournament');
   for (const id of ['v5', 'v6', 'v7', 'v8']) assert(ladder.textContent.includes(id), 'the full challenger field renders — ' + id);
@@ -2666,6 +2666,73 @@ test('live racing (e2e): the match-ups page fills progressively from the publish
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
+});
+
+// (h) ISSUE #8: a DEGENERATE published rung-0 (only champion + first
+// challenger) must NOT under-render to "2 field". The full challenger field is
+// carried on `competitors` (role !== champion) AND `entries` (side ===
+// challenger); the live funnel's entering rung is WIDENED to the whole field so
+// EVERY challenger races (≥4 lanes), with the champion v0 kept as the gate
+// benchmark — never a rung lane.
+test('live racing model (issue #8): a degenerate published rung-0 is widened to the FULL challenger field from competitors/entries (≥4 lanes), v0 stays the gate', () => {
+  const at = {
+    structure: 'racing', phase: 'running',
+    structure_params: { field_size: 4, eta: 2, board_fraction: 0.25, board_size: 8 },
+    round_index: 0, total_rounds: 2,
+    // the full field: champion v0 + four challengers v5..v8.
+    competitors: [
+      { generation_id: 'v0', seed: 1, role: 'champion' },
+      { generation_id: 'v5', seed: 2, role: 'challenger' },
+      { generation_id: 'v6', seed: 3, role: 'challenger' },
+      { generation_id: 'v7', seed: 4, role: 'challenger' },
+      { generation_id: 'v8', seed: 5, role: 'challenger' },
+    ],
+    // the per-entry rows the backend now publishes (one per competitor): the
+    // champion defends, the four challengers race.
+    entries: [
+      { entry_id: 'v0', side: 'champion', status: 'running', loss_summary: {} },
+      { entry_id: 'v5', side: 'challenger', status: 'running', loss_summary: {} },
+      { entry_id: 'v6', side: 'challenger', status: 'queued', loss_summary: {} },
+      { entry_id: 'v7', side: 'challenger', status: 'queued', loss_summary: {} },
+      { entry_id: 'v8', side: 'challenger', status: 'queued', loss_summary: {} },
+    ],
+    // DEGENERATE published rounds: the active rung-0 carries only champion + the
+    // FIRST challenger (the sparse/under-rendering shape from issue #8).
+    rounds: [
+      { round_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v0', 'v5'], survivors: [], cut: [], board_fraction: 0.25, pending: true }] },
+      { round_index: 1, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0'], board_fraction: 1.0, winner: null, pending: true }] },
+    ],
+    standings: [], champion_lineage: ['v0'],
+  };
+  const model = STRUCT.buildLiveRacingModel({
+    at,
+    heartbeat: { phase: 'tournament:round_0:rung0_m0', generation_id: 'v5' },
+    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
+    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
+  });
+  const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
+  // the entering rung-0 field is widened to the FULL challenger field — v0 (the
+  // champion/benchmark) is NOT a rung lane.
+  assertDeep([...r0.competitors].sort(), ['v5', 'v6', 'v7', 'v8'], 'rung-0 is widened to the full challenger field {v5,v6,v7,v8}; champion v0 is excluded');
+  assert(r0.live_progress && r0.live_progress.v5 && r0.live_progress.v8, 'every widened lane carries a live_progress entry (incl. the queued challengers)');
+
+  // the rendered funnel shows ≥4 racing lanes (the FULL field), not 2.
+  const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
+  const host = document.createElement('div');
+  for (const n of nodes) host.appendChild(n);
+  const funnel = svgsByClass(host, 'dn-funnel')[0];
+  assert(funnel, 'the live survival funnel rendered');
+  const laneNames = allByClass(funnel, 'dn-funnel-runner').map((g) => (g.textContent || '').trim());
+  const challengerLanes = laneNames.filter((t) => /^v[5-8]\b/.test(t));
+  assert(challengerLanes.length >= 4, 'rung-0 shows the FULL challenger field (≥4 lanes), not the degenerate "2 field" — got ' + challengerLanes.length);
+  for (const id of ['v5', 'v6', 'v7', 'v8']) assert(funnel.textContent.includes(id), 'every challenger lane is named — ' + id);
+  // the champion v0 is the benchmark/gate defender — NEVER a rung RUNNER lane.
+  assert(!laneNames.some((t) => /^v0\b/.test(t)), 'champion v0 is the benchmark/gate, never a rung-runner lane');
+
+  // the LIVE-HERO path (live.js → racingModel) widens the degenerate field too.
+  const heroModel = STRUCT.racingModel(STRUCT.normalizeStructure(at, true));
+  assert(heroModel && heroModel.live, 'racingModel built a live racing model from the degenerate payload');
+  assertDeep([...heroModel.rungs[0].competitors].sort(), ['v5', 'v6', 'v7', 'v8'], 'the live-hero racingModel widens rung-0 to the full challenger field too (champion v0 excluded)');
 });
 
 // ====================================================================
@@ -2939,37 +3006,22 @@ test('live elim model: a no-op repeat render leaves the bracket node identity un
   assert(first === second, 'the bracket node identity is preserved across a no-op tick');
 });
 
-// ---- (c) the richer racing ladder render ----------------------------
+// ---- (c) the richer racing survival-funnel render -------------------
+// (the static funnel render is exercised by the "survival funnel: the SVG
+// narrows N→…→1 …" test below; here we cover the LIVE pending-rung case.)
 
-test('racing ladder: renders rungs with board fractions, cut (✕) vs survivor (↑) marks, and a champion-gate', () => {
+test('survival funnel: a LIVE race leaves the pending rung neutral (nobody cut) and the gate reads "deciding…"', () => {
   const rungs = [
-    { label: 'Rung 1', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v0', 'v1'], cut: ['v2', 'v3'], board_fraction: 0.5 },
-    { label: 'Rung 2', competitors: ['v0', 'v1'], survivors: ['v1'], cut: ['v0'], board_fraction: 1.0 },
+    { label: 'Rung 1', competitors: ['v1', 'v2', 'v3'], survivors: ['v1'], cut: ['v2', 'v3'], board_fraction: 0.5 },
+    { label: 'Rung 2', competitors: ['v1'], survivors: [], cut: [], board_fraction: 1.0, pending: true },
   ];
-  const node = svg.racingLadder({ rungs, championId: 'v1', onCompetitor() {} });
-  assertEqual(node.localName, 'svg', 'the racing ladder is an SVG');
-  assertEqual(node.getAttribute('width'), '100%', 'fit-to-width (width:100%)');
-  assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'carries a viewBox so it scales to its pane');
-  const txt = node.textContent;
-  assert(txt.includes('board 50%') && txt.includes('board 100%'), 'each rung shows its board fraction (budget escalation)');
-  assert(txt.includes('✕'), 'a cut runner is marked ✕');
-  assert(txt.includes('↑'), 'a survivor is marked ↑');
-  // the trailing champion-gate column crowns the final survivor as champion.
-  assert(txt.includes('champion-gate'), 'a champion-gate column is rendered');
-  assert(txt.includes('♛ v1') || txt.includes('♛'), 'the final survivor (v1) flows into the champion-gate seat as the new champion ♛');
-  // survivor → next-rung connectors trace the halving.
-  assert(allByClass(node, 'dn-raceladder-edge').length >= 1, 'survivor connectors trace the field into the next rung');
-});
-
-test('racing ladder: a LIVE race leaves the pending rung neutral (nobody cut) and the gate reads "deciding…"', () => {
-  const rungs = [
-    { label: 'Rung 1', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v0', 'v1'], cut: ['v2', 'v3'], board_fraction: 0.5 },
-    { label: 'Rung 2', competitors: ['v0', 'v1'], survivors: [], cut: [], board_fraction: 1.0, pending: true },
-  ];
-  const node = svg.racingLadder({ rungs, championId: null, live: true, onCompetitor() {} });
+  const node = svg.survivalFunnel({ rungs, championId: null, benchmarkId: 'v0', live: true, onCompetitor() {} });
   // only the DECIDED rung shows cuts; the pending rung does not strike anyone.
-  const struck = allByClass(node, 'dn-out');
-  assertEqual(struck.length, 2, 'only the two decided cuts (v2, v3) are struck — the pending rung strikes nobody');
+  const cutNames = node.querySelectorAll('[class]')
+    .filter((n) => (n.getAttribute('class') || '').includes('dn-funnel-name') && (n.getAttribute('class') || '').includes('dn-bad'));
+  assertEqual(cutNames.length, 2, 'only the two decided cuts (v2, v3) peel off — the pending rung strikes nobody');
+  // the pending stage renders as a neutral (non-cut) band.
+  assert(allByClass(node, 'dn-funnel-pending').length >= 1, 'the pending (still-racing) stage renders neutral (no premature cut)');
   assert(node.textContent.includes('deciding'), 'the champion-gate reads "deciding…" while the race is live (no premature crown)');
 });
 
@@ -3059,9 +3111,9 @@ test('racing reconstruct: the champion-gate resolves v3 as the promoted champion
   const nodes = STRUCT.renderStructure(st, ctx, RC_EPOCH);
   const wrap = document.createElement('div');
   for (const n of nodes) wrap.appendChild(n);
-  const ladder = svgsByClass(wrap, 'dn-raceladder')[0];
-  assert(ladder, 'the racing ladder rendered from the reconstruction');
-  assert(ladder.textContent.includes('champion-gate'), 'a champion-gate column rendered');
+  const ladder = svgsByClass(wrap, 'dn-funnel')[0];
+  assert(ladder, 'the survival funnel rendered from the reconstruction');
+  assert(ladder.textContent.includes('champion-gate'), 'a champion-gate stage rendered');
   assert(ladder.textContent.includes('♛ v3'), 'the gate crowns v3 as the new champion ♛');
   assert(!ladder.textContent.includes('tbd'), 'the gate is NOT the empty "tbd" skeleton');
   assert(wrap.textContent.includes('v3 promoted'), 'the caption states the champion-gate outcome (v3 promoted)');
@@ -3069,14 +3121,14 @@ test('racing reconstruct: the champion-gate resolves v3 as the promoted champion
 
 // ---- (c) competitors are clickable to their candidate ---------------
 
-test('racing reconstruct: each competitor in the ladder is clickable → its candidate page', () => {
+test('racing reconstruct: each competitor in the funnel is clickable → its candidate page', () => {
   const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
   let navTo = null;
   const ctx = { navigate: (v, p) => { navTo = { v, p }; }, href: router.href };
   const nodes = STRUCT.renderStructure(st, ctx, RC_EPOCH);
   const wrap = document.createElement('div');
   for (const n of nodes) wrap.appendChild(n);
-  const runner = allByClass(wrap, 'dn-raceladder-runner')[0];
+  const runner = allByClass(wrap, 'dn-funnel-runner')[0];
   assert(runner, 'a clickable competitor row exists');
   runner.dispatchEvent({ type: 'click' });
   assert(navTo && navTo.v === 'candidate' && navTo.p.epochId === RC_EPOCH, 'clicking a competitor routes to its candidate page');
@@ -3104,8 +3156,8 @@ test('racing reconstruct: the LIVE /api/active-tournament path still renders the
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
 
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'the LIVE racing ladder rendered from /api/active-tournament');
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
+  assert(ladder, 'the LIVE survival funnel rendered from /api/active-tournament');
   assert(allByClass(host, 'dt-live-pill')[0], 'a LIVE badge marks the in-flight tournament');
   assert(host.textContent.includes('Rung 1') && host.textContent.includes('Rung 2'), 'both rungs render (incl. the still-racing one)');
   // the not-yet-decided rung stays neutral (nobody struck) and the gate reads "deciding…".
@@ -3140,10 +3192,10 @@ test('racing reconstruct: the match-ups page rebuilds the full ladder from the p
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
 
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'the racing ladder rendered on the match-ups page from the per-challenger records');
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
+  assert(ladder, 'the survival funnel rendered on the match-ups page from the per-challenger records');
   assert(!/No tournament|No rungs|unavailable/i.test(host.textContent), 'NOT the empty "RUNG · RUNG · CHAMPION-GATE: tbd" skeleton');
-  assert(host.textContent.includes('Rung 0') && host.textContent.includes('Rung 1'), 'both reconstructed rungs render as columns');
+  assert(host.textContent.includes('Rung 0') && host.textContent.includes('Rung 1'), 'both reconstructed rungs render as stages');
   // the full rung0 field + the cut/survivor marks made it through to the SVG.
   for (const id of ['v1', 'v2', 'v3', 'v4']) assert(ladder.textContent.includes(id), 'rung0 names the full field — ' + id);
   assert(ladder.textContent.includes('✕'), 'cut runners are struck ✕');
@@ -3737,7 +3789,7 @@ test('survival funnel: the racing epoch strip renders the funnel (stages narrow 
   assert(txt.includes('♛ v3'), 'the champion-gate crowns the survivor v3 (♛)');
   // the episode drills into the round's full Match-ups (the ladder lives there).
   assert(host.textContent.includes('open round'), 'the episode keeps the "open round →" drill affordance');
-  assertEqual(svgsByClass(host, 'dn-raceladder').length, 0, 'the epoch hero is the funnel figure, NOT a duplicate of the Match-ups ladder');
+  assertEqual(svgsByClass(host, 'dn-funnel').length, 1, 'the epoch hero is a SINGLE survival-funnel figure (the unified racing visual)');
 });
 
 // (b) a competitor is clickable → its candidate.
@@ -5061,30 +5113,17 @@ test('live motion: prefers-reduced-motion suppresses the live animation classes/
   assert(rm.includes('.dt-live-enter') && /\.dt-live-enter[^;{}]*\{?[^}]*animation: none/.test(rm) || rm.includes('.dt-live-enter'), 'the funnel/ladder entrance is suppressed under reduced motion');
   assert(rm.includes('.dt-ticker-row'), 'the ticker-row slide-in is suppressed under reduced motion');
   assert(rm.includes('.dt-live-hero-progfill'), 'the progress-bar width transition is suppressed under reduced motion');
-  assert(/\.dn-funnel-band/.test(rm) && /\.dn-raceladder-runner/.test(rm), 'the funnel band + ladder runner transitions are suppressed under reduced motion');
+  assert(/\.dn-funnel-band/.test(rm) && /\.dn-funnel-bar/.test(rm), 'the funnel band + progress-bar transitions are suppressed under reduced motion');
   // sanity: the un-gated rules DO carry motion (so reduced-motion is a real gate).
   assert(/\.dt-ticker-row \{[^}]*animation: dt-ticker-in/.test(css), 'the ticker row animates by default (gated off only under reduced motion)');
   assert(/@keyframes dt-live-fade/.test(css) && /@keyframes dt-ticker-in/.test(css), 'the live keyframes are defined');
 });
 
-// ---- (d) the racing ladder shows the champion/benchmark (v0) reference ----
+// ---- (d) the racing model derives the champion/benchmark (v0) reference ----
+// (the rendered funnel's benchmark caption is exercised by the "survival funnel:
+// carries the champion/benchmark (v0) reference …" test below.)
 
-test('racing ladder: shows the champion/benchmark (v0) reference and labels the rung deltas as vs-v0', () => {
-  const rungs = [
-    { match_id: 'rung0', label: 'Rung 1', competitors: ['v1', 'v2', 'v3'], survivors: ['v3'], cut: ['v1', 'v2'], board_fraction: 0.5, deltas: { v1: 5, v2: 2, v3: -1 } },
-    { match_id: 'rung1', label: 'Rung 2', competitors: ['v3'], survivors: ['v3'], cut: [], board_fraction: 1.0, deltas: { v3: -2 } },
-  ];
-  const node = svg.racingLadder({ rungs, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
-  // a persistent benchmark label naming v0 + a dashed pace line.
-  const bench = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-raceladder-bench') && n.localName === 'text')[0];
-  assert(bench, 'the ladder carries a persistent champion/benchmark label');
-  assert(bench.textContent.includes('v0'), 'the benchmark label names the champion v0');
-  assert(/vs\s+champion\s+v0|every\s+Δ\s+is\s+vs\s+v0|Δ\s+is\s+vs\s+v0/i.test(bench.textContent), 'the benchmark label makes explicit that deltas are vs v0');
-  const line = node.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-raceladder-bench-line'))[0];
-  assert(line && line.localName === 'line', 'a dashed v0 pace line spans the ladder');
-});
-
-test('racing ladder: the racingModel derives the champion/benchmark (v0) seat distinct from the survivor', () => {
+test('racing: the racingModel derives the champion/benchmark (v0) seat distinct from the survivor', () => {
   const st = STRUCT.reconstructRacing(RACING_TOURNAMENTS, RC_EPOCH);
   const model = STRUCT.racingModel(st);
   assert(model, 'a racing model was derived');
@@ -6135,9 +6174,9 @@ test('gens (cross-epoch): a NON-active epoch’s Match-ups renders the COMPLETED
   // NO live leak from e1 onto e0.
   assertEqual(allByClass(host, 'dt-live-pill').length, 0, 'NO LIVE pill on the closed e0 view (e1’s live run does not leak)');
   assert(!/being seeded|is being seeded|run is starting/i.test(host.textContent), 'NOT e1’s live "being seeded"/"starting" empty state under e0');
-  // e0 renders its OWN completed racing ladder (reconstructed from its records).
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'e0 renders its OWN completed racing ladder (not the live topology)');
+  // e0 renders its OWN completed survival funnel (reconstructed from its records).
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
+  assert(ladder, 'e0 renders its OWN completed survival funnel (not the live topology)');
 
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = [];
@@ -6175,8 +6214,8 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: TWO_EP_NEW });
 
   assert(allByClass(host, 'dt-live-pill')[0], 'the active e1 view carries the LIVE pill');
-  const ladder = svgsByClass(host, 'dn-raceladder')[0];
-  assert(ladder, 'the live progressive racing ladder renders for the active epoch');
+  const ladder = svgsByClass(host, 'dn-funnel')[0];
+  assert(ladder, 'the live progressive survival funnel renders for the active epoch');
   assert(!/being seeded/i.test(host.textContent), 'NOT the "being seeded" empty state once the live field exists');
 
   coreState.state.heartbeat = { phase: 'idle' };
@@ -6715,13 +6754,11 @@ test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no �
   assertEqual(svg.CROWN.current, '♛', 'the current-champion crown is ♛');
   assertEqual(svg.CROWN.former, '♔', 'the former-champion crown is ♔');
 
-  // a crowned racing gate (funnel + ladder) shows ♛, never ♚.
+  // a crowned racing gate (survival funnel) shows ♛, never ♚.
   const rungs = [{ label: 'Rung 0', match_id: 'rung0', competitors: ['v1', 'v2'], survivors: ['v1'], cut: ['v2'], board_fraction: 0.5 }];
   const funnel = svg.survivalFunnel({ rungs, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', gateDelta: -2 });
   assert(funnel.textContent.includes('♛'), 'a crowned funnel gate emits ♛');
   assert(!funnel.textContent.includes('♚'), 'a crowned funnel gate does NOT emit ♚');
-  const ladder = svg.racingLadder({ rungs, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', gateDelta: -2 });
-  assert(ladder.textContent.includes('♛') && !ladder.textContent.includes('♚'), 'a crowned racing ladder gate emits ♛, not ♚');
 
   // a crowned elim bracket-as-flow gate.
   const winners = [{ round_index: 0, label: 'Final', matches: [{ match_id: 'WB-R0-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'WB-R0-0' }] }];

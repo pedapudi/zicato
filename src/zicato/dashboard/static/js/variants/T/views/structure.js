@@ -127,6 +127,10 @@ export function normalizeStructure(st, live) {
     structure: st.structure || 'gauntlet',
     structure_params: st.structure_params || st.params || {},
     competitors: Array.isArray(st.competitors) ? st.competitors : [],
+    // the per-(entry × side) rows the backend publishes live; carried through so
+    // the racing model can recover the FULL challenger field when the published
+    // rounds are sparse/degenerate (issue #8).
+    entries: Array.isArray(st.entries) ? st.entries : [],
     rounds: Array.isArray(st.rounds) ? st.rounds : [],
     standings: Array.isArray(st.standings) ? st.standings : [],
     // the per-challenger proposing-step outcomes (applied/rejected + reason),
@@ -733,20 +737,71 @@ export function racingModel(st) {
   const rounds = Array.isArray(st.rounds) ? st.rounds : [];
   const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
   const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
-  const gateRound = rounds.find((r) => String(firstMatch(r).match_id || '') === 'racing-final') || null;
-  const rungRounds = rounds.filter((r) => String(firstMatch(r).match_id || '') !== 'racing-final');
+  const isFinal = (mid) => String(mid || '') === 'racing-final';
+  const gateRound = rounds.find((r) => isFinal(firstMatch(r).match_id)) || null;
+  const rungRounds = rounds.filter((r) => !isFinal(firstMatch(r).match_id));
 
-  const rungs = rungRounds.map((r) => {
+  // the champion/benchmark id(s) — the gate defender, never a rung lane: from
+  // competitors (role/side === champion), the published gate competitors, and
+  // the lineage head.
+  const championIds = (() => {
+    const ids = new Set();
+    for (const c of (Array.isArray(st.competitors) ? st.competitors : [])) {
+      if (c && c.generation_id != null && String(c.role || c.side || '').toLowerCase() === 'champion') ids.add(String(c.generation_id));
+    }
+    const gm = gateRound ? firstMatch(gateRound) : null;
+    if (gm && Array.isArray(gm.competitors)) for (const g of gm.competitors) ids.add(String(g));
+    if (lineage.length) ids.add(lineage[lineage.length - 1]);
+    return ids;
+  })();
+  // the FULL challenger field — challengers from competitors + entries, minus
+  // the champion(s). Used to WIDEN a degenerate live entering rung (issue #8).
+  const challengerField = (() => {
+    const seen = new Set();
+    const out = [];
+    const add = (id) => { const s = String(id); if (s && !seen.has(s) && !championIds.has(s)) { seen.add(s); out.push(s); } };
+    for (const c of (Array.isArray(st.competitors) ? st.competitors : [])) {
+      if (c && c.generation_id != null && String(c.role || c.side || '').toLowerCase() !== 'champion') add(c.generation_id);
+    }
+    for (const e of (Array.isArray(st.entries) ? st.entries : [])) {
+      if (!e) continue;
+      const side = String(e.side || e.role || '').toLowerCase();
+      if (side === 'champion' || side === 'parent') continue;
+      const id = e.entry_id != null ? e.entry_id : e.generation_id;
+      if (id != null) add(id);
+    }
+    return out;
+  })();
+
+  const rungs = rungRounds.map((r, ri) => {
     const m = firstMatch(r);
+    // a rung's lanes are its NON-champion competitors (v0 defends at the gate —
+    // never a rung lane, even when the publisher lists it on the rung match).
+    let competitors = (Array.isArray(m.competitors) ? m.competitors : [])
+      .map(String).filter((g) => !championIds.has(g));
+    const survivors = Array.isArray(m.survivors) ? m.survivors : [];
+    const cut = Array.isArray(m.cut) ? m.cut : [];
+    const pending = !(survivors.length) && !(cut.length);
+    // ISSUE #8: a LIVE, entering (rung-0), still-pending rung whose published
+    // field is a degenerate subset of the real challenger field is WIDENED to
+    // the whole field so every challenger races (≥ the full field), never just
+    // champion + first challenger.
+    if (live && ri === 0 && pending && challengerField.length > competitors.length
+      && competitors.every((g) => challengerField.indexOf(g) >= 0)) {
+      const merged = challengerField.slice();
+      for (const g of competitors) if (merged.indexOf(g) < 0) merged.push(g);
+      competitors = merged;
+    }
     return {
       label: r.label || `Rung ${(r.round_index || 0) + 1}`,
       match_id: m.match_id,
-      competitors: Array.isArray(m.competitors) ? m.competitors : [],
-      survivors: Array.isArray(m.survivors) ? m.survivors : [],
-      cut: Array.isArray(m.cut) ? m.cut : [],
+      competitors,
+      survivors,
+      cut,
       deltas: (m.deltas && typeof m.deltas === 'object') ? m.deltas : null,
       board_fraction: svg.isNum(m.board_fraction) ? m.board_fraction : null,
-      pending: !(Array.isArray(m.survivors) && m.survivors.length) && !(Array.isArray(m.cut) && m.cut.length),
+      live_progress: (m.live_progress && typeof m.live_progress === 'object') ? m.live_progress : null,
+      pending,
     };
   });
 
@@ -850,6 +905,53 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   const firstMatch = (r) => (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : {};
   const inflight = inflightByGen(activeRuns, epochGens);
 
+  // ── ISSUE #8: the FULL challenger field for a racing run ──
+  // The champion (v0) is the benchmark/gate defender, NOT a rung lane. Every
+  // OTHER competitor is a challenger that races the entering (rung-0) field.
+  // Derived from `competitors` (role/side !== champion) and `entries`
+  // (side === challenger), unioned + de-duped, so a DEGENERATE published rung-0
+  // (sparser than the real field — e.g. only the first challenger) can be
+  // WIDENED to the whole field below. Order follows competitors, then entries.
+  // the champion/benchmark id(s) — the gate defender(s), never a rung lane.
+  // Drawn from competitors (role/side === champion), the champion-gate match
+  // competitors (the published gate lists v0), and the lineage head.
+  const racingChampions = (() => {
+    if (!isRacing) return new Set();
+    const ids = new Set();
+    for (const c of competitors) {
+      if (c && c.generation_id != null && String(c.role || c.side || '').toLowerCase() === 'champion') {
+        ids.add(String(c.generation_id));
+      }
+    }
+    for (const r of rawRounds) {
+      const m = firstMatch(r);
+      if (isFinal(m.match_id) && Array.isArray(m.competitors)) for (const g of m.competitors) ids.add(String(g));
+    }
+    const lineage = Array.isArray(at.champion_lineage) ? at.champion_lineage : [];
+    if (lineage.length) ids.add(String(lineage[lineage.length - 1]));
+    return ids;
+  })();
+  const racingChallengers = (() => {
+    if (!isRacing) return [];
+    const seen = new Set();
+    const out = [];
+    const add = (id) => { const s = String(id); if (s && !seen.has(s) && !racingChampions.has(s)) { seen.add(s); out.push(s); } };
+    for (const c of competitors) {
+      if (c && c.generation_id != null && String(c.role || c.side || '').toLowerCase() !== 'champion') add(c.generation_id);
+    }
+    const entries = Array.isArray(at.entries) ? at.entries : [];
+    for (const e of entries) {
+      if (!e) continue;
+      const side = String(e.side || e.role || '').toLowerCase();
+      const id = e.entry_id != null ? e.entry_id : e.generation_id;
+      if (id == null) continue;
+      // a champion/parent entry defends the gate — never a rung lane.
+      if (side === 'champion' || side === 'parent') continue;
+      add(id);
+    }
+    return out;
+  })();
+
   // per-board total (k/N progress label): the contract pins board_size; for
   // racing each rung covers a board fraction (board_fraction on the match).
   const boardSize = svg.isNum(params.board_size) ? params.board_size
@@ -874,13 +976,30 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     || m.bye);
 
   // overlay in-flight board progress onto a still-pending PUBLISHED match.
-  const overlay = (m, queued) => {
+  // `entering` marks the rung-0 (the first entering rung of a racing run) — its
+  // field is WIDENED to the full challenger set when the publisher emitted a
+  // degenerate subset (issue #8): the live funnel's first rung must show ALL
+  // challengers racing, not just champion + first challenger.
+  const overlay = (m, queued, entering) => {
     if (settled(m)) return m;
     const total = totalFor(m);
     if (isRacing) {
       // a racing rung's field is its competitors; surface a per-lane
-      // live_progress map so the ladder shows each lane racing k/N boards.
-      const field = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
+      // live_progress map so the funnel shows each lane racing k/N boards.
+      // a rung's lanes are its NON-champion competitors (the champion/benchmark
+      // v0 defends at the gate — it is never a rung lane, even when the
+      // publisher lists it on the rung match).
+      let field = (Array.isArray(m.competitors) ? m.competitors : [])
+        .map(String).filter((g) => !racingChampions.has(g));
+      // ISSUE #8: widen a degenerate entering rung to the full challenger field
+      // — only when every published lane IS a known challenger (never clobber a
+      // legitimately-narrowed downstream rung) and the full field is larger.
+      if (entering && racingChallengers.length > field.length
+        && field.every((g) => racingChallengers.indexOf(g) >= 0)) {
+        const merged = racingChallengers.slice();
+        for (const g of field) if (merged.indexOf(g) < 0) merged.push(g);
+        field = merged;
+      }
       const progress = {};
       for (const g of field) {
         const inf = inflight.get(g);
@@ -888,7 +1007,7 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
           ? { inflight: inf.count, done: Math.max(0, Math.floor(inf.sumProgress)), total, partialDelta }
           : { inflight: 0, done: 0, total, partialDelta: null };
       }
-      return Object.assign({}, m, { winner: null, pending: true, queued, live_progress: queued ? null : progress });
+      return Object.assign({}, m, { competitors: field, winner: null, pending: true, queued, live_progress: queued ? null : progress });
     }
     // swiss / elim: a per-match done/inflight tally over the pairing's gens.
     const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
@@ -910,6 +1029,12 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   { const m = isRacing ? /rung(\d+)/.exec(phase) : /round[_:]?(\d+)/.exec(phase); if (m) activeIdx = Number(m[1]); }
   if (activeIdx == null && svg.isNum(at.round_index)) activeIdx = at.round_index;
 
+  // the index of the FIRST entering (non-gate) racing rung — the only rung
+  // whose field may be widened to the full challenger set (issue #8).
+  const firstRungIdx = isRacing
+    ? rawRounds.findIndex((r) => !isFinal(firstMatch(r).match_id))
+    : -1;
+
   const rounds = rawRounds.map((r, i) => {
     if (roundSettled(r)) return r;
     const m0 = firstMatch(r);
@@ -919,7 +1044,8 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     const isActive = isGate ? false : (activeIdx != null ? ri === activeIdx
       : rawRounds.slice(0, i).every(roundSettled));
     const queued = !isActive;
-    const matches = (Array.isArray(r.matches) ? r.matches : []).map((m) => overlay(m, queued));
+    const entering = isRacing && !isGate && i === firstRungIdx;
+    const matches = (Array.isArray(r.matches) ? r.matches : []).map((m) => overlay(m, queued, entering));
     return { round_index: ri, label: r.label || (isRacing ? `Rung ${ri}` : `Round ${ri + 1}`), queued, matches };
   });
 
@@ -1189,7 +1315,7 @@ function renderRacing(st, ctx, epochId) {
   const rungRounds = rounds.filter((r) => String(firstMatch(r).match_id || '') !== 'racing-final');
 
   // each racing rung round has ONE match whose competitors/survivors/cut carry
-  // the rung; flatten to a rung list for the ladder mark.
+  // the rung; flatten to a rung list for the funnel mark.
   const rungs = rungRounds.map((r) => {
     const m = firstMatch(r);
     return {
@@ -1201,7 +1327,7 @@ function renderRacing(st, ctx, epochId) {
       deltas: (m.deltas && typeof m.deltas === 'object') ? m.deltas : null,
       board_fraction: svg.isNum(m.board_fraction) ? m.board_fraction : null,
       // progressive LIVE fields (present only for the active/queued rungs of a
-      // live race) — the ladder shows each lane's "racing · k/N boards" + a
+      // live race) — the funnel shows each lane's "racing · k/N boards" + a
       // partial Δ; queued rungs read "queued".
       live_progress: (m.live_progress && typeof m.live_progress === 'object') ? m.live_progress : null,
       queued: !!m.queued,
@@ -1249,7 +1375,7 @@ function renderRacing(st, ctx, epochId) {
   const benchmarkId = (racingModel(st) || {}).benchmarkId || null;
   const card = el('div', { class: 'dn-panel dn-figpane' });
   card.appendChild(rungs.length
-    ? svg.racingLadder({
+    ? svg.survivalFunnel({
         rungs, championId, benchmarkId, live, gateState, gateDelta,
         onCompetitor: (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); },
       })
@@ -1265,7 +1391,7 @@ function renderRacing(st, ctx, epochId) {
       + gateNote
       + (live ? ' · LIVE — the eventual winner is not committed until the final gate' : '') }));
   }
-  nodes.push(section(live ? 'Racing ladder · LIVE — rungs, board fractions, cuts' : 'Racing ladder · rungs, board fractions, cuts', card));
+  nodes.push(section(live ? 'Survival funnel · LIVE — field narrowing rung-by-rung' : 'Survival funnel · field narrowing rung-by-rung', card));
   const standings = standingsTable(st, ctx, epochId, live);
   if (standings) nodes.push(section('Standings', standings));
   return nodes;

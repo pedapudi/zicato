@@ -618,197 +618,6 @@ export function pairedSlopegraph(opts) {
   return svg;
 }
 
-// ---- racing ladder (DATA-DRIVEN successive-halving) -----------------
-//
-// One column per rung from the structure payload's `rounds[]`, escalating
-//   (absent ⇒ inferred from championId + live, preserving the old behavior.)
-export function racingLadder(opts) {
-  const o = opts || {};
-  const rungs = (Array.isArray(o.rungs) ? o.rungs : []).filter((r) => r);
-  const live = !!o.live;
-  const colW = 124;
-  const colGap = 30;
-  const gateW = 104;
-  const rowH = 18;
-  const headH = 34;
-  const top = 6;
-  // the v0 BENCHMARK reference (the reigning champion the field is raced vs; NOT
-  // a rung competitor) — drawn as a persistent labelled pace line at Δ=0.
-  const benchId = o.benchmarkId != null ? String(o.benchmarkId)
-    : (o.championId != null ? String(o.championId) : null);
-  const benchH = benchId ? 18 : 0;
-  const maxRows = Math.max(1, ...rungs.map((r) => (Array.isArray(r.competitors) ? r.competitors.length : 0)), 1);
-  const ladderW = rungs.length * colW + Math.max(0, rungs.length - 1) * colGap;
-  const w = Math.max(colW, ladderW + colGap + gateW) + 8;
-  const h = top + benchH + headH + maxRows * rowH + 8;
-  const svg = svgEl('svg', {
-    class: 'dn-raceladder', width: '100%', height: h,
-    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
-  });
-  // the benchmark pace line + label spanning the whole ladder.
-  if (benchId) {
-    const by = top + 10;
-    svg.appendChild(hov(svgEl('line', {
-      x1: 2, y1: by + 4, x2: w - 4, y2: by + 4, class: 'dn-raceladder-bench-line',
-    }), `champion v0 = ${benchId} · the field is raced vs this benchmark; every Δ is vs v0 · v0 defends at the champion-gate`));
-    const bt = svgEl('text', { x: 4, y: by, class: 'dn-raceladder-bench' });
-    bt.textContent = `▸ vs champion v0 = ${shortLabel(benchId, 16)} · Δ pace 0 (every Δ is vs v0)`;
-    svg.appendChild(bt);
-  }
-  if (rungs.length === 0) {
-    const t = svgEl('text', { x: w / 2, y: h / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
-    t.textContent = 'no rungs yet';
-    svg.appendChild(t);
-    return svg;
-  }
-  // everything below the benchmark band is offset by benchH.
-  const headTop = top + benchH;
-  const colX = (j) => j * (colW + colGap) + 2;
-  const rowY = (i) => headTop + headH + i * rowH + rowH / 2;
-  // cache each competitor's row index per rung so connectors can be drawn from
-  // a survivor's seat in rung j to the same competitor's seat in rung j+1.
-  const rowIndex = rungs.map((rung) => {
-    const map = new Map();
-    (Array.isArray(rung.competitors) ? rung.competitors : []).forEach((cid, i) => map.set(String(cid), i));
-    return map;
-  });
-
-  // ── connectors: each survivor of rung j → its seat in rung j+1 ──────
-  for (let j = 0; j < rungs.length - 1; j++) {
-    const surv = Array.isArray(rungs[j].survivors) ? rungs[j].survivors.map(String) : [];
-    const x1 = colX(j) + colW - 6;
-    const x2 = colX(j + 1) + 2;
-    const mx = (x1 + x2) / 2;
-    for (const sid of surv) {
-      const yi = rowIndex[j].get(sid);
-      const yj = rowIndex[j + 1].get(sid);
-      if (yi == null || yj == null) continue;
-      svg.appendChild(svgEl('path', {
-        d: `M${x1},${rowY(yi)} H${mx} V${rowY(yj)} H${x2}`,
-        class: 'dn-raceladder-edge', fill: 'none',
-      }));
-    }
-  }
-
-  rungs.forEach((rung, j) => {
-    const x = colX(j);
-    // a QUEUED future rung (live race, not yet started) is shown dimmed with its
-    // board-fraction label so the whole successive-halving shape is legible.
-    const queued = !!rung.queued;
-    const prog = (rung.live_progress && typeof rung.live_progress === 'object') ? rung.live_progress : null;
-    const head = svgEl('text', { x: x + colW / 2, y: headTop + 12, class: 'dn-raceladder-head' + (queued ? ' dn-raceladder-queued' : ''), 'text-anchor': 'middle' });
-    head.textContent = shortLabel(rung.label || `Rung ${j + 1}`, 16) + (queued ? ' · queued' : '');
-    svg.appendChild(head);
-    if (isNum(rung.board_fraction)) {
-      const sub = svgEl('text', { x: x + colW / 2, y: headTop + 26, class: 'dn-raceladder-frac', 'text-anchor': 'middle' });
-      sub.textContent = `board ${(rung.board_fraction * 100).toFixed(0)}%`;
-      svg.appendChild(sub);
-    }
-    const cutSet = new Set(Array.isArray(rung.cut) ? rung.cut.map(String) : []);
-    const surv = new Set(Array.isArray(rung.survivors) ? rung.survivors.map(String) : []);
-    const comps = Array.isArray(rung.competitors) ? rung.competitors : [];
-    // a rung whose results are not in yet (no cut + no survivors) is PENDING:
-    // every runner is shown neutral (racing), never cut, until the cut lands.
-    const pending = !!rung.pending || (cutSet.size === 0 && surv.size === 0);
-    comps.forEach((cid, i) => {
-      const cy = rowY(i);
-      const sid = String(cid);
-      const eliminated = !pending && cutSet.has(sid);
-      const survived = !pending && (surv.has(sid) || (!eliminated && surv.size === 0 && cutSet.size === 0));
-      const racing = pending || (!eliminated && !survived);
-      const lane = prog ? prog[sid] : null;
-      const g = svgEl('g', { class: 'dn-raceladder-runner' + (queued ? ' dn-raceladder-lane-queued' : ''), tabindex: o.onCompetitor ? '0' : null });
-      const cls = 'dn-raceladder-name'
-        + (eliminated ? ' dn-out dn-bad' : survived ? ' dn-good' : queued ? ' dn-raceladder-queued' : racing ? ' dn-racing' : '');
-      const verdict = eliminated ? 'cut' : survived ? 'survives'
-        : queued ? 'queued' : (lane ? 'racing · ' + laneProgressText(lane) : 'racing');
-      // partial Δ-vs-champion (live), else the committed rung Δ.
-      const partial = lane && isNum(lane.partialDelta) ? lane.partialDelta : null;
-      const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : partial;
-      const t = hov(svgEl('text', { x: x + 6, y: cy + 3, class: cls }),
-        `${sid} · rung ${j + 1}${isNum(rung.board_fraction) ? ` · board ${(rung.board_fraction * 100).toFixed(0)}%` : ''}${delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : ''} · ${verdict}`);
-      // the lane label: a live lane reads "v3 · k/N", a queued lane "v3 · queued".
-      const laneSuffix = eliminated ? ' ✕' : survived ? ' ↑'
-        : (lane ? ' · ' + laneProgressText(lane) : (queued ? '' : ''));
-      t.textContent = shortLabel(sid, lane ? 8 : 14) + laneSuffix;
-      g.appendChild(t);
-      // a thin in-flight PROGRESS BAR under a live lane (boards done / total).
-      if (lane && (lane.inflight || lane.done)) {
-        const barW = colW - 12;
-        const frac = (isNum(lane.total) && lane.total > 0)
-          ? Math.min(1, (lane.done || 0) / lane.total)
-          : (lane.inflight ? 0.5 : 0);
-        g.appendChild(svgEl('rect', { x: x + 6, y: cy + 5, width: barW, height: 2, rx: 1, class: 'dn-raceladder-bar-bg' }));
-        g.appendChild(svgEl('rect', { x: x + 6, y: cy + 5, width: Math.max(1, barW * frac), height: 2, rx: 1,
-          class: 'dn-raceladder-bar' + (lane.inflight ? ' dn-raceladder-bar-live' : '') }));
-      }
-      // the competitor's Δ-vs-champion at this rung, right-aligned in the column.
-      if (delta != null) {
-        const dt = svgEl('text', {
-          x: x + colW - 6, y: cy + 3, 'text-anchor': 'end',
-          class: 'dn-raceladder-delta ' + (delta > 0 ? 'dn-bad' : delta < 0 ? 'dn-good' : ''),
-        });
-        dt.textContent = fmtSigned(delta, delta !== 0 && Math.abs(delta) < 0.1 ? 3 : 1);
-        g.appendChild(dt);
-      }
-      clickable(g, o.onCompetitor && (() => o.onCompetitor(sid)));
-      svg.appendChild(g);
-    });
-  });
-
-  // ── the trailing champion-gate column ───────────────────────────────
-  //
-  // The gate is the full-board confirmation duel: the lone survivor faces the
-  // When gateState is absent, infer from championId + live (legacy callers).
-  const gx = ladderW + colGap + 2;
-  const gateHead = svgEl('text', { x: gx + gateW / 2, y: headTop + 12, class: 'dn-raceladder-head', 'text-anchor': 'middle' });
-  gateHead.textContent = 'champion-gate';
-  svg.appendChild(gateHead);
-  const cy = rowY(0);
-  const champId = o.championId ? String(o.championId) : null;
-  const gateState = o.gateState || (live ? 'deciding'
-    : (champId ? 'crowned' : 'pending'));
-  const crowned = gateState === 'crowned' && !!champId;
-  // connector from the final rung's survivor seat into the gate seat.
-  const lastSurv = Array.isArray(rungs[rungs.length - 1].survivors) ? rungs[rungs.length - 1].survivors.map(String) : [];
-  const seatId = champId || (lastSurv.length === 1 ? lastSurv[0] : null);
-  if (seatId && lastSurv.indexOf(seatId) >= 0) {
-    const x1 = colX(rungs.length - 1) + colW - 6;
-    const fromY = rowY(rowIndex[rungs.length - 1].get(seatId) || 0);
-    const mx = (x1 + gx) / 2;
-    svg.appendChild(svgEl('path', {
-      d: `M${x1},${fromY} H${mx} V${cy} H${gx}`,
-      class: 'dn-raceladder-edge' + (crowned ? ' dn-raceladder-edge-champ' : ''), fill: 'none',
-    }));
-  }
-  const clickId = champId || seatId;
-  const gateG = svgEl('g', { class: 'dn-raceladder-gate', tabindex: (clickId && o.onCompetitor) ? '0' : null });
-  gateG.appendChild(svgEl('rect', { x: gx, y: cy - rowH / 2 - 1, width: gateW, height: rowH + 2, rx: 3,
-    class: 'dn-raceladder-gatebox' + (crowned ? ' dn-good' : '') }));
-  const dStr = isNum(o.gateDelta) ? ` · Δ ${fmtSigned(o.gateDelta, 2)}` : '';
-  let label;
-  let tip;
-  if (crowned) {
-    label = CROWN.current + ' ' + shortLabel(champId, 11);
-    tip = `${champId} cleared the gate → new champion${dStr}`;
-  } else if (gateState === 'stands') {
-    label = 'champion stands';
-    tip = `the survivor lost the full-board gate — champion stands${dStr}`;
-  } else if (gateState === 'deciding') {
-    label = 'deciding…';
-    tip = champId ? `${champId} leads — gate not yet committed` : 'the final gate is deciding';
-  } else {
-    label = 'tbd';
-    tip = 'awaiting the final survivor';
-  }
-  const gt = hov(svgEl('text', { x: gx + 6, y: cy + 3, class: 'dn-raceladder-gatelab' + (crowned ? ' dn-good' : '') }), tip);
-  gt.textContent = label;
-  gateG.appendChild(gt);
-  clickable(gateG, (clickId && o.onCompetitor) && (() => o.onCompetitor(clickId)));
-  svg.appendChild(gateG);
-  return svg;
-}
-
 // ---- racing SURVIVAL FUNNEL (the at-a-glance epoch hero) -------------
 //
 // The successive-halving field rendered as a FLOW that narrows at each cut:
@@ -890,11 +699,16 @@ export function survivalFunnel(opts) {
     svg.appendChild(sub);
 
     // ── the surviving runners ride INSIDE the band (↑), clickable ──
+    // a LIVE racing rung carries a per-lane `live_progress` map; an active
+    // (not queued) lane reads "racing · k/N boards" + a partial Δ-vs-champion
+    // and grows a thin in-flight progress bar as boards land.
+    const prog = (rung.live_progress && typeof rung.live_progress === 'object') ? rung.live_progress : null;
     const survRunners = pending ? comps.map(String) : surv;
     survRunners.forEach((sid, i) => {
       const cy = survRunners.length === 1 ? midY
         : midY - hOut + 8 + (i * (Math.max(1, 2 * hOut - 16)) / Math.max(1, survRunners.length - 1));
-      funnelRunner(svg, o, sid, rung, j, x0 + 8, cy, pending ? 'racing' : 'survives');
+      const lane = prog ? prog[String(sid)] : null;
+      funnelRunner(svg, o, sid, rung, j, x0 + 8, cy, pending ? 'racing' : 'survives', lane, stageW - 16);
     });
 
     // ── eliminated competitors peel off as labelled dead-end branches (✕) ──
@@ -988,36 +802,45 @@ export function survivalFunnel(opts) {
 
 // One funnel competitor label (a survivor riding the band, or a peeled-off
 // eliminated dead-end). Hover → its per-rung Δ + cut/survive verdict; click →
-// its candidate. `verdict` ∈ {survives, cut, racing}.
-function funnelRunner(svg, o, sid, rung, j, x, cy, verdict) {
-  const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : null;
-  // LIVE per-lane progress (only on a racing lane mid-flight): the board
-  // done/total tally + a partial Δ-vs-champion, surfaced inline as "k/N" so the
-  // single survival funnel carries the same live detail the rung ladder did.
-  const lp = (rung.live_progress && typeof rung.live_progress === 'object') ? rung.live_progress[sid] : null;
-  const liveK = (verdict === 'racing' && lp && isNum(lp.total) && lp.total > 0)
-    ? ` ${isNum(lp.done) ? lp.done : 0}/${lp.total}` : '';
-  const partial = (lp && isNum(lp.partialDelta)) ? lp.partialDelta : null;
+// its candidate. `verdict` ∈ {survives, cut, racing}. A LIVE racing lane passes
+// its `lane` ({inflight, done, total, partialDelta}) so the runner reads
+// "racing · k/N boards" + a partial Δ and grows an in-flight progress bar
+// (`barW` is the band-bounded bar width); `lane` is null for settled/non-live.
+function funnelRunner(svg, o, sid, rung, j, x, cy, verdict, lane, barW) {
+  // partial Δ-vs-champion (live) falls back to the committed rung Δ.
+  const partial = lane && isNum(lane.partialDelta) ? lane.partialDelta : null;
+  const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : partial;
   const glyph = verdict === 'cut' ? ' ✕' : verdict === 'survives' ? ' ↑' : '';
+  // a live racing lane appends its "k/N boards" progress to the label.
+  const laneSuffix = (verdict === 'racing' && lane) ? ' · ' + laneProgressText(lane) : '';
   const cls = 'dn-funnel-name'
     + (verdict === 'cut' ? ' dn-out dn-bad' : verdict === 'survives' ? ' dn-good' : ' dn-racing');
   const tip = `${sid} · ${rung.label || 'rung ' + j}`
     + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : '')
-    + (liveK ? ` · ${liveK.trim()} boards` : '')
-    + (delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion`
-        : partial != null ? ` · partial Δ ${fmtSigned(partial, 2)} vs champion` : '')
+    + (delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : '')
+    + (laneSuffix ? ` · ${laneProgressText(lane)}` : '')
     + ` · ${verdict}`;
   const g = svgEl('g', { class: 'dn-funnel-runner', tabindex: o.onCompetitor ? '0' : null });
   const t = hov(svgEl('text', { x, y: cy + 3, class: cls }), tip);
-  t.textContent = shortLabel(sid, 13) + glyph + liveK;
+  t.textContent = shortLabel(sid, lane ? 8 : 13) + glyph + laneSuffix;
   g.appendChild(t);
+  // a thin in-flight PROGRESS BAR under a live lane (boards done / total).
+  if (lane && (lane.inflight || lane.done)) {
+    const bw = Math.max(20, barW || 80);
+    const frac = (isNum(lane.total) && lane.total > 0)
+      ? Math.min(1, (lane.done || 0) / lane.total)
+      : (lane.inflight ? 0.5 : 0);
+    g.appendChild(svgEl('rect', { x, y: cy + 5, width: bw, height: 2, rx: 1, class: 'dn-funnel-bar-bg' }));
+    g.appendChild(svgEl('rect', { x, y: cy + 5, width: Math.max(1, bw * frac), height: 2, rx: 1,
+      class: 'dn-funnel-bar' + (lane.inflight ? ' dn-funnel-bar-live' : '') }));
+  }
   clickable(g, o.onCompetitor && (() => o.onCompetitor(sid)));
   svg.appendChild(g);
 }
 
 // ---- swiss STANDINGS LADDER (DATA-DRIVEN, live + completed) ----------
 //
-// The swiss analogue of racingLadder/survivalFunnel: a column per round (its
+// The swiss analogue of the racing survivalFunnel: a column per round (its
 //   gateState ∈ 'crowned'|'stands'|'deciding'|'pending' (else inferred).
 export function swissLadder(opts) {
   const o = opts || {};

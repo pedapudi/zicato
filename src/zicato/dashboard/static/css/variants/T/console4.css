@@ -1594,38 +1594,6 @@
     background: color-mix(in srgb, var(--v2-accent) 10%, transparent); }
 
 
-  /* racing ladder (successive halving) */
-  .dn-raceladder-head { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
-    text-transform: uppercase; letter-spacing: 0.05em; }
-  .dn-raceladder-frac { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
-  .dn-raceladder-name { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
-  .dn-raceladder-name.dn-good { fill: var(--v2-good); }
-  .dn-raceladder-name.dn-bad { fill: var(--v2-bad); }
-  .dn-raceladder-name.dn-out { text-decoration: line-through; opacity: 0.85; }
-  .dn-raceladder-name.dn-racing { fill: var(--v2-ink-soft); }
-  /* a QUEUED future rung (live race, not yet started) is dimmed */
-  .dn-raceladder-queued, .dn-raceladder-name.dn-raceladder-queued { fill: var(--v2-ink-faint); opacity: 0.7; }
-  .dn-raceladder-lane-queued { opacity: 0.7; }
-  /* per-lane in-flight board-progress bar under an actively-racing lane */
-  .dn-raceladder-bar-bg { fill: var(--v2-rule-soft); opacity: 0.6; }
-  .dn-raceladder-bar { fill: var(--v2-accent); opacity: 0.85; transition: width 0.3s ease; }
-  .dn-raceladder-bar-live { fill: var(--v2-accent); }
-  /* each runner's Δ-vs-champion at the rung, right-aligned + token-themed */
-  .dn-raceladder-delta { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
-  .dn-raceladder-delta.dn-good { fill: var(--v2-good); }
-  .dn-raceladder-delta.dn-bad { fill: var(--v2-bad); }
-  .dn-raceladder-runner:hover .dn-raceladder-name,
-  .dn-raceladder-runner:focus .dn-raceladder-name { fill: var(--v2-accent); outline: none; }
-  /* survivor → next-rung connectors + the champion-gate seat */
-  .dn-raceladder-edge { stroke: var(--v2-rule); stroke-width: 1.2; vector-effect: non-scaling-stroke; opacity: 0.7; }
-  .dn-raceladder-edge-champ { stroke: var(--v2-good); opacity: 0.9; }
-  .dn-raceladder-gatebox { fill: var(--v2-rule-soft); stroke: var(--v2-rule); stroke-width: 1; }
-  .dn-raceladder-gatebox.dn-good { stroke: var(--v2-good); }
-  .dn-raceladder-gatelab { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
-  .dn-raceladder-gatelab.dn-good { fill: var(--v2-good); font-weight: 700; }
-  .dn-raceladder-gate:hover .dn-raceladder-gatelab,
-  .dn-raceladder-gate:focus .dn-raceladder-gatelab { fill: var(--v2-accent); outline: none; }
-
   /* racing SURVIVAL FUNNEL (the epoch-overview hero) — field → cuts →
      survivor → champion-gate; the flow narrows at each cut. All marks read
      from --v2-* tokens so the funnel is legible across every theme (incl. the
@@ -1656,6 +1624,10 @@
   .dn-funnel-name.dn-bad { fill: var(--v2-bad); }
   .dn-funnel-name.dn-out { opacity: 0.8; }
   .dn-funnel-name.dn-racing { fill: var(--v2-ink-soft); }
+  /* per-lane in-flight board-progress bar under an actively-racing lane (LIVE) */
+  .dn-funnel-bar-bg { fill: var(--v2-rule-soft); opacity: 0.6; }
+  .dn-funnel-bar { fill: var(--v2-accent); opacity: 0.85; transition: width 0.3s ease; }
+  .dn-funnel-bar-live { fill: var(--v2-accent); }
   .dn-funnel-runner:hover .dn-funnel-name,
   .dn-funnel-runner:focus .dn-funnel-name { fill: var(--v2-accent); outline: none; }
   /* the terminal champion-gate seat */
@@ -1873,16 +1845,13 @@
    * this file → instant, no transitions/animations under reduced motion).
    * ==================================================================== */
 
-  /* the v0 / champion BENCHMARK reference on the racing ladder + funnel:
-   * a persistent labelled pace line at Δ=0, so the reader sees the champion
-   * the per-rung deltas are measured against (v0 is the benchmark, not a rung
-   * competitor; it defends at the champion-gate). */
-  .dn-raceladder-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
-  .dn-raceladder-bench-line { stroke: var(--v2-accent); stroke-width: 1; stroke-dasharray: 3 3;
-    opacity: 0.45; vector-effect: non-scaling-stroke; }
+  /* the v0 / champion BENCHMARK reference on the survival funnel:
+   * a persistent caption naming the champion the per-rung deltas are measured
+   * against (v0 is the benchmark, not a rung competitor; it defends at the
+   * champion-gate). */
   .dn-funnel-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
 
-  /* a freshly-built funnel/ladder eases in (one-shot — never infinite). */
+  /* a freshly-built funnel eases in (one-shot — never infinite). */
   .dt-live-enter { animation: dt-live-fade 0.34s ease-out; }
   @keyframes dt-live-fade {
     from { opacity: 0; transform: translateY(4px); }
@@ -1892,7 +1861,6 @@
    * field thins (the band narrows, survivors slide forward, cuts peel off). */
   .dn-funnel-band { transition: opacity 0.3s ease; }
   .dn-funnel-runner, .dn-funnel-deadedge { transition: opacity 0.3s ease, transform 0.3s ease; }
-  .dn-raceladder-runner, .dn-raceladder-edge { transition: opacity 0.3s ease; }
   /* swiss/elim live figures ease their value/position changes the same way. */
   .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge { transition: opacity 0.3s ease, transform 0.3s ease; }
   .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv { transition: opacity 0.3s ease; }
@@ -2029,8 +1997,7 @@
     .dt-live-enter { animation: none; }
     .dt-ticker-row { animation: none; }
     .dn-inflight-pulse { animation: none; }
-    .dn-funnel-band, .dn-funnel-runner, .dn-funnel-deadedge,
-    .dn-raceladder-runner, .dn-raceladder-edge, .dn-raceladder-bar,
+    .dn-funnel-band, .dn-funnel-runner, .dn-funnel-deadedge, .dn-funnel-bar,
     .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge, .dn-swissladder-bar,
     .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv,
     .dt-live-hero-progfill, .dt-live-match-fill, .dn-hm-cell { transition: none; }
