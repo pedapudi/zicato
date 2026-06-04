@@ -1277,11 +1277,20 @@ function standingsTable(st, ctx, epochId, live) {
   const standings = (st && Array.isArray(st.standings)) ? st.standings.slice() : [];
   if (!standings.length) return null;
   const structure = (st && st.structure) || 'gauntlet';
+  // Racing (successive-halving / best-arm) has NO head-to-head winner/loser —
+  // each rung ranks survivors by SCALAR and cuts the worst; the promote/reject
+  // is the gate, not a match record. So W/L are structurally always 0 for
+  // racing and a permanently-zero column reads as broken. Drop W/L for racing
+  // (scalar + status carry the standing); keep them for the bracket structures
+  // that actually populate them (single_elim / double_elim / swiss).
+  const showWL = structure !== 'racing';
   standings.sort((a, b) => (svg.isNum(a.rank) ? a.rank : 1e9) - (svg.isNum(b.rank) ? b.rank : 1e9));
   const tbl = el('table', { class: 'dn-board-table dt-standings' });
   tbl.appendChild(el('thead', null, [el('tr', null, [
     el('th', { text: 'rank' }), el('th', { text: 'generation' }), el('th', { text: 'status' }),
-    el('th', { class: 'dn-num', text: 'scalar' }), el('th', { class: 'dn-num', text: 'W' }), el('th', { class: 'dn-num', text: 'L' }), el('th', { text: '' }),
+    el('th', { class: 'dn-num', text: 'scalar' }),
+    ...(showWL ? [el('th', { class: 'dn-num', text: 'W' }), el('th', { class: 'dn-num', text: 'L' })] : []),
+    el('th', { text: '' }),
   ])]));
   const tbody = el('tbody');
   for (const s of standings) {
@@ -1300,8 +1309,10 @@ function standingsTable(st, ctx, epochId, live) {
       el('td', { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
       el('td', null, [statusPill(status)]),
       el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' }),
-      el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' }),
-      el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.losses) ? String(s.losses) : '—' }),
+      ...(showWL ? [
+        el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' }),
+        el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.losses) ? String(s.losses) : '—' }),
+      ] : []),
       el('td', null, [s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), text: 'open →' }) : null].filter(Boolean)),
     ]));
   }

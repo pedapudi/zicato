@@ -991,16 +991,25 @@ export function survivalFunnel(opts) {
 // its candidate. `verdict` ∈ {survives, cut, racing}.
 function funnelRunner(svg, o, sid, rung, j, x, cy, verdict) {
   const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : null;
+  // LIVE per-lane progress (only on a racing lane mid-flight): the board
+  // done/total tally + a partial Δ-vs-champion, surfaced inline as "k/N" so the
+  // single survival funnel carries the same live detail the rung ladder did.
+  const lp = (rung.live_progress && typeof rung.live_progress === 'object') ? rung.live_progress[sid] : null;
+  const liveK = (verdict === 'racing' && lp && isNum(lp.total) && lp.total > 0)
+    ? ` ${isNum(lp.done) ? lp.done : 0}/${lp.total}` : '';
+  const partial = (lp && isNum(lp.partialDelta)) ? lp.partialDelta : null;
   const glyph = verdict === 'cut' ? ' ✕' : verdict === 'survives' ? ' ↑' : '';
   const cls = 'dn-funnel-name'
     + (verdict === 'cut' ? ' dn-out dn-bad' : verdict === 'survives' ? ' dn-good' : ' dn-racing');
   const tip = `${sid} · ${rung.label || 'rung ' + j}`
     + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : '')
-    + (delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : '')
+    + (liveK ? ` · ${liveK.trim()} boards` : '')
+    + (delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion`
+        : partial != null ? ` · partial Δ ${fmtSigned(partial, 2)} vs champion` : '')
     + ` · ${verdict}`;
   const g = svgEl('g', { class: 'dn-funnel-runner', tabindex: o.onCompetitor ? '0' : null });
   const t = hov(svgEl('text', { x, y: cy + 3, class: cls }), tip);
-  t.textContent = shortLabel(sid, 13) + glyph;
+  t.textContent = shortLabel(sid, 13) + glyph + liveK;
   g.appendChild(t);
   clickable(g, o.onCompetitor && (() => o.onCompetitor(sid)));
   svg.appendChild(g);
