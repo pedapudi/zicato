@@ -31,6 +31,7 @@ from pathlib import Path
 from zicato.core.workspace import (
     analysis_path,
     board_path,
+    brief_path,
     epoch_dir,
     generation_dir,
     journal_path,
@@ -96,7 +97,9 @@ def test_all_epoch_helpers_descend_uniformly(tmp_path: Path) -> None:
     assert journal_path(tmp_path, "e0") == edir / "journal.md"
     assert analysis_path(tmp_path, "e0") == edir / "analysis.md"
     assert mutations_json_path(tmp_path, "e0") == edir / "mutations.json"
-    assert rubric_path(tmp_path, "e0") == edir / "rubric.md"
+    assert brief_path(tmp_path, "e0") == edir / "brief.md"
+    # legacy alias resolves to the current brief.md path
+    assert rubric_path(tmp_path, "e0") == edir / "brief.md"
 
 
 def test_lineage_path_descends(tmp_path: Path) -> None:

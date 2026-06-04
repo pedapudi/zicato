@@ -51,7 +51,7 @@ The dashboard is launched automatically; its URL is printed
 | `--harness-call-llm TEXT` | **Required.** Dotted import path of the inner-harness call_llm (`module:symbol`). |
 | `--auxiliary-call-llm TEXT` | **Required.** Dotted path of the auxiliary call_llm — proposer/judge side. Must be a different Python object from the harness callable (collusion guard, `is`-distinct). |
 | `--rounds INTEGER` | Number of propose/tournament/promote rounds to attempt (default 1, must be >=1). |
-| `--mode full\|fast` | `fast` (default) = child vs the champion's cached aggregate, re-scoring the champion only when no cache exists. `full` = re-run both parent and child every round. Use `full` for the mock smoke and when you don't trust the champion cache; `fast` for cheaper real runs. |
+| `--mode full\|fast` | `fast` (default) = **cache-first**: every `(generation, entry, replicate)` board UNIT is evaluated at most once and reused across all pairings / rounds / structures — only cache misses run. So a carried champion is reused, not re-run (the round records `champion_eval_mode` = `fast`, or `fast-degraded` when some units had to run to seed the cache). `full` = bypass the cache and re-run every unit. Use `full` for the mock smoke and when you don't trust the cache; `fast` for cheaper real runs (and it is what makes a multi-challenger field affordable). |
 | `--max-wall-clock-seconds INTEGER` | Total wall-clock budget for the whole invocation. The loop stops cleanly between rounds once spent; a single round that would overrun is cancelled and recorded as aborted. Unset = unbounded. Stacks on top of each board entry's own `wall_clock_budget_seconds`. Env: `ZICATO_MAX_WALL_CLOCK_SECONDS`. |
 | `--max-consecutive-rejections INTEGER` | Stop early after this many rounds rejected in a row (default 3). |
 | `--epoch TEXT` | Pin an explicit epoch, skipping the auto-epoch check entirely. |
@@ -69,8 +69,10 @@ concern (e.g. an SSH tunnel), not a zicato flag.
 - **Rounds:** start small (`--rounds 2-4`) on a real run; each round is a full
   tournament across the board.
 - **Mode:** `fast` is the default and the right call for real budget — it reuses
-  the champion's cached aggregate. Use `full` when you've changed scoring/board
-  or want both sides freshly scored.
+  every board unit already evaluated under this contract (the carried champion,
+  and any shared challenger pairing) instead of re-running it. Use `full` when
+  you want every unit freshly scored (the mock smoke, or when you don't trust
+  the cache).
 - **Budget:** on any real run set `--max-wall-clock-seconds` as a hard ceiling so
   a runaway loop cannot burn unbounded budget. `--max-consecutive-rejections`
   gives a quality-based early stop when the proposer stalls.

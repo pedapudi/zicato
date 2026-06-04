@@ -11,7 +11,7 @@ The canonical layout these helpers produce::
     {workspace_root}/
       epochs/{epoch_id}/
         board.jsonl
-        rubric.md
+        brief.md
         scoring.json
         generations/{generation_id}/
           experiment.json
@@ -184,9 +184,19 @@ def lineage_path(workspace_root: Path) -> Path:
     return _normalise_workspace_root(workspace_root) / "lineage.json"
 
 
+def brief_path(workspace_root: Path, epoch_id: str) -> Path:
+    """Path to the operator-edited proposer brief for one epoch (``brief.md``)."""
+    return _epoch_root(workspace_root, epoch_id) / "brief.md"
+
+
 def rubric_path(workspace_root: Path, epoch_id: str) -> Path:
-    """Path to the operator-edited proposer rubric for one epoch."""
-    return _epoch_root(workspace_root, epoch_id) / "rubric.md"
+    """Deprecated alias of :func:`brief_path`.
+
+    The per-epoch proposer brief was once ``rubric.md``; it is now
+    ``brief.md``. This alias resolves to the current path so older
+    callers/imports keep working — new code should use ``brief_path``.
+    """
+    return brief_path(workspace_root, epoch_id)
 
 
 def board_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -279,6 +289,7 @@ __all__ = [
     "journal_path",
     "analysis_path",
     "lineage_path",
+    "brief_path",
     "rubric_path",
     "board_path",
     "scoring_path",

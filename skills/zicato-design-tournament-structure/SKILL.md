@@ -15,8 +15,12 @@ different **structure**: `swiss`, `single_elim`, `double_elim`, or `racing`.
 The structure is part of the **evaluation contract** (it is a field of
 `ScoringWeights`, folded into the contract hash). Changing the structure or
 any of its params **rolls the epoch** — see "Changing the structure rolls the
-epoch" below. Sibling skills: `zicato-tune-scoring` (the gate + loss weights
-this consumes), `zicato-author-board` (the board the field is scored on),
+epoch" below. Sibling skills — the design companions:
+`zicato-design-boards` (a board discriminating enough that the field actually
+separates) and `zicato-design-judges` (what the loss measures); and the
+operational/loop skills: `zicato-tune-scoring` (the gate + loss weights this
+consumes), `zicato-author-board` (the board the field is scored on),
+`zicato-manage-epochs-and-rounds` (the round model this lives in),
 `zicato-evolve` (the loop that runs it), `zicato-analyze-epoch` (reading the
 standings/bracket afterward). Spec:
 [TOURNAMENT-STRUCTURES.md](../../docs/design/TOURNAMENT-STRUCTURES.md),
