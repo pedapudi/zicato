@@ -1633,14 +1633,77 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
         # defensively: if they are absent (pre-migration index) the query
         # returns [] and the structure degenerates to gauntlet — leaving
         # the legacy ``matchups`` / ``champion_lineage`` byte-identical.
+        # The champion-eval columns are v8; a pre-v8 (or fixture) index lacks
+        # them, and a SELECT naming a missing column errors → _query returns []
+        # → the whole structure envelope degrades. So include them only when the
+        # table actually has them (PRAGMA), and read them defensively per-row.
+        _tcols = {row["name"] for row in _query(conn, "PRAGMA table_info(tournaments)", ())}
+        _champ_sel = (
+            ", champion_eval_mode, champion_run_ref"
+            if {"champion_eval_mode", "champion_run_ref"} <= _tcols
+            else ""
+        )
         struct_rows = _query(
             conn,
             "SELECT tournament_id, structure, structure_params_json, "
-            "competitors_json, rounds_json, standings_json, ran_at "
-            "FROM tournaments WHERE epoch_id = ? "
-            "ORDER BY ran_at ASC, tournament_id ASC",
+            "competitors_json, rounds_json, standings_json, ran_at, "
+            "parent_generation_id, child_generation_id, parent_scalar"
+            + _champ_sel
+            + " FROM tournaments WHERE epoch_id = ? ORDER BY ran_at ASC, tournament_id ASC",
             (epoch_id,),
         )
+
+        def _rget(row: sqlite3.Row, key: str) -> Any:
+            return row[key] if key in row.keys() else None
+
+        # The per-round CHAMPION (id + scalar + eval provenance: champion_eval_mode
+        # / champion_run_ref — cached vs re-run) is carried on the per-CHALLENGER
+        # rows: each has parent_generation_id = the round's champion. A FIELD row
+        # has an EMPTY parent (a field is a round, not a duel), so resolve a field
+        # record's champion from a sibling per-challenger row keyed by the
+        # CHALLENGER (whose child is one of the field's competitors).
+        champ_by_child: dict[str, dict[str, Any]] = {}
+        for r in struct_rows:
+            cg = r["child_generation_id"]
+            pg = r["parent_generation_id"]
+            if cg and pg:
+                champ_by_child[str(cg)] = {
+                    "id": str(pg),
+                    "scalar": r["parent_scalar"],
+                    "eval_mode": _rget(r, "champion_eval_mode"),
+                    "run_ref": _rget(r, "champion_run_ref"),
+                }
+
+        def _champion_for(row: sqlite3.Row, comps: list[Any]) -> dict[str, Any] | None:
+            # a per-challenger / gauntlet row carries the champion directly;
+            # a field row (empty parent) borrows from a competitor's sibling row.
+            cid = row["parent_generation_id"]
+            base = (
+                {
+                    "id": str(cid),
+                    "scalar": row["parent_scalar"],
+                    "eval_mode": _rget(row, "champion_eval_mode"),
+                    "run_ref": _rget(row, "champion_run_ref"),
+                }
+                if cid is not None and str(cid) != ""
+                else None
+            )
+            if base is None:
+                for c in comps:
+                    key = str(c.get("generation_id") if isinstance(c, dict) else c)
+                    if key in champ_by_child:
+                        base = dict(champ_by_child[key])
+                        break
+            if base is None:
+                return None
+            sc = base.get("scalar")
+            return {
+                "id": base["id"],
+                "scalar": float(sc) if isinstance(sc, (int | float)) else None,
+                "eval_mode": base.get("eval_mode") or "full",
+                "run_ref": base.get("run_ref"),
+            }
+
         # FIELD-level rows (``{epoch}:field:{first_challenger}``) carry the
         # whole round's settled structure — round pairings + Copeland
         # standings + competitor field — for swiss / elim. When one exists
@@ -1678,14 +1741,19 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
             competitors = _opt_json(r["competitors_json"])
             rounds = _opt_json(r["rounds_json"])
             standings = _opt_json(r["standings_json"])
+            comp_list = competitors if isinstance(competitors, list) else []
+            # The per-round CHAMPION — id + loss + eval provenance (cached vs
+            # re-run) read CANONICALLY from the records, so the frontend reads the
+            # champion spine instead of reconstructing it.
             tournaments.append(
                 {
                     "tournament_id": r["tournament_id"],
                     "structure": structure,
                     "structure_params": params,
-                    "competitors": competitors if isinstance(competitors, list) else [],
+                    "competitors": comp_list,
                     "rounds": rounds if isinstance(rounds, list) else [],
                     "standings": standings if isinstance(standings, list) else [],
+                    "champion": _champion_for(r, comp_list),
                 }
             )
 

@@ -1391,6 +1391,9 @@
     border: 1px solid var(--v2-rule); color: var(--v2-ink-faint); margin-left: auto; white-space: nowrap; }
   .dt-tag-gen-champ { color: var(--v2-good); border-color: var(--v2-good); }
   .dt-tag-gen-former { color: var(--v2-ink-faint); border-color: var(--v2-rule); font-style: italic; }
+  /* a CARRIED champion reference ("↑ … defends"): a dimmed, caution-toned tag —
+   * the incumbent carried in to defend this round, not a fresh proposal. */
+  .dt-tag-gen-carried { color: var(--v2-caution); border-color: var(--v2-rule); font-style: italic; }
 
   /* ---- view affordances added by P ---- */
   .dt-empty { color: var(--v2-ink-faint); font-size: 12px; font-style: italic; padding: 12px 0; }

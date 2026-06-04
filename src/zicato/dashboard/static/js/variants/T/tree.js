@@ -50,7 +50,8 @@ export function treeDigest(model, route, toggles, live) {
       // the round grouping (Task 5) folds in so the tree re-stamps when a gen's
       // birth-round / a round's gate outcome changes, but stays stable on a beat.
       const rounds = Array.isArray(b.rounds) ? b.rounds.map((r) => [
-        r.round_index, r.championId, r.gateOutcome ? r.gateOutcome.kind + ':' + (r.gateOutcome.gen || '') : '',
+        r.round_index, r.championId, r.championEvalMode || '',
+        r.gateOutcome ? r.gateOutcome.kind + ':' + (r.gateOutcome.gen || '') : '',
         (Array.isArray(r.challengers) ? r.challengers : []).map((g) => g && g.id),
       ]) : [];
       return [e.id, b.gens.map((g) => [g.id, !!g.promoted, !!g.currentChampion, !!g.formerChampion, !!g.orphan, Number.isInteger(g.round_index) ? g.round_index : null]), b.boards.map((x) => x.id), rounds];
@@ -152,6 +153,25 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
         });
       };
 
+      // A CARRIED champion reference: the incumbent defending THIS round, born in
+      // an earlier round (its full node lives there). Rendered dimmed + "↑ …
+      // defends" so each round's full field is visible WITHOUT a confusing plain
+      // duplicate. The link is ROUND-SCOPED: "carried" is the role, so the target
+      // resolves to the champion's evaluation FOR THIS ROUND — the cached result
+      // in fast mode, the fresh re-run in full mode — i.e. always the output that
+      // round actually used.
+      const champRefLeaf = (id, roundIndex, evalMode, depth) => leafRow({
+        depth, kind: 'gen-carried', label: id, glyph: '↑',
+        // the carried champion's per-round eval provenance: a fast/cached reuse
+        // vs a full re-run that round — the canonical signal from the record.
+        tag: (evalMode === 'fast' || evalMode === 'fast-degraded') ? 'defends · cached'
+          : evalMode === 'full' ? 'defends · re-run' : 'defends',
+        selected: (sel === 'candidate' || sel === 'diff') && p.epochId === epoch.id
+          && p.gen === id && String(p.round) === String(roundIndex),
+        live: isLive(id),
+        onSelect: () => ctx.navigate('candidate', { epochId: epoch.id, gen: id, round: roundIndex }),
+      });
+
       // ROUND GROUPING (Task 5): Epoch → Generations → Round 0 / Round 1 / …
       // → {challengers minted that round}. We show the round layer ONLY when it
       // SAYS something — there is real round structure (>1 round, OR a
@@ -167,9 +187,11 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
         rounds.forEach((r, ri) => {
           const rKey = gKey + '/r' + r.round_index;
           const rOpen = open.has(rKey) || routeOpenKeys(route).has(rKey)
-            // the round holding the selected candidate opens automatically.
+            // the round holding the selected candidate opens automatically —
+            // whether it is a minted challenger OR the round's carried champion.
             || ((sel === 'candidate' || sel === 'diff') && p.epochId === epoch.id
-                && (r.challengers || []).some((g) => g && String(g.id) === String(p.gen)));
+                && (String(r.championId) === String(p.gen)
+                    || (r.challengers || []).some((g) => g && String(g.id) === String(p.gen))));
           const promoted = r.gateOutcome && r.gateOutcome.kind === 'promoted';
           // the DEFENDING champion lives in the ROUND HEADER (e.g. "v3 defends ·
           // — held" / "▲ v6 promoted"), NOT as a duplicate ↑-reference child row.
@@ -186,9 +208,18 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
             onToggle: () => onToggle(rKey),
           }));
           if (!rOpen) return;
-          // the carried-in champion is shown in the round HEADER (above), not as a
-          // duplicated ↑-reference child — only the round's MINTED challengers
-          // appear as children.
+          // The round's DEFENDING champion heads its field: a FULL node in its
+          // birth round (its origin), a dimmed CARRIED reference in every later
+          // round it defends — so the round's complete competing field shows
+          // (champion + challengers) without a confusing plain duplicate. Then
+          // the round's MINTED challengers.
+          if (r.championId != null) {
+            const champ = gensById.get(String(r.championId));
+            const bornHere = champ && Number.isInteger(champ.round_index)
+              && champ.round_index === r.round_index;
+            if (bornHere) tree.appendChild(genLeaf(champ, 4));
+            else tree.appendChild(champRefLeaf(String(r.championId), r.round_index, r.championEvalMode, 4));
+          }
           for (const c of (r.challengers || [])) {
             const g = gensById.get(String(c.id)) || c;
             tree.appendChild(genLeaf(g, 4));

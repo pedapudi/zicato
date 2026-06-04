@@ -49,11 +49,15 @@ export function epochRoundModel(opts) {
   const bracket = (o.bracket && typeof o.bracket === 'object') ? o.bracket : {};
   const structure = String(o.structure || 'gauntlet');
   const lineage = Array.isArray(bracket.champion_lineage) ? bracket.champion_lineage.map(String) : [];
-  // the seed champion: the caller's championId, else the lineage root, else the
-  // parentless seed gen — round 0's incoming champion.
-  const seedId = o.championId != null ? String(o.championId)
-    : (lineage.length ? lineage[0]
-      : (gens.find((g) => !g.parent) ? String(gens.find((g) => !g.parent).id) : null));
+  // The SEED = round 0's INCOMING champion = the epoch's FIRST champion, NOT the
+  // current/reigning one. Derive it from the lineage ROOT (lineage[0]) or the
+  // parentless seed gen; the caller's `championId` is only a last-resort fallback
+  // (callers pass the *current* champion there, which is the wrong end of the
+  // spine — using it as the seed scrambles the whole champion reconstruction).
+  const parentless = gens.find((g) => !g.parent);
+  const seedId = lineage.length ? lineage[0]
+    : (parentless ? String(parentless.id)
+      : (o.championId != null ? String(o.championId) : null));
 
   const byId = new Map();
   for (const g of gens) if (g && g.id != null) byId.set(String(g.id), g);
@@ -77,13 +81,28 @@ export function epochRoundModel(opts) {
       const gateOutcome = promotedChallenger
         ? { kind: 'promoted', gen: promotedChallenger.id }
         : { kind: 'held', gen: null };
+      // Prefer the CANONICAL per-round champion from the tournament record
+      // (`tournamentRef.champion` = {id, scalar, eval_mode, run_ref} surfaced by
+      // /api/tournaments) over the reconstructed spine + gen-level scalar — so a
+      // champion defending multiple rounds carries its REAL per-round eval
+      // (cached vs re-run), not one averaged number. Reconstruction (`carried`
+      // + scalarOf) remains the pre-feature fallback when no record resolves.
+      const ref = r.tournamentRef || null;
+      const refChamp = (ref && ref.champion && ref.champion.id != null) ? ref.champion : null;
+      const champId = refChamp ? String(refChamp.id) : carried;
       const round = {
         round_index: isNum(r.round_index) ? r.round_index : i,
-        champion: { id: carried, scalar: scalarOf(carried) },
+        champion: {
+          id: champId,
+          scalar: (refChamp && isNum(refChamp.scalar)) ? refChamp.scalar : scalarOf(champId),
+          evalMode: refChamp ? (refChamp.eval_mode || null) : null,
+          runRef: refChamp ? (refChamp.run_ref || null) : null,
+          fromRecord: !!refChamp,
+        },
         challengers,
         structure,
         gateOutcome,
-        tournamentRef: r.tournamentRef || null,
+        tournamentRef: ref,
         source,
       };
       // promote the spine for the next round.
@@ -188,7 +207,7 @@ export function roundModelDigest(rounds) {
   const list = Array.isArray(rounds) ? rounds : [];
   return JSON.stringify(list.map((r) => [
     r.round_index, r.structure, r.source,
-    r.champion ? [r.champion.id, isNum(r.champion.scalar) ? r.champion.scalar.toFixed(2) : null] : null,
+    r.champion ? [r.champion.id, isNum(r.champion.scalar) ? r.champion.scalar.toFixed(2) : null, r.champion.evalMode || ''] : null,
     (Array.isArray(r.challengers) ? r.challengers : []).map((c) => [
       c.id, c.promoted, isNum(c.scalar) ? c.scalar.toFixed(2) : null,
     ]),
@@ -258,6 +277,8 @@ export function roundsForTree(opts) {
   return model.map((r) => ({
     round_index: r.round_index,
     championId: r.champion ? r.champion.id : null,
+    championEvalMode: r.champion ? r.champion.evalMode : null,
+    championRunRef: r.champion ? r.champion.runRef : null,
     gateOutcome: r.gateOutcome,
     source: r.source,
     challengers: r.challengers.map((c) => byId.get(String(c.id))).filter(Boolean),

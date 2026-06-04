@@ -7225,10 +7225,33 @@ test('tree: groups generations by round when round_index is present (Round 0 / R
   assert(host.textContent.includes('v0 defends'), 'round 0 header names the defending champion (v0 defends)');
   assert(host.textContent.includes('▲ v1 promoted'), 'round 0 header shows its gate outcome (▲ v1 promoted)');
   assert(host.textContent.includes('v1 defends') && host.textContent.includes('held'), 'round 1 header names v1 defends · — held');
-  // the carried-in champion is NOT duplicated as a ↑-reference child row.
-  assert(!host.textContent.includes('↑ from R0'), 'the carried-in champion is NOT a duplicate ↑-reference child (it lives in the round header)');
+  // Each round shows its FULL field: the champion born THIS round is a full
+  // node (v0 under round 0), while a champion CARRIED in to defend a later
+  // round is a dimmed gen-carried reference (v1 under round 1 — born round 0).
   const carried = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'gen-carried');
-  assertEqual(carried.length, 0, 'no gen-carried reference rows remain');
+  assertEqual(carried.length, 1, 'the carried champion (v1) shows as ONE dimmed reference under the round it defends (round 1)');
+  assert(carried[0].textContent.includes('v1') && carried[0].textContent.includes('defends'), 'the carried reference names v1 and is tagged "defends"');
+});
+
+test('round model: reads the CANONICAL per-round champion (id + cached/re-run eval mode) from the tournament record, not the reconstructed spine', async () => {
+  const rounds = await import('../js/variants/T/views/rounds.js');
+  const gens = [
+    { id: 'v0', parent: null, promoted: false, round_index: 0 },
+    { id: 'v1', parent: 'v0', promoted: false, round_index: 0 },
+    { id: 'v2', parent: 'v0', promoted: false, round_index: 1 },
+  ];
+  // per-round field records carrying the CANONICAL champion + its eval mode:
+  // round 0 ran the champion FULL (re-run), round 1 reused it FAST (cached).
+  const bracket = { tournaments: [
+    { tournament_id: 't0', competitors: [{ generation_id: 'v1' }], champion: { id: 'v0', scalar: 5.0, eval_mode: 'full', run_ref: 'epochs/e/generations/v0' } },
+    { tournament_id: 't1', competitors: [{ generation_id: 'v2' }], champion: { id: 'v0', scalar: 4.0, eval_mode: 'fast', run_ref: 'epochs/e/generations/v0' } },
+  ] };
+  const model = rounds.roundsForTree({ gens, bracket, structure: 'swiss', championId: 'v0' });
+  const r0 = model.find((r) => r.round_index === 0);
+  const r1 = model.find((r) => r.round_index === 1);
+  assert(r0 && r0.championEvalMode === 'full', 'round 0 surfaces the record champion eval mode (full = re-run)');
+  assert(r1 && r1.championEvalMode === 'fast', 'round 1 surfaces the record champion eval mode (fast = cached) — read, not reconstructed');
+  assert(r1 && String(r1.championId) === 'v0', 'the carried champion id is the canonical record value');
 });
 
 test('tree: degrades to a FLAT generation list when round_index is absent (no redundant Round 0 wrapper)', () => {
