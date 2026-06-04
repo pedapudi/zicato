@@ -492,7 +492,8 @@ def test_path_helpers_layout(tmp_path: Path) -> None:
     assert journal_path(ws, epoch_id) == ws / "epochs" / epoch_id / "journal.md"
     assert analysis_path(ws, epoch_id) == ws / "epochs" / epoch_id / "analysis.md"
     assert lineage_path(ws) == ws / "lineage.json"
-    assert rubric_path(ws, epoch_id) == ws / "epochs" / epoch_id / "rubric.md"
+    # rubric_path is the legacy alias of brief_path; both resolve to brief.md.
+    assert rubric_path(ws, epoch_id) == ws / "epochs" / epoch_id / "brief.md"
     assert board_path(ws, epoch_id) == ws / "epochs" / epoch_id / "board.jsonl"
     assert scoring_path(ws, epoch_id) == ws / "epochs" / epoch_id / "scoring.json"
 

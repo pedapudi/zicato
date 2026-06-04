@@ -730,7 +730,10 @@ async def evolve_once(
         # so it persists into experiment.json — the dashboard's round-timeline /
         # champion-spine attributes each generation to its birth round from this
         # stamp (the canonical value the loop already threads as round_index).
-        experiment = replace(experiment, round_index=round_index)
+        # The guard is redundant at runtime (the `else` means propose succeeded,
+        # so experiment is non-None) but narrows the union type for the checker.
+        if experiment is not None:
+            experiment = replace(experiment, round_index=round_index)
 
     # --- 7. Validate patch set against the manifest ---
     if experiment is not None:
