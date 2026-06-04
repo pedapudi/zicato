@@ -261,8 +261,13 @@ def test_evolve_no_dashboard_suppresses_both_spawns(
     assert "Dashboard:" not in result.output
 
 
-def test_evolve_tears_down_both_children(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Both the supervisor and the dashboard are terminated on exit."""
+def test_evolve_keeps_dashboard_serving_at_normal_conclusion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At a NORMAL evolve conclusion the watchdog is torn down but the
+    dashboard is deliberately LEFT serving (#5) — the final state of the
+    run is exactly when the live view is most interesting. evolve prints a
+    clear "still serving" line."""
     from zicato.cli.commands.evolve import evolve_cmd
 
     spawned: list[_FakeProc] = []
@@ -273,6 +278,38 @@ def test_evolve_tears_down_both_children(monkeypatch: pytest.MonkeyPatch) -> Non
     assert result.exit_code == 0, result.output
 
     assert len(spawned) == 2
+    sup = next(p for p in spawned if "zicato-supervisor" in p.argv[0])
+    dash = next(p for p in spawned if "zicato.dashboard" in p.argv)
+
+    # Watchdog supervisor: torn down (no purpose once the loop ends).
+    assert sup.terminated, "watchdog supervisor should be torn down on exit"
+    # Dashboard: LEFT serving (NOT terminated) so the operator can inspect
+    # the final state.
+    assert not dash.terminated, "dashboard must be left serving at normal conclusion"
+    assert "still serving" in result.output.lower()
+
+
+def test_evolve_tears_down_both_children_on_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuine error path still cleans up BOTH children — only the
+    normal-conclusion teardown of the dashboard is suppressed (#5)."""
+    import zicato.orchestrator as orch_mod
+    from zicato.cli.commands.evolve import evolve_cmd
+
+    spawned: list[_FakeProc] = []
+    _install_evolve_mocks(monkeypatch, spawned)
+
+    async def _boom(**_kwargs: Any) -> list[Any]:
+        raise RuntimeError("contract drifted")
+
+    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _boom)
+
+    runner = CliRunner()
+    result = runner.invoke(evolve_cmd, _evolve_args())
+    # RuntimeError is surfaced as a clean CLI error (non-zero exit).
+    assert result.exit_code != 0
+
+    assert len(spawned) == 2
     for proc in spawned:
-        assert proc.terminated, f"child {proc.argv} was not terminated on exit"
-        assert proc.returncode is not None
+        assert proc.terminated, f"child {proc.argv} was not torn down on the error path"

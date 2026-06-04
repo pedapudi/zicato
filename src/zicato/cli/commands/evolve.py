@@ -321,6 +321,42 @@ async def _report_dashboard_url(
     )
 
 
+def _announce_dashboard_still_serving(
+    workspace_root: Path,
+    preferred_port: int,
+    proc: asyncio.subprocess.Process | None,
+) -> None:
+    """Tell the operator the dashboard is left running at loop conclusion.
+
+    The live dashboard is most interesting *at* the end of an evolve loop
+    — the final champion, the closed-out tournament funnel, the trend the
+    run produced. So at NORMAL conclusion we deliberately leave the
+    dashboard service running rather than tearing it down, and print where
+    it is still served plus how to stop it. (Error paths and explicit
+    interrupts still tear it down — only the clean-finish teardown is
+    suppressed.)
+
+    The bound host/port are read back from ``runtime/dashboard.json`` so
+    the message names the port the dashboard actually walked onto, never
+    an assumed one. If the dashboard never spawned (or already exited) we
+    say nothing — there is nothing to leave serving. As a fallback, if the
+    process is alive but the endpoint file is unreadable, the re-launch
+    command is printed so the operator can bring the view back by hand.
+    """
+    if proc is None or proc.returncode is not None:
+        return
+    host, bound = _read_dashboard_endpoint(_dashboard_endpoint_file(workspace_root))
+    if bound is not None:
+        click.echo(f"Dashboard still serving at http://{host}:{bound} — Ctrl-C to stop.")
+        return
+    # Endpoint unreadable but the process is alive: give the operator the
+    # exact command to re-attach a dashboard to this workspace.
+    click.echo(
+        f"Dashboard still serving (port unconfirmed). Re-launch with: "
+        f"zicato dashboard --workspace {workspace_root} --port {preferred_port}"
+    )
+
+
 def _read_dashboard_endpoint(endpoint_file: Path) -> tuple[str, int | None]:
     """Read ``runtime/dashboard.json``; return ``(host, port-or-None)``.
 
@@ -671,7 +707,7 @@ def evolve_cmd(
         )
         await _report_dashboard_url(workspace_root, dashboard_port, dash)
         try:
-            return await evolve_n_rounds(
+            result = await evolve_n_rounds(
                 rounds=rounds,
                 workspace_root=workspace_root,
                 epoch_id=epoch,
@@ -684,11 +720,22 @@ def evolve_cmd(
                 epoch_name=epoch_name,
                 stop_reason_out=stop_reason_out,
             )
-        finally:
-            # Tear down both children. Tear the dashboard down first so
-            # its port is freed before the watchdog notices it is gone.
+        except BaseException:
+            # Genuine error path or an explicit interrupt (Ctrl-C raises
+            # KeyboardInterrupt, a BaseException). Clean up BOTH children:
+            # tear the dashboard down first so its port is freed before the
+            # watchdog notices it is gone.
             await _terminate_child(dash)
             await _terminate_child(sup)
+            raise
+        # Normal conclusion. The watchdog supervisor has no purpose once
+        # the loop is done, so tear it down — but deliberately leave the
+        # dashboard service running so the operator can inspect the final
+        # state of the run (per repo convention every evolve launch serves
+        # the dashboard and reports its URL). Announce that it is still up.
+        await _terminate_child(sup)
+        _announce_dashboard_still_serving(workspace_root, dashboard_port, dash)
+        return result
 
     try:
         outcomes = asyncio.run(_run())
