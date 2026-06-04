@@ -716,6 +716,13 @@ enforce this but the convention is documented here so operators know.
 
 ## 8. Round mechanics
 
+"Round" here means the **outer evolve round** — one `zicato evolve
+--rounds N` meta-loop step, one tournament, one crowning. (The richer
+structures of §9 play several *inner* rounds — swiss rounds, bracket
+rounds, racing rungs — within a single outer round; the two senses are
+disambiguated in §9.3.) The steps below describe one *gauntlet* outer
+round.
+
 A single round, in storage terms:
 
 1. Read patterns from `patterns/round_{NNN-1}.json` (if any).
@@ -735,6 +742,13 @@ Round numbers are global within an epoch (independent of whether the
 round promoted). The 17th round is round 17 even if only 12 of those
 landed promotions.
 
+Each generation records its **birth round** as a 0-based `round_index`,
+persisted into `experiment.json` (`Experiment.round_index`, mirrored from
+`Generation.round_index`) so the dashboard's round-timeline / champion-spine
+views can attribute a generation to the outer round that minted it. It
+defaults to `0` for the seed `v0` and for records that predate the stamp,
+and it is always the OUTER evolve round — never an inner bracket round.
+
 Two artifacts live outside the per-generation directory because they
 aggregate across rounds:
 
@@ -743,9 +757,12 @@ aggregate across rounds:
 
 ## 9. Per-epoch tournament structure
 
-> **Status.** DESIGN (not yet implemented). The shipped behaviour is
-> the king-of-the-hill gauntlet; this section specifies how a
-> *configurable* per-epoch structure folds into the epoch contract. The
+> **Status.** SHIPPED. The five structures (`gauntlet` default,
+> `single_elim`, `double_elim`, `swiss`, `racing`) are implemented as
+> pluggable selection strategies under `zicato/selection/`, driven by
+> `zicato/selection/driver.py:resolve_tournament` and selected per-epoch
+> from the scoring `tournament` block. `gauntlet` is the king-of-the-hill
+> default; an epoch with no `tournament` key gets it byte-for-byte. The
 > full data model (persisted record, dashboard API, CLI) lives in
 > [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md); the selection
 > algorithms live in [SELECTION.md](SELECTION.md) /
@@ -806,11 +823,12 @@ play several matches, but the journaling seams are unchanged — they
 
 - **`experiment.json` `outcome`** — still written once per generation,
   still carrying `tournament_decision` (the crowning verdict for *that*
-  generation: did it become / stay champion). It gains additive fields
+  generation: did it become / stay champion). It carries additive fields
   — `structure`, `final_rank`, `eliminated_in_round`, and a
-  per-generation `match_record` of the matches that generation played.
-  Old journals deserialize unchanged (every new field defaults to the
-  gauntlet interpretation).
+  per-generation `match_record` of the matches that generation played —
+  plus the runtime `champion_eval_mode` provenance (§9.4). Old journals
+  deserialize unchanged (every added field defaults to the gauntlet /
+  `full` interpretation).
 - **`journal.md`** — still one human-readable section per experiment.
   For a non-gauntlet structure the section additionally renders the
   generation's rank / elimination round, but the
@@ -828,6 +846,46 @@ The full persisted shapes (the generalized `ActiveTournament`,
 defaults) are specified in
 [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §2 and
 [STORAGE.md](STORAGE.md) §5.
+
+#### The two senses of "round" (disambiguation)
+
+"Round" is overloaded and the two senses are routinely confused:
+
+- The **outer evolve round** — one `zicato evolve --rounds N` meta-loop
+  step. One tournament is played per outer round, ending in one crowning.
+  Outer round numbers are global within the epoch (§8). This is the round
+  the `--rounds` flag counts and the round that the per-generation
+  `round_index` stamp records (§8 / `Experiment.round_index`).
+- A tournament's **inner rounds** — the scheduling steps *inside* a single
+  tournament for the non-gauntlet structures: swiss rounds, single/double-
+  elim **bracket** rounds, and racing **rungs**. These are carried as
+  `Matchup.round_index` / `Round.round_index` in `zicato/selection/` and
+  do **not** advance the outer `--rounds` counter.
+
+A gauntlet has exactly one inner round (champion vs one challenger), so its
+outer and inner round coincide — which is why the two are easy to conflate.
+A swiss / elim / racing tournament plays several inner rounds within ONE
+outer evolve round, over a multi-challenger field.
+
+### 9.4 `champion_eval_mode` — runtime champion-eval provenance
+
+`OutcomeRecord.champion_eval_mode` records how the **champion** side was
+evaluated for the round under the `evolve --mode` knob. It is RUNTIME
+provenance only — it carries no weight in the gate and is **not** folded
+into the contract hash (flipping `fast`↔`full` does not roll the epoch);
+it exists purely so the journal can attribute champion sample freshness +
+cost per round.
+
+| Value | Meaning |
+|---|---|
+| `full` | The champion was run **live** this round (`--mode full` bypasses the unit cache and re-samples every board unit; or fast was not applicable). |
+| `fast` | The champion's cached per-board scalars were **reused** and the champion was NOT executed. `--mode fast` (the default) is cache-first: every `(generation, entry, replicate)` board unit is evaluated at most once and reused across pairings/rounds/structures; only cache misses run. |
+| `fast-degraded` | Fast was requested but no cache covered the needed boards (the seed/first champion, or a not-yet-covered subset), so the champion ran live **once** to seed the cache. |
+
+Reader's caveat: when `champion_eval_mode` is `fast`, the champion's per-run
+numbers were *reused*, not freshly sampled — a flat champion trajectory does
+not mean "the champion didn't move", it means it wasn't re-run. Re-run with
+`--mode full` for a clean re-sample.
 
 ## 10. Contract-hash auto-epoching
 
@@ -919,9 +977,12 @@ invocation, before the round loop starts:
      auto-epoching on, `evolve` closes the current epoch (generating
      `analysis.md`), opens a fresh one carrying the new contract, and
      runs against it. The roll prints a clear message naming which
-     component changed:
+     component(s) changed — the label is the literal component name(s)
+     (`board`, `brief`, `scoring`, `entrypoint`, `mutable_trees`),
+     comma-joined, or a generic `contract` when no per-component
+     breakdown is available (a legacy epoch with no stored components):
      ```
-     contract changed (proposer brief) — rolled 2026-05-15_e0 -> 2026-05-15_e1
+     contract changed (brief) — rolled 2026-05-15_e0 -> 2026-05-15_e1
      ```
      With `--no-auto-epoch`, it errors instead of rolling.
 
@@ -958,10 +1019,15 @@ new <name>` with an explicit name is unchanged. `zicato evolve
 --epoch-name <name>` overrides the `e{N}` scheme for an epoch that
 `evolve` auto-creates.
 
+An auto-rolled epoch has **no goal recorded** — the roll happens
+mid-`evolve` with no operator-interaction surface, so the epoch's `goal`
+field lands empty and the roll prints a `NOTE:` recommending the operator
+fill it in with `zicato epoch set-goal --epoch <id> --goal "..."` (§10.8).
+
 ### 10.8 The escape hatches
 
-`epoch new` / `close` / `switch` all keep working unchanged. They are
-the manual escape hatches:
+`epoch new` / `close` / `switch` / `set-goal` all keep working
+unchanged. They are the manual escape hatches:
 
 - `--no-auto-epoch` makes `evolve` strict: it errors on contract drift
   instead of rolling. Use this when you want to be told about drift
@@ -969,7 +1035,15 @@ the manual escape hatches:
 - `zicato epoch new` is still the way to start an epoch with a
   hand-chosen name, or to roll for a reason the hash cannot see (e.g.
   a regression-baseline rebase that did not touch any contract file).
+  The supplied contract files are frozen into the epoch directory AND
+  published as the workspace's live contract, so a subsequent `zicato
+  evolve` resolves the same contract and continues this epoch rather
+  than spuriously rolling.
 - `zicato epoch switch` still re-points the current-epoch marker.
+- `zicato epoch set-goal --epoch <id> --goal "..."` sets (or overwrites)
+  an epoch's goal after the fact — intended for the auto-roll case where
+  the goal lands empty. Idempotent; also refreshes the index `epochs.goal`
+  column.
 
 ## 11. Cross-references
 

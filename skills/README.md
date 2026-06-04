@@ -6,8 +6,8 @@ instructions, plus any helper scripts). They encode the right command
 sequence, the artifacts to read, and the guardrails so a new user can
 hand a task to an agent and get a correct, safe run.
 
-To use a skill in a Claude Code session, symlink or copy its directory
-into `.claude/skills/<name>/`. See [`../AGENTS.md`](../AGENTS.md) for
+To use a skill in an agent session, symlink or copy its directory into
+your agent's skills directory. See [`../AGENTS.md`](../AGENTS.md) for
 the operating rules every skill assumes (gate live runs,
 `uv sync --all-extras`, report the dashboard URL, files-canonical).
 
@@ -17,12 +17,29 @@ The skills are organized by where they sit in the loop. The leverage
 is highest at the top: the contract you author drives everything the
 loop can discover.
 
-### Tier 0 — Setup
+**Designing a new target? Start with the DESIGN skills.** The `*-design-*`
+and `manage-epochs-and-rounds` skills teach the *principles* — how to
+structure a tournament, design a discriminating board, design judges,
+and reason about epochs/rounds — distinct from the operational `author-*`
+/ `tune-*` / `evolve` skills that drive the syntax and commands. A good
+mental model (epochs/rounds) + a discriminating contract (board + judges
++ structure) is what makes the loop able to improve anything at all.
+
+### Tier 0 — Foundations & setup
 | Skill | What it does |
 |---|---|
+| `zicato-manage-epochs-and-rounds` | The mental model + operations for the epoch → round → generation → run hierarchy: what an epoch is (a sealed contract), contract-hash auto-epoching, the **two senses of "round"** (outer evolve round vs a tournament's inner rounds), champion/challenger vs parent/child, `champion_eval_mode`, the mandatory pre-run hypothesis, and the `zicato epoch` escape hatches. **Read this first.** |
 | `zicato-bootstrap` | Zero-to-first-loop: scaffold a workspace, register an inner-harness adapter, wire the two `call_llm` callables, run the deterministic smoke loop, confirm the artifact tree. |
 
 ### Tier 1 — Author the evaluation contract (highest leverage)
+*Design principles (WHAT + WHY)* — pair each with its operational sibling:
+| Skill | What it does |
+|---|---|
+| `zicato-design-tournament-structure` | **Choose + configure** the per-epoch tournament structure — gauntlet / swiss / single_elim / double_elim / racing — and its params (`field_size`, `replicates`, swiss `rounds_n`, racing `eta`/`board_fraction`). The decision guide + the design principles (replication is the noise lever; the gate protects the incumbent; a racing rung cuts, it does not crown) + the `scoring.json` `tournament` block. |
+| `zicato-design-boards` | **What belongs on a board**: coverage of the behaviors you care about, entries that actually separate champion from challenger (avoid all-pass/all-fail), single-turn vs scripted vs emulated, the `board_meta`/`disable_drift`/`judge_only` header. The principles behind `zicato-author-board`. |
+| `zicato-design-judges` | **What to measure + how it weighs**: outcome expectations vs in-run process judges, drift kinds → loss, severity, the weighting knobs, and the collusion guard (judge callable distinct from the harness). The principles behind `zicato-author-board` + `zicato-tune-scoring`. |
+
+*Operational (the syntax + commands):*
 | Skill | What it does |
 |---|---|
 | `zicato-author-board` | Write/extend `board.jsonl`: the three entry kinds (single-turn, scripted multi-turn, emulated multi-turn), the five expectation kinds, weights, tags, `board_meta`/`disable_drift`, the emulator two-callable rule. Validate with `zicato board`. |
@@ -38,7 +55,7 @@ loop can discover.
 ### Tier 3 — Observe a run in flight
 | Skill | What it does |
 |---|---|
-| `zicato-watch-dashboard` | Open and read the dashboard (L0 workspace → L1 epoch → L2 generation → L3 round → L4 run), screenshot it, narrate what's happening, and follow harmonograf deep-links. |
+| `zicato-watch-dashboard` | Open and read the live "Console IV" dashboard: navigate Environment (fleet) → Epoch (champion-spine round timeline + loss-floor waterfall) → Generations/round Match-ups → Boards → Mutation surface → Publication; read the structure's match-up figure (racing survival funnel / swiss ladder / elim flow / gauntlet Δ-lanes); tell whether the loop improved; screenshot with browser-use. |
 | `zicato-diagnose-health` | Run `zicato health`, interpret the degeneracy detectors (degenerate scoring, no-expectations, …), and recommend the contract fix for a toothless loop. |
 | `zicato-read-telemetry` | Trace a run through its harmonograf session and `events.jsonl`/`loss.json`; relate the meta-loop session (zicato itself) to the per-board sessions (the system under test). |
 

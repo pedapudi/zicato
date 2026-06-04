@@ -1,12 +1,18 @@
 # Tournament structures — the `SelectionStrategy` abstraction
 
-> **Status.** Design + implementation plan. **No code in this document is
-> shipped.** It specifies a pluggable per-epoch tournament structure: the
-> `SelectionStrategy` interface, the five concrete strategies, and the
-> exact backend changes the implementation wave must make (with
-> `file:line` references against the tree at the time of writing).
+> **Status.** SHIPPED. The `SelectionStrategy` interface, all five concrete
+> strategies, the registry, the `tournament` config block, and the
+> `--tournament-structure` / `--tournament-param` CLI surface are in the tree
+> and exercised by the test suite. §§1–3 describe the shipped design; §§4–4.1
+> are the shipped config contract; §§5, 7 are retained as the original
+> implementation plan / cross-team interface and are annotated where the
+> shipped names differ from the plan (the two load-bearing renames:
+> the persisted type is **`TournamentStructure`** on **`ScoringWeights`**, not
+> `TournamentSpec` on `EpochConfig`; the registry validates against
+> **`VALID_TOURNAMENT_STRUCTURES`**). Operator-facing config lives in §4.0 and
+> in the `zicato-design-tournament-structure` skill.
 
-This document is the *how-to-build-it* companion to two existing docs:
+This document is the design + reference companion to two existing docs:
 
 - [`SELECTION.md §10`](SELECTION.md#10-configurable-per-epoch-tournament-structures)
   — the **decision theory**: why the gauntlet is the default, which
@@ -89,18 +95,29 @@ class Matchup:
     matchup_id: str               # stable within the tournament
     left: Contestant              # by convention the incumbent/higher-seed
     right: Contestant
-    board_subset: tuple[str, ...] | None  # None = full board; racing uses a slice
-    replicates: int               # how many paired runs to average (>=1)
+    board_subset: tuple[str, ...] | None = None  # None = full board; racing slices
+    replicates: int = 1           # paired runs averaged before scoring (>=1).
+                                  # 1 = the gauntlet's exact single-run path;
+                                  # brackets default >=2 because REPLICATION,
+                                  # not bracket shape, is the noise lever.
+    round_index: int = 0          # bracket round / swiss round / racing rung
+    bracket_slot: str = ""        # e.g. "WB-R1-0"; empty for non-bracket structures
 
 @dataclass(frozen=True, slots=True)
 class MatchupResult:
     """A completed duel, handed back to the strategy."""
     matchup_id: str
+    left_id: str                  # the two sides' generation ids (self-describing)
+    right_id: str
     left_agg: dict[str, Any]      # aggregate_generation_score output
     right_agg: dict[str, Any]
     outcome: GateOutcome          # from evaluate_gate — UNCHANGED gate
+    round_index: int = 0
+    bracket_slot: str = ""
     # outcome.decision is the gate's verdict treating `left` as parent,
     # `right` as child; the strategy interprets it per its own rules.
+    # `lower_scalar_id()` reads the sign of outcome.delta_scalar (= right-left)
+    # to name the winner of a challenger-vs-challenger node.
 ```
 
 `Experiment`, `GateOutcome`, `aggregate_generation_score` and the
@@ -154,8 +171,17 @@ class SelectionDecision:
     promoted_generation_id: str | None  # None ⇒ champion stands
     decision: TournamentDecision        # "promoted" | "rejected" | "deferred"
     reason: str                         # human-readable; mirrors GateOutcome.reason
-    matchups: tuple[MatchupResult, ...] # full bracket audit for the journal/dashboard
+    matchups: tuple[MatchupResult, ...] = ()  # full bracket audit (journal/dashboard)
+    crowning_matchup_id: str = ""       # the duel that decided promotion
+    standings: tuple[Standing, ...] = () # final best-first ranking (empty for gauntlet)
 ```
+
+The shipped strategy ABC also carries `rounds()` (settled per-round records
+for the dashboard) and a live in-flight projection (`live_rounds()` /
+`live_standings()`, built from the `_pending_round()` / `_live_standings()`
+hooks) so the dashboard can render a tournament WHILE it runs. `Standing` and
+`RoundRecord` / `MatchRecord` are the dashboard-shaped record types; see
+`src/zicato/selection/strategy.py`.
 
 ### 2.3 The driver (orchestrator-side, replaces steps 2–5)
 
@@ -197,6 +223,22 @@ never re-implements the gate.
 Each lives in `src/zicato/selection/strategies/<name>.py`. The
 one-line scheduling / advance / stopping summary, then the notes.
 
+> **Param defaults at a glance** (read off the shipped strategy
+> constructors — these are the authoritative defaults the
+> `zicato-design-tournament-structure` skill tabulates):
+>
+> | structure | `field_size` | `replicates` | extra |
+> |---|---|---|---|
+> | `gauntlet` | `1` (fixed) | `1` | — |
+> | `single_elim` | `2` | `2` | — |
+> | `double_elim` | `2` | `2` | — |
+> | `swiss` | `2` | `2` | `rounds_n=4` |
+> | `racing` | `2` | `1` | `eta=2`, `board_fraction=0.25`, `rung0_board_size=0` |
+>
+> `replicates` defaults are exactly that — DEFAULTS, not floors: an operator
+> may set any `>= 1`. `racing` defaults to `1` because it replicates
+> intrinsically via escalating board slices.
+
 ### 3.1 `gauntlet` (default — current behaviour, exactly)
 
 - **field_size**: `1`.
@@ -227,9 +269,9 @@ the migration target is *byte-for-byte equivalent behaviour* with
   survivor clears it.
 - **stopping**: `resolved()` when one finalist remains and the final
   champion-gate node has a result.
-- **noise**: `replicates ≥ 2` is **mandatory** (config default for this
-  structure), per `SELECTION.md §2③/§8` — a strong candidate dies to one
-  unlucky run otherwise. The structure doc must repeat that verdict.
+- **noise**: `replicates ≥ 2` is the **config default** for this structure
+  (an operator may override to `1`), per `SELECTION.md §2③/§8` — a strong
+  candidate dies to one unlucky run otherwise.
 
 ### 3.3 `double_elim`
 
@@ -244,8 +286,15 @@ the migration target is *byte-for-byte equivalent behaviour* with
   the grand final has a result.
 - **noise**: `SELECTION.md §8` is explicit that the "second life" is
   delivered more cheaply by replication; this structure is offered for
-  completeness, and its config default should *also* set `replicates ≥ 2`
-  rather than rely on the losers' bracket for robustness.
+  completeness, and its config default *also* sets `replicates ≥ 2` rather
+  than rely on the losers' bracket for robustness.
+- **shipped simplification**: the losers' bracket is run as a plain
+  single-elimination over the accumulated winners'-bracket losers once the
+  WB has a survivor (rather than a fully seeded WB/LB feed schedule). Every
+  generation still gets exactly one second life (eliminated on its second
+  node loss), the grand final still pits the two survivors, and the crowning
+  champion-gate is unchanged. See the module docstring in
+  `src/zicato/selection/strategies/double_elim.py`.
 
 ### 3.4 `swiss`
 
@@ -301,43 +350,50 @@ load, listing the registry keys.
 
 ## 4. The shared `tournament` config contract
 
-> **Owned by the data-model agent.** This section states the contract
-> *this* design needs; the data-model agent owns the persisted schema,
-> the journal/dashboard record shape, and the contract-hash treatment.
+> **Shipped.** The contract below is what the loader, the strategies, and the
+> contract hash actually implement.
 
-The epoch's frozen contract gains a `tournament` block:
+**As shipped**, the `tournament` block lives inside `scoring.json` (it
+deserializes into `ScoringWeights.tournament_structure`, a frozen
+`TournamentStructure` dataclass — `src/zicato/core/types.py`), and so folds
+into the scoring component of the contract hash automatically. The block:
 
 ```jsonc
-// epochs/{id}/tournament.json  (or a "tournament" key in the epoch contract)
-{
+// scoring.json — alongside the scoring weights
+"tournament": {
   "structure": "gauntlet",      // gauntlet | single_elim | double_elim | swiss | racing
   "params": {
-    "field_size": 1,            // challengers/round; 1 ⇒ gauntlet degeneracy
-    "replicates": 1,            // paired runs per duel, averaged (§9 lever 1)
-    // single_elim / double_elim: { } (field_size + replicates suffice)
-    // swiss:   { "rounds_n": 4 }
-    // racing:  { "eta": 2, "board_fraction": 0.25, "rung0_board_size": null }
+    // field_size + replicates are universal (defaults are per-structure, §3)
+    // gauntlet:                {}                       (field_size fixed at 1)
+    // single_elim/double_elim: { "field_size": 4, "replicates": 2 }
+    // swiss:                   { "field_size": 4, "rounds_n": 4, "replicates": 2 }
+    // racing:                  { "field_size": 8, "eta": 2, "board_fraction": 0.25 }
   }
 }
 ```
 
-- **Default**: absent block ⇒ `{structure: "gauntlet", params: {field_size: 1, replicates: 1}}`,
-  so every existing epoch keeps today's behaviour with no migration.
+- **Default**: absent block ⇒ `{structure: "gauntlet", params: {}}`
+  (`TournamentStructure.gauntlet()`), so every existing epoch keeps today's
+  behaviour with no migration. `params` is stored and round-tripped verbatim
+  as an opaque mapping; the data layer enforces only that `structure` is one
+  of `VALID_TOURNAMENT_STRUCTURES` and `params` is a mapping — per-key
+  semantics (`field_size`, `replicates`, `rounds_n`, `eta`, …) are owned by
+  the strategy that reads them.
 - **Per-structure params**: `field_size`, `replicates` are universal;
   `swiss` adds `rounds_n`; `racing` adds `eta` + a board-subset schedule
-  (`board_fraction` or explicit `rung0_board_size`). The config loader
-  validates the params against the chosen `structure`.
-- **Where it threads**: alongside board / brief / scoring as a
-  per-epoch frozen artifact. It reads naturally onto
-  `EpochConfig` (`src/zicato/core/types.py:1605`) as a new
-  `tournament: TournamentSpec` field with a defaulting factory (mirrors
-  how `scoring: ScoringWeights` is already a frozen sub-object).
+  (`board_fraction` or explicit `rung0_board_size`). The loader validates the
+  `structure` token; per-key `params` semantics are validated by the strategy.
+- **Where it threads (shipped)**: the structure is the
+  `tournament_structure: TournamentStructure` field of `ScoringWeights`
+  (`src/zicato/core/types.py`), so it serializes through `scoring.json` and
+  is part of the scoring contract — NOT a separate `EpochConfig` field. (The
+  original plan proposed a `TournamentSpec` on `EpochConfig`; the shipped
+  design folds it into `ScoringWeights` instead, which is why a structure
+  change rolls the epoch for free via the scoring hash.)
 
 ### 4.0 Quickstart: configure a structure (operator-facing)
 
-> **Status.** Unlike the rest of this document, this subsection describes
-> *shipped* surface — the `tournament` block parses into `ScoringWeights`
-> and the CLI flags below exist. For a runnable, no-live-LLM walkthrough
+> For a runnable, no-live-LLM walkthrough
 > against a real target, see the presentation example's
 > [`RUN.md` → "Running a non-gauntlet tournament"](../../examples/zicato_examples/target_1_presentation/RUN.md)
 > and its `scoring.racing.json`, exercised end-to-end by
@@ -408,23 +464,31 @@ closes the current epoch and opens a fresh one, exactly as retuning
 selected under different rules and are not directly comparable, which is
 precisely why the structure rolls the contract.
 
-### 4.1 Is `tournament` part of the contract hash?
+### 4.1 Is `tournament` part of the contract hash? — yes (shipped)
 
-**Recommended: yes** — the structure changes *what a promotion means*, so
-generations selected under different structures are not directly
-comparable, exactly the rationale for the other contract components
-(`src/zicato/epoch/contract.py:1-26`). Concretely: add a sixth canonical
-component to `compute_contract_hash` (`contract.py:319`) and a
-`"tournament"` key to `compute_component_hashes` (`contract.py:351`),
-canonicalised the way `_canon_scoring` (`contract.py:236`) routes
-`scoring.json` through `ScoringWeights` — round floats, sort keys,
-serialize the fully-defaulted `TournamentSpec`. This makes changing the
-structure auto-roll the epoch. **The data-model agent owns this
-decision** — flagged here as the interface I depend on (§7).
+**Yes.** The structure changes *what a promotion means*, so generations
+selected under different structures are not directly comparable — the same
+rationale as the other contract components. As shipped this needed NO new
+canonical component: because `tournament_structure` is a nested frozen
+dataclass field of `ScoringWeights`, the scoring canonicaliser recurses into
+it structurally (`_scoring_to_canon` / `_canon_value` in
+`src/zicato/epoch/contract.py`), dict-ifying its `params` mapping into the
+hash input. Switching structures or bumping any param changes the canonical
+scoring form and rolls the epoch automatically.
 
 ---
 
 ## 5. Backend implementation plan (exact files)
+
+> **Historical.** Retained as the original wave plan. The feature is SHIPPED:
+> the package is `src/zicato/selection/` (`strategy.py`, `registry.py`,
+> `strategies/{gauntlet,single_elim,double_elim,swiss,racing}.py`), the
+> structure is `ScoringWeights.tournament_structure: TournamentStructure`
+> (`src/zicato/core/types.py`), the hash folds it in via the scoring
+> canonicaliser (`src/zicato/epoch/contract.py`, §4.1), and the CLI surface
+> is `--tournament-structure` / `--tournament-param` on `evolve`
+> (§4.0). `file:line` references below are against the tree at planning time
+> and may have drifted.
 
 Ordered so each step is independently testable. **No gate/scoring
 changes** except the optional replication averaging, which is additive.
@@ -548,6 +612,12 @@ deliverable** (§7).
 
 ## 7. Interface required FROM the data-model agent
 
+> **Historical.** The cross-team interface below was resolved during the
+> implementation waves; the resolutions are reflected in §§3–4.1 above
+> (`tournament` lives on `ScoringWeights`, is in the contract hash, and the
+> strategy emits `SelectionDecision` + a flat `MatchupResult` audit plus
+> `Standing` / `RoundRecord` dashboard records). Kept for provenance.
+
 This design depends on the data-model agent for the following shared
 contract; everything else above is owned here.
 
@@ -587,3 +657,4 @@ backwards-compatible special case.
 | The promote gate every structure consumes unchanged | [`SCORING.md §5`](SCORING.md#5-the-tournament-promotion-gate), `src/zicato/tournament/gate.py` |
 | Replication (lever 1), multi-candidate field (lever 0), confirmation (lever 3) | [`SELECTION.md §9`](SELECTION.md#9-the-recommended-design) |
 | The epoch as the frozen contract; auto-roll on contract change | [`EPOCHS-AND-JOURNALING.md`](EPOCHS-AND-JOURNALING.md), `src/zicato/epoch/contract.py` |
+| Operator-facing: choosing + configuring a structure | `skills/zicato-design-tournament-structure/SKILL.md` |
