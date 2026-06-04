@@ -199,6 +199,43 @@ def test_rebuild_index_records_tournament(tmp_path: Path) -> None:
     assert t["decision"] == "promoted"
     # Delta scalar carried from the OutcomeRecord.
     assert t["delta_scalar"] == pytest.approx(0.15)
+    # v8: the crowning outcome did not set a champion_eval_mode, so it
+    # round-trips as the OutcomeRecord default ("full").
+    assert t["champion_eval_mode"] == "full"
+    # v8: champion_run_ref is the best-effort pointer at the champion
+    # (parent "v0") generation's workspace-relative directory.
+    assert t["champion_run_ref"] == f"epochs/{eid}/generations/v0"
+
+
+def test_rebuild_index_tournament_records_fast_champion_eval_mode(tmp_path: Path) -> None:
+    # An outcome whose champion side was evaluated in fast (cached) mode
+    # must round-trip champion_eval_mode == "fast" onto the tournament row.
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", ' '"wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# rubric\n", encoding="utf-8")
+
+    cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
+    eid = cfg.id
+    _seed_lineage(ws, eid)
+    exp = make_experiment(
+        epoch_id=eid,
+        generation_id="v1",
+        parent_generation_id="v0",
+        outcome=make_outcome_record(champion_eval_mode="fast"),
+    )
+    write_experiment(ws, eid, "v1", exp)
+
+    db = rebuild_index(ws)
+    tournaments = tournaments_for_epoch(db, eid)
+    assert len(tournaments) == 1
+    t = tournaments[0]
+    assert t["champion_eval_mode"] == "fast"
+    assert t["champion_run_ref"] == f"epochs/{eid}/generations/v0"
 
 
 def test_rebuild_index_metric_counts_from_drift_events(tmp_path: Path) -> None:

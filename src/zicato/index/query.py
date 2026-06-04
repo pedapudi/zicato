@@ -543,12 +543,32 @@ def prior_experiments_for_epoch(
 
 
 def tournaments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
-    """Return every resolved tournament row under ``epoch_id``."""
-    return _select(
+    """Return every resolved tournament row under ``epoch_id``.
+
+    ``champion_eval_mode`` / ``champion_run_ref`` (the v8 per-round
+    champion-eval-provenance columns) are selected as optional columns: a
+    legacy index opened read-only without the migration still loads each
+    row with both fields present-but-null, so a consumer can show
+    cached-vs-rerun per round and degrade on a null (treating a null mode
+    as ``"full"``).
+    """
+    return _select_optional_columns(
         db_path,
-        "SELECT tournament_id, epoch_id, parent_generation_id, child_generation_id, "
-        "decision, parent_scalar, child_scalar, delta_scalar, rejection_reason, ran_at "
-        "FROM tournaments WHERE epoch_id = ? ORDER BY ran_at, tournament_id",
+        "tournaments",
+        (
+            "tournament_id",
+            "epoch_id",
+            "parent_generation_id",
+            "child_generation_id",
+            "decision",
+            "parent_scalar",
+            "child_scalar",
+            "delta_scalar",
+            "rejection_reason",
+            "ran_at",
+        ),
+        ("champion_eval_mode", "champion_run_ref"),
+        "WHERE epoch_id = ? ORDER BY ran_at, tournament_id",
         (epoch_id,),
     )
 

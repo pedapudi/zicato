@@ -42,7 +42,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 #: The canonical table DDL. Ordered so that ``CREATE TABLE`` statements
@@ -156,7 +156,9 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       competitors_json TEXT,
       rounds_json TEXT,
       standings_json TEXT,
-      field_status_json TEXT
+      field_status_json TEXT,
+      champion_eval_mode TEXT,
+      champion_run_ref TEXT
     )
     """,
     """
@@ -279,6 +281,26 @@ _V6_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: unknown), and a full ``zicato reindex`` re-derives it from
 #: ``lineage.json`` (which now carries ``round_index`` per generation).
 _V7_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "round_index", "INTEGER"),)
+
+
+#: Columns added in v8 (per-round champion evaluation provenance). A
+#: tournament row carries ``champion_eval_mode`` — how the champion
+#: (parent / left) side was evaluated that round (``"full"`` = run live,
+#: ``"fast"`` = cached per-board scalars reused, ``"fast-degraded"`` =
+#: fast requested but the cache had to be seeded by a single live run) —
+#: plus ``champion_run_ref``, a best-effort pointer at the champion's
+#: per-round run/output (the champion generation's directory). Source is
+#: the crowning matchup's OutcomeRecord (``champion_eval_mode`` defaults
+#: to ``"full"`` for journals that predate the field). Same incremental-
+#: open ALTER pattern as the earlier waves: a pre-existing v7 database
+#: gains these as ``NULL`` columns on open (legacy rows read as
+#: ``champion_eval_mode IS NULL`` — mode unknown, treat as ``"full"``),
+#: and a full ``zicato reindex`` re-derives them from each experiment's
+#: resolved outcome.
+_V8_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("tournaments", "champion_eval_mode", "TEXT"),
+    ("tournaments", "champion_run_ref", "TEXT"),
+)
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
@@ -411,6 +433,14 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
 
     if current < 7:
         for table, column, ddl_type in _V7_ADDED_COLUMNS:
+            if not _table_exists(conn, table):
+                continue
+            if column in _column_names(conn, table):
+                continue
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+    if current < 8:
+        for table, column, ddl_type in _V8_ADDED_COLUMNS:
             if not _table_exists(conn, table):
                 continue
             if column in _column_names(conn, table):

@@ -647,13 +647,31 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
         }
         for m in outcome.match_record
     ]
+    # v8 per-round champion-eval provenance. ``champion_eval_mode`` is the
+    # crowning matchup's OutcomeRecord field — how the champion (parent /
+    # left) side was evaluated this round. It defaults to ``"full"`` on the
+    # dataclass for journals that predate the field, so reading it here is
+    # always one of ``"full"`` / ``"fast"`` / ``"fast-degraded"``.
+    champion_eval_mode = outcome.champion_eval_mode or "full"
+    # ``champion_run_ref`` is a best-effort pointer at the champion's
+    # per-round run/output. The cleanest already-available reference is the
+    # champion (parent) generation's workspace-relative directory, where its
+    # per-board runs / loss files live — derived purely from ids we already
+    # hold, no filesystem walk. When there is no parent generation (a v0
+    # seed has no crowning matchup, so this branch is not normally reached)
+    # we write NULL rather than inventing a reference.
+    champion_run_ref: str | None = (
+        f"epochs/{experiment.epoch_id}/generations/{experiment.parent_generation_id}"
+        if experiment.parent_generation_id
+        else None
+    )
     conn.execute(
         "INSERT INTO tournaments("
         "tournament_id, epoch_id, parent_generation_id, child_generation_id, "
         "decision, parent_scalar, child_scalar, delta_scalar, rejection_reason, "
         "ran_at, structure, structure_params_json, competitors_json, rounds_json, "
-        "standings_json, field_status_json) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "standings_json, field_status_json, champion_eval_mode, champion_run_ref) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(tournament_id) DO UPDATE SET "
         "epoch_id = excluded.epoch_id, "
         "parent_generation_id = excluded.parent_generation_id, "
@@ -673,7 +691,12 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
         # per-experiment crowning record does not carry the proposing
         # outcomes, so COALESCE preserves an existing value rather than
         # clobbering it with this row's empty list.
-        "field_status_json = COALESCE(tournaments.field_status_json, excluded.field_status_json)",
+        "field_status_json = COALESCE(tournaments.field_status_json, excluded.field_status_json), "
+        "champion_eval_mode = excluded.champion_eval_mode, "
+        # Preserve an existing run-ref rather than clobbering it with NULL
+        # when a re-ingest cannot resolve a parent (defensive — the crowning
+        # row always carries one).
+        "champion_run_ref = COALESCE(excluded.champion_run_ref, tournaments.champion_run_ref)",
         (
             tournament_id,
             experiment.epoch_id,
@@ -691,6 +714,8 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
             json.dumps(rounds),
             json.dumps([]),
             json.dumps([]),
+            champion_eval_mode,
+            champion_run_ref,
         ),
     )
 

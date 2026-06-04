@@ -173,6 +173,9 @@ def test_tournaments_columns_match_contract() -> None:
         "standings_json",
         # v5: the per-challenger proposing-step outcomes.
         "field_status_json",
+        # v8: per-round champion-eval provenance.
+        "champion_eval_mode",
+        "champion_run_ref",
     ]
     conn.close()
 
