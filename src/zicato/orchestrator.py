@@ -1401,17 +1401,19 @@ async def _evolve_multi_challenger(
         # field-status so the dashboard's proposing-step tracker reads
         # "N proposed · 0 applied — all rejected" rather than an empty
         # idle state (the recent all-failed run that prompted this).
+        champion_only = [{"generation_id": parent_id, "seed": 1, "role": "champion"}]
         _publish_active_tournament(
             workspace_root,
             tournament_id=f"tourn_{epoch_id}_{base_id}",
             epoch_id=epoch_id,
             structure=tournament_spec.structure,
             structure_params=dict(tournament_spec.params),
-            competitors=[{"generation_id": parent_id, "seed": 1, "role": "champion"}],
+            competitors=champion_only,
             round_index=round_index,
             total_rounds=total_rounds,
             field_status=field_status,
             phase="proposing",
+            entries=_field_entries(champion_only),
         )
         return EvolveRoundOutcome(
             parent_generation_id=parent_id,
@@ -1530,6 +1532,7 @@ async def _evolve_multi_challenger(
         round_index=round_index,
         total_rounds=total_rounds,
         field_status=field_status,
+        entries=_field_entries(competitors_meta),
     )
 
     # --- Live structure publish. Each time the driver schedules a batch
@@ -1543,6 +1546,7 @@ async def _evolve_multi_challenger(
     # byte-compatible. Best-effort — _publish_active_tournament never
     # raises, so a publish failure cannot abort the resolution.
     def _publish_live_structure(strat: Any) -> None:
+        live_standings = _serialise_standings(strat.live_standings())
         _publish_active_tournament(
             workspace_root,
             tournament_id=tournament_id,
@@ -1554,7 +1558,8 @@ async def _evolve_multi_challenger(
             total_rounds=total_rounds,
             field_status=field_status,
             rounds=_serialise_rounds(strat.live_rounds()),
-            standings=_serialise_standings(strat.live_standings()),
+            standings=live_standings,
+            entries=_field_entries(competitors_meta, live_standings),
         )
 
     # --- Drive the strategy to a crowned decision.
@@ -1820,6 +1825,7 @@ def _publish_active_tournament(
     phase: str = "running",
     rounds: list[dict[str, Any]] | None = None,
     standings: list[dict[str, Any]] | None = None,
+    entries: list[Any] | None = None,
 ) -> None:
     """Best-effort: publish the live ActiveTournament envelope.
 
@@ -1839,6 +1845,14 @@ def _publish_active_tournament(
     bracket/ladder/funnel renderers work identically live and post-run.
     Omitting them (e.g. the all-rejected publish, which has no field to
     seed) leaves the envelope's ``rounds`` / ``standings`` empty.
+
+    ``entries`` is the per-entry funnel field
+    (:class:`~zicato.runtime.state.ActiveTournamentEntry`). The gauntlet
+    A/B path seeds it directly; the multi-challenger / racing path builds
+    it via :func:`_field_entries` so the dashboard's per-entry funnel rung
+    is non-empty live, not just after the run settles. When omitted (e.g.
+    the all-rejected publish) it falls back to an empty list, matching the
+    pre-existing behaviour.
 
     Never raises — a live-state write failure must not abort the round.
     """
@@ -1865,10 +1879,69 @@ def _publish_active_tournament(
                 field_status=[dict(f) for f in (field_status or [])],
                 rounds=[dict(r) for r in (rounds or [])],
                 standings=[dict(s) for s in (standings or [])],
+                entries=list(entries or []),
             ),
         )
     except Exception as exc:  # noqa: BLE001 — live state is best-effort
         log.debug("active-tournament publish skipped: %s", exc)
+
+
+def _field_entries(
+    competitors: list[dict[str, Any]],
+    standings: list[dict[str, Any]] | None = None,
+) -> list[Any]:
+    """Build the per-competitor funnel ``entries`` for a non-gauntlet field.
+
+    The gauntlet A/B path seeds :attr:`ActiveTournament.entries` with one
+    :class:`~zicato.runtime.state.ActiveTournamentEntry` per board entry
+    per side; the dashboard funnel groups by ``side`` to draw rungs. The
+    racing / multi-challenger live-publish path historically left
+    ``entries`` empty, so the live funnel could not render the per-entry
+    rung field for a field tournament until the run settled. This helper
+    closes that gap by emitting one row per competitor, mirroring the A/B
+    shape: ``side`` carries the competitor's role (``champion`` /
+    ``challenger``) — the data-model §2.3 convention for non-gauntlet
+    structures — and ``entry_id`` carries its generation id.
+
+    When live ``standings`` are supplied each row's ``status`` and
+    ``loss_summary`` are derived from the matching standing (status maps
+    alive/competing → ``running``, eliminated/champion → ``completed``; the
+    Copeland ``scalar`` rides in ``loss_summary`` so the funnel can colour
+    a rung by relative loss). Absent standings (the pre-schedule publish)
+    every row is ``queued`` with an empty loss summary.
+    """
+    from zicato.runtime.state import ActiveTournamentEntry  # noqa: PLC0415
+
+    by_gen: dict[str, dict[str, Any]] = {}
+    for s in standings or []:
+        gid = str(s.get("generation_id", ""))
+        if gid:
+            by_gen[gid] = s
+
+    entries: list[Any] = []
+    for c in competitors:
+        gid = str(c.get("generation_id", ""))
+        role = str(c.get("role", "") or "")
+        standing = by_gen.get(gid)
+        if standing is None:
+            status = "queued"
+            loss_summary: dict[str, float] = {}
+        else:
+            raw_status = str(standing.get("status", "") or "")
+            status = "completed" if raw_status in ("eliminated", "champion") else "running"
+            scalar = standing.get("scalar")
+            loss_summary = {"scalar": float(scalar)} if isinstance(scalar, int | float) else {}
+        entries.append(
+            ActiveTournamentEntry(
+                entry_id=gid,
+                # Non-gauntlet structures carry the competitor role as the
+                # ``side`` key (data-model §2.3); the funnel groups on it.
+                side=role or gid,
+                status=status,
+                loss_summary=loss_summary,
+            )
+        )
+    return entries
 
 
 def _serialise_rounds(rounds: Any) -> list[dict[str, Any]]:
@@ -2056,6 +2129,12 @@ def _settle_active_tournament(
                 rounds=rounds,
                 standings=standings,
                 field_status=[dict(f) for f in (field_status or [])],
+                # Seed the per-competitor funnel field from the SETTLED
+                # standings so the retained completed envelope (the
+                # dashboard's only live source for a non-gauntlet field
+                # until the next round) carries the per-entry rung, not an
+                # empty list. Mirrors the live-publish path.
+                entries=_field_entries(competitors, standings),
             ),
         )
     except Exception as exc:  # noqa: BLE001 — live state is best-effort

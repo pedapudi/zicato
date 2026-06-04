@@ -193,6 +193,15 @@ def test_swiss_field_runs_end_to_end_and_promotes(
     assert active.rounds, "settled envelope should carry the swiss rounds"
     standings_ids = {s["generation_id"] for s in active.standings}
     assert standings_ids == {"v0", "v1", "v2"}
+    # The funnel field (`entries`) is seeded for the non-gauntlet path —
+    # one row per competitor — so the dashboard's per-entry funnel rung
+    # renders. The racing/multi-challenger publish historically left this
+    # empty (#8), so GET /api/active-tournament returned entries: [].
+    assert active.entries, "non-gauntlet envelope should seed per-entry funnel rows"
+    entry_ids = {e.entry_id for e in active.entries}
+    assert entry_ids == {"v0", "v1", "v2"}
+    # `side` carries the competitor role for non-gauntlet structures.
+    assert {e.side for e in active.entries} == {"champion", "challenger"}
 
     # The v3 index columns are populated for the crowned generation.
     db = sqlite3.connect(workspace / "index.db")
@@ -520,3 +529,40 @@ def test_field_status_absent_is_empty_and_back_compatible() -> None:
     assert t.field_status == []
     # Present in to_dict() as an (additive) empty list.
     assert t.to_dict()["field_status"] == []
+
+
+def test_field_entries_seeds_one_row_per_competitor() -> None:
+    """`_field_entries` builds the funnel field for the non-gauntlet path.
+
+    Regression for #8: the racing / multi-challenger live-publish path set
+    competitors / rounds / standings but NOT `entries`, so GET
+    /api/active-tournament returned `entries: []` and the live funnel could
+    not render the per-entry rung. The helper now emits one row per
+    competitor, deriving status + loss_summary from live standings when
+    present and falling back to `queued` before any standings exist.
+    """
+    from zicato.orchestrator import _field_entries
+
+    competitors = [
+        {"generation_id": "v0", "seed": 1, "role": "champion"},
+        {"generation_id": "v1", "seed": 2, "role": "challenger"},
+        {"generation_id": "v2", "seed": 3, "role": "challenger"},
+    ]
+
+    # Pre-schedule (no standings): every row queued, side = role.
+    pre = _field_entries(competitors)
+    assert [e.entry_id for e in pre] == ["v0", "v1", "v2"]
+    assert {e.side for e in pre} == {"champion", "challenger"}
+    assert {e.status for e in pre} == {"queued"}
+
+    # Live standings drive status + loss_summary.
+    standings = [
+        {"generation_id": "v0", "status": "eliminated", "scalar": 2.0, "role": "champion"},
+        {"generation_id": "v1", "status": "champion", "scalar": 0.5, "role": "challenger"},
+        {"generation_id": "v2", "status": "competing", "scalar": 1.5, "role": "challenger"},
+    ]
+    live = {e.entry_id: e for e in _field_entries(competitors, standings)}
+    assert live["v0"].status == "completed"
+    assert live["v1"].status == "completed"
+    assert live["v2"].status == "running"
+    assert live["v1"].loss_summary["scalar"] == 0.5
