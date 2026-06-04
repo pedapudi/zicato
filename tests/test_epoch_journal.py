@@ -256,6 +256,37 @@ def test_read_experiment_round_trips_new_layout(
     assert loaded.outcome.tournament_decision == "promoted"
 
 
+def test_write_experiment_persists_round_index(
+    epoch_root: tuple[Path, str],
+) -> None:
+    """round_index is written into experiment.json and round-trips back, so the
+    dashboard can attribute the generation to its birth round (issue #9)."""
+    from dataclasses import replace
+
+    ws, eid = epoch_root
+    exp = replace(_experiment(outcome=_outcome()), round_index=2)
+    write_experiment(ws, eid, "v1", exp)
+
+    # it is in the on-disk body where the dashboard reader looks for it.
+    body = json.loads((experiment_json_path(ws, eid, "v1")).read_text())
+    assert body["round_index"] == 2
+    # and it round-trips through the typed reader.
+    assert read_experiment(ws, eid, "v1").round_index == 2
+
+
+def test_read_experiment_defaults_round_index_when_absent(
+    epoch_root: tuple[Path, str],
+) -> None:
+    """A pre-feature experiment.json with no round_index reads as 0 (no crash)."""
+    ws, eid = epoch_root
+    write_experiment(ws, eid, "v1", _experiment(outcome=_outcome()))
+    path = experiment_json_path(ws, eid, "v1")
+    body = json.loads(path.read_text())
+    body.pop("round_index", None)
+    path.write_text(json.dumps(body))
+    assert read_experiment(ws, eid, "v1").round_index == 0
+
+
 def test_read_experiment_accepts_legacy_inline_form(
     epoch_root: tuple[Path, str],
 ) -> None:

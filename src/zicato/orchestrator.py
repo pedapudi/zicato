@@ -725,6 +725,12 @@ async def evolve_once(
         # journal entry, and the loop continues.
         proposer_validation_failed = exc
         experiment = None
+    else:
+        # Stamp the EVOLVE round that minted this generation onto the experiment
+        # so it persists into experiment.json — the dashboard's round-timeline /
+        # champion-spine attributes each generation to its birth round from this
+        # stamp (the canonical value the loop already threads as round_index).
+        experiment = replace(experiment, round_index=round_index)
 
     # --- 7. Validate patch set against the manifest ---
     if experiment is not None:

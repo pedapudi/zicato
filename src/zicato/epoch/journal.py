@@ -372,6 +372,7 @@ def write_experiment(
         "generation_id": experiment.generation_id,
         "parent_generation_id": experiment.parent_generation_id,
         "proposed_at": experiment.proposed_at,
+        "round_index": experiment.round_index,
         "hypothesis": _coerce_paths(asdict(experiment.hypothesis)),
         "patch_ids": patch_ids,
         "outcome": (
@@ -466,6 +467,8 @@ def read_experiment(
     hypothesis = _hypothesis_from_dict(body.get("hypothesis") or {})
     outcome = _outcome_from_dict(body.get("outcome"))
 
+    raw_round = body.get("round_index")
+    round_index = raw_round if isinstance(raw_round, int) and not isinstance(raw_round, bool) else 0
     return Experiment(
         id=str(body.get("id", "")),
         epoch_id=str(body.get("epoch_id", epoch_id)),
@@ -475,6 +478,7 @@ def read_experiment(
         hypothesis=hypothesis,
         patches=tuple(patches),
         outcome=outcome,
+        round_index=round_index,
     )
 
 

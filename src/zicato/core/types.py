@@ -1626,6 +1626,13 @@ class Experiment:
         snapshot to produce the child snapshot.
     outcome:
         The tournament's verdict, or ``None`` until the experiment runs.
+    round_index:
+        The 0-based EVOLVE round that minted this generation. Persisted into
+        ``experiment.json`` so the dashboard can attribute each generation to
+        its birth round (the round-timeline / champion-spine view reads it);
+        the canonical value the orchestrator already threads as
+        ``Generation.round_index``. Defaults to 0 for the seed and for
+        pre-feature records that predate the stamp.
     """
 
     id: str
@@ -1636,6 +1643,7 @@ class Experiment:
     hypothesis: HypothesisSpec
     patches: tuple[Patch, ...]
     outcome: OutcomeRecord | None
+    round_index: int = 0
 
 
 # ---------------------------------------------------------------------------
