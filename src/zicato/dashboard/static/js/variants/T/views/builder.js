@@ -193,7 +193,7 @@ function renderRail(host) {
 function sectionDone(id) {
   const d = _draft || {};
   const sc = d.scoring || {};
-  const ts = sc.tournament_structure || {};
+  const ts = sc.tournament || {};
   switch (id) {
     case 'structure': return !!ts.structure;
     case 'field': return !!(ts.params && Object.keys(ts.params).length);
@@ -249,7 +249,7 @@ function controlRow(labelText, info, control) {
 }
 
 function structureSection(d) {
-  const cur = ((d.scoring || {}).tournament_structure || {}).structure || 'gauntlet';
+  const cur = ((d.scoring || {}).tournament || {}).structure || 'gauntlet';
   const cards = STRUCTURES.map((s) => {
     const card = el('button', {
       class: 'dn-bld-card' + (s.id === cur ? ' dn-bld-card-on' : ''),
@@ -268,7 +268,7 @@ function structureSection(d) {
 }
 
 function fieldSection(d) {
-  const ts = (d.scoring || {}).tournament_structure || {};
+  const ts = (d.scoring || {}).tournament || {};
   const specs = paramSpecsFor(ts.structure || 'gauntlet');
   const params = ts.params || {};
   const rows = specs.map((spec) => {
@@ -464,7 +464,7 @@ function shorten(s, n) { const str = String(s || '—'); return str.length > n ?
 function renderPreview(host) {
   const d = _draft || {};
   const sc = d.scoring || {};
-  const ts = sc.tournament_structure || {};
+  const ts = sc.tournament || {};
   const structure = ts.structure || 'gauntlet';
   const cost = _cost || {};
   const diff = _diff || {};

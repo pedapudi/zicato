@@ -25,7 +25,11 @@ const CONFIG = { chat_enabled: false, agent: { model: '' }, skills: ['zicato-bui
 function freshDraft() {
   return {
     scoring: {
-      tournament_structure: { structure: 'gauntlet', params: { field_size: 2, replicates: 1 } },
+      // The backend serializes the tournament block under the `tournament`
+      // key (zicato.epoch.lifecycle._scoring_to_dict), NOT `tournament_structure`
+      // (that is the Python ScoringWeights attribute name). The view must read
+      // this exact key — the stuck-on-Gauntlet bug was reading the wrong one.
+      tournament: { structure: 'gauntlet', params: { field_size: 2, replicates: 1 } },
       overfitting: { enabled: true, holdout_fraction: 0.2, min_board_size_for_split: 8 },
       promote_margin: 0, pass_rate_monotonicity: false,
     },
@@ -47,7 +51,7 @@ function envelope(patch) {
   return {
     draft: DRAFT,
     patch: patch || { op: 'noop', changed: {} },
-    cost: { structure: DRAFT.scoring.tournament_structure.structure, board_size: 2, holdout_size: 0,
+    cost: { structure: DRAFT.scoring.tournament.structure, board_size: 2, holdout_size: 0,
       board_runs_per_round: 4, breakdown: [{ label: 'duel runs', runs: 4, detail: 'field 2 × board 2' }] },
     warnings: [],
     diff: { components: [], changed_components: [], rolls_epoch: false },
@@ -66,8 +70,8 @@ function installBuilderFetch() {
     if (path === '/builder/op') {
       OP_CALLS.push(body);
       // mutate the shared draft so the applied envelope is observably different.
-      if (body.op === 'set_structure') DRAFT.scoring.tournament_structure.structure = body.args.structure;
-      if (body.op === 'set_param') DRAFT.scoring.tournament_structure.params[body.args.key] = body.args.value;
+      if (body.op === 'set_structure') DRAFT.scoring.tournament.structure = body.args.structure;
+      if (body.op === 'set_param') DRAFT.scoring.tournament.params[body.args.key] = body.args.value;
       if (body.op === 'set_gate' && body.args.promote_margin != null) DRAFT.scoring.promote_margin = body.args.promote_margin;
       if (body.op === 'set_holdout' && Array.isArray(body.args.tags)) {
         const held = new Set(body.args.tags);
@@ -158,6 +162,35 @@ test('builder view: a structure pick calls /builder/op and applies the returned 
   // the applied diff rolls the epoch — the preview impact pill reflects it.
   const impact = firstClass(host, 'dn-bld-impact');
   assert(impact && impact.textContent.includes('rolls epoch'), 'the contract-impact pill shows the epoch roll');
+  // ── the VISUAL selected-state must follow the new structure (the bug) ──
+  // After the set_structure result is applied, the highlighted card must be
+  // the picked one — derived from the draft's `tournament.structure`, never
+  // stuck on the first (Gauntlet) card. Assert on the DOM class, not the data.
+  const onCards = byClass(host, 'dn-bld-card').filter((c) => c.classList.contains('dn-bld-card-on'));
+  assertEqual(onCards.length, 1, 'exactly one structure card carries the selected class');
+  assert(onCards[0].textContent.toLowerCase().includes('swiss'), 'the SELECTED card is Swiss, not Gauntlet');
+  assertEqual(onCards[0].getAttribute('aria-pressed'), 'true', 'the selected card reports aria-pressed=true');
+});
+
+test('builder view: a draft whose structure is racing highlights the Racing card (not Gauntlet)', async () => {
+  installBuilderFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  // Drive the draft to racing through the real op/apply path, then RE-RENDER
+  // the mounted view. The data layer ends up racing (envelope applied); the
+  // assertion is purely on the selected-state render — it must follow the
+  // draft's `tournament.structure`, never stay pinned to the first card.
+  const racing = byClass(host, 'dn-bld-card').find((c) => c.textContent.toLowerCase().includes('racing'));
+  assert(racing, 'the racing card is present');
+  racing.dispatchEvent(makeEvent('click'));
+  await tick();
+  // a second render() re-mounts the view against the now-racing shared draft,
+  // mirroring a persisted racing draft re-opened — the highlight must persist.
+  await view.render(host);
+  const onCards = byClass(host, 'dn-bld-card').filter((c) => c.classList.contains('dn-bld-card-on'));
+  assertEqual(onCards.length, 1, 'exactly one structure card is selected for the racing draft');
+  assert(onCards[0].textContent.toLowerCase().includes('racing'), 'the racing draft highlights Racing, not Gauntlet');
 });
 
 test('builder view: a field param edit posts set_param with the numeric value', async () => {
