@@ -50,8 +50,9 @@ import * as boards from './views/boards.js';
 import * as board from './views/board.js';
 import * as mutations from './views/mutations.js';
 import * as publication from './views/publication.js';
+import * as builder from './views/builder.js';
 
-const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, publication };
+const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, publication, builder };
 
 export const THEMES = COLOR_THEMES.map((t) => t[0]);
 const COLOR_IDS = THEMES;
@@ -542,6 +543,13 @@ export function mountShell(root) {
     ]),
     _crumbHost,
     el('span', { class: 'dt-topbar-spacer' }),
+    // the tournament-builder entry (B2). A standalone nav link now; B3 will
+    // re-home it under a Settings panel. Uses the router href so the route stays
+    // the single source of truth.
+    el('a', { class: 'dt-nav-build', href: href('builder', {}), title: 'Tournament builder', 'aria-label': 'Open the tournament builder' }, [
+      el('span', { class: 'dt-nav-build-glyph', 'aria-hidden': 'true', text: '⚒' }),
+      el('span', { class: 'dt-nav-build-text', text: 'build' }),
+    ]),
     colorSwitch,
     typeSwitch,
     scalePill,

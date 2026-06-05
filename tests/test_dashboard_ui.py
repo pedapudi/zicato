@@ -263,7 +263,15 @@ def test_bundle_under_size_envelope(
     # net +~11 KB even after RETIRING the seat/box `elimBracket` renderer + the
     # boxed champion-banner / match-card markup + their CSS. The envelope is
     # raised to 720 KB to cover the added graphics with headroom.
-    assert total < 720_000, f"bundle is {total} bytes, exceeds 720_000 envelope"
+    #
+    # B2 then lands the tournament-builder FRONTEND — a self-contained four-pane
+    # view (left-rail sections · center controls · live preview reusing the
+    # svg.js per-structure figures · a drag-resizable chat-copilot pane) plus its
+    # supporting modules (REST client, builder metadata + preview schematic, an
+    # accessible info popover, the SSE chat reader) and its scoped CSS. That is a
+    # whole new interactive surface (~66 KB of view + module + CSS), so the
+    # envelope is raised to 820 KB to cover it with headroom for B3's re-homing.
+    assert total < 820_000, f"bundle is {total} bytes, exceeds 820_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

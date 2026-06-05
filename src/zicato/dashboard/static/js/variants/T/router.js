@@ -25,7 +25,7 @@
 // breadcrumb, back button, and every view share one signature.
 
 export const PREFIX = '#';
-export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'publication'];
+export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'publication', 'builder'];
 
 // Split the hash into its path part and its `~k=v` suffix params (the compare
 // target). Everything before the first `~` is the structural path.
@@ -51,6 +51,10 @@ export function parseRoute(hash) {
   // bare `#/` prefix: the path part is everything after the leading slash.
   const parts = raw.replace(/^\/+/, '').split('/').filter(Boolean).map(dec);
   if (!parts.length || parts[0] === 'home') return { view: 'home', params: {}, cmp };
+  // the tournament-builder lives at a standalone top-level route (B2). B3 will
+  // re-home it under a Settings panel; the route is kept self-contained so the
+  // move touches only this switch + the nav entry.
+  if (parts[0] === 'builder') return { view: 'builder', params: {}, cmp };
   if (parts[0] !== 'e') return { view: 'home', params: {}, cmp };
 
   const epochId = parts[1] || null;
@@ -91,6 +95,7 @@ export function href(view, params, opts) {
   let base;
   switch (view) {
     case 'home': base = PREFIX + '/'; break;
+    case 'builder': base = PREFIX + '/builder'; break;
     case 'epoch': base = e || (PREFIX + '/'); break;
     case 'gens':
       base = e ? (p.round != null ? `${e}/gens/r/${enc(p.round)}` : `${e}/gens`) : PREFIX + '/';
@@ -146,6 +151,7 @@ export function up(route) {
   }
   switch (route ? route.view : 'home') {
     case 'home': return null;
+    case 'builder': return { view: 'home', params: {} };
     case 'epoch': return { view: 'home', params: {} };
     case 'gens':
       // a round drill-down steps up to the full (all-rounds) Match-ups first.
@@ -178,6 +184,8 @@ export function crumbTrail(route) {
   const home = { label: 'environment', view: 'home', params: {} };
   const epoch = p.epochId ? { label: p.epochId, view: 'epoch', params: { epochId: p.epochId } } : null;
   switch (route.view) {
+    case 'builder':
+      return [home, { label: 'tournament builder', current: true }];
     case 'epoch':
       return [home, { label: p.epochId || 'epoch', current: true }];
     case 'gens':
