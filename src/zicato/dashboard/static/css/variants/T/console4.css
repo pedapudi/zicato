@@ -1140,6 +1140,23 @@
  * detail column. Transitions are CSS `transition`, never infinite.
  * =================================================================== */
 
+/* THE BRAND ACCENT TOKEN — the single non-foreground colour of the mark (the
+ * plucked-note dot). Default green on light grounds; brightened on the dark
+ * themes for contrast. The stroke itself is `currentColor` (theme ink), so it
+ * flips dark/light on its own — only the accent needs a per-theme value. */
+#variant-root[data-variant="T"] { --zicato-accent: #2FA46A; }
+#variant-root[data-variant="T"][data-t-theme="monokai"],
+#variant-root[data-variant="T"][data-t-theme="solarized-dark"],
+#variant-root[data-variant="T"][data-t-theme="google-dark"],
+#variant-root[data-variant="T"][data-t-theme="lunaria-eclipse"],
+#variant-root[data-variant="T"][data-t-theme="belafonte-night"],
+#variant-root[data-variant="T"][data-t-theme="zenburn"],
+#variant-root[data-variant="T"][data-t-theme="selenized-black"],
+#variant-root[data-variant="T"][data-t-theme="relaxed"],
+#variant-root[data-variant="T"][data-t-theme="espresso"],
+#variant-root[data-variant="T"][data-t-theme="dracula"],
+#variant-root[data-variant="T"][data-t-theme="ubuntu"] { --zicato-accent: #3FB87A; }
+
 #variant-root[data-variant="T"] {
   /* ---- compact top bar (chrome lives above the body split) ---- */
   .dt-topbar {
@@ -1160,8 +1177,14 @@
   .dt-back-glyph { font-size: 14px; line-height: 1; }
   .dt-back.dt-back-off { opacity: 0.35; cursor: default; }
   .dt-back.dt-back-off:hover { color: var(--v2-ink-soft); background: transparent; border-color: var(--v2-rule); }
-  .dt-brand { display: inline-flex; align-items: baseline; gap: 6px; }
-  .dt-brand-name { font-family: var(--n-font-head); font-weight: 700; font-size: 15px; letter-spacing: 0.02em; color: var(--v2-ink); }
+  .dt-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--v2-ink); }
+  /* THE BRAND MARK — inline SVG. It strokes with `currentColor`, so it inherits
+     the brand block's ink (set above) and flips dark/light with the theme; the
+     plucked-note dot fills with `--zicato-accent` (the green token, defined on
+     the root just below + brightened on dark themes). Static chrome — painted
+     once, never on a heartbeat. */
+  .dt-brand-mark { height: 17px; width: auto; display: block; flex: none; overflow: visible; }
+  .dt-brand-name { font-family: var(--n-font-head); font-weight: 700; font-size: 15px; letter-spacing: 0.02em; color: var(--v2-ink); align-self: baseline; }
   .dt-brand-variant { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--v2-accent); }
 

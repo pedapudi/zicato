@@ -1,6 +1,15 @@
-# zicato
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/zicato-lockup-dark.svg">
+  <img alt="zicato" src="docs/brand/zicato-lockup-light.svg" width="420">
+</picture>
 
 **A self-improving harness for multi-agent systems.**
+
+</div>
+
+# zicato
 
 zicato wraps a multi-agent system you already have — a coordinator + specialists,
 a deep sub-agent tree, a single LlmAgent, whatever shape — and turns it into the
@@ -85,6 +94,14 @@ The full design lives under [`docs/design/`](docs/design/). Read
 - [`docs/design/CLI.md`](docs/design/CLI.md) — full CLI reference: every subcommand, every flag, exit codes, scripting hints.
 - [`docs/design/RATIONALE.md`](docs/design/RATIONALE.md) — the "why" behind every major decision: annotated mutation points, per-epoch contract, mandatory hypothesis, collusion-proof emulator, drift taxonomy as features.
 - [`docs/design/VOCABULARY.md`](docs/design/VOCABULARY.md) — glossary of load-bearing terms (epoch, generation, run, round, experiment, hypothesis, outcome, loss profile, pattern, tournament, lineage, rubric).
+
+## Brand
+
+The mark, wordmark, lockups, tile, and favicons live in
+[`docs/brand/`](docs/brand/) — see [`docs/brand/README.md`](docs/brand/README.md)
+for the construction story (golden logarithmic spiral · damped-sine sparkline ·
+one plucked-note accent), the color tokens, and the theme-adaptive rule
+(`currentColor` ink + a `--zicato-accent` custom property).
 
 ## License
 
