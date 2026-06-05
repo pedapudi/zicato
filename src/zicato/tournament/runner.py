@@ -251,6 +251,14 @@ class TournamentResult:
     #: by the dashboard) is documented at
     #: :func:`zicato.tournament.ladder.holdout_record`.
     holdout: dict[str, Any] | None = None
+    #: THIS duel's child (challenger) HOLDOUT-slice scalar, or ``None`` when
+    #: there was no holdout to measure (small board / split disabled / a path
+    #: that does not run the holdout). The orchestrator pairs it with the
+    #: TRAIN-slice ``child_agg["scalar"]`` to journal the per-generation
+    #: ``train_loss`` / ``holdout_loss`` / ``generalization_gap``
+    #: (OVERFITTING.md §12 #5). Decoupled from the Ladder's release semantics
+    #: so the generalization gap is always measurable when a holdout exists.
+    holdout_child_scalar: float | None = None
 
 
 class _ProgressBumpingSink:
@@ -1619,6 +1627,7 @@ def _holdout_aggs(
     parent_losses: dict[str, LossProfile],
     child_losses: dict[str, LossProfile],
     weights: ScoringWeights,
+    epoch_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Return the holdout parent/child aggregates, or ``(None, None)``.
 
@@ -1633,9 +1642,10 @@ def _holdout_aggs(
     A holdout id with no recorded loss on a side is simply omitted from
     that side's aggregate (the gate compares whatever overlaps).
     """
-    from zicato.board.split import split_board  # noqa: PLC0415
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
 
-    _train_ids, holdout_ids = split_board(board, weights.overfitting)
+    seed = rotation_seed(weights.overfitting, epoch_id)
+    _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=seed)
     if not holdout_ids:
         return None, None
     holdout_set = set(holdout_ids)
@@ -1654,6 +1664,7 @@ def _train_aggs(
     parent_losses: dict[str, LossProfile],
     child_losses: dict[str, LossProfile],
     weights: ScoringWeights,
+    epoch_id: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return the TRAIN-slice parent/child aggregates.
 
@@ -1662,9 +1673,10 @@ def _train_aggs(
     so these aggregates are byte-identical to the pre-split full-board
     aggregates — the back-compat invariant.
     """
-    from zicato.board.split import split_board  # noqa: PLC0415
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
 
-    train_ids, _holdout_ids = split_board(board, weights.overfitting)
+    seed = rotation_seed(weights.overfitting, epoch_id)
+    train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=seed)
     train_set = set(train_ids)
     parent_train = _losses_for(board, train_set, parent_losses)
     child_train = _losses_for(board, train_set, child_losses)
@@ -2015,9 +2027,9 @@ async def run_tournament(
     # to the pre-split full-board aggregates. The holdout slice (if any) is
     # confirmation-only and is threaded into the gate separately; it never
     # becomes the generation's reported score.
-    parent_agg, child_agg = _train_aggs(board, parent_losses, child_losses, weights)
+    parent_agg, child_agg = _train_aggs(board, parent_losses, child_losses, weights, epoch_id)
     holdout_parent_agg, holdout_child_agg = _holdout_aggs(
-        board, parent_losses, child_losses, weights
+        board, parent_losses, child_losses, weights, epoch_id
     )
 
     # The regression check + the three train-slice rules decide on the TRAIN
@@ -2058,6 +2070,9 @@ async def run_tournament(
         per_entry_losses=per_entry_losses,
         champion_eval_mode="full",
         holdout=holdout_block,
+        holdout_child_scalar=(
+            None if holdout_child_agg is None else float(holdout_child_agg["scalar"])
+        ),
     )
 
 

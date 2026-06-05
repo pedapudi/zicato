@@ -9,7 +9,7 @@ holdout so the loop behaves byte-identically to before the split existed.
 
 from __future__ import annotations
 
-from zicato.board.split import HOLDOUT_TAG, split_board
+from zicato.board.split import HOLDOUT_TAG, rotation_seed, split_board
 from zicato.core.types import BoardEntry, OverfittingConfig
 
 
@@ -101,3 +101,81 @@ def test_a_fraction_that_would_select_everything_degrades() -> None:
     train, holdout = split_board(board, cfg)
     assert holdout == ()
     assert train == tuple(e.id for e in board)
+
+
+# ---------------------------------------------------------------------------
+# Holdout rotation (OVERFITTING.md §7 / §12 #6)
+# ---------------------------------------------------------------------------
+
+
+def test_seed_none_is_byte_identical_to_the_unseeded_split() -> None:
+    # The default seed=None reproduces the pre-rotation partition exactly.
+    board = _board(60)
+    cfg = OverfittingConfig(min_board_size_for_split=8, holdout_fraction=0.3)
+    assert split_board(board, cfg) == split_board(board, cfg, seed=None)
+
+
+def test_seed_is_deterministic_per_seed() -> None:
+    board = _board(60)
+    cfg = OverfittingConfig(min_board_size_for_split=8, holdout_fraction=0.3)
+    assert split_board(board, cfg, seed="epoch-1") == split_board(board, cfg, seed="epoch-1")
+
+
+def test_distinct_seeds_rotate_the_holdout() -> None:
+    # Two epoch ids hold out a different slice — no fixed slice is mined forever.
+    board = _board(60)
+    cfg = OverfittingConfig(min_board_size_for_split=8, holdout_fraction=0.3)
+    _train_a, holdout_a = split_board(board, cfg, seed="epoch-1")
+    _train_b, holdout_b = split_board(board, cfg, seed="epoch-2")
+    assert set(holdout_a) != set(holdout_b)
+    # Both remain valid partitions of the board.
+    for holdout in (holdout_a, holdout_b):
+        assert holdout
+        assert set(holdout) < {e.id for e in board}
+
+
+def test_seed_is_ignored_under_an_explicit_holdout_tag() -> None:
+    # A hand-declared holdout is never rotated — the tag wins regardless of seed.
+    board = [_entry("a"), _entry("b", tags=(HOLDOUT_TAG,)), _entry("c")]
+    cfg = OverfittingConfig()
+    assert split_board(board, cfg, seed="epoch-1") == split_board(board, cfg, seed="epoch-2")
+    assert split_board(board, cfg, seed="epoch-1") == (("a", "c"), ("b",))
+
+
+def test_small_board_does_not_rotate() -> None:
+    # Below the split floor the holdout is empty regardless of the seed.
+    board = _board(5)
+    cfg = OverfittingConfig()
+    train, holdout = split_board(board, cfg, seed="epoch-1")
+    assert holdout == ()
+    assert train == tuple(e.id for e in board)
+
+
+# ---------------------------------------------------------------------------
+# rotation_seed policy helper
+# ---------------------------------------------------------------------------
+
+
+def test_rotation_seed_returns_epoch_id_when_rotation_on() -> None:
+    cfg = OverfittingConfig(rotate_holdout=True)
+    assert rotation_seed(cfg, "2026-06-05_alpha") == "2026-06-05_alpha"
+
+
+def test_rotation_seed_is_none_when_rotation_off() -> None:
+    cfg = OverfittingConfig(rotate_holdout=False)
+    assert rotation_seed(cfg, "2026-06-05_alpha") is None
+
+
+def test_rotation_seed_is_none_without_an_epoch_id() -> None:
+    cfg = OverfittingConfig(rotate_holdout=True)
+    assert rotation_seed(cfg, None) is None
+    assert rotation_seed(cfg, "") is None
+
+
+def test_rotate_holdout_false_keeps_the_unseeded_split_via_policy() -> None:
+    # Threaded through the policy helper, rotate_holdout=False yields the
+    # byte-identical unseeded split even when an epoch id is available.
+    board = _board(60)
+    cfg_off = OverfittingConfig(min_board_size_for_split=8, rotate_holdout=False)
+    seed = rotation_seed(cfg_off, "epoch-1")
+    assert split_board(board, cfg_off, seed=seed) == split_board(board, cfg_off, seed=None)

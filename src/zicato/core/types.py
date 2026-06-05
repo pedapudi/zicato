@@ -1589,6 +1589,25 @@ class OverfittingConfig:
         The Ladder/Thresholdout governor over the holdout query
         (:class:`LadderConfig`; OVERFITTING.md §4 / §12 #2). Default-on;
         a no-op when the holdout is empty.
+    rotate_holdout:
+        When ``True`` (default), the hash-derived holdout *rotates* across
+        epochs (OVERFITTING.md §7 / §12 #6): the epoch id is folded into the
+        id-hash at the split call sites so a different ~``holdout_fraction``
+        slice is held out each epoch — no fixed slice is mined forever.
+        Stable *within* an epoch (the seed is the epoch id). When ``False``
+        the unseeded split is used (the same slice every epoch). The
+        rotation is an epoch-local derivation: it does NOT change the
+        contract hash for an unchanged board — only this flag itself
+        participates in the hash. An explicit ``holdout`` tag is never
+        rotated.
+    max_generations_per_contract:
+        Optional cadence ceiling (OVERFITTING.md §9 / §12 #6, cross-ref
+        SELECTION-THEORY.md §5 optimal-stopping horizon). When set, the loop
+        surfaces a board-refresh *recommendation* (a health finding / logged
+        signal) once a contract has been mined for this many generations —
+        a cue that the contract should be refreshed (the operator rolls).
+        ``None`` (default) imposes no ceiling. This never forces a surprising
+        auto epoch-roll; it only recommends. Must be ``>= 1`` when set.
     """
 
     enabled: bool = True
@@ -1596,6 +1615,8 @@ class OverfittingConfig:
     min_board_size_for_split: int = 8
     restrict_proposer_visibility: bool = True
     ladder: LadderConfig = field(default_factory=_default_ladder_config)
+    rotate_holdout: bool = True
+    max_generations_per_contract: int | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 < self.holdout_fraction < 1.0:
@@ -1603,6 +1624,11 @@ class OverfittingConfig:
         if self.min_board_size_for_split < 0:
             raise ValueError(
                 f"min_board_size_for_split must be >= 0, got " f"{self.min_board_size_for_split!r}"
+            )
+        if self.max_generations_per_contract is not None and self.max_generations_per_contract < 1:
+            raise ValueError(
+                f"max_generations_per_contract must be >= 1 or None, got "
+                f"{self.max_generations_per_contract!r}"
             )
 
     @classmethod
@@ -1691,6 +1717,19 @@ class OutcomeRecord:
     #    "ladder_budget_total": int, "ladder_budget_remaining": int,
     #    "threshold": float}``. RUNTIME evidence, not a contract input.
     holdout: dict[str, Any] | None = None
+    # Per-generation train/holdout loss + the generalization gap
+    # (OVERFITTING.md §6 / §12 #5). RUNTIME evidence, not a contract input.
+    # ``train_loss`` is THIS generation's (the child's) TRAIN-slice scalar —
+    # the score that gated it. ``holdout_loss`` is its HOLDOUT-slice scalar,
+    # or ``None`` when there was no holdout (small board / split disabled /
+    # older journals). ``generalization_gap`` is ``holdout_loss - train_loss``
+    # (positive = the holdout is worse than train, the memorization signature),
+    # or ``None`` when there is no holdout. A parallel dashboard agent reads
+    # these three keys verbatim; the ``generalization_gap`` health detector
+    # reads them off the champion lineage.
+    train_loss: float | None = None
+    holdout_loss: float | None = None
+    generalization_gap: float | None = None
 
 
 #: Hard cap on the number of settled prior experiments surfaced to the

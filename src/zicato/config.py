@@ -91,12 +91,26 @@ class HealthConfig:
         Number of consecutive ``rejected`` generations
         :func:`~zicato.health.diagnostics.detect_stalled_loop` treats as
         a stall. Must be ``>= 1``.
+    generalization_gap_warn:
+        The generalization gap (``holdout_loss - train_loss``) at or above
+        which
+        :func:`~zicato.health.diagnostics.detect_generalization_gap`
+        fires a ``warning`` — the champion's holdout is starting to lag its
+        train slice (board memorization; OVERFITTING.md §6 / §12 #5). Must
+        be ``>= 0``.
+    generalization_gap_crit:
+        The gap at or above which the detector fires ``critical`` and
+        surfaces a board-refresh recommendation. Must be ``>= 0`` and is
+        clamped to at least ``generalization_gap_warn`` so the critical bar
+        never sits below the warning bar.
     """
 
     scoring_window: int = 3
     scoring_epsilon: float = 1e-6
     no_expectations_fraction: float = 0.5
     stalled_rejects: int = 3
+    generalization_gap_warn: float = 0.05
+    generalization_gap_crit: float = 0.15
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +373,16 @@ _ENV_BINDINGS: dict[str, tuple[str, str, Any]] = {
         _coerce_non_negative_float,
     ),
     "ZICATO_HEALTH_STALLED_REJECTS": ("health", "stalled_rejects", _coerce_positive_int),
+    "ZICATO_HEALTH_GENERALIZATION_GAP_WARN": (
+        "health",
+        "generalization_gap_warn",
+        _coerce_non_negative_float,
+    ),
+    "ZICATO_HEALTH_GENERALIZATION_GAP_CRIT": (
+        "health",
+        "generalization_gap_crit",
+        _coerce_non_negative_float,
+    ),
     "ZICATO_AUX_CALL_TIMEOUT": ("aux", "call_timeout_s", _coerce_positive_float),
     "ZICATO_MAX_WALL_CLOCK_SECONDS": (
         "budget",

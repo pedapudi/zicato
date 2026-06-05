@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile, ScoringWeights
 from zicato.core.types import OverfittingConfig
@@ -132,3 +134,33 @@ def test_small_board_degrades_to_the_full_board(tmp_path: Path) -> None:
     assert "ENTRY_X" in prompt
     assert "ENTRY_Y" in prompt
     assert "over 2 runs" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Per-generation train/holdout loss + gap fields (OVERFITTING.md §12 #5)
+# ---------------------------------------------------------------------------
+
+
+class _FakeResult:
+    """A minimal stand-in for a TournamentResult carrying a holdout scalar."""
+
+    def __init__(self, holdout_child_scalar: float | None) -> None:
+        self.holdout_child_scalar = holdout_child_scalar
+
+
+def test_generalization_fields_with_holdout() -> None:
+    from zicato.orchestrator import _generalization_fields
+
+    fields = _generalization_fields(0.40, _FakeResult(holdout_child_scalar=0.55))
+    assert fields["train_loss"] == 0.40
+    assert fields["holdout_loss"] == 0.55
+    assert fields["generalization_gap"] == pytest.approx(0.15)
+
+
+def test_generalization_fields_degrade_without_holdout() -> None:
+    from zicato.orchestrator import _generalization_fields
+
+    fields = _generalization_fields(0.40, _FakeResult(holdout_child_scalar=None))
+    assert fields["train_loss"] == 0.40
+    assert fields["holdout_loss"] is None
+    assert fields["generalization_gap"] is None

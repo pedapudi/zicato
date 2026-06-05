@@ -30,6 +30,8 @@ HealthConfig field                Environment variable        Default
 ``scoring_epsilon``               ``ZICATO_HEALTH_SCORING_EPSILON``   1e-6
 ``no_expectations_fraction``      ``ZICATO_HEALTH_NO_EXPECTATIONS_FRACTION``   0.5
 ``stalled_rejects``               ``ZICATO_HEALTH_STALLED_REJECTS``      3
+``generalization_gap_warn``       ``ZICATO_HEALTH_GENERALIZATION_GAP_WARN``   0.05
+``generalization_gap_crit``       ``ZICATO_HEALTH_GENERALIZATION_GAP_CRIT``   0.15
 ================================  =========================  =========
 
 * ``scoring_window`` — how many of the most-recent tournaments
@@ -42,6 +44,11 @@ HealthConfig field                Environment variable        Default
   greater than this value.
 * ``stalled_rejects`` — how many consecutive ``rejected`` generations
   :func:`detect_stalled_loop` treats as a stall.
+* ``generalization_gap_warn`` / ``generalization_gap_crit`` — the
+  ``holdout_loss - train_loss`` gap at/above which
+  :func:`detect_generalization_gap` fires ``warning`` / ``critical``
+  (the "running-but-fake-progress" overfitting detector; OVERFITTING.md
+  §6 / §12 #5).
 """
 
 from __future__ import annotations
@@ -82,6 +89,16 @@ NO_EXPECTATIONS_FRACTION: float = HealthConfig().no_expectations_fraction
 #: :attr:`zicato.config.HealthConfig.stalled_rejects`.
 STALLED_LOOP_REJECTS: int = HealthConfig().stalled_rejects
 
+#: Generalization gap (``holdout_loss - train_loss``) at/above which
+#: :func:`detect_generalization_gap` fires ``warning``. See
+#: :attr:`zicato.config.HealthConfig.generalization_gap_warn`.
+GENERALIZATION_GAP_WARN: float = HealthConfig().generalization_gap_warn
+
+#: Generalization gap at/above which :func:`detect_generalization_gap`
+#: fires ``critical`` (and recommends a board refresh). See
+#: :attr:`zicato.config.HealthConfig.generalization_gap_crit`.
+GENERALIZATION_GAP_CRIT: float = HealthConfig().generalization_gap_crit
+
 #: Namespace prefix of drift-derived metrics in the unified metric view.
 _DRIFT_NAMESPACE = "drift:"
 
@@ -115,7 +132,8 @@ class HealthFinding:
         Stable symbolic identifier for the detector that produced this
         finding. One of ``"degenerate_scoring"``,
         ``"non_differentiating_entry"``, ``"flat_drift_signal"``,
-        ``"no_expectations"``, ``"stalled_loop"``.
+        ``"no_expectations"``, ``"stalled_loop"``,
+        ``"generalization_gap"``, ``"refresh_cadence"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -473,6 +491,170 @@ def detect_stalled_loop(
     ]
 
 
+def _gap_observation(experiment: Any) -> tuple[float, float, float] | None:
+    """Return ``(train_loss, holdout_loss, generalization_gap)`` for an exp.
+
+    Reads the per-generation loss fields off the experiment's tournament
+    ``outcome`` (OVERFITTING.md §12 #5), tolerating both a typed
+    :class:`~zicato.core.types.OutcomeRecord` and the plain dict
+    ``experiment.json`` deserialises to. Returns ``None`` whenever there is
+    no measured holdout — no outcome, no holdout loss, or a missing gap —
+    which is the safe degrade: such generations contribute no signal.
+    """
+    outcome = _attr_or_key(experiment, "outcome")
+    if outcome is None:
+        return None
+    train = _attr_or_key(outcome, "train_loss")
+    holdout = _attr_or_key(outcome, "holdout_loss")
+    gap = _attr_or_key(outcome, "generalization_gap")
+    if train is None or holdout is None or gap is None:
+        return None
+    try:
+        return float(train), float(holdout), float(gap)
+    except (TypeError, ValueError):
+        return None
+
+
+def detect_generalization_gap(
+    experiments: list[Any], config: HealthConfig | None = None
+) -> list[HealthFinding]:
+    """Fire when the champion's holdout loss diverges from its train loss.
+
+    The "running-but-fake-progress" detector (OVERFITTING.md §6 / §12 #5),
+    the overfitting counterpart to the "running-but-meaningless" family. It
+    watches the **generalization gap** — ``holdout_loss - train_loss`` — over
+    the lineage. When the proposer begins *memorizing the board* rather than
+    improving true quality, the train loss keeps falling while the holdout
+    loss stalls or rises, so the gap **widens** and turns positive (the
+    holdout scores worse than the train slice).
+
+    The rule, over the generations that carry a measured holdout (both
+    ``train_loss`` and ``holdout_loss`` persisted on the outcome):
+
+    * Fewer than two such generations → no finding (nothing to compare; the
+      safe degrade when there is no holdout or the run is too young).
+    * Otherwise compute the latest gap and whether it **widened** since the
+      earliest measured generation (``gap_now > gap_first``). A gap that is
+      flat or *narrowing* is healthy regardless of magnitude — the holdout is
+      tracking train — so the detector clears.
+    * A widened gap at/above ``config.generalization_gap_crit`` fires
+      ``critical`` and recommends a board refresh (OVERFITTING.md §7 / §12 #6:
+      roll the epoch / rotate the holdout); at/above
+      ``config.generalization_gap_warn`` it fires ``warning``; below the warn
+      bar it clears.
+
+    ``config`` defaults to the env-sourced
+    :class:`~zicato.config.HealthConfig` via :func:`load_config`.
+    """
+    health = _resolve_health_config(config)
+    warn = health.generalization_gap_warn
+    crit = max(health.generalization_gap_crit, warn)
+
+    observations: list[tuple[str, float, float, float]] = []
+    for exp in experiments:
+        obs = _gap_observation(exp)
+        if obs is None:
+            continue
+        generation_id = str(_attr_or_key(exp, "generation_id") or "")
+        observations.append((generation_id, *obs))
+
+    if len(observations) < 2:
+        return []
+
+    first_gap = observations[0][3]
+    gen_now, train_now, holdout_now, gap_now = observations[-1]
+
+    # A flat or narrowing gap is healthy — the holdout tracks train.
+    if gap_now <= first_gap:
+        return []
+    # Below the warning bar there is no concern yet.
+    if gap_now < warn:
+        return []
+
+    if gap_now >= crit:
+        severity = "critical"
+        recommendation = (
+            "the champion is memorizing the board — refresh the contract: roll "
+            "the epoch (rotating the holdout) or author fresh entries "
+            "(OVERFITTING.md §7; SELECTION-THEORY.md §5 optimal-stopping horizon)"
+        )
+    else:
+        severity = "warning"
+        recommendation = (
+            "watch the holdout vs train divergence; if it keeps widening, "
+            "refresh the contract / roll the epoch (OVERFITTING.md §6–§7)"
+        )
+
+    return [
+        HealthFinding(
+            code="generalization_gap",
+            severity=severity,
+            summary=(
+                f"generalization gap widened to {gap_now:+.3f} "
+                f"(holdout_loss={holdout_now:g} − train_loss={train_now:g}) at "
+                f"generation {gen_now!r} — the champion may be overfitting the board"
+            ),
+            detail={
+                "generation_id": gen_now,
+                "train_loss": train_now,
+                "holdout_loss": holdout_now,
+                "generalization_gap": gap_now,
+                "first_generalization_gap": first_gap,
+                "warn_threshold": warn,
+                "crit_threshold": crit,
+                "generations_with_holdout": len(observations),
+                "refresh_recommended": severity == "critical",
+                "recommendation": recommendation,
+            },
+        )
+    ]
+
+
+def detect_refresh_cadence(
+    experiments: list[Any], max_generations_per_contract: int | None
+) -> list[HealthFinding]:
+    """Recommend a board refresh once a contract has been mined long enough.
+
+    The cadence half of OVERFITTING.md §7 / §12 #6. When the operator sets
+    :attr:`~zicato.core.types.OverfittingConfig.max_generations_per_contract`,
+    this surfaces a board-refresh **recommendation** (an ``info`` finding,
+    never a forced auto-roll) once the number of evaluated generations under
+    the contract reaches that ceiling — a cue that the contract has been
+    mined enough and should be refreshed (cross-ref SELECTION-THEORY.md §5,
+    the optimal-stopping horizon). The companion overfitting signal is the
+    ``critical`` :func:`detect_generalization_gap` finding; either is the
+    operator's cue to roll.
+
+    Silent when no ceiling is configured (``None`` — the default) or the
+    contract has not yet reached it.
+    """
+    if max_generations_per_contract is None:
+        return []
+    evaluated = sum(1 for exp in experiments if _attr_or_key(exp, "outcome") is not None)
+    if evaluated < max_generations_per_contract:
+        return []
+    return [
+        HealthFinding(
+            code="refresh_cadence",
+            severity="info",
+            summary=(
+                f"{evaluated} generations evaluated under this contract — at/over the "
+                f"configured cadence ceiling of {max_generations_per_contract}; consider "
+                "refreshing the board (roll the epoch)"
+            ),
+            detail={
+                "evaluated_generations": evaluated,
+                "max_generations_per_contract": max_generations_per_contract,
+                "refresh_recommended": True,
+                "recommendation": (
+                    "refresh the contract — roll the epoch (rotating the holdout) "
+                    "(OVERFITTING.md §7; SELECTION-THEORY.md §5 optimal-stopping horizon)"
+                ),
+            },
+        )
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -489,6 +671,7 @@ def assess_loop_health(
     board_entries: list[BoardEntry],
     epoch_id: str,
     config: HealthConfig | None = None,
+    max_generations_per_contract: int | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -514,6 +697,12 @@ def assess_loop_health(
         :func:`zicato.config.load_config`; resolved once here and passed
         to every threshold-using detector so the environment is read at
         most once per assessment.
+    max_generations_per_contract:
+        The cadence ceiling from
+        :attr:`~zicato.core.types.OverfittingConfig.max_generations_per_contract`,
+        threaded through so :func:`detect_refresh_cadence` can surface a
+        board-refresh recommendation. ``None`` (the default) disables the
+        cadence detector entirely.
 
     Returns
     -------
@@ -528,6 +717,8 @@ def assess_loop_health(
     findings.extend(detect_flat_drift_signal(losses_by_generation))
     findings.extend(detect_no_expectations(board_entries, health))
     findings.extend(detect_stalled_loop(experiments, health))
+    findings.extend(detect_generalization_gap(experiments, health))
+    findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -543,6 +734,8 @@ __all__ = [
     "DEGENERATE_SCORING_EPSILON",
     "NO_EXPECTATIONS_FRACTION",
     "STALLED_LOOP_REJECTS",
+    "GENERALIZATION_GAP_WARN",
+    "GENERALIZATION_GAP_CRIT",
     "HealthFinding",
     "LoopHealth",
     "assess_loop_health",
@@ -551,4 +744,6 @@ __all__ = [
     "detect_flat_drift_signal",
     "detect_no_expectations",
     "detect_stalled_loop",
+    "detect_generalization_gap",
+    "detect_refresh_cadence",
 ]

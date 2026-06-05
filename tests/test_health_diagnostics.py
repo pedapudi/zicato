@@ -24,8 +24,10 @@ from zicato.health.diagnostics import (
     assess_loop_health,
     detect_degenerate_scoring,
     detect_flat_drift_signal,
+    detect_generalization_gap,
     detect_no_expectations,
     detect_non_differentiating_entry,
+    detect_refresh_cadence,
     detect_stalled_loop,
 )
 
@@ -73,6 +75,35 @@ def _experiment(generation_id: str, *, scalar_delta: float | None, decision: str
             "rejection_reason": "" if decision != "rejected" else "no_improvement",
         }
     return {"generation_id": generation_id, "outcome": outcome}
+
+
+def _gap_experiment(
+    generation_id: str,
+    *,
+    train_loss: float | None,
+    holdout_loss: float | None,
+) -> dict:
+    """Build an ``experiment.json``-shaped dict carrying per-gen loss fields.
+
+    ``holdout_loss`` of ``None`` models the no-holdout degrade — both the
+    holdout loss and the gap are absent on the outcome.
+    """
+    gap = None if (train_loss is None or holdout_loss is None) else holdout_loss - train_loss
+    return {
+        "generation_id": generation_id,
+        "outcome": {
+            "ran_at": "2026-05-15T00:00:00Z",
+            "drift_movements": [],
+            "pass_rate_delta": 0.0,
+            "drift_loss_delta": 0.0,
+            "scalar_score_delta": 0.0,
+            "tournament_decision": "promoted",
+            "rejection_reason": "",
+            "train_loss": train_loss,
+            "holdout_loss": holdout_loss,
+            "generalization_gap": gap,
+        },
+    }
 
 
 def _board_entry(entry_id: str, *, with_expectation: bool) -> BoardEntry:
@@ -273,6 +304,137 @@ def test_stalled_loop_silent_below_threshold() -> None:
         _experiment("v2", scalar_delta=0.0, decision="rejected"),
     ]
     assert detect_stalled_loop(experiments) == []
+
+
+# ---------------------------------------------------------------------------
+# generalization_gap (OVERFITTING.md §6 / §12 #5)
+# ---------------------------------------------------------------------------
+
+
+def test_generalization_gap_fires_warning_when_gap_widens_past_warn() -> None:
+    # Train falls, holdout stalls → the gap widens from ~0 to 0.08, between
+    # the default warn (0.05) and crit (0.15) bars.
+    experiments = [
+        _gap_experiment("v1", train_loss=0.50, holdout_loss=0.50),
+        _gap_experiment("v2", train_loss=0.42, holdout_loss=0.50),
+    ]
+    findings = detect_generalization_gap(experiments)
+    assert len(findings) == 1
+    assert findings[0].code == "generalization_gap"
+    assert findings[0].severity == "warning"
+    assert findings[0].detail["refresh_recommended"] is False
+
+
+def test_generalization_gap_fires_critical_past_crit_and_recommends_refresh() -> None:
+    # Train falls hard, holdout rises → gap widens to 0.25, above crit (0.15).
+    experiments = [
+        _gap_experiment("v1", train_loss=0.50, holdout_loss=0.50),
+        _gap_experiment("v2", train_loss=0.30, holdout_loss=0.55),
+    ]
+    findings = detect_generalization_gap(experiments)
+    assert len(findings) == 1
+    assert findings[0].severity == "critical"
+    assert findings[0].detail["refresh_recommended"] is True
+    assert "refresh" in findings[0].detail["recommendation"].lower()
+
+
+def test_generalization_gap_clears_below_warn() -> None:
+    # The gap widens but only to 0.02 — below the warn bar, no finding.
+    experiments = [
+        _gap_experiment("v1", train_loss=0.50, holdout_loss=0.50),
+        _gap_experiment("v2", train_loss=0.46, holdout_loss=0.48),
+    ]
+    assert detect_generalization_gap(experiments) == []
+
+
+def test_generalization_gap_clears_when_gap_narrows() -> None:
+    # A large but *narrowing* gap is healthy — the holdout is catching up.
+    experiments = [
+        _gap_experiment("v1", train_loss=0.30, holdout_loss=0.60),  # gap 0.30
+        _gap_experiment("v2", train_loss=0.40, holdout_loss=0.50),  # gap 0.10
+    ]
+    assert detect_generalization_gap(experiments) == []
+
+
+def test_generalization_gap_degrades_with_no_holdout() -> None:
+    # No holdout on any generation → no measured gap → no finding.
+    experiments = [
+        _gap_experiment("v1", train_loss=0.50, holdout_loss=None),
+        _gap_experiment("v2", train_loss=0.30, holdout_loss=None),
+    ]
+    assert detect_generalization_gap(experiments) == []
+
+
+def test_generalization_gap_degrades_below_two_generations() -> None:
+    # A single measured generation has nothing to compare against.
+    experiments = [_gap_experiment("v1", train_loss=0.30, holdout_loss=0.55)]
+    assert detect_generalization_gap(experiments) == []
+
+
+def test_generalization_gap_env_overrides_thresholds(monkeypatch) -> None:
+    # Lower the warn bar via the env knob so a small widening now fires.
+    monkeypatch.setenv("ZICATO_HEALTH_GENERALIZATION_GAP_WARN", "0.01")
+    monkeypatch.setenv("ZICATO_HEALTH_GENERALIZATION_GAP_CRIT", "0.5")
+    experiments = [
+        _gap_experiment("v1", train_loss=0.50, holdout_loss=0.50),
+        _gap_experiment("v2", train_loss=0.46, holdout_loss=0.48),  # gap 0.02
+    ]
+    findings = detect_generalization_gap(experiments)
+    assert len(findings) == 1
+    assert findings[0].severity == "warning"
+
+
+# ---------------------------------------------------------------------------
+# refresh_cadence (OVERFITTING.md §7 / §12 #6)
+# ---------------------------------------------------------------------------
+
+
+def test_refresh_cadence_silent_when_no_ceiling() -> None:
+    experiments = [_experiment(f"v{i}", scalar_delta=-0.1, decision="promoted") for i in range(5)]
+    assert detect_refresh_cadence(experiments, None) == []
+
+
+def test_refresh_cadence_silent_below_ceiling() -> None:
+    experiments = [_experiment(f"v{i}", scalar_delta=-0.1, decision="promoted") for i in range(3)]
+    assert detect_refresh_cadence(experiments, 5) == []
+
+
+def test_refresh_cadence_recommends_refresh_at_ceiling() -> None:
+    experiments = [_experiment(f"v{i}", scalar_delta=-0.1, decision="promoted") for i in range(5)]
+    findings = detect_refresh_cadence(experiments, 5)
+    assert len(findings) == 1
+    assert findings[0].code == "refresh_cadence"
+    assert findings[0].severity == "info"
+    assert findings[0].detail["refresh_recommended"] is True
+    assert findings[0].detail["evaluated_generations"] == 5
+
+
+def test_refresh_cadence_ignores_unevaluated_experiments() -> None:
+    # Experiments without an outcome do not count toward the cadence.
+    experiments = [
+        _experiment("v1", scalar_delta=None, decision="rejected"),
+        _experiment("v2", scalar_delta=None, decision="rejected"),
+    ]
+    assert detect_refresh_cadence(experiments, 2) == []
+
+
+def test_assess_loop_health_threads_cadence_and_gap() -> None:
+    # The suite wires both new detectors; a critical gap flips healthy False.
+    experiments = [
+        _gap_experiment("v1", train_loss=0.50, holdout_loss=0.50),
+        _gap_experiment("v2", train_loss=0.30, holdout_loss=0.60),
+    ]
+    report = assess_loop_health(
+        losses_by_generation={},
+        experiments=experiments,
+        board_entries=[_board_entry("a", with_expectation=True)],
+        epoch_id="e1",
+        max_generations_per_contract=2,
+    )
+    codes = {f.code for f in report.findings}
+    assert "generalization_gap" in codes
+    assert "refresh_cadence" in codes
+    assert report.healthy is False  # the critical gap
 
 
 # ---------------------------------------------------------------------------

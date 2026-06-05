@@ -113,9 +113,25 @@ def test_overfitting_block_round_trips() -> None:
         holdout_fraction=0.4,
         min_board_size_for_split=10,
         restrict_proposer_visibility=False,
+        rotate_holdout=False,
+        max_generations_per_contract=25,
     )
     again = overfitting_config_from_dict(overfitting_config_to_dict(cfg))
     assert again == cfg
+
+
+def test_scoring_parses_rotation_and_cadence_knobs() -> None:
+    # The §12 #6 knobs (rotate_holdout / max_generations_per_contract) parse
+    # and default safely (rotation on, no ceiling) when absent.
+    o = _scoring_weights_from_dict(
+        {"overfitting": {"rotate_holdout": False, "max_generations_per_contract": 30}}
+    ).overfitting
+    assert o.rotate_holdout is False
+    assert o.max_generations_per_contract == 30
+
+    default = _scoring_weights_from_dict({"overfitting": {"holdout_fraction": 0.3}}).overfitting
+    assert default.rotate_holdout is True
+    assert default.max_generations_per_contract is None
 
 
 def test_absent_ladder_block_is_default_on() -> None:

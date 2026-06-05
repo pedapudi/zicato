@@ -289,6 +289,44 @@ def test_outcome_holdout_block_absent_reads_as_none(epoch_root: tuple[Path, str]
     assert loaded.outcome.holdout is None
 
 
+def test_outcome_generalization_fields_round_trip(epoch_root: tuple[Path, str]) -> None:
+    # The per-generation train/holdout loss + gap (OVERFITTING.md §12 #5)
+    # survive a write/read with exact values so the dashboard + gap detector
+    # read them back.
+    from dataclasses import replace
+
+    ws, eid = epoch_root
+    exp = _experiment(
+        outcome=replace(
+            _outcome(),
+            train_loss=0.42,
+            holdout_loss=0.55,
+            generalization_gap=0.13,
+        )
+    )
+    write_experiment(ws, eid, "v1", exp)
+
+    loaded = read_experiment(ws, eid, "v1")
+    assert loaded.outcome is not None
+    assert loaded.outcome.train_loss == 0.42
+    assert loaded.outcome.holdout_loss == 0.55
+    assert loaded.outcome.generalization_gap == 0.13
+
+
+def test_outcome_generalization_fields_absent_read_as_none(
+    epoch_root: tuple[Path, str],
+) -> None:
+    # No holdout (the byte-identical degrade / an older journal) reads back as
+    # None on all three fields — no crash.
+    ws, eid = epoch_root
+    write_experiment(ws, eid, "v1", _experiment(outcome=_outcome()))
+    loaded = read_experiment(ws, eid, "v1")
+    assert loaded.outcome is not None
+    assert loaded.outcome.train_loss is None
+    assert loaded.outcome.holdout_loss is None
+    assert loaded.outcome.generalization_gap is None
+
+
 def test_write_experiment_persists_round_index(
     epoch_root: tuple[Path, str],
 ) -> None:

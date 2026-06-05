@@ -239,6 +239,10 @@ def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
         kwargs["min_board_size_for_split"] = int(raw["min_board_size_for_split"])
     if "restrict_proposer_visibility" in raw:
         kwargs["restrict_proposer_visibility"] = bool(raw["restrict_proposer_visibility"])
+    if "rotate_holdout" in raw:
+        kwargs["rotate_holdout"] = bool(raw["rotate_holdout"])
+    if "max_generations_per_contract" in raw and raw["max_generations_per_contract"] is not None:
+        kwargs["max_generations_per_contract"] = int(raw["max_generations_per_contract"])
     kwargs["ladder"] = ladder_config_from_dict(raw.get("ladder"))
     return OverfittingConfig(**kwargs)
 
@@ -281,6 +285,8 @@ def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:
         "holdout_fraction": cfg.holdout_fraction,
         "min_board_size_for_split": cfg.min_board_size_for_split,
         "restrict_proposer_visibility": cfg.restrict_proposer_visibility,
+        "rotate_holdout": cfg.rotate_holdout,
+        "max_generations_per_contract": cfg.max_generations_per_contract,
         "ladder": ladder_config_to_dict(cfg.ladder),
     }
 

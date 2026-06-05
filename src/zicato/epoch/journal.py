@@ -222,6 +222,20 @@ def _hypothesis_from_dict(d: dict[str, Any]) -> HypothesisSpec:
     )
 
 
+def _opt_float(value: Any) -> float | None:
+    """Coerce a JSON value to ``float``, preserving an absent/``None`` value.
+
+    Used for the optional per-generation loss fields (OVERFITTING.md §12 #5)
+    that are ``null`` whenever there was no holdout to measure against.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
     if d is None:
         return None
@@ -266,6 +280,11 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         # as a plain JSON dict; ``None`` / absent when no holdout was
         # consulted (the byte-identical Phase-A degrade and older journals).
         holdout=d.get("holdout"),
+        # Per-generation train/holdout loss + gap (OVERFITTING.md §12 #5).
+        # ``None`` / absent on older journals and the no-holdout degrade.
+        train_loss=_opt_float(d.get("train_loss")),
+        holdout_loss=_opt_float(d.get("holdout_loss")),
+        generalization_gap=_opt_float(d.get("generalization_gap")),
     )
 
 

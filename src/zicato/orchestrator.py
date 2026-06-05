@@ -608,9 +608,14 @@ async def evolve_once(
     # slice IS the full board and every downstream artifact is byte-
     # identical to the pre-split behaviour. The mutation manifest (code
     # spans) is unrelated to the split and is left untouched.
-    from zicato.board.split import split_board  # noqa: PLC0415
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
 
-    train_ids, _holdout_ids = split_board(board, weights.overfitting)
+    # Thread the epoch id as the rotation seed (OVERFITTING.md §12 #6) so the
+    # holdout slice is stable within this epoch but rotates across epochs.
+    # ``rotation_seed`` returns ``None`` (the unseeded, byte-identical split)
+    # when ``rotate_holdout`` is off.
+    train_seed = rotation_seed(weights.overfitting, resolved_epoch_id)
+    train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=train_seed)
     train_id_set = set(train_ids)
     train_board = [e for e in board if e.id in train_id_set]
     losses = _load_parent_losses(
@@ -976,6 +981,7 @@ async def evolve_once(
     bookkeeping_decision = "promoted" if decision == "promoted" else "rejected"
     parent_scalar = float(tournament_result.parent_agg.get("scalar", 0.0))
     child_scalar = float(tournament_result.child_agg.get("scalar", 0.0))
+    _gen_fields = _generalization_fields(child_scalar, tournament_result)
     outcome_record = OutcomeRecord(
         ran_at=_now_iso(),
         drift_movements=(),  # detailed per-kind movements out-of-scope for v0
@@ -1000,6 +1006,13 @@ async def evolve_once(
         # Journaled verbatim under the stable ``holdout`` key the dashboard
         # reads (see :func:`zicato.tournament.ladder.holdout_record`).
         holdout=getattr(tournament_result, "holdout", None),
+        # Per-generation train/holdout loss + gap (OVERFITTING.md §12 #5).
+        # ``train_loss`` is the child's TRAIN-slice scalar (the score that
+        # gated it); ``holdout_loss`` its HOLDOUT-slice scalar (``None`` when
+        # no holdout existed); ``generalization_gap`` their difference.
+        train_loss=_gen_fields["train_loss"],
+        holdout_loss=_gen_fields["holdout_loss"],
+        generalization_gap=_gen_fields["generalization_gap"],
     )
     finalised = update_experiment_outcome(
         workspace_root, resolved_epoch_id, next_id, outcome_record
@@ -2691,6 +2704,34 @@ async def evolve_n_rounds(
 # ---------------------------------------------------------------------------
 
 
+def _generalization_fields(child_scalar: float, tournament_result: Any) -> dict[str, float | None]:
+    """Build the per-generation ``train_loss`` / ``holdout_loss`` / gap fields.
+
+    ``child_scalar`` is the challenger's TRAIN-slice scalar (the score that
+    gated it — the train slice IS the full board when there is no holdout, so
+    this is the byte-identical full-board scalar in the common degrade). The
+    holdout scalar is read off the runner's
+    :attr:`~zicato.tournament.runner.TournamentResult.holdout_child_scalar`,
+    which is ``None`` whenever there was no holdout to measure.
+
+    The generalization gap is ``holdout_loss - train_loss`` (OVERFITTING.md
+    §6 / §12 #5): positive = the holdout scores *worse* than train, the
+    board-memorization signature the gap detector watches for. ``None`` for
+    both holdout fields when there is no holdout — the safe, no-finding
+    degrade.
+    """
+    holdout_scalar = getattr(tournament_result, "holdout_child_scalar", None)
+    train_loss = float(child_scalar)
+    if holdout_scalar is None:
+        return {"train_loss": train_loss, "holdout_loss": None, "generalization_gap": None}
+    holdout_loss = float(holdout_scalar)
+    return {
+        "train_loss": train_loss,
+        "holdout_loss": holdout_loss,
+        "generalization_gap": holdout_loss - train_loss,
+    }
+
+
 def _now_iso() -> str:
     return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat()
 
@@ -3300,6 +3341,25 @@ def _collect_epoch_health_inputs(
     return losses_by_generation, experiments
 
 
+def _epoch_max_generations_per_contract(workspace_root: Path, epoch_id: str) -> int | None:
+    """Read the epoch's ``overfitting.max_generations_per_contract`` cadence.
+
+    Best-effort: a missing / unreadable ``scoring.json`` yields ``None`` so
+    the cadence detector stays silent (OVERFITTING.md §12 #6). Used only to
+    feed :func:`zicato.health.diagnostics.detect_refresh_cadence`.
+    """
+    import json as _json  # noqa: PLC0415
+
+    from zicato.core.workspace import scoring_path  # noqa: PLC0415
+    from zicato.workspace_loader import overfitting_config_from_dict  # noqa: PLC0415
+
+    try:
+        raw = _json.loads(scoring_path(workspace_root, epoch_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return overfitting_config_from_dict(raw.get("overfitting")).max_generations_per_contract
+
+
 def _assess_and_persist_loop_health(
     workspace_root: Path,
     epoch_id: str,
@@ -3342,6 +3402,9 @@ def _assess_and_persist_loop_health(
             experiments,
             board,
             epoch_id,
+            max_generations_per_contract=_epoch_max_generations_per_contract(
+                workspace_root, epoch_id
+            ),
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
         log.debug("loop-health assessment skipped for %s round %d: %s", epoch_id, round_n, exc)

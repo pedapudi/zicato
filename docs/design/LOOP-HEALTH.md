@@ -19,7 +19,9 @@ This document covers:
   (§1).
 - Loop health as a robustness concern — a toothless eval is a
   failure mode (§2).
-- The five detectors and their severities (§3).
+- The detectors and their severities (§3): the five "running-but-
+  meaningless" detectors plus the "running-but-fake-progress"
+  `generalization_gap` detector and the `refresh_cadence` recommendation.
 - The `LoopHealth` report (§4).
 - The `zicato health` CLI (§5).
 - How the orchestrator surfaces critical findings (§6).
@@ -206,7 +208,62 @@ attention; it is also the L5 circuit breaker's territory
 Silent until `stalled_rejects` evaluated experiments exist and the
 trailing reject-run reaches the threshold.
 
-### 3.6 Severity summary
+### 3.6 Generalization gap — `generalization_gap`
+
+**What it catches.** The "running-but-**fake-progress**" failure — the
+counterpart to the other detectors' "running-but-meaningless." Where they
+catch a *toothless* eval (no signal at all), this catches a *productive*
+loop that is producing **fake** progress: the proposer is **memorizing the
+board** rather than improving true quality
+([OVERFITTING.md §6](OVERFITTING.md) / §12 #5). It depends on the
+train/holdout board split ([OVERFITTING.md §3](OVERFITTING.md) / §12 #1):
+the proposer optimizes against the *train* slice while the *holdout* slice
+is touched only to confirm — so when the proposer overfits, the champion's
+train loss keeps falling while its holdout loss stalls or rises.
+
+**Signal.** Reads the per-generation `train_loss` / `holdout_loss` /
+`generalization_gap` (`gap = holdout_loss - train_loss`) persisted on each
+generation's tournament outcome. Over the generations that carry a measured
+holdout, it compares the latest gap to the earliest. A gap that is flat or
+*narrowing* is healthy (the holdout tracks train) and clears regardless of
+magnitude. A gap that has **widened** fires:
+
+- **`warning`** when `gap ≥ generalization_gap_warn` (default `0.05`);
+- **`critical`** when `gap ≥ generalization_gap_crit` (default `0.15`),
+  and the finding carries a **board-refresh recommendation**
+  (`detail.refresh_recommended = true`) — the cue to refresh the contract:
+  roll the epoch (rotating the holdout) per
+  [OVERFITTING.md §7](OVERFITTING.md), the *overfitting* reason to retire a
+  contract that complements the *diminishing-returns* reason in
+  [SELECTION-THEORY.md §5](SELECTION-THEORY.md) (the optimal-stopping
+  horizon).
+
+Both thresholds are `HealthConfig` fields re-tunable via
+`ZICATO_HEALTH_GENERALIZATION_GAP_WARN` / `_CRIT`. The detector **degrades
+cleanly to no finding** when there is no holdout (small board, split
+disabled — every generation's holdout loss is `null`) or fewer than two
+generations carry a measured holdout. This is the safe, default-on degrade:
+a board too small to split simply never trips it.
+
+### 3.7 Board-refresh cadence — `refresh_cadence`
+
+**What it catches.** A contract that has been mined for "long enough" even
+without a visibly widening gap — across many generations even the *holdout*
+can start to be overfit ([OVERFITTING.md §9](OVERFITTING.md)). This is the
+cadence half of the refresh policy ([OVERFITTING.md §7](OVERFITTING.md) /
+§12 #6).
+
+**Signal.** When the operator sets
+`OverfittingConfig.max_generations_per_contract` (a frozen contract field;
+`None` by default = no ceiling), the detector emits one **`info`** finding
+once the number of evaluated generations under the contract reaches that
+ceiling, carrying `detail.refresh_recommended = true` and the same
+roll-the-epoch recommendation as the `critical` `generalization_gap`. It is
+a **recommendation, never a forced auto-roll**: the operator rolls (or an
+explicitly-configured auto-stop acts). Silent when no ceiling is configured
+or the contract has not yet reached it.
+
+### 3.8 Severity summary
 
 Each detector emits a *fixed* severity (the shipped detectors do not
 escalate by severity tier — they either fire at their one severity or
@@ -219,6 +276,8 @@ stay silent):
 | `flat_drift_signal` | `warning` | total `drift:`-namespace metric count is zero across all runs |
 | `no_expectations` | `info` | fraction of entries without an expectation `> no_expectations_fraction` |
 | `stalled_loop` | `warning` | trailing run of `rejected` decisions reaches `stalled_rejects` |
+| `generalization_gap` | `warning` / `critical` | the champion's `holdout_loss - train_loss` gap has *widened* past `generalization_gap_warn` / `_crit` (board memorization) |
+| `refresh_cadence` | `info` | evaluated generations under the contract reach `max_generations_per_contract` |
 
 Severities mean:
 
@@ -288,7 +347,7 @@ Fields:
 | `epoch_id` | The epoch this report describes. |
 | `healthy` | `True` iff no finding has `warning` or `critical` severity. Purely-`info` findings do not flip it to `False`. |
 | `checked_at` | ISO-8601 UTC timestamp of when the assessment ran. |
-| `findings` | Every `HealthFinding` produced by every detector, in detector order (`degenerate_scoring`, `non_differentiating_entry`, `flat_drift_signal`, `no_expectations`, `stalled_loop`). A detector may emit more than one finding (`non_differentiating_entry` emits one per dead entry). |
+| `findings` | Every `HealthFinding` produced by every detector, in detector order (`degenerate_scoring`, `non_differentiating_entry`, `flat_drift_signal`, `no_expectations`, `stalled_loop`, `generalization_gap`, `refresh_cadence`). A detector may emit more than one finding (`non_differentiating_entry` emits one per dead entry). |
 | `findings[].code` | The detector's stable symbolic identifier (§3). |
 | `findings[].severity` | `info` / `warning` / `critical`. |
 | `findings[].summary` | One-line human-readable rendering for terminal output. |

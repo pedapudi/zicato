@@ -258,6 +258,31 @@ def test_hash_changes_on_ladder_disable(tmp_path: Path) -> None:
     assert h_on != h_off
 
 
+def test_hash_changes_on_rotate_holdout_edit(tmp_path: Path) -> None:
+    # The ``rotate_holdout`` flag (OVERFITTING.md §12 #6) folds into the
+    # contract: flipping it selects champions under a different holdout-
+    # derivation discipline, so it rolls the epoch — even though the
+    # rotation itself never touches the board's contract hash.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"overfitting": {"rotate_holdout": True}}))
+    h_on = compute_contract_hash(base)
+    base.scoring_path.write_text(json.dumps({"overfitting": {"rotate_holdout": False}}))
+    h_off = compute_contract_hash(base)
+    assert h_on != h_off
+
+
+def test_hash_changes_on_max_generations_per_contract_edit(tmp_path: Path) -> None:
+    # The cadence ceiling (OVERFITTING.md §12 #6) folds into the contract.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(
+        json.dumps({"overfitting": {"max_generations_per_contract": None}})
+    )
+    h_none = compute_contract_hash(base)
+    base.scoring_path.write_text(json.dumps({"overfitting": {"max_generations_per_contract": 20}}))
+    h_set = compute_contract_hash(base)
+    assert h_none != h_set
+
+
 def test_absent_ladder_block_hashes_as_the_defaults(tmp_path: Path) -> None:
     # A scoring.json that never mentions ``overfitting.ladder`` must hash like
     # one that spells the default-on Ladder config out in full.

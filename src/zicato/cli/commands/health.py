@@ -147,6 +147,24 @@ def _load_board(workspace_dir: Path, epoch_id: str) -> list[BoardEntry]:
         raise click.ClickException(f"Could not read board at {path}: {exc}") from exc
 
 
+def _max_generations_per_contract(workspace_dir: Path, epoch_id: str) -> int | None:
+    """Read the epoch's ``overfitting.max_generations_per_contract`` cadence.
+
+    Best-effort: a missing / unreadable ``scoring.json`` (an incomplete
+    epoch) yields ``None`` — the cadence detector simply stays silent rather
+    than failing the health command.
+    """
+    from zicato.core.workspace import scoring_path  # noqa: PLC0415
+    from zicato.workspace_loader import overfitting_config_from_dict  # noqa: PLC0415
+
+    path = scoring_path(workspace_dir, epoch_id)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return overfitting_config_from_dict(raw.get("overfitting")).max_generations_per_contract
+
+
 def render_report(report: LoopHealth) -> str:
     """Render a :class:`LoopHealth` report as colour-coded terminal text.
 
@@ -214,6 +232,7 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
         experiments=experiments,
         board_entries=board_entries,
         epoch_id=epoch_id,
+        max_generations_per_contract=_max_generations_per_contract(workspace_dir, epoch_id),
     )
 
     click.echo(render_report(report))
