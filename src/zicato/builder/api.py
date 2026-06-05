@@ -21,12 +21,12 @@ shapes via the existing validators. They never start a live run.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from zicato.builder import operations as ops
@@ -111,6 +111,17 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     raise ValueError(f"unknown builder op {op!r}")
 
 
+def _format_sse(frame: dict[str, Any]) -> str:
+    """Encode one copilot frame as an SSE ``data:`` event.
+
+    Reuses the dashboard's one-frame-per-``data:``-line convention (see
+    :func:`zicato.dashboard.sse._format_sse`); each frame's ``type`` is its
+    semantic event, carried inside the JSON so the frontend reads a single
+    uniform schema off ``JSON.parse(e.data).type``.
+    """
+    return f"data: {json.dumps(frame, default=str)}\n\n"
+
+
 async def _read_json_body(request: Request) -> dict[str, Any]:
     """Parse a JSON request body into a dict (empty on absence / error)."""
     try:
@@ -133,7 +144,7 @@ def make_builder_endpoints(
     *,
     read_only: bool = False,
     store: DraftStore | None = None,
-) -> dict[str, Callable[[Request], Awaitable[JSONResponse]]]:
+) -> dict[str, Callable[[Request], Awaitable[Response]]]:
     """Build the builder REST handlers bound to a workspace + draft store.
 
     The handlers are thin over :mod:`zicato.builder.operations`. ``store``
@@ -230,11 +241,51 @@ def make_builder_endpoints(
             return JSONResponse({"error": str(exc)}, status_code=400)
         return JSONResponse(result.to_dict())
 
+    async def builder_chat(request: Request) -> Response:
+        """Stream the copilot's reply + draft patches as SSE.
+
+        Reads ``{session, message}``, then streams the copilot run's frames
+        (``token`` / ``tool`` / ``patch`` / ``done`` / ``error``) as
+        ``text/event-stream``. The copilot's tools mutate the SAME session
+        draft this handler's siblings edit (the shared ``draft_store``), so
+        the FORM updates live and a subsequent ``GET /builder/draft``
+        reflects the change. Graceful degrade — a disabled / ADK-less chat
+        yields a single clear ``error`` frame (the form path is untouched).
+        The copilot never rolls the epoch: its ``apply`` is dry-run only.
+        """
+        forbidden = _forbidden()
+        if forbidden is not None:
+            return forbidden
+        try:
+            body = await _read_json_body(request)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        message = body.get("message")
+        if not isinstance(message, str) or not message:
+            return JSONResponse({"error": "missing 'message'"}, status_code=400)
+        session = _session_of(body, request)
+        config = load_builder_config(root)
+
+        async def _stream() -> AsyncIterator[str]:
+            from zicato.builder.copilot import run_copilot  # noqa: PLC0415
+
+            async for frame in run_copilot(
+                config,
+                session_id=session,
+                message=message,
+                store=draft_store,
+                workspace_root=root,
+            ):
+                yield _format_sse(frame)
+
+        return StreamingResponse(_stream(), media_type="text/event-stream")
+
     return {
         "builder_config": builder_config,
         "builder_draft": builder_draft,
         "builder_op": builder_op,
         "builder_apply": builder_apply,
+        "builder_chat": builder_chat,
     }
 
 
@@ -254,6 +305,7 @@ def builder_routes(
         Route("/builder/draft", handlers["builder_draft"], methods=["GET"]),
         Route("/builder/op", handlers["builder_op"], methods=["POST"]),
         Route("/builder/apply", handlers["builder_apply"], methods=["POST"]),
+        Route("/builder/chat", handlers["builder_chat"], methods=["POST"]),
     ]
 
 
