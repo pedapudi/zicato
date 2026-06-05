@@ -536,17 +536,17 @@ such keys exist in the loader, the strategies, or the tests today.
 
 ---
 
-## 10. Visual language (Console IV — design-only, NOT built)
+## 10. Visual language (Console — design-only, NOT built)
 
 > **Status.** As speculative as the rest of this note. The duel matrix is
 > not even surfaced in the dashboard today. This section records *how each
-> method would render* in the existing Console IV idiom, so the dashboard
+> method would render* in the existing Console idiom, so the dashboard
 > design travels with the math.
 
 These methods all derive from one object — the **pairwise duel matrix** —
 so the idiomatic answer is **one honest substrate plus a switchable
 resolver lens**, not a gallery of unrelated charts. Every figure below
-stays in the Console IV language: Tufte small-multiples and signed
+stays in the Console language: Tufte small-multiples and signed
 dot-plots, diverging **green = improvement / red = regression**, the
 **champion always a reference rule (never an ordinary mark)**, the **gate
 margin always a shaded band**, direct labeling over legends, and all of it

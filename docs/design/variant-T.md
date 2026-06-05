@@ -1,11 +1,12 @@
-# Variant T — "Console IV": the convergence-IV anchor
+# Variant T — "Console IV" (ships as **Console**): the convergence-IV anchor
 
 > For the consolidated, current visual design language (the colour-role system,
 > typography, the mark grammar, render discipline, and the design lineage), see
-> [CONSOLE-IV-DESIGN-LANGUAGE.md](CONSOLE-IV-DESIGN-LANGUAGE.md) — the source of
+> [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md) — the source of
 > truth. This file is the round-by-round changelog.
 
-Console IV is the round-6 **convergence-IV anchor**: the direct synthesis the
+Console (bake-off codename "Console IV") is the round-6 **convergence-IV
+anchor**: the direct synthesis the
 operator asked for — **Variant P (Console III, judged the best-looking console)**
 with three folds:
 

@@ -1,6 +1,6 @@
 # zicato — presentation deck
 
-A Console IV–styled deck introducing zicato: the problem (multi-agent systems
+A Console–styled deck introducing zicato: the problem (multi-agent systems
 **drift** and you can't tell if a change helped), why it's hard, how it composes
 known-good selection theory, the **novel advantage** (goldfive's custom judges
 turn agent behaviour into a shaped drift **loss**), and a tour of the feature set.
@@ -18,7 +18,7 @@ turn agent behaviour into a shaped drift **loss**), and a tour of the feature se
 (**epoch ⊃ round ⊃ generation** — a round mints a field of generations) ·
 5. Standing on known-good techniques · 6. The novel advantage — goldfive's judges
 → a shaped loss · 7. The gate (protected incumbent) · 8. Tournament structures ·
-9. The modular proposer · 10. Overfitting defenses · 11. Operate it (Console IV) ·
+9. The modular proposer · 10. Overfitting defenses · 11. Operate it (Console) ·
 12. Closing.
 
 ## Sources

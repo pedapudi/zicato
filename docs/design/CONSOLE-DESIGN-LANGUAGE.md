@@ -1,6 +1,6 @@
-# Console IV — the design language
+# Console — the design language
 
-This document is the single, current source of truth for the **Console IV**
+This document is the single, current source of truth for the **Console**
 dashboard UI (the variant code-named **T**, the convergence winner of the
 dashboard bake-off and the sole shipping front end). It consolidates a design
 language that had been scattered across a round-by-round changelog
@@ -15,9 +15,9 @@ in [variant-T.md](variant-T.md) and the bake-off field record in
 [DASHBOARD-VARIANTS.md](DASHBOARD-VARIANTS.md) remain as history; this is the
 present-tense reference.
 
-## 1. What Console IV is
+## 1. What Console is
 
-Console IV is a **decision-centric console, not a report**. Its one job — the
+Console is a **decision-centric console, not a report**. Its one job — the
 same as the dashboard's overall ([DASHBOARD.md](DASHBOARD.md)) — is to make the
 promote/reject decision over a champion-vs-challenger tournament **legible while
 it is still in flight**. The aesthetic stance that follows from that job:
@@ -32,13 +32,13 @@ it is still in flight**. The aesthetic stance that follows from that job:
   data-ink-maximal. The single permanent spacing baseline is **cozy** (the
   density picker was removed); the operator tunes the fit with a page-wide
   **scale** pill, not a density toggle.
-- **A console technical aesthetic.** Monospace data, a `CONSOLE IV` chrome
+- **A console technical aesthetic.** Monospace data, a `CONSOLE` chrome
   brand, terminal-derived colour palettes, and a chess/tournament metaphor
   (crowns, the champion-gate, ladders and brackets) give the surface a
   coherent terminal-and-tournament voice. See §8 for the lineage of these
   choices.
 
-Console IV is self-contained under `js/variants/T/**` + `console4.css` + the
+Console is self-contained under `js/variants/T/**` + `console4.css` + the
 entry `app_T.js`, reusing only the shared `js/core/*` data spine. Exactly one UI
 loads at a time.
 
@@ -355,7 +355,7 @@ poll*. `live.js` owns one persistent `LiveController` patched in place on every
 
 ## 8. Design-language inspirations / lineage
 
-Console IV's grammar is not arbitrary — each principle traces to a public design
+Console's grammar is not arbitrary — each principle traces to a public design
 authority. (These influences belong in this document; they are deliberately
 **not** cited in the source code.)
 
@@ -398,7 +398,7 @@ the console aesthetic (§8.3).
 
 ### 8.3 The terminal / console technical aesthetic
 
-The `CONSOLE IV` chrome brand, the monospace data face (the default Technical
+The `CONSOLE` chrome brand, the monospace data face (the default Technical
 typeface's JetBrains Mono for all data/labels/code), and the terminal-derived
 palettes together give the surface a **terminal-and-console voice** — the
 instrument reads like a power-user's console, not a consumer report.

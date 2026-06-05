@@ -2,7 +2,7 @@
 
 > **Status.** SHIPPED. The deterministic backend lives at
 > `zicato/builder/{config,draft,operations,api,copilot,copilot_tools}.py`; the
-> frontend is a self-contained Console-IV view
+> frontend is a self-contained Console view
 > (`dashboard/static/js/variants/T/views/builder.js` + `…/builder/*`); the
 > launch surfaces are the dashboard `#/builder` deep-link, the dashboard
 > Settings panel (`…/views/settings.js`), and the standalone `zicato builder`

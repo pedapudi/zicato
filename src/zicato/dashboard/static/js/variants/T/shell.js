@@ -511,7 +511,7 @@ export function mountShell(root) {
     el('div', { class: 'dt-brand' }, [
       brandMark(),
       brandWordmark(),
-      el('span', { class: 'dt-brand-variant', text: 'console iv' }),
+      el('span', { class: 'dt-brand-variant', text: 'console' }),
     ]),
     _crumbHost,
     el('span', { class: 'dt-topbar-spacer' }),

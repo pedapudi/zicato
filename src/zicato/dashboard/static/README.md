@@ -9,9 +9,9 @@ Google Fonts, loaded by `app_T.js` with `display=swap` + system
 fallbacks). Everything else in this directory must remain self-contained
 — no CDN, no remote scripts.
 
-The shipping UI is **Console IV** (the bake-off convergence winner,
+The shipping UI is **Console** (the bake-off convergence winner,
 code-named **Variant T**); its design language is documented in
-`docs/design/CONSOLE-IV-DESIGN-LANGUAGE.md`. It is self-contained under
+`docs/design/CONSOLE-DESIGN-LANGUAGE.md`. It is self-contained under
 `js/variants/T/**` + `css/variants/T/console4.css`, reusing only the
 shared `js/core/*` data spine. Exactly one UI loads at a time.
 
@@ -24,7 +24,7 @@ module codes against are pinned in `js/CONTRACTS.md`.
 
 - `index.html` — single-page shell hosting `#variant-root`. Loads the
   variant CSS + `app_T.js` (as a module).
-- `app_T.js` — the thin entry point for Console IV. Loads Google Fonts,
+- `app_T.js` — the thin entry point for Console. Loads Google Fonts,
   imports the core spine + the Variant-T shell, wires the event bus
   (state mutation / route change → render), and bootstraps.
 - `js/core/` — the data/render spine shared by the variant. `state.js`
@@ -33,7 +33,7 @@ module codes against are pinned in `js/CONTRACTS.md`.
   fetches), `sse.js` (EventSource + typed deltas), `dom.js` (the keyed,
   no-flash `el`/`svgEl` render primitives), `format.js`,
   `harmonograf.js`, `hypothesis_block.js`.
-- `js/variants/T/` — the Console IV UI. `shell.js` (chrome + the
+- `js/variants/T/` — the Console UI. `shell.js` (chrome + the
   tree-sidebar ↔ detail-pane router host + the page-scale pill),
   `router.js` (the hierarchical hash routes), `tree.js` (the data-model
   TREE sidebar, round-grouped), `svg.js` (the data-viz primitives —
@@ -48,7 +48,7 @@ module codes against are pinned in `js/CONTRACTS.md`.
   accessors). `js/variants/T/views/**` paints one detail pane each
   (`home`, `epoch`, `gens`, `candidate`, `board`, `boards`, `rounds`,
   `structure`, `mutations`, `publication`, `diff`).
-- `css/variants/T/console4.css` — all Console IV styling: the
+- `css/variants/T/console4.css` — all Console styling: the
   sixteen-theme `--v2-*` six-role token contract (swapped by
   `[data-t-theme]`), the typeface tokens (`[data-t-type]`), and every
   fit-to-width SVG mark's classes (`dn-*` / `dt-*`).
@@ -73,7 +73,7 @@ children, nothing is written — a steady heartbeat is a true no-op, so
 scroll position, focus and the hovercard survive. Live state animates
 *values / positions* (CSS transitions, never `animation: …infinite`),
 while digest-gating governs *structure*. See
-`docs/design/CONSOLE-IV-DESIGN-LANGUAGE.md` §6.
+`docs/design/CONSOLE-DESIGN-LANGUAGE.md` §6.
 
 ## Environment-view data flow
 

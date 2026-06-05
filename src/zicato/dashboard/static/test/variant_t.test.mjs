@@ -786,17 +786,15 @@ test('pickers: typeface (Technical default) + colour (monokai default) switch + 
   freshState();
   const root = document.createElement('div');
   assertEqual(ui.DEFAULT_COLOR, 'monokai', 'monokai is the default colour theme');
-  assertEqual(ui.DEFAULT_TYPE, 'technical', 'Code mono (technical) is the default typeface');
+  assertEqual(ui.DEFAULT_TYPE, 'technical', 'Technical is the default typeface');
   const typeIds = ui.TYPE_THEMES.map((t) => t[0]);
   // The typeface ids are EXACTLY editorial/technical/display — no Sans.
   assertDeep(typeIds, ['editorial', 'technical', 'display'], 'typeface ids are exactly editorial/technical/display (Sans removed)');
   assert(!typeIds.includes('sans'), 'the redundant Sans typeface is gone');
-  // CHANGE 3: all three are MONOSPACE, with a legible code↔prose distinction
-  // in the LABELS (prose mono / code mono / display mono).
-  const typeLabels = ui.TYPE_THEMES.map((t) => t[1].toLowerCase());
-  assert(typeLabels.every((l) => l.includes('mono')), 'every typeface label names it a monospace voice');
-  assert(typeLabels.some((l) => l.includes('code')) && typeLabels.some((l) => l.includes('prose')),
-    'the labels carry the code-vs-prose distinction');
+  // the three modes keep their original NAMES — Editorial / Technical / Display.
+  const typeLabels = ui.TYPE_THEMES.map((t) => t[1]);
+  assertDeep(typeLabels, ['Editorial', 'Technical', 'Display'],
+    'the three modes are named Editorial / Technical / Display');
   const colorIds = ui.COLOR_THEMES.map((t) => t[0]);
   assert(['monokai', 'solarized-dark', 'solarized-light'].every((c) => colorIds.includes(c)), 'the three original colour themes are kept');
   shell.applyTheme('solarized-dark', root);
@@ -6326,15 +6324,18 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
   coreState.state.activeTournament = null;
 });
 
-// ---- typeface voices: ALL THREE are MONOSPACE, code↔prose distinct (CHANGE 3) -----
+// ---- typeface voices: Editorial / Technical / Display — three distinct voices -----
 //
-// Console IV is a terminal-aesthetic dashboard, so every typeface option is a
-// MONOSPACE family — they vary along a code↔prose axis, NOT serif/sans/display.
-// Technical = a CODE mono (JetBrains Mono), Editorial = a PROSE/humanist mono
-// (iA Writer Mono), Display = a DISPLAY mono (Space Mono). Asserted against the
-// resolved --n-font-* / --v2-* token strings declared in the scoped CSS, plus
-// each stack ending in a monospace fallback.
-test('typeface voices: ALL THREE are monospace — technical=code mono, editorial=prose mono, display=display mono (from the CSS tokens)', () => {
+// The three modes keep their names AND their distinct voices, body included:
+//   Editorial — a reading SERIF throughout (Source Serif 4).
+//   Technical (DEFAULT) — an all-MONOSPACE MIXTURE: iA Writer Mono (a warm,
+//               humanist PROSE mono) for body / headings / publication, and
+//               JetBrains Mono (a crisp CODE mono) for data / labels / code —
+//               a genuine prose↔code mono mixture.
+//   Display — a geometric/condensed voice (Space Grotesk body + Archivo Narrow
+//             headings & big numerals).
+// Asserted against the resolved --n-font-* / --v2-* token strings in the CSS.
+test('typeface voices: editorial=serif, technical=prose↔code mono mixture, display=geometric/condensed (from the CSS tokens)', () => {
   const css = readCss();
   // Pull the base block (where --n-font-* primitives are declared) so we can
   // resolve var(...) references the per-type blocks point at.
@@ -6361,38 +6362,49 @@ test('typeface voices: ALL THREE are monospace — technical=code mono, editoria
   const tech = typeBlock('technical');
   const disp = typeBlock('display');
 
-  // base mono primitives — every one ends in the generic `monospace` keyword.
-  const code = resolve(baseBlock, 'n-font-code');
-  const prose = resolve(baseBlock, 'n-font-prose');
-  const displayMono = resolve(baseBlock, 'n-font-display-mono');
-  assert(/JetBrains Mono/.test(code) && /monospace\s*$/.test(code), 'code mono is JetBrains Mono → monospace fallback');
-  assert(/iA Writer Mono/.test(prose) && /monospace\s*$/.test(prose), 'prose mono is iA Writer Mono → monospace fallback');
-  assert(/Space Mono/.test(displayMono) && /monospace\s*$/.test(displayMono), 'display mono is Space Mono → monospace fallback');
+  // base primitives.
+  const proseMono = resolve(baseBlock, 'n-font-prose-mono');
+  const codeMono = resolve(baseBlock, 'n-font-mono-real');
+  const serif = resolve(baseBlock, 'n-font-serif');
+  const geo = resolve(baseBlock, 'n-font-geo');
+  const display = resolve(baseBlock, 'n-font-display');
+  assert(/iA Writer Mono/.test(proseMono) && /monospace\s*$/.test(proseMono), 'prose mono is iA Writer Mono → monospace fallback');
+  assert(/JetBrains Mono/.test(codeMono) && /monospace\s*$/.test(codeMono), 'code mono is JetBrains Mono → monospace fallback');
+  assert(/Source Serif 4/.test(serif) && /serif\s*$/.test(serif), 'serif is Source Serif 4 → serif fallback');
+  assert(/Space Grotesk/.test(geo), 'geo is the geometric Space Grotesk family');
+  assert(/Archivo Narrow/.test(display), 'display headings are the condensed Archivo Narrow face');
 
-  // Technical (DEFAULT) = the CODE mono, applied to EVERY surface (body, mono,
-  // headings, publication) — one mono voice throughout.
-  for (const tok of ['v2-sans', 'v2-mono', 'n-font-head', 'n-font-paper']) {
-    assertEqual(resolve(tech, tok), code, 'technical ' + tok + ' is the code mono (JetBrains Mono)');
-  }
-  // Editorial = the PROSE/humanist mono throughout.
-  for (const tok of ['v2-sans', 'v2-mono', 'n-font-head', 'n-font-paper']) {
-    assertEqual(resolve(ed, tok), prose, 'editorial ' + tok + ' is the prose mono (iA Writer Mono)');
-  }
-  // Display = the DISPLAY mono throughout.
-  for (const tok of ['v2-sans', 'v2-mono', 'n-font-head', 'n-font-paper']) {
-    assertEqual(resolve(disp, tok), displayMono, 'display ' + tok + ' is the display mono (Space Mono)');
-  }
+  // Technical (DEFAULT) is an all-MONOSPACE MIXTURE: prose mono for body /
+  // headings / publication, code mono for data / labels. Both stacks are mono.
+  assertEqual(resolve(tech, 'v2-sans'), proseMono, 'technical body (--v2-sans) is the prose mono (iA Writer Mono)');
+  assertEqual(resolve(tech, 'n-font-head'), proseMono, 'technical headings are the prose mono');
+  assertEqual(resolve(tech, 'n-font-paper'), proseMono, 'technical publication is the prose mono');
+  assertEqual(resolve(tech, 'v2-mono'), codeMono, 'technical data/labels (--v2-mono) are the code mono (JetBrains Mono)');
+  assert(/monospace\s*$/.test(proseMono) && /monospace\s*$/.test(codeMono), 'BOTH technical faces are monospace (all-mono mixture)');
+  assert(proseMono !== codeMono, 'technical mixes TWO distinct monos (prose vs code)');
 
-  // EVERY resolved body stack is monospace; the three are mutually distinct.
-  for (const [id, stack] of [['technical', code], ['editorial', prose], ['display', displayMono]]) {
-    assert(/monospace\s*$/.test(stack), id + ' body stack ends in the generic monospace keyword');
-  }
-  assert(code !== prose && code !== displayMono && prose !== displayMono,
-    'code / prose / display monos are three distinct families');
-  // and none is a serif or proportional sans — purely a code↔prose mono axis.
-  for (const stack of [code, prose, displayMono]) {
-    assert(!/serif/.test(stack) || /monospace/.test(stack), 'no proportional serif voice — monospace only');
-  }
+  // Editorial: the BODY is a SERIF, distinct from the technical monos.
+  const edSans = resolve(ed, 'v2-sans');
+  const edPaper = resolve(ed, 'n-font-paper');
+  assert(/Source Serif 4/.test(edSans), 'editorial body (--v2-sans) is a serif (Source Serif 4)');
+  assert(/serif/.test(edSans), 'editorial body stack ends in a serif fallback');
+  assert(edSans !== proseMono && edSans !== codeMono, 'editorial body is NOT a mono');
+  assert(/Source Serif 4/.test(edPaper) && /serif/.test(edPaper), 'editorial publication voice is serif');
+  assert(/Source Serif 4|serif/.test(resolve(ed, 'n-font-head')), 'editorial headings are serif');
+
+  // Display: the BODY is the geometric family, distinct from the serif and the
+  // monos; headings are the condensed display face.
+  const dispSans = resolve(disp, 'v2-sans');
+  const dispPaper = resolve(disp, 'n-font-paper');
+  const dispHead = resolve(disp, 'n-font-head');
+  assert(/Space Grotesk/.test(dispSans), 'display body (--v2-sans) is the geometric display family (Space Grotesk)');
+  assert(dispSans !== edSans && dispSans !== proseMono && dispSans !== codeMono, 'display body is NOT the serif or a mono');
+  assert(/Space Grotesk/.test(dispPaper), 'display publication voice is the geometric family');
+  assert(/Archivo Narrow/.test(dispHead), 'display headings/big-nums are the condensed display face (Archivo Narrow)');
+
+  // the three bodies are mutually distinct.
+  assert(edSans !== dispSans && edSans !== proseMono && dispSans !== proseMono,
+    'editorial / technical / display bodies are three distinct families');
 });
 
 // the brand wordmark pins to a FIXED brand mono, INDEPENDENT of the user's
@@ -6416,30 +6428,43 @@ test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappa
   assert(/var\(--v2-brand-mono\)/.test(src), 'the wordmark text font-family is var(--v2-brand-mono)');
 });
 
-// the three monospace faces are SELF-HOSTED woff2 declared via @font-face in the
-// scoped CSS — NO external font CDN, so a blocked network never affects the page.
-test('fonts: the three monospace faces are SELF-HOSTED woff2 via @font-face (no CDN)', async () => {
+// FONTS — a SPLIT loading strategy:
+//   * Technical's two monos (iA Writer Mono + JetBrains Mono) are SELF-HOSTED
+//     woff2 declared via @font-face in the scoped CSS — the DEFAULT mode never
+//     touches a CDN. Space Mono is gone (Display reverts to its geometric sans).
+//   * Editorial's serif + Display's geometric/condensed families load from the
+//     Google-Fonts loader in app_T.js (display=swap).
+test('fonts: technical monos are SELF-HOSTED woff2; editorial/display families load via the Google-Fonts loader', async () => {
   const css = readCss();
-  for (const fam of ['JetBrains Mono', 'iA Writer Mono', 'Space Mono']) {
+  // the two TECHNICAL monos are self-hosted via @font-face from local woff2.
+  for (const fam of ['iA Writer Mono', 'JetBrains Mono']) {
     const re = new RegExp('@font-face[^}]*font-family:\\s*"' + fam + '"[^}]*url\\([^)]*\\.woff2[^)]*\\)\\s*format\\("woff2"\\)', 's');
     assert(re.test(css), '@font-face declares ' + fam + ' from a local .woff2');
   }
-  assert(/font-display:\s*swap/.test(css), 'faces load with font-display: swap');
-  // the @font-face src never points at an external host.
+  // Space Mono is no longer declared (Display reverts to its geometric sans).
+  assert(!/Space Mono/.test(css), 'Space Mono is no longer referenced in the CSS');
+  assert(/font-display:\s*swap/.test(css), 'self-hosted faces load with font-display: swap');
+  // every @font-face src is LOCAL (no external host) — the self-hosted monos.
   const faces = css.match(/@font-face\s*\{[^}]*\}/gs) || [];
-  assert(faces.length >= 3, 'at least three @font-face blocks declared');
+  assert(faces.length >= 2, 'at least two @font-face blocks declared (iA Writer Mono + JetBrains Mono)');
   for (const f of faces) assert(!/url\(\s*['"]?https?:/.test(f), 'a face src is a LOCAL url (no http/https CDN)');
 
-  // app_T.js no longer injects an external Google-Fonts link — the faces are
-  // loaded purely by the self-hosting @font-face in the stylesheet.
   const fs = await import('node:fs');
   const appJs = fs.readFileSync(new URL('../app_T.js', import.meta.url), 'utf8');
-  assert(!/fonts\.googleapis\.com/.test(appJs), 'app_T.js no longer references an external font CDN');
+  // Editorial (serif) + Display (geometric/condensed) load from the Google-Fonts
+  // loader; JetBrains Mono is self-hosted so it must NOT be in the CDN request.
+  const loaded = [...appJs.matchAll(/family=([A-Za-z0-9+]+)/g)].map((m) => m[1].replace(/\+/g, ' '));
+  for (const fam of ['Source Serif 4', 'Space Grotesk', 'Archivo Narrow']) {
+    assert(loaded.includes(fam), 'app_T.js loads the ' + fam + ' family (display=swap)');
+  }
+  assert(!loaded.includes('JetBrains Mono'), 'JetBrains Mono is self-hosted, NOT requested from the CDN');
+  assert(!loaded.includes('iA Writer Mono'), 'iA Writer Mono is self-hosted, NOT requested from the CDN');
+  assert(/display=swap/.test(appJs), 'CDN fonts are requested with display=swap');
 
-  // the woff2 files actually ship on disk under static/fonts/.
+  // the self-hosted woff2 files actually ship on disk under static/fonts/.
   const path = await import('node:path');
   const fontsDir = path.dirname(new URL('../app_T.js', import.meta.url).pathname) + '/fonts';
-  for (const f of ['JetBrainsMono-Regular.woff2', 'iAWriterMonoS-Regular.woff2', 'SpaceMono-Regular.woff2']) {
+  for (const f of ['JetBrainsMono-Regular.woff2', 'iAWriterMonoS-Regular.woff2']) {
     assert(fs.existsSync(fontsDir + '/' + f) && fs.statSync(fontsDir + '/' + f).size > 0, 'ships ' + f);
   }
 });

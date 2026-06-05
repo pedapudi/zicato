@@ -1,18 +1,18 @@
 ---
 name: zicato-watch-dashboard
-description: Open and read zicato's live "Console IV" dashboard during (or after) an evolve run — navigate the view hierarchy Environment → Epoch → Generations/round Match-ups → Boards → Mutation surface → Publication, read the configured tournament structure's match-up figure (racing survival funnel / swiss ladder / elim flow / gauntlet Δ-lanes), tell whether the loop improved, and narrate what is running. Screenshot it with browser-use. Use whenever you need to observe an in-flight or post-mortem epoch.
+description: Open and read zicato's live "Console" dashboard during (or after) an evolve run — navigate the view hierarchy Environment → Epoch → Generations/round Match-ups → Boards → Mutation surface → Publication, read the configured tournament structure's match-up figure (racing survival funnel / swiss ladder / elim flow / gauntlet Δ-lanes), tell whether the loop improved, and narrate what is running. Screenshot it with browser-use. Use whenever you need to observe an in-flight or post-mortem epoch.
 ---
 
-# Watch the zicato dashboard (Console IV)
+# Watch the zicato dashboard (Console)
 
 The dashboard is zicato's **decision-centric console**: its one job is to make
 the promote/reject decision over a champion-vs-challenger tournament legible
-**while it is still in flight**. The shipping UI is **Console IV** (the
+**while it is still in flight**. The shipping UI is **Console** (the
 converged winner of the dashboard bake-off, internally "variant T"); it is the
 sole front end. The primary surfaces are fit-to-width SVG figures — funnels,
 ladders, brackets, dot-plots, heatmaps — built on a fixed visual grammar (the
 same mark means the same thing everywhere). See
-[../../docs/design/CONSOLE-IV-DESIGN-LANGUAGE.md](../../docs/design/CONSOLE-IV-DESIGN-LANGUAGE.md)
+[../../docs/design/CONSOLE-DESIGN-LANGUAGE.md](../../docs/design/CONSOLE-DESIGN-LANGUAGE.md)
 (the present-tense source of truth) and [../../AGENTS.md](../../AGENTS.md) for
 the operating rules.
 
@@ -201,7 +201,7 @@ completed record so a mid-run epoch never shows an empty ladder.
 
 ## See also
 
-- [CONSOLE-IV-DESIGN-LANGUAGE.md](../../docs/design/CONSOLE-IV-DESIGN-LANGUAGE.md) — the visual grammar + the figures (the present-tense source of truth).
+- [CONSOLE-DESIGN-LANGUAGE.md](../../docs/design/CONSOLE-DESIGN-LANGUAGE.md) — the visual grammar + the figures (the present-tense source of truth).
 - [zicato-tournament-forensics](../zicato-tournament-forensics/SKILL.md) — read one promote/reject decision (the matchup detail + the gate).
 - [zicato-diagnose-health](../zicato-diagnose-health/SKILL.md) — interpret the loop-health panel; fix a toothless eval.
 - [zicato-analyze-epoch](../zicato-analyze-epoch/SKILL.md) — the epoch retrospective behind the Publication tab.

@@ -1,8 +1,9 @@
 # Dashboard variant bake-off — the durable record
 
 > Record-keeping document. A six-round design bake-off produced 23 dashboard
-> variants (**A–W**) for the zicato dashboard. **T (Console IV) is the
-> convergence winner and the new UI.** This document is the durable record of
+> variants (**A–W**) for the zicato dashboard. **T (bake-off codename "Console
+> IV", now shipping as Console) is the convergence winner and the new UI.** This
+> document is the durable record of
 > the field — the shared visual-element catalogue (Part 1) and the per-variant
 > look-and-feel (Part 2) — written so the variant *code* under
 > `src/zicato/dashboard/static/js/variants/<LETTER>/` +
@@ -19,7 +20,7 @@
 
 - **2026-06-01 — bake-off field archived.** Variants **A–W** (the bake-off
   field) were removed from `main` and preserved at the git tag
-  `dashboard-bakeoff-2026-06-01`. **Variant T (Console IV)** stayed on `main`
+  `dashboard-bakeoff-2026-06-01`. **Variant T (Console)** stayed on `main`
   as the converged, default UI (`app_T.js` + `js/variants/T/` +
   `css/variants/T/console4.css`).
 - **2026-06-02 — latent fallback shells retired.** The two remaining
@@ -52,7 +53,7 @@ The lineage of judgements that shaped the convergence:
 - M's spacing/proportion and L's mutation-viewer quality were singled out as good.
 - P (Console III) was judged the best-looking console and became the round-6
   anchor; S's side-by-side compare and Q's spacing were folded into it.
-- **T (Console IV)** is the converged anchor — the new UI.
+- **T (Console)** is the converged anchor — the new UI.
 
 ---
 
@@ -118,7 +119,7 @@ appears in that variant, not that it shares code.)
   I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W. (A and D ship bespoke palettes; D
   has a `prefers-color-scheme` dark mode.)
 - **Source of truth:** the full role system + the sixteen themes are documented
-  in [CONSOLE-IV-DESIGN-LANGUAGE.md](CONSOLE-IV-DESIGN-LANGUAGE.md) §2.
+  in [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md) §2.
 
 ### Typeface themes (three distinct serif / mono / display voices)
 - **Encodes:** a second chrome picker swapping the family tokens (`--v2-sans` /
@@ -126,15 +127,16 @@ appears in that variant, not that it shares code.)
   `data-…-type` root attribute (persisted). In the shipping UI **(T)** the
   picker is exactly **three genuinely distinct voices** (default **Technical**),
   not Open-Sans variations: **Editorial** (Source Serif 4 throughout — body,
-  data, headings & publication), **Technical** (Open Sans body + JetBrains Mono
-  for data/labels/code), **Display** (Space Grotesk geometric body + Archivo
-  Narrow condensed headings & big numerals). The earlier redundant **Sans**
+  data, headings & publication), **Technical** (an all-monospace mixture — iA
+  Writer Mono prose body/headings/publication + JetBrains Mono for data/labels/
+  code), **Display** (Space Grotesk geometric body + Archivo Narrow condensed
+  headings & big numerals). The earlier redundant **Sans**
   option was dropped (`sans` normalises to Technical). Google Fonts is the only
   permitted external dependency — fonts only, system fallbacks, `display=swap`.
 - **Binds:** none (presentation tokens).
 - **Used by:** L, M, N, O, P, Q, R, S, T, U, V, W. (Introduced in round 4.)
 - **Source of truth:** the typography system is documented in
-  [CONSOLE-IV-DESIGN-LANGUAGE.md](CONSOLE-IV-DESIGN-LANGUAGE.md) §3.
+  [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md) §3.
 
 ### Density / "roominess" picker
 - **Encodes:** a third chrome selector (compact · cozy · roomy) driving a root
@@ -604,7 +606,7 @@ typeface theme, signature element(s), navigation model, and a one-line
 
 ## Round 6 — convergence IV (T–W)
 
-### T — "Console IV" — THE CONVERGENCE WINNER / THE NEW UI
+### T — "Console IV" (ships as **Console**) — THE CONVERGENCE WINNER / THE NEW UI
 - **Identity:** the convergence-IV anchor and the new UI — the synthesis the
   operator asked for: **P (Console III)** as the base, with three folds and a
   round-7 evolution.
