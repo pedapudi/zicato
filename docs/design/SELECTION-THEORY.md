@@ -536,7 +536,135 @@ such keys exist in the loader, the strategies, or the tests today.
 
 ---
 
-## 10. Summary table
+## 10. Visual language (Console IV — design-only, NOT built)
+
+> **Status.** As speculative as the rest of this note. The duel matrix is
+> not even surfaced in the dashboard today. This section records *how each
+> method would render* in the existing Console IV idiom, so the dashboard
+> design travels with the math.
+
+These methods all derive from one object — the **pairwise duel matrix** —
+so the idiomatic answer is **one honest substrate plus a switchable
+resolver lens**, not a gallery of unrelated charts. Every figure below
+stays in the Console IV language: Tufte small-multiples and signed
+dot-plots, diverging **green = improvement / red = regression**, the
+**champion always a reference rule (never an ordinary mark)**, the **gate
+margin always a shaded band**, direct labeling over legends, and all of it
+computed server-side from the *settled* round so it renders once
+(digest-gated — no rebuild on a no-op heartbeat). And every lens ends at
+the same caption: *…which only PROPOSES a winner; the gate still decides.*
+
+### 10.1 The substrate — the duel grid
+
+A contestant×contestant **margin matrix**, champion pinned top-left behind
+a reference rule, ordered by current standing. Each cell is a small
+*signed dot* (Tufte, not a heavy heatmap fill): green = row beat column,
+red = lost, size = |loss-margin|. The diagonal carries each contestant's
+own loss tick. **Unplayed pairings** (racing/elim never run them) render
+as faint hatch — honest about coverage. Every solution concept below is an
+**overlay or derived small-multiple on this one grid**, switched via the
+⌘K palette (`resolve with: Copeland · Ranked Pairs · maximal lottery`).
+
+```
+        chmp  c1   c2   c3   c4
+ chmp │   ·   ●    ●    ○    ●      ● row beats col (green)
+  c1  │   ○   ·    ●    ●    ●      ○ row loses    (red)
+  c2  │   ○   ○    ·    ●    ◌      ◌ unplayed (faint hatch)
+  c3  │   ●   ○    ○    ·    ●      size = |margin|
+  c4  │   ○   ○    ▦    ○    ·
+       └ champion reference rule
+```
+
+### 10.2 Set solutions — a cut on the reordered grid
+
+- **Smith set / top cycle** → reorder so the dominating strongly-connected
+  block is top-left, then draw a single horizontal **cut rule** (the
+  racing survival-funnel idiom) labeled `Smith set · k of N`; everything
+  below dims. The champion's position relative to the cut shows at a glance
+  whether the incumbent is even in contention.
+- **Uncovered set** → an annotation column, not a graph: each row gets a
+  tiny `covered-by` count bar; uncovered rows (count 0) stay lit, covered
+  rows dim with a caret pointing at their coverer. No node-link diagram —
+  that would be chartjunk.
+
+### 10.3 Bipartisan set + maximal lotteries — the probability lollipop
+
+These share the zero-sum-game Nash mixed strategy, so **one figure covers
+both**: a horizontal **lollipop dot-plot** where length = each
+contestant's probability mass in the optimal lottery. The *support* (the
+non-zero lollipops) **is** the bipartisan set. A Condorcet winner is
+unmistakable — one full bar at p=1; a genuine cycle renders **as mass
+shared across 2–3 contestants**, i.e. the figure shows the cycle directly.
+
+```
+maximal lottery (margin game)
+ c2  ████████████████  .61   ← bipartisan-set support
+ c1  ██████████        .39
+chmp │·                .00   (champion reference rule)
+ c3                    .00   ← excluded (covered)
+ c4                    .00
+       one full bar ⇒ Condorcet winner; spread ⇒ true cycle
+```
+
+### 10.4 Ranking methods — the lock-in waterfall
+
+- **Ranked Pairs** → its algorithm *is* a waterfall, so reuse the
+  loss-floor waterfall motif directly: duels sorted by margin, longest
+  signed bar on top, each row a green/red magnitude bar with a state glyph
+  — `✓ locked` or `⊘ skipped (would close a cycle)`. The **discarded edge
+  is the auditable hero of the view**: the one row marked "dropped — weakest
+  margin in the cycle." The resolved DAG's source is the proposed winner.
+
+```
+Ranked Pairs · lock-in order (by margin)
+  c2 ▸ c4   ██████████ +.42  ✓ locked
+  c1 ▸ c3   ███████    +.31  ✓ locked
+  c2 ▸ c1   █████      +.22  ✓ locked
+  c3 ▸ c2   ███        +.14  ⊘ skipped — closes c1▸c3▸c2▸c1
+  ⇒ resolved winner: c2
+```
+
+- **Schulze** → the alternate lens on the *same* data: a small-multiple of
+  **beatpath breadcrumbs**, one strip per rival (`c2 ▸ c4 ▸ c1`), strip
+  width = path strength (weakest link). A ⌘K toggle off the Ranked-Pairs
+  view, not its own panel.
+- **Kemeny–Young** → just **reorder the duel grid into the Kemeny order**
+  and light the residual upset cells *below the diagonal* in red; their
+  count is the Kemeny distance being minimized. "The order that pushes red
+  below the diagonal." Flagged niche (tiny fields only).
+
+### 10.5 Bradley–Terry — the rating backbone: CI dot-plot + replication heat
+
+A latent-**strength dot-plot with confidence whiskers**, champion as the
+reference rule and the **gate margin as a shaded band** to its right that a
+challenger must clear. The zicato-honest move: **overlapping CIs dim and
+flag "not yet separated → replicate"**, and a thin adjacent column shows
+replicate-count per contestant so you can see *where the next duel should
+go*. This is the visual form of *replicate-first, resolve-second* (§2, §7).
+
+```
+Bradley–Terry strength  (— = 95% CI)        replicates
+ c2     ├──●──┤                ░░gate░░          ██   6
+ c1   ├───●───┤                                  ██   6
+chmp ──────●──│ reference                        ████ 12
+ c3  ├─────●─────┤  ⚠ overlaps c4 → replicate    ▪    2
+ c4  ├────●────┤   ⚠                             ▪    2
+                  └ separated dots ⇒ trustworthy order
+```
+
+### 10.6 What ties it together
+
+One substrate (the duel grid); a **⌘K resolver toggle** that swaps the
+overlay and re-highlights the proposed winner consistently; Copeland keeps
+its existing swiss ladder; the new lenses are the lollipop
+(bipartisan/lottery), the lock-in waterfall (Ranked Pairs/Schulze), the
+grid-reorder (Smith/Kemeny), and the CI dot-plot (Bradley–Terry). The
+champion is forever a reference rule and the gate forever a shaded band, so
+the protected-incumbent invariant is **visible, not merely asserted**.
+
+---
+
+## 11. Summary table
 
 | Method | Family | Tractable? | Condorcet-consistent? | zicato verdict |
 |---|---|---|---|---|
@@ -560,7 +688,7 @@ such keys exist in the loader, the strategies, or the tests today.
 
 ---
 
-## 11. Citations
+## 12. Citations
 
 Authoritative sources for the methods above.
 
@@ -589,7 +717,7 @@ Authoritative sources for the methods above.
 
 ---
 
-## 12. Cross-references
+## 13. Cross-references
 
 | Topic | Document |
 |---|---|
