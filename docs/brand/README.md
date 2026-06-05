@@ -76,11 +76,18 @@ to `#3FB87A`.)
 | `zicato-lockup.svg` | mark + `zıcato` wordmark, horizontal | `currentColor` + `var(--zicato-accent)` — adaptive |
 | `zicato-lockup-light.svg` | fixed-color lockup, dark ink `#15181C` | for hosts that can't supply `currentColor` |
 | `zicato-lockup-dark.svg` | fixed-color lockup, light ink `#EDEFEA` | the dark half of a `<picture>` |
-| `zicato-tile.svg` | rounded-square app tile, dark `#0E1116` ground | favicon / app-icon look |
+| `zicato-tile.svg` | rounded-square app tile, dark `#0E1116` ground | the **full mark** at app-icon scale (180px / large) |
+| `zicato-favicon.svg` | **tab favicon** — a bold `z` + green plucked-note on the dark tile | legible at 16px (the full mark muddies that small) |
 | `wordmark.svg` | `zıcato` wordmark alone | `currentColor` + `var(--zicato-accent)` — adaptive |
-| `favicon-16.png` / `favicon-32.png` | rasterized favicons | from the tile |
-| `apple-touch-icon-180.png` | iOS home-screen icon | from the tile |
-| `favicon.ico` | multi-res icon (16/32/48) | from the tile |
+| `favicon-16.png` / `favicon-32.png` | rasterized tab favicons | from `zicato-favicon.svg` |
+| `apple-touch-icon-180.png` | iOS home-screen icon | from `zicato-tile.svg` (full mark) |
+| `favicon.ico` | multi-res icon (16/32/48) | from `zicato-favicon.svg` |
+
+> **Favicon vs. tile.** The full golden-spiral mark is glorious at the lockup /
+> 180px, but collapses into noise at 16px. So the *tab favicon* is a simplified
+> `z` + the green plucked-note (`zicato-favicon.svg`); the *full mark* tile stays
+> for the 180px apple-touch icon and any large app-icon use. Different mark by
+> size — standard favicon practice.
 
 ### The wordmark
 
