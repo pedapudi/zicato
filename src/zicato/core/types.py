@@ -1837,6 +1837,98 @@ class ScoringWeights:
     tournament_structure: TournamentStructure = field(default_factory=_default_tournament_structure)
 
 
+# ---------------------------------------------------------------------------
+# Proposer
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ProposerSkill:
+    """One markdown skill module the proposer loads from a proposer dir.
+
+    A skill is a single ``proposers/<name>/skills/*.md`` file: a small
+    block of operator-authored guidance the proposer composes into its
+    context. Skills carry SKILL.md-style frontmatter (a ``name`` and a
+    ``description``) followed by a free-form markdown body.
+
+    The skill is part of the *evaluation contract*: a semantic edit to a
+    skill body — like an edit to the proposer brief — means generations on
+    either side of the change are steered differently and are no longer
+    directly comparable, so the epoch must roll. The contract hash folds
+    the skill bodies in (see :func:`zicato.epoch.contract._canon_proposer`);
+    cosmetic whitespace edits are normalized away so only semantic changes
+    roll the epoch.
+
+    Fields
+    ------
+    name:
+        The skill's identifier — the ``name`` frontmatter value, falling
+        back to the file's stem when no frontmatter is present.
+    description:
+        One-line summary from the ``description`` frontmatter value;
+        the empty string when absent.
+    body:
+        The markdown body following the frontmatter, verbatim. Contract
+        canonicalization normalizes its whitespace before hashing.
+    """
+
+    name: str
+    description: str
+    body: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProposerSpec:
+    """The resolved proposer for an epoch — its agent identity + skills.
+
+    A proposer is either the built-in default agent (no skills, no custom
+    agent module) or a ``proposers/<name>/`` directory carrying markdown
+    skill modules and an optional custom ``agent.py``. :class:`ProposerSpec`
+    is the resolved, hash-ready shape of that directory; it is produced by
+    :func:`zicato.proposer.skills.resolve_proposer_spec` and folded into the
+    contract hash so configuring a proposer dir — or editing one of its
+    skills — rolls the epoch.
+
+    Fields
+    ------
+    agent_id:
+        ``"builtin:default"`` for the built-in agent, or ``"dir:<name>"``
+        when a ``proposers/<name>/agent.py`` directory backs the proposer.
+        The id distinguishes the builtin from any on-disk proposer even
+        when the latter happens to carry no skills.
+    tools:
+        Names of the tools the proposer agent may call. Empty for the
+        builtin; tool declaration is a later phase, so an on-disk proposer
+        also resolves with empty tools for now.
+    skills:
+        The loaded :class:`ProposerSkill` modules, sorted by name.
+    agent_source_sha256:
+        Hex SHA-256 of the proposer dir's ``agent.py`` when present, else
+        ``None``. Folded into the contract hash so editing the custom
+        agent's source rolls the epoch.
+    """
+
+    agent_id: str
+    tools: tuple[str, ...]
+    skills: tuple[ProposerSkill, ...]
+    agent_source_sha256: str | None
+
+    @classmethod
+    def default(cls) -> ProposerSpec:
+        """Return the built-in default proposer — no skills, no tools.
+
+        The default is the built-in agent that runs when no proposer dir
+        is configured. It canonicalizes to a stable form so a workspace
+        that never configures a proposer keeps a stable contract hash.
+        """
+        return cls(
+            agent_id="builtin:default",
+            tools=(),
+            skills=(),
+            agent_source_sha256=None,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class EpochConfig:
     """The frozen evaluation contract for an epoch.
@@ -1891,6 +1983,13 @@ class EpochConfig:
         journal. Defaults to the empty string (which renders as "no
         goal recorded" downstream) so epochs already on disk that
         predate this field load cleanly. May be multi-line.
+    proposer_path:
+        Filesystem location of the ``proposers/<name>/`` directory frozen
+        for this epoch, or ``None`` for the built-in default proposer.
+        Folds into the contract hash via :mod:`zicato.epoch.contract`, so
+        configuring a proposer dir (or editing one of its skills) rolls
+        the epoch. Defaults to ``None``; an epoch ``config.json`` written
+        before this field landed loads as the built-in default.
     """
 
     id: str
@@ -1903,6 +2002,10 @@ class EpochConfig:
     closed_at: str = ""
     contract_hash: str = ""
     goal: str = ""
+    # Location of the proposer dir frozen for this epoch, or ``None`` for
+    # the built-in default proposer. Folded into the contract hash; missing
+    # in an epoch ``config.json`` written before this field landed ⇒ ``None``.
+    proposer_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2145,6 +2248,9 @@ __all__ = [
     "Experiment",
     "PriorExperiment",
     "EXPERIMENT_MEMORY_MAX_ENTRIES",
+    # Proposer
+    "ProposerSkill",
+    "ProposerSpec",
     # Epoch / generation
     "ScoringWeights",
     "EpochConfig",

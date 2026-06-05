@@ -1,6 +1,6 @@
 """Contract hashing for auto-epoching.
 
-An epoch is the unit of *evaluation contract*. Four things make up that
+An epoch is the unit of *evaluation contract*. Five things make up that
 contract:
 
 1. The board — test inputs + expectations + judges (``board.jsonl``).
@@ -8,13 +8,16 @@ contract:
 3. The scoring — weights + gate thresholds (``scoring.json``).
 4. The registered inner-harness IDENTITY — the ``--adk`` entrypoint
    string plus the sorted list of ``--mutable-tree`` paths.
+5. The proposer — the agent identity, its tools, and the skill modules
+   under a configured ``proposers/<name>/`` dir (or the built-in default
+   proposer when none is configured).
 
 A change to any of these means generations on either side of the change
 are no longer directly comparable, so the epoch must roll. The inner
 harness's *source content* is deliberately NOT part of the contract —
 that is exactly what zicato mutates within an epoch.
 
-This module reduces the four contract components to a single
+This module reduces the contract components to a single
 ``sha256`` hex digest. The hash is *canonicalized* so spurious edits
 (whitespace, board-entry reordering, float-formatting noise) do not
 trigger a roll — only semantic changes do.
@@ -36,7 +39,7 @@ from pathlib import Path
 
 log = logging.getLogger("zicato.epoch.contract")
 
-#: Separator between the five canonical component forms before hashing.
+#: Separator between the canonical component forms before hashing.
 #: Chosen to be a byte sequence that cannot appear in any canonical
 #: component (a NUL plus a marker word).
 _SEP = "\x00--zicato-contract-component--\x00"
@@ -60,6 +63,14 @@ class ContractInputs:
         The registered ``--mutable-tree`` paths. Stored as a tuple of
         strings; :func:`compute_contract_hash` sorts and absolutises
         them so order and relative/absolute spelling do not matter.
+    proposer_path:
+        Location of the proposer dir (``proposers/<name>/``) the epoch
+        steers with, or ``None`` for the built-in default proposer.
+        :func:`compute_contract_hash` resolves it to a
+        :class:`zicato.core.types.ProposerSpec` and folds the agent id,
+        tools, skill bodies, and any custom ``agent.py`` source into the
+        hash, so configuring a proposer dir — or editing a skill — rolls
+        the epoch. ``None`` (the builtin) canonicalizes to a stable form.
     """
 
     board_path: Path
@@ -67,6 +78,10 @@ class ContractInputs:
     scoring_path: Path
     entrypoint: str
     mutable_trees: tuple[str, ...]
+    #: Location of the proposer dir (``proposers/<name>/``) frozen for
+    #: the epoch, or ``None`` for the built-in default proposer. ``None``
+    #: by default so existing construction sites keep working.
+    proposer_path: Path | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +364,48 @@ def _canon_mutable_trees(mutable_trees: tuple[str, ...]) -> str:
     return "\n".join(resolved)
 
 
+def _canon_proposer(proposer_path: Path | None) -> str:
+    """Canonical form of the proposer: agent identity + skills + tools.
+
+    Resolves the proposer dir (or ``None`` ⇒ the built-in default) to a
+    :class:`zicato.core.types.ProposerSpec` via
+    :func:`zicato.proposer.skills.resolve_proposer_spec`, then reduces it
+    to a sorted-key JSON string:
+
+    * ``agent_id`` — ``"builtin:default"`` or ``"dir:<name>"``;
+    * ``tools`` — the tool names, sorted;
+    * ``skills`` — ``[{"name": ..., "sha256": <hash of the normalized
+      body>}]``, sorted by name. Skill bodies are normalized exactly like
+      the proposer brief, so a whitespace-only skill edit does not move the
+      hash; a semantic edit (or adding / removing / renaming a skill) does;
+    * ``agent_source_sha256`` — SHA-256 of a custom ``agent.py`` (or
+      ``null``), so editing the custom agent rolls the epoch.
+
+    The built-in default produces a stable canonical string, so a
+    workspace that never configures a proposer keeps a stable hash.
+    """
+    from zicato.proposer.skills import (  # noqa: PLC0415
+        normalize_skill_body,
+        resolve_proposer_spec,
+    )
+
+    spec = resolve_proposer_spec(proposer_path)
+    skills = sorted(
+        (
+            {"name": skill.name, "sha256": _sha(normalize_skill_body(skill.body))}
+            for skill in spec.skills
+        ),
+        key=lambda s: s["name"],
+    )
+    canon: dict[str, object] = {
+        "agent_id": spec.agent_id,
+        "tools": sorted(spec.tools),
+        "skills": skills,
+        "agent_source_sha256": spec.agent_source_sha256,
+    }
+    return json.dumps(canon, sort_keys=True, ensure_ascii=False)
+
+
 # ---------------------------------------------------------------------------
 # Public surface
 # ---------------------------------------------------------------------------
@@ -369,8 +426,11 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
       places, ``json.dumps(sort_keys=True)``.
     * **entrypoint** — the string verbatim.
     * **mutable_trees** — sorted tuple of absolute path strings.
+    * **proposer** — the resolved :class:`ProposerSpec` (agent id, sorted
+      tools, per-skill normalized-body hashes sorted by name, custom
+      ``agent.py`` source hash), serialized sorted-key.
 
-    The five canonical forms are concatenated with a NUL-delimited
+    The canonical forms are concatenated with a NUL-delimited
     separator and hashed. Missing files are treated as the empty string
     for that component (so a board-less workspace still hashes
     deterministically) — a warning is logged when that happens.
@@ -381,6 +441,7 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
         _canon_scoring(inputs.scoring_path),
         _canon_entrypoint(inputs.entrypoint),
         _canon_mutable_trees(inputs.mutable_trees),
+        _canon_proposer(inputs.proposer_path),
     ]
     joined = _SEP.join(components)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
@@ -391,7 +452,7 @@ def compute_component_hashes(inputs: ContractInputs) -> dict[str, str]:
 
     Used by the auto-roll path to report *which* contract component
     changed. The keys are ``"board"``, ``"brief"``, ``"scoring"``,
-    ``"entrypoint"``, ``"mutable_trees"``.
+    ``"entrypoint"``, ``"mutable_trees"``, ``"proposer"``.
     """
     return {
         "board": _sha(_canon_board(inputs.board_path)),
@@ -399,6 +460,7 @@ def compute_component_hashes(inputs: ContractInputs) -> dict[str, str]:
         "scoring": _sha(_canon_scoring(inputs.scoring_path)),
         "entrypoint": _sha(_canon_entrypoint(inputs.entrypoint)),
         "mutable_trees": _sha(_canon_mutable_trees(inputs.mutable_trees)),
+        "proposer": _sha(_canon_proposer(inputs.proposer_path)),
     }
 
 
@@ -458,16 +520,30 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
     raw_trees = config.get("mutable_trees") or config.get("source_roots") or []
     mutable_trees = tuple(str(t) for t in raw_trees)
 
+    # ``contract.proposer_path`` is optional — absent ⇒ the built-in
+    # default proposer (``None``). Relative spellings are resolved like
+    # the other contract paths, against the operator's project root (the
+    # workspace's parent).
+    raw_proposer = contract.get("proposer_path")
+    proposer_path: Path | None
+    if raw_proposer:
+        proposer_path = Path(raw_proposer)
+        if not proposer_path.is_absolute():
+            proposer_path = (workspace_root.parent / proposer_path).resolve()
+    else:
+        proposer_path = None
+
     return ContractInputs(
         board_path=board_path,
         brief_path=brief_path,
         scoring_path=scoring_path,
         entrypoint=entrypoint,
         mutable_trees=mutable_trees,
+        proposer_path=proposer_path,
     )
 
 
-def default_contract_paths(workspace_root: Path) -> dict[str, Path]:
+def default_contract_paths(workspace_root: Path) -> dict[str, Path | None]:
     """Return the default canonical contract source paths for a workspace.
 
     The convention is ``<workspace_root_parent>/board.jsonl``,
@@ -479,6 +555,10 @@ def default_contract_paths(workspace_root: Path) -> dict[str, Path]:
     The proposer-brief default is returned under both ``brief_path``
     (the current key) and ``rubric_path`` (a legacy alias) so callers
     that have not yet adopted the rename keep resolving.
+
+    The ``proposer_path`` default is ``None`` — no proposer dir, i.e. the
+    built-in default proposer. A workspace opts into a proposer dir by
+    setting ``contract.proposer_path`` explicitly.
     """
     brief_default = Path(_default_brief_path(workspace_root))
     return {
@@ -486,6 +566,7 @@ def default_contract_paths(workspace_root: Path) -> dict[str, Path]:
         "brief_path": brief_default,
         "rubric_path": brief_default,
         "scoring_path": Path(_default_contract_path(workspace_root, "scoring.json")),
+        "proposer_path": None,
     }
 
 

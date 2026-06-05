@@ -157,13 +157,18 @@ def _adopt_contract_sources(
     defaults = default_contract_paths(workspace_root)
     contract = dict(config.get("contract") or {})
 
-    board_target = Path(contract.get("board_path") or defaults["board_path"])
+    # These three default keys are always concrete Paths (only
+    # ``proposer_path`` defaults to ``None``); narrow for the type checker.
+    default_board = defaults["board_path"]
+    default_brief = defaults["rubric_path"]
+    default_scoring = defaults["scoring_path"]
+    assert default_board is not None and default_brief is not None and default_scoring is not None
+
+    board_target = Path(contract.get("board_path") or default_board)
     # ``rubric_path`` is the on-disk key name for the proposer brief
     # (kept for back-compat); ``brief_path`` is also accepted on read.
-    brief_target = Path(
-        contract.get("brief_path") or contract.get("rubric_path") or defaults["rubric_path"]
-    )
-    scoring_target = Path(contract.get("scoring_path") or defaults["scoring_path"])
+    brief_target = Path(contract.get("brief_path") or contract.get("rubric_path") or default_brief)
+    scoring_target = Path(contract.get("scoring_path") or default_scoring)
 
     def _publish(source: Path, target: Path) -> None:
         source = source.resolve()

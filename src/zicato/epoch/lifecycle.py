@@ -200,6 +200,9 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         "closed_at": cfg.closed_at,
         "contract_hash": cfg.contract_hash,
         "goal": cfg.goal,
+        # ``None`` ⇒ built-in default proposer. Written as null so an
+        # epoch that never configured a proposer round-trips cleanly.
+        "proposer_path": str(cfg.proposer_path) if cfg.proposer_path is not None else None,
     }
 
 
@@ -214,6 +217,11 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
     #
     # ``goal`` defaults to "" so epochs written before the field landed
     # load as "no goal recorded".
+    #
+    # ``proposer_path`` defaults to ``None`` (the built-in default
+    # proposer) so an epoch ``config.json`` written before the field
+    # landed loads cleanly.
+    raw_proposer = d.get("proposer_path")
     return EpochConfig(
         id=d["id"],
         name=d["name"],
@@ -225,6 +233,7 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         closed_at=d.get("closed_at", ""),
         contract_hash=str(d.get("contract_hash", "")),
         goal=str(d.get("goal", "")),
+        proposer_path=Path(raw_proposer) if raw_proposer else None,
     )
 
 
@@ -375,6 +384,7 @@ def new_epoch(
     entrypoint: str = "",
     mutable_trees: tuple[str, ...] = (),
     goal: str = "",
+    proposer_path: Path | None = None,
 ) -> EpochConfig:
     """Create a new epoch directory and switch to it.
 
@@ -413,6 +423,13 @@ def new_epoch(
     existing callers (and tests) keep working — an epoch created
     without them simply hashes those two components as empty, which is
     stable and back-compatible.
+
+    ``proposer_path`` freezes the epoch's proposer dir
+    (``proposers/<name>/``) into the contract hash; ``None`` (the default)
+    is the built-in default proposer and canonicalizes to a stable form,
+    so existing callers that omit it keep their hashes back-compatible
+    except for the one-time roll that adding the proposer component
+    introduces.
 
     ``goal`` is a free-form operator-supplied statement of intent for
     the epoch. It is persisted into ``config.json`` and surfaced in
@@ -480,6 +497,7 @@ def new_epoch(
             scoring_path=target_scoring,
             entrypoint=entrypoint,
             mutable_trees=tuple(mutable_trees),
+            proposer_path=proposer_path,
         )
     )
 
@@ -496,6 +514,7 @@ def new_epoch(
         closed_at="",
         contract_hash=contract_hash,
         goal=goal,
+        proposer_path=proposer_path,
     )
     _write_config(workspace_root, cfg)
 

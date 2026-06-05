@@ -394,6 +394,7 @@ def _create_epoch_from_contract(
         aux_call_llm=aux_call_llm,
         entrypoint=inputs.entrypoint,
         mutable_trees=tuple(inputs.mutable_trees),
+        proposer_path=inputs.proposer_path,
     )
     return cfg.id
 

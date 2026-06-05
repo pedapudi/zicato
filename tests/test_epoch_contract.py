@@ -390,3 +390,225 @@ def test_resolve_contract_inputs_default_brief_falls_back_to_legacy_file(
     (tmp_path / "rubric.md").write_text("# legacy brief\n")
     inputs = resolve_contract_inputs(workspace)
     assert inputs.brief_path == (tmp_path / "rubric.md").resolve()
+
+
+# ---------------------------------------------------------------------------
+# Proposer component
+#
+# The proposer — its agent identity, tools, and skill modules — is the
+# sixth contract component. A semantic skill edit (or adding / removing /
+# renaming a skill, or editing a custom agent.py) rolls the epoch; a
+# whitespace-only skill edit or a filesystem-reorder does not.
+# ---------------------------------------------------------------------------
+
+
+_SKILL_A = "---\nname: tighten\ndescription: keep it terse\n---\n\nPrefer terse patches.\n"
+_SKILL_B = "---\nname: bold\ndescription: be bold\n---\n\nFavor bold rewrites.\n"
+
+
+def _make_proposer(tmp_path: Path, *, skills: dict[str, str], agent: str | None = None) -> Path:
+    """Create a ``proposers/<name>/`` dir with the given skills + agent."""
+    proposer = tmp_path / "proposers" / "p1"
+    skills_dir = proposer / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    for filename, text in skills.items():
+        (skills_dir / filename).write_text(text)
+    if agent is not None:
+        (proposer / "agent.py").write_text(agent)
+    return proposer
+
+
+def test_proposer_skill_body_edit_changes_hash(tmp_path: Path) -> None:
+    """A semantic edit to a skill body rolls the contract hash."""
+    from dataclasses import replace
+
+    base = _write_contract(tmp_path)
+    proposer = _make_proposer(tmp_path, skills={"a.md": _SKILL_A})
+    with_proposer = replace(base, proposer_path=proposer)
+    h1 = compute_contract_hash(with_proposer)
+
+    (proposer / "skills" / "a.md").write_text(
+        "---\nname: tighten\ndescription: keep it terse\n---\n\nPrefer VERY terse patches.\n"
+    )
+    h2 = compute_contract_hash(with_proposer)
+    assert h1 != h2
+
+
+def test_proposer_skill_edit_names_proposer_component(tmp_path: Path) -> None:
+    """Component drift on a skill edit is attributed to ``proposer``."""
+    from dataclasses import replace
+
+    from zicato.epoch.contract import compute_component_hashes
+
+    base = _write_contract(tmp_path)
+    proposer = _make_proposer(tmp_path, skills={"a.md": _SKILL_A})
+    with_proposer = replace(base, proposer_path=proposer)
+    before = compute_component_hashes(with_proposer)
+
+    (proposer / "skills" / "a.md").write_text(
+        "---\nname: tighten\ndescription: keep it terse\n---\n\nA materially different skill.\n"
+    )
+    after = compute_component_hashes(with_proposer)
+
+    changed = [k for k in before if before[k] != after[k]]
+    assert changed == ["proposer"]
+
+
+def test_proposer_adding_a_skill_changes_hash(tmp_path: Path) -> None:
+    """Adding a skill file rolls the hash."""
+    from dataclasses import replace
+
+    base = _write_contract(tmp_path)
+    proposer = _make_proposer(tmp_path, skills={"a.md": _SKILL_A})
+    with_proposer = replace(base, proposer_path=proposer)
+    h1 = compute_contract_hash(with_proposer)
+
+    (proposer / "skills" / "b.md").write_text(_SKILL_B)
+    h2 = compute_contract_hash(with_proposer)
+    assert h1 != h2
+
+
+def test_proposer_removing_a_skill_changes_hash(tmp_path: Path) -> None:
+    """Removing a skill file rolls the hash."""
+    from dataclasses import replace
+
+    base = _write_contract(tmp_path)
+    proposer = _make_proposer(tmp_path, skills={"a.md": _SKILL_A, "b.md": _SKILL_B})
+    with_proposer = replace(base, proposer_path=proposer)
+    h1 = compute_contract_hash(with_proposer)
+
+    (proposer / "skills" / "b.md").unlink()
+    h2 = compute_contract_hash(with_proposer)
+    assert h1 != h2
+
+
+def test_proposer_renaming_a_skill_changes_hash(tmp_path: Path) -> None:
+    """Renaming a skill file (its ``name`` frontmatter) rolls the hash."""
+    from dataclasses import replace
+
+    base = _write_contract(tmp_path)
+    proposer = _make_proposer(tmp_path, skills={"a.md": _SKILL_A})
+    with_proposer = replace(base, proposer_path=proposer)
+    h1 = compute_contract_hash(with_proposer)
+
+    (proposer / "skills" / "a.md").write_text(
+        "---\nname: RENAMED\ndescription: keep it terse\n---\n\nPrefer terse patches.\n"
+    )
+    h2 = compute_contract_hash(with_proposer)
+    assert h1 != h2
+
+
+def test_proposer_agent_source_edit_changes_hash(tmp_path: Path) -> None:
+    """Editing the custom ``agent.py`` rolls the hash via its source sha."""
+    from dataclasses import replace
+
+    base = _write_contract(tmp_path)
+    proposer = _make_proposer(
+        tmp_path, skills={"a.md": _SKILL_A}, agent="def build():\n    return 1\n"
+    )
+    with_proposer = replace(base, proposer_path=proposer)
+    h1 = compute_contract_hash(with_proposer)
+
+    (proposer / "agent.py").write_text("def build():\n    return 2\n")
+    h2 = compute_contract_hash(with_proposer)
+    assert h1 != h2
+
+
+def test_proposer_whitespace_only_skill_edit_is_stable(tmp_path: Path) -> None:
+    """Whitespace / line-ending-only skill edits do not roll the hash."""
+    from dataclasses import replace
+
+    base = _write_contract(tmp_path)
+    proposer = _make_proposer(tmp_path, skills={"a.md": _SKILL_A})
+    with_proposer = replace(base, proposer_path=proposer)
+    h1 = compute_contract_hash(with_proposer)
+
+    # Same skill body re-spelled with CRLF endings, trailing spaces, and
+    # extra leading / trailing blank lines.
+    (proposer / "skills" / "a.md").write_text(
+        "---\nname: tighten\ndescription: keep it terse\n---\n\n\nPrefer terse patches.   \r\n\n\n"
+    )
+    h2 = compute_contract_hash(with_proposer)
+    assert h1 == h2
+
+
+def test_proposer_hash_stable_across_filesystem_reorder(tmp_path: Path) -> None:
+    """Re-touching files (mtime reorder) leaves the hash unchanged.
+
+    Skills are discovered sorted by filename, so the order the filesystem
+    happens to enumerate / the files' mtimes do not move the hash.
+    """
+    import os
+    from dataclasses import replace
+
+    base = _write_contract(tmp_path)
+    proposer = _make_proposer(tmp_path, skills={"a.md": _SKILL_A, "b.md": _SKILL_B})
+    with_proposer = replace(base, proposer_path=proposer)
+    h1 = compute_contract_hash(with_proposer)
+
+    # Bump mtimes in the reverse of name order; the loader still sorts by
+    # name so the canonical form is identical.
+    os.utime(proposer / "skills" / "b.md", (1, 1))
+    os.utime(proposer / "skills" / "a.md", (2, 2))
+    h2 = compute_contract_hash(with_proposer)
+    assert h1 == h2
+
+
+def test_proposer_builtin_default_is_stable(tmp_path: Path) -> None:
+    """The built-in default (``proposer_path=None``) hashes deterministically."""
+    base = _write_contract(tmp_path)  # proposer_path defaults to None
+    h1 = compute_contract_hash(base)
+    h2 = compute_contract_hash(base)
+    assert h1 == h2
+
+
+def test_proposer_builtin_differs_from_empty_dir(tmp_path: Path) -> None:
+    """An empty proposer dir is NOT the builtin — agent_id differs.
+
+    The builtin's ``agent_id`` is ``"builtin:default"`` while a configured
+    dir is ``"dir:<name>"`` even with no skills and no agent.py, so the two
+    canonicalize differently.
+    """
+    from dataclasses import replace
+
+    base = _write_contract(tmp_path)  # builtin (None)
+    h_builtin = compute_contract_hash(base)
+
+    empty = tmp_path / "proposers" / "p1"
+    (empty / "skills").mkdir(parents=True)
+    h_empty_dir = compute_contract_hash(replace(base, proposer_path=empty))
+    assert h_builtin != h_empty_dir
+
+
+def test_resolve_contract_inputs_reads_proposer_path(tmp_path: Path) -> None:
+    """``contract.proposer_path`` is resolved; relative spellings absolutise."""
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    (workspace / "config.json").write_text(
+        json.dumps(
+            {
+                "adk_entrypoint": "pkg.mod:agent",
+                "mutable_trees": [],
+                "contract": {
+                    "board_path": "/abs/board.jsonl",
+                    "brief_path": "/abs/brief.md",
+                    "scoring_path": "/abs/scoring.json",
+                    "proposer_path": "proposers/p1",
+                },
+            }
+        )
+    )
+    inputs = resolve_contract_inputs(workspace)
+    # Relative to the workspace's parent (the operator's project root).
+    assert inputs.proposer_path == (tmp_path / "proposers" / "p1").resolve()
+
+
+def test_resolve_contract_inputs_proposer_path_absent_is_none(tmp_path: Path) -> None:
+    """No ``contract.proposer_path`` ⇒ the built-in default proposer (None)."""
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    (workspace / "config.json").write_text(
+        json.dumps({"adk_entrypoint": "pkg.mod:agent", "mutable_trees": []})
+    )
+    inputs = resolve_contract_inputs(workspace)
+    assert inputs.proposer_path is None

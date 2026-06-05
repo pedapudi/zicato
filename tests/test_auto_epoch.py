@@ -205,6 +205,66 @@ def test_legacy_epoch_treated_as_matching(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Proposer drift auto-rolls
+# ---------------------------------------------------------------------------
+
+
+_SKILL = "---\nname: tighten\ndescription: keep it terse\n---\n\nPrefer terse patches.\n"
+
+
+def _set_proposer_path(workspace: Path, proposer_path: Path | None) -> None:
+    """Rewrite ``config.json``'s ``contract.proposer_path`` in place."""
+    config_path = workspace / "config.json"
+    config = json.loads(config_path.read_text())
+    if proposer_path is None:
+        config["contract"].pop("proposer_path", None)
+    else:
+        config["contract"]["proposer_path"] = str(proposer_path)
+    config_path.write_text(json.dumps(config))
+
+
+def test_configuring_a_proposer_dir_auto_rolls(tmp_path: Path) -> None:
+    """Pointing the contract at a proposer dir between resolves rolls the epoch."""
+    workspace, _ = _bootstrap(tmp_path)
+    first = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+
+    # Configure a proposer dir (builtin → dir:<name> drifts the contract).
+    proposer = tmp_path / "proposers" / "p1"
+    (proposer / "skills").mkdir(parents=True)
+    (proposer / "skills" / "a.md").write_text(_SKILL)
+    _set_proposer_path(workspace, proposer)
+
+    rolled = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    assert rolled != first
+    assert current_epoch_id(workspace) == rolled
+    assert len(list_epochs(workspace)) == 2
+    # The new epoch froze the proposer dir into its config.
+    assert load_epoch(workspace, rolled).proposer_path == proposer
+
+
+def test_editing_a_skill_auto_rolls_and_cites_proposer(tmp_path: Path) -> None:
+    """Editing a configured skill between resolves rolls + cites ``proposer``."""
+    workspace, _ = _bootstrap(tmp_path)
+    proposer = tmp_path / "proposers" / "p1"
+    (proposer / "skills").mkdir(parents=True)
+    (proposer / "skills" / "a.md").write_text(_SKILL)
+    _set_proposer_path(workspace, proposer)
+
+    asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm))
+
+    # Semantic skill edit → contract drifts; the message must name proposer.
+    (proposer / "skills" / "a.md").write_text(
+        "---\nname: tighten\ndescription: keep it terse\n---\n\nA materially different skill.\n"
+    )
+    with pytest.raises(RuntimeError, match="proposer"):
+        asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=False, aux_call_llm=_aux_llm))
+
+
+# ---------------------------------------------------------------------------
 # Explicit --epoch skips auto-rolling
 # ---------------------------------------------------------------------------
 
