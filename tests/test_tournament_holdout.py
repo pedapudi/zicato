@@ -163,3 +163,106 @@ def test_holdout_confirmation_promotes_and_reports_train_scalar(
     # Selection steers on the train scalar; the holdout never blends in.
     assert result.child_agg["drift_loss_mean"] == pytest.approx(1.0)
     assert result.parent_agg["drift_loss_mean"] == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------------------
+# confirm_crowning_holdout — the non-gauntlet structures' champion-gate
+# Ladder-mediated holdout confirmation (OVERFITTING.md §3/§4).
+# ---------------------------------------------------------------------------
+
+
+def _agg(scalar: float, *, pass_fail: bool | None = True) -> dict[str, Any]:
+    """A minimal aggregate dict shaped like ``aggregate_generation_score``."""
+    return {
+        "scalar": scalar,
+        "drift_loss_mean": scalar,
+        "pass_rate": 1.0 if pass_fail else 0.0,
+        "per_entry": {},
+        "namespace_aggregates": {},
+    }
+
+
+def _confirm(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    board: list[BoardEntry],
+    holdout_child_drift: float,
+) -> Any:
+    """Drive ``confirm_crowning_holdout`` for a champion-vs-survivor crowning duel."""
+    from zicato.tournament.gate import GateOutcome
+    from zicato.tournament.runner import confirm_crowning_holdout
+
+    # The crowning duel already decided a TRAIN win (champion 2.0 -> survivor
+    # 1.0). The holdout run is the only thing the helper executes itself.
+    canned: dict[tuple[str, str], LossProfile] = {}
+    for e in board:
+        canned[("v0", e.id)] = _loss(generation_id="v0", entry_id=e.id, drift_loss=2.0)
+        drift = holdout_child_drift if HOLDOUT_TAG in e.tags else 1.0
+        canned[("v1", e.id)] = _loss(generation_id="v1", entry_id=e.id, drift_loss=drift)
+    _stub_run_single(monkeypatch, canned)
+
+    train_outcome = GateOutcome(
+        decision="promoted", reason="", delta_scalar=-1.0, delta_pass_rate=0.0
+    )
+    return asyncio.run(
+        confirm_crowning_holdout(
+            adapter=object(),
+            champion_gen=_gen(tmp_path, "v0", None),
+            challenger_gen=_gen(tmp_path, "v1", "v0"),
+            board=board,
+            train_outcome=train_outcome,
+            train_parent_agg=_agg(2.0),
+            train_child_agg=_agg(1.0),
+            weights=ScoringWeights(promote_margin=0.1),
+            config=_runtime(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+
+def test_confirm_crowning_holdout_flips_a_holdout_regression(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The survivor won on train but regresses on the holdout entry (1.0 -> 5.0
+    # vs champion 2.0): the crowning promote flips to a holdout reject.
+    outcome, block, holdout_scalar = _confirm(
+        monkeypatch, tmp_path, board=_board(), holdout_child_drift=5.0
+    )
+    assert outcome.decision == "rejected"
+    assert "holdout_not_confirmed" in outcome.reason
+    assert block is not None and block["confirmed"] is False
+    assert holdout_scalar == pytest.approx(5.0)
+
+
+def test_confirm_crowning_holdout_confirms_a_general_win(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The survivor holds the holdout (1.0 vs champion 2.0): the crowning
+    # promote stands, the evidence block confirms, and the budget decremented.
+    outcome, block, holdout_scalar = _confirm(
+        monkeypatch, tmp_path, board=_board(), holdout_child_drift=1.0
+    )
+    assert outcome.decision == "promoted"
+    assert block is not None and block["confirmed"] is True
+    assert holdout_scalar == pytest.approx(1.0)
+    assert block["ladder_budget_remaining"] == block["ladder_budget_total"] - 1
+
+
+def test_confirm_crowning_holdout_degrades_byte_identically_without_holdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A board with NO holdout (no tag, below the split floor) ⇒ the helper
+    # consults no holdout, charges no budget, and returns the train outcome
+    # unchanged with no evidence block — byte-identical to today.
+    board = [
+        BoardEntry(id="only_a", kind="single_turn", wall_clock_budget_seconds=60, input="x"),
+        BoardEntry(id="only_b", kind="single_turn", wall_clock_budget_seconds=60, input="x"),
+    ]
+    outcome, block, holdout_scalar = _confirm(
+        monkeypatch, tmp_path, board=board, holdout_child_drift=5.0
+    )
+    assert outcome.decision == "promoted"  # the train outcome, untouched
+    assert block is None
+    assert holdout_scalar is None

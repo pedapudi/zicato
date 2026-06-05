@@ -1389,6 +1389,7 @@ async def _evolve_multi_challenger(
     RECORDED in the journal for provenance (it is never a contract
     input, so flipping fast↔full does not roll the epoch).
     """
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
     from zicato.core.types import MatchOutcome  # noqa: PLC0415
     from zicato.epoch import (  # noqa: PLC0415
         append_journal_entry,
@@ -1401,10 +1402,24 @@ async def _evolve_multi_challenger(
         Matchup,
         MatchupResult,
     )
-    from zicato.tournament.runner import run_matchup  # noqa: PLC0415
+    from zicato.tournament.runner import confirm_crowning_holdout, run_matchup  # noqa: PLC0415
 
     auxiliary_model = str(workspace_config.get("auxiliary_model", ""))
     field_n = strategy.field_size()
+
+    # TRAIN/HOLDOUT split (OVERFITTING.md §3/§4). The structure's internal
+    # matchups (swiss rounds, elim nodes, racing rungs) — INCLUDING the final
+    # champion-gate duel that decides promotion — score on the TRAIN slice
+    # only, so the holdout is never consumed to *pick* the leader (mirrors the
+    # gauntlet, which selects on train). The full board is retained for the
+    # one Ladder-mediated holdout confirmation run after resolution. When the
+    # holdout is empty (small board / split disabled / no tagged entry) the
+    # train slice IS the full board, so every matchup runs on the full board
+    # and the whole path is byte-identical to today's whole-board behaviour.
+    _train_seed = rotation_seed(weights.overfitting, epoch_id)
+    _train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=_train_seed)
+    _train_id_set = set(_train_ids)
+    train_board = [e for e in board if e.id in _train_id_set]
 
     # --- Propose + apply the N-challenger field. Ids are minted in
     # sequence so each challenger is a distinct vN child of the champion;
@@ -1557,7 +1572,12 @@ async def _evolve_multi_challenger(
             adapter=adapter,
             left_gen=_generation_for(m.left.generation_id),
             right_gen=_generation_for(m.right.generation_id),
-            board=board,
+            # Internal selection scores on the TRAIN slice only (the holdout
+            # is confirmation-only, never used to pick the leader). A racing
+            # rung's ``board_subset`` is intersected against the train board
+            # inside ``run_matchup``. Empty holdout ⇒ ``train_board`` IS the
+            # full board ⇒ byte-identical to today.
+            board=train_board,
             weights=weights,
             config=config,
             workspace_root=workspace_root,
@@ -1696,11 +1716,77 @@ async def _evolve_multi_challenger(
         decision=decision,
     )
 
-    # --- Per-challenger OutcomeRecord audit. Each challenger records the
-    # matches it played (opponent, win/loss, delta), its final rank, and
-    # the crowning verdict for THIS generation (promoted iff it is the
-    # crowned generation; rejected otherwise — a dead branch).
+    # --- Final champion-gate Ladder-mediated holdout confirmation
+    # (OVERFITTING.md §3/§4). The structure resolved its leader on the TRAIN
+    # slice and ran ONE crowning champion-vs-survivor duel (also train). If
+    # that duel promoted AND a holdout slice exists, the win must ALSO confirm
+    # on the holdout — through the SAME Ladder-mediated machinery + the SAME
+    # per-epoch ``ladder_state.json`` budget the gauntlet uses. A released
+    # non-confirmation flips the crowning promote to a holdout reject; the
+    # champion stands. Empty holdout (small board / split disabled) ⇒ no
+    # holdout run, no Ladder move ⇒ byte-identical to today. The resulting
+    # ``holdout`` block + the challenger's holdout-slice scalar are stamped on
+    # the crowned/leading challenger's OutcomeRecord below (same shape as the
+    # gauntlet), so #5's gap detector + the board-status surface work for
+    # these structures too.
     promoted_id = decision.promoted_generation_id
+    crowning_reason_override: str | None = None
+    crowning_holdout_block: dict[str, Any] | None = None
+    crowning_holdout_child_scalar: float | None = None
+    crowning_challenger_id: str | None = None
+    crowning_challenger_train_scalar: float | None = None
+    crowning_result = (
+        next(
+            (m for m in decision.matchups if m.matchup_id == decision.crowning_matchup_id),
+            None,
+        )
+        if decision.crowning_matchup_id
+        else None
+    )
+    if crowning_result is not None and decision.decision == "promoted" and promoted_id is not None:
+        # Identify the champion (parent) and challenger (survivor) sides of
+        # the crowning duel; ``left`` is the champion by the strategy's
+        # convention, but resolve defensively so a future strategy that
+        # seeds the champion on the right still confirms the right pair.
+        champ_is_left = crowning_result.left_id == parent_id
+        challenger_crown_id = crowning_result.right_id if champ_is_left else crowning_result.left_id
+        crowning_challenger_id = challenger_crown_id
+        champ_train_agg = crowning_result.left_agg if champ_is_left else crowning_result.right_agg
+        challenger_train_agg = (
+            crowning_result.right_agg if champ_is_left else crowning_result.left_agg
+        )
+        # The crowning challenger's TRAIN-slice scalar — paired with its
+        # holdout-slice scalar (below) for a consistent generalization gap
+        # measured on the SAME crowning duel (mirrors the gauntlet, where the
+        # gap is the child's train vs holdout scalar of the one duel).
+        crowning_challenger_train_scalar = float(challenger_train_agg.get("scalar", 0.0))
+        (
+            crowning_outcome,
+            crowning_holdout_block,
+            crowning_holdout_child_scalar,
+        ) = await confirm_crowning_holdout(
+            adapter=adapter,
+            champion_gen=champion_gen,
+            challenger_gen=_generation_for(challenger_crown_id),
+            board=board,
+            train_outcome=crowning_result.outcome,
+            train_parent_agg=champ_train_agg,
+            train_child_agg=challenger_train_agg,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+            fast=fast_mode,
+        )
+        if crowning_outcome.decision != "promoted":
+            # The holdout flipped a bracket-leader's train win to a reject:
+            # the champion stands, the crowned generation is demoted to a
+            # dead branch, and the crowning reason carries the holdout cause.
+            promoted_id = None
+            crowning_reason_override = crowning_outcome.reason
+
     rank_by_id = {s.generation_id: s.rank for s in decision.standings}
     matches_by_gen: dict[str, list[MatchOutcome]] = {c.generation_id: [] for c in applied}
     for mr in decision.matchups:
@@ -1752,6 +1838,36 @@ async def _evolve_multi_challenger(
         gen_scalar = float(agg.get("scalar", 0.0)) if agg else 0.0
         if is_crowned:
             child_scalar_crown = gen_scalar
+        # The crowning challenger (the survivor that reached the final
+        # champion-gate duel) carries the Ladder/holdout evidence block + the
+        # per-generation train/holdout/gap fields, mirroring the gauntlet's
+        # OutcomeRecord. A holdout-demoted crown carries the
+        # ``holdout_not_confirmed`` reason from the confirmation step instead
+        # of the strategy's crowning reason. Every other challenger (a dead
+        # bracket branch) keeps the back-compat defaults (no holdout).
+        is_crowning_challenger = gid == crowning_challenger_id
+        if is_crowning_challenger:
+            rejection_reason = (
+                ""
+                if is_crowned
+                else (crowning_reason_override if crowning_reason_override else decision.reason)
+            )
+            holdout_block = crowning_holdout_block
+            # Pair the crowning duel's TRAIN scalar with its HOLDOUT scalar so
+            # the gap is measured on the same duel (falls back to the standings
+            # aggregate only if the crowning train scalar is somehow absent).
+            crown_train = (
+                crowning_challenger_train_scalar
+                if crowning_challenger_train_scalar is not None
+                else gen_scalar
+            )
+            gen_fields = _generalization_fields_from_scalars(
+                crown_train, crowning_holdout_child_scalar
+            )
+        else:
+            rejection_reason = "" if is_crowned else decision.reason
+            holdout_block = None
+            gen_fields = _generalization_fields_from_scalars(gen_scalar, None)
         outcome_record = OutcomeRecord(
             ran_at=_now_iso(),
             drift_movements=(),
@@ -1759,11 +1875,15 @@ async def _evolve_multi_challenger(
             drift_loss_delta=0.0,
             scalar_score_delta=gen_scalar - parent_scalar,
             tournament_decision=gen_decision,  # type: ignore[arg-type]
-            rejection_reason=("" if is_crowned else decision.reason),
+            rejection_reason=rejection_reason,
             structure=tournament_spec.structure,
             final_rank=rank_by_id.get(gid),
             match_record=tuple(matches_by_gen.get(gid, ())),
             champion_eval_mode=resolved_champion_eval_mode,
+            holdout=holdout_block,
+            train_loss=gen_fields["train_loss"],
+            holdout_loss=gen_fields["holdout_loss"],
+            generalization_gap=gen_fields["generalization_gap"],
         )
         finalised = update_experiment_outcome(workspace_root, epoch_id, gid, outcome_record)
         finalised_by_id[gid] = finalised
@@ -1853,11 +1973,19 @@ async def _evolve_multi_challenger(
         # reached the gate (the one the reason is about), not an arbitrary applied[0].
         summary_child_id = promoted_id or (crowning.right_id if champ_is_left else crowning.left_id)
 
+    # A holdout-demoted crown reports the ``holdout_not_confirmed`` cause from
+    # the confirmation step, not the strategy's (promote-shaped) crowning
+    # reason; every other rejection keeps the strategy's reason.
+    summary_reason = (
+        ""
+        if promoted_id is not None
+        else (crowning_reason_override if crowning_reason_override else decision.reason)
+    )
     return EvolveRoundOutcome(
         parent_generation_id=parent_id,
         proposed_generation_id=summary_child_id,
         tournament_decision=bookkeeping_decision,
-        rejection_reason=("" if promoted_id is not None else decision.reason),
+        rejection_reason=summary_reason,
         parent_scalar=summary_parent_scalar,
         child_scalar=summary_child_scalar,
         delta_scalar=summary_child_scalar - summary_parent_scalar,
@@ -2721,7 +2849,23 @@ def _generalization_fields(child_scalar: float, tournament_result: Any) -> dict[
     degrade.
     """
     holdout_scalar = getattr(tournament_result, "holdout_child_scalar", None)
-    train_loss = float(child_scalar)
+    return _generalization_fields_from_scalars(child_scalar, holdout_scalar)
+
+
+def _generalization_fields_from_scalars(
+    train_scalar: float, holdout_scalar: float | None
+) -> dict[str, float | None]:
+    """Build the per-generation ``train_loss`` / ``holdout_loss`` / gap fields.
+
+    The scalar-level core of :func:`_generalization_fields`, shared with the
+    non-gauntlet (multi-challenger) path which already holds the crowning
+    challenger's TRAIN-slice and HOLDOUT-slice scalars directly (rather than a
+    :class:`~zicato.tournament.runner.TournamentResult`). The generalization
+    gap is ``holdout_loss - train_loss`` (OVERFITTING.md §6 / §12 #5); ``None``
+    for both holdout fields when there is no holdout — the safe no-finding
+    degrade.
+    """
+    train_loss = float(train_scalar)
     if holdout_scalar is None:
         return {"train_loss": train_loss, "holdout_loss": None, "generalization_gap": None}
     holdout_loss = float(holdout_scalar)

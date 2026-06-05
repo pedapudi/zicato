@@ -2738,12 +2738,117 @@ async def run_matchup(
     )
 
 
+async def confirm_crowning_holdout(
+    *,
+    adapter: Any,
+    champion_gen: Generation,
+    challenger_gen: Generation,
+    board: list[BoardEntry],
+    train_outcome: GateOutcome,
+    train_parent_agg: dict[str, Any],
+    train_child_agg: dict[str, Any],
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    disable_drift: tuple[Any, ...] = (),
+    judge_only: bool = False,
+    fast: bool = False,
+) -> tuple[GateOutcome, dict[str, Any] | None, float | None]:
+    """Ladder-mediate the holdout confirmation of a structure's crowning duel.
+
+    The non-gauntlet structures (swiss / single_elim / double_elim / racing)
+    resolve a leader/survivor through their bracket/swiss/racing logic — all
+    scored on the TRAIN slice — and then run ONE final champion-gate duel of
+    that survivor vs the reigning champion. ``train_outcome`` /
+    ``train_parent_agg`` / ``train_child_agg`` are that crowning duel's
+    TRAIN-slice gate verdict and aggregates (``train_outcome`` decided on the
+    train slice, exactly like the gauntlet's ``run_tournament`` train gate).
+
+    This function reuses the gauntlet's holdout machinery to add the SAME
+    Ladder-mediated holdout confirmation on top of that crowning duel:
+
+    1. Split the board into train / holdout via :func:`split_board` with the
+       epoch-id :func:`rotation_seed` — identical to the gauntlet path. When
+       the holdout is empty (small board / split disabled / no tagged entry)
+       this returns ``(train_outcome, None, None)`` immediately, so the
+       structure's decision is byte-identical to today's whole-board
+       behaviour (the back-compat degrade).
+    2. Otherwise run ONE additional duel — champion (``left``) vs survivor
+       (``right``) — restricted to the HOLDOUT slice via ``board_subset``, to
+       measure both sides' holdout-slice aggregates. The holdout is
+       confirmation-only: it never picks the leader.
+    3. Feed the train verdict + train/holdout aggregates through
+       :func:`_ladder_mediated_outcome` — the same per-epoch
+       :class:`~zicato.tournament.ladder.LadderState` at ``ladder_state_path``
+       the gauntlet loads/saves, so the per-epoch query budget is SHARED
+       across whichever path consults the holdout this epoch. A released
+       non-confirmation flips the crowning promote to a ``rejected`` outcome
+       (reason ``holdout_not_confirmed``); the champion stands.
+
+    Returns ``(final_outcome, holdout_block, holdout_child_scalar)``:
+
+    * ``final_outcome`` — the crowning verdict after holdout mediation (the
+      orchestrator promotes iff it is ``"promoted"``).
+    * ``holdout_block`` — the stable Ladder/holdout evidence dict (see
+      :func:`zicato.tournament.ladder.holdout_record`) to journal verbatim
+      under ``OutcomeRecord.holdout``; ``None`` when no holdout was consulted.
+    * ``holdout_child_scalar`` — the challenger's holdout-slice scalar for the
+      per-generation ``generalization_gap``; ``None`` when no holdout existed.
+
+    Fast-mode note: ``fast`` is threaded to the holdout duel exactly as the
+    internal matchups receive it, so the champion's holdout-slice board units
+    are reused from the cache when already evaluated — the holdout
+    confirmation is applied on the FULL path consistently, never silently
+    skipped under ``--mode fast``.
+    """
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
+
+    seed = rotation_seed(weights.overfitting, epoch_id)
+    _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=seed)
+    if not holdout_ids:
+        # No holdout slice → byte-identical to today's whole-board decision.
+        return train_outcome, None, None
+
+    holdout_result = await run_matchup(
+        adapter=adapter,
+        left_gen=champion_gen,
+        right_gen=challenger_gen,
+        board=board,
+        weights=weights,
+        config=config,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        board_subset=tuple(holdout_ids),
+        disable_drift=disable_drift,
+        judge_only=judge_only,
+        fast=fast,
+        match_id="holdout-confirm",
+    )
+    holdout_parent_agg = holdout_result.parent_agg
+    holdout_child_agg = holdout_result.child_agg
+
+    final_outcome, holdout_block = _ladder_mediated_outcome(
+        train_outcome=train_outcome,
+        parent_agg=train_parent_agg,
+        child_agg=train_child_agg,
+        holdout_parent_agg=holdout_parent_agg,
+        holdout_child_agg=holdout_child_agg,
+        weights=weights,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+    )
+    holdout_child_scalar = float(holdout_child_agg["scalar"])
+    return final_outcome, holdout_block, holdout_child_scalar
+
+
 # Public surface
 __all__ = [
     "TournamentResult",
     "run_fast_mode",
     "run_tournament",
     "run_matchup",
+    "confirm_crowning_holdout",
 ]
 
 
