@@ -169,6 +169,19 @@ def mutations_json_path(workspace_root: Path, epoch_id: str) -> Path:
     return _epoch_root(workspace_root, epoch_id) / "mutations.json"
 
 
+def ladder_state_path(workspace_root: Path, epoch_id: str) -> Path:
+    """Path to an epoch's persisted Ladder governor state (``ladder_state.json``).
+
+    The Ladder (OVERFITTING.md §4 / §12 #2) tracks per-epoch state across
+    rounds — the best holdout score released so far and the remaining
+    holdout-query budget. The runner reads it before mediating a round's
+    holdout query and writes the updated state back after. Lives under the
+    epoch directory (not a generation directory) because the budget is a
+    per-epoch resource, exactly like ``mutations.json``.
+    """
+    return _epoch_root(workspace_root, epoch_id) / "ladder_state.json"
+
+
 def journal_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to an epoch's running narrative journal."""
     return _epoch_root(workspace_root, epoch_id) / "journal.md"
@@ -286,6 +299,7 @@ __all__ = [
     "patches_dir",
     "patch_json_path",
     "mutations_json_path",
+    "ladder_state_path",
     "journal_path",
     "analysis_path",
     "lineage_path",

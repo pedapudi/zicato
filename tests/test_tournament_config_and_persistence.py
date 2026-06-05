@@ -118,6 +118,55 @@ def test_overfitting_block_round_trips() -> None:
     assert again == cfg
 
 
+def test_absent_ladder_block_is_default_on() -> None:
+    cfg = overfitting_config_from_dict({"holdout_fraction": 0.3})
+    assert cfg.ladder.enabled is True
+    assert cfg.ladder.threshold is None
+    assert cfg.ladder.budget == 16
+    assert cfg.ladder.noise_scale == 0.0
+
+
+def test_scoring_parses_ladder_block() -> None:
+    w = _scoring_weights_from_dict(
+        {
+            "overfitting": {
+                "ladder": {
+                    "enabled": False,
+                    "threshold": 0.05,
+                    "budget": 4,
+                    "noise_scale": 0.02,
+                }
+            }
+        }
+    )
+    lad = w.overfitting.ladder
+    assert lad.enabled is False
+    assert lad.threshold == 0.05
+    assert lad.budget == 4
+    assert lad.noise_scale == 0.02
+
+
+def test_ladder_threshold_null_round_trips_as_none() -> None:
+    from zicato.core.types import LadderConfig, OverfittingConfig
+
+    cfg = OverfittingConfig(ladder=LadderConfig(threshold=None, budget=8))
+    again = overfitting_config_from_dict(overfitting_config_to_dict(cfg))
+    assert again.ladder.threshold is None
+    assert again == cfg
+
+
+def test_overfitting_block_round_trips_with_ladder() -> None:
+    from zicato.core.types import LadderConfig, OverfittingConfig
+
+    cfg = OverfittingConfig(
+        enabled=False,
+        holdout_fraction=0.4,
+        ladder=LadderConfig(enabled=True, threshold=0.07, budget=32, noise_scale=0.01),
+    )
+    again = overfitting_config_from_dict(overfitting_config_to_dict(cfg))
+    assert again == cfg
+
+
 def test_scoring_lifecycle_serde_preserves_overfitting() -> None:
     # The lifecycle serializer (_scoring_to_dict / _scoring_from_dict) must
     # carry the overfitting block through a full round-trip so a frozen

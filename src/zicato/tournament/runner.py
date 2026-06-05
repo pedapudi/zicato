@@ -243,6 +243,14 @@ class TournamentResult:
     #: ``champion_eval_mode`` provenance. A gauntlet/ad-hoc caller can
     #: ignore it. Empty for legacy callers.
     unit_provenance: dict[str, _UnitProvenance] = field(default_factory=dict)
+    #: The Ladder/holdout evidence block for THIS duel (OVERFITTING.md §12 #2),
+    #: or ``None`` when no holdout was consulted (a small board, the split
+    #: disabled, or a non-full-A/B path that does not gate on the holdout).
+    #: The orchestrator copies it verbatim onto the journaled
+    #: :class:`~zicato.core.types.OutcomeRecord.holdout`. Shape (stable, read
+    #: by the dashboard) is documented at
+    #: :func:`zicato.tournament.ladder.holdout_record`.
+    holdout: dict[str, Any] | None = None
 
 
 class _ProgressBumpingSink:
@@ -1666,6 +1674,202 @@ def _train_aggs(
     )
 
 
+def _load_ladder_state(workspace_root: Path, epoch_id: str, cfg: Any) -> Any:
+    """Read the persisted per-epoch Ladder state, or seed a fresh one.
+
+    Best-effort: a missing / unreadable / shape-changed state file (e.g. a
+    budget bump rolled the epoch) seeds a fresh state from the config's
+    budget. The Ladder state is runtime-only — it never enters the contract
+    hash — so re-seeding on a parse failure is always safe.
+    """
+    import json  # noqa: PLC0415
+
+    from zicato.core.workspace import ladder_state_path  # noqa: PLC0415
+    from zicato.tournament.ladder import LadderState  # noqa: PLC0415
+
+    path = ladder_state_path(workspace_root, epoch_id)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return LadderState(
+            budget_total=int(raw["budget_total"]),
+            budget_remaining=int(raw["budget_remaining"]),
+            best_holdout_scalar=(
+                None
+                if raw.get("best_holdout_scalar") is None
+                else float(raw["best_holdout_scalar"])
+            ),
+            best_confirmed=(
+                None if raw.get("best_confirmed") is None else bool(raw["best_confirmed"])
+            ),
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return LadderState.seed(cfg)
+
+
+def _save_ladder_state(workspace_root: Path, epoch_id: str, state: Any) -> None:
+    """Persist the per-epoch Ladder state. Best-effort — never aborts a round."""
+    import json  # noqa: PLC0415
+
+    from zicato.core.workspace import ladder_state_path  # noqa: PLC0415
+
+    path = ladder_state_path(workspace_root, epoch_id)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "budget_total": state.budget_total,
+                    "budget_remaining": state.budget_remaining,
+                    "best_holdout_scalar": state.best_holdout_scalar,
+                    "best_confirmed": state.best_confirmed,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        log.debug("ladder: failed to persist state for epoch %s", epoch_id, exc_info=True)
+
+
+def _ladder_mediated_outcome(
+    *,
+    train_outcome: GateOutcome,
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    holdout_parent_agg: dict[str, Any] | None,
+    holdout_child_agg: dict[str, Any] | None,
+    weights: ScoringWeights,
+    workspace_root: Path,
+    epoch_id: str,
+) -> tuple[GateOutcome, dict[str, Any] | None]:
+    """Apply the Ladder governor to a train-decided gate outcome.
+
+    ``train_outcome`` is :func:`~zicato.tournament.gate.evaluate_gate` run on
+    the TRAIN slice only (no holdout threaded). This function adds the
+    Ladder-mediated holdout confirmation on top and returns
+    ``(final_outcome, holdout_record)``:
+
+    * **No holdout** (both holdout aggs ``None``): the holdout step is skipped
+      entirely; the train outcome is returned with ``holdout=None`` — exactly
+      Phase A / pre-split behaviour, byte-identical.
+    * **Holdout, train rejected**: a train reject already fires with its
+      specific reason; the holdout is not consulted (no budget charged) and
+      no Ladder state moves. The block records ``confirmed=None``,
+      ``ladder_released=False``, the current budget unchanged.
+    * **Holdout, train promotes, Ladder disabled**: run the raw Phase-A
+      confirmation (``holdout_confirms``) directly — every query counts, no
+      budget. The block reflects that (``ladder_released`` mirrors whether the
+      bit was applied, budget left at its total since nothing is charged).
+    * **Holdout, train promotes, Ladder enabled**: mediate through
+      :func:`zicato.tournament.ladder.query_holdout`. A *released*
+      non-confirmation flips the promote to a holdout reject; a released
+      confirmation (or a withheld / budget-exhausted query — "champion
+      stands") leaves the train promote intact. The proposer is fed back only
+      the threshold-gated bit via the journal, never the raw per-entry result.
+    """
+    from zicato.tournament.gate import holdout_confirms  # noqa: PLC0415
+    from zicato.tournament.ladder import (  # noqa: PLC0415
+        effective_threshold,
+        holdout_record,
+        query_holdout,
+    )
+
+    # No holdout slice to consult → byte-identical to Phase A.
+    if holdout_parent_agg is None or holdout_child_agg is None:
+        return train_outcome, None
+
+    cfg = weights.overfitting.ladder
+    train_parent_scalar = float(parent_agg["scalar"])
+    train_child_scalar = float(child_agg["scalar"])
+    holdout_scalar = float(holdout_child_agg["scalar"])
+    threshold = effective_threshold(cfg, weights)
+
+    # A train reject fires first with its specific reason; we never consult the
+    # holdout (no budget charged, no state move). The block still records the
+    # current budget so the dashboard can render it.
+    if train_outcome.decision != "promoted":
+        state = _load_ladder_state(workspace_root, epoch_id, cfg) if cfg.enabled else None
+        budget_total = state.budget_total if state is not None else cfg.budget
+        budget_remaining = state.budget_remaining if state is not None else cfg.budget
+        block = holdout_record(
+            confirmed=None,
+            train_scalar=train_child_scalar,
+            holdout_scalar=None,
+            released=False,
+            budget_total=budget_total,
+            budget_remaining=budget_remaining,
+            threshold=threshold,
+        )
+        return train_outcome, block
+
+    # The raw Phase-A confirmation bit (computed out of band; the Ladder
+    # decides whether it is released this round).
+    raw_reason = holdout_confirms(holdout_parent_agg, holdout_child_agg, weights)
+    raw_confirmed = not raw_reason
+
+    # Ladder disabled → raw Phase-A confirmation: every query counts, no budget.
+    if not cfg.enabled:
+        if raw_reason:
+            final = GateOutcome(
+                decision="rejected",
+                reason=raw_reason,
+                delta_scalar=train_outcome.delta_scalar,
+                delta_pass_rate=train_outcome.delta_pass_rate,
+            )
+        else:
+            final = train_outcome
+        block = holdout_record(
+            confirmed=raw_confirmed,
+            train_scalar=train_child_scalar,
+            holdout_scalar=holdout_scalar,
+            released=True,
+            budget_total=cfg.budget,
+            budget_remaining=cfg.budget,
+            threshold=threshold,
+        )
+        return final, block
+
+    # Ladder enabled → mediate the query.
+    state = _load_ladder_state(workspace_root, epoch_id, cfg)
+    release = query_holdout(
+        state,
+        cfg=cfg,
+        weights=weights,
+        train_parent_scalar=train_parent_scalar,
+        train_child_scalar=train_child_scalar,
+        holdout_scalar=holdout_scalar,
+        holdout_confirmed=raw_confirmed,
+    )
+    _save_ladder_state(workspace_root, epoch_id, release.state)
+
+    # A RELEASED non-confirmation flips the promote to a holdout reject. A
+    # released confirmation, or any withheld / budget-exhausted query
+    # ("champion stands" — the holdout no longer gates), leaves the train
+    # promote intact.
+    if release.released and not raw_confirmed:
+        final = GateOutcome(
+            decision="rejected",
+            reason=raw_reason,
+            delta_scalar=train_outcome.delta_scalar,
+            delta_pass_rate=train_outcome.delta_pass_rate,
+        )
+    else:
+        final = train_outcome
+
+    block = holdout_record(
+        confirmed=release.confirmed,
+        train_scalar=train_child_scalar,
+        holdout_scalar=release.holdout_scalar,
+        released=release.released,
+        budget_total=release.state.budget_total,
+        budget_remaining=release.state.budget_remaining,
+        threshold=release.threshold,
+    )
+    return final, block
+
+
 def _regression_rejection(
     parent_agg: dict[str, Any],
     child_agg: dict[str, Any],
@@ -1816,13 +2020,27 @@ async def run_tournament(
         board, parent_losses, child_losses, weights
     )
 
-    outcome = await _gate_with_regression(
+    # The regression check + the three train-slice rules decide on the TRAIN
+    # aggregates only; the holdout is threaded separately through the Ladder
+    # governor (OVERFITTING.md §4 / §12 #2) so its confirmation only *counts*
+    # under the Ladder's release rule + per-epoch query budget. An absent
+    # holdout (small board / split disabled) makes the Ladder a no-op, so the
+    # decision stays byte-identical to Phase A.
+    train_outcome = await _gate_with_regression(
         parent_agg=parent_agg,
         child_agg=child_agg,
         child_snapshot_root=child_gen.snapshot_root,
         weights=weights,
+    )
+    outcome, holdout_block = _ladder_mediated_outcome(
+        train_outcome=train_outcome,
+        parent_agg=parent_agg,
+        child_agg=child_agg,
         holdout_parent_agg=holdout_parent_agg,
         holdout_child_agg=holdout_child_agg,
+        weights=weights,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
     )
 
     per_entry_losses: dict[str, tuple[LossProfile, LossProfile]] = {}
@@ -1839,6 +2057,7 @@ async def run_tournament(
         outcome=outcome,
         per_entry_losses=per_entry_losses,
         champion_eval_mode="full",
+        holdout=holdout_block,
     )
 
 

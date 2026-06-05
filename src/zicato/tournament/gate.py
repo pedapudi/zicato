@@ -224,6 +224,23 @@ def _holdout_confirms(
     return ""
 
 
+def holdout_confirms(
+    holdout_parent_agg: dict[str, Any],
+    holdout_child_agg: dict[str, Any],
+    weights: ScoringWeights,
+) -> str:
+    """Public wrapper for the holdout-confirmation check (OVERFITTING.md §12 #1).
+
+    Returns ``""`` when the holdout confirms the train-measured win, or the
+    ``holdout_not_confirmed`` reason otherwise. Exposed so the Ladder governor
+    (:mod:`zicato.tournament.ladder`) can compute the raw confirmation bit
+    *out of band* — the Ladder then decides whether to release that bit this
+    round. :func:`evaluate_gate` still calls the same logic internally for the
+    non-Ladder (raw Phase-A) path.
+    """
+    return _holdout_confirms(holdout_parent_agg, holdout_child_agg, weights)
+
+
 def evaluate_gate(
     parent_agg: dict[str, Any],
     child_agg: dict[str, Any],
@@ -335,4 +352,9 @@ def evaluate_gate(
     )
 
 
-__all__ = ["GateOutcome", "NAMESPACE_MONOTONICITY_TOLERANCE", "evaluate_gate"]
+__all__ = [
+    "GateOutcome",
+    "NAMESPACE_MONOTONICITY_TOLERANCE",
+    "evaluate_gate",
+    "holdout_confirms",
+]

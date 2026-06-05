@@ -1473,6 +1473,79 @@ def _default_tournament_structure() -> TournamentStructure:
 
 
 @dataclass(frozen=True, slots=True)
+class LadderConfig:
+    """The Ladder/Thresholdout governor over the holdout query (OVERFITTING.md §4, §12 #2).
+
+    Phase A built the train/holdout split and a holdout-*confirmation* step
+    (:class:`OverfittingConfig`). This sub-config governs *how* that holdout
+    is queried across an epoch's rounds, after Blum & Hardt's Ladder: a
+    reused holdout stays valid under an adaptively-querying proposer only if
+    every interaction with it is mediated by a mechanism that limits the
+    information leaked back. The two rules:
+
+    * **Release rule.** A new holdout-based signal is released only when the
+      *train-measured* improvement clears the threshold beyond the noise
+      band. Within the band the previous best is re-reported, so the
+      proposer cannot chase board fluctuations.
+    * **Budget.** Each holdout query charges a finite per-epoch budget; once
+      exhausted, no further holdout signals are released (the loop degrades
+      to "champion stands" — no holdout-gated promotion).
+
+    Folded into the contract hash through :class:`OverfittingConfig` →
+    :class:`ScoringWeights` (the canonicalizer recurses into nested frozen
+    dataclasses), so changing any knob — or the one-time default-on rollout —
+    rolls the epoch, exactly as retuning ``promote_margin`` does.
+
+    Default-on with a safe auto-degrade: an empty holdout (small board, split
+    disabled) means there is nothing to govern, and the Ladder is a no-op —
+    behaviour stays byte-identical to Phase A.
+
+    Fields
+    ------
+    enabled:
+        Master switch for the Ladder governor. ``True`` by default. When
+        ``False`` the holdout confirmation runs in its raw Phase-A form
+        (every holdout query counts, no budget, no release rule).
+    threshold:
+        The train-improvement bar the release rule applies. ``None``
+        (default) derives it from :attr:`ScoringWeights.promote_margin` so
+        the Ladder reuses the gate's existing noise threshold; a float pins
+        it explicitly.
+    budget:
+        Per-epoch holdout-query budget. Each round that consults the holdout
+        charges one. When the budget is exhausted the Ladder stops releasing
+        holdout signals. Must be ``>= 0`` (``0`` releases nothing).
+    noise_scale:
+        Width of the noise band added to the threshold. ``0.0`` (default) is
+        the parameter-free Ladder — no calibration needed. Reserved for
+        DP-grade noise calibration later; must be ``>= 0``.
+    """
+
+    enabled: bool = True
+    threshold: float | None = None
+    budget: int = 16
+    noise_scale: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.threshold is not None and self.threshold < 0.0:
+            raise ValueError(f"ladder.threshold must be >= 0 or None, got {self.threshold!r}")
+        if self.budget < 0:
+            raise ValueError(f"ladder.budget must be >= 0, got {self.budget!r}")
+        if self.noise_scale < 0.0:
+            raise ValueError(f"ladder.noise_scale must be >= 0, got {self.noise_scale!r}")
+
+    @classmethod
+    def defaults(cls) -> LadderConfig:
+        """The fully-defaulted (default-on) config an absent block resolves to."""
+        return cls()
+
+
+def _default_ladder_config() -> LadderConfig:
+    """Default-factory for :attr:`OverfittingConfig.ladder`."""
+    return LadderConfig.defaults()
+
+
+@dataclass(frozen=True, slots=True)
 class OverfittingConfig:
     """Anti-overfitting controls: the train/holdout board split + leakage gate.
 
@@ -1512,15 +1585,17 @@ class OverfittingConfig:
         aggregated to counts/rates, and experiment-memory ``Δscalar`` is
         coarsened to ``improved``/``flat``/``regressed`` buckets. Turning
         it off restores the verbatim rendering byte-for-byte.
+    ladder:
+        The Ladder/Thresholdout governor over the holdout query
+        (:class:`LadderConfig`; OVERFITTING.md §4 / §12 #2). Default-on;
+        a no-op when the holdout is empty.
     """
 
     enabled: bool = True
     holdout_fraction: float = 0.3
     min_board_size_for_split: int = 8
     restrict_proposer_visibility: bool = True
-    # Phase B (Ladder/Thresholdout noisy, budgeted holdout — OVERFITTING.md
-    # §12 #2) will add a nested ``ladder`` sub-config here. Reserved; not
-    # implemented in this phase.
+    ladder: LadderConfig = field(default_factory=_default_ladder_config)
 
     def __post_init__(self) -> None:
         if not 0.0 < self.holdout_fraction < 1.0:
@@ -1604,6 +1679,18 @@ class OutcomeRecord:
     # ``"full"`` so older journals deserialize unchanged. Recorded purely
     # for provenance — flipping fast↔full does not roll the epoch.
     champion_eval_mode: str = "full"
+    # Holdout + Ladder evidence for THIS round (OVERFITTING.md §4 / §12 #2).
+    # ``None`` (the default) when there was no holdout to consult — a small
+    # board, the split disabled, or no tagged entry — so older journals and
+    # the byte-identical Phase-A degrade carry no block. When a holdout was
+    # consulted this is a plain JSON-shaped dict with the stable shape the
+    # dashboard reads (the keys are documented at
+    # :func:`zicato.tournament.ladder.holdout_record`):
+    # ``{"confirmed": bool|None, "train_scalar": float|None,
+    #    "holdout_scalar": float|None, "ladder_released": bool,
+    #    "ladder_budget_total": int, "ladder_budget_remaining": int,
+    #    "threshold": float}``. RUNTIME evidence, not a contract input.
+    holdout: dict[str, Any] | None = None
 
 
 #: Hard cap on the number of settled prior experiments surfaced to the
@@ -2329,6 +2416,8 @@ __all__ = [
     "ProposerSpec",
     # Epoch / generation
     "ScoringWeights",
+    "OverfittingConfig",
+    "LadderConfig",
     "EpochConfig",
     "Generation",
     # Patterns

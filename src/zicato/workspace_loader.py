@@ -25,6 +25,7 @@ from zicato.board.jsonl import load_board, load_board_with_meta
 from zicato.core.types import (
     BoardEntry,
     EpochConfig,
+    LadderConfig,
     OverfittingConfig,
     ScoringWeights,
     TournamentStructure,
@@ -238,7 +239,35 @@ def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
         kwargs["min_board_size_for_split"] = int(raw["min_board_size_for_split"])
     if "restrict_proposer_visibility" in raw:
         kwargs["restrict_proposer_visibility"] = bool(raw["restrict_proposer_visibility"])
+    kwargs["ladder"] = ladder_config_from_dict(raw.get("ladder"))
     return OverfittingConfig(**kwargs)
+
+
+def ladder_config_from_dict(raw: Any) -> LadderConfig:
+    """Parse the ``overfitting.ladder`` block into a :class:`LadderConfig`.
+
+    Absent (``None``) or a non-mapping ⇒ the fully-defaulted (default-on)
+    :class:`~zicato.core.types.LadderConfig`, so an epoch that never spells
+    the block out still gets the Ladder governor on, with a safe auto-degrade
+    on an empty holdout. A present block forwards each recognised key;
+    unknown keys are ignored. ``threshold`` is ``None`` (derive from
+    ``promote_margin``) unless explicitly set. Range/validity is enforced by
+    ``LadderConfig``'s ``__post_init__``. Folds into the contract hash through
+    :class:`OverfittingConfig` automatically (the canonicalizer recurses into
+    nested frozen dataclasses), so a ``ladder`` change rolls the epoch.
+    """
+    if not isinstance(raw, Mapping):
+        return LadderConfig.defaults()
+    kwargs: dict[str, Any] = {}
+    if "enabled" in raw:
+        kwargs["enabled"] = bool(raw["enabled"])
+    if "threshold" in raw and raw["threshold"] is not None:
+        kwargs["threshold"] = float(raw["threshold"])
+    if "budget" in raw:
+        kwargs["budget"] = int(raw["budget"])
+    if "noise_scale" in raw:
+        kwargs["noise_scale"] = float(raw["noise_scale"])
+    return LadderConfig(**kwargs)
 
 
 def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:
@@ -252,6 +281,22 @@ def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:
         "holdout_fraction": cfg.holdout_fraction,
         "min_board_size_for_split": cfg.min_board_size_for_split,
         "restrict_proposer_visibility": cfg.restrict_proposer_visibility,
+        "ladder": ladder_config_to_dict(cfg.ladder),
+    }
+
+
+def ladder_config_to_dict(cfg: LadderConfig) -> dict[str, Any]:
+    """Serialize a :class:`LadderConfig` to the ``ladder`` sub-block.
+
+    The inverse of :func:`ladder_config_from_dict`; every field is written so
+    the on-disk form is complete and round-trips cleanly. ``threshold`` is
+    serialized verbatim (``None`` ⇒ derive from ``promote_margin``).
+    """
+    return {
+        "enabled": cfg.enabled,
+        "threshold": cfg.threshold,
+        "budget": cfg.budget,
+        "noise_scale": cfg.noise_scale,
     }
 
 
@@ -301,4 +346,6 @@ __all__ = [
     "tournament_structure_to_dict",
     "overfitting_config_from_dict",
     "overfitting_config_to_dict",
+    "ladder_config_from_dict",
+    "ladder_config_to_dict",
 ]

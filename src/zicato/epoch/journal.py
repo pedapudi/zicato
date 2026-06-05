@@ -262,6 +262,10 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         eliminated_in_round=int(raw_elim) if raw_elim is not None else None,
         match_record=match_record,
         champion_eval_mode=str(d.get("champion_eval_mode", "full")),
+        # Holdout + Ladder evidence (OVERFITTING.md §12 #2). Stored verbatim
+        # as a plain JSON dict; ``None`` / absent when no holdout was
+        # consulted (the byte-identical Phase-A degrade and older journals).
+        holdout=d.get("holdout"),
     )
 
 

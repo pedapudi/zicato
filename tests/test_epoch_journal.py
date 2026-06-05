@@ -256,6 +256,39 @@ def test_read_experiment_round_trips_new_layout(
     assert loaded.outcome.tournament_decision == "promoted"
 
 
+def test_outcome_holdout_block_round_trips(epoch_root: tuple[Path, str]) -> None:
+    # The Ladder/holdout evidence block (OVERFITTING.md §12 #2) survives a
+    # write/read with its exact shape so the dashboard reads it back.
+    from dataclasses import replace
+
+    ws, eid = epoch_root
+    block = {
+        "confirmed": True,
+        "train_scalar": 0.5,
+        "holdout_scalar": 0.6,
+        "ladder_released": True,
+        "ladder_budget_total": 16,
+        "ladder_budget_remaining": 15,
+        "threshold": 0.01,
+    }
+    exp = _experiment(outcome=replace(_outcome(), holdout=block))
+    write_experiment(ws, eid, "v1", exp)
+
+    loaded = read_experiment(ws, eid, "v1")
+    assert loaded.outcome is not None
+    assert loaded.outcome.holdout == block
+
+
+def test_outcome_holdout_block_absent_reads_as_none(epoch_root: tuple[Path, str]) -> None:
+    # An outcome with no holdout block (the byte-identical Phase-A degrade, or
+    # an older journal) reads back with holdout=None — no crash.
+    ws, eid = epoch_root
+    write_experiment(ws, eid, "v1", _experiment(outcome=_outcome()))
+    loaded = read_experiment(ws, eid, "v1")
+    assert loaded.outcome is not None
+    assert loaded.outcome.holdout is None
+
+
 def test_write_experiment_persists_round_index(
     epoch_root: tuple[Path, str],
 ) -> None:

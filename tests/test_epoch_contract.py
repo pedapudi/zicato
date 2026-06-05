@@ -238,6 +238,51 @@ def test_hash_changes_on_restrict_visibility_edit(tmp_path: Path) -> None:
     assert h1 != h2
 
 
+def test_hash_changes_on_ladder_knob_edit(tmp_path: Path) -> None:
+    # The Ladder sub-config (OVERFITTING.md §12 #2) folds into the scoring
+    # contract through OverfittingConfig — bumping a Ladder knob rolls the
+    # epoch, exactly as retuning promote_margin does.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"overfitting": {"ladder": {"budget": 16}}}))
+    h1 = compute_contract_hash(base)
+    base.scoring_path.write_text(json.dumps({"overfitting": {"ladder": {"budget": 32}}}))
+    h2 = compute_contract_hash(base)
+    assert h1 != h2
+
+
+def test_hash_changes_on_ladder_disable(tmp_path: Path) -> None:
+    base = _write_contract(tmp_path)
+    h_on = compute_contract_hash(base)  # default-on ladder
+    base.scoring_path.write_text(json.dumps({"overfitting": {"ladder": {"enabled": False}}}))
+    h_off = compute_contract_hash(base)
+    assert h_on != h_off
+
+
+def test_absent_ladder_block_hashes_as_the_defaults(tmp_path: Path) -> None:
+    # A scoring.json that never mentions ``overfitting.ladder`` must hash like
+    # one that spells the default-on Ladder config out in full.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"overfitting": {"holdout_fraction": 0.3}}))
+    h_absent = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps(
+            {
+                "overfitting": {
+                    "holdout_fraction": 0.3,
+                    "ladder": {
+                        "enabled": True,
+                        "threshold": None,
+                        "budget": 16,
+                        "noise_scale": 0.0,
+                    },
+                }
+            }
+        )
+    )
+    h_spelled = compute_contract_hash(base)
+    assert h_absent == h_spelled
+
+
 def test_absent_overfitting_block_hashes_as_the_defaults(tmp_path: Path) -> None:
     # A scoring.json that never mentions ``overfitting`` must hash exactly
     # like one that spells the default-on config out in full — the

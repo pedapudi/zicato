@@ -995,6 +995,11 @@ async def evolve_once(
         # (``full`` / ``fast`` / ``fast-degraded``); record it on the
         # gauntlet path too so a fast round is not journalled as ``full``.
         champion_eval_mode=tournament_result.champion_eval_mode,
+        # The Ladder/holdout evidence block (OVERFITTING.md §12 #2) the runner
+        # assembled for this duel — ``None`` when no holdout was consulted.
+        # Journaled verbatim under the stable ``holdout`` key the dashboard
+        # reads (see :func:`zicato.tournament.ladder.holdout_record`).
+        holdout=getattr(tournament_result, "holdout", None),
     )
     finalised = update_experiment_outcome(
         workspace_root, resolved_epoch_id, next_id, outcome_record

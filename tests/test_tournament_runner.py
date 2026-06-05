@@ -39,6 +39,7 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.core import BoardEntry as _BoardEntry
+from zicato.tournament.gate import GateOutcome
 from zicato.tournament.runner import (
     TournamentResult,
     _stamp_judge_only,
@@ -1716,3 +1717,232 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
     # "cached" — the runner only ever updates child rows in fast mode.
     assert all(e.status == "completed" for e in children)
     assert all(e.status == "cached" for e in parents)
+
+
+# ---------------------------------------------------------------------------
+# Ladder-mediated holdout confirmation (OVERFITTING.md §4 / §12 #2). The
+# Phase-A holdout confirmation now flows through the Ladder governor: it only
+# *counts* under the release rule + per-epoch budget, and the round's
+# decision record carries the stable ``holdout`` block.
+# ---------------------------------------------------------------------------
+
+
+def _ladder_agg(scalar: float, *, pass_fail: bool = True, entry: str = "h") -> dict[str, Any]:
+    return {
+        "scalar": scalar,
+        "pass_rate": 1.0 if pass_fail else 0.0,
+        "per_entry": {entry: {"pass_fail": pass_fail}},
+    }
+
+
+def _promote_outcome(delta_scalar: float = -0.5) -> GateOutcome:
+    return GateOutcome(
+        decision="promoted", reason="", delta_scalar=delta_scalar, delta_pass_rate=0.0
+    )
+
+
+def _reject_outcome() -> GateOutcome:
+    return GateOutcome(
+        decision="rejected",
+        reason="insufficient improvement: ...",
+        delta_scalar=-0.001,
+        delta_pass_rate=0.0,
+    )
+
+
+def test_ladder_no_holdout_is_byte_identical(tmp_path: Path) -> None:
+    # No holdout slice → the Ladder is a no-op: the train outcome is returned
+    # unchanged and ``holdout`` is None (Phase-A / pre-split behaviour).
+    train = _promote_outcome()
+    parent = _ladder_agg(1.0)
+    child = _ladder_agg(0.5)
+    outcome, block = runner_mod._ladder_mediated_outcome(
+        train_outcome=train,
+        parent_agg=parent,
+        child_agg=child,
+        holdout_parent_agg=None,
+        holdout_child_agg=None,
+        weights=ScoringWeights(promote_margin=0.1),
+        workspace_root=tmp_path,
+        epoch_id="e0",
+    )
+    assert outcome is train
+    assert block is None
+
+
+def test_ladder_released_confirmation_keeps_promote(tmp_path: Path) -> None:
+    # A train-win that clears the threshold, with a confirming holdout, stays
+    # promoted and populates the block with the shape the dashboard reads.
+    train = _promote_outcome()  # train improvement 0.5 >> 0.1 threshold
+    outcome, block = runner_mod._ladder_mediated_outcome(
+        train_outcome=train,
+        parent_agg=_ladder_agg(1.0),
+        child_agg=_ladder_agg(0.5),
+        holdout_parent_agg=_ladder_agg(1.0),
+        holdout_child_agg=_ladder_agg(0.8),  # holdout improved → confirms
+        weights=ScoringWeights(promote_margin=0.1),
+        workspace_root=tmp_path,
+        epoch_id="e0",
+    )
+    assert outcome.decision == "promoted"
+    assert block is not None
+    assert set(block) == {
+        "confirmed",
+        "train_scalar",
+        "holdout_scalar",
+        "ladder_released",
+        "ladder_budget_total",
+        "ladder_budget_remaining",
+        "threshold",
+    }
+    assert block["confirmed"] is True
+    assert block["ladder_released"] is True
+    assert block["train_scalar"] == pytest.approx(0.5)
+    assert block["holdout_scalar"] == pytest.approx(0.8)
+    assert block["ladder_budget_remaining"] == block["ladder_budget_total"] - 1
+
+
+def test_ladder_released_nonconfirmation_flips_to_reject(tmp_path: Path) -> None:
+    # A released holdout that does NOT confirm flips the train-promote to a
+    # holdout reject. The champion stands on reject.
+    train = _promote_outcome()
+    outcome, block = runner_mod._ladder_mediated_outcome(
+        train_outcome=train,
+        parent_agg=_ladder_agg(1.0),
+        child_agg=_ladder_agg(0.5),
+        holdout_parent_agg=_ladder_agg(1.0),
+        holdout_child_agg=_ladder_agg(5.0),  # holdout regressed hard → reject
+        weights=ScoringWeights(promote_margin=0.1),
+        workspace_root=tmp_path,
+        epoch_id="e0",
+    )
+    assert outcome.decision == "rejected"
+    assert "holdout_not_confirmed" in outcome.reason
+    assert block is not None
+    assert block["confirmed"] is False
+    assert block["ladder_released"] is True
+
+
+def test_ladder_train_reject_does_not_consult_holdout(tmp_path: Path) -> None:
+    # A train reject fires first; the holdout is not consulted (no budget
+    # charged) and the block records confirmed=None with full budget.
+    train = _reject_outcome()
+    outcome, block = runner_mod._ladder_mediated_outcome(
+        train_outcome=train,
+        parent_agg=_ladder_agg(1.0),
+        child_agg=_ladder_agg(0.999),
+        holdout_parent_agg=_ladder_agg(1.0),
+        holdout_child_agg=_ladder_agg(0.5),
+        weights=ScoringWeights(promote_margin=0.1),
+        workspace_root=tmp_path,
+        epoch_id="e0",
+    )
+    assert outcome is train
+    assert block is not None
+    assert block["confirmed"] is None
+    assert block["ladder_released"] is False
+    assert block["ladder_budget_remaining"] == block["ladder_budget_total"]
+
+
+def test_ladder_budget_exhaustion_lets_champion_stand(tmp_path: Path) -> None:
+    # With budget=1, the first release consumes it; a second train-win is no
+    # longer holdout-gated (it promotes on the train rules alone), even when
+    # the holdout would have rejected it.
+    from zicato.core.types import LadderConfig, OverfittingConfig
+
+    weights = ScoringWeights(
+        promote_margin=0.1,
+        overfitting=OverfittingConfig(ladder=LadderConfig(budget=1)),
+    )
+    train = _promote_outcome()
+
+    out1, _ = runner_mod._ladder_mediated_outcome(
+        train_outcome=train,
+        parent_agg=_ladder_agg(1.0),
+        child_agg=_ladder_agg(0.5),
+        holdout_parent_agg=_ladder_agg(1.0),
+        holdout_child_agg=_ladder_agg(0.8),
+        weights=weights,
+        workspace_root=tmp_path,
+        epoch_id="e0",
+    )
+    assert out1.decision == "promoted"
+
+    # Budget now 0: a holdout that WOULD reject is never released → champion
+    # stands → the train-promote survives.
+    out2, block2 = runner_mod._ladder_mediated_outcome(
+        train_outcome=train,
+        parent_agg=_ladder_agg(1.0),
+        child_agg=_ladder_agg(0.5),
+        holdout_parent_agg=_ladder_agg(1.0),
+        holdout_child_agg=_ladder_agg(99.0),
+        weights=weights,
+        workspace_root=tmp_path,
+        epoch_id="e0",
+    )
+    assert out2.decision == "promoted"
+    assert block2 is not None
+    assert block2["ladder_released"] is False
+    assert block2["ladder_budget_remaining"] == 0
+
+
+def test_ladder_disabled_runs_raw_phase_a_confirmation(tmp_path: Path) -> None:
+    # ladder.enabled=False ⇒ raw Phase-A confirmation: every holdout query
+    # counts, no budget, no release rule. A regressing holdout rejects.
+    from zicato.core.types import LadderConfig, OverfittingConfig
+
+    weights = ScoringWeights(
+        promote_margin=0.1,
+        overfitting=OverfittingConfig(ladder=LadderConfig(enabled=False)),
+    )
+    outcome, block = runner_mod._ladder_mediated_outcome(
+        train_outcome=_promote_outcome(),
+        parent_agg=_ladder_agg(1.0),
+        child_agg=_ladder_agg(0.5),
+        holdout_parent_agg=_ladder_agg(1.0),
+        holdout_child_agg=_ladder_agg(5.0),
+        weights=weights,
+        workspace_root=tmp_path,
+        epoch_id="e0",
+    )
+    assert outcome.decision == "rejected"
+    assert "holdout_not_confirmed" in outcome.reason
+    assert block is not None
+    # No budget machinery in disabled mode: budget stays at total.
+    assert block["ladder_budget_remaining"] == block["ladder_budget_total"]
+
+
+def test_ladder_withhold_within_band_keeps_promote(tmp_path: Path) -> None:
+    # A train-win whose improvement is WITHIN the noise band is withheld: the
+    # holdout result does not count this round, so a regressing holdout cannot
+    # reject — the train-promote stands and the prior best is re-reported.
+    weights = ScoringWeights(promote_margin=0.5)
+    # First, a clear release establishes a confirming best.
+    out1, _ = runner_mod._ladder_mediated_outcome(
+        train_outcome=_promote_outcome(delta_scalar=-0.9),
+        parent_agg=_ladder_agg(1.0),
+        child_agg=_ladder_agg(0.1),  # improvement 0.9 >= 0.5 → released
+        holdout_parent_agg=_ladder_agg(1.0),
+        holdout_child_agg=_ladder_agg(0.2),
+        weights=weights,
+        workspace_root=tmp_path,
+        epoch_id="e0",
+    )
+    assert out1.decision == "promoted"
+
+    # Now a tiny train-win (improvement 0.1 < 0.5 band) with a bad holdout:
+    # withheld → not released → cannot reject → promote stands.
+    out2, block2 = runner_mod._ladder_mediated_outcome(
+        train_outcome=_promote_outcome(delta_scalar=-0.1),
+        parent_agg=_ladder_agg(1.0),
+        child_agg=_ladder_agg(0.9),
+        holdout_parent_agg=_ladder_agg(1.0),
+        holdout_child_agg=_ladder_agg(50.0),
+        weights=weights,
+        workspace_root=tmp_path,
+        epoch_id="e0",
+    )
+    assert out2.decision == "promoted"
+    assert block2 is not None
+    assert block2["ladder_released"] is False
+    assert block2["confirmed"] is True  # the prior best, re-reported
