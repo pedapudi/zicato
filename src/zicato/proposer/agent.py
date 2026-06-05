@@ -18,12 +18,16 @@ Two halves:
   :func:`build_proposer_agent` — the protocol, the skills-aware built-in
   implementation, and the spec→agent builder.
 
-The built-in default agent is the only agent this phase ships. A proposer
-dir that carries a custom ``agent.py`` (``spec.agent_source_sha256`` is
-set) is a deliberate seam: :func:`build_proposer_agent` raises
-``NotImplementedError`` rather than silently falling back, so a configured
-custom agent never runs as the default by accident. The agent-with-tools
-loading path lands in Phase 2b.
+Two agent implementations ship here. The built-in
+:class:`DefaultProposerAgent` is the single-shot text-shim path: it drives
+:func:`propose_experiment` over the auxiliary callable. A proposer dir that
+carries a custom ``agent.py`` (``spec.agent_source_sha256`` is set) selects
+the Design-A path instead — :func:`build_proposer_agent` returns an
+:class:`~zicato.proposer.adk_agent.ADKProposerAgent`, a native ADK agent
+that declares its own ``model=`` and runs on ADK's own ``Runner`` (NOT the
+auxiliary text shim, which cannot express the function calls a tool-using
+agent needs). The ADK module is imported lazily so the default path stays
+free of the optional ``google-adk`` extra.
 """
 
 from __future__ import annotations
@@ -134,24 +138,49 @@ class DefaultProposerAgent:
         )
 
 
-def build_proposer_agent(spec: ProposerSpec) -> ProposerAgent:
+def build_proposer_agent(
+    spec: ProposerSpec,
+    proposer_path: Path | None = None,
+) -> ProposerAgent:
     """Build the :class:`ProposerAgent` for a resolved proposer spec.
 
     Returns a :class:`DefaultProposerAgent` — the skills-aware single-shot
     built-in — for the built-in default spec and for any ``dir:*`` proposer
     that carries *no* custom agent module (``spec.agent_source_sha256`` is
     ``None``). Such a proposer steers the default engine purely through its
-    skills.
+    skills, over the auxiliary text shim.
 
     When the proposer dir ships a ``proposers/<name>/agent.py``
-    (``spec.agent_source_sha256`` is set), this raises
-    :class:`NotImplementedError`: loading and running a custom proposer
-    agent — the agent-with-tools path — lands in Phase 2b. Raising here
-    (rather than silently running the default) keeps the seam honest, so a
-    configured custom agent never runs as the default by accident.
+    (``spec.agent_source_sha256`` is set), this returns an
+    :class:`~zicato.proposer.adk_agent.ADKProposerAgent` — the Design-A
+    tool-using path: a native ADK agent that declares its own ``model=``
+    and runs on ADK's own ``Runner`` (the auxiliary callable does NOT
+    govern it). ``proposer_path`` is the proposer dir the
+    ``agent.py`` module is loaded from; the orchestrator threads the same
+    frozen ``proposer_path`` it resolved the spec from. The ADK module is
+    imported lazily so the default path never requires the ``google-adk``
+    extra.
+
+    Raises
+    ------
+    ValueError
+        When the spec carries a custom agent module but no
+        ``proposer_path`` was supplied to load it from — a misconfiguration
+        the caller must fix rather than silently fall back to the default.
     """
     if spec.agent_source_sha256 is not None:
-        raise NotImplementedError("custom ADK proposer agents land in Phase 2b")
+        if proposer_path is None:
+            raise ValueError(
+                "spec declares a custom proposer agent (agent_source_sha256 is "
+                "set) but no proposer_path was supplied to load "
+                "proposers/<name>/agent.py from"
+            )
+        # Lazy import: ADKProposerAgent pulls in the optional google-adk
+        # extra only when actually constructed, so the default path stays
+        # dependency-light.
+        from zicato.proposer.adk_agent import ADKProposerAgent  # noqa: PLC0415
+
+        return ADKProposerAgent(spec=spec, proposer_path=proposer_path)
     return DefaultProposerAgent(spec)
 
 

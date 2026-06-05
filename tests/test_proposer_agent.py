@@ -144,12 +144,16 @@ def test_build_agent_for_skills_only_dir() -> None:
     assert agent.spec is spec
 
 
-def test_build_agent_with_custom_agent_source_is_phase_2b_seam() -> None:
+def test_build_agent_with_custom_agent_source_requires_proposer_path() -> None:
+    # Phase 2b: a custom-agent spec selects the ADK (Design A) path, which
+    # needs the proposer dir to load proposers/<name>/agent.py from. Without
+    # a proposer_path the builder raises ValueError rather than silently
+    # falling back to the default agent.
     spec = ProposerSpec(
         agent_id="dir:demo",
         tools=(),
         skills=(),
         agent_source_sha256="deadbeef",
     )
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="no proposer_path"):
         build_proposer_agent(spec)

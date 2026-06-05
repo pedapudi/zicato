@@ -1,0 +1,207 @@
+"""Tests for the read-only proposer tool registry (``zicato.proposer.tools``).
+
+Each tool is exercised against a fixture generation-root snapshot plus a
+mutation manifest whose ``source_root`` basenames re-base onto that
+snapshot. The tests assert the returned content, that the read / grep
+tools refuse path traversal and never write, that every tool raises
+cleanly with no bound context, and that the bind context-manager sets AND
+resets the module-level context var.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from zicato.proposer import tools as proposer_tools
+from zicato.proposer.tools import (
+    DEFAULT_PROPOSER_TOOLS,
+    ProposerToolContext,
+    bind_proposer_tool_context,
+    grep_mutable,
+    list_mutation_points,
+    read_insights,
+    read_journal,
+    read_mutable_file,
+)
+from zicato.testing import make_mutation_point
+
+
+def _build_snapshot(tmp_path: Path) -> tuple[Path, tuple]:
+    """Build a generation snapshot + a manifest re-basing onto it.
+
+    Layout::
+
+        {tmp}/snapshot/harness/prompts.py
+        {tmp}/snapshot/harness/router.py
+
+    The manifest's ``source_root`` basename is ``harness``, so
+    ``ProposerToolContext.mutable_roots`` resolves ``{snapshot}/harness``.
+    """
+    snapshot = tmp_path / "snapshot"
+    harness = snapshot / "harness"
+    harness.mkdir(parents=True)
+    (harness / "prompts.py").write_text(
+        "SYSTEM_PROMPT = 'You are a helpful assistant.'\n", encoding="utf-8"
+    )
+    (harness / "router.py").write_text(
+        "def route(msg):\n    return 'fallback'  # TODO tighten\n", encoding="utf-8"
+    )
+
+    mp = make_mutation_point(
+        id="harness__system_prompt",
+        file=harness / "prompts.py",
+        source_root=Path("/orig/harness"),
+        content="You are a helpful assistant.",
+    )
+    return snapshot, (mp,)
+
+
+def _make_ctx(tmp_path: Path) -> ProposerToolContext:
+    snapshot, mutations = _build_snapshot(tmp_path)
+    return ProposerToolContext(
+        workspace_root=tmp_path / "ws",
+        generation_root=snapshot,
+        epoch_id="ep-001",
+        mutations=mutations,
+    )
+
+
+def test_list_mutation_points_renders_manifest(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    with bind_proposer_tool_context(ctx):
+        payload = json.loads(list_mutation_points())
+    entries = payload["mutation_points"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["id"] == "harness__system_prompt"
+    assert entry["content"] == "You are a helpful assistant."
+    # File is rendered relative to the snapshot root when possible.
+    assert entry["file"] == "harness/prompts.py"
+
+
+def test_read_mutable_file_returns_content(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    with bind_proposer_tool_context(ctx):
+        text = read_mutable_file("prompts.py")
+    assert "You are a helpful assistant." in text
+
+
+def test_read_mutable_file_rejects_traversal(tmp_path: Path) -> None:
+    # Plant a secret OUTSIDE the mutable subtree the proposer may read.
+    secret = tmp_path / "snapshot" / "secret.txt"
+    ctx = _make_ctx(tmp_path)
+    secret.write_text("TOP SECRET", encoding="utf-8")
+    with bind_proposer_tool_context(ctx):
+        with pytest.raises(ValueError, match="does not resolve to a file"):
+            read_mutable_file("../secret.txt")
+
+
+def test_read_mutable_file_rejects_absolute(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    with bind_proposer_tool_context(ctx):
+        with pytest.raises(ValueError, match="must be relative"):
+            read_mutable_file("/etc/passwd")
+
+
+def test_read_mutable_file_never_writes(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    target = tmp_path / "snapshot" / "harness" / "prompts.py"
+    before = target.read_bytes()
+    mtime_before = target.stat().st_mtime_ns
+    with bind_proposer_tool_context(ctx):
+        read_mutable_file("prompts.py")
+    assert target.read_bytes() == before
+    assert target.stat().st_mtime_ns == mtime_before
+
+
+def test_grep_mutable_finds_matches(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    with bind_proposer_tool_context(ctx):
+        out = grep_mutable(r"TODO")
+    assert "router.py:" in out
+    assert "TODO tighten" in out
+
+
+def test_grep_mutable_no_matches_signal(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    with bind_proposer_tool_context(ctx):
+        out = grep_mutable(r"zzz_no_such_token_zzz")
+    assert out == "(no matches)"
+
+
+def test_grep_mutable_invalid_regex_raises(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    with bind_proposer_tool_context(ctx):
+        with pytest.raises(ValueError, match="invalid regex"):
+            grep_mutable(r"(unterminated")
+
+
+def test_grep_mutable_never_writes(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    harness = tmp_path / "snapshot" / "harness"
+    snapshot_before = {p: p.read_bytes() for p in harness.rglob("*") if p.is_file()}
+    with bind_proposer_tool_context(ctx):
+        grep_mutable(r".")
+    for path, data in snapshot_before.items():
+        assert path.read_bytes() == data
+
+
+def test_read_journal_and_insights_empty_when_absent(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    with bind_proposer_tool_context(ctx):
+        assert read_journal() == ""
+        assert read_insights() == ""
+
+
+def test_read_journal_reads_existing(tmp_path: Path) -> None:
+    from zicato.core.workspace import journal_path
+
+    ctx = _make_ctx(tmp_path)
+    jp = journal_path(ctx.workspace_root, ctx.epoch_id)
+    jp.parent.mkdir(parents=True, exist_ok=True)
+    jp.write_text("## round 1\nwe tried tightening the prompt.\n", encoding="utf-8")
+    with bind_proposer_tool_context(ctx):
+        out = read_journal()
+    assert "tightening the prompt" in out
+
+
+def test_tools_raise_with_no_bound_context() -> None:
+    # Each tool resolves the context var and must raise cleanly when unbound.
+    for tool in (list_mutation_points, read_journal, read_insights):
+        with pytest.raises(RuntimeError, match="no bound ProposerToolContext"):
+            tool()
+    with pytest.raises(RuntimeError, match="no bound ProposerToolContext"):
+        read_mutable_file("prompts.py")
+    with pytest.raises(RuntimeError, match="no bound ProposerToolContext"):
+        grep_mutable(r".")
+
+
+def test_bind_context_sets_and_resets(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    # Unset before.
+    assert proposer_tools._TOOL_CONTEXT.get() is None
+    with bind_proposer_tool_context(ctx):
+        assert proposer_tools._TOOL_CONTEXT.get() is ctx
+    # Reset after the block, even though we entered cleanly.
+    assert proposer_tools._TOOL_CONTEXT.get() is None
+
+
+def test_bind_context_resets_on_exception(tmp_path: Path) -> None:
+    ctx = _make_ctx(tmp_path)
+    with pytest.raises(RuntimeError, match="boom"):
+        with bind_proposer_tool_context(ctx):
+            raise RuntimeError("boom")
+    assert proposer_tools._TOOL_CONTEXT.get() is None
+
+
+def test_default_proposer_tools_are_the_read_only_set() -> None:
+    assert DEFAULT_PROPOSER_TOOLS == (
+        list_mutation_points,
+        read_mutable_file,
+        grep_mutable,
+        read_journal,
+        read_insights,
+    )

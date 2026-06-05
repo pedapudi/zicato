@@ -541,7 +541,11 @@ async def evolve_once(
     # same agent.
     _epoch_cfg = load_epoch(workspace_root, resolved_epoch_id)
     proposer_spec = resolve_proposer_spec(_epoch_cfg.proposer_path)
-    proposer_agent = build_proposer_agent(proposer_spec)
+    # Thread the frozen ``proposer_path`` so a custom-agent spec (Design A)
+    # can load ``proposers/<name>/agent.py`` from the same dir the spec was
+    # resolved from. ``None`` (the default / skill-only proposer) yields the
+    # single-shot built-in unchanged.
+    proposer_agent = build_proposer_agent(proposer_spec, proposer_path=_epoch_cfg.proposer_path)
     # Custom judges declared on the board / per_judge_weights are valid
     # ``drift:<judge_name>`` metric targets in a proposer hypothesis even
     # though they are not built-in goldfive drift kinds.
