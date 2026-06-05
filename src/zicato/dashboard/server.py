@@ -283,10 +283,21 @@ def create_app(
         ),
         Route("/api/control/brief", handlers["control_brief"], methods=["POST"]),
         Route("/static/{path:path}", serve_static_path),
-        # Any unmatched GET is treated as a request for a bundled asset
-        # so index.html's root-relative references resolve.
-        Route("/{path:path}", serve_fallback),
     ]
+
+    # Tournament-builder REST surface (B1a). The form (B2) and the copilot
+    # (B1b) both drive these handlers; they share the same draft store and
+    # the same builder operations, so there is one source of truth for an
+    # edit. The POST ops respect the dashboard's read_only flag. Spliced in
+    # before the catch-all asset fallback so /builder/* never falls through
+    # to the static server.
+    from zicato.builder.api import builder_routes  # noqa: PLC0415
+
+    routes.extend(builder_routes(paths.root, read_only=read_only))
+
+    # Any unmatched GET is treated as a request for a bundled asset so
+    # index.html's root-relative references resolve. MUST stay last.
+    routes.append(Route("/{path:path}", serve_fallback))
 
     @contextlib.asynccontextmanager
     async def _lifespan(_app: Starlette) -> AsyncIterator[None]:

@@ -1,0 +1,360 @@
+"""The mutable draft-contract state the builder edits.
+
+A :class:`TournamentDraft` is the editable working copy of a whole
+evaluation **contract** — the scoring weights (structure + params +
+overfitting/holdout + gate + per-kind/per-judge weights), the board
+(entries with their judges / predicates / rubrics and ``holdout`` tags),
+the proposer brief text, and the proposer dir. Both the form (B2) and the
+copilot (B1b) drive the *same* draft through the operations in
+:mod:`zicato.builder.operations`; the draft is the single editable
+surface, and nothing it does touches the live workspace until
+:func:`zicato.builder.operations.apply` is called with ``confirm=True``.
+
+Unlike the frozen contract dataclasses in :mod:`zicato.core.types`, a
+:class:`TournamentDraft` is deliberately MUTABLE — operations mutate it in
+place and return a structured patch describing what changed. A
+:class:`DraftStore` keys independent drafts by ``session_id`` so two
+concurrent builder sessions never tread on each other.
+
+The draft can be initialised blank or, via
+:meth:`TournamentDraft.from_workspace`, pre-filled from the CURRENT live
+contract so the builder opens showing exactly what is running.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from zicato.board.jsonl import _entry_to_dict
+from zicato.board.split import HOLDOUT_TAG, split_board
+from zicato.core.types import (
+    BoardEntry,
+    ProposerSpec,
+    ScoringWeights,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ContractComponentDiff:
+    """Whether one contract component differs between draft and live.
+
+    Fields
+    ------
+    component:
+        One of ``"board"`` / ``"brief"`` / ``"scoring"`` / ``"proposer"``
+        / ``"structure"`` / ``"overfitting"``. ``structure`` and
+        ``overfitting`` are sub-views of scoring surfaced separately so
+        the UI can show *which* part of the scoring contract moved.
+    changed:
+        ``True`` iff the draft's value for this component differs from the
+        live workspace's value.
+    """
+
+    component: str
+    changed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ContractDiff:
+    """Which contract components differ between the draft and live.
+
+    A component that differs will roll the epoch on
+    :func:`zicato.builder.operations.apply`. The diff is what the UI
+    renders to warn the operator before they confirm.
+
+    Fields
+    ------
+    components:
+        Per-component diff flags (see :class:`ContractComponentDiff`).
+    rolls_epoch:
+        ``True`` iff any *contract* component differs — i.e. applying the
+        draft would roll the epoch. ``structure`` and ``overfitting`` are
+        sub-views of ``scoring`` and do not independently flip this beyond
+        what ``scoring`` already does.
+    """
+
+    components: tuple[ContractComponentDiff, ...]
+    rolls_epoch: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable snapshot for the UI."""
+        return {
+            "components": [
+                {"component": c.component, "changed": c.changed} for c in self.components
+            ],
+            "rolls_epoch": self.rolls_epoch,
+            "changed_components": [c.component for c in self.components if c.changed],
+        }
+
+
+def _entry_with_holdout(entry: BoardEntry, *, holdout: bool) -> BoardEntry:
+    """Return ``entry`` with the ``holdout`` tag added or removed.
+
+    The ``holdout`` tag is how an operator declares an explicit
+    train/holdout split by hand (see :mod:`zicato.board.split`); the
+    builder edits it as a per-entry boolean. Idempotent — adding a tag an
+    entry already carries, or removing one it lacks, returns an
+    equivalent entry.
+    """
+    import dataclasses
+
+    has = HOLDOUT_TAG in entry.tags
+    if holdout and not has:
+        return dataclasses.replace(entry, tags=(*entry.tags, HOLDOUT_TAG))
+    if not holdout and has:
+        return dataclasses.replace(entry, tags=tuple(t for t in entry.tags if t != HOLDOUT_TAG))
+    return entry
+
+
+@dataclass(slots=True)
+class TournamentDraft:
+    """A mutable, in-memory editable copy of one evaluation contract.
+
+    Fields
+    ------
+    scoring:
+        The working :class:`ScoringWeights` — structure + params,
+        overfitting/holdout config, the promote gate, and the per-kind /
+        per-judge weights. Mutated wholesale by the operations (every
+        ``set_*`` op replaces this with a new frozen instance).
+    entries:
+        The working board, in order. Mutable list; operations edit
+        entries / judges in place. Each entry's ``holdout`` tag carries
+        the explicit train/holdout split.
+    brief:
+        The proposer-brief text (markdown), verbatim.
+    proposer_path:
+        Location of the proposer dir, or ``None`` for the built-in
+        default proposer.
+    """
+
+    scoring: ScoringWeights = field(default_factory=ScoringWeights)
+    entries: list[BoardEntry] = field(default_factory=list)
+    brief: str = ""
+    proposer_path: Path | None = None
+
+    # -- construction -----------------------------------------------------
+
+    @classmethod
+    def from_workspace(cls, workspace_root: Path) -> TournamentDraft:
+        """Initialise a draft from the CURRENT live contract.
+
+        Reads the workspace's current epoch — its scoring weights, board
+        (with judges / predicates / rubrics and any ``holdout`` tags), the
+        proposer-brief text, and the configured proposer dir — so the
+        builder opens pre-filled with what is running. A missing component
+        degrades to its default (empty board, empty brief, default scoring,
+        built-in proposer) rather than raising, so a freshly-``init``-ed
+        workspace with no epoch yet still yields an editable blank draft.
+        """
+        from zicato.workspace_loader import (  # noqa: PLC0415
+            load_current_board,
+            load_current_brief,
+            load_current_epoch_config,
+            load_current_scoring,
+        )
+
+        try:
+            scoring = load_current_scoring(workspace_root)
+        except FileNotFoundError:
+            scoring = ScoringWeights()
+
+        try:
+            entries = list(load_current_board(workspace_root))
+        except FileNotFoundError:
+            entries = []
+
+        try:
+            brief = load_current_brief(workspace_root).text
+        except FileNotFoundError:
+            brief = ""
+
+        proposer_path: Path | None = None
+        try:
+            cfg = load_current_epoch_config(workspace_root)
+            proposer_path = cfg.proposer_path
+        except FileNotFoundError:
+            proposer_path = None
+
+        return cls(
+            scoring=scoring,
+            entries=entries,
+            brief=brief,
+            proposer_path=proposer_path,
+        )
+
+    # -- read-side --------------------------------------------------------
+
+    def entry_by_id(self, entry_id: str) -> BoardEntry | None:
+        """Return the entry with ``entry_id``, or ``None`` if absent."""
+        for entry in self.entries:
+            if entry.id == entry_id:
+                return entry
+        return None
+
+    def resolved_proposer(self) -> ProposerSpec:
+        """Resolve the draft's proposer dir into a :class:`ProposerSpec`."""
+        from zicato.proposer.skills import resolve_proposer_spec  # noqa: PLC0415
+
+        return resolve_proposer_spec(self.proposer_path)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable snapshot of the whole draft for the UI.
+
+        The scoring block is rendered through the shared lifecycle
+        serializer so it is byte-compatible with the on-disk
+        ``scoring.json`` shape; the board through the shared JSONL
+        per-entry serializer. ``holdout`` is surfaced as a derived
+        train/holdout id partition so the UI can highlight the split
+        without re-deriving it.
+        """
+        from zicato.epoch.lifecycle import _scoring_to_dict  # noqa: PLC0415
+
+        train_ids, holdout_ids = split_board(self.entries, self.scoring.overfitting)
+        return {
+            "scoring": _scoring_to_dict(self.scoring),
+            "board": [_entry_to_dict(e) for e in self.entries],
+            "brief": self.brief,
+            "proposer_path": str(self.proposer_path) if self.proposer_path is not None else None,
+            "proposer": _proposer_to_dict(self.resolved_proposer()),
+            "holdout": {
+                "train_ids": list(train_ids),
+                "holdout_ids": list(holdout_ids),
+            },
+        }
+
+    # -- diff vs live -----------------------------------------------------
+
+    def diff_vs_live(self, workspace_root: Path) -> ContractDiff:
+        """Return which contract components differ from the live workspace.
+
+        Builds the live draft via :meth:`from_workspace` and compares each
+        contract component to this draft's. A differing component will roll
+        the epoch on :func:`zicato.builder.operations.apply`.
+        """
+        live = TournamentDraft.from_workspace(workspace_root)
+
+        board_changed = _board_canon(self.entries) != _board_canon(live.entries)
+        brief_changed = _brief_canon(self.brief) != _brief_canon(live.brief)
+        scoring_changed = _scoring_canon(self.scoring) != _scoring_canon(live.scoring)
+        proposer_changed = self.resolved_proposer() != live.resolved_proposer()
+        structure_changed = self.scoring.tournament_structure != live.scoring.tournament_structure
+        overfitting_changed = self.scoring.overfitting != live.scoring.overfitting
+
+        components = (
+            ContractComponentDiff("board", board_changed),
+            ContractComponentDiff("brief", brief_changed),
+            ContractComponentDiff("scoring", scoring_changed),
+            ContractComponentDiff("proposer", proposer_changed),
+            ContractComponentDiff("structure", structure_changed),
+            ContractComponentDiff("overfitting", overfitting_changed),
+        )
+        rolls_epoch = board_changed or brief_changed or scoring_changed or proposer_changed
+        return ContractDiff(components=components, rolls_epoch=rolls_epoch)
+
+    def set_holdout_tags(self, holdout_ids: Sequence[str]) -> None:
+        """Set the explicit ``holdout`` tag exactly on ``holdout_ids``.
+
+        Every entry whose id is in ``holdout_ids`` gains the tag; every
+        other entry loses it. Mutates :attr:`entries` in place.
+        """
+        wanted = set(holdout_ids)
+        self.entries = [_entry_with_holdout(e, holdout=e.id in wanted) for e in self.entries]
+
+
+def _proposer_to_dict(spec: ProposerSpec) -> dict[str, Any]:
+    """JSON-serializable view of a resolved proposer for the UI."""
+    return {
+        "agent_id": spec.agent_id,
+        "tools": list(spec.tools),
+        "skills": [{"name": s.name, "description": s.description} for s in spec.skills],
+        "has_custom_agent": spec.agent_source_sha256 is not None,
+    }
+
+
+def _board_canon(entries: Sequence[BoardEntry]) -> str:
+    """Canonical, order-independent string form of a board for diffing.
+
+    Reuses the contract canonicalizer's per-entry serialization so the
+    diff agrees with the epoch-roll rule: reordering entries does not
+    register a change; editing an entry's content does.
+    """
+    import json
+
+    return "\n".join(
+        json.dumps(_entry_to_dict(e), sort_keys=True, ensure_ascii=False)
+        for e in sorted(entries, key=lambda e: e.id)
+    )
+
+
+def _brief_canon(text: str) -> str:
+    """Whitespace-normalized brief, matching the contract canonicalizer."""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in normalized.split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _scoring_canon(weights: ScoringWeights) -> str:
+    """Float-rounded, key-sorted scoring form, matching the contract hash."""
+    import json
+
+    from zicato.epoch.contract import _round_floats, _scoring_to_canon  # noqa: PLC0415
+
+    return json.dumps(_round_floats(_scoring_to_canon(weights)), sort_keys=True)
+
+
+class DraftStore:
+    """In-memory store of editable drafts keyed by session id.
+
+    Concurrent builder sessions (multiple browser tabs, the form and the
+    copilot side by side) each get an independent :class:`TournamentDraft`
+    so their edits never collide. A session new to the store is lazily
+    initialised from the CURRENT live contract via
+    :meth:`TournamentDraft.from_workspace`, so the builder always opens
+    pre-filled with what is running.
+
+    The store is process-local and not persisted — drafts live only until
+    :func:`zicato.builder.operations.apply` writes one to the workspace,
+    or the process exits.
+    """
+
+    def __init__(self) -> None:
+        self._drafts: dict[str, TournamentDraft] = {}
+
+    def get(self, session_id: str, workspace_root: Path) -> TournamentDraft:
+        """Return the draft for ``session_id``, initialising it if new.
+
+        A session not yet in the store is initialised from the live
+        contract so it opens pre-filled. Subsequent calls return the same
+        mutable instance, so operations accumulate across requests.
+        """
+        draft = self._drafts.get(session_id)
+        if draft is None:
+            draft = TournamentDraft.from_workspace(workspace_root)
+            self._drafts[session_id] = draft
+        return draft
+
+    def reset(self, session_id: str, workspace_root: Path) -> TournamentDraft:
+        """Discard ``session_id``'s draft and re-init it from live."""
+        draft = TournamentDraft.from_workspace(workspace_root)
+        self._drafts[session_id] = draft
+        return draft
+
+    def has(self, session_id: str) -> bool:
+        """``True`` iff ``session_id`` already has a draft in the store."""
+        return session_id in self._drafts
+
+
+__all__ = [
+    "ContractComponentDiff",
+    "ContractDiff",
+    "TournamentDraft",
+    "DraftStore",
+]
