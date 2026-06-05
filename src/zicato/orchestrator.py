@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     # Annotation-only — the proposer module is imported lazily inside
     # ``evolve_once`` (see the module docstring on lazy imports), so its
     # exception type is referenced here purely for type annotations.
+    from zicato.proposer.agent import ProposerAgent
     from zicato.proposer.proposer import ProposerError
 
 log = logging.getLogger("zicato.orchestrator")
@@ -489,6 +490,7 @@ async def evolve_once(
     from zicato.epoch import (  # noqa: PLC0415
         append_journal_entry,
         append_to_lineage,
+        load_epoch,  # noqa: PLC0415
         update_experiment_outcome,
         write_experiment,
     )
@@ -503,7 +505,12 @@ async def evolve_once(
         DetectorInput,
         detect_patterns,
     )
-    from zicato.proposer.proposer import ProposerError, propose_experiment  # noqa: PLC0415
+    from zicato.proposer.agent import (  # noqa: PLC0415
+        ProposerContext,
+        build_proposer_agent,
+    )
+    from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
+    from zicato.proposer.skills import resolve_proposer_spec  # noqa: PLC0415
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
     from zicato.tournament.runner import (  # noqa: PLC0415
         run_fast_mode,
@@ -524,6 +531,17 @@ async def evolve_once(
     board, disable_drift, judge_only = workspace_loader.load_current_board_with_meta(workspace_root)
     weights = workspace_loader.load_current_scoring(workspace_root)
     brief = workspace_loader.load_current_brief(workspace_root)
+    # Resolve the epoch's proposer ONCE per evolve invocation — reading the
+    # frozen ``proposer_path`` off the epoch config and turning it into a
+    # skills-aware :class:`ProposerAgent`. ``proposer_path is None`` (the
+    # default) yields the built-in single-shot agent with no skills, so the
+    # propose call is byte-identical to before this surface existed. The
+    # resolution reads the skill files once here, never inside the retry
+    # loop. Both the gauntlet path and the multi-challenger field reuse the
+    # same agent.
+    _epoch_cfg = load_epoch(workspace_root, resolved_epoch_id)
+    proposer_spec = resolve_proposer_spec(_epoch_cfg.proposer_path)
+    proposer_agent = build_proposer_agent(proposer_spec)
     # Custom judges declared on the board / per_judge_weights are valid
     # ``drift:<judge_name>`` metric targets in a proposer hypothesis even
     # though they are not built-in goldfive drift kinds.
@@ -634,6 +652,7 @@ async def evolve_once(
             round_index=round_index,
             total_rounds=total_rounds,
             meta_loop_emitter=meta_loop_emitter,
+            proposer_agent=proposer_agent,
         )
 
     # --- 6. Propose ---
@@ -700,23 +719,25 @@ async def evolve_once(
 
     proposer_validation_failed: ProposerError | None = None
     try:
-        experiment = await propose_experiment(
-            epoch_id=resolved_epoch_id,
-            parent_generation_id=parent_id,
-            new_generation_id=next_id,
-            patterns=patterns,
-            mutations=mutations,
-            brief_text=brief.text,
-            current_loss_summary=loss_summary,
-            aux_call_llm=auxiliary_call_llm,
-            model=str(workspace_config.get("auxiliary_model", "")),
-            max_retries=max_proposer_retries,
-            forbidden_ids=brief.forbidden_ids,
-            workspace_root=workspace_root,
-            validate_experiment=_validate_experiment_post_apply,
-            meta_loop_emitter=meta_loop_emitter,
-            custom_judge_names=custom_judge_names,
-            prior_experiments=prior,
+        experiment = await proposer_agent.propose(
+            ProposerContext(
+                epoch_id=resolved_epoch_id,
+                parent_generation_id=parent_id,
+                new_generation_id=next_id,
+                patterns=tuple(patterns),
+                mutations=tuple(mutations),
+                brief_text=brief.text,
+                current_loss_summary=loss_summary,
+                aux_call_llm=auxiliary_call_llm,
+                model=str(workspace_config.get("auxiliary_model", "")),
+                max_retries=max_proposer_retries,
+                forbidden_ids=brief.forbidden_ids,
+                workspace_root=workspace_root,
+                validate_experiment=_validate_experiment_post_apply,
+                meta_loop_emitter=meta_loop_emitter,
+                custom_judge_names=custom_judge_names,
+                prior_experiments=tuple(prior),
+            )
         )
     except ProposerError as exc:
         # The proposer exhausted its bounded retries without producing a
@@ -1128,6 +1149,7 @@ async def _propose_and_apply_challenger(
     round_index: int,
     meta_loop_emitter: Any,
     seed: int,
+    proposer_agent: ProposerAgent,
     custom_judge_names: frozenset[str] = frozenset(),
     prior_experiments: tuple[PriorExperiment, ...] = (),
 ) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
@@ -1154,6 +1176,12 @@ async def _propose_and_apply_challenger(
     cross-round history plus this round's already-minted in-flight
     siblings — so each challenger diversifies away from both known
     failures and its just-proposed cohort. Empty by default.
+
+    ``proposer_agent`` is the epoch's resolved :class:`ProposerAgent`
+    (built once per evolve invocation from the frozen ``proposer_path``).
+    Each challenger is proposed through it, so a configured proposer's
+    skills shape every challenger in the field exactly as they shape the
+    gauntlet's single challenger.
     """
     from zicato.epoch import write_experiment  # noqa: PLC0415
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
@@ -1161,10 +1189,8 @@ async def _propose_and_apply_challenger(
         check_forbidden_ids,
         validate_post_apply,
     )
-    from zicato.proposer.proposer import (  # noqa: PLC0415
-        ProposerError,
-        propose_experiment,
-    )
+    from zicato.proposer.agent import ProposerContext  # noqa: PLC0415
+    from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
 
     genstore = default_generation_store(workspace_root)
     last_child_snapshot: dict[str, Path] = {}
@@ -1195,23 +1221,25 @@ async def _propose_and_apply_challenger(
         return validate_post_apply(child, list(candidate.patches), mutations)
 
     try:
-        experiment = await propose_experiment(
-            epoch_id=epoch_id,
-            parent_generation_id=parent_id,
-            new_generation_id=next_id,
-            patterns=patterns,
-            mutations=mutations,
-            brief_text=brief.text,
-            current_loss_summary=loss_summary,
-            aux_call_llm=auxiliary_call_llm,
-            model=auxiliary_model,
-            max_retries=max_proposer_retries,
-            forbidden_ids=brief.forbidden_ids,
-            workspace_root=workspace_root,
-            validate_experiment=_validate,
-            meta_loop_emitter=meta_loop_emitter,
-            custom_judge_names=custom_judge_names,
-            prior_experiments=prior_experiments,
+        experiment = await proposer_agent.propose(
+            ProposerContext(
+                epoch_id=epoch_id,
+                parent_generation_id=parent_id,
+                new_generation_id=next_id,
+                patterns=tuple(patterns),
+                mutations=tuple(mutations),
+                brief_text=brief.text,
+                current_loss_summary=loss_summary,
+                aux_call_llm=auxiliary_call_llm,
+                model=auxiliary_model,
+                max_retries=max_proposer_retries,
+                forbidden_ids=brief.forbidden_ids,
+                workspace_root=workspace_root,
+                validate_experiment=_validate,
+                meta_loop_emitter=meta_loop_emitter,
+                custom_judge_names=custom_judge_names,
+                prior_experiments=prior_experiments,
+            )
         )
     except ProposerError as exc:
         reason = _short_reject_reason(exc.attempts) or str(exc)
@@ -1298,6 +1326,7 @@ async def _evolve_multi_challenger(
     round_index: int,
     total_rounds: int,
     meta_loop_emitter: Any,
+    proposer_agent: ProposerAgent,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round under a non-gauntlet tournament structure.
 
@@ -1386,6 +1415,7 @@ async def _evolve_multi_challenger(
             seed=offset + 2,
             custom_judge_names=custom_judge_names,
             prior_experiments=prior + tuple(siblings),
+            proposer_agent=proposer_agent,
         )
         field_status.append(status)
         if challenger is not None:

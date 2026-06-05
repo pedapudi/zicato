@@ -35,7 +35,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from zicato.aux_timeout import aux_call_timeout_s
-from zicato.core.types import Experiment, MutationPoint, Pattern, PriorExperiment
+from zicato.core.types import (
+    Experiment,
+    MutationPoint,
+    Pattern,
+    PriorExperiment,
+    ProposerSkill,
+)
 from zicato.proposer.brief import enforce_forbidden
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
 from zicato.proposer.structured import (
@@ -94,6 +100,7 @@ async def propose_experiment(
     meta_loop_emitter: MetaLoopEmitter | None = None,
     custom_judge_names: frozenset[str] | None = None,
     prior_experiments: Iterable[PriorExperiment] = (),
+    skills: tuple[ProposerSkill, ...] = (),
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -192,6 +199,17 @@ async def propose_experiment(
         default) omits the section entirely — every standalone caller
         that pre-dates this surface keeps producing a byte-identical
         prompt.
+    skills:
+        The resolved proposer skill modules (see
+        :class:`~zicato.core.types.ProposerSkill`) for the active epoch's
+        proposer. Forwarded to
+        :func:`~zicato.proposer.prompts.render_system_prompt`, where a
+        non-empty tuple appends a ``Proposer skills`` section after the
+        brief block so each skill's guidance reaches the model as operating
+        procedure for the epoch. Empty (the default) appends nothing — the
+        built-in default proposer carries no skills, so a caller that
+        supplies none renders a byte-identical system prompt to before this
+        surface existed.
 
     Returns
     -------
@@ -212,7 +230,7 @@ async def propose_experiment(
     patterns_list = list(patterns)
     mutations_by_id = {mp.id: mp for mp in mutations_list}
 
-    system_prompt = render_system_prompt(brief_text)
+    system_prompt = render_system_prompt(brief_text, skills)
 
     # Lazy import: keeps :mod:`zicato.proposer.proposer` independent of
     # the analyzer module so the proposer is importable even when the

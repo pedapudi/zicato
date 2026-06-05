@@ -33,12 +33,19 @@ a re-exporting package init. Downstream callers import from
 
 from __future__ import annotations
 
+from zicato.proposer.agent import (
+    DefaultProposerAgent,
+    ProposerAgent,
+    ProposerContext,
+    build_proposer_agent,
+)
 from zicato.proposer.brief import ProposerBrief, enforce_forbidden, load_brief
 from zicato.proposer.prompts import (
     SYSTEM_PROMPT_TEMPLATE,
     USER_PROMPT_TEMPLATE,
     render_mutation_block,
     render_pattern_block,
+    render_skills_block,
     render_system_prompt,
     render_user_prompt,
 )
@@ -47,6 +54,7 @@ from zicato.proposer.proposer import (
     ProposerError,
     propose_experiment,
 )
+from zicato.proposer.skills import resolve_proposer_spec
 from zicato.proposer.structured import (
     EXPERIMENT_JSON_SCHEMA,
     ExperimentParseError,
@@ -58,10 +66,16 @@ __all__ = [
     "ExperimentValidator",
     "ProposerError",
     "propose_experiment",
+    "DefaultProposerAgent",
+    "ProposerAgent",
+    "ProposerContext",
+    "build_proposer_agent",
+    "resolve_proposer_spec",
     "SYSTEM_PROMPT_TEMPLATE",
     "USER_PROMPT_TEMPLATE",
     "render_mutation_block",
     "render_pattern_block",
+    "render_skills_block",
     "render_system_prompt",
     "render_user_prompt",
     "ProposerBrief",

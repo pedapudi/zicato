@@ -32,7 +32,7 @@ from __future__ import annotations
 import textwrap
 from collections.abc import Iterable
 
-from zicato.core.types import MutationPoint, Pattern, PriorExperiment
+from zicato.core.types import MutationPoint, Pattern, PriorExperiment, ProposerSkill
 
 #: Hard ceiling on a single mutation point's rendered content. A
 #: ``replace`` patch MUST faithfully reproduce every part of the span it
@@ -336,15 +336,57 @@ def render_prior_experiments_block(prior: Iterable[PriorExperiment]) -> str:
     return "\n\n".join(blocks)
 
 
-def render_system_prompt(brief_text: str) -> str:
+def render_skills_block(skills: Iterable[ProposerSkill]) -> str:
+    """Render the proposer's skill modules into a system-prompt section body.
+
+    Each skill becomes a ``### <name> — <description>`` heading followed by
+    its body; consecutive skills are separated by a blank line. An empty
+    skills iterable returns the empty string — the proposer-side sentinel
+    for "omit the skills section entirely", mirroring the insights and
+    prior-experiments blocks. A skill with no description renders just its
+    name in the heading (no trailing em-dash).
+    """
+    items = list(skills)
+    if not items:
+        return ""
+    blocks: list[str] = []
+    for skill in items:
+        heading = f"### {skill.name}"
+        if skill.description:
+            heading = f"{heading} — {skill.description}"
+        blocks.append(f"{heading}\n{skill.body}")
+    return "\n\n".join(blocks)
+
+
+def render_system_prompt(
+    brief_text: str,
+    skills: tuple[ProposerSkill, ...] = (),
+) -> str:
     """Build the system prompt with the proposer-brief body spliced in.
 
     The proposer-brief body is inserted verbatim so the operator's prose
     guidance reaches the model alongside the structured forbidden /
     preferred lists.
+
+    ``skills`` are the resolved proposer skill modules (see
+    :class:`zicato.core.types.ProposerSkill`). When non-empty, a
+    ``Proposer skills`` section is appended AFTER the brief block so the
+    operator's composable guidance modules reach the model as operating
+    procedure for the epoch. Empty (the default) appends nothing — a caller
+    that supplies no skills renders a byte-identical prompt to before this
+    surface existed, so every standalone caller is unaffected.
     """
 
-    return SYSTEM_PROMPT_TEMPLATE.format(brief_text=brief_text.strip() or "(empty)")
+    base = SYSTEM_PROMPT_TEMPLATE.format(brief_text=brief_text.strip() or "(empty)")
+    skills_block = render_skills_block(skills)
+    if not skills_block:
+        return base
+    return (
+        f"{base}\n"
+        "Proposer skills (composable guidance modules — follow them as "
+        "operating procedure for this epoch):\n\n"
+        f"{skills_block}\n"
+    )
 
 
 def render_user_prompt(
@@ -422,6 +464,7 @@ __all__ = [
     "render_pattern_block",
     "render_mutation_block",
     "render_prior_experiments_block",
+    "render_skills_block",
     "render_system_prompt",
     "render_user_prompt",
 ]

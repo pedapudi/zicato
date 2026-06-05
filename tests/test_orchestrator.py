@@ -955,3 +955,114 @@ def test_evolve_once_survives_report_generation_failure(
     # The round still produced its real verdict despite the report crash.
     assert outcome.tournament_decision == "promoted"
     assert outcome.proposed_generation_id == "v1"
+
+
+def _make_recording_aux(responses: list[str]) -> tuple[Any, list[str]]:
+    """An aux callable that yields ``responses`` in order and records systems.
+
+    Returns the callable paired with a list that accumulates the ``system``
+    argument of each call, so a test can assert what reached the model.
+    """
+    systems: list[str] = []
+    state = {"i": 0}
+
+    async def _aux(system: str, user: str, model: str) -> str:
+        del user, model
+        systems.append(system)
+        i = state["i"]
+        if i >= len(responses):
+            raise AssertionError("stub aux LLM ran out of responses")
+        state["i"] = i + 1
+        return responses[i]
+
+    return _aux, systems
+
+
+def test_evolve_once_threads_configured_proposer_skill_into_system_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A skill on the epoch's configured proposer dir reaches the proposer call.
+
+    Bootstraps a workspace whose epoch freezes a ``proposers/demo/`` dir
+    carrying one skill, then asserts the skill body lands in the system
+    prompt the orchestrator sends to the auxiliary callable — proving the
+    spec → ``build_proposer_agent`` → ``ProposerContext`` wiring flows the
+    skill through the real evolve path.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    (workspace / "config.json").write_text(
+        json.dumps(
+            {
+                "instance_id": "test",
+                "created_at": "2026-05-14T00:00:00Z",
+                "adapter": {"kind": "stub"},
+            }
+        )
+    )
+    board_src = tmp_path / "board.jsonl"
+    board_src.write_text(
+        json.dumps(
+            {
+                "id": "entry_a",
+                "kind": "single_turn",
+                "wall_clock_budget_seconds": 60,
+                "input": "hello",
+            }
+        )
+        + "\n"
+    )
+    brief_src = tmp_path / "brief.md"
+    brief_src.write_text("# Proposer brief\n- Be careful.\n")
+
+    # The proposer dir + its single skill, frozen onto the epoch.
+    proposer_dir = tmp_path / "proposers" / "demo"
+    skills_dir = proposer_dir / "skills"
+    skills_dir.mkdir(parents=True)
+    skill_body = "Prefer the smallest patch that moves the loss."
+    (skills_dir / "minimal.md").write_text(
+        "---\nname: minimal\ndescription: keep patches small\n---\n" + skill_body + "\n"
+    )
+
+    cfg = new_epoch(
+        workspace,
+        name="alpha",
+        board_source=board_src,
+        brief_source=brief_src,
+        weights=ScoringWeights(promote_margin=0.01),
+        auto_close_previous=False,
+        proposer_path=proposer_dir,
+    )
+
+    v0_dir = workspace / "epochs" / cfg.id / "generations" / "v0"
+    snap = v0_dir / "snapshot"
+    snap.mkdir(parents=True)
+    (snap / "agent.py").write_text(
+        '"""Stub harness source for tests."""\n'
+        "\n"
+        '# zicato:mutable id="greeting"\n'
+        'GREETING = "hello"\n'
+    )
+
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    aux, systems = _make_recording_aux([_valid_proposer_response()])
+    asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=cfg.id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=aux,
+        )
+    )
+
+    assert systems, "the proposer never called the auxiliary LLM"
+    assert any(skill_body in s for s in systems)
+    assert any("Proposer skills (composable guidance modules" in s for s in systems)
