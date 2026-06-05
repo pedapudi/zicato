@@ -47,7 +47,7 @@ mental model (epochs/rounds) + a discriminating contract (board + judges
 | `zicato-write-brief` | Author/refine the proposer brief (`brief.md`): the epoch goal, the mutation budget, constraints, and the `## Forbidden` mutation ids the proposer may not touch. |
 | `zicato-tune-scoring` | Edit `scoring.json`: drift-loss weights, `per_judge_weights`/`default_judge_weight`, pass/fail predicates, and the promotion gate (drift margin + pass-rate monotonicity). |
 
-*GUI builder copilot (assemble the contract through a draft, apply rolls the epoch):*
+*GUI builder copilot (assemble the contract through a draft, apply rolls the epoch). The launch/integration model, the copilot↔draft mechanism, `builder.json`, and the consequence-forward principle are documented in [`docs/design/TOURNAMENT-BUILDER.md`](../docs/design/TOURNAMENT-BUILDER.md):*
 | Skill | What it does |
 |---|---|
 | `zicato-build-tournament` | The **tournament-builder copilot's** whole-contract walkthrough — structure, `field_size`/`replicates`, per-structure params, the board & train/holdout split, the proposer, and the gate — edited as a DRAFT and applied only on confirmation. Consequence-forward: surface the COST (board-runs ≈ `field_size × replicates × rounds/rungs` + holdout-confirm) and the epoch-roll before every `apply`; never starts a live run. Defers structure to `zicato-design-tournament-structure`, board craft to `zicato-build-board`, holdout to `OVERFITTING.md`, proposer to `zicato-design-proposer`, gate to `SCORING.md`. |

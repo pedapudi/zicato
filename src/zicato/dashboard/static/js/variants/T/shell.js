@@ -51,8 +51,9 @@ import * as board from './views/board.js';
 import * as mutations from './views/mutations.js';
 import * as publication from './views/publication.js';
 import * as builder from './views/builder.js';
+import * as settings from './views/settings.js';
 
-const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, publication, builder };
+const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, publication, builder, settings };
 
 export const THEMES = COLOR_THEMES.map((t) => t[0]);
 const COLOR_IDS = THEMES;
@@ -543,12 +544,14 @@ export function mountShell(root) {
     ]),
     _crumbHost,
     el('span', { class: 'dt-topbar-spacer' }),
-    // the tournament-builder entry (B2). A standalone nav link now; B3 will
-    // re-home it under a Settings panel. Uses the router href so the route stays
-    // the single source of truth.
-    el('a', { class: 'dt-nav-build', href: href('builder', {}), title: 'Tournament builder', 'aria-label': 'Open the tournament builder' }, [
-      el('span', { class: 'dt-nav-build-glyph', 'aria-hidden': 'true', text: '⚒' }),
-      el('span', { class: 'dt-nav-build-text', text: 'build' }),
+    // the SETTINGS entry (B3) — a ⚙ that opens the Settings surface, which now
+    // HOMES the tournament builder (the flagship section) alongside contract /
+    // assistant / appearance / dashboard. Uses the router href so the route
+    // stays the single source of truth; `#/builder` still deep-links the
+    // builder section directly.
+    el('a', { class: 'dt-nav-build', href: href('settings', {}), title: 'Settings (tournament builder + preferences)', 'aria-label': 'Open settings' }, [
+      el('span', { class: 'dt-nav-build-glyph', 'aria-hidden': 'true', text: '⚙' }),
+      el('span', { class: 'dt-nav-build-text', text: 'settings' }),
     ]),
     colorSwitch,
     typeSwitch,

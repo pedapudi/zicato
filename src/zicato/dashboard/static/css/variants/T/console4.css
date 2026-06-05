@@ -2231,4 +2231,39 @@
     .dn-bld-work { grid-template-columns: 1fr; }
     .dn-bld-chat-handle { display: none; }
   }
+
+  /* ===================  SETTINGS surface (B3)  =================== */
+  /* A section rail + one section host. The builder section delegates to the
+   * full builder view (its own grid takes over), so the body host is just a
+   * min-0 column the section paints into. Theme tokens only. */
+  .dn-settings { display: grid; grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
+    gap: 22px; align-items: start; min-width: 0; }
+  .dn-set-rail { display: flex; flex-direction: column; gap: 3px; position: sticky; top: 8px; min-width: 0; }
+  a.dn-set-railitem { display: flex; align-items: center; gap: 9px; width: 100%; text-decoration: none;
+    background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 9px 11px;
+    color: var(--v2-ink-soft); font-size: 12.5px; transition: background 0.12s, color 0.12s, border-color 0.12s; }
+  a.dn-set-railitem:hover { background: var(--v2-rule-soft); color: var(--v2-ink); }
+  a.dn-set-railitem-active { background: var(--v2-rule-soft); color: var(--v2-ink); border-color: var(--v2-rule); }
+  .dn-set-railglyph { color: var(--v2-accent); font-size: 12px; flex: none; width: 14px; text-align: center; }
+  .dn-set-raillabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .dn-set-body { min-width: 0; }
+  .dn-set-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px;
+    padding: 11px 13px; margin: 12px 0; }
+
+  /* the key/value grid — a read-mostly contract / config roll-up. The
+   * contract rows are links into the builder; the static config rows are not. */
+  .dn-set-kvgrid { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+  .dn-set-kvrow { display: grid; grid-template-columns: minmax(140px, 240px) minmax(0, 1fr);
+    align-items: baseline; gap: 14px; padding: 7px 10px; border: 1px solid var(--v2-rule-soft);
+    border-radius: 4px; text-decoration: none; color: var(--v2-ink);
+    transition: background 0.12s, border-color 0.12s; }
+  a.dn-set-kvrow:hover { background: var(--v2-rule-soft); border-color: var(--v2-accent); }
+  .dn-set-kvrow-static { cursor: default; }
+  .dn-set-k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
+  .dn-set-v { font-size: 12.5px; color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+  @media (max-width: 1080px) {
+    .dn-settings { grid-template-columns: 1fr; }
+    .dn-set-rail { position: static; flex-direction: row; flex-wrap: wrap; }
+  }
 }

@@ -175,6 +175,27 @@ zicato board remove [OPTIONS] ENTRY_ID
 |---|---|---|
 | `--workspace TEXT` | `.zicato` | Path to the zicato workspace root. |
 
+### `zicato builder`
+
+Launch the dashboard focused on the tournament builder. Boots the same
+dashboard service `zicato dashboard` runs, against the given workspace, and
+prints the builder deep-link (`http://127.0.0.1:<port>/#/builder`) so the
+browser opens on the builder rather than the environment overview. The server
+runs in the foreground until interrupted (Ctrl-C). The bind address is fixed
+at the loopback `127.0.0.1` — the dashboard is a local inspection surface,
+never exposed on a routable interface (the same rule `zicato dashboard` /
+`zicato evolve` honour). The builder is also reachable inside any running
+dashboard via the top-bar ⚙ Settings entry.
+
+```
+zicato builder [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace PATH` | `.zicato` | Path to the zicato workspace root to serve. |
+| `--dashboard-port INTEGER RANGE` | `7892` (1–65535) | Port for the dashboard HTTP server (bound on `127.0.0.1`). |
+
 ### `zicato dashboard`
 
 Serve the dashboard for an existing workspace over HTTP. Point it at any

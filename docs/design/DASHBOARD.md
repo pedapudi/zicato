@@ -153,6 +153,11 @@ foreground until interrupted (Ctrl-C):
 The auto-spawn case is the common one and gets the simplest entry
 point: no command, just `evolve` doing it for you.
 
+> **Builder focus.** `zicato builder` is the same service launched focused on
+> the tournament builder (it prints the `#/builder` deep-link); the builder is
+> also reachable inside any running dashboard via the top-bar ⚙ Settings entry.
+> See [`TOURNAMENT-BUILDER.md`](TOURNAMENT-BUILDER.md).
+
 ## 3. Architecture (HTTP + SSE)
 
 The dashboard server is a single-page HTML application talking
