@@ -14,6 +14,7 @@ import { deriveLiveStatus } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, normaliseDecision, densityTokens } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, reconstructRacing, normalizeStructure, racingModel, swissOverviewModel, elimModel, buildLiveSwissModel, buildLiveElimModel, structureDigest } from './structure.js';
 import { epochRoundModel, roundModelDigest, waterfallModel } from './rounds.js';
+import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading epoch contract…' }));
@@ -136,6 +137,11 @@ export async function render(host, ctx, params) {
   // renderer for all structures, degrading to a single episode for --rounds 1.
   const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId });
 
+  // The BOARD-STATUS surface (train/holdout split + ladder + generalization
+  // gap). Derived DEFENSIVELY from the epoch payload — graceful empty states
+  // when the overfitting `#2`/`#5` fields are absent.
+  const boardStatus = boardStatusModel(ep);
+
   const digest = JSON.stringify({
     epochId, goal: ep.goal || '', objective: objectiveText(ep), briefLen: (ep.brief || '').length, closed: !!ep.closed,
     structure: tournament ? [tournament.structure, JSON.stringify(tournament.params || {})] : null,
@@ -148,6 +154,7 @@ export async function render(host, ctx, params) {
     waterfall: waterfallModel(epochRounds).map((s) => [s.round_index, svg.isNum(s.from) ? s.from.toFixed(2) : null, svg.isNum(s.to) ? s.to.toFixed(2) : null, s.promoted, s.gen]),
     loss: [...lossLookup.entries()].sort(),
     board: board.map((b) => [b.entry_id || b.id, b.kind, b.weight, b.budget_s]),
+    boardStatus: boardStatusDigest(boardStatus),
   });
 
   gatedSwap(host, digest, () => {
@@ -296,6 +303,13 @@ export async function render(host, ctx, params) {
       hmCard.appendChild(empty('No per-entry loss profiles yet (the index may not be built).'));
     }
     nodes.push(section('Board entries × generations · drift loss (heatmap)', hmCard));
+
+    // ---- BOARD STATUS: the train/holdout split + ladder + generalization gap.
+    // Self-contained component; a board entry routes to its cross-candidate
+    // view (the same target the heatmap rows use).
+    nodes.push(renderBoardStatus(boardStatus, {
+      onEntry: (entryId) => ctx.navigate('board', { epochId, entry: entryId }),
+    }));
     return nodes;
   });
 }

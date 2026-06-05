@@ -1028,6 +1028,203 @@ def _tournament_block_from_scoring(scoring: Any) -> dict[str, Any] | None:
     }
 
 
+def _overfitting_block_from_scoring(scoring: Any) -> dict[str, Any] | None:
+    """Extract the ``overfitting`` block from a frozen scoring dict.
+
+    The overfitting Phase A surface freezes its config on
+    :class:`~zicato.core.types.ScoringWeights.overfitting` and serializes
+    it into ``scoring.json`` under an ``"overfitting"`` key. The dashboard
+    reads it back DEFENSIVELY: the block is optional (an epoch that
+    predates the feature — or one that left the holdout disabled — carries
+    no key), every field is read with a type guard, and an unreadable /
+    absent block degrades to ``None`` so the caller renders a clean
+    "no holdout configured" state rather than crashing.
+
+    Returns a normalized ``{enabled, holdout_fraction, holdout_tags,
+    seed}`` dict when a usable block is present, else ``None``.
+    """
+    if not isinstance(scoring, dict):
+        return None
+    raw = scoring.get("overfitting")
+    if not isinstance(raw, dict):
+        return None
+    enabled = raw.get("enabled")
+    # An explicit `enabled: false` means the operator turned the holdout
+    # off — surface it as "configured but disabled" rather than absent.
+    enabled = bool(enabled) if isinstance(enabled, bool) else True
+    frac = raw.get("holdout_fraction")
+    holdout_fraction = (
+        float(frac) if isinstance(frac, int | float) and not isinstance(frac, bool) else 0.0
+    )
+    # Clamp to a sane [0, 1] — a malformed fraction must never select a
+    # negative / >100% slice.
+    holdout_fraction = max(0.0, min(1.0, holdout_fraction))
+    raw_tags = raw.get("holdout_tags")
+    holdout_tags = [t for t in raw_tags if isinstance(t, str)] if isinstance(raw_tags, list) else []
+    seed_raw = raw.get("seed")
+    seed = int(seed_raw) if isinstance(seed_raw, int) and not isinstance(seed_raw, bool) else 0
+    return {
+        "enabled": enabled,
+        "holdout_fraction": holdout_fraction,
+        "holdout_tags": holdout_tags,
+        "seed": seed,
+    }
+
+
+def _stable_unit(entry_id: str, seed: int) -> float:
+    """A deterministic value in ``[0, 1)`` keyed on ``(entry_id, seed)``.
+
+    Seed-stable and platform-independent (a SHA-256 digest of the keyed
+    string, NOT Python's salted ``hash()``), so the dashboard's
+    server-side split is reproducible across processes and matches the
+    runtime's own deterministic hold-out selection.
+    """
+    import hashlib  # noqa: PLC0415 — local, used only by the split
+
+    h = hashlib.sha256(f"{seed}:{entry_id}".encode()).hexdigest()
+    # Take the leading 52 bits (13 hex chars) → a uniform [0, 1).
+    return int(h[:13], 16) / float(1 << 52)
+
+
+def compute_board_split(
+    board: list[dict[str, Any]], overfitting: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Server-side train/holdout split for one epoch's board.
+
+    Mirrors the runtime's ``board.split.split_board`` selection so the
+    dashboard names the SAME slices the gate plays: an entry is HELD OUT
+    when (a) its tags intersect the configured ``holdout_tags``, or (b)
+    it falls in the deterministic ``holdout_fraction`` tail of a stable
+    per-entry hash. Everything else is TRAIN (played every round, the only
+    slice the proposer sees).
+
+    Returns ``{configured, enabled, holdout_fraction, holdout_tags,
+    entries:[{entry_id, slice, tag?, weight?}], train_count,
+    holdout_count, total}``. When no usable overfitting block is present
+    (or it is disabled) every entry reads as ``train`` and ``configured``
+    is ``False`` — the honest "no holdout" state the frontend renders
+    without crashing.
+    """
+    entries_out: list[dict[str, Any]] = []
+    enabled = bool(overfitting and overfitting.get("enabled"))
+    frac = float(overfitting["holdout_fraction"]) if overfitting else 0.0
+    tags = set(overfitting["holdout_tags"]) if overfitting else set()
+    seed = int(overfitting["seed"]) if overfitting else 0
+    configured = overfitting is not None and (frac > 0.0 or bool(tags))
+
+    # Resolve which non-tag entries fall in the fraction tail. Tag-held
+    # entries are removed from the pool first; the fraction applies to the
+    # WHOLE board (matching the runtime's "fraction of the board" framing),
+    # so the count is floor(total * fraction), drawn by stable-hash order.
+    rows: list[tuple[str, dict[str, Any]]] = []
+    for b in board:
+        eid = b.get("entry_id") if b.get("entry_id") is not None else b.get("id")
+        if eid is None:
+            continue
+        rows.append((str(eid), b))
+
+    tag_held: set[str] = set()
+    if enabled and tags:
+        for eid, b in rows:
+            entry_tags = b.get("tags")
+            if isinstance(entry_tags, list) and tags.intersection(
+                t for t in entry_tags if isinstance(t, str)
+            ):
+                tag_held.add(eid)
+
+    frac_held: set[str] = set()
+    if enabled and frac > 0.0:
+        total = len(rows)
+        want = int(total * frac)
+        if want > 0:
+            # Order the NOT-already-tag-held pool by stable hash; the tail
+            # `want` entries are held out (deterministic, seed-stable).
+            pool = [eid for eid, _ in rows if eid not in tag_held]
+            pool.sort(key=lambda e: (_stable_unit(e, seed), e))
+            # Tag-held entries already count toward the target; only top up
+            # to `want` total held entries via the fraction.
+            need = max(0, want - len(tag_held))
+            for eid in pool[len(pool) - need :] if need else []:
+                frac_held.add(eid)
+
+    train_count = 0
+    holdout_count = 0
+    for eid, b in rows:
+        held = enabled and (eid in tag_held or eid in frac_held)
+        slice_name = "holdout" if held else "train"
+        if held:
+            holdout_count += 1
+        else:
+            train_count += 1
+        row: dict[str, Any] = {"entry_id": eid, "slice": slice_name}
+        # The matching holdout TAG (why-held-out provenance for the popover),
+        # present only for a tag-held entry.
+        if eid in tag_held:
+            entry_tags = b.get("tags")
+            match = next(
+                (t for t in (entry_tags or []) if isinstance(t, str) and t in tags),
+                None,
+            )
+            if match is not None:
+                row["tag"] = match
+        weight = b.get("weight")
+        if isinstance(weight, int | float) and not isinstance(weight, bool):
+            row["weight"] = float(weight)
+        entries_out.append(row)
+
+    return {
+        "configured": configured,
+        "enabled": enabled,
+        "holdout_fraction": frac,
+        "holdout_tags": sorted(tags),
+        "entries": entries_out,
+        "train_count": train_count,
+        "holdout_count": holdout_count,
+        "total": len(rows),
+    }
+
+
+def _latest_holdout_summary(experiments: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The most recent decision's ``holdout`` ladder summary, defensively.
+
+    Each per-decision record (``experiment.json``) may carry a ``holdout``
+    block written by the gate's confirmation step:
+    ``{confirmed, train_scalar, holdout_scalar, ladder_released,
+    ladder_budget_total, ladder_budget_remaining, threshold}``. The block
+    is OPTIONAL (absent until the ``#2`` Ladder lands, and ``null`` when a
+    decision had no holdout step). This walks the experiments newest-first
+    and returns the first usable, type-guarded block — or ``None`` when no
+    decision recorded one yet, the frontend's "after a run" empty state.
+    """
+    for exp in reversed(experiments):
+        if not isinstance(exp, dict):
+            continue
+        raw = exp.get("holdout")
+        if not isinstance(raw, dict):
+            continue
+
+        def _num(key: str) -> float | None:
+            v = raw.get(key)  # noqa: B023 — raw is the loop's current record
+            return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None
+
+        def _int(key: str) -> int | None:
+            v = raw.get(key)  # noqa: B023 — raw is the loop's current record
+            return int(v) if isinstance(v, int) and not isinstance(v, bool) else None
+
+        confirmed = raw.get("confirmed")
+        return {
+            "generation_id": exp.get("generation_id"),
+            "confirmed": confirmed if isinstance(confirmed, bool) else None,
+            "train_scalar": _num("train_scalar"),
+            "holdout_scalar": _num("holdout_scalar"),
+            "ladder_released": bool(raw.get("ladder_released")),
+            "ladder_budget_total": _int("ladder_budget_total"),
+            "ladder_budget_remaining": _int("ladder_budget_remaining"),
+            "threshold": _num("threshold"),
+        }
+    return None
+
+
 def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
     """An epoch's full evaluation contract.
 
@@ -1094,6 +1291,15 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
     if scoring is not None:
         view["scoring"] = scoring
 
+    # Train/holdout split (overfitting Phase A). Computed SERVER-SIDE from
+    # the board entries + the frozen ``overfitting`` block on scoring.json,
+    # so the frontend gets the SAME slices the gate plays without re-deriving
+    # the deterministic selection. Always present (every entry reads as
+    # ``train`` with ``configured: False`` when no holdout is configured).
+    view["board_split"] = compute_board_split(
+        board if board is not None else [], _overfitting_block_from_scoring(scoring)
+    )
+
     # Tournament structure block (TOURNAMENT-DATA-MODEL.md §3.1). Echo the
     # epoch's resolved ``{structure, params}`` from the frozen
     # ``scoring.json`` so the Epoch view can name the structure without a
@@ -1113,6 +1319,12 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
 
     # Experiment log: per-generation hypothesis + outcome + patch content.
     view["experiments"] = _read_epoch_experiments(epoch_dir)
+
+    # Holdout ladder summary — the latest decision's ``holdout`` block
+    # (ladder budget + train/holdout scalars). Read defensively from the
+    # per-decision records; ``None`` until a decision records one (the
+    # frontend's "after a run" empty state).
+    view["holdout"] = _latest_holdout_summary(view["experiments"])
 
     # Δscalar aggregates — the Epoch header's headline number. The
     # champion-spine sum frames meta-loop progress (promoted hops only);

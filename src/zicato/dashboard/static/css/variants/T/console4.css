@@ -1080,6 +1080,66 @@
     .dn-hovercard, .dn-hovercard.dn-hovercard-on { transition: none; transform: none; }
   }
 
+  /* Rich hovercard body (board-status popovers): a small titled detail card.
+   * Token-only; lives inside .dn-hovercard so it inherits the per-theme card. */
+  .dn-hc-body { display: flex; flex-direction: column; gap: 3px; }
+  .dn-hc-title { font-weight: 600; color: var(--v2-ink); }
+  .dn-hc-row { color: var(--v2-ink-soft); }
+  .dn-hc-link { color: var(--v2-accent); text-decoration: none; }
+
+  /* ── BOARD STATUS surface (train/holdout split + ladder + gap) ───────── */
+  .dn-boardstatus { display: flex; flex-direction: column; gap: 18px; }
+
+  /* 1 — the split strip. train = OUTLINE, holdout = ACCENT FILL (matches the
+   * builder's Board & holdout strip). All theme tokens — carries every scheme. */
+  .dn-bs-counts { font-family: var(--v2-mono); font-size: 12px; margin-bottom: 8px; }
+  .dn-bs-counts-main { color: var(--v2-ink); font-variant-numeric: tabular-nums; }
+  .dn-bs-noholdout { margin-left: 6px; }
+  .dn-bs-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dn-bs-chip {
+    font-family: var(--v2-mono); font-size: 10.5px; line-height: 1.4;
+    padding: 2px 8px; border-radius: 10px; border: 1px solid var(--v2-rule);
+    color: var(--v2-ink-soft); background: transparent;
+  }
+  .dn-bs-chip.dn-bs-train { border-color: var(--v2-rule); color: var(--v2-ink-soft); }
+  .dn-bs-chip.dn-bs-holdout {
+    border-color: var(--v2-accent); color: var(--v2-bg, var(--v2-panel));
+    background: var(--v2-accent);
+  }
+  .dn-bs-chip:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--v2-accent) 50%, transparent); }
+
+  /* 2 — the played-at legend + the ladder budget readout. */
+  .dn-bs-legend { display: flex; flex-direction: column; gap: 6px; padding-top: 4px;
+    border-top: 1px solid var(--v2-rule-soft); }
+  .dn-bs-legrow { display: flex; align-items: center; gap: 8px; font-family: var(--v2-mono); font-size: 11.5px; }
+  .dn-bs-legtxt strong { color: var(--v2-ink); font-weight: 600; }
+  .dn-bs-sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; flex: 0 0 auto; }
+  .dn-bs-sw.dn-bs-train { border: 1px solid var(--v2-rule); background: transparent; }
+  .dn-bs-sw.dn-bs-holdout { border: 1px solid var(--v2-accent); background: var(--v2-accent); }
+  .dn-bs-ladder { display: flex; align-items: baseline; gap: 8px; margin-top: 4px;
+    font-family: var(--v2-mono); font-size: 11.5px; }
+  .dn-bs-ladder-lab { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.05em; font-size: 9.5px; }
+  .dn-bs-ladder-val { color: var(--v2-ink); font-variant-numeric: tabular-nums; font-size: 14px; }
+
+  /* 3 — the generalization-gap trend (two themed sparklines + a verdict). */
+  .dn-bs-gap { padding-top: 4px; border-top: 1px solid var(--v2-rule-soft); }
+  .dn-bs-gap-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+    font-family: var(--v2-mono); font-size: 11.5px; color: var(--v2-ink); margin-bottom: 6px; }
+  .dn-bs-gap-note { font-size: 10.5px; }
+  .dn-bs-gap-rows { display: flex; flex-direction: column; gap: 6px; }
+  .dn-bs-gap-row { display: flex; align-items: center; gap: 10px; }
+  .dn-bs-gap-lab { font-family: var(--v2-mono); font-size: 10.5px; width: 56px; flex: 0 0 56px;
+    color: var(--v2-ink-faint); text-align: right; }
+  .dn-bs-gap-spark { flex: 1 1 auto; min-width: 0; }
+  /* the two series read apart: train = ink, holdout = accent (theme-aware). */
+  .dn-bs-line-train .dn-spark-line { stroke: var(--v2-ink-soft); }
+  .dn-bs-line-train .dn-spark-dot { fill: var(--v2-ink-soft); }
+  .dn-bs-line-holdout .dn-spark-line { stroke: var(--v2-accent); }
+  .dn-bs-line-holdout .dn-spark-dot { fill: var(--v2-accent); }
+  .dn-bs-verdict { margin-top: 8px; font-family: var(--v2-mono); font-size: 11px; }
+  .dn-bs-verdict.dn-good { color: var(--v2-good); }
+  .dn-bs-verdict.dn-bad { color: var(--v2-bad); }
+
   .ezn-board-node { cursor: pointer; }
   .ezn-board-node:hover .ezn-board-disc { stroke-width: 2.2; }
   .ezn-board-node:focus { outline: none; }
