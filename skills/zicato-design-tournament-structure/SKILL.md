@@ -164,6 +164,24 @@ and are **not directly comparable**, so they must not share an epoch's
 lineage. See `zicato-analyze-epoch` and
 [EPOCHS-AND-JOURNALING.md](../../docs/design/EPOCHS-AND-JOURNALING.md).
 
+## Winner-resolution & rating (beyond Copeland)
+
+Today swiss collapses its duel matrix with **Copeland** (count of duels won),
+which is margin-blind, and a noisy loss can leave the matrix **cyclic** (A>B,
+B>C, C>A). A research note —
+[SELECTION-THEORY.md](../../docs/design/SELECTION-THEORY.md) — surveys
+tournament-solution / social-choice / rating methods (Smith set, Ranked Pairs,
+Schulze, maximal lotteries, Bradley–Terry) and how they'd map to zicato as a
+*winner-resolution* layer plus a *rating* layer **underneath** the existing
+structures. **None of it is implemented yet** — it would arrive as future
+`tournament.params` knobs (`resolver`, `rating`), not new structures.
+
+The one operating rule to remember now: **replicate first, resolve second.**
+Most cycles zicato sees are noise artifacts that replication dissolves; only
+invoke a cycle-resolver on the residual cycle that survives replication. And
+any such resolver only *proposes* a leader — the champion-gate still owns
+promotion, so the protected-incumbent invariant is untouched.
+
 ## Worked examples
 
 **Noisy gauntlet → just replicate (no structure change).** The single duel's
