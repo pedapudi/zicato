@@ -47,6 +47,12 @@ mental model (epochs/rounds) + a discriminating contract (board + judges
 | `zicato-write-brief` | Author/refine the proposer brief (`brief.md`): the epoch goal, the mutation budget, constraints, and the `## Forbidden` mutation ids the proposer may not touch. |
 | `zicato-tune-scoring` | Edit `scoring.json`: drift-loss weights, `per_judge_weights`/`default_judge_weight`, pass/fail predicates, and the promotion gate (drift margin + pass-rate monotonicity). |
 
+*GUI builder copilot (assemble the contract through a draft, apply rolls the epoch):*
+| Skill | What it does |
+|---|---|
+| `zicato-build-tournament` | The **tournament-builder copilot's** whole-contract walkthrough — structure, `field_size`/`replicates`, per-structure params, the board & train/holdout split, the proposer, and the gate — edited as a DRAFT and applied only on confirmation. Consequence-forward: surface the COST (board-runs ≈ `field_size × replicates × rounds/rungs` + holdout-confirm) and the epoch-roll before every `apply`; never starts a live run. Defers structure to `zicato-design-tournament-structure`, board craft to `zicato-build-board`, holdout to `OVERFITTING.md`, proposer to `zicato-design-proposer`, gate to `SCORING.md`. |
+| `zicato-build-board` | The **board-builder copilot's** deep board-craft guide — entries (single/multi-turn, expectations, the `holdout` tag, weight), judges (declared/in-run, `judge_name`, `per_judge_weights`, `board_meta`, the collusion-guarded emulator), and how the loss knobs combine to *shape* an objective. Designs for discrimination (avoid the toothless eval) and holds out a slice so the proposer can't memorise the board. Edits a DRAFT, applies on confirmation. Defers the scalar to `SCORING.md`, the schema to `BOARD-FORMAT.md`, anti-overfitting to `OVERFITTING.md`, discrimination diagnosis to `LOOP-HEALTH.md`. |
+
 ### Tier 2 — Run the loop
 | Skill | What it does |
 |---|---|
