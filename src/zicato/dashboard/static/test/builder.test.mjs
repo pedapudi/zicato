@@ -367,6 +367,45 @@ test('chat stream: an error frame stops the stream and calls onError', async () 
   assert(err && err.includes('builder.json'), 'the graceful-degrade error message surfaced');
 });
 
+test('chat pane: is a 3-row flex column with the message log flex:1 and the composer pinned at the BOTTOM', () => {
+  // The pane must be a docked full-height column: header pinned top, message
+  // log the single growable (flex:1) middle child, composer pinned bottom — so
+  // even an empty conversation puts the input at the bottom edge, never a short
+  // content-sized stub. Assert the structural layout (DOM order + the classes
+  // the CSS flex rules key on), since the mock DOM does not compute styles.
+  const chat = new BuilderChat({ config: { chat_enabled: true, agent: { model: 'm' } } });
+  // the pane → [handle, body, strip]
+  const body = chat.node.children.find((n) => n.classList.contains('dn-bld-chat-body'));
+  assert(body, 'the pane has a flex body column');
+  // the body's three rows, in order: head · log · composer.
+  const rows = body.children;
+  assertEqual(rows.length, 3, 'the body is a 3-row flex column (header · log · composer)');
+  assert(rows[0].classList.contains('dn-bld-chat-head'), 'row 1 is the header (pinned top)');
+  assert(rows[1].classList.contains('dn-bld-chat-log'), 'row 2 is the scrollable message log');
+  assert(rows[2].classList.contains('dn-bld-chat-composer'), 'row 3 is the composer, LAST → pinned at the bottom');
+  // the message log is the growable child the CSS gives flex:1 + overflow-y:auto
+  // (so long conversations scroll INSIDE the pane, not the page).
+  assertEqual(chat._log, rows[1], 'the streamed message log is the flex:1 middle row');
+  // the composer holds the input + send (the bottom-pinned 3rd row).
+  assert(rows[2].children.some((n) => n.classList.contains('dn-bld-chat-input')), 'the composer carries the input');
+  assert(rows[2].children.some((n) => n.classList.contains('dn-bld-chat-send')), 'the composer carries the send button');
+});
+
+test('chat pane: the chat-disabled (degrade) state keeps the full-height frame — composer still pinned at the bottom', () => {
+  // The "configure builder.json" degrade state must NOT collapse the pane: the
+  // degrade notice sits INSIDE the flex:1 log row, so the composer stays pinned
+  // at the bottom of the full-height frame just like the enabled state.
+  const chat = new BuilderChat({ config: { chat_enabled: false, agent: { model: '' } } });
+  const body = chat.node.children.find((n) => n.classList.contains('dn-bld-chat-body'));
+  const rows = body.children;
+  assertEqual(rows.length, 3, 'the disabled pane keeps the 3-row frame');
+  assert(rows[2].classList.contains('dn-bld-chat-composer'), 'the composer is still the LAST row (bottom-pinned)');
+  // the degrade notice rides inside the (flex:1) log, not in place of the frame.
+  const log = rows[1];
+  assert(log.classList.contains('dn-bld-chat-log'), 'the middle row is still the flex:1 log');
+  assert(log.children.some((n) => n.classList.contains('dn-bld-chat-degrade')), 'the degrade notice sits inside the growable log');
+});
+
 test('builder view: the work column reflows the chat width as a CSS var (no overlap)', async () => {
   installBuilderFetch();
   globalThis.window.localStorage.clear();
@@ -431,5 +470,41 @@ function allDesc(node) {
 }
 
 function tick() { return new Promise((r) => setTimeout(r, 0)); }
+
+// ── full-height docked-workspace layout (CSS-level guard) ─────────────
+//
+// The mock DOM does not compute styles, so the structural tests above assert
+// the DOM (3-row flex, composer last). These read the CSS source to lock the
+// rules that make the workspace full-height: the builder root gets a DEFINITE
+// height from the viewport (so the chat pane stretches to a docked column, not
+// a content-sized stub) and the message log is the flex:1 growable child.
+
+const _builderCss = (await import('node:fs'))
+  .readFileSync(new URL('../css/variants/T/console4.css', import.meta.url), 'utf8')
+  .replace(/\n/g, ' ');
+function readBuilderCss() { return _builderCss; }
+
+test('builder CSS: the builder root is a DEFINITE full-height frame (viewport − top bar − viewhost padding)', () => {
+  const css = readBuilderCss();
+  const block = /\.dn-builder\s*\{([^}]*)\}/.exec(css);
+  assert(block, 'the .dn-builder rule exists');
+  const decl = block[1];
+  // a definite height computed from the viewport (NOT content-driven) so the
+  // grid children stretch to a docked full-height column.
+  assert(/height:\s*calc\(100vh/.test(decl), 'the builder root takes a definite viewport-derived height');
+  assert(/align-items:\s*stretch/.test(decl), 'the grid stretches its children (work column + chat) to that height');
+});
+
+test('builder CSS: the chat log is the flex:1 scrollable middle row + the composer is a bottom border-top row', () => {
+  const css = readBuilderCss();
+  const log = /\.dn-bld-chat-log\s*\{([^}]*)\}/.exec(css);
+  assert(log && /flex:\s*1/.test(log[1]), 'the message log is the flex:1 growable child');
+  assert(log && /overflow-y:\s*auto/.test(log[1]), 'the message log scrolls internally (long chats scroll in-pane)');
+  const composer = /\.dn-bld-chat-composer\s*\{([^}]*)\}/.exec(css);
+  assert(composer && /border-top/.test(composer[1]), 'the composer is the bottom-pinned row (border-top divider)');
+  // the work column children scroll internally so the full-height frame never clips.
+  const cols = /\.dn-bld-center,\s*\.dn-bld-preview\s*\{([^}]*)\}/.exec(css);
+  assert(cols && /overflow-y:\s*auto/.test(cols[1]), 'the center + preview columns scroll internally');
+});
 
 await run();

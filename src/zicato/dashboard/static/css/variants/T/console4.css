@@ -2120,12 +2120,24 @@
   /* the view shell: a work column (rail · center · preview) + a fixed chat
    * column. Real grid layout: the work column is 1fr, the chat column is the
    * persisted --dn-bld-chat px width, so the form + preview reflow to the
-   * remaining width and NEVER overlap or clip at any chat width. */
+   * remaining width and NEVER overlap or clip at any chat width.
+   *
+   * FULL-HEIGHT WORKSPACE: the builder is a docked workspace, not a stack of
+   * content-sized cards. Its height is the viewport minus the 50px top bar and
+   * the viewhost's own padding (top = --dt-pad-y, bottom = 96px) — the same
+   * frame the viewhost paints into — so the chat copilot rides as a full-height
+   * docked column rather than a short floating stub. `align-items: stretch`
+   * makes every grid child (work column · chat) take that full height; each
+   * child scrolls INTERNALLY if its content overflows, so nothing clips. */
   .dn-builder { display: grid; grid-template-columns: 1fr var(--dn-bld-chat, 340px);
-    gap: 18px; align-items: start; min-width: 0; }
+    gap: 18px; align-items: stretch; min-width: 0;
+    height: calc(100vh - 50px - var(--dt-pad-y, 40px) - 96px); min-height: 420px; }
   .dn-builder[data-chat-collapsed="1"] { grid-template-columns: 1fr 30px; }
   .dn-bld-work { display: grid; grid-template-columns: minmax(150px, 200px) minmax(0, 1.3fr) minmax(0, 1fr);
-    gap: 18px; align-items: start; min-width: 0; }
+    gap: 18px; align-items: stretch; min-width: 0; min-height: 0; }
+  /* center + preview own the full column height, top-aligned, scrolling
+   * INTERNALLY when their content overflows so the workspace never clips. */
+  .dn-bld-center, .dn-bld-preview { min-height: 0; overflow-y: auto; }
 
   /* left rail. */
   .dn-bld-rail { display: flex; flex-direction: column; gap: 3px; position: sticky; top: 8px; min-width: 0; }
@@ -2241,9 +2253,13 @@
   .dn-bld-warn-glyph { flex: none; }
   .dn-bld-warn-msg { min-width: 0; }
 
-  /* the chat copilot pane. */
-  .dn-bld-chat { position: relative; min-width: 0; align-self: stretch; border: 1px solid var(--v2-rule);
-    border-radius: 6px; background: var(--v2-panel); display: flex; flex-direction: column; min-height: 360px; }
+  /* the chat copilot pane — a FULL-HEIGHT docked column, not a content-sized
+   * stub. The grid stretches it to the workspace height; it is a 3-row flex
+   * column (header · log · composer) whose log grows (flex:1) and scrolls, so
+   * the composer pins to the BOTTOM edge even with an empty conversation. */
+  .dn-bld-chat { position: relative; min-width: 0; align-self: stretch; min-height: 0;
+    border: 1px solid var(--v2-rule);
+    border-radius: 6px; background: var(--v2-panel); display: flex; flex-direction: column; }
   .dn-bld-chat-handle { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
   .dn-bld-chat-handle:hover, .dn-bld-chat-handle-drag, .dn-bld-chat-handle:focus { background: var(--v2-accent); opacity: 0.4; outline: none; }
   .dn-bld-chat-collapsed .dn-bld-chat-handle { display: none; }
@@ -2290,9 +2306,13 @@
     .dn-bld-chat-dot { animation: none; }
   }
   @media (max-width: 1080px) {
-    .dn-builder { grid-template-columns: 1fr; }
+    /* stacked single-column fallback: drop the docked full-height frame so the
+     * panes flow as a normal scrolling page (no internal clipping when narrow). */
+    .dn-builder { grid-template-columns: 1fr; height: auto; min-height: 0; }
     .dn-builder[data-chat-collapsed="1"] { grid-template-columns: 1fr; }
     .dn-bld-work { grid-template-columns: 1fr; }
+    .dn-bld-center, .dn-bld-preview { overflow-y: visible; }
+    .dn-bld-chat { min-height: 360px; }
     .dn-bld-chat-handle { display: none; }
   }
 
