@@ -215,10 +215,11 @@ const GLYPH = {
     paths: ['M5,6 H11 V11', 'M5,11 H11', 'M11,11 H19', 'M5,16 H11 V11', 'M5,20 H17'],
   },
   racing: {
+    // a funnel symmetric about x=12, rows evenly spaced (cy 5 / 12 / 19)
     dots: [
-      { cx: 6, cy: 6, r: 1.8 }, { cx: 11, cy: 6, r: 1.8 }, { cx: 16, cy: 6, r: 1.8 }, { cx: 21, cy: 6, r: 1.8 },
-      { cx: 9, cy: 13, r: 1.8 }, { cx: 16, cy: 13, r: 1.8 },
-      { cx: 12.5, cy: 20, r: 2.2 },
+      { cx: 4.5, cy: 5, r: 1.8 }, { cx: 9.5, cy: 5, r: 1.8 }, { cx: 14.5, cy: 5, r: 1.8 }, { cx: 19.5, cy: 5, r: 1.8 },
+      { cx: 9, cy: 12, r: 1.8 }, { cx: 15, cy: 12, r: 1.8 },
+      { cx: 12, cy: 19, r: 2.2 },
     ],
   },
 };
