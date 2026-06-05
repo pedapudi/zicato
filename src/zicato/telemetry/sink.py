@@ -35,6 +35,7 @@ harmonograf to every inner run zicato launches.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,19 @@ log = logging.getLogger("zicato.telemetry.sink")
 #: no longer reads it directly. The name is kept here for the tests and
 #: log messages that reference it.
 HARMONOGRAF_URL_ENV = "ZICATO_HARMONOGRAF_URL"
+
+#: Environment variable carrying the *gRPC* dial target (a bare
+#: ``host:port``) for an AUTO-LAUNCHED harmonograf. The auto-launched
+#: server binds two distinct ports — a browser-facing gRPC-Web port (the
+#: one in ``ZICATO_HARMONOGRAF_URL``, used for dashboard deep-links) and a
+#: native gRPC port the per-run sink must dial. Deriving the gRPC target
+#: from the web URL (the old behaviour) would dial the *web* port over
+#: native gRPC, fail the handshake, and — because all sink errors are
+#: swallowed — silently drop telemetry. The orchestrator's auto-launch
+#: wiring sets this to ``host:grpc_port`` so the sink dials the right
+#: port. Unset for an EXTERNAL harmonograf, where the web URL *is* the
+#: dial target (a single port) and the scheme-stripping fallback applies.
+HARMONOGRAF_GRPC_ENV = "ZICATO_HARMONOGRAF_GRPC"
 
 
 def make_run_sink_path(
@@ -189,7 +203,32 @@ def _harmonograf_grpc_target(url: str) -> str:
     return target.split("/", 1)[0].rstrip("/")
 
 
-def _make_harmonograf_sink(url: str) -> Any | None:
+def resolve_harmonograf_grpc_target(url: str) -> str:
+    """Resolve the gRPC dial target for the harmonograf sink to dial.
+
+    The auto-launched harmonograf binds two ports: a browser-facing
+    gRPC-Web port (carried by ``ZICATO_HARMONOGRAF_URL`` / ``url`` here,
+    used for dashboard deep-links) and a native gRPC port the sink must
+    dial. When the orchestrator auto-launches a server it exports the
+    native gRPC target as ``ZICATO_HARMONOGRAF_GRPC`` (a bare
+    ``host:port``); this resolver prefers that env var so the sink dials
+    the gRPC port rather than the web port.
+
+    For an EXTERNAL harmonograf (operator-pinned ``ZICATO_HARMONOGRAF_URL``
+    with no separate auto-launch) ``ZICATO_HARMONOGRAF_GRPC`` is unset and
+    the web URL *is* the single dial target, so we fall back to scheme-
+    stripping it via :func:`_harmonograf_grpc_target` — preserving the
+    pre-split behaviour for the external path.
+    """
+    grpc_env = os.environ.get(HARMONOGRAF_GRPC_ENV, "").strip()
+    if grpc_env:
+        # Tolerate an accidental scheme on the grpc env (defensive — the
+        # orchestrator sets a bare host:port, but normalise anyway).
+        return _harmonograf_grpc_target(grpc_env)
+    return _harmonograf_grpc_target(url)
+
+
+def _make_harmonograf_sink(url: str, *, grpc_target: str | None = None) -> Any | None:
     """Build a goldfive-compatible harmonograf sink for ``url``.
 
     The concrete sink ships in harmonograf's client library
@@ -201,8 +240,12 @@ def _make_harmonograf_sink(url: str) -> Any | None:
     a hard dependency of a run.
 
     ``HarmonografSink`` takes a pre-built ``Client``; the client is
-    constructed against ``url`` reduced to a bare gRPC dial target via
-    :func:`_harmonograf_grpc_target`.
+    constructed against the gRPC dial target. When ``grpc_target`` is
+    supplied (an auto-launched server's native gRPC ``host:port``) it is
+    dialed verbatim; otherwise the target is resolved via
+    :func:`resolve_harmonograf_grpc_target` (which prefers the
+    ``ZICATO_HARMONOGRAF_GRPC`` env, falling back to scheme-stripping the
+    web ``url`` for an external harmonograf).
     """
     try:
         from harmonograf_client import Client, HarmonografSink  # noqa: PLC0415
@@ -216,7 +259,7 @@ def _make_harmonograf_sink(url: str) -> Any | None:
         )
         return None
     try:
-        target = _harmonograf_grpc_target(url)
+        target = grpc_target if grpc_target else resolve_harmonograf_grpc_target(url)
         client = Client(name="zicato", server_addr=target)
         return HarmonografSink(client)
     except Exception as exc:  # noqa: BLE001 — never hard-fail a run on this
@@ -264,6 +307,8 @@ def make_run_sinks(
 
     url = resolve_harmonograf_url(workspace_config)
     if url:
+        # The grpc target resolution prefers ZICATO_HARMONOGRAF_GRPC (the
+        # auto-launched native gRPC port) over deriving from the web URL.
         harmonograf_sink = _make_harmonograf_sink(url)
         if harmonograf_sink is not None:
             sinks.append(harmonograf_sink)
@@ -275,5 +320,7 @@ __all__ = [
     "make_run_sink",
     "make_run_sinks",
     "resolve_harmonograf_url",
+    "resolve_harmonograf_grpc_target",
     "HARMONOGRAF_URL_ENV",
+    "HARMONOGRAF_GRPC_ENV",
 ]

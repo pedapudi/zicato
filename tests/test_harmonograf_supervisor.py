@@ -240,6 +240,49 @@ def test_build_meta_loop_sink_no_url_returns_none() -> None:
     assert build_meta_loop_sink("", "session-x") is None
 
 
+def test_build_meta_loop_sink_dials_grpc_port_and_scopes_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Meta-loop sink dials the gRPC port (not the web URL) and scopes the session.
+
+    Same web≠grpc split as the per-run sink: with the auto-launch
+    ``ZICATO_HARMONOGRAF_GRPC`` env set, the meta-loop Client must dial
+    the native gRPC port, NOT the gRPC-Web port in the URL. The session
+    id is threaded into the Client so meta-loop traffic is bucketed under
+    one harmonograf session.
+    """
+    import sys
+    import types
+
+    from zicato.telemetry.sink import HARMONOGRAF_GRPC_ENV
+
+    constructed: dict[str, object] = {}
+
+    class _StubClient:
+        def __init__(self, *, name: str, server_addr: str, session_id: str = "") -> None:
+            constructed["name"] = name
+            constructed["server_addr"] = server_addr
+            constructed["session_id"] = session_id
+
+    class _StubHarmonografSink:
+        def __init__(self, client: object) -> None:
+            constructed["client"] = client
+
+    stub_mod = types.ModuleType("harmonograf_client")
+    stub_mod.Client = _StubClient  # type: ignore[attr-defined]
+    stub_mod.HarmonografSink = _StubHarmonografSink  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
+
+    monkeypatch.setenv(HARMONOGRAF_GRPC_ENV, "127.0.0.1:9090")
+    sink = build_meta_loop_sink("http://127.0.0.1:9080", "zicato-meta-loop-sess")
+
+    assert sink is not None
+    # Dialed the gRPC port, not the web port.
+    assert constructed["server_addr"] == "127.0.0.1:9090"
+    # Session scoped on the client.
+    assert constructed["session_id"] == "zicato-meta-loop-sess"
+
+
 def test_env_var_restorer_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
     """_EnvVarRestorer captures prior value and restores it idempotently."""
     monkeypatch.setenv("__ZICATO_TEST_VAR__", "before")

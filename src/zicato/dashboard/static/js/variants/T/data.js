@@ -259,6 +259,12 @@ export function expectations(epochId, genId, entryId) {
 export function perJudgeForRun(epochId, genId, entryId) {
   return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/per-judge`);
 }
+// Per-run header (runtime/tokens/turns/...) AND the run's adk_session_id —
+// the latter is what the harmonograf deep-link keys its session view on
+// (the per-entry index rows do not carry it; this loss.json-backed read does).
+export function runHeader(epochId, genId, entryId) {
+  return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/header`);
+}
 
 // Back-compat run_id-keyed transcript read. Resolution is now gen×entry-FIRST
 // on the backend: when the caller knows the run's coordinates (the panes

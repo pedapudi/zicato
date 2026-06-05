@@ -33,6 +33,7 @@ import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch } from './structure.js';
 import { epochRoundModel, reignModel } from './rounds.js';
 import { deriveLiveStatus } from '../livestatus.js';
+import { harmonografIsLive, harmonografLink, harmonografMini } from '../../../core/harmonograf.js';
 
 export async function render(host, ctx, params, route) {
   params = params || {};
@@ -233,11 +234,14 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   // regressed predicate / namespace in its detail.
   const gateExplain = primaryGate ? deriveGateExplain(primaryGate) : null;
 
-  let exps = null, judges = null, drillRow = null;
+  let exps = null, judges = null, drillRow = null, drillHeader = null;
   if (entryParam) {
-    [exps, judges] = await Promise.all([
+    [exps, judges, drillHeader] = await Promise.all([
       D.expectations(epochId, genId, entryParam),
       D.perJudgeForRun(epochId, genId, entryParam),
+      // the run HEADER carries adk_session_id — the harmonograf deep-link
+      // key (the per-entry index rows above do not surface it).
+      D.runHeader(epochId, genId, entryParam),
     ]);
     drillRow = entries.find((e) => e.entry_id === entryParam) || null;
   }
@@ -264,7 +268,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
     node, baseline, decision, mpts, entries, mine, gateSpecs, gates,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
-    entryParam, exps, judges, drillRow, inflight, cached, cachedProvenance,
+    entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
   };
 }
 
@@ -334,6 +338,10 @@ function candidateDigest(s) {
     drill: s.entryParam || null,
     drillExp: s.exps && Array.isArray(s.exps.outcomes) ? s.exps.outcomes.map((o) => [o.kind, o.passed, o.judge_name, o.detail]) : null,
     drillJudge: s.judges && Array.isArray(s.judges.judges) ? s.judges.judges.map((j) => [j.judge_name, j.weighted_loss]) : null,
+    // harmonograf deep-link state — folded in so the link appears/disappears
+    // when liveness flips (server up ⇄ run ended) without a no-op-beat repaint.
+    hgLive: harmonografIsLive(),
+    hgSession: (s.drillHeader && s.drillHeader.adk_session_id) || null,
     // LIVE in-flight board runs for this candidate — folded into the digest so a
     // beat that advances progress repaints, but a no-op heartbeat stays equal.
     inflight: Array.isArray(s.inflight) ? s.inflight.map((r) => {
@@ -455,13 +463,19 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     ]));
     const tbl = el('table', { class: 'dn-board-table dn-inflight-table' });
     tbl.appendChild(el('thead', null, [el('tr', null, [
-      el('th', { text: 'board' }), el('th', { text: 'run' }), el('th', { text: 'progress' }),
+      el('th', { text: 'board' }), el('th', { text: 'run' }), el('th', { text: 'progress' }), el('th', { text: 'execution' }),
     ])]));
     const tbody = el('tbody');
     for (const r of inflight) {
       const eid = r.entry_id != null ? r.entry_id : (r.board_entry_id != null ? r.board_entry_id : (r.entry != null ? r.entry : '—'));
       const pr = runProgressRatio(r);
       const pct = pr != null ? Math.round(pr * 100) : null;
+      // a per-run harmonograf "execution ▸" link — liveness-gated (these are
+      // in-flight runs, so the auto-launched server is up) and stop-propagated
+      // so the cell click does not also navigate the row. Renders nothing when
+      // not live / no harmonograf url (harmonografMini returns null).
+      const exec = harmonografMini(r, 'execution', 'open this run’s harmonograf trace');
+      if (exec) exec.addEventListener('click', (ev) => ev.stopPropagation());
       const row = el('tr', { class: 'dn-inflight-row' }, [
         el('td', { class: 'dn-mono', text: String(eid) }),
         el('td', { class: 'dn-mono dn-faint', text: r.run_id ? String(r.run_id) : 'pending' }),
@@ -471,6 +485,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
           ]),
           el('span', { class: 'dn-mono dn-faint dn-progress-pct', text: pct != null ? ' ' + pct + '%' : ' running…' }),
         ]),
+        el('td', null, [exec || el('span', { class: 'dn-faint', text: '—' })]),
       ]);
       if (eid !== '—') { row.style.cursor = 'pointer'; row.addEventListener('click', () => ctx.navigate('board', { epochId, entry: eid, gen: genId })); }
       tbody.appendChild(row);
@@ -524,7 +539,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   }
   host.appendChild(section('Per-board scoring · sorted, vs champion', scoreCard));
 
-  if (isPrimary && s.entryParam) host.appendChild(entryDrilldown(ctx, epochId, genId, s.entryParam, s.drillRow, s.exps, s.judges));
+  if (isPrimary && s.entryParam) host.appendChild(entryDrilldown(ctx, epochId, genId, s.entryParam, s.drillRow, s.exps, s.judges, s.drillHeader));
 
   // ---- fix #3: ALL match-ups for this candidate ----
   host.appendChild(section('Match-ups · every round this candidate was in', allMatchupsPanel(s.mine, genId, championId, ctx, epochId)));
@@ -647,7 +662,7 @@ function gatePanel(gate, champion, challenger) {
   return card;
 }
 
-function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges) {
+function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges, header) {
   const runId = row ? row.run_id : null;
   const card = el('div', { class: 'dn-panel dn-drill' });
   card.appendChild(el('div', { class: 'dn-row' }, [
@@ -682,9 +697,15 @@ function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges) {
   }
 
   // fix #5 path: the transcript opens INLINE on the board view (no separate run page).
+  // The harmonograf link is the per-run EXECUTION trace (this run's goldfive
+  // events, keyed on its adk_session_id) — rendered only while a run is LIVE
+  // (the auto-launched harmonograf server dies with the loop, so a link built
+  // after it ends points at a dead port; harmonografLink returns null then).
+  const hgExec = harmonografLink(header || {}, 'Open this run in harmonograf');
   card.appendChild(el('div', { style: 'margin-top:14px;' }, [
     el('a', { class: 'dn-linkbtn', href: ctx.href('board', { epochId, entry: entryId, gen: genId }), text: 'Open the transcript inline (vs champion) →' }),
     runId ? el('span', { class: 'dn-faint dn-mono', style: 'margin-left:8px;', text: runId.slice(0, 10) + '…' }) : null,
+    hgExec ? el('span', { class: 'dn-faint', style: 'margin-left:8px;' }, ['· ', hgExec]) : null,
   ].filter(Boolean)));
 
   return section('Entry · ' + entryId, card);

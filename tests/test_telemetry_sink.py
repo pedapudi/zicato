@@ -226,6 +226,76 @@ def test_harmonograf_grpc_target_normalizes_urls() -> None:
     assert _harmonograf_grpc_target("  host:7531  ") == "host:7531"
 
 
+def test_make_run_sinks_auto_launch_dials_grpc_port_not_web_port(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Auto-launched harmonograf: sink dials the gRPC port, link keeps the web port.
+
+    Regression for the silent-telemetry-drop bug: the auto-launched
+    server binds a browser-facing gRPC-Web port (carried by
+    ``ZICATO_HARMONOGRAF_URL`` for dashboard deep-links) AND a distinct
+    native gRPC port (``ZICATO_HARMONOGRAF_GRPC``) the per-run sink must
+    dial. Stripping the scheme off the web URL (the old behaviour) dialed
+    the WEB port over native gRPC, failing the handshake silently. Here
+    web_port (9080) != grpc_port (9090); the sink MUST dial the grpc port.
+    """
+    pytest.importorskip("goldfive")
+    import sys
+    import types
+
+    from zicato.telemetry.sink import (
+        HARMONOGRAF_GRPC_ENV,
+        HARMONOGRAF_URL_ENV,
+        make_run_sinks,
+    )
+
+    constructed: dict[str, object] = {}
+
+    class _StubClient:
+        def __init__(self, *, name: str, server_addr: str) -> None:
+            constructed["server_addr"] = server_addr
+
+    class _StubHarmonografSink:
+        def __init__(self, client: object) -> None:
+            constructed["client"] = client
+
+    stub_mod = types.ModuleType("harmonograf_client")
+    stub_mod.Client = _StubClient  # type: ignore[attr-defined]
+    stub_mod.HarmonografSink = _StubHarmonografSink  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
+
+    # The dashboard link gets the WEB port; the sink must NOT dial it.
+    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "http://127.0.0.1:9080")
+    # The orchestrator's auto-launch wiring exports the native gRPC port.
+    monkeypatch.setenv(HARMONOGRAF_GRPC_ENV, "127.0.0.1:9090")
+
+    sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
+
+    assert len(sinks) == 2
+    # The sink dialed the gRPC port (9090), NOT the web port (9080).
+    assert constructed["server_addr"] == "127.0.0.1:9090"
+
+
+def test_resolve_harmonograf_grpc_target_prefers_grpc_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """resolve_harmonograf_grpc_target: grpc env wins, else derives from web URL."""
+    from zicato.telemetry.sink import (
+        HARMONOGRAF_GRPC_ENV,
+        resolve_harmonograf_grpc_target,
+    )
+
+    # Auto-launch path: ZICATO_HARMONOGRAF_GRPC set ⇒ dial it (the grpc
+    # port), ignoring the web URL passed in.
+    monkeypatch.setenv(HARMONOGRAF_GRPC_ENV, "127.0.0.1:9090")
+    assert resolve_harmonograf_grpc_target("http://127.0.0.1:9080") == "127.0.0.1:9090"
+
+    # External path: no grpc env ⇒ the web URL IS the single dial target,
+    # scheme-stripped.
+    monkeypatch.delenv(HARMONOGRAF_GRPC_ENV, raising=False)
+    assert resolve_harmonograf_grpc_target("http://ext-host:7777") == "ext-host:7777"
+
+
 def test_make_run_sinks_falls_back_to_jsonl_when_harmonograf_client_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

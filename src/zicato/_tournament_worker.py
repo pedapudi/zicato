@@ -217,7 +217,9 @@ def _build_adapter(spec: dict[str, Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _build_sinks(events_path: Path, harmonograf_url: str) -> tuple[list[Any], Any]:
+def _build_sinks(
+    events_path: Path, harmonograf_url: str, harmonograf_grpc: str = ""
+) -> tuple[list[Any], Any]:
     """Build the per-run sink list: canonical JSONL plus optional harmonograf.
 
     Returns ``(sinks, tracker)`` where ``tracker`` is the
@@ -250,7 +252,12 @@ def _build_sinks(events_path: Path, harmonograf_url: str) -> tuple[list[Any], An
         try:
             from zicato.telemetry.sink import _make_harmonograf_sink  # noqa: PLC0415
 
-            extra = _make_harmonograf_sink(harmonograf_url)
+            # ``harmonograf_grpc`` carries the native gRPC dial target the
+            # runner resolved (the auto-launched server's grpc_port, NOT
+            # the browser-facing gRPC-Web port in ``harmonograf_url``). An
+            # empty target falls back to deriving from the web URL — the
+            # external-harmonograf single-port path.
+            extra = _make_harmonograf_sink(harmonograf_url, grpc_target=harmonograf_grpc or None)
             if extra is not None:
                 sinks.append(extra)
         except Exception as exc:  # noqa: BLE001 — harmonograf is additive only
@@ -473,6 +480,7 @@ async def _run(args: dict[str, Any]) -> None:
     loss_path = Path(args["loss_path"])
     result_path = Path(args["result_path"])
     harmonograf_url = str(args.get("harmonograf_url", "") or "")
+    harmonograf_grpc = str(args.get("harmonograf_grpc", "") or "")
 
     # Export the per-run scratch directory so the inner harness routes
     # its run output OUTSIDE the generation snapshot. Without this a
@@ -556,7 +564,7 @@ async def _run(args: dict[str, Any]) -> None:
     except Exception as exc:  # noqa: BLE001 — heartbeat is best-effort
         log.warning("worker could not start run heartbeat for %s: %s", run_id, exc)
 
-    sinks, tracker = _build_sinks(events_path, harmonograf_url)
+    sinks, tracker = _build_sinks(events_path, harmonograf_url, harmonograf_grpc)
     adapter = _build_adapter(args["adapter"])
 
     run_result: RunResult | None = None

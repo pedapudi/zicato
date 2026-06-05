@@ -2965,9 +2965,27 @@ def _resolve_or_launch_harmonograf(
     # via load_config()/resolve_harmonograf_url(). The restorer is
     # captured on the handle so shutdown unsets / restores the
     # environment cleanly.
-    restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_URL")
-    restorer.set(handle.url)
-    return handle.url, _LaunchedHandle(handle, restorer)
+    restorers: list[_EnvVarRestorer] = []
+    url_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_URL")
+    url_restorer.set(handle.url)
+    restorers.append(url_restorer)
+
+    # The auto-launched server binds TWO ports: the web URL above (for
+    # browser deep-links) and a native gRPC port the per-run sinks must
+    # dial. Export the gRPC target distinctly so the sink builders dial
+    # the gRPC port instead of stripping the web URL and dialing the web
+    # port (which would silently drop telemetry). The external-URL path
+    # above returns before reaching here, so this only fires for an
+    # auto-launched server — exactly where web_port != grpc_port.
+    grpc_port = getattr(handle, "grpc_port", 0) or 0
+    if grpc_port:
+        # Host matches the auto-launch bind (127.0.0.1); see
+        # harmonograf_supervisor.start_harmonograf.
+        grpc_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_GRPC")
+        grpc_restorer.set(f"127.0.0.1:{grpc_port}")
+        restorers.append(grpc_restorer)
+
+    return handle.url, _LaunchedHandle(handle, restorers)
 
 
 def _build_meta_loop_emitter_safe(
@@ -3018,21 +3036,28 @@ class _NoopShutdownHandle:
 
 
 class _LaunchedHandle:
-    """Composite handle: server lifecycle plus env-var restoration."""
+    """Composite handle: server lifecycle plus env-var restoration.
 
-    def __init__(self, inner: Any, restorer: _EnvVarRestorer) -> None:
+    Holds a list of :class:`_EnvVarRestorer` — one for the web URL
+    (``ZICATO_HARMONOGRAF_URL``) and, on the auto-launch path, one for the
+    native gRPC target (``ZICATO_HARMONOGRAF_GRPC``) — so shutdown returns
+    both env vars to their pre-launch state.
+    """
+
+    def __init__(self, inner: Any, restorers: list[_EnvVarRestorer]) -> None:
         self._inner = inner
-        self._restorer = restorer
+        self._restorers = list(restorers)
         self.url = inner.url
 
     def shutdown(self) -> None:
         # Restore env BEFORE stopping the server so a concurrent
         # tournament-runner re-resolve does not pick up the auto-launched
         # URL after the server is gone.
-        try:
-            self._restorer.restore()
-        except Exception as exc:  # noqa: BLE001 — restoration is best-effort
-            log.debug("env restoration during harmonograf shutdown failed: %s", exc)
+        for restorer in self._restorers:
+            try:
+                restorer.restore()
+            except Exception as exc:  # noqa: BLE001 — restoration is best-effort
+                log.debug("env restoration during harmonograf shutdown failed: %s", exc)
         try:
             self._inner.shutdown()
         except Exception as exc:  # noqa: BLE001 — never raise from teardown

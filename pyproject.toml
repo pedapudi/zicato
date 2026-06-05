@@ -45,7 +45,7 @@ dependencies = [
     "harmonograf-client",
     # harmonograf_server is the in-process console server zicato auto-
     # launches at evolve startup (see
-    # zicato.integration.harmonograf_supervisor). Bound to a free
+    # zicato.telemetry.harmonograf_supervisor). Bound to a free
     # localhost port unless ZICATO_HARMONOGRAF_URL /
     # config.integration.harmonograf_url opts in to an external instance.
     # Imported lazily so a degraded install (missing dep) only disables
@@ -262,7 +262,7 @@ harmonograf-client = { git = "https://github.com/pedapudi/harmonograf.git", subd
 # harmonograf-server is the same monorepo, server subdirectory. Pinned
 # to the same rev as the client so the two never skew. zicato auto-
 # launches its own harmonograf-server bound to a free localhost port at
-# evolve startup (see zicato.integration.harmonograf_supervisor) so the
+# evolve startup (see zicato.telemetry.harmonograf_supervisor) so the
 # operator no longer needs to keep a separate harmonograf process
 # running; setting ``ZICATO_HARMONOGRAF_URL`` / ``integration.harmonograf_url``
 # opts back into an external instance.

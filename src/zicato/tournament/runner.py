@@ -796,6 +796,26 @@ def _resolve_harmonograf_url(workspace_root: Path) -> str:
         return ""
 
 
+def _resolve_harmonograf_grpc(workspace_root: Path, url: str) -> str:
+    """Best-effort gRPC dial target for the worker args file.
+
+    Threaded through the args file (alongside the web ``url``) so the
+    worker dials the native gRPC port rather than the browser-facing
+    gRPC-Web port. For an auto-launched harmonograf the orchestrator sets
+    ``ZICATO_HARMONOGRAF_GRPC`` to ``host:grpc_port``; the resolver below
+    prefers it and falls back to scheme-stripping ``url`` for an external
+    instance (single port). Empty ``url`` ⇒ empty target.
+    """
+    if not url:
+        return ""
+    try:
+        from zicato.telemetry.sink import resolve_harmonograf_grpc_target  # noqa: PLC0415
+
+        return resolve_harmonograf_grpc_target(url)
+    except Exception:  # noqa: BLE001 — never fail a tournament on target resolution
+        return ""
+
+
 #: Multiplier on ``task_failure_ratio`` in the synthesised aborted-run
 #: loss — mirrors :data:`zicato.telemetry.reducer._TASK_FAILURE_RATIO_MULTIPLIER`
 #: ("pure failures matter"). Kept as a local constant so this module does
@@ -1067,7 +1087,8 @@ async def _run_single(
                 "result_path": str(result_path),
                 "instance_id": config.instance_id,
                 "seed": config.seed,
-                "harmonograf_url": _resolve_harmonograf_url(workspace_root),
+                "harmonograf_url": (_hg_url := _resolve_harmonograf_url(workspace_root)),
+                "harmonograf_grpc": _resolve_harmonograf_grpc(workspace_root, _hg_url),
                 "weights": _weights_spec(weights),
             }
             args_path.write_text(json.dumps(args_payload), encoding="utf-8")

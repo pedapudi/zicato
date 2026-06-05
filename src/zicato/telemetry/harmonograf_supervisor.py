@@ -448,12 +448,18 @@ def build_meta_loop_sink(harmonograf_url: str, session_id: str) -> Awaitable[Any
     try:
         from harmonograf_client import Client, HarmonografSink  # noqa: PLC0415
 
-        from zicato.telemetry.sink import _harmonograf_grpc_target  # noqa: PLC0415
+        from zicato.telemetry.sink import (  # noqa: PLC0415
+            resolve_harmonograf_grpc_target,
+        )
     except ImportError as exc:
         log.warning("meta-loop harmonograf sink skipped: client unavailable (%s)", exc)
         return None
     try:
-        target = _harmonograf_grpc_target(harmonograf_url)
+        # Dial the native gRPC port, NOT the browser-facing gRPC-Web port
+        # carried by ``harmonograf_url``. For an auto-launched server the
+        # resolver prefers ``ZICATO_HARMONOGRAF_GRPC`` (host:grpc_port);
+        # for an external instance it scheme-strips the single-port URL.
+        target = resolve_harmonograf_grpc_target(harmonograf_url)
         # The client name is validated by harmonograf against
         # ``[a-zA-Z0-9_-]{1,128}``. A raw ``zicato-meta:{session_id}``
         # injects a ':' (and the session id may already be at the length
@@ -461,13 +467,12 @@ def build_meta_loop_sink(harmonograf_url: str, session_id: str) -> Awaitable[Any
         # already ``zicato-meta-loop-...``, so the resulting name stays
         # readable, e.g. ``zicato-meta-zicato-meta-loop-...``.
         client_name = _sanitize_agent_name(f"zicato-meta:{session_id}")
-        client = Client(name=client_name, server_addr=target)
-        # The HarmonografSink does not currently accept a session_id on
-        # construction — sessions are derived per-run from goldfive's
-        # own metadata. The client name carries the session label so
-        # the harmonograf console at least distinguishes meta-loop
-        # traffic; a follow-up may thread session_id explicitly once
-        # harmonograf_client exposes it.
+        # ``harmonograf_client.Client`` accepts an explicit ``session_id``
+        # so the meta-loop's proposer / judge envelopes are bucketed under
+        # one stable session on the harmonograf timeline (rather than
+        # scattering across per-run sessions). Pass the already-sanitized
+        # ``session_id`` through — it satisfies the same name regex.
+        client = Client(name=client_name, server_addr=target, session_id=session_id)
         return HarmonografSink(client)
     except Exception as exc:  # noqa: BLE001 — never hard-fail
         log.warning(
