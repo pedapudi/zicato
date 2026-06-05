@@ -199,7 +199,7 @@ function floatOf(params, key, def) {
 //   swiss       — three stacked horizontal lines of varying length (a ladder)
 //   single_elim — a small knockout bracket
 //   double_elim — a bracket with an extra losers'-lane line
-//   racing      — a funnel of decreasing dots (4 → 2 → 1 narrowing)
+//   racing      — a staggered 3 → 2 → 1 funnel; the cut arms fade
 const GLYPH = {
   gauntlet: {
     dots: [{ cx: 7, cy: 12, r: 2.4 }, { cx: 17, cy: 12, r: 2.4 }],
@@ -215,12 +215,13 @@ const GLYPH = {
     paths: ['M5,6 H11 V11', 'M5,11 H11', 'M11,11 H19', 'M5,16 H11 V11', 'M5,20 H17'],
   },
   racing: {
-    // a COMPACT funnel: symmetric about x=12, vertically centred, tight rows
-    // (a sparse full-height spread reads as stretched at icon size)
+    // a compact 3→2→1 STAGGERED funnel (each row nested in the gaps of the one
+    // above), matching the mockup; the cut arms on the right edge fade (`o`) —
+    // successive halving. Rows centred on x=12.
     dots: [
-      { cx: 6, cy: 7, r: 1.8 }, { cx: 10, cy: 7, r: 1.8 }, { cx: 14, cy: 7, r: 1.8 }, { cx: 18, cy: 7, r: 1.8 },
-      { cx: 10, cy: 12, r: 1.8 }, { cx: 14, cy: 12, r: 1.8 },
-      { cx: 12, cy: 17, r: 2.0 },
+      { cx: 7, cy: 7, r: 1.8 }, { cx: 12, cy: 7, r: 1.8 }, { cx: 17, cy: 7, r: 1.8, o: 0.32 },
+      { cx: 9.5, cy: 12, r: 1.8 }, { cx: 14.5, cy: 12, r: 1.8, o: 0.32 },
+      { cx: 12, cy: 17, r: 1.8 },
     ],
   },
 };
@@ -234,7 +235,11 @@ export function structureGlyphSvg(structure) {
   }
   if (g.dots && g.dots.length) {
     kids.push(svgEl('g', { fill: 'currentColor', stroke: 'none' },
-      g.dots.map((c) => svgEl('circle', { cx: String(c.cx), cy: String(c.cy), r: String(c.r) }))));
+      g.dots.map((c) => {
+        const attrs = { cx: String(c.cx), cy: String(c.cy), r: String(c.r) };
+        if (c.o != null) attrs['fill-opacity'] = String(c.o);
+        return svgEl('circle', attrs);
+      })));
   }
   return svgEl('svg', {
     class: 'dn-bld-cardglyph', width: 24, height: 24, viewBox: '0 0 24 24',

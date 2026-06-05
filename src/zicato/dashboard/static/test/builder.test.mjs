@@ -438,7 +438,7 @@ test('structure glyphs: each of the five structures renders a crisp theme-token 
   }
 });
 
-test('structure glyphs: gauntlet is ●—● (two dots + a join), racing is a 4→2→1 funnel of dots', () => {
+test('structure glyphs: gauntlet is ●—● (two dots + a join), racing is a 3→2→1 staggered funnel', () => {
   // gauntlet: two duel dots joined by a short line.
   const g = builder.structureGlyphSvg('gauntlet');
   const gDots = allDesc(g).filter((n) => n.localName === 'circle');
@@ -446,10 +446,12 @@ test('structure glyphs: gauntlet is ●—● (two dots + a join), racing is a 4
   assertEqual(gDots.length, 2, 'gauntlet draws the two duel dots');
   assertEqual(gPaths.length, 1, 'gauntlet draws the single joining line');
 
-  // racing: a narrowing funnel of dots — 4 + 2 + 1 = 7 dots.
+  // racing: a staggered funnel of dots — 3 + 2 + 1 = 6 dots, two cut arms faded.
   const r = builder.structureGlyphSvg('racing');
   const rDots = allDesc(r).filter((n) => n.localName === 'circle');
-  assertEqual(rDots.length, 7, 'racing draws a 4→2→1 funnel of dots');
+  assertEqual(rDots.length, 6, 'racing draws a 3→2→1 funnel of dots');
+  const faded = rDots.filter((n) => n.getAttribute('fill-opacity') != null);
+  assertEqual(faded.length, 2, 'racing fades the two cut arms');
 
   // swiss: three stacked ranking lines (no dots).
   const s = builder.structureGlyphSvg('swiss');
