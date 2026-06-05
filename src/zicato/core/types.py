@@ -2348,6 +2348,13 @@ class RuntimeConfig:
         a distinct callable from :attr:`harness_call_llm` (identity-
         unequal) so the emulator cannot trivially collude with the
         inner harness through shared state.
+    judge_call_llm:
+        Optional LLM callable used by the in-run process judges /
+        rubric matchers. ``None`` (the default) ⇒ judges fall back to
+        :attr:`auxiliary_call_llm` (today's behavior). When set (from
+        the workspace ``models.judge`` block) it lets an operator point
+        the judges at a separate endpoint/model from the rest of the
+        auxiliary surface. Read via :meth:`effective_judge_call_llm`.
     seed:
         Optional integer seed for any zicato-internal random number
         generators. Adapters may or may not honor it for the inner
@@ -2396,6 +2403,7 @@ class RuntimeConfig:
     auxiliary_call_llm: CallLLM
     seed: int | None = None
     parallelism: int = 4
+    judge_call_llm: CallLLM | None = None
 
     def __post_init__(self) -> None:
         """Validate the cheap scalar invariants (currently ``parallelism``)."""
@@ -2404,6 +2412,16 @@ class RuntimeConfig:
                 f"RuntimeConfig.parallelism must be >= 1, got {self.parallelism!r}; "
                 "use 1 for fully sequential board execution"
             )
+
+    def effective_judge_call_llm(self) -> CallLLM:
+        """The callable judges run on: :attr:`judge_call_llm` or the auxiliary.
+
+        Judges historically run on :attr:`auxiliary_call_llm`; a workspace
+        ``models.judge`` block may override them onto a separate endpoint via
+        :attr:`judge_call_llm`. This single accessor centralises that
+        fall-back so every judge call site reads the same rule.
+        """
+        return self.judge_call_llm if self.judge_call_llm is not None else self.auxiliary_call_llm
 
 
 __all__ = [

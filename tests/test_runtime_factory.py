@@ -174,3 +174,120 @@ def test_runtime_config_non_callable_dotted_path_raises(
             },
             workspace_root=tmp_path,
         )
+
+
+# ---------------------------------------------------------------------------
+# Unified ``models`` block resolution (runtime infra, not the contract)
+# ---------------------------------------------------------------------------
+
+
+def _install_models_callables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register three distinct module-level call_llm callables for dotted paths."""
+    mod = types.ModuleType("fake_models_mod")
+    mod.harness_fn = _stub_harness  # type: ignore[attr-defined]
+    mod.aux_fn = _stub_aux  # type: ignore[attr-defined]
+
+    async def _judge(system: str, user: str, model: str) -> str:
+        del system, user, model
+        return ""
+
+    mod.judge_fn = _judge  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fake_models_mod", mod)
+
+
+def test_models_block_resolves_harness_and_auxiliary_dotted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``models.{harness,auxiliary}`` (dotted form) wins over ``runtime.*``."""
+    _install_models_callables(monkeypatch)
+    cfg = make_runtime_config(
+        {
+            # legacy runtime.* present but should be ignored when models.* set.
+            "runtime": {
+                "harness_call_llm": "fake_models_mod.judge_fn",
+                "auxiliary_call_llm": "fake_models_mod.judge_fn",
+            },
+            "models": {
+                "harness": {"call_llm": "fake_models_mod:harness_fn"},
+                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
+            },
+        },
+        workspace_root=tmp_path,
+    )
+    assert cfg.harness_call_llm is _stub_harness
+    assert cfg.auxiliary_call_llm is _stub_aux
+
+
+def test_models_block_falls_back_to_runtime_when_role_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An unconfigured ``models`` role falls back to ``runtime.*`` (today's path)."""
+    _install_models_callables(monkeypatch)
+    cfg = make_runtime_config(
+        {
+            "runtime": {
+                "harness_call_llm": "fake_models_mod.harness_fn",
+                "auxiliary_call_llm": "fake_models_mod.aux_fn",
+            },
+            # empty models block ⇒ both roles fall through to runtime.*
+            "models": {},
+        },
+        workspace_root=tmp_path,
+    )
+    assert cfg.harness_call_llm is _stub_harness
+    assert cfg.auxiliary_call_llm is _stub_aux
+    # No judge role ⇒ judge_call_llm is None and judges use the auxiliary.
+    assert cfg.judge_call_llm is None
+    assert cfg.effective_judge_call_llm() is _stub_aux
+
+
+def test_explicit_callable_kwarg_beats_models_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit callable kwarg wins over a configured ``models`` role."""
+    _install_models_callables(monkeypatch)
+    cfg = make_runtime_config(
+        {"models": {"harness": {"call_llm": "fake_models_mod:harness_fn"}}},
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_aux,  # the kwarg wins
+        auxiliary_call_llm=_stub_harness,
+    )
+    assert cfg.harness_call_llm is _stub_aux
+
+
+def test_models_judge_role_resolves_and_overrides_auxiliary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``models.judge`` resolves to a distinct judge callable; else aux is used."""
+    _install_models_callables(monkeypatch)
+    cfg = make_runtime_config(
+        {
+            "models": {
+                "harness": {"call_llm": "fake_models_mod:harness_fn"},
+                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
+                "judge": {"call_llm": "fake_models_mod:judge_fn"},
+            }
+        },
+        workspace_root=tmp_path,
+    )
+    assert cfg.judge_call_llm is not None
+    # The judge callable is the configured one, NOT the auxiliary.
+    assert cfg.effective_judge_call_llm() is cfg.judge_call_llm
+    assert cfg.effective_judge_call_llm() is not cfg.auxiliary_call_llm
+
+
+def test_models_collusion_guard_fires_when_harness_equals_auxiliary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The collusion guard still rejects harness==auxiliary via the models block."""
+    _install_models_callables(monkeypatch)
+    with pytest.raises(RuntimeError, match="must be distinct"):
+        make_runtime_config(
+            {
+                "models": {
+                    "harness": {"call_llm": "fake_models_mod:harness_fn"},
+                    "auxiliary": {"call_llm": "fake_models_mod:harness_fn"},
+                }
+            },
+            workspace_root=tmp_path,
+        )

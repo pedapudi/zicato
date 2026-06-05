@@ -193,9 +193,15 @@ def _render_draft_summary(draft: TournamentDraft) -> str:
     return json.dumps(summary, default=str, indent=2)
 
 
-def _resolve_model(config: BuilderConfig) -> Any:
-    """Resolve the agent ``model=`` from ``builder.json`` ``agent`` config.
+def _resolve_model(config: BuilderConfig, workspace_root: Path | None = None) -> Any:
+    """Resolve the agent ``model=`` for the copilot.
 
+    Resolution order:
+
+    * the workspace ``models.builder`` role (when configured) WINS — a model
+      change is runtime infra, not the contract, so it never rolls the epoch;
+      resolved via :func:`zicato.models_config.resolve_builder_model`. Else
+      fall back to ``builder.json`` ``agent`` (backward-compat):
     * ``agent.call_llm`` (dotted path) set ⇒ import it and use it directly
       (a custom model object, or a factory the caller pre-resolved).
     * else build from ``agent.model``: when ``endpoint`` / ``api_key_env``
@@ -208,6 +214,17 @@ def _resolve_model(config: BuilderConfig) -> Any:
     :attr:`BuilderConfig.chat_enabled` first, so this is a guard, not the
     common path.
     """
+    if workspace_root is not None:
+        from zicato.models_config import load_models_config, resolve_builder_model
+        from zicato.workspace_loader import load_workspace_config
+
+        try:
+            models = load_models_config(load_workspace_config(workspace_root))
+        except (FileNotFoundError, ValueError):
+            models = None
+        if models is not None and not models.builder.is_empty:
+            return resolve_builder_model(models.builder)
+
     agent_cfg = config.agent
     if agent_cfg.call_llm:
         return import_dotted_path(agent_cfg.call_llm, label="builder agent.call_llm")
@@ -255,7 +272,7 @@ def build_copilot_agent(
 
     return LlmAgent(
         name="zicato_builder_copilot",
-        model=_resolve_model(config),
+        model=_resolve_model(config, workspace_root),
         instruction=instruction,
         tools=list(DEFAULT_BUILDER_TOOLS),
     )
@@ -266,6 +283,23 @@ def _adk_available() -> bool:
     import importlib.util
 
     return importlib.util.find_spec("google.adk") is not None
+
+
+def _models_builder_configured(workspace_root: Path) -> bool:
+    """Return ``True`` iff the workspace ``models.builder`` role is configured.
+
+    A configured ``models.builder`` enables the copilot even when
+    ``builder.json`` carries no model (the unified config supersedes it), so
+    the chat gate consults it alongside :attr:`BuilderConfig.chat_enabled`.
+    """
+    from zicato.models_config import load_models_config
+    from zicato.workspace_loader import load_workspace_config
+
+    try:
+        models = load_models_config(load_workspace_config(workspace_root))
+    except (FileNotFoundError, ValueError):
+        return False
+    return not models.builder.is_empty
 
 
 async def run_copilot(
@@ -295,7 +329,10 @@ async def run_copilot(
     :class:`~zicato.testing.adk_fake.FakeADKModel`) bypasses model
     resolution and disk loading entirely.
     """
-    if agent is None and (not config.chat_enabled or not _adk_available()):
+    if agent is None and (
+        not (config.chat_enabled or _models_builder_configured(workspace_root))
+        or not _adk_available()
+    ):
         yield {"type": "error", "message": CHAT_DISABLED_MESSAGE}
         return
 

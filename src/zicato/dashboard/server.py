@@ -295,6 +295,14 @@ def create_app(
 
     routes.extend(builder_routes(paths.root, read_only=read_only))
 
+    # Unified models / LLM-endpoints settings surface. A model/endpoint is
+    # runtime infra (NOT the evaluation contract), so a write here never rolls
+    # the epoch. GET returns the secret-safe view (api_key_env NAME + a
+    # set/unset flag); POST persists only the ``models`` block of config.json.
+    from zicato.dashboard.settings_api import settings_routes  # noqa: PLC0415
+
+    routes.extend(settings_routes(paths.root, read_only=read_only))
+
     # Any unmatched GET is treated as a request for a bundled asset so
     # index.html's root-relative references resolve. MUST stay last.
     routes.append(Route("/{path:path}", serve_fallback))

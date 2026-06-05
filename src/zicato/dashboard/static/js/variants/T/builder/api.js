@@ -16,6 +16,19 @@ export async function getConfig() {
   try { return await fetchJson('/builder/config'); } catch (e) { return null; }
 }
 
+// The unified models / LLM-endpoints settings surface. GET returns the
+// secret-safe view (each role's spec carries the api_key_env NAME + an
+// api_key_env_set boolean — never the secret value); POST persists the
+// `models` block (a model/endpoint is runtime infra, so it never rolls the
+// epoch). Failure-tolerant GET (null on error) mirrors getConfig.
+export async function getModels() {
+  try { return await fetchJson('/settings/models'); } catch (e) { return null; }
+}
+
+export async function saveModels(models) {
+  return postJson('/settings/models', { models: models || {} });
+}
+
 export async function getDraft() {
   try { return await fetchJson('/builder/draft?session=' + encodeURIComponent(SESSION)); } catch (e) { return null; }
 }

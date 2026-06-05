@@ -28,7 +28,7 @@ import {
   RAIL_MIN, RAIL_MAX, readRail,
 } from '../ui.js';
 import * as data from '../data.js';
-import { getConfig } from '../builder/api.js';
+import { getModels, saveModels } from '../builder/api.js';
 import * as builder from './builder.js';
 // REUSE the SAME theme/pref mechanism the top-bar controls drive — these apply
 // to the app root, persist (the one localStorage store ui.js owns), AND sync the
@@ -42,8 +42,16 @@ import {
 const SECTIONS = [
   { id: 'builder', label: 'Tournament builder', glyph: '⚒' },
   { id: 'contract', label: 'Contract', glyph: '◷' },
-  { id: 'assistant', label: 'Builder assistant', glyph: '✦' },
+  { id: 'models', label: 'Models / LLM endpoints', glyph: '✦' },
   { id: 'appearance', label: 'Appearance', glyph: '◑' },
+];
+
+// The four LLM roles the unified models section edits, in display order.
+const MODEL_ROLES = [
+  ['harness', 'Harness', 'The LLM the inner agent under evaluation runs on.'],
+  ['auxiliary', 'Auxiliary', 'Every zicato-internal consumer — emulator, proposer, analysis.'],
+  ['builder', 'Builder', 'The tournament-builder copilot.'],
+  ['judge', 'Judge', 'In-run process judges / rubric matchers (falls back to auxiliary).'],
 ];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 const DEFAULT_SECTION = 'builder';
@@ -52,7 +60,9 @@ let _active = DEFAULT_SECTION;
 let _railHost = null;
 let _sectionHost = null;
 let _ctx = null;
-let _config = null;         // /builder/config public dict (assistant section)
+let _models = null;         // /settings/models secret-safe view (models section)
+let _modelsDirty = false;   // an unsaved local edit is pending (digest-gate seam)
+let _modelsStatus = '';     // last save outcome message (saved / error)
 let _builderMounted = false; // the builder owns its own shared draft + chrome
 
 function normaliseSection(id) {
@@ -115,7 +125,7 @@ async function renderSection() {
 
   switch (_active) {
     case 'contract': return renderContract();
-    case 'assistant': return renderAssistant();
+    case 'models': return renderModels();
     case 'appearance': return renderAppearance();
     default: return renderContract();
   }
@@ -182,48 +192,184 @@ function contractRow(label, value, linkView) {
   ]);
 }
 
-// ── Builder assistant — builder.json config (model NAME only) ─────────
+// ── Models / LLM endpoints — EDITABLE per-role config (NAMES only) ────
 //
-// Surfaces the copilot's configured model name + the api_key_env NAME (never a
-// secret value) + chat_enabled, from GET /builder/config.
+// Generalises the former "Builder assistant" read-out into an EDITABLE
+// section for ALL FOUR roles (harness · auxiliary · builder · judge), backed
+// by the secret-safe GET/POST /settings/models. Each role toggles between the
+// `call_llm` dotted-path form and the `{model, endpoint, api_key_env}` form;
+// only the api_key_env NAME is ever shown/edited (plus a "set / unset"
+// indicator from the server's api_key_env_set boolean) — never a secret value.
+// A model/endpoint is runtime infra, so a change here does NOT roll the epoch.
 
-async function renderAssistant() {
-  if (_config == null) _config = await getConfig();
-  const cfg = _config || { chat_enabled: false, agent: {}, skills: [] };
-  const agent = cfg.agent || {};
-  const skills = Array.isArray(cfg.skills) ? cfg.skills : [];
-  const digest = JSON.stringify({
-    chat: !!cfg.chat_enabled, model: agent.model || '',
-    keyEnv: agent.api_key_env || '', endpoint: agent.endpoint || '', skills,
+// The in-memory editable model of all four roles. Seeded from the server's
+// secret-safe view, mutated locally as the operator edits, POSTed on save.
+let _modelsEdit = null;
+
+function blankRoleEdit() {
+  return { use_call_llm: false, call_llm: '', model: '', endpoint: '', api_key_env: '', api_key_env_set: false };
+}
+
+// Fold one server role spec (public, secret-safe) into the editable shape.
+function roleEditFromPublic(spec) {
+  const s = spec || {};
+  const useCallLlm = !!s.call_llm;
+  return {
+    use_call_llm: useCallLlm,
+    call_llm: s.call_llm || '',
+    model: s.model || '',
+    endpoint: s.endpoint || '',
+    api_key_env: s.api_key_env || '',
+    api_key_env_set: !!s.api_key_env_set,
+  };
+}
+
+// Project the editable shape back to the on-disk role spec the POST takes.
+// Emits ONLY the active form's keys (so the server stores a clean spec) and
+// NEVER a secret value — api_key_env is a NAME.
+function roleSpecFromEdit(edit) {
+  if (edit.use_call_llm) {
+    return edit.call_llm ? { call_llm: edit.call_llm } : {};
+  }
+  if (!edit.model) return {};
+  return { model: edit.model, endpoint: edit.endpoint || null, api_key_env: edit.api_key_env || null };
+}
+
+function seedModelsEdit() {
+  const view = (_models && _models.models) || {};
+  _modelsEdit = {};
+  for (const [id] of MODEL_ROLES) _modelsEdit[id] = roleEditFromPublic(view[id]);
+}
+
+async function renderModels() {
+  if (_models == null) { _models = await getModels(); seedModelsEdit(); }
+  if (_modelsEdit == null) seedModelsEdit();
+
+  const digest = JSON.stringify({ edit: _modelsEdit, dirty: _modelsDirty, status: _modelsStatus });
+  gatedSwap(_sectionHost, 'models|' + digest, () => {
+    if (_models == null) return [empty('Could not load the models settings.')];
+    return [
+      section('Models / LLM endpoints',
+        el('p', { class: 'dn-lede', text: 'How every role reaches an LLM — harness, auxiliary, builder, and judge. A model / endpoint is runtime INFRASTRUCTURE, not part of the evaluation contract, so a change here does NOT roll the epoch (unlike the Contract section).' }),
+        el('p', { class: 'dn-faint', text: 'For each role, either a call_llm dotted path or a model spec. Only the API-key environment-variable NAME is shown or edited — a secret value is never read or surfaced here.' }),
+        el('div', { class: 'dn-set-models' }, MODEL_ROLES.map(roleCard)),
+        modelsActions()),
+    ];
   });
-  gatedSwap(_sectionHost, 'assistant|' + digest, () => [
-    section('Builder assistant',
-      el('p', { class: 'dn-lede', text: 'How the tournament-builder copilot reaches a model — read from builder.json. The model name and the API-key environment-variable NAME are shown; a secret value is never read or surfaced here.' }),
-      el('div', { class: 'dn-set-kvgrid' }, [
-        kv('chat', cfg.chat_enabled ? 'enabled' : 'disabled (no model configured)'),
-        kv('model', agent.model || '—', true),
-        kv('endpoint', agent.endpoint || 'provider default', true),
-        kv('api key env', agent.api_key_env || '—', true),
-      ]),
-      skills.length
-        ? el('div', { class: 'dn-set-panel' }, [
-            el('div', { class: 'dn-subhead', text: 'composed builder skills' }),
-            el('ul', { class: 'dn-bld-skills' }, skills.map((s) => el('li', null, [
-              el('span', { class: 'dn-bld-skill-name', text: typeof s === 'string' ? s : (s.name || '') }),
-            ]))),
-          ])
-        : el('p', { class: 'dn-faint', text: 'No composed builder skills.' }),
-      cfg.chat_enabled
-        ? null
-        : el('p', { class: 'dn-faint', text: 'Configure the agent block in builder.json to enable the chat copilot; the builder still works form-only without it.' })),
+}
+
+function roleCard([id, label, hint]) {
+  const edit = _modelsEdit[id];
+  return el('div', { class: 'dn-set-modelcard', 'data-role': id }, [
+    el('div', { class: 'dn-set-modelhead' }, [
+      el('span', { class: 'dn-set-modelname', text: label }),
+      el('span', { class: 'dn-faint', text: hint }),
+    ]),
+    formToggle(id, edit),
+    edit.use_call_llm ? callLlmForm(id, edit) : modelSpecForm(id, edit),
   ]);
 }
 
-function kv(k, v, mono) {
-  return el('div', { class: 'dn-set-kvrow dn-set-kvrow-static' }, [
-    el('span', { class: 'dn-set-k', text: k }),
-    el('span', { class: 'dn-set-v' + (mono ? ' dn-mono' : ''), text: v }),
+// The call_llm ⟷ model-spec toggle — a two-button group per role.
+function formToggle(id, edit) {
+  const mk = (useCallLlm, text) => {
+    const on = edit.use_call_llm === useCallLlm;
+    const b = el('button', {
+      class: 'dn-set-typebtn' + (on ? ' dn-set-typebtn-on' : ''),
+      type: 'button', 'aria-pressed': String(on),
+      'data-form': useCallLlm ? 'call_llm' : 'model', text,
+    });
+    b.addEventListener('click', () => {
+      if (edit.use_call_llm !== useCallLlm) { edit.use_call_llm = useCallLlm; markDirty(); }
+    });
+    return b;
+  };
+  return el('div', { class: 'dn-set-typeswitch', role: 'group', 'aria-label': id + ' form' }, [
+    mk(false, 'model spec'), mk(true, 'call_llm path'),
   ]);
+}
+
+function callLlmForm(id, edit) {
+  return el('div', { class: 'dn-set-modelform' }, [
+    textField(id + '-call_llm', 'call_llm', edit.call_llm, 'pkg.mod:fn', (v) => { edit.call_llm = v; markDirty(); }),
+  ]);
+}
+
+function modelSpecForm(id, edit) {
+  return el('div', { class: 'dn-set-modelform' }, [
+    textField(id + '-model', 'model', edit.model, 'model id', (v) => { edit.model = v; markDirty(); }),
+    textField(id + '-endpoint', 'endpoint', edit.endpoint, 'provider default', (v) => { edit.endpoint = v; markDirty(); }),
+    apiKeyEnvField(id, edit),
+  ]);
+}
+
+// The api_key_env field shows + edits ONLY the env-var NAME, plus a read-only
+// "set / unset" indicator derived from the server's api_key_env_set boolean.
+// There is no secret-value input path anywhere.
+function apiKeyEnvField(id, edit) {
+  const indicator = el('span', {
+    class: 'dn-set-keyflag ' + (edit.api_key_env_set ? 'dn-set-keyflag-set' : 'dn-set-keyflag-unset'),
+    text: edit.api_key_env ? (edit.api_key_env_set ? 'set' : 'unset') : '—',
+    title: 'whether the named environment variable is currently set (the value is never read)',
+  });
+  const field = textField(id + '-api_key_env', 'api_key_env (name)', edit.api_key_env, 'API_KEY_ENV_VAR', (v) => { edit.api_key_env = v; markDirty(); });
+  field.appendChild(indicator);
+  return field;
+}
+
+function textField(name, label, value, placeholder, onInput) {
+  const input = el('input', {
+    class: 'dn-set-input dn-mono', type: 'text', name, value: value || '',
+    placeholder: placeholder || '', 'aria-label': label, autocomplete: 'off', spellcheck: 'false',
+  });
+  input.addEventListener('input', () => {
+    const v = input.value != null ? input.value : input.getAttribute('value');
+    onInput(String(v || ''));
+  });
+  return el('label', { class: 'dn-set-field' }, [
+    el('span', { class: 'dn-set-fieldlabel', text: label }),
+    input,
+  ]);
+}
+
+function modelsActions() {
+  const save = el('button', {
+    class: 'dn-linkbtn', type: 'button',
+    disabled: _modelsDirty ? null : 'disabled', text: 'Save models config',
+  });
+  save.addEventListener('click', onSaveModels);
+  const status = _modelsStatus
+    ? el('span', { class: 'dn-faint', text: _modelsStatus })
+    : null;
+  return el('div', { class: 'dn-set-modelactions' }, [save, status]);
+}
+
+function markDirty() {
+  _modelsDirty = true;
+  _modelsStatus = '';
+  redrawModels();
+}
+
+async function onSaveModels() {
+  const payload = {};
+  for (const [id] of MODEL_ROLES) payload[id] = roleSpecFromEdit(_modelsEdit[id]);
+  const res = await saveModels(payload);
+  if (res && res.error) {
+    _modelsStatus = 'save failed: ' + res.error;
+  } else {
+    _models = res || _models;
+    seedModelsEdit();
+    _modelsDirty = false;
+    _modelsStatus = 'saved · does not roll the epoch';
+  }
+  redrawModels();
+}
+
+function redrawModels() {
+  if (_active === 'models' && _sectionHost) {
+    _sectionHost.removeAttribute('data-t-digest');
+    renderModels();
+  }
 }
 
 // ── Appearance — the EDITABLE colour / typeface / scale / rail pickers ─

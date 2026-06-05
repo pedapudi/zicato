@@ -200,7 +200,7 @@ export function crumbTrail(route) {
     case 'settings': {
       const labels = {
         builder: 'tournament builder', contract: 'contract',
-        assistant: 'builder assistant', appearance: 'appearance',
+        models: 'models / llm endpoints', appearance: 'appearance',
       };
       if (p.section && labels[p.section]) {
         return [home, { label: 'settings', view: 'settings', params: {} }, { label: labels[p.section], current: true }];

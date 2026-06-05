@@ -625,6 +625,32 @@ def _callable_dotted_path(fn: Any) -> str:
     return f"{module}:{qualname}"
 
 
+def _role_worker_spec(
+    role: str,
+    *,
+    models: Any,
+    fallback_callable: Any,
+) -> dict[str, Any]:
+    """Build the subprocess-worker spec for one LLM role.
+
+    When the workspace ``models.<role>`` block is configured (a dotted path
+    OR a model spec), its secret-free :meth:`RoleSpec.to_worker_spec` dict is
+    emitted under ``{"models_role": {...}}`` — the worker re-resolves it with
+    :func:`zicato.models_config.resolve_text_call_llm` in its fresh
+    interpreter (reading any ``api_key_env`` from the worker's own
+    :data:`os.environ`). This lets a model-spec role (whose resolved callable
+    is a closure that cannot cross the process boundary) reach the worker.
+
+    Otherwise the legacy form is used: the resolved callable's re-importable
+    dotted path under ``{"dotted": "module:qualname"}`` — exactly today's
+    behavior for an unconfigured role.
+    """
+    spec = models.role(role)
+    if not spec.is_empty:
+        return {"models_role": spec.to_worker_spec()}
+    return {"dotted": _callable_dotted_path(fallback_callable)}
+
+
 def _adapter_spec(adapter: Any) -> dict[str, Any]:
     """Serialise a harness adapter into a JSON-friendly spec dict.
 
@@ -1000,6 +1026,23 @@ async def _run_single(
             ephemeral_snapshot, scratch_dir = _make_ephemeral_snapshot(
                 generation.snapshot_root, run_id
             )
+            # The unified ``models`` block (runtime infra, NOT the contract)
+            # is the source of truth for how each role reaches a provider in
+            # the worker. For a configured role we pass its secret-free spec
+            # and let the worker re-resolve (so a model-spec closure need not
+            # cross the process boundary); for an unconfigured role we fall
+            # back to the resolved callable's dotted path — today's behavior.
+            from zicato import workspace_loader  # noqa: PLC0415
+            from zicato.models_config import ModelsConfig, load_models_config  # noqa: PLC0415
+
+            try:
+                _models = load_models_config(workspace_loader.load_workspace_config(workspace_root))
+            except (FileNotFoundError, ValueError):
+                # No / malformed workspace config.json ⇒ no ``models`` block;
+                # every role falls back to its resolved callable's dotted
+                # path (today's behavior). Ad-hoc callers (tests) that run a
+                # generation without a full workspace config still spawn.
+                _models = ModelsConfig()
             args_payload = {
                 "workspace_root": str(workspace_root),
                 "epoch_id": epoch_id,
@@ -1008,8 +1051,17 @@ async def _run_single(
                 "scratch_dir": str(scratch_dir),
                 "entry": _entry_to_dict(entry),
                 "adapter": _adapter_spec(adapter),
-                "harness_call_llm": _callable_dotted_path(config.harness_call_llm),
-                "auxiliary_call_llm": _callable_dotted_path(config.auxiliary_call_llm),
+                "harness_role": _role_worker_spec(
+                    "harness", models=_models, fallback_callable=config.harness_call_llm
+                ),
+                "auxiliary_role": _role_worker_spec(
+                    "auxiliary", models=_models, fallback_callable=config.auxiliary_call_llm
+                ),
+                "judge_role": _role_worker_spec(
+                    "judge",
+                    models=_models,
+                    fallback_callable=config.effective_judge_call_llm(),
+                ),
                 "sink_events_path": str(sink_path),
                 "loss_path": str(loss_path),
                 "result_path": str(result_path),

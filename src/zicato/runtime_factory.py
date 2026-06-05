@@ -11,12 +11,22 @@ construction.
 Resolution rules:
 
 * If the caller supplies a ``harness_call_llm`` / ``auxiliary_call_llm``
-  Python callable, that wins — the config's dotted path is ignored.
+  Python callable, that wins — both the ``models`` block and the config's
+  dotted path are ignored.
+* Otherwise, when the workspace config carries a ``models.{harness,
+  auxiliary}`` role spec, it is resolved (a dotted-path callable, or a
+  model spec built into a callable — see :mod:`zicato.models_config`).
 * Otherwise the factory imports the dotted path the workspace config
   stores under ``runtime.harness_call_llm`` / ``runtime.auxiliary_call_llm``.
   Missing keys raise :class:`ValueError`.
+* The judge callable is resolved from ``models.judge`` when present; absent,
+  it is left ``None`` so judges fall back to the auxiliary callable (today's
+  behavior, via :meth:`RuntimeConfig.effective_judge_call_llm`).
 * The instance id, workspace root, and seed are read from the config's
   ``runtime`` sub-dict (with ``instance_id`` defaulting to ``"default"``).
+
+A model/endpoint is runtime INFRASTRUCTURE, not part of the evaluation
+contract, so a change to the ``models`` block does not roll the epoch.
 """
 
 from __future__ import annotations
@@ -28,6 +38,7 @@ from typing import Any
 from zicato.core.types import CallLLM, RuntimeConfig
 from zicato.core.workspace import assert_distinct_callables
 from zicato.import_path import import_dotted_path
+from zicato.models_config import load_models_config, resolve_text_call_llm
 
 
 def make_runtime_config(
@@ -86,25 +97,45 @@ def make_runtime_config(
         raw_root = runtime_dict.get("workspace_root", ".zicato")
         resolved_root = Path(str(raw_root))
 
+    # The unified ``models`` block (runtime infra, NOT part of the contract)
+    # is the first source for harness / auxiliary / judge — but an explicit
+    # callable kwarg still wins, and an unconfigured role falls through to
+    # the legacy ``runtime.*`` dotted paths so existing workspaces are
+    # untouched.
+    models = load_models_config(workspace_config)
+
     harness = harness_call_llm
+    if harness is None and not models.harness.is_empty:
+        harness = resolve_text_call_llm(models.harness, role="harness")
     if harness is None:
         dotted = runtime_dict.get("harness_call_llm")
         if not dotted:
             raise ValueError(
                 "workspace_config['runtime']['harness_call_llm'] is required "
-                "when no harness_call_llm callable is passed explicitly"
+                "when no harness_call_llm callable is passed explicitly "
+                "and no models.harness role is configured"
             )
         harness = _import_callable(str(dotted), kind="harness_call_llm")
 
     aux = auxiliary_call_llm
+    if aux is None and not models.auxiliary.is_empty:
+        aux = resolve_text_call_llm(models.auxiliary, role="auxiliary")
     if aux is None:
         dotted = runtime_dict.get("auxiliary_call_llm")
         if not dotted:
             raise ValueError(
                 "workspace_config['runtime']['auxiliary_call_llm'] is required "
-                "when no auxiliary_call_llm callable is passed explicitly"
+                "when no auxiliary_call_llm callable is passed explicitly "
+                "and no models.auxiliary role is configured"
             )
         aux = _import_callable(str(dotted), kind="auxiliary_call_llm")
+
+    # Judges use ``models.judge`` when present; absent, ``judge_call_llm``
+    # stays ``None`` and judges fall back to the auxiliary callable via
+    # ``RuntimeConfig.effective_judge_call_llm`` (today's behavior).
+    judge: CallLLM | None = None
+    if not models.judge.is_empty:
+        judge = resolve_text_call_llm(models.judge, role="judge")
 
     seed_raw = runtime_dict.get("seed")
     seed: int | None = int(seed_raw) if seed_raw is not None else None
@@ -136,6 +167,7 @@ def make_runtime_config(
         auxiliary_call_llm=aux,
         seed=seed,
         parallelism=parallelism,
+        judge_call_llm=judge,
     )
 
 

@@ -2355,6 +2355,31 @@
   .dn-set-reset:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
   .dn-set-reset:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
 
+  /* the EDITABLE Models / LLM-endpoints section — one card per role, each with
+   * a call_llm ⟷ model-spec toggle + the active form's NAME-only fields. The
+   * api_key_env field shows the env-var NAME plus a set/unset flag, never a
+   * secret value. Theme tokens only. */
+  .dn-set-models { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+  .dn-set-modelcard { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 5px;
+    padding: 11px 13px; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+  .dn-set-modelhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .dn-set-modelname { font-size: 12.5px; color: var(--v2-ink); font-weight: 600; }
+  .dn-set-modelform { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+  .dn-set-field { display: grid; grid-template-columns: minmax(120px, 160px) minmax(0, 1fr) auto;
+    align-items: center; gap: 10px; min-width: 0; }
+  .dn-set-fieldlabel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--v2-ink-faint); }
+  .dn-set-input { font-family: var(--v2-mono); font-size: 11.5px; color: var(--v2-ink);
+    background: var(--v2-paper); border: 1px solid var(--v2-rule); border-radius: 4px;
+    padding: 4px 8px; min-width: 0; width: 100%; }
+  .dn-set-input:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
+  .dn-set-keyflag { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 2px 7px; border-radius: 3px; border: 1px solid var(--v2-rule); flex: none; }
+  .dn-set-keyflag-set { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
+  .dn-set-keyflag-unset { color: var(--v2-ink-faint); background: transparent; }
+  .dn-set-modelactions { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+  .dn-set-modelactions .dn-linkbtn[disabled] { opacity: 0.45; cursor: default; pointer-events: none; }
+
   @media (max-width: 1080px) {
     .dn-settings { grid-template-columns: 1fr; }
     .dn-set-rail { position: static; flex-direction: row; flex-wrap: wrap; }

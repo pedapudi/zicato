@@ -39,21 +39,45 @@ const EPOCH = {
   proposer: { has_custom_agent: false },
 };
 
-// the assistant section reads /builder/config — a model NAME + api_key_env NAME.
-const BUILDER_CONFIG = {
-  chat_enabled: true,
-  agent: { model: 'house-model-x', endpoint: null, api_key_env: 'HOUSE_API_KEY', call_llm: null },
-  skills: ['zicato-build-tournament', 'zicato-build-board'],
+// the models section reads /settings/models — the secret-safe per-role view:
+// each role carries a call_llm path OR a {model, endpoint, api_key_env} spec
+// with an api_key_env_set boolean. NO secret value is ever present.
+const MODELS_VIEW = {
+  models: {
+    harness: { call_llm: 'pkg.harness:call_llm' },
+    auxiliary: { model: 'house-model-x', endpoint: null, api_key_env: 'HOUSE_API_KEY', api_key_env_set: true },
+    builder: { model: 'builder-model', endpoint: 'https://endpoint.example', api_key_env: 'BUILDER_KEY', api_key_env_set: false },
+    judge: {},
+  },
+  roles: ['harness', 'auxiliary', 'builder', 'judge'],
+  rolls_epoch: false,
 };
+
+let _lastModelsPost = null; // captures the POST /settings/models body for assertions
 
 function jsonRes(obj) {
   return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => obj, text: async () => JSON.stringify(obj) };
 }
 
 function installFetch() {
+  _lastModelsPost = null;
   globalThis.fetch = async (path, init) => {
     if (path === '/api/epoch') return jsonRes(EPOCH);
-    if (path === '/builder/config') return jsonRes(BUILDER_CONFIG);
+    if (path === '/settings/models') {
+      if (init && init.method === 'POST') {
+        _lastModelsPost = JSON.parse(init.body);
+        // echo a refreshed secret-safe view derived from the posted block.
+        const posted = _lastModelsPost.models || {};
+        const echo = {};
+        for (const id of ['harness', 'auxiliary', 'builder', 'judge']) {
+          const s = posted[id] || {};
+          echo[id] = s.call_llm ? { call_llm: s.call_llm }
+            : (s.model ? { model: s.model, endpoint: s.endpoint || null, api_key_env: s.api_key_env || null, api_key_env_set: false } : {});
+        }
+        return jsonRes({ models: echo, roles: MODELS_VIEW.roles, rolls_epoch: false });
+      }
+      return jsonRes(MODELS_VIEW);
+    }
     if (path.startsWith('/builder/draft')) {
       return jsonRes({ session: 'dashboard', draft: { scoring: { tournament_structure: { structure: 'gauntlet', params: {} } }, board: [], holdout: { train_ids: [], holdout_ids: [] }, proposer: {} }, cost: { board_runs_per_round: 0, breakdown: [] }, warnings: [], diff: { changed_components: [], rolls_epoch: false } });
     }
@@ -111,6 +135,7 @@ test('settings: the section rail renders the four sections (Dashboard retired)',
   const labels = items.map((i) => i.textContent);
   assert(labels.some((l) => l.includes('Tournament builder')), 'the builder section is in the rail');
   assert(labels.some((l) => l.includes('Contract')), 'the contract section is in the rail');
+  assert(labels.some((l) => l.includes('Models')), 'the models / LLM-endpoints section is in the rail');
   assert(labels.some((l) => l.includes('Appearance')), 'the appearance section is in the rail');
   assert(!labels.some((l) => l.includes('Dashboard')), 'the Dashboard section was retired (folded into Appearance)');
 });
@@ -174,18 +199,78 @@ test('settings: the Contract section reads /api/epoch as a read-only roll-up', a
   assert(rows.length > 0 && rows.every((r) => r.getAttribute('href') === '#/builder'), 'contract rows link into the builder');
 });
 
-test('settings: the Builder-assistant section surfaces model + api_key_env NAME only (no secret)', async () => {
+test('settings: the Models section renders all four roles, each editable (toggle + fields)', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
-  await settings.render(host, ctx, { section: 'assistant' });
+  await settings.render(host, ctx, { section: 'models' });
   await tick();
   const body = firstClass(host, 'dn-set-body');
-  assert(body.textContent.includes('house-model-x'), 'the model NAME is shown');
-  assert(body.textContent.includes('HOUSE_API_KEY'), 'the api_key_env NAME is shown');
-  assert(body.textContent.includes('enabled'), 'chat_enabled is surfaced');
-  // the env-var NAME is shown, never resolved — there is no secret value path,
-  // so nothing that looks like a key value can appear (we only ever pass names).
+  // one card per role — harness · auxiliary · builder · judge.
+  const cards = byClass(body, 'dn-set-modelcard');
+  assertEqual(cards.length, 4, 'all four roles render a card');
+  const roleIds = cards.map((c) => c.getAttribute('data-role'));
+  for (const id of ['harness', 'auxiliary', 'builder', 'judge']) {
+    assert(roleIds.includes(id), 'the ' + id + ' role card renders');
+  }
+  // each card carries the call_llm ⟷ model-spec toggle.
+  for (const c of cards) {
+    assert(byClass(c, 'dn-set-typebtn').length === 2, 'each role has the form toggle');
+  }
+  // harness arrived as a call_llm spec ⇒ its call_llm path input is shown.
+  const harness = cards.find((c) => c.getAttribute('data-role') === 'harness');
+  const harnessInput = byClass(harness, 'dn-set-input').find((i) => i.getAttribute('name') === 'harness-call_llm');
+  assert(harnessInput && harnessInput.getAttribute('value') === 'pkg.harness:call_llm', 'the harness call_llm path is editable and seeded');
+});
+
+test('settings: the Models section shows the api_key_env NAME + set/unset flag, never a secret', async () => {
+  installFetch();
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'models' });
+  await tick();
+  const body = firstClass(host, 'dn-set-body');
+  // auxiliary arrived as a model spec with a SET env var; builder as UNSET.
+  // The NAME is surfaced in the (editable) api_key_env input value.
+  const keyInputs = byClass(body, 'dn-set-input').filter((i) => (i.getAttribute('name') || '').endsWith('-api_key_env'));
+  const keyVals = keyInputs.map((i) => i.getAttribute('value'));
+  assert(keyVals.includes('HOUSE_API_KEY'), 'the auxiliary api_key_env NAME is shown');
+  assert(keyVals.includes('BUILDER_KEY'), 'the builder api_key_env NAME is shown');
+  const flags = byClass(body, 'dn-set-keyflag');
+  const flagText = flags.map((f) => f.textContent);
+  assert(flagText.includes('set'), 'a set indicator renders for a present env var');
+  assert(flagText.includes('unset'), 'an unset indicator renders for an absent env var');
+  // there is NO secret-value input or text anywhere — only env-var NAMES.
   assert(!body.textContent.toLowerCase().includes('sk-'), 'no secret-looking value is rendered');
+  const inputs = byClass(body, 'dn-set-input');
+  assert(!inputs.some((i) => (i.getAttribute('type') || '') === 'password'), 'no password / secret input exists');
+});
+
+test('settings: editing a Models role + saving round-trips through POST /settings/models (NAMES only)', async () => {
+  installFetch();
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'models' });
+  await tick();
+  let body = firstClass(host, 'dn-set-body');
+  // edit the judge role's model spec — type a model id + an env-var NAME.
+  const judge = byClass(body, 'dn-set-modelcard').find((c) => c.getAttribute('data-role') === 'judge');
+  const modelInput = byClass(judge, 'dn-set-input').find((i) => i.getAttribute('name') === 'judge-model');
+  assert(modelInput, 'the judge model-spec input is present (model-spec is the default form)');
+  modelInput.setAttribute('value', 'judge-model-y');
+  modelInput.value = 'judge-model-y';
+  modelInput.dispatchEvent(makeEvent('input'));
+  await tick();
+  // Save is enabled once dirty; click it.
+  body = firstClass(host, 'dn-set-body');
+  const save = byClass(body, 'dn-linkbtn').find((b) => b.textContent.includes('Save'));
+  assert(save && !save.getAttribute('disabled'), 'the save button is enabled after an edit');
+  save.dispatchEvent(makeEvent('click'));
+  await tick();
+  // the POST carried the edited model spec, an api_key_env NAME only, and never
+  // any resolved secret value.
+  assert(_lastModelsPost && _lastModelsPost.models, 'the POST carried a models block');
+  assertEqual(_lastModelsPost.models.judge.model, 'judge-model-y', 'the edited judge model id round-tripped');
+  assert(!('api_key_env_set' in _lastModelsPost.models.judge), 'the set/unset flag is a VIEW-only field, never posted');
+  const flat = JSON.stringify(_lastModelsPost).toLowerCase();
+  assert(!flat.includes('sk-'), 'no secret value crossed the POST boundary');
 });
 
 test('settings: the builder section RE-HOMES the B2 builder view (its own chrome renders in the host)', async () => {

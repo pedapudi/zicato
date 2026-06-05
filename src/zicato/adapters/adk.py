@@ -650,7 +650,7 @@ class ADKRunnableHarness:
         judges = assemble_judges(
             entry_judges=_entry_judge_specs(entry),
             disable_drift=_entry_disable_drift(entry),
-            aux_call_llm=config.auxiliary_call_llm,
+            aux_call_llm=config.effective_judge_call_llm(),
         )
         # Judge-only mode: spread in the no-steering overrides
         # (StaticPlanner + LiteralGoalDeriver) so goldfive judges without
@@ -727,7 +727,7 @@ class ADKRunnableHarness:
         judges = assemble_judges(
             entry_judges=_entry_judge_specs(entry),
             disable_drift=_entry_disable_drift(entry),
-            aux_call_llm=config.auxiliary_call_llm,
+            aux_call_llm=config.effective_judge_call_llm(),
         )
         agent = self._agent
         gf_runtime = _goldfive_runtime()
@@ -823,7 +823,7 @@ class ADKRunnableHarness:
         judges = assemble_judges(
             entry_judges=_entry_judge_specs(entry),
             disable_drift=_entry_disable_drift(entry),
-            aux_call_llm=config.auxiliary_call_llm,
+            aux_call_llm=config.effective_judge_call_llm(),
         )
         agent = self._agent
         gf_runtime = _goldfive_runtime()

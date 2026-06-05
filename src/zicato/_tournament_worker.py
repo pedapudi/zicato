@@ -107,6 +107,31 @@ def _import_callable(dotted: str) -> Any:
     return obj
 
 
+def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
+    """Resolve one role's worker spec to a text call_llm in this interpreter.
+
+    The spec is the dict the runner emitted (see
+    :func:`zicato.tournament.runner._role_worker_spec`):
+
+    * ``{"dotted": "module:qualname"}`` — re-import the callable (legacy /
+      unconfigured role); or
+    * ``{"models_role": {...}}`` — a workspace ``models.<role>`` spec, which
+      this worker re-resolves with the same machinery the runtime factory
+      uses (reading any ``api_key_env`` from the worker's OWN os.environ).
+    """
+    if not isinstance(spec, dict):
+        raise ValueError(f"{role} role spec must be a JSON object, got {type(spec).__name__}")
+    dotted = spec.get("dotted")
+    if dotted:
+        return _import_callable(str(dotted))
+    raw_role = spec.get("models_role")
+    if isinstance(raw_role, dict):
+        from zicato.models_config import resolve_text_call_llm, role_spec_from_dict  # noqa: PLC0415
+
+        return resolve_text_call_llm(role_spec_from_dict(raw_role), role=role)
+    raise ValueError(f"{role} role spec has neither 'dotted' nor 'models_role': {spec!r}")
+
+
 def _load_args(args_path: Path) -> dict[str, Any]:
     """Read and minimally validate the worker's JSON args file.
 
@@ -124,8 +149,9 @@ def _load_args(args_path: Path) -> dict[str, Any]:
             "entrypoint": "module.path:agent_symbol",
             "mutable_trees": ["<abs path>", ...]
           },
-          "harness_call_llm": "pkg.module:callable",
-          "auxiliary_call_llm": "pkg.module:callable",
+          "harness_role":   {"dotted": "pkg.module:callable"} | {"models_role": {...}},
+          "auxiliary_role": {"dotted": "pkg.module:callable"} | {"models_role": {...}},
+          "judge_role":     {"dotted": "pkg.module:callable"} | {"models_role": {...}},
           "sink_events_path": "<abs path to events.jsonl>",
           "loss_path": "<abs path to loss.json>",
           "result_path": "<abs path the worker writes its result JSON to>",
@@ -143,8 +169,8 @@ def _load_args(args_path: Path) -> dict[str, Any]:
         "snapshot_root",
         "entry",
         "adapter",
-        "harness_call_llm",
-        "auxiliary_call_llm",
+        "harness_role",
+        "auxiliary_role",
         "sink_events_path",
         "loss_path",
         "result_path",
@@ -370,7 +396,7 @@ async def _evaluate_expectation(
     return await evaluate_expectation(
         entry.expectation,
         run_result,
-        aux_call_llm=config.auxiliary_call_llm,
+        aux_call_llm=config.effective_judge_call_llm(),
     )
 
 
@@ -466,16 +492,25 @@ async def _run(args: dict[str, Any]) -> None:
     entry = validate_board_entry(args["entry"])
     run_id = f"{generation_id}--{entry.id}"
 
-    # The two LLM callables are re-imported from their dotted paths in
-    # THIS fresh interpreter — they are necessarily distinct callables.
-    harness_call_llm = _import_callable(str(args["harness_call_llm"]))
-    auxiliary_call_llm = _import_callable(str(args["auxiliary_call_llm"]))
+    # Resolve each LLM role in THIS fresh interpreter — either a dotted
+    # path re-import (legacy / unconfigured role) or a model spec from the
+    # workspace ``models`` block, re-resolved here (reading any api_key_env
+    # from the worker's OWN os.environ — secrets never crossed the boundary).
+    harness_call_llm = _resolve_role_call_llm(args["harness_role"], role="harness")
+    auxiliary_call_llm = _resolve_role_call_llm(args["auxiliary_role"], role="auxiliary")
+    # The judge role falls back to ``None`` when unconfigured, so
+    # ``RuntimeConfig.effective_judge_call_llm`` resolves to the auxiliary.
+    judge_call_llm = None
+    judge_role = args.get("judge_role")
+    if isinstance(judge_role, dict) and (judge_role.get("dotted") or judge_role.get("models_role")):
+        judge_call_llm = _resolve_role_call_llm(judge_role, role="judge")
     config = RuntimeConfig(
         instance_id=str(args.get("instance_id", "default")),
         workspace_root=workspace_root,
         harness_call_llm=harness_call_llm,
         auxiliary_call_llm=auxiliary_call_llm,
         seed=args.get("seed"),
+        judge_call_llm=judge_call_llm,
     )
 
     weights = _weights_from_args(args)
