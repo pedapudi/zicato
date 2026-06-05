@@ -81,8 +81,16 @@ class WorkspacePaths:
     directly off it).
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, harmonograf_url: str = "") -> None:
         self.root = Path(root)
+        # The persistent per-workspace harmonograf web URL the dashboard
+        # PROCESS resolved at startup (``ensure_workspace_harmonograf``).
+        # Injected into the heartbeat payload so the standalone /
+        # post-mortem dashboard can deep-link into persisted sessions even
+        # though no live evolve is writing ``harmonograf_url``. Empty when
+        # the dashboard could not resolve a server (failure isolation) —
+        # the readers then inject nothing. See ``read_heartbeat_dict``.
+        self.harmonograf_url = harmonograf_url
 
     @property
     def runtime(self) -> Path:
@@ -233,16 +241,50 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
     and a dead run would read LIVE forever. When the on-disk
     ``last_heartbeat`` is not a usable ISO timestamp we fall back to the
     heartbeat file's mtime so the API always returns an ageable value.
+
+    Standalone-harmonograf injection
+    --------------------------------
+    When the dashboard PROCESS resolved a persistent per-workspace
+    harmonograf (``paths.harmonograf_url`` is non-empty), the resolved URL
+    is injected so the frontend's liveness-gated deep-links light up
+    against the persisted sessions even though no live evolve is writing
+    ``harmonograf_url``. Precedence: a live evolve's heartbeat
+    ``harmonograf_url`` WINS — it names the live run's own server — so the
+    injected URL only fills the field when the heartbeat has none. A
+    distinct ``harmonograf_persistent`` flag is always set on injection so
+    the frontend can treat a persistent server as "live" (the standalone
+    server does NOT die with a run, unlike the evolve-launched one).
+
+    When there is no heartbeat on disk at all (a never-run / post-mortem
+    workspace) but the dashboard resolved a persistent server, a SYNTHETIC
+    heartbeat carrying only the harmonograf fields is returned so the
+    deep-links still render.
     """
     try:
         hb = read_heartbeat(paths.root)
     except Exception:
-        return None
+        hb = None
+    injected_url = getattr(paths, "harmonograf_url", "") or ""
     if hb is None:
+        if injected_url:
+            # No on-disk heartbeat (post-mortem workspace) — synthesize a
+            # minimal one carrying only the harmonograf fields so the
+            # standalone deep-links render.
+            return {
+                "harmonograf_url": injected_url,
+                "harmonograf_persistent": True,
+                "last_heartbeat": _heartbeat_file_mtime_iso(paths),
+            }
         return None
     out = hb.to_dict()
     if _parse_iso(out.get("last_heartbeat")) is None:
         out["last_heartbeat"] = _heartbeat_file_mtime_iso(paths)
+    if injected_url:
+        # Heartbeat-from-live-evolve wins: only fill the URL when absent.
+        existing = out.get("harmonograf_url")
+        if not isinstance(existing, str) or not existing.strip():
+            out["harmonograf_url"] = injected_url
+        out["harmonograf_persistent"] = True
     return out
 
 

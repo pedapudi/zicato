@@ -33,13 +33,24 @@
 import { el } from './dom.js';
 import { state } from './state.js';
 
-// Is a run currently LIVE? The harmonograf server only exists while the
-// loop runs, so the deep-links are only valid then. Liveness = an active
-// tournament OR at least one active run. (The stale `harmonograf_url`
-// alone is NOT proof of life — it is the bug.)
+// Is a harmonograf server currently reachable for deep-links?
+//
+// Two distinct sources of a LIVE server:
+//   1. An evolve-launched server, which exists ONLY while the loop runs
+//      and DIES with it — so it is "live" iff a run is actually in flight
+//      (an active tournament OR at least one active run). A stale
+//      `harmonograf_url` lingering on the merged heartbeat is NOT proof of
+//      life here — that was the original bug this gate fixes.
+//   2. A persistent per-workspace server the STANDALONE dashboard reused-
+//      or-launched (`ensure_workspace_harmonograf`). It does NOT die with a
+//      run — it lives for the dashboard process — so a post-mortem
+//      dashboard with no active runs is still "live" for deep-link
+//      purposes. The backend signals this with `harmonograf_persistent` on
+//      the (dashboard-injected) heartbeat.
 export function harmonografIsLive() {
   if (state.activeTournament != null) return true;
   if (Array.isArray(state.activeRuns) && state.activeRuns.length > 0) return true;
+  if (state.heartbeat && state.heartbeat.harmonograf_persistent === true) return true;
   return false;
 }
 

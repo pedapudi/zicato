@@ -31,6 +31,10 @@ htmlcov/
 # Zicato workspace (per-project state)
 .zicato/
 
+# Per-workspace harmonograf data (sqlite db + payloads + server record).
+# Travels with the workspace like .zicato/; never committed.
+.harmonograf/
+
 # Target run output — agents write rendered artifacts here at run time.
 # This is exactly the artifact leak the snapshot-scope fix targets:
 # generation snapshots stay code-only, so run output is never committed.

@@ -479,6 +479,131 @@ def test_read_heartbeat_dict_preserves_a_usable_stamp(tmp_path: Path) -> None:
     assert out["last_heartbeat"] == "2026-06-03T03:30:00Z"
 
 
+def test_standalone_harmonograf_url_injected_into_heartbeat(tmp_path: Path) -> None:
+    """A persistent per-workspace url is injected so the deep-links light up.
+
+    The standalone dashboard resolves a persistent harmonograf and stamps the
+    url onto ``WorkspacePaths``; ``read_heartbeat_dict`` must inject it (and the
+    ``harmonograf_persistent`` flag) so the frontend's liveness gate reads true
+    even with no active run.
+    """
+    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+
+    ws = tmp_path / "ws"
+    runtime = ws / ".zicato" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "heartbeat.json").write_text(
+        json.dumps(
+            {
+                "pid": 7,
+                "instance_id": "default",
+                "started_at": "2026-06-03T01:56:49Z",
+                "last_heartbeat": "2026-06-03T03:30:00Z",
+                "phase": "idle",
+            }
+        ),
+        encoding="utf-8",
+    )
+    url = "http://127.0.0.1:42017"
+    out = read_heartbeat_dict(WorkspacePaths(ws / ".zicato", harmonograf_url=url))
+    assert out is not None
+    assert out["harmonograf_url"] == url
+    assert out["harmonograf_persistent"] is True
+
+
+def test_live_evolve_heartbeat_url_wins_over_injected(tmp_path: Path) -> None:
+    """Precedence: a live evolve's heartbeat ``harmonograf_url`` is not clobbered.
+
+    When the on-disk heartbeat already carries a url (a live evolve writing its
+    own server), the dashboard-injected persistent url must NOT overwrite it —
+    the live server wins. The ``harmonograf_persistent`` flag is still set.
+    """
+    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+
+    ws = tmp_path / "ws"
+    runtime = ws / ".zicato" / "runtime"
+    runtime.mkdir(parents=True)
+    live_url = "http://127.0.0.1:55555"
+    (runtime / "heartbeat.json").write_text(
+        json.dumps(
+            {
+                "pid": 7,
+                "instance_id": "default",
+                "started_at": "2026-06-03T01:56:49Z",
+                "last_heartbeat": "2026-06-03T03:30:00Z",
+                "phase": "tournament",
+                "harmonograf_url": live_url,
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = read_heartbeat_dict(
+        WorkspacePaths(ws / ".zicato", harmonograf_url="http://127.0.0.1:42017")
+    )
+    assert out is not None
+    # The live evolve's url wins.
+    assert out["harmonograf_url"] == live_url
+    assert out["harmonograf_persistent"] is True
+
+
+def test_standalone_harmonograf_synthesizes_heartbeat_for_postmortem(tmp_path: Path) -> None:
+    """No on-disk heartbeat + a persistent url ⇒ a synthetic heartbeat renders links."""
+    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+
+    ws = tmp_path / "ws"
+    (ws / ".zicato" / "runtime").mkdir(parents=True)
+    url = "http://127.0.0.1:42017"
+    out = read_heartbeat_dict(WorkspacePaths(ws / ".zicato", harmonograf_url=url))
+    assert out is not None
+    assert out["harmonograf_url"] == url
+    assert out["harmonograf_persistent"] is True
+    # An ageable timestamp is always present.
+    assert out["last_heartbeat"]
+
+
+def test_no_injection_without_persistent_url(tmp_path: Path) -> None:
+    """Without a persistent url, no heartbeat at all stays ``None`` (no synthesis)."""
+    from zicato.dashboard.state_reader import WorkspacePaths, read_heartbeat_dict
+
+    ws = tmp_path / "ws"
+    (ws / ".zicato" / "runtime").mkdir(parents=True)
+    out = read_heartbeat_dict(WorkspacePaths(ws / ".zicato"))
+    assert out is None
+
+
+def test_run_serves_when_harmonograf_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failure isolation: ``run`` builds a working app even if harmonograf fails.
+
+    The ensure-helper is stubbed to raise; ``_ensure_workspace_harmonograf`` must
+    swallow it and the dashboard app still answers ``/api/health``.
+    """
+    import zicato.dashboard.server as server_mod
+
+    def _boom(_root: Path) -> object:
+        raise RuntimeError("harmonograf exploded")
+
+    # Patch the public ensure-helper the server imports lazily.
+    import zicato.telemetry.harmonograf_supervisor as sup
+
+    monkeypatch.setattr(sup, "ensure_workspace_harmonograf", _boom)
+
+    handle = server_mod._ensure_workspace_harmonograf(tmp_path)
+    # No-op handle — empty url, not launched, shutdown is safe.
+    assert getattr(handle, "web_url", None) == ""
+    assert getattr(handle, "launched", None) is False
+    handle.shutdown()
+
+    # And a created app (with the empty url) still serves health.
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    app = create_app(tmp_path / ".zicato", static_dir, read_only=True, harmonograf_url="")
+    (tmp_path / ".zicato" / "runtime").mkdir(parents=True)
+    with TestClient(app) as c:
+        assert c.get("/api/health").status_code == 200
+
+
 def test_lineage_shape(client: TestClient) -> None:
     r = client.get("/api/lineage")
     assert r.status_code == 200

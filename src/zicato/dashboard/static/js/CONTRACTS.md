@@ -67,7 +67,8 @@ exception. Shape (as produced by `state_reader.build_environment`):
                       adk_session_id:str } ],
   "health_report": { ...loop health... },
   "heartbeat": { generation_id, round_index, last_heartbeat,
-        round_started_at, started_at, harmonograf_url? } | null,
+        round_started_at, started_at, harmonograf_url?,
+        harmonograf_persistent? } | null,
   "lock": { ... } | null,
   "run_log": { "events":[{seq,kind,ts,summary}], "cursor":int, "events_path":str },
   "generated_at": "ISO-8601 Z"
@@ -356,6 +357,18 @@ Built from `ZICATO_HARMONOGRAF_URL` surfaced on the heartbeat as
 `harmonograf_url`. Exports `harmonografBase()`, `harmonografRunUrl(rec)`,
 `harmonografLink(run, label)`, `harmonografMini(target, label, aria)`,
 `harmonografGenLink(genId)`, `harmonografSessionId(rec)`, `deriveRunId(rec)`.
+
+**Liveness gate.** Links resolve only against a REACHABLE server.
+`harmonografIsLive()` is true when EITHER (a) a run is in flight (an
+active tournament or any active run) — the evolve-launched server lives
+only then — OR (b) the heartbeat carries `harmonograf_persistent: true`.
+The latter is set by the STANDALONE dashboard / builder, which reuses-or-
+launches ONE persistent per-workspace harmonograf bound to the workspace's
+`.harmonograf/harmonograf.db` (`ensure_workspace_harmonograf`) and injects
+its `web_url` into the heartbeat payload (`state_reader.read_heartbeat_dict`)
+so the post-mortem deep-links into PERSISTED sessions light up with no live
+run. Precedence: a live evolve's own heartbeat `harmonograf_url` always
+wins; the injected url only fills the field when the heartbeat has none.
 
 harmonograf keys its session views by the **ADK session id** — the
 `sessionId` present on every goldfive event envelope. The backend

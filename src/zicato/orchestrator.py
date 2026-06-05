@@ -2947,45 +2947,48 @@ def _resolve_or_launch_harmonograf(
         log.debug("harmonograf auto-launch skipped: external URL configured (%s)", configured)
         return configured, _NoopShutdownHandle()
 
+    # Route through the per-workspace ensure-helper so an evolve and a
+    # concurrently-open standalone dashboard share ONE harmonograf server
+    # bound to the workspace's sqlite db (the ``server.json`` record is the
+    # single-server-per-workspace contract — see
+    # ``harmonograf_supervisor.ensure_workspace_harmonograf``). When the
+    # helper REUSES an existing server (a standalone dashboard already
+    # launched one), evolve does NOT own its lifecycle — it leaves it
+    # running; when evolve LAUNCHED it, the handle's shutdown stops it.
     try:
         from zicato.telemetry.harmonograf_supervisor import (  # noqa: PLC0415
-            start_harmonograf,
+            ensure_workspace_harmonograf,
         )
     except Exception as exc:  # noqa: BLE001 — supervisor import is best-effort
         log.warning("harmonograf auto-launch skipped: supervisor module unavailable (%s)", exc)
         return "", _NoopShutdownHandle()
 
-    handle = start_harmonograf(workspace_root)
-    if not handle.url:
-        # Supervisor's own failure-isolation path already logged a warning.
-        return "", handle
+    handle = ensure_workspace_harmonograf(workspace_root)
+    if not handle.web_url:
+        # Helper's own failure-isolation path already logged a warning.
+        return "", _NoopShutdownHandle()
 
-    # Make the auto-launched URL discoverable to the tournament runner
-    # and the worker subprocesses, both of which re-resolve the env var
-    # via load_config()/resolve_harmonograf_url(). The restorer is
-    # captured on the handle so shutdown unsets / restores the
-    # environment cleanly.
+    # Make the resolved URL discoverable to the tournament runner and the
+    # worker subprocesses, both of which re-resolve the env var via
+    # load_config()/resolve_harmonograf_url(). The restorer is captured on
+    # the handle so shutdown unsets / restores the environment cleanly.
     restorers: list[_EnvVarRestorer] = []
     url_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_URL")
-    url_restorer.set(handle.url)
+    url_restorer.set(handle.web_url)
     restorers.append(url_restorer)
 
-    # The auto-launched server binds TWO ports: the web URL above (for
-    # browser deep-links) and a native gRPC port the per-run sinks must
-    # dial. Export the gRPC target distinctly so the sink builders dial
-    # the gRPC port instead of stripping the web URL and dialing the web
-    # port (which would silently drop telemetry). The external-URL path
-    # above returns before reaching here, so this only fires for an
-    # auto-launched server — exactly where web_port != grpc_port.
-    grpc_port = getattr(handle, "grpc_port", 0) or 0
-    if grpc_port:
-        # Host matches the auto-launch bind (127.0.0.1); see
-        # harmonograf_supervisor.start_harmonograf.
+    # The server binds TWO ports: the web URL above (for browser deep-
+    # links) and a native gRPC port the per-run sinks must dial. Export the
+    # gRPC target distinctly so the sink builders dial the gRPC port
+    # instead of stripping the web URL and dialing the web port (which
+    # would silently drop telemetry).
+    grpc_target = getattr(handle, "grpc_target", "") or ""
+    if grpc_target:
         grpc_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_GRPC")
-        grpc_restorer.set(f"127.0.0.1:{grpc_port}")
+        grpc_restorer.set(grpc_target)
         restorers.append(grpc_restorer)
 
-    return handle.url, _LaunchedHandle(handle, restorers)
+    return handle.web_url, _LaunchedHandle(handle, restorers)
 
 
 def _build_meta_loop_emitter_safe(
@@ -3047,7 +3050,9 @@ class _LaunchedHandle:
     def __init__(self, inner: Any, restorers: list[_EnvVarRestorer]) -> None:
         self._inner = inner
         self._restorers = list(restorers)
-        self.url = inner.url
+        # ``inner`` may be a ``HarmonografHandle`` (``.url``) or a
+        # ``WorkspaceHarmonografHandle`` (``.web_url``); accept either.
+        self.url = getattr(inner, "url", None) or getattr(inner, "web_url", "")
 
     def shutdown(self) -> None:
         # Restore env BEFORE stopping the server so a concurrent

@@ -26,7 +26,9 @@ from zicato.runtime.state import read_heartbeat
 from zicato.telemetry import harmonograf_supervisor as supervisor
 from zicato.telemetry.harmonograf_supervisor import (
     HarmonografHandle,
+    WorkspaceHarmonografHandle,
     build_meta_loop_sink,
+    ensure_workspace_harmonograf,
     meta_loop_session_id,
     start_harmonograf,
 )
@@ -319,6 +321,105 @@ def test_pick_free_port_returns_distinct() -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(("127.0.0.1", p))
+
+
+# ---------------------------------------------------------------------------
+# Per-workspace ensure-helper (standalone dashboard / builder)
+# ---------------------------------------------------------------------------
+
+
+def _harmonograf_data_dir(workspace_root: Path) -> Path:
+    """Mirror the supervisor's ``.harmonograf`` data-dir resolution."""
+    return supervisor._resolve_data_dir(workspace_root)
+
+
+def test_ensure_workspace_harmonograf_launches_and_records(tmp_path: Path) -> None:
+    """No record on disk ⇒ launch a fresh server and write ``server.json``."""
+    handle = ensure_workspace_harmonograf(tmp_path)
+    try:
+        assert isinstance(handle, WorkspaceHarmonografHandle)
+        assert handle.web_url.startswith("http://127.0.0.1:")
+        assert handle.launched is True
+        assert _wait_for_health(handle.web_url, deadline_s=15.0)
+        # A live record landed on disk naming this server.
+        record_path = _harmonograf_data_dir(tmp_path) / "server.json"
+        assert record_path.exists()
+        import json as _json
+
+        rec = _json.loads(record_path.read_text())
+        assert rec["web_url"] == handle.web_url
+        assert rec["grpc_target"].startswith("127.0.0.1:")
+        assert int(rec["pid"]) == os.getpid()
+        assert rec["started_iso"]
+    finally:
+        handle.shutdown()
+
+
+def test_ensure_workspace_harmonograf_reuses_live_record(tmp_path: Path) -> None:
+    """A second ensure with a LIVE record reuses it (launched=False)."""
+    first = ensure_workspace_harmonograf(tmp_path)
+    try:
+        assert first.launched is True
+        assert _wait_for_health(first.web_url, deadline_s=15.0)
+
+        second = ensure_workspace_harmonograf(tmp_path)
+        # Reused — no second server, no shutdown ownership.
+        assert second.launched is False
+        assert second.web_url == first.web_url
+        assert second.grpc_target == first.grpc_target
+        # second.shutdown() must be a no-op (it does not own the server).
+        second.shutdown()
+        # The first server is still alive after the reuser's no-op shutdown.
+        assert _wait_for_health(first.web_url, deadline_s=5.0)
+    finally:
+        first.shutdown()
+
+
+def test_ensure_workspace_harmonograf_relaunches_on_stale_record(tmp_path: Path) -> None:
+    """A stale record (dead pid / unreachable port) is ignored and overwritten."""
+    import json as _json
+
+    data_dir = _harmonograf_data_dir(tmp_path)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    # A record naming a pid that cannot be alive and a port nothing binds.
+    stale = {
+        "web_url": "http://127.0.0.1:1",
+        "grpc_target": "127.0.0.1:2",
+        "pid": 2_147_483_646,  # implausibly high; not a live process
+        "started_iso": "2020-01-01T00:00:00Z",
+    }
+    (data_dir / "server.json").write_text(_json.dumps(stale))
+
+    handle = ensure_workspace_harmonograf(tmp_path)
+    try:
+        # Stale record ignored ⇒ a fresh launch.
+        assert handle.launched is True
+        assert handle.web_url.startswith("http://127.0.0.1:")
+        assert handle.web_url != "http://127.0.0.1:1"
+        assert _wait_for_health(handle.web_url, deadline_s=15.0)
+        # The record was overwritten to name the live server.
+        rec = _json.loads((data_dir / "server.json").read_text())
+        assert rec["web_url"] == handle.web_url
+    finally:
+        handle.shutdown()
+
+
+def test_ensure_workspace_harmonograf_failure_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launch failure yields a no-op handle (empty url), never raises."""
+    monkeypatch.setattr(
+        supervisor,
+        "start_harmonograf",
+        lambda _root, **_kw: HarmonografHandle(url="", grpc_port=0),
+    )
+    handle = ensure_workspace_harmonograf(tmp_path)
+    assert isinstance(handle, WorkspaceHarmonografHandle)
+    assert handle.web_url == ""
+    assert handle.grpc_target == ""
+    assert handle.launched is False
+    # shutdown() on the no-op handle is a no-op.
+    handle.shutdown()
 
 
 def test_resolve_harmonograf_url_pure_resolver(

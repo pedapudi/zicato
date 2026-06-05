@@ -56,7 +56,10 @@ exclusive footprint crosses ~30 MB.
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
+import json
 import logging
+import os
 import re
 import socket
 import tempfile
@@ -369,6 +372,278 @@ def _resolve_data_dir(workspace_root: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Per-workspace persistent server (standalone dashboard / builder)
+# ---------------------------------------------------------------------------
+#
+# A live ``zicato evolve`` auto-launches a harmonograf server that dies
+# with the run. The persisted sessions, however, live on in
+# ``<workspace>/.harmonograf/harmonograf.db``. A standalone ``zicato
+# dashboard`` / ``zicato builder`` wants to surface those persisted
+# sessions for a post-mortem execution view — but the evolve-launched
+# server is gone, so there is no URL to deep-link into.
+#
+# :func:`ensure_workspace_harmonograf` closes that gap: it launches (or
+# reuses) ONE persistent harmonograf server per workspace, bound to that
+# workspace's existing sqlite db, and records its endpoint in
+# ``.harmonograf/server.json`` so a second caller (a concurrent evolve,
+# a second dashboard tab's process) reuses the same server instead of
+# opening a SECOND server on the same sqlite file.
+#
+# sqlite double-open resolution
+# -----------------------------
+# The ``server.json`` record is the single-server-per-workspace contract.
+# Every launcher — the standalone dashboard, the standalone builder, AND
+# the evolve auto-launch path — routes through this helper, which:
+#   1. reads ``server.json``; if it names a LIVE server (pid alive AND
+#      the web port answers a TCP connect), reuses it verbatim; else
+#   2. launches a fresh server bound to ``harmonograf.db`` and rewrites
+#      the record.
+# Because both paths consult the same record first, no two servers ever
+# bind the same db: whoever wins the race writes the record, the loser
+# reuses it. A stale record left by a crashed/killed process fails the
+# liveness probe and is overwritten.
+
+
+#: The per-workspace server record. Holds enough to (a) reuse a live
+#: server and (b) probe whether the recorded server is still alive.
+_SERVER_RECORD_NAME = "server.json"
+
+
+def _utc_now_iso() -> str:
+    return _dt.datetime.now(_dt.UTC).isoformat().replace("+00:00", "Z")
+
+
+def _server_record_path(data_dir: Path) -> Path:
+    return data_dir / _SERVER_RECORD_NAME
+
+
+def _pid_alive(pid: int) -> bool:
+    """True when ``pid`` names a live process this user can signal.
+
+    ``os.kill(pid, 0)`` raises ``ProcessLookupError`` for a dead pid and
+    ``PermissionError`` for a live process owned by another user (treated
+    as alive — it exists). A non-positive pid is never alive.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _port_reachable(host: str, port: int, *, timeout_s: float = 0.5) -> bool:
+    """True when a TCP connect to ``host:port`` succeeds within ``timeout_s``.
+
+    The liveness half that a bare pid check cannot give: a recycled pid
+    could be alive while the harmonograf port it once owned is gone.
+    """
+    if port <= 0:
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+def _coerce_pid(value: Any) -> int:
+    """Coerce a record's ``pid`` field to an int (``0`` when unusable)."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_host_port(target: str) -> tuple[str, int]:
+    """Split a ``host:port`` grpc target into its parts (``("", 0)`` on error)."""
+    if not target or ":" not in target:
+        return "", 0
+    host, _, port_s = target.rpartition(":")
+    try:
+        return host or "127.0.0.1", int(port_s)
+    except ValueError:
+        return "", 0
+
+
+def _read_server_record(data_dir: Path) -> dict[str, Any] | None:
+    """Read ``server.json``; missing / malformed -> ``None``."""
+    path = _server_record_path(data_dir)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _write_server_record(data_dir: Path, record: dict[str, Any]) -> None:
+    """Persist ``server.json`` best-effort (a write failure is non-fatal)."""
+    try:
+        _server_record_path(data_dir).write_text(json.dumps(record) + "\n", encoding="utf-8")
+    except OSError as exc:
+        log.debug("could not write harmonograf server record: %s", exc)
+
+
+class WorkspaceHarmonografHandle:
+    """Handle for a per-workspace harmonograf server (standalone path).
+
+    Attributes
+    ----------
+    web_url:
+        Browser-resolvable URL of the running harmonograf-web listener,
+        e.g. ``"http://127.0.0.1:42017"``. The empty string on the
+        failure-isolation no-op path — callers MUST treat an empty URL as
+        "no live console" and serve the dashboard anyway.
+    grpc_target:
+        The native ``host:port`` gRPC target (for sinks); ``""`` on the
+        no-op handle.
+    launched:
+        ``True`` when THIS handle started the server (so the caller owns
+        its lifecycle and must :meth:`shutdown`); ``False`` when it reused
+        an already-running per-workspace server (leave it running — its
+        owner, e.g. a live evolve or another dashboard process, tears it
+        down).
+    """
+
+    def __init__(
+        self,
+        *,
+        web_url: str,
+        grpc_target: str,
+        launched: bool,
+        inner: HarmonografHandle | None = None,
+    ) -> None:
+        self.web_url = web_url
+        self.grpc_target = grpc_target
+        self.launched = launched
+        self._inner = inner
+
+    def shutdown(self, grace_seconds: float = _DEFAULT_SHUTDOWN_GRACE_S) -> None:
+        """Stop the server iff this handle launched it. Idempotent, never raises.
+
+        A reused server (``launched is False``) is left running — its
+        owning process is responsible for it. A no-op handle (no inner
+        server) does nothing.
+        """
+        if not self.launched or self._inner is None:
+            return
+        try:
+            self._inner.shutdown(grace_seconds)
+        except Exception as exc:  # noqa: BLE001 — never raise from teardown
+            log.debug("workspace harmonograf shutdown raised: %s", exc)
+
+    def __enter__(self) -> WorkspaceHarmonografHandle:
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.shutdown()
+
+
+def _noop_workspace_handle() -> WorkspaceHarmonografHandle:
+    return WorkspaceHarmonografHandle(web_url="", grpc_target="", launched=False)
+
+
+def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHandle:
+    """Reuse-or-launch ONE persistent harmonograf server for a workspace.
+
+    Bound to the workspace's existing ``.harmonograf/harmonograf.db`` so a
+    standalone dashboard / builder can deep-link into the persisted
+    sessions even when no live evolve is running.
+
+    Resolution:
+
+    1. If ``.harmonograf/server.json`` names a server whose pid is alive
+       AND whose web port answers a TCP connect, REUSE it — return a
+       handle with ``launched=False`` (the caller must NOT shut it down).
+    2. Otherwise (no record, a malformed record, or a stale record whose
+       process is dead / port is gone) LAUNCH a fresh server via
+       :func:`start_harmonograf`, rewrite ``server.json``, and return a
+       handle with ``launched=True`` (the caller owns its lifecycle).
+
+    Failure-isolated: any failure — a missing harmonograf-server dep, a
+    port-bind error, an unreachable launch — logs a warning and returns a
+    no-op handle (``web_url=""``). The dashboard MUST still run.
+    """
+    # Resolve to an absolute path up front: a relative ``workspace_root``
+    # (e.g. the ``.zicato`` default the CLI passes) would otherwise land
+    # the ``.harmonograf`` data dir under the current working directory.
+    # The server record + db must travel with the named workspace, never
+    # the cwd.
+    try:
+        workspace_root = Path(workspace_root).resolve()
+    except Exception as exc:  # noqa: BLE001 — never block the dashboard
+        log.warning("harmonograf workspace path unresolvable (%s)", exc)
+        return _noop_workspace_handle()
+
+    # Only stand up a persistent server for a workspace that actually
+    # exists on disk. A dashboard pointed at a not-yet-created workspace
+    # (or a bare default ``.zicato`` that was never initialised) has no
+    # persisted sessions to surface, and creating a ``.harmonograf`` next
+    # to a phantom workspace would just litter the cwd. A no-op handle
+    # keeps the dashboard serving without a harmonograf link.
+    ws_dir = workspace_root if workspace_root.name == ".zicato" else workspace_root / ".zicato"
+    if not ws_dir.is_dir() and not workspace_root.is_dir():
+        log.debug("harmonograf workspace %s absent; no persistent server", workspace_root)
+        return _noop_workspace_handle()
+
+    try:
+        data_dir = _resolve_data_dir(workspace_root)
+    except Exception as exc:  # noqa: BLE001 — never block the dashboard
+        log.warning("harmonograf workspace data dir unavailable (%s)", exc)
+        return _noop_workspace_handle()
+
+    # 1. Reuse an already-running per-workspace server, if the record is live.
+    record = _read_server_record(data_dir)
+    if record is not None:
+        web_url = str(record.get("web_url") or "")
+        grpc_target = str(record.get("grpc_target") or "")
+        pid = _coerce_pid(record.get("pid"))
+        host, port = _parse_host_port(web_url.split("//", 1)[-1])
+        if web_url and _pid_alive(pid) and _port_reachable(host or "127.0.0.1", port):
+            log.debug("reusing live per-workspace harmonograf at %s (pid %d)", web_url, pid)
+            return WorkspaceHarmonografHandle(
+                web_url=web_url, grpc_target=grpc_target, launched=False
+            )
+        # Stale record (dead pid or unreachable port) — fall through and
+        # relaunch; the write below overwrites it.
+        log.debug("ignoring stale harmonograf server record at %s", web_url or "<empty>")
+
+    # 2. Launch a fresh server bound to this workspace's sqlite db.
+    try:
+        inner = start_harmonograf(workspace_root)
+    except Exception as exc:  # noqa: BLE001 — start_harmonograf is itself isolated
+        log.warning("harmonograf workspace launch raised (%s)", exc)
+        return _noop_workspace_handle()
+    if not inner.url:
+        # start_harmonograf already logged its own failure-isolation warning.
+        return _noop_workspace_handle()
+
+    grpc_target = f"127.0.0.1:{inner.grpc_port}" if inner.grpc_port else ""
+    _write_server_record(
+        data_dir,
+        {
+            "web_url": inner.url,
+            "grpc_target": grpc_target,
+            "pid": os.getpid(),
+            "started_iso": _utc_now_iso(),
+        },
+    )
+    log.info("launched per-workspace harmonograf at %s (grpc %s)", inner.url, grpc_target)
+    return WorkspaceHarmonografHandle(
+        web_url=inner.url, grpc_target=grpc_target, launched=True, inner=inner
+    )
+
+
+# ---------------------------------------------------------------------------
 # Meta-loop sink helpers
 # ---------------------------------------------------------------------------
 
@@ -485,7 +760,9 @@ def build_meta_loop_sink(harmonograf_url: str, session_id: str) -> Awaitable[Any
 
 __all__ = [
     "HarmonografHandle",
+    "WorkspaceHarmonografHandle",
     "build_meta_loop_sink",
+    "ensure_workspace_harmonograf",
     "meta_loop_session_id",
     "start_harmonograf",
 ]

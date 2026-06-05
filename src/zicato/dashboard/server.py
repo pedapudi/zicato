@@ -33,6 +33,7 @@ import socket
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -60,16 +61,21 @@ SSE stream are available.</p>
 """
 
 
-def _resolve_workspace(workspace_root: Path) -> WorkspacePaths:
+def _resolve_workspace(workspace_root: Path, *, harmonograf_url: str = "") -> WorkspacePaths:
     """Normalize a workspace argument to a :class:`WorkspacePaths`.
 
     Accepts either the ``.zicato`` directory itself or a project root
     that contains one — so callers can pass whichever they have.
+
+    ``harmonograf_url`` is the persistent per-workspace harmonograf URL the
+    dashboard process resolved at startup; it is stamped onto the paths so
+    the state readers inject it into the heartbeat payload (lighting up the
+    standalone deep-links).
     """
     root = Path(workspace_root)
     if root.name != ".zicato" and (root / ".zicato").is_dir():
         root = root / ".zicato"
-    return WorkspacePaths(root)
+    return WorkspacePaths(root, harmonograf_url=harmonograf_url)
 
 
 def create_app(
@@ -77,6 +83,7 @@ def create_app(
     static_dir: Path,
     *,
     read_only: bool = True,
+    harmonograf_url: str = "",
 ) -> Starlette:
     """Build the dashboard ASGI application.
 
@@ -91,8 +98,15 @@ def create_app(
     read_only:
         When ``True`` (the default) the POST control endpoints return
         ``403``; the GET endpoints and SSE stream are always available.
+    harmonograf_url:
+        The persistent per-workspace harmonograf web URL this dashboard
+        process resolved at startup (``""`` when none). Stamped onto the
+        workspace paths so the state readers inject it into the heartbeat
+        payload, lighting up the standalone deep-links into persisted
+        harmonograf sessions. A live evolve's own heartbeat URL still wins
+        (see ``state_reader.read_heartbeat_dict``).
     """
-    paths = _resolve_workspace(workspace_root)
+    paths = _resolve_workspace(workspace_root, harmonograf_url=harmonograf_url)
     static_dir = Path(static_dir)
     started = time.monotonic()
     broker = ChangeBroker(paths)
@@ -375,6 +389,45 @@ def _publish_endpoint(workspace_root: Path, host: str, bound_port: int) -> None:
         return
 
 
+def _ensure_workspace_harmonograf(workspace_root: Path) -> Any:
+    """Reuse-or-launch the persistent per-workspace harmonograf server.
+
+    Returns a ``WorkspaceHarmonografHandle`` (``web_url``/``grpc_target``/
+    ``launched``). Fully failure-isolated: any problem — a missing
+    harmonograf-server dep, a port-bind error, an unreachable launch —
+    yields a no-op handle (``web_url=""``) so the dashboard still serves.
+
+    sqlite double-open: the helper consults ``.harmonograf/server.json``
+    first, so a concurrent evolve (which routes through the same helper)
+    and this dashboard share ONE server bound to the workspace db — never
+    two servers fighting over the same sqlite file.
+    """
+    try:
+        from zicato.telemetry.harmonograf_supervisor import (  # noqa: PLC0415
+            ensure_workspace_harmonograf,
+        )
+
+        return ensure_workspace_harmonograf(Path(workspace_root))
+    except Exception as exc:  # noqa: BLE001 — never block the dashboard
+        import logging  # noqa: PLC0415
+
+        logging.getLogger(__name__).warning(
+            "harmonograf workspace resolution skipped (%s); dashboard continues "
+            "without harmonograf deep-links",
+            exc,
+        )
+
+        class _NoopHandle:
+            web_url = ""
+            grpc_target = ""
+            launched = False
+
+            def shutdown(self) -> None:
+                return None
+
+        return _NoopHandle()
+
+
 def run(
     workspace_root: Path,
     host: str,
@@ -390,13 +443,36 @@ def run(
     The host/port actually bound is recorded to ``runtime/dashboard.json``
     (see :func:`_publish_endpoint`) so a parent ``zicato evolve`` can
     report the dashboard's real URL.
+
+    A persistent per-workspace harmonograf server is reused-or-launched at
+    startup (:func:`_ensure_workspace_harmonograf`) so a standalone /
+    post-mortem dashboard can deep-link into the persisted harmonograf
+    sessions. Lifecycle ownership: the dashboard shuts the server down
+    ONLY when it LAUNCHED it (``handle.launched``); a server it merely
+    reused (a live evolve's, or another dashboard process's) is left
+    running.
     """
     import uvicorn
 
+    hg = _ensure_workspace_harmonograf(workspace_root)
+
     bound_port = _pick_port(host, port)
-    app = create_app(workspace_root, static_dir, read_only=False)
+    app = create_app(
+        workspace_root,
+        static_dir,
+        read_only=False,
+        harmonograf_url=getattr(hg, "web_url", "") or "",
+    )
     app.state.bound_port = bound_port
 
     _publish_endpoint(workspace_root, host, bound_port)
 
-    uvicorn.run(app, host=host, port=bound_port, log_level="info")
+    try:
+        uvicorn.run(app, host=host, port=bound_port, log_level="info")
+    finally:
+        # Own the lifecycle only when we launched the server; a reused one
+        # (evolve's, or another dashboard's) is left running.
+        try:
+            hg.shutdown()
+        except Exception:  # noqa: BLE001 — teardown is best-effort
+            pass

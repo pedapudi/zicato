@@ -74,6 +74,33 @@ test('harmonograf builders: no harmonograf_url ⇒ nothing, even while live', ()
   assertEqual(harmonograf.harmonografLink({ adk_session_id: ADK_SID }), null, 'no url ⇒ no link');
 });
 
+// --- standalone (persistent) server gating ---------------------------------
+// A standalone dashboard has NO active runs, but a persistent per-workspace
+// server (signalled by `harmonograf_persistent` on the injected heartbeat)
+// must still read as live so the post-mortem deep-links render.
+test('harmonograf builders: a persistent server reads live with NO active runs', () => {
+  const s = coreState.state;
+  s.activeTournament = null;
+  s.activeRuns = [];
+  s.heartbeat = { harmonograf_url: HG_URL, harmonograf_persistent: true };
+  assert(harmonograf.harmonografIsLive(), 'a persistent server reads as live');
+  const href = harmonograf.harmonografRunUrl({ adk_session_id: ADK_SID });
+  assertEqual(href, `${HG_URL}/#/session/${encodeURIComponent(ADK_SID)}`,
+    'the persistent server deep-links the persisted ADK session');
+  const link = harmonograf.harmonografLink({ adk_session_id: ADK_SID });
+  assert(link, 'a link renders against the persistent server');
+});
+
+test('harmonograf builders: NO persistent flag + no runs ⇒ not live', () => {
+  const s = coreState.state;
+  s.activeTournament = null;
+  s.activeRuns = [];
+  // A lingering url with NO persistent flag and no live run stays dead.
+  s.heartbeat = { harmonograf_url: HG_URL };
+  assert(!harmonograf.harmonografIsLive(), 'no persistent flag, no run ⇒ not live');
+  assertEqual(harmonograf.harmonografBase(), null, 'no base for a dead, non-persistent server');
+});
+
 // --- candidate-view wiring (the dead-code fix) -----------------------------
 
 const FIX = {
@@ -150,6 +177,27 @@ test('candidate view: NO harmonograf link when the loop is not live', async () =
 
   const links = allByClass(host, 'harmonograf-link');
   assertEqual(links.length, 0, 'no harmonograf link renders when the loop is dead');
+});
+
+test('candidate view: the per-run link RENDERS against a persistent (post-mortem) server', async () => {
+  data.invalidate();
+  installFetch(FIX);
+  // No active runs (post-mortem), but a persistent per-workspace server.
+  const s = coreState.state;
+  s.activeTournament = null;
+  s.activeRuns = [];
+  s.heartbeat = { harmonograf_url: HG_URL, harmonograf_persistent: true };
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1', entry: 'waffles_single' });
+
+  const links = allByClass(host, 'harmonograf-link');
+  assert(links.length >= 1, 'a harmonograf link rendered against the persistent server');
+  const exec = links.find((a) => (a.getAttribute('href') || '').includes('/#/session/'));
+  assert(exec, 'the persisted-session execution link deep-links a /#/session/ route');
+  assertEqual(exec.getAttribute('href'), `${HG_URL}/#/session/${encodeURIComponent(ADK_SID)}`,
+    'the href targets the persisted run’s ADK session');
 });
 
 await run();
