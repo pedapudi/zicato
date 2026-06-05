@@ -26,6 +26,10 @@ An **epoch** is the unit of evaluation contract. It owns:
   for the duration.
 - A frozen scoring configuration (`scoring.json`) — weights,
   tournament thresholds, tolerance bands.
+- A frozen **proposer** — the proposing agent's identity, its tools,
+  and the skill modules under the configured `proposers/<name>/` dir
+  (or the built-in default proposer when none is configured). See
+  [PROPOSER.md](PROPOSER.md).
 
 Inside an epoch, generations are linearly ordered (`v0 → v1 → ... →
 vN`). `v0` is the baseline — the inner harness as-registered. Each
@@ -51,6 +55,12 @@ An operator starts a new epoch when any of the following hold:
 - The tournament structure changes (e.g. `gauntlet → swiss`, or a
   structure param like `swiss.rounds`) — see §9. Generations selected
   under different structures are not comparable.
+- The **proposer** changes — a different proposer dir is registered, the
+  proposer's custom `agent.py` (or declared identity / tools) is edited,
+  or one of its `skills/*.md` modules is added, removed, or
+  semantically changed. The agent that proposes the mutations is part of
+  the contract, so generations proposed under different proposers are not
+  comparable. See [PROPOSER.md](PROPOSER.md).
 - The regression baseline rebases (a major refactor of the inner
   harness happened outside the loop and the parent `v0` of the next
   epoch is a fresh snapshot).
@@ -896,7 +906,7 @@ Contract-hash auto-epoching is the mechanism that makes that true.
 
 ### 10.1 What's in the contract
 
-The **evaluation contract** is exactly four things:
+The **evaluation contract** is exactly five things:
 
 1. **The board** — test inputs, `expectations`, `judges`, and the
    board's `disable_drift` set (`board.jsonl`).
@@ -908,6 +918,13 @@ The **evaluation contract** is exactly four things:
    full data model).
 4. **The registered inner-harness IDENTITY** — the `--adk` entrypoint
    string plus the sorted list of `--mutable-tree` paths.
+5. **The proposer** — the proposing agent's identity, its tools, and the
+   skill modules under the configured `proposers/<name>/` dir (or the
+   built-in default proposer when none is registered). See
+   [PROPOSER.md](PROPOSER.md). Note the *proposer brief* (item 2) and the
+   *proposer* (item 5) are distinct contract inputs: the brief is
+   per-epoch operator steering text, the proposer is the agent (plus its
+   skills) that consumes it.
 
 A change to any one of these means generations on either side are no
 longer directly comparable, so the epoch must roll.
@@ -933,9 +950,14 @@ override the default. These are the operator's *live, editable*
 copies. On epoch creation / roll they are frozen (copied) into
 `epochs/{id}/`.
 
+`register --proposer-path PATH` additionally records
+`contract.proposer_path` — the proposer dir whose skills + optional
+custom `agent.py` are folded into the hash. An absent flag leaves the
+key unset (the built-in default proposer). See [PROPOSER.md](PROPOSER.md).
+
 ### 10.3 The contract hash
 
-`zicato/epoch/contract.py` reduces the four contract components to a
+`zicato/epoch/contract.py` reduces the contract components to a
 single `sha256` hex digest, the **contract hash**. It is stored on the
 epoch's `EpochConfig` (`contract_hash`) at creation time.
 
@@ -949,15 +971,17 @@ so spurious edits do not roll the epoch:
 | scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — round every float to 6 decimal places, `json.dumps(sort_keys=True)`. Partial vs full documents and float-precision noise are no-ops; a structure or param change is NOT a no-op (it rolls the epoch). |
 | entrypoint | The string verbatim. |
 | mutable_trees | Sorted tuple of absolute path strings. Registration order is a no-op. |
+| proposer | Resolve the proposer dir (or the builtin default) to a `ProposerSpec` and serialize sorted-key: `agent_id`, sorted `tools`, per-skill normalized-body hashes sorted by name, and the custom `agent.py` source hash. Each skill body is normalized exactly like the proposer brief, so a whitespace-only skill edit is a no-op; a semantic skill edit (or adding / removing / renaming a skill, or editing `agent.py`) rolls the epoch. The builtin default canonicalizes to a stable form, so a workspace that never registers a proposer keeps a stable hash. |
 
-The five canonical forms are concatenated and hashed. Missing files are
+The canonical forms are concatenated and hashed. Missing files are
 treated as the empty string for that component (so a board-less
 workspace still hashes deterministically) — a warning is logged.
 
-A whitespace-only proposer-brief edit, a reordered board, or float
-noise in `scoring.json` leaves the hash unchanged. A changed board
-input, a retuned `per_judge_weight`, an added custom judge, a
-different entrypoint, or an added mutable tree changes it.
+A whitespace-only proposer-brief edit, a whitespace-only skill edit, a
+reordered board, or float noise in `scoring.json` leaves the hash
+unchanged. A changed board input, a retuned `per_judge_weight`, an added
+custom judge, a different entrypoint, an added mutable tree, or a
+registered / edited proposer changes it.
 
 ### 10.4 Roll-at-evolve-time semantics
 
@@ -1055,6 +1079,7 @@ unchanged. They are the manual escape hatches:
 | Loss profile written into each `runs/{id}/loss.json` | [TELEMETRY.md](TELEMETRY.md) |
 | Drift loss scalar that drives `tournament_decision` | [SCORING.md](SCORING.md) |
 | Per-epoch tournament structure: config block, persisted record, API, UI | [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) |
+| The proposer as a contract input: tiers, tools, Design A, epoch-roll | [PROPOSER.md](PROPOSER.md), `skills/zicato-design-proposer/SKILL.md` |
 | CLI commands for `epoch new` / `close` / `list` | [CLI.md](CLI.md) |
 | Atomic-rename helper used by `analysis.html` writes | [RUNTIME.md](RUNTIME.md) §6 |
 | Live dashboard that supersedes `analysis.html` during an `evolve` | [DASHBOARD.md](DASHBOARD.md) |

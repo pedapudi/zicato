@@ -78,8 +78,10 @@ concern (e.g. an SSH tunnel), not a zicato flag.
   gives a quality-based early stop when the proposer stalls.
 - **Epochs:** leave auto-epoching on (default). Editing `board.jsonl` /
   `brief.md` / `scoring.json` between invocations is detected as contract drift
-  and rolls a fresh epoch automatically. Use `--no-auto-epoch` only when you
-  want a drifted contract to be a hard error.
+  and rolls a fresh epoch automatically. So is registering a proposer dir
+  (`register --proposer-path`) or editing one of its skills — see
+  `skills/zicato-design-proposer`. Use `--no-auto-epoch` only when you want a
+  drifted contract to be a hard error.
 
 ## Reading the result
 
@@ -114,5 +116,6 @@ allowed to rewrite (and what's `[forbidden]`) before you trust a promotion.
 - [docs/design/SCORING.md](../../docs/design/SCORING.md) — the promotion gate.
 - [docs/design/TOURNAMENT.md](../../docs/design/TOURNAMENT.md) — champion-vs-challenger model.
 - [docs/design/DASHBOARD.md](../../docs/design/DASHBOARD.md) — the live UI.
+- [docs/design/PROPOSER.md](../../docs/design/PROPOSER.md) + `skills/zicato-design-proposer` — configuring the proposer (skills / custom ADK agent), a contract input that rolls the epoch.
 - [docs/design/EPOCHS-AND-JOURNALING.md](../../docs/design/EPOCHS-AND-JOURNALING.md) — epoch lifecycle.
 - [docs/design/LOOP-HEALTH.md](../../docs/design/LOOP-HEALTH.md) — `zicato health` detectors.

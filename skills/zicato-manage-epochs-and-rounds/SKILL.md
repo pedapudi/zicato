@@ -84,7 +84,7 @@ champion-spine views can attribute each generation to its birth round.
 Operators should rarely think about epoch management. They edit the board /
 brief / scoring, run `zicato evolve`, and the right thing happens.
 
-### 4.1 What is in the contract (exactly four things)
+### 4.1 What is in the contract (exactly five things)
 
 1. **board** — entries + `expectations` + `judges` + the board-level
    `disable_drift` set (`board.jsonl`).
@@ -94,6 +94,13 @@ brief / scoring, run `zicato evolve`, and the right thing happens.
 4. **inner-harness IDENTITY** — the registered entrypoint string + the sorted
    list of mutable-tree paths (NOT the source bytes inside those trees — that
    source is exactly what zicato mutates within the epoch).
+5. **proposer** — the proposing agent's identity, tools, and the skill modules
+   under the configured `proposers/<name>/` dir (or the built-in default
+   proposer when none is registered via `register --proposer-path`). Distinct
+   from the *proposer brief* (item 2): the brief is per-epoch steering text;
+   the proposer is the agent (plus its skills) that consumes it. See
+   `skills/zicato-design-proposer` and
+   [PROPOSER.md](../../docs/design/PROPOSER.md).
 
 `evolve` reduces these to one `sha256` **contract hash**
 (`zicato/epoch/contract.py`), stored on the `EpochConfig.contract_hash` at
@@ -118,11 +125,13 @@ treated as **always matching** — the orchestrator never rolls it spuriously.
 
 ### 4.3 What forces a roll (any contract change)
 
-Any change to the four components above. Concretely: a changed/added/removed
+Any change to the five components above. Concretely: a changed/added/removed
 board entry, an added or retuned judge, toggling `disable_drift`, editing the
 brief's `## Forbidden` list (or any brief text that survives canonicalization),
 retuning a weight / `per_judge_weight` / `promote_margin`, a different
-entrypoint, an added/removed mutable tree — **and changing the scoring
+entrypoint, an added/removed mutable tree, **registering a proposer dir or
+semantically editing its `agent.py` / a `skills/*.md` module** (the roll
+message names the changed component as `proposer`) — **and changing the scoring
 `tournament` block**: switching `gauntlet → swiss`, or bumping a param like
 `swiss.rounds`. The tournament structure lives inside `scoring.json` and rides
 the existing scoring canonicalizer, so a structure change rolls the epoch

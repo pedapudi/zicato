@@ -137,6 +137,83 @@ def test_register_with_no_mutable_trees(tmp_path: Path) -> None:
     assert config["mutable_trees"] == []
 
 
+def test_register_writes_proposer_path(tmp_path: Path) -> None:
+    """`--proposer-path` lands `contract.proposer_path` (absolutised)."""
+    workspace = _init_workspace(tmp_path)
+    proposer_dir = tmp_path / "proposers" / "fancy"
+    (proposer_dir / "skills").mkdir(parents=True)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        register_cmd,
+        [
+            "--workspace",
+            str(workspace),
+            "--adk",
+            "pkg.module:agent",
+            "--proposer-path",
+            str(proposer_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    assert config["contract"]["proposer_path"] == str(proposer_dir.resolve())
+
+
+def test_register_omits_proposer_path_by_default(tmp_path: Path) -> None:
+    """Without the flag, `contract.proposer_path` is left unset (builtin)."""
+    workspace = _init_workspace(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(
+        register_cmd,
+        ["--workspace", str(workspace), "--adk", "pkg.module:agent"],
+    )
+    assert result.exit_code == 0, result.output
+    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    assert "proposer_path" not in config["contract"]
+
+
+def test_register_proposer_path_resolves_into_contract_inputs(tmp_path: Path) -> None:
+    """A registered proposer dir is picked up by `resolve_contract_inputs`.
+
+    Mirrors how `evolve` reads the contract back: the flag must land in
+    `config.json` such that a subsequent contract resolve sees the
+    proposer dir, while an unregistered workspace resolves to the builtin
+    default (`None`).
+    """
+    from zicato.epoch.contract import resolve_contract_inputs
+
+    workspace = _init_workspace(tmp_path)
+    proposer_dir = tmp_path / "proposers" / "fancy"
+    (proposer_dir / "skills").mkdir(parents=True)
+
+    runner = CliRunner()
+    # First register WITHOUT the flag — builtin default proposer.
+    result = runner.invoke(
+        register_cmd,
+        ["--workspace", str(workspace), "--adk", "pkg.module:agent"],
+    )
+    assert result.exit_code == 0, result.output
+    assert resolve_contract_inputs(workspace).proposer_path is None
+
+    # Re-register WITH the flag — the proposer dir is now resolved.
+    result = runner.invoke(
+        register_cmd,
+        [
+            "--workspace",
+            str(workspace),
+            "--adk",
+            "pkg.module:agent",
+            "--proposer-path",
+            str(proposer_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    resolved = resolve_contract_inputs(workspace).proposer_path
+    assert resolved == proposer_dir.resolve()
+
+
 def test_register_requires_initialized_workspace(tmp_path: Path) -> None:
     workspace = tmp_path / ".not-yet-initialized"
     runner = CliRunner()

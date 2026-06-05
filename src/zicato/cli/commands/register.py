@@ -18,6 +18,13 @@ the ``.zicato/`` workspace, but ``--board`` / ``--brief`` /
 these paths back on every ``evolve`` to decide whether the evaluation
 contract has drifted (see ``docs/design/EPOCHS-AND-JOURNALING.md``).
 
+``--proposer-path`` optionally points the workspace at a proposer dir
+(``proposers/<name>/`` — skills, plus an optional custom ``agent.py``).
+Absent ⇒ the built-in default proposer. The proposer is itself a
+contract input: configuring a proposer dir — or editing one of its
+skills — rolls the epoch on the next ``evolve`` (see
+``docs/design/PROPOSER.md``).
+
 The values are persisted to ``{workspace}/config.json`` so subsequent
 subcommands can read them back without re-asking the operator.
 """
@@ -100,6 +107,17 @@ def _validate_entrypoint(entrypoint: str) -> None:
     type=click.Path(),
     help="Canonical scoring.json path (default: <workspace_parent>/scoring.json).",
 )
+@click.option(
+    "--proposer-path",
+    "proposer_path",
+    default=None,
+    type=click.Path(),
+    help=(
+        "Proposer dir (proposers/<name>/ — skills + optional agent.py). "
+        "Absent ⇒ the built-in default proposer. Part of the contract: "
+        "configuring it (or editing a skill) rolls the epoch."
+    ),
+)
 def register_cmd(
     workspace: str,
     entrypoint: str,
@@ -107,6 +125,7 @@ def register_cmd(
     board_path: str | None,
     brief_path: str | None,
     scoring_path: str | None,
+    proposer_path: str | None,
 ) -> None:
     """Advanced: record the adapter entrypoint, mutable trees, and contract paths.
 
@@ -122,6 +141,13 @@ def register_cmd(
     scoring) default to the conventional location alongside the
     workspace. They are stored under the `contract` key and read back
     by contract-hash auto-epoching on every `evolve`.
+
+    `--proposer-path` is optional and stored under the same `contract`
+    key as `contract.proposer_path` (absolutised). It is itself a
+    contract input — configuring a proposer dir, or editing one of its
+    skills, rolls the epoch on the next `evolve`. Omitting the flag
+    leaves the key unset, which resolves to the built-in default
+    proposer.
     """
     _validate_entrypoint(entrypoint)
     workspace_root = Path(workspace)
@@ -149,7 +175,7 @@ def register_cmd(
     # key: that key name is the on-disk contract format read back by
     # ``resolve_contract_inputs`` (a non-CLI module). The operator-facing
     # flag is ``--brief``; only the persisted key keeps the older name.
-    config["contract"] = {
+    contract_block: dict[str, str] = {
         "board_path": str(
             Path(board_path).resolve() if board_path is not None else defaults["board_path"]
         ),
@@ -160,6 +186,14 @@ def register_cmd(
             Path(scoring_path).resolve() if scoring_path is not None else defaults["scoring_path"]
         ),
     }
+    # ``contract.proposer_path`` is optional. It is written only when the
+    # operator passes ``--proposer-path`` — an absent flag leaves the key
+    # out so ``resolve_contract_inputs`` falls back to the built-in
+    # default proposer (``None``). Absolutised like the other contract
+    # paths so the persisted value is stable regardless of CWD.
+    if proposer_path is not None:
+        contract_block["proposer_path"] = str(Path(proposer_path).resolve())
+    config["contract"] = contract_block
     write_workspace_config(workspace_root, config)
 
     click.echo(

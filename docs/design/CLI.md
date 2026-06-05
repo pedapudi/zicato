@@ -372,6 +372,12 @@ canonical contract source paths default to the conventional location
 alongside the workspace, are stored under the `contract` key, and are read
 back by contract-hash auto-epoching on every `evolve`.
 
+`--proposer-path` is optional and stored under the same `contract` key as
+`contract.proposer_path` (absolutised). It is itself a contract input —
+configuring a proposer dir, or editing one of its skills, rolls the epoch on
+the next `evolve`. Omitting the flag leaves the key unset, which resolves to
+the built-in default proposer. See [PROPOSER.md](PROPOSER.md).
+
 ```
 zicato register [OPTIONS]
 ```
@@ -384,6 +390,7 @@ zicato register [OPTIONS]
 | `--board PATH` | `<workspace_parent>/board.jsonl` | Canonical `board.jsonl` path. |
 | `--brief PATH` | `<workspace_parent>/brief.md` | Canonical proposer-brief path. |
 | `--scoring PATH` | `<workspace_parent>/scoring.json` | Canonical `scoring.json` path. |
+| `--proposer-path PATH` | — (builtin default proposer) | Proposer dir (`proposers/<name>/` — skills + optional `agent.py`). A contract input: configuring it (or editing a skill) rolls the epoch. |
 
 ### `zicato reindex`
 
