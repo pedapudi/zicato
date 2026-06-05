@@ -380,6 +380,56 @@ test('builder view: the work column reflows the chat width as a CSS var (no over
   assert(varVal && /px$/.test(varVal), 'the chat-width CSS var is stamped in px on the root');
 });
 
+// ── structure-card glyphs (ported from the approved mockup) ───────────
+
+test('structure glyphs: each of the five structures renders a crisp theme-token SVG (currentColor only)', () => {
+  for (const id of ['gauntlet', 'swiss', 'single_elim', 'double_elim', 'racing']) {
+    const svg = builder.structureGlyphSvg(id);
+    assert(svg && svg.localName === 'svg', `${id} → an svg glyph`);
+    assertEqual(svg.getAttribute('viewBox'), '0 0 24 24', `${id} glyph is a crisp 24×24 viewBox`);
+    assertEqual(svg.getAttribute('class'), 'dn-bld-cardglyph', `${id} glyph carries the card-glyph class`);
+    // theme tokens ONLY — every stroke/fill is currentColor, never a hex colour.
+    for (const n of allDesc(svg)) {
+      const stroke = n.getAttribute('stroke');
+      const fill = n.getAttribute('fill');
+      if (stroke && stroke !== 'none') assertEqual(stroke, 'currentColor', `${id}: stroke is the currentColor token`);
+      if (fill && fill !== 'none') assertEqual(fill, 'currentColor', `${id}: fill is the currentColor token`);
+      assert(!/#[0-9a-fA-F]{3,6}/.test(`${stroke} ${fill}`), `${id}: no hardcoded hex colour`);
+    }
+  }
+});
+
+test('structure glyphs: gauntlet is ●—● (two dots + a join), racing is a 4→2→1 funnel of dots', () => {
+  // gauntlet: two duel dots joined by a short line.
+  const g = builder.structureGlyphSvg('gauntlet');
+  const gDots = allDesc(g).filter((n) => n.localName === 'circle');
+  const gPaths = allDesc(g).filter((n) => n.localName === 'path');
+  assertEqual(gDots.length, 2, 'gauntlet draws the two duel dots');
+  assertEqual(gPaths.length, 1, 'gauntlet draws the single joining line');
+
+  // racing: a narrowing funnel of dots — 4 + 2 + 1 = 7 dots.
+  const r = builder.structureGlyphSvg('racing');
+  const rDots = allDesc(r).filter((n) => n.localName === 'circle');
+  assertEqual(rDots.length, 7, 'racing draws a 4→2→1 funnel of dots');
+
+  // swiss: three stacked ranking lines (no dots).
+  const s = builder.structureGlyphSvg('swiss');
+  const sPaths = allDesc(s).filter((n) => n.localName === 'path');
+  assertEqual(sPaths.length, 3, 'swiss draws three stacked ranking lines');
+
+  // double_elim carries the extra losers'-lane line over single_elim.
+  const se = allDesc(builder.structureGlyphSvg('single_elim')).filter((n) => n.localName === 'path').length;
+  const de = allDesc(builder.structureGlyphSvg('double_elim')).filter((n) => n.localName === 'path').length;
+  assert(de > se, 'double-elim adds the extra losers-lane line over single-elim');
+});
+
+function allDesc(node) {
+  const out = [];
+  const walk = (n) => { for (const c of n.children) { out.push(c); walk(c); } };
+  walk(node);
+  return out;
+}
+
 function tick() { return new Promise((r) => setTimeout(r, 0)); }
 
 await run();

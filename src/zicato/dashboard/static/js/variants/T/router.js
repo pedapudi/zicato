@@ -52,8 +52,8 @@ export function parseRoute(hash) {
   const parts = raw.replace(/^\/+/, '').split('/').filter(Boolean).map(dec);
   if (!parts.length || parts[0] === 'home') return { view: 'home', params: {}, cmp };
   // SETTINGS (B3) homes the tournament builder + the contract / assistant /
-  // appearance / dashboard sections. `#/settings[/<section>]` deep-links a
-  // section; a bare `#/settings` opens the default (builder) section.
+  // appearance sections. `#/settings[/<section>]` deep-links a section; a bare
+  // `#/settings` opens the default (builder) section.
   if (parts[0] === 'settings') return { view: 'settings', params: { section: parts[1] || null }, cmp };
   // `#/builder` is kept as a first-class DEEP-LINK to the builder (B2). B3
   // re-homes the builder under Settings; the direct route resolves into the
@@ -200,7 +200,7 @@ export function crumbTrail(route) {
     case 'settings': {
       const labels = {
         builder: 'tournament builder', contract: 'contract',
-        assistant: 'builder assistant', appearance: 'appearance', dashboard: 'dashboard',
+        assistant: 'builder assistant', appearance: 'appearance',
       };
       if (p.section && labels[p.section]) {
         return [home, { label: 'settings', view: 'settings', params: {} }, { label: labels[p.section], current: true }];

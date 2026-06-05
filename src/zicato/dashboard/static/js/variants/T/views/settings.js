@@ -1,8 +1,9 @@
 // variants/T/views/settings.js — the Settings surface (B3).
 //
 // A wide Console-IV view that HOMES the flagship tournament builder alongside
-// the read-mostly contract at-a-glance, the builder-assistant config, the
-// appearance pickers, and dashboard prefs. A left section rail drives ONE
+// the read-mostly contract at-a-glance, the builder-assistant config, and the
+// EDITABLE appearance pickers (colour / typeface / page scale / side-panel
+// width — every visual + layout preference). A left section rail drives ONE
 // section host on the right — the same idiom as the builder's own rail.
 //
 // RE-HOME DISCIPLINE: the tournament builder is NOT rewritten here. The B2
@@ -19,17 +20,30 @@
 // DOM (no flash). Theme tokens only.
 
 import { el, clearChildren } from '../../../core/dom.js';
-import { gatedSwap, section, empty, COLOR_THEMES, TYPE_THEMES, readColor, readType } from '../ui.js';
+import {
+  gatedSwap, section, empty, COLOR_THEMES, TYPE_THEMES, readColor, readType,
+} from '../ui.js';
+import {
+  SCALE_MIN, SCALE_MAX, SCALE_STEP, readScale,
+  RAIL_MIN, RAIL_MAX, readRail,
+} from '../ui.js';
 import * as data from '../data.js';
 import { getConfig } from '../builder/api.js';
 import * as builder from './builder.js';
+// REUSE the SAME theme/pref mechanism the top-bar controls drive — these apply
+// to the app root, persist (the one localStorage store ui.js owns), AND sync the
+// top-bar pickers. The Appearance section is editable by calling THESE, so the
+// settings panel and the top bar are two views of ONE source of truth (changing
+// either updates the other and persists identically). NOT a fork.
+import {
+  applyTheme, applyTypeface, applyScale, resetScale, applyRail,
+} from '../shell.js';
 
 const SECTIONS = [
   { id: 'builder', label: 'Tournament builder', glyph: '⚒' },
   { id: 'contract', label: 'Contract', glyph: '◷' },
   { id: 'assistant', label: 'Builder assistant', glyph: '✦' },
   { id: 'appearance', label: 'Appearance', glyph: '◑' },
-  { id: 'dashboard', label: 'Dashboard', glyph: '▦' },
 ];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 const DEFAULT_SECTION = 'builder';
@@ -103,7 +117,6 @@ async function renderSection() {
     case 'contract': return renderContract();
     case 'assistant': return renderAssistant();
     case 'appearance': return renderAppearance();
-    case 'dashboard': return renderDashboard();
     default: return renderContract();
   }
 }
@@ -213,50 +226,133 @@ function kv(k, v, mono) {
   ]);
 }
 
-// ── Appearance — the colour + typeface pickers ────────────────────────
+// ── Appearance — the EDITABLE colour / typeface / scale / rail pickers ─
 //
-// The theme mechanism already lives in the top bar (the swatch dropdown +
-// typeface buttons drive `data-t-theme` / `data-t-type` on the root). Rather
-// than duplicate those controls, this section SURFACES the active selections
-// and points at the persistent top-bar pickers — theme carry-over, no second
-// source of truth.
+// Every appearance preference is editable INLINE here, wired to the SAME
+// mechanism the top-bar controls drive: applyTheme / applyTypeface / applyScale
+// / applyRail stamp the app root, persist to the one ui.js localStorage store,
+// AND sync the top-bar pickers. So editing a pref here updates the top bar (and
+// vice-versa) and persists identically — one source of truth, not a fork. The
+// former read-only "Dashboard" roll-up (page scale + side-panel width) is folded
+// in here as the editable Layout block, so Appearance is the single home for
+// every visual/layout preference and the Dashboard section is retired.
 
 function renderAppearance() {
   const color = readColor();
   const type = readType();
-  const colorLabel = (COLOR_THEMES.find((t) => t[0] === color) || [color, color])[1];
-  const typeLabel = (TYPE_THEMES.find((t) => t[0] === type) || [type, type])[1];
-  gatedSwap(_sectionHost, `appearance|${color}|${type}`, () => [
+  const scale = readScale();
+  const rail = readRail();
+  gatedSwap(_sectionHost, `appearance|${color}|${type}|${scale}|${rail}`, () => [
     section('Appearance',
-      el('p', { class: 'dn-lede', text: 'The colour theme and typeface are persistent and carry across every view. Change them from the pickers in the top bar; the active selections are shown here.' }),
-      el('div', { class: 'dn-set-kvgrid' }, [
-        kv('colour theme', colorLabel),
-        kv('typeface', typeLabel),
+      el('p', { class: 'dn-lede', text: 'Colour theme, typeface, page scale, and side-panel width — all persistent and shared with the top-bar controls (change either, the other follows).' }),
+      el('div', { class: 'dn-set-appgrid' }, [
+        appRow('Colour theme', themePicker(color)),
+        appRow('Typeface', typefacePicker(type)),
+        appRow('Page scale', scalePicker(scale)),
+        appRow('Side-panel width', railPicker(rail)),
       ])),
   ]);
 }
 
-// ── Dashboard — existing prefs (read-only roll-up) ────────────────────
-//
-// Page scale + rail width are persisted by the shell's pickers; surfaced here
-// so Settings is a single home for every preference, with the live controls
-// staying in the top bar / rail (no second source of truth).
-
-function renderDashboard() {
-  let scale = '100%';
-  let rail = '—';
-  try {
-    const s = window.localStorage.getItem('zicato.T.scale');
-    if (s) scale = s + '%';
-    const r = window.localStorage.getItem('zicato.T.rail');
-    if (r) rail = r + 'px';
-  } catch (e) { /* private mode */ }
-  gatedSwap(_sectionHost, `dashboard|${scale}|${rail}`, () => [
-    section('Dashboard',
-      el('p', { class: 'dn-lede', text: 'Layout preferences, persisted across sessions. Adjust the page scale from the top-bar pill and the side-panel width from the rail handle.' }),
-      el('div', { class: 'dn-set-kvgrid' }, [
-        kv('page scale', scale),
-        kv('side-panel width', rail),
-      ])),
+// A labelled appearance row: a label cell + the live control cell.
+function appRow(label, control) {
+  return el('div', { class: 'dn-set-approw' }, [
+    el('span', { class: 'dn-set-k', text: label }),
+    el('div', { class: 'dn-set-appctl' }, [control]),
   ]);
+}
+
+// COLOUR THEME — a native <select> over all themes, wired to applyTheme (which
+// stamps the root, persists, AND syncs the top-bar swatch dropdown).
+function themePicker(current) {
+  const sel = el('select', { class: 'dn-set-select', 'aria-label': 'Colour theme' },
+    COLOR_THEMES.map(([id, label]) => {
+      const opt = el('option', { value: id, text: label });
+      if (id === current) opt.setAttribute('selected', 'selected');
+      return opt;
+    }));
+  sel.addEventListener('change', () => {
+    const v = sel.value != null ? sel.value : sel.getAttribute('value');
+    applyTheme(v);
+  });
+  return sel;
+}
+
+// TYPEFACE — the same three-way button group idiom the top bar uses, wired to
+// applyTypeface (root + persist + top-bar sync).
+function typefacePicker(current) {
+  const btns = TYPE_THEMES.map(([id, label]) => {
+    const b = el('button', {
+      class: 'dn-set-typebtn' + (id === current ? ' dn-set-typebtn-on' : ''),
+      type: 'button', 'data-type': id, 'aria-pressed': String(id === current),
+      title: 'typeface: ' + id, text: label,
+    });
+    b.addEventListener('click', () => { applyTypeface(id); _redraw(); });
+    return b;
+  });
+  return el('div', { class: 'dn-set-typeswitch', role: 'group', 'aria-label': 'Typeface' }, btns);
+}
+
+// PAGE SCALE — a native range + a % readout + a reset, wired to applyScale /
+// resetScale (whole-page zoom; root + persist + top-bar pill sync).
+function scalePicker(current) {
+  const range = el('input', {
+    class: 'dn-set-range', type: 'range',
+    min: String(SCALE_MIN), max: String(SCALE_MAX), step: String(SCALE_STEP),
+    value: String(current), 'aria-label': 'Page scale',
+    'aria-valuemin': String(SCALE_MIN), 'aria-valuemax': String(SCALE_MAX), 'aria-valuenow': String(current),
+  });
+  const out = el('span', { class: 'dn-set-readout', text: current + '%' });
+  const onScale = (ev) => {
+    const raw = (ev && ev.target && ev.target.value != null) ? ev.target.value
+      : (range.value != null ? range.value : range.getAttribute('value'));
+    const n = applyScale(raw);
+    out.textContent = n + '%';
+    range.setAttribute('aria-valuenow', String(n));
+  };
+  range.addEventListener('input', onScale);
+  range.addEventListener('change', onScale);
+  const reset = el('button', {
+    class: 'dn-set-reset', type: 'button',
+    title: 'Reset page scale to 100%', 'aria-label': 'Reset page scale to 100%', text: '⟲',
+  });
+  reset.addEventListener('click', () => {
+    const n = resetScale();
+    range.value = String(n);
+    range.setAttribute('value', String(n));
+    range.setAttribute('aria-valuenow', String(n));
+    out.textContent = n + '%';
+  });
+  return el('div', { class: 'dn-set-rangewrap' }, [range, out, reset]);
+}
+
+// SIDE-PANEL WIDTH — a native range + a px readout, wired to applyRail (the same
+// grid-column + persist the rail-drag handle uses).
+function railPicker(current) {
+  const range = el('input', {
+    class: 'dn-set-range', type: 'range',
+    min: String(RAIL_MIN), max: String(RAIL_MAX), step: '4',
+    value: String(current), 'aria-label': 'Side-panel width',
+    'aria-valuemin': String(RAIL_MIN), 'aria-valuemax': String(RAIL_MAX), 'aria-valuenow': String(current),
+  });
+  const out = el('span', { class: 'dn-set-readout', text: current + 'px' });
+  const onRail = (ev) => {
+    const raw = (ev && ev.target && ev.target.value != null) ? ev.target.value
+      : (range.value != null ? range.value : range.getAttribute('value'));
+    const n = applyRail(raw);
+    out.textContent = n + 'px';
+    range.setAttribute('aria-valuenow', String(n));
+  };
+  range.addEventListener('input', onRail);
+  range.addEventListener('change', onRail);
+  return el('div', { class: 'dn-set-rangewrap' }, [range, out]);
+}
+
+// Re-render the appearance section after a control that changes a selected-state
+// class (the typeface buttons) so the active button highlights immediately.
+function _redraw() {
+  if (_active === 'appearance' && _sectionHost) {
+    _sectionHost.removeAttribute('data-t-digest');
+    renderAppearance();
+  }
 }

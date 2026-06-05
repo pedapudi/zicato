@@ -439,6 +439,60 @@ function brandMark() {
   }, [stroke, dot]);
 }
 
+// THE WORDMARK — "zıcato" with a DOTLESS ı (U+0131) carrying the green accent
+// dot over its stem, matching docs/brand/zicato-lockup.svg. The wordmark is an
+// inline SVG (not a styled text span): an external/text dot can't be pinned to
+// the glyph stem and can't inherit `currentColor` for the letters + the accent
+// token for the dot at once. Centering was a prior pain point, so the dot is
+// pinned GEOMETRICALLY rather than by eye:
+//
+//   * the letters render in a MONOSPACE face (`--v2-mono`), so every glyph has
+//     the SAME advance width — the ı stem center is therefore deterministic and
+//     not subject to per-glyph kerning;
+//   * with a left text anchor at x=WORDMARK_X0 and a per-glyph advance of
+//     WORDMARK_ADV, the centre of the i-th glyph is x0 + (i + 0.5)·adv. The ı is
+//     index 1 ("z" is 0), so its stem centre — and the dot cx — is
+//     `wordmarkDotCx()` below. The export lets a unit test assert the dot's
+//     x-position EQUALS that computed stem centre (the centering guarantee).
+//
+// Theme-adaptive: the text fills with `currentColor` (flips dark/light with the
+// theme); the dot fills with `var(--zicato-accent)`. Built ONCE as static
+// chrome — never rebuilt on an SSE heartbeat (digest discipline).
+export const WORDMARK_TEXT = 'zıcato';   // z + dotless ı + cato
+const WORDMARK_X0 = 1;       // left text anchor (viewBox units)
+const WORDMARK_ADV = 9.6;    // per-glyph advance for the monospace face
+const WORDMARK_BASELINE = 15;
+const WORDMARK_DOT_CY = 3.0; // the accent dot sits above the x-height
+const WORDMARK_DOT_R = 1.7;
+const WORDMARK_DOTLESS_I_INDEX = 1; // "z"=0, "ı"=1
+
+// The geometric centre of the dotless ı stem (= the accent dot cx). Pinned to
+// the monospace advance grid so the dot is PERFECTLY centred over the stem.
+export function wordmarkDotCx() {
+  return WORDMARK_X0 + (WORDMARK_DOTLESS_I_INDEX + 0.5) * WORDMARK_ADV;
+}
+
+function brandWordmark() {
+  const w = WORDMARK_X0 * 2 + WORDMARK_TEXT.length * WORDMARK_ADV;
+  const text = svgEl('text', {
+    class: 'dt-brand-letters',
+    x: String(WORDMARK_X0), y: String(WORDMARK_BASELINE),
+    'font-family': 'var(--v2-mono)', 'font-size': '15', 'font-weight': '700',
+    'letter-spacing': '0', 'textLength': String(WORDMARK_TEXT.length * WORDMARK_ADV),
+    'lengthAdjust': 'spacing', fill: 'currentColor', 'xml:space': 'preserve',
+  });
+  text.textContent = WORDMARK_TEXT;
+  const dot = svgEl('circle', {
+    class: 'dt-brand-dot',
+    cx: String(wordmarkDotCx()), cy: String(WORDMARK_DOT_CY), r: String(WORDMARK_DOT_R),
+    fill: 'var(--zicato-accent)',
+  });
+  return svgEl('svg', {
+    class: 'dt-brand-name', viewBox: `0 0 ${w} 18`,
+    role: 'img', 'aria-label': 'zicato', focusable: 'false',
+  }, [text, dot]);
+}
+
 export function mountShell(root) {
   _root = root;
   clearChildren(root);
@@ -539,14 +593,14 @@ export function mountShell(root) {
     _backBtn,
     el('div', { class: 'dt-brand' }, [
       brandMark(),
-      el('span', { class: 'dt-brand-name', text: 'zicato' }),
+      brandWordmark(),
       el('span', { class: 'dt-brand-variant', text: 'console iv' }),
     ]),
     _crumbHost,
     el('span', { class: 'dt-topbar-spacer' }),
     // the SETTINGS entry (B3) — a ⚙ that opens the Settings surface, which now
     // HOMES the tournament builder (the flagship section) alongside contract /
-    // assistant / appearance / dashboard. Uses the router href so the route
+    // assistant / appearance (editable). Uses the router href so the route
     // stays the single source of truth; `#/builder` still deep-links the
     // builder section directly.
     el('a', { class: 'dt-nav-build', href: href('settings', {}), title: 'Settings (tournament builder + preferences)', 'aria-label': 'Open settings' }, [

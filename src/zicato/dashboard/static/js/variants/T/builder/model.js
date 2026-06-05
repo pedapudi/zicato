@@ -188,23 +188,54 @@ function floatOf(params, key, def) {
   return isFinite(n) ? n : def;
 }
 
-// A small inline structure glyph as theme-adaptive SVG for the picker cards —
-// strokes with currentColor so it follows the card's ink in any colour scheme.
-const GLYPH_PATHS = {
-  gauntlet: ['M4,12 H20', 'M14,6 L20,12 L14,18'],
-  single_elim: ['M4,5 V19', 'M4,8 H12 V12', 'M4,16 H12 V12', 'M12,12 H20'],
-  double_elim: ['M4,6 H11 V12', 'M4,12 H11', 'M11,12 H20', 'M4,18 H11 V12'],
-  swiss: ['M4,8 H16', 'M13,5 L16,8 L13,11', 'M20,16 H8', 'M11,13 L8,16 L11,19'],
-  racing: ['M4,5 H20', 'M6,10 H18', 'M8,15 H16', 'M10,20 H14'],
+// A small inline structure glyph as theme-adaptive SVG for the picker cards.
+// PORTED from the approved tournament-builder mockup (its five structure-card
+// figures), re-projected onto a crisp 24×24 viewBox at a single 1.6 stroke
+// weight. Theme tokens only — strokes/fills use `currentColor` (the card paints
+// the glyph in `var(--v2-accent)`), so the mark follows the card's ink in any
+// colour scheme. Each structure declares optional stroked `paths` (brackets /
+// ranking lines) and optional filled `dots` (the duel / funnel nodes):
+//   gauntlet    — two dots joined by a short line (●—●, the 1v1 duel)
+//   swiss       — three stacked horizontal lines of varying length (a ladder)
+//   single_elim — a small knockout bracket
+//   double_elim — a bracket with an extra losers'-lane line
+//   racing      — a funnel of decreasing dots (4 → 2 → 1 narrowing)
+const GLYPH = {
+  gauntlet: {
+    dots: [{ cx: 7, cy: 12, r: 2.4 }, { cx: 17, cy: 12, r: 2.4 }],
+    paths: ['M9.8,12 H14.2'],
+  },
+  swiss: {
+    paths: ['M5,7 H17', 'M5,12 H14', 'M5,17 H19'],
+  },
+  single_elim: {
+    paths: ['M5,7 H11 V12', 'M5,17 H11 V12', 'M11,12 H19'],
+  },
+  double_elim: {
+    paths: ['M5,6 H11 V11', 'M5,11 H11', 'M11,11 H19', 'M5,16 H11 V11', 'M5,20 H17'],
+  },
+  racing: {
+    dots: [
+      { cx: 6, cy: 6, r: 1.8 }, { cx: 11, cy: 6, r: 1.8 }, { cx: 16, cy: 6, r: 1.8 }, { cx: 21, cy: 6, r: 1.8 },
+      { cx: 9, cy: 13, r: 1.8 }, { cx: 16, cy: 13, r: 1.8 },
+      { cx: 12.5, cy: 20, r: 2.2 },
+    ],
+  },
 };
 
 export function structureGlyphSvg(structure) {
-  const paths = GLYPH_PATHS[structure] || GLYPH_PATHS.gauntlet;
+  const g = GLYPH[structure] || GLYPH.gauntlet;
+  const kids = [];
+  if (g.paths && g.paths.length) {
+    kids.push(svgEl('g', { fill: 'none', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' },
+      g.paths.map((d) => svgEl('path', { d }))));
+  }
+  if (g.dots && g.dots.length) {
+    kids.push(svgEl('g', { fill: 'currentColor', stroke: 'none' },
+      g.dots.map((c) => svgEl('circle', { cx: String(c.cx), cy: String(c.cy), r: String(c.r) }))));
+  }
   return svgEl('svg', {
     class: 'dn-bld-cardglyph', width: 24, height: 24, viewBox: '0 0 24 24',
     role: 'img', 'aria-hidden': 'true', focusable: 'false',
-  }, [
-    svgEl('g', { fill: 'none', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' },
-      paths.map((d) => svgEl('path', { d }))),
-  ]);
+  }, kids);
 }

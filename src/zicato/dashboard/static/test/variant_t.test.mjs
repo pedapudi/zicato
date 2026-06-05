@@ -804,6 +804,54 @@ test('pickers: typeface (Technical default) + colour (monokai default) switch + 
   assertEqual(ui.normaliseType('sans'), 'technical', 'the dropped Sans id falls back to Technical');
 });
 
+// ---- the brand wordmark: dotless ı + the accent dot CENTRED on its stem ----
+
+test('brand wordmark: renders "zıcato" with a dotless ı (U+0131) and the accent dot is centred over its stem', async () => {
+  freshState(); installFetch();
+  const listeners = { hashchange: [] };
+  globalThis.HashChangeEvent = function HashChangeEvent() {};
+  globalThis.EventSource = function EventSource() { this.readyState = 0; this.addEventListener = () => {}; this.close = () => {}; };
+  globalThis.EventSource.CLOSED = 2;
+  globalThis.window = globalThis.window || {};
+  globalThis.window.localStorage = globalThis.window.localStorage || { getItem() { return null; }, setItem() {} };
+  globalThis.window.addEventListener = (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); };
+  const loc = { _hash: '#/' };
+  Object.defineProperty(loc, 'hash', {
+    get() { return this._hash; },
+    set(v) { this._hash = v; for (const fn of (listeners.hashchange || [])) fn(); },
+  });
+  globalThis.location = loc;
+  globalThis.window.location = loc;
+  globalThis.window.dispatchEvent = () => { for (const fn of (listeners.hashchange || [])) fn(); };
+
+  const root = document.createElement('div');
+  document.body.appendChild(root);
+  shell.mountShell(root);
+  await new Promise((r) => setTimeout(r, 0));
+
+  // the wordmark is an inline SVG (.dt-brand-name) — not a styled text span —
+  // so the dot can be pinned to the glyph stem + inherit theme tokens.
+  const mark = svgsByClass(root, 'dt-brand-name')[0];
+  assert(mark && mark.localName === 'svg', 'the wordmark renders as an inline SVG');
+
+  // the letters render the DOTLESS ı (U+0131), never a dotted "i".
+  const text = allByClass(mark, 'dt-brand-letters')[0];
+  assert(text, 'the wordmark has a letters <text> element');
+  assertEqual(text.textContent, shell.WORDMARK_TEXT, 'the wordmark text is the brand string');
+  assert(text.textContent.includes('ı'), 'the wordmark uses the dotless ı (U+0131)');
+  assert(!text.textContent.includes('i'), 'no dotted "i" in the wordmark');
+  // the letters fill with currentColor (theme-adaptive), not a hardcoded colour.
+  assertEqual(text.getAttribute('fill'), 'currentColor', 'the letters fill with currentColor (theme token)');
+
+  // THE CENTERING GUARANTEE: the accent dot's cx EQUALS the computed ı stem
+  // centre (pinned to the monospace advance grid). This is the exact assertion
+  // the prior centering pain point demands — a number-equality, not an eyeball.
+  const dot = allByClass(mark, 'dt-brand-dot')[0];
+  assert(dot, 'the wordmark has the accent dot');
+  assertEqual(Number(dot.getAttribute('cx')), shell.wordmarkDotCx(), 'the dot cx equals the ı stem centre');
+  assertEqual(dot.getAttribute('fill'), 'var(--zicato-accent)', 'the dot fills with the accent token');
+});
+
 test('compare primitives: comparePicker reflects the value; splitFrame yields two sides only when B is given', () => {
   let chosen = '__unset__';
   const picker = compare.comparePicker({

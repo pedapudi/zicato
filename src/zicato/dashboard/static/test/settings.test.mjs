@@ -9,7 +9,7 @@
 // /builder/config; the builder section RE-HOMES the B2 builder view (its cards
 // render inside the settings host). Same harness style as builder.test.mjs.
 
-import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
 
 installDom();
 
@@ -102,16 +102,61 @@ test('router: settings crumbs + up climb back to the landing then environment', 
 
 // ── the settings surface ──────────────────────────────────────────────
 
-test('settings: the section rail renders all five sections', async () => {
+test('settings: the section rail renders the four sections (Dashboard retired)', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'contract' });
   const items = byClass(host, 'dn-set-railitem');
-  assertEqual(items.length, 5, 'five settings sections in the rail');
+  assertEqual(items.length, 4, 'four settings sections in the rail');
   const labels = items.map((i) => i.textContent);
   assert(labels.some((l) => l.includes('Tournament builder')), 'the builder section is in the rail');
   assert(labels.some((l) => l.includes('Contract')), 'the contract section is in the rail');
   assert(labels.some((l) => l.includes('Appearance')), 'the appearance section is in the rail');
+  assert(!labels.some((l) => l.includes('Dashboard')), 'the Dashboard section was retired (folded into Appearance)');
+});
+
+test('settings: the Appearance section is EDITABLE and shares the top-bar theme store', async () => {
+  installFetch();
+  globalThis.window.localStorage.clear();
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'appearance' });
+  await tick();
+  const body = firstClass(host, 'dn-set-body');
+  // an editable theme <select>, typeface buttons, and page-scale / rail ranges.
+  const sel = firstClass(body, 'dn-set-select');
+  assert(sel && sel.localName === 'select', 'an editable colour-theme select renders');
+  assert(byClass(body, 'dn-set-typebtn').length === 3, 'the three typeface buttons render');
+  assertEqual(byClass(body, 'dn-set-range').length, 2, 'page-scale + side-panel-width ranges render');
+
+  // changing the theme select drives the SHARED store (applyTheme persists it
+  // to the same localStorage key the top-bar dropdown reads — one source).
+  const ui = await import('../js/variants/T/ui.js');
+  sel.value = 'dracula';
+  sel.dispatchEvent(makeEvent('change'));
+  assertEqual(ui.readColor(), 'dracula', 'the appearance select persisted via the shared theme store');
+
+  // changing the page-scale range drives the SHARED scale store likewise.
+  const ranges = byClass(body, 'dn-set-range');
+  const scaleRange = ranges[0];
+  scaleRange.setAttribute('value', '120');
+  scaleRange.value = '120';
+  scaleRange.dispatchEvent(makeEvent('input'));
+  assertEqual(ui.readScale(), 120, 'the page-scale range persisted via the shared scale store');
+});
+
+test('settings: editing appearance updates the SAME store the top-bar reads (round-trip)', async () => {
+  installFetch();
+  globalThis.window.localStorage.clear();
+  const ui = await import('../js/variants/T/ui.js');
+  // a value set the "top-bar way" (persistType) is reflected by the settings
+  // picker's initial selected button — one source of truth, both directions.
+  ui.persistType('display');
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'appearance' });
+  await tick();
+  const body = firstClass(host, 'dn-set-body');
+  const onBtn = byClass(body, 'dn-set-typebtn').find((b) => b.classList.contains('dn-set-typebtn-on'));
+  assert(onBtn && onBtn.getAttribute('data-type') === 'display', 'the picker reflects the shared typeface store');
 });
 
 test('settings: the Contract section reads /api/epoch as a read-only roll-up', async () => {
