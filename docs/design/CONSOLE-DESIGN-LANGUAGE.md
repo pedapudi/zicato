@@ -1,9 +1,21 @@
-# Console — the design language
+# Console — the dashboard's application of the design language
 
-This document is the single, current source of truth for the **Console**
-dashboard UI (the variant code-named **T**, the convergence winner of the
-dashboard bake-off and the sole shipping front end). It consolidates a design
-language that had been scattered across a round-by-round changelog
+> **Canonical language doc:** the zicato design *language* — the colour tokens,
+> the three typeface modes, the line-art figure conventions, render discipline,
+> accessibility, and a worked "build a new surface" walkthrough — now lives in
+> **[DESIGN-LANGUAGE.md](DESIGN-LANGUAGE.md)**, the single source of truth for
+> any zicato UI. **This** document is the dashboard's *specific application* of
+> that language: the Console view IA (the tree ↔ detail router, overview vs
+> drill-down), the figure-to-purpose mapping, the live-vs-completed conventions,
+> and the design lineage. For a shared token/type/figure value, defer to
+> DESIGN-LANGUAGE.md; for *how the Console uses* it, read on here. Where the two
+> overlap, DESIGN-LANGUAGE.md is canonical for the language and this doc is
+> canonical for the dashboard application.
+
+This document is the current source of truth for the **Console** dashboard UI
+(the variant code-named **T**, the convergence winner of the dashboard bake-off
+and the sole shipping front end). It consolidates a design language that had
+been scattered across a round-by-round changelog
 ([variant-T.md](variant-T.md)) and a stale catalogue
 ([DASHBOARD-VARIANTS.md](DASHBOARD-VARIANTS.md)).
 
