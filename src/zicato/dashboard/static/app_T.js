@@ -8,11 +8,11 @@
 // persistent collapsible nested tree (Environment → Epoch → {Generations|
 // Boards|Mutation surface|Publication}) drives a single detail pane. The
 // orchestrator wires `?ui=T` in index.html; this entry:
-//   1. injects the variant's scoped stylesheet (self-contained),
-//   2. injects the Google Fonts link (the ONLY permitted external dependency —
-//      fonts only, with system fallbacks + font-display: swap),
-//   3. paints the dashboard into #variant-root,
-//   4. reuses the shared data layer (core/{api,sse,state}) untouched.
+//   1. injects the variant's scoped stylesheet (self-contained), which itself
+//      @font-faces the three SELF-HOSTED monospace woff2 under static/fonts/
+//      (no external dependency — a blocked CDN can never affect the page),
+//   2. paints the dashboard into #variant-root,
+//   3. reuses the shared data layer (core/{api,sse,state}) untouched.
 //
 // Everything visual lives under js/variants/T/** + css/variants/T/**.
 
@@ -38,29 +38,13 @@ function ensureStylesheet() {
   document.head.appendChild(link);
 }
 
-// The ONLY external dependency the brief permits: Google Fonts (fonts only).
-// Open Sans (Technical body) + Source Serif 4 (Editorial — body & headings) +
-// JetBrains Mono (Technical data/labels/code) + Space Grotesk (Display body) +
-// Archivo Narrow (Display headings & big nums). `display=swap` so a slow font
-// never blocks paint; system fallbacks live in the stylesheet.
-function ensureFonts() {
-  const id = 'console4-T-fonts';
-  if (document.getElementById(id)) return;
-  const link = document.createElement('link');
-  link.id = id;
-  link.rel = 'stylesheet';
-  link.href = 'https://fonts.googleapis.com/css2'
-    + '?family=Open+Sans:ital,wght@0,400;0,600;0,700;1,400'
-    + '&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400'
-    + '&family=JetBrains+Mono:wght@400;500;700'
-    + '&family=Space+Grotesk:wght@400;500;700'
-    + '&family=Archivo+Narrow:wght@500;600;700'
-    + '&display=swap';
-  document.head.appendChild(link);
-}
+// FONTS: there is NO external font dependency. The three typeface options are
+// all MONOSPACE and SELF-HOSTED as woff2 under static/fonts/ — JetBrains Mono
+// (code), iA Writer Mono (prose/humanist), Space Mono (display) — declared via
+// @font-face in console4.css (font-display: swap; broad system-mono fallbacks).
+// Injecting the stylesheet therefore loads the faces; no CDN link is needed.
 
 export function boot() {
-  ensureFonts();
   ensureStylesheet();
   mountShell(ensureRoot());
 }

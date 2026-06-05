@@ -147,18 +147,33 @@ test('settings: the Appearance section is EDITABLE and shares the top-bar theme 
   await settings.render(host, ctx, { section: 'appearance' });
   await tick();
   const body = firstClass(host, 'dn-set-body');
-  // an editable theme <select>, typeface buttons, and page-scale / rail ranges.
-  const sel = firstClass(body, 'dn-set-select');
-  assert(sel && sel.localName === 'select', 'an editable colour-theme select renders');
+  // CHANGE 1: the theme picker is the SHARED swatch DROPDOWN (the very same
+  // component the top bar renders — dt-cd / dt-cd-option / dt-swatch-strip), NOT
+  // a plain <select>. Each option carries a colour swatch strip + name.
+  const dd = firstClass(body, 'dt-cd');
+  assert(dd, 'the colour theme picker is the shared swatch dropdown (dt-cd)');
+  assert(!firstClass(body, 'dn-set-select'), 'the old plain <select> theme picker is gone');
+  const options = byClass(body, 'dt-cd-option');
+  assert(options.length >= 3, 'one option per theme in the swatch dropdown');
+  for (const opt of options) {
+    const strip = byClass(opt, 'dt-swatch-strip')[0];
+    assert(strip, 'option ' + opt.getAttribute('data-theme') + ' shows a colour swatch strip');
+    assert(byClass(strip, 'dt-swatch').length >= 4, 'the strip renders representative colour swatches');
+  }
+  // typeface buttons, and page-scale / rail ranges.
   assert(byClass(body, 'dn-set-typebtn').length === 3, 'the three typeface buttons render');
   assertEqual(byClass(body, 'dn-set-range').length, 2, 'page-scale + side-panel-width ranges render');
 
-  // changing the theme select drives the SHARED store (applyTheme persists it
-  // to the same localStorage key the top-bar dropdown reads — one source).
+  // choosing a swatch option drives the SHARED store (applyTheme persists it to
+  // the same localStorage key the top-bar dropdown reads — one source).
   const ui = await import('../js/variants/T/ui.js');
-  sel.value = 'dracula';
-  sel.dispatchEvent(makeEvent('change'));
-  assertEqual(ui.readColor(), 'dracula', 'the appearance select persisted via the shared theme store');
+  const dracula = byClass(body, 'dt-cd-option').find((o) => o.getAttribute('data-theme') === 'dracula');
+  assert(dracula, 'the dropdown has a dracula option');
+  dracula.dispatchEvent(makeEvent('click'));
+  assertEqual(ui.readColor(), 'dracula', 'the swatch dropdown persisted via the shared theme store');
+  // the closed trigger now reflects the chosen theme name.
+  assert(firstClass(body, 'dt-cd-trigger').textContent.toLowerCase().includes('dracula'),
+    'the closed trigger shows the chosen theme');
 
   // changing the page-scale range drives the SHARED scale store likewise.
   const ranges = byClass(body, 'dn-set-range');

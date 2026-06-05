@@ -80,18 +80,20 @@ export function persistColor(t) {
 // ---- typeface themes (Technical is the default) ---------------------
 //
 // Each maps to a `[data-t-type]` value the stylesheet keys on (swapping the
-// --n-font-* custom properties). The three are genuinely DIFFERENT voices —
-// body included — so toggling the picker is immediately recognizable as
-// serif · technical-mono · display.
-//   Editorial — Source Serif 4 throughout (body + headings + publication): a
-//               typeset, literary reading voice.
-//   Technical — Open Sans body + JetBrains Mono for data / labels / code.
-//   Display   — Space Grotesk geometric body + Archivo Narrow (condensed)
-//               headings & big numerals: a punchy headline voice.
+// --n-font-* custom properties). Matching Console IV's terminal aesthetic, ALL
+// THREE are MONOSPACE — they vary along a CODE↔PROSE axis (not serif/sans/
+// display), so the whole panel always keeps the fixed advance grid:
+//   Editorial (prose mono)   — iA Writer Mono: a warm, humanist monospace that
+//                              reads like text — the long-form reading voice.
+//   Technical (code mono)    — JetBrains Mono: crisp, grid-y, the canonical
+//                              coding face — the default, tightest voice.
+//   Display (display mono)   — Space Mono: wide, geometric, heavier — a punchy
+//                              headline monospace voice.
+// The labels carry the code↔prose distinction so the picker reads clearly.
 export const TYPE_THEMES = [
-  ['editorial', 'Editorial'],
-  ['technical', 'Technical'],
-  ['display', 'Display'],
+  ['editorial', 'Prose mono'],
+  ['technical', 'Code mono'],
+  ['display', 'Display mono'],
 ];
 const TYPE_IDS = TYPE_THEMES.map((t) => t[0]);
 export const DEFAULT_TYPE = 'technical';

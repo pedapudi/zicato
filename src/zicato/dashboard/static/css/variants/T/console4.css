@@ -19,6 +19,52 @@
  * infinite animation.
  */
 
+/* ===================  self-hosted monospace faces (@font-face)  ===================
+ *
+ * The three typeface options are all MONOSPACE — matching zicato's terminal
+ * aesthetic — and span a code↔prose axis. Each face is a self-hosted, SIL-OFL
+ * woff2 under ../../../fonts/ (relative to this stylesheet at css/variants/T/),
+ * subset to the Latin set the dashboard renders. NO network dependency: the
+ * files ship in the bundle directory, so a blocked CDN never affects the page.
+ *
+ *   JetBrains Mono — CODE: crisp, grid-y, the canonical coding mono.
+ *   iA Writer Mono — PROSE: a warm, humanist mono that reads like text.
+ *   Space Mono     — DISPLAY: wide, geometric, a punchy headline mono.
+ *
+ * `font-display: swap` so a slow font never blocks paint; the `--n-font-*`
+ * token stacks below list broad system-mono fallbacks for the same reason.
+ */
+@font-face {
+  font-family: "JetBrains Mono"; font-style: normal; font-weight: 400;
+  font-display: swap;
+  src: url("../../../fonts/JetBrainsMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono"; font-style: normal; font-weight: 700;
+  font-display: swap;
+  src: url("../../../fonts/JetBrainsMono-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "iA Writer Mono"; font-style: normal; font-weight: 400;
+  font-display: swap;
+  src: url("../../../fonts/iAWriterMonoS-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "iA Writer Mono"; font-style: normal; font-weight: 700;
+  font-display: swap;
+  src: url("../../../fonts/iAWriterMonoS-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Space Mono"; font-style: normal; font-weight: 400;
+  font-display: swap;
+  src: url("../../../fonts/SpaceMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Space Mono"; font-style: normal; font-weight: 700;
+  font-display: swap;
+  src: url("../../../fonts/SpaceMono-Bold.woff2") format("woff2");
+}
+
 /* ===================  the three theme token sets  =================== */
 
 /* Monokai (DEFAULT for J) — warm dark, classic editor palette. */
@@ -373,54 +419,69 @@
   --v2-cell-empty: #371129;
 }
 
-/* ===================  the three typeface themes  ===================
+/* ===================  the three typeface themes (ALL MONOSPACE)  ===================
  *
- * Editorial / Technical / Display — three genuinely DIFFERENT voices, body
- * included, so toggling the picker is immediately recognizable:
- *   Editorial — a reading SERIF throughout (body + headings + publication).
- *   Technical — Open Sans body + JetBrains Mono for data / labels / code.
- *   Display   — a characterful geometric sans body + a condensed display face
- *               for headings & big numerals.
+ * Console IV is a terminal-aesthetic dashboard, so ALL THREE typeface options
+ * are MONOSPACE — they vary along a code↔prose axis rather than serif/sans/
+ * display, so the WHOLE panel (body + headings + publication + data) keeps the
+ * fixed advance grid the marks and the wordmark rely on:
+ *   Technical (DEFAULT, "code mono") — JetBrains Mono: crisp, grid-y, the
+ *               canonical coding face. The tightest, most technical voice.
+ *   Editorial ("prose mono")         — iA Writer Mono: a warm, humanist mono
+ *               that reads like text — the comfortable long-form voice.
+ *   Display ("display mono")         — Space Mono: wide, geometric, a punchy
+ *               headline mono for a bolder, more characterful voice.
  * The picker swaps --v2-sans / --v2-mono / --n-font-head / --n-font-paper via
- * [data-t-type] on the root. Google Fonts are loaded in app_T.js (display=swap);
- * every family lists a system fallback so a slow / blocked font never breaks
- * layout. Default: Technical.
+ * [data-t-type] on the root; since every face is monospace, --v2-sans and
+ * --v2-mono resolve to the SAME family per theme (one mono voice throughout).
+ * Each --n-font-* primitive is a self-hosted woff2 (see @font-face above) with a
+ * BROAD system-mono fallback so a blocked/slow font never breaks the grid.
+ * Default: Technical (code mono).
+ *
+ * TODO(fonts): the woff2 files are full-Latin subsets pulled upstream; a follow-up
+ * could tighten the subset further to only the glyphs the dashboard renders.
  */
 #variant-root[data-variant="T"] {
-  --n-font-base: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --n-font-mono-real: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-  --n-font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
-  --n-font-display: "Archivo Narrow", "Space Grotesk", "Open Sans", system-ui, sans-serif;
-  --n-font-geo: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  /* code mono — crisp, grid-y. */
+  --n-font-code: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  /* prose/humanist mono — warmer, reads like text. */
+  --n-font-prose: "iA Writer Mono", "iA Writer Mono S", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* display mono — wide, geometric, heavier. */
+  --n-font-display-mono: "Space Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
 
-  /* Technical (DEFAULT): Open Sans body + JetBrains Mono data/labels/code. */
-  --v2-sans: var(--n-font-base);
-  --v2-mono: var(--n-font-mono-real);
-  --n-font-head: var(--n-font-base);
-  --n-font-paper: var(--n-font-base);
+  /* THE BRAND MONO — a FIXED monospace the wordmark pins to, INDEPENDENT of the
+   * user's typeface choice, so its dot stays centred on the advance grid no
+   * matter which option is selected (the brand never reflows with the UI). */
+  --v2-brand-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* Technical (DEFAULT): the code mono throughout. */
+  --v2-sans: var(--n-font-code);
+  --v2-mono: var(--n-font-code);
+  --n-font-head: var(--n-font-code);
+  --n-font-paper: var(--n-font-code);
 }
-/* Editorial: a reading SERIF for the WHOLE panel — body, headings, and
- * publication all read like a typeset document. Data labels stay serif too,
- * leaning on Source Serif 4's tabular figures. */
+/* Editorial — the PROSE (humanist) mono for the WHOLE panel: a warmer, more
+ * readable monospace voice for long-form reading, still on the fixed grid. */
 #variant-root[data-variant="T"][data-t-type="editorial"] {
-  --v2-sans: var(--n-font-serif);
-  --v2-mono: var(--n-font-serif);
-  --n-font-head: var(--n-font-serif);
-  --n-font-paper: var(--n-font-serif);
+  --v2-sans: var(--n-font-prose);
+  --v2-mono: var(--n-font-prose);
+  --n-font-head: var(--n-font-prose);
+  --n-font-paper: var(--n-font-prose);
 }
+/* Technical — the CODE mono (default): crisp, grid-y, the most technical voice. */
 #variant-root[data-variant="T"][data-t-type="technical"] {
-  --v2-sans: var(--n-font-base);
-  --v2-mono: var(--n-font-mono-real);
-  --n-font-head: var(--n-font-base);
-  --n-font-paper: var(--n-font-base);
+  --v2-sans: var(--n-font-code);
+  --v2-mono: var(--n-font-code);
+  --n-font-head: var(--n-font-code);
+  --n-font-paper: var(--n-font-code);
 }
-/* Display: a geometric grotesque BODY (Space Grotesk — clearly NOT Open Sans)
- * with a condensed display face (Archivo Narrow) for headings & big numerals. */
+/* Display — the DISPLAY mono: wide, geometric, heavier — a punchy headline voice
+ * (still monospace, still on the advance grid). */
 #variant-root[data-variant="T"][data-t-type="display"] {
-  --v2-sans: var(--n-font-geo);
-  --v2-mono: var(--n-font-mono-real);
-  --n-font-head: var(--n-font-display);
-  --n-font-paper: var(--n-font-geo);
+  --v2-sans: var(--n-font-display-mono);
+  --v2-mono: var(--n-font-display-mono);
+  --n-font-head: var(--n-font-display-mono);
+  --n-font-paper: var(--n-font-display-mono);
 }
 
 /* ===================  the COZY spacing baseline (density removed)  ===================

@@ -21,7 +21,7 @@
 
 import { el, clearChildren } from '../../../core/dom.js';
 import {
-  gatedSwap, section, empty, COLOR_THEMES, TYPE_THEMES, readColor, readType,
+  gatedSwap, section, empty, TYPE_THEMES, readColor, readType,
 } from '../ui.js';
 import {
   SCALE_MIN, SCALE_MAX, SCALE_STEP, readScale,
@@ -30,6 +30,10 @@ import {
 import * as data from '../data.js';
 import { getModels, saveModels } from '../builder/api.js';
 import * as builder from './builder.js';
+// REUSE the SAME swatch-dropdown component the top bar renders (NOT a fork): the
+// settings theme picker is the very same control, so the two render identically
+// and stay in lockstep through the shared store (applyTheme → syncSwatchDropdowns).
+import { buildSwatchDropdown } from '../swatchdropdown.js';
 // REUSE the SAME theme/pref mechanism the top-bar controls drive — these apply
 // to the app root, persist (the one localStorage store ui.js owns), AND sync the
 // top-bar pickers. The Appearance section is editable by calling THESE, so the
@@ -64,6 +68,10 @@ let _models = null;         // /settings/models secret-safe view (models section
 let _modelsDirty = false;   // an unsaved local edit is pending (digest-gate seam)
 let _modelsStatus = '';     // last save outcome message (saved / error)
 let _builderMounted = false; // the builder owns its own shared draft + chrome
+// The SHARED swatch dropdown for the Appearance theme picker — built ONCE and
+// its node REUSED across re-renders (gatedSwap re-appends the same node), so we
+// never register a fresh instance per repaint. applyTheme keeps it in sync.
+let _themeDropdown = null;
 
 function normaliseSection(id) {
   return SECTION_IDS.includes(id) ? id : DEFAULT_SECTION;
@@ -408,20 +416,18 @@ function appRow(label, control) {
   ]);
 }
 
-// COLOUR THEME — a native <select> over all themes, wired to applyTheme (which
-// stamps the root, persists, AND syncs the top-bar swatch dropdown).
+// COLOUR THEME — the SAME swatch dropdown the top bar renders (the shared
+// component, NOT a fork): each option shows its colour swatch strip + name, so
+// settings and the top bar look identical and share one store. Built ONCE and
+// its node reused across re-renders; choosing applies via applyTheme (which
+// stamps the root, persists, AND syncs every live dropdown — top bar + here).
 function themePicker(current) {
-  const sel = el('select', { class: 'dn-set-select', 'aria-label': 'Colour theme' },
-    COLOR_THEMES.map(([id, label]) => {
-      const opt = el('option', { value: id, text: label });
-      if (id === current) opt.setAttribute('selected', 'selected');
-      return opt;
-    }));
-  sel.addEventListener('change', () => {
-    const v = sel.value != null ? sel.value : sel.getAttribute('value');
-    applyTheme(v);
-  });
-  return sel;
+  if (!_themeDropdown) {
+    _themeDropdown = buildSwatchDropdown(current, (id) => { applyTheme(id); });
+  } else {
+    _themeDropdown.setValue(current);
+  }
+  return _themeDropdown.node;
 }
 
 // TYPEFACE — the same three-way button group idiom the top bar uses, wired to

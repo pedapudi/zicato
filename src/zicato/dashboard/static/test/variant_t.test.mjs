@@ -786,11 +786,17 @@ test('pickers: typeface (Technical default) + colour (monokai default) switch + 
   freshState();
   const root = document.createElement('div');
   assertEqual(ui.DEFAULT_COLOR, 'monokai', 'monokai is the default colour theme');
-  assertEqual(ui.DEFAULT_TYPE, 'technical', 'Technical is the default typeface');
+  assertEqual(ui.DEFAULT_TYPE, 'technical', 'Code mono (technical) is the default typeface');
   const typeIds = ui.TYPE_THEMES.map((t) => t[0]);
-  // CHANGE 3: the typeface options are EXACTLY Editorial/Technical/Display — no Sans.
-  assertDeep(typeIds, ['editorial', 'technical', 'display'], 'typefaces are exactly editorial/technical/display (Sans removed)');
+  // The typeface ids are EXACTLY editorial/technical/display — no Sans.
+  assertDeep(typeIds, ['editorial', 'technical', 'display'], 'typeface ids are exactly editorial/technical/display (Sans removed)');
   assert(!typeIds.includes('sans'), 'the redundant Sans typeface is gone');
+  // CHANGE 3: all three are MONOSPACE, with a legible code↔prose distinction
+  // in the LABELS (prose mono / code mono / display mono).
+  const typeLabels = ui.TYPE_THEMES.map((t) => t[1].toLowerCase());
+  assert(typeLabels.every((l) => l.includes('mono')), 'every typeface label names it a monospace voice');
+  assert(typeLabels.some((l) => l.includes('code')) && typeLabels.some((l) => l.includes('prose')),
+    'the labels carry the code-vs-prose distinction');
   const colorIds = ui.COLOR_THEMES.map((t) => t[0]);
   assert(['monokai', 'solarized-dark', 'solarized-light'].every((c) => colorIds.includes(c)), 'the three original colour themes are kept');
   shell.applyTheme('solarized-dark', root);
@@ -850,6 +856,55 @@ test('brand wordmark: renders "zıcato" with a dotless ı (U+0131) and the accen
   assert(dot, 'the wordmark has the accent dot');
   assertEqual(Number(dot.getAttribute('cx')), shell.wordmarkDotCx(), 'the dot cx equals the ı stem centre');
   assertEqual(dot.getAttribute('fill'), 'var(--zicato-accent)', 'the dot fills with the accent token');
+});
+
+// CHANGE 2 + 4: the TYPEFACE button group is gone from the top bar (it lives in
+// Settings → Appearance now); the colour SWATCH DROPDOWN stays; and the wordmark
+// dot stays centred for the FIXED brand mono regardless of the selected typeface.
+test('top bar: NO typeface button group (moved to Settings); swatch dropdown kept; wordmark dot centred for the fixed brand mono', async () => {
+  freshState(); installFetch();
+  const listeners = { hashchange: [] };
+  globalThis.HashChangeEvent = function HashChangeEvent() {};
+  globalThis.EventSource = function EventSource() { this.readyState = 0; this.addEventListener = () => {}; this.close = () => {}; };
+  globalThis.EventSource.CLOSED = 2;
+  globalThis.window = globalThis.window || {};
+  globalThis.window.localStorage = globalThis.window.localStorage || { getItem() { return null; }, setItem() {} };
+  globalThis.window.addEventListener = (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); };
+  const loc = { _hash: '#/' };
+  Object.defineProperty(loc, 'hash', {
+    get() { return this._hash; },
+    set(v) { this._hash = v; for (const fn of (listeners.hashchange || [])) fn(); },
+  });
+  globalThis.location = loc;
+  globalThis.window.location = loc;
+  globalThis.window.dispatchEvent = () => { for (const fn of (listeners.hashchange || [])) fn(); };
+
+  const root = document.createElement('div');
+  document.body.appendChild(root);
+  shell.mountShell(root);
+  await new Promise((r) => setTimeout(r, 0));
+
+  const topbar = allByClass(root, 'dt-topbar')[0];
+  assert(topbar, 'the top bar painted');
+  // the typeface group + its buttons are GONE from the top bar.
+  assertEqual(allByClass(topbar, 'dt-type-switch').length, 0, 'no typeface button group in the top bar');
+  assertEqual(allByClass(topbar, 'dt-type-btn').length, 0, 'no typeface buttons in the top bar');
+  // the colour swatch dropdown + the scale pill + the status pill remain.
+  assert(allByClass(topbar, 'dt-cd')[0], 'the colour swatch dropdown is still in the top bar');
+  assert(allByClass(topbar, 'dt-scale-pill')[0], 'the page-scale pill is still in the top bar');
+  assert(allByClass(topbar, 'dt-status')[0], 'the live-status pill is still in the top bar');
+
+  // the wordmark dot stays centred on the FIXED brand mono — switching the UI
+  // typeface (the swappable --v2-mono) must NOT move the geometrically-pinned dot.
+  const wm = svgsByClass(root, 'dt-brand-name')[0];
+  const dot = allByClass(wm, 'dt-brand-dot')[0];
+  const text = allByClass(wm, 'dt-brand-letters')[0];
+  assertEqual(text.getAttribute('font-family'), 'var(--v2-brand-mono)', 'the wordmark pins to the FIXED brand mono');
+  const cxBefore = Number(dot.getAttribute('cx'));
+  shell.applyTypeface('display', root);
+  shell.applyTypeface('editorial', root);
+  assertEqual(Number(dot.getAttribute('cx')), cxBefore, 'the dot cx is unchanged across typeface switches');
+  assertEqual(Number(dot.getAttribute('cx')), shell.wordmarkDotCx(), 'the dot cx still equals the computed brand-mono stem centre');
 });
 
 test('compare primitives: comparePicker reflects the value; splitFrame yields two sides only when B is given', () => {
@@ -6271,12 +6326,15 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
   coreState.state.activeTournament = null;
 });
 
-// ---- typeface VOICES: the three are genuinely distinct, body included -----
+// ---- typeface voices: ALL THREE are MONOSPACE, code↔prose distinct (CHANGE 3) -----
 //
-// Editorial = serif throughout, Display = a geometric/display sans body, and
-// Technical is UNCHANGED (Open Sans body + JetBrains Mono). Asserted against
-// the resolved --n-font-* / --v2-* token strings declared in the scoped CSS.
-test('typeface voices: editorial=serif body, display=display body, technical UNCHANGED — resolved from the CSS tokens', () => {
+// Console IV is a terminal-aesthetic dashboard, so every typeface option is a
+// MONOSPACE family — they vary along a code↔prose axis, NOT serif/sans/display.
+// Technical = a CODE mono (JetBrains Mono), Editorial = a PROSE/humanist mono
+// (iA Writer Mono), Display = a DISPLAY mono (Space Mono). Asserted against the
+// resolved --n-font-* / --v2-* token strings declared in the scoped CSS, plus
+// each stack ending in a monospace fallback.
+test('typeface voices: ALL THREE are monospace — technical=code mono, editorial=prose mono, display=display mono (from the CSS tokens)', () => {
   const css = readCss();
   // Pull the base block (where --n-font-* primitives are declared) so we can
   // resolve var(...) references the per-type blocks point at.
@@ -6303,53 +6361,87 @@ test('typeface voices: editorial=serif body, display=display body, technical UNC
   const tech = typeBlock('technical');
   const disp = typeBlock('display');
 
-  // base primitives.
-  const openSans = resolve(baseBlock, 'n-font-base');
-  const jetbrains = resolve(baseBlock, 'n-font-mono-real');
-  assert(/Open Sans/.test(openSans), 'base body is Open Sans');
-  assert(/JetBrains Mono/.test(jetbrains), 'base mono is JetBrains Mono');
+  // base mono primitives — every one ends in the generic `monospace` keyword.
+  const code = resolve(baseBlock, 'n-font-code');
+  const prose = resolve(baseBlock, 'n-font-prose');
+  const displayMono = resolve(baseBlock, 'n-font-display-mono');
+  assert(/JetBrains Mono/.test(code) && /monospace\s*$/.test(code), 'code mono is JetBrains Mono → monospace fallback');
+  assert(/iA Writer Mono/.test(prose) && /monospace\s*$/.test(prose), 'prose mono is iA Writer Mono → monospace fallback');
+  assert(/Space Mono/.test(displayMono) && /monospace\s*$/.test(displayMono), 'display mono is Space Mono → monospace fallback');
 
-  // Technical is UNCHANGED: Open Sans body + JetBrains Mono.
-  assertEqual(resolve(tech, 'v2-sans'), openSans, 'technical body (--v2-sans) is Open Sans');
-  assertEqual(resolve(tech, 'n-font-paper'), openSans, 'technical publication is Open Sans');
-  assertEqual(resolve(tech, 'n-font-head'), openSans, 'technical headings are Open Sans');
-  assertEqual(resolve(tech, 'v2-mono'), jetbrains, 'technical data/labels are JetBrains Mono');
+  // Technical (DEFAULT) = the CODE mono, applied to EVERY surface (body, mono,
+  // headings, publication) — one mono voice throughout.
+  for (const tok of ['v2-sans', 'v2-mono', 'n-font-head', 'n-font-paper']) {
+    assertEqual(resolve(tech, tok), code, 'technical ' + tok + ' is the code mono (JetBrains Mono)');
+  }
+  // Editorial = the PROSE/humanist mono throughout.
+  for (const tok of ['v2-sans', 'v2-mono', 'n-font-head', 'n-font-paper']) {
+    assertEqual(resolve(ed, tok), prose, 'editorial ' + tok + ' is the prose mono (iA Writer Mono)');
+  }
+  // Display = the DISPLAY mono throughout.
+  for (const tok of ['v2-sans', 'v2-mono', 'n-font-head', 'n-font-paper']) {
+    assertEqual(resolve(disp, tok), displayMono, 'display ' + tok + ' is the display mono (Space Mono)');
+  }
 
-  // Editorial: the BODY is a SERIF, distinct from Open Sans.
-  const edSans = resolve(ed, 'v2-sans');
-  const edPaper = resolve(ed, 'n-font-paper');
-  assert(/Source Serif 4/.test(edSans), 'editorial body (--v2-sans) is a serif (Source Serif 4)');
-  assert(/serif/.test(edSans), 'editorial body stack ends in a serif fallback');
-  assert(edSans !== openSans, 'editorial body is NOT Open Sans');
-  assert(/Source Serif 4/.test(edPaper) && /serif/.test(edPaper), 'editorial publication voice is serif');
-  assert(/Source Serif 4|serif/.test(resolve(ed, 'n-font-head')), 'editorial headings are serif');
-
-  // Display: the BODY is the display/geometric family, distinct from both
-  // Open Sans and the serif; headings are the condensed display face.
-  const dispSans = resolve(disp, 'v2-sans');
-  const dispPaper = resolve(disp, 'n-font-paper');
-  const dispHead = resolve(disp, 'n-font-head');
-  assert(/Space Grotesk/.test(dispSans), 'display body (--v2-sans) is the geometric display family (Space Grotesk)');
-  assert(dispSans !== openSans, 'display body is NOT Open Sans');
-  assert(!/Source Serif 4/.test(dispSans) && dispSans !== edSans, 'display body is NOT the editorial serif');
-  assert(/Space Grotesk/.test(dispPaper), 'display publication voice is the geometric family');
-  assert(/Archivo Narrow/.test(dispHead), 'display headings/big-nums are the condensed display face (Archivo Narrow)');
-
-  // the three bodies are mutually distinct.
-  assert(edSans !== dispSans && edSans !== openSans && dispSans !== openSans,
-    'editorial / technical / display bodies are three distinct families');
+  // EVERY resolved body stack is monospace; the three are mutually distinct.
+  for (const [id, stack] of [['technical', code], ['editorial', prose], ['display', displayMono]]) {
+    assert(/monospace\s*$/.test(stack), id + ' body stack ends in the generic monospace keyword');
+  }
+  assert(code !== prose && code !== displayMono && prose !== displayMono,
+    'code / prose / display monos are three distinct families');
+  // and none is a serif or proportional sans — purely a code↔prose mono axis.
+  for (const stack of [code, prose, displayMono]) {
+    assert(!/serif/.test(stack) || /monospace/.test(stack), 'no proportional serif voice — monospace only');
+  }
 });
 
-// any newly-added font family is actually loaded by app_T.js's Google-Fonts loader.
-test('font loader: every typeface family used in the CSS is requested by app_T.js', async () => {
+// the brand wordmark pins to a FIXED brand mono, INDEPENDENT of the user's
+// typeface — so its dot stays centred regardless of the selected typeface.
+test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappable --v2-mono token', async () => {
+  const css = readCss();
+  const baseM = css.match(/#variant-root\[data-variant="T"\]\s*\{([^}]*)\}/);
+  assert(baseM, 'the base token block exists');
+  const base = baseM[1];
+  const brand = (base.match(/--v2-brand-mono\s*:\s*([^;]+);/) || [])[1];
+  assert(brand, 'the base block declares a fixed --v2-brand-mono token');
+  assert(/monospace\s*$/.test(brand.trim()), 'the brand mono stack ends in the generic monospace keyword');
+  // it is NOT declared inside any per-type block, so it never swaps with the UI.
+  for (const id of ['editorial', 'technical', 'display']) {
+    const m = css.match(new RegExp('#variant-root\\[data-variant="T"\\]\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
+    assert(m && !/--v2-brand-mono/.test(m[1]), 'the ' + id + ' typeface block does NOT re-declare the brand mono (it stays fixed)');
+  }
+  // the wordmark <text> pins to the fixed brand mono (not the swappable mono).
+  const fsmod = await import('node:fs');
+  const src = fsmod.readFileSync(new URL('../js/variants/T/shell.js', import.meta.url), 'utf8');
+  assert(/var\(--v2-brand-mono\)/.test(src), 'the wordmark text font-family is var(--v2-brand-mono)');
+});
+
+// the three monospace faces are SELF-HOSTED woff2 declared via @font-face in the
+// scoped CSS — NO external font CDN, so a blocked network never affects the page.
+test('fonts: the three monospace faces are SELF-HOSTED woff2 via @font-face (no CDN)', async () => {
+  const css = readCss();
+  for (const fam of ['JetBrains Mono', 'iA Writer Mono', 'Space Mono']) {
+    const re = new RegExp('@font-face[^}]*font-family:\\s*"' + fam + '"[^}]*url\\([^)]*\\.woff2[^)]*\\)\\s*format\\("woff2"\\)', 's');
+    assert(re.test(css), '@font-face declares ' + fam + ' from a local .woff2');
+  }
+  assert(/font-display:\s*swap/.test(css), 'faces load with font-display: swap');
+  // the @font-face src never points at an external host.
+  const faces = css.match(/@font-face\s*\{[^}]*\}/gs) || [];
+  assert(faces.length >= 3, 'at least three @font-face blocks declared');
+  for (const f of faces) assert(!/url\(\s*['"]?https?:/.test(f), 'a face src is a LOCAL url (no http/https CDN)');
+
+  // app_T.js no longer injects an external Google-Fonts link — the faces are
+  // loaded purely by the self-hosting @font-face in the stylesheet.
   const fs = await import('node:fs');
   const appJs = fs.readFileSync(new URL('../app_T.js', import.meta.url), 'utf8');
-  // the loader builds a Google Fonts css2 URL with &family=Name+Parts:...
-  const loaded = [...appJs.matchAll(/family=([A-Za-z0-9+]+)/g)].map((m) => m[1].replace(/\+/g, ' '));
-  for (const fam of ['Open Sans', 'JetBrains Mono', 'Source Serif 4', 'Space Grotesk', 'Archivo Narrow']) {
-    assert(loaded.includes(fam), 'app_T.js loads the ' + fam + ' family (display=swap)');
+  assert(!/fonts\.googleapis\.com/.test(appJs), 'app_T.js no longer references an external font CDN');
+
+  // the woff2 files actually ship on disk under static/fonts/.
+  const path = await import('node:path');
+  const fontsDir = path.dirname(new URL('../app_T.js', import.meta.url).pathname) + '/fonts';
+  for (const f of ['JetBrainsMono-Regular.woff2', 'iAWriterMonoS-Regular.woff2', 'SpaceMono-Regular.woff2']) {
+    assert(fs.existsSync(fontsDir + '/' + f) && fs.statSync(fontsDir + '/' + f).size > 0, 'ships ' + f);
   }
-  assert(/display=swap/.test(appJs), 'fonts are requested with display=swap');
 });
 
 // ====================================================================
