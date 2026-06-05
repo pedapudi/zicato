@@ -86,6 +86,13 @@ class ProposerContext:
     meta_loop_emitter: MetaLoopEmitter | None = None
     custom_judge_names: frozenset[str] | None = None
     prior_experiments: tuple[PriorExperiment, ...] = ()
+    #: When ``True`` (the default-on
+    #: :attr:`~zicato.core.types.OverfittingConfig.restrict_proposer_visibility`
+    #: posture, set by the orchestrator from the epoch's scoring config),
+    #: the assembled prompt aggregates per-entry pattern identities to
+    #: counts/rates and coarsens experiment-memory Δscalar to buckets
+    #: (OVERFITTING.md §11). ``False`` renders the verbatim prompt.
+    restrict_visibility: bool = False
 
 
 class ProposerAgent(Protocol):
@@ -135,6 +142,7 @@ class DefaultProposerAgent:
             custom_judge_names=ctx.custom_judge_names,
             prior_experiments=ctx.prior_experiments,
             skills=self.spec.skills,
+            restrict_visibility=ctx.restrict_visibility,
         )
 
 

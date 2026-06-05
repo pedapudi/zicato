@@ -25,6 +25,108 @@ def _agg(
     }
 
 
+# ---------------------------------------------------------------------------
+# Holdout-confirmation step (OVERFITTING.md §12 #1 / §13). A train-measured
+# win must also confirm on the holdout; a failure is just another reject and
+# the champion stands. An absent holdout skips the step entirely so the
+# decision is byte-identical to the pre-split gate.
+# ---------------------------------------------------------------------------
+
+
+def test_holdout_absent_is_byte_identical_to_pre_split() -> None:
+    parent = _agg(scalar=1.0, pass_rate=0.5, per_entry={"a": {"pass_fail": True}})
+    child = _agg(scalar=0.5, pass_rate=1.0, per_entry={"a": {"pass_fail": True}})
+    weights = ScoringWeights(promote_margin=0.1)
+
+    without = evaluate_gate(parent, child, weights)
+    with_none = evaluate_gate(
+        parent, child, weights, holdout_parent_agg=None, holdout_child_agg=None
+    )
+    assert without == with_none
+    assert without.decision == "promoted"
+
+
+def test_holdout_confirms_a_train_win() -> None:
+    parent = _agg(scalar=1.0, per_entry={"a": {"pass_fail": True}})
+    child = _agg(scalar=0.5, per_entry={"a": {"pass_fail": True}})
+    # The holdout slice also improves (or at least does not regress).
+    h_parent = _agg(scalar=1.0, per_entry={"h": {"pass_fail": True}})
+    h_child = _agg(scalar=0.8, per_entry={"h": {"pass_fail": True}})
+    weights = ScoringWeights(promote_margin=0.1)
+
+    outcome = evaluate_gate(
+        parent, child, weights, holdout_parent_agg=h_parent, holdout_child_agg=h_child
+    )
+    assert outcome.decision == "promoted"
+    assert outcome.reason == ""
+
+
+def test_holdout_scalar_regression_flips_a_train_win_to_reject() -> None:
+    parent = _agg(scalar=1.0, per_entry={"a": {"pass_fail": True}})
+    child = _agg(scalar=0.5, per_entry={"a": {"pass_fail": True}})  # clear train win
+    # The holdout REGRESSES past the margin: the challenger memorized train.
+    h_parent = _agg(scalar=1.0, per_entry={"h": {"pass_fail": True}})
+    h_child = _agg(scalar=1.5, per_entry={"h": {"pass_fail": True}})
+    weights = ScoringWeights(promote_margin=0.1)
+
+    outcome = evaluate_gate(
+        parent, child, weights, holdout_parent_agg=h_parent, holdout_child_agg=h_child
+    )
+    assert outcome.decision == "rejected"
+    assert "holdout_not_confirmed" in outcome.reason
+    # The reported deltas are still the TRAIN-side deltas.
+    assert outcome.delta_scalar == pytest.approx(-0.5)
+
+
+def test_holdout_per_entry_regression_flips_a_train_win_to_reject() -> None:
+    parent = _agg(scalar=1.0, per_entry={"a": {"pass_fail": True}})
+    child = _agg(scalar=0.5, per_entry={"a": {"pass_fail": True}})
+    # Holdout scalar holds flat, but an entry the champion passed regressed.
+    h_parent = _agg(scalar=1.0, per_entry={"h": {"pass_fail": True}})
+    h_child = _agg(scalar=1.0, per_entry={"h": {"pass_fail": False}})
+    weights = ScoringWeights(promote_margin=0.1)
+
+    outcome = evaluate_gate(
+        parent, child, weights, holdout_parent_agg=h_parent, holdout_child_agg=h_child
+    )
+    assert outcome.decision == "rejected"
+    assert "holdout_not_confirmed" in outcome.reason
+    assert "h" in outcome.reason
+
+
+def test_holdout_flat_is_a_confirmation_not_a_failure() -> None:
+    # A train win whose holdout merely holds flat (no regression) confirms —
+    # the holdout is not asked to clear the margin in the improving direction.
+    parent = _agg(scalar=1.0, per_entry={"a": {"pass_fail": True}})
+    child = _agg(scalar=0.5, per_entry={"a": {"pass_fail": True}})
+    h_parent = _agg(scalar=1.0, per_entry={"h": {"pass_fail": True}})
+    h_child = _agg(scalar=1.0, per_entry={"h": {"pass_fail": True}})  # exactly flat
+    weights = ScoringWeights(promote_margin=0.1)
+
+    outcome = evaluate_gate(
+        parent, child, weights, holdout_parent_agg=h_parent, holdout_child_agg=h_child
+    )
+    assert outcome.decision == "promoted"
+
+
+def test_train_reject_fires_before_holdout_confirmation() -> None:
+    # A train-side reject (insufficient margin) must surface its own reason,
+    # not a holdout reason — the holdout step only runs after the train rules
+    # would have promoted.
+    parent = _agg(scalar=1.0, per_entry={"a": {"pass_fail": True}})
+    child = _agg(scalar=0.999, per_entry={"a": {"pass_fail": True}})  # near-miss
+    h_parent = _agg(scalar=1.0, per_entry={"h": {"pass_fail": True}})
+    h_child = _agg(scalar=5.0, per_entry={"h": {"pass_fail": False}})  # awful holdout
+    weights = ScoringWeights(promote_margin=0.1)
+
+    outcome = evaluate_gate(
+        parent, child, weights, holdout_parent_agg=h_parent, holdout_child_agg=h_child
+    )
+    assert outcome.decision == "rejected"
+    assert "insufficient improvement" in outcome.reason
+    assert "holdout_not_confirmed" not in outcome.reason
+
+
 def test_gate_promotes_when_child_beats_parent_by_margin() -> None:
     parent = _agg(scalar=1.0, pass_rate=0.5, per_entry={"a": {"pass_fail": True}})
     child = _agg(scalar=0.5, pass_rate=1.0, per_entry={"a": {"pass_fail": True}})

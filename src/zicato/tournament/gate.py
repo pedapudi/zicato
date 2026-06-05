@@ -43,7 +43,20 @@ Three rules, applied in order:
    and names every regressing namespace in the reason. Namespaces
    whose flag is missing or ``False`` are not gated this way.
 
-If no rule rejects, the gate promotes.
+If no rule rejects, the gate promotes — UNLESS a holdout-confirmation
+step is supplied (OVERFITTING.md §1/§12 #1, §13). When the caller passes
+a held-out slice's parent/child aggregates, a train-measured win must
+*also* confirm on the holdout: the challenger's holdout scalar may not
+regress past ``promote_margin`` versus the champion's, and no entry the
+champion passed on the holdout may have regressed. A failed confirmation
+is just another reason to ``reject`` (reason ``holdout_not_confirmed``);
+the champion stands, exactly as on any other reject — the
+protected-incumbent invariant is untouched. The holdout is
+confirmation-only: it never steers selection or the proposer, and it is
+applied AFTER the three train-slice rules so a train reject still fires
+first with its specific reason. When no holdout is supplied (the board
+was too small to split, or the split is disabled) the step is skipped
+entirely and the decision is byte-identical to the pre-split gate.
 
 The :class:`GateOutcome` records the delta values regardless of the
 decision, so the journal always has the same shape of evidence to
@@ -165,12 +178,74 @@ def _regressed_entries(parent_agg: dict[str, Any], child_agg: dict[str, Any]) ->
     return regressed
 
 
+def _holdout_confirms(
+    holdout_parent_agg: dict[str, Any],
+    holdout_child_agg: dict[str, Any],
+    weights: ScoringWeights,
+) -> str:
+    """Return ``""`` when the holdout confirms the win, else a reason.
+
+    Reuses the same machinery the train slice is gated by — the
+    ``promote_margin`` regression band on the holdout scalar, and the
+    pass-rate monotonicity check on the holdout's per-entry rows — but in
+    *confirmation* form: the challenger must merely *not regress* on the
+    holdout. Concretely it rejects when
+
+    * the challenger's holdout loss rose past the champion's by more than
+      ``promote_margin`` (a real holdout regression, not noise), OR
+    * any entry the champion passed on the holdout regressed (reusing
+      :func:`_regressed_entries`, gated by ``pass_rate_monotonicity`` so
+      operators who disabled it on the train side disable it here too).
+
+    The holdout is never asked to clear ``promote_margin`` in the
+    *improving* direction — a train-measured win that merely holds flat on
+    the holdout is a confirmation, not a failure. This is the asymmetry
+    that makes the holdout a guard against board-memorization rather than a
+    second, stricter promotion bar.
+    """
+    parent_scalar = float(holdout_parent_agg["scalar"])
+    child_scalar = float(holdout_child_agg["scalar"])
+    # A holdout regression: the challenger's holdout loss rose past the
+    # champion's by more than the noise band. (delta > +margin ⇒ regressed.)
+    if child_scalar - parent_scalar > weights.promote_margin:
+        return (
+            f"holdout_not_confirmed: holdout loss rose by "
+            f"{child_scalar - parent_scalar:.6f} "
+            f"(champion {parent_scalar:.6f} -> challenger {child_scalar:.6f}); "
+            f"a train-measured win must hold within {weights.promote_margin:.6f} "
+            f"on the holdout slice"
+        )
+    if weights.pass_rate_monotonicity:
+        regressed = _regressed_entries(holdout_parent_agg, holdout_child_agg)
+        if regressed:
+            return "holdout_not_confirmed: holdout pass-rate regression on entries: " + ", ".join(
+                regressed
+            )
+    return ""
+
+
 def evaluate_gate(
     parent_agg: dict[str, Any],
     child_agg: dict[str, Any],
     weights: ScoringWeights,
+    *,
+    holdout_parent_agg: dict[str, Any] | None = None,
+    holdout_child_agg: dict[str, Any] | None = None,
 ) -> GateOutcome:
-    """Apply the promote gate. See module docstring for the rules."""
+    """Apply the promote gate. See module docstring for the rules.
+
+    ``parent_agg`` / ``child_agg`` are the TRAIN-slice aggregates (or the
+    full-board aggregates when the board was not split) — the three rules
+    decide on them, and selection / standings read the train scalar. When
+    ``holdout_parent_agg`` / ``holdout_child_agg`` are supplied AND the
+    train rules would promote, the win must also confirm on the holdout
+    (see :func:`_holdout_confirms`); a failure flips the promotion to a
+    ``reject`` with reason ``holdout_not_confirmed``. Both holdout
+    arguments ``None`` (the small-board / disabled case) skips the step,
+    leaving the decision byte-identical to the pre-split gate. The reported
+    deltas are always the train-side deltas so the journal's evidence shape
+    is unchanged.
+    """
     parent_scalar = float(parent_agg["scalar"])
     child_scalar = float(child_agg["scalar"])
     parent_pass = float(parent_agg.get("pass_rate", 1.0))
@@ -237,6 +312,20 @@ def evaluate_gate(
             delta_scalar=delta_scalar,
             delta_pass_rate=delta_pass_rate,
         )
+
+    # Holdout confirmation (OVERFITTING.md §12 #1). The three train rules
+    # cleared; if the caller split out a holdout, the win must also confirm
+    # there. An empty / absent holdout skips this step entirely so behavior
+    # is byte-identical to the pre-split gate. Deltas stay train-side.
+    if holdout_parent_agg is not None and holdout_child_agg is not None:
+        holdout_reason = _holdout_confirms(holdout_parent_agg, holdout_child_agg, weights)
+        if holdout_reason:
+            return GateOutcome(
+                decision="rejected",
+                reason=holdout_reason,
+                delta_scalar=delta_scalar,
+                delta_pass_rate=delta_pass_rate,
+            )
 
     return GateOutcome(
         decision="promoted",

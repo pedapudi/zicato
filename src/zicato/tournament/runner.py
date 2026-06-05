@@ -1552,6 +1552,8 @@ async def _gate_with_regression(
     child_agg: dict[str, Any],
     child_snapshot_root: Path,
     weights: ScoringWeights,
+    holdout_parent_agg: dict[str, Any] | None = None,
+    holdout_child_agg: dict[str, Any] | None = None,
 ) -> GateOutcome:
     """Apply the promote gate, prefixed by a regression-suite check.
 
@@ -1562,6 +1564,13 @@ async def _gate_with_regression(
     :class:`GateOutcome` to ``"rejected"`` with a reason like
     ``"regression suite failed: N tests"`` — regardless of how strongly
     the child improved on drift_loss / pass_rate.
+
+    ``parent_agg`` / ``child_agg`` are the TRAIN-slice aggregates (equal to
+    the full-board aggregates when the board was not split). The optional
+    ``holdout_parent_agg`` / ``holdout_child_agg`` thread the holdout slice
+    into :func:`~zicato.tournament.gate.evaluate_gate` for the
+    holdout-confirmation step; both ``None`` skips it (the small-board /
+    disabled case) for byte-identical pre-split behaviour.
 
     The deltas reported on the outcome are still computed against the
     aggregate dicts so the journal can render evidence even when a
@@ -1575,7 +1584,86 @@ async def _gate_with_regression(
         )
         if not regression.passed:
             return _regression_rejection(parent_agg, child_agg, regression)
-    return evaluate_gate(parent_agg, child_agg, weights)
+    return evaluate_gate(
+        parent_agg,
+        child_agg,
+        weights,
+        holdout_parent_agg=holdout_parent_agg,
+        holdout_child_agg=holdout_child_agg,
+    )
+
+
+def _losses_for(
+    board: list[BoardEntry],
+    id_set: set[str],
+    losses: dict[str, LossProfile],
+) -> list[LossProfile]:
+    """Return the loss profiles for ``id_set``, in board order.
+
+    A slice id with no recorded loss on this side is simply skipped — the
+    aggregator and the gate compare whatever overlaps.
+    """
+    return [losses[e.id] for e in board if e.id in id_set and e.id in losses]
+
+
+def _holdout_aggs(
+    board: list[BoardEntry],
+    parent_losses: dict[str, LossProfile],
+    child_losses: dict[str, LossProfile],
+    weights: ScoringWeights,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Return the holdout parent/child aggregates, or ``(None, None)``.
+
+    Splits the board into train / holdout ids via
+    :func:`zicato.board.split.split_board`. When the holdout is empty (the
+    board is too small to split, or the split is disabled, or no entry is
+    tagged), returns ``(None, None)`` so the gate's holdout-confirmation
+    step is skipped and behaviour is byte-identical to today.
+
+    Otherwise aggregates the parent and child loss profiles restricted to
+    the holdout ids — the confirmation-only slice the proposer never sees.
+    A holdout id with no recorded loss on a side is simply omitted from
+    that side's aggregate (the gate compares whatever overlaps).
+    """
+    from zicato.board.split import split_board  # noqa: PLC0415
+
+    _train_ids, holdout_ids = split_board(board, weights.overfitting)
+    if not holdout_ids:
+        return None, None
+    holdout_set = set(holdout_ids)
+    # Preserve board order in each slice (split_board already returns ids in
+    # board order, but iterating the board keeps a single source of truth).
+    parent_holdout = _losses_for(board, holdout_set, parent_losses)
+    child_holdout = _losses_for(board, holdout_set, child_losses)
+    return (
+        aggregate_generation_score(parent_holdout, weights),
+        aggregate_generation_score(child_holdout, weights),
+    )
+
+
+def _train_aggs(
+    board: list[BoardEntry],
+    parent_losses: dict[str, LossProfile],
+    child_losses: dict[str, LossProfile],
+    weights: ScoringWeights,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return the TRAIN-slice parent/child aggregates.
+
+    The train slice drives the three gate rules and steers selection /
+    standings. When the holdout is empty the train slice IS the full board,
+    so these aggregates are byte-identical to the pre-split full-board
+    aggregates — the back-compat invariant.
+    """
+    from zicato.board.split import split_board  # noqa: PLC0415
+
+    train_ids, _holdout_ids = split_board(board, weights.overfitting)
+    train_set = set(train_ids)
+    parent_train = _losses_for(board, train_set, parent_losses)
+    child_train = _losses_for(board, train_set, child_losses)
+    return (
+        aggregate_generation_score(parent_train, weights),
+        aggregate_generation_score(child_train, weights),
+    )
 
 
 def _regression_rejection(
@@ -1716,14 +1804,25 @@ async def run_tournament(
             except Exception:  # noqa: BLE001
                 pass
 
-    parent_agg = aggregate_generation_score(list(parent_losses.values()), weights)
-    child_agg = aggregate_generation_score(list(child_losses.values()), weights)
+    # The scalar that gates promotion and steers selection / standings is
+    # the TRAIN-slice scalar (OVERFITTING.md §12 #1). When the board is too
+    # small to split — the common case and the default-safe degrade — the
+    # train slice IS the full board, so these aggregates are byte-identical
+    # to the pre-split full-board aggregates. The holdout slice (if any) is
+    # confirmation-only and is threaded into the gate separately; it never
+    # becomes the generation's reported score.
+    parent_agg, child_agg = _train_aggs(board, parent_losses, child_losses, weights)
+    holdout_parent_agg, holdout_child_agg = _holdout_aggs(
+        board, parent_losses, child_losses, weights
+    )
 
     outcome = await _gate_with_regression(
         parent_agg=parent_agg,
         child_agg=child_agg,
         child_snapshot_root=child_gen.snapshot_root,
         weights=weights,
+        holdout_parent_agg=holdout_parent_agg,
+        holdout_child_agg=holdout_child_agg,
     )
 
     per_entry_losses: dict[str, tuple[LossProfile, LossProfile]] = {}
@@ -1892,6 +1991,12 @@ async def run_fast_mode(
             except Exception:  # noqa: BLE001
                 pass
 
+    # Fast mode compares the child against a cached whole-board historical
+    # aggregate, so it does NOT thread a holdout into the gate: a train-only
+    # child aggregate compared to a whole-board parent baseline would be an
+    # apples-to-oranges scalar and could wrongly flip a decision. The
+    # holdout-confirmation step lives on the full A/B path (the default
+    # gauntlet promotion path); fast mode stays byte-identical to today.
     child_agg = aggregate_generation_score(list(child_losses.values()), weights)
     outcome = await _gate_with_regression(
         parent_agg=parent_historical_agg,

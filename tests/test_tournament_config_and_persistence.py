@@ -19,6 +19,8 @@ from zicato.epoch.journal import _outcome_from_dict
 from zicato.runtime.state import ActiveTournament, ActiveTournamentEntry
 from zicato.workspace_loader import (
     _scoring_weights_from_dict,
+    overfitting_config_from_dict,
+    overfitting_config_to_dict,
     tournament_structure_from_dict,
     tournament_structure_to_dict,
 )
@@ -64,6 +66,68 @@ def test_tournament_block_round_trips() -> None:
     again = tournament_structure_from_dict(tournament_structure_to_dict(spec))
     assert again.structure == "racing"
     assert again.params == {"eta": 3, "board_fraction": 0.5}
+
+
+# ---------------------------------------------------------------------------
+# Anti-overfitting config parsing + round-trip (OVERFITTING.md §12 #1/#3)
+# ---------------------------------------------------------------------------
+
+
+def test_absent_overfitting_block_is_default_on() -> None:
+    cfg = overfitting_config_from_dict(None)
+    assert cfg.enabled is True
+    assert cfg.holdout_fraction == 0.3
+    assert cfg.min_board_size_for_split == 8
+    assert cfg.restrict_proposer_visibility is True
+
+
+def test_scoring_without_overfitting_key_is_default_on() -> None:
+    w = _scoring_weights_from_dict({"drift_weight": 2.0})
+    assert w.overfitting.enabled is True
+    assert w.overfitting.restrict_proposer_visibility is True
+
+
+def test_scoring_parses_overfitting_block() -> None:
+    w = _scoring_weights_from_dict(
+        {
+            "overfitting": {
+                "enabled": False,
+                "holdout_fraction": 0.25,
+                "min_board_size_for_split": 12,
+                "restrict_proposer_visibility": False,
+            }
+        }
+    )
+    o = w.overfitting
+    assert o.enabled is False
+    assert o.holdout_fraction == 0.25
+    assert o.min_board_size_for_split == 12
+    assert o.restrict_proposer_visibility is False
+
+
+def test_overfitting_block_round_trips() -> None:
+    from zicato.core.types import OverfittingConfig
+
+    cfg = OverfittingConfig(
+        enabled=False,
+        holdout_fraction=0.4,
+        min_board_size_for_split=10,
+        restrict_proposer_visibility=False,
+    )
+    again = overfitting_config_from_dict(overfitting_config_to_dict(cfg))
+    assert again == cfg
+
+
+def test_scoring_lifecycle_serde_preserves_overfitting() -> None:
+    # The lifecycle serializer (_scoring_to_dict / _scoring_from_dict) must
+    # carry the overfitting block through a full round-trip so a frozen
+    # epoch's config.json reloads with the same anti-overfitting contract.
+    from zicato.core.types import OverfittingConfig
+    from zicato.epoch.lifecycle import _scoring_from_dict, _scoring_to_dict
+
+    weights = ScoringWeights(overfitting=OverfittingConfig(enabled=False, holdout_fraction=0.45))
+    again = _scoring_from_dict(_scoring_to_dict(weights))
+    assert again.overfitting == weights.overfitting
 
 
 # ---------------------------------------------------------------------------

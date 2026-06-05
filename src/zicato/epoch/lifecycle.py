@@ -127,7 +127,10 @@ def _make_epoch_id(workspace_root: Path, name: str) -> str:
 
 
 def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
-    from zicato.workspace_loader import tournament_structure_to_dict  # noqa: PLC0415
+    from zicato.workspace_loader import (  # noqa: PLC0415
+        overfitting_config_to_dict,
+        tournament_structure_to_dict,
+    )
 
     return {
         "drift_weight": weights.drift_weight,
@@ -141,6 +144,7 @@ def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
         "promote_margin": weights.promote_margin,
         "pass_rate_monotonicity": weights.pass_rate_monotonicity,
         "tournament": tournament_structure_to_dict(weights.tournament_structure),
+        "overfitting": overfitting_config_to_dict(weights.overfitting),
     }
 
 
@@ -151,7 +155,10 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     # dataclass default. ``default_judge_weight`` is forwarded only when
     # the key is present, for the same back-compat reason. Mirror of
     # :func:`zicato.workspace_loader._scoring_weights_from_dict`.
-    from zicato.workspace_loader import tournament_structure_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import (  # noqa: PLC0415
+        overfitting_config_from_dict,
+        tournament_structure_from_dict,
+    )
 
     judge_kwargs: dict[str, Any] = {}
     raw_per_judge = d.get("per_judge_weights")
@@ -162,6 +169,9 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     # The tournament structure rides in the ``tournament`` block; absent
     # ⇒ gauntlet. Threaded into both ScoringWeights branches below.
     judge_kwargs["tournament_structure"] = tournament_structure_from_dict(d.get("tournament"))
+    # The anti-overfitting config rides in the ``overfitting`` block;
+    # absent ⇒ the default-on config. Threaded into both branches below.
+    judge_kwargs["overfitting"] = overfitting_config_from_dict(d.get("overfitting"))
     raw_sev = d.get("severity_weights")
     if raw_sev:
         severity = {str(k): float(v) for k, v in raw_sev.items()}

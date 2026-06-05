@@ -601,13 +601,25 @@ async def evolve_once(
     # write the snapshot must never abort the round.
     _dump_mutations_snapshot(workspace_root, resolved_epoch_id, mutations)
     # --- 4. Patterns ---
+    # The proposer + detectors + loss summary see the TRAIN slice ONLY
+    # (OVERFITTING.md §11.1, §12 #1): the holdout's per-entry behaviour is
+    # never surfaced to the proposer, so it cannot be memorized. When the
+    # board is too small to split (the default-safe degrade), the train
+    # slice IS the full board and every downstream artifact is byte-
+    # identical to the pre-split behaviour. The mutation manifest (code
+    # spans) is unrelated to the split and is left untouched.
+    from zicato.board.split import split_board  # noqa: PLC0415
+
+    train_ids, _holdout_ids = split_board(board, weights.overfitting)
+    train_id_set = set(train_ids)
+    train_board = [e for e in board if e.id in train_id_set]
     losses = _load_parent_losses(
-        workspace_root, resolved_epoch_id, parent_id, board, read_loss_profile
+        workspace_root, resolved_epoch_id, parent_id, train_board, read_loss_profile
     )
-    events_paths = _build_events_paths(workspace_root, resolved_epoch_id, parent_id, board)
+    events_paths = _build_events_paths(workspace_root, resolved_epoch_id, parent_id, train_board)
     detector_input = DetectorInput(
         losses=losses,
-        entries={e.id: e for e in board},
+        entries={e.id: e for e in train_board},
         events_paths=events_paths,
     )
     patterns = detect_patterns(detector_input, detectors=ALL_DETECTORS)
@@ -741,6 +753,7 @@ async def evolve_once(
                 meta_loop_emitter=meta_loop_emitter,
                 custom_judge_names=custom_judge_names,
                 prior_experiments=tuple(prior),
+                restrict_visibility=weights.overfitting.restrict_proposer_visibility,
             )
         )
     except ProposerError as exc:
@@ -1156,6 +1169,7 @@ async def _propose_and_apply_challenger(
     proposer_agent: ProposerAgent,
     custom_judge_names: frozenset[str] = frozenset(),
     prior_experiments: tuple[PriorExperiment, ...] = (),
+    restrict_visibility: bool = False,
 ) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
     """Propose + apply ONE challenger child of the champion.
 
@@ -1243,6 +1257,7 @@ async def _propose_and_apply_challenger(
                 meta_loop_emitter=meta_loop_emitter,
                 custom_judge_names=custom_judge_names,
                 prior_experiments=prior_experiments,
+                restrict_visibility=restrict_visibility,
             )
         )
     except ProposerError as exc:
@@ -1420,6 +1435,7 @@ async def _evolve_multi_challenger(
             custom_judge_names=custom_judge_names,
             prior_experiments=prior + tuple(siblings),
             proposer_agent=proposer_agent,
+            restrict_visibility=weights.overfitting.restrict_proposer_visibility,
         )
         field_status.append(status)
         if challenger is not None:

@@ -188,6 +188,86 @@ def test_hash_stable_across_mutable_tree_reordering(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Anti-overfitting config folds into the scoring contract (OVERFITTING.md
+# §12 #1/#3): changing any knob in the ``overfitting`` block — or the
+# one-time default-on rollout — must roll the epoch, exactly as retuning a
+# scoring weight does. An absent block is the default-on config, so a
+# scoring.json that never mentions it hashes identically to one that spells
+# the defaults out.
+# ---------------------------------------------------------------------------
+
+
+def test_hash_changes_on_overfitting_knob_edit(tmp_path: Path) -> None:
+    base = _write_contract(tmp_path)
+    h1 = compute_contract_hash(base)
+
+    # Flip the master switch off — a different evaluation contract.
+    base.scoring_path.write_text(
+        json.dumps(
+            {
+                "drift_weight": 1.0,
+                "pass_weight": 1.0,
+                "promote_margin": 0.01,
+                "overfitting": {"enabled": False},
+            }
+        )
+    )
+    h2 = compute_contract_hash(base)
+    assert h1 != h2
+
+
+def test_hash_changes_on_holdout_fraction_edit(tmp_path: Path) -> None:
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"overfitting": {"holdout_fraction": 0.3}}))
+    h1 = compute_contract_hash(base)
+    base.scoring_path.write_text(json.dumps({"overfitting": {"holdout_fraction": 0.4}}))
+    h2 = compute_contract_hash(base)
+    assert h1 != h2
+
+
+def test_hash_changes_on_restrict_visibility_edit(tmp_path: Path) -> None:
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(
+        json.dumps({"overfitting": {"restrict_proposer_visibility": True}})
+    )
+    h1 = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"overfitting": {"restrict_proposer_visibility": False}})
+    )
+    h2 = compute_contract_hash(base)
+    assert h1 != h2
+
+
+def test_absent_overfitting_block_hashes_as_the_defaults(tmp_path: Path) -> None:
+    # A scoring.json that never mentions ``overfitting`` must hash exactly
+    # like one that spells the default-on config out in full — the
+    # canonicalizer routes both through the same fully-defaulted
+    # OverfittingConfig.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "pass_weight": 1.0, "promote_margin": 0.01})
+    )
+    h_absent = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps(
+            {
+                "drift_weight": 1.0,
+                "pass_weight": 1.0,
+                "promote_margin": 0.01,
+                "overfitting": {
+                    "enabled": True,
+                    "holdout_fraction": 0.3,
+                    "min_board_size_for_split": 8,
+                    "restrict_proposer_visibility": True,
+                },
+            }
+        )
+    )
+    h_spelled = compute_contract_hash(base)
+    assert h_absent == h_spelled
+
+
+# ---------------------------------------------------------------------------
 # Missing files
 # ---------------------------------------------------------------------------
 

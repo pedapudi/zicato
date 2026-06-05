@@ -101,6 +101,7 @@ async def propose_experiment(
     custom_judge_names: frozenset[str] | None = None,
     prior_experiments: Iterable[PriorExperiment] = (),
     skills: tuple[ProposerSkill, ...] = (),
+    restrict_visibility: bool = False,
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -210,6 +211,14 @@ async def propose_experiment(
         built-in default proposer carries no skills, so a caller that
         supplies none renders a byte-identical system prompt to before this
         surface existed.
+    restrict_visibility:
+        When ``True`` (the default-on
+        :attr:`~zicato.core.types.OverfittingConfig.restrict_proposer_visibility`
+        posture, threaded by the orchestrator), the user prompt aggregates
+        per-entry pattern identities to counts/rates and coarsens
+        experiment-memory Δscalar to buckets (OVERFITTING.md §11). ``False``
+        (the default here so standalone callers are unaffected) renders the
+        verbatim prompt, byte-for-byte as before this lever existed.
 
     Returns
     -------
@@ -260,6 +269,7 @@ async def propose_experiment(
             feedback=feedback,
             insights=insights_block,
             prior_experiments=prior_experiments_list,
+            restrict_visibility=restrict_visibility,
         )
         # Meta-loop bookends: one paired ``proposer_call_started`` /
         # ``proposer_call_completed`` per attempt. ``invocation_id`` is

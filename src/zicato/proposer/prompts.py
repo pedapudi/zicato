@@ -193,11 +193,61 @@ response MUST be "{{" and the last MUST be "}}".
 """
 
 
-def render_pattern_block(patterns: Iterable[Pattern]) -> str:
+#: Detector ``detail`` keys that leak per-entry IDENTITY to the proposer —
+#: the precise information an adversarial optimizer needs to special-case a
+#: named board entry (OVERFITTING.md §1.3, §11.2-3). When the proposer's
+#: visibility is restricted, these keys are removed from the rendered
+#: ``detail`` and replaced by a board-wide count/rate that steers a
+#: *general* fix without naming the entry. ``affected_entry_ids`` is a
+#: comma-joined id list; ``entry_id`` / ``task_id`` / ``agent`` are single
+#: named identities. Everything else (rates, counts, thresholds) is already
+#: aggregate and renders verbatim.
+_LEAKY_DETAIL_KEYS: frozenset[str] = frozenset(
+    {"affected_entry_ids", "entry_id", "task_id", "agent"}
+)
+
+
+def _aggregate_pattern_detail(detail: dict[str, str]) -> list[str]:
+    """Sanitize a pattern ``detail`` dict at the render boundary.
+
+    Drops every per-entry IDENTITY key (:data:`_LEAKY_DETAIL_KEYS`) and, in
+    its place, appends a single aggregate ``entries_affected=N`` count when
+    an entry-id list was present — enough to tell the proposer *how many*
+    entries a pattern touches (so it can size a general fix) without ever
+    naming *which*. The remaining non-leaky keys (rates, counts,
+    thresholds) pass through unchanged.
+
+    No exact failing input strings reach the prompt: the detectors never
+    put raw inputs in ``detail`` (they carry ids, counts, rates), so
+    stripping the id keys leaves only aggregates — there is no input string
+    to withhold here.
+    """
+    kept = {k: v for k, v in detail.items() if k not in _LEAKY_DETAIL_KEYS}
+    parts = [f"{k}={v}" for k, v in sorted(kept.items())]
+    # Surface a board-wide count derived from a verbatim entry-id list, when
+    # one was present, so "how broad is this pattern" survives the
+    # aggregation while "which named entries" does not.
+    raw_ids = detail.get("affected_entry_ids")
+    if raw_ids:
+        n = len([piece for piece in raw_ids.split(",") if piece.strip()])
+        parts.append(f"entries_affected={n}")
+    return parts
+
+
+def render_pattern_block(patterns: Iterable[Pattern], *, restrict: bool = False) -> str:
     """Render the list of patterns into the user-prompt block.
 
     Empty pattern lists render as a one-line "(no patterns)" notice so
     the model sees an explicit signal rather than a blank section.
+
+    When ``restrict`` is ``True`` (the default-on
+    :attr:`~zicato.core.types.OverfittingConfig.restrict_proposer_visibility`
+    posture), the per-entry IDENTITY keys in each pattern's ``detail`` are
+    aggregated to counts/rates via :func:`_aggregate_pattern_detail` so the
+    proposer cannot special-case a named board entry — the cheapest strike
+    at adversarial Goodhart (OVERFITTING.md §11). When ``restrict`` is
+    ``False`` the ``detail`` dict renders verbatim, byte-for-byte as before
+    this lever existed.
     """
 
     lines: list[str] = []
@@ -206,7 +256,10 @@ def render_pattern_block(patterns: Iterable[Pattern]) -> str:
         return "(no patterns detected in the current generation)"
     for p in items:
         affected = ", ".join(p.affected_mutation_ids) if p.affected_mutation_ids else "—"
-        detail_parts = [f"{k}={v}" for k, v in sorted(p.detail.items())]
+        if restrict:
+            detail_parts = _aggregate_pattern_detail(dict(p.detail))
+        else:
+            detail_parts = [f"{k}={v}" for k, v in sorted(p.detail.items())]
         detail = "; ".join(detail_parts) if detail_parts else "—"
         lines.append(
             f"- id={p.id} kind={p.kind} severity={p.severity}\n"
@@ -267,7 +320,25 @@ def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
     return "\n".join(lines)
 
 
-def _render_prior_experiment_line(pe: PriorExperiment) -> str:
+def _bucket_scalar_delta(delta: float) -> str:
+    """Coarsen a fine-grained Δscalar to a memorization-resistant bucket.
+
+    The scalar is a LOSS (lower is better), so a *negative* delta is an
+    improvement. Returns ``improved`` / ``flat`` / ``regressed``. The flat
+    band is the default promote margin (``0.01``) so a within-noise move
+    reads as ``flat`` — the proposer keeps the build-on-wins / avoid-
+    failures signal without the exact response-surface gradient that lets
+    it climb the *board* rather than true quality (OVERFITTING.md §11.4).
+    """
+    flat_band = 0.01
+    if delta < -flat_band:
+        return "improved"
+    if delta > flat_band:
+        return "regressed"
+    return "flat"
+
+
+def _render_prior_experiment_line(pe: PriorExperiment, *, restrict: bool = False) -> str:
     """Render one prior experiment as a two-line compact entry.
 
     The first line carries the verdict, Δscalar (omitted for an in-flight
@@ -275,6 +346,12 @@ def _render_prior_experiment_line(pe: PriorExperiment) -> str:
     the bracketed targeted mutation-point ids (plus the symbolic rejection
     reason for a rejected entry); the second line is the indented core
     idea. See ``docs/design/EXPERIMENT-MEMORY.md`` §3.5.
+
+    When ``restrict`` is ``True``, the fine-grained ``Δscalar`` number is
+    coarsened to an ``improved`` / ``flat`` / ``regressed`` bucket
+    (OVERFITTING.md §11.4) so the proposer cannot read the board's exact
+    response surface round-over-round. When ``False`` the precise number
+    renders verbatim, byte-for-byte as before this lever existed.
     """
     ids = ", ".join(pe.modulating) if pe.modulating else "—"
     verdict = pe.decision.upper().replace("_", "-")
@@ -282,7 +359,13 @@ def _render_prior_experiment_line(pe: PriorExperiment) -> str:
     # board and is not comparable, so it is omitted; an in-flight sibling
     # has no outcome yet.
     if pe.scalar_score_delta is not None and pe.same_contract:
-        head = f"- {pe.generation_id} {verdict} Δscalar={pe.scalar_score_delta:+.3f}  [{ids}]"
+        if restrict:
+            head = (
+                f"- {pe.generation_id} {verdict} "
+                f"Δscalar={_bucket_scalar_delta(pe.scalar_score_delta)}  [{ids}]"
+            )
+        else:
+            head = f"- {pe.generation_id} {verdict} Δscalar={pe.scalar_score_delta:+.3f}  [{ids}]"
     else:
         head = f"- {pe.generation_id} {verdict}  [{ids}]"
     if pe.decision == "rejected" and pe.rejection_reason:
@@ -290,7 +373,9 @@ def _render_prior_experiment_line(pe: PriorExperiment) -> str:
     return f"{head}\n    {pe.core_idea}"
 
 
-def render_prior_experiments_block(prior: Iterable[PriorExperiment]) -> str:
+def render_prior_experiments_block(
+    prior: Iterable[PriorExperiment], *, restrict: bool = False
+) -> str:
     """Render the experiment-memory section body, or ``""`` when empty.
 
     Groups the prior experiments by decision into the three compact
@@ -317,18 +402,18 @@ def render_prior_experiments_block(prior: Iterable[PriorExperiment]) -> str:
 
     blocks: list[str] = []
     if promoted:
-        body = "\n".join(_render_prior_experiment_line(pe) for pe in promoted)
+        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in promoted)
         blocks.append(f"Already promoted (build on these — the direction worked):\n{body}")
     if rejected:
-        body = "\n".join(_render_prior_experiment_line(pe) for pe in rejected)
+        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in rejected)
         blocks.append(
             f"Already rejected (do NOT re-propose these unless something changed):\n{body}"
         )
     if deferred:
-        body = "\n".join(_render_prior_experiment_line(pe) for pe in deferred)
+        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in deferred)
         blocks.append(f"Deferred (neither won decisively — weak signal):\n{body}")
     if in_flight:
-        body = "\n".join(_render_prior_experiment_line(pe) for pe in in_flight)
+        body = "\n".join(_render_prior_experiment_line(pe, restrict=restrict) for pe in in_flight)
         blocks.append(
             f"Proposed this round, not yet evaluated (diversify away from these):\n{body}"
         )
@@ -397,6 +482,7 @@ def render_user_prompt(
     feedback: str = "",
     insights: str = "",
     prior_experiments: Iterable[PriorExperiment] = (),
+    restrict_visibility: bool = False,
 ) -> str:
     """Build the user prompt for one proposer call.
 
@@ -430,14 +516,22 @@ def render_user_prompt(
         the section entirely, mirroring the insights and pattern blocks —
         so a caller that supplies no prior experiments renders a
         byte-identical prompt to before this surface existed.
+    restrict_visibility:
+        When ``True`` (the default-on
+        :attr:`~zicato.core.types.OverfittingConfig.restrict_proposer_visibility`
+        posture), the pattern block aggregates per-entry identities to
+        counts/rates and the experiment-memory Δscalar is coarsened to
+        buckets (OVERFITTING.md §11). ``False`` (the default here so call
+        sites that have not adopted the flag are unaffected) renders both
+        verbatim, byte-for-byte as before this lever existed.
     """
 
     body = USER_PROMPT_TEMPLATE.format(
         current_loss_summary=current_loss_summary.strip() or "(no loss summary)",
-        pattern_block=render_pattern_block(patterns),
+        pattern_block=render_pattern_block(patterns, restrict=restrict_visibility),
         mutation_block=render_mutation_block(mutations),
     )
-    prior_block = render_prior_experiments_block(prior_experiments)
+    prior_block = render_prior_experiments_block(prior_experiments, restrict=restrict_visibility)
     if prior_block:
         prior_prefix = (
             "## What's already been tried (this epoch — avoid repeating "

@@ -60,3 +60,110 @@ def test_skill_without_description_renders_name_only() -> None:
     block = render_skills_block((skill,))
     assert block.startswith("### terse\n")
     assert "—" not in block.splitlines()[0]
+
+
+# ---------------------------------------------------------------------------
+# Proposer leakage restriction (OVERFITTING.md §11 / §12 #3). When the
+# default-on ``restrict_proposer_visibility`` posture is active, the render
+# boundary aggregates per-entry pattern identities to counts/rates and
+# coarsens experiment-memory Δscalar to buckets. With it OFF, both render
+# verbatim, byte-for-byte as before this lever existed.
+# ---------------------------------------------------------------------------
+
+from zicato.core.types import Pattern, PriorExperiment  # noqa: E402
+from zicato.proposer.prompts import (  # noqa: E402
+    render_pattern_block,
+    render_prior_experiments_block,
+)
+
+
+def _hot_task_pattern() -> Pattern:
+    # Mirrors a detect_hot_tasks detail dict, which names the entry + task.
+    return Pattern(
+        id="p1",
+        kind="hot_task",
+        summary="task fails frequently",
+        detail={
+            "entry_id": "contradictory",
+            "task_id": "t3",
+            "fail_or_block_rate": "0.40",
+            "starts": "10",
+        },
+        affected_mutation_ids=("m1",),
+        severity="warning",
+    )
+
+
+def _metric_freq_pattern() -> Pattern:
+    return Pattern(
+        id="p2",
+        kind="metric_frequency",
+        summary="off_topic fires often",
+        detail={
+            "metric": "drift:off_topic",
+            "affected_entry_ids": "a,b,c,d",
+            "rate": "0.40",
+        },
+        severity="warning",
+    )
+
+
+def test_pattern_block_unrestricted_is_verbatim() -> None:
+    patterns = [_hot_task_pattern(), _metric_freq_pattern()]
+    rendered = render_pattern_block(patterns, restrict=False)
+    # The default-arg call (no restrict) must match the explicit False.
+    assert render_pattern_block(patterns) == rendered
+    # Per-entry identities render verbatim when unrestricted.
+    assert "entry_id=contradictory" in rendered
+    assert "task_id=t3" in rendered
+    assert "affected_entry_ids=a,b,c,d" in rendered
+
+
+def test_pattern_block_restricted_aggregates_identities() -> None:
+    patterns = [_hot_task_pattern(), _metric_freq_pattern()]
+    rendered = render_pattern_block(patterns, restrict=True)
+    # No literal per-entry / per-task identity survives.
+    assert "contradictory" not in rendered
+    assert "task_id=t3" not in rendered
+    assert "a,b,c,d" not in rendered
+    # But aggregate counts / rates DO survive so a general fix can be sized.
+    assert "entries_affected=4" in rendered
+    assert "fail_or_block_rate=0.40" in rendered
+    assert "rate=0.40" in rendered
+    # The non-leaky structure (id / kind / summary / mutation ids) is intact.
+    assert "id=p1" in rendered
+    assert "task fails frequently" in rendered
+    assert "affected_mutation_ids: m1" in rendered
+
+
+def _prior(delta: float | None, *, gen: str = "g1") -> PriorExperiment:
+    return PriorExperiment(
+        generation_id=gen,
+        epoch_id="e1",
+        core_idea="tighten the refusal guard",
+        modulating=("m1",),
+        decision="promoted",
+        rejection_reason="",
+        scalar_score_delta=delta,
+        same_contract=True,
+    )
+
+
+def test_prior_experiments_unrestricted_shows_fine_grained_delta() -> None:
+    prior = [_prior(-0.137)]
+    rendered = render_prior_experiments_block(prior, restrict=False)
+    assert render_prior_experiments_block(prior) == rendered  # default == False
+    assert "Δscalar=-0.137" in rendered
+    assert "improved" not in rendered
+
+
+def test_prior_experiments_restricted_buckets_delta() -> None:
+    improved = render_prior_experiments_block([_prior(-0.137, gen="gi")], restrict=True)
+    flat = render_prior_experiments_block([_prior(0.001, gen="gf")], restrict=True)
+    regressed = render_prior_experiments_block([_prior(0.250, gen="gr")], restrict=True)
+    assert "Δscalar=improved" in improved
+    assert "Δscalar=flat" in flat
+    assert "Δscalar=regressed" in regressed
+    # The exact number never reaches the prompt.
+    assert "-0.137" not in improved
+    assert "0.250" not in regressed

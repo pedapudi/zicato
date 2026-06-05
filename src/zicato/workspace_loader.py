@@ -22,7 +22,13 @@ from pathlib import Path
 from typing import Any
 
 from zicato.board.jsonl import load_board, load_board_with_meta
-from zicato.core.types import BoardEntry, EpochConfig, ScoringWeights, TournamentStructure
+from zicato.core.types import (
+    BoardEntry,
+    EpochConfig,
+    OverfittingConfig,
+    ScoringWeights,
+    TournamentStructure,
+)
 from zicato.core.workspace import board_path, epoch_dir, scoring_path
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch
 from zicato.proposer.brief import ProposerBrief, load_brief
@@ -201,9 +207,52 @@ def _scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
         promote_margin=float(d.get("promote_margin", 0.01)),
         pass_rate_monotonicity=bool(d.get("pass_rate_monotonicity", True)),
         tournament_structure=tournament_structure_from_dict(d.get("tournament")),
+        overfitting=overfitting_config_from_dict(d.get("overfitting")),
         **severity_kwarg,
         **judge_kwargs,
     )
+
+
+def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
+    """Parse the ``overfitting`` block of a ``scoring.json`` into a config.
+
+    Absent (``None``) or a non-mapping ⇒ the fully-defaulted (default-on)
+    :class:`~zicato.core.types.OverfittingConfig` — so every epoch on disk
+    today, and every operator who never touches the knob, gets the
+    anti-overfitting machine on, with a safe auto-degrade on small boards.
+
+    A present block forwards each recognised key; unknown keys are
+    ignored. Range/validity is enforced by ``OverfittingConfig``'s
+    ``__post_init__``. Shared by :func:`_scoring_weights_from_dict` (used
+    by the contract canonicalizer) and the lifecycle serializer so the
+    on-disk format is fully shared between the two loaders.
+    """
+    if not isinstance(raw, Mapping):
+        return OverfittingConfig.defaults()
+    kwargs: dict[str, Any] = {}
+    if "enabled" in raw:
+        kwargs["enabled"] = bool(raw["enabled"])
+    if "holdout_fraction" in raw:
+        kwargs["holdout_fraction"] = float(raw["holdout_fraction"])
+    if "min_board_size_for_split" in raw:
+        kwargs["min_board_size_for_split"] = int(raw["min_board_size_for_split"])
+    if "restrict_proposer_visibility" in raw:
+        kwargs["restrict_proposer_visibility"] = bool(raw["restrict_proposer_visibility"])
+    return OverfittingConfig(**kwargs)
+
+
+def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:
+    """Serialize an :class:`OverfittingConfig` to the ``overfitting`` block.
+
+    The inverse of :func:`overfitting_config_from_dict`; every field is
+    written so the on-disk form is complete and round-trips cleanly.
+    """
+    return {
+        "enabled": cfg.enabled,
+        "holdout_fraction": cfg.holdout_fraction,
+        "min_board_size_for_split": cfg.min_board_size_for_split,
+        "restrict_proposer_visibility": cfg.restrict_proposer_visibility,
+    }
 
 
 def tournament_structure_from_dict(raw: Any) -> TournamentStructure:
@@ -250,4 +299,6 @@ __all__ = [
     "load_current_brief",
     "tournament_structure_from_dict",
     "tournament_structure_to_dict",
+    "overfitting_config_from_dict",
+    "overfitting_config_to_dict",
 ]

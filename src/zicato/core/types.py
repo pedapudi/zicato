@@ -1473,6 +1473,75 @@ def _default_tournament_structure() -> TournamentStructure:
 
 
 @dataclass(frozen=True, slots=True)
+class OverfittingConfig:
+    """Anti-overfitting controls: the train/holdout board split + leakage gate.
+
+    Part of the frozen evaluation contract: it is modelled as a field of
+    :class:`ScoringWeights` (and therefore folds into the contract hash
+    automatically through the existing scoring canonicalizer), so changing
+    any knob — or the one-time default-on rollout — rolls the epoch,
+    exactly as retuning ``promote_margin`` does. A run that splits a holdout
+    out of the board, and confirms promotions against it, selects champions
+    under a different rule than one that does not, which is precisely the
+    contract-roll rationale.
+
+    Every field is default-on with a safe auto-degrade: a board too small
+    to split (fewer than :attr:`min_board_size_for_split` entries, and no
+    explicit ``holdout`` tag) yields an *empty* holdout, and the whole
+    machine collapses to the pre-split behaviour byte-for-byte.
+
+    Fields
+    ------
+    enabled:
+        Master switch for the train/holdout split. ``True`` by default.
+        When ``False``, no holdout is ever derived (an explicit
+        ``holdout`` tag still wins — see :func:`zicato.board.split.split_board`)
+        and the loop behaves exactly as it did before this phase.
+    holdout_fraction:
+        Target fraction of the board to hold out when the split is derived
+        by hash (no explicit ``holdout`` tag). A deterministic, id-stable
+        threshold selects approximately this fraction. Range ``(0, 1)``.
+    min_board_size_for_split:
+        Smallest board size at which a hash-derived split is attempted.
+        Below this the holdout is empty (degrade to today's behaviour) so a
+        small board is never starved of train entries. An explicit
+        ``holdout`` tag overrides this floor.
+    restrict_proposer_visibility:
+        When ``True`` (default), the proposer prompt is sanitised at the
+        render boundary: per-entry identities in the detector patterns are
+        aggregated to counts/rates, and experiment-memory ``Δscalar`` is
+        coarsened to ``improved``/``flat``/``regressed`` buckets. Turning
+        it off restores the verbatim rendering byte-for-byte.
+    """
+
+    enabled: bool = True
+    holdout_fraction: float = 0.3
+    min_board_size_for_split: int = 8
+    restrict_proposer_visibility: bool = True
+    # Phase B (Ladder/Thresholdout noisy, budgeted holdout — OVERFITTING.md
+    # §12 #2) will add a nested ``ladder`` sub-config here. Reserved; not
+    # implemented in this phase.
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.holdout_fraction < 1.0:
+            raise ValueError(f"holdout_fraction must be in (0, 1), got {self.holdout_fraction!r}")
+        if self.min_board_size_for_split < 0:
+            raise ValueError(
+                f"min_board_size_for_split must be >= 0, got " f"{self.min_board_size_for_split!r}"
+            )
+
+    @classmethod
+    def defaults(cls) -> OverfittingConfig:
+        """The fully-defaulted (default-on) config an absent block resolves to."""
+        return cls()
+
+
+def _default_overfitting_config() -> OverfittingConfig:
+    """Default-factory for :attr:`ScoringWeights.overfitting`."""
+    return OverfittingConfig.defaults()
+
+
+@dataclass(frozen=True, slots=True)
 class OutcomeRecord:
     """The post-run record appended to an :class:`Experiment` after evaluation.
 
@@ -1835,6 +1904,13 @@ class ScoringWeights:
     # canonicalizer with zero new plumbing: changing the structure or any
     # param rolls the epoch. See :class:`TournamentStructure`.
     tournament_structure: TournamentStructure = field(default_factory=_default_tournament_structure)
+    # Anti-overfitting controls (train/holdout split + proposer leakage
+    # restriction). Modelled here so it factors into the contract hash
+    # through the existing scoring canonicalizer with zero new plumbing:
+    # changing any knob — or the one-time default-on rollout — rolls the
+    # epoch. Default-on with a safe auto-degrade on small boards. See
+    # :class:`OverfittingConfig` and ``docs/design/OVERFITTING.md``.
+    overfitting: OverfittingConfig = field(default_factory=_default_overfitting_config)
 
 
 # ---------------------------------------------------------------------------
