@@ -722,12 +722,19 @@ async def evolve_once(
         # it copies the parent tree, applies the patch set all-or-nothing,
         # and clears any stale child tree from a prior attempt — so a
         # retry re-derives cleanly. See docs/design/STORAGE.md §4-§5.
-        child = genstore.derive_generation(
-            epoch_id=resolved_epoch_id,
-            parent_generation_id=parent_id,
-            child_generation_id=next_id,
-            patches=list(candidate.patches),
-        )
+        # apply_patches now runs its own post-apply syntax gate and raises
+        # ValueError when a patch left a touched ``.py`` file unparseable;
+        # surface that as a retryable post-apply finding rather than letting
+        # it crash the evolve loop (issue #11).
+        try:
+            child = genstore.derive_generation(
+                epoch_id=resolved_epoch_id,
+                parent_generation_id=parent_id,
+                child_generation_id=next_id,
+                patches=list(candidate.patches),
+            )
+        except ValueError as exc:
+            return [f"derive_generation rejected the patch set: {exc}"]
         last_child_snapshot["path"] = child
         return validate_post_apply(child, list(candidate.patches), mutations)
 
@@ -1247,12 +1254,19 @@ async def _propose_and_apply_challenger(
             round_index=round_index,
             phase=f"applying:round_{round_index}:{next_id}",
         )
-        child = genstore.derive_generation(
-            epoch_id=epoch_id,
-            parent_generation_id=parent_id,
-            child_generation_id=next_id,
-            patches=list(candidate.patches),
-        )
+        # apply_patches runs a post-apply syntax gate and raises ValueError
+        # when a patch left a touched ``.py`` file unparseable; surface that
+        # as a retryable post-apply finding rather than crashing the round
+        # (issue #11).
+        try:
+            child = genstore.derive_generation(
+                epoch_id=epoch_id,
+                parent_generation_id=parent_id,
+                child_generation_id=next_id,
+                patches=list(candidate.patches),
+            )
+        except ValueError as exc:
+            return [f"derive_generation rejected the patch set: {exc}"]
         last_child_snapshot["path"] = child
         return validate_post_apply(child, list(candidate.patches), mutations)
 

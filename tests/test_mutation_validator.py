@@ -12,7 +12,7 @@ import pytest
 from click.testing import CliRunner
 
 from zicato.core.types import Patch
-from zicato.mutation.applier import apply_patches
+from zicato.mutation.applier import apply_patches, apply_patches_unchecked
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato.mutation.validator import (
     check_forbidden_ids,
@@ -110,27 +110,88 @@ def test_validator_detects_unresolved_id_post_apply(tmp_path: Path) -> None:
 
 
 def test_validator_detects_unparseable_post_apply(tmp_path: Path) -> None:
+    """The post-apply syntax check still flags an unparseable snapshot.
+
+    A span replace can no longer produce unparseable Python (the applier
+    wraps prose into a collision-proof literal), so we drive the check
+    through a ``:code`` region instead. A ``:code`` body is written
+    verbatim — real control flow the proposer owns — so it can still be
+    legitimately broken by a malformed proposer block.
+    """
+
     src = tmp_path / "src"
     tgt = tmp_path / "tgt"
     _write(
         src / "a.py",
-        '''
-        # zicato:mutable id="instr"
-        INSTR = """initial"""
-    ''',
+        """
+        def slug(topic):
+            # zicato:mutable:code id="slug_logic"
+            s = topic.lower()
+            # zicato:mutable:end
+            return s
+        """,
     )
     pre = enumerate_mutations([src])
-    # Inject a literal that breaks parsing once we paste it in.
+    # A ``:code`` body that does not parse in place (dangling ``if``).
     patches = [
         _patch(
             pid="p1",
-            mutation_id="instr",
-            new_content='"""unclosed',  # missing closing triple-quote
+            mutation_id="slug_logic",
+            new_content="    s = topic.lower()\n    if",  # truncated, unparseable
         )
     ]
-    apply_patches(src, patches, tgt)
+    # The atomic apply path now rejects the batch at its source: a
+    # post-apply syntax error attributes the corruption to the round that
+    # produced it rather than crashing the next generation's enumeration.
+    with pytest.raises(ValueError, match="post-apply syntax problem"):
+        apply_patches(src, patches, tgt)
+    assert not tgt.exists()
+
+    # The post-apply validator independently flags the same breakage when
+    # driven against an already-materialised (unchecked) tree.
+    apply_patches_unchecked(src, patches, tgt)
     errors = validate_post_apply(tgt, patches, pre)
     assert any("syntax error" in e.lower() for e in errors)
+
+
+def test_assignment_echo_span_no_longer_crashes(tmp_path: Path) -> None:
+    """The issue-#11 repro: a span replace whose new_content echoes an
+    assignment ending in ``"`` must NOT corrupt the snapshot.
+
+    Before the fix this wrote ``\"\"\"ROSTER = "..."\"\"\"`` — a four-quote
+    fuse that left ``prompts.py`` unparseable, enumerating to ``[]`` and
+    crashing the next generation with ``KeyError``. Now it degrades into a
+    valid (poorly-shaped) literal: the tree parses and every id re-resolves.
+    """
+
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    _write(
+        src / "prompts.py",
+        """
+        # zicato:mutable id="roster"
+        ROSTER = "multi_search"
+    """,
+    )
+    patches = [
+        _patch(
+            pid="p1",
+            mutation_id="roster",
+            new_content='ROSTER = "multi_search, lookup_entry_context"',
+        )
+    ]
+    # No crash, no ValueError — the wrap path produced parseable source.
+    apply_patches(src, patches, tgt)
+    out = (tgt / "prompts.py").read_text(encoding="utf-8")
+    import ast as _ast
+
+    _ast.parse(out)
+    # The id still re-enumerates (it did not silently vanish).
+    ids = {p.id for p in enumerate_mutations([tgt])}
+    assert ids == {"roster"}
+    # Post-apply validation is clean.
+    pre = enumerate_mutations([src])
+    assert validate_post_apply(tgt, patches, pre) == []
 
 
 def test_validator_detects_missing_required_placeholder(tmp_path: Path) -> None:

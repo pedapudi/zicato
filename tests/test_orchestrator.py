@@ -110,6 +110,12 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
         "\n"
         '# zicato:mutable id="greeting"\n'
         'GREETING = "hello"\n'
+        "\n"
+        "\n"
+        "def greet(name):\n"
+        '    # zicato:mutable:code id="greet_logic"\n'
+        '    return GREETING + " " + name\n'
+        "    # zicato:mutable:end\n"
     )
     return workspace, cfg.id
 
@@ -337,15 +343,20 @@ def _valid_proposer_response() -> str:
 def _destructive_proposer_response() -> str:
     """A schema-valid response whose patch breaks the snapshot post-apply.
 
-    The patch parses fine but its ``new_content`` is an unterminated
-    string literal — applying it produces a Python syntax error that
-    :func:`validate_post_apply` catches.
+    The patch targets the ``greet_logic`` ``:code`` region — a region body
+    is written verbatim (real control flow the proposer owns), so a
+    truncated block (a dangling ``if``) genuinely fails to parse in place.
+    A span replace can no longer corrupt the snapshot (issue #11): the
+    applier wraps stray-quote prose into a collision-proof literal. So to
+    still exercise the destructive-patch retry path we break a ``:code``
+    region, which is the remaining surface a proposer can legitimately
+    leave unparseable.
     """
     return json.dumps(
         {
             "hypothesis": {
-                "core_idea": "swap the greeting string",
-                "modulating": ["greeting"],
+                "core_idea": "rewrite the greeting logic",
+                "modulating": ["greet_logic"],
                 "why": "Exercising the destructive-patch retry path.",
                 "expected_drift_movements": [
                     {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
@@ -355,10 +366,11 @@ def _destructive_proposer_response() -> str:
             },
             "patches": [
                 {
-                    "mutation_id": "greeting",
+                    "mutation_id": "greet_logic",
                     "op": "replace",
-                    # Unterminated string literal — breaks Python syntax.
-                    "new_content": '"unterminated',
+                    # Truncated control flow — a dangling ``if`` breaks
+                    # Python syntax once written verbatim into the region.
+                    "new_content": "    if",
                     "rationale": "destructive patch under test",
                 }
             ],
@@ -773,9 +785,10 @@ def test_evolve_once_dumps_mutations_json(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert snapshot_path.exists()
     points = json.loads(snapshot_path.read_text())
     assert isinstance(points, list)
-    # The stub snapshot carries a single zicato:mutable marker.
-    assert len(points) == 1
-    point = points[0]
+    # The stub snapshot carries a span marker (greeting) and a code
+    # region (greet_logic).
+    assert len(points) == 2
+    point = next(p for p in points if p["id"] == "greeting")
     assert set(point.keys()) == {
         "id",
         "kind",

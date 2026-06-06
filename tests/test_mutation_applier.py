@@ -680,6 +680,57 @@ def test_span_replace_already_correct_indent_is_idempotent(tmp_path: Path) -> No
     assert "import os" in out
 
 
+@pytest.mark.parametrize(
+    ("new_content", "needle"),
+    [
+        # Trailing single quote — the original four-quote fuse bug.
+        ('multi_search, lookup_entry_context"', "lookup_entry_context"),
+        # Assignment echo ending in a quote — the exact issue-#11 repro.
+        ('ROSTER = "multi_search, lookup_entry_context"', "ROSTER ="),
+        # Leading quote, never closed — fuses at the opening delimiter.
+        ('"leading quote, never closed', "leading quote"),
+        # Embedded triple-double-quote — forces the '\\'\\'\\'' fallback.
+        ('contains a """ run inside', "contains a"),
+        # Both triple forms present — must fall back to repr().
+        ("mixes \"\"\" and ''' delimiters", "mixes"),
+    ],
+)
+def test_span_replace_prose_with_quotes_stays_parseable(
+    tmp_path: Path, new_content: str, needle: str
+) -> None:
+    """A prose/echo span replace with stray quotes must never corrupt the
+    snapshot — the applier wraps it into a collision-proof literal so the
+    target tree parses AND every mutation id re-enumerates.
+
+    This is the regression gate for issue #11: a malformed proposer patch
+    (an assignment echo, a stray trailing/leading quote, an embedded
+    triple-quote run) must degrade into a low-quality literal, not an
+    unparseable file that silently drops the file's mutation ids and
+    crashes the next generation with ``KeyError``.
+    """
+
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    _write(
+        src / "prompts.py",
+        """
+        # zicato:mutable id="roster"
+        ROSTER = "multi_search"
+    """,
+    )
+    patches = [_patch(pid="p1", mutation_id="roster", op="replace", new_content=new_content)]
+    apply_patches(src, patches, tgt)
+
+    out = (tgt / "prompts.py").read_text(encoding="utf-8")
+    # The target tree parses — no four-quote fuse, no unterminated literal.
+    ast.parse(out)
+    # Every mutation id re-enumerates (the file did not silently vanish).
+    ids = {p.id for p in enumerate_mutations([tgt])}
+    assert ids == {"roster"}
+    # The replacement content survived (wrapped as a literal body).
+    assert needle in out
+
+
 def test_apply_replace_onto_read_only_snapshot(tmp_path: Path) -> None:
     """A patch lands even when the source file is mode 0o444.
 

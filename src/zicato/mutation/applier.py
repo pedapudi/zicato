@@ -168,6 +168,35 @@ def _looks_like_python_string_literal(text: str) -> bool:
     return rest.startswith(('"""', "'''", '"', "'"))
 
 
+def _is_python_string_literal_source(text: str) -> bool:
+    """Confirm ``text`` is *actually* well-formed Python string-literal source.
+
+    :func:`_looks_like_python_string_literal` is a cheap first-character
+    heuristic — it returns ``True`` for any prose that merely *starts* with
+    a quote (``"leading quote, never closed``). Taking the verbatim-preserve
+    branch on that alone writes the prose out unchanged and corrupts the
+    file. This is the real gate: the (dedented, parenthesised) content must
+    parse in ``eval`` mode to a single string expression — either a plain
+    string constant (:class:`ast.Constant` whose value is ``str``) or an
+    f-string (:class:`ast.JoinedStr`). Parenthesising lets implicitly
+    concatenated / multi-line literals (the ``+``-joined and adjacent-literal
+    span shapes) parse as one expression. Anything else (an assignment echo
+    like ``ROSTER = "..."``, a bare unterminated literal, arbitrary prose)
+    fails here and the caller falls through to the safe wrap path.
+    """
+    stripped = textwrap.dedent(text).strip()
+    if not stripped:
+        return False
+    try:
+        tree = ast.parse(f"({stripped})", mode="eval")
+    except SyntaxError:
+        return False
+    node = tree.body
+    if isinstance(node, ast.JoinedStr):
+        return True
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
 def _quote_as_python_string(content: str, indent: str) -> str:
     """Wrap ``content`` as a Python triple-quoted string literal.
 
@@ -176,18 +205,21 @@ def _quote_as_python_string(content: str, indent: str) -> str:
     syntactic position (kwarg value, return expression, parenthesised
     concat, etc.) without disturbing the surrounding code's indent.
 
-    Triple double-quotes are used unless ``content`` itself contains a
-    triple-double-quote sequence, in which case we fall back to triple
-    single-quotes. When both collide we hard-escape one — rare enough
-    that the fallback's mild ugliness is acceptable.
+    A triple delimiter is only safe when it cannot *fuse* with the
+    content: the triple sequence must be absent from ``content`` AND the
+    content must not start or end with that quote char. A trailing ``"``
+    fuses with the closing ``\"\"\"`` into a four-quote run (``\"\"\"\"``)
+    that Python reads as a closed empty literal plus a dangling quote — an
+    unterminated-string ``SyntaxError``; a leading ``"`` fuses the same way
+    at the opening delimiter. We try ``\"\"\"`` then ``'''``; if both would
+    fuse, fall back to ``repr(content)``, which is always a valid
+    (single-line) literal regardless of the content's quote characters.
     """
-    if '"""' not in content:
-        return f'{indent}"""{content}"""'
-    if "'''" not in content:
-        return f"{indent}'''{content}'''"
-    # Both triple-quote forms appear in the content; escape one.
-    escaped = content.replace('"""', '\\"\\"\\"')
-    return f'{indent}"""{escaped}"""'
+    for triple in ('"""', "'''"):
+        q = triple[0]
+        if triple not in content and not content.startswith(q) and not content.endswith(q):
+            return f"{indent}{triple}{content}{triple}"
+    return f"{indent}{repr(content)}"
 
 
 def _literal_line_prefix(text: str) -> str:
@@ -394,7 +426,15 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
         # off its column and break the enclosing block's indentation.
         original_span = "".join(lines[point.line_start - 1 : point.line_end])
         indent = _literal_line_prefix(original_span)
-        if _looks_like_python_string_literal(new_content):
+        # Preserve verbatim only when BOTH the cheap first-char heuristic
+        # AND a real parse confirm the content is well-formed string-literal
+        # source. The heuristic alone returns True for prose that merely
+        # starts with a quote; preserving that verbatim writes an
+        # unterminated literal. When the parse gate fails we fall through to
+        # the (collision-proof) wrap path, which always yields valid source.
+        if _looks_like_python_string_literal(new_content) and _is_python_string_literal_source(
+            new_content
+        ):
             middle = _reindent_python_literal(new_content, indent)
         else:
             middle = _quote_as_python_string(new_content, indent)
@@ -492,6 +532,68 @@ def apply_patches(
         )
 
     _apply_patches_into_tree(target_root, patches)
+
+    # Post-apply syntax gate: attribute corruption to the round that
+    # PRODUCED it. A malformed proposer patch must degrade into a rejected
+    # challenger here, not silently write an unparseable snapshot that
+    # crashes the *next* generation's enumeration one round later. We
+    # re-parse every ``.py`` file the batch touched; if any no longer
+    # parses, remove the copied tree (keeping lineage append-only) and
+    # raise so the caller records a single rejection.
+    syntax_problems = _post_apply_syntax_problems(target_root, patches)
+    if syntax_problems:
+        shutil.rmtree(target_root, ignore_errors=True)
+        raise ValueError(
+            "apply_patches: refusing to promote snapshot; "
+            f"{len(syntax_problems)} post-apply syntax problem(s): " + "; ".join(syntax_problems)
+        )
+
+
+def _touched_py_files(target_root: Path, patches: list[Patch]) -> set[Path]:
+    """Return the ``.py`` files under ``target_root`` the batch touched.
+
+    Resolved by re-enumerating the applied tree and mapping each patched
+    ``mutation_id`` back to its file. A corrupted file enumerates to zero
+    points (the enumerator drops it on ``SyntaxError``), so an id that no
+    longer resolves is itself a signal the file broke — the post-apply
+    parse pass below catches it from the other direction by walking the
+    whole tree, but we keep this targeted set for a precise error message.
+    """
+
+    points = enumerate_mutations([target_root])
+    by_id = {p.id: p for p in points}
+    touched: set[Path] = set()
+    for patch in patches:
+        point = by_id.get(patch.mutation_id)
+        if point is not None and point.file.suffix == ".py":
+            touched.add(point.file.resolve())
+    return touched
+
+
+def _post_apply_syntax_problems(target_root: Path, patches: list[Patch]) -> list[str]:
+    """Return one problem string per ``.py`` file the batch left unparseable.
+
+    Walks every ``.py`` file under ``target_root`` and re-parses it. Walking
+    the whole tree (not only the files we can map a still-resolving id back
+    to) is deliberate: a span replace that corrupted a file makes that
+    file's ids vanish from the enumeration, so a mapping-only check would
+    miss exactly the failure this guard exists to catch.
+    """
+
+    target_root = Path(target_root).resolve()
+    touched = _touched_py_files(target_root, patches)
+    problems: list[str] = []
+    for py_file in sorted(target_root.rglob("*.py")):
+        try:
+            text = py_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            ast.parse(text)
+        except SyntaxError as exc:
+            tag = " (touched)" if py_file.resolve() in touched else ""
+            problems.append(f"{py_file}{tag}: {exc}")
+    return problems
 
 
 def apply_patches_unchecked(

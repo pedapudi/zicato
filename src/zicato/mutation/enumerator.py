@@ -34,10 +34,13 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import logging
 from pathlib import Path
 
 from zicato.core.types import MutationPoint
 from zicato.mutation.markers import is_end_marker, parse_marker_line
+
+_log = logging.getLogger(__name__)
 
 
 def _content_hash(text: str) -> str:
@@ -84,9 +87,19 @@ def _enumerate_file(file_path: Path, source_root: Path) -> list[MutationPoint]:
         return []
     try:
         tree = ast.parse(text)
-    except SyntaxError:
+    except SyntaxError as exc:
         # Unparseable files are skipped — the validator catches this kind
         # of breakage post-apply; pre-apply enumeration is best-effort.
+        # Log it, though: silently returning ``[]`` is what turns a local
+        # snapshot corruption into a confusing crash one round later (the
+        # next ``derive_generation`` finds the file's ids missing and raises
+        # ``KeyError``). The warning attributes the drop to the real cause.
+        _log.warning(
+            "enumerator: dropping unparseable file %s (SyntaxError: %s); "
+            "its mutation ids will not resolve",
+            file_path,
+            exc,
+        )
         return []
 
     lines = text.splitlines(keepends=True)
