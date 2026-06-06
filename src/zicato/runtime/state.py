@@ -98,6 +98,17 @@ class Heartbeat:
         the workspace ``config.json``). Empty string when the run is
         JSONL-only. The dashboard surfaces it as a "watch live" link.
         Optional — old readers ignore the field.
+    harmonograf_meta_session:
+        The harmonograf SESSION id for this evolve's meta-loop (the
+        orchestrator's own proposer + process-judge timeline — the
+        operator's "Gantt view of zicato itself"). Deterministic from
+        the evolve start time via
+        :func:`zicato.telemetry.harmonograf_supervisor.meta_loop_session_id`.
+        The dashboard deep-links the top-bar "execution" entry at
+        ``<harmonograf_url>/#/session/<harmonograf_meta_session>``. Empty
+        when no meta-loop session is in scope (JSONL-only / degraded
+        install). Optional — old readers ignore the field. See
+        ``docs/design/HARMONOGRAF.md`` §2b.
     """
 
     pid: int
@@ -110,6 +121,7 @@ class Heartbeat:
     round_index: int = 0
     round_started_at: str = ""
     harmonograf_url: str = ""
+    harmonograf_meta_session: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for JSON encoding."""
@@ -124,6 +136,7 @@ class Heartbeat:
             "round_index": self.round_index,
             "round_started_at": self.round_started_at,
             "harmonograf_url": self.harmonograf_url,
+            "harmonograf_meta_session": self.harmonograf_meta_session,
         }
 
     @classmethod
@@ -140,6 +153,7 @@ class Heartbeat:
             round_index=int(d.get("round_index", 0)),
             round_started_at=str(d.get("round_started_at", "")),
             harmonograf_url=str(d.get("harmonograf_url", "")),
+            harmonograf_meta_session=str(d.get("harmonograf_meta_session", "")),
         )
 
 

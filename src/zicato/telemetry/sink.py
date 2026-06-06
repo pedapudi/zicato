@@ -20,16 +20,17 @@ directory ``mkdir`` so the goldfive sink can lazily open the file
 without the caller pre-creating the directory tree.
 
 Scope: this module wires harmonograf to the **inner-harness** event
-stream (one goldfive.v1.Event stream per entry run). Zicato's
-**meta-loop** — the orchestrator's round/generation/epoch lifecycle —
-does not produce goldfive Events; its activity is surfaced through
-heartbeat JSON (``runtime/state.py``), the journal/epoch lineage, and
-the post-run reducer's ``LossProfile``. The harmonograf split is the
-deliberate design (``docs/design/TELEMETRY.md``, ``TOURNAMENT.md``):
-harmonograf is the execution view of one run; the zicato dashboard is
-the competition view across runs. So a separate "meta-loop sink" is
-*not* wired here — the existing per-run sink list already attaches
-harmonograf to every inner run zicato launches.
+stream (one goldfive.v1.Event stream per entry run) — the board-run
+session of the harmonograf taxonomy. Zicato's **meta-loop** — the
+orchestrator's own proposer + process-judge calls — is its OWN
+harmonograf session, wired separately in
+:mod:`zicato.telemetry.meta_loop` (the ``MetaLoopEmitter``) +
+:func:`zicato.telemetry.harmonograf_supervisor.build_meta_loop_sink`.
+The two sessions and the two dashboard surfaces that link to them are
+specified canonically in ``docs/design/HARMONOGRAF.md`` (§2 session
+taxonomy, §3 dashboard surfaces). harmonograf is the execution view of
+one run / of the meta-loop; the zicato dashboard is the competition
+view across runs.
 """
 
 from __future__ import annotations

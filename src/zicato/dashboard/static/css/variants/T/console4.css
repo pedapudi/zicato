@@ -2169,6 +2169,17 @@
   .dt-nav-build-glyph { color: var(--v2-accent); }
   .dt-nav-build:hover .dt-nav-build-glyph { color: var(--v2-paper); }
 
+  /* the ZICATO-LEVEL harmonograf entry — top-bar "execution ↗" deep-link
+   * into the meta-loop session. Matches the nav-build chip so the two top-bar
+   * entries read as a set; theme-tokened throughout. Empty (no child) when the
+   * surface isn't available, so the chrome collapses cleanly. */
+  .dt-nav-exec { display: inline-flex; align-items: center; }
+  .dt-nav-exec:empty { display: none; }
+  .dt-exec-link { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
+    font-size: 11px; color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
+    padding: 4px 9px; text-decoration: none; transition: background 0.15s, color 0.15s, border-color 0.15s; }
+  .dt-exec-link:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
+
   /* the view shell: a work column (rail · center · preview) + a fixed chat
    * column. Real grid layout: the work column is 1fr, the chat column is the
    * persisted --dn-bld-chat px width, so the form + preview reflow to the

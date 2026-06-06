@@ -269,12 +269,18 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
         if injected_url:
             # No on-disk heartbeat (post-mortem workspace) — synthesize a
             # minimal one carrying only the harmonograf fields so the
-            # standalone deep-links render.
-            return {
+            # standalone deep-links render. Recover the meta-loop session
+            # id off the persisted JSONL so the zicato-level "execution"
+            # link resolves post-mortem (docs/design/HARMONOGRAF.md §2b).
+            synthetic: dict[str, Any] = {
                 "harmonograf_url": injected_url,
                 "harmonograf_persistent": True,
                 "last_heartbeat": _heartbeat_file_mtime_iso(paths),
             }
+            meta = read_meta_loop_session_id(paths)
+            if meta:
+                synthetic["harmonograf_meta_session"] = meta
+            return synthetic
         return None
     out = hb.to_dict()
     if _parse_iso(out.get("last_heartbeat")) is None:
@@ -285,6 +291,15 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
         if not isinstance(existing, str) or not existing.strip():
             out["harmonograf_url"] = injected_url
         out["harmonograf_persistent"] = True
+        # Same precedence for the meta-loop session id: a live evolve's
+        # heartbeat value wins; only recover off the JSONL when absent
+        # (e.g. an older heartbeat from before this field existed, or a
+        # standalone dashboard over a finished workspace).
+        existing_meta = out.get("harmonograf_meta_session")
+        if not isinstance(existing_meta, str) or not existing_meta.strip():
+            meta = read_meta_loop_session_id(paths)
+            if meta:
+                out["harmonograf_meta_session"] = meta
     return out
 
 
@@ -503,6 +518,42 @@ def read_adk_session_id_from_events(events_jsonl_path: str | None) -> str:
                 if not isinstance(evt, dict):
                     continue
                 sid = evt.get("sessionId") or evt.get("session_id") or ""
+                return str(sid) if sid else ""
+    except Exception:  # noqa: BLE001 — best-effort
+        return ""
+    return ""
+
+
+def read_meta_loop_session_id(paths: WorkspacePaths) -> str:
+    """Best-effort recovery of the zicato meta-loop harmonograf session id.
+
+    The meta-loop session id is deterministic from the evolve start ISO
+    (``meta_loop_session_id`` in the supervisor), but the dashboard does
+    not otherwise know that start time — so for a post-mortem workspace
+    (no live heartbeat carrying ``harmonograf_meta_session``) we recover
+    the id by reading ``session_id`` / ``sessionId`` off the first event
+    line of ``<ws>/.zicato/runtime/meta_loop_events.jsonl``. That JSONL is
+    written by every meta-loop emit (``telemetry/meta_loop.py``) and
+    survives the evolve, so the zicato-level deep-link still resolves
+    post-mortem. Returns ``""`` on any failure (no meta-loop run yet, a
+    degraded install that wrote no JSONL, malformed lines) so the caller
+    degrades to "no execution link" rather than crashing.
+
+    See ``docs/design/HARMONOGRAF.md`` §2b for the session taxonomy.
+    """
+    try:
+        jsonl = paths.runtime / "meta_loop_events.jsonl"
+        if not jsonl.exists():
+            return ""
+        with open(jsonl, encoding="utf-8") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                evt = json.loads(raw)
+                if not isinstance(evt, dict):
+                    continue
+                sid = evt.get("session_id") or evt.get("sessionId") or ""
                 return str(sid) if sid else ""
     except Exception:  # noqa: BLE001 — best-effort
         return ""

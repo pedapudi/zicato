@@ -22,6 +22,7 @@
 // Theme + typeface are CSS-only swaps (data-t-theme / data-t-type on the root).
 
 import { el, svgEl, clearChildren, patchText, patchClass } from '../../core/dom.js';
+import { harmonografMetaUrl } from '../../core/harmonograf.js';
 import { state } from '../../core/state.js';
 import { bus } from '../../core/bus.js';
 import { loadEnvironment, loadServiceIdentity } from '../../core/api.js';
@@ -79,6 +80,8 @@ let _scaleReadout = null;
 let _railHandle = null;        // the draggable rail-resize handle (Change 2)
 let _railDragging = false;     // true while a live rail drag is in flight
 let _backBtn = null;
+let _execHost = null;          // top-bar host for the zicato-level harmonograf link
+let _lastExecHref = null;      // digest gate for the execution link (no-beat churn)
 let _renderToken = 0;
 let _live = null;             // the persistent LIVE-RUN controller (live hero + ticker)
 let _heroHost = null;         // the persistent host the live hero leads from
@@ -413,6 +416,9 @@ export function mountShell(root) {
   clearChildren(root);
   _toggles.clear();
   _lastTreeDigest = null;
+  // Reset the exec-link digest: mountShell rebuilds the top bar (a fresh,
+  // empty _execHost), so a stale digest must not skip the first paint.
+  _lastExecHref = null;
   root.setAttribute('data-variant', 'T');
   root.setAttribute('data-t-theme', readColor());
   root.setAttribute('data-t-type', readType());
@@ -515,6 +521,11 @@ export function mountShell(root) {
     ]),
     _crumbHost,
     el('span', { class: 'dt-topbar-spacer' }),
+    // the ZICATO-LEVEL harmonograf entry — a liveness-gated "execution ▸"
+    // link into the meta-loop session (the proposer + judge timeline of the
+    // evolution itself). Filled by renderExecLink, digest-gated so a no-op
+    // heartbeat never repaints it. See docs/design/HARMONOGRAF.md §3b.
+    (_execHost = el('span', { class: 'dt-nav-exec', 'aria-live': 'polite' })),
     // the SETTINGS entry (B3) — a ⚙ that opens the Settings surface, which now
     // HOMES the tournament builder (the flagship section) alongside contract /
     // assistant / appearance (editable). Uses the router href so the route
@@ -794,6 +805,28 @@ function renderStatus() {
   }
 }
 
+// THE ZICATO-LEVEL HARMONOGRAF LINK. The top-bar "execution ▸" entry deep-links
+// into the meta-loop session (zicato's own proposer + judge timeline). It is
+// liveness-gated (via harmonografMetaUrl → harmonografBase) so it renders only
+// while a harmonograf server is reachable AND a meta-loop session id is known —
+// during a live evolve OR a standalone dashboard that resolved a persistent
+// per-workspace server. Digest-gated on the resolved href so a no-op heartbeat
+// never repaints it (render discipline). See docs/design/HARMONOGRAF.md §3b.
+function renderExecLink() {
+  if (!_execHost) return;
+  const url = harmonografMetaUrl();
+  if (url === _lastExecHref) return;
+  _lastExecHref = url;
+  clearChildren(_execHost);
+  if (!url) return;
+  _execHost.appendChild(el('a', {
+    class: 'harmonograf-link harmonograf-meta dt-exec-link',
+    href: url, target: '_blank', rel: 'noopener',
+    title: 'Open the zicato execution timeline (meta-loop) in harmonograf',
+    'aria-label': 'open the zicato execution timeline in harmonograf',
+  }, ['execution ↗']));
+}
+
 // THE SSE-DRIVEN LIVE REFRESH. Distinct from renderStatus (which is gated on the
 // COARSE status digest): the live hero must update on EVERY tick (a steady
 // heartbeat that does not change the status digest can still carry progress /
@@ -836,6 +869,7 @@ async function dispatch() {
 
   renderCrumbs(route);
   renderStatus();
+  renderExecLink();
   refreshLive();
   renderBack(route);
   renderTree(route);
@@ -867,6 +901,10 @@ async function dispatch() {
 let _reRenderTimer = null;
 function onStateChanged() {
   renderStatus();
+  // The zicato-level execution link flips with liveness (server up ⇄ run
+  // ended ⇄ meta-session learned) — refresh it on every tick alongside the
+  // status pill. Digest-gated internally so a no-op beat writes zero DOM.
+  renderExecLink();
   // SSE-DRIVEN: refresh the live surfaces on EVERY tick (sub-second — the SSE
   // heartbeat frame fires state:changed directly), so live state (phase /
   // progress / funnel / activity) animates as it lands rather than waiting on

@@ -162,7 +162,10 @@ class IntegrationConfig:
         :mod:`zicato.telemetry.harmonograf_supervisor`). Set this to opt
         out of auto-launch and stream to an external long-lived
         harmonograf instead — useful for collecting traffic from many
-        zicato invocations into a single shared console.
+        zicato invocations into a single shared console. The full
+        integration design (server lifecycle, the board-run vs meta-loop
+        session taxonomy, and the two dashboard surfaces) lives in
+        ``docs/design/HARMONOGRAF.md``.
     supervisor_binary:
         Filesystem path to the ``zicato-supervisor`` watchdog binary, or
         empty string to fall back to the in-tree release build and then

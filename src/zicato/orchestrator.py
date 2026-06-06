@@ -2657,10 +2657,17 @@ async def evolve_n_rounds(
     outcomes: list[EvolveRoundOutcome] = []
     try:
         await beater.start()
+        # The meta-loop session id is surfaced on the heartbeat so the
+        # dashboard can deep-link the top-bar "execution" entry into the
+        # zicato-level harmonograf session (the proposer + judge timeline).
+        # Read it off the emitter — empty when no meta-loop session is in
+        # scope. See docs/design/HARMONOGRAF.md §2b/§4.
+        meta_session = getattr(meta_loop_emitter, "session_id", "") or ""
         beater.update(
             epoch_id=epoch_id or "",
             phase="evolve_n_rounds:start",
             harmonograf_url=harmonograf_url,
+            harmonograf_meta_session=meta_session,
         )
         beater.bump_now()
         consecutive_rejections = 0

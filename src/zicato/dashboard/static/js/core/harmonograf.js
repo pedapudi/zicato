@@ -129,6 +129,49 @@ export function harmonografMini(target, label, ariaLabel) {
   }, [(label || 'harmonograf') + ' ↗']);
 }
 
+// ── ZICATO-LEVEL (meta-loop) surface ──────────────────────────────────
+// harmonograf "at the zicato level": the orchestrator's own proposer +
+// process-judge timeline, bucketed under ONE stable session id per evolve
+// (`meta_loop_session_id`). The backend surfaces that id on the heartbeat
+// as `harmonograf_meta_session` (live evolve writes it; the standalone
+// dashboard recovers it off `meta_loop_events.jsonl` for post-mortem).
+// See docs/design/HARMONOGRAF.md §2b/§3b.
+
+// The meta-loop session id off the (merged) heartbeat, or null.
+export function harmonografMetaSession() {
+  const hb = state.heartbeat;
+  if (!hb) return null;
+  const sid = hb.harmonograf_meta_session;
+  if (typeof sid !== 'string') return null;
+  const trimmed = sid.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+// The deep-link URL for the zicato-level execution (meta-loop) session.
+// Liveness-gated like every other builder; null when no server is live or
+// no meta-loop session id is known.
+export function harmonografMetaUrl() {
+  const base = harmonografBase();
+  if (!base) return null;
+  const sid = harmonografMetaSession();
+  if (!sid) return null;
+  return `${base}/#/session/${encodeURIComponent(sid)}`;
+}
+
+// The top-bar "execution ▸" link into the zicato-level meta-loop session.
+// Returns null (renders nothing) when the surface isn't available — the
+// caller MUST tolerate null so the top bar stays clean on a degraded /
+// pre-run workspace.
+export function harmonografMetaLink(label, ariaLabel) {
+  const href = harmonografMetaUrl();
+  if (!href) return null;
+  return el('a', {
+    class: 'harmonograf-link harmonograf-meta', href,
+    target: '_blank', rel: 'noopener',
+    'aria-label': ariaLabel || 'open the zicato execution timeline in harmonograf',
+  }, [(label || 'execution') + ' ↗']);
+}
+
 // A subtle superscript link for a bracket / tournament generation node.
 // harmonograf has no per-generation filter URL, so this lands on the
 // bare url, scoped by the generation id in its aria-label.

@@ -93,11 +93,21 @@ export class AppState {
   setHeartbeat(hb) {
     if (!hb || typeof hb !== 'object') return;
     const prevUrl = this.heartbeat && this.heartbeat.harmonograf_url;
+    // The zicato-level meta-loop session id (top-bar "execution" link) is
+    // a stable field too — preserve it across a minimal beat exactly like
+    // harmonograf_url so the execution link doesn't blink out on a ping.
+    const prevMeta = this.heartbeat && this.heartbeat.harmonograf_meta_session;
     this.heartbeat = Object.assign({}, this.heartbeat, hb);
     if (typeof this.heartbeat.harmonograf_url !== 'string'
         || this.heartbeat.harmonograf_url.trim() === '') {
       if (typeof prevUrl === 'string' && prevUrl.trim() !== '') {
         this.heartbeat.harmonograf_url = prevUrl;
+      }
+    }
+    if (typeof this.heartbeat.harmonograf_meta_session !== 'string'
+        || this.heartbeat.harmonograf_meta_session.trim() === '') {
+      if (typeof prevMeta === 'string' && prevMeta.trim() !== '') {
+        this.heartbeat.harmonograf_meta_session = prevMeta;
       }
     }
   }

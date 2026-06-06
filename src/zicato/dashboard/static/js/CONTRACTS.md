@@ -353,10 +353,16 @@ navigates. The router emits `route:changed` on the bus.
 
 ## 9. Harmonograf (core/harmonograf.js)
 
+> Canonical integration design: **`docs/design/HARMONOGRAF.md`** (server
+> lifecycle · session taxonomy · the two dashboard surfaces · liveness vs
+> post-mortem). This section is the frontend-contract slice of that doc.
+
 Built from `ZICATO_HARMONOGRAF_URL` surfaced on the heartbeat as
 `harmonograf_url`. Exports `harmonografBase()`, `harmonografRunUrl(rec)`,
 `harmonografLink(run, label)`, `harmonografMini(target, label, aria)`,
-`harmonografGenLink(genId)`, `harmonografSessionId(rec)`, `deriveRunId(rec)`.
+`harmonografGenLink(genId)`, `harmonografSessionId(rec)`, `deriveRunId(rec)`,
+and the **zicato-level** builders `harmonografMetaSession()`,
+`harmonografMetaUrl()`, `harmonografMetaLink(label, aria)`.
 
 **Liveness gate.** Links resolve only against a REACHABLE server.
 `harmonografIsLive()` is true when EITHER (a) a run is in flight (an
@@ -383,6 +389,17 @@ surfaces this as `adk_session_id` on run-like records:
 
 Session path: `/#/session/<adk_session_id>`. No harmonograf-side change
 is required — the integration is complete.
+
+**Zicato-level (meta-loop) surface.** Beyond the per-run links, the top
+bar (`variants/T/shell.js`) carries a single liveness-gated `execution ↗`
+deep-link into the **meta-loop** session — zicato's own proposer + judge
+timeline (the operator's "Gantt view of zicato itself"). The backend
+surfaces its session id on the heartbeat as `harmonograf_meta_session`
+(a live evolve writes it from the `MetaLoopEmitter`; the standalone
+dashboard recovers it off `runtime/meta_loop_events.jsonl` for
+post-mortem). `harmonografMetaUrl()` resolves
+`<harmonograf_url>/#/session/<harmonograf_meta_session>`, gated on the same
+liveness rule as the per-run links. See `docs/design/HARMONOGRAF.md` §2b/§3b.
 
 The Tournament view surfaces these as visible jump-off links: one
 tournament-overall link in the hall head, and one per board side on the
