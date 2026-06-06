@@ -512,6 +512,11 @@ class WorkspaceHarmonografHandle:
         an already-running per-workspace server (leave it running — its
         owner, e.g. a live evolve or another dashboard process, tears it
         down).
+    reason:
+        Short human-readable explanation for a no-op handle (empty
+        ``web_url``) — e.g. ``"workspace absent"`` or a launch error — so
+        a caller can surface WHY there are no deep-links. The empty string
+        on the live (launched/reused) path.
     """
 
     def __init__(
@@ -521,10 +526,12 @@ class WorkspaceHarmonografHandle:
         grpc_target: str,
         launched: bool,
         inner: HarmonografHandle | None = None,
+        reason: str = "",
     ) -> None:
         self.web_url = web_url
         self.grpc_target = grpc_target
         self.launched = launched
+        self.reason = reason
         self._inner = inner
 
     def shutdown(self, grace_seconds: float = _DEFAULT_SHUTDOWN_GRACE_S) -> None:
@@ -548,8 +555,8 @@ class WorkspaceHarmonografHandle:
         self.shutdown()
 
 
-def _noop_workspace_handle() -> WorkspaceHarmonografHandle:
-    return WorkspaceHarmonografHandle(web_url="", grpc_target="", launched=False)
+def _noop_workspace_handle(reason: str = "") -> WorkspaceHarmonografHandle:
+    return WorkspaceHarmonografHandle(web_url="", grpc_target="", launched=False, reason=reason)
 
 
 def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHandle:
@@ -582,7 +589,7 @@ def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHa
         workspace_root = Path(workspace_root).resolve()
     except Exception as exc:  # noqa: BLE001 — never block the dashboard
         log.warning("harmonograf workspace path unresolvable (%s)", exc)
-        return _noop_workspace_handle()
+        return _noop_workspace_handle(f"workspace path unresolvable: {exc}")
 
     # Only stand up a persistent server for a workspace that actually
     # exists on disk. A dashboard pointed at a not-yet-created workspace
@@ -593,13 +600,13 @@ def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHa
     ws_dir = workspace_root if workspace_root.name == ".zicato" else workspace_root / ".zicato"
     if not ws_dir.is_dir() and not workspace_root.is_dir():
         log.debug("harmonograf workspace %s absent; no persistent server", workspace_root)
-        return _noop_workspace_handle()
+        return _noop_workspace_handle("workspace absent")
 
     try:
         data_dir = _resolve_data_dir(workspace_root)
     except Exception as exc:  # noqa: BLE001 — never block the dashboard
         log.warning("harmonograf workspace data dir unavailable (%s)", exc)
-        return _noop_workspace_handle()
+        return _noop_workspace_handle(f"data dir unavailable: {exc}")
 
     # 1. Reuse an already-running per-workspace server, if the record is live.
     record = _read_server_record(data_dir)
@@ -622,10 +629,10 @@ def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHa
         inner = start_harmonograf(workspace_root)
     except Exception as exc:  # noqa: BLE001 — start_harmonograf is itself isolated
         log.warning("harmonograf workspace launch raised (%s)", exc)
-        return _noop_workspace_handle()
+        return _noop_workspace_handle(f"launch raised: {exc}")
     if not inner.url:
         # start_harmonograf already logged its own failure-isolation warning.
-        return _noop_workspace_handle()
+        return _noop_workspace_handle("server did not start")
 
     grpc_target = f"127.0.0.1:{inner.grpc_port}" if inner.grpc_port else ""
     _write_server_record(

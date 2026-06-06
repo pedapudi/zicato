@@ -409,23 +409,46 @@ def _ensure_workspace_harmonograf(workspace_root: Path) -> Any:
 
         return ensure_workspace_harmonograf(Path(workspace_root))
     except Exception as exc:  # noqa: BLE001 — never block the dashboard
-        import logging  # noqa: PLC0415
-
-        logging.getLogger(__name__).warning(
-            "harmonograf workspace resolution skipped (%s); dashboard continues "
-            "without harmonograf deep-links",
-            exc,
-        )
-
+        # Logging is NOT configured at this point in ``run()`` (uvicorn
+        # configures it later), so a logger call here would vanish. Carry
+        # the reason on the no-op handle instead so the caller can surface
+        # it to stdout alongside the startup banner.
         class _NoopHandle:
             web_url = ""
             grpc_target = ""
             launched = False
+            reason = f"resolution raised: {exc}"
 
             def shutdown(self) -> None:
                 return None
 
         return _NoopHandle()
+
+
+def _echo_harmonograf_status(hg: Any) -> None:
+    """Print a visible one-line harmonograf status to stdout.
+
+    Emitted in the SAME stream/style as the ``Dashboard:`` banner so an
+    operator always knows whether execution deep-links are available —
+    and, on the no-op path, WHY they are not. Logging is not configured
+    this early in :func:`run` (uvicorn configures it later), so a logger
+    call would silently vanish; this is a deliberate ``click.echo`` to
+    stdout. Fully isolated: printing the status must never raise.
+    """
+    import click  # noqa: PLC0415
+
+    try:
+        web_url = getattr(hg, "web_url", "") or ""
+        if web_url:
+            state = "launched" if getattr(hg, "launched", False) else "reused"
+            click.echo(f"harmonograf: {web_url} ({state})")
+        else:
+            reason = getattr(hg, "reason", "") or "no harmonograf available"
+            click.echo(
+                "harmonograf: unavailable — continuing without execution " f"deep-links ({reason})"
+            )
+    except Exception:  # noqa: BLE001 — the status line must never block startup
+        return
 
 
 def run(
@@ -455,8 +478,18 @@ def run(
     import uvicorn
 
     hg = _ensure_workspace_harmonograf(workspace_root)
+    _echo_harmonograf_status(hg)
 
     bound_port = _pick_port(host, port)
+
+    # Print the DEFINITIVE dashboard URL now that the real bound port is
+    # known — ``_pick_port`` may have walked +1 off the requested port (a
+    # TIME_WAIT bounce), so the requested port can be wrong. The command
+    # modules deliberately do NOT pre-print this URL.
+    import click  # noqa: PLC0415
+
+    click.echo(f"Dashboard: http://{host}:{bound_port}")
+
     app = create_app(
         workspace_root,
         static_dir,

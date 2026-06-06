@@ -114,7 +114,9 @@ def dashboard_cmd(workspace: str, host: str, port: int) -> None:
             f"the dashboard service (zicato.dashboard.server) is not available in this build: {exc}"
         ) from exc
 
-    click.echo(f"Dashboard: http://{host}:{port}")
+    # The definitive ``Dashboard:`` URL is printed by ``server.run`` once
+    # the real bound port is known (``_pick_port`` may walk +1 off the
+    # requested port on a TIME_WAIT bounce), so it is NOT pre-printed here.
     click.echo(f"Serving workspace {workspace_root}", err=True)
     dashboard_server.run(
         workspace_root=workspace_root,

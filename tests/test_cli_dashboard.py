@@ -111,8 +111,13 @@ def test_dashboard_invokes_server_run(monkeypatch: pytest.MonkeyPatch, tmp_path:
     assert captured["host"] == "127.0.0.1"
     assert captured["port"] == 8001
     assert captured["static_dir"].name == "static"
-    # The URL is printed to the operator.
-    assert "http://127.0.0.1:8001" in result.output
+    # The command no longer pre-prints the requested-port URL: the
+    # definitive ``Dashboard:`` line is emitted by ``server.run`` once the
+    # real bound port is known (a TIME_WAIT bounce can shift it), so the
+    # command must NOT advertise the requested port itself. It still prints
+    # the "Serving workspace" line.
+    assert "http://127.0.0.1:8001" not in result.output
+    assert "Serving workspace" in result.output
 
 
 def test_dashboard_reports_missing_service(monkeypatch: pytest.MonkeyPatch) -> None:
