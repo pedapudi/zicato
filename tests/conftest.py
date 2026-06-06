@@ -8,15 +8,169 @@ moved under a ``src/`` root the implicit path handling is no longer
 something to lean on — making the repo root explicit here keeps
 ``import tests.*`` resolvable from both the in-process test session
 and any worker subprocess that inherits the environment.
+
+Also provides shared scaffolding for the CLI tests that invoke
+``zicato evolve``:
+
+* :data:`FakeDashboardProc` / the ``mock_dashboard_spawn`` fixture stub
+  out ``asyncio.create_subprocess_exec`` so an ``evolve`` invocation
+  never launches a *real* ``python -m zicato.dashboard`` child. evolve
+  deliberately LEAVES the dashboard serving at a normal conclusion, so a
+  test that lets the real spawn happen orphans the dashboard subprocess
+  (it squats on the dashboard port and is reaped by ``systemd --user``,
+  never the test). Mocking the spawn keeps those tests hermetic.
+* :func:`_reap_leaked_dashboards` is an autouse safety net: even if some
+  test spawns a real dashboard child, it is group-killed at teardown so
+  nothing leaks across the session.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
+import signal
+import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 # tests/conftest.py -> repository root.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+
+# ---------------------------------------------------------------------------
+# Dashboard subprocess hygiene
+# ---------------------------------------------------------------------------
+
+# The exact argv fragment a real dashboard child carries. Only ``python -m
+# zicato.dashboard`` children are test orphans; a live ``zicato dashboard``
+# (no ``-m``) launched by the operator is a different process and is never
+# touched here.
+_DASHBOARD_ARGV_MARKER = "-m zicato.dashboard"
+
+
+class FakeDashboardProc:
+    """Minimal stand-in for an ``asyncio.subprocess.Process``.
+
+    Records terminate/kill so a test can assert the teardown path while
+    never starting a real OS process. Mirrors the ``_FakeProc`` used by
+    ``test_cli_dashboard.py`` so the two CLI test modules behave the same.
+    """
+
+    def __init__(self, argv: tuple[str, ...]) -> None:
+        self.argv = argv
+        self.returncode: int | None = None
+        self.terminated = False
+        self.killed = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = 0
+
+    def kill(self) -> None:  # pragma: no cover - escalation path
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
+@pytest.fixture
+def mock_dashboard_spawn(monkeypatch: pytest.MonkeyPatch) -> list[FakeDashboardProc]:
+    """Patch ``asyncio.create_subprocess_exec`` with a non-spawning fake.
+
+    Returns the list of spawned :class:`FakeDashboardProc` so a test can
+    assert on the recorded children. Any CLI test that runs ``evolve`` to
+    a normal conclusion must use this (directly or transitively) so the
+    real dashboard child is never launched and then orphaned.
+    """
+    spawned: list[FakeDashboardProc] = []
+
+    async def _fake_exec(*args: Any, **kwargs: Any) -> FakeDashboardProc:
+        del kwargs
+        argv = tuple(str(a) for a in args)
+        proc = FakeDashboardProc(argv)
+        spawned.append(proc)
+        # If this is the dashboard spawn, publish a fake endpoint file so the
+        # CLI's bound-port readback resolves immediately instead of polling
+        # the full fallback timeout (the real server would write this once it
+        # bound a port).
+        if "zicato.dashboard" in argv and "--workspace" in argv:
+            ws = Path(argv[argv.index("--workspace") + 1])
+            host = "127.0.0.1"
+            if "--host" in argv:
+                host = argv[argv.index("--host") + 1]
+            port = 7892
+            if "--port" in argv:
+                port = int(argv[argv.index("--port") + 1])
+            from zicato.runtime.paths import dashboard_endpoint_path
+
+            endpoint = dashboard_endpoint_path(ws)
+            endpoint.parent.mkdir(parents=True, exist_ok=True)
+            endpoint.write_text(
+                json.dumps({"host": host, "port": port}),
+                encoding="utf-8",
+            )
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    return spawned
+
+
+def _leaked_dashboard_pids() -> list[int]:
+    """PIDs of any live ``python -m zicato.dashboard`` child."""
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "pid,args"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - ps absent
+        return []
+    pids: list[int] = []
+    for line in out.splitlines():
+        if _DASHBOARD_ARGV_MARKER not in line:
+            continue
+        head = line.strip().split(None, 1)
+        if head and head[0].isdigit():
+            pids.append(int(head[0]))
+    return pids
+
+
+@pytest.fixture(autouse=True)
+def _reap_leaked_dashboards() -> Iterator[None]:
+    """Safety net: group-kill any real dashboard child a test leaks.
+
+    A test should never spawn a real dashboard (see ``mock_dashboard_spawn``),
+    but if one slips through, terminate the whole process group so nothing —
+    including any harmonograf the dashboard parents — is left squatting on a
+    port. Only ``-m zicato.dashboard`` children are reaped; a live operator
+    ``zicato dashboard`` is a distinct argv and is never matched.
+    """
+    before = set(_leaked_dashboard_pids())
+    try:
+        yield
+    finally:
+        leaked = [pid for pid in _leaked_dashboard_pids() if pid not in before]
+        for pid in leaked:
+            # Kill the whole session/process group when we can, falling back
+            # to the bare pid; escalate SIGTERM -> SIGKILL.
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    pgid = os.getpgid(pid)
+                    os.killpg(pgid, sig)
+                except (ProcessLookupError, PermissionError, OSError):
+                    try:
+                        os.kill(pid, sig)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        break

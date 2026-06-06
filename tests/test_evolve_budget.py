@@ -359,8 +359,12 @@ def _install_cli_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, An
     monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
 
 
-def test_cli_passes_max_wall_clock_seconds_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_passes_max_wall_clock_seconds_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_dashboard_spawn: list[Any],
+) -> None:
     """``--max-wall-clock-seconds N`` is plumbed into ``evolve_n_rounds``."""
+    del mock_dashboard_spawn
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
@@ -384,8 +388,10 @@ def test_cli_passes_max_wall_clock_seconds_flag(monkeypatch: pytest.MonkeyPatch)
 
 def test_cli_max_wall_clock_seconds_defaults_to_none(
     monkeypatch: pytest.MonkeyPatch,
+    mock_dashboard_spawn: list[Any],
 ) -> None:
     """With no flag and no env var the total budget is ``None`` (unbounded)."""
+    del mock_dashboard_spawn
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
@@ -406,8 +412,12 @@ def test_cli_max_wall_clock_seconds_defaults_to_none(
     assert captured["max_wall_clock_seconds"] is None
 
 
-def test_cli_max_wall_clock_seconds_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_max_wall_clock_seconds_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_dashboard_spawn: list[Any],
+) -> None:
     """``ZICATO_MAX_WALL_CLOCK_SECONDS`` is honoured when the flag is absent."""
+    del mock_dashboard_spawn
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
@@ -428,8 +438,12 @@ def test_cli_max_wall_clock_seconds_env_var(monkeypatch: pytest.MonkeyPatch) -> 
     assert captured["max_wall_clock_seconds"] == 720
 
 
-def test_cli_flag_overrides_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_flag_overrides_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_dashboard_spawn: list[Any],
+) -> None:
     """An explicit flag wins over the env var."""
+    del mock_dashboard_spawn
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
@@ -452,8 +466,12 @@ def test_cli_flag_overrides_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["max_wall_clock_seconds"] == 30
 
 
-def test_cli_summary_reports_budget_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_summary_reports_budget_stop(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_dashboard_spawn: list[Any],
+) -> None:
     """The CLI summary names the total-budget stop distinctly."""
+    del mock_dashboard_spawn
     from zicato.cli.commands.evolve import evolve_cmd
 
     async def _fake_evolve_n_rounds(**kwargs: Any) -> list[Any]:
@@ -488,8 +506,12 @@ def test_cli_summary_reports_budget_stop(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "completed all" not in result.output
 
 
-def test_cli_summary_reports_mid_round_abort(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_summary_reports_mid_round_abort(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_dashboard_spawn: list[Any],
+) -> None:
     """The CLI summary calls out a mid-round budget abort distinctly."""
+    del mock_dashboard_spawn
     from zicato.cli.commands.evolve import evolve_cmd
 
     async def _fake_evolve_n_rounds(**kwargs: Any) -> list[Any]:
