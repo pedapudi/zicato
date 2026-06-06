@@ -1010,7 +1010,22 @@ export function swissLadder(opts) {
 //     championId, benchmarkId, gateState, live, onCompetitor(id) }
 export function elimFlow(opts) {
   const o = opts || {};
-  const rounds = (Array.isArray(o.winners) ? o.winners : []).filter((r) => r && Array.isArray(r.matches));
+  // COLUMN ORDER must be TEMPORAL (by round_index), not the caller's band
+  // concatenation order. The double-elim caller passes winners.concat(losers),
+  // which lists the GRAND FINAL (a winners' band) BEFORE the losers' bracket
+  // rounds — so the losers' columns rendered to the RIGHT of the gate-bound
+  // final, the winners→losers DROP edges pointed backwards, and a dropped lane's
+  // dots were left orphaned. Sorting by round_index restores WB → LB → GF order
+  // so every advancement / drop edge runs left-to-right into its real target.
+  const rounds = (Array.isArray(o.winners) ? o.winners : [])
+    .filter((r) => r && Array.isArray(r.matches))
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => {
+      const ra = isNum(a.r.round_index) ? a.r.round_index : a.i;
+      const rb = isNum(b.r.round_index) ? b.r.round_index : b.i;
+      return ra - rb || a.i - b.i;
+    })
+    .map((x) => x.r);
   const live = !!o.live;
   const champId = o.championId != null ? String(o.championId) : null;
   const benchId = o.benchmarkId != null ? String(o.benchmarkId) : null;
@@ -1024,7 +1039,7 @@ export function elimFlow(opts) {
   const genState = new Map();
   const ensure = (id) => {
     const k = String(id);
-    if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), eliminatedAt: null, pendingAt: new Set() });
+    if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), lostAt: new Set(), eliminatedAt: null, pendingAt: new Set() });
     return genState.get(k);
   };
   // the per-round MATCHES (a two-lane convergence each): two competitors meet, the
@@ -1049,10 +1064,23 @@ export function elimFlow(opts) {
         if (pending) { g.pendingAt.add(ci); continue; }
         if (m.bye) { g.advanced.add(ci); continue; }
         if (winner && c === winner) g.advanced.add(ci);
-        else if (winner) { if (g.eliminatedAt == null) g.eliminatedAt = ci; }
+        else if (winner) g.lostAt.add(ci);   // a decided loss in THIS column
       }
     }
   });
+  // ELIMINATION vs DROP (double-elim correctness): a generation is ELIMINATED at
+  // a column only when it lost there AND never plays again in a LATER column. An
+  // earlier loss that is followed by a later appearance is a winners→losers DROP
+  // (the "second life"), not a termination — so it must keep its lane, connect to
+  // its losers'-bracket entry by a drop edge, and NOT draw a phantom ✕ in the WB.
+  // A single-elim loss has no later column, so it stays a true elimination.
+  for (const g of genState.values()) {
+    const lost = [...g.lostAt].sort((a, b) => a - b);
+    const lastPlayed = g.played.size ? Math.max(...g.played) : -1;
+    for (const ci of lost) {
+      if (ci >= lastPlayed) { g.eliminatedAt = ci; break; }  // no later column → eliminated here
+    }
+  }
   const gens = [...genState.values()];
   // order lanes: survivors / champion first (by deepest round reached), then the
   // earlier-eliminated; the champion lane floats to the top.
@@ -1140,17 +1168,28 @@ export function elimFlow(opts) {
       const advanced = g.advanced.has(ci);
       const pending = g.pendingAt.has(ci);
       const eliminated = g.eliminatedAt === ci;
+      // a DROP: lost this column but plays again later (winners→losers second
+      // life) — not a terminal cut, not pending; its dot reads as a loss and a
+      // drop edge carries the lane into its next (losers'-bracket) column.
+      const dropped = g.lostAt.has(ci) && !eliminated;
       // the node dot at this round.
-      const dotCls = 'dn-elimflow-dot ' + (eliminated ? 'dn-elimflow-bad' : advanced ? 'dn-elimflow-good' : 'dn-elimflow-pending');
+      const dotCls = 'dn-elimflow-dot ' + (eliminated || dropped ? 'dn-elimflow-bad' : advanced ? 'dn-elimflow-good' : 'dn-elimflow-pending');
       lane.appendChild(hov(svgEl('circle', { cx: x, cy: y, r: 2.8, class: dotCls }),
-        `${g.id} · ${rounds[ci] ? (rounds[ci].label || 'R' + ci) : 'R' + ci} · ${eliminated ? 'eliminated' : advanced ? 'advanced' : 'racing'}`));
-      // a segment to the NEXT column (a later round, or the gate) when advanced.
-      if (advanced || pending) {
+        `${g.id} · ${rounds[ci] ? (rounds[ci].label || 'R' + ci) : 'R' + ci} · ${eliminated ? 'eliminated' : dropped ? 'lost → losers’ bracket' : advanced ? 'advanced' : 'racing'}`));
+      // a segment to the NEXT column the lane plays (a later round, or the gate)
+      // whenever the lane CONTINUES: it advanced, it is racing, OR it dropped to
+      // the losers' bracket. Without the drop case the dropped lane's WB dot was
+      // orphaned from its LB entry, so the bracket "couldn't tell what connects".
+      if (advanced || pending || dropped) {
         const nextCi = cols.find((c) => c > ci);
+        // a lane reaches the GATE from the last column only when it WON / is still
+        // racing there (advanced or pending) — never on a drop (a dropped lane
+        // always has a later played column, so it never falls through to here).
         const toX = (nextCi != null) ? colX(nextCi)
-          : (ci === nCols - 1 ? gateX : null); // last winners round → gate
+          : ((advanced || pending) && ci === nCols - 1 ? gateX : null);
         if (toX != null) {
-          const segCls = 'dn-elimflow-seg ' + (pending ? 'dn-elimflow-seg-pending' : 'dn-elimflow-good');
+          const segCls = 'dn-elimflow-seg ' + (dropped ? 'dn-elimflow-seg-drop dn-elimflow-bad'
+            : pending ? 'dn-elimflow-seg-pending' : 'dn-elimflow-good');
           lane.appendChild(svgEl('line', { x1: x, y1: y, x2: toX, y2: y, class: segCls }));
         }
       }
