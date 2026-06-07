@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — logo / branding study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from src/.../variants/T/console4.css --v2-* roles and mapped onto this
+       study's token names. The picker sets html[data-theme]; each block fully
+       restyles the page. --zicato-accent ← --v2-accent (drives the SVG dot).
+       Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background .18s, color .18s;
+    padding: 0 0 80px;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  header .brand { color: currentColor; display: flex; align-items: center; gap: 10px; }
+  header .brand svg { height: 26px; width: auto; }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+  .toggle {
+    border: 1px solid var(--rule); background: var(--panel); color: var(--ink);
+    font: inherit; font-size: 12px; padding: 7px 14px; border-radius: 6px; cursor: pointer;
+  }
+  .toggle:hover { border-color: var(--ink-faint); }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  section { margin: 40px 0; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 22px; max-width: 78ch; }
+  .lede code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .verdict {
+    display: inline-block; margin: 10px 0 0;
+    border-left: 3px solid var(--good); padding: 8px 14px;
+    background: var(--panel); border-radius: 0 6px 6px 0; font-size: 12.5px;
+  }
+  .verdict b { color: var(--good); }
+
+  .card {
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--panel);
+    padding: 20px; margin-bottom: 18px;
+  }
+  .card-title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 14px; }
+
+  /* side-by-side wordmark compare */
+  .wm-rows { display: grid; gap: 4px; }
+  .wm-grid {
+    display: grid;
+    grid-template-columns: 70px 1fr 1fr;
+    align-items: center; gap: 10px;
+    padding: 14px 0; border-bottom: 1px dashed var(--rule-soft);
+  }
+  .wm-grid:last-child { border-bottom: 0; }
+  .wm-grid .px { font-size: 11px; color: var(--ink-faint); }
+  .wm-cell { display: flex; align-items: center; gap: 12px; }
+  .wm-cell svg { color: var(--ink); display: block; }
+  .col-head { display: grid; grid-template-columns: 70px 1fr 1fr; gap: 10px; font-size: 11px; color: var(--ink-faint); margin-bottom: 4px; }
+  .col-head .bad { color: var(--ink-faint); }
+  .col-head .ok  { color: var(--good); }
+  .tag { font-size: 10px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-faint); white-space: nowrap; }
+  .tag.cur { }
+  .tag.fix { border-color: var(--good); color: var(--good); }
+
+  /* stroke/dot option matrix */
+  .matrix-scroll { overflow-x: auto; }
+  table.matrix { border-collapse: collapse; width: 100%; min-width: 760px; }
+  table.matrix th, table.matrix td {
+    border: 1px solid var(--rule); padding: 12px 8px; text-align: center; vertical-align: middle;
+  }
+  table.matrix thead th { font-size: 11px; color: var(--ink-faint); font-weight: 400; letter-spacing: .04em; }
+  table.matrix th.rowhead { font-size: 11px; color: var(--ink-faint); font-weight: 400; white-space: nowrap; }
+  table.matrix td svg { color: var(--ink); display: block; margin: 0 auto; }
+  table.matrix .opt-cur { background: color-mix(in srgb, var(--ink-faint) 12%, transparent); }
+  table.matrix .opt-pick { background: color-mix(in srgb, var(--good) 16%, transparent); outline: 2px solid var(--good); outline-offset: -2px; }
+  .legend { display: flex; gap: 18px; font-size: 11px; color: var(--ink-faint); margin: 12px 0 4px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 14px; height: 14px; border-radius: 3px; display: inline-block; border: 1px solid var(--rule); }
+  .sw.cur { background: color-mix(in srgb, var(--ink-faint) 18%, var(--panel)); }
+  .sw.pick { background: color-mix(in srgb, var(--good) 28%, var(--panel)); outline: 2px solid var(--good); outline-offset: -2px; }
+
+  /* size ladder for a single config (dot-r matrix) — each column is a size,
+     stacking the three radius options with clear room between mark + label. */
+  .ladder { display: flex; align-items: flex-start; gap: 40px; flex-wrap: wrap; }
+  .ladder .rung { text-align: center; }
+  .ladder .rung svg { color: var(--ink); display: block; margin: 0 auto 6px; }
+  .ladder .rung .dot-opt { display: flex; flex-direction: column; align-items: center;
+    gap: 4px; margin-bottom: 18px; }
+  .ladder .rung .px { font-size: 11px; color: var(--ink-faint); }
+  .ladder .rung .size-cap { font-weight: 700; color: var(--ink); margin-top: 4px;
+    padding-top: 8px; border-top: 1px solid var(--rule-soft); }
+
+  /* threshold swap */
+  .swap-grid { display: flex; gap: 40px; flex-wrap: wrap; }
+  .swap-col { text-align: center; }
+  .swap-pair { display: flex; align-items: flex-end; gap: 22px; justify-content: center;
+    padding: 18px 26px; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); }
+  .swap-pair .item { text-align: center; }
+  .swap-pair .item svg { color: var(--ink); display: block; margin: 0 auto 6px; }
+  .swap-pair .item .px { font-size: 10px; color: var(--ink-faint); }
+  .swap-col h3 { font-size: 12px; font-weight: 700; margin: 14px 0 0; }
+  .swap-col p { font-size: 11px; color: var(--ink-faint); max-width: 28ch; margin: 4px auto 0; }
+
+  /* lockup compare — label column + a clean two-row stack of the 44 / 72px
+     lockups (each on its own padded row, size noted, nothing overlapping). */
+  .lock-rows { display: grid; gap: 28px; }
+  .lock-row { display: flex; flex-direction: column; align-items: stretch; gap: 12px;
+    padding: 20px 0; border-bottom: 1px dashed var(--rule-soft); }
+  .lock-row:last-child { border-bottom: 0; }
+  .lock-row .label { font-size: 11px; color: var(--ink-faint); line-height: 1.5; }
+  .lock-row .label .tag { display: inline-block; margin-top: 8px; }
+  .lock-row .lock-set { display: flex; flex-direction: column; gap: 28px; align-items: center; }
+  .lock-row .lock-item { display: flex; align-items: center; gap: 14px; }
+  .lock-row .lock-item .px { font-size: 10px; color: var(--ink-faint); white-space: nowrap; }
+  .lock-row svg { color: var(--ink); display: block; }
+
+  footer { max-width: 1180px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+  .note-on-c { font-size: 11px; color: var(--ink-faint); }
+  .accent-dot-demo { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--zicato-accent); vertical-align: middle; }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) — mirrors .dt-cd in console4.css ---- */
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+</style>
+</head>
+<body data-ground="light">
+<header>
+  <span class="brand" id="hdr-mark" aria-label="zicato mark"></span>
+  <h1>zicato — logo / branding study</h1>
+  <span class="spacer"></span>
+  <span class="note-on-c">ink = <code style="font-size:11px">currentColor</code>, accent = <span class="accent-dot-demo"></span> <code style="font-size:11px">--zicato-accent</code></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+    A live, parameterized look at three proposed branding fixes. Every mark below is the <b>real</b> generated
+    geometry from <code>docs/brand/*.svg</code>, inlined as SVG and cloned with different
+    <code>stroke-width</code> / dot-<code>r</code> / dot-<code>cx</code> attributes — so it is crisp at every size and
+    adapts to the ground via <code>currentColor</code> + <code>--zicato-accent</code>. Toggle the ground to prove adaptation.
+  </p>
+
+  <!-- ===================== SELECTIONS (sign-off) ===================== -->
+  <div class="card" style="border:2px solid var(--good); background:color-mix(in srgb, var(--good) 8%, var(--panel)); margin-top:14px;">
+    <div class="card-title" style="color:var(--good); font-size:13px; letter-spacing:.04em;">✓ SELECTIONS — sign off to apply</div>
+    <ol style="margin:8px 0 0; padding-left:22px; line-height:1.95; font-size:13px; color:var(--ink);">
+      <li><b>Wordmark dot — KEEP current</b> (no change): <code>wordmark.svg</code> cx 50.977 · <code>zicato-lockup.svg</code> cx 358.936. <span style="color:var(--ink-faint)">[§1]</span></li>
+      <li><b>Mark stroke weight — 5.0</b> (from 2.4). <span style="color:var(--ink-faint)">[§2a]</span></li>
+      <li><b>Accent dot — base r 5.5, size-aware:</b> grows as the mark shrinks above ~24px (<code>r = 5.5·(180/px)<sup>0.7</sup></code>), <b>dropped below ~24px</b> (line thickens). <span style="color:var(--ink-faint)">[§2b + §2c highlighted row]</span></li>
+      <li><b>16 / 24px icons:</b> full <b>spiral</b> mark → <b>drop the dot, thicken the stroke (~sw13)</b>; <b>z+note favicon → keep its accent dot</b> at every size. <span style="color:var(--ink-faint)">[§3b ✓ options]</span></li>
+      <li><b>Lockup — PROPOSED:</b> stroke 5.0 · dot r 5.5 · dot kept at cx 358.936. <span style="color:var(--ink-faint)">[§4]</span></li>
+    </ol>
+    <p class="lede" style="margin-top:12px;">On sign-off, these apply to <code>docs/brand/*.svg</code> (thicken mark stroke 2.4→5.0 + accent dot r 3.2→5.5; size-aware dot scaling; 16/24px no-dot thick-line spiral variant; favicon keeps its dot) + re-rasterized proofs + the dashboard mark. The <b>wordmark and lockup dot positions are unchanged</b> (current is correct).</p>
+  </div>
+
+  <!-- ===================== 1. WORDMARK DOT ===================== -->
+  <section>
+    <h2>1 · Wordmark — dot misplacement (6a)</h2>
+    <p class="lede">
+      The wordmark dot should cap the ı stem. <b>Operator-confirmed: the current placement is correct</b> —
+      <code>wordmark.svg</code> cx <b>50.977</b> / <code>zicato-lockup.svg</code> cx <b>358.936</b> read right.
+      Bracketing it proved the point: the geometric stem-centre (52.4) reads <b>too far right</b>, and 46.4
+      <b>too far left</b> — the metric estimate already nailed it. Net: the wordmark dot needs <b>no change</b>.
+      <br><span class="note-on-c">The dashboard wordmark is a separate, already-correct construction — not restudied here.</span>
+    </p>
+    <div class="card">
+      <div class="col-head">
+        <span></span>
+        <span class="ok">CURRENT ✓ — cx 50.977 (correct — keep)</span>
+        <span class="bad">tried 52.4 (geometric centre) — too far right</span>
+      </div>
+      <div class="wm-rows" id="wordmark-rows"></div>
+    </div>
+    <span class="verdict"><b>Compare for (a):</b> CURRENT (50.977) reads correct — it caps the ı stem cleanly. The geometric centre (52.4) looks too far right; 46.4 too far left. <b>Keep 50.977 — the wordmark SVG needs no dot change.</b></span>
+  </section>
+
+  <!-- ===================== 2. STROKE / DOT MATRIX ===================== -->
+  <section>
+    <h2>2 · Mark — stroke-weight × dot-radius option matrix (6b)</h2>
+    <p class="lede">
+      The current mark uses <code>stroke-width 2.4</code> + accent dot <code>r 3.2</code> — both go sub-pixel
+      small and the line nearly vanishes at ~16px, reading lighter than the wordmark. The matrix renders the
+      real spiral across a <b>size ladder</b> (16 / 24 / 48 / 96 / 180 px) for each candidate stroke weight.
+      One continuous stroke, single accent, theme-adaptive throughout.
+    </p>
+
+    <div class="card">
+      <div class="card-title">Stroke weight across the size ladder (dot r 5.5 ≥32px; dropped ≤24px)</div>
+      <div class="legend">
+        <span><i class="sw cur"></i> current (2.4)</span>
+        <span><i class="sw"></i> option</span>
+        <span><i class="sw pick"></i> proposed default (5.0)</span>
+      </div>
+      <div class="matrix-scroll">
+        <table class="matrix" id="stroke-matrix"></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Accent dot radius — at 32 / 48 / 96 px, where the dot is kept (stroke 5.0)</div>
+      <div class="ladder" id="dot-ladder"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Accent dot — size-aware: grows as the mark shrinks, then dropped below ~24px (line thickens)</div>
+      <div class="matrix-scroll"><table class="matrix" id="dot-scale"></table></div>
+      <p class="lede" style="margin-top:10px">Render-size-aware rule (graded mark variants). <b>Above ~24px</b> the dot is kept and grows gently as the mark shrinks — <code>r(px) = 5.5·(180/px)<sup>0.7</sup></code> — so it stays a real note. <b>At/below 24px the dot is dropped entirely and the stroke thickens</b> (see §3b); a dot that small is just noise. The <code>constant r 5.5</code> row shows why dropping wins: at 16–24px the fixed dot fades to a whisper.</p>
+    </div>
+    <span class="verdict"><b>Compare for (b):</b> read the <b>16px</b> column — 2.4 is a whisper, 5.0 carries weight kin to the wordmark, 6.5 clogs the inner turns. And <b>≤24px the accent dot is dropped</b> (noise that small — see §3b) while the stroke thickens; the dot is kept + sized only ≥32px.</span>
+  </section>
+
+  <!-- ===================== 3. THRESHOLD SWAP ===================== -->
+  <section>
+    <h2>3 · Size-threshold swap — full mark vs. bold-z favicon</h2>
+    <p class="lede">
+      Even thickened, the full golden spiral muddies into noise below ~24px. The proposal: serve the full mark
+      <b>≥ 24px</b> and swap to the simplified <code>zicato-favicon.svg</code> bold-z (with the green plucked-note)
+      <b>below ~24px</b>. Here both are shown at 16px and 24px so the crossover is visible.
+    </p>
+    <div class="swap-grid">
+      <div class="swap-col">
+        <div class="swap-pair" id="swap-full"></div>
+        <h3>Full mark</h3>
+        <p>legible and glorious at 24px+, but the spiral inner-turns collapse at 16px</p>
+      </div>
+      <div class="swap-col">
+        <div class="swap-pair" id="swap-fav"></div>
+        <h3>Favicon bold-z</h3>
+        <p>stays crisp at 16px — this is what ships below the ~24px threshold</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">16 / 24px icons — drop the accent dot, thicken the line</div>
+      <div class="ladder" id="small-icon"></div>
+      <p class="lede" style="margin-top:10px">Two small-size icons, two rules. The full <b>spiral</b> mark: at 16–24px its accent dot is noise on an already-muddy glyph — <b>drop the dot, thicken the stroke</b>. The <b>z+note favicon</b>: the bold-z stays legible small, so it <b>keeps its accent dot at every size</b> (the note is the whole point and reads fine — ✓ keep). Net: full mark → drop dot + thicken; z+note → always keep the dot.</p>
+    </div>
+    <span class="verdict"><b>Compare for (c):</b> the full spiral is mush at 16px regardless of weight, so below ~24px ship the <b>z+note favicon — which keeps its accent dot</b> (legible at 16px). The accent-dot drop + thicker stroke applies only to the full <b>spiral</b> mark, for the rare case it must render small.</span>
+  </section>
+
+  <!-- ===================== 4. LOCKUP ===================== -->
+  <section>
+    <h2>4 · Lockup — current vs. proposed</h2>
+    <p class="lede">
+      Mark + <code>zıcato</code> wordmark. PROPOSED keeps the dot (cx 358.936 — current is correct) and thickens the
+      mark stroke (2.4 → 5.0, dot r → 5.5) so the icon reads as kin to the wordmark weight rather than a faint line beside it.
+    </p>
+    <div class="card">
+      <div class="lock-rows" id="lockup-rows"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Standalone branding study · served from <code>/tmp/zicato-branding-study/</code> · read-only against
+  <code>/home/sunil/git/zicato/docs/brand/</code> · no repo edits.
+</footer>
+
+<script>
+/* ----- REAL geometry copied verbatim from docs/brand/*.svg ----- */
+
+// zicato-mark.svg paths (the one continuous stroke + the bridge tick)
+const MARK_SPIRAL = "M94,52.5 L93.9,52.7 L93.7,52.9 L93.6,53.1 L93.5,53.4 L93.5,53.7 L93.4,54 L93.4,54.3 L93.5,54.6 L93.6,55 L93.7,55.3 L93.9,55.6 L94.1,55.9 L94.4,56.2 L94.7,56.5 L95.1,56.7 L95.4,56.9 L95.9,57.1 L96.3,57.2 L96.8,57.2 L97.3,57.2 L97.9,57.2 L98.4,57 L98.9,56.8 L99.4,56.5 L99.9,56.2 L100.4,55.8 L100.9,55.3 L101.2,54.7 L101.6,54.1 L101.8,53.4 L102,52.6 L102.1,51.9 L102.1,51 L102,50.2 L101.8,49.3 L101.5,48.5 L101.1,47.6 L100.5,46.8 L99.9,46 L99.1,45.3 L98.2,44.7 L97.2,44.1 L96.1,43.7 L94.9,43.4 L93.6,43.2 L92.3,43.2 L91,43.3 L89.6,43.6 L88.2,44.1 L86.8,44.8 L85.5,45.6 L84.2,46.7 L83,47.9 L82,49.3 L81.1,50.9 L80.3,52.7 L79.8,54.6 L79.5,56.6 L79.4,58.7 L79.5,60.9 L80,63.2 L80.7,65.4 L81.8,67.6 L83.1,69.8 L84.8,71.9 L86.7,73.8 L89,75.5 L91.5,77 L94.3,78.3 L97.3,79.2 L100.6,79.8 L104,80 L150,80 L170,102 L190,80 Q206,56 222,80 Q236,102 250,80 Q261,68 272,80 L292,80";
+const MARK_BRIDGE = "M292,66 L292,94";
+const MARK_VIEWBOX = "71 35 229 75"; // from zicato-mark.svg
+const MARK_DOT = { cx: 170, cy: 102 };   // pluck vertex
+
+// wordmark.svg — outlined zıcato glyphs (DejaVu Sans Mono) + dot
+const WORDMARK_PATH = "M9.763671875 27.51171875H30.40625V31.77734375L14.080078125 52.19140625H30.40625V56.0H9.154296875V51.68359375L25.48046875 31.244140625H9.763671875ZM42.806640625 27.5625H54.765625V52.369140625H64.033203125V56.0H40.826171875V52.369140625H50.09375V31.193359375H42.806640625ZM95.552734375 54.552734375Q93.673828125 55.64453125 91.6806640625 56.1904296875Q89.6875 56.736328125 87.60546875 56.736328125Q81.00390625 56.736328125 77.2841796875 52.775390625Q73.564453125 48.814453125 73.564453125 41.806640625Q73.564453125 34.798828125 77.2841796875 30.837890625Q81.00390625 26.876953125 87.60546875 26.876953125Q89.662109375 26.876953125 91.6171875 27.41015625Q93.572265625 27.943359375 95.552734375 29.060546875V33.9609375Q93.69921875 32.310546875 91.8330078125 31.57421875Q89.966796875 30.837890625 87.60546875 30.837890625Q83.212890625 30.837890625 80.8515625 33.681640625Q78.490234375 36.525390625 78.490234375 41.806640625Q78.490234375 47.0625 80.8642578125 49.9189453125Q83.23828125 52.775390625 87.60546875 52.775390625Q90.04296875 52.775390625 91.97265625 52.0263671875Q93.90234375 51.27734375 95.552734375 49.703125ZM118.744140625 41.705078125H117.1953125Q113.107421875 41.705078125 111.0380859375 43.1396484375Q108.96875 44.57421875 108.96875 47.41796875Q108.96875 49.982421875 110.517578125 51.404296875Q112.06640625 52.826171875 114.80859375 52.826171875Q118.66796875 52.826171875 120.876953125 50.1474609375Q123.0859375 47.46875 123.111328125 42.74609375V41.705078125ZM127.80859375 39.775390625V56.0H123.111328125V51.78515625Q121.61328125 54.32421875 119.3408203125 55.5302734375Q117.068359375 56.736328125 113.818359375 56.736328125Q109.4765625 56.736328125 106.88671875 54.2861328125Q104.296875 51.8359375 104.296875 47.72265625Q104.296875 42.974609375 107.4833984375 40.51171875Q110.669921875 38.048828125 116.83984375 38.048828125H123.111328125V37.3125Q123.0859375 33.91015625 121.384765625 32.3740234375Q119.68359375 30.837890625 115.951171875 30.837890625Q113.564453125 30.837890625 111.126953125 31.5234375Q108.689453125 32.208984375 106.37890625 33.529296875V28.857421875Q108.96875 27.8671875 111.3427734375 27.3720703125Q113.716796875 26.876953125 115.951171875 26.876953125Q119.48046875 26.876953125 121.9814453125 27.91796875Q124.482421875 28.958984375 126.03125 31.041015625Q126.99609375 32.310546875 127.40234375 34.1767578125Q127.80859375 36.04296875 127.80859375 39.775390625ZM148.81640625 19.48828125V27.5625H159.4296875V31.193359375H148.81640625V46.630859375Q148.81640625 49.779296875 150.009765625 51.0234375Q151.203125 52.267578125 154.173828125 52.267578125H159.4296875V56.0H153.716796875Q148.4609375 56.0 146.302734375 53.892578125Q144.14453125 51.78515625 144.14453125 46.630859375V31.193359375H136.552734375V27.5625H144.14453125V19.48828125ZM181.173828125 30.837890625Q177.619140625 30.837890625 175.791015625 33.60546875Q173.962890625 36.373046875 173.962890625 41.806640625Q173.962890625 47.21484375 175.791015625 49.9951171875Q177.619140625 52.775390625 181.173828125 52.775390625Q184.75390625 52.775390625 186.58203125 49.9951171875Q188.41015625 47.21484375 188.41015625 41.806640625Q188.41015625 36.373046875 186.58203125 33.60546875Q184.75390625 30.837890625 181.173828125 30.837890625ZM181.173828125 26.876953125Q187.08984375 26.876953125 190.2255859375 30.7109375Q193.361328125 34.544921875 193.361328125 41.806640625Q193.361328125 49.09375 190.23828125 52.9150390625Q187.115234375 56.736328125 181.173828125 56.736328125Q175.2578125 56.736328125 172.134765625 52.9150390625Q169.01171875 49.09375 169.01171875 41.806640625Q169.01171875 34.544921875 172.134765625 30.7109375Q175.2578125 26.876953125 181.173828125 26.876953125Z";
+const WORDMARK_VIEWBOX = "0 0 232 72";
+const WM_DOT_CY = 16;
+const WM_DOT_CX_CUR = 50.977;   // current: lands over the c
+const WM_DOT_CX_FIX = 52.4;     // pixel-perfect: ı-stem centre (DejaVu ı stem x≈50.1–54.8)
+const WM_DOT_R = 4.2;
+
+// zicato-favicon.svg — bold-z on dark tile (self-contained, fixed colors)
+const FAVICON_SVG = `<svg viewBox="0 0 256 256" role="img" aria-label="zicato">
+  <rect width="256" height="256" rx="52" fill="#0E1116"/>
+  <path d="M74,86 L182,86 L74,170 L182,170" fill="none" stroke="#EDEFEA" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="128" cy="128" r="21" fill="#3FB87A"/>
+</svg>`;
+
+/* ----- builders ----- */
+
+// the adaptive mark: currentColor stroke + accent dot, parameterized
+function markSVG(px, strokeW, dotR) {
+  // grow the viewBox below so a large (size-scaled) accent dot at the pluck
+  // vertex (cy 102) never clips against the box bottom; no-op for small dots.
+  const vbH = Math.max(75, (MARK_DOT.cy + dotR + 3) - 35);
+  return `<svg width="${px}" height="${(px*vbH/229).toFixed(1)}" viewBox="71 35 229 ${vbH.toFixed(1)}" role="img" aria-label="zicato mark">
+    <g fill="none" stroke="currentColor" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round">
+      <path d="${MARK_SPIRAL}"/>
+      <path d="${MARK_BRIDGE}"/>
+    </g>
+    <circle cx="${MARK_DOT.cx}" cy="${MARK_DOT.cy}" r="${dotR}" fill="var(--zicato-accent, #2FA46A)"/>
+  </svg>`;
+}
+
+// wordmark, parameterized dot cx
+function wordmarkSVG(px, dotCx) {
+  const h = px;                       // px is the cap-ish height target
+  const w = px * 232/72;
+  return `<svg width="${w.toFixed(1)}" height="${h}" viewBox="${WORDMARK_VIEWBOX}" role="img" aria-label="zicato">
+    <path d="${WORDMARK_PATH}" fill="currentColor"/>
+    <circle cx="${dotCx}" cy="${WM_DOT_CY}" r="${WM_DOT_R}" fill="var(--zicato-accent, #2FA46A)"/>
+  </svg>`;
+}
+
+function favSVG(px) {
+  return FAVICON_SVG.replace('<svg ', `<svg width="${px}" height="${px}" `);
+}
+// favicon with the green accent note dropped (just the bold-z line) — for ≤24px
+function favNoDot(px) {
+  return FAVICON_SVG.replace('<svg ', `<svg width="${px}" height="${px}" `).replace(/<circle\b[^>]*\/>/, '');
+}
+
+/* ----- 1. wordmark rows ----- */
+const wmSizes = [18, 28, 44, 72];
+document.getElementById('wordmark-rows').innerHTML = wmSizes.map(px => `
+  <div class="wm-grid">
+    <span class="px">${px}px</span>
+    <div class="wm-cell">${wordmarkSVG(px, WM_DOT_CX_CUR)}<span class="tag fix">cx 50.977 ✓</span></div>
+    <div class="wm-cell">${wordmarkSVG(px, WM_DOT_CX_FIX)}<span class="tag cur">cx 52.4 ✗</span></div>
+  </div>`).join('');
+
+/* ----- 2a. stroke matrix (rows = stroke weight, cols = size ladder) ----- */
+const ladderSizes = [16, 24, 48, 96, 180];
+const strokeOpts = [
+  { w: 2.4, label: 'current', cls: 'opt-cur' },
+  { w: 4.0, label: '4.0',     cls: '' },
+  { w: 5.0, label: '5.0  ✓ SELECTED',  cls: 'opt-pick' },
+  { w: 6.5, label: '6.5',     cls: '' },
+];
+const MATRIX_DOT_R = 5.5;
+// dot r and stroke-width are in viewBox units (constant across rendered px sizes).
+document.getElementById('stroke-matrix').innerHTML =
+  `<thead><tr><th class="rowhead">stroke&nbsp;↓ / size&nbsp;→</th>${ladderSizes.map(s=>`<th>${s}px</th>`).join('')}</tr></thead><tbody>` +
+  strokeOpts.map(opt => `<tr>
+    <th class="rowhead">${opt.label}</th>
+    ${ladderSizes.map(s => `<td class="${opt.cls}">${markSVG(s, opt.w, s<=24 ? 0 : MATRIX_DOT_R)}</td>`).join('')}
+  </tr>`).join('') + `</tbody>`;
+
+/* ----- 2b. dot-radius ladder (stroke fixed at 5.0) ----- */
+const dotOpts = [
+  { r: 3.2, label: 'current (3.2)' },
+  { r: 4.5, label: '4.5' },
+  { r: 5.5, label: '5.5  ✓ SELECTED' },
+];
+const DOT_LADDER_STROKE = 5.0;
+document.getElementById('dot-ladder').innerHTML =
+  [32, 48, 96].map(px => `
+    <div class="rung">
+      ${dotOpts.map(o => `<div class="dot-opt">${markSVG(px, DOT_LADDER_STROKE, o.r)}<div class="px">${o.label}</div></div>`).join('')}
+      <div class="px size-cap">${px}px</div>
+    </div>`).join('');
+
+/* ----- 2c. subtle size-aware accent-dot scaling ----- */
+const DOT_BASE_R = 5.5, DOT_REF_PX = 180, DOT_SCALE_ALPHA = 0.7;
+function scaledDotR(px){ return +(DOT_BASE_R*Math.pow(DOT_REF_PX/px, DOT_SCALE_ALPHA)).toFixed(2); }
+const SMALL_NODOT_SW = 13;   // ≤24px: dot dropped, stroke thickened (matches §3b)
+const scaleRows = [
+  { label:'constant r 5.5',              cls:'',         dot:()=>5.5,                          sw:()=>5.0 },
+  { label:'kept ≥32px · dropped ≤24px ✓ SELECTED',  cls:'opt-pick', dot:px=> px<=24 ? 0 : scaledDotR(px), sw:px=> px<=24 ? SMALL_NODOT_SW : 5.0 },
+];
+document.getElementById('dot-scale').innerHTML =
+  `<thead><tr><th class="rowhead">dot&nbsp;↓ / size&nbsp;→</th>${ladderSizes.map(s=>`<th>${s}px</th>`).join('')}</tr></thead><tbody>` +
+  scaleRows.map(row=>`<tr><th class="rowhead">${row.label}</th>${ladderSizes.map(s=>`<td class="${row.cls}">${markSVG(s,row.sw(s),row.dot(s))}<div class="px" style="opacity:.55;font-size:9px">${row.dot(s)===0 ? 'no dot · sw'+row.sw(s) : 'r '+row.dot(s)}</div></td>`).join('')}</tr>`).join('') + `</tbody>`;
+
+/* ----- 3. threshold swap ----- */
+document.getElementById('swap-full').innerHTML = [16, 24].map(px =>
+  `<div class="item">${markSVG(px, 5.0, 5.5)}<div class="px">${px}px</div></div>`).join('');
+document.getElementById('swap-fav').innerHTML = [16, 24].map(px =>
+  `<div class="item">${favSVG(px)}<div class="px">${px}px</div></div>`).join('');
+
+/* ----- 3b. small-icon treatment: drop dot + thicker line at 16/24px ----- */
+document.getElementById('small-icon').innerHTML = [16, 24].map(px => `
+  <div class="rung">
+    <div class="dot-opt">${markSVG(px,5.0,5.5)}<div class="px">mark · dot · sw5</div></div>
+    <div class="dot-opt">${markSVG(px,13,0)}<div class="px">mark · NO dot · sw13 ✓</div></div>
+    <div class="dot-opt">${favSVG(px)}<div class="px">z + note ✓ (keep dot)</div></div>
+    <div class="dot-opt">${favNoDot(px)}<div class="px">z · no dot ✗</div></div>
+    <div class="px size-cap">${px}px</div>
+  </div>`).join('');
+
+/* ----- 4. lockup current vs proposed ----- */
+// Build a lockup inline = mark + wordmark laid out like zicato-lockup.svg
+function lockupSVG(px, strokeW, dotR, wmDotCx) {
+  // lockup.svg viewBox "71 30 470 90"; mark group + wordmark glyph paths in same coord space.
+  // We reuse mark coords (71..292) and the lockup wordmark path block.
+  const LOCKUP_WM = "M317.763671875 63.51171875H338.40625V67.77734375L322.080078125 88.19140625H338.40625V92.0H317.154296875V87.68359375L333.48046875 67.244140625H317.763671875ZM350.806640625 63.5625H362.765625V88.369140625H372.033203125V92.0H348.826171875V88.369140625H358.09375V67.193359375H350.806640625ZM403.552734375 90.552734375Q401.673828125 91.64453125 399.6806640625 92.1904296875Q397.6875 92.736328125 395.60546875 92.736328125Q389.00390625 92.736328125 385.2841796875 88.775390625Q381.564453125 84.814453125 381.564453125 77.806640625Q381.564453125 70.798828125 385.2841796875 66.837890625Q389.00390625 62.876953125 395.60546875 62.876953125Q397.662109375 62.876953125 399.6171875 63.41015625Q401.572265625 63.943359375 403.552734375 65.060546875V69.9609375Q401.69921875 68.310546875 399.8330078125 67.57421875Q397.966796875 66.837890625 395.60546875 66.837890625Q391.212890625 66.837890625 388.8515625 69.681640625Q386.490234375 72.525390625 386.490234375 77.806640625Q386.490234375 83.0625 388.8642578125 85.9189453125Q391.23828125 88.775390625 395.60546875 88.775390625Q398.04296875 88.775390625 399.97265625 88.0263671875Q401.90234375 87.27734375 403.552734375 85.703125ZM426.744140625 77.705078125H425.1953125Q421.107421875 77.705078125 419.0380859375 79.1396484375Q416.96875 80.57421875 416.96875 83.41796875Q416.96875 85.982421875 418.517578125 87.404296875Q420.06640625 88.826171875 422.80859375 88.826171875Q426.66796875 88.826171875 428.876953125 86.1474609375Q431.0859375 83.46875 431.111328125 78.74609375V77.705078125ZM435.80859375 75.775390625V92.0H431.111328125V87.78515625Q429.61328125 90.32421875 427.3408203125 91.5302734375Q425.068359375 92.736328125 421.818359375 92.736328125Q417.4765625 92.736328125 414.88671875 90.2861328125Q412.296875 87.8359375 412.296875 83.72265625Q412.296875 78.974609375 415.4833984375 76.51171875Q418.669921875 74.048828125 424.83984375 74.048828125H431.111328125V73.3125Q431.0859375 69.91015625 429.384765625 68.3740234375Q427.68359375 66.837890625 423.951171875 66.837890625Q421.564453125 66.837890625 419.126953125 67.5234375Q416.689453125 68.208984375 414.37890625 69.529296875V64.857421875Q416.96875 63.8671875 419.3427734375 63.3720703125Q421.716796875 62.876953125 423.951171875 62.876953125Q427.48046875 62.876953125 429.9814453125 63.91796875Q432.482421875 64.958984375 434.03125 67.041015625Q434.99609375 68.310546875 435.40234375 70.1767578125Q435.80859375 72.04296875 435.80859375 75.775390625ZM456.81640625 55.48828125V63.5625H467.4296875V67.193359375H456.81640625V82.630859375Q456.81640625 85.779296875 458.009765625 87.0234375Q459.203125 88.267578125 462.173828125 88.267578125H467.4296875V92.0H461.716796875Q456.4609375 92.0 454.302734375 89.892578125Q452.14453125 87.78515625 452.14453125 82.630859375V67.193359375H444.552734375V63.5625H452.14453125V55.48828125ZM489.173828125 66.837890625Q485.619140625 66.837890625 483.791015625 69.60546875Q481.962890625 72.373046875 481.962890625 77.806640625Q481.962890625 83.21484375 483.791015625 85.9951171875Q485.619140625 88.775390625 489.173828125 88.775390625Q492.75390625 88.775390625 494.58203125 85.9951171875Q496.41015625 83.21484375 496.41015625 77.806640625Q496.41015625 72.373046875 494.58203125 69.60546875Q492.75390625 66.837890625 489.173828125 66.837890625ZM489.173828125 62.876953125Q495.08984375 62.876953125 498.2255859375 66.7109375Q501.361328125 70.544921875 501.361328125 77.806640625Q501.361328125 85.09375 498.23828125 88.9150390625Q495.115234375 92.736328125 489.173828125 92.736328125Q483.2578125 92.736328125 480.134765625 88.9150390625Q477.01171875 85.09375 477.01171875 77.806640625Q477.01171875 70.544921875 480.134765625 66.7109375Q483.2578125 62.876953125 489.173828125 62.876953125Z";
+  const w = px * 470/90;
+  return `<svg width="${w.toFixed(0)}" height="${px}" viewBox="71 30 470 90" role="img" aria-label="zicato">
+    <g fill="none" stroke="currentColor" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round">
+      <path d="${MARK_SPIRAL}"/>
+      <path d="${MARK_BRIDGE}"/>
+    </g>
+    <circle cx="170" cy="102" r="${dotR}" fill="var(--zicato-accent, #2FA46A)"/>
+    <path d="${LOCKUP_WM}" fill="currentColor"/>
+    <circle cx="${wmDotCx}" cy="52" r="4.2" fill="var(--zicato-accent, #2FA46A)"/>
+  </svg>`;
+}
+const LK_CUR = { stroke: 2.4, dot: 3.2, wmcx: 358.936 };
+const LK_FIX = { stroke: 5.0, dot: 5.5, wmcx: 358.936 };  // dot KEPT (current is correct); only stroke + dot-size thickened
+function lockSet(cfg) {
+  return `<div class="lock-set">
+    <div class="lock-item">${lockupSVG(44, cfg.stroke, cfg.dot, cfg.wmcx)}<span class="px">44px</span></div>
+    <div class="lock-item">${lockupSVG(72, cfg.stroke, cfg.dot, cfg.wmcx)}<span class="px">72px</span></div>
+  </div>`;
+}
+document.getElementById('lockup-rows').innerHTML = `
+  <div class="lock-row">
+    <span class="label">CURRENT<br><span class="tag cur">2.4 · r3.2 · cx 358.9</span></span>
+    ${lockSet(LK_CUR)}
+  </div>
+  <div class="lock-row">
+    <span class="label">PROPOSED ✓ SELECTED<br><span class="tag fix">5.0 · r5.5 · cx 358.936 (dot kept)</span></span>
+    ${lockSet(LK_FIX)}
+  </div>`;
+
+/* ----- header mark ----- */
+document.getElementById('hdr-mark').innerHTML = markSVG(80, 5.0, 5.5);
+
+/* ===== Console colour-scheme picker — 16 themes ported from variants/T =====
+   Swatch tuple = [ground, surface, ink, improve, regress, accent] (matches the
+   real swatchdropdown.js legibility-hint strip). Selecting a row sets
+   html[data-theme] and live-swaps the token block defined in CSS — including
+   --zicato-accent, so the SVG marks' green dot adapts per theme. */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME = "monokai";
+const THEME_IDS = THEMES.map(t => t[0]);
+function strip(swatches, sm) {
+  return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">` +
+    swatches.map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('') + `</span>`;
+}
+function mountThemePicker(hostId) {
+  const host = document.getElementById(hostId);
+  let value = DEFAULT_THEME, open = false, activeIdx = THEME_IDS.indexOf(value);
+  const byId = new Map(THEMES.map(t => [t[0], t]));
+  host.innerHTML =
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw]) =>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             ${strip(sw)}<span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd = host.querySelector('.dt-cd');
+  const trigger = host.querySelector('.dt-cd-trigger');
+  const trigStrip = host.querySelector('.dt-cd-trig-strip');
+  const trigName = host.querySelector('.dt-cd-trig-name');
+  const list = host.querySelector('.dt-cd-list');
+  const options = Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id) {
+    value = THEME_IDS.includes(id) ? id : DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme', value);
+    const def = byId.get(value);
+    trigStrip.className = 'dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden', 'true');
+    trigStrip.innerHTML = def[2].map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent = def[1];
+    options.forEach(o => o.setAttribute('aria-selected', String(o.getAttribute('data-theme') === value)));
+  }
+  function setActive(i) {
+    activeIdx = (i + options.length) % options.length;
+    options.forEach((o,k) => o.classList.toggle('dt-cd-active', k === activeIdx));
+  }
+  function setOpen(next) {
+    open = next; cd.classList.toggle('dt-cd-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) setActive(Math.max(0, THEME_IDS.indexOf(value)));
+  }
+  function choose(id) { applyTheme(id); setOpen(false); }
+  options.forEach(o => o.addEventListener('click', () => choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click', () => setOpen(!open));
+  trigger.addEventListener('keydown', ev => {
+    if (['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)) { ev.preventDefault(); setOpen(true); list.focus?.(); }
+  });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); setOpen(false); trigger.focus(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx+1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx-1); }
+    else if (['Enter',' ','Spacebar'].includes(ev.key)) {
+      ev.preventDefault();
+      const id = options[activeIdx]?.getAttribute('data-theme'); if (id) choose(id);
+    }
+  });
+  document.addEventListener('click', ev => {
+    if (!open) return; let n = ev.target; while (n) { if (n === cd) return; n = n.parentNode; } setOpen(false);
+  });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+</script>
+</body>
+</html>
