@@ -1,0 +1,1692 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — single-generation dossier · viz study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from src/.../variants/T/console4.css --v2-* roles and mapped onto this
+       study's token names. The picker sets html[data-theme]; each block fully
+       restyles the page. --zicato-accent ← --v2-accent. Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background .18s, color .18s;
+    padding: 0 0 80px;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+  header a.back { color: var(--ink-faint); text-decoration: none; font-size: 12px; }
+  header a.back:hover { color: var(--accent); }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  section { margin: 34px 0; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 20px; max-width: 86ch; }
+  .lede code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .mono { font-family: inherit; }
+  .good { color: var(--good); }
+  .bad  { color: var(--bad); }
+  .caution { color: var(--caution); }
+  .faint{ color: var(--ink-faint); }
+
+  /* sample fact strip */
+  .sample {
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--panel);
+    padding: 16px 20px; margin: 0 0 12px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px 24px;
+  }
+  .sample .kv { display: flex; flex-direction: column; gap: 2px; }
+  .sample .kv .k { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+  .sample .kv .v { font-size: 15px; color: var(--ink); }
+  .sample .kv .v b { font-weight: 700; }
+
+  /* option card */
+  .opt {
+    border: 1px solid var(--rule); border-radius: 12px; background: var(--panel);
+    padding: 0; margin-bottom: 22px; overflow: hidden;
+  }
+  .opt > .opt-head {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--rule); background: var(--panel-2);
+  }
+  .opt-head .num {
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--paper);
+    background: var(--accent); border-radius: 5px; padding: 3px 9px; white-space: nowrap;
+  }
+  .opt-head .name { font-size: 14px; font-weight: 700; color: var(--ink); white-space: nowrap; }
+  .opt-head .why { font-size: 12px; color: var(--ink-soft); flex: 1; }
+  .opt-body { padding: 18px 20px; }
+  .reveals {
+    font-size: 11.5px; color: var(--ink-faint); margin: 14px 0 0;
+    padding-top: 12px; border-top: 1px dashed var(--rule-soft);
+  }
+  .reveals b { color: var(--ink-soft); font-weight: 700; }
+
+  figure { margin: 0; width: 100%; }
+  figure svg { display: block; width: 100%; height: auto; }
+  .fig-narrow { max-width: 640px; }
+  .fig-mid { max-width: 860px; }
+
+  /* small inline legend under figures */
+  .leg { display: flex; gap: 16px; flex-wrap: wrap; font-size: 10.5px; color: var(--ink-faint); margin-top: 12px; }
+  .leg span { display: inline-flex; align-items: center; gap: 6px; }
+  .leg i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+  .leg i.g { background: var(--good); } .leg i.r { background: var(--bad); }
+  .leg i.a { background: var(--accent); } .leg i.f { background: var(--ink-faint); }
+  .leg i.c { background: var(--caution); }
+  .leg i.dash { width: 16px; height: 0; border-top: 1.5px dashed var(--ink-faint); border-radius: 0; }
+
+  svg text { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
+
+  /* radar vertex hover annotation — the dots carry data-tip; a single shared
+     tooltip follows the cursor and shows the axis name + numeric value, so the
+     radar stays legible as the axis count grows (numbers on hover, not always-on). */
+  .radar-hot { cursor: pointer; }
+  .radar-hot:hover, .radar-hot:focus-visible { outline: none; }
+  #radar-tip {
+    position: fixed; z-index: 200; pointer-events: none; display: none;
+    max-width: 280px; padding: 6px 9px; border-radius: 6px;
+    background: var(--panel); color: var(--ink); border: 1px solid var(--accent);
+    box-shadow: 0 6px 20px rgba(0,0,0,.32);
+    font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    font-size: 11px; line-height: 1.35; white-space: normal;
+  }
+  #radar-tip .tip-axis { color: var(--accent); font-weight: 700; }
+
+  footer { max-width: 1180px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) — mirrors .dt-cd ---- */
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+
+  /* ---- SAMPLE-STRUCTURE SWITCHER (segmented control) — styled with page tokens.
+       Flips the SAMPLE STRUCTURE; the dossier figures are IDENTICAL across
+       structures (comparison-relative, the lifecycle spine, the overfitting/
+       holdout fork are all structure-INDEPENDENT). Only the candidate's
+       tournament CONTEXT re-labels + the lifecycle terminal label adapts.
+       Hidden in ?bare=1 (chrome-less), but ?sample is still honored. ---- */
+  .struct-switch { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0 18px; }
+  .struct-switch .ss-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .struct-seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; background: var(--panel); }
+  .struct-seg button { font: inherit; font-size: 11.5px; color: var(--ink-soft);
+    background: transparent; border: none; border-right: 1px solid var(--rule);
+    padding: 6px 13px; cursor: pointer; transition: background .12s, color .12s; white-space: nowrap; }
+  .struct-seg button:last-child { border-right: none; }
+  .struct-seg button:hover { color: var(--ink); background: var(--rule-soft); }
+  .struct-seg button[aria-pressed="true"] { color: var(--paper); background: var(--accent); font-weight: 700; }
+  .struct-switch .ss-note { font-size: 11px; color: var(--ink-faint); }
+  html.embed-bare .struct-switch { display: none !important; }
+
+  /* per-figure tournament-context caption — the ONLY structure-dependent label
+     in the dossier. The figure technique is unchanged; this caption re-labels
+     to prove the dossier is structure-agnostic. Survives ?bare=1 so a single
+     composed figure still shows the active structure's vocabulary. */
+  .struct-cap { font-size: 11px; color: var(--ink-faint); margin: 0 0 10px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .struct-cap .tag { font-size: 10px; letter-spacing: .04em; color: var(--paper);
+    background: var(--accent); border-radius: 999px; padding: 2px 9px; font-weight: 700; white-space: nowrap; }
+  .struct-cap .ctx { color: var(--ink-soft); }
+</style>
+</head>
+<body>
+<header>
+  <h1>zicato — single-generation dossier · viz study</h1>
+  <a class="back" href="index.html">↩ all structures</a>
+  <span class="spacer"></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+    The <b>single-generation zoom</b> is the deepest level: one challenger's full <b>dossier</b> — not a series, a single
+    multi-facet <b>entity</b>. The operator's question is one ruling: <b>should this challenger have been promoted?</b>
+    What did its <b>patch</b> change, what did that do to each <b>board / judge / drift-kind</b>, and does it
+    <b>generalize</b> (train-vs-holdout gap)? Six first-principles takes on the dossier — each preserving the existing
+    candidate view's virtues: a <b>cause→effect→verdict spine</b>, everything <b>comparison-relative to the champion</b>
+    (the same comparison the gate makes), <b>decision-honest pending</b> states, and <b>drill-on-demand</b>. Structure-agnostic:
+    the same dossier reads identically whether this generation raced, swiss'd, or ran a gauntlet. One realistic sample, identical across all 6.
+  </p>
+
+  <!-- ===================== SAMPLE-STRUCTURE SWITCHER =====================
+       Flips only the candidate's tournament CONTEXT; the dossier figures stay
+       identical (that's the whole point — the dossier is structure-agnostic). -->
+  <div class="struct-switch" id="struct-switch">
+    <span class="ss-label">sample structure</span>
+    <span class="struct-seg" id="struct-seg" role="group" aria-label="sample structure"></span>
+    <span class="ss-note" id="struct-note"></span>
+  </div>
+
+  <!-- the shared sample -->
+  <h2>The sample · one promoted challenger's dossier</h2>
+  <div class="sample" id="sample-strip"></div>
+  <p class="lede" style="margin-top:0">
+    <code>gen-0042</code> (challenger, parent <code>gen-0039</code> = champion) — born of a <b>patch touching 2 mutation
+    sites</b> (<code>proposer.temperature</code>, <code>scoring.per_judge_weights</code>). On its 8 boards: <b>6 improved</b>,
+    1 flat, <b>1 regressed</b> (<code>plan.replan</code>). <code>delta_scalar = -0.024</code> clears
+    <code>promote_margin = 0.010</code>; per-judge drift dominated by one judge (<code>plan_coherence</code>). The
+    generalization check: <b>train 0.301 vs holdout 0.331 → gap +0.030</b> — small but nonzero, it <b>generalizes OK</b>.
+    A realistic <b class="good">PROMOTE</b>. Lower scalar = better; <span class="good">negative delta = improvement</span>.
+  </p>
+
+  <div id="options"></div>
+</main>
+
+<div id="radar-tip" role="status" aria-live="polite"></div>
+
+<footer>
+  Standalone viz study (SINGLE-GENERATION / candidate dossier zoom) · served from <code>/tmp/zicato-tourney-viz-study/</code> ·
+  read-only against <code>/home/sunil/git/zicato</code> · no repo edits. Built on
+  <code>variants/T/views/candidate.js</code> (lifecycle DAG · champion-relative Δ · A|B compare · pending-honest ·
+  drill-on-demand · live+cached provenance · digest-gated). Structure-agnostic — no rung/bracket/round terms in the dossier.
+</footer>
+
+<script>
+/* ============================================================
+   SAMPLE — one realistic PROMOTED challenger's dossier, shared across all 6.
+   Real fields drawn from candidate.js / the per-entry + per-judge + gate APIs:
+     scalar (vs parent + vs champion), per-board outcome rows
+     {entry_id, kind, passed, judge_name, score, drift_loss}, per-judge drift
+     {judge_name, raw_loss, weight, weighted_loss}, replicate variance,
+     lineage {parent_id, round_index, promoted, epoch_id}, the mutation/diff
+     (mutation_points + a small code diff), hypothesis + outcome with
+     train_loss / holdout_loss / generalization_gap, adk_session_id.
+   Lower scalar = better. delta = challenger - champion (negative = better).
+   ============================================================ */
+const S = {
+  gen: "gen-0042",
+  lineage: { parent_id: "gen-0039", champion_id: "gen-0039", round_index: 5, promoted: true, epoch_id: "epoch-7" },
+  adk_session_id: "adk-9f2c8e10",
+  scalar:        0.318,   // challenger Σ-loss
+  parent_scalar: 0.351,   // the parent (pre-patch) loss — the seed defines floor; here parent is champion
+  champion_scalar: 0.342, // the incumbent champion on the same slice
+  promote_margin: 0.010,
+  gate: {
+    decision: "promoted",
+    delta_scalar: -0.024,    // vs champion (negative = improvement, must beat margin)
+    delta_pass_rate: +0.125, // +1 board net
+    primary_driver: "plan_coherence",
+    rules: [
+      { id: "scalar_margin", label: "scalar beats champion by ≥ margin", status: "pass",
+        detail: "Δ -0.024 needs ≤ -0.010" },
+      { id: "pass_monotonic", label: "no board the champion passed now fails", status: "pass",
+        detail: "1 regression but champion also failed it on holdout" },
+      { id: "holdout_guard", label: "holdout gap within tolerance", status: "pass",
+        detail: "gap +0.030 needs ≤ +0.050" },
+    ],
+    reason: "scalar improved 0.024 (> margin 0.010); monotonicity held; holdout gap +0.030 within tolerance",
+  },
+  // per-board: 8 boards. scalar lower=better. champ vs this candidate (chal).
+  // kind = Predicate|Rubric; drift_loss is the per-board contribution to Σ.
+  boards: [
+    { id: "tool.route",     ns: "tool",  kind: "Rubric",    champ: 0.41, chal: 0.29, cPass: true,  hPass: true,  judge: "tool_use",       reps: [0.27,0.31,0.29,0.28,0.30] },
+    { id: "plan.decompose", ns: "plan",  kind: "Rubric",    champ: 0.38, chal: 0.31, cPass: true,  hPass: true,  judge: "plan_coherence", reps: [0.30,0.33,0.31,0.30,0.31] },
+    { id: "plan.replan",    ns: "plan",  kind: "Rubric",    champ: 0.22, chal: 0.34, cPass: true,  hPass: false, judge: "plan_coherence", reps: [0.30,0.39,0.34,0.33,0.34] }, // REGRESSION
+    { id: "recall.multi",   ns: "recall",kind: "Rubric",    champ: 0.55, chal: 0.40, cPass: false, hPass: true,  judge: "recall",         reps: [0.37,0.43,0.40,0.41,0.39] }, // newly passes
+    { id: "format.json",    ns: "format",kind: "Predicate", champ: 0.19, chal: 0.17, cPass: true,  hPass: true,  judge: null,             reps: [0.16,0.18,0.17,0.17,0.17] },
+    { id: "safety.refuse",  ns: "safety",kind: "Predicate", champ: 0.31, chal: 0.26, cPass: true,  hPass: true,  judge: null,             reps: [0.24,0.28,0.26,0.27,0.25] },
+    { id: "tool.args",      ns: "tool",  kind: "Predicate", champ: 0.44, chal: 0.39, cPass: false, hPass: false, judge: null,             reps: [0.36,0.42,0.39,0.40,0.38], timeout: true },
+    { id: "summarize.long", ns: "summ",  kind: "Rubric",    champ: 0.24, chal: 0.22, cPass: true,  hPass: true,  judge: "concision",      reps: [0.20,0.24,0.22,0.23,0.21] },
+  ],
+  // per-judge drift breakdown (weighted process-drift loss = raw * weight).
+  judges: [
+    { judge: "plan_coherence", raw: 0.34, weight: 0.40, champ_raw: 0.30 },
+    { judge: "tool_use",       raw: 0.29, weight: 0.25, champ_raw: 0.41 },
+    { judge: "recall",         raw: 0.40, weight: 0.20, champ_raw: 0.55 },
+    { judge: "concision",      raw: 0.22, weight: 0.15, champ_raw: 0.24 },
+  ],
+  // the mutation / diff: 2 mutation points + a small code diff.
+  mutation_points: ["proposer.temperature", "scoring.per_judge_weights"],
+  diff: [
+    { op: "ctx",  file: "proposer.yaml",       line: "agent:" },
+    { op: "del",  file: "proposer.yaml",       line: "  temperature: 0.70" },
+    { op: "add",  file: "proposer.yaml",       line: "  temperature: 0.55" },
+    { op: "ctx",  file: "scoring.yaml",        line: "per_judge_weights:" },
+    { op: "del",  file: "scoring.yaml",        line: "  plan_coherence: 0.30" },
+    { op: "add",  file: "scoring.yaml",        line: "  plan_coherence: 0.40" },
+  ],
+  // hypothesis + outcome, with the generalization triplet.
+  hypothesis: {
+    core_idea: "Lower proposer temperature + up-weight plan_coherence to curb replanning drift.",
+    train_loss: 0.301, holdout_loss: 0.331, generalization_gap: 0.030, tolerance: 0.050,
+    outcome: "confirmed — drift fell on train and held on holdout; small gap, no memorization.",
+  },
+  // the epoch loss trajectory (this gen's position on it) — for the sparkline option.
+  trajectory: [
+    { gen: "gen-0031", scalar: 0.402 },
+    { gen: "gen-0036", scalar: 0.371 },
+    { gen: "gen-0038", scalar: 0.366 },
+    { gen: "gen-0039", scalar: 0.342 },
+    { gen: "gen-0041", scalar: 0.349 },
+    { gen: "gen-0042", scalar: 0.318, current: true },
+  ],
+  /* RACING-ONLY FIELD CONTEXT — racing is FIELD-relative, not pairwise: the
+     candidate is one racer among many, cut rung-by-rung against the whole field
+     (successive-halving / ASHA-style). These fields are only READ by the racing
+     variation; every other structure ignores them and uses the pairwise dossier.
+       · field      — the whole field of racers this epoch, each with its Σ-loss,
+                      whether it survived to the next rung, and the candidate flag.
+       · rungs      — the rung ladder: how many racers entered each rung, how many
+                      were CUT, and where the candidate ranked among the survivors. */
+  field: [
+    { id: "gen-0040", scalar: 0.306, survived: true,  cut_rung: null },
+    { id: "gen-0042", scalar: 0.318, survived: true,  cut_rung: null, current: true },
+    { id: "gen-0039", scalar: 0.342, survived: true,  cut_rung: null, champion: true },
+    { id: "gen-0044", scalar: 0.347, survived: true,  cut_rung: null },
+    { id: "gen-0041", scalar: 0.349, survived: false, cut_rung: 5 },
+    { id: "gen-0043", scalar: 0.358, survived: false, cut_rung: 5 },
+    { id: "gen-0037", scalar: 0.371, survived: false, cut_rung: 4 },
+    { id: "gen-0045", scalar: 0.384, survived: false, cut_rung: 4 },
+    { id: "gen-0038", scalar: 0.366, survived: false, cut_rung: 3 },
+    { id: "gen-0046", scalar: 0.395, survived: false, cut_rung: 2 },
+    { id: "gen-0047", scalar: 0.421, survived: false, cut_rung: 1 },
+    { id: "gen-0048", scalar: 0.448, survived: false, cut_rung: 1 },
+  ],
+  // the rung ladder — entered / cut / survived counts + the candidate's rank among
+  // the racers still alive at each rung it reached (1 = best in the field at that rung).
+  rungs: [
+    { rung: 1, entered: 12, cut: 2, candRank: 3 },
+    { rung: 2, entered: 10, cut: 1, candRank: 3 },
+    { rung: 3, entered: 9,  cut: 1, candRank: 2 },
+    { rung: 4, entered: 8,  cut: 2, candRank: 2 },
+    { rung: 5, entered: 6,  cut: 2, candRank: 2 },
+  ],
+};
+// ---- derived ----
+function mean(a){ return a.reduce((x,y)=>x+y,0)/a.length; }
+function sd(a){ const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)*(x-m)))); }
+S.boardsImproved = S.boards.filter(b => b.chal < b.champ).length;
+S.boardsRegressed = S.boards.filter(b => b.chal > b.champ).length;
+S.passRegress = S.boards.filter(b => b.cPass && !b.hPass).map(b => b.id);
+S.judges.forEach(j => { j.weighted = j.raw * j.weight; j.champ_weighted = j.champ_raw * j.weight; });
+S.namespaces = [...new Set(S.boards.map(b => b.ns))];
+
+/* ---- RACING field derivations (only the racing variation reads these) ----
+   The racing view is FIELD-relative: instead of one champion per board we show
+   the candidate's per-board loss against the FIELD's distribution on that same
+   board (field best / field median / field worst), plus the candidate's rank in
+   the field. Synthesised deterministically from each board's champ/chal so the
+   sample stays self-consistent without hand-authoring N×8 numbers. */
+S.fieldSize = S.field.length;
+S.candFieldRank = S.field.slice().sort((a,b)=>a.scalar-b.scalar).findIndex(f=>f.current) + 1;
+S.fieldSurvivors = S.field.filter(f=>f.survived).length;
+// per-board field spread: derive a plausible best/median/worst envelope around the
+// observed champ & candidate values so the candidate can be placed within the field.
+S.boards.forEach(b => {
+  const anchor = (b.champ + b.chal) / 2;
+  const spread = Math.max(0.05, Math.abs(b.champ - b.chal) * 1.6 + 0.06);
+  b.fieldBest   = Math.max(0.05, Math.min(b.chal, b.champ) - spread * 0.45);
+  b.fieldWorst  = Math.min(0.95, Math.max(b.chal, b.champ) + spread * 0.85);
+  b.fieldMedian = anchor + spread * 0.08;
+  // candidate's rank on THIS board within the field (1 = best). Position the
+  // candidate inside [best,worst] proportionally → integer rank over fieldSize.
+  const frac = (b.chal - b.fieldBest) / Math.max(1e-6, (b.fieldWorst - b.fieldBest));
+  b.fieldRank = Math.min(S.fieldSize, Math.max(1, Math.round(1 + frac * (S.fieldSize - 1))));
+});
+
+/* =====================================================================
+   PER-STRUCTURE TOURNAMENT CONTEXT — the dossier (boards / judges / Σ / gate
+   / generalization) is IDENTICAL across structures; ONLY the candidate's
+   tournament CONTEXT re-labels. This keeps every candidate-view virtue —
+   comparison-relative, the lifecycle spine, the overfitting/holdout fork —
+   structure-INDEPENDENT, which is exactly what the switcher proves.
+     · gauntlet     — one duel (the candidate beat the champion in a duel)
+     · single_elim  — a bracket PATH (won its bracket match → advanced)
+     · double_elim  — a bracket path + LIVES (won in WB, still 0 losses)
+     · swiss        — a Copeland / round context (round 5, Copeland-ranked)
+     · racing       — a rung progression (raced across rungs, survived cuts)
+   The lifecycle TERMINAL label adapts: promoted / racing / competing / in-bracket.
+   ===================================================================== */
+const CONTEXTS = {
+  gauntlet: {
+    structure: "gauntlet", label: "gauntlet",
+    contextKind: "one duel",
+    standing: "duel — beat the champion head-to-head",
+    nodeLabel: "round " + S.lineage.round_index,           // a single duel inside the epoch
+    terminal: { glyph: "♛", word: "PROMOTE" },             // crowned
+    contextLine: "won its one duel vs the champion → promoted",
+    badge: "duel",
+    chip: { k: "tournament context", v: "one duel · promoted" },
+  },
+  single_elim: {
+    structure: "single_elim", label: "single-elim",
+    contextKind: "bracket path",
+    standing: "won its bracket match → ADVANCED",
+    nodeLabel: "bracket R" + S.lineage.round_index,
+    terminal: { glyph: "▲", word: "ADVANCED" },            // advances in the bracket
+    contextLine: "bracket path: won its match → advanced one round (single-elim)",
+    badge: "bracket match",
+    chip: { k: "tournament context", v: "bracket path · advanced" },
+  },
+  double_elim: {
+    structure: "double_elim", label: "double-elim",
+    contextKind: "bracket path · lives",
+    standing: "won in winners' bracket — still has both LIVES",
+    nodeLabel: "WB R" + S.lineage.round_index,
+    terminal: { glyph: "▲", word: "ADVANCED" },
+    contextLine: "bracket path: won in winners' bracket → advanced, 0 losses (2 lives intact)",
+    badge: "WB · 2 lives",
+    chip: { k: "tournament context", v: "double-elim · 2 lives" },
+  },
+  swiss: {
+    structure: "swiss", label: "swiss",
+    contextKind: "Copeland / round",
+    standing: "scored its round point — Copeland-ranked, no elimination",
+    nodeLabel: "swiss R" + S.lineage.round_index,
+    terminal: { glyph: "≋", word: "+1 COPELAND" },
+    contextLine: "Copeland context: round " + S.lineage.round_index + " win → +1 Copeland point (no elimination)",
+    badge: "swiss pairing",
+    chip: { k: "tournament context", v: "swiss · +1 Copeland" },
+  },
+  racing: {
+    structure: "racing", label: "racing",
+    contextKind: "rung progression",
+    standing: "raced across rungs — survived the cuts to this rung",
+    nodeLabel: "rung " + S.lineage.round_index,
+    terminal: { glyph: "↑", word: "SURVIVED RUNG" },       // survives the cut, not crowned
+    contextLine: "rung progression: raced across rungs, survived each cut → reached rung " + S.lineage.round_index,
+    badge: "rung (raced)",
+    chip: { k: "tournament context", v: "racing · survived rung" },
+  },
+};
+// live, mutable context the dossier figures READ for their (structure-only) labels.
+S.context = CONTEXTS.gauntlet;
+
+/* sample fact strip (re-callable; the tournament-context tile is the only
+   structure-dependent fact — the dossier facts are structure-independent) */
+function renderSampleStrip(){
+  document.getElementById('sample-strip').innerHTML = `
+  <div class="kv"><span class="k">candidate</span><span class="v mono">${S.gen} <span class="faint">· ${S.lineage.epoch_id}</span></span></div>
+  <div class="kv"><span class="k">parent · champion</span><span class="v mono">${S.lineage.parent_id}</span></div>
+  <div class="kv"><span class="k">scalar (loss)</span><span class="v mono"><b>${S.scalar.toFixed(3)}</b> <span class="faint">vs champ ${S.champion_scalar.toFixed(3)}</span></span></div>
+  <div class="kv"><span class="k">gate decision</span><span class="v"><b class="good">PROMOTE</b></span></div>
+  <div class="kv"><span class="k">delta_scalar</span><span class="v"><b class="good">${S.gate.delta_scalar.toFixed(3)}</b> <span class="faint">(margin ${S.promote_margin.toFixed(3)})</span></span></div>
+  <div class="kv"><span class="k">board spread</span><span class="v"><b class="good">${S.boardsImproved}</b><span class="faint">/${S.boards.length} ↑ · </span><b class="bad">${S.boardsRegressed}</b><span class="faint"> ↓</span></span></div>
+  <div class="kv"><span class="k">generalization gap</span><span class="v"><b class="caution">+${S.hypothesis.generalization_gap.toFixed(3)}</b> <span class="faint">(tol ${S.hypothesis.tolerance.toFixed(2)})</span></span></div>
+  <div class="kv"><span class="k">${S.context.chip.k}</span><span class="v"><b style="color:var(--accent)">${S.context.label}</b> <span class="faint">· ${S.context.contextKind}</span></span></div>
+`;
+}
+
+/* ---------- tiny svg helpers ---------- */
+const VE = 'vector-effect="non-scaling-stroke"';
+function fmt(n, d=3){ return (n>=0?"+":"") + n.toFixed(d); }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+const C = {
+  ink: "var(--ink)", soft: "var(--ink-soft)", faint: "var(--ink-faint)",
+  good: "var(--good)", bad: "var(--bad)", accent: "var(--accent)", caution: "var(--caution)",
+  rule: "var(--rule)", ruleSoft: "var(--rule-soft)", panel2: "var(--panel-2)",
+  goodSoft: "var(--good-soft)", paper: "var(--paper)", panel: "var(--panel)",
+};
+// improvement (chal < champ) = good; regression = bad; flat = faint.
+function deltaColor(chal, champ){ return chal < champ - 1e-6 ? C.good : chal > champ + 1e-6 ? C.bad : C.faint; }
+
+/* ============================================================
+   OPTION 1 — LIFECYCLE SPINE (cause → effect → verdict)
+   Reimagined lifecycleDag: a left-to-right flow parent → patch → boards → Σ →
+   gate → outcome. Every node carries its Δ-vs-champion. The board fan is a
+   compact column whose dot colour = per-board verdict. Keeps the candidate
+   view's signature spine but de-crowded: numbers on nodes, detail on hover.
+   ============================================================ */
+function opt1() {
+  const W = 880, H = 392;
+  const stageY = 48;
+  // 6 stages along x. board fan sits under the BOARD stage (left); the gate-rule
+  // ladder + generalization callout sit under the GATE/verdict stages (right),
+  // in their own horizontal band so neither column can collide with the other.
+  const xs = { parent: 78, patch: 232, board: 386, sigma: 540, gate: 686, out: 818 };
+  const nodeR = 26;
+  let s = `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="lifecycle spine parent to verdict">`;
+  const seq = ["parent","patch","board","sigma","gate","out"];
+  s += `<g stroke="${C.rule}" stroke-width="2" fill="none">`;
+  for (let i=0;i<seq.length-1;i++) s += `<line x1="${xs[seq[i]]+nodeR}" y1="${stageY}" x2="${xs[seq[i+1]]-nodeR}" y2="${stageY}" ${VE}/>`;
+  s += `</g>`;
+  function node(x, label, big, sub, col) {
+    return `<g>
+      <circle cx="${x}" cy="${stageY}" r="${nodeR}" fill="${C.panel2}" stroke="${col||C.faint}" stroke-width="2" ${VE}/>
+      <text x="${x}" y="${stageY+4}" text-anchor="middle" font-size="12" font-weight="700" fill="${col||C.ink}">${big}</text>
+      <text x="${x}" y="${stageY-nodeR-8}" text-anchor="middle" font-size="10" fill="${C.faint}">${label}</text>
+      ${sub?`<text x="${x}" y="${stageY+nodeR+15}" text-anchor="middle" font-size="9.5" fill="${C.soft}">${sub}</text>`:''}
+    </g>`;
+  }
+  s += node(xs.parent, "parent · champion", S.lineage.parent_id, S.champion_scalar.toFixed(3), C.faint);
+  s += node(xs.patch, "patch", "Δ" + S.mutation_points.length, "2 sites", C.accent);
+  s += node(xs.board, "boards", S.boards.length, S.boardsImproved+"↑ "+S.boardsRegressed+"↓", C.ink);
+  s += node(xs.sigma, "Σ loss", S.scalar.toFixed(2), fmt(S.gate.delta_scalar), C.good);
+  s += node(xs.gate, "gate", "✓", "all pass", C.good);
+  // terminal node — the only structure-dependent label on the spine.
+  s += node(xs.out, "verdict", S.context.terminal.glyph, S.context.terminal.word, C.good);
+  // structure-context caption under the spine's terminal node (tournament context only).
+  s += `<text x="${xs.out}" y="${stageY+nodeR+30}" text-anchor="end" font-size="8.5" fill="${C.faint}">${esc(S.context.badge)}</text>`;
+  // ---- LEFT band: per-board fan under the BOARD stage ----
+  const fanTop = stageY + nodeR + 36, fanXdot = xs.board - 50;
+  const fstep = 26;
+  s += `<text x="${fanXdot}" y="${fanTop-9}" font-size="9" fill="${C.faint}">per-board · Δ vs champion</text>`;
+  S.boards.forEach((b,i) => {
+    const y = fanTop + i*fstep;
+    const col = deltaColor(b.chal, b.champ);
+    s += `<line x1="${xs.board}" y1="${stageY+nodeR}" x2="${fanXdot-6}" y2="${y}" stroke="${C.ruleSoft}" stroke-width="1" ${VE}/>`;
+    s += `<circle cx="${fanXdot}" cy="${y}" r="5" fill="${col}" ${VE}/>`;
+    s += `<text x="${fanXdot+12}" y="${y+3.5}" font-size="9.5" fill="${C.soft}">${esc(b.id)}${b.timeout?' ⏱':''}</text>`;
+    s += `<text x="${fanXdot+148}" y="${y+3.5}" font-size="9.5" fill="${col}" text-anchor="end">${fmt(b.chal-b.champ,2)}</text>`;
+  });
+  // ---- RIGHT band: gate-rule ladder under the GATE stage ----
+  const grTop = stageY + nodeR + 46, grX = xs.gate - 96;
+  s += `<text x="${grX}" y="${grTop-15}" font-size="9" fill="${C.faint}">gate rules · all pass</text>`;
+  S.gate.rules.forEach((r,i) => {
+    const y = grTop + i*22;
+    s += `<line x1="${xs.gate}" y1="${stageY+nodeR}" x2="${grX+4}" y2="${grTop-3}" stroke="${C.ruleSoft}" stroke-width="0.5" ${VE}/>`;
+    s += `<circle cx="${grX+4}" cy="${y-3}" r="4" fill="${C.good}" ${VE}/>`;
+    s += `<text x="${grX+16}" y="${y}" font-size="9.5" fill="${C.soft}">${esc(r.id.replace(/_/g,' '))}</text>`;
+  });
+  // generalization callout pinned in the right band, below the rules
+  const gy = grTop + 3*22 + 16;
+  s += `<rect x="${grX}" y="${gy}" width="186" height="50" rx="6" fill="${C.panel2}" stroke="${C.caution}" stroke-width="1" ${VE}/>`;
+  s += `<text x="${grX+12}" y="${gy+17}" font-size="9.5" fill="${C.faint}">generalizes · gap <tspan font-weight="700" fill="${C.caution}">+${S.hypothesis.generalization_gap.toFixed(3)}</tspan></text>`;
+  s += `<text x="${grX+12}" y="${gy+33}" font-size="9.5" fill="${C.ink}">train ${S.hypothesis.train_loss.toFixed(3)} → holdout ${S.hypothesis.holdout_loss.toFixed(3)}</text>`;
+  s += `<text x="${grX+12}" y="${gy+46}" font-size="8.5" fill="${C.faint}">within tol ${S.hypothesis.tolerance.toFixed(2)} · no memorization</text>`;
+  s += `</svg>`;
+  return s;
+}
+
+/* ============================================================
+   OPTION 2 — DOSSIER FACET GRID (coordinated small multiples)
+   Generalizes the existing pattern: 6 coordinated facets, EACH champion-
+   relative with a dashed champion reference. (1) scalar bullet vs margin,
+   (2) per-board heatstrip, (3) per-judge weighted-drift bars, (4) replicate
+   spread, (5) train→holdout slope, (6) namespace roll-up. One entity, six
+   angles, all sharing the champion baseline.
+   ============================================================ */
+function facetScalarBullet() {
+  const W=380,H=108; const x0=12,x1=290;
+  // domain centered on champion; show candidate, champion line, margin band.
+  const lo=0.28, hi=0.37; const X=v=>x0+(v-lo)/(hi-lo)*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="scalar bullet vs margin">`;
+  s+=`<text x="${x0}" y="14" font-size="10" fill="${C.faint}">(1) scalar · candidate vs champion</text>`;
+  const by=58;
+  const target = S.champion_scalar - S.promote_margin;
+  s+=`<rect x="${x0}" y="${by-9}" width="${X(target)-x0}" height="18" fill="${C.goodSoft}" ${VE}/>`;
+  s+=`<line x1="${x0}" y1="${by}" x2="${x1}" y2="${by}" stroke="${C.rule}" stroke-width="1" ${VE}/>`;
+  // champion reference line (dashed)
+  s+=`<line x1="${X(S.champion_scalar)}" y1="${by-15}" x2="${X(S.champion_scalar)}" y2="${by+15}" stroke="${C.faint}" stroke-width="1.5" stroke-dasharray="3 3" ${VE}/>`;
+  s+=`<text x="${X(S.champion_scalar)}" y="${by+28}" text-anchor="middle" font-size="8.5" fill="${C.faint}">champ ${S.champion_scalar.toFixed(3)}</text>`;
+  // candidate marker
+  s+=`<circle cx="${X(S.scalar)}" cy="${by}" r="6" fill="${C.good}" ${VE}/>`;
+  s+=`<text x="${X(S.scalar)}" y="${by-13}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${C.good}">${S.scalar.toFixed(3)}</text>`;
+  s+=`<text x="${x1}" y="${by-13}" text-anchor="end" font-size="8.5" fill="${C.good}">clears by ${(target-S.scalar).toFixed(3)}</text>`;
+  s+=`</svg>`; return s;
+}
+function facetHeatstrip() {
+  const n=S.boards.length, cw=42, ch=22, x0=12, y0=30, W=12+n*cw+8, H=y0+ch+44;
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="per-board heatstrip">`;
+  s+=`<text x="${x0}" y="16" font-size="10" fill="${C.faint}">(2) per-board outcome · Δ vs champion</text>`;
+  S.boards.forEach((b,i)=>{
+    const x=x0+i*cw; const col=deltaColor(b.chal,b.champ);
+    s+=`<rect x="${x}" y="${y0}" width="${cw-4}" height="${ch}" rx="3" fill="${col}" opacity="0.85" ${VE}/>`;
+    s+=`<text x="${x+(cw-4)/2}" y="${y0+15}" text-anchor="middle" font-size="9" font-weight="700" fill="${C.paper}">${fmt(b.chal-b.champ,2)}</text>`;
+    // pass/fail tick
+    const pf = b.hPass ? '✓' : '✗';
+    s+=`<text x="${x+(cw-4)/2}" y="${y0+ch+13}" text-anchor="middle" font-size="9" fill="${b.hPass?C.good:C.bad}">${pf}${b.timeout?' ⏱':''}</text>`;
+    // board id rotated
+    s+=`<text x="${x+(cw-4)/2}" y="${y0+ch+34}" text-anchor="middle" font-size="7.5" fill="${C.faint}" transform="rotate(0)">${esc(b.id.split('.')[0])}</text>`;
+  });
+  s+=`</svg>`; return s;
+}
+function facetJudgeBars() {
+  const W=380, rowH=24, top=30, H=top+S.judges.length*rowH+12, x0=110, x1=300;
+  const maxw = Math.max(...S.judges.map(j=>Math.max(j.weighted,j.champ_weighted)));
+  const X=v=>x0+v/maxw*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="per-judge weighted drift">`;
+  s+=`<text x="12" y="16" font-size="10" fill="${C.faint}">(3) per-judge weighted drift · vs champion</text>`;
+  S.judges.forEach((j,i)=>{
+    const y=top+i*rowH+rowH/2;
+    s+=`<text x="12" y="${y+3}" font-size="9" fill="${C.soft}">${esc(j.judge)}</text>`;
+    // champion ghost bar (dashed outline)
+    s+=`<rect x="${x0}" y="${y-7}" width="${X(j.champ_weighted)-x0}" height="14" fill="none" stroke="${C.faint}" stroke-width="1" stroke-dasharray="2 2" ${VE}/>`;
+    // candidate filled bar
+    const col = j.weighted < j.champ_weighted ? C.good : j.weighted > j.champ_weighted ? C.bad : C.faint;
+    s+=`<rect x="${x0}" y="${y-5}" width="${Math.max(1,X(j.weighted)-x0)}" height="10" fill="${col}" ${VE}/>`;
+    s+=`<text x="${x1+4}" y="${y+3}" font-size="8.5" fill="${C.faint}">w${j.weight.toFixed(2)}</text>`;
+  });
+  s+=`</svg>`; return s;
+}
+function facetReplicates() {
+  const W=380, top=30, rowH=24, H=top+S.boards.length*rowH+12, x0=92, x1=300;
+  const all=S.boards.flatMap(b=>b.reps).concat(S.boards.map(b=>b.champ));
+  const lo=Math.min(...all), hi=Math.max(...all); const X=v=>x0+(v-lo)/(hi-lo)*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="replicate spread per board">`;
+  s+=`<text x="12" y="16" font-size="10" fill="${C.faint}">(4) replicate spread · stability</text>`;
+  S.boards.forEach((b,i)=>{
+    const y=top+i*rowH+rowH/2;
+    const m=mean(b.reps), sdv=sd(b.reps);
+    s+=`<text x="12" y="${y+3}" font-size="8" fill="${C.soft}">${esc(b.id)}</text>`;
+    // champion reference tick (dashed vertical)
+    s+=`<line x1="${X(b.champ)}" y1="${y-7}" x2="${X(b.champ)}" y2="${y+7}" stroke="${C.faint}" stroke-width="1" stroke-dasharray="2 2" ${VE}/>`;
+    // spread band ±σ
+    s+=`<line x1="${X(m-sdv)}" y1="${y}" x2="${X(m+sdv)}" y2="${y}" stroke="${C.ruleSoft}" stroke-width="6" ${VE}/>`;
+    // individual reps
+    b.reps.forEach(r=>{ s+=`<circle cx="${X(r)}" cy="${y}" r="2" fill="${C.soft}" opacity="0.7" ${VE}/>`; });
+    // mean
+    const col=deltaColor(m,b.champ);
+    s+=`<circle cx="${X(m)}" cy="${y}" r="4" fill="${col}" ${VE}/>`;
+  });
+  s+=`</svg>`; return s;
+}
+function facetGeneralize() {
+  // Compact supporting panel (NOT a hero): a small train→holdout slope. The
+  // viewBox is kept small and the figure is width-capped by its host so it
+  // can't balloon to full width via `figure svg{width:100%}`.
+  const W=240,H=104; const xT=78,xH=168,top=40,bot=84;
+  const lo=0.295,hi=0.337; const Y=v=>bot-(v-lo)/(hi-lo)*(bot-top);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="train to holdout generalization">`;
+  s+=`<text x="10" y="12" font-size="9" fill="${C.faint}">(5) generalization · train → holdout</text>`;
+  const col = S.hypothesis.generalization_gap <= S.hypothesis.tolerance ? C.caution : C.bad;
+  // gap caption on its own line at top
+  s+=`<text x="10" y="27" font-size="9" font-weight="700" fill="${col}">gap +${S.hypothesis.generalization_gap.toFixed(3)} <tspan font-weight="400" fill="${C.faint}">≤ tol ${S.hypothesis.tolerance.toFixed(2)} · OK</tspan></text>`;
+  // axis labels
+  s+=`<text x="${xT}" y="${bot+14}" text-anchor="middle" font-size="8.5" fill="${C.faint}">train</text>`;
+  s+=`<text x="${xH}" y="${bot+14}" text-anchor="middle" font-size="8.5" fill="${C.faint}">holdout</text>`;
+  // slope line
+  s+=`<line x1="${xT}" y1="${Y(S.hypothesis.train_loss)}" x2="${xH}" y2="${Y(S.hypothesis.holdout_loss)}" stroke="${col}" stroke-width="2" ${VE}/>`;
+  s+=`<circle cx="${xT}" cy="${Y(S.hypothesis.train_loss)}" r="4" fill="${C.good}" ${VE}/>`;
+  s+=`<circle cx="${xH}" cy="${Y(S.hypothesis.holdout_loss)}" r="4" fill="${col}" ${VE}/>`;
+  // labels to the side (train below-left, holdout above-right) so neither collides
+  s+=`<text x="${xT-10}" y="${Y(S.hypothesis.train_loss)+3.5}" text-anchor="end" font-size="9" font-weight="700" fill="${C.good}">${S.hypothesis.train_loss.toFixed(3)}</text>`;
+  s+=`<text x="${xH+10}" y="${Y(S.hypothesis.holdout_loss)+3.5}" text-anchor="start" font-size="9" font-weight="700" fill="${col}">${S.hypothesis.holdout_loss.toFixed(3)}</text>`;
+  s+=`</svg>`; return s;
+}
+function facetNamespace() {
+  const W=380, top=30, rowH=24, x0=92, x1=300;
+  const nsAgg = S.namespaces.map(ns=>{
+    const bs=S.boards.filter(b=>b.ns===ns);
+    return { ns, chal: mean(bs.map(b=>b.chal)), champ: mean(bs.map(b=>b.champ)), n: bs.length };
+  });
+  const H=top+nsAgg.length*rowH+12;
+  const lo=0.18,hi=0.46; const X=v=>x0+(v-lo)/(hi-lo)*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="namespace roll-up">`;
+  s+=`<text x="12" y="16" font-size="10" fill="${C.faint}">(6) namespace roll-up · dumbbell vs champion</text>`;
+  nsAgg.forEach((a,i)=>{
+    const y=top+i*rowH+rowH/2;
+    s+=`<text x="12" y="${y+3}" font-size="9" fill="${C.soft}">${esc(a.ns)}<tspan fill="${C.faint}"> ·${a.n}</tspan></text>`;
+    const col=deltaColor(a.chal,a.champ);
+    s+=`<line x1="${X(a.champ)}" y1="${y}" x2="${X(a.chal)}" y2="${y}" stroke="${col}" stroke-width="2" ${VE}/>`;
+    s+=`<circle cx="${X(a.champ)}" cy="${y}" r="3.5" fill="none" stroke="${C.faint}" stroke-width="1.5" ${VE}/>`;
+    s+=`<circle cx="${X(a.chal)}" cy="${y}" r="4" fill="${col}" ${VE}/>`;
+  });
+  s+=`</svg>`; return s;
+}
+/* ============================================================
+   OPTION 2 — CANDIDATE DOSSIER (as shipped) · the REAL dashboard view
+   Faithfully reproduces variants/T/views/candidate.js — the shipped
+   candidate dossier — and arranges it in a coordinated dossier layout:
+     (A) the LIFECYCLE DAG, cause → effect → verdict
+         (parent → patch → board-fan → Σ → gate → terminal), each board
+         circle carrying its drift-loss + champ Δ, the Σ node the aggregate
+         + Δ, the gate node the deciding rule — exactly the dag.js spine.
+     (B) the PER-BOARD drift-loss DOT-PLOT vs the champion reference rule,
+         sorted, pass/fail/timeout glyphs (svg.valueDotPlot).
+     (C) the PROMOTE-GATE LADDER — the short-circuiting rules, in order,
+         with status dots (candidate.js gatePanel rules).
+     (D) the SCALAR-COMPONENT BARS — champion vs challenger per component,
+         the comparison the gate performs (candidate.js scalar_components).
+   This fuses the real dossier's CONTENT with opt-2's coordinated-panel
+   LAYOUT: one entity, the four shipped panels read together. Theme-adaptive
+   via the same tokens; identical across structures (only the terminal /
+   tournament-context label re-labels, like the rest of the page).
+   ============================================================ */
+
+// (A) the lifecycle DAG — an SVG string faithful to variants/T/dag.js geometry:
+// six column heads (PARENT · PATCH · BOARD · Σ · GATE · TERMINAL), a board fan
+// (one disc per entry, colour = pass/fail/timeout) with a per-disc "champ N · Δ"
+// sublabel, flow edges whose width ∝ contribution, the Σ + GATE + structure-aware
+// TERMINAL spine boxes. Lower loss = better; Δ = challenger − champion (+ = worse).
+function dossierLifecycleDag() {
+  const W = 880;
+  const cols = { parent: 0.075, patch: 0.235, board: 0.45, agg: 0.66, gate: 0.82, term: 0.95 };
+  const X = {}; for (const k in cols) X[k] = cols[k] * W;
+  const board = S.boards;
+  const ROW = 34, HEAD = 34;
+  const fanTop = HEAD + ROW/2, fanSpan = (board.length - 1) * ROW, fanBot = fanTop + fanSpan;
+  const midY = (fanTop + fanBot) / 2;
+  const H = HEAD + ROW/2 + fanSpan + 56;
+  const total = board.reduce((a,b)=>a + b.chal, 0);
+  let s = `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="candidate lifecycle parent to verdict">`;
+  // column heads
+  const heads = [[X.parent,'PARENT'],[X.patch,'PATCH'],[X.board,'BOARD'],[X.agg,'Σ'],[X.gate,'GATE'],[X.term,'TERMINAL']];
+  heads.forEach(([x,t]) => s += `<text x="${x}" y="16" text-anchor="middle" font-size="9.5" letter-spacing="1" fill="${C.faint}">${t}</text>`);
+  const flow=(x1,y1,x2,y2)=>{ const mx=(x1+x2)/2; return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`; };
+  function box(cx, label, sub, col, w, h){
+    w=w||0.12*W; h=h||44;
+    return `<g><rect x="${cx-w/2}" y="${midY-h/2}" width="${w}" height="${h}" rx="6" fill="${C.panel2}" stroke="${col}" stroke-width="1.5" ${VE}/>
+      <text x="${cx}" y="${midY-(sub?4:-3)}" text-anchor="middle" font-size="11" font-weight="700" fill="${col}">${esc(label)}</text>
+      ${sub?`<text x="${cx}" y="${midY+11}" text-anchor="middle" font-size="9" fill="${C.soft}">${esc(sub)}</text>`:''}</g>`;
+  }
+  // PARENT (champion) → PATCH
+  s += box(X.parent, S.lineage.parent_id, 'champion', C.faint);
+  s += box(X.patch, 'PATCH', S.mutation_points.length + ' sites', C.accent, 0.13*W);
+  s += `<path d="${flow(X.parent+0.06*W, midY, X.patch-0.065*W, midY)}" fill="none" stroke="${C.rule}" stroke-width="1.5" ${VE}/>`;
+  // BOARD fan — one disc per entry, with champ-Δ sublabel below.
+  const r = 12;
+  board.forEach((b,i)=>{
+    const y = board.length>1 ? fanTop + i*ROW : midY;
+    const col = deltaColor(b.chal, b.champ);
+    const dl = b.chal - b.champ;
+    const contrib = b.chal / total;
+    s += `<path d="${flow(X.patch+0.065*W, midY, X.board-r, y)}" fill="none" stroke="${C.ruleSoft}" stroke-width="1" ${VE}/>`;
+    s += `<path d="${flow(X.board+r, y, X.agg-0.05*W, midY)}" fill="none" stroke="${col}" stroke-width="${Math.max(1, contrib*12).toFixed(1)}" opacity="0.55" ${VE}/>`;
+    // entry label LEFT of disc; loss INSIDE; champ·Δ sublabel BELOW.
+    s += `<text x="${X.board-r-8}" y="${y+3}" text-anchor="end" font-size="9" fill="${C.soft}">${esc(b.id)}${b.timeout?' ⏱':''}</text>`;
+    s += `<circle cx="${X.board}" cy="${y}" r="${r}" fill="${C.panel2}" stroke="${col}" stroke-width="2" ${VE}/>`;
+    s += `<text x="${X.board}" y="${y+3}" text-anchor="middle" font-size="9" font-weight="700" fill="${col}">${Math.round(b.chal*100)}</text>`;
+    s += `<text x="${X.board}" y="${y+r+10}" text-anchor="middle" font-size="7.5" fill="${col}">champ ${Math.round(b.champ*100)} · Δ${fmt(dl*100,0)}</text>`;
+  });
+  // Σ node — aggregate + Δ vs champion.
+  const champSigma = board.reduce((a,b)=>a+b.champ,0);
+  const sigmaDelta = total - champSigma;
+  s += box(X.agg, 'Σ '+S.scalar.toFixed(2), 'Δ '+fmt(sigmaDelta,2), sigmaDelta<0?C.good:C.bad, 0.11*W, 48);
+  s += `<path d="${flow(X.agg+0.05*W, midY, X.gate-0.06*W, midY)}" fill="none" stroke="${C.good}" stroke-width="1.5" ${VE}/>`;
+  // GATE node — the deciding rule.
+  s += box(X.gate, 'GATE', fmt(S.gate.delta_scalar,2)+' Δ', C.good, 0.12*W, 48);
+  s += `<path d="${flow(X.gate+0.06*W, midY, X.term-0.05*W, midY)}" fill="none" stroke="${C.good}" stroke-width="1.5" ${VE}/>`;
+  // TERMINAL — structure-aware (the only structure-dependent label on the figure).
+  s += box(X.term, S.context.terminal.glyph+' '+S.context.terminal.word, 'champion', C.good, 0.1*W, 48);
+  // key line beneath the fan
+  s += `<text x="${W/2}" y="${H-8}" text-anchor="middle" font-size="8.5" fill="${C.faint}">Δ vs champion · + = worse · lower loss better · edge width ∝ contribution to Σ</text>`;
+  s += `</svg>`; return s;
+}
+
+// (B) per-board PAIRED comparison vs champion — a per-board dumbbell: on each
+// board row the champion's loss ON THAT BOARD (hollow ○) and this candidate's
+// loss (filled ●) sit on a shared per-row axis, joined by a connector; colour =
+// improved (left of champ) / regressed (right of champ); Δ = chal − champ shown
+// at the right with the pass/fail/timeout glyph. Worst-first sort. This replaces
+// the old single AGGREGATE champion reference rule: every board is now compared
+// against the champion ON THAT SAME BOARD — "is the candidate better here?".
+function dossierDotPlot() {
+  const rows = [...S.boards].sort((a,b)=>b.chal-a.chal); // worst-first
+  const W=380, rh=22, labelW=120, glyphW=14, deltaW=34, top=30;
+  const H = top + rows.length*rh + 16;
+  const x0=labelW+6, x1=W-glyphW-deltaW;
+  // shared per-row value axis spanning both champ & candidate across all boards.
+  const vals = rows.flatMap(b=>[b.chal, b.champ]);
+  let lo=Math.min(...vals), hi=Math.max(...vals); if(lo===hi) hi+=1;
+  const pad=(hi-lo)*0.08; lo-=pad; hi+=pad;
+  const X = v => x0 + (v-lo)/(hi-lo)*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="per-board paired comparison vs champion">`;
+  s+=`<text x="4" y="13" font-size="10" fill="${C.faint}">per-board · champion ○ → candidate ● · vs champ ON THIS BOARD</text>`;
+  // mini legend (champ vs candidate marker) under the title
+  s+=`<circle cx="${x0+4}" cy="22" r="3" fill="none" stroke="${C.faint}" stroke-width="1.4" ${VE}/>`;
+  s+=`<text x="${x0+11}" y="25" font-size="7.5" fill="${C.faint}">champ</text>`;
+  s+=`<circle cx="${x0+52}" cy="22" r="3.4" fill="${C.accent}" ${VE}/>`;
+  s+=`<text x="${x0+59}" y="25" font-size="7.5" fill="${C.faint}">candidate · Δ→</text>`;
+  rows.forEach((b,i)=>{
+    const cy=top + i*rh + rh/2;
+    const cx=X(b.champ), dx=X(b.chal);
+    const col = deltaColor(b.chal, b.champ); // good if candidate < champ on THIS board
+    // board label + namespace
+    s+=`<text x="${labelW}" y="${cy-1}" text-anchor="end" font-size="9" fill="${C.soft}">${esc(b.id)}</text>`;
+    s+=`<text x="${labelW}" y="${cy+8}" text-anchor="end" font-size="7.5" fill="${C.faint}">${esc(S.context.label)} · ${esc(b.ns)}</text>`;
+    // faint full-row baseline, then the champ→candidate connector on top
+    s+=`<line x1="${x0}" y1="${cy}" x2="${x1}" y2="${cy}" stroke="${C.ruleSoft}" stroke-width="0.75" ${VE}/>`;
+    s+=`<line x1="${cx}" y1="${cy}" x2="${dx}" y2="${cy}" stroke="${col}" stroke-width="2.2" ${VE}/>`;
+    // champion marker (hollow) on THIS board, then candidate (filled)
+    s+=`<circle cx="${cx}" cy="${cy}" r="3.4" fill="${C.panel}" stroke="${C.faint}" stroke-width="1.4" ${VE}/>`;
+    s+=`<circle cx="${dx}" cy="${cy}" r="4" fill="${col}" ${VE}/>`;
+    // per-board Δ value (chal − champ) just left of the glyph
+    s+=`<text x="${W-glyphW-2}" y="${cy+3}" text-anchor="end" font-size="8" font-weight="700" fill="${col}">${fmt(b.chal-b.champ,2)}</text>`;
+    // pass/fail/timeout glyph at the right edge
+    const gx=W-glyphW+6;
+    if (b.timeout) s+=`<text x="${gx}" y="${cy+3}" text-anchor="middle" font-size="9" fill="${C.caution}">⏱</text>`;
+    else if (b.hPass) s+=`<circle cx="${gx}" cy="${cy}" r="2.6" fill="${C.good}" ${VE}/>`;
+    else s+=`<g stroke="${C.bad}" stroke-width="1.4"><line x1="${gx-2.6}" y1="${cy-2.6}" x2="${gx+2.6}" y2="${cy+2.6}" ${VE}/><line x1="${gx-2.6}" y1="${cy+2.6}" x2="${gx+2.6}" y2="${cy-2.6}" ${VE}/></g>`;
+  });
+  // de-emphasized aggregate context (NOT the per-row comparator): one faint tick.
+  const ax=X(S.champion_scalar), ayb=H-4;
+  s+=`<line x1="${ax}" y1="${top-6}" x2="${ax}" y2="${ayb-9}" stroke="${C.ruleSoft}" stroke-width="1" stroke-dasharray="2 4" ${VE}/>`;
+  s+=`<text x="${ax}" y="${ayb}" text-anchor="middle" font-size="7" fill="${C.faint}">champ aggregate ${S.champion_scalar.toFixed(3)}</text>`;
+  s+=`</svg>`; return s;
+}
+
+// (C) the PROMOTE-GATE LADDER — the short-circuiting acceptance rules in order,
+// each a status dot + label + status + detail (candidate.js gatePanel rules).
+function dossierGateLadder() {
+  const W=380, top=44, rh=34, H=top + S.gate.rules.length*rh + 8;
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="promote gate rules ladder">`;
+  s+=`<text x="4" y="13" font-size="10" fill="${C.faint}">promote gate · rules short-circuit in order</text>`;
+  // decision header
+  s+=`<rect x="4" y="20" width="120" height="16" rx="8" fill="${C.goodSoft}" stroke="${C.good}" stroke-width="1" ${VE}/>`;
+  s+=`<text x="64" y="31" text-anchor="middle" font-size="9" font-weight="700" fill="${C.good}">${S.gate.decision.toUpperCase()}</text>`;
+  s+=`<text x="132" y="31" font-size="9" fill="${C.soft}">Δ scalar ${fmt(S.gate.delta_scalar,3)} · driver ${esc(S.gate.primary_driver)}</text>`;
+  S.gate.rules.forEach((rl,i)=>{
+    const y=top + i*rh;
+    const pass = rl.status==='pass';
+    const col = pass?C.good:rl.status==='fail'?C.bad:C.caution;
+    // rule index, status dot, label, status word, detail
+    s+=`<text x="6" y="${y+9}" font-size="9" fill="${C.faint}">${i+1}.</text>`;
+    s+=`<circle cx="26" cy="${y+6}" r="4.5" fill="${pass?col:'none'}" stroke="${col}" stroke-width="1.6" ${VE}/>`;
+    if (pass) s+=`<path d="M23.6 ${y+6} l1.6 1.8 l3.0 -3.4" fill="none" stroke="${C.paper}" stroke-width="1.3" ${VE}/>`;
+    s+=`<text x="38" y="${y+9}" font-size="9.5" fill="${C.ink}">${esc(rl.label)}</text>`;
+    s+=`<text x="${W-4}" y="${y+9}" text-anchor="end" font-size="8.5" font-weight="700" fill="${col}">${rl.status}</text>`;
+    s+=`<text x="38" y="${y+22}" font-size="8" fill="${C.faint}">${esc(rl.detail)}</text>`;
+  });
+  s+=`</svg>`; return s;
+}
+
+// (D) SCALAR-COMPONENT BARS — champion vs challenger per scalar component (the
+// per-judge weighted contributions + the pass-rate term), the comparison the
+// gate performs (candidate.js gate.scalar_components). Lower = better.
+function dossierScalarComponents() {
+  // derive the components from the weighted-judge contributions + a pass-rate term.
+  const comps = S.judges.map(j=>({ k:j.judge, chal:j.weighted, champ:j.champ_weighted }))
+    .concat([{ k:'pass_rate', chal:0.07, champ:0.10 }]);
+  const W=380, top=26, rh=26, H=top + comps.length*rh + 10, x0=120, x1=W-70;
+  const maxw = Math.max(...comps.flatMap(c=>[c.chal, c.champ]));
+  const X = v => x0 + v/maxw*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="scalar components champion vs challenger">`;
+  s+=`<text x="4" y="13" font-size="10" fill="${C.faint}">scalar components · champion ▢ vs challenger ▮ · Δ</text>`;
+  comps.forEach((c,i)=>{
+    const y=top + i*rh + rh/2;
+    const d = c.chal - c.champ;
+    const col = d<0?C.good : d>0?C.bad : C.faint;
+    s+=`<text x="4" y="${y+3}" font-size="9" fill="${C.soft}">${esc(c.k)}</text>`;
+    // champion ghost bar (dashed outline)
+    s+=`<rect x="${x0}" y="${y-7}" width="${Math.max(1,X(c.champ)-x0)}" height="14" fill="none" stroke="${C.faint}" stroke-width="1" stroke-dasharray="2 2" ${VE}/>`;
+    // challenger filled bar
+    s+=`<rect x="${x0}" y="${y-5}" width="${Math.max(1,X(c.chal)-x0)}" height="10" fill="${col}" ${VE}/>`;
+    // Δ value at right
+    s+=`<text x="${W-4}" y="${y+3}" text-anchor="end" font-size="8.5" font-weight="700" fill="${col}">${fmt(d,2)}</text>`;
+  });
+  s+=`</svg>`; return s;
+}
+
+/* ============================================================
+   RACING FIELD VARIATION — racing is FIELD-relative, not pairwise.
+   Every other structure compares the candidate to ONE champion (a duel / a
+   bracket match / a Copeland pairing). Racing cuts the whole FIELD rung-by-rung
+   (successive-halving), so "how good is this candidate" only means anything
+   against the field. These two panels replace the pairwise per-board dumbbell +
+   scalar-component bars (which assume a single opponent) with field-relative
+   reads, while the lifecycle spine + gate ladder + generalization stay shared.
+   ============================================================ */
+
+// (R1) FIELD STANDINGS — every racer this epoch ranked by Σ-loss, the candidate
+// highlighted, survivors vs cut marked, the champion flagged. Answers "where does
+// this candidate sit in the field?" — the racing analogue of the scalar bullet.
+function racingFieldStandings() {
+  const rows = [...S.field].sort((a,b)=>a.scalar-b.scalar);
+  const W=380, top=44, rh=21, H=top + rows.length*rh + 14, labelW=86, x0=labelW+8, x1=W-58;
+  const vals = rows.map(f=>f.scalar);
+  let lo=Math.min(...vals), hi=Math.max(...vals); const pad=(hi-lo)*0.08; lo-=pad; hi+=pad;
+  const X = v => x0 + (v-lo)/(hi-lo)*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="racing field standings by scalar">`;
+  s+=`<text x="4" y="13" font-size="10" fill="${C.faint}">field standings · candidate vs the whole field · lower = better</text>`;
+  // rank summary chip
+  s+=`<rect x="4" y="22" width="150" height="16" rx="8" fill="${C.goodSoft}" stroke="${C.good}" stroke-width="1" ${VE}/>`;
+  s+=`<text x="79" y="33" text-anchor="middle" font-size="9" font-weight="700" fill="${C.good}">rank ${S.candFieldRank} / ${S.fieldSize} · survived</text>`;
+  s+=`<text x="162" y="33" font-size="8.5" fill="${C.soft}">${S.fieldSurvivors} of ${S.fieldSize} still racing</text>`;
+  // candidate Σ reference (dashed vertical)
+  s+=`<line x1="${X(S.scalar)}" y1="${top-6}" x2="${X(S.scalar)}" y2="${H-12}" stroke="${C.accent}" stroke-width="1" stroke-dasharray="2 3" ${VE}/>`;
+  rows.forEach((f,i)=>{
+    const y=top + i*rh + rh/2;
+    const isCand = f.current, isChamp = f.champion;
+    const col = isCand ? C.accent : f.survived ? C.good : C.bad;
+    // rank + id
+    s+=`<text x="4" y="${y+3}" font-size="8" fill="${C.faint}">${i+1}.</text>`;
+    s+=`<text x="${labelW}" y="${y+3}" text-anchor="end" font-size="8.5" fill="${isCand?C.accent:C.soft}" font-weight="${isCand?'700':'400'}">${esc(f.id)}${isChamp?' ♛':''}</text>`;
+    // baseline + marker
+    s+=`<line x1="${x0}" y1="${y}" x2="${x1}" y2="${y}" stroke="${C.ruleSoft}" stroke-width="0.6" ${VE}/>`;
+    const r = isCand ? 5 : 3.4;
+    if (f.survived) s+=`<circle cx="${X(f.scalar)}" cy="${y}" r="${r}" fill="${col}" ${VE}/>`;
+    else s+=`<g stroke="${col}" stroke-width="1.4"><line x1="${X(f.scalar)-3}" y1="${y-3}" x2="${X(f.scalar)+3}" y2="${y+3}" ${VE}/><line x1="${X(f.scalar)-3}" y1="${y+3}" x2="${X(f.scalar)+3}" y2="${y-3}" ${VE}/></g>`;
+    // scalar value + (for cut racers) the rung they were cut at
+    s+=`<text x="${W-4}" y="${y+3}" text-anchor="end" font-size="8" fill="${col}">${f.scalar.toFixed(3)}${f.survived?'':' ✂R'+f.cut_rung}</text>`;
+  });
+  s+=`</svg>`; return s;
+}
+
+// (R2) PER-BOARD vs THE FIELD — on each board the candidate's loss is placed
+// within the FIELD's envelope (best ─ median ─ worst), with the candidate's rank
+// on that board. This is the racing analogue of the pairwise dumbbell: not "did
+// you beat ONE champion here", but "where did you land in the field on this slice".
+function racingFieldBoards() {
+  const rows=[...S.boards].sort((a,b)=>a.fieldRank-b.fieldRank); // best field-rank first
+  const W=380, top=30, rh=23, labelW=110, rankW=40, x0=labelW+6, x1=W-rankW-6;
+  const H = top + rows.length*rh + 18;
+  const vals = rows.flatMap(b=>[b.fieldBest,b.fieldWorst,b.chal]);
+  let lo=Math.min(...vals), hi=Math.max(...vals); const pad=(hi-lo)*0.06; lo-=pad; hi+=pad;
+  const X = v => x0 + (v-lo)/(hi-lo)*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="per-board position within the field">`;
+  s+=`<text x="4" y="13" font-size="10" fill="${C.faint}">per-board · candidate ● within field envelope (best ─ worst)</text>`;
+  // mini legend
+  s+=`<line x1="${x0+2}" y1="22" x2="${x0+30}" y2="22" stroke="${C.ruleSoft}" stroke-width="4" ${VE}/>`;
+  s+=`<text x="${x0+36}" y="25" font-size="7.5" fill="${C.faint}">field best→worst · ◆ median · ● cand · rank→</text>`;
+  rows.forEach((b,i)=>{
+    const cy=top + i*rh + rh/2;
+    // rank among field on this board → colour: top third good, bottom third bad.
+    const col = b.fieldRank <= S.fieldSize/3 ? C.good : b.fieldRank >= 2*S.fieldSize/3 ? C.bad : C.caution;
+    s+=`<text x="${labelW}" y="${cy-1}" text-anchor="end" font-size="9" fill="${C.soft}">${esc(b.id)}</text>`;
+    s+=`<text x="${labelW}" y="${cy+8}" text-anchor="end" font-size="7.5" fill="${C.faint}">racing · ${esc(b.ns)}</text>`;
+    // field envelope band best→worst
+    s+=`<line x1="${X(b.fieldBest)}" y1="${cy}" x2="${X(b.fieldWorst)}" y2="${cy}" stroke="${C.ruleSoft}" stroke-width="5" ${VE}/>`;
+    // field median diamond
+    const mx=X(b.fieldMedian);
+    s+=`<path d="M${mx} ${cy-4} L${mx+4} ${cy} L${mx} ${cy+4} L${mx-4} ${cy} Z" fill="${C.faint}" ${VE}/>`;
+    // candidate marker
+    s+=`<circle cx="${X(b.chal)}" cy="${cy}" r="4" fill="${col}" ${VE}/>`;
+    // rank in field on this board
+    s+=`<text x="${W-4}" y="${cy+3}" text-anchor="end" font-size="8" font-weight="700" fill="${col}">${b.fieldRank}/${S.fieldSize}</text>`;
+  });
+  s+=`</svg>`; return s;
+}
+
+// (R3) RUNG LADDER — the cut ladder: racers entered vs cut at each rung, with the
+// candidate's rank among survivors at each rung it cleared. Shows how it FARED vs
+// the field as the field narrowed — the field-relative survival story.
+function racingRungLadder() {
+  const rows = S.rungs;
+  const W=380, top=30, rh=30, labelW=52, x0=labelW+8, x1=W-94, H=top + rows.length*rh + 12;
+  const maxEntered = Math.max(...rows.map(r=>r.entered));
+  const X = v => x0 + v/maxEntered*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="rung ladder entered cut survived">`;
+  s+=`<text x="4" y="13" font-size="10" fill="${C.faint}">rung ladder · entered ▮ · cut ✂ · candidate rank among survivors</text>`;
+  rows.forEach((r,i)=>{
+    const y=top + i*rh + rh/2;
+    const survived = r.entered - r.cut;
+    s+=`<text x="4" y="${y+3}" font-size="9" fill="${C.soft}">rung ${r.rung}</text>`;
+    // entered bar (faint) with survived overlaid (good)
+    s+=`<rect x="${x0}" y="${y-6}" width="${X(r.entered)-x0}" height="12" rx="2" fill="none" stroke="${C.faint}" stroke-width="1" stroke-dasharray="2 2" ${VE}/>`;
+    s+=`<rect x="${x0}" y="${y-5}" width="${Math.max(1,X(survived)-x0)}" height="10" rx="2" fill="${C.good}" opacity="0.55" ${VE}/>`;
+    // cut marker at the tail
+    if (r.cut>0) s+=`<text x="${X(r.entered)+4}" y="${y+3}" font-size="8.5" fill="${C.bad}">✂${r.cut}</text>`;
+    // candidate rank chip at the far right
+    const rc = r.candRank<=2 ? C.good : r.candRank<=4 ? C.caution : C.faint;
+    s+=`<text x="${W-4}" y="${y+3}" text-anchor="end" font-size="8.5" font-weight="700" fill="${rc}">#${r.candRank} of ${survived}</text>`;
+  });
+  s+=`</svg>`; return s;
+}
+
+function opt2() {
+  // the real dossier, coordinated: the lifecycle DAG spans the full width on top
+  // (the spine the whole ruling reads along), then the comparison panels sit in a
+  // coordinated grid beneath it. opt-4's RADAR SILHOUETTE is now folded in as one
+  // of those panels (the at-a-glance "does the shape dominate?" read). Since the
+  // radar already compares candidate vs champion across scalar / pass-rate /
+  // per-judge, the old scalar-component bars were redundant with it and are
+  // dropped; the promote-gate ladder carries the deciding-rule detail.
+  // RACING is FIELD-relative, so under ?sample=racing the pairwise per-board
+  // dumbbell is swapped for the field-relative panels (field standings · per-board
+  // vs field · rung ladder); the shared spine, gate ladder, radar, and
+  // generalization stay put.
+  const racing = S.context && S.context.structure === 'racing';
+  if (racing) {
+    return `<div style="display:flex;flex-direction:column;gap:14px;">
+      <figure style="border-bottom:1px dashed var(--rule-soft);padding-bottom:10px;">
+        <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">lifecycle · cause → effect → verdict</div>
+        ${dossierLifecycleDag()}
+      </figure>
+      <div style="font-size:10px;color:var(--accent);letter-spacing:.04em;border-bottom:1px solid var(--rule-soft);padding-bottom:5px;">
+        racing variation · FIELD-relative (not pairwise) — the candidate is one racer cut rung-by-rung against the whole field
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px 22px;">
+        <figure>
+          <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">field standings · rank among all racers</div>
+          ${racingFieldStandings()}
+        </figure>
+        <figure>
+          <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">per-board · position within the field</div>
+          ${racingFieldBoards()}
+        </figure>
+        <figure>
+          <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">rung ladder · how it fared as the field narrowed</div>
+          ${racingRungLadder()}
+        </figure>
+        <figure>
+          <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">silhouette · candidate shape vs field-leader</div>
+          ${radarSilhouette({ W:420, H:360, cx:210, cy:185, R:128, legend:false })}
+          <div style="font-size:9px;color:var(--ink-faint);margin-top:2px;text-align:center;">
+            <span style="color:var(--accent)">▬</span> candidate ·
+            <span style="color:var(--ink-faint)">┄</span> reference · hover a vertex for its value
+          </div>
+        </figure>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px 22px;">
+        <figure>
+          <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">promote gate · short-circuiting rules</div>
+          ${dossierGateLadder()}
+        </figure>
+        <figure>${facetGeneralize()}</figure>
+      </div>
+    </div>`;
+  }
+  return `<div style="display:flex;flex-direction:column;gap:14px;">
+    <figure style="border-bottom:1px dashed var(--rule-soft);padding-bottom:10px;">
+      <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">lifecycle · cause → effect → verdict</div>
+      ${dossierLifecycleDag()}
+    </figure>
+    <div style="display:grid;grid-template-columns:1.05fr 0.95fr;gap:12px 22px;align-items:start;">
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <figure>
+          <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">per-board · candidate vs champion</div>
+          ${dossierDotPlot()}
+        </figure>
+        <figure>
+          <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">promote gate · short-circuiting rules</div>
+          ${dossierGateLadder()}
+        </figure>
+      </div>
+      <figure style="align-self:stretch;">
+        <div style="font-size:10px;color:var(--ink-faint);margin-bottom:2px;">silhouette · candidate shape vs champion (folds in opt 4)</div>
+        ${radarSilhouette({ W:420, H:360, cx:210, cy:185, R:128, legend:false })}
+        <div style="font-size:9px;color:var(--ink-faint);margin-top:2px;text-align:center;">
+          <span style="color:var(--accent)">▬</span> candidate ·
+          <span style="color:var(--ink-faint)">┄</span> champion ·
+          outer = better · hover a vertex for its value
+        </div>
+      </figure>
+    </div>
+    <figure style="max-width:300px;">${facetGeneralize()}</figure>
+  </div>`;
+}
+
+/* ============================================================
+   OPTION 3 — DIVERGING DUMBBELL (per-board Δ-vs-champion)
+   The board verdict made the spine. One row per board: champion dot ⟶
+   candidate dot, joined; left of the champion line = improvement (green),
+   right = regression (red). Replicate σ as a whisker on the candidate dot.
+   Sorted by Δ so the regression sits visibly at the bottom. The single most
+   honest "what did the patch do to each board" view.
+   ============================================================ */
+function opt3() {
+  const rows=[...S.boards].sort((a,b)=>(a.chal-a.champ)-(b.chal-b.champ));
+  const W=820, top=58, rowH=30, labelW=150, x0=labelW+12, x1=W-180;
+  const H=top+rows.length*rowH+30;
+  const lo=0.14,hi=0.58; const X=v=>x0+(v-lo)/(hi-lo)*(x1-x0);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="per-board diverging dumbbell">`;
+  // header
+  s+=`<text x="12" y="22" font-size="11" fill="${C.faint}">per-board: champion ○ → candidate ● · joined; left of champion = improved</text>`;
+  s+=`<text x="${x1+12}" y="22" font-size="10" fill="${C.faint}">Δ vs champ</text>`;
+  // axis grid (a few ticks)
+  for (const t of [0.2,0.3,0.4,0.5]) {
+    s+=`<line x1="${X(t)}" y1="${top-8}" x2="${X(t)}" y2="${top+rows.length*rowH-rowH/2+8}" stroke="${C.ruleSoft}" stroke-width="1" ${VE}/>`;
+    s+=`<text x="${X(t)}" y="${top-12}" text-anchor="middle" font-size="8.5" fill="${C.faint}">${t.toFixed(1)}</text>`;
+  }
+  rows.forEach((b,i)=>{
+    const y=top+i*rowH;
+    const col=deltaColor(b.chal,b.champ);
+    const m=mean(b.reps), sdv=sd(b.reps);
+    // board label + kind
+    s+=`<text x="${labelW}" y="${y+3.5}" text-anchor="end" font-size="10" fill="${C.soft}">${esc(b.id)}</text>`;
+    s+=`<text x="12" y="${y+3.5}" font-size="8" fill="${C.faint}">${b.kind[0]}</text>`;
+    // connector
+    s+=`<line x1="${X(b.champ)}" y1="${y}" x2="${X(b.chal)}" y2="${y}" stroke="${col}" stroke-width="2.5" ${VE}/>`;
+    // replicate whisker on candidate
+    s+=`<line x1="${X(m-sdv)}" y1="${y}" x2="${X(m+sdv)}" y2="${y}" stroke="${col}" stroke-width="1" opacity="0.5" ${VE}/>`;
+    s+=`<line x1="${X(m-sdv)}" y1="${y-3}" x2="${X(m-sdv)}" y2="${y+3}" stroke="${col}" stroke-width="1" opacity="0.5" ${VE}/>`;
+    s+=`<line x1="${X(m+sdv)}" y1="${y-3}" x2="${X(m+sdv)}" y2="${y+3}" stroke="${col}" stroke-width="1" opacity="0.5" ${VE}/>`;
+    // champion (hollow) + candidate (filled)
+    s+=`<circle cx="${X(b.champ)}" cy="${y}" r="4.5" fill="${C.panel}" stroke="${C.faint}" stroke-width="1.5" ${VE}/>`;
+    s+=`<circle cx="${X(b.chal)}" cy="${y}" r="5.5" fill="${col}" ${VE}/>`;
+    if (b.timeout) s+=`<text x="${X(b.chal)+9}" y="${y+3}" font-size="9" fill="${C.caution}">⏱</text>`;
+    // delta value at right
+    s+=`<text x="${x1+12}" y="${y+3.5}" font-size="10" font-weight="700" fill="${col}">${fmt(b.chal-b.champ,3)}</text>`;
+    // pass/fail flip flag
+    if (b.cPass && !b.hPass) s+=`<text x="${x1+78}" y="${y+3.5}" font-size="8.5" fill="${C.bad}">pass→fail</text>`;
+    else if (!b.cPass && b.hPass) s+=`<text x="${x1+78}" y="${y+3.5}" font-size="8.5" fill="${C.good}">fail→pass</text>`;
+  });
+  // Σ summary line at bottom
+  const yb=top+rows.length*rowH+8;
+  s+=`<line x1="${labelW}" y1="${yb-4}" x2="${x1+150}" y2="${yb-4}" stroke="${C.rule}" stroke-width="1" ${VE}/>`;
+  s+=`<text x="${labelW}" y="${yb+12}" text-anchor="end" font-size="10" font-weight="700" fill="${C.ink}">Σ</text>`;
+  s+=`<text x="${x1+12}" y="${yb+12}" font-size="10" font-weight="700" fill="${C.good}">${fmt(S.gate.delta_scalar,3)}</text>`;
+  s+=`<text x="${x1+78}" y="${yb+12}" font-size="8.5" fill="${C.good}">clears margin</text>`;
+  s+=`</svg>`; return s;
+}
+
+/* ============================================================
+   OPTION 4 — RADAR SILHOUETTE (gen vs champion)
+   The candidate's shape vs the champion's, across the heterogeneous axes the
+   gate weighs: scalar, pass-rate, and the per-judge / per-namespace aggregates.
+   One enclosed champion polygon (dashed) + candidate polygon (filled, accent).
+   Where the candidate pulls IN = improvement; a spike OUT = the regression.
+   Whole-dossier silhouette at a glance — does the shape strictly dominate?
+   ============================================================ */
+// the radar axes the gate weighs: scalar(inv), pass-rate, + per-judge. lower
+// loss => larger radius (1 = best, outer). Shared by opt4 (the standalone radar)
+// and opt2 (the dossier, which folds the radar silhouette in as a panel).
+function radarAxes() {
+  return [
+    { lab:"scalar",   chal: 1-(S.scalar-0.28)/0.12,   champ: 1-(S.champion_scalar-0.28)/0.12 },
+    { lab:"pass-rate",chal: 0.875,                     champ: 0.75 },
+    ...S.judges.map(j=>({ lab:j.judge, chal: 1-(j.raw-0.18)/0.42, champ: 1-(j.champ_raw-0.18)/0.42 })),
+  ];
+}
+// raw per-axis values for the hover tooltip — the radar plots a normalised
+// radius (outer = better), but the operator wants the underlying NUMBER. This
+// recovers the loss/rate each axis encodes so the tooltip can show it verbatim.
+function radarRawValues() {
+  return [
+    { chal: S.scalar,          champ: S.champion_scalar, unit:"loss",  better:"lower" },
+    { chal: 0.875,             champ: 0.75,              unit:"rate",  better:"higher" },
+    ...S.judges.map(j=>({ chal: j.raw, champ: j.champ_raw, unit:"drift", better:"lower" })),
+  ];
+}
+// the radar silhouette as a reusable SVG. opts: {W,H,cx,cy,R,legend} — legend
+// off lets a host pack the radar tight as a complementary panel. Vertices carry
+// hover metadata (data-tip*) so a shared tooltip can annotate the numeric value
+// per axis on mouseover — keeping the radar legible as the axis count grows.
+// labelMode: 'auto' hides always-on spoke labels once the axes get dense (≥9),
+// leaning on hover; 'always'/'never' force it.
+function radarSilhouette({ W=560, H=420, cx=235, cy=210, R=150, legend=true, labelMode='auto' }={}) {
+  const axes = radarAxes();
+  const raw = radarRawValues();
+  const n=axes.length;
+  const showLabels = labelMode==='always' ? true : labelMode==='never' ? false : n<=8;
+  const ang=i=> -Math.PI/2 + i*2*Math.PI/n;
+  const P=(i,r)=>[cx+Math.cos(ang(i))*R*Math.max(0.05,Math.min(1,r)), cy+Math.sin(ang(i))*R*Math.max(0.05,Math.min(1,r))];
+  // a hover-able vertex: a generous transparent hit-circle over the visible dot,
+  // carrying the axis name + both numeric values for the shared tooltip.
+  const fmtV = (v,u)=> u==='rate' ? (v*100).toFixed(1)+'%' : v.toFixed(3);
+  function hot(i, x, y, who){
+    const r = raw[i], a = axes[i];
+    const val = who==='champ' ? r.champ : r.chal;        // 'cand' → the .chal value
+    const tip = `${a.lab} · ${who} ${fmtV(val,r.unit)}  (champ ${fmtV(r.champ,r.unit)} · cand ${fmtV(r.chal,r.unit)}; ${r.better} = better)`;
+    return `<circle class="radar-hot" cx="${x}" cy="${y}" r="11" fill="transparent" `
+      + `data-tip="${esc(tip)}" data-axis="${esc(a.lab)}" tabindex="0" role="img" aria-label="${esc(tip)}" ${VE}/>`;
+  }
+  let s=`<svg class="radar-svg" viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="radar candidate vs champion — hover a vertex for its value">`;
+  // rings
+  for (const rr of [0.25,0.5,0.75,1]) {
+    let pts=axes.map((_,i)=>P(i,rr).join(',')).join(' ');
+    s+=`<polygon points="${pts}" fill="none" stroke="${C.ruleSoft}" stroke-width="1" ${VE}/>`;
+  }
+  // spokes + labels (labels suppressed when dense — hover annotates instead)
+  axes.forEach((a,i)=>{
+    const [ex,ey]=P(i,1);
+    s+=`<line x1="${cx}" y1="${cy}" x2="${ex}" y2="${ey}" stroke="${C.ruleSoft}" stroke-width="1" ${VE}/>`;
+    if (showLabels) {
+      const [lx,ly]=P(i,1.18);
+      const anchor = Math.abs(lx-cx)<6 ? 'middle' : lx<cx ? 'end' : 'start';
+      s+=`<text x="${lx}" y="${ly+3}" text-anchor="${anchor}" font-size="9.5" fill="${C.soft}">${esc(a.lab)}</text>`;
+    } else {
+      // dense radar: a tiny tick index on the rim; the axis name lives in the hover tip.
+      const [lx,ly]=P(i,1.08);
+      s+=`<text x="${lx}" y="${ly+3}" text-anchor="middle" font-size="7.5" fill="${C.faint}">${i+1}</text>`;
+    }
+  });
+  // champion polygon (dashed, faint)
+  let cp=axes.map((a,i)=>P(i,a.champ).join(',')).join(' ');
+  s+=`<polygon points="${cp}" fill="none" stroke="${C.faint}" stroke-width="1.5" stroke-dasharray="4 3" ${VE}/>`;
+  axes.forEach((a,i)=>{ const [x,y]=P(i,a.champ); s+=`<circle cx="${x}" cy="${y}" r="2.5" fill="none" stroke="${C.faint}" stroke-width="1" ${VE}/>`; });
+  // candidate polygon (filled accent)
+  let kp=axes.map((a,i)=>P(i,a.chal).join(',')).join(' ');
+  s+=`<polygon points="${kp}" fill="${C.accent}" fill-opacity="0.16" stroke="${C.accent}" stroke-width="2" ${VE}/>`;
+  axes.forEach((a,i)=>{
+    const [x,y]=P(i,a.chal);
+    const col = a.chal>=a.champ ? C.good : C.bad; // larger radius = better
+    s+=`<circle cx="${x}" cy="${y}" r="3.5" fill="${col}" ${VE}/>`;
+  });
+  // hover hit-targets LAST so they sit on top of every vertex (champion + candidate).
+  axes.forEach((a,i)=>{
+    const [cxp,cyp]=P(i,a.champ); s+=hot(i,cxp,cyp,'champ');
+    const [kxp,kyp]=P(i,a.chal);  s+=hot(i,kxp,kyp,'cand');
+  });
+  // legend block (right) — optional
+  if (legend) {
+    const lx=440, ly=70;
+    s+=`<rect x="${lx-10}" y="${ly-18}" width="120" height="112" rx="6" fill="${C.panel2}" stroke="${C.rule}" stroke-width="1" ${VE}/>`;
+    s+=`<text x="${lx}" y="${ly}" font-size="9.5" fill="${C.faint}">outer = better</text>`;
+    s+=`<line x1="${lx}" y1="${ly+16}" x2="${lx+24}" y2="${ly+16}" stroke="${C.accent}" stroke-width="2" ${VE}/>`;
+    s+=`<text x="${lx+30}" y="${ly+19}" font-size="9.5" fill="${C.soft}">candidate</text>`;
+    s+=`<line x1="${lx}" y1="${ly+34}" x2="${lx+24}" y2="${ly+34}" stroke="${C.faint}" stroke-width="1.5" stroke-dasharray="4 3" ${VE}/>`;
+    s+=`<text x="${lx+30}" y="${ly+37}" font-size="9.5" fill="${C.soft}">champion</text>`;
+    s+=`<text x="${lx}" y="${ly+56}" font-size="9" fill="${C.good}">● gain</text>`;
+    s+=`<text x="${lx+50}" y="${ly+56}" font-size="9" fill="${C.bad}">● loss</text>`;
+    s+=`<text x="${lx}" y="${ly+74}" font-size="8" fill="${C.faint}">hover a vertex</text>`;
+    s+=`<text x="${lx}" y="${ly+85}" font-size="8" fill="${C.faint}">for its value</text>`;
+    // verdict caption (kept narrow so it never escapes the viewBox)
+    s+=`<text x="${cx}" y="${H-26}" text-anchor="middle" font-size="10" fill="${C.ink}">dominates on 5/6 axes</text>`;
+    s+=`<text x="${cx}" y="${H-12}" text-anchor="middle" font-size="9" fill="${C.faint}">one pull-in: plan_coherence (the regression)</text>`;
+  }
+  s+=`</svg>`; return s;
+}
+function opt4() { return radarSilhouette(); }
+
+/* ============================================================
+   OPTION 5 — PATCH→SITES→BOARDS→DRIFT SANKEY (provenance flow)
+   Causal attribution: the patch's 2 mutation sites flow to the boards they
+   touched, which flow to the drift-kinds (judges) they moved. Band width =
+   magnitude of effect; band colour = improved/regressed. Answers "what did
+   THIS patch change, and through what did it change the score" — the unique
+   thing the dossier can show that a leaderboard cannot.
+   ============================================================ */
+function opt5() {
+  const W=860,H=380; const colX=[60,300,540,790];
+  const top=60, bot=H-30;
+  // nodes per column
+  const sites = S.mutation_points; // 2
+  // which boards each site touches (attribution, from mutation_surface)
+  const siteBoards = {
+    "proposer.temperature": ["plan.replan","tool.route","recall.multi","format.json"],
+    "scoring.per_judge_weights": ["plan.decompose","plan.replan","summarize.long","safety.refuse","tool.args"],
+  };
+  const boards = S.boards.map(b=>b.id);
+  const drifts = [...new Set(S.boards.map(b=>b.judge).filter(Boolean))]; // judges moved
+  function colPositions(items, label) {
+    const stepY=(bot-top)/(items.length);
+    return items.map((it,i)=>({ id:it, y: top + i*stepY + stepY/2 }));
+  }
+  const cs=colPositions(sites), cb=colPositions(boards), cd=colPositions(drifts);
+  const byB=Object.fromEntries(cb.map(o=>[o.id,o])), byD=Object.fromEntries(cd.map(o=>[o.id,o]));
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="patch to sites to boards to drift sankey">`;
+  // column captions
+  const caps=["mutation site","board touched","drift-kind moved","Σ effect"];
+  caps.forEach((c,i)=>{ s+=`<text x="${colX[i]}" y="32" text-anchor="${i===3?'end':i===0?'start':'middle'}" font-size="10" fill="${C.faint}">${c}</text>`; });
+  // links site -> board
+  function band(x1,y1,x2,y2,w,col,op){
+    const mx=(x1+x2)/2;
+    return `<path d="M${x1},${y1-w/2} C${mx},${y1-w/2} ${mx},${y2-w/2} ${x2},${y2-w/2} L${x2},${y2+w/2} C${mx},${y2+w/2} ${mx},${y1+w/2} ${x1},${y1+w/2} Z" fill="${col}" fill-opacity="${op}" ${VE}/>`;
+  }
+  // site -> board bands
+  cs.forEach((site,si)=>{
+    const bds=siteBoards[site.id]||[];
+    bds.forEach(bid=>{
+      const b=S.boards.find(x=>x.id===bid); const bo=byB[bid];
+      const col=deltaColor(b.chal,b.champ);
+      const w=Math.max(3, Math.abs(b.chal-b.champ)*120);
+      s+=band(colX[0]+8, site.y, colX[1]-8, bo.y, w, col, 0.32);
+    });
+  });
+  // board -> drift bands
+  S.boards.forEach(b=>{
+    if(!b.judge) return; const bo=byB[b.id], dn=byD[b.judge];
+    const col=deltaColor(b.chal,b.champ);
+    const w=Math.max(3, Math.abs(b.chal-b.champ)*120);
+    s+=band(colX[1]+8, bo.y, colX[2]-8, dn.y, w, col, 0.32);
+  });
+  // drift -> Σ bands
+  cd.forEach(dn=>{
+    const j=S.judges.find(x=>x.judge===dn.id);
+    const col = j && j.weighted<j.champ_weighted ? C.good : C.bad;
+    const w=Math.max(3,(j?Math.abs(j.weighted-j.champ_weighted):0.02)*200);
+    s+=band(colX[2]+8, dn.y, colX[3]-8, (top+bot)/2, w, col, 0.30);
+  });
+  // node boxes
+  function nodes(col,x,anchor,labelDx){
+    col.forEach(o=>{
+      s+=`<rect x="${x-4}" y="${o.y-9}" width="8" height="18" rx="2" fill="${C.ink}" ${VE}/>`;
+      s+=`<text x="${x+labelDx}" y="${o.y+3.5}" text-anchor="${anchor}" font-size="9" fill="${C.soft}">${esc(o.id)}</text>`;
+    });
+  }
+  nodes(cs, colX[0], 'start', 10);
+  cb.forEach(o=>{ s+=`<rect x="${colX[1]-4}" y="${o.y-7}" width="8" height="14" rx="2" fill="${C.ink}" ${VE}/>`; s+=`<text x="${colX[1]+10}" y="${o.y+3}" font-size="8.5" fill="${C.soft}">${esc(o.id)}</text>`; });
+  cd.forEach(o=>{ s+=`<rect x="${colX[2]-4}" y="${o.y-8}" width="8" height="16" rx="2" fill="${C.ink}" ${VE}/>`; s+=`<text x="${colX[2]+10}" y="${o.y+3}" font-size="8.5" fill="${C.soft}">${esc(o.id)}</text>`; });
+  // Σ node
+  s+=`<rect x="${colX[3]-8}" y="${(top+bot)/2-22}" width="12" height="44" rx="3" fill="${C.good}" ${VE}/>`;
+  s+=`<text x="${colX[3]-14}" y="${(top+bot)/2-2}" text-anchor="end" font-size="11" font-weight="700" fill="${C.good}">${fmt(S.gate.delta_scalar,3)}</text>`;
+  s+=`<text x="${colX[3]-14}" y="${(top+bot)/2+13}" text-anchor="end" font-size="8.5" fill="${C.faint}">PROMOTE</text>`;
+  s+=`</svg>`; return s;
+}
+
+/* ============================================================
+   OPTION 6 — TRAJECTORY + HYPOTHESIS CALLOUT (generalization first-class)
+   The decision-honest narrative: the epoch loss trajectory with THIS gen
+   pinned, its hypothesis as the callout, and the train/holdout pair drawn as
+   a forked endpoint so the generalization gap is the literal fork the eye
+   lands on. Overfitting is the headline, not a footnote: a wide fork = it
+   memorized; this narrow fork = it generalizes.
+   ============================================================ */
+function opt6() {
+  const W=970,H=340; const x0=60,x1=540,top=60,bot=230;
+  const pts=S.trajectory;
+  const lo=0.30,hi=0.41; const X=i=>x0+i/(pts.length-1)*(x1-x0); const Y=v=>bot-(v-lo)/(hi-lo)*(bot-top);
+  let s=`<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="epoch trajectory with generalization fork">`;
+  // y gridlines
+  for (const t of [0.32,0.36,0.40]) {
+    s+=`<line x1="${x0}" y1="${Y(t)}" x2="${x1}" y2="${Y(t)}" stroke="${C.ruleSoft}" stroke-width="1" ${VE}/>`;
+    s+=`<text x="${x0-8}" y="${Y(t)+3}" text-anchor="end" font-size="8.5" fill="${C.faint}">${t.toFixed(2)}</text>`;
+  }
+  s+=`<text x="${x0}" y="${top-22}" font-size="11" fill="${C.faint}">epoch ${S.lineage.epoch_id} loss trajectory · lower = better</text>`;
+  // champion (parent) reference line — the bar the candidate must beat
+  s+=`<line x1="${x0}" y1="${Y(S.champion_scalar)}" x2="${x1+250}" y2="${Y(S.champion_scalar)}" stroke="${C.faint}" stroke-width="1.5" stroke-dasharray="4 3" ${VE}/>`;
+  s+=`<text x="${x1+254}" y="${Y(S.champion_scalar)+3}" font-size="9" fill="${C.faint}">champion ${S.champion_scalar.toFixed(3)}</text>`;
+  // path
+  let d=pts.map((p,i)=>`${i?'L':'M'}${X(i)},${Y(p.scalar)}`).join(' ');
+  s+=`<path d="${d}" fill="none" stroke="${C.soft}" stroke-width="2" ${VE}/>`;
+  pts.forEach((p,i)=>{
+    const cur=p.current;
+    s+=`<circle cx="${X(i)}" cy="${Y(p.scalar)}" r="${cur?6:3.5}" fill="${cur?C.good:C.soft}" ${VE}/>`;
+    s+=`<text x="${X(i)}" y="${bot+16}" text-anchor="middle" font-size="8" fill="${cur?C.ink:C.faint}">${esc(p.gen)}</text>`;
+  });
+  // the FORK at the current gen: train vs holdout endpoints
+  const ci=pts.length-1, fx=X(ci);
+  const tY=Y(S.hypothesis.train_loss), hY=Y(S.hypothesis.holdout_loss);
+  const forkX=fx+90;
+  s+=`<line x1="${fx}" y1="${Y(pts[ci].scalar)}" x2="${forkX}" y2="${tY}" stroke="${C.good}" stroke-width="2" ${VE}/>`;
+  s+=`<line x1="${fx}" y1="${Y(pts[ci].scalar)}" x2="${forkX}" y2="${hY}" stroke="${C.caution}" stroke-width="2" ${VE}/>`;
+  s+=`<circle cx="${forkX}" cy="${tY}" r="5" fill="${C.good}" ${VE}/>`;
+  s+=`<circle cx="${forkX}" cy="${hY}" r="5" fill="${C.caution}" ${VE}/>`;
+  s+=`<text x="${forkX+10}" y="${tY+3}" font-size="9.5" fill="${C.good}">train ${S.hypothesis.train_loss.toFixed(3)}</text>`;
+  s+=`<text x="${forkX+10}" y="${hY+3}" font-size="9.5" fill="${C.caution}">holdout ${S.hypothesis.holdout_loss.toFixed(3)}</text>`;
+  // gap bracket between fork tips
+  s+=`<line x1="${forkX+150}" y1="${tY}" x2="${forkX+150}" y2="${hY}" stroke="${C.caution}" stroke-width="1" ${VE}/>`;
+  s+=`<line x1="${forkX+146}" y1="${tY}" x2="${forkX+154}" y2="${tY}" stroke="${C.caution}" stroke-width="1" ${VE}/>`;
+  s+=`<line x1="${forkX+146}" y1="${hY}" x2="${forkX+154}" y2="${hY}" stroke="${C.caution}" stroke-width="1" ${VE}/>`;
+  s+=`<text x="${forkX+160}" y="${(tY+hY)/2+3}" font-size="10" font-weight="700" fill="${C.caution}">gap +${S.hypothesis.generalization_gap.toFixed(3)}</text>`;
+  s+=`<text x="${forkX+160}" y="${(tY+hY)/2+16}" font-size="8" fill="${C.faint}">≤ tol ${S.hypothesis.tolerance.toFixed(2)} · generalizes</text>`;
+  // hypothesis callout box (bottom)
+  const hyTop=bot+34;
+  s+=`<rect x="${x0}" y="${hyTop}" width="${W-x0-30}" height="56" rx="7" fill="${C.panel2}" stroke="${C.rule}" stroke-width="1" ${VE}/>`;
+  s+=`<text x="${x0+14}" y="${hyTop+18}" font-size="9.5" fill="${C.faint}">hypothesis · ${esc(S.gen)} ←patch from ${esc(S.lineage.parent_id)}</text>`;
+  s+=`<text x="${x0+14}" y="${hyTop+34}" font-size="10" fill="${C.ink}">${esc(S.hypothesis.core_idea)}</text>`;
+  s+=`<text x="${x0+14}" y="${hyTop+49}" font-size="9.5" fill="${C.good}">outcome: ${esc(S.hypothesis.outcome)}</text>`;
+  s+=`</svg>`; return s;
+}
+
+/* ============================================================ render ============
+   NOTE — former OPT 7 ("Dossier + radar") was REMOVED: opt-2 now folds the radar
+   silhouette in directly (the operator's request 1), so a separate dossier+radar
+   fusion is redundant. opt-4 stays as the standalone radar take; opt-2 is the
+   composed dossier that includes it. The page is back to SIX takes.
+   ============================================================ */
+const OPTIONS = [
+  { n:"OPT 1", name:"Lifecycle spine",
+    why:"Keeps the candidate view's signature DAG — parent→patch→boards→Σ→gate→verdict — but de-crowded: each node carries its Δ-vs-champion, the board fan and gate-rule ladder hang off their nodes, generalization pinned as a callout.",
+    reveals:"<b>The causal chain end to end:</b> a patch of 2 sites moved 6/8 boards, Σ cleared the margin, all 3 gate rules passed, and the train→holdout pair confirms it generalizes — one figure that walks the whole ruling.",
+    build:opt1, cls:"fig-mid" },
+  { n:"OPT 2", name:"Candidate dossier (as shipped) + radar",
+    why:"The REAL dashboard candidate view (variants/T/views/candidate.js) folded into the study, in a coordinated-grid layout: the lifecycle DAG (parent→patch→board-fan→Σ→gate→terminal, each circle vs champion) spans the top; beneath it the shipped comparison panels — per-board paired dumbbell vs champion and the short-circuiting promote-gate ladder — read together with the RADAR SILHOUETTE (opt 4) now folded in as the at-a-glance shape panel (the scalar-component bars were dropped as redundant with the radar); every one champion-relative. Under ?sample=racing it swaps to FIELD-relative panels (field standings · per-board-vs-field · rung ladder), since racing cuts the whole field rung-by-rung rather than running a duel.",
+    reveals:"<b>The shipped ruling, end to end, plus the silhouette:</b> the lifecycle spine walks cause→effect→verdict; the dumbbell ranks each board vs champion; the gate ladder shows WHY it promoted; the radar makes 'better almost everywhere, worse in one place' a single legible shape (hover a vertex for its number). In racing the field panels show where the candidate landed among ALL racers and how it fared as the field narrowed.",
+    build:opt2, cls:"fig-mid" },
+  { n:"OPT 3", name:"Diverging dumbbell",
+    why:"Per-board Δ-vs-champion as the spine: champion ○ → candidate ●, joined, sorted by Δ; replicate σ as a whisker. The exact comparison the gate makes, board by board.",
+    reveals:"<b>Exactly what the patch did to each board:</b> 6 dumbbells pull left (improved), one pulls right — plan.replan, the lone regression that flips pass→fail — and the whiskers show the wins are bigger than the replicate noise.",
+    build:opt3, cls:"" },
+  { n:"OPT 4", name:"Radar silhouette",
+    why:"The candidate's whole shape vs the champion's across the heterogeneous axes the gate weighs (scalar, pass-rate, per-judge). Filled candidate polygon over a dashed champion polygon — domination is a shape you can see.",
+    reveals:"<b>Whether it strictly dominates:</b> the candidate polygon encloses the champion on 5 of 6 axes with a single visible pull-in on plan_coherence — the silhouette makes 'better almost everywhere, worse in one place' instantly legible.",
+    build:opt4, cls:"fig-narrow" },
+  { n:"OPT 5", name:"Patch→sites→boards→drift Sankey",
+    why:"Causal attribution flow: the 2 mutation sites → the boards they touched → the drift-kinds (judges) they moved → Σ. Band width = magnitude, colour = improved/regressed. The one view a leaderboard can never give.",
+    reveals:"<b>Through what the patch changed the score:</b> per_judge_weights flows mostly into plan boards and plan_coherence drift; temperature spreads thinner across tool/recall — and the lone red band traces the regression back to its mutation site.",
+    build:opt5, cls:"fig-mid" },
+  { n:"OPT 6", name:"Trajectory + generalization fork",
+    why:"Decision-honest narrative: the epoch loss trajectory with this gen pinned, hypothesis as the callout, and the train/holdout pair drawn as a literal FORK so the generalization gap is the thing the eye lands on. Overfitting as the headline.",
+    reveals:"<b>That it earned its place and didn't memorize:</b> the gen sits at the trajectory's new low under the champion line, and the train/holdout fork is narrow (+0.030) — a wide fork would scream overfit; this one confirms the hypothesis.",
+    build:opt6, cls:"fig-mid" },
+];
+
+/* render the dossier — re-callable so the switcher can re-label every figure.
+   The figures are STRUCTURE-INDEPENDENT; only the per-structure terminal/context
+   labels they read from S.context change between renders. */
+function renderOptions(){
+  document.getElementById('options').innerHTML = OPTIONS.map(o => `
+  <section class="opt">
+    <div class="opt-head">
+      <span class="num">${o.n}</span>
+      <span class="name">${o.name}</span>
+      <span class="why">${o.why}</span>
+    </div>
+    <div class="opt-body">
+      <div class="struct-cap"><span class="tag">${S.context.label}</span><span class="ctx">tournament context · ${S.context.contextLine}</span></div>
+      <figure class="${o.cls}">${o.build()}</figure>
+      <div class="leg">
+        <span><i class="g"></i> improved / promote</span>
+        <span><i class="r"></i> regressed</span>
+        <span><i class="f"></i> neutral / champion</span>
+        <span><i class="c"></i> holdout / generalization</span>
+        <span><i class="dash"></i> champion reference</span>
+        <span><i class="a"></i> patch / candidate</span>
+      </div>
+      <p class="reveals">${o.reveals}</p>
+    </div>
+  </section>`).join('');
+}
+function renderAll(){ renderSampleStrip(); renderOptions(); }
+
+/* ===================== SAMPLE-STRUCTURE SWITCHER =====================
+   Flips the candidate's tournament CONTEXT (S.context) and re-renders. The
+   dossier figures themselves are IDENTICAL across structures — only the
+   tournament-context tile + the lifecycle TERMINAL label re-label. Honors
+   ?sample=<structure>; hidden in ?bare=1 but ?sample is still applied. */
+const STRUCTS = [
+  ["gauntlet",     "gauntlet"],
+  ["single_elim",  "single-elim"],
+  ["double_elim",  "double-elim"],
+  ["swiss",        "swiss"],
+  ["racing",       "racing"],
+];
+const STRUCT_IDS = STRUCTS.map(s=>s[0]);
+let CUR_STRUCT = "gauntlet";
+function setStructure(id, push){
+  if (!STRUCT_IDS.includes(id)) id = "gauntlet";
+  CUR_STRUCT = id;
+  S.context = CONTEXTS[id];
+  document.querySelectorAll('#struct-seg button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.getAttribute('data-struct') === id)));
+  const note = document.getElementById('struct-note');
+  if (note) note.textContent = "— context: " + S.context.contextLine;
+  renderAll();
+  if (push){
+    const u = new URL(location.href); u.searchParams.set('sample', id);
+    history.replaceState(null, "", u);
+  }
+}
+function mountStructSwitch(){
+  const seg = document.getElementById('struct-seg');
+  seg.innerHTML = STRUCTS.map(([id,label]) =>
+    `<button type="button" data-struct="${id}" aria-pressed="${id===CUR_STRUCT}" title="sample structure: ${label}">${label}</button>`).join('');
+  seg.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => setStructure(b.getAttribute('data-struct'), true)));
+}
+mountStructSwitch();
+
+/* honor ?sample=<structure> for the initial sample (a composer drives it). */
+(function(){
+  const P = new URLSearchParams(location.search);
+  let init = P.get('sample');
+  if (init) init = init.replace(/-/g, '_');
+  setStructure(STRUCT_IDS.includes(init) ? init : "gauntlet", false);
+})();
+
+/* ===== Console colour-scheme picker — 16 themes ported from variants/T ===== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME = "monokai";
+const THEME_IDS = THEMES.map(t => t[0]);
+function strip(swatches, sm) {
+  return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">` +
+    swatches.map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('') + `</span>`;
+}
+function mountThemePicker(hostId) {
+  const host = document.getElementById(hostId);
+  let value = DEFAULT_THEME, open = false, activeIdx = THEME_IDS.indexOf(value);
+  const byId = new Map(THEMES.map(t => [t[0], t]));
+  host.innerHTML =
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw]) =>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             ${strip(sw)}<span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd = host.querySelector('.dt-cd');
+  const trigger = host.querySelector('.dt-cd-trigger');
+  const trigStrip = host.querySelector('.dt-cd-trig-strip');
+  const trigName = host.querySelector('.dt-cd-trig-name');
+  const list = host.querySelector('.dt-cd-list');
+  const options = Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id) {
+    value = THEME_IDS.includes(id) ? id : DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme', value);
+    const def = byId.get(value);
+    trigStrip.className = 'dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden', 'true');
+    trigStrip.innerHTML = def[2].map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent = def[1];
+    options.forEach(o => o.setAttribute('aria-selected', String(o.getAttribute('data-theme') === value)));
+  }
+  function setActive(i) {
+    activeIdx = (i + options.length) % options.length;
+    options.forEach((o,k) => o.classList.toggle('dt-cd-active', k === activeIdx));
+  }
+  function setOpen(next) {
+    open = next; cd.classList.toggle('dt-cd-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) setActive(Math.max(0, THEME_IDS.indexOf(value)));
+  }
+  function choose(id) { applyTheme(id); setOpen(false); }
+  options.forEach(o => o.addEventListener('click', () => choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click', () => setOpen(!open));
+  trigger.addEventListener('keydown', ev => {
+    if (['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)) { ev.preventDefault(); setOpen(true); list.focus?.(); }
+  });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); setOpen(false); trigger.focus(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx+1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx-1); }
+    else if (['Enter',' ','Spacebar'].includes(ev.key)) {
+      ev.preventDefault();
+      const id = options[activeIdx]?.getAttribute('data-theme'); if (id) choose(id);
+    }
+  });
+  document.addEventListener('click', ev => {
+    if (!open) return; let n = ev.target; while (n) { if (n === cd) return; n = n.parentNode; } setOpen(false);
+  });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+
+/* ===== RADAR vertex hover tooltip — delegated so it survives every re-render.
+   Each radar vertex carries data-tip (axis name + per-axis numeric value, for
+   both champion & candidate). A single fixed tooltip follows the pointer. This
+   lets the radar drop always-on axis labels when dense and surface the NUMBER on
+   demand instead — so the figure scales as the axis count grows. ===== */
+(function(){
+  const tip = document.getElementById('radar-tip');
+  if (!tip) return;
+  function show(target, x, y){
+    const t = target.getAttribute('data-tip'); if (!t) return;
+    const axis = target.getAttribute('data-axis') || '';
+    // bold the leading axis name (everything before the first " · ")
+    const rest = axis && t.startsWith(axis) ? t.slice(axis.length) : (' ' + t);
+    tip.innerHTML = `<span class="tip-axis">${axis}</span>${rest.replace(/&/g,'&amp;').replace(/</g,'&lt;')}`;
+    tip.style.display = 'block';
+    move(x, y);
+  }
+  function move(x, y){
+    // keep the tip on-screen; offset from the cursor.
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    let nx = x + 14, ny = y + 14;
+    if (nx + w > window.innerWidth - 8) nx = x - w - 14;
+    if (ny + h > window.innerHeight - 8) ny = y - h - 14;
+    tip.style.left = Math.max(4, nx) + 'px';
+    tip.style.top  = Math.max(4, ny) + 'px';
+  }
+  function hide(){ tip.style.display = 'none'; }
+  // pointer (mouse) — delegated on document so re-rendered SVG always works.
+  document.addEventListener('mouseover', e => {
+    const hot = e.target.closest && e.target.closest('.radar-hot');
+    if (hot) show(hot, e.clientX, e.clientY);
+  });
+  document.addEventListener('mousemove', e => {
+    if (tip.style.display === 'block') {
+      const hot = e.target.closest && e.target.closest('.radar-hot');
+      if (hot) move(e.clientX, e.clientY); else hide();
+    }
+  });
+  document.addEventListener('mouseout', e => {
+    const hot = e.target.closest && e.target.closest('.radar-hot');
+    if (hot) hide();
+  });
+  // keyboard focus (accessibility) — anchor the tip at the focused vertex.
+  document.addEventListener('focusin', e => {
+    const hot = e.target.closest && e.target.closest('.radar-hot');
+    if (hot){ const r = hot.getBoundingClientRect(); show(hot, r.left + r.width/2, r.top); }
+  });
+  document.addEventListener('focusout', e => {
+    const hot = e.target.closest && e.target.closest('.radar-hot');
+    if (hot) hide();
+  });
+})();
+</script>
+<style>html.embed-bare,html.embed-bare body{padding:0!important;margin:0!important}html.embed-bare section{margin:0!important}</style>
+<script>window.__EMBED_CFG__={optSel:'#options > section.opt',bareHide:['.opt-head','.leg','.reveals']};</script>
+<script src="_embed.js"></script>
+</body>
+</html>

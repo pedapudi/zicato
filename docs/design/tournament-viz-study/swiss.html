@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — SWISS tournament visualization study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from src/.../variants/T/console4.css --v2-* roles and mapped onto this
+       study's token names. The picker sets html[data-theme]; each block fully
+       restyles the page. --zicato-accent ← --v2-accent. Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background .18s, color .18s;
+    padding: 0 0 80px;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  header .brand { color: currentColor; display: flex; align-items: center; gap: 10px; }
+  header .brand svg { height: 24px; width: auto; }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  section { margin: 36px 0; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 18px; max-width: 88ch; }
+  .lede code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  b.good { color: var(--good); } b.bad { color: var(--bad); } b.acc { color: var(--accent); }
+
+  .opt-card {
+    border: 1px solid var(--rule); border-radius: 12px; background: var(--panel);
+    padding: 22px; margin-bottom: 26px;
+  }
+  .opt-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 4px; flex-wrap: wrap; }
+  .opt-num { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+  .opt-name { font-size: 16px; font-weight: 700; color: var(--ink); }
+  .opt-rationale { color: var(--ink-soft); font-size: 12.5px; margin: 0 0 18px; max-width: 92ch; }
+
+  .view-block { margin: 18px 0; }
+  .view-tag {
+    font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint);
+    border-bottom: 1px dashed var(--rule-soft); padding-bottom: 5px; margin-bottom: 12px;
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .view-tag .vk { color: var(--accent); font-weight: 700; }
+  .view-tag .vd { color: var(--ink-faint); text-transform: none; letter-spacing: 0; font-size: 11px; }
+
+  .figbox { border: 1px solid var(--rule-soft); border-radius: 8px; background: var(--panel-2); padding: 14px; overflow-x: auto; }
+  svg.fig { width: 100%; height: auto; display: block; }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 820px){ .twocol { grid-template-columns: 1fr; } }
+
+  /* tables */
+  table.lb { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  table.lb th, table.lb td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--rule-soft); white-space: nowrap; }
+  table.lb th { color: var(--ink-faint); font-weight: 400; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+  table.lb td.l, table.lb th.l { text-align: left; }
+  table.lb tr.champ td { color: var(--ink); }
+  table.lb tr.leader td { color: var(--good); font-weight: 700; }
+  table.lb tr.promote td { color: var(--good); }
+  .pill { display: inline-block; font-size: 9.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-faint); letter-spacing: .04em; vertical-align: middle; }
+  .pill.champ { border-color: var(--accent); color: var(--accent); }
+  .pill.lead  { border-color: var(--good); color: var(--good); }
+  .pill.bye   { border-color: var(--caution); color: var(--caution); }
+  .pill.pend  { border-color: var(--ink-faint); color: var(--ink-faint); border-style: dashed; }
+
+  .legend { display: flex; gap: 16px; font-size: 10.5px; color: var(--ink-faint); margin: 12px 2px 2px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .lk { width: 18px; height: 0; border-top: 2px solid var(--accent); display: inline-block; }
+  .lk.good { border-color: var(--good); }
+  .lk.faint { border-top-style: dashed; border-color: var(--ink-faint); }
+  .lk.bad { border-color: var(--bad); }
+  .dotm { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); display: inline-block; }
+  .dotm.good { background: var(--good); }
+  .dotm.faint { background: var(--ink-faint); }
+
+  /* hero banner standings bars */
+  .hero-row { display: grid; grid-template-columns: 30px 1.6fr 4fr 56px 64px; align-items: center; gap: 10px; padding: 5px 0; font-size: 12px; }
+  .hero-row .rk { color: var(--ink-faint); text-align: right; font-size: 11px; }
+  .hero-row .nm { color: var(--ink); display: flex; align-items: center; gap: 7px; overflow: hidden; }
+  .hero-row .nm .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hero-row .bar { height: 14px; background: var(--rule-soft); border-radius: 3px; position: relative; overflow: hidden; }
+  .hero-row .bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 3px; }
+  .hero-row.leader .bar > i { background: var(--good); }
+  .hero-row.champ .bar > i { background: color-mix(in srgb, var(--accent) 55%, var(--paper)); }
+  .hero-row .pts { text-align: right; color: var(--ink); font-weight: 700; }
+  .hero-row.leader .pts { color: var(--good); }
+  .hero-row .sc { text-align: right; color: var(--ink-faint); font-size: 11px; }
+
+  /* ===== OPT 7 / OPT 8 composed-option styling ===== */
+  /* diverging Δscalar magnitude bar (shared) */
+  .lg-dtrack { display:inline-block; height:7px; border-radius:4px; background:var(--rule-soft);
+    position:relative; vertical-align:middle; overflow:hidden; }
+  .lg-dtrack > i { position:absolute; left:0; top:0; bottom:0; border-radius:4px;
+    background:linear-gradient(90deg, color-mix(in srgb,var(--accent) 55%, transparent), var(--accent)); }
+  .lg-dval { font-size:10.5px; color:var(--ink-faint); margin-left:8px; font-variant-numeric:tabular-nums; }
+
+  /* OPT 7 hero: refined score-group ladder */
+  .lg-hero { padding:14px 16px; }
+  .lg-band { display:flex; align-items:flex-start; gap:16px; padding:9px 0; border-bottom:1px solid var(--rule-soft); }
+  .lg-band:last-of-type { border-bottom:none; }
+  .lg-band-rec { min-width:92px; display:flex; align-items:baseline; gap:5px; }
+  .lg-band-rec b { color:var(--accent); font-size:19px; font-weight:700; line-height:1; font-variant-numeric:tabular-nums; }
+  .lg-band-rec span { color:var(--ink-faint); font-size:11px; }
+  .lg-band-rec em { color:var(--ink-faint); font-size:9.5px; font-style:normal; letter-spacing:.08em; text-transform:uppercase; margin-left:2px; align-self:center; }
+  .lg-band-pool { flex:1; display:flex; flex-wrap:wrap; gap:7px; }
+  .lg-chip { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--rule); border-radius:7px;
+    padding:4px 10px; background:var(--panel); }
+  .lg-chip b { color:var(--ink); font-size:12.5px; }
+  .lg-chip.lead { border-color:var(--good); background:color-mix(in srgb,var(--good) 12%, var(--panel)); }
+  .lg-chip.lead b { color:var(--good); }
+  .lg-chip.champ { border-color:var(--accent); }
+  .lg-chip.champ b { color:var(--accent); }
+  .lg-mu { color:var(--ink-faint); font-size:10.5px; font-variant-numeric:tabular-nums; }
+  .lg-foot { color:var(--ink-faint); font-size:10px; margin-top:10px; line-height:1.5; }
+
+  /* OPT 7 (b): refined pairing ledger */
+  .lgx { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:860px){ .lgx { grid-template-columns:1fr; } }
+  .lgx-round { border:1px solid var(--rule-soft); border-radius:10px; background:var(--panel-2); overflow:hidden; }
+  .lgx-round.live { border-color:color-mix(in srgb,var(--caution) 55%, var(--rule)); }
+  .lgx-rh { display:flex; align-items:center; gap:10px; padding:9px 14px;
+    background:color-mix(in srgb,var(--ink) 4%, var(--panel)); border-bottom:1px solid var(--rule-soft); }
+  .lgx-round.live .lgx-rh { background:color-mix(in srgb,var(--caution) 9%, var(--panel)); }
+  .lgx-rn { font-size:13px; font-weight:700; color:var(--ink); letter-spacing:.04em;
+    border:1px solid var(--rule); border-radius:5px; padding:1px 7px; font-variant-numeric:tabular-nums; }
+  .lgx-rl { font-size:11px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.1em; }
+  .lgx-rt { font-size:10.5px; color:var(--accent); }
+  .lgx-done { font-size:10px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.1em; margin-left:auto; }
+  .lgx-rh .pill.pend { margin-left:auto; }
+  .lgx-body { padding:6px 14px 12px; }
+  .lgx-grp { display:flex; gap:12px; padding:8px 0; border-bottom:1px dashed var(--rule-soft); }
+  .lgx-grp:last-child { border-bottom:none; }
+  .lgx-spine { min-width:62px; display:flex; flex-direction:column; gap:1px; padding-top:2px;
+    border-left:3px solid color-mix(in srgb,var(--accent) 55%, var(--rule)); padding-left:9px; }
+  .lgx-spine b { color:var(--accent); font-size:15px; font-weight:700; line-height:1; font-variant-numeric:tabular-nums; }
+  .lgx-spine span { color:var(--ink-faint); font-size:9px; letter-spacing:.04em; }
+  .lgx-rows { flex:1; display:flex; flex-direction:column; gap:5px; }
+  .lgx-row { display:grid; grid-template-columns:38px 1fr auto; align-items:center; gap:10px; font-size:12.5px; }
+  .lgx-rec { color:var(--ink-faint); font-size:10px; font-variant-numeric:tabular-nums; text-align:right;
+    border:1px solid var(--rule-soft); border-radius:4px; padding:1px 0; }
+  .lgx-pair { display:flex; align-items:center; gap:7px; min-width:0; }
+  .lgx-pair b.win { color:var(--good); font-weight:700; }
+  .lgx-pair .lose { color:var(--ink-soft); }
+  .lgx-def { color:var(--ink-faint); font-size:11px; }
+  .lgx-vs { color:var(--ink-faint); font-size:11px; }
+  .lgx-pair b { color:var(--ink); }
+  .lgx-note { color:var(--ink-faint); font-size:10px; }
+  .lgx-mag { display:flex; align-items:center; justify-content:flex-end; white-space:nowrap; }
+  .lgx-mag-pend { color:var(--ink-faint); font-size:10.5px; font-style:italic; }
+  .lgx-row.bye .lgx-pair b, .lgx-row.pend .lgx-pair b { color:var(--ink); }
+
+  /* OPT 8 (b): rank-flow + pairing strips */
+  .lgf-cap { font-size:10.5px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.1em; margin-bottom:8px; }
+  .lgf-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  @media (max-width:860px){ .lgf-grid { grid-template-columns:repeat(2,1fr); } }
+  .lgf-col { border:1px solid var(--rule-soft); border-radius:8px; background:var(--panel); padding:8px 10px; }
+  .lgf-col.live { border-color:color-mix(in srgb,var(--caution) 55%, var(--rule)); background:color-mix(in srgb,var(--caution) 7%, var(--panel)); }
+  .lgf-ch { font-size:11px; font-weight:700; color:var(--ink-soft); letter-spacing:.06em; padding-bottom:6px;
+    margin-bottom:6px; border-bottom:1px solid var(--rule-soft); display:flex; align-items:center; gap:6px; }
+  .lgf-row { display:flex; align-items:center; gap:6px; font-size:11.5px; padding:3px 0; flex-wrap:wrap; }
+  .lgf-rec { color:var(--ink-faint); font-size:9.5px; font-variant-numeric:tabular-nums;
+    border:1px solid var(--rule-soft); border-radius:3px; padding:0 3px; }
+  .lgf-row b.win { color:var(--good); font-weight:700; }
+  .lgf-row .lose { color:var(--ink-soft); }
+  .lgf-row b { color:var(--ink); }
+  .lgf-def { color:var(--good); font-size:10px; }
+  .lgf-vs { color:var(--ink-faint); font-size:10px; }
+  .lgf-row .lg-dtrack { margin-left:auto; height:5px; }
+  .lgf-row .lg-dval { display:none; }
+
+  footer { max-width: 1180px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) ---- */
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand" id="hdr-mark" aria-label="zicato mark"></span>
+  <h1>zicato — SWISS visualization study</h1>
+  <span class="spacer"></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+    Six distinct ways to render a <b>SWISS</b> tournament — the configurable per-epoch structure where the
+    <b class="acc">reigning champion participates as a contestant</b>, no one is eliminated, everyone plays
+    every round, and an odd field grants a <span class="pill bye">BYE = +1 free Copeland point</span>.
+    Standing is the <b class="acc">Copeland score</b> (duels won) tie-broken by <b class="acc">mean scalar</b>
+    (lower = better), then id. After <code>rounds_n</code> rounds the top <b>non-champion</b> leader faces the
+    <code>swiss-final</code> champion-gate and is crowned only if it clears it. Every option below renders one
+    <b>identical mid-tournament dataset</b>: 7 contestants (champion + 6 challengers), 4 rounds, round&nbsp;4
+    still in flight. Each option carries three views — <b class="acc">(a) hero banner</b> (at-a-glance live
+    leaderboard), <b class="acc">(b) cross-round</b> (standings trajectory across the Swiss rounds), and
+    <b class="acc">(c) round-level</b> (per-round pairings + standings).
+    <br><br>
+    <b>What we are designing against:</b> the current frontend <b class="bad">invents phantom draws</b> and shows
+    an <b class="bad">always-0 losses column</b> (both dropped here — the backend never draws and losses are
+    structurally always 0); its bump chart is the strongest standings idiom but is <b>epoch-only</b>; the live
+    ladder leads with pairings and buries standings; and the mean-scalar tiebreak — the real ranking signal —
+    is hidden under Copeland points. So here the <b class="acc">Copeland leaderboard + rank trajectory are the
+    hero</b>, the <b class="acc">mean-scalar tiebreak is surfaced as a magnitude</b>, and the champion is marked
+    in the field.
+  </p>
+
+  <p style="color:var(--ink-faint);font-size:12px;margin:8px 0 0;line-height:1.55">
+    This is the structure-specific tournament FIGURE at three zooms — the SINGLE-ROUND layer. The hero shell, cross-epoch, cross-round (across evolve-rounds), single-matchup, and single-generation levels are structure-agnostic — see their own pages (<a href="index.html" style="color:inherit;text-decoration:underline">← index</a>).
+  </p>
+
+  <div id="options"></div>
+</main>
+
+<footer>
+  Standalone Swiss visualization study · served from <code>/tmp/zicato-tourney-viz-study/</code> · read-only
+  against <code>/home/sunil/git/zicato/src/zicato/selection/strategies/swiss.py</code> · no repo edits.
+  Real fields: standings <code>{rank, wins (Copeland), scalar (mean), status, role}</code>; pairings
+  <code>r{round}_m{slot}{competitors, winner, bye, delta_scalar, pending}</code> + the <code>swiss-final</code> gate.
+</footer>
+
+<script>
+/* =====================================================================
+   ONE realistic mid-tournament SAMPLE dataset, shared by all 6 options.
+   7 contestants (odd → one bye/round) = the champion + 6 challengers.
+   4 Swiss rounds; rounds 1–3 settled, round 4 in flight (one duel pending).
+   Standing = Copeland score (wins) tiebroken by mean scalar (lower better).
+   NO losses column (always 0). NO draws (backend has none). ===== */
+
+const CHAMP = 'g0';
+const ROUNDS_N = 4;
+
+// contestants: id, label, role. champion participates as a contestant.
+const FIELD = [
+  { id:'g0', label:'gen-0 · champ', role:'champion' },
+  { id:'g3', label:'gen-3',  role:'challenger' },
+  { id:'g5', label:'gen-5',  role:'challenger' },
+  { id:'g1', label:'gen-1',  role:'challenger' },
+  { id:'g6', label:'gen-6',  role:'challenger' },
+  { id:'g2', label:'gen-2',  role:'challenger' },
+  { id:'g4', label:'gen-4',  role:'challenger' },
+];
+const labelOf = Object.fromEntries(FIELD.map(c => [c.id, c.label]));
+const roleOf  = Object.fromEntries(FIELD.map(c => [c.id, c.role]));
+
+// PAIRINGS per round. winner = lower-scalar id; bye = free Copeland point.
+// pending=true for the still-running round-4 duel. delta_scalar = right-left
+// (per backend MatchupResult: <0 means LEFT/first won). We store the duel's
+// magnitude as |delta| on the winner edge for display.
+// Rounds 1-3 fully settled; round 4: one duel done, one duel pending, one bye.
+const ROUNDS = [
+  { round:1, label:'Swiss round 1', matches:[
+    { id:'r0_m0', competitors:['g0','g4'], winner:'g0', bye:false, delta_scalar:+0.041, pending:false },
+    { id:'r0_m1', competitors:['g1','g5'], winner:'g5', bye:false, delta_scalar:-0.018, pending:false },
+    { id:'r0_m2', competitors:['g2','g6'], winner:'g6', bye:false, delta_scalar:-0.026, pending:false },
+    { id:'r0_m3', competitors:['g3'],      winner:'g3', bye:true,  delta_scalar:null,   pending:false },
+  ]},
+  { round:2, label:'Swiss round 2', matches:[
+    { id:'r1_m0', competitors:['g5','g6'], winner:'g5', bye:false, delta_scalar:+0.012, pending:false },
+    { id:'r1_m1', competitors:['g0','g3'], winner:'g3', bye:false, delta_scalar:-0.009, pending:false },
+    { id:'r1_m2', competitors:['g1','g4'], winner:'g1', bye:false, delta_scalar:+0.033, pending:false },
+    { id:'r1_m3', competitors:['g2'],      winner:'g2', bye:true,  delta_scalar:null,   pending:false },
+  ]},
+  { round:3, label:'Swiss round 3', matches:[
+    { id:'r2_m0', competitors:['g5','g3'], winner:'g5', bye:false, delta_scalar:+0.007, pending:false },
+    { id:'r2_m1', competitors:['g0','g6'], winner:'g0', bye:false, delta_scalar:+0.021, pending:false },
+    { id:'r2_m2', competitors:['g1','g2'], winner:'g1', bye:false, delta_scalar:+0.015, pending:false },
+    { id:'r2_m3', competitors:['g4'],      winner:'g4', bye:true,  delta_scalar:null,   pending:false },
+  ]},
+  { round:4, label:'Swiss round 4', matches:[
+    { id:'r3_m0', competitors:['g5','g0'], winner:'g5', bye:false, delta_scalar:+0.011, pending:false },
+    { id:'r3_m1', competitors:['g3','g1'], winner:'',   bye:false, delta_scalar:null,   pending:true  },
+    { id:'r3_m2', competitors:['g6','g2'], winner:'g6', bye:false, delta_scalar:+0.004, pending:false },
+    { id:'r3_m3', competitors:['g4'],      winner:'g4', bye:true,  delta_scalar:null,   pending:false },
+  ]},
+];
+
+// The champion gate that will follow round 4 (top non-champion vs g0).
+// Shown as a forthcoming/pending crowning question — the leader is g5.
+const GATE = { id:'swiss-final', competitors:[CHAMP, 'g5'], pending:true };
+
+// Per-contestant mean scalar (the real tiebreak signal; lower = better).
+// Hand-set to a realistic mid-tournament spread, leader g5 cleanly lowest.
+const MEAN_SCALAR = {
+  g5:0.143, g3:0.169, g0:0.176, g1:0.188, g6:0.201, g2:0.224, g4:0.247,
+};
+
+/* ---- derive Copeland standings AFTER each round (cumulative) ---- */
+// returns Map(round → [{id, wins, rank, scalar, role}]) ranked by
+// (-wins, scalar, id). roundsSeen counts settled (non-pending) matches.
+function copelandAfter(uptoRound) {
+  const wins = Object.fromEntries(FIELD.map(c => [c.id, 0]));
+  for (const r of ROUNDS) {
+    if (r.round > uptoRound) break;
+    for (const m of r.matches) {
+      if (m.pending) continue;            // unsettled duels don't score yet
+      if (m.winner) wins[m.winner] = (wins[m.winner]||0) + 1;
+    }
+  }
+  const rows = FIELD.map(c => ({ id:c.id, wins:wins[c.id], scalar:MEAN_SCALAR[c.id], role:c.role }));
+  rows.sort((a,b) => (b.wins-a.wins) || (a.scalar-b.scalar) || (a.id<b.id?-1:1));
+  rows.forEach((r,i)=> r.rank = i+1);
+  return rows;
+}
+// final/live standings = after all played rounds (round 4 partially settled)
+const STANDINGS = copelandAfter(ROUNDS_N);
+const MAXWINS = Math.max(...STANDINGS.map(s=>s.wins), 1);
+// the emerging non-champion LEADER (faces the gate)
+const LEADER = STANDINGS.find(s => s.role !== 'champion').id;
+const CHAMP_RANK = STANDINGS.find(s => s.id===CHAMP).rank;
+
+// rank trajectory across rounds: Map(id → [rank after R1, R2, R3, R4])
+const TRAJ = {};
+for (const c of FIELD) TRAJ[c.id] = [];
+for (let r=1; r<=ROUNDS_N; r++){
+  const st = copelandAfter(r);
+  for (const row of st) TRAJ[row.id][r-1] = { rank:row.rank, wins:row.wins, scalar:row.scalar };
+}
+// scalar formatting
+const fs = (x) => (x==null ? '—' : x.toFixed(3));
+const fd = (x) => (x==null ? '' : (x<0?'−':'+') + Math.abs(x).toFixed(3));
+
+/* ---- per-contestant per-round RESULT sequence + opponent + record ----
+   RESULTS[id] = [{kind:'W'|'L'|'bye'|'pend', opp, delta, winsAfter, recAfter}]
+   recAfter is the running Copeland-points (= wins, since no draws/losses) and the
+   "score group" key that Swiss pairs WITHIN. This is the raw signal the pairing
+   ledger, score-group brackets and running-record strip all read. */
+const RESULTS = {};
+for (const c of FIELD) RESULTS[c.id] = [];
+{
+  const running = Object.fromEntries(FIELD.map(c => [c.id, 0]));
+  for (const r of ROUNDS) {
+    for (const m of r.matches) {
+      if (m.bye) {
+        const id = m.competitors[0];
+        if (!m.pending) running[id]++;
+        RESULTS[id][r.round-1] = { kind:'bye', opp:null, delta:null, winsAfter:running[id] };
+        continue;
+      }
+      if (m.pending) {
+        for (const id of m.competitors) {
+          const opp = m.competitors.find(x=>x!==id);
+          RESULTS[id][r.round-1] = { kind:'pend', opp, delta:null, winsAfter:running[id] };
+        }
+        continue;
+      }
+      const w = m.winner, l = m.competitors.find(x=>x!==w);
+      running[w]++;
+      RESULTS[w][r.round-1] = { kind:'W', opp:l, delta:m.delta_scalar, winsAfter:running[w] };
+      RESULTS[l][r.round-1] = { kind:'L', opp:w, delta:m.delta_scalar, winsAfter:running[l] };
+    }
+  }
+}
+// score-GROUPS per round entering that round: Map(round → [{rec, ids[]}]) where
+// rec = Copeland points BEFORE the round, descending. The pairing logic groups
+// the field by record; Swiss pairs within (or adjacent to) these groups.
+function groupsBefore(round){
+  const before = round<=1 ? Object.fromEntries(FIELD.map(c=>[c.id,0]))
+    : Object.fromEntries(copelandAfter(round-1).map(s=>[s.id,s.wins]));
+  const by = {};
+  for (const c of FIELD){ const k=before[c.id]; (by[k]=by[k]||[]).push(c.id); }
+  return Object.keys(by).map(Number).sort((a,b)=>b-a).map(rec=>({ rec, ids:by[rec] }));
+}
+
+/* ===== zicato mark (header) — real geometry, theme-adaptive ===== */
+const MARK_SPIRAL = "M94,52.5 L93.9,52.7 L93.7,52.9 L93.6,53.1 L93.5,53.4 L93.5,53.7 L93.4,54 L93.4,54.3 L93.5,54.6 L93.6,55 L93.7,55.3 L93.9,55.6 L94.1,55.9 L94.4,56.2 L94.7,56.5 L95.1,56.7 L95.4,56.9 L95.9,57.1 L96.3,57.2 L96.8,57.2 L97.3,57.2 L97.9,57.2 L98.4,57 L98.9,56.8 L99.4,56.5 L99.9,56.2 L100.4,55.8 L100.9,55.3 L101.2,54.7 L101.6,54.1 L101.8,53.4 L102,52.6 L102.1,51.9 L102.1,51 L102,50.2 L101.8,49.3 L101.5,48.5 L101.1,47.6 L100.5,46.8 L99.9,46 L99.1,45.3 L98.2,44.7 L97.2,44.1 L96.1,43.7 L94.9,43.4 L93.6,43.2 L92.3,43.2 L91,43.3 L89.6,43.6 L88.2,44.1 L86.8,44.8 L85.5,45.6 L84.2,46.7 L83,47.9 L82,49.3 L81.1,50.9 L80.3,52.7 L79.8,54.6 L79.5,56.6 L79.4,58.7 L79.5,60.9 L80,63.2 L80.7,65.4 L81.8,67.6 L83.1,69.8 L84.8,71.9 L86.7,73.8 L89,75.5 L91.5,77 L94.3,78.3 L97.3,79.2 L100.6,79.8 L104,80 L150,80 L170,102 L190,80 Q206,56 222,80 Q236,102 250,80 Q261,68 272,80 L292,80";
+const MARK_BRIDGE = "M292,66 L292,94";
+document.getElementById('hdr-mark').innerHTML =
+  `<svg width="78" viewBox="71 35 229 75" role="img" aria-label="zicato mark">
+     <g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke">
+       <path d="${MARK_SPIRAL}"/><path d="${MARK_BRIDGE}"/></g>
+     <circle cx="170" cy="102" r="5.5" fill="var(--zicato-accent,#2FA46A)"/></svg>`;
+
+/* ================= small shared SVG helpers ================= */
+const NS = 'http://www.w3.org/2000/svg';
+function svg(w,h){ return `<svg class="fig" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" role="img">`; }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+// map a contestant to a stroke colour role: leader=good, champion=accent(muted via attr), else accent
+function lineColor(id){ return id===LEADER ? 'var(--good)' : (id===CHAMP ? 'var(--accent)' : 'var(--ink-faint)'); }
+
+/* =====================================================================
+   VIEW BUILDERS — three per option, six options. Each returns an HTML
+   string. Options differ in IDIOM, not data. ===================== */
+
+// ---- shared: a compact leaderboard TABLE (used by several round views) ----
+function lbTable(standings, opts={}) {
+  const showGate = opts.gate !== false;
+  let rows = standings.map(s => {
+    const isLeader = s.id===LEADER, isChamp = s.role==='champion';
+    const cls = isLeader ? 'leader' : (isChamp ? 'champ' : '');
+    const tag = isChamp ? '<span class="pill champ">CHAMP</span>'
+              : (isLeader ? '<span class="pill lead">LEADER → gate</span>' : '');
+    return `<tr class="${cls}">
+      <td>${s.rank}</td>
+      <td class="l">${esc(labelOf[s.id])} ${tag}</td>
+      <td>${s.wins}</td>
+      <td>${fs(s.scalar)}</td></tr>`;
+  }).join('');
+  return `<table class="lb">
+    <thead><tr><th>#</th><th class="l">contestant</th><th>copeland</th><th>mean scalar</th></tr></thead>
+    <tbody>${rows}</tbody></table>` +
+    (showGate ? gateLine() : '');
+}
+function gateLine(){
+  return `<div style="margin-top:10px;font-size:11.5px;color:var(--ink-soft)">
+    <span class="pill pend">swiss-final · PENDING</span>
+    &nbsp;crowning question: does <b class="good">${esc(labelOf[LEADER])}</b>
+    (Copeland ${STANDINGS.find(s=>s.id===LEADER).wins}, scalar ${fs(MEAN_SCALAR[LEADER])})
+    beat the incumbent <b class="acc">${esc(labelOf[CHAMP])}</b> at the gate?</div>`;
+}
+
+/* ---------- (a) HERO BANNER variants ---------- */
+function heroBars(){
+  // horizontal Copeland bars + mean-scalar tail; leader=good, champ=muted accent
+  return STANDINGS.map(s => {
+    const isLeader=s.id===LEADER, isChamp=s.role==='champion';
+    const cls = isLeader?'leader':(isChamp?'champ':'');
+    const pct = (s.wins/MAXWINS*100).toFixed(1);
+    const tag = isChamp?'<span class="pill champ">CHAMP</span>':(isLeader?'<span class="pill lead">→ GATE</span>':'');
+    return `<div class="hero-row ${cls}">
+      <div class="rk">#${s.rank}</div>
+      <div class="nm"><span class="who">${esc(labelOf[s.id])}</span>${tag}</div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="pts">${s.wins}</div>
+      <div class="sc">${fs(s.scalar)}</div>
+    </div>`;
+  }).join('');
+}
+
+// hero option that is an SVG "lane" leaderboard (bars in svg + crowning chip)
+function heroLanesSVG(){
+  const W=900, rowH=30, padT=14, padL=170, padR=120;
+  const H = padT + STANDINGS.length*rowH + 8;
+  const barMax = W - padL - padR;
+  let parts = [svg(W,H)];
+  STANDINGS.forEach((s,i)=>{
+    const y = padT + i*rowH + rowH/2;
+    const isLeader=s.id===LEADER, isChamp=s.role==='champion';
+    const col = isLeader?'var(--good)':(isChamp?'var(--accent)':'var(--accent)');
+    const op = isChamp?0.5:(isLeader?1:0.7);
+    const w = (s.wins/MAXWINS)*barMax;
+    // strip the inline "· champ" — the CHAMP chip already carries the role, and
+    // the long label would otherwise collide with the chip at x=118.
+    const nm = labelOf[s.id].replace(' · champ','');
+    parts.push(`<text x="8" y="${y+4}" font-size="12" fill="var(--ink-faint)">#${s.rank}</text>`);
+    parts.push(`<text x="34" y="${y+4}" font-size="12" fill="var(--ink)">${esc(nm)}</text>`);
+    if(isChamp) parts.push(`<text x="118" y="${y+4}" font-size="9" fill="var(--accent)">CHAMP</text>`);
+    if(isLeader) parts.push(`<text x="118" y="${y+4}" font-size="9" fill="var(--good)">→GATE</text>`);
+    parts.push(`<rect x="${padL}" y="${y-7}" width="${barMax}" height="14" rx="3" fill="var(--rule-soft)"/>`);
+    parts.push(`<rect x="${padL}" y="${y-7}" width="${w.toFixed(1)}" height="14" rx="3" fill="${col}" opacity="${op}"/>`);
+    parts.push(`<text x="${padL+w+8}" y="${y+4}" font-size="12" fill="${isLeader?'var(--good)':'var(--ink)'}" font-weight="700">${s.wins}</text>`);
+    parts.push(`<text x="${W-8}" y="${y+4}" font-size="11" fill="var(--ink-faint)" text-anchor="end">μ ${fs(s.scalar)}</text>`);
+  });
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+/* ---------- (b) CROSS-ROUND trajectory variants ---------- */
+// bump chart: rank trajectory across rounds (1 = top). The hero idiom.
+function bumpChart(){
+  const W=900, rounds=ROUNDS_N, padL=70, padR=170, padT=26, padB=18, rowH=34;
+  const n=FIELD.length;
+  const H = padT + (n)*rowH + padB;
+  const xOf = (r)=> padL + (r/(rounds-1))*(W-padL-padR);
+  const yOf = (rank)=> padT + (rank-1)*rowH + rowH/2;
+  let parts=[svg(W,H)];
+  // round header ticks
+  for(let r=0;r<rounds;r++){
+    parts.push(`<text x="${xOf(r)}" y="14" font-size="10.5" fill="var(--ink-faint)" text-anchor="middle">R${r+1}</text>`);
+    parts.push(`<line x1="${xOf(r)}" y1="${padT-4}" x2="${xOf(r)}" y2="${H-padB}" stroke="var(--rule-soft)" stroke-width="1"/>`);
+  }
+  // one polyline per contestant
+  for(const c of FIELD){
+    const pts = TRAJ[c.id].map((t,ri)=>`${xOf(ri)},${yOf(t.rank)}`).join(' ');
+    const col = lineColor(c.id);
+    const wgt = (c.id===LEADER||c.id===CHAMP)?2.4:1.4;
+    const dash = c.id===CHAMP ? '' : '';
+    parts.push(`<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="${wgt}" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" opacity="${(c.id===LEADER||c.id===CHAMP)?1:0.65}"/>`);
+    // node dots + end label
+    TRAJ[c.id].forEach((t,ri)=>{
+      parts.push(`<circle cx="${xOf(ri)}" cy="${yOf(t.rank)}" r="${(c.id===LEADER||c.id===CHAMP)?3.2:2.2}" fill="${col}"/>`);
+    });
+    const last = TRAJ[c.id][rounds-1];
+    const lab = labelOf[c.id] + (c.id===CHAMP?' ◆champ':(c.id===LEADER?' ★leader':''));
+    parts.push(`<text x="${xOf(rounds-1)+8}" y="${yOf(last.rank)+4}" font-size="11" fill="${col}" font-weight="${(c.id===LEADER||c.id===CHAMP)?700:400}">${esc(lab)}</text>`);
+  }
+  // rank axis labels
+  for(let rk=1;rk<=n;rk++) parts.push(`<text x="${padL-10}" y="${yOf(rk)+4}" font-size="10" fill="var(--ink-faint)" text-anchor="end">#${rk}</text>`);
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+// stacked Copeland-points area/step: cumulative wins per round (a "scoreboard climb")
+function pointsClimb(){
+  const W=900, rounds=ROUNDS_N, padL=44, padR=170, padT=20, padB=24;
+  const maxW = MAXWINS;
+  const xOf=(r)=> padL + (r/(rounds-1))*(W-padL-padR);
+  const yOf=(w)=> (padT + (maxW-w)/maxW*(180));
+  const H = 180 + padT + padB;
+  let parts=[svg(W,H)];
+  for(let r=0;r<rounds;r++){
+    parts.push(`<text x="${xOf(r)}" y="12" font-size="10.5" fill="var(--ink-faint)" text-anchor="middle">R${r+1}</text>`);
+    parts.push(`<line x1="${xOf(r)}" y1="${padT}" x2="${xOf(r)}" y2="${H-padB}" stroke="var(--rule-soft)"/>`);
+  }
+  for(let w=0;w<=maxW;w++) parts.push(`<text x="${padL-8}" y="${yOf(w)+3}" font-size="9.5" fill="var(--ink-faint)" text-anchor="end">${w}</text>`);
+  const endLabels=[];   // collect for vertical declutter (many lines tie on wins)
+  for(const c of FIELD){
+    const pts = TRAJ[c.id].map((t,ri)=>`${xOf(ri)},${yOf(t.wins)}`).join(' ');
+    const col = lineColor(c.id);
+    const hot = (c.id===LEADER||c.id===CHAMP);
+    parts.push(`<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="${hot?2.4:1.4}" vector-effect="non-scaling-stroke" stroke-linejoin="round" opacity="${hot?1:0.6}"/>`);
+    const last=TRAJ[c.id][rounds-1];
+    parts.push(`<circle cx="${xOf(rounds-1)}" cy="${yOf(last.wins)}" r="${hot?3.2:2.2}" fill="${col}"/>`);
+    endLabels.push({ y0:yOf(last.wins), col, hot, wins:last.wins,
+      txt:`${labelOf[c.id]} · ${last.wins}` });
+  }
+  // declutter end labels: many contestants tie on Copeland points, so their
+  // anchor y collide. Sort by natural y, then push each down to keep a min gap,
+  // and clamp the whole stack inside the plot so nothing overflows the viewBox.
+  const GAP=13, lx=xOf(rounds-1)+8;
+  endLabels.sort((a,b)=> a.y0-b.y0 || b.wins-a.wins);
+  let prev=-Infinity;
+  for(const e of endLabels){ let y=Math.max(e.y0, prev+GAP); e.y=y; prev=y; }
+  const overflow=endLabels.length?endLabels[endLabels.length-1].y-(H-4):0;
+  if(overflow>0){ // shift the stack up so the last label fits, keep min gap
+    let p=Infinity;
+    for(let k=endLabels.length-1;k>=0;k--){ let y=Math.min(endLabels[k].y-overflow, p-GAP); endLabels[k].y=y; p=y; }
+  }
+  for(const e of endLabels){
+    parts.push(`<text x="${lx}" y="${e.y+4}" font-size="11" fill="${e.col}" font-weight="${e.hot?700:400}">${esc(e.txt)}</text>`);
+  }
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+// slope/dot-matrix: standings table per round with rank delta arrows
+function slopeMatrix(){
+  let head = '<tr><th class="l">contestant</th>';
+  for(let r=1;r<=ROUNDS_N;r++) head += `<th>R${r}</th>`;
+  head += '</tr>';
+  // order by final rank
+  const ordered = STANDINGS.map(s=>s.id);
+  let body = ordered.map(id=>{
+    const isLeader=id===LEADER, isChamp=roleOf[id]==='champion';
+    const cls=isLeader?'leader':(isChamp?'champ':'');
+    let cells='';
+    TRAJ[id].forEach((t,ri)=>{
+      let arrow='';
+      if(ri>0){ const d=TRAJ[id][ri-1].rank - t.rank;
+        arrow = d>0?` <span style="color:var(--good)">▲${d}</span>`:(d<0?` <span style="color:var(--bad)">▼${-d}</span>`:'');
+      }
+      cells += `<td>#${t.rank} <span style="color:var(--ink-faint)">·${t.wins}w</span>${arrow}</td>`;
+    });
+    const tag=isChamp?' <span class="pill champ">CHAMP</span>':(isLeader?' <span class="pill lead">LEADER</span>':'');
+    return `<tr class="${cls}"><td class="l">${esc(labelOf[id])}${tag}</td>${cells}</tr>`;
+  }).join('');
+  return `<table class="lb"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
+/* ---------- (c) ROUND-LEVEL variants ---------- */
+// per-round pairing card list + standings beside it
+function pairingList(roundObj){
+  return roundObj.matches.map(m=>{
+    if(m.bye){
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--rule-soft);font-size:12px">
+        <span class="pill bye">BYE +1</span> ${esc(labelOf[m.competitors[0]])}
+        <span style="color:var(--ink-faint)"> — free Copeland point</span></div>`;
+    }
+    if(m.pending){
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--rule-soft);font-size:12px">
+        <span class="pill pend">PENDING</span>
+        ${esc(labelOf[m.competitors[0]])} <span style="color:var(--ink-faint)">vs</span> ${esc(labelOf[m.competitors[1]])}
+        <span style="color:var(--ink-faint)"> · duel in flight</span></div>`;
+    }
+    const w=m.winner, l=m.competitors.find(x=>x!==w);
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--rule-soft);font-size:12px">
+      <b class="good">${esc(labelOf[w])}</b> <span style="color:var(--ink-faint)">def.</span> ${esc(labelOf[l])}
+      <span style="color:var(--ink-faint)"> · Δscalar ${fd(m.delta_scalar)}</span></div>`;
+  }).join('');
+}
+
+// SVG bracket-ish pairing diagram for a round (two competitors → winner)
+function pairingSVG(roundObj){
+  const W=900, rowH=44, padT=16, padL=12;
+  const H = padT + roundObj.matches.length*rowH + 8;
+  let parts=[svg(W,H)];
+  const jx=padL+150;                 // bracket join x, shared by all rows
+  roundObj.matches.forEach((m,i)=>{
+    const y=padT+i*rowH+rowH/2;
+    if(m.bye){
+      // bye label sits where the winner node sits (after the bracket join), so
+      // it lines up with the other rows; the dashed bye-line starts AFTER the
+      // full label text and runs to the Δ column — it must never cross the words.
+      const byeLabelX = jx+56;
+      const byeText = '⟲ BYE · +1 Copeland';
+      // generous monospace estimate: ~7.1px/char at 11px → keep the line clear.
+      const byeLineX = byeLabelX + byeText.length*7.1 + 16;
+      parts.push(`<text x="${padL}" y="${y+4}" font-size="12" fill="var(--ink)">${esc(labelOf[m.competitors[0]])}</text>`);
+      parts.push(`<text x="${byeLabelX}" y="${y+4}" font-size="11" fill="var(--caution)">${esc(byeText)}</text>`);
+      parts.push(`<line x1="${byeLineX}" y1="${y}" x2="${W-160}" y2="${y}" stroke="var(--caution)" stroke-width="1.5" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>`);
+      return;
+    }
+    const [a,b]=m.competitors;
+    const pend=m.pending;
+    const aw = m.winner===a, bw=m.winner===b;
+    const c1 = pend?'var(--ink-faint)':(aw?'var(--good)':'var(--ink-faint)');
+    const c2 = pend?'var(--ink-faint)':(bw?'var(--good)':'var(--ink-faint)');
+    // two boxes joining to a winner node
+    parts.push(`<text x="${padL}" y="${y-6}" font-size="12" fill="${c1}" font-weight="${aw?700:400}">${esc(labelOf[a])}</text>`);
+    parts.push(`<text x="${padL}" y="${y+12}" font-size="12" fill="${c2}" font-weight="${bw?700:400}">${esc(labelOf[b])}</text>`);
+    const ds = pend?'stroke-dasharray="4 4"':'';
+    parts.push(`<path d="M ${jx} ${y-9} L ${jx+24} ${y-9} L ${jx+24} ${y} L ${jx+48} ${y}" fill="none" stroke="${pend?'var(--ink-faint)':'var(--accent)'}" stroke-width="1.4" ${ds} vector-effect="non-scaling-stroke"/>`);
+    parts.push(`<path d="M ${jx} ${y+9} L ${jx+24} ${y+9} L ${jx+24} ${y} L ${jx+48} ${y}" fill="none" stroke="${pend?'var(--ink-faint)':'var(--accent)'}" stroke-width="1.4" ${ds} vector-effect="non-scaling-stroke"/>`);
+    if(pend){
+      parts.push(`<text x="${jx+56}" y="${y+4}" font-size="11" fill="var(--ink-faint)">pending…</text>`);
+    } else {
+      parts.push(`<text x="${jx+56}" y="${y+4}" font-size="12" fill="var(--good)" font-weight="700">${esc(labelOf[m.winner])}</text>`);
+      parts.push(`<text x="${W-8}" y="${y+4}" font-size="11" fill="var(--ink-faint)" text-anchor="end">Δ ${fd(m.delta_scalar)}</text>`);
+    }
+  });
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+/* =====================================================================
+   NEW SWISS-NATIVE VIEW BUILDERS (opts 1–4, 6). Opt 5 keeps its own
+   funcs (bumpChart / scalarDescent / scalarHero) untouched as the
+   reference. Each builder below leans into ONE thing Swiss actually is:
+   record-grouped pairing, rank churn, score-group structure, the road
+   to the gate, the running W/L record. ================================ */
+
+// short glyphs for results
+const RES_GLYPH = { W:'●', L:'○', bye:'⊘', pend:'·' };
+function nm(id){ return labelOf[id].replace(' · champ',''); }
+function roleMark(id){ return id===CHAMP?' ◆':(id===LEADER?' ★':''); }
+
+/* ============ OPT 2 — THE BUMP / RANK-FLOW CHART (the standout) ============
+   The canonical Swiss view: each contestant's STANDING POSITION across rounds,
+   drawn as smooth bump lines that cross when ranks swap. Rank bands shade the
+   plot so a line's vertical travel = ranks gained/lost; win/loss glyphs ride
+   each segment so churn is causally legible; the leader's emergence and the
+   champion holding mid-pack are the visual headline. */
+function bumpFlow(opts={}){
+  const compact = !!opts.compact;
+  const W=900, rounds=ROUNDS_N, n=FIELD.length;
+  const padL=64, padR=176, padT=compact?22:30, padB=compact?12:24, rowH=compact?20:36;
+  const H = padT + n*rowH + padB;
+  const xOf=(r)=> padL + (r/(rounds-1))*(W-padL-padR);
+  const yOf=(rank)=> padT + (rank-1)*rowH + rowH/2;
+  let parts=[svg(W,H)];
+  // rank bands (alternating) — a faint zebra so vertical travel reads as ranks
+  for(let rk=1;rk<=n;rk++){
+    if(rk%2===0) parts.push(`<rect x="${padL}" y="${yOf(rk)-rowH/2}" width="${W-padL-padR}" height="${rowH}" fill="var(--ink)" opacity="0.035"/>`);
+    parts.push(`<text x="${padL-10}" y="${yOf(rk)+4}" font-size="${compact?9:10}" fill="var(--ink-faint)" text-anchor="end">#${rk}</text>`);
+  }
+  // round axis
+  for(let r=0;r<rounds;r++){
+    parts.push(`<text x="${xOf(r)}" y="${compact?12:14}" font-size="${compact?9.5:10.5}" fill="var(--ink-faint)" text-anchor="middle">R${r+1}</text>`);
+    parts.push(`<line x1="${xOf(r)}" y1="${padT-3}" x2="${xOf(r)}" y2="${H-padB}" stroke="var(--rule-soft)" stroke-width="1"/>`);
+  }
+  // ordering: draw faint lines first, hot (leader/champ) last so they sit on top
+  const order=[...FIELD].sort((a,b)=>{
+    const ha=(a.id===LEADER||a.id===CHAMP)?1:0, hb=(b.id===LEADER||b.id===CHAMP)?1:0; return ha-hb;
+  });
+  for(const c of order){
+    const col=lineColor(c.id), hot=(c.id===LEADER||c.id===CHAMP);
+    const tr=TRAJ[c.id];
+    // smooth bump path: horizontal-ease cubic between rank nodes
+    let d='';
+    tr.forEach((t,ri)=>{
+      const x=xOf(ri), y=yOf(t.rank);
+      if(ri===0){ d=`M ${x} ${y}`; }
+      else { const x0=xOf(ri-1), y0=yOf(tr[ri-1].rank), mx=(x0+x)/2;
+        d+=` C ${mx} ${y0} ${mx} ${y} ${x} ${y}`; }
+    });
+    parts.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="${hot?(compact?2.6:3):(compact?1.4:1.8)}" stroke-linecap="round" vector-effect="non-scaling-stroke" opacity="${hot?1:0.55}"/>`);
+    // nodes + per-segment result glyph (W/L/bye) midway, only in full mode
+    tr.forEach((t,ri)=>{
+      const x=xOf(ri), y=yOf(t.rank);
+      parts.push(`<circle cx="${x}" cy="${y}" r="${hot?(compact?3:3.6):(compact?2:2.4)}" fill="${col}"/>`);
+      if(!compact && ri>0){
+        const res=RESULTS[c.id][ri]; if(res){
+          const x0=xOf(ri-1), y0=yOf(tr[ri-1].rank), mx=(x0+x)/2, my=(y0+y)/2;
+          const gl=RES_GLYPH[res.kind]||'';
+          const gcol=res.kind==='W'?'var(--good)':(res.kind==='L'?'var(--bad)':'var(--ink-faint)');
+          if(hot) parts.push(`<text x="${mx}" y="${my-4}" font-size="9" fill="${gcol}" text-anchor="middle" opacity="0.9">${gl}</text>`);
+        }
+      }
+    });
+    // end label with role mark + final rank
+    const last=tr[rounds-1];
+    const lab=nm(c.id)+roleMark(c.id);
+    parts.push(`<text x="${xOf(rounds-1)+9}" y="${yOf(last.rank)+4}" font-size="${compact?10:11.5}" fill="${col}" font-weight="${hot?700:400}">${esc(lab)} <tspan fill="var(--ink-faint)" font-weight="400">#${last.rank}</tspan></text>`);
+  }
+  parts.push('</svg>');
+  return parts.join('');
+}
+// compact rank-flow strip HERO for opt 2 — the bump in a thin glance band +
+// a tiny final-standings rail on the right.
+function rankFlowHero(){
+  return bumpFlow({compact:true});
+}
+
+/* ============ OPT 1 — THE PAIRING LEDGER ============
+   Swiss made legible as PAIRINGS BY RECORD: each round, the field is split into
+   score groups (same record) and paired within; this view shows every round's
+   matchups as a ledger of "winner def. loser · Δ", grouped under their record
+   bracket, so the pairing logic — like plays like — is the star.
+   Hero = the record-grouped standings (the score-group ladder). */
+function recordGroupHero(){
+  // group the live standings by Copeland record (the score groups), each group a
+  // row band; within a group order by mean-scalar (the tiebreak).
+  const by={};
+  for(const s of STANDINGS){ (by[s.wins]=by[s.wins]||[]).push(s); }
+  const recs=Object.keys(by).map(Number).sort((a,b)=>b-a);
+  let html=`<div class="figbox" style="padding:10px 14px">`;
+  recs.forEach(rec=>{
+    const grp=by[rec].sort((a,b)=>a.scalar-b.scalar);
+    html+=`<div style="display:flex;align-items:center;gap:12px;padding:7px 0;border-bottom:1px solid var(--rule-soft)">
+      <div style="min-width:88px;font-size:11px;color:var(--accent);font-weight:700;letter-spacing:.04em">${rec} pt${rec===1?'':'s'} <span style="color:var(--ink-faint);font-weight:400">· ${grp.length}</span></div>
+      <div style="flex:1;display:flex;flex-wrap:wrap;gap:8px">`;
+    grp.forEach(s=>{
+      const isL=s.id===LEADER,isC=s.role==='champion';
+      const col=isL?'var(--good)':(isC?'var(--accent)':'var(--ink)');
+      const chip=isC?'<span class="pill champ">CHAMP</span>':(isL?'<span class="pill lead">→ GATE</span>':'');
+      html+=`<span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--rule);border-radius:6px;padding:3px 9px;background:var(--panel)">
+        <b style="color:${col}">${esc(nm(s.id))}</b>${chip}
+        <span style="color:var(--ink-faint);font-size:10.5px">μ ${fs(s.scalar)}</span></span>`;
+    });
+    html+=`</div></div>`;
+  });
+  html+=`<div style="font-size:10px;color:var(--ink-faint);margin-top:8px">contestants share a row when they share a record — Swiss pairs within these score groups; within a group, lower mean-scalar leads.</div></div>`;
+  return html;
+}
+// the full round-by-round pairing ledger (every round, grouped by record).
+function pairingLedger(){
+  let html=`<div class="figbox">`;
+  ROUNDS.forEach(r=>{
+    const groups=groupsBefore(r.round);
+    html+=`<div style="margin-bottom:14px">
+      <div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-faint);border-bottom:1px solid var(--rule-soft);padding-bottom:4px;margin-bottom:6px">
+        ${esc(r.label)} <span style="color:var(--accent);text-transform:none;letter-spacing:0">· paired by record</span></div>`;
+    // for each match, find the record group it sits in (use first competitor's pre-round record)
+    const preRec = r.round<=1 ? Object.fromEntries(FIELD.map(c=>[c.id,0]))
+      : Object.fromEntries(copelandAfter(r.round-1).map(s=>[s.id,s.wins]));
+    // sort matches by the higher pre-round record of their competitors, desc
+    const ms=[...r.matches].sort((a,b)=>{
+      const ra=Math.max(...a.competitors.map(x=>preRec[x])), rb=Math.max(...b.competitors.map(x=>preRec[x]));
+      return rb-ra;
+    });
+    html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 18px">`;
+    ms.forEach(m=>{
+      const recTag=`<span style="color:var(--ink-faint);font-size:10px;min-width:40px;display:inline-block">[${preRec[m.competitors[0]]}${m.competitors[1]!=null?'–'+preRec[m.competitors[1]]:''}]</span>`;
+      if(m.bye){
+        html+=`<div style="font-size:12px;padding:3px 0">${recTag}<span class="pill bye">BYE +1</span> ${esc(nm(m.competitors[0]))}</div>`;
+      } else if(m.pending){
+        html+=`<div style="font-size:12px;padding:3px 0">${recTag}<span class="pill pend">LIVE</span> ${esc(nm(m.competitors[0]))} <span style="color:var(--ink-faint)">vs</span> ${esc(nm(m.competitors[1]))}</div>`;
+      } else {
+        const w=m.winner,l=m.competitors.find(x=>x!==w);
+        html+=`<div style="font-size:12px;padding:3px 0">${recTag}<b class="good">${esc(nm(w))}</b> <span style="color:var(--ink-faint)">def.</span> ${esc(nm(l))} <span style="color:var(--ink-faint)">· Δ ${fd(m.delta_scalar)}</span></div>`;
+      }
+    });
+    html+=`</div></div>`;
+  });
+  html+=`<div style="font-size:10px;color:var(--ink-faint)">[a–b] = the two competitors' records entering the round · ● winner def. loser · Δscalar = win margin (lower = better)</div></div>`;
+  return html;
+}
+
+/* ============ OPT 3 — SCORE-GROUP STRUCTURE (the Swiss skeleton) ============
+   Swiss's defining mechanic as a column-per-round funnel: each round the field
+   splits into score groups (W-records), pairs WITHIN a group, then re-sorts as
+   results land. Lanes flow group→group; the spread of the field (everyone at 0,
+   then fanning into 0/1/2/3…) is the headline. Hero = current score-group blocks. */
+function scoreGroupFunnel(){
+  const W=900, rounds=ROUNDS_N+1; // +1 column for the final settled groups
+  const padL=18, padR=18, padT=30, padB=16;
+  const colW=(W-padL-padR)/rounds;
+  // for each "column" c (0..rounds-1): the score groups entering round c+1, except
+  // the last column = final settled standings groups.
+  const cols=[];
+  for(let c=0;c<rounds;c++){
+    if(c<ROUNDS_N){ cols.push({ label:`before R${c+1}`, groups:groupsBefore(c+1) }); }
+    else { const by={}; for(const s of STANDINGS){ (by[s.wins]=by[s.wins]||[]).push(s.id); }
+      const recs=Object.keys(by).map(Number).sort((a,b)=>b-a);
+      cols.push({ label:'settled', groups:recs.map(rec=>({rec,ids:by[rec]})) }); }
+  }
+  const maxRec=Math.max(...cols.flatMap(col=>col.groups.map(g=>g.rec)),1);
+  // vertical layout: each column stacks its groups top(high rec)→bottom(low rec)
+  const chipH=18, chipGap=4, grpGap=14;
+  const H=padT + FIELD.length*(chipH+chipGap) + (maxRec)*grpGap + padB + 10;
+  // position cache: col → id → {x,y}
+  const pos=cols.map(()=>({}));
+  let parts=[svg(W,H)];
+  cols.forEach((col,ci)=>{
+    const cx=padL+ci*colW;
+    parts.push(`<text x="${cx+colW/2}" y="14" font-size="10" fill="var(--ink-faint)" text-anchor="middle">${esc(col.label)}</text>`);
+    let y=padT;
+    col.groups.forEach(g=>{
+      // group header band
+      parts.push(`<text x="${cx+colW/2}" y="${y-1}" font-size="9.5" fill="var(--accent)" text-anchor="middle" font-weight="700">${g.rec} pt${g.rec===1?'':'s'}</text>`);
+      y+=8;
+      // order ids within group by current mean-scalar
+      const ids=[...g.ids].sort((a,b)=>MEAN_SCALAR[a]-MEAN_SCALAR[b]);
+      ids.forEach(id=>{
+        const isL=id===LEADER,isC=roleOf[id]==='champion';
+        const col2=isL?'var(--good)':(isC?'var(--accent)':'var(--ink-faint)');
+        const op=isC?0.6:(isL?1:0.8);
+        const bx=cx+8, bw=colW-16, by=y;
+        pos[ci][id]={x:bx,y:by+chipH/2,xr:bx+bw};
+        parts.push(`<rect x="${bx}" y="${by}" width="${bw}" height="${chipH}" rx="4" fill="var(--panel)" stroke="${col2}" stroke-width="${(isL||isC)?1.6:1}" opacity="${op}"/>`);
+        parts.push(`<text x="${bx+7}" y="${by+chipH/2+3.5}" font-size="10.5" fill="${col2}" font-weight="${(isL||isC)?700:400}">${esc(nm(id))}${roleMark(id).trim()?roleMark(id):''}</text>`);
+        y+=chipH+chipGap;
+      });
+      y+=grpGap-chipGap;
+    });
+  });
+  // flow links id col→col+1 (faint), hot lanes emphasised
+  for(let ci=0;ci<cols.length-1;ci++){
+    for(const id of Object.keys(pos[ci])){
+      const a=pos[ci][id], b=pos[ci+1][id]; if(!a||!b) continue;
+      const hot=(id===LEADER||id===CHAMP);
+      const col=lineColor(id);
+      const mx=(a.xr+b.x)/2;
+      parts.push(`<path d="M ${a.xr} ${a.y} C ${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}" fill="none" stroke="${col}" stroke-width="${hot?2:1}" opacity="${hot?0.85:0.3}" vector-effect="non-scaling-stroke"/>`);
+    }
+  }
+  parts.push('</svg>');
+  return parts.join('');
+}
+// hero: just the CURRENT score groups as horizontal blocks (the live skeleton).
+function scoreGroupHero(){
+  const by={}; for(const s of STANDINGS){ (by[s.wins]=by[s.wins]||[]).push(s); }
+  const recs=Object.keys(by).map(Number).sort((a,b)=>b-a);
+  const maxN=Math.max(...recs.map(r=>by[r].length),1);
+  let html=`<div class="figbox" style="display:flex;gap:10px;align-items:stretch;overflow-x:auto;padding:14px">`;
+  recs.forEach(rec=>{
+    const grp=by[rec].sort((a,b)=>a.scalar-b.scalar);
+    html+=`<div style="flex:1;min-width:120px;border:1px solid var(--rule);border-radius:8px;background:var(--panel);padding:8px 10px">
+      <div style="font-size:11px;font-weight:700;color:var(--accent);text-align:center;padding-bottom:6px;border-bottom:1px solid var(--rule-soft);margin-bottom:6px">${rec} pt${rec===1?'':'s'} <span style="color:var(--ink-faint);font-weight:400">· ${grp.length}</span></div>`;
+    grp.forEach(s=>{
+      const isL=s.id===LEADER,isC=s.role==='champion';
+      const col=isL?'var(--good)':(isC?'var(--accent)':'var(--ink)');
+      const mark=isC?' ◆':(isL?' ★':'');
+      html+=`<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;padding:3px 0;color:${col};font-weight:${(isL||isC)?700:400}">
+        <span>${esc(nm(s.id))}${mark}</span><span style="color:var(--ink-faint);font-weight:400">μ${fs(s.scalar)}</span></div>`;
+    });
+    html+=`</div>`;
+  });
+  html+=`</div><div style="font-size:10px;color:var(--ink-faint);margin-top:6px">each column is a score group (same Copeland record) — Swiss pairs within a column; ◆ champion, ★ leader → gate</div>`;
+  return html;
+}
+
+/* ============ OPT 4 — ROAD TO THE GATE (capstone-centric) ============
+   Frames the whole tournament as the run-up to the crowning question. The
+   cross-round view is a points-accrual climb that converges on a GATE node:
+   the leader's line reaches the gate where it must clear the champion. Distinct
+   from the bump — this is the "approach to the capstone" story. */
+function roadToGate(){
+  const W=900, rounds=ROUNDS_N, padL=44, padR=210, padT=24, padB=26;
+  const plotH=180, maxW=MAXWINS;
+  const gateX=W-padR+70;
+  const xOf=(r)=> padL + (r/(rounds-1))*(W-padL-padR-30);
+  const yOf=(w)=> padT + (maxW-w)/maxW*plotH;
+  const H=plotH+padT+padB;
+  let parts=[svg(W,H)];
+  // y grid (points)
+  for(let w=0;w<=maxW;w++){
+    parts.push(`<line x1="${padL}" y1="${yOf(w)}" x2="${xOf(rounds-1)}" y2="${yOf(w)}" stroke="var(--rule-soft)" stroke-width="1"/>`);
+    parts.push(`<text x="${padL-8}" y="${yOf(w)+3}" font-size="9.5" fill="var(--ink-faint)" text-anchor="end">${w}</text>`);
+  }
+  for(let r=0;r<rounds;r++) parts.push(`<text x="${xOf(r)}" y="14" font-size="10.5" fill="var(--ink-faint)" text-anchor="middle">R${r+1}</text>`);
+  // GATE column
+  const gx=xOf(rounds-1)+90;
+  parts.push(`<line x1="${gx}" y1="${padT-4}" x2="${gx}" y2="${H-padB+2}" stroke="var(--good)" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.7"/>`);
+  parts.push(`<text x="${gx}" y="14" font-size="10.5" fill="var(--good)" text-anchor="middle" font-weight="700">GATE</text>`);
+  // lines: points-climb per contestant, leader extends to the gate
+  const endY=[];
+  for(const c of FIELD){
+    const tr=TRAJ[c.id], col=lineColor(c.id), hot=(c.id===LEADER||c.id===CHAMP);
+    const pts=tr.map((t,ri)=>`${xOf(ri)},${yOf(t.wins)}`).join(' ');
+    parts.push(`<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="${hot?2.6:1.4}" stroke-linejoin="round" vector-effect="non-scaling-stroke" opacity="${hot?1:0.5}"/>`);
+    const last=tr[rounds-1];
+    parts.push(`<circle cx="${xOf(rounds-1)}" cy="${yOf(last.wins)}" r="${hot?3.4:2.2}" fill="${col}"/>`);
+    endY.push({id:c.id,y:yOf(last.wins),wins:last.wins,col,hot});
+    if(c.id===LEADER){
+      // extend the leader's line toward the gate node
+      parts.push(`<path d="M ${xOf(rounds-1)} ${yOf(last.wins)} L ${gx} ${yOf(last.wins)}" fill="none" stroke="var(--good)" stroke-width="2.6" vector-effect="non-scaling-stroke"/>`);
+    }
+  }
+  // declutter end labels (between plot end and gate)
+  const GAP=15, lx=xOf(rounds-1)+8;
+  endY.sort((a,b)=>a.y-b.y || b.wins-a.wins);
+  let prev=-1e9; for(const e of endY){ e.ly=Math.max(e.y, prev+GAP); prev=e.ly; }
+  const over=endY.length?endY[endY.length-1].ly-(H-4):0;
+  if(over>0){ let p=1e9; for(let k=endY.length-1;k>=0;k--){ endY[k].ly=Math.min(endY[k].ly-over,p-GAP); p=endY[k].ly; } }
+  for(const e of endY){
+    if(e.id===LEADER) continue; // leader labelled at the gate
+    parts.push(`<text x="${lx}" y="${e.ly+3}" font-size="10.5" fill="${e.col}" font-weight="${e.hot?700:400}" opacity="${e.hot?1:0.85}">${esc(nm(e.id))}${roleMark(e.id)} · ${e.wins}</text>`);
+  }
+  // the gate node: leader vs champion verdict
+  const L=STANDINGS.find(s=>s.id===LEADER), C=STANDINGS.find(s=>s.id===CHAMP);
+  const ly=yOf(L.wins);
+  parts.push(`<circle cx="${gx}" cy="${ly}" r="6" fill="var(--good)"/>`);
+  parts.push(`<text x="${gx+12}" y="${ly-4}" font-size="11.5" fill="var(--good)" font-weight="700">${esc(nm(LEADER))} ★ → must beat</text>`);
+  parts.push(`<text x="${gx+12}" y="${ly+12}" font-size="11" fill="var(--accent)">${esc(nm(CHAMP))} ◆ (μ ${fs(C.scalar)})</text>`);
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+/* ============ OPT 6 — RUNNING-RECORD STRIP (terminal-native) ============
+   The densest take: a sorted final ladder where each contestant carries its
+   per-round W/L/bye SEQUENCE as a sparkline of glyphs, plus running Copeland
+   and the mean-scalar tiebreak — an operator's at-a-glance record strip. */
+function recordStrip(){
+  // sequence of result glyphs, coloured per result, with a tiny running-rank tail
+  let rows=STANDINGS.map(s=>{
+    const isL=s.id===LEADER,isC=s.role==='champion';
+    const rowCol=isL?'var(--good)':(isC?'var(--accent)':'var(--ink)');
+    const glyph=isC?'◆':(isL?'★':' ');
+    const seq=RESULTS[s.id].map(res=>{
+      const k=res?res.kind:'';
+      const gc=k==='W'?'var(--good)':(k==='L'?'var(--bad)':(k==='bye'?'var(--caution)':'var(--ink-faint)'));
+      const g=RES_GLYPH[k]||'·';
+      return `<span style="color:${gc}" title="${k}${res&&res.opp?' vs '+nm(res.opp):''}">${g}</span>`;
+    }).join('<span style="color:var(--rule)">·</span>');
+    const tag=isC?'champ':(isL?'leader→gate':'');
+    const name=nm(s.id).padEnd(7,' ');
+    return `<div style="display:grid;grid-template-columns:26px 80px 96px 44px 64px 92px;gap:8px;font-size:12.5px;padding:3px 0;color:${rowCol};border-bottom:1px solid var(--rule-soft)">`+
+      `<span style="color:var(--ink-faint)">#${s.rank}</span>`+
+      `<span style="font-weight:${(isL||isC)?700:400}">${glyph} ${esc(name)}</span>`+
+      `<span style="letter-spacing:2px">${seq}</span>`+
+      `<span style="font-weight:700;color:${isL?'var(--good)':'var(--accent)'}">${s.wins}pt</span>`+
+      `<span style="color:var(--ink-faint)">μ${fs(s.scalar)}</span>`+
+      `<span style="color:var(--ink-faint);font-size:10.5px">${tag}</span></div>`;
+  }).join('');
+  return `<div class="figbox" style="font-family:inherit">
+    <div style="display:grid;grid-template-columns:26px 80px 96px 44px 64px 92px;gap:8px;font-size:9.5px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.06em;padding-bottom:4px;border-bottom:1px solid var(--rule-soft);margin-bottom:3px">
+      <span>#</span><span>contestant</span><span>R1·R2·R3·R4</span><span>cope</span><span>μ-scalar</span><span>role</span></div>
+    ${rows}
+    <div style="font-size:10px;color:var(--ink-faint);margin-top:7px"><span style="color:var(--good)">●</span> won · <span style="color:var(--bad)">○</span> lost · <span style="color:var(--caution)">⊘</span> bye(+1) · <span style="color:var(--ink-faint)">·</span> live — the round-by-round record that built each standing</div></div>`;
+}
+
+/* =====================================================================
+   COMPOSED OPTS 7 & 8 — built from the operator's picks (opt 1 + 3 + 5).
+   Goal: keep OPT 1's informativeness (the round-by-round pairing ledger:
+   every matchup, tagged with the competitors' ENTERING records [a–b] so
+   "like plays like" is visible, with the Δscalar win-margin) and give it
+   MUCH stronger visuals — blending opt 3's score-group structure and
+   opt 5's rank-flow + μ-scalar-as-magnitude.
+   ===================================================================== */
+
+// shared: a diverging Δscalar magnitude bar. Swiss winners are decided by the
+// LOWER scalar, so |Δ| is the WIN MARGIN. We draw it as a fixed-width track with
+// a bar growing left→right; longer = more decisive. (opt 5 DNA: scalar as a
+// first-class magnitude, here per-duel instead of per-contestant.)
+const DMAX = Math.max(...ROUNDS.flatMap(r=>r.matches.map(m=>Math.abs(m.delta_scalar||0))), 0.001);
+function deltaBar(delta, w=120){
+  if(delta==null) return `<span class="lg-dtrack" style="width:${w}px"></span>`;
+  const frac=Math.min(1, Math.abs(delta)/DMAX);
+  const fillW=Math.max(3, frac*w);
+  return `<span class="lg-dtrack" style="width:${w}px">`+
+    `<i style="width:${fillW.toFixed(1)}px"></i></span>`+
+    `<span class="lg-dval">Δ ${fd(delta)}</span>`;
+}
+
+/* ---- OPT 7 hero: refined score-group ladder (opt 1 record bands, restyled
+   as crisp horizontal score-group rows with the field as bordered chips). ---- */
+function ledgerLadderHero(){
+  const by={}; for(const s of STANDINGS){ (by[s.wins]=by[s.wins]||[]).push(s); }
+  const recs=Object.keys(by).map(Number).sort((a,b)=>b-a);
+  let html=`<div class="figbox lg-hero">`;
+  recs.forEach((rec,gi)=>{
+    const grp=by[rec].sort((a,b)=>a.scalar-b.scalar);
+    html+=`<div class="lg-band">
+      <div class="lg-band-rec"><b>${rec}</b><span>pt${rec===1?'':'s'}</span><em>${grp.length} tied</em></div>
+      <div class="lg-band-pool">`;
+    grp.forEach(s=>{
+      const isL=s.id===LEADER,isC=s.role==='champion';
+      const cls=isL?'lead':(isC?'champ':'');
+      const chip=isC?'<span class="pill champ">CHAMP</span>':(isL?'<span class="pill lead">→ GATE</span>':'');
+      html+=`<span class="lg-chip ${cls}"><b>${esc(nm(s.id))}</b>${chip}<span class="lg-mu">μ ${fs(s.scalar)}</span></span>`;
+    });
+    html+=`</div></div>`;
+  });
+  html+=`<div class="lg-foot">contestants share a band when they share a Copeland record — Swiss pairs WITHIN a band (like plays like); within a band, lower mean-scalar leads.</div></div>`;
+  return html;
+}
+
+/* ---- OPT 7 (b): the REFINED PAIRING LEDGER — opt 1's content, re-rendered as
+   structured per-round panels: a score-group spine on the left, each pairing a
+   row with entering-records [a–b], winner def. loser, and a diverging Δ-margin
+   bar so win quality is visible at a glance (opt 5), grouped by record (opt 3). */
+function pairingLedgerRefined(){
+  let html=`<div class="lgx">`;
+  ROUNDS.forEach((r,ri)=>{
+    const preRec = r.round<=1 ? Object.fromEntries(FIELD.map(c=>[c.id,0]))
+      : Object.fromEntries(copelandAfter(r.round-1).map(s=>[s.id,s.wins]));
+    // bucket this round's matches by the (higher) entering record → score-group spine
+    const buckets={};
+    for(const m of r.matches){ const k=Math.max(...m.competitors.map(x=>preRec[x])); (buckets[k]=buckets[k]||[]).push(m); }
+    const keys=Object.keys(buckets).map(Number).sort((a,b)=>b-a);
+    const live = r.matches.some(m=>m.pending);
+    html+=`<section class="lgx-round${live?' live':''}">
+      <header class="lgx-rh">
+        <span class="lgx-rn">R${r.round}</span>
+        <span class="lgx-rl">${esc(r.label)}</span>
+        <span class="lgx-rt">paired by record</span>
+        ${live?'<span class="pill pend">IN FLIGHT</span>':'<span class="lgx-done">settled</span>'}
+      </header>
+      <div class="lgx-body">`;
+    keys.forEach(k=>{
+      html+=`<div class="lgx-grp">
+        <div class="lgx-spine"><b>${k}</b><span>pt${k===1?'':'s'} group</span></div>
+        <div class="lgx-rows">`;
+      buckets[k].forEach(m=>{
+        const rtag=`<span class="lgx-rec">${preRec[m.competitors[0]]}${m.competitors[1]!=null?'–'+preRec[m.competitors[1]]:''}</span>`;
+        if(m.bye){
+          html+=`<div class="lgx-row bye">${rtag}
+            <span class="lgx-pair"><span class="pill bye">BYE +1</span> <b>${esc(nm(m.competitors[0]))}</b><span class="lgx-note">free Copeland point</span></span>
+            <span class="lgx-mag"></span></div>`;
+        } else if(m.pending){
+          html+=`<div class="lgx-row pend">${rtag}
+            <span class="lgx-pair"><span class="pill pend">LIVE</span> <b>${esc(nm(m.competitors[0]))}</b> <span class="lgx-vs">vs</span> <b>${esc(nm(m.competitors[1]))}</b><span class="lgx-note">duel in flight</span></span>
+            <span class="lgx-mag lgx-mag-pend">pending…</span></div>`;
+        } else {
+          const w=m.winner,l=m.competitors.find(x=>x!==w);
+          html+=`<div class="lgx-row">${rtag}
+            <span class="lgx-pair"><b class="win">${esc(nm(w))}</b> <span class="lgx-def">def.</span> <span class="lose">${esc(nm(l))}</span></span>
+            <span class="lgx-mag">${deltaBar(m.delta_scalar)}</span></div>`;
+        }
+      });
+      html+=`</div></div>`;
+    });
+    html+=`</div></section>`;
+  });
+  html+=`</div>`;
+  return html;
+}
+function ledgerRefinedLegend(){
+  return `<div class="legend">
+    <span><span class="lgx-rec" style="position:static">a–b</span> entering records (like plays like)</span>
+    <span><b class="good">winner</b> def. <span style="color:var(--ink-faint)">loser</span></span>
+    <span><span class="lg-dtrack" style="width:34px;vertical-align:middle"><i style="width:24px"></i></span> Δscalar margin (longer = more decisive)</span>
+    <span><span class="pill pend">LIVE</span> in-flight · <span class="pill bye">BYE +1</span> odd-field bye</span>
+  </div>`;
+}
+
+/* ---- OPT 8 (b): LEDGER × RANK-FLOW. Fuses opt 5's bump (the standings-churn
+   signature) with opt 1's pairing ledger that CAUSES the churn. Top: a refined
+   rank-flow bump with score-group bands behind it (opt 3) + per-segment W/L
+   glyphs. Below, per round, a compact pairing strip [a–b] winner def. loser Δ
+   so each rank move is explained by the duel that drove it. ---- */
+function rankFlowLedger(){
+  // --- the bump (reuse the strong bumpFlow geometry but inline so we can put a
+  //     per-round pairing strip directly beneath, column-aligned) ---
+  let html=`<div class="figbox"><div class="lgf-cap">standings churn — rank position across the Swiss rounds (lines cross when ranks swap)</div>${bumpFlow()}</div>`;
+  // --- per-round pairing strips, in a tidy grid, each headed by the round ---
+  html+=`<div class="figbox lgf-strips" style="margin-top:10px"><div class="lgf-cap">what drove each move — pairings by record, round by round</div><div class="lgf-grid">`;
+  ROUNDS.forEach(r=>{
+    const preRec = r.round<=1 ? Object.fromEntries(FIELD.map(c=>[c.id,0]))
+      : Object.fromEntries(copelandAfter(r.round-1).map(s=>[s.id,s.wins]));
+    const ms=[...r.matches].sort((a,b)=>Math.max(...b.competitors.map(x=>preRec[x]))-Math.max(...a.competitors.map(x=>preRec[x])));
+    const live=r.matches.some(m=>m.pending);
+    html+=`<div class="lgf-col${live?' live':''}"><div class="lgf-ch">R${r.round}${live?' <span class="pill pend">live</span>':''}</div>`;
+    ms.forEach(m=>{
+      const rtag=`<span class="lgf-rec">${preRec[m.competitors[0]]}${m.competitors[1]!=null?'–'+preRec[m.competitors[1]]:''}</span>`;
+      if(m.bye){
+        html+=`<div class="lgf-row">${rtag}<span class="pill bye">BYE</span> <b>${esc(nm(m.competitors[0]))}</b></div>`;
+      } else if(m.pending){
+        html+=`<div class="lgf-row">${rtag}<span class="pill pend">LIVE</span> <b>${esc(nm(m.competitors[0]))}</b> <span class="lgf-vs">vs</span> <b>${esc(nm(m.competitors[1]))}</b></div>`;
+      } else {
+        const w=m.winner,l=m.competitors.find(x=>x!==w);
+        html+=`<div class="lgf-row">${rtag}<b class="win">${esc(nm(w))}</b><span class="lgf-def">▸</span><span class="lose">${esc(nm(l))}</span>${deltaBar(m.delta_scalar,46)}</div>`;
+      }
+    });
+    html+=`</div>`;
+  });
+  html+=`</div></div>`;
+  return html;
+}
+function rankFlowLedgerLegend(){
+  return `<div class="legend">
+    <span><i class="lk good"></i> leader → gate</span>
+    <span><i class="lk"></i> champion (participates)</span>
+    <span><i class="lk faint"></i> field</span>
+    <span><span style="color:var(--good)">●</span>/<span style="color:var(--bad)">○</span> the win/loss that moved each line</span>
+    <span><span class="lgf-rec" style="position:static">a–b</span> entering records · Δ = win margin</span>
+  </div>`;
+}
+// OPT 8 hero: the rank-flow glance band (opt 5/2 idiom) — the churn at a glance.
+function rankFlowLedgerHero(){
+  return `<div class="figbox">${rankFlowHero()}</div>`;
+}
+
+/* =====================================================================
+   THE OPTIONS. Each = {num, name, rationale, a(), b(), c()}.
+   ===================================================================== */
+const OPTIONS = [
+  {
+    num:'Opt 1', name:'Pairing Ledger',
+    rationale:'Swiss IS its pairing logic: each round, the field is split into score groups (same record) and '+
+      'paired LIKE-vs-LIKE. This option makes that the star — the hero groups the live standings into their '+
+      'record bands (so you see who shares a score group), and the cross-round view is the full round-by-round '+
+      'ledger of every matchup, tagged with the two competitors’ entering records [a–b] so the "like plays like" '+
+      'rule is visible. Round view zooms the in-flight round’s pairings + standings.',
+    a:()=> recordGroupHero() + gateLine(),
+    b:()=> pairingLedger() + ledgerLegend(),
+    c:()=> roundLevelTwoCol(),
+  },
+  {
+    num:'Opt 2', name:'Rank-Flow Bump',
+    rationale:'The canonical Swiss chart, done right: each contestant’s STANDING POSITION traced across the '+
+      'rounds as smooth bump lines that CROSS when ranks swap — the signature standings churn. Rank bands zebra '+
+      'the plot so vertical travel reads as ranks gained/lost, per-segment ●/○ glyphs mark the win/loss that '+
+      'caused each move, and the leader’s emergence (vs the champion holding mid-pack) is the headline. Hero is '+
+      'the same flow compacted to a glance band; round view is the SVG pairing diagram.',
+    a:()=> `<div class="figbox">${rankFlowHero()}</div>${gateLine()}`,
+    b:()=> `<div class="figbox">${bumpFlow()}</div>${bumpLegend()}`,
+    c:()=> roundLevelSVG(),
+  },
+  {
+    num:'Opt 3', name:'Score-Group Funnel',
+    rationale:'Renders the Swiss SKELETON — the score-group structure — as a column-per-round funnel. The field '+
+      'starts undifferentiated at 0 pts and fans out into 0/1/2/3-point groups as results land; lanes flow '+
+      'group→group and the spread of the field is the story. Hero shows the CURRENT score groups as blocks (who '+
+      'is bracketed with whom right now); round view is the in-flight pairings + standings.',
+    a:()=> scoreGroupHero() + gateLine(),
+    b:()=> `<div class="figbox">${scoreGroupFunnel()}</div>${groupLegend()}`,
+    c:()=> roundLevelTwoCol(),
+  },
+  {
+    num:'Opt 4', name:'Road to the Gate',
+    rationale:'Frames the whole tournament as the run-up to the crowning question. The hero is the gate banner — '+
+      'leader vs incumbent champion, both Copeland + mean-scalar — then the standings. The cross-round view is a '+
+      'points-accrual climb that CONVERGES on a GATE node: every contestant’s line climbs over the rounds, and '+
+      'the leader’s line extends past the field to the gate, where it must clear the champion. The approach to '+
+      'the capstone, not just the standings.',
+    a:()=> gateBanner() + `<div style="margin-top:12px">${heroBars()}</div>`,
+    b:()=> `<div class="figbox">${roadToGate()}</div>${roadLegend()}`,
+    c:()=> roundLevelTwoCol(),
+  },
+  {
+    num:'Opt 5', name:'Scalar-Weighted',
+    rationale:'Surfaces the mean-scalar TIEBREAK as a first-class magnitude — the real ranking signal the '+
+      'current UI buries. The hero shows Copeland bars overlaid with a μ-scalar marker (lower = better, drawn '+
+      'toward the right), so ties on points are visually broken. Cross-round is a dual-track: rank bump on top, '+
+      'mean-scalar descent below. Round view shows each duel’s Δscalar magnitude as the win quality.',
+    a:()=> `<div class="figbox">${scalarHero()}</div>${gateLine()}`,
+    b:()=> `<div class="figbox">${bumpChart()}</div><div class="figbox" style="margin-top:10px">${scalarDescent()}</div>${bumpLegend()}`,
+    c:()=> roundLevelSVG(),
+  },
+  {
+    num:'Opt 6', name:'Compact Console',
+    rationale:'The densest, most terminal-native take — a single monospace standings block as the hero (rank, '+
+      'Copeland, mean-scalar, role glyph) with inline win-bars made of block characters, so it drops into a '+
+      'narrow panel. Cross-round is the slope matrix (rounds as columns). Round view is the plain pairings list. '+
+      'Least chrome, maximum legibility for an operator scanning many epochs.',
+    a:()=> consoleHero() + gateLine(),
+    b:()=> `<div class="figbox" style="overflow-x:auto">${slopeMatrix()}</div>`,
+    c:()=> roundLevelList(),
+  },
+  {
+    num:'Opt 7', name:'Pairing Ledger · Refined',
+    rationale:'OPT 1’s running-record ledger — every round’s matchups, tagged with the two competitors’ '+
+      'ENTERING records [a–b] so "like plays like" is visible — but rebuilt with real visual structure. Each '+
+      'round is a panel with a score-group SPINE down the left (opt 3’s skeleton), so you read which record band '+
+      'each pairing sits in; every duel is a typeset row — <b class="good">winner</b> def. loser — with a '+
+      'diverging Δscalar MARGIN bar (opt 5’s scalar-as-magnitude) so win quality reads at a glance; the in-flight '+
+      'round is tinted and chip-flagged. Hero is the live score-group ladder; round view zooms the in-flight round.',
+    a:()=> ledgerLadderHero() + gateLine(),
+    b:()=> pairingLedgerRefined() + ledgerRefinedLegend(),
+    c:()=> roundLevelTwoCol(),
+  },
+  {
+    num:'Opt 8', name:'Ledger × Rank-Flow',
+    rationale:'Fuses OPT 1’s pairing ledger with opt 5’s rank-flow bump so cause sits above effect. The top is '+
+      'the standings-churn signature — each contestant’s rank traced across the rounds, lines crossing when ranks '+
+      'swap, per-segment ●/○ marking the win/loss that moved them — and directly beneath, a round-by-round '+
+      'pairing strip (records [a–b], winner ▸ loser, Δ-margin bar) EXPLAINS every move the bump shows. The churn '+
+      'and the pairings that produced it, read together. Hero is the rank-flow glance band; round view is the '+
+      'SVG pairing diagram + standings.',
+    a:()=> rankFlowLedgerHero() + gateLine(),
+    b:()=> rankFlowLedger() + rankFlowLedgerLegend(),
+    c:()=> roundLevelSVG(),
+  },
+];
+
+/* ---- shared composite round-level layouts ---- */
+function roundLevelTwoCol(){
+  const r = ROUNDS[ROUNDS_N-1];          // the in-flight round 4
+  return `<div class="twocol">
+    <div class="figbox"><div style="font-size:10.5px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">${esc(r.label)} · pairings</div>${pairingList(r)}</div>
+    <div class="figbox"><div style="font-size:10.5px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">standings after round ${r.round}</div>${lbTable(STANDINGS)}</div>
+  </div>`;
+}
+function roundLevelSVG(){
+  const r = ROUNDS[ROUNDS_N-1];
+  return `<div class="figbox"><div style="font-size:10.5px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">${esc(r.label)} · pairings (winner edges; dashed = pending)</div>${pairingSVG(r)}</div>
+    <div class="figbox" style="margin-top:10px">${lbTable(STANDINGS)}</div>`;
+}
+function roundLevelList(){
+  const r = ROUNDS[ROUNDS_N-1];
+  return `<div class="figbox"><div style="font-size:10.5px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">${esc(r.label)} · pairings</div>${pairingList(r)}<div style="margin-top:12px">${lbTable(STANDINGS,{gate:false})}</div></div>`;
+}
+
+function bumpLegend(){
+  return `<div class="legend">
+    <span><i class="lk good"></i> leader → gate</span>
+    <span><i class="lk"></i> champion (participates)</span>
+    <span><i class="lk faint"></i> other contestants</span>
+    <span><i class="dotm good"></i> round node</span>
+    <span>rank #1 = top of standings; lower mean-scalar = better</span>
+  </div>`;
+}
+
+// Opt 1 — pairing-ledger legend (record brackets + winner/loser/Δ key).
+function ledgerLegend(){
+  return `<div class="legend">
+    <span><span class="pill" style="border-color:var(--ink-faint)">[a–b]</span> entering records (like plays like)</span>
+    <span><b class="good">●</b> winner def. loser</span>
+    <span><span class="pill pend">LIVE</span> in-flight pairing</span>
+    <span><span class="pill bye">BYE +1</span> odd field bye</span>
+    <span>Δscalar = win margin · lower mean-scalar = better</span>
+  </div>`;
+}
+
+// Opt 3 — score-group funnel legend (the Swiss skeleton fanning out by record).
+function groupLegend(){
+  return `<div class="legend">
+    <span><i class="dotm good"></i> leader → gate</span>
+    <span><i class="dotm"></i> champion (mid-pack)</span>
+    <span><i class="dotm faint"></i> other contestants</span>
+    <span><i class="lk"></i> flow into next round's score group</span>
+    <span>columns = score groups (same Copeland record); the field fans out as results land</span>
+  </div>`;
+}
+
+// Opt 4 — road-to-the-gate legend (points climb converging on the gate node).
+function roadLegend(){
+  return `<div class="legend">
+    <span><i class="lk good"></i> leader's climb → extends to the GATE</span>
+    <span><i class="lk"></i> champion (incumbent at the gate)</span>
+    <span><i class="lk faint"></i> other contestants' points climb</span>
+    <span><i class="dotm good"></i> gate node — leader must clear the champion</span>
+    <span>y = Copeland points accrued per round</span>
+  </div>`;
+}
+
+/* ---- Opt 4 gate banner ---- */
+function gateBanner(){
+  const L=STANDINGS.find(s=>s.id===LEADER), C=STANDINGS.find(s=>s.id===CHAMP);
+  return `<div class="figbox" style="background:var(--good-soft);border-color:var(--good)">
+    <div style="font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--good);margin-bottom:8px">swiss-final · champion gate <span class="pill pend">PENDING</span></div>
+    <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;font-size:13px">
+      <div><b class="good">${esc(labelOf[LEADER])}</b> <span class="pill lead">LEADER #${L.rank}</span><br>
+        <span style="color:var(--ink-soft)">Copeland ${L.wins} · mean-scalar ${fs(L.scalar)}</span></div>
+      <div style="color:var(--ink-faint);font-size:18px">⟶ must beat ⟶</div>
+      <div><b class="acc">${esc(labelOf[CHAMP])}</b> <span class="pill champ">INCUMBENT #${C.rank}</span><br>
+        <span style="color:var(--ink-soft)">Copeland ${C.wins} · mean-scalar ${fs(C.scalar)}</span></div>
+    </div>
+    <div style="margin-top:8px;font-size:11.5px;color:var(--ink-soft)">Promoted only if the leader clears the gate against the incumbent — a Swiss winner that does not actually beat the champion is NOT crowned.</div>
+  </div>`;
+}
+
+/* ---- Opt 5 scalar hero + descent ---- */
+function scalarHero(){
+  const W=900, rowH=30, padT=14, padL=170, padR=130;
+  const H=padT+STANDINGS.length*rowH+22;   // +room for the bottom caption
+  const barMax=W-padL-padR;
+  const scs=STANDINGS.map(s=>s.scalar);
+  const smin=Math.min(...scs), smax=Math.max(...scs);
+  let parts=[svg(W,H)];
+  STANDINGS.forEach((s,i)=>{
+    const y=padT+i*rowH+rowH/2;
+    const isLeader=s.id===LEADER,isChamp=s.role==='champion';
+    const col=isLeader?'var(--good)':'var(--accent)';
+    const op=isChamp?0.5:(isLeader?1:0.7);
+    const w=(s.wins/MAXWINS)*barMax;
+    const nm = labelOf[s.id].replace(' · champ','');
+    parts.push(`<text x="8" y="${y+4}" font-size="12" fill="var(--ink-faint)">#${s.rank}</text>`);
+    parts.push(`<text x="34" y="${y+4}" font-size="12" fill="var(--ink)">${esc(nm)}</text>`);
+    if(isChamp) parts.push(`<text x="118" y="${y+4}" font-size="9" fill="var(--accent)">CHAMP</text>`);
+    if(isLeader) parts.push(`<text x="118" y="${y+4}" font-size="9" fill="var(--good)">→GATE</text>`);
+    parts.push(`<rect x="${padL}" y="${y-7}" width="${barMax}" height="14" rx="3" fill="var(--rule-soft)"/>`);
+    parts.push(`<rect x="${padL}" y="${y-7}" width="${w.toFixed(1)}" height="14" rx="3" fill="${col}" opacity="${op}"/>`);
+    // scalar marker: position within bar proportional to scalar rank (lower=further right=better)
+    const sfrac = (smax - s.scalar)/((smax-smin)||1);   // 1 for best (lowest) scalar
+    const mx = padL + sfrac*barMax;
+    parts.push(`<line x1="${mx}" y1="${y-9}" x2="${mx}" y2="${y+9}" stroke="var(--ink)" stroke-width="2" vector-effect="non-scaling-stroke"/>`);
+    parts.push(`<text x="${W-8}" y="${y+4}" font-size="11" fill="var(--ink-faint)" text-anchor="end">μ ${fs(s.scalar)}</text>`);
+  });
+  parts.push(`<text x="${padL}" y="${H-6}" font-size="9" fill="var(--ink-faint)">▏Copeland bar · │ tick = mean-scalar (right = lower/better)</text>`);
+  parts.push('</svg>');
+  return parts.join('');
+}
+function scalarDescent(){
+  // mean-scalar is static per contestant here (final mean); draw as a sorted
+  // descent ladder so the tiebreak ordering is explicit.
+  // padT clears the title + each node's label-above; padB clears the value-below.
+  const W=900, padL=70, padR=170, padT=40, padB=30, H=180;
+  const ordered=[...STANDINGS].sort((a,b)=>a.scalar-b.scalar);
+  const scs=ordered.map(s=>s.scalar); const smin=Math.min(...scs),smax=Math.max(...scs);
+  const xOf=(i)=> padL + (i/(ordered.length-1))*(W-padL-padR);
+  const yOf=(v)=> padT + ((v-smin)/((smax-smin)||1))*(H-padT-padB);
+  let parts=[svg(W,H)];
+  const pts=ordered.map((s,i)=>`${xOf(i)},${yOf(s.scalar)}`).join(' ');
+  parts.push(`<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`);
+  ordered.forEach((s,i)=>{
+    const col=s.id===LEADER?'var(--good)':(s.role==='champion'?'var(--accent)':'var(--ink-faint)');
+    parts.push(`<circle cx="${xOf(i)}" cy="${yOf(s.scalar)}" r="3.4" fill="${col}"/>`);
+    parts.push(`<text x="${xOf(i)}" y="${yOf(s.scalar)-8}" font-size="10" fill="${col}" text-anchor="middle">${esc(labelOf[s.id].replace(' · champ',''))}</text>`);
+    parts.push(`<text x="${xOf(i)}" y="${yOf(s.scalar)+16}" font-size="9" fill="var(--ink-faint)" text-anchor="middle">${fs(s.scalar)}</text>`);
+  });
+  parts.push(`<text x="8" y="${padT+4}" font-size="9" fill="var(--ink-faint)">best</text>`);
+  parts.push(`<text x="8" y="${H-padB+2}" font-size="9" fill="var(--ink-faint)">worst</text>`);
+  parts.push(`<text x="${padL}" y="12" font-size="10" fill="var(--ink-faint)">mean-scalar descent (left = lowest = best tiebreak)</text>`);
+  parts.push('</svg>');
+  return parts.join('');
+}
+
+/* ---- Opt 6 console hero ---- */
+function consoleHero(){
+  const blocks=(w)=> '█'.repeat(w) + '░'.repeat(MAXWINS-w);
+  let rows = STANDINGS.map(s=>{
+    const isLeader=s.id===LEADER,isChamp=s.role==='champion';
+    const glyph = isChamp?'◆':(isLeader?'★':' ');
+    const col = isLeader?'var(--good)':(isChamp?'var(--accent)':'var(--ink)');
+    const tag = isChamp?'champ':(isLeader?'leader→gate':'');
+    const name=(labelOf[s.id].replace(' · champ','')).padEnd(7,' ');
+    return `<div style="display:grid;grid-template-columns:30px 86px 110px 50px 70px 96px;gap:6px;font-size:12.5px;padding:2px 0;color:${col}">`+
+      `<span style="color:var(--ink-faint)">#${s.rank}</span>`+
+      `<span>${glyph} ${esc(name)}</span>`+
+      `<span style="letter-spacing:-1px;color:${isLeader?'var(--good)':'var(--accent)'}">${blocks(s.wins)}</span>`+
+      `<span style="font-weight:700">${s.wins}w</span>`+
+      `<span style="color:var(--ink-faint)">μ${fs(s.scalar)}</span>`+
+      `<span style="color:var(--ink-faint)">${tag}</span></div>`;
+  }).join('');
+  return `<div class="figbox" style="font-family:inherit">
+    <div style="display:grid;grid-template-columns:30px 86px 110px 50px 70px 96px;gap:6px;font-size:9.5px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.06em;padding-bottom:4px;border-bottom:1px solid var(--rule-soft);margin-bottom:4px">
+      <span>#</span><span>contestant</span><span>copeland</span><span>pts</span><span>μ-scalar</span><span>role</span></div>
+    ${rows}</div>`;
+}
+
+/* =================== RENDER all options =================== */
+const VIEWS = [
+  ['a','HERO GLANCE — the compacted figure that fills the hero\'s structure slot','compact at-a-glance live standings — the leaderboard'],
+  ['b','SINGLE-ROUND — the full tournament (across its bracket-rounds / rungs / pairings)','standings trajectory across the Swiss rounds — who is emerging'],
+  ['c','WITHIN-ROUND — one bracket-round / rung / pairing in detail','the in-flight round 4 pairings + standings'],
+];
+document.getElementById('options').innerHTML = OPTIONS.map(o=>`
+  <section class="opt-card">
+    <div class="opt-head"><span class="opt-num">${o.num}</span><span class="opt-name">${esc(o.name)}</span></div>
+    <p class="opt-rationale">${o.rationale}</p>
+    ${VIEWS.map(([k,kt,kd])=>`
+      <div class="view-block">
+        <div class="view-tag"><span class="vk">(${k}) ${kt}</span><span class="vd">${kd}</span></div>
+        ${o[k]()}
+      </div>`).join('')}
+  </section>`).join('');
+
+/* ===== Console colour-scheme picker — 16 themes ===== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME="monokai";
+const THEME_IDS=THEMES.map(t=>t[0]);
+function strip(swatches,sm){ return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">`+swatches.map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('')+`</span>`; }
+function mountThemePicker(hostId){
+  const host=document.getElementById(hostId);
+  let value=DEFAULT_THEME, open=false, activeIdx=THEME_IDS.indexOf(value);
+  const byId=new Map(THEMES.map(t=>[t[0],t]));
+  host.innerHTML=`<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span></button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw])=>`<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">${strip(sw)}<span class="dt-cd-name">${label}</span></div>`).join('')}
+      </div></div>`;
+  const cd=host.querySelector('.dt-cd'), trigger=host.querySelector('.dt-cd-trigger');
+  const trigStrip=host.querySelector('.dt-cd-trig-strip'), trigName=host.querySelector('.dt-cd-trig-name');
+  const list=host.querySelector('.dt-cd-list'), options=Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id){
+    value=THEME_IDS.includes(id)?id:DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme',value);
+    const def=byId.get(value);
+    trigStrip.className='dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden','true');
+    trigStrip.innerHTML=def[2].map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent=def[1];
+    options.forEach(o=>o.setAttribute('aria-selected',String(o.getAttribute('data-theme')===value)));
+  }
+  function setActive(i){ activeIdx=(i+options.length)%options.length; options.forEach((o,k)=>o.classList.toggle('dt-cd-active',k===activeIdx)); }
+  function setOpen(next){ open=next; cd.classList.toggle('dt-cd-open',open); trigger.setAttribute('aria-expanded',String(open)); if(open) setActive(Math.max(0,THEME_IDS.indexOf(value))); }
+  function choose(id){ applyTheme(id); setOpen(false); }
+  options.forEach(o=>o.addEventListener('click',()=>choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click',()=>setOpen(!open));
+  trigger.addEventListener('keydown',ev=>{ if(['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)){ev.preventDefault();setOpen(true);list.focus?.();} });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown',ev=>{
+    if(ev.key==='Escape'){ev.preventDefault();setOpen(false);trigger.focus();}
+    else if(ev.key==='ArrowDown'){ev.preventDefault();setActive(activeIdx+1);}
+    else if(ev.key==='ArrowUp'){ev.preventDefault();setActive(activeIdx-1);}
+    else if(['Enter',' ','Spacebar'].includes(ev.key)){ev.preventDefault();const id=options[activeIdx]?.getAttribute('data-theme'); if(id) choose(id);}
+  });
+  document.addEventListener('click',ev=>{ if(!open) return; let n=ev.target; while(n){ if(n===cd) return; n=n.parentNode; } setOpen(false); });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+</script>
+<style>html.embed-bare,html.embed-bare body{padding:0!important;margin:0!important}html.embed-bare .opt-card,html.embed-bare section{margin:0!important}</style>
+<script>window.__EMBED_CFG__={optSel:'#options > section.opt-card',bareHide:['.opt-head','.opt-rationale','.view-tag'],viewSel:'.view-block',bareKeepViews:[0,1]};</script>
+<script src="_embed.js"></script>
+</body>
+</html>

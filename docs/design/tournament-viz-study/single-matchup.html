@@ -1,0 +1,1554 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — single-matchup (duel) study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from src/.../variants/T/console4.css --v2-* roles and mapped onto this
+       study's token names. The picker sets html[data-theme]; each block fully
+       restyles the page. --zicato-accent ← --v2-accent. Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background .18s, color .18s;
+    padding: 0 0 80px;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  header .brand { color: currentColor; display: flex; align-items: center; gap: 10px; }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  section { margin: 36px 0; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 20px; max-width: 84ch; }
+  .lede code, .rationale code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  /* ----- decision / data-shape banner ----- */
+  .decision-banner {
+    border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+    border-radius: 0 8px 8px 0; background: var(--panel);
+    padding: 16px 18px; margin: 14px 0 8px;
+  }
+  .decision-banner .q { font-size: 13.5px; color: var(--ink); margin: 0 0 10px; }
+  .decision-banner .q b { color: var(--accent); }
+  .shape-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 18px; margin-top: 4px; }
+  .shape-grid .f { font-size: 11.5px; color: var(--ink-soft); }
+  .shape-grid .f b { color: var(--ink); font-weight: 600; }
+  .shape-grid .f code { font-size: 11px; }
+
+  /* ----- the shared sample read-out ----- */
+  .sample {
+    border: 1px dashed var(--rule); border-radius: 8px; background: var(--panel-2);
+    padding: 14px 18px; margin: 12px 0 4px; font-size: 12px; color: var(--ink-soft);
+  }
+  .sample b { color: var(--ink); }
+  .sample .promote { color: var(--good); font-weight: 700; }
+  .sample .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip { font-size: 10.5px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-faint); white-space: nowrap; }
+  .chip.good { border-color: var(--good); color: var(--good); }
+  .chip.bad  { border-color: var(--bad);  color: var(--bad); }
+  .chip.cau  { border-color: var(--caution); color: var(--caution); }
+  .chip.acc  { border-color: var(--accent); color: var(--accent); }
+
+  /* ----- option cards ----- */
+  .opt-card {
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--panel);
+    padding: 20px 22px; margin-bottom: 20px;
+  }
+  .opt-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .opt-num { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+  .opt-name { font-size: 15px; font-weight: 700; color: var(--ink); }
+  .opt-tech { font-size: 11px; color: var(--ink-faint); letter-spacing: .04em; }
+  .rationale { font-size: 12px; color: var(--ink-soft); margin: 6px 0 16px; max-width: 86ch; }
+  .reveals { font-size: 11.5px; color: var(--ink-faint); margin-top: 14px; border-top: 1px dashed var(--rule-soft); padding-top: 10px; }
+  .reveals b { color: var(--good); }
+
+  .fig-wrap { width: 100%; }
+  svg.fig { width: 100%; height: auto; display: block; overflow: visible; }
+  svg.fig text { font-family: ui-monospace, "JetBrains Mono", monospace; }
+
+  /* per-option legend */
+  .olegend { display: flex; gap: 18px; font-size: 10.5px; color: var(--ink-faint); margin: 0 0 12px; flex-wrap: wrap; }
+  .olegend span { display: inline-flex; align-items: center; gap: 6px; }
+  .olegend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .olegend .ln { width: 16px; height: 0; border-top: 2px solid; display: inline-block; }
+
+  footer { max-width: 1180px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+  .note-on-c { font-size: 11px; color: var(--ink-faint); }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) ---- */
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+
+  /* ---- SAMPLE-STRUCTURE SWITCHER (segmented control) — styled with page tokens.
+       Flips the SAMPLE STRUCTURE; the SAME 6 figures re-label themselves to
+       prove the single-matchup layer is structure-agnostic. Hidden in ?bare=1
+       (chrome-less), but ?sample is still honored to set the initial structure. ---- */
+  .struct-switch { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0 20px; }
+  .struct-switch .ss-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .struct-seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; background: var(--panel); }
+  .struct-seg button { font: inherit; font-size: 11.5px; color: var(--ink-soft);
+    background: transparent; border: none; border-right: 1px solid var(--rule);
+    padding: 6px 13px; cursor: pointer; transition: background .12s, color .12s; white-space: nowrap; }
+  .struct-seg button:last-child { border-right: none; }
+  .struct-seg button:hover { color: var(--ink); background: var(--rule-soft); }
+  .struct-seg button[aria-pressed="true"] { color: var(--paper); background: var(--accent); font-weight: 700; }
+  .struct-switch .ss-note { font-size: 11px; color: var(--ink-faint); }
+  html.embed-bare .struct-switch { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand" id="hdr-mark" aria-label="zicato mark"></span>
+  <h1>zicato — single-matchup study · one duel (champion vs challenger)</h1>
+  <span class="spacer"></span>
+  <span class="note-on-c">win = <span style="color:var(--good)">●</span> · loss = <span style="color:var(--bad)">●</span> · timeout = <span style="color:var(--caution)">●</span> · accent = <span style="color:var(--accent)">●</span></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+    The deepest zoom: <b>one matchup</b>. A single champion is challenged by a single child. This study explores
+    <b>6 first-principles ways</b> to answer the same decision from the same data — every option is fed the
+    <b>one shared sample</b> below. The viz is identical for all tournament structures
+    (gauntlet / single- &amp; double-elim / swiss / racing); the only wrinkle is the <b>frame label</b> — a racing
+    rung resolves a <b>partial board</b> and <b>cuts</b> a contestant (no crown), whereas the champion gate runs the
+    <b>full board</b> and can promote. Each option marks that distinction where it matters.
+  </p>
+
+  <!-- ===================== SAMPLE-STRUCTURE SWITCHER ===================== -->
+  <div class="struct-switch" id="struct-switch">
+    <span class="ss-label">sample structure</span>
+    <span class="struct-seg" id="struct-seg" role="group" aria-label="sample structure"></span>
+    <span class="ss-note" id="struct-note"></span>
+  </div>
+
+  <!-- ===================== DECISION + DATA SHAPE ===================== -->
+  <section>
+    <h2>Decision &amp; data shape (drives all 6)</h2>
+    <div class="decision-banner">
+      <p class="q"><b>Did this challenger beat this champion — and WHY?</b> Which of the 3 gate rules decided it?
+        Where (which boards / judges / drift-kinds) did the &Delta; come from? Is the win <b>robust</b>
+        (tight replicate spread, holdout-confirmed)?</p>
+      <div class="shape-grid">
+        <div class="f"><b>Gate</b> — 3 short-circuiting rules + holdout step: <code>{decision, reason, delta_scalar, delta_pass_rate, rules[], scalar_components, primary_driver}</code></div>
+        <div class="f"><b>Per-board grid</b> — <code>[{entry_id, parent/child_drift_loss, parent/child_pass, delta, verdict, won_by}]</code></div>
+        <div class="f"><b>Per-drift-kind</b> — <code>[{kind, champion_count, challenger_count, delta, direction}]</code></div>
+        <div class="f"><b>Per-judge</b> — <code>[{judge_name, champion/challenger_weighted_loss, delta}]</code></div>
+        <div class="f"><b>Replicates</b> — multiple runs/side &rarr; scalar spread = confidence</div>
+        <div class="f"><b>Rule 1</b> scalar margin · <b>Rule 2</b> pass-rate monotonicity · <b>Rule 3</b> per-namespace monotonicity</div>
+      </div>
+    </div>
+
+    <div class="sample" id="sample-readout"></div>
+  </section>
+
+  <!-- option cards mount here -->
+  <div id="options"></div>
+</main>
+
+<footer>
+  Standalone single-matchup (duel) viz study · served from <code>/tmp/zicato-tourney-viz-study/</code> ·
+  read-only against <code>/home/sunil/git/zicato</code> · no repo edits. One shared sample across all 6 options;
+  Console line-art, theme-adaptive via <code>currentColor</code> + theme tokens.
+</footer>
+
+<script>
+/* =====================================================================
+   THE ONE SHARED SAMPLE — a CLOSE PROMOTE.
+   Challenger beats champion on ~6/8 boards with one contained regression.
+   The scalar-margin rule (Rule 1) decides it: the loss drop clears
+   promote_margin. Primary driver is one judge (clarity_judge). Per-kind
+   movements are mostly improved. Replicates are tight (low sigma) and the
+   holdout confirmed. Scalar is a LOSS — lower is better.
+   ===================================================================== */
+const PROMOTE_MARGIN = 0.010;
+
+/* =====================================================================
+   STRUCTURE-AGNOSTIC SAMPLES — the duel + the 3-rule gate is IDENTICAL
+   across all five structures; only the FRAME WRINKLE re-labels. Every
+   structure feeds the SAME data shape into the SAME 6 figures; the point
+   is the technique is unchanged. The GAUNTLET sample is the canonical one
+   (the original shared sample, untouched) — the single full-board duel /
+   the gate. The other four relabel the wrinkle (+ a few value tweaks):
+     · gauntlet     — the single duel · FULL board · the gate (can crown)
+     · single_elim  — a bracket match · FULL board · the gate (advances)
+     · double_elim  — a WB match · FULL board · the gate (loss → losers')
+     · swiss        — a Swiss pairing · FULL board · the gate (Copeland pt)
+     · racing       — champion-vs-challenger on a board SUBSET; a rung CUTS
+                      (no crown, PARTIAL board) — the one structural twist.
+   The 3-rule gate, the per-board / per-kind / per-judge / replicate views
+   all stay structurally identical; only `frame` + `racing_frame` (which
+   the rule-ladder outcome bar reads) and the per-structure label deltas
+   below differ. ===================================================== */
+
+function deepCopy(o){ return JSON.parse(JSON.stringify(o)); }
+
+// --- the canonical GAUNTLET sample (the original shared sample) ---
+const SAMPLE_GAUNTLET = {
+  structure: "gauntlet",
+  champion: "gen-014",
+  challenger: "gen-021",
+  decision: "promoted",
+  reason: "",                       // empty when promoted
+  // scalar is lower-is-better; champion 0.412 -> challenger 0.389
+  scalar: { champion: 0.412, challenger: 0.389 },
+  delta_scalar: -0.023,             // child - parent ; negative = improvement
+  delta_pass_rate: +0.125,          // +1 board flipped fail->pass over 8
+  // the 3 gate rules, in firing order; the deciding one is rule R1
+  rules: [
+    { id: "R1", label: "scalar margin", detail: "child < parent − promote_margin", status: "pass", fired: true,
+      note: "loss fell 0.023 ≥ margin 0.010" },
+    { id: "R2", label: "pass-rate monotonicity", detail: "no entry parent passed that child fails", status: "pass", fired: false,
+      note: "0 regressions on parent-passed entries" },
+    { id: "R3", label: "per-namespace monotonicity", detail: "no weighted namespace regression", status: "pass", fired: false,
+      note: "all tracked namespaces held or improved" },
+    { id: "HC", label: "holdout confirmation", detail: "win must hold on held-out slice", status: "pass", fired: false,
+      note: "holdout Δ −0.018 within margin — confirmed" },
+  ],
+  primary_driver: { judge: "clarity_judge", delta: -0.014 },   // biggest single mover
+  // scalar components — the weighted-loss buckets that sum to the scalar
+  scalar_components: {
+    champion:   { drift: 0.171, rubric: 0.092, schema: 0.058, latency: 0.061, cost: 0.030 },
+    challenger: { drift: 0.156, rubric: 0.079, schema: 0.058, latency: 0.067, cost: 0.029 },
+  },
+  // per-board grid: 8 entries, 6 child-wins, 1 contained regression (b5), 1 tie
+  boards: [
+    { entry_id: "b1_summary",    parent: 0.61, child: 0.42, p_pass: true,  c_pass: true,  verdict: "improved",  won_by: "challenger" },
+    { entry_id: "b2_extract",    parent: 0.48, child: 0.31, p_pass: true,  c_pass: true,  verdict: "improved",  won_by: "challenger" },
+    { entry_id: "b3_classify",   parent: 0.55, child: 0.50, p_pass: false, c_pass: true,  verdict: "flipped",   won_by: "challenger" },
+    { entry_id: "b4_rewrite",    parent: 0.39, child: 0.27, p_pass: true,  c_pass: true,  verdict: "improved",  won_by: "challenger" },
+    { entry_id: "b5_translate",  parent: 0.33, child: 0.45, p_pass: true,  c_pass: true,  verdict: "regressed", won_by: "champion"   },
+    { entry_id: "b6_qa",         parent: 0.50, child: 0.36, p_pass: true,  c_pass: true,  verdict: "improved",  won_by: "challenger" },
+    { entry_id: "b7_format",     parent: 0.29, child: 0.28, p_pass: true,  c_pass: true,  verdict: "tied",      won_by: "tie"        },
+    { entry_id: "b8_reason",     parent: 0.58, child: 0.40, p_pass: true,  c_pass: true,  verdict: "improved",  won_by: "challenger" },
+  ],
+  // per-drift-kind movements (count of flagged drifts; lower is better)
+  drift_kinds: [
+    { kind: "verbosity",     champion: 12, challenger: 7,  direction: "improved"  },
+    { kind: "hallucination", champion: 4,  challenger: 2,  direction: "improved"  },
+    { kind: "schema_break",  champion: 3,  challenger: 3,  direction: "unchanged" },
+    { kind: "off_tone",      champion: 6,  challenger: 4,  direction: "improved"  },
+    { kind: "refusal",       champion: 1,  challenger: 2,  direction: "worsened"  },
+    { kind: "latency_spike", champion: 5,  challenger: 4,  direction: "improved"  },
+  ],
+  // per-judge weighted loss (in-run process judges; lower is better)
+  judges: [
+    { judge_name: "clarity_judge",    champion: 0.118, challenger: 0.104 },   // primary driver, Δ -0.014
+    { judge_name: "faithful_judge",   champion: 0.094, challenger: 0.088 },
+    { judge_name: "tone_judge",       champion: 0.071, challenger: 0.066 },
+    { judge_name: "format_judge",     champion: 0.052, challenger: 0.054 },   // slight worsening
+    { judge_name: "safety_judge",     champion: 0.041, challenger: 0.039 },
+  ],
+  // replicate scalars per side (N runs each) -> spread = confidence
+  replicates: {
+    champion:   [0.409, 0.413, 0.412, 0.415, 0.411],
+    challenger: [0.387, 0.391, 0.389, 0.388, 0.390],
+  },
+  holdout: { champion: 0.420, challenger: 0.402, confirmed: true },
+  // structure wrinkle context — the gauntlet duel is a FULL-board gate that can crown.
+  frame: { kind: "champion gate (full board)", note: "the single duel — promotes on the full board" },
+  // the racing equivalent the rule-ladder always names as the contrast case.
+  racing_frame: { kind: "rung cut (partial board)", note: "racing rung — board subset, cuts a contestant, no crown" },
+  // one-line summary verb fragments the read-out + figures reuse.
+  frameVerb: "supersedes (full board, gate can crown)",
+  readoutKicker: "the single duel — FULL board, the champion gate.",
+};
+
+/* Build the per-structure SAMPLES registry. Each non-gauntlet variant is a
+   deepCopy of the canonical sample with ONLY frame labels + a couple of
+   value tweaks changed — proving the figure is unchanged. */
+function withFrame(base, over){ const s = deepCopy(base); s.structure = over.structure; s.frame = over.frame; s.frameVerb = over.frameVerb; s.readoutKicker = over.readoutKicker; if (over.boardsLabel) s.boardsLabel = over.boardsLabel; if (over.tweak) over.tweak(s); return s; }
+
+const SAMPLES = {
+  gauntlet: SAMPLE_GAUNTLET,
+
+  single_elim: withFrame(SAMPLE_GAUNTLET, {
+    structure: "single_elim",
+    frame: { kind: "bracket match (full board)", note: "single-elim node — winner advances, loser is out" },
+    frameVerb: "advances past (bracket match, full board)",
+    readoutKicker: "a single-elim BRACKET MATCH — FULL board, the gate decides who advances.",
+    // bracket framing reads as a node, not a promote-to-champion: rename the win verb context only.
+  }),
+
+  double_elim: withFrame(SAMPLE_GAUNTLET, {
+    structure: "double_elim",
+    frame: { kind: "winners'-bracket match (full board)", note: "double-elim WB — loser drops to the losers' bracket (a life), not out" },
+    frameVerb: "wins the WB match (full board, loser keeps a life)",
+    readoutKicker: "a double-elim WINNERS'-BRACKET match — FULL board; the loser drops to losers' (a life), not out.",
+  }),
+
+  swiss: withFrame(SAMPLE_GAUNTLET, {
+    structure: "swiss",
+    frame: { kind: "Swiss pairing (full board)", note: "swiss round — the win scores a Copeland point; pairings, no elimination" },
+    frameVerb: "takes the Copeland point (Swiss pairing, full board)",
+    readoutKicker: "a SWISS PAIRING — FULL board; the win is one Copeland point, no elimination.",
+  }),
+
+  // RACING is the one structural twist: a board SUBSET and a rung that CUTS (no crown).
+  racing: withFrame(SAMPLE_GAUNTLET, {
+    structure: "racing",
+    frame: { kind: "rung cut (partial board)", note: "racing rung — board SUBSET; the slower contestant is CUT, no crown" },
+    frameVerb: "survives the rung (board subset, cuts the slower side — no crown)",
+    readoutKicker: "a RACING RUNG — PARTIAL board (subset); the rung CUTS the slower side, it does not crown.",
+    boardsLabel: "rung board subset (raced)",
+    // value tweak: a rung resolves on a SUBSET of the boards — drop the last 2
+    // boards from the grid (raced on a subset), and the rung "cuts" rather than promotes.
+    tweak: (s) => {
+      s.decision = "cut";                     // racing resolves a CUT, not a promote
+      s.boards = s.boards.slice(0, 6);        // partial board: subset of 6 of the 8 entries
+      // the surviving (advancing) side keeps the lead; recompute pass-rate delta over the subset
+      s.delta_pass_rate = +0.167;             // +1 flip over the 6-board subset
+      // racing's gate fires the same R1 margin — but the outcome is "advances on the rung".
+    },
+  }),
+};
+
+/* =====================================================================
+   RACING SINGLE-MATCHUP SAMPLE — the ONE structural exception.
+   Racing matchups are NOT head-to-head duels: there is no pairwise gate.
+   Instead the field runs successive-halving rungs on a GROWING board slice
+   and is culled by rank at each rung. So "compare two candidates" here means
+   compare their TWO TRAJECTORIES across the shared rungs — per-rung scalar,
+   which rungs each survived, where each was CUT, and their relative standing
+   rung-by-rung. This data mirrors racing.py's MatchRecord vocabulary
+   (rungs / board_fraction / survivors / cut / exitRung), matching racing.html.
+
+   The two CHOSEN candidates for this matchup:
+     · A = g142 — the deep survivor (alive through every rung; provisional leader)
+     · B = g145 — cut at rung 1 (kept pace at rung 0, slipped behind on the
+                  larger board slice and dropped below the rung-1 cut line)
+   They share rungs 0–1, so the head-to-head segment is real; A then races on
+   alone (rung 2, in-flight). That asymmetry is the whole point — you compare
+   two contestants WITHIN the race, not in an isolated duel.
+   ===================================================================== */
+const RACE_PAIR = {
+  structure: "racing",
+  // the two chosen candidates being compared, plus the benchmark champion.
+  A: { id: "g142", role: "survivor" },
+  B: { id: "g145", role: "cut" },
+  champion: { id: "g117", scalar: 0.412 },     // benchmark lane reference (full-board)
+  // the shared rung ladder — board slice grows each rung (eta=2). Lower scalar better.
+  // cutLine = the rank-cut threshold scalar at that rung (worse than it => cut).
+  rungs: [
+    { rung: 0, label: "Rung 0", board_fraction: 0.25, board_n: 6,  board_total: 24,
+      state: "settled",  field_n: 8, survivors_n: 4, cutLine: 0.360 },
+    { rung: 1, label: "Rung 1", board_fraction: 0.50, board_n: 12, board_total: 24,
+      state: "settled",  field_n: 4, survivors_n: 2, cutLine: 0.345 },
+    { rung: 2, label: "Rung 2", board_fraction: 1.00, board_n: 24, board_total: 24,
+      state: "in-flight",field_n: 2, survivors_n: 1, cutLine: null  },
+  ],
+  // per-candidate per-rung result. scalar=null means "not evaluated (already cut)".
+  // rank = standing within that rung's field (1 = best). survived = made the cut.
+  A_rungs: [
+    { rung: 0, scalar: 0.301, rank: 1, of: 8, survived: true  },
+    { rung: 1, scalar: 0.318, rank: 1, of: 4, survived: true  },
+    { rung: 2, scalar: 0.327, rank: 1, of: 2, survived: true, inflight: true },
+  ],
+  B_rungs: [
+    { rung: 0, scalar: 0.355, rank: 3, of: 8, survived: true  },   // squeaked through (4 survive)
+    { rung: 1, scalar: 0.349, rank: 4, of: 4, survived: false },   // CUT — below the rung-1 line
+    { rung: 2, scalar: null,  rank: null, of: 2, survived: false },// never raced rung 2
+  ],
+  exit: { A: null, B: 1 },                      // B exited at rung 1; A still alive
+  // the eventual full-board champion gate the survivor still has to clear (pending).
+  final: { survivor: "g142", state: "pending", projMargin: +(0.412 - 0.327).toFixed(3) },
+  readoutKicker: "a RACING comparison — two contestants across the successive-halving rungs (no head-to-head duel).",
+};
+
+// the live, mutable pointer every figure reads from. Reassigned by the switcher.
+let SAMPLE = SAMPLES.gauntlet;
+
+/* ---------- small helpers ---------- */
+const mean = a => a.reduce((s,x)=>s+x,0)/a.length;
+const stdev = a => { const m = mean(a); return Math.sqrt(mean(a.map(x=>(x-m)**2))); };
+const fmt = (x,d=3) => (x>=0?"+":"")+x.toFixed(d);
+const cssvar = v => `var(${v})`;
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+/* shared color roles */
+const C_INK="var(--ink)", C_SOFT="var(--ink-soft)", C_FAINT="var(--ink-faint)";
+const C_GOOD="var(--good)", C_BAD="var(--bad)", C_CAU="var(--caution)", C_ACC="var(--accent)";
+const C_RULE="var(--rule)", C_RULESOFT="var(--rule-soft)", C_PANEL2="var(--panel-2)";
+
+function verdictColor(v){
+  if (v==="improved"||v==="flipped") return C_GOOD;
+  if (v==="regressed") return C_BAD;
+  if (v==="tied") return C_FAINT;
+  return C_SOFT;
+}
+function dirColor(d){
+  if (d==="improved") return C_GOOD;
+  if (d==="worsened") return C_BAD;
+  return C_FAINT;
+}
+
+/* ---------- sample read-out (re-callable; reads the live SAMPLE) ---------- */
+function renderSampleReadout(){
+  const s = SAMPLE;
+  // RACING is the structural exception: no head-to-head duel, no gate between the
+  // two candidates — so the read-out describes the two-candidate RACE COMPARISON.
+  if (s.structure === "racing"){
+    const A=RACE_PAIR.A.id, B=RACE_PAIR.B.id, rp=RACE_PAIR;
+    const a0=rp.A_rungs[0].scalar, b0=rp.B_rungs[0].scalar;
+    document.getElementById('sample-readout').innerHTML =
+      `THE RACING MATCHUP — <b>${esc(rp.readoutKicker)}</b>
+       Comparing <b>${A}</b> (survivor) and <b>${B}</b> (cut) across the successive-halving rungs against benchmark
+       champion <b>${rp.champion.id}</b>. They start close on the 25% slice (${a0.toFixed(3)} vs ${b0.toFixed(3)});
+       on the 50% slice <b>${B}</b> slips below the rung-1 <b>cut line</b> and is
+       <span style="color:var(--bad)">CUT at rung ${rp.exit.B}</span>, while <b>${A}</b> holds rank&nbsp;1 and races on
+       (rung 2 <span style="color:var(--caution)">in-flight</span>). A rung <b>CUTS</b> — it does not crown; the survivor
+       still owes the <b>full-board champion gate</b> (pending, projected margin +${rp.final.projMargin}).
+       <div class="chips">
+         <span class="chip cau">racing — NO head-to-head duel</span>
+         <span class="chip acc">compare: ${A} vs ${B} across rungs</span>
+         <span class="chip good">${A}: survives → gate (pending)</span>
+         <span class="chip bad">${B}: ✕ cut at rung ${rp.exit.B}</span>
+         <span class="chip cau">rung CUTS · no crown</span>
+         <span class="chip acc">board slice 25% → 50% → 100%</span>
+       </div>`;
+    return;
+  }
+  const cSig = stdev(s.replicates.champion), chSig = stdev(s.replicates.challenger);
+  const racing = s.structure === "racing";
+  const nBoards = s.boards.length;
+  const nWon = s.boards.filter(b=>b.won_by==="challenger").length;
+  const reg = s.boards.find(b=>b.verdict==="regressed");
+  const decisionWord = racing ? "ADVANCES (rung cut)" : "PROMOTED";
+  const decisionChip = racing ? "decision: rung — advances (cut)" : "decision: promoted";
+  const boardScope = racing ? `<b>${nBoards}-board SUBSET</b> (partial — raced)` : `<b>${nBoards} boards</b> (full)`;
+  document.getElementById('sample-readout').innerHTML =
+    `THE SHARED SAMPLE — a <b>CLOSE WIN</b> read as <b>${esc(s.readoutKicker)}</b>
+     Champion <b>${s.champion}</b> vs challenger <b>${s.challenger}</b>:
+     challenger <span class="promote">${decisionWord}</span> on <b>${nWon}/${nBoards}</b> boards of the ${boardScope}
+     ${reg?`(1 contained regression at <code>${esc(reg.entry_id)}</code>)`:''}. Deciding rule: <b>R1 scalar margin</b> — loss fell
+     <b>${(-s.delta_scalar).toFixed(3)}</b> ≥ margin <code>${PROMOTE_MARGIN}</code>
+     (${s.scalar.champion} &rarr; ${s.scalar.challenger}). Primary driver:
+     <b>${s.primary_driver.judge}</b> (Δ ${fmt(s.primary_driver.delta)}). Replicate σ tight
+     (champ ${cSig.toFixed(4)} · chall ${chSig.toFixed(4)}); holdout <b>confirmed</b> (Δ −0.018).
+     <div class="chips">
+       <span class="chip good">${decisionChip}</span>
+       <span class="chip acc">decided by: R1 scalar margin</span>
+       <span class="chip good">Δscalar ${fmt(s.delta_scalar)}</span>
+       <span class="chip good">Δpass-rate ${fmt(s.delta_pass_rate,3)}</span>
+       <span class="chip ${racing?'cau':'acc'}">frame: ${esc(s.frame.kind)}</span>
+       ${reg?`<span class="chip bad">1 contained regression</span>`:''}
+       <span class="chip good">holdout ✓ confirmed</span>
+     </div>`;
+}
+
+/* =====================================================================
+   GEOMETRY HELPERS — every figure is a viewBox SVG drawn at width:100%.
+   Non-scaling strokes keep line-art crisp at any rendered width.
+   ===================================================================== */
+const NSS = 'vector-effect="non-scaling-stroke"';
+function svgOpen(w,h){ return `<svg class="fig" viewBox="0 0 ${w} ${h}" role="img">`; }
+
+/* The structure-frame caption every figure carries so the SAME figure visibly
+   re-labels itself when the sample structure flips (and so a single bare-mode
+   figure still shows the active structure's vocabulary). Drawn top-left at the
+   given anchor; structure-agnostic geometry, structure-dependent text only. */
+function frameTag(s, x, y){
+  const racing = s.structure === "racing";
+  return `<text x="${x}" y="${y}" fill="${racing?C_CAU:C_ACC}" font-size="9.5" font-weight="700">`
+       + `frame: ${esc(s.frame.kind)}</text>`;
+}
+
+/* =====================================================================
+   RACING SINGLE-MATCHUP — THE STRUCTURAL EXCEPTION.
+   Racing has NO pairwise duel: there is no gate between the two candidates.
+   So when ?sample=racing the single-matchup figure switches to a
+   RACE-COMPARISON treatment — two chosen candidates compared side-by-side
+   ACROSS the successive-halving rungs (per-rung scalar, who survived each
+   rung, where each was cut, relative standing rung-by-rung). The six option
+   slots map onto six racing-appropriate lenses (the head-to-head intent of
+   each, re-expressed for a race). All read RACE_PAIR; all theme-adaptive.
+   ===================================================================== */
+const isRacing = () => SAMPLE && SAMPLE.structure === "racing";
+
+/* racing geometry: a shared scalar domain across both candidates' rungs + the
+   champion benchmark, lower-is-better → left. */
+function raceDomain(){
+  const vals = [RACE_PAIR.champion.scalar];
+  RACE_PAIR.A_rungs.forEach(r=>{ if (r.scalar!=null) vals.push(r.scalar); });
+  RACE_PAIR.B_rungs.forEach(r=>{ if (r.scalar!=null) vals.push(r.scalar); });
+  RACE_PAIR.rungs.forEach(r=>{ if (r.cutLine!=null) vals.push(r.cutLine); });
+  return { lo: Math.min(...vals)-0.018, hi: Math.max(...vals)+0.018 };
+}
+// per-candidate display identity. A = the deep survivor (accent), B = the cut one (faint→bad).
+function raceCandColor(side, cut){ return side==='A' ? C_ACC : (cut ? C_BAD : C_SOFT); }
+function raceMarker(g, cx, cy, r, side, survived, inflight){
+  const col = side==='A' ? C_ACC : (survived ? C_SOFT : C_BAD);
+  if (inflight) return g + `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col}" stroke-width="2" stroke-dasharray="2.5 2.5" ${NSS}/>`;
+  if (survived) return g + `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${col}" ${NSS}/>`;
+  // a CUT marker: hollow ring with an ✕ through it
+  let s = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${C_BAD}" stroke-width="2" ${NSS}/>`;
+  const d=r*0.62;
+  s += `<line x1="${cx-d}" y1="${cy-d}" x2="${cx+d}" y2="${cy+d}" stroke="${C_BAD}" stroke-width="1.6" ${NSS}/>`;
+  s += `<line x1="${cx-d}" y1="${cy+d}" x2="${cx+d}" y2="${cy-d}" stroke="${C_BAD}" stroke-width="1.6" ${NSS}/>`;
+  return g + s;
+}
+function raceFrameTag(g, x, y){
+  return g + `<text x="${x}" y="${y}" fill="${C_CAU}" font-size="9.5" font-weight="700">`
+       + `frame: racing — successive-halving rungs (no head-to-head duel)</text>`;
+}
+// right-aligned legend block: `rightX` is the right edge; the ~300px block is
+// laid out ending at rightX so it never overflows the viewBox.
+function raceLegend(g, rightX, y){
+  const A=RACE_PAIR.A.id, B=RACE_PAIR.B.id;
+  const x = rightX - 300;
+  g += `<circle cx="${x}" cy="${y-3}" r="4.5" fill="${C_ACC}"/><text x="${x+10}" y="${y}" fill="${C_FAINT}" font-size="9.5">${esc(A)} · survivor</text>`;
+  g += `<circle cx="${x+118}" cy="${y-3}" r="4.5" fill="none" stroke="${C_BAD}" stroke-width="2"/><text x="${x+128}" y="${y}" fill="${C_FAINT}" font-size="9.5">${esc(B)} · cut</text>`;
+  g += `<circle cx="${x+212}" cy="${y-3}" r="4.5" fill="none" stroke="${C_FAINT}" stroke-width="2" stroke-dasharray="2 2"/><text x="${x+222}" y="${y}" fill="${C_FAINT}" font-size="9.5">in-flight</text>`;
+  return g;
+}
+
+/* ---- RACING LENS 1: dual-lane scalar trajectory across the rungs ----
+   The core comparison. One horizontal scalar axis; each candidate is a path
+   of per-rung markers connected across the growing board slices. Where B is
+   cut, its path stops with an ✕; A races on alone (in-flight ring). The
+   champion benchmark is a reference tick. Reads: "both started close, B fell
+   behind on the bigger slice and was cut, A pulled ahead and is still in." */
+function raceTrajectory(){
+  const W=920, padL=92, padR=120, top=58, rowH=78, padB=52;
+  const rungs = RACE_PAIR.rungs;
+  const H = top + rungs.length*rowH + padB;
+  const dom = raceDomain();
+  const x = v => padL + (v-dom.lo)/(dom.hi-dom.lo)*(W-padL-padR);
+  let g = svgOpen(W,H);
+  g = raceFrameTag(g, 8, 14);
+  g += `<text x="${padL}" y="34" fill="${C_INK}" font-size="13" font-weight="700">Two candidates across the rungs — scalar trajectory (lower = better →)</text>`;
+  g = raceLegend(g, W-padR-2, 30);
+  // champion benchmark reference line
+  const cx = x(RACE_PAIR.champion.scalar);
+  g += `<line x1="${cx}" y1="${top-8}" x2="${cx}" y2="${H-padB+6}" stroke="${C_FAINT}" stroke-dasharray="3 4" ${NSS}/>`;
+  g += `<text x="${cx}" y="${H-padB+20}" fill="${C_FAINT}" font-size="9.5" text-anchor="middle">champion ${esc(RACE_PAIR.champion.id)} ${RACE_PAIR.champion.scalar}</text>`;
+  // collect per-side node positions to draw the connecting path
+  const lanes = { A: [], B: [] };
+  rungs.forEach((r,i)=>{
+    const cy = top + i*rowH + rowH/2;
+    // rung label + board-slice chip on the left
+    g += `<text x="${padL-12}" y="${cy-4}" fill="${C_SOFT}" font-size="11" text-anchor="end">${esc(r.label)}</text>`;
+    g += `<text x="${padL-12}" y="${cy+10}" fill="${C_FAINT}" font-size="9" text-anchor="end">board ${Math.round(r.board_fraction*100)}% (${r.board_n}/${r.board_total})</text>`;
+    // lane baseline
+    g += `<line x1="${padL}" y1="${cy}" x2="${W-padR}" y2="${cy}" stroke="${C_RULESOFT}" ${NSS}/>`;
+    // cut-line threshold tick (where it exists)
+    if (r.cutLine!=null){ const xc=x(r.cutLine);
+      g += `<line x1="${xc}" y1="${cy-22}" x2="${xc}" y2="${cy+22}" stroke="${C_BAD}" stroke-width="1.4" stroke-dasharray="2 3" ${NSS}/>`;
+      g += `<text x="${xc}" y="${cy-26}" fill="${C_BAD}" font-size="8.5" text-anchor="middle">cut line</text>`;
+    } else {
+      g += `<text x="${W-padR-2}" y="${cy-26}" fill="${C_CAU}" font-size="9" text-anchor="end">in-flight — survivor races on alone</text>`;
+    }
+    [['A',RACE_PAIR.A_rungs[i]],['B',RACE_PAIR.B_rungs[i]]].forEach(([side,rr])=>{
+      if (rr.scalar==null) return;
+      const X=x(rr.scalar);
+      lanes[side].push({x:X,y:cy});
+      g = raceMarker(g, X, cy, 6, side, rr.survived, rr.inflight);
+      const col = side==='A' ? C_ACC : (rr.survived ? C_SOFT : C_BAD);
+      const dy = side==='A' ? -12 : 16;
+      g += `<text x="${X}" y="${cy+dy}" fill="${col}" font-size="9.5" text-anchor="middle">${rr.scalar.toFixed(3)} · #${rr.rank}/${rr.of}</text>`;
+    });
+  });
+  // connect each lane's nodes (the trajectory)
+  ['A','B'].forEach(side=>{
+    const pts = lanes[side];
+    const col = side==='A' ? C_ACC : C_SOFT;
+    for (let i=0;i<pts.length-1;i++)
+      g += `<line x1="${pts[i].x}" y1="${pts[i].y}" x2="${pts[i+1].x}" y2="${pts[i+1].y}" stroke="${col}" stroke-width="${side==='A'?2.5:1.8}" ${side==='B'?'stroke-dasharray="5 3"':''} ${NSS}/>`;
+  });
+  // B's exit annotation
+  const bExit = lanes.B[lanes.B.length-1];
+  if (RACE_PAIR.exit.B!=null && bExit)
+    g += `<text x="${bExit.x+12}" y="${bExit.y+4}" fill="${C_BAD}" font-size="9.5">✕ ${esc(RACE_PAIR.B.id)} CUT at rung ${RACE_PAIR.exit.B}</text>`;
+  return g + `</svg>`;
+}
+
+/* ---- RACING LENS 2: per-rung gap (A − B) on the SHARED rungs only ----
+   The diverging-bar analogue. On the rungs both raced, how far apart were the
+   two? A bar per shared rung, anchored at Δ=0; left = A ahead (better/lower
+   loss), and the rung where B was cut is flagged. After the cut there is no
+   pairing, shown as a "no longer paired" marker. */
+function raceGap(){
+  const W=920, padL=150, padR=170, rowH=46, top=58, padB=30;
+  // only the rungs where BOTH have a scalar are truly paired
+  const shared = RACE_PAIR.rungs.map((r,i)=>({
+    r, a:RACE_PAIR.A_rungs[i], b:RACE_PAIR.B_rungs[i]
+  }));
+  const H = top + shared.length*rowH + padB;
+  const pairedDeltas = shared.filter(o=>o.a.scalar!=null&&o.b.scalar!=null).map(o=>o.a.scalar-o.b.scalar);
+  const maxAbs = Math.max(0.04, ...pairedDeltas.map(Math.abs))*1.2;
+  const mid = padL + (W-padL-padR)/2, half=(W-padL-padR)/2;
+  const x = d => mid + (d/maxAbs)*half;
+  let g = svgOpen(W,H);
+  g = raceFrameTag(g, 8, 14);
+  g += `<text x="${padL}" y="34" fill="${C_INK}" font-size="13" font-weight="700">Per-rung gap A−B on the rungs both raced</text>`;
+  g += `<text x="${mid-half}" y="${top-8}" fill="${C_ACC}" font-size="10">← ${esc(RACE_PAIR.A.id)} ahead (lower loss)</text>`;
+  g += `<text x="${mid+half}" y="${top-8}" fill="${C_BAD}" font-size="10" text-anchor="end">${esc(RACE_PAIR.B.id)} ahead →</text>`;
+  g += `<line x1="${mid}" y1="${top-2}" x2="${mid}" y2="${H-padB}" stroke="${C_INK}" stroke-width="1.5" ${NSS}/>`;
+  g += `<text x="${mid}" y="${H-padB+14}" fill="${C_FAINT}" font-size="10" text-anchor="middle">Δ = 0 (tied)</text>`;
+  shared.forEach((o,i)=>{
+    const cy = top + i*rowH + rowH/2;
+    g += `<text x="${padL-12}" y="${cy-2}" fill="${C_SOFT}" font-size="11" text-anchor="end">${esc(o.r.label)}</text>`;
+    g += `<text x="${padL-12}" y="${cy+12}" fill="${C_FAINT}" font-size="8.5" text-anchor="end">board ${Math.round(o.r.board_fraction*100)}%</text>`;
+    if (o.a.scalar!=null && o.b.scalar!=null){
+      const d = o.a.scalar - o.b.scalar;          // negative => A lower => A ahead
+      const col = d<0 ? C_ACC : C_BAD;
+      const x0=mid, x1=x(d), bx=Math.min(x0,x1), bw=Math.max(2,Math.abs(x1-x0));
+      g += `<rect x="${bx}" y="${cy-9}" width="${bw}" height="18" rx="2" fill="${col}" opacity="0.85"/>`;
+      const lblX = d<0?x1-6:x1+6, anc=d<0?'end':'start';
+      g += `<text x="${lblX}" y="${cy+4}" fill="${col}" font-size="10" text-anchor="${anc}">${fmt(d,3)}</text>`;
+      // flag the rung where B got cut
+      if (!o.b.survived)
+        g += `<text x="${W-padR+10}" y="${cy+4}" fill="${C_BAD}" font-size="9.5">✕ ${esc(RACE_PAIR.B.id)} cut here</text>`;
+      else
+        g += `<text x="${W-padR+10}" y="${cy+4}" fill="${C_FAINT}" font-size="9.5">both survive</text>`;
+    } else {
+      // no longer paired — B already gone
+      g += `<text x="${mid+8}" y="${cy+4}" fill="${C_FAINT}" font-size="10">— no pairing (${esc(RACE_PAIR.B.id)} already cut; ${esc(RACE_PAIR.A.id)} races on)</text>`;
+    }
+  });
+  return g + `</svg>`;
+}
+
+/* ---- RACING LENS 3: survival ladder — who survived each rung, where cut ----
+   The rule-ladder analogue. The rungs as stacked rows; each shows the board
+   slice + cut threshold, and TWO status cells (A and B): survived ●, cut ✕,
+   in-flight ◌. The decisive moment (B's cut at rung 1) is framed. The bottom
+   bar names the outcome: A continues to the full-board champion gate (pending),
+   B eliminated at rung 1. NO crown is awarded by a rung. */
+function raceSurvivalLadder(){
+  const W=920, top=22, rungH=72, padL=30, padR=30;
+  const rungs = RACE_PAIR.rungs;
+  const H = top + rungs.length*rungH + 96;
+  let g = svgOpen(W,H);
+  const cutIdx = RACE_PAIR.exit.B;     // the deciding rung
+  rungs.forEach((r,i)=>{
+    const y = top + i*rungH;
+    const a = RACE_PAIR.A_rungs[i], b = RACE_PAIR.B_rungs[i];
+    const decided = i===cutIdx;
+    const frame = decided ? C_BAD : C_RULE;
+    g += `<rect x="${padL}" y="${y}" width="${W-padL-padR}" height="${rungH-16}" rx="8"
+      fill="${decided?cssvar('--panel-2'):'transparent'}" stroke="${frame}" stroke-width="${decided?2:1}" ${NSS}/>`;
+    // left column: rung id + board slice (two stacked lines, kept inside ~300px)
+    g += `<text x="${padL+18}" y="${y+24}" fill="${C_INK}" font-size="13" font-weight="${decided?700:600}">${esc(r.label)} · board ${Math.round(r.board_fraction*100)}%</text>`;
+    g += `<text x="${padL+18}" y="${y+42}" fill="${C_FAINT}" font-size="10">${r.board_n}/${r.board_total} entries · field ${r.field_n}→${r.survivors_n}${r.cutLine!=null?` · cut line ${r.cutLine}`:' · in-flight'}</text>`;
+    // column divider between the left meta and the two candidate cells
+    g += `<line x1="${padL+300}" y1="${y+10}" x2="${padL+300}" y2="${y+rungH-26}" stroke="${C_RULESOFT}" ${NSS}/>`;
+    // two candidate cells (clear of the left meta column)
+    [['A',a,RACE_PAIR.A.id,padL+330],['B',b,RACE_PAIR.B.id,padL+560]].forEach(([side,rr,id,cellX])=>{
+      const col = rr.scalar==null ? C_FAINT : (side==='A'?C_ACC:(rr.survived?C_SOFT:C_BAD));
+      const cy = y+(rungH-16)/2;
+      g = raceMarker(g, cellX, cy, 7, side, rr.survived, rr.inflight);
+      g += `<text x="${cellX+16}" y="${cy-3}" fill="${col}" font-size="12" font-weight="${side==='A'?700:600}">${esc(id)}</text>`;
+      let st;
+      if (rr.scalar==null) st = "— already cut";
+      else if (rr.inflight) st = `in-flight · ${rr.scalar.toFixed(3)} · #${rr.rank}/${rr.of}`;
+      else if (rr.survived) st = `survived · ${rr.scalar.toFixed(3)} · #${rr.rank}/${rr.of}`;
+      else st = `CUT · ${rr.scalar.toFixed(3)} · #${rr.rank}/${rr.of}`;
+      g += `<text x="${cellX+16}" y="${cy+13}" fill="${col}" font-size="10">${esc(st)}</text>`;
+    });
+    if (decided) g += `<text x="${W-padR-14}" y="${y+18}" fill="${C_BAD}" font-size="10.5" font-weight="700" text-anchor="end">◀ ${esc(RACE_PAIR.B.id)} CUT</text>`;
+    if (i<rungs.length-1){ const cy0=y+rungH-16;
+      g += `<line x1="${padL+34}" y1="${cy0}" x2="${padL+34}" y2="${cy0+16}" stroke="${C_RULE}" stroke-dasharray="3 3" ${NSS}/>`;
+      g += `<text x="${padL+44}" y="${cy0+12}" fill="${C_FAINT}" font-size="9">↓ survivors re-race on a larger board slice</text>`;
+    }
+  });
+  const oy = top + rungs.length*rungH + 6;
+  g += `<rect x="${padL}" y="${oy}" width="${W-padL-padR}" height="60" rx="8" fill="${cssvar('--panel-2')}" stroke="${C_CAU}" stroke-width="2" ${NSS}/>`;
+  g += `<text x="${padL+18}" y="${oy+22}" fill="${C_CAU}" font-size="13" font-weight="700">OUTCOME — ${esc(RACE_PAIR.A.id)} survives, ${esc(RACE_PAIR.B.id)} cut at rung ${RACE_PAIR.exit.B}. A rung CUTS; it does not crown.</text>`;
+  g += `<text x="${padL+18}" y="${oy+40}" fill="${C_SOFT}" font-size="10.5">${esc(RACE_PAIR.A.id)} advances to the full-board champion gate (pending) — projected margin vs ${esc(RACE_PAIR.champion.id)}: +${RACE_PAIR.final.projMargin}.</text>`;
+  g += `<text x="${padL+18}" y="${oy+54}" fill="${C_FAINT}" font-size="10">gauntlet equivalent would run the FULL board once and the gate could crown; racing resolves a CUT on a board subset.</text>`;
+  return g + `</svg>`;
+}
+
+/* ---- RACING LENS 4: survivor vs full-board champion gate (bullet) ----
+   The bullet analogue, but for the racing-specific endgame the two candidates
+   point at: the survivor still has to clear the FULL-board champion gate. Shows
+   the survivor's current scalar against the champion benchmark band, with the
+   cut candidate marked where it dropped out (it never reached this gate). */
+function raceBullet(){
+  const W=920, top=70, padL=60, padR=60, barY=96, barH=40, H=240;
+  const dom = raceDomain();
+  const x = v => padL + (v-dom.lo)/(dom.hi-dom.lo)*(W-padL-padR);
+  let g = svgOpen(W,H);
+  g = raceFrameTag(g, padL, 18);
+  g += `<text x="${padL}" y="38" fill="${C_INK}" font-size="13" font-weight="700">Survivor ${esc(RACE_PAIR.A.id)} vs the full-board champion gate (pending)</text>`;
+  g += `<text x="${padL}" y="56" fill="${C_FAINT}" font-size="10.5">racing has no head-to-head; the surviving candidate must still beat champion ${esc(RACE_PAIR.champion.id)} on the FULL board to be crowned — ${esc(RACE_PAIR.B.id)} never reached this gate (cut at rung ${RACE_PAIR.exit.B})</text>`;
+  const xCh = x(RACE_PAIR.champion.scalar);
+  // beat zone (left of champion benchmark = lower loss = would win the gate)
+  g += `<rect x="${x(dom.lo)}" y="${barY-12}" width="${xCh-x(dom.lo)}" height="${barH+24}" fill="${cssvar('--good-soft')}" opacity="0.6"/>`;
+  g += `<rect x="${xCh}" y="${barY-12}" width="${x(dom.hi)-xCh}" height="${barH+24}" fill="${cssvar('--panel-2')}"/>`;
+  g += `<text x="${(x(dom.lo)+xCh)/2}" y="${barY-18}" fill="${C_GOOD}" font-size="10" text-anchor="middle">would CROWN (beats benchmark)</text>`;
+  g += `<text x="${(xCh+x(dom.hi))/2}" y="${barY-18}" fill="${C_FAINT}" font-size="10" text-anchor="middle">would lose the gate</text>`;
+  // benchmark tick
+  g += `<line x1="${xCh}" y1="${barY-12}" x2="${xCh}" y2="${barY+barH+12}" stroke="${C_ACC}" stroke-width="2.5" ${NSS}/>`;
+  g += `<text x="${xCh}" y="${barY+barH+30}" fill="${C_ACC}" font-size="9.5" text-anchor="middle">champion ${RACE_PAIR.champion.scalar}</text>`;
+  // survivor measure bar (its rung-2 in-flight scalar)
+  const aS = RACE_PAIR.A_rungs[RACE_PAIR.A_rungs.length-1].scalar;
+  const xA = x(aS);
+  g += `<rect x="${xA}" y="${barY+barH/2-7}" width="${Math.max(2,xCh-xA)}" height="14" rx="2" fill="${C_GOOD}" opacity="0.9"/>`;
+  g = raceMarker(g, xA, barY+barH/2, 7, 'A', true, true);
+  g += `<text x="${xA}" y="${barY-2}" fill="${C_ACC}" font-size="10.5" font-weight="700" text-anchor="middle">${esc(RACE_PAIR.A.id)} ${aS.toFixed(3)} (in-flight)</text>`;
+  // the cut candidate's exit scalar, marked far right / where it fell
+  const bExit = RACE_PAIR.B_rungs.filter(r=>r.scalar!=null).slice(-1)[0];
+  const xB = x(bExit.scalar);
+  g = raceMarker(g, xB, barY+barH/2, 6, 'B', false, false);
+  g += `<text x="${xB}" y="${barY+barH+12}" fill="${C_BAD}" font-size="9.5" text-anchor="middle">${esc(RACE_PAIR.B.id)} ✕ rung ${RACE_PAIR.exit.B}</text>`;
+  g += `<text x="${padL}" y="${H-16}" fill="${C_GOOD}" font-size="11">projected gate margin +${RACE_PAIR.final.projMargin} — ${esc(RACE_PAIR.A.id)} sits inside the crown zone, but the gate is PENDING (full board not yet run).</text>`;
+  return g + `</svg>`;
+}
+
+/* ---- RACING LENS 5: relative standing rung-by-rung (rank lanes) ----
+   The replicate-box analogue, re-aimed at racing's real question: how did the
+   two candidates RANK against the field at each rung, and where did B fall
+   below the cut. Two rank lanes (rank 1 at top); the field size shrinks each
+   rung, so the lanes redraw their scale. B's marker crosses below the cut row
+   at rung 1. Shows relative standing, not just absolute scalar. */
+function raceStanding(){
+  const W=920, padL=70, padR=60, top=64, colW=(920-70-60)/3, H=320;
+  const rungs = RACE_PAIR.rungs;
+  let g = svgOpen(W,H);
+  g = raceFrameTag(g, 8, 16);
+  g += `<text x="${padL}" y="38" fill="${C_INK}" font-size="13" font-weight="700">Relative standing rung-by-rung — rank within the shrinking field</text>`;
+  g = raceLegend(g, W-padR-2, 16);
+  const laneTop = top+24, laneBot = H-46;
+  rungs.forEach((r,i)=>{
+    const cx0 = padL + i*colW, cxc = cx0 + colW/2;
+    // column header
+    g += `<text x="${cxc}" y="${laneTop-6}" fill="${C_SOFT}" font-size="11" text-anchor="middle">${esc(r.label)} · board ${Math.round(r.board_fraction*100)}%</text>`;
+    g += `<text x="${cxc}" y="${laneBot+18}" fill="${C_FAINT}" font-size="9" text-anchor="middle">field ${r.field_n} → ${r.survivors_n} survive</text>`;
+    // rank positions: rank 1 (top) .. field_n (bottom)
+    const ry = rank => laneTop + (rank-0.5)/r.field_n*(laneBot-laneTop);
+    // cut boundary: ranks beyond survivors_n are cut
+    const cutY = laneTop + (r.survivors_n)/r.field_n*(laneBot-laneTop);
+    g += `<rect x="${cx0+10}" y="${cutY}" width="${colW-20}" height="${laneBot-cutY}" fill="${cssvar('--bad')}" opacity="0.07"/>`;
+    g += `<line x1="${cx0+10}" y1="${cutY}" x2="${cx0+colW-10}" y2="${cutY}" stroke="${C_BAD}" stroke-dasharray="3 3" ${NSS}/>`;
+    if (r.cutLine!=null) g += `<text x="${cx0+colW-12}" y="${cutY-4}" fill="${C_BAD}" font-size="8.5" text-anchor="end">cut line</text>`;
+    else g += `<text x="${cxc}" y="${cutY-4}" fill="${C_CAU}" font-size="8.5" text-anchor="middle">in-flight (no cut yet)</text>`;
+    // column divider
+    if (i>0) g += `<line x1="${cx0}" y1="${laneTop-2}" x2="${cx0}" y2="${laneBot+2}" stroke="${C_RULESOFT}" ${NSS}/>`;
+    // place A and B markers
+    [['A',RACE_PAIR.A_rungs[i]],['B',RACE_PAIR.B_rungs[i]]].forEach(([side,rr])=>{
+      if (rr.rank==null) {
+        if (side==='B') g += `<text x="${cxc}" y="${laneBot-6}" fill="${C_FAINT}" font-size="9" text-anchor="middle">${esc(RACE_PAIR.B.id)} gone</text>`;
+        return;
+      }
+      const mx = side==='A'? cxc-18 : cxc+18, my = ry(rr.rank);
+      g = raceMarker(g, mx, my, 6, side, rr.survived, rr.inflight);
+      const col = side==='A'?C_ACC:(rr.survived?C_SOFT:C_BAD);
+      g += `<text x="${mx}" y="${my+(side==='A'?-11:18)}" fill="${col}" font-size="9" text-anchor="middle">#${rr.rank}</text>`;
+    });
+  });
+  // connect A's rank path & B's rank path across columns
+  ['A','B'].forEach(side=>{
+    const arr = (side==='A'?RACE_PAIR.A_rungs:RACE_PAIR.B_rungs);
+    const col = side==='A'?C_ACC:C_SOFT;
+    let prev=null;
+    arr.forEach((rr,i)=>{
+      if (rr.rank==null){ prev=null; return; }
+      const cxc = padL + i*colW + colW/2;
+      const ry = laneTop + (rr.rank-0.5)/rungs[i].field_n*(laneBot-laneTop);
+      const mx = side==='A'? cxc-18 : cxc+18;
+      if (prev) g += `<line x1="${prev.x}" y1="${prev.y}" x2="${mx}" y2="${ry}" stroke="${col}" stroke-width="${side==='A'?2.2:1.6}" ${side==='B'?'stroke-dasharray="5 3"':''} ${NSS}/>`;
+      prev = {x:mx,y:ry};
+    });
+  });
+  return g + `</svg>`;
+}
+
+/* ---- RACING LENS 6: scalar-sharpening slope across board slices ----
+   The slope-chart analogue. As the board slice grows (more evidence), each
+   candidate's scalar SHARPENS. Plot each candidate's scalar at rung0 → rung1
+   → (rung2) as connected nodes on a vertical loss scale, so you see whether a
+   candidate held up or drifted as the evidence weight grew — and the exact rung
+   where B drifted past the cut while A held its lead. */
+function raceSharpen(){
+  const W=920, top=64, padB=58, padL=140, padR=160, H=340;
+  const rungs = RACE_PAIR.rungs;
+  const xs = rungs.map((r,i)=> padL + (rungs.length>1? i/(rungs.length-1):0)*(W-padL-padR));
+  const dom = raceDomain();
+  // VERTICAL LOSS AXIS — "better = up". Loss is a LOSS (lower is better), so we
+  // map the BEST (lowest) loss to the TOP and the WORST (highest) loss to the
+  // BOTTOM: the upward direction unambiguously means "better". The axis below
+  // is labelled explicitly (better ↑ · low loss / worse · high loss) + a shaded
+  // "better" zone so a small loss number sitting high up is expected, not a
+  // surprise. Matches racing.html / cross-epoch's "better ↑" framing.
+  const yTop = top+22, yBot = H-padB;
+  const y = v => yTop + (v-dom.lo)/(dom.hi-dom.lo)*(yBot-yTop);  // lower loss → higher on screen (better = up)
+  let g = svgOpen(W,H);
+  g = raceFrameTag(g, 8, 16);
+  g += `<text x="${padL}" y="36" fill="${C_INK}" font-size="13" font-weight="700">Scalar sharpening as the board slice grows — does each candidate hold up?</text>`;
+  g = raceLegend(g, W-padR-2, 52);
+  // shaded "better" zone (upper third) — makes "up = better" read at a glance
+  const betterBand = yTop + (yBot-yTop)*0.34;
+  g += `<rect x="${padL-30}" y="${yTop}" width="${(W-padR)-(padL-30)}" height="${betterBand-yTop}" fill="${cssvar('--good-soft')}" opacity="0.45"/>`;
+  // vertical loss axis + explicit endpoint cues
+  g += `<line x1="${padL-30}" y1="${yTop}" x2="${padL-30}" y2="${yBot}" stroke="${C_RULE}" ${NSS}/>`;
+  g += `<text x="${padL-26}" y="${yTop-6}" fill="${C_GOOD}" font-size="9.5" font-weight="700">better ↑ · low loss</text>`;
+  // "worse · high loss" rotated up the lower axis (clears the rung labels below)
+  g += `<text x="${padL-40}" y="${yBot}" fill="${C_FAINT}" font-size="9" text-anchor="start" transform="rotate(-90 ${padL-40} ${yBot})">worse · high loss</text>`;
+  // rung axis (x) labels + verticals
+  rungs.forEach((r,i)=>{
+    g += `<line x1="${xs[i]}" y1="${yTop}" x2="${xs[i]}" y2="${yBot}" stroke="${C_RULESOFT}" stroke-dasharray="2 4" ${NSS}/>`;
+    g += `<text x="${xs[i]}" y="${H-padB+18}" fill="${C_SOFT}" font-size="10.5" text-anchor="middle">${esc(r.label)}</text>`;
+    g += `<text x="${xs[i]}" y="${H-padB+32}" fill="${C_FAINT}" font-size="9" text-anchor="middle">board ${Math.round(r.board_fraction*100)}%</text>`;
+    if (r.cutLine!=null){ const yc=y(r.cutLine);
+      g += `<line x1="${xs[i]-26}" y1="${yc}" x2="${xs[i]+26}" y2="${yc}" stroke="${C_BAD}" stroke-width="1.4" stroke-dasharray="2 3" ${NSS}/>`;
+    }
+  });
+  // champion benchmark horizontal
+  const yCh = y(RACE_PAIR.champion.scalar);
+  g += `<line x1="${padL}" y1="${yCh}" x2="${W-padR}" y2="${yCh}" stroke="${C_FAINT}" stroke-dasharray="3 4" ${NSS}/>`;
+  g += `<text x="${W-padR+6}" y="${yCh+4}" fill="${C_FAINT}" font-size="9.5">champ ${RACE_PAIR.champion.scalar}</text>`;
+  // each candidate's path
+  [['A',RACE_PAIR.A_rungs],['B',RACE_PAIR.B_rungs]].forEach(([side,arr])=>{
+    const col = side==='A'?C_ACC:C_SOFT;
+    let prev=null;
+    arr.forEach((rr,i)=>{
+      if (rr.scalar==null) return;
+      const px=xs[i], py=y(rr.scalar);
+      if (prev) g += `<line x1="${prev.x}" y1="${prev.y}" x2="${px}" y2="${py}" stroke="${col}" stroke-width="${side==='A'?2.6:1.8}" ${side==='B'?'stroke-dasharray="5 3"':''} ${NSS}/>`;
+      g = raceMarker(g, px, py, 6, side, rr.survived, rr.inflight);
+      const lblCol = side==='A'?C_ACC:(rr.survived?C_SOFT:C_BAD);
+      g += `<text x="${px}" y="${py+(side==='A'?-12:18)}" fill="${lblCol}" font-size="9" text-anchor="middle">${rr.scalar.toFixed(3)}</text>`;
+      prev={x:px,y:py};
+    });
+    // end label
+    const last = arr.filter(r=>r.scalar!=null).slice(-1)[0];
+    const li = arr.findIndex(r=>r===last);
+    g += `<text x="${xs[li]+10}" y="${y(last.scalar)+3}" fill="${col}" font-size="10" font-weight="${side==='A'?700:400}">${esc(side==='A'?RACE_PAIR.A.id:RACE_PAIR.B.id)}${side==='B'?` ✕ rung ${RACE_PAIR.exit.B}`:' (in-flight)'}</text>`;
+  });
+  return g + `</svg>`;
+}
+
+/* map each option's head-to-head builder to its racing lens */
+const RACE_LENS = { 1: raceTrajectory, 2: raceGap, 3: raceSurvivalLadder, 4: raceBullet, 5: raceStanding, 6: raceSharpen };
+
+/* ============================ OPTION 1 ============================
+   DUMBBELL / CONNECTED-DOT — champion vs challenger per board.
+   Two dots joined by a bar; bar length = |Δ|, colored by who won.
+   The single regression points the "wrong" way and reads red.
+   ================================================================= */
+function optDumbbell(){
+  const s = SAMPLE;
+  const W=920, padL=150, padR=120, rowH=34, top=46, padB=30;
+  const rows = s.boards;
+  const H = top + rows.length*rowH + padB;
+  // domain over all losses
+  const all = rows.flatMap(r=>[r.parent, r.child]);
+  const lo = 0, hi = Math.max(...all)*1.08;
+  const x = v => padL + (v-lo)/(hi-lo)*(W-padL-padR);
+  let g = svgOpen(W,H);
+  g += frameTag(s, 8, 14);
+  // axis
+  g += `<line x1="${padL}" y1="${top-14}" x2="${W-padR}" y2="${top-14}" stroke="${C_RULE}" ${NSS}/>`;
+  for (let t=0;t<=0.6;t+=0.2){ const X=x(t);
+    g += `<line x1="${X}" y1="${top-18}" x2="${X}" y2="${H-padB+6}" stroke="${C_RULESOFT}" stroke-dasharray="2 4" ${NSS}/>`;
+    g += `<text x="${X}" y="${top-22}" fill="${C_FAINT}" font-size="10" text-anchor="middle">${t.toFixed(1)}</text>`;
+  }
+  g += `<text x="${padL}" y="${top-34}" fill="${C_FAINT}" font-size="10">drift loss (lower better) →</text>`;
+  // legend
+  g += `<circle cx="${W-padR+16}" cy="${top-30}" r="5" fill="${C_FAINT}"/><text x="${W-padR+26}" y="${top-26}" fill="${C_FAINT}" font-size="10">champ</text>`;
+  g += `<circle cx="${W-padR+16}" cy="${top-14}" r="5" fill="${C_ACC}"/><text x="${W-padR+26}" y="${top-10}" fill="${C_FAINT}" font-size="10">chall</text>`;
+  rows.forEach((r,i)=>{
+    const cy = top + i*rowH + rowH/2;
+    const xc = x(r.parent), xh = x(r.child);
+    const col = verdictColor(r.verdict);
+    g += `<text x="${padL-12}" y="${cy+3}" fill="${C_SOFT}" font-size="11" text-anchor="end">${esc(r.entry_id)}</text>`;
+    // connecting bar
+    g += `<line x1="${xc}" y1="${cy}" x2="${xh}" y2="${cy}" stroke="${col}" stroke-width="3" ${NSS}/>`;
+    // champion dot (neutral) + challenger dot (accent or won-color)
+    g += `<circle cx="${xc}" cy="${cy}" r="5" fill="${cssvar('--panel')}" stroke="${C_FAINT}" stroke-width="2" ${NSS}/>`;
+    g += `<circle cx="${xh}" cy="${cy}" r="5" fill="${col}" ${NSS}/>`;
+    // delta + verdict label at the right
+    const d = r.child - r.parent;
+    g += `<text x="${W-padR+10}" y="${cy+3}" fill="${col}" font-size="10" text-anchor="start">${fmt(d,2)} ${r.verdict==='flipped'?'⇧pass':''}</text>`;
+  });
+  return g + `</svg>`;
+}
+
+/* ============================ OPTION 2 ============================
+   DIVERGING BAR — per-board Δ centered at zero.
+   Left of zero = challenger improved (good); right = regressed (bad).
+   One bar crosses to the right (the contained regression). Pass-flip
+   marked. Instantly shows the win is lopsided-left.
+   ================================================================= */
+function optDiverging(){
+  const s = SAMPLE;
+  const W=920, padL=150, padR=150, rowH=32, top=50, padB=24;
+  const rows = s.boards.map(r=>({...r, d:r.child-r.parent}));
+  const H = top + rows.length*rowH + padB;
+  const maxAbs = Math.max(...rows.map(r=>Math.abs(r.d)))*1.15;
+  const mid = padL + (W-padL-padR)/2;
+  const half = (W-padL-padR)/2;
+  const x = d => mid + (d/maxAbs)*half;
+  let g = svgOpen(W,H);
+  g += frameTag(s, 8, 16);
+  g += `<text x="${mid-half}" y="${top-26}" fill="${C_GOOD}" font-size="10">← challenger better (Δ<0)</text>`;
+  g += `<text x="${mid+half}" y="${top-26}" fill="${C_BAD}" font-size="10" text-anchor="end">worse (Δ>0) →</text>`;
+  // zero line
+  g += `<line x1="${mid}" y1="${top-18}" x2="${mid}" y2="${H-padB}" stroke="${C_INK}" stroke-width="1.5" ${NSS}/>`;
+  g += `<text x="${mid}" y="${H-padB+14}" fill="${C_FAINT}" font-size="10" text-anchor="middle">Δ = 0</text>`;
+  rows.forEach((r,i)=>{
+    const cy = top + i*rowH + rowH/2;
+    const col = verdictColor(r.verdict);
+    g += `<text x="${padL-12}" y="${cy+3}" fill="${C_SOFT}" font-size="11" text-anchor="end">${esc(r.entry_id)}</text>`;
+    const x0 = mid, x1 = x(r.d);
+    const bx = Math.min(x0,x1), bw = Math.max(1.5,Math.abs(x1-x0));
+    g += `<rect x="${bx}" y="${cy-9}" width="${bw}" height="18" rx="2" fill="${col}" opacity="0.85"/>`;
+    const lblX = r.d<0 ? x1-6 : x1+6;
+    const anc = r.d<0 ? 'end' : 'start';
+    g += `<text x="${lblX}" y="${cy+3}" fill="${col}" font-size="10" text-anchor="${anc}">${fmt(r.d,2)}</text>`;
+    if (r.verdict==='flipped') g += `<text x="${W-padR+10}" y="${cy+3}" fill="${C_GOOD}" font-size="9.5">fail→pass</text>`;
+    if (r.verdict==='regressed') g += `<text x="${W-padR+10}" y="${cy+3}" fill="${C_BAD}" font-size="9.5">contained</text>`;
+  });
+  return g + `</svg>`;
+}
+
+/* ============================ OPTION 3 ============================
+   RULE LADDER / DECISION WATERFALL — the 3 gate rules in firing order
+   + holdout step, deciding rule (R1) highlighted. Short-circuit logic
+   made literal: a token "drops" down rungs until one rule resolves it.
+   Honors structure wrinkle: full-board gate can crown; rung cuts.
+   ================================================================= */
+function optRuleLadder(){
+  const s = SAMPLE;
+  const W=920, rungH=72, top=20, padL=30, padR=30, lblW=210;
+  const rungs = s.rules;
+  const H = top + rungs.length*rungH + 112;
+  let g = svgOpen(W,H);
+  const deciding = "R1";
+  rungs.forEach((rule,i)=>{
+    const y = top + i*rungH;
+    const decided = rule.id===deciding;
+    const col = rule.status==="pass" ? C_GOOD : C_BAD;
+    const frame = decided ? C_ACC : C_RULE;
+    // rung box
+    g += `<rect x="${padL}" y="${y}" width="${W-padL-padR}" height="${rungH-16}" rx="8"
+      fill="${decided?cssvar('--panel-2'):'transparent'}" stroke="${frame}" stroke-width="${decided?2:1}" ${NSS}/>`;
+    // rule id chip
+    g += `<rect x="${padL+14}" y="${y+14}" width="40" height="24" rx="5" fill="none" stroke="${frame}" ${NSS}/>`;
+    g += `<text x="${padL+34}" y="${y+30}" fill="${frame}" font-size="12" font-weight="700" text-anchor="middle">${rule.id}</text>`;
+    // label + detail
+    g += `<text x="${padL+68}" y="${y+24}" fill="${C_INK}" font-size="13" font-weight="${decided?700:400}">${esc(rule.label)}</text>`;
+    g += `<text x="${padL+68}" y="${y+40}" fill="${C_FAINT}" font-size="10.5">${esc(rule.detail)}</text>`;
+    // status pill (right)
+    const pillX = W-padR-150;
+    g += `<circle cx="${pillX}" cy="${y+22}" r="5" fill="${col}" ${NSS}/>`;
+    g += `<text x="${pillX+12}" y="${y+26}" fill="${col}" font-size="11">${rule.status}${rule.fired?' · FIRED':''}</text>`;
+    // note line — left-shifted on the deciding rung so the DECIDES badge has room
+    const noteEndX = decided ? W-padR-104 : W-padR-14;
+    g += `<text x="${noteEndX}" y="${y+42}" fill="${C_SOFT}" font-size="10" text-anchor="end">${esc(rule.note)}</text>`;
+    // deciding badge (own column on the right, clear of the status pill row)
+    if (decided) g += `<text x="${W-padR-14}" y="${y+42}" fill="${C_ACC}" font-size="10" font-weight="700" text-anchor="end">◀ DECIDES</text>`;
+    // connector down to next rung
+    if (i<rungs.length-1){
+      const cy0=y+rungH-16, cy1=y+rungH;
+      g += `<line x1="${padL+34}" y1="${cy0}" x2="${padL+34}" y2="${cy1}" stroke="${C_RULE}" stroke-dasharray="3 3" ${NSS}/>`;
+      g += `<text x="${padL+44}" y="${cy0+12}" fill="${C_FAINT}" font-size="9">↓ not reached unless above passes</text>`;
+    }
+  });
+  // outcome bar (two short lines so the structure-wrinkle text never overruns)
+  // structure-agnostic: the SAME gate fired; only the outcome VERB re-labels.
+  const oy = top + rungs.length*rungH + 8;
+  const racing = s.structure === "racing";
+  const decisionWord = racing ? "RESOLVED (RUNG)" : "PROMOTED";
+  const contrast = racing
+    ? `gauntlet equivalent reads "${esc(SAMPLES.gauntlet.frame.kind)}" — runs the full board, the gate can crown.`
+    : `racing equivalent reads "${esc(s.racing_frame.kind)}" — cuts a contestant on a board subset, no crown.`;
+  g += `<rect x="${padL}" y="${oy}" width="${W-padL-padR}" height="58" rx="8" fill="${cssvar('--good-soft')}" stroke="${C_GOOD}" stroke-width="2" ${NSS}/>`;
+  g += `<text x="${padL+18}" y="${oy+22}" fill="${C_GOOD}" font-size="13" font-weight="700">DECISION: ${decisionWord} — challenger ${esc(s.challenger)} ${esc(s.frameVerb)}</text>`;
+  g += `<text x="${padL+18}" y="${oy+40}" fill="${C_SOFT}" font-size="10.5">frame: ${esc(s.frame.kind)} — ${esc(s.frame.note)}.</text>`;
+  g += `<text x="${padL+18}" y="${oy+54}" fill="${C_FAINT}" font-size="10">${contrast}</text>`;
+  return g + `</svg>`;
+}
+
+/* ============================ OPTION 4 ============================
+   BULLET GRAPH — challenger Δscalar against the promote_margin band.
+   Qualitative band = the reject zone (loss must drop past −margin);
+   the measure bar is the actual Δ; a target tick marks the margin
+   threshold. The single clearest "did it clear the bar?" reading.
+   ================================================================= */
+function optBullet(){
+  const s = SAMPLE;
+  const W=920, top=70, padL=40, padR=40, barY=84, barH=40;
+  const H = 230;
+  // domain in Δscalar units: from improvement (left, negative) to regression (right)
+  const dom = { lo:-0.040, hi:0.020 };
+  const x = v => padL + (v-dom.lo)/(dom.hi-dom.lo)*(W-padL-padR);
+  let g = svgOpen(W,H);
+  g += frameTag(s, padL, 18);
+  g += `<text x="${padL}" y="36" fill="${C_INK}" font-size="13" font-weight="700">Challenger Δscalar vs the promote_margin band</text>`;
+  g += `<text x="${padL}" y="54" fill="${C_FAINT}" font-size="10.5">scalar is a LOSS · a promotion needs Δ ≤ −promote_margin (${PROMOTE_MARGIN}); the reject band is everything to the right of that tick</text>`;
+  // qualitative bands: PROMOTE zone (left of -margin, good-soft) | REJECT band (right, neutral->bad)
+  const xMargin = x(-PROMOTE_MARGIN), xZero = x(0);
+  g += `<rect x="${x(dom.lo)}" y="${barY-12}" width="${xMargin-x(dom.lo)}" height="${barH+24}" fill="${cssvar('--good-soft')}" opacity="0.6"/>`;
+  g += `<rect x="${xMargin}" y="${barY-12}" width="${x(dom.hi)-xMargin}" height="${barH+24}" fill="${cssvar('--panel-2')}"/>`;
+  g += `<text x="${(x(dom.lo)+xMargin)/2}" y="${barY-18}" fill="${C_GOOD}" font-size="10" text-anchor="middle">PROMOTE zone</text>`;
+  g += `<text x="${(xMargin+x(dom.hi))/2}" y="${barY-18}" fill="${C_FAINT}" font-size="10" text-anchor="middle">REJECT band (near-miss / regress)</text>`;
+  // axis ticks
+  [-0.04,-0.03,-0.02,-0.01,0,0.01,0.02].forEach(t=>{ const X=x(t);
+    g += `<line x1="${X}" y1="${barY+barH+10}" x2="${X}" y2="${barY+barH+16}" stroke="${C_FAINT}" ${NSS}/>`;
+    g += `<text x="${X}" y="${barY+barH+30}" fill="${C_FAINT}" font-size="9.5" text-anchor="middle">${t.toFixed(2)}</text>`;
+  });
+  // measure bar: from 0 to the actual delta (negative => extends left into promote zone)
+  const dX = x(s.delta_scalar);
+  const mx = Math.min(xZero, dX), mw = Math.abs(dX-xZero);
+  g += `<rect x="${mx}" y="${barY+barH/2-7}" width="${mw}" height="14" rx="2" fill="${C_GOOD}"/>`;
+  // zero baseline
+  g += `<line x1="${xZero}" y1="${barY-6}" x2="${xZero}" y2="${barY+barH+6}" stroke="${C_INK}" stroke-width="1.5" ${NSS}/>`;
+  g += `<text x="${xZero}" y="${barY+barH+44}" fill="${C_FAINT}" font-size="9.5" text-anchor="middle">Δ=0 (no change)</text>`;
+  // margin threshold tick (the "target")
+  g += `<line x1="${xMargin}" y1="${barY-12}" x2="${xMargin}" y2="${barY+barH+12}" stroke="${C_ACC}" stroke-width="2.5" ${NSS}/>`;
+  g += `<text x="${xMargin}" y="${barY+barH+44}" fill="${C_ACC}" font-size="9.5" text-anchor="middle">−margin</text>`;
+  // value callout
+  g += `<text x="${dX}" y="${barY+barH/2+4}" fill="${C_INK}" font-size="11" font-weight="700" text-anchor="${s.delta_scalar<0?'end':'start'}" dx="${s.delta_scalar<0?-8:8}">Δ ${fmt(s.delta_scalar)}</text>`;
+  g += `<text x="${padL}" y="${H-14}" fill="${C_GOOD}" font-size="11">✓ cleared by ${(Math.abs(s.delta_scalar)-PROMOTE_MARGIN).toFixed(3)} past the margin — comfortable but close</text>`;
+  return g + `</svg>`;
+}
+
+/* ============================ OPTION 5 ============================
+   BOX / CANDLESTICK — replicate spread per side. Is the win noise?
+   Each side gets a box (min–max whisker + mean), drawn on a shared
+   loss axis. Non-overlapping boxes => the gap is real, not jitter.
+   ================================================================= */
+function optReplicateBox(){
+  const s = SAMPLE;
+  const W=920, top=60, padL=140, padR=60, padB=60;
+  const H = 300;
+  const sides = [
+    { name:"champion "+s.champion,   data:s.replicates.champion,   col:C_FAINT, y: top+50 },
+    { name:"challenger "+s.challenger, data:s.replicates.challenger, col:C_ACC,   y: top+150 },
+  ];
+  const all = [...s.replicates.champion, ...s.replicates.challenger];
+  const lo = Math.min(...all)-0.006, hi = Math.max(...all)+0.006;
+  const x = v => padL + (v-lo)/(hi-lo)*(W-padL-padR);
+  let g = svgOpen(W,H);
+  g += frameTag(s, padL, 16);
+  g += `<text x="${padL}" y="34" fill="${C_INK}" font-size="13" font-weight="700">Replicate spread per side — is the gap real or noise?</text>`;
+  // axis
+  const axY = H-padB+6;
+  g += `<line x1="${padL}" y1="${axY}" x2="${W-padR}" y2="${axY}" stroke="${C_RULE}" ${NSS}/>`;
+  for (let t=0.385; t<=0.418; t+=0.005){ const X=x(t);
+    g += `<line x1="${X}" y1="${top+20}" x2="${X}" y2="${axY}" stroke="${C_RULESOFT}" stroke-dasharray="2 4" ${NSS}/>`;
+    g += `<text x="${X}" y="${axY+16}" fill="${C_FAINT}" font-size="9.5" text-anchor="middle">${t.toFixed(3)}</text>`;
+  }
+  g += `<text x="${W-padR}" y="${axY+34}" fill="${C_FAINT}" font-size="10" text-anchor="end">scalar (loss) — lower better →</text>`;
+  sides.forEach(sd=>{
+    const mn=Math.min(...sd.data), mx=Math.max(...sd.data), m=mean(sd.data), sg=stdev(sd.data);
+    const y=sd.y, bh=40;
+    g += `<text x="${padL-14}" y="${y+4}" fill="${sd.col}" font-size="11" text-anchor="end">${esc(sd.name)}</text>`;
+    // whisker
+    g += `<line x1="${x(mn)}" y1="${y}" x2="${x(mx)}" y2="${y}" stroke="${sd.col}" ${NSS}/>`;
+    g += `<line x1="${x(mn)}" y1="${y-8}" x2="${x(mn)}" y2="${y+8}" stroke="${sd.col}" ${NSS}/>`;
+    g += `<line x1="${x(mx)}" y1="${y-8}" x2="${x(mx)}" y2="${y+8}" stroke="${sd.col}" ${NSS}/>`;
+    // box = mean ± sigma
+    const bx=x(m-sg), bw=Math.max(2,x(m+sg)-x(m-sg));
+    g += `<rect x="${bx}" y="${y-bh/2}" width="${bw}" height="${bh}" rx="3" fill="${sd.col}" opacity="0.18" stroke="${sd.col}" ${NSS}/>`;
+    // mean line + individual replicate ticks
+    g += `<line x1="${x(m)}" y1="${y-bh/2}" x2="${x(m)}" y2="${y+bh/2}" stroke="${sd.col}" stroke-width="2.5" ${NSS}/>`;
+    sd.data.forEach(v=> g += `<circle cx="${x(v)}" cy="${y}" r="2.6" fill="${sd.col}"/>`);
+    g += `<text x="${x(m)}" y="${y-bh/2-6}" fill="${sd.col}" font-size="10" text-anchor="middle">μ ${m.toFixed(3)} · σ ${sg.toFixed(4)}</text>`;
+  });
+  // gap annotation between the two boxes (non-overlapping)
+  const gx = x(0.400);
+  g += `<line x1="${gx}" y1="${sides[0].y+22}" x2="${gx}" y2="${sides[1].y-22}" stroke="${C_GOOD}" stroke-dasharray="4 3" ${NSS}/>`;
+  g += `<text x="${gx+8}" y="${(sides[0].y+sides[1].y)/2}" fill="${C_GOOD}" font-size="10.5">boxes don't overlap → gap is real, low σ → tight</text>`;
+  return g + `</svg>`;
+}
+
+/* ============================ OPTION 6 ============================
+   SLOPE CHART — scalar components champion → challenger, plus per-judge
+   on the same canvas. Each line slopes down (improve / good) or up
+   (worsen / bad). The steepest down-slope = the primary driver, flagged.
+   ================================================================= */
+function optSlope(){
+  const s = SAMPLE;
+  const W=920, top=56, padB=40, colL=300, colR=620, padTop=20;
+  // combine components + judges into two grouped panels via two slope charts side by side
+  // left panel: scalar components; right panel: per-judge weighted loss
+  const comps = Object.keys(s.scalar_components.champion).map(k=>({
+    name:k, champ:s.scalar_components.champion[k], chall:s.scalar_components.challenger[k]
+  }));
+  const judges = s.judges.map(j=>({ name:j.judge_name, champ:j.champion, chall:j.challenger, primary:j.judge_name===s.primary_driver.judge }));
+  const H = 360;
+  const panelTop = top+padTop, panelBot = H-padB;
+  function panel(items, x0, x1, title, maxV){
+    let p = `<text x="${(x0+x1)/2}" y="${top+2}" fill="${C_INK}" font-size="12" font-weight="700" text-anchor="middle">${esc(title)}</text>`;
+    p += `<text x="${x0}" y="${top+20}" fill="${C_FAINT}" font-size="10" text-anchor="middle">champ</text>`;
+    p += `<text x="${x1}" y="${top+20}" fill="${C_FAINT}" font-size="10" text-anchor="middle">chall</text>`;
+    const y = v => panelBot - (v/maxV)*(panelBot-panelTop-26);
+    // axis rails
+    p += `<line x1="${x0}" y1="${panelTop+18}" x2="${x0}" y2="${panelBot}" stroke="${C_RULE}" ${NSS}/>`;
+    p += `<line x1="${x1}" y1="${panelTop+18}" x2="${x1}" y2="${panelBot}" stroke="${C_RULE}" ${NSS}/>`;
+    // node geometry pass
+    const meta = items.map(it=>{
+      const down = it.chall < it.champ;        // loss fell => improvement => good
+      const same = Math.abs(it.chall-it.champ)<1e-9;
+      const col = same ? C_FAINT : (down ? C_GOOD : C_BAD);
+      return { it, col, yc:y(it.champ), yh:y(it.chall) };
+    });
+    // lines + nodes
+    meta.forEach(({it,col,yc,yh})=>{
+      const sw = it.primary ? 3 : 1.6;
+      p += `<line x1="${x0}" y1="${yc}" x2="${x1}" y2="${yh}" stroke="${col}" stroke-width="${sw}" ${NSS}/>`;
+      p += `<circle cx="${x0}" cy="${yc}" r="3.2" fill="${C_FAINT}"/>`;
+      p += `<circle cx="${x1}" cy="${yh}" r="3.2" fill="${col}"/>`;
+    });
+    // de-collide labels: push each label down to keep a 13px minimum gap,
+    // drawing a faint leader when the label was nudged off its node.
+    const GAP = 13;
+    function placeLabels(sideKey, anchorX, anchor, render){
+      const arr = meta.map(m=>({ m, base:m[sideKey] })).sort((a,b)=>a.base-b.base);
+      let last = -1e9;
+      arr.forEach(o=>{
+        let ly = Math.max(o.base, last + GAP);
+        last = ly;
+        if (Math.abs(ly-o.base) > 1.5)
+          p += `<line x1="${anchorX}" y1="${o.base}" x2="${anchorX+(anchor==='end'?-6:6)}" y2="${ly}" stroke="${C_RULESOFT}" stroke-width="1" ${NSS}/>`;
+        p += render(o.m, ly);
+      });
+    }
+    // left = names (anchored end at x0-8), right = values (anchored start at x1+8)
+    placeLabels('yc', x0-8, 'end', (m,ly)=>
+      `<text x="${x0-8}" y="${ly+3}" fill="${C_SOFT}" font-size="9.5" text-anchor="end">${esc(m.it.name)}</text>`);
+    placeLabels('yh', x1+8, 'start', (m,ly)=>
+      `<text x="${x1+8}" y="${ly+3}" fill="${m.col}" font-size="9.5">${m.it.chall.toFixed(3)}${m.it.primary?' ◀ driver':''}</text>`);
+    return p;
+  }
+  const maxComp = Math.max(...comps.flatMap(c=>[c.champ,c.chall]))*1.1;
+  const maxJ = Math.max(...judges.flatMap(j=>[j.champ,j.chall]))*1.1;
+  let g = svgOpen(W,H);
+  g += frameTag(s, 8, 16);
+  g += panel(comps, 150, 360, "scalar components (loss buckets)", maxComp);
+  g += panel(judges, 600, 800, "per-judge weighted loss", maxJ);
+  // divider
+  g += `<line x1="470" y1="${top+10}" x2="470" y2="${panelBot}" stroke="${C_RULESOFT}" stroke-dasharray="2 4" ${NSS}/>`;
+  g += `<text x="150" y="${H-12}" fill="${C_FAINT}" font-size="10">down-slope = loss fell (good · ${esc(C_GOOD)==='var(--good)'?'green':''}) · up-slope = worsened (red). Steepest down = primary driver (${esc(s.primary_driver.judge)}).</text>`;
+  return g + `</svg>`;
+}
+
+/* ===================== option registry ===================== */
+const OPTIONS = [
+  {
+    n:1, name:"Per-board dumbbell", tech:"dumbbell / connected-dot",
+    rationale:`Each board is one row: a hollow champion dot and a filled challenger dot joined by a bar whose <b>length is |Δ|</b> and whose <b>color is the verdict</b>. The eye reads "how far did each board move, and which way" in one sweep. The lone <code>b5_translate</code> regression has its bar colored <span style="color:var(--bad)">red</span> while the rest run <span style="color:var(--good)">green</span> — the win's shape (6 of 8) is immediate.`,
+    build:optDumbbell,
+    reveals:`<b>Reveals:</b> per-board magnitude AND direction of the duel at a glance — where the Δ came from, and that exactly one board regressed (contained).`
+  },
+  {
+    n:2, name:"Per-board diverging bar", tech:"diverging bar (centered at Δ=0)",
+    rationale:`Same per-board Δ, but anchored to a <b>shared zero axis</b>: bars to the <span style="color:var(--good)">left</span> mean the challenger improved, to the <span style="color:var(--bad)">right</span> mean it regressed. The mass is overwhelmingly left, so "lopsided win" is a single visual fact; the one right-crossing bar (<code>b5</code>) is the contained regression, and the fail→pass flip on <code>b3_classify</code> is tagged.`,
+    build:optDiverging,
+    reveals:`<b>Reveals:</b> the balance of the win as a center-of-mass — most boards left of zero, one contained crossing, one pass-flip — answering "how decisive, and where's the risk?"`
+  },
+  {
+    n:3, name:"Gate rule ladder", tech:"rule ladder / decision waterfall",
+    rationale:`The 3 short-circuiting gate rules + holdout step as <b>stacked rungs</b> in firing order. Each rung shows its status pill and note; the deciding rule (<b>R1 scalar margin</b>) is framed in <span style="color:var(--accent)">accent</span> with a "◀ DECIDES" badge, and dashed connectors say "↓ not reached unless above passes". The outcome bar carries the structure wrinkle: <b>champion gate (full board) → promote</b> vs <b>rung cut (partial board) → no crown</b>.`,
+    build:optRuleLadder,
+    reveals:`<b>Reveals:</b> exactly WHY — which of the 3 rules decided, that R1's margin clinched it, and that the holdout confirmed. The single best answer to "what made the call?"`
+  },
+  {
+    n:4, name:"Margin bullet graph", tech:"bullet graph vs the promote_margin band",
+    rationale:`One measure: the challenger's <b>Δscalar</b> drawn against the qualitative <b>promote_margin band</b>. The <span style="color:var(--good)">PROMOTE zone</span> is left of the <span style="color:var(--accent)">−margin tick</span>; the reject band (near-miss / regress) is to the right. The measure bar lands inside the promote zone, and the callout states how far past the bar it cleared — the crispest "did it clear the threshold, and by how much?"`,
+    build:optBullet,
+    reveals:`<b>Reveals:</b> the deciding-rule headroom — the win cleared −margin comfortably but it's a CLOSE promote, exactly as the sample says.`
+  },
+  {
+    n:5, name:"Replicate box plot", tech:"box / candlestick (replicate spread)",
+    rationale:`Each side becomes a <b>box</b> (mean ± σ) with min–max whiskers and every replicate plotted as a tick, on a shared loss axis. The two boxes <b>don't overlap</b> and both are narrow — so the gap is real signal, not run-to-run jitter. This is the robustness lens: is the win noise?`,
+    build:optReplicateBox,
+    reveals:`<b>Reveals:</b> confidence — tight σ on both sides + non-overlapping boxes prove the duel's outcome is stable across replicates, not a lucky single run.`
+  },
+  {
+    n:6, name:"Component / judge slope", tech:"slope chart (champ→chall)",
+    rationale:`Two side-by-side slope panels: the <b>scalar-component</b> loss buckets and the <b>per-judge</b> weighted losses, each sloping champion→challenger. <span style="color:var(--good)">Down</span> = loss fell (improved), <span style="color:var(--bad)">up</span> = worsened. The steepest down-slope is the <b>primary driver</b> (<code>clarity_judge</code>), drawn thick and flagged — so attribution ("which bucket / judge moved the scalar?") is structural.`,
+    build:optSlope,
+    reveals:`<b>Reveals:</b> attribution — which loss buckets and which judge drove the Δ, with the primary driver isolated and the lone worsening judge (format) visible as an up-slope.`
+  },
+];
+
+const host = document.getElementById('options');
+host.innerHTML = OPTIONS.map(o=>`
+  <section class="opt-card">
+    <div class="opt-head">
+      <span class="opt-num">Option ${o.n}</span>
+      <span class="opt-name">${o.name}</span>
+      <span class="opt-tech">— ${o.tech}</span>
+    </div>
+    <div class="rationale">${o.rationale}</div>
+    <div class="fig-wrap" id="fig-${o.n}"></div>
+    <div class="reveals">${o.reveals}</div>
+  </section>`).join('');
+/* ===================== render all figures from the live SAMPLE =====================
+   STRUCTURE-AWARE BRANCH: racing has no head-to-head duel, so when the live
+   SAMPLE is racing every figure switches to its RACE-COMPARISON lens (two chosen
+   candidates compared across the successive-halving rungs) and the card's
+   rationale/reveals swap to racing copy. All other structures keep the
+   head-to-head design untouched. */
+const RACE_COPY = {
+  1: { name:"Dual-lane rung trajectory", tech:"two candidates' scalar across the rungs",
+       rationale:`Racing is NOT a duel — there is no gate between the two candidates. So this compares the <b>two trajectories</b> directly: each candidate is a path of per-rung markers on a shared loss axis as the <b>board slice grows</b> (25% → 50% → 100%). <b>${'g142'}</b> (<span style="color:var(--accent)">accent</span>, survivor) pulls ahead; <b>${'g145'}</b> (cut) keeps pace at rung 0, slips past the <span style="color:var(--bad)">cut line</span> on the bigger slice and is <span style="color:var(--bad)">✕ cut at rung 1</span>; the survivor then races on alone (dashed in-flight ring).`,
+       reveals:`<b>Reveals:</b> the core race comparison — per-rung scalar for BOTH candidates, who survived each rung, exactly where one was cut, and the survivor pulling ahead as evidence grew.` },
+  2: { name:"Per-rung gap (A−B)", tech:"diverging bar on the shared rungs only",
+       rationale:`The per-rung <b>gap</b> between the two candidates, but only on the rungs <b>both actually raced</b>. Anchored at Δ=0: <span style="color:var(--accent)">left</span> = the survivor ahead (lower loss). Once one candidate is cut there is no longer a pairing — that rung reads "no pairing", honestly reflecting that racing stops comparing a contestant the moment it's culled.`,
+       reveals:`<b>Reveals:</b> how far apart the two were rung-by-rung while both were in, and the precise rung the pairing ended (the cut) — no fake head-to-head after elimination.` },
+  3: { name:"Rung survival ladder", tech:"who survived each rung · where cut",
+       rationale:`The rungs as stacked rows; each names its <b>board slice</b>, field size and <b>cut line</b>, with a status cell for <b>each candidate</b>: survived ●, <span style="color:var(--bad)">cut ✕</span>, in-flight ◌. The deciding moment (the cut at rung 1) is framed; the outcome bar states that a rung <b>CUTS</b> (no crown) and the survivor advances to the still-<b>pending</b> full-board champion gate.`,
+       reveals:`<b>Reveals:</b> the racing decision shape — survive/cut per rung for both, the rung where one was eliminated, and that the survivor still owes a full-board gate (a rung never crowns).` },
+  4: { name:"Survivor vs champion gate", tech:"bullet — the pending full-board gate",
+       rationale:`Racing's endgame the candidates point at: the survivor must still beat <b>champion g117</b> on the <b>FULL board</b> to be crowned. The survivor's in-flight scalar sits inside the <span style="color:var(--good)">crown zone</span> (left of the benchmark tick); the <span style="color:var(--bad)">cut candidate</span> is marked where it dropped out and never reached this gate.`,
+       reveals:`<b>Reveals:</b> the racing-specific "is the survivor good enough to crown?" — projected gate margin, and that the other candidate exited long before this gate.` },
+  5: { name:"Relative standing rung-by-rung", tech:"rank lanes within the shrinking field",
+       rationale:`Not absolute scalar but <b>relative standing</b>: how each candidate <b>ranked</b> within the field at each rung (rank 1 at top). The field shrinks each rung, so each column rescales; the shaded band is the <b>cut zone</b> (ranks beyond the survivor count). You watch one candidate drift into the cut band at rung 1 while the other holds rank 1.`,
+       reveals:`<b>Reveals:</b> the comparison the way racing actually decides — by RANK against the field, rung by rung, and the exact rung one candidate crossed below the cut.` },
+  6: { name:"Scalar sharpening slope", tech:"slope across growing board slices",
+       rationale:`As the board slice grows, each candidate's scalar <b>sharpens</b> (more evidence). Each candidate is a slope across rung0 → rung1 → (rung2), so you see whether it <b>held up</b> or <b>drifted</b> as evidence weight grew — and the rung where one drifted past the <span style="color:var(--bad)">cut line</span> while the other held its lead under the <b>champion benchmark</b> reference.`,
+       reveals:`<b>Reveals:</b> robustness under growing evidence — whether each candidate's advantage was stable as the board grew, isolating where one's apparent parity collapsed.` },
+};
+function applyCardCopy(){
+  const racing = isRacing();
+  OPTIONS.forEach(o=>{
+    const card = document.getElementById('fig-'+o.n).closest('.opt-card');
+    if (!card) return;
+    const nameEl = card.querySelector('.opt-name'), techEl = card.querySelector('.opt-tech');
+    const ratEl = card.querySelector('.rationale'), revEl = card.querySelector('.reveals');
+    if (racing && RACE_COPY[o.n]){
+      const c = RACE_COPY[o.n];
+      if (nameEl) nameEl.textContent = c.name;
+      if (techEl) techEl.textContent = "— " + c.tech;
+      if (ratEl) ratEl.innerHTML = c.rationale;
+      if (revEl) revEl.innerHTML = c.reveals;
+    } else {
+      if (nameEl) nameEl.textContent = o.name;
+      if (techEl) techEl.textContent = "— " + o.tech;
+      if (ratEl) ratEl.innerHTML = o.rationale;
+      if (revEl) revEl.innerHTML = o.reveals;
+    }
+  });
+}
+function renderFigures(){
+  const racing = isRacing();
+  OPTIONS.forEach(o=>{
+    const build = (racing && RACE_LENS[o.n]) ? RACE_LENS[o.n] : o.build;
+    document.getElementById('fig-'+o.n).innerHTML = build();
+  });
+  applyCardCopy();
+}
+function renderAll(){ renderSampleReadout(); renderFigures(); }
+
+/* ===================== SAMPLE-STRUCTURE SWITCHER =====================
+   Flips the live SAMPLE between the 5 structures and re-renders the SAME 6
+   figures + read-out. Honors ?sample=<structure>; hidden in ?bare=1 but the
+   ?sample param is still applied so a composer can drive the initial sample. */
+const STRUCTS = [
+  ["gauntlet",     "gauntlet"],
+  ["single_elim",  "single-elim"],
+  ["double_elim",  "double-elim"],
+  ["swiss",        "swiss"],
+  ["racing",       "racing"],
+];
+const STRUCT_IDS = STRUCTS.map(s=>s[0]);
+const STRUCT_NOTE = {
+  gauntlet:    "the single duel · FULL board · the gate (can crown)",
+  single_elim: "a bracket match · FULL board · winner advances",
+  double_elim: "a winners'-bracket match · FULL board · loser drops (a life)",
+  swiss:       "a Swiss pairing · FULL board · scores a Copeland point",
+  racing:      "a rung · PARTIAL board (subset) · CUTS the slower side, no crown",
+};
+let CUR_STRUCT = "gauntlet";
+function setStructure(id, push){
+  if (!STRUCT_IDS.includes(id)) id = "gauntlet";
+  CUR_STRUCT = id;
+  SAMPLE = SAMPLES[id];
+  // update the segmented control pressed-state
+  document.querySelectorAll('#struct-seg button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.getAttribute('data-struct') === id)));
+  const note = document.getElementById('struct-note');
+  if (note) note.textContent = "— " + (STRUCT_NOTE[id] || "");
+  renderAll();
+  if (push){
+    const u = new URL(location.href); u.searchParams.set('sample', id);
+    history.replaceState(null, "", u);
+  }
+}
+function mountStructSwitch(){
+  const seg = document.getElementById('struct-seg');
+  seg.innerHTML = STRUCTS.map(([id,label]) =>
+    `<button type="button" data-struct="${id}" aria-pressed="${id===CUR_STRUCT}" title="sample structure: ${label}">${label}</button>`).join('');
+  seg.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => setStructure(b.getAttribute('data-struct'), true)));
+}
+mountStructSwitch();
+
+/* honor ?sample=<structure> for the initial sample (a composer drives it).
+   In ?bare=1 the switcher control is hidden via CSS but ?sample still applies. */
+(function(){
+  const P = new URLSearchParams(location.search);
+  let init = P.get('sample');
+  if (init) init = init.replace(/-/g, '_');   // accept single-elim or single_elim
+  setStructure(STRUCT_IDS.includes(init) ? init : "gauntlet", false);
+})();
+
+/* ===================== header mark (inline real geometry) ===================== */
+const MARK_SPIRAL = "M94,52.5 L93.9,52.7 L93.7,52.9 L93.6,53.1 L93.5,53.4 L93.5,53.7 L93.4,54 L93.4,54.3 L93.5,54.6 L93.6,55 L93.7,55.3 L93.9,55.6 L94.1,55.9 L94.4,56.2 L94.7,56.5 L95.1,56.7 L95.4,56.9 L95.9,57.1 L96.3,57.2 L96.8,57.2 L97.3,57.2 L97.9,57.2 L98.4,57 L98.9,56.8 L99.4,56.5 L99.9,56.2 L100.4,55.8 L100.9,55.3 L101.2,54.7 L101.6,54.1 L101.8,53.4 L102,52.6 L102.1,51.9 L102.1,51 L102,50.2 L101.8,49.3 L101.5,48.5 L101.1,47.6 L100.5,46.8 L99.9,46 L99.1,45.3 L98.2,44.7 L97.2,44.1 L96.1,43.7 L94.9,43.4 L93.6,43.2 L92.3,43.2 L91,43.3 L89.6,43.6 L88.2,44.1 L86.8,44.8 L85.5,45.6 L84.2,46.7 L83,47.9 L82,49.3 L81.1,50.9 L80.3,52.7 L79.8,54.6 L79.5,56.6 L79.4,58.7 L79.5,60.9 L80,63.2 L80.7,65.4 L81.8,67.6 L83.1,69.8 L84.8,71.9 L86.7,73.8 L89,75.5 L91.5,77 L94.3,78.3 L97.3,79.2 L100.6,79.8 L104,80 L150,80 L170,102 L190,80 Q206,56 222,80 Q236,102 250,80 Q261,68 272,80 L292,80";
+const MARK_BRIDGE = "M292,66 L292,94";
+document.getElementById('hdr-mark').innerHTML =
+  `<svg width="78" height="26" viewBox="71 35 229 75" role="img" aria-label="zicato mark">
+     <g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+       <path d="${MARK_SPIRAL}"/><path d="${MARK_BRIDGE}"/>
+     </g>
+     <circle cx="170" cy="102" r="5.5" fill="var(--zicato-accent,#2FA46A)"/>
+   </svg>`;
+
+/* ===================== Console colour-scheme picker — 16 themes ===================== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME = "monokai";
+const THEME_IDS = THEMES.map(t => t[0]);
+function strip(swatches, sm) {
+  return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">` +
+    swatches.map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('') + `</span>`;
+}
+function mountThemePicker(hostId) {
+  const host = document.getElementById(hostId);
+  let value = DEFAULT_THEME, open = false, activeIdx = THEME_IDS.indexOf(value);
+  const byId = new Map(THEMES.map(t => [t[0], t]));
+  host.innerHTML =
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw]) =>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             ${strip(sw)}<span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd = host.querySelector('.dt-cd');
+  const trigger = host.querySelector('.dt-cd-trigger');
+  const trigStrip = host.querySelector('.dt-cd-trig-strip');
+  const trigName = host.querySelector('.dt-cd-trig-name');
+  const list = host.querySelector('.dt-cd-list');
+  const options = Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id) {
+    value = THEME_IDS.includes(id) ? id : DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme', value);
+    const def = byId.get(value);
+    trigStrip.className = 'dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden', 'true');
+    trigStrip.innerHTML = def[2].map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent = def[1];
+    options.forEach(o => o.setAttribute('aria-selected', String(o.getAttribute('data-theme') === value)));
+  }
+  function setActive(i) {
+    activeIdx = (i + options.length) % options.length;
+    options.forEach((o,k) => o.classList.toggle('dt-cd-active', k === activeIdx));
+  }
+  function setOpen(next) {
+    open = next; cd.classList.toggle('dt-cd-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) setActive(Math.max(0, THEME_IDS.indexOf(value)));
+  }
+  function choose(id) { applyTheme(id); setOpen(false); }
+  options.forEach(o => o.addEventListener('click', () => choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click', () => setOpen(!open));
+  trigger.addEventListener('keydown', ev => {
+    if (['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)) { ev.preventDefault(); setOpen(true); list.focus?.(); }
+  });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); setOpen(false); trigger.focus(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx+1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx-1); }
+    else if (['Enter',' ','Spacebar'].includes(ev.key)) {
+      ev.preventDefault();
+      const id = options[activeIdx]?.getAttribute('data-theme'); if (id) choose(id);
+    }
+  });
+  document.addEventListener('click', ev => {
+    if (!open) return; let n = ev.target; while (n) { if (n === cd) return; n = n.parentNode; } setOpen(false);
+  });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+</script>
+<style>html.embed-bare,html.embed-bare body{padding:0!important;margin:0!important}html.embed-bare section{margin:0!important}</style>
+<script>window.__EMBED_CFG__={optSel:'#options > section.opt-card',bareHide:['.opt-head','.rationale','.reveals']};</script>
+<script src="_embed.js"></script>
+</body>
+</html>

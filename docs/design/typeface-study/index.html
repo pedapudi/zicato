@@ -1,0 +1,1600 @@
+<!doctype html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato · Console — Typeface Study</title>
+
+<!-- Google Fonts: serif + geometric/condensed families (operator's browser fetches from CDN) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Newsreader:opsz,wght@6..72,400;6..72,600;6..72,700&family=Space+Grotesk:wght@400;500;700&family=Archivo+Narrow:wght@400;500;700&family=Inter:wght@400;500;700&family=Sora:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+<!-- Google Fonts: 4 more creative variations per mode (all validated 200) -->
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;700&family=Fira+Code:wght@400;500;700&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Roboto family (T4) + Google Sans Mono / Noto Sans Mono (T7) -->
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&family=Google+Sans+Mono:wght@400;500;700&family=Noto+Sans+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Lora:wght@400;500;700&family=Fraunces:wght@400;600;700&family=Spectral:wght@400;500;700&family=Bitter:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Bricolage+Grotesque:wght@400;600;700&family=Big+Shoulders+Display:wght@400;700&family=Outfit:wght@400;500;700&display=swap" rel="stylesheet">
+
+<!-- batch 3: more open (OFL) combinations to reach 12 per mode (validated 200) -->
+<link href="https://fonts.googleapis.com/css2?family=Red+Hat+Text:wght@400;500;700&family=Red+Hat+Mono:wght@400;500;700&family=Source+Sans+3:wght@400;500;700&family=Source+Code+Pro:wght@400;500;700&family=Spline+Sans:wght@400;500;700&family=Spline+Sans+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Literata:wght@400;500;700&family=Crimson+Pro:wght@400;500;700&family=Zilla+Slab:wght@400;500;700&family=EB+Garamond:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;700&family=Anton&family=Archivo:wght@400;500;700&family=Saira+Condensed:wght@400;500;700&family=Hanken+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<!-- batch 4: +3 per mode incl. Inconsolata + Ubuntu Mono (validated 200) -->
+<link href="https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;500;700&family=Ubuntu+Mono:wght@400;700&family=Ubuntu:wght@400;500;700&family=Alegreya:wght@400;500;700&family=Vollkorn:wght@400;500;700&family=Domine:wght@400;500;700&family=Familjen+Grotesk:wght@400;500;700&family=Barlow+Condensed:wght@400;500;700&family=Chivo:wght@400;500;700&display=swap" rel="stylesheet">
+
+<style>
+/* ============================================================
+   Self-hosted faces (served by THIS local server, so they
+   travel over the operator's tunnel — no CDN dependency).
+   ============================================================ */
+@font-face { font-family:"iA Writer Mono"; font-weight:400; font-display:swap;
+  src:url("fonts/iAWriterMonoS-Regular.woff2") format("woff2"); }
+@font-face { font-family:"iA Writer Mono"; font-weight:700; font-display:swap;
+  src:url("fonts/iAWriterMonoS-Bold.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:400; font-display:swap;
+  src:url("fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
+@font-face { font-family:"JetBrains Mono"; font-weight:700; font-display:swap;
+  src:url("fonts/JetBrainsMono-Bold.woff2") format("woff2"); }
+/* Commit Mono — NOT on Google Fonts; fetched from its GitHub release (v1.143),
+   shipped as OpenType. */
+@font-face { font-family:"Commit Mono"; font-weight:400; font-display:swap;
+  src:url("fonts/CommitMono-400-Regular.otf") format("opentype"); }
+@font-face { font-family:"Commit Mono"; font-weight:700; font-display:swap;
+  src:url("fonts/CommitMono-700-Regular.otf") format("opentype"); }
+
+/* ============================================================
+   Reset + Console THEME tokens — the full 16-theme Console
+   colour-scheme set, ported 1:1 from the real
+   src/.../variants/T/console4.css --v2-* role contract and
+   mapped onto this study's token names. Each html[data-theme]
+   block fully restyles the page (grounds, ink, accent, rules).
+   The picker (top bar) sets data-theme on <html>. Default: monokai.
+   panel-2  ← --v2-cell-empty   accent-2/zicato-accent ← --v2-accent
+   ============================================================ */
+*,*::before,*::after { box-sizing:border-box; }
+html,body { margin:0; padding:0; }
+
+html[data-theme="monokai"] {
+  --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+  --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+  --rule:#3a3b34; --rule-soft:#2f302a;
+  --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+  --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+}
+html[data-theme="solarized-dark"] {
+  --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+  --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+  --rule:#0E3540; --rule-soft:#0B2E39;
+  --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+  --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+}
+html[data-theme="solarized-light"] {
+  --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+  --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+  --rule:#E7DCBE; --rule-soft:#F0E7CC;
+  --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+  --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+}
+html[data-theme="google-light"] {
+  --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+  --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+  --rule:#E2E3E4; --rule-soft:#F1F1F1;
+  --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+  --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+}
+html[data-theme="google-dark"] {
+  --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+  --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+  --rule:#444548; --rule-soft:#323336;
+  --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+  --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+}
+html[data-theme="lunaria-light"] {
+  --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+  --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+  --rule:#CEC8C5; --rule-soft:#DCD6D3;
+  --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+  --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+}
+html[data-theme="lunaria-eclipse"] {
+  --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+  --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+  --rule:#4D5960; --rule-soft:#404C53;
+  --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+  --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+}
+html[data-theme="belafonte-day"] {
+  --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+  --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+  --rule:#BBB1A3; --rule-soft:#C8BFAF;
+  --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+  --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+}
+html[data-theme="belafonte-night"] {
+  --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+  --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+  --rule:#35272E; --rule-soft:#2B1C24;
+  --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+  --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+}
+html[data-theme="paper"] {
+  --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+  --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+  --rule:#C6C3B6; --rule-soft:#DCD9CA;
+  --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+  --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+}
+html[data-theme="zenburn"] {
+  --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+  --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+  --rule:#575754; --rule-soft:#494947;
+  --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+  --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+}
+html[data-theme="selenized-black"] {
+  --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+  --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+  --rule:#353535; --rule-soft:#262626;
+  --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+  --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+}
+html[data-theme="relaxed"] {
+  --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+  --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+  --rule:#53575F; --rule-soft:#444851;
+  --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+  --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+}
+html[data-theme="espresso"] {
+  --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+  --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+  --rule:#4C4C4C; --rule-soft:#3E3E3E;
+  --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+  --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+}
+html[data-theme="dracula"] {
+  --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+  --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+  --rule:#44475A; --rule-soft:#353848;
+  --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+  --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+}
+html[data-theme="ubuntu"] {
+  --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+  --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+  --rule:#4B2640; --rule-soft:#3E1A32;
+  --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+  --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+}
+
+body {
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  transition:background .2s ease, color .2s ease;
+}
+
+/* ---- page chrome ---- */
+.topbar {
+  position:sticky; top:0; z-index:5;
+  display:flex; align-items:center; gap:14px;
+  padding:11px 26px;
+  background:color-mix(in srgb, var(--paper) 90%, transparent);
+  backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--rule);
+}
+.brand { display:inline-flex; align-items:baseline; gap:7px; }
+.brand-name {
+  font-family:"JetBrains Mono", ui-monospace, monospace; /* the brand mono (--v2-brand-mono) */
+  font-weight:700; font-size:15px; letter-spacing:0;
+  position:relative; display:inline-block; line-height:1;
+}
+/* the green accent IS the dot over the dotless ı (2nd glyph): 1.5 char-advances
+   from the left edge in a monospace face centers it on the stem. */
+.brand-name::after {
+  content:""; position:absolute; left:1.5ch; top:.05em;
+  transform:translateX(-50%);
+  width:.19em; height:.19em; border-radius:50%; background:var(--accent-2);
+}
+.brand-tag {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:10px;
+  letter-spacing:.18em; text-transform:uppercase; color:var(--accent-2);
+}
+.spacer { flex:1; }
+.toggle {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11px;
+  color:var(--ink-soft); background:transparent; cursor:pointer;
+  border:1px solid var(--rule); border-radius:6px; padding:5px 11px;
+  transition:border-color .15s, color .15s;
+}
+.toggle:hover { border-color:var(--accent-2); color:var(--ink); }
+.toggle[aria-pressed="true"] { border-color:var(--accent); background:var(--accent); color:var(--paper); }
+.toggle[aria-pressed="true"]:hover { filter:brightness(1.08); }
+
+.wrap { max-width:1500px; margin:0 auto; padding:26px 26px 90px; }
+
+.pagehead h1 { font-size:24px; font-weight:700; letter-spacing:-.01em; margin:0 0 6px; }
+.pagehead p { font-size:14px; color:var(--ink-soft); margin:0; max-width:80ch; line-height:1.5; }
+
+.mode { margin:42px 0 0; }
+.mode-head {
+  display:flex; align-items:baseline; gap:12px;
+  border-bottom:1px solid var(--rule); padding-bottom:8px; margin-bottom:6px;
+}
+.mode-head h2 { font-size:17px; font-weight:700; margin:0; letter-spacing:.01em; }
+.mode-head .kind {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:10px;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--accent-2);
+}
+.mode-note { font-size:13px; color:var(--ink-soft); margin:8px 0 18px; max-width:90ch; }
+.mode-note .what { color:var(--ink); font-weight:500; }
+
+/* card grid: comparable cards in a row/grid */
+.grid {
+  display:grid; gap:18px;
+  grid-template-columns:repeat(auto-fill, minmax(370px, 1fr));
+}
+
+.card {
+  border:1px solid var(--rule); border-radius:8px;
+  background:var(--panel); overflow:hidden;
+  display:flex; flex-direction:column;
+}
+.card.current { border-color:var(--good); }
+
+/* "show liked only" — hide unliked cards in the CARD MATRIX only.
+   (.mode sections with zero liked cards are hidden via JS.) */
+body.liked-only .card:not(.is-liked) { display:none; }
+
+.card-label {
+  display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
+  padding:11px 15px; background:var(--panel-2);
+  border-bottom:1px solid var(--rule);
+  font-family:"Inter",system-ui,sans-serif; /* label chrome stays neutral */
+}
+.card-id { font-size:13px; font-weight:700; letter-spacing:.01em; }
+.card-roles {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:10.5px;
+  color:var(--ink-soft); line-height:1.45; margin-top:3px;
+}
+.card-roles b { color:var(--ink); font-weight:700; }
+.badge-current {
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--paper); background:var(--good);
+  padding:3px 7px; border-radius:5px; white-space:nowrap; align-self:flex-start;
+}
+.badges { display:flex; flex-direction:column; gap:4px; align-items:flex-end; }
+.badge-liked {
+  font-family:"JetBrains Mono",monospace; font-size:9px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--caution); background:transparent;
+  border:1px solid var(--caution); padding:2px 6px; border-radius:5px; white-space:nowrap;
+}
+.badge-sub {
+  font-family:"JetBrains Mono",monospace; font-size:9.5px; line-height:1.4;
+  color:var(--caution); margin-top:6px;
+  border-left:2px solid var(--caution); padding-left:7px;
+}
+
+/* the SAMPLE — its fonts are set per-card via inline custom props */
+.sample { padding:16px 17px 18px; display:flex; flex-direction:column; gap:13px; }
+.s-head {
+  font-family:var(--f-head); font-size:15px; font-weight:700; letter-spacing:.005em;
+  color:var(--ink); line-height:1.3;
+}
+.s-prose {
+  font-family:var(--f-prose); font-size:13.5px; line-height:1.55; color:var(--ink-soft);
+}
+.s-prose .lift { color:var(--good); font-weight:700; }
+
+/* DATA TABLE — tabular figures, aligned numbers */
+.s-table { font-family:var(--f-data); font-size:12.5px; width:100%;
+  border-collapse:collapse; font-variant-numeric:tabular-nums lining-nums; }
+.s-table caption {
+  text-align:left; font-family:var(--f-data); font-size:9.5px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-faint); padding-bottom:5px;
+}
+.s-table th {
+  text-align:right; font-weight:500; color:var(--ink-faint);
+  font-size:10px; letter-spacing:.04em; text-transform:uppercase;
+  padding:0 0 5px; border-bottom:1px solid var(--rule);
+}
+.s-table th:first-child { text-align:left; }
+.s-table td {
+  text-align:right; padding:3.5px 0; color:var(--ink);
+  font-variant-numeric:tabular-nums lining-nums;
+  border-bottom:1px solid var(--rule-soft);
+}
+.s-table td:first-child { text-align:left; color:var(--ink-soft); }
+.s-table .dlt-good { color:var(--good); }
+.s-table tr:last-child td { border-bottom:none; }
+
+/* CODE / LABELS block */
+.s-code {
+  font-family:var(--f-code); font-size:12px; line-height:1.65;
+  background:var(--rule-soft); border:1px solid var(--rule);
+  border-radius:5px; padding:9px 11px; color:var(--ink);
+  white-space:pre; overflow-x:auto;
+}
+.s-code .k { color:var(--accent-2); }
+.s-code .v { color:var(--ink); }
+
+/* BIG metric */
+.s-metric { display:flex; align-items:baseline; gap:9px; margin-top:2px; }
+.s-metric .big {
+  font-family:var(--f-data); font-size:40px; font-weight:700; line-height:1;
+  letter-spacing:-.01em; color:var(--ink);
+  font-variant-numeric:tabular-nums lining-nums;
+}
+.s-metric .cap {
+  font-family:var(--f-data); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--ink-faint);
+}
+.s-metric .cap b { display:block; color:var(--good); font-size:13px; letter-spacing:0;
+  text-transform:none; font-variant-numeric:tabular-nums; }
+
+footer { margin-top:46px; padding-top:16px; border-top:1px solid var(--rule);
+  font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--ink-faint); line-height:1.7; }
+
+/* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) — mirrors .dt-cd in console4.css ---- */
+.theme-pick-label { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:10px;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--ink-faint); margin-right:2px; }
+.dt-cd { position: relative; display: inline-flex; }
+.dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--rule); border-radius: 5px; padding: 4px 9px;
+  background: transparent; color: var(--ink-soft); cursor: pointer;
+  font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px;
+  transition: border-color .15s, color .15s; }
+.dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+.dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dt-cd-name { color: var(--ink); white-space: nowrap; }
+.dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+.dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+.dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+.dt-swatch { display: inline-block; width: 11px; height: 13px; }
+.dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+.dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+  min-width: 200px; max-height: 70vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+.dt-cd.dt-cd-open .dt-cd-list { display: block; }
+.dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+  cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+.dt-cd-option .dt-cd-name { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 10.5px; }
+.dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+.dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+
+/* ============================================================
+   PICKER STUDY — exploratory design of the typeface-picker
+   control itself: 3 curated options per mode (Technical /
+   Editorial / Display), pre-selected default per mode. Three
+   variants share these tokens so all recolor live with the
+   16-theme picker. The big card-matrix sections below are
+   untouched.
+   ============================================================ */
+.picker-study {
+  margin:24px 0 8px; padding:22px 24px 26px;
+  border:1px solid var(--rule); border-radius:10px;
+  background:var(--panel);
+}
+.picker-study .ps-head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+  border-bottom:1px solid var(--rule); padding-bottom:10px; margin-bottom:4px; }
+.picker-study .ps-head h2 { font-size:18px; font-weight:700; margin:0; letter-spacing:.005em; }
+.picker-study .ps-head .kind {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:10px;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--accent-2); }
+.picker-study .ps-intro { font-size:13px; color:var(--ink-soft); margin:10px 0 4px; max-width:96ch; line-height:1.55; }
+.picker-study .ps-intro b { color:var(--ink); font-weight:600; }
+.picker-study .ps-intro code { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:12px;
+  color:var(--accent-2); background:var(--rule-soft); padding:1px 5px; border-radius:4px; }
+
+.ps-variants { display:grid; gap:18px; margin-top:18px;
+  grid-template-columns:repeat(auto-fit, minmax(440px, 1fr)); }
+.ps-variant {
+  border:1px solid var(--rule); border-radius:9px; background:var(--panel-2);
+  display:flex; flex-direction:column; overflow:hidden;
+}
+.ps-variant-head { padding:11px 15px 12px; border-bottom:1px solid var(--rule); }
+.ps-variant-head .vlabel { display:flex; align-items:baseline; gap:9px; }
+.ps-variant-head .vtag {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11px; font-weight:700;
+  color:var(--paper); background:var(--accent-2); border-radius:5px; padding:2px 8px; letter-spacing:.04em; }
+.ps-variant-head .vname { font-size:14px; font-weight:700; }
+.ps-variant-head .vwhy { font-size:12px; color:var(--ink-soft); margin-top:5px; line-height:1.5; }
+.ps-variant-body { padding:15px 15px 16px; display:flex; flex-direction:column; gap:13px; }
+
+/* segmented mode control (shared by variants A + B) */
+.ps-seg { display:inline-flex; border:1px solid var(--rule); border-radius:7px; overflow:hidden;
+  background:var(--paper); align-self:flex-start; }
+.ps-seg button {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11px; letter-spacing:.02em;
+  color:var(--ink-soft); background:transparent; border:none; cursor:pointer;
+  padding:6px 13px; transition:background .14s, color .14s;
+  border-right:1px solid var(--rule); }
+.ps-seg button:last-child { border-right:none; }
+.ps-seg button:hover { color:var(--ink); }
+.ps-seg button[aria-pressed="true"] { background:var(--accent-2); color:var(--paper); font-weight:700; }
+
+/* ---- Variant A: chips/cards row ---- */
+.ps-chips { display:grid; gap:11px; grid-template-columns:repeat(3, 1fr); }
+.ps-chip {
+  text-align:left; cursor:pointer; border:1px solid var(--rule); border-radius:8px;
+  background:var(--paper); padding:11px 12px 12px; display:flex; flex-direction:column; gap:8px;
+  transition:border-color .14s, background .14s, box-shadow .14s; }
+.ps-chip:hover { border-color:var(--accent-2); }
+.ps-chip[aria-pressed="true"] {
+  border-color:var(--accent); background:var(--rule-soft);
+  box-shadow:inset 0 0 0 1px var(--accent); }
+.ps-chip .chip-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.ps-chip .chip-name { font-size:12.5px; font-weight:700; color:var(--ink); line-height:1.25; }
+.ps-chip .chip-id { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:9.5px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); }
+.ps-chip .chip-check { width:15px; height:15px; flex:none; border-radius:50%;
+  border:1.5px solid var(--rule); display:inline-flex; align-items:center; justify-content:center;
+  color:var(--paper); font-size:9px; transition:background .14s, border-color .14s; }
+.ps-chip[aria-pressed="true"] .chip-check { background:var(--accent); border-color:var(--accent); }
+.ps-chip .chip-default { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:8px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--good);
+  border:1px solid var(--good); border-radius:4px; padding:1px 4px; }
+/* the micro-sample — its faces are set inline per option */
+.ps-micro { display:flex; align-items:baseline; gap:9px; padding-top:2px;
+  border-top:1px dashed var(--rule); }
+.ps-micro .m-prose { font-family:var(--m-prose); font-size:15px; font-weight:600; color:var(--ink);
+  letter-spacing:.005em; line-height:1.1; }
+.ps-micro .m-code { font-family:var(--m-code); font-size:13px; color:var(--ink-soft);
+  font-variant-numeric:tabular-nums lining-nums; line-height:1.1; }
+
+/* ---- Variant B: dt-cd-style popover, grouped by mode ---- */
+.ps-pop-group { margin:2px 0; }
+.ps-pop-group .grp-label {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:9px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--ink-faint); padding:6px 7px 4px; }
+.ps-pop-option {
+  display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:5px;
+  cursor:pointer; color:var(--ink-soft); transition:background .12s, color .12s; }
+.ps-pop-option:hover { background:var(--rule-soft); color:var(--ink); }
+.ps-pop-option[aria-selected="true"] { background:var(--rule-soft); }
+.ps-pop-option .opt-radio { width:13px; height:13px; flex:none; border-radius:50%;
+  border:1.5px solid var(--rule); position:relative; }
+.ps-pop-option[aria-selected="true"] .opt-radio { border-color:var(--accent); }
+.ps-pop-option[aria-selected="true"] .opt-radio::after { content:""; position:absolute;
+  inset:2.5px; border-radius:50%; background:var(--accent); }
+.ps-pop-option .opt-name { font-size:12px; font-weight:600; min-width:118px; }
+.ps-pop-option[aria-selected="true"] .opt-name { color:var(--accent); }
+.ps-pop-option .opt-micro { margin-left:auto; display:flex; align-items:baseline; gap:7px; }
+.ps-pop-option .opt-micro .mp { font-family:var(--m-prose); font-size:13px; font-weight:600; color:var(--ink); }
+.ps-pop-option .opt-micro .mc { font-family:var(--m-code); font-size:11px; color:var(--ink-faint);
+  font-variant-numeric:tabular-nums lining-nums; }
+/* trigger styled like dt-cd */
+.ps-pop-trigger { display:inline-flex; align-items:center; gap:9px; align-self:flex-start;
+  border:1px solid var(--rule); border-radius:6px; padding:6px 11px; background:var(--paper);
+  color:var(--ink-soft); cursor:pointer; transition:border-color .15s, color .15s; }
+.ps-pop-trigger:hover { color:var(--ink); border-color:var(--accent); }
+.ps-pop-trigger .trig-mode { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:9px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); }
+.ps-pop-trigger .trig-face { font-family:var(--m-prose); font-size:14px; font-weight:600; color:var(--ink); }
+.ps-pop-trigger .trig-caret { font-size:8px; color:var(--ink-faint); transition:transform .15s; }
+.ps-pop.open .ps-pop-trigger .trig-caret { transform:rotate(180deg); }
+.ps-pop { position:relative; }
+.ps-pop-list { display:none; position:absolute; top:calc(100% + 5px); left:0; z-index:40;
+  min-width:300px; background:var(--panel); border:1px solid var(--rule); border-radius:7px;
+  box-shadow:0 10px 28px rgba(0,0,0,.30); padding:5px; }
+.ps-pop.open .ps-pop-list { display:block; }
+
+/* ---- Variant C: 3x3 matrix ---- */
+.ps-matrix { display:grid; gap:1px; background:var(--rule);
+  border:1px solid var(--rule); border-radius:8px; overflow:hidden;
+  grid-template-columns:auto 1fr 1fr 1fr; }
+.ps-matrix .mx-cell { background:var(--paper); padding:9px 10px; }
+.ps-matrix .mx-corner { background:var(--panel-2); }
+.ps-matrix .mx-colhead, .ps-matrix .mx-rowhead { background:var(--panel-2);
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:9px; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--ink-faint); display:flex; align-items:center; }
+.ps-matrix .mx-colhead { justify-content:center; }
+.ps-matrix .mx-rowhead { color:var(--accent-2); font-weight:700; font-size:10px; }
+.ps-opt {
+  cursor:pointer; display:flex; flex-direction:column; gap:6px; min-height:62px;
+  transition:background .14s, box-shadow .14s; position:relative; }
+.ps-opt:hover { background:var(--rule-soft); }
+.ps-opt[aria-selected="true"] { background:var(--rule-soft); box-shadow:inset 0 0 0 2px var(--accent); z-index:1; }
+.ps-opt .o-name { font-size:11.5px; font-weight:700; color:var(--ink); line-height:1.2; }
+.ps-opt .o-id { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:8.5px;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); }
+.ps-opt[aria-selected="true"] .o-name { color:var(--accent); }
+.ps-opt .o-micro { display:flex; align-items:baseline; gap:7px; margin-top:auto; }
+.ps-opt .o-micro .mp { font-family:var(--m-prose); font-size:14px; font-weight:600; color:var(--ink); line-height:1; }
+.ps-opt .o-micro .mc { font-family:var(--m-code); font-size:11px; color:var(--ink-faint);
+  font-variant-numeric:tabular-nums lining-nums; line-height:1; }
+
+/* shared "this is how body+code looks" preview strip */
+.ps-preview { margin-top:3px; border:1px dashed var(--rule); border-radius:7px;
+  background:var(--paper); padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
+.ps-preview .pv-cap { font-family:"JetBrains Mono",ui-monospace,monospace; font-size:8.5px;
+  letter-spacing:.12em; text-transform:uppercase; color:var(--ink-faint); }
+.ps-preview .pv-body { font-family:var(--p-prose); font-size:13px; color:var(--ink); line-height:1.45; }
+.ps-preview .pv-code { font-family:var(--p-code); font-size:12px; color:var(--ink-soft);
+  font-variant-numeric:tabular-nums lining-nums;
+  background:var(--rule-soft); border:1px solid var(--rule); border-radius:5px; padding:5px 8px; }
+.ps-preview .pv-code .k { color:var(--accent-2); }
+
+/* ============================================================
+   PICKS TRAY — a floating, collapsible ballot (bottom-right).
+   Shared design with the composer study (compose.html); both
+   export an identical Markdown shape. Theme-adaptive via the
+   Console tokens already defined above. Persists to localStorage.
+   ============================================================ */
+.pick-toggle {
+  flex:none; width:22px; height:22px; border-radius:50%;
+  border:1.5px solid var(--rule); background:transparent; cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:12px; line-height:1; color:var(--ink-faint);
+  transition:border-color .14s, color .14s, background .14s, transform .1s;
+  padding:0;
+}
+.pick-toggle:hover { border-color:var(--accent); color:var(--ink); }
+.pick-toggle:active { transform:scale(.9); }
+.pick-toggle[aria-pressed="true"] {
+  border-color:var(--accent); background:var(--accent); color:var(--paper);
+}
+.pick-toggle.pt-sm { width:18px; height:18px; font-size:10px; border-width:1.5px; }
+
+#picks-tray {
+  position:fixed; right:18px; bottom:18px; z-index:200;
+  width:340px; max-width:calc(100vw - 36px);
+  font-family:"Inter",system-ui,sans-serif;
+  color:var(--ink);
+}
+#picks-tray .pt-card {
+  border:1px solid var(--rule); border-radius:10px;
+  background:var(--panel);
+  box-shadow:0 10px 34px rgba(0,0,0,.34);
+  overflow:hidden;
+  display:flex; flex-direction:column;
+  max-height:min(74vh, 720px);
+}
+#picks-tray.collapsed .pt-body { display:none; }
+#picks-tray .pt-head {
+  display:flex; align-items:center; gap:9px;
+  padding:10px 13px; background:var(--panel-2);
+  border-bottom:1px solid var(--rule); cursor:pointer; user-select:none;
+}
+#picks-tray.collapsed .pt-head { border-bottom:none; }
+#picks-tray .pt-title {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11px; font-weight:700;
+  letter-spacing:.08em; text-transform:uppercase; color:var(--ink);
+}
+#picks-tray .pt-count {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:10px;
+  color:var(--paper); background:var(--accent); border-radius:9px;
+  padding:1px 7px; min-width:18px; text-align:center;
+}
+#picks-tray .pt-count.zero { background:var(--rule); color:var(--ink-faint); }
+#picks-tray .pt-spacer { flex:1; }
+#picks-tray .pt-chevron { color:var(--ink-faint); font-size:10px; transition:transform .15s; }
+#picks-tray.collapsed .pt-chevron { transform:rotate(180deg); }
+#picks-tray .pt-body { padding:11px 13px 13px; overflow-y:auto; display:flex; flex-direction:column; gap:11px; }
+
+#picks-tray .pt-group { display:flex; flex-direction:column; gap:5px; }
+#picks-tray .pt-group-label {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:9px; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--accent-2); padding-bottom:2px;
+  border-bottom:1px solid var(--rule-soft);
+}
+#picks-tray .pt-item {
+  display:flex; align-items:center; gap:8px; padding:4px 2px;
+  font-size:12px; color:var(--ink); line-height:1.35;
+}
+#picks-tray .pt-item .pt-item-text { flex:1; min-width:0; }
+#picks-tray .pt-item .pt-item-id {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:10px; color:var(--ink-faint);
+}
+#picks-tray .pt-item .pt-rm {
+  flex:none; width:18px; height:18px; border-radius:5px; border:1px solid transparent;
+  background:transparent; color:var(--ink-faint); cursor:pointer; font-size:12px; line-height:1;
+  display:inline-flex; align-items:center; justify-content:center;
+  transition:color .12s, border-color .12s, background .12s;
+}
+#picks-tray .pt-item .pt-rm:hover { color:var(--bad); border-color:var(--bad); }
+#picks-tray .pt-empty { font-size:12px; color:var(--ink-faint); font-style:italic; padding:6px 2px; }
+
+#picks-tray .pt-notes-lab,
+#picks-tray .pt-export-lab {
+  font-family:"JetBrains Mono",ui-monospace,monospace; font-size:9px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--ink-faint); margin:2px 0 4px;
+}
+#picks-tray textarea {
+  width:100%; resize:vertical; font:inherit; font-size:11.5px; line-height:1.45;
+  color:var(--ink); background:var(--panel-2); border:1px solid var(--rule);
+  border-radius:7px; padding:7px 9px;
+}
+#picks-tray textarea:focus { outline:none; border-color:var(--accent); }
+#picks-tray #pt-notes { min-height:46px; }
+#picks-tray #pt-export {
+  min-height:96px; font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11px; display:none;
+}
+#picks-tray.show-export #pt-export { display:block; }
+#picks-tray .pt-actions { display:flex; gap:7px; }
+#picks-tray .pt-btn {
+  flex:1; font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11px;
+  border:1px solid var(--rule); border-radius:7px; padding:7px 9px; cursor:pointer;
+  background:var(--panel-2); color:var(--ink-soft);
+  transition:border-color .12s, color .12s, background .12s;
+}
+#picks-tray .pt-btn:hover { border-color:var(--accent); color:var(--ink); }
+#picks-tray .pt-btn.primary { background:var(--accent); color:var(--paper); border-color:var(--accent); font-weight:700; }
+#picks-tray .pt-btn.primary:hover { filter:brightness(1.08); }
+#picks-tray .pt-copied { color:var(--good); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <span class="brand">
+    <span class="brand-name">zıcato</span>
+    <span class="brand-tag">Console — Typeface Study</span>
+  </span>
+  <span class="spacer"></span>
+  <button class="toggle liked-only-toggle" id="liked-only-toggle" type="button" role="switch" aria-pressed="false" aria-label="Show liked typefaces only" title="Show only the liked typeface cards (card matrix)">♡ liked only</button>
+  <a class="compose-link" href="http://127.0.0.1:7952/compose.html?template=candidate" style="font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;color:var(--accent);text-decoration:none;border:1px solid var(--accent);border-radius:6px;padding:5px 11px;margin-right:16px;white-space:nowrap;">▶ preview a typeface in the composer</a>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main class="wrap">
+  <div class="pagehead">
+    <h1>Typeface study — three modes, side by side</h1>
+    <p>Each card applies one font option to the <b>same representative zicato content</b> — a section heading, body prose, a data table with tabular figures, a config/labels block, and one big metric — so prose, data, code, and headings are all exercised. Cards marked <b>current</b> show today's pairing. Compare within each mode, then <a href="http://127.0.0.1:7952/compose.html?template=candidate" style="color:var(--accent)">open the composer</a> to apply a chosen typeface to a full dashboard page in situ.</p>
+  </div>
+
+  <!-- ============================ PICKER STUDY ============================ -->
+  <section class="picker-study" id="picker-study">
+    <div class="ps-head">
+      <h2>Picker study — 3 options per mode</h2>
+      <span class="kind">control design · curated finalists</span>
+    </div>
+    <p class="ps-intro">
+      What an <b>updated typeface picker</b> could look like: instead of dozens of options, each of the three modes
+      (<b>Technical / Editorial / Display</b>) offers exactly <b>3 curated finalists</b>, with the current default
+      pre-selected. Below are three candidate designs for the picker control itself — click a mode or option in any of
+      them to see the selected state update and the live "body + code" preview strip change. Every micro-sample renders
+      in the option's <b>real faces</b>. The 3-per-mode set is data-driven: swap finalists by editing the single
+      <code>PICKER_FINALISTS</code> array (illustrative finalists shown — operator can swap freely).
+    </p>
+    <div class="ps-variants" id="ps-variants"></div>
+  </section>
+
+  <!-- ============================ TECHNICAL ============================ -->
+  <section class="mode">
+    <div class="mode-head">
+      <h2>Technical mode</h2>
+      <span class="kind">all-mono · prose↔code axis</span>
+    </div>
+    <p class="mode-note"><span class="what">What to look for:</span> the PROSE face carries body + heading; the CODE face carries the table, config, and big metric. The current pairing (iA Writer Mono prose) is the one under review — judge whether the prose mono reads warm and text-like beside JetBrains Mono's grid, and whether the two monos feel like one family or two.</p>
+    <div class="grid" id="grid-technical"></div>
+  </section>
+
+  <!-- ============================ EDITORIAL ============================ -->
+  <section class="mode">
+    <div class="mode-head">
+      <h2>Editorial mode</h2>
+      <span class="kind">reading serif</span>
+    </div>
+    <p class="mode-note"><span class="what">What to look for:</span> whether a serif typeset everywhere stays legible for DATA — check the table's tabular figures and the big metric. E2 swaps in JetBrains Mono for data/labels; decide if the mono numerals earn the break from the serif voice.</p>
+    <div class="grid" id="grid-editorial"></div>
+  </section>
+
+  <!-- ============================ DISPLAY ============================ -->
+  <section class="mode">
+    <div class="mode-head">
+      <h2>Display mode</h2>
+      <span class="kind">geometric / condensed</span>
+    </div>
+    <p class="mode-note"><span class="what">What to look for:</span> heading character vs. body calm. The current D2 pairs a condensed display face (Archivo Narrow) for headings against a geometric body (Space Grotesk); D1 and D3 unify on a single family — compare whether the condensed headline adds enough to justify the second face.</p>
+    <div class="grid" id="grid-display"></div>
+  </section>
+
+  <footer>
+    self-hosted (this server): iA Writer Mono · JetBrains Mono · Commit Mono &nbsp;|&nbsp;
+    CDN (Google Fonts): Source Serif 4 · Space Grotesk · Archivo Narrow · Inter · IBM Plex Sans · IBM Plex Mono · Newsreader · Sora<br>
+    tokens distilled from src/zicato/dashboard/static/css/variants/T/console4.css — standalone study, no repo edits.
+  </footer>
+</main>
+
+<script>
+/* ============================================================
+   PICKS-TRAY FOUNDATION — declared first so the card render +
+   picker-study render (further down) can reference picksState /
+   cleanId without a temporal-dead-zone error. The tray UI + the
+   rest of the pick logic live near the bottom of this script.
+   ============================================================ */
+const PICKS_KEY = 'zicato-typeface-study-picks-v3';
+const MODE_DISPLAY = { technical:'Technical', editorial:'Editorial', display:'Display', picker:'Picker style' };
+const MODE_EXPORT_ORDER = ['technical','editorial','display','picker'];
+
+/* the operator's curated final set — seeded as the pre-liked picks when there
+   is no saved state under PICKS_KEY. Ordered exactly as the export should read
+   within each mode. (Card picks only — no picker-style picks are seeded.) */
+const INITIAL_LIKES = {
+  technical: ['T7','T9','T12','T14'],
+  editorial: ['E5','E7','E8','E15'],
+  display:   ['D2','D12','D14','D5'],
+};
+
+/* the operator's FINALIZED picker-style pick — seeded alongside the card likes
+   (mode 'picker', id 'B') so a fresh -v3 load opens with the grouped popover
+   hearted. Exported as: "Picker style: B · Grouped popover (Console dt-cd idiom)". */
+const INITIAL_PICKER_LIKES = [
+  { id:'B', label:'Grouped popover (Console dt-cd idiom)' },
+];
+
+/* the canonical id (strip the " / CURRENT" decoration so T3 ↔ T3) */
+function cleanId(id) { return id.replace(/\s*\/\s*CURRENT/i, '').trim(); }
+
+/* tracks whether the current picksState came from saved storage (true) or is a
+   fresh/empty default (false) — the seeding step below only fires when unsaved. */
+let picksWereSaved = false;
+function loadPicks() {
+  try {
+    const raw = localStorage.getItem(PICKS_KEY);
+    if (raw) {
+      const obj = JSON.parse(raw);
+      if (obj && Array.isArray(obj.picks)) { picksWereSaved = true; return { picks: obj.picks, notes: obj.notes || '' }; }
+    }
+  } catch (e) {}
+  return { picks: [], notes: '' };
+}
+function savePicks() {
+  try { localStorage.setItem(PICKS_KEY, JSON.stringify(picksState)); } catch (e) {}
+}
+let picksState = loadPicks();
+
+/* ===== Console colour-scheme picker — 16 themes ported from variants/T =====
+   Swatch tuple = [ground, surface, ink, improve, regress, accent] (matches the
+   real swatchdropdown.js legibility-hint strip). Selecting a row sets
+   html[data-theme] and live-swaps the token block defined in CSS. */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME = "monokai";
+const THEME_IDS = THEMES.map(t => t[0]);
+function strip(swatches, sm) {
+  return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">` +
+    swatches.map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('') + `</span>`;
+}
+function mountThemePicker(hostId) {
+  const host = document.getElementById(hostId);
+  let value = DEFAULT_THEME, open = false, activeIdx = THEME_IDS.indexOf(value);
+  const byId = new Map(THEMES.map(t => [t[0], t]));
+  host.innerHTML =
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw]) =>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             ${strip(sw)}<span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd = host.querySelector('.dt-cd');
+  const trigger = host.querySelector('.dt-cd-trigger');
+  const trigStrip = host.querySelector('.dt-cd-trig-strip');
+  const trigName = host.querySelector('.dt-cd-trig-name');
+  const list = host.querySelector('.dt-cd-list');
+  const options = Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id) {
+    value = THEME_IDS.includes(id) ? id : DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme', value);
+    const def = byId.get(value);
+    trigStrip.className = 'dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden', 'true');
+    trigStrip.innerHTML = def[2].map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent = def[1];
+    options.forEach(o => o.setAttribute('aria-selected', String(o.getAttribute('data-theme') === value)));
+  }
+  function setActive(i) {
+    activeIdx = (i + options.length) % options.length;
+    options.forEach((o,k) => o.classList.toggle('dt-cd-active', k === activeIdx));
+  }
+  function setOpen(next) {
+    open = next; cd.classList.toggle('dt-cd-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) setActive(Math.max(0, THEME_IDS.indexOf(value)));
+  }
+  function choose(id) { applyTheme(id); setOpen(false); }
+  options.forEach(o => o.addEventListener('click', () => choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click', () => setOpen(!open));
+  trigger.addEventListener('keydown', ev => {
+    if (['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)) { ev.preventDefault(); setOpen(true); list.focus?.(); }
+  });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); setOpen(false); trigger.focus(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx+1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx-1); }
+    else if (['Enter',' ','Spacebar'].includes(ev.key)) {
+      ev.preventDefault();
+      const id = options[activeIdx]?.getAttribute('data-theme'); if (id) choose(id);
+    }
+  });
+  document.addEventListener('click', ev => {
+    if (!open) return; let n = ev.target; while (n) { if (n === cd) return; n = n.parentNode; } setOpen(false);
+  });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+
+/* ---- font stacks ---- */
+const JBM   = "'JetBrains Mono', ui-monospace, monospace";
+const IAW   = "'iA Writer Mono', ui-monospace, monospace";
+const CM    = "'Commit Mono', ui-monospace, monospace";
+const INTER = "'Inter', system-ui, sans-serif";
+const SS4   = "'Source Serif 4', Georgia, serif";
+const NEWS  = "'Newsreader', Georgia, serif";
+const SG    = "'Space Grotesk', system-ui, sans-serif";
+const AN    = "'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif";
+const SORA  = "'Sora', system-ui, sans-serif";
+const PLEXS = "'IBM Plex Sans', system-ui, sans-serif";
+const PLEXM = "'IBM Plex Mono', ui-monospace, monospace";
+/* --- 4 more creative variations per mode (all Google Fonts) --- */
+const SPMONO = "'Space Mono', ui-monospace, monospace";
+const FIRAS  = "'Fira Sans', system-ui, sans-serif";
+const FIRAC  = "'Fira Code', ui-monospace, monospace";
+const DMSANS = "'DM Sans', system-ui, sans-serif";
+const DMMONO = "'DM Mono', ui-monospace, monospace";
+const MARTM  = "'Martian Mono', ui-monospace, monospace";
+const PLAYF  = "'Playfair Display', Georgia, serif";
+const LORA   = "'Lora', Georgia, serif";
+const FRAUN  = "'Fraunces', Georgia, serif";
+const SPECT  = "'Spectral', Georgia, serif";
+const BITTER = "'Bitter', Georgia, serif";
+const SYNE   = "'Syne', system-ui, sans-serif";
+const BRICO  = "'Bricolage Grotesque', system-ui, sans-serif";
+const BIGSH  = "'Big Shoulders Display', 'Archivo Narrow', system-ui, sans-serif";
+const OUTFIT = "'Outfit', system-ui, sans-serif";
+/* --- batch 3: more open (OFL) families to reach 12 per mode --- */
+const RHT    = "'Red Hat Text', system-ui, sans-serif";
+const RHM    = "'Red Hat Mono', ui-monospace, monospace";
+const SRCS   = "'Source Sans 3', system-ui, sans-serif";
+const SRCC   = "'Source Code Pro', ui-monospace, monospace";
+const SPLS   = "'Spline Sans', system-ui, sans-serif";
+const SPLM   = "'Spline Sans Mono', ui-monospace, monospace";
+const LITER  = "'Literata', Georgia, serif";
+const CRIMS  = "'Crimson Pro', Georgia, serif";
+const ZILLA  = "'Zilla Slab', Georgia, serif";
+const GARA   = "'EB Garamond', Georgia, serif";
+const OSWALD = "'Oswald', 'Archivo Narrow', system-ui, sans-serif";
+const ANTON  = "'Anton', 'Archivo Narrow', system-ui, sans-serif";
+const ARCHV  = "'Archivo', system-ui, sans-serif";
+const SAIRAC = "'Saira Condensed', 'Archivo Narrow', system-ui, sans-serif";
+const HANKEN = "'Hanken Grotesk', system-ui, sans-serif";
+/* --- Roboto family (T4 = Roboto + Roboto Mono) + Google Sans Mono (T7) --- */
+const ROBOTO     = "'Roboto', system-ui, sans-serif";
+const ROBOTOMONO = "'Roboto Mono', ui-monospace, monospace";
+const GSMONO     = "'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace";
+/* --- batch 4: +3 per mode (Inconsolata + Ubuntu Mono requested) --- */
+const INCON    = "'Inconsolata', ui-monospace, monospace";
+const UBUM     = "'Ubuntu Mono', ui-monospace, monospace";
+const UBUNTU   = "'Ubuntu', system-ui, sans-serif";
+const ALEG     = "'Alegreya', Georgia, serif";
+const VOLL     = "'Vollkorn', Georgia, serif";
+const DOMINE   = "'Domine', Georgia, serif";
+const FAMILJEN = "'Familjen Grotesk', system-ui, sans-serif";
+const BARLOWC  = "'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif";
+const CHIVO    = "'Chivo', system-ui, sans-serif";
+
+/* head, prose, data, code roles per option */
+const OPTIONS = {
+  technical: [
+    { id:'CURRENT', current:true,
+      roles:'prose: <b>iA Writer Mono</b> · data/code: <b>JetBrains Mono</b>',
+      head:IAW, prose:IAW, data:JBM, code:JBM },
+    { id:'T1',
+      roles:'prose: <b>Commit Mono</b> · data/code: <b>JetBrains Mono</b>',
+      head:CM, prose:CM, data:JBM, code:JBM },
+    { id:'T2',
+      roles:'prose: <b>Inter</b> (sans) · data/code: <b>JetBrains Mono</b>',
+      head:INTER, prose:INTER, data:JBM, code:JBM },
+    { id:'T3',
+      roles:'prose: <b>IBM Plex Sans</b> · data/code: <b>IBM Plex Mono</b>',
+      head:PLEXS, prose:PLEXS, data:PLEXM, code:PLEXM },
+    { id:'T4', label:'Roboto + Roboto Mono',
+      roles:'prose/head: <b>Roboto</b> · data/code: <b>Roboto Mono</b>',
+      head:ROBOTO, prose:ROBOTO, data:ROBOTOMONO, code:ROBOTOMONO },
+    { id:'T5',
+      roles:'prose/head: <b>Fira Sans</b> · data/code: <b>Fira Code</b>',
+      head:FIRAS, prose:FIRAS, data:FIRAC, code:FIRAC },
+    { id:'T6',
+      roles:'prose/head: <b>DM Sans</b> · data/code: <b>DM Mono</b>',
+      head:DMSANS, prose:DMSANS, data:DMMONO, code:DMMONO },
+    { id:'T7', label:'Google Sans Mono',
+      roles:'all <b>Google Sans Mono</b> (Noto Sans Mono fallback)',
+      head:GSMONO, prose:GSMONO, data:GSMONO, code:GSMONO },
+    { id:'T8',
+      roles:'prose/head: <b>Red Hat Text</b> · data/code: <b>Red Hat Mono</b>',
+      head:RHT, prose:RHT, data:RHM, code:RHM },
+    { id:'T9', label:'Source Sans 3 + Source Code Pro',
+      roles:'prose/head: <b>Source Sans 3</b> · data/code: <b>Source Code Pro</b>',
+      head:SRCS, prose:SRCS, data:SRCC, code:SRCC },
+    { id:'T10', label:'Spline Sans + Spline Sans Mono',
+      roles:'prose/head: <b>Spline Sans</b> · data/code: <b>Spline Sans Mono</b>',
+      head:SPLS, prose:SPLS, data:SPLM, code:SPLM },
+    { id:'T11',
+      roles:'everything: <b>IBM Plex Mono</b> (pure all-mono)',
+      head:PLEXM, prose:PLEXM, data:PLEXM, code:PLEXM },
+    { id:'T12', label:'Inconsolata',
+      roles:'everything: <b>Inconsolata</b> (all-Inconsolata)',
+      head:INCON, prose:INCON, data:INCON, code:INCON },
+    { id:'T13',
+      roles:'prose/head: <b>Ubuntu Mono</b> · data/code: <b>JetBrains Mono</b>',
+      head:UBUM, prose:UBUM, data:JBM, code:JBM },
+    { id:'T14', label:'Ubuntu + Ubuntu Mono',
+      roles:'prose/head: <b>Ubuntu</b> (sans) · data/code: <b>Ubuntu Mono</b>',
+      head:UBUNTU, prose:UBUNTU, data:UBUM, code:UBUM },
+  ],
+  editorial: [
+    { id:'E1 / CURRENT', current:true,
+      roles:'everything: <b>Source Serif 4</b>',
+      head:SS4, prose:SS4, data:SS4, code:SS4 },
+    { id:'E2',
+      roles:'prose/head: <b>Source Serif 4</b> · data/labels: <b>JetBrains Mono</b>',
+      head:SS4, prose:SS4, data:JBM, code:JBM },
+    { id:'E3',
+      roles:'everything: <b>Newsreader</b> (serif)',
+      head:NEWS, prose:NEWS, data:NEWS, code:NEWS },
+    { id:'E4',
+      roles:'headings: <b>Playfair Display</b> · body/data: <b>Lora</b>',
+      head:PLAYF, prose:LORA, data:LORA, code:LORA },
+    { id:'E5', label:'Fraunces',
+      roles:'everything: <b>Fraunces</b> (old-style display serif)',
+      head:FRAUN, prose:FRAUN, data:FRAUN, code:FRAUN },
+    { id:'E6', label:'Spectral',
+      roles:'everything: <b>Spectral</b> (screen serif)',
+      head:SPECT, prose:SPECT, data:SPECT, code:SPECT },
+    { id:'E7', label:'Bitter',
+      roles:'everything: <b>Bitter</b> (slab serif)',
+      head:BITTER, prose:BITTER, data:BITTER, code:BITTER },
+    { id:'E8', label:'Literata',
+      roles:'everything: <b>Literata</b> (literary, reading-optimized)',
+      head:LITER, prose:LITER, data:LITER, code:LITER },
+    { id:'E9',
+      roles:'everything: <b>Crimson Pro</b> (old-style book serif)',
+      head:CRIMS, prose:CRIMS, data:CRIMS, code:CRIMS },
+    { id:'E10', label:'Zilla Slab',
+      roles:'everything: <b>Zilla Slab</b> (Mozilla slab serif)',
+      head:ZILLA, prose:ZILLA, data:ZILLA, code:ZILLA },
+    { id:'E11',
+      roles:'everything: <b>EB Garamond</b> (classic Garamond)',
+      head:GARA, prose:GARA, data:GARA, code:GARA },
+    { id:'E12',
+      roles:'headings: <b>Fraunces</b> · body/data: <b>Newsreader</b>',
+      head:FRAUN, prose:NEWS, data:NEWS, code:NEWS },
+    { id:'E13',
+      roles:'everything: <b>Alegreya</b> (book serif)',
+      head:ALEG, prose:ALEG, data:ALEG, code:ALEG },
+    { id:'E14',
+      roles:'everything: <b>Vollkorn</b> (warm body serif)',
+      head:VOLL, prose:VOLL, data:VOLL, code:VOLL },
+    { id:'E15', label:'Domine',
+      roles:'everything: <b>Domine</b> (screen body serif)',
+      head:DOMINE, prose:DOMINE, data:DOMINE, code:DOMINE },
+  ],
+  display: [
+    { id:'D2 / CURRENT', current:true, label:'Archivo Narrow + Space Grotesk',
+      roles:'headings: <b>Archivo Narrow</b> · body: <b>Space Grotesk</b>',
+      head:AN, prose:SG, data:SG, code:SG },
+    { id:'D1',
+      roles:'headings + body: <b>Space Grotesk</b>',
+      head:SG, prose:SG, data:SG, code:SG },
+    { id:'D3',
+      roles:'everything: <b>Sora</b>',
+      head:SORA, prose:SORA, data:SORA, code:SORA },
+    { id:'D4',
+      roles:'headings: <b>Syne</b> · body: <b>Space Grotesk</b>',
+      head:SYNE, prose:SG, data:SG, code:SG },
+    { id:'D5', label:'Bricolage Grotesque',
+      roles:'everything: <b>Bricolage Grotesque</b>',
+      head:BRICO, prose:BRICO, data:BRICO, code:BRICO },
+    { id:'D6',
+      roles:'headings: <b>Big Shoulders Display</b> · body: <b>Space Grotesk</b>',
+      head:BIGSH, prose:SG, data:SG, code:SG },
+    { id:'D7',
+      roles:'everything: <b>Outfit</b> (clean geometric)',
+      head:OUTFIT, prose:OUTFIT, data:OUTFIT, code:OUTFIT },
+    { id:'D8',
+      roles:'headings: <b>Oswald</b> (condensed) · body: <b>Space Grotesk</b>',
+      head:OSWALD, prose:SG, data:SG, code:SG },
+    { id:'D9',
+      roles:'headings: <b>Anton</b> (ultra-bold condensed) · body: <b>Space Grotesk</b>',
+      head:ANTON, prose:SG, data:SG, code:SG },
+    { id:'D10',
+      roles:'everything: <b>Archivo</b> (expanded grotesque)',
+      head:ARCHV, prose:ARCHV, data:ARCHV, code:ARCHV },
+    { id:'D11',
+      roles:'headings: <b>Saira Condensed</b> · body: <b>Space Grotesk</b>',
+      head:SAIRAC, prose:SG, data:SG, code:SG },
+    { id:'D12', label:'Hanken Grotesk',
+      roles:'everything: <b>Hanken Grotesk</b> (warm grotesque)',
+      head:HANKEN, prose:HANKEN, data:HANKEN, code:HANKEN },
+    { id:'D13',
+      roles:'everything: <b>Familjen Grotesk</b>',
+      head:FAMILJEN, prose:FAMILJEN, data:FAMILJEN, code:FAMILJEN },
+    { id:'D14', label:'Barlow Condensed + Space Grotesk',
+      roles:'headings: <b>Barlow Condensed</b> · body: <b>Space Grotesk</b>',
+      head:BARLOWC, prose:SG, data:SG, code:SG },
+    { id:'D15',
+      roles:'everything: <b>Chivo</b> (grotesque)',
+      head:CHIVO, prose:CHIVO, data:CHIVO, code:CHIVO },
+  ],
+};
+
+/* seed the operator's curated pre-liked set when there is NO saved state under
+   PICKS_KEY (a fresh -v2 load). Resolves each id → {mode,id,label} from OPTIONS,
+   preserving INITIAL_LIKES order so the export reads in that order. Picker-style
+   picks are never seeded. Runs once, after OPTIONS is defined. */
+function seedInitialLikes() {
+  if (picksWereSaved || picksState.picks.length) return;
+  const seeded = [];
+  ['technical','editorial','display'].forEach(mode => {
+    (INITIAL_LIKES[mode] || []).forEach(id => {
+      const opt = OPTIONS[mode].find(o => cleanId(o.id) === id);
+      if (!opt) return;
+      const label = opt.label || labelFromRoles(opt.roles);
+      seeded.push({ mode, id, label });
+    });
+  });
+  // seed the FINALIZED picker style (mode 'picker') alongside the card likes
+  INITIAL_PICKER_LIKES.forEach(p => seeded.push({ mode:'picker', id:p.id, label:p.label }));
+  picksState.picks = seeded;
+  savePicks();
+}
+seedInitialLikes();
+
+/* the same representative zicato content for every card */
+function sampleHTML() {
+  return `
+    <div class="s-head">Epoch 7 · gauntlet · round 3</div>
+    <div class="s-prose">The challenger dropped weighted loss by <span class="lift">0.031</span> over the champion across 12 board entries, with no per-task regression. The gate opens; v7 is promoted and carries its birth round forward.</div>
+    <table class="s-table">
+      <caption>fleet · generations</caption>
+      <thead><tr><th>gen</th><th>loss</th><th>&Delta;</th><th>pass-rate</th></tr></thead>
+      <tbody>
+        <tr><td>v5</td><td>0.449</td><td>&mdash;</td><td>&mdash;</td></tr>
+        <tr><td>v6</td><td>0.431</td><td class="dlt-good">&minus;0.018</td><td>11/12</td></tr>
+        <tr><td>v7</td><td>0.418</td><td class="dlt-good">&minus;0.031</td><td>12/12</td></tr>
+      </tbody>
+    </table>
+    <div class="s-code"><span class="k">promote_margin</span>: <span class="v">0.02</span>
+<span class="k">field_size</span>: <span class="v">4</span>
+<span class="k">drift_weight</span>: <span class="v">0.6</span>
+<span class="k">structure</span>: <span class="v">racing</span></div>
+    <div class="s-metric">
+      <span class="big">0.418</span>
+      <span class="cap">weighted loss<b>&minus;0.031 vs champion</b></span>
+    </div>`;
+}
+
+/* operator's flagged favorites — badged for quick scanning */
+const LIKED = new Set(['T3','T4','T6','E3','E5','E7','D2 / CURRENT','D5','D6']);
+
+/* derive a short human face-name label from a card's roles HTML — the bolded
+   face name(s). Used as the pick label so the tray reads e.g. "IBM Plex Sans". */
+function labelFromRoles(roles) {
+  const tmp = document.createElement('div'); tmp.innerHTML = roles;
+  const bolds = Array.from(tmp.querySelectorAll('b')).map(b => b.textContent.trim());
+  if (!bolds.length) return tmp.textContent.trim().slice(0, 40);
+  // de-dupe consecutive identical faces (e.g. prose+data same family)
+  const uniq = [...new Set(bolds)];
+  return uniq.join(' + ');
+}
+
+function render(mode) {
+  const host = document.getElementById('grid-' + mode);
+  OPTIONS[mode].forEach(o => {
+    const card = document.createElement('div');
+    card.className = 'card' + (o.current ? ' current' : '');
+    const sub = o.sub ? `<div class="badge-sub">${o.sub}</div>` : '';
+    const cid = cleanId(o.id);
+    card.dataset.mode = mode;
+    card.dataset.id = cid;
+    const label = o.label || labelFromRoles(o.roles);
+    card.innerHTML = `
+      <div class="card-label">
+        <div>
+          <div class="card-id">${o.id}</div>
+          <div class="card-roles">${o.roles}</div>
+          ${sub}
+        </div>
+        <div class="badges">
+          <button class="pick-toggle" type="button" data-mode="${mode}" data-id="${cid}" data-label="${label.replace(/"/g,'&quot;')}" aria-pressed="false" aria-label="Pick ${cid}">♡</button>
+          ${o.current ? '<span class="badge-current">current</span>' : ''}${LIKED.has(o.id) ? '<span class="badge-liked">★ liked</span>' : ''}
+        </div>
+      </div>
+      <div class="sample"
+           style="--f-head:${o.head};--f-prose:${o.prose};--f-data:${o.data};--f-code:${o.code};">
+        ${sampleHTML()}
+      </div>`;
+    card.querySelector('.pick-toggle').addEventListener('click', e => {
+      const b = e.currentTarget;
+      togglePick(b.dataset.mode, b.dataset.id, b.dataset.label);
+    });
+    host.appendChild(card);
+  });
+}
+['technical','editorial','display'].forEach(render);
+
+/* ============================================================
+   PICKER STUDY — 3 curated finalists per mode, pre-selected
+   default. SWAPPABLE: edit PICKER_FINALISTS below. Each entry
+   references an existing OPTIONS[mode] item by id, gives a
+   short display name, and marks the per-mode default.
+   These are illustrative finalists; the operator can swap any
+   of them by editing this one array (ids must match OPTIONS).
+   ============================================================ */
+const PICKER_FINALISTS = {
+  technical: [
+    { id:'T3',  name:'IBM Plex',           default:true  },  // operator fave
+    { id:'T7',  name:'Google Sans Mono',   default:false },
+    { id:'T12', name:'Inconsolata',        default:false },
+  ],
+  editorial: [
+    { id:'E1 / CURRENT', name:'Source Serif 4', default:true },  // current default
+    { id:'E5', name:'Fraunces',  default:false },
+    { id:'E3', name:'Newsreader', default:false },
+  ],
+  display: [
+    { id:'D2 / CURRENT', name:'Archivo Narrow + Space Grotesk', default:true }, // current default
+    { id:'D1', name:'Space Grotesk',      default:false },
+    { id:'D5', name:'Bricolage Grotesque', default:false },
+  ],
+};
+const MODE_LABELS = { technical:'Technical', editorial:'Editorial', display:'Display' };
+const MODE_KEYS = ['technical','editorial','display'];
+
+/* resolve a finalist to its full OPTIONS object (real font stacks) */
+function resolveFinalist(mode, fin) {
+  const opt = OPTIONS[mode].find(o => o.id === fin.id);
+  return { ...fin, opt };  // opt has .head/.prose/.data/.code (real faces)
+}
+const FINALISTS = Object.fromEntries(MODE_KEYS.map(m =>
+  [m, PICKER_FINALISTS[m].map(f => resolveFinalist(m, f))]));
+
+/* per-variant selection state: { mode, byMode:{technical:idx,...} } */
+function initState() {
+  const byMode = {};
+  MODE_KEYS.forEach(m => { byMode[m] = Math.max(0, FINALISTS[m].findIndex(f => f.default)); });
+  return { mode:'technical', byMode };
+}
+
+/* a tiny live micro-sample: prose "Ag" + code "0.123" in the option's real faces */
+function microHTML(opt) {
+  return `<span class="m-prose" style="font-family:${opt.prose}">Ag</span>` +
+         `<span class="m-code" style="font-family:${opt.code}">0.123</span>`;
+}
+function currentOpt(st) { return FINALISTS[st.mode][st.byMode[st.mode]].opt; }
+
+/* the shared "this is how body+code looks" preview strip */
+function previewHTML(opt) {
+  return `<div class="ps-preview" style="--p-prose:${opt.prose};--p-code:${opt.code};">
+      <div class="pv-cap">body + code preview</div>
+      <div class="pv-body">The challenger dropped weighted loss by 0.031 over the champion across 12 board entries.</div>
+      <div class="pv-code"><span class="k">promote_margin</span>: 0.02 · <span class="k">structure</span>: racing · loss 0.418</div>
+    </div>`;
+}
+
+/* ---------- Variant A: segmented mode control + 3 option chips ---------- */
+function renderVariantA(host) {
+  const st = initState();
+  const el = document.createElement('div');
+  el.className = 'ps-variant';
+  el.innerHTML = `
+    <div class="ps-variant-head">
+      <div class="vlabel"><span class="vtag">A</span><span class="vname">Segmented control + option chips</span></div>
+      <div class="vwhy">Mode as a familiar segmented toggle; the 3 finalists laid out as tappable cards with a live micro-sample each. Most scannable — the whole choice for the active mode is visible at once.</div>
+    </div>
+    <div class="ps-variant-body">
+      <div class="ps-seg" role="group" aria-label="Typeface mode"></div>
+      <div class="ps-chips"></div>
+      <div class="pv-mount"></div>
+    </div>`;
+  const seg = el.querySelector('.ps-seg');
+  const chips = el.querySelector('.ps-chips');
+  const pvMount = el.querySelector('.pv-mount');
+  seg.innerHTML = MODE_KEYS.map(m =>
+    `<button type="button" data-mode="${m}" aria-pressed="${m===st.mode}">${MODE_LABELS[m]}</button>`).join('');
+  function paint() {
+    seg.querySelectorAll('button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.mode === st.mode)));
+    const fins = FINALISTS[st.mode];
+    const mode = st.mode;
+    chips.innerHTML = fins.map((f, i) => {
+      const sel = i === st.byMode[st.mode];
+      const cid = cleanId(f.id);
+      return `<div class="ps-chip" data-idx="${i}" aria-pressed="${sel}" role="button" tabindex="0">
+        <div class="chip-top">
+          <div>
+            <div class="chip-name">${f.name}</div>
+            <div class="chip-id">${cid}${f.default?' · default':''}</div>
+          </div>
+          <span class="chip-check" aria-hidden="true"></span>
+        </div>
+        <div class="ps-micro" style="--m-prose:${f.opt.prose};--m-code:${f.opt.code};">
+          <span class="m-prose">Ag</span><span class="m-code">0.123</span>
+        </div>
+      </div>`;
+    }).join('');
+    chips.querySelectorAll('.ps-chip').forEach(c => {
+      // chips SELECT the previewed finalist; "liking" happens on the picker
+      // STYLE (the variant head), not on individual font options.
+      const selectMode = () => { st.byMode[st.mode] = +c.dataset.idx; paint(); };
+      c.addEventListener('click', selectMode);
+      c.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectMode(); } });
+    });
+    pvMount.innerHTML = previewHTML(currentOpt(st));
+    if (typeof syncAllToggles === 'function') syncAllToggles();
+  }
+  seg.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { st.mode = b.dataset.mode; paint(); }));
+  paint();
+  host.appendChild(el);
+}
+
+/* ---------- Variant B: dt-cd-style popover grouped by mode ---------- */
+function renderVariantB(host) {
+  const st = initState();
+  let open = false;
+  const el = document.createElement('div');
+  el.className = 'ps-variant';
+  el.innerHTML = `
+    <div class="ps-variant-head">
+      <div class="vlabel"><span class="vtag">B</span><span class="vname">Grouped popover (Console <code style="font-family:inherit;background:none;padding:0;color:var(--accent-2)">dt-cd</code> idiom)</span></div>
+      <div class="vwhy">Mirrors the real colour-picker dropdown: one compact trigger, a popover grouped by mode with 3 rows each, every row a face-name + micro-preview. Smallest footprint; fits an existing toolbar.</div>
+    </div>
+    <div class="ps-variant-body">
+      <div class="ps-pop">
+        <button type="button" class="ps-pop-trigger" aria-haspopup="listbox" aria-expanded="false">
+          <span class="trig-mode"></span><span class="trig-face"></span><span class="trig-caret">▾</span>
+        </button>
+        <div class="ps-pop-list" role="listbox"></div>
+      </div>
+      <div class="pv-mount"></div>
+    </div>`;
+  const pop = el.querySelector('.ps-pop');
+  const trigger = el.querySelector('.ps-pop-trigger');
+  const trigMode = el.querySelector('.trig-mode');
+  const trigFace = el.querySelector('.trig-face');
+  const list = el.querySelector('.ps-pop-list');
+  const pvMount = el.querySelector('.pv-mount');
+  list.innerHTML = MODE_KEYS.map(m => `
+    <div class="ps-pop-group">
+      <div class="grp-label">${MODE_LABELS[m]}</div>
+      ${FINALISTS[m].map((f,i) => `
+        <div class="ps-pop-option" role="option" data-mode="${m}" data-idx="${i}"
+             style="--m-prose:${f.opt.prose};--m-code:${f.opt.code};">
+          <span class="opt-radio"></span>
+          <span class="opt-name">${f.name}</span>
+          <span class="opt-micro"><span class="mp">Ag</span><span class="mc">0.123</span></span>
+        </div>`).join('')}
+    </div>`).join('');
+  function paint() {
+    list.querySelectorAll('.ps-pop-option').forEach(o => {
+      const m = o.dataset.mode, i = +o.dataset.idx;
+      o.setAttribute('aria-selected', String(m === st.mode && i === st.byMode[m]));
+    });
+    const cur = FINALISTS[st.mode][st.byMode[st.mode]];
+    trigMode.textContent = MODE_LABELS[st.mode];
+    trigFace.textContent = cur.name;
+    trigger.style.setProperty('--m-prose', cur.opt.prose);
+    pvMount.innerHTML = previewHTML(currentOpt(st));
+  }
+  function setOpen(n){ open=n; pop.classList.toggle('open',open); trigger.setAttribute('aria-expanded',String(open)); }
+  trigger.addEventListener('click', () => setOpen(!open));
+  list.querySelectorAll('.ps-pop-option').forEach(o =>
+    o.addEventListener('click', () => {
+      st.mode = o.dataset.mode; st.byMode[st.mode] = +o.dataset.idx; paint(); setOpen(false);
+    }));
+  document.addEventListener('click', ev => {
+    if (!open) return; let n = ev.target; while (n) { if (n === pop) return; n = n.parentNode; } setOpen(false);
+  });
+  paint();
+  host.appendChild(el);
+}
+
+/* ---------- Variant C: 3x3 matrix (rows = modes, cols = options) ---------- */
+function renderVariantC(host) {
+  const st = initState();
+  const el = document.createElement('div');
+  el.className = 'ps-variant';
+  el.innerHTML = `
+    <div class="ps-variant-head">
+      <div class="vlabel"><span class="vtag">C</span><span class="vname">3×3 matrix — every option at once</span></div>
+      <div class="vwhy">Rows = modes, columns = the 3 finalists. The entire picker is visible with no toggling; one highlighted cell per row marks each mode's pick. Best for comparing all nine faces side by side.</div>
+    </div>
+    <div class="ps-variant-body">
+      <div class="ps-matrix"></div>
+      <div class="pv-mount"></div>
+    </div>`;
+  const mx = el.querySelector('.ps-matrix');
+  const pvMount = el.querySelector('.pv-mount');
+  function paint() {
+    let html = `<div class="mx-cell mx-corner"></div>
+      <div class="mx-cell mx-colhead">option 1</div>
+      <div class="mx-cell mx-colhead">option 2</div>
+      <div class="mx-cell mx-colhead">option 3</div>`;
+    MODE_KEYS.forEach(m => {
+      html += `<div class="mx-cell mx-rowhead">${MODE_LABELS[m]}</div>`;
+      FINALISTS[m].forEach((f,i) => {
+        const sel = i === st.byMode[m] && (m === st.mode);
+        const picked = i === st.byMode[m];
+        html += `<div class="mx-cell ps-opt" role="option" data-mode="${m}" data-idx="${i}"
+             aria-selected="${picked}"
+             style="--m-prose:${f.opt.prose};--m-code:${f.opt.code};${sel?'box-shadow:inset 0 0 0 2px var(--accent);':''}">
+            <div><div class="o-name">${f.name}</div><div class="o-id">${f.id.replace(' / CURRENT','')}${f.default?' · default':''}</div></div>
+            <div class="o-micro"><span class="mp">Ag</span><span class="mc">0.123</span></div>
+          </div>`;
+      });
+    });
+    mx.innerHTML = html;
+    mx.querySelectorAll('.ps-opt').forEach(o =>
+      o.addEventListener('click', () => {
+        st.mode = o.dataset.mode; st.byMode[st.mode] = +o.dataset.idx; paint();
+      }));
+    pvMount.innerHTML = previewHTML(currentOpt(st));
+  }
+  paint();
+  host.appendChild(el);
+}
+
+(function mountPickerStudy(){
+  const host = document.getElementById('ps-variants');
+  renderVariantA(host);
+  renderVariantB(host);
+  renderVariantC(host);
+  // "Like" the PICKER STYLE itself (variant A / B / C), not a font option —
+  // a heart on each variant head records the picker DESIGN under the
+  // "Picker style" group in the tray.
+  host.querySelectorAll('.ps-variant').forEach(v => {
+    const head = v.querySelector('.ps-variant-head');
+    const letter = (v.querySelector('.vtag') ? v.querySelector('.vtag').textContent : '').trim();
+    const name = (v.querySelector('.vname') ? v.querySelector('.vname').textContent : '').trim();
+    if (!head || !letter) return;
+    head.style.position = 'relative';
+    head.style.paddingRight = '42px';
+    const btn = document.createElement('button');
+    btn.className = 'pick-toggle';
+    btn.type = 'button';
+    btn.dataset.mode = 'picker';
+    btn.dataset.id = letter;
+    btn.dataset.label = name;
+    btn.setAttribute('aria-pressed', 'false');
+    btn.setAttribute('aria-label', 'Like picker style ' + letter);
+    btn.title = 'Like this picker style';
+    btn.style.cssText = 'position:absolute;top:11px;right:13px;';
+    btn.textContent = '♡';
+    btn.addEventListener('click', e => { e.stopPropagation(); togglePick('picker', letter, name); });
+    head.appendChild(btn);
+  });
+  if (typeof syncAllToggles === 'function') syncAllToggles();
+})();
+
+/* ============================================================
+   PICKS TRAY — selection/ballot for the typeface study.
+   A pick = { mode, id, label } where label is a human face name.
+   Persisted to localStorage under PICKS_KEY. Grouped by mode.
+   Exports a Markdown list (one line per mode) + a notes line.
+   Shared design + identical export shape with compose.html.
+   (Foundation — PICKS_KEY / picksState / cleanId — is declared near the
+   top of this script so the card + picker-study renders can reference it.)
+   ============================================================ */
+
+/* a stable pick key: mode + canonical id (so a card + its picker chip dedupe) */
+function pickKey(mode, id) { return mode + '::' + cleanId(id); }
+function hasPick(mode, id) { return picksState.picks.some(p => pickKey(p.mode, p.id) === pickKey(mode, id)); }
+function togglePick(mode, id, label) {
+  const key = pickKey(mode, id);
+  const i = picksState.picks.findIndex(p => pickKey(p.mode, p.id) === key);
+  if (i >= 0) picksState.picks.splice(i, 1);
+  else picksState.picks.push({ mode, id: cleanId(id), label });
+  savePicks();
+  syncAllToggles();
+  renderTray();
+}
+function removePick(mode, id) {
+  const key = pickKey(mode, id);
+  const i = picksState.picks.findIndex(p => pickKey(p.mode, p.id) === key);
+  if (i >= 0) { picksState.picks.splice(i, 1); savePicks(); syncAllToggles(); renderTray(); }
+}
+function clearPicks() {
+  picksState = { picks: [], notes: picksState.notes };
+  savePicks(); syncAllToggles(); renderTray();
+}
+
+/* reflect current pick-state onto every .pick-toggle on the page */
+function syncAllToggles() {
+  document.querySelectorAll('.pick-toggle[data-mode][data-id]').forEach(btn => {
+    const on = hasPick(btn.dataset.mode, btn.dataset.id);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.textContent = on ? '♥' : '♡';   // ♥ / ♡
+    btn.title = on ? 'Picked — click to remove' : 'Pick this typeface';
+  });
+  // keep each CARD-MATRIX card's is-liked class in sync (scoped to .card; the
+  // picker study + tray are untouched) so the "show liked only" view is live.
+  document.querySelectorAll('.card[data-mode][data-id]').forEach(card => {
+    card.classList.toggle('is-liked', hasPick(card.dataset.mode, card.dataset.id));
+  });
+  applyLikedOnlyEmptySections();
+}
+
+/* hide a card-matrix mode section whose visible (liked) cards are zero while
+   "show liked only" is on; show it again otherwise. Scoped to .mode sections. */
+function applyLikedOnlyEmptySections() {
+  const likedOnly = document.body.classList.contains('liked-only');
+  document.querySelectorAll('main.wrap > section.mode').forEach(sec => {
+    if (!likedOnly) { sec.style.display = ''; return; }
+    const anyLiked = sec.querySelector('.card.is-liked');
+    sec.style.display = anyLiked ? '' : 'none';
+  });
+}
+
+/* ---- build the Markdown export (the SHARED shape) ---- */
+function buildMarkdown() {
+  const lines = ['## Typeface picks'];
+  MODE_EXPORT_ORDER.forEach(mode => {
+    const inMode = picksState.picks.filter(p => p.mode === mode);
+    if (!inMode.length) return;
+    const parts = inMode.map(p => `${p.id} · ${p.label}`);
+    lines.push(`- ${MODE_DISPLAY[mode]}: ${parts.join('; ')}`);
+  });
+  if (lines.length === 1) lines.push('- (none yet)');
+  const notes = (picksState.notes || '').trim();
+  lines.push(`Notes: ${notes || '-'}`);
+  return lines.join('\n');
+}
+
+/* ---- the floating tray ---- */
+function mountTray() {
+  const tray = document.createElement('div');
+  tray.id = 'picks-tray';
+  tray.innerHTML = `
+    <div class="pt-card">
+      <div class="pt-head" id="pt-head">
+        <span class="pt-title">♥ My picks</span>
+        <span class="pt-count" id="pt-count">0</span>
+        <span class="pt-spacer"></span>
+        <span class="pt-chevron" aria-hidden="true">▾</span>
+      </div>
+      <div class="pt-body">
+        <div id="pt-list"></div>
+        <div>
+          <div class="pt-notes-lab">notes</div>
+          <textarea id="pt-notes" placeholder="free text for your collaborator…"></textarea>
+        </div>
+        <div class="pt-actions">
+          <button class="pt-btn primary" id="pt-copy" type="button">Copy picks</button>
+          <button class="pt-btn" id="pt-clear" type="button">Clear all</button>
+        </div>
+        <div>
+          <div class="pt-export-lab">export (select-all → copy if clipboard blocked)</div>
+          <textarea id="pt-export" readonly></textarea>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(tray);
+
+  const head = tray.querySelector('#pt-head');
+  // restore collapsed pref (default open)
+  if (localStorage.getItem(PICKS_KEY + ':collapsed') === '1') tray.classList.add('collapsed');
+  head.addEventListener('click', () => {
+    tray.classList.toggle('collapsed');
+    localStorage.setItem(PICKS_KEY + ':collapsed', tray.classList.contains('collapsed') ? '1' : '0');
+  });
+
+  const notes = tray.querySelector('#pt-notes');
+  notes.value = picksState.notes || '';
+  notes.addEventListener('input', () => { picksState.notes = notes.value; savePicks(); refreshExport(); });
+
+  tray.querySelector('#pt-clear').addEventListener('click', clearPicks);
+  tray.querySelector('#pt-copy').addEventListener('click', () => {
+    const md = buildMarkdown();
+    tray.classList.add('show-export');
+    const ex = tray.querySelector('#pt-export');
+    ex.value = md;
+    ex.focus(); ex.select();
+    const btn = tray.querySelector('#pt-copy');
+    const done = () => { btn.textContent = '✓ Copied'; btn.classList.add('pt-copied');
+      setTimeout(() => { btn.textContent = 'Copy picks'; btn.classList.remove('pt-copied'); }, 1600); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(md).then(done, () => { try { document.execCommand('copy'); } catch(e){} done(); });
+      } else { try { document.execCommand('copy'); } catch(e){} done(); }
+    } catch (e) { done(); }
+  });
+}
+
+function refreshExport() {
+  const ex = document.getElementById('pt-export');
+  if (ex && document.getElementById('picks-tray').classList.contains('show-export')) ex.value = buildMarkdown();
+}
+
+function renderTray() {
+  const list = document.getElementById('pt-list');
+  const countEl = document.getElementById('pt-count');
+  if (!list) return;
+  const n = picksState.picks.length;
+  countEl.textContent = String(n);
+  countEl.classList.toggle('zero', n === 0);
+  if (!n) {
+    list.innerHTML = `<div class="pt-empty">No picks yet — tap a ♡ on any option card or picker style.</div>`;
+    refreshExport();
+    return;
+  }
+  let html = '';
+  MODE_EXPORT_ORDER.forEach(mode => {
+    const inMode = picksState.picks.filter(p => p.mode === mode);
+    if (!inMode.length) return;
+    html += `<div class="pt-group"><div class="pt-group-label">${MODE_DISPLAY[mode]}</div>`;
+    inMode.forEach(p => {
+      html += `<div class="pt-item">
+        <span class="pt-item-text">${escapeHtml(p.label)} <span class="pt-item-id">${escapeHtml(p.id)}</span></span>
+        <button class="pt-rm" type="button" data-mode="${mode}" data-id="${escapeHtml(p.id)}" title="Remove">✕</button>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+  list.innerHTML = html;
+  list.querySelectorAll('.pt-rm').forEach(b =>
+    b.addEventListener('click', () => removePick(b.dataset.mode, b.dataset.id)));
+  refreshExport();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ---- "show liked only" toggle (CARD MATRIX scope) — persisted ---- */
+const LIKED_ONLY_KEY = PICKS_KEY + ':liked-only';
+function setLikedOnly(on, persist) {
+  document.body.classList.toggle('liked-only', on);
+  const btn = document.getElementById('liked-only-toggle');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(on));
+    btn.textContent = (on ? '♥' : '♡') + ' liked only';
+  }
+  if (persist) { try { localStorage.setItem(LIKED_ONLY_KEY, on ? '1' : '0'); } catch (e) {} }
+  applyLikedOnlyEmptySections();
+}
+(function mountLikedOnlyToggle() {
+  const btn = document.getElementById('liked-only-toggle');
+  if (!btn) return;
+  let on = false;
+  try { on = localStorage.getItem(LIKED_ONLY_KEY) === '1'; } catch (e) {}
+  setLikedOnly(on, false);  // default OFF unless previously persisted
+  btn.addEventListener('click', () => setLikedOnly(!document.body.classList.contains('liked-only'), true));
+})();
+
+mountTray();
+syncAllToggles();
+renderTray();
+</script>
+</body>
+</html>

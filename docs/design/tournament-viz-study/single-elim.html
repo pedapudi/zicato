@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — single-elim tournament viz study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from src/.../variants/T/console4.css --v2-* roles and mapped onto this
+       study's token names. The picker sets html[data-theme]; each block fully
+       restyles the page. --zicato-accent ← --v2-accent. Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background .18s, color .18s;
+    padding: 0 0 80px;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  header .brand { color: currentColor; display: flex; align-items: center; gap: 10px; }
+  header .brand svg { height: 24px; width: auto; }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  section { margin: 40px 0; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 22px; max-width: 86ch; }
+  .lede code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  /* option card */
+  .opt {
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--panel);
+    padding: 18px 20px 22px; margin-bottom: 26px;
+  }
+  .opt > h3 {
+    font-size: 13px; margin: 0 0 2px; letter-spacing: .04em;
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .opt > h3 .num { color: var(--accent); font-weight: 700; }
+  .opt > .rationale { font-size: 12px; color: var(--ink-faint); margin: 0 0 16px; max-width: 92ch; }
+  .view { margin: 0 0 20px; }
+  .view:last-child { margin-bottom: 0; }
+  .view-cap {
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .view-cap b { color: var(--ink-soft); font-weight: 700; }
+  .view-cap .vtag {
+    font-size: 9px; padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--rule); color: var(--ink-faint);
+  }
+  .figframe {
+    border: 1px solid var(--rule-soft); border-radius: 8px; background: var(--panel-2);
+    padding: 14px 16px;
+  }
+  .figframe.hero { padding: 10px 14px; }
+  .figframe svg { display: block; width: 100%; height: auto; color: var(--ink); }
+
+  /* shared legend */
+  .legend { display: flex; gap: 16px; font-size: 10.5px; color: var(--ink-faint); margin: 12px 0 0; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .legend .ln { width: 16px; height: 0; border-top: 2px solid currentColor; display: inline-block; }
+
+  footer { max-width: 1180px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+
+  /* theme picker (mirrors console swatch dropdown) */
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand" id="hdr-mark" aria-label="zicato mark"></span>
+  <h1>single-elim — tournament viz study</h1>
+  <span class="spacer"></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+    Six design directions for visualizing a <b>single-elimination</b> tournament epoch where the
+    <b>champion is a protected top seed with a bye</b> who meets the bracket survivor in a <code>"final"</code>
+    champion-gate duel. The <b>current</b> dashboard view fails standings: lanes order by depth reached (not rank/scalar),
+    W/L + rank live in a disconnected side table, no current-leader highlight mid-bracket, the gate margin is buried in a
+    hover tooltip, and byes are silent. Each option below makes <b>standings the hero</b> — rank-ordered, alive/out/finalist/champion,
+    running W/L, and the champion-gate <code>delta_scalar</code> as a magnitude. One shared mid-tournament dataset throughout
+    (champion <code>v0</code> + 7 challengers; some out, one bye, a survivor awaiting the gate). Switch the theme to recolor every figure.
+  </p>
+
+  <p style="color:var(--ink-faint);font-size:12px;margin:8px 0 0;line-height:1.55">
+    This is the structure-specific tournament FIGURE at three zooms — the SINGLE-ROUND layer. The hero shell, cross-epoch, cross-round (across evolve-rounds), single-matchup, and single-generation levels are structure-agnostic — see their own pages (<a href="index.html" style="color:inherit;text-decoration:underline">← index</a>).
+  </p>
+
+  <div id="options"></div>
+</main>
+
+<footer>
+  Standalone tournament-viz study · single-elimination · served from <code>/tmp/zicato-tourney-viz-study/</code> ·
+  read-only against <code>/home/sunil/git/zicato</code> · no repo edits. Accents driven from the active Console theme.
+</footer>
+
+<script>
+/* ============================================================
+   SHARED MID-TOURNAMENT SAMPLE  (single-elim, real fields only)
+   Champion v0 = protected top seed, bye into the final.
+   7 challengers (g1..g7) play the winners' bracket.
+   Mid-bracket: R1 + R2 settled, FINAL pending (champion awaits).
+   scalar = loss, LOWER is better.
+   ============================================================ */
+const SAMPLE = {
+  structure: 'single_elim',
+  // per-competitor state (gens). status ∈ alive|eliminated|champion ; role ∈ champion|challenger
+  competitors: {
+    v0: { id:'v0', role:'champion',  seed:0, scalar:0.182, wins:0, losses:0, eliminated_round:null, bye:true,  status:'alive' },
+    g1: { id:'g1', role:'challenger',seed:1, scalar:0.171, wins:2, losses:0, eliminated_round:null, status:'alive' },   // SURVIVOR → final
+    g2: { id:'g2', role:'challenger',seed:2, scalar:0.205, wins:1, losses:1, eliminated_round:1,    status:'eliminated' },
+    g3: { id:'g3', role:'challenger',seed:3, scalar:0.198, wins:1, losses:1, eliminated_round:1,    status:'eliminated' },
+    g4: { id:'g4', role:'challenger',seed:4, scalar:0.219, wins:1, losses:1, eliminated_round:1,    status:'eliminated' }, // got R0 bye, lost R1
+    g5: { id:'g5', role:'challenger',seed:5, scalar:0.241, wins:0, losses:1, eliminated_round:0,    status:'eliminated' },
+    g6: { id:'g6', role:'challenger',seed:6, scalar:0.189, wins:1, losses:1, eliminated_round:1,    status:'eliminated' }, // upset g2 in R0, lost R1
+    g7: { id:'g7', role:'challenger',seed:7, scalar:0.262, wins:0, losses:1, eliminated_round:0,    status:'eliminated' },
+  },
+  // rounds[].matches[]  — bracket_slot WB-R{n}-{slot}; delta_scalar sign = winner (winner is LOWER scalar)
+  // round 0 = WB R1 (4 nodes: 3 duels + g4 bye) ; round 1 = WB R2 (2 duels) ; round 2 = final (pending)
+  rounds: [
+    { round_index:0, label:'Round 1', matches:[
+      { match_id:'WB-R0-0', bracket_slot:'WB-R0-0', competitors:['g1','g7'], winner:'g1', delta_scalar:-0.091, decision:'advance', pending:false, bye:false },
+      { match_id:'WB-R0-1', bracket_slot:'WB-R0-1', competitors:['g2','g6'], winner:'g6', delta_scalar:-0.016, decision:'advance', pending:false, bye:false }, // upset
+      { match_id:'WB-R0-2', bracket_slot:'WB-R0-2', competitors:['g3','g5'], winner:'g3', delta_scalar:-0.043, decision:'advance', pending:false, bye:false },
+      { match_id:'WB-R0-3', bracket_slot:'WB-R0-3', competitors:['g4'],      winner:'g4', delta_scalar:null,    decision:'bye',     pending:false, bye:true  },
+    ]},
+    { round_index:1, label:'Round 2', matches:[
+      { match_id:'WB-R1-0', bracket_slot:'WB-R1-0', competitors:['g1','g4'], winner:'g1', delta_scalar:-0.048, decision:'advance', pending:false, bye:false },
+      { match_id:'WB-R1-1', bracket_slot:'WB-R1-1', competitors:['g3','g6'], winner:'g3', delta_scalar:-0.009, decision:'advance', pending:false, bye:false },
+    ]},
+    { round_index:2, label:'Round 3', matches:[
+      { match_id:'WB-R2-0', bracket_slot:'WB-R2-0', competitors:['g1','g3'], winner:'g1', delta_scalar:-0.027, decision:'advance', pending:false, bye:false },
+    ]},
+    { round_index:3, label:'Final · champion gate', matches:[
+      // FINAL pending — survivor g1 vs champion v0. partial gate margin so far.
+      { match_id:'final', bracket_slot:'final', competitors:['v0','g1'], winner:null, delta_scalar:-0.011, decision:'deciding', pending:true, bye:false },
+    ]},
+  ],
+  // the surviving finalist + gate
+  survivor:'g1',
+  championId:'v0',
+  // gate margin: g1 scalar - v0 scalar = 0.171 - 0.182 = -0.011 (g1 currently ahead by .011, LIVE/partial)
+  gateDelta:-0.011,
+  gatePending:true,
+};
+
+// Helpers over the sample -------------------------------------------------
+const C = SAMPLE.competitors;
+// standings rows sorted by scalar (lower better), rank assigned.
+function standings() {
+  const rows = Object.values(C).map(c => ({...c}));
+  rows.sort((a,b)=> a.scalar - b.scalar || a.id.localeCompare(b.id));
+  rows.forEach((r,i)=> r.rank = i+1);
+  return rows;
+}
+const STAND = standings();
+// propagate rank back onto the source competitor objects so bracket seats
+// (which reference C.gN directly) can show #rank.
+STAND.forEach(r => { if (C[r.id]) C[r.id].rank = r.rank; });
+const SURV = C[SAMPLE.survivor];
+const CHAMP = C[SAMPLE.championId];
+const maxLossRound = Math.max(...Object.values(C).map(c=> c.eliminated_round==null?0:c.eliminated_round));
+// nice fixed-point
+const f3 = n => (n==null?'—':(n<0?'−':'')+Math.abs(n).toFixed(3));
+const f3s = n => (n==null?'—':(n<0?'−':'+')+Math.abs(n).toFixed(3));
+const SVGNS='http://www.w3.org/2000/svg';
+
+// state → semantic token name
+function statusColor(c) {
+  if (c.role==='champion') return 'var(--accent)';
+  if (c.status==='eliminated') return 'var(--bad)';
+  if (c.id===SAMPLE.survivor) return 'var(--good)';
+  return 'var(--ink-soft)';
+}
+function statusLabel(c) {
+  if (c.role==='champion') return 'champion (gate)';
+  if (c.id===SAMPLE.survivor) return 'finalist';
+  if (c.status==='eliminated') return 'out R'+(c.eliminated_round+1);
+  return 'alive';
+}
+
+/* tiny svg builder */
+function S(tag, attrs={}, kids=[]) {
+  const e=document.createElementNS(SVGNS,tag);
+  for (const k in attrs) if (attrs[k]!=null) e.setAttribute(k,attrs[k]);
+  for (const c of (Array.isArray(kids)?kids:[kids])) if (c!=null) e.appendChild(typeof c==='string'?document.createTextNode(c):c);
+  return e;
+}
+function svgRoot(vbW, vbH) {
+  return S('svg',{viewBox:`0 0 ${vbW} ${vbH}`, role:'img', width:'100%',
+    'font-family':'ui-monospace, monospace'});
+}
+const NSS = {'vector-effect':'non-scaling-stroke'};
+
+/* ============================================================
+   OPTION 1 — STANDINGS LADDER + scalar number-line
+   Rank-ordered rows; bar = scalar (lower=left=better); state color;
+   W/L pill; the gate shown as a bracket between v0 and the finalist.
+   ============================================================ */
+function opt1View(kind) {
+  const rows = STAND;
+  const minS = Math.min(...rows.map(r=>r.scalar)), maxS = Math.max(...rows.map(r=>r.scalar));
+  const pad = (maxS-minS)*0.12 || 0.01;
+  const lo = minS-pad, hi = maxS+pad;
+  const X = s => 250 + (s-lo)/(hi-lo)*(W-290);
+  let W, rowH, top;
+  if (kind==='hero') { W=1100; rowH=20; top=26; }
+  else { W=1100; rowH=30; top=34; }
+  const H = top + rows.length*rowH + 18;
+  const root = svgRoot(W,H);
+  // axis baseline
+  root.appendChild(S('text',{x:8,y:16,fill:'var(--ink-faint)','font-size':10},'rank'));
+  root.appendChild(S('text',{x:250,y:16,fill:'var(--ink-faint)','font-size':10},'scalar (loss · lower better) →'));
+  // gate marker for champion scalar
+  const gx = X(CHAMP.scalar);
+  root.appendChild(S('line',{x1:gx,y1:top-6,x2:gx,y2:H-10,stroke:'var(--accent)','stroke-dasharray':'3 3','stroke-width':1,...NSS}));
+  root.appendChild(S('text',{x:gx,y:H-2,fill:'var(--accent)','font-size':9,'text-anchor':'middle'},'champion gate'));
+  rows.forEach((c,i)=>{
+    const y = top + i*rowH + rowH/2;
+    const col = statusColor(c);
+    // rank
+    root.appendChild(S('text',{x:20,y:y+3,fill:'var(--ink)','font-size':kind==='hero'?10:11,'text-anchor':'end'},String(c.rank)));
+    // id + status
+    root.appendChild(S('text',{x:30,y:y+3,fill:col,'font-size':kind==='hero'?10:11,'font-weight':c.id===SAMPLE.survivor||c.role==='champion'?700:400}, c.id));
+    root.appendChild(S('text',{x:64,y:y+3,fill:'var(--ink-faint)','font-size':9}, statusLabel(c)));
+    // W/L
+    root.appendChild(S('text',{x:200,y:y+3,fill:'var(--ink-soft)','font-size':9,'text-anchor':'end'}, c.wins+'–'+c.losses));
+    // scalar bar: a tick at the scalar
+    const bx = X(c.scalar);
+    root.appendChild(S('line',{x1:250,y1:y,x2:bx,y2:y,stroke:'var(--rule)','stroke-width':1,...NSS}));
+    root.appendChild(S('circle',{cx:bx,cy:y,r:kind==='hero'?3:4,fill:col, stroke:c.status==='eliminated'?'none':'var(--paper)','stroke-width':1}));
+    // dashed if pending/in-flight (finalist still deciding at gate)
+    if (c.id===SAMPLE.survivor) root.appendChild(S('circle',{cx:bx,cy:y,r:kind==='hero'?6:7,fill:'none',stroke:'var(--good)','stroke-dasharray':'2 2','stroke-width':1,...NSS}));
+    root.appendChild(S('text',{x:bx+9,y:y+3,fill:'var(--ink-faint)','font-size':9}, f3(c.scalar)));
+  });
+  return root;
+}
+
+/* ============================================================
+   OPTION 2 — BRACKET TREE w/ FUSED standing chips
+   A real left→right bracket; each seat carries its rank badge + W/L +
+   scalar; winner edge in --good, eliminated seat struck in --bad;
+   bye seat dashed; final = champion-gate seat with delta magnitude bar.
+   ============================================================ */
+function bracketGeom() {
+  // columns: R1(4) R2(2) R3(1 survivor) | gate(v0 vs survivor)
+  return SAMPLE.rounds;
+}
+function seatBox(root, x, y, w, h, c, opts={}) {
+  const col = c?statusColor(c):'var(--ink-faint)';
+  const elim = c && c.status==='eliminated';
+  const dash = opts.dash;
+  root.appendChild(S('rect',{x,y,width:w,height:h,rx:4,fill:'var(--panel)',
+    stroke:col,'stroke-width':elim?1:1.5,'stroke-dasharray':dash?'4 3':null,'fill-opacity':0.0,...NSS}));
+  if (!c) return;
+  const yc=y+h/2;
+  // rank badge
+  root.appendChild(S('text',{x:x+7,y:yc-3,fill:'var(--ink-faint)','font-size':8},'#'+c.rank));
+  // id
+  root.appendChild(S('text',{x:x+7,y:yc+9,fill:col,'font-size':11,'font-weight':600,
+    'text-decoration':elim?'line-through':null}, c.id));
+  // W/L + scalar
+  root.appendChild(S('text',{x:x+w-7,y:yc-3,fill:'var(--ink-soft)','font-size':8.5,'text-anchor':'end'}, c.wins+'–'+c.losses));
+  root.appendChild(S('text',{x:x+w-7,y:yc+9,fill:'var(--ink-faint)','font-size':9,'text-anchor':'end'}, f3(c.scalar)));
+  if (opts.bye) root.appendChild(S('text',{x:x+w/2,y:y-3,fill:'var(--accent)','font-size':8,'text-anchor':'middle'},'BYE'));
+}
+// bracket tree: every seat position captured per column so edges connect cleanly.
+function opt2View(kind) {
+  const W=1100; const seatW=124, seatH=kind==='hero'?24:36;
+  const colX=[16, 244, 468, 690, 904];
+  const H = kind==='hero'? 236 : 300;
+  const root = svgRoot(W,H);
+  const span = H-44; const top=30;
+  const pos = {}; // colIndex -> { id -> {cx,cy} } (cy center)
+  function lay(ci, list) {
+    pos[ci] = {};
+    const n=list.length;
+    list.forEach((e,i)=>{
+      const y = top + span*((i+0.5)/n) - seatH/2;
+      const x = colX[ci];
+      seatBox(root,x,y,seatW,seatH,e.c,e.opts||{});
+      if (e.c) pos[ci][e.c.id+(e.key||'')] = {x, y, cx:x+seatW, cy:y+seatH/2, lx:x};
+    });
+  }
+  lay(0,[{c:C.g1},{c:C.g7},{c:C.g2},{c:C.g6},{c:C.g3},{c:C.g5},{c:C.g4,opts:{bye:true}}]);
+  lay(1,[{c:C.g1},{c:C.g4},{c:C.g3},{c:C.g6}]);
+  lay(2,[{c:C.g1},{c:C.g3}]);
+  lay(3,[{c:C.g1}]);
+  lay(4,[{c:CHAMP}]);
+  // connectors: each match -> winner advances to next col
+  function drawConn(ci, fromId, toId, good) {
+    const a=pos[ci]&&pos[ci][fromId]; const b=pos[ci+1]&&pos[ci+1][toId];
+    if(!a||!b) return;
+    const x1=a.cx, y1=a.cy, x2=b.lx, y2=b.cy, mx=(x1+x2)/2;
+    root.appendChild(S('path',{d:`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`,
+      fill:'none',stroke:good?'var(--good)':'var(--bad)','stroke-width':good?1.5:1,
+      'stroke-opacity':good?0.9:0.4,'stroke-dasharray':good?null:'3 3',...NSS}));
+  }
+  // R1->R2
+  drawConn(0,'g1','g1',true); drawConn(0,'g7','g1',false);
+  drawConn(0,'g6','g6',true); drawConn(0,'g2','g6',false);
+  drawConn(0,'g3','g3',true); drawConn(0,'g5','g3',false);
+  drawConn(0,'g4','g4',true);
+  // R2->R3
+  drawConn(1,'g1','g1',true); drawConn(1,'g4','g1',false);
+  drawConn(1,'g3','g3',true); drawConn(1,'g6','g3',false);
+  // R3->survivor
+  drawConn(2,'g1','g1',true); drawConn(2,'g3','g1',false);
+  // survivor -> gate (pending, dashed accent)
+  const a=pos[3]['g1'], b=pos[4]['v0'];
+  if(a&&b){ const mx=(a.cx+b.lx)/2;
+    root.appendChild(S('path',{d:`M${a.cx},${a.cy} C${mx},${a.cy} ${mx},${b.cy} ${b.lx},${b.cy}`,
+      fill:'none',stroke:'var(--accent)','stroke-width':1.5,'stroke-dasharray':'5 3',...NSS}));
+    // gate margin magnitude label
+    root.appendChild(S('text',{x:mx,y:(a.cy+b.cy)/2-6,fill:'var(--accent)','font-size':9,'text-anchor':'middle'},
+      'gate Δ '+f3s(SAMPLE.gateDelta)));
+  }
+  // column captions
+  ['Round 1','Round 2','Round 3','survivor','champion gate'].forEach((t,i)=>{
+    root.appendChild(S('text',{x:colX[i]+seatW/2,y:18,fill:'var(--ink-faint)','font-size':9,'text-anchor':'middle'},t));
+  });
+  return root;
+}
+
+/* ============================================================
+   OPTION 3 — SURVIVAL TIMELINE (rounds as columns, rank as vertical)
+   Each gen is a horizontal track; it runs left→right round by round,
+   sitting at its current rank; the track ENDS (✕, --bad) at its
+   elimination round and the surviving track reaches the gate (--good).
+   Standings = vertical order. Leader = top track, bolded.
+   ============================================================ */
+function opt3View(kind) {
+  const W=1100;
+  const rounds = ['seed','R1','R2','R3','gate'];
+  // reserve a right gutter (260px) so the gate terminus glyph + W/L·scalar
+  // text never collide with the gate-column node.
+  const rightGutter = 260;
+  const colX = rounds.map((_,i)=> 70 + i*((W-70-rightGutter)/(rounds.length-1)));
+  const ordered = STAND; // rank order top→bottom
+  const rowH = kind==='hero'? 17 : 26;
+  const top = 30;
+  const H = top + ordered.length*rowH + 24;
+  const root = svgRoot(W,H);
+  // round headers
+  ['seed','Round 1','Round 2','Round 3','gate'].forEach((t,i)=>
+    root.appendChild(S('text',{x:colX[i],y:16,fill:'var(--ink-faint)','font-size':9,'text-anchor':'middle'},t)));
+  // how far each gen advanced (col index reached). champion: seed..gate. challenger: seed..(elim round col).
+  function reach(c) {
+    if (c.role==='champion') return 4; // through gate (awaiting)
+    if (c.status!=='eliminated') return 4; // survivor → gate
+    return 1 + c.eliminated_round; // eliminated at this round col (R{n})
+  }
+  ordered.forEach((c,i)=>{
+    const y = top + i*rowH + rowH/2;
+    const col = statusColor(c);
+    const r = reach(c);
+    // label
+    root.appendChild(S('text',{x:8,y:y+3,fill:col,'font-size':kind==='hero'?10:11,
+      'font-weight':(c.id===SAMPLE.survivor||c.role==='champion')?700:400},
+      '#'+c.rank+' '+c.id));
+    // baseline track to reach
+    const x0=colX[0], x1=colX[r];
+    const isFinalLeg = (c.id===SAMPLE.survivor||c.role==='champion');
+    root.appendChild(S('line',{x1:x0,y1:y,x2:x1,y2:y,stroke:col,'stroke-width':c.status==='eliminated'?1:1.5,
+      'stroke-opacity':c.status==='eliminated'?0.55:1, ...NSS}));
+    // dashed final leg into the gate (pending)
+    if (r===4) {
+      root.appendChild(S('line',{x1:colX[3],y1:y,x2:colX[4],y2:y,stroke:'var(--accent)','stroke-width':1.5,'stroke-dasharray':'5 3',...NSS}));
+    }
+    // node markers at each round it played
+    for (let k=0;k<=Math.min(r,3);k++)
+      root.appendChild(S('circle',{cx:colX[k],cy:y,r:2.5,fill:col}));
+    // terminus glyph
+    if (c.status==='eliminated') {
+      root.appendChild(S('text',{x:x1+6,y:y+3.5,fill:'var(--bad)','font-size':10},'✕'));
+    } else if (c.role==='champion') {
+      root.appendChild(S('text',{x:colX[4]+6,y:y+4,fill:'var(--accent)','font-size':11},'♛'));
+    } else {
+      root.appendChild(S('text',{x:colX[4]+6,y:y+4,fill:'var(--good)','font-size':10},'▶'));
+    }
+    // W/L + scalar at right margin
+    root.appendChild(S('text',{x:W-6,y:y+3,fill:'var(--ink-faint)','font-size':8.5,'text-anchor':'end'},
+      c.wins+'–'+c.losses+'  '+f3(c.scalar)));
+  });
+  // gate margin callout — anchored under the gate column, kept within bounds
+  root.appendChild(S('text',{x:colX[4],y:H-7,fill:'var(--accent)','font-size':9,'text-anchor':'middle'},
+    'gate Δ '+f3s(SAMPLE.gateDelta)+' (g1 vs v0)'));
+  return root;
+}
+
+/* ============================================================
+   OPTION 4 — LEADERBOARD CARDS (status-grouped podium)
+   Big finalist + champion duel up top with the gate margin as a
+   tug-of-war bar; below, a compact ranked grid of every gen with
+   state color, W/L, scalar, and elimination round.
+   ============================================================ */
+function opt4View(kind) {
+  const W=1100;
+  if (kind==='round') return opt4Bracket();
+  const H = kind==='hero'? 92 : 150;
+  const root = svgRoot(W,H);
+  // gate tug-of-war bar centered
+  const barY=kind==='hero'?40:54, barX0=W*0.30, barX1=W*0.70, mid=(barX0+barX1)/2;
+  root.appendChild(S('text',{x:W/2,y:18,fill:'var(--ink-faint)','font-size':10,'text-anchor':'middle'},'CHAMPION GATE — final (deciding)'));
+  // champion left, finalist right
+  root.appendChild(S('text',{x:barX0-10,y:barY+4,fill:'var(--accent)','font-size':13,'text-anchor':'end','font-weight':700},'v0 ♛'));
+  root.appendChild(S('text',{x:barX0-10,y:barY+18,fill:'var(--ink-faint)','font-size':9,'text-anchor':'end'},'champion · '+f3(CHAMP.scalar)));
+  root.appendChild(S('text',{x:barX1+10,y:barY+4,fill:'var(--good)','font-size':13,'font-weight':700},'g1 ▶'));
+  root.appendChild(S('text',{x:barX1+10,y:barY+18,fill:'var(--ink-faint)','font-size':9},'finalist · '+f3(SURV.scalar)+' · '+SURV.wins+'–'+SURV.losses));
+  // bar
+  root.appendChild(S('line',{x1:barX0,y1:barY,x2:barX1,y2:barY,stroke:'var(--rule)','stroke-width':2,...NSS}));
+  root.appendChild(S('line',{x1:mid,y1:barY-7,x2:mid,y2:barY+7,stroke:'var(--ink-faint)','stroke-width':1,...NSS}));
+  // marker: negative delta = finalist ahead → toward right (good). scale delta to half-bar.
+  const span=(barX1-barX0)/2, maxD=0.05;
+  const knob = mid - (SAMPLE.gateDelta/maxD)*span; // delta<0 → knob>mid (toward finalist)
+  root.appendChild(S('circle',{cx:Math.max(barX0,Math.min(barX1,knob)),cy:barY,r:6,fill:'var(--good)',stroke:'var(--paper)','stroke-width':1.5}));
+  root.appendChild(S('circle',{cx:Math.max(barX0,Math.min(barX1,knob)),cy:barY,r:9,fill:'none',stroke:'var(--good)','stroke-dasharray':'2 2','stroke-width':1,...NSS}));
+  root.appendChild(S('text',{x:mid,y:barY+24,fill:'var(--accent)','font-size':10,'text-anchor':'middle'},
+    'gate Δ '+f3s(SAMPLE.gateDelta)+' — finalist leads, gate still deciding'));
+  if (kind!=='hero') {
+    // mini ranked grid below
+    const gy=92, cols=4, cw=(W-20)/cols;
+    STAND.forEach((c,i)=>{
+      const cx=10+(i%cols)*cw, cyy=gy+Math.floor(i/cols)*26;
+      const col=statusColor(c);
+      root.appendChild(S('rect',{x:cx,y:cyy,width:cw-8,height:22,rx:3,fill:'var(--panel)','fill-opacity':0,stroke:col,'stroke-width':1,'stroke-dasharray':c.id===SAMPLE.survivor?'4 3':null,...NSS}));
+      root.appendChild(S('text',{x:cx+6,y:cyy+14,fill:col,'font-size':10,'font-weight':600},'#'+c.rank+' '+c.id));
+      root.appendChild(S('text',{x:cx+cw-14,y:cyy+14,fill:'var(--ink-faint)','font-size':8.5,'text-anchor':'end'},
+        statusLabel(c)+' · '+c.wins+'–'+c.losses+' · '+f3(c.scalar)));
+    });
+  }
+  return root;
+}
+function opt4Bracket() { return opt2View('round'); } // reuse fused bracket for the round detail
+
+/* ============================================================
+   OPTION 5 — RANKED BAR CHART (scalar bars, state-colored, gate band)
+   Horizontal bars sorted by scalar; shorter = better. Champion-gate
+   band drawn behind so you see who clears it. W/L + elim round inline.
+   ============================================================ */
+function opt5View(kind) {
+  const W=1100;
+  const rows=STAND;
+  const rowH = kind==='hero'?18:28;
+  const top=28; const H=top+rows.length*rowH+16;
+  const root=svgRoot(W,H);
+  const labelW=150, x0=labelW, x1=W-150;
+  const maxS=Math.max(...rows.map(r=>r.scalar)); const sc=s=> (s/maxS)*(x1-x0);
+  // gate band: everything left of champion scalar clears
+  const gx=x0+sc(CHAMP.scalar);
+  root.appendChild(S('rect',{x:x0,y:top-6,width:gx-x0,height:H-top-4,fill:'var(--good)','fill-opacity':0.07}));
+  root.appendChild(S('line',{x1:gx,y1:top-8,x2:gx,y2:H-8,stroke:'var(--accent)','stroke-dasharray':'3 3','stroke-width':1,...NSS}));
+  root.appendChild(S('text',{x:gx+4,y:top-10,fill:'var(--accent)','font-size':9},'gate (v0 '+f3(CHAMP.scalar)+')'));
+  root.appendChild(S('text',{x:8,y:16,fill:'var(--ink-faint)','font-size':9},'rank · gen — bar = scalar (loss, shorter better)'));
+  rows.forEach((c,i)=>{
+    const y=top+i*rowH; const col=statusColor(c); const bw=sc(c.scalar);
+    root.appendChild(S('text',{x:8,y:y+rowH*0.62,fill:col,'font-size':kind==='hero'?10:11,'font-weight':(c.id===SAMPLE.survivor||c.role==='champion')?700:400},
+      '#'+c.rank+' '+c.id));
+    root.appendChild(S('text',{x:labelW-8,y:y+rowH*0.62,fill:'var(--ink-faint)','font-size':8.5,'text-anchor':'end'},statusLabel(c)));
+    // bar
+    const bh=rowH*0.5;
+    root.appendChild(S('rect',{x:x0,y:y+rowH*0.2,width:bw,height:bh,rx:2,
+      fill:col,'fill-opacity':c.status==='eliminated'?0.32:0.7,
+      stroke:col,'stroke-width':c.id===SAMPLE.survivor||c.role==='champion'?1.5:0,
+      'stroke-dasharray':c.id===SAMPLE.survivor?'4 3':null,...NSS}));
+    root.appendChild(S('text',{x:x0+bw+6,y:y+rowH*0.62,fill:'var(--ink-faint)','font-size':9},
+      f3(c.scalar)+'  '+c.wins+'–'+c.losses));
+  });
+  return root;
+}
+
+/* ============================================================
+   OPTION 6 — RADIAL BRACKET (rounds as rings, gate at center)
+   Outer ring = R1 field; advancing inward each round; the champion
+   sits at the center gate. Survivor's wedge is --good and dashed to
+   center; eliminated wedges fade --bad at their drop ring. Standings
+   list flanks it, rank-ordered.
+   ============================================================ */
+function opt6View(kind) {
+  const W=1100; const H = kind==='hero'? 220 : 320;
+  const root=svgRoot(W,H);
+  // The radial lives in a fixed-width LEFT panel; reserve a margin all around
+  // for the outer spoke labels so nothing escapes the viewBox. The standings
+  // list occupies the RIGHT zone, clearly separated from the radial.
+  const labelPad = 40;                 // room for outer id labels + glyphs
+  const panelW = H;                    // square-ish radial zone (left)
+  const cx = panelW/2;
+  const cy = H/2;
+  // radius bounded by BOTH vertical and horizontal room minus the label pad
+  const R = Math.min(cx, cy) - labelPad;
+  const rings=4; // R1, R2, R3, center=gate
+  const rr=k=> R*(1 - k/rings) + 8;
+  for(let k=0;k<rings;k++) root.appendChild(S('circle',{cx,cy,r:rr(k),fill:'none',stroke:'var(--rule)','stroke-width':1,'stroke-dasharray':k===0?null:'2 4',...NSS}));
+  // R1 field (8 wedge slots, 7 gens + bye gap) positions around outer ring
+  const field=['g1','g7','g2','g6','g3','g5','g4'];
+  const ang=i=> (-90 + i*(360/8))*Math.PI/180;
+  function pol(r,a){return [cx+r*Math.cos(a), cy+r*Math.sin(a)];}
+  // how many rounds this gen SURVIVED (won) before its spoke terminates.
+  //   eliminated at round e  -> survived rounds 0..e-1 (e segments won, then a loss segment)
+  //   survivor/champion      -> survived all bracket rounds, reaches the gate ring
+  function survivedRounds(c){
+    if(c.role==='champion') return rings-1;          // holds the center gate
+    if(c.status!=='eliminated') return rings-1;       // survivor → gate ring
+    return c.eliminated_round;                         // won rounds [0..e-1], lost at e
+  }
+  // ---- per-round survival coloring (operator request) -------------------
+  // Each spoke is split into per-round segments. Segments through rounds the
+  // gen SURVIVED render in --good; the segment where it was ELIMINATED renders
+  // in --bad and is capped with a red ✕. The survivor stays green to the gate
+  // ring, then dashes in --accent to the champion at center.
+  field.forEach((id,i)=>{
+    const c=C[id], a=ang(i);
+    const elim = c.status==='eliminated';
+    const surv = survivedRounds(c);                    // # of won (green) segments
+    const isSurvivor = id===SAMPLE.survivor;
+    const ca=Math.cos(a), sa=Math.sin(a);
+    // green segments for each survived round: rr(k) → rr(k+1)
+    for(let k=0;k<surv;k++){
+      const [sx,sy]=pol(rr(k),a), [ex,ey]=pol(rr(k+1),a);
+      root.appendChild(S('line',{x1:sx,y1:sy,x2:ex,y2:ey,stroke:'var(--good)','stroke-width':1.8,...NSS}));
+    }
+    // survived-ring node dots so each cleared round reads as a beat
+    for(let k=0;k<=surv;k++){ const [dx,dy]=pol(rr(k),a);
+      root.appendChild(S('circle',{cx:dx,cy:dy,r:2,fill:'var(--good)'})); }
+    if(elim){
+      // the LOSS segment: from the last survived ring to the elimination ring,
+      // drawn in --bad and capped with a red ✕ — the survive→eliminate break.
+      const [sx,sy]=pol(rr(surv),a), [ex,ey]=pol(rr(surv+1),a);
+      root.appendChild(S('line',{x1:sx,y1:sy,x2:ex,y2:ey,stroke:'var(--bad)','stroke-width':2,...NSS}));
+      // small red node where the green ends + the loss starts (the transition)
+      root.appendChild(S('circle',{cx:sx,cy:sy,r:2.2,fill:'var(--bad)',stroke:'var(--paper)','stroke-width':0.6}));
+      // bold red ✕ at the elimination ring (terminus)
+      root.appendChild(S('text',{x:ex,y:ey+3.2,fill:'var(--bad)','font-size':10.5,'text-anchor':'middle','font-weight':700},'✕'));
+    } else if(isSurvivor){
+      // survivor reaches the gate ring green, then dashes --accent into center
+      const [gx,gy]=pol(rr(surv),a);
+      root.appendChild(S('line',{x1:gx,y1:gy,x2:cx,y2:cy,stroke:'var(--accent)','stroke-width':1.6,'stroke-dasharray':'4 3',...NSS}));
+      root.appendChild(S('text',{x:gx,y:gy+3.5,fill:'var(--good)','font-size':10,'text-anchor':'middle','font-weight':700},'▶'));
+    }
+    // outer label — anchored & vertically nudged by quadrant so it never
+    // crosses the viewBox top/bottom/left edges. Colored by outcome so the
+    // legend reads at the label too: green=advanced/finalist, red=eliminated.
+    const lblCol = elim ? 'var(--bad)' : 'var(--good)';
+    const [lx,ly]=pol(rr(0)+7,a);
+    const anchor = ca<-0.3?'end':(ca>0.3?'start':'middle');
+    const ldy = sa<-0.3? -2 : (sa>0.3? 9 : 3);   // push up-labels up, down-labels down
+    root.appendChild(S('text',{x:lx,y:ly+ldy,fill:lblCol,'font-size':9,'text-anchor':anchor,
+      'font-weight':isSurvivor?700:400}, id));
+  });
+  // center gate = champion
+  root.appendChild(S('circle',{cx,cy,r:13,fill:'var(--panel)',stroke:'var(--accent)','stroke-width':1.5,...NSS}));
+  root.appendChild(S('text',{x:cx,y:cy-1,fill:'var(--accent)','font-size':10,'text-anchor':'middle','font-weight':700},'v0'));
+  root.appendChild(S('text',{x:cx,y:cy+9,fill:'var(--accent)','font-size':8,'text-anchor':'middle'},'♛'));
+  // flanking standings list (rank order) — starts well clear of the radial zone
+  const lx0=panelW+34;
+  root.appendChild(S('text',{x:lx0,y:14,fill:'var(--ink-faint)','font-size':9},'standings — gate Δ '+f3s(SAMPLE.gateDelta)));
+  const rh=kind==='hero'?17:26;
+  const listTop=32;
+  STAND.forEach((c,i)=>{
+    const yy=listTop+i*rh; const col=statusColor(c);
+    root.appendChild(S('text',{x:lx0,y:yy,fill:col,'font-size':kind==='hero'?10:11,'font-weight':(c.id===SAMPLE.survivor||c.role==='champion')?700:400},
+      '#'+c.rank+' '+c.id));
+    root.appendChild(S('text',{x:lx0+70,y:yy,fill:'var(--ink-faint)','font-size':9},statusLabel(c)));
+    root.appendChild(S('text',{x:W-10,y:yy,fill:'var(--ink-faint)','font-size':9,'text-anchor':'end'},
+      c.wins+'–'+c.losses+'  '+f3(c.scalar)));
+  });
+  return root;
+}
+
+/* ============================================================
+   ASSEMBLE the 6 options × 3 views
+   ============================================================ */
+const OPTIONS = [
+  { n:1, title:'Standings ladder + scalar number-line',
+    rationale:'Standings ARE the figure: rank-ordered rows on a shared scalar axis (lower=better). Every gen sits at its loss; the dashed champion-gate line shows who clears it; the finalist is haloed. No side table — the leaderboard is the chart.',
+    build:opt1View },
+  { n:2, title:'Bracket tree with FUSED standing chips',
+    rationale:'A real left→right bracket, but each seat carries its rank badge, W/L, and scalar; winner edges are green, losers fade red & strike through, the bye is flagged, and the survivor→gate edge is a dashed accent leg labeled with the gate Δ. Keeps the familiar bracket but folds standings into every seat.',
+    build:opt2View },
+  { n:3, title:'Survival timeline (rounds × rank)',
+    rationale:'Rounds run left→right; gens are vertically rank-ordered tracks. A track ENDS with ✕ at its elimination round; the survivor & champion tracks reach the gate (dashed). You read who is alive, at which round each died, and the standings order in one glance.',
+    build:opt3View },
+  { n:4, title:'Champion-gate tug-of-war + ranked grid',
+    rationale:'Leads with the decision that matters: the finalist-vs-champion duel as a tug-of-war bar where the knob position IS the gate Δ magnitude. Below, a compact ranked grid of the whole field with state, W/L, scalar. The buried hover margin becomes the hero.',
+    build:opt4View },
+  { n:5, title:'Ranked scalar bars + gate clearance band',
+    rationale:'Horizontal bars sorted by scalar (shorter=better), state-colored, with a shaded "clears the gate" band behind everything left of the champion line. Instantly answers: who is best, who is alive, and would they clear the gate.',
+    build:opt5View },
+  { n:6, title:'Radial bracket (rings inward to the center gate)',
+    rationale:'Rounds are concentric rings; spokes advance inward as gens win. Each spoke is colored by per-round survival: the segments through rounds it SURVIVED are green, and the segment where it was ELIMINATED turns red and is capped with a red ✕ — so the survive→eliminate break is unmistakable. The champion holds the center gate (accent) and the survivor stays green to the gate ring, then dashes accent in. A rank-ordered standings list flanks it so the novel shape never costs legibility.',
+    build:opt6View },
+];
+
+const legendHTML = `
+  <div class="legend">
+    <span><i class="dot" style="background:var(--good)"></i> finalist / advances</span>
+    <span><i class="dot" style="background:var(--bad)"></i> eliminated</span>
+    <span><i class="dot" style="background:var(--accent)"></i> champion / gate</span>
+    <span><i class="dot" style="background:var(--ink-faint)"></i> alive / pending</span>
+    <span style="color:var(--accent)"><i class="ln"></i> dashed = pending / in-flight</span>
+  </div>`;
+
+const VIEWS = [
+  { key:'hero',  cap:'(a) HERO GLANCE — the compacted figure that fills the hero\'s structure slot', tag:'top-bar width · at-a-glance' },
+  { key:'epoch', cap:'(b) SINGLE-ROUND — the full tournament (across its bracket-rounds / rungs / pairings)', tag:'who is emerging across rounds' },
+  { key:'round', cap:'(c) WITHIN-ROUND — one bracket-round / rung / pairing in detail', tag:'detailed bracket' },
+];
+
+function buildOptions() {
+  const host=document.getElementById('options');
+  OPTIONS.forEach(opt=>{
+    const card=document.createElement('div'); card.className='opt';
+    const h=document.createElement('h3');
+    h.innerHTML=`<span class="num">Opt ${opt.n}</span> ${opt.title}`;
+    card.appendChild(h);
+    const r=document.createElement('p'); r.className='rationale'; r.textContent=opt.rationale;
+    card.appendChild(r);
+    VIEWS.forEach(v=>{
+      const view=document.createElement('div'); view.className='view';
+      const cap=document.createElement('div'); cap.className='view-cap';
+      cap.innerHTML=`<b>${v.cap}</b><span class="vtag">${v.tag}</span>`;
+      view.appendChild(cap);
+      const frame=document.createElement('div'); frame.className='figframe'+(v.key==='hero'?' hero':'');
+      try { frame.appendChild(opt.build(v.key)); }
+      catch(e){ frame.textContent='render error: '+e.message; }
+      view.appendChild(frame);
+      card.appendChild(view);
+    });
+    // legend once per card under the views
+    const lg=document.createElement('div'); lg.innerHTML=legendHTML; card.appendChild(lg.firstElementChild.nextElementSibling||lg.firstElementChild);
+    host.appendChild(card);
+  });
+}
+buildOptions();
+
+/* ---- header mark (real zicato mark geometry, theme-adaptive) ---- */
+const MARK_SPIRAL = "M94,52.5 L93.9,52.7 L93.7,52.9 L93.6,53.1 L93.5,53.4 L93.5,53.7 L93.4,54 L93.4,54.3 L93.5,54.6 L93.6,55 L93.7,55.3 L93.9,55.6 L94.1,55.9 L94.4,56.2 L94.7,56.5 L95.1,56.7 L95.4,56.9 L95.9,57.1 L96.3,57.2 L96.8,57.2 L97.3,57.2 L97.9,57.2 L98.4,57 L98.9,56.8 L99.4,56.5 L99.9,56.2 L100.4,55.8 L100.9,55.3 L101.2,54.7 L101.6,54.1 L101.8,53.4 L102,52.6 L102.1,51.9 L102.1,51 L102,50.2 L101.8,49.3 L101.5,48.5 L101.1,47.6 L100.5,46.8 L99.9,46 L99.1,45.3 L98.2,44.7 L97.2,44.1 L96.1,43.7 L94.9,43.4 L93.6,43.2 L92.3,43.2 L91,43.3 L89.6,43.6 L88.2,44.1 L86.8,44.8 L85.5,45.6 L84.2,46.7 L83,47.9 L82,49.3 L81.1,50.9 L80.3,52.7 L79.8,54.6 L79.5,56.6 L79.4,58.7 L79.5,60.9 L80,63.2 L80.7,65.4 L81.8,67.6 L83.1,69.8 L84.8,71.9 L86.7,73.8 L89,75.5 L91.5,77 L94.3,78.3 L97.3,79.2 L100.6,79.8 L104,80 L150,80 L170,102 L190,80 Q206,56 222,80 Q236,102 250,80 Q261,68 272,80 L292,80";
+const MARK_BRIDGE = "M292,66 L292,94";
+document.getElementById('hdr-mark').innerHTML =
+  `<svg width="74" height="24" viewBox="71 35 229 75" role="img" aria-label="zicato mark">
+    <g fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="${MARK_SPIRAL}"/><path d="${MARK_BRIDGE}"/>
+    </g>
+    <circle cx="170" cy="102" r="5.5" fill="var(--zicato-accent, #2FA46A)"/>
+  </svg>`;
+
+/* ===== Console colour-scheme picker — 16 themes ===== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME="monokai";
+const THEME_IDS=THEMES.map(t=>t[0]);
+function strip(swatches,sm){return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">`+swatches.map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('')+`</span>`;}
+function mountThemePicker(hostId){
+  const host=document.getElementById(hostId);
+  let value=DEFAULT_THEME, open=false, activeIdx=THEME_IDS.indexOf(value);
+  const byId=new Map(THEMES.map(t=>[t[0],t]));
+  host.innerHTML=`<div class="dt-cd" role="group" aria-label="Colour theme">
+    <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+      <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+      <span class="dt-cd-caret" aria-hidden="true">▾</span>
+    </button>
+    <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+      ${THEMES.map(([id,label,sw])=>`<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">${strip(sw)}<span class="dt-cd-name">${label}</span></div>`).join('')}
+    </div></div>`;
+  const cd=host.querySelector('.dt-cd'), trigger=host.querySelector('.dt-cd-trigger'),
+    trigStrip=host.querySelector('.dt-cd-trig-strip'), trigName=host.querySelector('.dt-cd-trig-name'),
+    list=host.querySelector('.dt-cd-list'), options=Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id){
+    value=THEME_IDS.includes(id)?id:DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme',value);
+    const def=byId.get(value);
+    trigStrip.className='dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden','true');
+    trigStrip.innerHTML=def[2].map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent=def[1];
+    options.forEach(o=>o.setAttribute('aria-selected',String(o.getAttribute('data-theme')===value)));
+  }
+  function setActive(i){activeIdx=(i+options.length)%options.length;options.forEach((o,k)=>o.classList.toggle('dt-cd-active',k===activeIdx));}
+  function setOpen(next){open=next;cd.classList.toggle('dt-cd-open',open);trigger.setAttribute('aria-expanded',String(open));if(open)setActive(Math.max(0,THEME_IDS.indexOf(value)));}
+  function choose(id){applyTheme(id);setOpen(false);}
+  options.forEach(o=>o.addEventListener('click',()=>choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click',()=>setOpen(!open));
+  trigger.addEventListener('keydown',ev=>{if(['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)){ev.preventDefault();setOpen(true);list.focus?.();}});
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown',ev=>{
+    if(ev.key==='Escape'){ev.preventDefault();setOpen(false);trigger.focus();}
+    else if(ev.key==='ArrowDown'){ev.preventDefault();setActive(activeIdx+1);}
+    else if(ev.key==='ArrowUp'){ev.preventDefault();setActive(activeIdx-1);}
+    else if(['Enter',' ','Spacebar'].includes(ev.key)){ev.preventDefault();const id=options[activeIdx]?.getAttribute('data-theme');if(id)choose(id);}
+  });
+  document.addEventListener('click',ev=>{if(!open)return;let n=ev.target;while(n){if(n===cd)return;n=n.parentNode;}setOpen(false);});
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+</script>
+<style>html.embed-bare,html.embed-bare body{padding:0!important;margin:0!important}html.embed-bare .opt,html.embed-bare section{margin:0!important}</style>
+<script>window.__EMBED_CFG__={optSel:'#options > div.opt',bareHide:['h3','.rationale','.legend','.view-cap'],viewSel:'.view',bareKeepViews:[0,1]};</script>
+<script src="_embed.js"></script>
+</body>
+</html>

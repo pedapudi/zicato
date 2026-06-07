@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — gauntlet tournament-viz study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from src/.../variants/T/console4.css --v2-* roles and mapped onto this
+       study's token names. The picker sets html[data-theme]; each block fully
+       restyles the page. --zicato-accent ← --v2-accent. Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background .18s, color .18s;
+    padding: 0 0 80px;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  section { margin: 34px 0; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 20px; max-width: 84ch; }
+  .lede code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .mono { font-family: inherit; }
+  .good { color: var(--good); }
+  .bad  { color: var(--bad); }
+  .faint{ color: var(--ink-faint); }
+
+  /* sample fact strip */
+  .sample {
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--panel);
+    padding: 16px 20px; margin: 0 0 12px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px 24px;
+  }
+  .sample .kv { display: flex; flex-direction: column; gap: 2px; }
+  .sample .kv .k { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+  .sample .kv .v { font-size: 15px; color: var(--ink); }
+  .sample .kv .v b { font-weight: 700; }
+
+  /* option card */
+  .opt {
+    border: 1px solid var(--rule); border-radius: 12px; background: var(--panel);
+    padding: 0; margin-bottom: 22px; overflow: hidden;
+  }
+  .opt > .opt-head {
+    display: flex; align-items: baseline; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--rule); background: var(--panel-2);
+  }
+  .opt-head .num {
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--paper);
+    background: var(--accent); border-radius: 5px; padding: 3px 9px;
+  }
+  .opt-head .name { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .opt-head .why { font-size: 12px; color: var(--ink-soft); flex: 1; }
+  .views {
+    display: grid; grid-template-columns: 1fr; gap: 0;
+  }
+  .view { padding: 18px 20px; border-bottom: 1px dashed var(--rule-soft); }
+  .view:last-child { border-bottom: 0; }
+  .view-cap {
+    font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .view-cap .tag {
+    font-size: 9px; padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--rule); color: var(--ink-faint);
+  }
+  figure { margin: 0; width: 100%; }
+  figure svg { display: block; width: 100%; height: auto; }
+  .fig-narrow { max-width: 620px; }
+  .fig-mid { max-width: 760px; }
+
+  /* small inline legend under figures */
+  .leg { display: flex; gap: 16px; flex-wrap: wrap; font-size: 10.5px; color: var(--ink-faint); margin-top: 10px; }
+  .leg span { display: inline-flex; align-items: center; gap: 6px; }
+  .leg i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+  .leg i.g { background: var(--good); } .leg i.r { background: var(--bad); }
+  .leg i.a { background: var(--accent); } .leg i.f { background: var(--ink-faint); }
+
+  svg text { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
+
+  footer { max-width: 1180px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) — mirrors .dt-cd ---- */
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>zicato — gauntlet · tournament-viz study</h1>
+  <span class="spacer"></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+    The <b>gauntlet</b> is the degenerate base case of every richer tournament figure: a funnel / bracket of exactly
+    <b>one match</b> — 1 champion vs 1 challenger, one full-board duel, promote-on-gate. There are no in-flight
+    standings to project; the standings are trivially the incumbent vs the one challenger. The operator's whole question
+    collapses to four signals: <b>did the challenger clear the gate</b>, by how much
+    (<code>delta_scalar</code> magnitude + sign — negative = challenger better, must beat <code>promote_margin</code>),
+    on <b>how many boards</b> (pass/fail spread), and <b>how reliably</b> (replicate variance). Below: 6 genuinely
+    different visual takes, each in 3 views — <b>(a) hero-banner</b>, <b>(b) single-round</b> (the one duel, board by
+    board), <b>(c) within-round duel detail</b>. One realistic sample, identical across all 6.
+  </p>
+
+  <p style="color:var(--ink-faint);font-size:12px;margin:8px 0 0;line-height:1.55">
+    This is the structure-specific tournament FIGURE at three zooms — the SINGLE-ROUND layer. The hero shell, cross-epoch, cross-round (across evolve-rounds), single-matchup, and single-generation levels are structure-agnostic — see their own pages (<a href="index.html" style="color:inherit;text-decoration:underline">← index</a>).
+  </p>
+
+  <!-- the shared sample -->
+  <h2>The sample · one realistic gauntlet duel</h2>
+  <div class="sample" id="sample-strip"></div>
+  <p class="lede" style="margin-top:0">
+    <code>gen-0042</code> (challenger) beats champion <code>gen-0039</code> by a modest margin on most boards, with one
+    regression on <code>plan.replan</code>. <code>delta_scalar = -0.024</code> clears <code>promote_margin = 0.01</code>;
+    pass-rate monotonicity holds (no board the champion passed that the challenger failed). A realistic <b>close
+    PROMOTE</b>. Lower scalar = better; <span class="good">negative delta = improvement</span>.
+  </p>
+
+  <div id="options"></div>
+</main>
+
+<footer>
+  Standalone tournament-viz study (GAUNTLET structure) · served from <code>/tmp/zicato-tourney-viz-study/</code> ·
+  read-only against <code>/home/sunil/git/zicato</code> · no repo edits. Data model:
+  <code>RoundRecord(label="Gauntlet")</code> · one <code>MatchRecord(competitors, winner, decision, delta_scalar)</code> ·
+  2-row <code>Standing{rank,scalar,status}</code> · gate <code>promote_margin=0.01</code>.
+</footer>
+
+<script>
+/* ============================================================
+   SAMPLE — one realistic gauntlet duel, shared across all 6 options.
+   Real fields: champion/challenger generation_ids, per-board scalar +
+   pass_fail, gate outcome (decision, reason, delta_scalar, delta_pass_rate),
+   2-row standings, plus a believable replicate breakdown for richness.
+   Lower scalar = better. delta_scalar = challenger - champion (neg = better).
+   ============================================================ */
+const S = {
+  champion:  { id: "gen-0039", role: "champion",   scalar: 0.342, pass_rate: 0.75 },
+  challenger:{ id: "gen-0042", role: "challenger", scalar: 0.318, pass_rate: 0.875 },
+  promote_margin: 0.01,
+  gate: {
+    decision: "promoted",
+    delta_scalar: -0.024,      // challenger - champion  (negative = improvement)
+    delta_pass_rate: +0.125,   // +1 board net
+    reason: "scalar improved by 0.024 (> margin 0.010); pass-rate monotonicity held",
+  },
+  // per-board breakdown: 8 boards. scalar lower=better. champ vs chal.
+  boards: [
+    { id: "tool.route",      champ: 0.41, chal: 0.29, cPass: true,  hPass: true  },
+    { id: "plan.decompose",  champ: 0.38, chal: 0.31, cPass: true,  hPass: true  },
+    { id: "plan.replan",     champ: 0.22, chal: 0.34, cPass: true,  hPass: false }, // REGRESSION
+    { id: "recall.multi",    champ: 0.55, chal: 0.40, cPass: false, hPass: true  }, // newly passes
+    { id: "format.json",     champ: 0.19, chal: 0.17, cPass: true,  hPass: true  },
+    { id: "safety.refuse",   champ: 0.31, chal: 0.26, cPass: true,  hPass: true  },
+    { id: "tool.args",       champ: 0.44, chal: 0.39, cPass: false, hPass: false },
+    { id: "summarize.long",  champ: 0.24, chal: 0.31, cPass: true,  hPass: true  },
+  ],
+  // replicates: each side run N times; scalar varies. (richness signal)
+  replicates: {
+    champ: [0.351, 0.338, 0.346, 0.333, 0.342],
+    chal:  [0.309, 0.327, 0.314, 0.322, 0.318],
+  },
+  // NOTE: the champion's reign ACROSS evolve-rounds (r0…r5 history) is
+  // cross-round / epoch-level content and lives on the separate cross-round
+  // level page — NOT here. This page is the SINGLE (degenerate) round: one
+  // champion vs one challenger, board by board. (no multi-round array here.)
+  standings: [
+    { rank: 1, id: "gen-0042", scalar: 0.318, status: "champion",   role: "challenger" },
+    { rank: 2, id: "gen-0039", scalar: 0.342, status: "eliminated", role: "champion"   },
+  ],
+};
+// derived
+S.boardsWon = S.boards.filter(b => b.chal < b.champ).length;
+S.boardsLost = S.boards.length - S.boardsWon;
+S.passRegress = S.boards.filter(b => b.cPass && !b.hPass).map(b => b.id);
+function mean(a){ return a.reduce((x,y)=>x+y,0)/a.length; }
+function sd(a){ const m=mean(a); return Math.sqrt(mean(a.map(x=>(x-m)*(x-m)))); }
+S.replStats = {
+  champ: { m: mean(S.replicates.champ), s: sd(S.replicates.champ) },
+  chal:  { m: mean(S.replicates.chal),  s: sd(S.replicates.chal) },
+};
+
+/* sample fact strip */
+document.getElementById('sample-strip').innerHTML = `
+  <div class="kv"><span class="k">champion</span><span class="v mono">${S.champion.id} · <span class="faint">${S.champion.scalar.toFixed(3)}</span></span></div>
+  <div class="kv"><span class="k">challenger</span><span class="v mono">${S.challenger.id} · <span class="faint">${S.challenger.scalar.toFixed(3)}</span></span></div>
+  <div class="kv"><span class="k">gate decision</span><span class="v"><b class="good">PROMOTE</b></span></div>
+  <div class="kv"><span class="k">delta_scalar</span><span class="v"><b class="good">${S.gate.delta_scalar.toFixed(3)}</b> <span class="faint">(margin ${S.promote_margin.toFixed(2)})</span></span></div>
+  <div class="kv"><span class="k">board spread</span><span class="v"><b class="good">${S.boardsWon}</b><span class="faint">/${S.boards.length} won · </span><b class="bad">${S.boardsLost}</b><span class="faint"> reg</span></span></div>
+  <div class="kv"><span class="k">replicate σ</span><span class="v faint">champ ${S.replStats.champ.s.toFixed(3)} · chal ${S.replStats.chal.s.toFixed(3)}</span></div>
+`;
+
+/* ---------- tiny svg helpers ---------- */
+const NS = "http://www.w3.org/2000/svg";
+const VE = 'vector-effect="non-scaling-stroke"';
+function fmt(n, d=3){ return (n>=0?"+":"") + n.toFixed(d); }
+
+/* color tokens resolved at draw time (we use var() in attributes so theme
+   switching recolors live; for fills/strokes we reference CSS vars directly). */
+const C = {
+  ink: "var(--ink)", soft: "var(--ink-soft)", faint: "var(--ink-faint)",
+  good: "var(--good)", bad: "var(--bad)", accent: "var(--accent)",
+  rule: "var(--rule)", ruleSoft: "var(--rule-soft)", panel2: "var(--panel-2)",
+  goodSoft: "var(--good-soft)", paper: "var(--paper)",
+};
+
+/* ============================================================
+   OPTION 1 — MARGIN GAUGE
+   A horizontal gate-margin axis: the gate threshold is a hard line; the
+   delta_scalar bar reaches across it. Reads "did it clear, by how much".
+   ============================================================ */
+function opt1_hero(){
+  // axis from -0.05 (improvement) .. +0.02 (regression). 0 = parity.
+  const W=600,H=120, x0=40,x1=560;
+  const lo=-0.05, hi=0.02;
+  const X = v => x0 + (v-lo)/(hi-lo)*(x1-x0);
+  const zero=X(0), gate=X(-S.promote_margin), d=X(S.gate.delta_scalar);
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="margin gauge">
+    <line x1="${x0}" y1="60" x2="${x1}" y2="60" stroke="${C.rule}" ${VE}/>
+    <!-- gate threshold -->
+    <line x1="${gate}" y1="34" x2="${gate}" y2="86" stroke="${C.caution || C.faint}" stroke-dasharray="4 3" ${VE}/>
+    <text x="${gate}" y="26" fill="${C.faint}" font-size="10" text-anchor="middle">gate −${S.promote_margin.toFixed(2)}</text>
+    <!-- parity -->
+    <line x1="${zero}" y1="44" x2="${zero}" y2="76" stroke="${C.faint}" ${VE}/>
+    <text x="${zero}" y="100" fill="${C.faint}" font-size="9" text-anchor="middle">parity</text>
+    <!-- delta bar from parity to delta -->
+    <rect x="${Math.min(zero,d)}" y="50" width="${Math.abs(d-zero)}" height="20" fill="${C.good}" opacity="0.32"/>
+    <line x1="${d}" y1="40" x2="${d}" y2="80" stroke="${C.good}" stroke-width="3" ${VE}/>
+    <circle cx="${d}" cy="60" r="5" fill="${C.good}"/>
+    <text x="${d}" y="34" fill="${C.good}" font-size="13" font-weight="700" text-anchor="middle">Δ ${S.gate.delta_scalar.toFixed(3)}</text>
+    <text x="${x0}" y="60" dy="3" fill="${C.faint}" font-size="9" text-anchor="end" dx="-4">better</text>
+    <text x="${x1}" y="60" dy="3" fill="${C.faint}" font-size="9" dx="6">worse</text>
+    <text x="320" y="116" fill="${C.good}" font-size="11" font-weight="700" text-anchor="middle">CLEARS GATE — challenger promoted</text>
+  </svg>`;
+}
+function opt1_cross(){
+  // ONE gauntlet round: the challenger's per-board Δ-vs-champion on a parity axis,
+  // each board a small margin-gauge row; the boards SUM to the aggregate Σ delta
+  // bar at the bottom, which crosses the gate ⇒ PROMOTE. One challenger, one round.
+  const n=S.boards.length;
+  const W=600, x0=132, x1=560, top=38, rowH=18;
+  const lo=-0.18, hi=0.18;                       // per-board Δ range
+  const X = v => x0 + (v-lo)/(hi-lo)*(x1-x0);
+  const zero=X(0);
+  const bodyH = top + n*rowH;
+  const sumY = bodyH + 26;                        // aggregate Σ row
+  const H = sumY + 40;
+  const rows = S.boards.map((b,i)=>{
+    const y=top+i*rowH+rowH/2, dv=b.chal-b.champ, better=dv<0;
+    const d=X(dv), col=better?C.good:C.bad, reg=b.cPass&&!b.hPass;
+    return `<text x="${x0-8}" y="${y+3}" fill="${reg?C.bad:C.soft}" font-size="9" text-anchor="end">${b.id}${reg?' ⚠':''}</text>
+      <rect x="${Math.min(zero,d)}" y="${y-4}" width="${Math.abs(d-zero)}" height="8" fill="${col}" opacity="0.32"/>
+      <circle cx="${d}" cy="${y}" r="3" fill="${col}"/>
+      <text x="${d + (better?-6:6)}" y="${y+3}" fill="${col}" font-size="8" text-anchor="${better?'end':'start'}">${fmt(dv,2)}</text>`;
+  }).join('');
+  // aggregate Σ delta uses the gate-margin scale so the gate line is meaningful
+  const loS=-0.05, hiS=0.02, XS = v => x0 + (v-loS)/(hiS-loS)*(x1-x0);
+  const zeroS=XS(0), gateS=XS(-S.promote_margin), dS=XS(S.gate.delta_scalar);
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="one gauntlet round, per-board margin">
+    <text x="${x0}" y="13" fill="${C.soft}" font-size="10">${S.challenger.id} vs champ ${S.champion.id} — board by board</text>
+    <line x1="${zero}" y1="${top-6}" x2="${zero}" y2="${bodyH}" stroke="${C.faint}" ${VE}/>
+    <text x="${zero}" y="${top-10}" fill="${C.faint}" font-size="8" text-anchor="middle">parity</text>
+    ${rows}
+    <line x1="${x0-12}" y1="${bodyH+8}" x2="${W-14}" y2="${bodyH+8}" stroke="${C.rule}" ${VE}/>
+    <!-- aggregate Σ delta on the gate-margin axis -->
+    <line x1="${gateS}" y1="${sumY-9}" x2="${gateS}" y2="${sumY+9}" stroke="${C.caution||C.faint}" stroke-dasharray="4 3" ${VE}/>
+    <text x="${gateS}" y="${sumY-13}" fill="${C.faint}" font-size="8" text-anchor="middle">gate −${S.promote_margin.toFixed(2)}</text>
+    <line x1="${zeroS}" y1="${sumY-9}" x2="${zeroS}" y2="${sumY+9}" stroke="${C.faint}" ${VE}/>
+    <text x="${x0-8}" y="${sumY+4}" fill="${C.good}" font-size="9" text-anchor="end" font-weight="700">Σ</text>
+    <rect x="${Math.min(zeroS,dS)}" y="${sumY-6}" width="${Math.abs(dS-zeroS)}" height="12" fill="${C.good}" opacity="0.34"/>
+    <circle cx="${dS}" cy="${sumY}" r="4" fill="${C.good}"/>
+    <text x="${dS-8}" y="${sumY+4}" fill="${C.good}" font-size="10" font-weight="700" text-anchor="end">Δ ${S.gate.delta_scalar.toFixed(3)}</text>
+    <text x="${x0}" y="${H-8}" fill="${C.faint}" font-size="9">${S.boardsWon}/${n} boards improve (1 gated regression ⚠) · Σ clears the gate ⇒ <tspan fill="${C.good}">PROMOTE</tspan></text>
+  </svg>`;
+}
+function opt1_round(){
+  const W=600,H=150, x0=40,x1=560;
+  const lo=-0.05, hi=0.02;
+  const X = v => x0 + (v-lo)/(hi-lo)*(x1-x0);
+  const gate=X(-S.promote_margin), zero=X(0), d=X(S.gate.delta_scalar);
+  // annotate the two scalars + the margin bracket
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="round margin detail">
+    <line x1="${x0}" y1="74" x2="${x1}" y2="74" stroke="${C.rule}" ${VE}/>
+    <line x1="${gate}" y1="40" x2="${gate}" y2="100" stroke="${C.caution||C.faint}" stroke-dasharray="4 3" ${VE}/>
+    <line x1="${zero}" y1="50" x2="${zero}" y2="98" stroke="${C.faint}" ${VE}/>
+    <!-- margin bracket between gate and parity -->
+    <line x1="${gate}" y1="118" x2="${zero}" y2="118" stroke="${C.faint}" ${VE}/>
+    <text x="${(gate+zero)/2}" y="132" fill="${C.faint}" font-size="9" text-anchor="middle">margin ${S.promote_margin.toFixed(2)}</text>
+    <text x="${zero}" y="46" fill="${C.faint}" font-size="9" text-anchor="middle">champ ${S.champion.scalar.toFixed(3)}</text>
+    <rect x="${Math.min(zero,d)}" y="64" width="${Math.abs(d-zero)}" height="20" fill="${C.good}" opacity="0.30"/>
+    <line x1="${d}" y1="54" x2="${d}" y2="94" stroke="${C.good}" stroke-width="3" ${VE}/>
+    <circle cx="${d}" cy="74" r="5" fill="${C.good}"/>
+    <text x="${d}" y="46" fill="${C.good}" font-size="12" font-weight="700" text-anchor="middle">Δ ${S.gate.delta_scalar.toFixed(3)}</text>
+    <text x="${d}" y="108" fill="${C.good}" font-size="9" text-anchor="middle">chal ${S.challenger.scalar.toFixed(3)}</text>
+    <text x="20" y="16" fill="${C.soft}" font-size="10">gate margin · challenger overshoots the threshold by ${(Math.abs(S.gate.delta_scalar)-S.promote_margin).toFixed(3)}</text>
+  </svg>`;
+}
+
+/* ============================================================
+   OPTION 2 — PER-BOARD WIN/LOSS STRIP
+   One cell per board, green=challenger better, red=worse. The spread
+   answers "on how many boards". Hero collapses to a tally; round shows
+   per-board scalar deltas.
+   ============================================================ */
+function boardCells(W, cellH, showLabels){
+  const n=S.boards.length, gap=4, cw=(W-(n-1)*gap)/n;
+  return S.boards.map((b,i)=>{
+    const x=i*(cw+gap), better=b.chal<b.champ;
+    const col=better?C.good:C.bad;
+    const reg = b.cPass && !b.hPass;
+    return `<rect x="${x}" y="0" width="${cw}" height="${cellH}" rx="3" fill="${col}" opacity="${better?0.30:0.30}" stroke="${reg?C.bad:col}" stroke-width="${reg?2:0}" ${VE}/>
+      <text x="${x+cw/2}" y="${cellH/2+4}" fill="${col}" font-size="11" font-weight="700" text-anchor="middle">${better?'▲':'▼'}</text>
+      ${showLabels?`<text x="${x+cw/2}" y="${cellH+12}" fill="${C.faint}" font-size="8" text-anchor="middle" transform="rotate(0 ${x+cw/2} ${cellH+12})">${b.id.split('.')[0]}</text>`:''}`;
+  }).join('');
+}
+function opt2_hero(){
+  const W=600;
+  return `<svg viewBox="0 0 ${W} 70" ${VE} role="img" aria-label="board strip hero">
+    <g transform="translate(0,8)">${boardCells(W-170, 34, false)}</g>
+    <text x="${W-150}" y="22" fill="${C.good}" font-size="18" font-weight="700">${S.boardsWon}</text>
+    <text x="${W-128}" y="22" fill="${C.faint}" font-size="11">won</text>
+    <text x="${W-150}" y="46" fill="${C.bad}" font-size="18" font-weight="700">${S.boardsLost}</text>
+    <text x="${W-128}" y="46" fill="${C.faint}" font-size="11">reg</text>
+    <text x="${W-86}" y="34" fill="${C.good}" font-size="11" font-weight="700">PROMOTE</text>
+  </svg>`;
+}
+function opt2_cross(){
+  // ONE gauntlet round, board by board: the fixed CHAMPION STANDARD (grey loss
+  // bar) vs the round's CHALLENGER (green/red loss bar) on each board, lower =
+  // better, with a pass/fail dot pair. The duel resolves to the Σ tally below.
+  const n=S.boards.length;
+  const W=600, x0=132, x1=552, top=30, rowH=20, base=0.6;
+  const X = v => x0 + (v/base)*(x1-x0);          // absolute loss → x
+  const bodyH = top + n*rowH;
+  const H = bodyH + 40;
+  const rows = S.boards.map((b,i)=>{
+    const y=top+i*rowH+rowH/2, better=b.chal<b.champ, reg=b.cPass&&!b.hPass;
+    const col=better?C.good:C.bad;
+    // champ standard (grey) on top half, challenger (col) on bottom half
+    return `<text x="${x0-8}" y="${y+3}" fill="${reg?C.bad:C.soft}" font-size="9" text-anchor="end">${b.id}${reg?' ⚠':''}</text>
+      <rect x="${x0}" y="${y-6}" width="${X(b.champ)-x0}" height="4.5" fill="${C.faint}" opacity="0.5"/>
+      <rect x="${x0}" y="${y+1}" width="${X(b.chal)-x0}" height="4.5" fill="${col}" opacity="0.7"/>
+      <circle cx="${X(b.chal)+8}" cy="${y}" r="3" fill="${b.hPass?C.good:'none'}" stroke="${b.hPass?C.good:C.bad}" ${VE}/>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="one gauntlet round, champ standard vs challenger per board">
+    <text x="${x0}" y="14" fill="${C.soft}" font-size="10">champ standard <tspan fill="${C.faint}">${S.champion.id}</tspan> (grey) vs challenger <tspan fill="${C.good}">${S.challenger.id}</tspan> (green) · lower = better</text>
+    <text x="${x0}" y="${top-6}" fill="${C.faint}" font-size="8">loss per board ▶  ·  ○ = challenger pass/fail</text>
+    ${rows}
+    <line x1="${x0-12}" y1="${bodyH+8}" x2="${W-14}" y2="${bodyH+8}" stroke="${C.rule}" ${VE}/>
+    <text x="${x0-8}" y="${bodyH+26}" fill="${C.good}" font-size="9" text-anchor="end" font-weight="700">Σ</text>
+    <text x="${x0}" y="${bodyH+26}" fill="${C.soft}" font-size="10"><tspan fill="${C.good}" font-weight="700">${S.boardsWon}</tspan>/${n} boards shorter (better) · <tspan fill="${C.bad}" font-weight="700">${S.boardsLost}</tspan> regress · Σ Δ <tspan fill="${C.good}" font-weight="700">${S.gate.delta_scalar.toFixed(3)}</tspan> ⇒ <tspan fill="${C.good}" font-weight="700">PROMOTE</tspan></text>
+  </svg>`;
+}
+function opt2_round(){
+  const W=600, n=S.boards.length, rowH=20, top=22, x0=132, axisW=356;
+  const maxAbs=0.18;
+  const mid=x0+axisW/2;
+  const X = dv => mid + (dv/(2*maxAbs))*axisW;  // dv = chal-champ
+  return `<svg viewBox="0 0 ${W} ${top+n*rowH+24}" ${VE} role="img" aria-label="per-board delta">
+    <line x1="${mid}" y1="${top-6}" x2="${mid}" y2="${top+n*rowH}" stroke="${C.faint}" ${VE}/>
+    <text x="${mid}" y="${top-10}" fill="${C.faint}" font-size="8" text-anchor="middle">parity</text>
+    ${S.boards.map((b,i)=>{
+      const y=top+i*rowH+rowH/2, dv=b.chal-b.champ, better=dv<0;
+      const xv=X(dv), col=better?C.good:C.bad, reg=b.cPass&&!b.hPass;
+      return `<text x="${x0-8}" y="${y+3}" fill="${reg?C.bad:C.soft}" font-size="9" text-anchor="end">${b.id}${reg?' ⚠':''}</text>
+        <rect x="${Math.min(mid,xv)}" y="${y-5}" width="${Math.abs(xv-mid)}" height="10" fill="${col}" opacity="0.34"/>
+        <text x="${xv + (better?-6:6)}" y="${y+3}" fill="${col}" font-size="8" text-anchor="${better?'end':'start'}">${fmt(dv,2)}</text>`;
+    }).join('')}
+    <text x="${x0}" y="${top+n*rowH+16}" fill="${C.faint}" font-size="9">◀ challenger better      worse ▶  ·  ⚠ = pass→fail regression (gated)</text>
+  </svg>`;
+}
+
+/* ============================================================
+   OPTION 3 — CHAMPION-VS-CHALLENGER SCALAR BARS
+   Two opposed bars (lower=better) with the delta bracket between them.
+   The most literal "scalar comparison" read.
+   ============================================================ */
+function opt3_hero(){
+  const W=600,H=110, x0=120, barW=360, base=0.6;
+  const X = v => x0 + (v/base)*barW;
+  const cy1=34, cy2=70;
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="scalar bars hero">
+    <text x="${x0-10}" y="${cy1+4}" fill="${C.faint}" font-size="10" text-anchor="end">champ</text>
+    <rect x="${x0}" y="${cy1-9}" width="${X(S.champion.scalar)-x0}" height="18" fill="${C.faint}" opacity="0.45"/>
+    <text x="${X(S.champion.scalar)+6}" y="${cy1+4}" fill="${C.faint}" font-size="10">${S.champion.scalar.toFixed(3)}</text>
+    <text x="${x0-10}" y="${cy2+4}" fill="${C.good}" font-size="10" text-anchor="end">chal</text>
+    <rect x="${x0}" y="${cy2-9}" width="${X(S.challenger.scalar)-x0}" height="18" fill="${C.good}" opacity="0.55"/>
+    <text x="${X(S.challenger.scalar)+6}" y="${cy2+4}" fill="${C.good}" font-size="10">${S.challenger.scalar.toFixed(3)}</text>
+    <!-- delta bracket -->
+    <line x1="${X(S.challenger.scalar)}" y1="${cy2-14}" x2="${X(S.champion.scalar)}" y2="${cy2-14}" stroke="${C.good}" ${VE}/>
+    <text x="${(X(S.challenger.scalar)+X(S.champion.scalar))/2}" y="${cy2-18}" fill="${C.good}" font-size="10" font-weight="700" text-anchor="middle">Δ ${S.gate.delta_scalar.toFixed(3)} ▲</text>
+    <text x="${x0+barW+4}" y="14" fill="${C.faint}" font-size="9">◀ lower = better</text>
+    <text x="${x0}" y="${H-6}" fill="${C.good}" font-size="11" font-weight="700">PROMOTE · shorter bar wins</text>
+  </svg>`;
+}
+function opt3_cross(){
+  // ONE gauntlet round as opposed scalar bars PER BOARD: champ (grey) and
+  // challenger (green/red) loss bars side by side on each board, with the
+  // per-board Δ bracket; the boards stack to the aggregate Σ bars at the foot.
+  const n=S.boards.length;
+  const W=600, top=26, rowH=21, x0=132, x1=540, base=0.6;
+  const X=v=>x0+(v/base)*(x1-x0);
+  const bodyH = top + n*rowH;
+  const sumY = bodyH + 24;
+  const H = sumY + 34;
+  const rows = S.boards.map((b,i)=>{
+    const y=top+i*rowH, better=b.chal<b.champ, reg=b.cPass&&!b.hPass;
+    const col=better?C.good:C.bad;
+    return `<text x="${x0-8}" y="${y+12}" fill="${reg?C.bad:C.soft}" font-size="9" text-anchor="end">${b.id}${reg?' ⚠':''}</text>
+      <rect x="${x0}" y="${y+2}" width="${X(b.champ)-x0}" height="5" fill="${C.faint}" opacity="0.5"/>
+      <rect x="${x0}" y="${y+9}" width="${X(b.chal)-x0}" height="5" fill="${col}" opacity="0.7"/>
+      <line x1="${X(b.chal)}" y1="${y+7}" x2="${X(b.champ)}" y2="${y+7}" stroke="${col}" opacity="0.6" ${VE}/>
+      <text x="${Math.max(X(b.champ),X(b.chal))+6}" y="${y+12}" fill="${col}" font-size="8">${fmt(b.chal-b.champ,2)}</text>`;
+  }).join('');
+  // aggregate Σ bars
+  const cy1=sumY, cy2=sumY+11;
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="one gauntlet round, opposed scalar bars per board">
+    <text x="${x0}" y="14" fill="${C.soft}" font-size="10">champ <tspan fill="${C.faint}">${S.champion.id}</tspan> (grey) vs chal <tspan fill="${C.good}">${S.challenger.id}</tspan> (green) per board · ◀ lower=better</text>
+    ${rows}
+    <line x1="${x0-12}" y1="${bodyH+8}" x2="${W-14}" y2="${bodyH+8}" stroke="${C.rule}" ${VE}/>
+    <text x="${x0-8}" y="${cy1+9}" fill="${C.good}" font-size="9" text-anchor="end" font-weight="700">Σ</text>
+    <rect x="${x0}" y="${cy1}" width="${X(S.champion.scalar)-x0}" height="6" fill="${C.faint}" opacity="0.5"/>
+    <text x="${X(S.champion.scalar)+6}" y="${cy1+6}" fill="${C.faint}" font-size="8">${S.champion.scalar.toFixed(3)}</text>
+    <rect x="${x0}" y="${cy2}" width="${X(S.challenger.scalar)-x0}" height="6" fill="${C.good}" opacity="0.7"/>
+    <text x="${X(S.challenger.scalar)+6}" y="${cy2+6}" fill="${C.good}" font-size="8">${S.challenger.scalar.toFixed(3)}</text>
+    <text x="${x0}" y="${H-6}" fill="${C.faint}" font-size="9">aggregate shorter green ⇒ Σ Δ <tspan fill="${C.good}" font-weight="700">${S.gate.delta_scalar.toFixed(3)}</tspan> clears margin ${S.promote_margin.toFixed(2)} ⇒ <tspan fill="${C.good}">PROMOTE</tspan></text>
+  </svg>`;
+}
+function opt3_round(){
+  const W=600,H=150, x0=130, barW=340, base=0.6;
+  const X=v=>x0+(v/base)*barW;
+  const cy1=40, cy2=92;
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="scalar bars round detail">
+    <text x="${x0-12}" y="${cy1-12}" fill="${C.faint}" font-size="9">${S.champion.id}</text>
+    <text x="${x0-10}" y="${cy1+4}" fill="${C.faint}" font-size="10" text-anchor="end">champ</text>
+    <rect x="${x0}" y="${cy1-9}" width="${X(S.champion.scalar)-x0}" height="18" fill="${C.faint}" opacity="0.45"/>
+    <text x="${X(S.champion.scalar)+6}" y="${cy1+4}" fill="${C.faint}" font-size="11">${S.champion.scalar.toFixed(3)}</text>
+    <!-- gate line: champ - margin -->
+    <line x1="${X(S.champion.scalar-S.promote_margin)}" y1="${cy1-16}" x2="${X(S.champion.scalar-S.promote_margin)}" y2="${cy2+16}" stroke="${C.caution||C.faint}" stroke-dasharray="4 3" ${VE}/>
+    <text x="${X(S.champion.scalar-S.promote_margin)}" y="${cy1-20}" fill="${C.faint}" font-size="8" text-anchor="middle">gate (champ−margin)</text>
+    <text x="${x0-12}" y="${cy2-12}" fill="${C.good}" font-size="9">${S.challenger.id}</text>
+    <text x="${x0-10}" y="${cy2+4}" fill="${C.good}" font-size="10" text-anchor="end">chal</text>
+    <rect x="${x0}" y="${cy2-9}" width="${X(S.challenger.scalar)-x0}" height="18" fill="${C.good}" opacity="0.55"/>
+    <text x="${X(S.challenger.scalar)+6}" y="${cy2+4}" fill="${C.good}" font-size="11">${S.challenger.scalar.toFixed(3)}</text>
+    <text x="${x0}" y="${H-8}" fill="${C.soft}" font-size="9">challenger bar ends left of the gate line ⇒ clears by ${(Math.abs(S.gate.delta_scalar)-S.promote_margin).toFixed(3)} ⇒ PROMOTE</text>
+  </svg>`;
+}
+
+/* ============================================================
+   OPTION 4 — CROWN HANDOFF
+   The crown line carries the champion; the round's challenger forks in and,
+   if it clears the gate, takes the crown. For the gauntlet's single round the
+   board verdicts are the rungs feeding the one handoff. (a hero, b one round
+   board-by-board, c the handoff in gate detail.)
+   ============================================================ */
+function opt4_hero(){
+  // compact: current crown holder + the just-decided handoff
+  const W=600,H=96;
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="reign hero">
+    <line x1="30" y1="48" x2="430" y2="48" stroke="${C.faint}" stroke-width="2" ${VE}/>
+    <circle cx="30" cy="48" r="6" fill="${C.faint}"/>
+    <text x="30" y="34" fill="${C.faint}" font-size="9" text-anchor="middle">${S.champion.id}</text>
+    <text x="30" y="70" fill="${C.faint}" font-size="8" text-anchor="middle">prev champ</text>
+    <!-- challenger fork in -->
+    <line x1="350" y1="86" x2="430" y2="48" stroke="${C.good}" stroke-width="2" ${VE}/>
+    <circle cx="350" cy="86" r="5" fill="${C.good}"/>
+    <text x="350" y="80" fill="${C.good}" font-size="9" text-anchor="end">${S.challenger.id} ▶</text>
+    <circle cx="430" cy="48" r="9" fill="${C.good}"/>
+    <text x="430" y="30" fill="${C.good}" font-size="11" font-weight="700" text-anchor="middle">♔ new champ</text>
+    <line x1="430" y1="48" x2="560" y2="48" stroke="${C.good}" stroke-width="2" stroke-dasharray="3 3" ${VE}/>
+    <text x="495" y="42" fill="${C.good}" font-size="10" text-anchor="middle">reign continues</text>
+    <text x="495" y="64" fill="${C.faint}" font-size="9" text-anchor="middle">Δ ${S.gate.delta_scalar.toFixed(3)}</text>
+  </svg>`;
+}
+function opt4_cross(){
+  // ONE gauntlet round: the single champ→challenger crown handoff, with the
+  // round's board outcomes as the rungs feeding the decision. The crown line
+  // carries the champion; the challenger fork rises through the per-board
+  // verdicts to take the crown. One challenger, one round.
+  const n=S.boards.length;
+  const W=600, x0=44, x1=556, yMain=46, yFork=120;
+  const colW=(x1-x0)/n;
+  const footY=190;
+  // board rungs spaced across the join from champ node to challenger crown
+  const rungs = S.boards.map((b,i)=>{
+    const cx=x0+ (i+0.5)*colW, better=b.chal<b.champ, reg=b.cPass&&!b.hPass;
+    const col=reg?C.bad:(better?C.good:C.bad);
+    const mk=reg?'⚠':(better?'▲':'▼');
+    return `<line x1="${cx}" y1="${yFork}" x2="${cx}" y2="${yMain+14}" stroke="${col}" opacity="0.45" ${VE}/>
+      <circle cx="${cx}" cy="${yFork}" r="3" fill="${col}"/>
+      <text x="${cx}" y="${yFork+13}" fill="${col}" font-size="8" text-anchor="middle">${mk}</text>
+      <text x="${cx}" y="${yFork+24}" fill="${C.faint}" font-size="7" text-anchor="middle">${b.id.split('.')[0]}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${footY+8}" ${VE} role="img" aria-label="one gauntlet round crown handoff">
+    <!-- crown line: prev champ → new champ -->
+    <line x1="${x0}" y1="${yMain}" x2="${x1-90}" y2="${yMain}" stroke="${C.faint}" stroke-width="2" ${VE}/>
+    <circle cx="${x0}" cy="${yMain}" r="7" fill="${C.faint}"/>
+    <text x="${x0}" y="${yMain-12}" fill="${C.faint}" font-size="9" text-anchor="middle">${S.champion.id}</text>
+    <text x="${x0}" y="${yMain+22}" fill="${C.faint}" font-size="8" text-anchor="middle">champ ${S.champion.scalar.toFixed(3)}</text>
+    <!-- the one round's board verdicts feed the handoff -->
+    ${rungs}
+    <!-- challenger takes the crown -->
+    <circle cx="${x1-90}" cy="${yMain}" r="10" fill="${C.good}"/>
+    <text x="${x1-90}" y="${yMain-14}" fill="${C.good}" font-size="10" font-weight="700" text-anchor="middle">♔ ${S.challenger.id}</text>
+    <text x="${x1-90}" y="${yMain+24}" fill="${C.good}" font-size="8" text-anchor="middle">new champ ${S.challenger.scalar.toFixed(3)}</text>
+    <line x1="${x1-90}" y1="${yMain}" x2="${x1}" y2="${yMain}" stroke="${C.good}" stroke-width="2" stroke-dasharray="3 3" ${VE}/>
+    <text x="${x1-30}" y="${yMain-8}" fill="${C.good}" font-size="8" text-anchor="middle">reign →</text>
+    <text x="${(x0+x1)/2}" y="${yFork+38}" fill="${C.faint}" font-size="8" text-anchor="middle">↑ this round's per-board verdicts feed the one handoff</text>
+    <line x1="${x0}" y1="${footY-16}" x2="${x1}" y2="${footY-16}" stroke="${C.rule}" ${VE}/>
+    <text x="${x0}" y="${footY}" fill="${C.faint}" font-size="9">one round · ${S.boardsWon}/${n} board verdicts favour the challenger ⇒ Σ Δ <tspan fill="${C.good}" font-weight="700">${S.gate.delta_scalar.toFixed(3)}</tspan> ⇒ crown handoff (<tspan fill="${C.good}">PROMOTE</tspan>)</text>
+  </svg>`;
+}
+function opt4_round(){
+  // single handoff in detail: champ node, challenger node, gate, crown
+  const W=600,H=150;
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="reign round handoff">
+    <circle cx="90" cy="60" r="10" fill="${C.faint}"/>
+    <text x="90" y="40" fill="${C.faint}" font-size="10" text-anchor="middle">${S.champion.id}</text>
+    <text x="90" y="84" fill="${C.faint}" font-size="9" text-anchor="middle">champ ${S.champion.scalar.toFixed(3)}</text>
+    <circle cx="90" cy="120" r="8" fill="${C.good}"/>
+    <text x="90" y="142" fill="${C.good}" font-size="9" text-anchor="middle">${S.challenger.id} ${S.challenger.scalar.toFixed(3)}</text>
+    <!-- gate node -->
+    <line x1="90" y1="70" x2="300" y2="90" stroke="${C.faint}" ${VE}/>
+    <line x1="90" y1="112" x2="300" y2="90" stroke="${C.good}" stroke-width="2" ${VE}/>
+    <rect x="300" y="72" width="86" height="36" rx="6" fill="none" stroke="${C.caution||C.faint}" stroke-dasharray="4 3" ${VE}/>
+    <text x="343" y="88" fill="${C.faint}" font-size="9" text-anchor="middle">GATE</text>
+    <text x="343" y="102" fill="${C.faint}" font-size="8" text-anchor="middle">margin ${S.promote_margin.toFixed(2)}</text>
+    <!-- promote arrow -->
+    <line x1="386" y1="90" x2="490" y2="90" stroke="${C.good}" stroke-width="2" ${VE}/>
+    <polygon points="490,90 482,86 482,94" fill="${C.good}"/>
+    <text x="438" y="82" fill="${C.good}" font-size="9" text-anchor="middle">Δ ${S.gate.delta_scalar.toFixed(3)}</text>
+    <circle cx="520" cy="90" r="12" fill="${C.good}"/>
+    <text x="520" y="68" fill="${C.good}" font-size="11" font-weight="700" text-anchor="middle">♔</text>
+    <text x="520" y="116" fill="${C.good}" font-size="9" text-anchor="middle">crowned</text>
+  </svg>`;
+}
+
+/* ============================================================
+   OPTION 5 — REPLICATE DISTRIBUTION (reliability-native)
+   Each side's replicate scalars as a dot strip with mean ± σ band;
+   answers "how reliably". Separation of the bands = confidence.
+   ============================================================ */
+function dotStrip(vals, y, col, X){
+  return vals.map(v=>`<circle cx="${X(v)}" cy="${y}" r="3" fill="${col}" opacity="0.8"/>`).join('');
+}
+function opt5_hero(){
+  const W=600,H=110, x0=110, x1=520, lo=0.29, hi=0.37;
+  const X=v=>x0+(v-lo)/(hi-lo)*(x1-x0);
+  const cm=S.replStats.champ, hm=S.replStats.chal;
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="replicate dist hero">
+    <text x="${x0-10}" y="38" fill="${C.faint}" font-size="10" text-anchor="end">champ</text>
+    <rect x="${X(cm.m-cm.s)}" y="28" width="${X(cm.m+cm.s)-X(cm.m-cm.s)}" height="14" fill="${C.faint}" opacity="0.22"/>
+    <line x1="${X(cm.m)}" y1="26" x2="${X(cm.m)}" y2="44" stroke="${C.faint}" stroke-width="2" ${VE}/>
+    ${dotStrip(S.replicates.champ,35,C.faint,X)}
+    <text x="${x0-10}" y="76" fill="${C.good}" font-size="10" text-anchor="end">chal</text>
+    <rect x="${X(hm.m-hm.s)}" y="66" width="${X(hm.m+hm.s)-X(hm.m-hm.s)}" height="14" fill="${C.good}" opacity="0.28"/>
+    <line x1="${X(hm.m)}" y1="64" x2="${X(hm.m)}" y2="82" stroke="${C.good}" stroke-width="2" ${VE}/>
+    ${dotStrip(S.replicates.chal,73,C.good,X)}
+    <text x="${x1}" y="20" fill="${C.faint}" font-size="9" text-anchor="end">◀ lower = better</text>
+    <text x="${x0}" y="${H-8}" fill="${C.good}" font-size="11" font-weight="700">bands separated ⇒ reliable PROMOTE (σ ${hm.s.toFixed(3)})</text>
+  </svg>`;
+}
+function opt5_cross(){
+  // ONE gauntlet round, board by board, reliability idiom: for each board the
+  // champ loss tick (|) vs the challenger loss with a small ±σ replicate band;
+  // the per-board separations roll up to the aggregate Σ band at the foot.
+  const n=S.boards.length;
+  const W=600, top=26, rowH=20, x0=132, x1=540, lo=0.10, hi=0.62;
+  const X=v=>x0+(v-lo)/(hi-lo)*(x1-x0);
+  const bodyH = top + n*rowH;
+  const sumY = bodyH + 26;
+  const H = sumY + 30;
+  const rows = S.boards.map((b,i)=>{
+    const y=top+i*rowH+rowH/2, better=b.chal<b.champ, reg=b.cPass&&!b.hPass;
+    const col=better?C.good:C.bad;
+    const sig = 0.012 + (i%3)*0.004;             // small realistic per-board σ
+    return `<text x="${x0-8}" y="${y+3}" fill="${reg?C.bad:C.soft}" font-size="9" text-anchor="end">${b.id}${reg?' ⚠':''}</text>
+      <rect x="${X(b.chal-sig)}" y="${y-4}" width="${X(b.chal+sig)-X(b.chal-sig)}" height="8" fill="${col}" opacity="0.28"/>
+      <line x1="${X(b.chal)}" y1="${y-5}" x2="${X(b.chal)}" y2="${y+5}" stroke="${col}" stroke-width="2" ${VE}/>
+      <line x1="${X(b.champ)}" y1="${y-4}" x2="${X(b.champ)}" y2="${y+4}" stroke="${C.faint}" ${VE}/>`;
+  }).join('');
+  const cm=S.replStats.champ, hm=S.replStats.chal;
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="one gauntlet round, per-board replicate separation">
+    <text x="${x0}" y="14" fill="${C.soft}" font-size="10">champ tick <tspan fill="${C.faint}">(|)</tspan> vs challenger ±σ band <tspan fill="${C.good}">(▭)</tspan> per board · ◀ lower = better</text>
+    ${rows}
+    <line x1="${x0-12}" y1="${bodyH+8}" x2="${W-14}" y2="${bodyH+8}" stroke="${C.rule}" ${VE}/>
+    <text x="${x0-8}" y="${sumY+3}" fill="${C.good}" font-size="9" text-anchor="end" font-weight="700">Σ</text>
+    <line x1="${X(cm.m)}" y1="${sumY-6}" x2="${X(cm.m)}" y2="${sumY+6}" stroke="${C.faint}" stroke-width="2" ${VE}/>
+    <rect x="${X(hm.m-hm.s)}" y="${sumY-5}" width="${X(hm.m+hm.s)-X(hm.m-hm.s)}" height="10" fill="${C.good}" opacity="0.3"/>
+    <line x1="${X(hm.m)}" y1="${sumY-6}" x2="${X(hm.m)}" y2="${sumY+6}" stroke="${C.good}" stroke-width="2" ${VE}/>
+    <text x="${X(hm.m)-8}" y="${sumY+3}" fill="${C.good}" font-size="8" text-anchor="end">μ ${hm.m.toFixed(3)} ±${hm.s.toFixed(3)}</text>
+    <text x="${x0}" y="${H-6}" fill="${C.faint}" font-size="9">bands sit left of the champ ticks on ${S.boardsWon}/${n} boards ⇒ low-variance Σ Δ <tspan fill="${C.good}" font-weight="700">${S.gate.delta_scalar.toFixed(3)}</tspan> ⇒ <tspan fill="${C.good}">PROMOTE</tspan></text>
+  </svg>`;
+}
+function opt5_round(){
+  const W=600,H=160, x0=110, x1=520, lo=0.29, hi=0.37;
+  const X=v=>x0+(v-lo)/(hi-lo)*(x1-x0);
+  const cm=S.replStats.champ, hm=S.replStats.chal;
+  // axis ticks
+  let ticks='';
+  for(let t=0.30;t<=0.36;t+=0.02){ ticks+=`<line x1="${X(t)}" y1="110" x2="${X(t)}" y2="116" stroke="${C.faint}" ${VE}/><text x="${X(t)}" y="128" fill="${C.faint}" font-size="8" text-anchor="middle">${t.toFixed(2)}</text>`; }
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="replicate dist round detail">
+    <line x1="${x0}" y1="110" x2="${x1}" y2="110" stroke="${C.rule}" ${VE}/>
+    ${ticks}
+    <text x="${x0-10}" y="40" fill="${C.faint}" font-size="10" text-anchor="end">champ ×${S.replicates.champ.length}</text>
+    <rect x="${X(cm.m-cm.s)}" y="28" width="${X(cm.m+cm.s)-X(cm.m-cm.s)}" height="18" fill="${C.faint}" opacity="0.22"/>
+    <line x1="${X(cm.m)}" y1="24" x2="${X(cm.m)}" y2="50" stroke="${C.faint}" stroke-width="2" ${VE}/>
+    ${dotStrip(S.replicates.champ,37,C.faint,X)}
+    <text x="${X(cm.m)}" y="20" fill="${C.faint}" font-size="9" text-anchor="middle">μ ${cm.m.toFixed(3)} ±${cm.s.toFixed(3)}</text>
+    <text x="${x0-10}" y="86" fill="${C.good}" font-size="10" text-anchor="end">chal ×${S.replicates.chal.length}</text>
+    <rect x="${X(hm.m-hm.s)}" y="74" width="${X(hm.m+hm.s)-X(hm.m-hm.s)}" height="18" fill="${C.good}" opacity="0.28"/>
+    <line x1="${X(hm.m)}" y1="70" x2="${X(hm.m)}" y2="96" stroke="${C.good}" stroke-width="2" ${VE}/>
+    ${dotStrip(S.replicates.chal,83,C.good,X)}
+    <text x="${X(hm.m)}" y="66" fill="${C.good}" font-size="9" text-anchor="middle">μ ${hm.m.toFixed(3)} ±${hm.s.toFixed(3)}</text>
+    <text x="14" y="${H-8}" fill="${C.soft}" font-size="9">bands barely overlap; challenger clears the gate on every replicate ⇒ low-variance, trustworthy decision</text>
+  </svg>`;
+}
+
+/* ============================================================
+   OPTION 6 — PROMOTE/HOLD VERDICT CARD
+   A decision-first composite: big verdict, then the four signals as a
+   compact gate-check checklist. Reads top-down like a ruling.
+   ============================================================ */
+function check(ok, label, detail){
+  const col=ok?C.good:C.bad, mk=ok?'✓':'✗';
+  // detail may be a single string or an array of pre-wrapped lines.
+  const lines = Array.isArray(detail) ? detail : [detail];
+  const dl = lines.map((ln,i)=>`<text x="32" y="${12+i*11}" fill="${C.faint}" font-size="9">${ln}</text>`).join('');
+  return `<g>
+    <circle cx="14" cy="0" r="8" fill="none" stroke="${col}" ${VE}/>
+    <text x="14" y="4" fill="${col}" font-size="11" font-weight="700" text-anchor="middle">${mk}</text>
+    <text x="32" y="-2" fill="${C.ink}" font-size="11">${label}</text>
+    ${dl}
+  </g>`;
+}
+function opt6_hero(){
+  const W=600,H=92;
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="verdict hero">
+    <rect x="2" y="2" width="${W-4}" height="${H-4}" rx="10" fill="${C.goodSoft}" stroke="${C.good}" ${VE}/>
+    <text x="24" y="40" fill="${C.good}" font-size="26" font-weight="700">PROMOTE</text>
+    <text x="24" y="62" fill="${C.soft}" font-size="11">${S.challenger.id} replaces ${S.champion.id}</text>
+    <text x="${W-24}" y="34" fill="${C.good}" font-size="18" font-weight="700" text-anchor="end">Δ ${S.gate.delta_scalar.toFixed(3)}</text>
+    <text x="${W-24}" y="52" fill="${C.faint}" font-size="10" text-anchor="end">${S.boardsWon}/${S.boards.length} boards · σ ${S.replStats.chal.s.toFixed(3)}</text>
+    <text x="${W-24}" y="70" fill="${C.faint}" font-size="9" text-anchor="end">clears margin ${S.promote_margin.toFixed(2)} by ${(Math.abs(S.gate.delta_scalar)-S.promote_margin).toFixed(3)}</text>
+  </svg>`;
+}
+function opt6_cross(){
+  // ONE gauntlet round as a per-board verdict ledger: one row per board with the
+  // champ loss, the challenger loss, the Δ and the pass/fail mark — the boards
+  // tally to the single Σ ruling at the foot. One challenger, one round.
+  const n=S.boards.length;
+  const W=600, top=44, rowH=19, x0=20;
+  const cId=x0+8, cChamp=x0+150, cChal=x0+230, cDelta=x0+318, cMark=x0+430;
+  const bodyH = top + n*rowH;
+  const H = bodyH + 44;
+  const head = `<text x="${cId}" y="30" fill="${C.faint}" font-size="9">board</text>
+    <text x="${cChamp}" y="30" fill="${C.faint}" font-size="9" text-anchor="end">champ</text>
+    <text x="${cChal}" y="30" fill="${C.faint}" font-size="9" text-anchor="end">chal</text>
+    <text x="${cDelta}" y="30" fill="${C.faint}" font-size="9" text-anchor="end">Δ</text>
+    <text x="${cMark}" y="30" fill="${C.faint}" font-size="9">verdict</text>`;
+  const rows = S.boards.map((b,i)=>{
+    const y=top+i*rowH+rowH/2, better=b.chal<b.champ, reg=b.cPass&&!b.hPass;
+    const col=better?C.good:C.bad;
+    const mk = reg?'⚠ gated regression':(better?'✓ improves':'✗ regresses');
+    return `<text x="${cId}" y="${y+3}" fill="${reg?C.bad:C.ink}" font-size="9.5">${b.id}</text>
+      <text x="${cChamp}" y="${y+3}" fill="${C.faint}" font-size="9" text-anchor="end">${b.champ.toFixed(3)}</text>
+      <text x="${cChal}" y="${y+3}" fill="${col}" font-size="9" text-anchor="end">${b.chal.toFixed(3)}</text>
+      <text x="${cDelta}" y="${y+3}" fill="${col}" font-size="9" text-anchor="end">${fmt(b.chal-b.champ,3)}</text>
+      <text x="${cMark}" y="${y+3}" fill="${col}" font-size="9">${mk}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="one gauntlet round, per-board verdict ledger">
+    <text x="${x0}" y="16" fill="${C.good}" font-size="12" font-weight="700">ROUND LEDGER · ${S.challenger.id} vs champ ${S.champion.id}</text>
+    ${head}
+    <line x1="${x0}" y1="36" x2="${W-14}" y2="36" stroke="${C.rule}" ${VE}/>
+    ${rows}
+    <line x1="${x0}" y1="${bodyH+8}" x2="${W-14}" y2="${bodyH+8}" stroke="${C.rule}" ${VE}/>
+    <text x="${cId}" y="${bodyH+26}" fill="${C.ink}" font-size="10">Σ <tspan fill="${C.good}" font-weight="700">${S.boardsWon}</tspan>/${n} improve · <tspan fill="${C.bad}" font-weight="700">${S.boardsLost}</tspan> regress · Σ Δ <tspan fill="${C.good}" font-weight="700">${S.gate.delta_scalar.toFixed(3)}</tspan> beats margin ${S.promote_margin.toFixed(2)}</text>
+    <text x="${cMark}" y="${bodyH+26}" fill="${C.good}" font-size="11" font-weight="700">⇒ PROMOTE</text>
+  </svg>`;
+}
+function opt6_round(){
+  // Single full-width checklist column: each gate signal gets the whole row
+  // width (~570px) for its detail, so nothing collides or escapes the viewBox.
+  const W=600;
+  const overshoot=(Math.abs(S.gate.delta_scalar)-S.promote_margin).toFixed(3);
+  const checks=[
+    ["Scalar margin cleared",
+      "delta_scalar "+S.gate.delta_scalar.toFixed(3)+" beats −margin −"+S.promote_margin.toFixed(2)+" (by "+overshoot+")"],
+    ["Pass-rate monotonicity held",
+      "no board champion passed that challenger failed; pass-rate "+fmt(S.gate.delta_pass_rate,3)],
+    ["Board spread favorable",
+      S.boardsWon+"/"+S.boards.length+" boards improved; 1 contained regression ("+S.passRegress.join(',')+")"],
+    ["Replicate variance low",
+      "challenger σ "+S.replStats.chal.s.toFixed(3)+"; every replicate clears the gate"],
+  ];
+  const rowTop=40, rowH=28;
+  const rows=checks.map(([lab,det],i)=>
+    `<g transform="translate(14,${rowTop+i*rowH})">${check(true,lab,det)}</g>`).join('');
+  const ruleY=rowTop+checks.length*rowH-2;     // 150
+  const H=ruleY+44;                             // room for 2 footer lines
+  return `<svg viewBox="0 0 ${W} ${H}" ${VE} role="img" aria-label="verdict round checklist">
+    <text x="14" y="18" fill="${C.good}" font-size="13" font-weight="700">RULING · PROMOTE — gate checklist</text>
+    ${rows}
+    <line x1="14" y1="${ruleY}" x2="${W-14}" y2="${ruleY}" stroke="${C.rule}" ${VE}/>
+    <text x="14" y="${ruleY+18}" fill="${C.soft}" font-size="10">standings → 1. <tspan fill="${C.good}">${S.standings[0].id}</tspan> ${S.standings[0].scalar.toFixed(3)} <tspan fill="${C.good}">champion</tspan>   ·   2. ${S.standings[1].id} ${S.standings[1].scalar.toFixed(3)} <tspan fill="${C.faint}">eliminated</tspan></text>
+    <text x="14" y="${ruleY+36}" fill="${C.faint}" font-size="9">all four gate signals green ⇒ promote-on-gate fires</text>
+  </svg>`;
+}
+
+/* ============================================================
+   ASSEMBLE
+   ============================================================ */
+const OPTIONS = [
+  { n:"OPT 1", name:"Margin gauge",
+    why:"Put delta_scalar on a gate-margin axis — the gate is a hard line and the bar reaches across it. Instantly reads clear / by-how-much.",
+    hero:opt1_hero, cross:opt1_cross, round:opt1_round },
+  { n:"OPT 2", name:"Per-board win/loss strip",
+    why:"One cell per board, green=better / red=regression. The spread is the at-a-glance answer to 'on how many boards', the gated regression is outlined.",
+    hero:opt2_hero, cross:opt2_cross, round:opt2_round },
+  { n:"OPT 3", name:"Champion-vs-challenger scalar bars",
+    why:"The most literal read: two opposed scalar bars (lower=better) with the delta bracket. The gate line shows exactly how far past threshold.",
+    hero:opt3_hero, cross:opt3_cross, round:opt3_round },
+  { n:"OPT 4", name:"Crown handoff",
+    why:"Crown-handoff: the crown line carries the champion; the round's challenger forks in and, clearing the gate, takes the crown. For the gauntlet's one round, the board verdicts are the rungs feeding the single handoff.",
+    hero:opt4_hero, cross:opt4_cross, round:opt4_round },
+  { n:"OPT 5", name:"Replicate distribution",
+    why:"Reliability-first: each side's replicate scalars as a dot strip with a mean±σ band. Band separation = confidence in the decision.",
+    hero:opt5_hero, cross:opt5_cross, round:opt5_round },
+  { n:"OPT 6", name:"Promote/hold verdict card",
+    why:"Decision-first composite: a big verdict plus the four gate signals as a checklist. Reads top-down like a ruling, with standings.",
+    hero:opt6_hero, cross:opt6_cross, round:opt6_round },
+];
+
+const VIEW_META = [
+  { key:"hero",  cap:"(a) HERO GLANCE — the compacted figure that fills the hero's structure slot", tag:"at-a-glance", cls:"fig-mid" },
+  { key:"cross", cap:"(b) SINGLE-ROUND — the one champion-vs-challenger duel, board by board", tag:"one duel", cls:"" },
+  { key:"round", cap:"(c) WITHIN-ROUND — the duel in detail", tag:"this match in detail", cls:"" },
+];
+
+document.getElementById('options').innerHTML = OPTIONS.map(o => `
+  <section class="opt">
+    <div class="opt-head">
+      <span class="num">${o.n}</span>
+      <span class="name">${o.name}</span>
+      <span class="why">${o.why}</span>
+    </div>
+    <div class="views">
+      ${VIEW_META.map(v => `
+        <div class="view">
+          <div class="view-cap">${v.cap} <span class="tag">${v.tag}</span></div>
+          <figure class="${v.cls}">${o[v.key]()}</figure>
+        </div>`).join('')}
+    </div>
+  </section>`).join('');
+
+/* ===== Console colour-scheme picker — 16 themes ported from variants/T ===== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME = "monokai";
+const THEME_IDS = THEMES.map(t => t[0]);
+function strip(swatches, sm) {
+  return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">` +
+    swatches.map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('') + `</span>`;
+}
+function mountThemePicker(hostId) {
+  const host = document.getElementById(hostId);
+  let value = DEFAULT_THEME, open = false, activeIdx = THEME_IDS.indexOf(value);
+  const byId = new Map(THEMES.map(t => [t[0], t]));
+  host.innerHTML =
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw]) =>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             ${strip(sw)}<span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd = host.querySelector('.dt-cd');
+  const trigger = host.querySelector('.dt-cd-trigger');
+  const trigStrip = host.querySelector('.dt-cd-trig-strip');
+  const trigName = host.querySelector('.dt-cd-trig-name');
+  const list = host.querySelector('.dt-cd-list');
+  const options = Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id) {
+    value = THEME_IDS.includes(id) ? id : DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme', value);
+    const def = byId.get(value);
+    trigStrip.className = 'dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden', 'true');
+    trigStrip.innerHTML = def[2].map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent = def[1];
+    options.forEach(o => o.setAttribute('aria-selected', String(o.getAttribute('data-theme') === value)));
+  }
+  function setActive(i) {
+    activeIdx = (i + options.length) % options.length;
+    options.forEach((o,k) => o.classList.toggle('dt-cd-active', k === activeIdx));
+  }
+  function setOpen(next) {
+    open = next; cd.classList.toggle('dt-cd-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) setActive(Math.max(0, THEME_IDS.indexOf(value)));
+  }
+  function choose(id) { applyTheme(id); setOpen(false); }
+  options.forEach(o => o.addEventListener('click', () => choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click', () => setOpen(!open));
+  trigger.addEventListener('keydown', ev => {
+    if (['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)) { ev.preventDefault(); setOpen(true); list.focus?.(); }
+  });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); setOpen(false); trigger.focus(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx+1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx-1); }
+    else if (['Enter',' ','Spacebar'].includes(ev.key)) {
+      ev.preventDefault();
+      const id = options[activeIdx]?.getAttribute('data-theme'); if (id) choose(id);
+    }
+  });
+  document.addEventListener('click', ev => {
+    if (!open) return; let n = ev.target; while (n) { if (n === cd) return; n = n.parentNode; } setOpen(false);
+  });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+</script>
+<style>html.embed-bare,html.embed-bare body{padding:0!important;margin:0!important}html.embed-bare section{margin:0!important}</style>
+<script>window.__EMBED_CFG__={optSel:'#options > section.opt',bareHide:['.opt-head','.view-cap'],viewSel:'.views .view',bareKeepViews:[0,1]};</script>
+<script src="_embed.js"></script>
+</body>
+</html>

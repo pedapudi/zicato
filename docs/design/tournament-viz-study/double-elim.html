@@ -1,0 +1,1814 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — double-elimination visualization study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from variants/T console4.css --v2-* roles. The picker sets
+       html[data-theme]; each block fully restyles the page. SVG figures read
+       --accent / --good / --bad / --ink-faint so theme-switching recolours
+       the brackets. Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background .18s, color .18s;
+    padding: 0 0 80px;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+
+  main { max-width: 1240px; margin: 0 auto; padding: 0 24px; }
+  section { margin: 40px 0; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 22px; max-width: 92ch; }
+  .lede code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  /* the global legend */
+  .legend { display: flex; gap: 16px; font-size: 11px; color: var(--ink-faint); margin: 12px 0; flex-wrap: wrap; align-items: center; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .legend .sw.good { background: var(--good); }
+  .legend .sw.bad  { background: var(--bad); }
+  .legend .sw.acc  { background: var(--accent); }
+  /* the shared WB/LB band convention: a tinted, hue-bordered swatch matching
+     the lane bands the figures draw — WB = accent border + good-soft tint,
+     LB = caution border + caution tint. */
+  .legend .sw.wb   { background: var(--good-soft); border: 1.5px solid var(--accent); }
+  .legend .sw.lb   { background: color-mix(in srgb, var(--caution) 16%, transparent); border: 1.5px solid var(--caution); }
+  .legend .sw.pend { background: transparent; border: 1.5px dashed var(--ink-faint); }
+  .legend .life { font-size: 13px; }
+  .legend .life.full { color: var(--good); }
+  .legend .life.half { color: var(--caution); }
+  .legend .life.out  { color: var(--bad); }
+
+  /* option card */
+  .opt {
+    border: 1px solid var(--rule); border-radius: 12px; background: var(--panel);
+    padding: 22px; margin-bottom: 26px;
+  }
+  .opt-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 4px; flex-wrap: wrap; }
+  .opt-num {
+    font-size: 12px; font-weight: 700; letter-spacing: .08em;
+    color: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
+    padding: 3px 9px; text-transform: uppercase;
+  }
+  .opt-title { font-size: 15px; font-weight: 700; color: var(--ink); }
+  .opt-rationale { font-size: 12px; color: var(--ink-soft); margin: 4px 0 18px; max-width: 96ch; }
+
+  .view { margin: 18px 0; }
+  .view-label {
+    font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .view-label .tag {
+    font-size: 9px; padding: 1px 6px; border-radius: 999px;
+    border: 1px solid var(--rule-soft); color: var(--ink-faint);
+  }
+  .view-box {
+    border: 1px solid var(--rule-soft); border-radius: 8px;
+    background: var(--panel-2); padding: 16px; overflow-x: auto;
+  }
+  .view-box.hero { padding: 12px 16px; }
+  figure { margin: 0; }
+  figure svg { display: block; width: 100%; height: auto; }
+
+  footer { max-width: 1240px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) ---- */
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>zicato — double-elimination visualization study</h1>
+  <span class="spacer"></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+    Eight options for visualizing a <b>double-elimination</b> tournament epoch, each rendered three ways:
+    a compact <b>hero-banner</b> (top-bar-width, at-a-glance standings), a <b>cross-round / epoch-level</b> view
+    (the whole epoch across its rounds), and a detailed <b>round-level</b> bracket. All eight render the SAME
+    mid-tournament sample — one champion <code>v3</code> protected, eight challengers <code>v4…v11</code>, some
+    undefeated in the winners' bracket, some dropped to the losers' bracket (one loss), two eliminated (two losses),
+    and a grand final pending. Every option is built to make first-class the two facts the current dashboard
+    buries: <b>which bracket side</b> a gen is on (winners' vs losers') and <b>lives remaining</b> (first life vs
+    second life). Switch the theme — every figure recolours from the active tokens.
+  </p>
+
+  <p style="color:var(--ink-faint);font-size:12px;margin:8px 0 0;line-height:1.55">
+    This is the structure-specific tournament FIGURE at three zooms — the SINGLE-ROUND layer. The hero shell, cross-epoch, cross-round (across evolve-rounds), single-matchup, and single-generation levels are structure-agnostic — see their own pages (<a href="index.html" style="color:inherit;text-decoration:underline">← index</a>).
+  </p>
+
+  <div class="legend">
+    <span><i class="sw wb"></i> <b style="color:var(--accent)">WINNERS' bracket</b> · ●● 2 lives</span>
+    <span><i class="sw lb"></i> <b style="color:var(--caution)">LOSERS' bracket</b> · ●○ 1 life</span>
+    <span><i class="sw good"></i> advances / wins</span>
+    <span><i class="sw bad"></i> eliminated (2nd loss)</span>
+    <span><i class="sw pend"></i> pending / GF gate</span>
+    <span style="margin-left:8px;">lives:</span>
+    <span><i class="life full">●●</i> WB (0 losses)</span>
+    <span><i class="life half">●○</i> LB (1 loss)</span>
+    <span><i class="life out">○○</i> out (2 losses)</span>
+  </div>
+
+  <div id="options"></div>
+</main>
+
+<footer>
+  Standalone double-elim visualization study · served from <code>/tmp/zicato-tourney-viz-study/</code> ·
+  read-only against <code>/home/sunil/git/zicato</code> · no repo edits. Fields mirror
+  <code>docs/design/TOURNAMENT-DATA-MODEL.md</code> §2.4–2.5 + <code>selection/strategies/double_elim.py</code>.
+</footer>
+
+<script>
+/* ===================================================================
+   SAMPLE DATASET — one realistic mid-tournament double-elim, shared by
+   all 6 options. Fields mirror the real model:
+     competitors[]  {generation_id, seed, role}
+     standings[]    {rank, scalar, wins, losses, status, side, life}
+     rounds[]       {round_index, label, bracket, matches[]}
+       match        {match_id, competitors[2], winner|null, delta_scalar,
+                      bracket_slot ("WB-"/"LB-"/"GF"), pending}
+   8 challengers (v4..v11) + champion v3. Mid-tournament:
+     - v6, v9 undefeated in WB (0 losses, 2 lives)
+     - several dropped to LB (1 loss, 1 life)
+     - v7, v10 eliminated (2 losses)
+     - GF pending: best surviving challenger vs champion v3
+   =================================================================== */
+const DATA = {
+  champion: 'v3',
+  competitors: [
+    { id: 'v3',  seed: 0, role: 'champion'   },
+    { id: 'v6',  seed: 1, role: 'challenger' },
+    { id: 'v9',  seed: 2, role: 'challenger' },
+    { id: 'v4',  seed: 3, role: 'challenger' },
+    { id: 'v11', seed: 4, role: 'challenger' },
+    { id: 'v5',  seed: 5, role: 'challenger' },
+    { id: 'v8',  seed: 6, role: 'challenger' },
+    { id: 'v7',  seed: 7, role: 'challenger' },
+    { id: 'v10', seed: 8, role: 'challenger' },
+  ],
+  // status: alive | eliminated | champion ; side: WB | LB | out | champ ;
+  // life: 2 (no loss) | 1 (one loss) | 0 (out).  scalar lower = better.
+  standings: [
+    { id: 'v6',  rank: 1, scalar: 0.318, wins: 3, losses: 0, status: 'alive',      side: 'WB',   life: 2, gfGate: true  },
+    { id: 'v9',  rank: 2, scalar: 0.347, wins: 3, losses: 0, status: 'alive',      side: 'WB',   life: 2 },
+    { id: 'v3',  rank: 3, scalar: 0.402, wins: 0, losses: 0, status: 'alive',      side: 'champ',life: 2, gfGate: true  },
+    { id: 'v4',  rank: 4, scalar: 0.418, wins: 2, losses: 1, status: 'alive',      side: 'LB',   life: 1 },
+    { id: 'v11', rank: 5, scalar: 0.451, wins: 2, losses: 1, status: 'alive',      side: 'LB',   life: 1 },
+    { id: 'v5',  rank: 6, scalar: 0.498, wins: 1, losses: 1, status: 'alive',      side: 'LB',   life: 1 },
+    { id: 'v8',  rank: 7, scalar: 0.531, wins: 1, losses: 1, status: 'alive',      side: 'LB',   life: 1 },
+    { id: 'v7',  rank: 8, scalar: 0.604, wins: 1, losses: 2, status: 'eliminated', side: 'out',  life: 0 },
+    { id: 'v10', rank: 9, scalar: 0.662, wins: 0, losses: 2, status: 'eliminated', side: 'out',  life: 0 },
+  ],
+  // the GF gate margin (challenger v6 vs champion v3); negative = challenger better
+  gf: { challenger: 'v6', champion: 'v3', delta_scalar: -0.084, pending: true },
+  rounds: [
+    { round_index: 0, label: "Winners' R1", bracket: 'WB', matches: [
+      { match_id: 'WB-R0-0', competitors: ['v6','v8'],  winner: 'v6',  delta_scalar: -0.071, bracket_slot: 'WB-R0-0', pending: false },
+      { match_id: 'WB-R0-1', competitors: ['v9','v5'],  winner: 'v9',  delta_scalar: -0.052, bracket_slot: 'WB-R0-1', pending: false },
+      { match_id: 'WB-R0-2', competitors: ['v4','v7'],  winner: 'v4',  delta_scalar: -0.039, bracket_slot: 'WB-R0-2', pending: false },
+      { match_id: 'WB-R0-3', competitors: ['v11','v10'],winner: 'v11', delta_scalar: -0.061, bracket_slot: 'WB-R0-3', pending: false },
+    ]},
+    { round_index: 1, label: "Winners' R2", bracket: 'WB', matches: [
+      { match_id: 'WB-R1-0', competitors: ['v6','v4'],  winner: 'v6',  delta_scalar: -0.044, bracket_slot: 'WB-R1-0', pending: false },
+      { match_id: 'WB-R1-1', competitors: ['v9','v11'], winner: 'v9',  delta_scalar: -0.028, bracket_slot: 'WB-R1-1', pending: false },
+    ]},
+    { round_index: 2, label: "Losers' R1", bracket: 'LB', matches: [
+      { match_id: 'LB-R2-0', competitors: ['v8','v5'],  winner: 'v5',  delta_scalar: -0.033, bracket_slot: 'LB-R2-0', pending: false },
+      { match_id: 'LB-R2-1', competitors: ['v7','v10'], winner: 'v7',  delta_scalar: -0.058, bracket_slot: 'LB-R2-1', pending: false },
+    ]},
+    { round_index: 3, label: "Losers' R2", bracket: 'LB', matches: [
+      { match_id: 'LB-R3-0', competitors: ['v4','v5'],  winner: 'v4',  delta_scalar: -0.080, bracket_slot: 'LB-R3-0', pending: false },
+      { match_id: 'LB-R3-1', competitors: ['v11','v7'], winner: 'v11', delta_scalar: -0.047, bracket_slot: 'LB-R3-1', pending: false },
+    ]},
+    { round_index: 4, label: "Winners' final", bracket: 'WB', matches: [
+      { match_id: 'WB-R4-0', competitors: ['v6','v9'],  winner: 'v6',  delta_scalar: -0.029, bracket_slot: 'WB-R4-0', pending: false },
+    ]},
+    { round_index: 5, label: "Losers' R3", bracket: 'LB', matches: [
+      { match_id: 'LB-R5-0', competitors: ['v4','v11'], winner: null,  delta_scalar: null,   bracket_slot: 'LB-R5-0', pending: true },
+    ]},
+    { round_index: 6, label: 'Grand final', bracket: 'GF', matches: [
+      { match_id: 'GF', competitors: ['v3','v6'], winner: null, delta_scalar: -0.084, bracket_slot: 'GF', pending: true },
+    ]},
+  ],
+};
+
+// quick lookups
+const ST = Object.fromEntries(DATA.standings.map(s => [s.id, s]));
+function sideOf(id){ return (ST[id]||{}).side || 'WB'; }
+function lifeOf(id){ const s = ST[id]; return s ? s.life : 2; }
+function statusOf(id){ return (ST[id]||{}).status || 'alive'; }
+function scalarOf(id){ const s = ST[id]; return s ? s.scalar : 0; }
+
+/* ---- shared SVG helpers (theme-driven via CSS vars) ---- */
+const NS = 'http://www.w3.org/2000/svg';
+
+/* ===================================================================
+   SHARED WB / LB VISUAL CONVENTION — used by EVERY option so the two
+   brackets read identically across the study. Redundant encoding:
+     · hue    — WB = accent, LB = caution, out = bad, champ = good
+     · tint   — a faint band fill behind a bracket's region
+     · lives  — ●● (WB, 0 losses) / ●○ (LB, 1 loss) / ○○ (out)
+     · label  — an explicit "WINNERS' BRACKET" / "LOSERS' BRACKET" tag
+   The same scheme appears in hero.html's double-elim structure figure.
+   =================================================================== */
+const BR = {
+  WB:    { hue: 'var(--accent)',  tint: 'var(--good-soft)',                              tintOp: 0.34, label: "WINNERS' BRACKET", short: 'WB', lives: '●●', note: 'undefeated · 2 lives' },
+  LB:    { hue: 'var(--caution)', tint: 'color-mix(in srgb, var(--caution) 90%, black)', tintOp: 0.14, label: "LOSERS' BRACKET",  short: 'LB', lives: '●○', note: 'one loss · last life' },
+  champ: { hue: 'var(--good)',    tint: 'var(--good-soft)',                              tintOp: 0.30, label: 'CHAMPION',        short: 'CH', lives: '●●', note: 'incumbent' },
+  out:   { hue: 'var(--bad)',     tint: 'var(--bad)',                                    tintOp: 0.10, label: 'ELIMINATED',      short: 'OUT', lives: '○○', note: 'two losses' },
+};
+function brOf(id){ const s = (ST[id]||{}).side; return BR[s] || BR.WB; }
+// the bracket-side text badge used on chips/rows so side is never colour-only.
+function sideBadge(id){ return brOf(id).short; }
+// life pip glyph string: ●●(two) ●○(one) ○○(out)
+function lifePips(life){
+  if (life === 2) return '●●';
+  if (life === 1) return '●○';
+  return '○○';
+}
+function lifeColor(life){ return life === 2 ? 'var(--good)' : life === 1 ? 'var(--caution)' : 'var(--bad)'; }
+function statusColor(id){
+  const s = statusOf(id);
+  if (s === 'eliminated') return 'var(--bad)';
+  if (id === DATA.champion) return 'var(--accent)';
+  return 'var(--ink)';
+}
+// escape
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* a small reusable "gate margin" magnitude bar (delta_scalar). returns svg fragment. */
+function gateBar(x, y, w, delta, h){
+  h = h || 5;
+  // magnitude scaled against a 0.10 reference; advance = good color, fill proportional
+  const mag = Math.min(1, Math.abs(delta||0) / 0.10);
+  const fw = Math.max(2, w * mag);
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h/2}" fill="var(--rule)"/>
+    <rect x="${x}" y="${y}" width="${fw.toFixed(1)}" height="${h}" rx="${h/2}" fill="var(--good)"/>`;
+}
+
+/* =====================================================================
+   OPTION RENDERERS
+   Each option exposes { num, title, rationale, hero(), epoch(), round() }
+   returning SVG-string figures. viewBox + width:100% throughout.
+   ===================================================================== */
+const OPTIONS = [];
+
+/* ---------- shared geometry constants ---------- */
+const VEC = 'vector-effect="non-scaling-stroke"';
+const MONO = 'font-family="ui-monospace,monospace"';
+
+/* ============================ OPTION 1 ============================
+   "Two-lane ledger" — a stacked split-rail. Winners' lane on top,
+   losers' lane below, divided by a labelled rule. Each gen is a chip
+   on its lane; a curved drop-arrow traces a gen falling from WB→LB.
+   Lives shown as ●● / ●○ pips. GF gate as a magnitude bar on the right.
+   ================================================================ */
+(function(){
+  function chip(x, y, id, opts){
+    opts = opts || {};
+    const w = opts.w || 46, h = 22;
+    const elim = statusOf(id) === 'eliminated';
+    // chip border = the gen's BRACKET hue (WB accent / LB caution / champ good /
+    // out bad), so side is encoded on the chip itself, not only by which lane it
+    // sits in — redundant with the lane band + lives pips.
+    const stroke = elim ? 'var(--bad)' : brOf(id).hue;
+    const dash = opts.pending ? `stroke-dasharray="3 3"` : '';
+    const fill = opts.fill || 'var(--panel)';
+    const fillOp = opts.fillOp != null ? `fill-opacity="${opts.fillOp}"` : '';
+    const life = lifeOf(id);
+    return `<g>
+      <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="5" fill="${fill}" ${fillOp} stroke="${stroke}" stroke-width="1.4" ${dash} ${VEC}/>
+      <text x="${x+7}" y="${y+15}" ${MONO} font-size="11" font-weight="700" fill="${elim?'var(--bad)':'var(--ink)'}" ${elim?'text-decoration="line-through"':''}>${esc(id)}</text>
+      <text x="${x+w-5}" y="${y+15}" text-anchor="end" font-size="10" fill="${lifeColor(life)}">${lifePips(life)}</text>
+    </g>`;
+  }
+  // hero: one compact split rail, top WB chips / bottom LB chips, GF chip at right
+  function hero(){
+    const W = 1180, H = 112;
+    const wb = DATA.standings.filter(s => s.side==='WB');
+    const lb = DATA.standings.filter(s => s.side==='LB');
+    const out = DATA.standings.filter(s => s.side==='out');
+    const gutter = 200;                 // left label gutter so labels never touch chips
+    const wbY = 16, lbY = 60, laneH = 36;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt1 hero">`;
+    // ── the two bracket LANES as distinct tinted bands (redundant with the
+    //    label + the lives pips), so WB vs LB is a spatial zone, not just rows.
+    s += `<rect x="0" y="${wbY-2}" width="${W-186}" height="${laneH}" rx="7" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.5" ${VEC}/>`;
+    s += `<rect x="0" y="${lbY-2}" width="${W-186}" height="${laneH}" rx="7" fill="${BR.LB.tint}" fill-opacity="${BR.LB.tintOp}" stroke="${BR.LB.hue}" stroke-width="1" stroke-opacity="0.5" ${VEC}/>`;
+    // a vertical rule closing the label gutter so labels read as a separate column.
+    s += `<line x1="${gutter-14}" y1="${wbY-2}" x2="${gutter-14}" y2="${lbY+laneH-2}" stroke="var(--rule)" stroke-dasharray="2 4" ${VEC}/>`;
+    // ── lane labels inside the gutter: lives glyph + name + note.
+    s += `<text x="12" y="${wbY+15}" ${MONO} font-size="13" fill="${BR.WB.hue}">${BR.WB.lives}</text>`;
+    s += `<text x="36" y="${wbY+15}" ${MONO} font-size="11" font-weight="700" fill="${BR.WB.hue}" letter-spacing=".5">WINNERS' BRACKET</text>`;
+    s += `<text x="12" y="${wbY+28}" ${MONO} font-size="8.5" fill="var(--ink-faint)">undefeated · two lives</text>`;
+    s += `<text x="12" y="${lbY+15}" ${MONO} font-size="13" fill="${BR.LB.hue}">${BR.LB.lives}</text>`;
+    s += `<text x="36" y="${lbY+15}" ${MONO} font-size="11" font-weight="700" fill="${BR.LB.hue}" letter-spacing=".5">LOSERS' BRACKET</text>`;
+    s += `<text x="12" y="${lbY+28}" ${MONO} font-size="8.5" fill="var(--ink-faint)">one loss · last life</text>`;
+    wb.forEach((r,i)=>{ s += chip(gutter + i*120, wbY+5, r.id, { fill:'var(--good-soft)' }); });
+    lb.forEach((r,i)=>{ s += chip(gutter + i*120, lbY+5, r.id, { fill: BR.LB.tint, fillOp: 0.18 }); });
+    // eliminated, faint, far right cluster between the lanes
+    s += `<text x="${W-356}" y="${H/2-16}" ${MONO} font-size="8" fill="var(--bad)" letter-spacing="1">OUT</text>`;
+    out.forEach((r,i)=>{ s += chip(W-330 + i*54, H/2-12, r.id, { w:46 }); });
+    // GF gate
+    s += `<g>
+      <rect x="${W-150}" y="${H/2-24}" width="136" height="48" rx="6" fill="var(--panel-2)" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="4 3" ${VEC}/>
+      <text x="${W-82}" y="${H/2-9}" text-anchor="middle" ${MONO} font-size="9" fill="var(--ink-faint)">GRAND FINAL · gate</text>
+      <text x="${W-82}" y="${H/2+6}" text-anchor="middle" ${MONO} font-size="11" font-weight="700"><tspan fill="var(--accent)">v6</tspan><tspan fill="var(--ink-faint)"> vs </tspan><tspan fill="var(--good)">v3</tspan></text>
+      <text x="${W-82}" y="${H/2+18}" text-anchor="middle" ${MONO} font-size="9" fill="var(--good)">Δ ${DATA.gf.delta_scalar}</text>
+    </g>`;
+    s += `</svg>`;
+    return s;
+  }
+  // epoch: full two-lane rail across rounds with TRUE WB→LB drop connectors.
+  // Each round is its own column (placed by round_index so time reads L→R);
+  // every WB loser is routed to the EXACT losers'-bracket match it re-enters.
+  function epoch(){
+    const W=1180;
+    // generous lanes so the LOSERS label gutter never touches chips
+    const laneY = { WB: 78, LB: 220 }, H = 270;
+    const chipW = 46, chipH = 22;
+    const labelGutter = 150;            // left gutter reserved for lane labels
+    const rounds = DATA.rounds.filter(r=>r.bracket!=='GF');
+    const maxRi = Math.max(...rounds.map(r=>r.round_index));
+    const x0 = labelGutter + 20, x1 = W - 40 - chipW;  // leave room for chip width + pips
+    const colAt = ri => x0 + (x1 - x0) * (maxRi ? ri/maxRi : 0);
+
+    // ---- place every match chip, remember its geometry by the chip's gen id ----
+    // chipPos[id] = {cx, cy} centre of the chip that gen currently sits in.
+    // We render the WINNER of each match as that column's chip (mirrors orig),
+    // and for drop-routing we record, per LB match, the entry point per slot.
+    const chipPos = {};                 // id -> {x,y,cx,cy}
+    const lbEntryFor = {};              // wb-loser id -> {x,y} of its LB re-entry match chip
+    // Build LB-entry map from the data model: a WB loser re-enters at the FIRST
+    // losers'-bracket match (lowest round_index) whose competitors include it.
+    const lbRounds = rounds.filter(r=>r.bracket==='LB');
+    function firstLbMatchFor(id){
+      for(const r of lbRounds){
+        for(const m of r.matches){
+          if(m.competitors.includes(id)) return {r, m};
+        }
+      }
+      return null;
+    }
+
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt1 epoch">`;
+    // lane bands — both hue-bordered + tinted per the shared WB/LB convention.
+    s += `<rect x="0" y="${laneY.WB-30}" width="${W}" height="70" rx="6" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.45" ${VEC}/>`;
+    s += `<rect x="0" y="${laneY.LB-30}" width="${W}" height="70" rx="6" fill="${BR.LB.tint}" fill-opacity="${BR.LB.tintOp}" stroke="${BR.LB.hue}" stroke-width="1" stroke-opacity="0.45" ${VEC}/>`;
+    // lane labels live wholly inside the left gutter, vertically centred, clear of chips
+    s += `<text x="14" y="${laneY.WB-14}" ${MONO} font-size="13" fill="${BR.WB.hue}">●● <tspan font-size="10" font-weight="700" letter-spacing="1.2">WINNERS' BRACKET</tspan></text>`;
+    s += `<text x="14" y="${laneY.WB+2}" ${MONO} font-size="8.5" fill="var(--ink-faint)" letter-spacing=".5">undefeated · two lives</text>`;
+    s += `<text x="14" y="${laneY.LB-14}" ${MONO} font-size="13" fill="${BR.LB.hue}">●○ <tspan font-size="10" font-weight="700" letter-spacing="1.2">LOSERS' BRACKET</tspan></text>`;
+    s += `<text x="14" y="${laneY.LB+2}" ${MONO} font-size="8.5" fill="var(--ink-faint)" letter-spacing=".5">one loss · last life</text>`;
+    s += `<line x1="${labelGutter+6}" y1="0" x2="${labelGutter+6}" y2="${H}" stroke="var(--rule-soft)" stroke-dasharray="2 4" ${VEC}/>`;
+    s += `<line x1="${labelGutter+6}" y1="${(laneY.WB+laneY.LB)/2}" x2="${W}" y2="${(laneY.WB+laneY.LB)/2}" stroke="var(--rule)" stroke-dasharray="2 5" ${VEC}/>`;
+
+    // ---- render chips, column by column ----
+    rounds.forEach(r=>{
+      const cx = colAt(r.round_index);
+      const ly = laneY[r.bracket];
+      s += `<text x="${cx+chipW/2}" y="${ly-36}" ${MONO} font-size="9" fill="var(--ink-faint)" text-anchor="middle">${esc(r.label)}</text>`;
+      r.matches.forEach((m,mi)=>{
+        const my = ly + mi*30;
+        const disp = m.winner || m.competitors[0];
+        s += chip(cx, my, disp, { pending:m.pending, fill: r.bracket==='WB'?'var(--good-soft)':'var(--panel)' });
+        chipPos[disp] = { x:cx, y:my, cx:cx+chipW/2, cy:my+chipH/2 };
+        // for LB matches, register an entry anchor (left edge mid) for incoming drops
+        if(r.bracket==='LB'){
+          m.competitors.forEach(id=>{
+            if(!(id in lbEntryFor)) lbEntryFor[id] = { x:cx, y:my+chipH/2 };
+          });
+        }
+      });
+    });
+
+    // ---- drop connectors: each WB match loser → its true LB re-entry match ----
+    rounds.filter(r=>r.bracket==='WB').forEach(r=>{
+      const cx = colAt(r.round_index);
+      r.matches.forEach((m,mi)=>{
+        const lose = m.competitors.find(c=>c!==m.winner);
+        if(!lose || statusOf(lose)==='champion') return;
+        const ent = firstLbMatchFor(lose);
+        if(!ent) return;
+        const tgtCx = colAt(ent.r.round_index);          // LB match column
+        const myWB = laneY.WB + mi*30;                    // WB chip row
+        // source: bottom-centre of the WB loser's match chip
+        const sx = cx + chipW/2, sy = myWB + chipH;
+        // target: left-centre of the LB re-entry match chip
+        const tmi = ent.r.matches.indexOf(ent.m);
+        const ty = laneY.LB + tmi*30 + chipH/2;
+        const tx = tgtCx;                                  // arrive at chip left edge
+        // smooth S-curve from WB bottom down to LB chip left edge
+        const midY = (sy + ty)/2;
+        s += `<path d="M${sx} ${sy} C ${sx} ${midY}, ${tx-26} ${ty}, ${tx-3} ${ty}" `
+           + `fill="none" stroke="var(--caution)" stroke-width="1.3" stroke-dasharray="3 2" ${VEC} marker-end="url(#o1arrow)"/>`;
+        // tiny origin tag riding the connector just below the source chip,
+        // offset horizontally per match row so stacked tags never collide.
+        s += `<text x="${sx+8}" y="${sy+9}" ${MONO} font-size="8" fill="var(--caution)">${esc(lose)}↓</text>`;
+      });
+    });
+
+    s += `<defs><marker id="o1arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--caution)"/></marker></defs>`;
+    s += `</svg>`;
+    return s;
+  }
+  // round: detailed single bracket round (winners' final), big chips + gate bars
+  function round(){
+    const W=1180, H=190;
+    const r = DATA.rounds.find(x=>x.label==="Losers' R2"); // a contested LB round
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt1 round">`;
+    s += `<text x="8" y="20" ${MONO} font-size="11" fill="var(--caution)" letter-spacing="1">LOSERS' R2 — winner survives, loser eliminated (2nd loss)</text>`;
+    r.matches.forEach((m,mi)=>{
+      const x = 40 + mi*560, y=46;
+      const win = m.winner, lose = m.competitors.find(c=>c!==win);
+      // two big competitor rows joined
+      [[m.competitors[0],0],[m.competitors[1],1]].forEach(([id,k])=>{
+        const ry = y + k*54;
+        const isWin = id===win;
+        const elim = !isWin; // LB loser eliminated
+        const col = elim?'var(--bad)':'var(--good)';
+        s += `<rect x="${x}" y="${ry}" width="300" height="44" rx="7" fill="var(--panel-2)" stroke="${col}" stroke-width="${isWin?2:1.2}" ${VEC}/>`;
+        s += `<text x="${x+14}" y="${ry+20}" ${MONO} font-size="14" font-weight="700" fill="${elim?'var(--bad)':'var(--ink)'}" ${elim?'text-decoration="line-through"':''}>${esc(id)}</text>`;
+        s += `<text x="${x+14}" y="${ry+36}" ${MONO} font-size="10" fill="var(--ink-faint)">scalar ${scalarOf(id).toFixed(3)} · ${esc(lifePips(lifeOf(id)))}</text>`;
+        s += `<text x="${x+292}" y="${ry+27}" text-anchor="end" ${MONO} font-size="11" fill="${col}">${isWin?'SURVIVES →':'OUT (2nd loss)'}</text>`;
+      });
+      // gate margin
+      s += `<text x="${x+330}" y="${y+22}" ${MONO} font-size="10" fill="var(--ink-faint)">gate margin</text>`;
+      s += gateBar(x+330, y+30, 160, m.delta_scalar, 8);
+      s += `<text x="${x+330}" y="${y+58}" ${MONO} font-size="12" font-weight="700" fill="var(--good)">Δ ${m.delta_scalar}</text>`;
+    });
+    s += `</svg>`;
+    return s;
+  }
+  OPTIONS.push({
+    num:1, title:'Two-lane ledger (split rail)',
+    rationale:'A horizontal split rail: winners’ lane on top, losers’ lane below, a labelled divider between. Curved drop-arrows trace a gen falling WB→LB, so a fallen-and-climbing gen never looks like a clean run. Life pips (●● / ●○) sit on every chip. The GF gate is a margin bar at the right edge.',
+    hero, epoch, round
+  });
+})();
+
+/* ============================ OPTION 2 ============================
+   "Lives-as-hearts standings table" — a dense rank-ordered leaderboard
+   where the dominant visual is the lives column (two filled pips vs one
+   filled / one hollow vs struck-out). Bracket side is a coloured left
+   border. The hero is the same table trimmed to top rows; the round
+   view is a focused match table.
+   ================================================================ */
+(function(){
+  function rowSVG(r, x, y, w, big){
+    const h = big?30:22;
+    const sideCol = r.side==='WB'?'var(--accent)':r.side==='LB'?'var(--caution)':r.side==='champ'?'var(--good)':'var(--bad)';
+    const elim = r.status==='eliminated';
+    let s = `<rect x="${x}" y="${y}" width="6" height="${h}" fill="${sideCol}"/>`;
+    s += `<text x="${x+16}" y="${y+h*0.66}" ${MONO} font-size="${big?13:11}" fill="var(--ink-faint)">${r.rank}</text>`;
+    s += `<text x="${x+40}" y="${y+h*0.66}" ${MONO} font-size="${big?14:12}" font-weight="700" fill="${elim?'var(--bad)':r.side==='champ'?'var(--accent)':'var(--ink)'}" ${elim?'text-decoration="line-through"':''}>${esc(r.id)}${r.gfGate?' ⚑':''}</text>`;
+    // side badge
+    const label = r.side==='WB'?"WB":r.side==='LB'?"LB":r.side==='champ'?'CH':'OUT';
+    s += `<text x="${x+w*0.42}" y="${y+h*0.66}" ${MONO} font-size="${big?12:10}" fill="${sideCol}">${label}</text>`;
+    // lives pips, the dominant column
+    s += `<text x="${x+w*0.60}" y="${y+h*0.66}" ${MONO} font-size="${big?16:13}" fill="${lifeColor(r.life)}">${lifePips(r.life)}</text>`;
+    // scalar
+    s += `<text x="${x+w*0.78}" y="${y+h*0.66}" ${MONO} font-size="${big?12:10}" fill="var(--ink-soft)">${r.scalar.toFixed(3)}</text>`;
+    // win-loss
+    s += `<text x="${x+w-6}" y="${y+h*0.66}" text-anchor="end" ${MONO} font-size="${big?11:9}" fill="var(--ink-faint)">${r.wins}–${r.losses}</text>`;
+    return s;
+  }
+  function header(x,y,w,big){
+    return `<text x="${x+16}" y="${y}" ${MONO} font-size="9" fill="var(--ink-faint)">#</text>
+      <text x="${x+40}" y="${y}" ${MONO} font-size="9" fill="var(--ink-faint)">gen</text>
+      <text x="${x+w*0.42}" y="${y}" ${MONO} font-size="9" fill="var(--ink-faint)">side</text>
+      <text x="${x+w*0.60}" y="${y}" ${MONO} font-size="9" fill="var(--ink-faint)">lives</text>
+      <text x="${x+w*0.78}" y="${y}" ${MONO} font-size="9" fill="var(--ink-faint)">scalar</text>
+      <text x="${x+w-6}" y="${y}" text-anchor="end" ${MONO} font-size="9" fill="var(--ink-faint)">w–l</text>`;
+  }
+  function hero(){
+    const W=1180, H=98, cols=DATA.standings.slice(0,9);
+    const sideLabel = r => r.side==='WB'?'WB':r.side==='LB'?'LB':r.side==='champ'?'CH':'OUT';
+    const sideColOf = r => r.side==='WB'?'var(--accent)':r.side==='LB'?'var(--caution)':r.side==='champ'?'var(--good)':'var(--bad)';
+    const sideTintOf = r => r.side==='WB'?BR.WB.tint:r.side==='LB'?BR.LB.tint:r.side==='champ'?BR.champ.tint:BR.out.tint;
+    // hero = horizontal strip of rank chips, lives dominant
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt2 hero">`;
+    s += `<text x="8" y="16" ${MONO} font-size="10" fill="var(--ink-faint)" letter-spacing="1">STANDINGS — rank · <tspan fill="var(--accent)" font-weight="700">WB</tspan> winners' · <tspan fill="var(--caution)" font-weight="700">LB</tspan> losers' · lives ●●/●○/○○  (⚑ = grand-final gate)</text>`;
+    const cw = (W-16)/cols.length;
+    cols.forEach((r,i)=>{
+      const x = 8 + i*cw;
+      const sideCol = sideColOf(r);
+      const elim = r.status==='eliminated';
+      // chip body, hue-bordered + faintly hue-tinted by bracket side.
+      s += `<rect x="${x+3}" y="26" width="${cw-8}" height="60" rx="7" fill="${sideTintOf(r)}" fill-opacity="0.14" ${VEC}/>`;
+      s += `<rect x="${x+3}" y="26" width="${cw-8}" height="60" rx="7" fill="none" stroke="${sideCol}" stroke-width="1.6" ${VEC}/>`;
+      // a SOLID side-tab at the chip's top-left carrying the explicit WB/LB/CH/OUT
+      // text — side is never colour-only.
+      s += `<rect x="${x+3}" y="26" width="34" height="15" rx="4" fill="${sideCol}" ${VEC}/>`;
+      s += `<text x="${x+20}" y="37" text-anchor="middle" ${MONO} font-size="9" font-weight="700" fill="var(--paper)">${sideLabel(r)}</text>`;
+      s += `<text x="${x+cw-12}" y="40" text-anchor="end" ${MONO} font-size="10" fill="var(--ink-faint)">#${r.rank}</text>`;
+      s += `<text x="${x+12}" y="60" ${MONO} font-size="14" font-weight="700" fill="${elim?'var(--bad)':r.side==='champ'?'var(--good)':'var(--ink)'}" ${elim?'text-decoration="line-through"':''}>${esc(r.id)}${r.gfGate?' ⚑':''}</text>`;
+      s += `<text x="${x+12}" y="78" ${MONO} font-size="16" fill="${lifeColor(r.life)}">${lifePips(r.life)}</text>`;
+      s += `<text x="${x+cw-12}" y="78" text-anchor="end" ${MONO} font-size="10" fill="var(--ink-soft)">${r.scalar.toFixed(3)}</text>`;
+    });
+    s += `</svg>`;
+    return s;
+  }
+  function epoch(){
+    const W=1180, rows=DATA.standings, rh=26, H=rows.length*rh+40;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt2 epoch">`;
+    s += `<text x="8" y="16" ${MONO} font-size="10" fill="var(--ink-faint)" letter-spacing="1">EPOCH STANDINGS — full field, rank-ordered, lives dominant</text>`;
+    s += header(8, 32, W-16, false);
+    rows.forEach((r,i)=>{ s += rowSVG(r, 8, 40 + i*rh, W-16, false); });
+    s += `</svg>`;
+    return s;
+  }
+  // round: per-match comparison table for a round
+  function round(){
+    const W=1180, r=DATA.rounds.find(x=>x.label==="Losers' R2"), H=160;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt2 round">`;
+    s += `<text x="8" y="18" ${MONO} font-size="11" fill="var(--caution)">LOSERS' R2 — both gens on their last life; loser is eliminated</text>`;
+    r.matches.forEach((m,mi)=>{
+      const x = 16 + mi*580, y = 40;
+      m.competitors.forEach((id,k)=>{
+        const ry = y + k*36, isWin = id===m.winner;
+        s += `<rect x="${x}" y="${ry}" width="430" height="30" rx="6" fill="var(--panel)" stroke="${isWin?'var(--good)':'var(--bad)'}" stroke-width="${isWin?2:1.2}" ${VEC}/>`;
+        s += `<text x="${x+12}" y="${ry+20}" ${MONO} font-size="13" font-weight="700" fill="${isWin?'var(--ink)':'var(--bad)'}" ${isWin?'':'text-decoration="line-through"'}>${esc(id)}</text>`;
+        s += `<text x="${x+90}" y="${ry+20}" ${MONO} font-size="11" fill="${lifeColor(lifeOf(id))}">${lifePips(lifeOf(id))} → ${isWin?lifePips(lifeOf(id)):'○○'}</text>`;
+        s += `<text x="${x+220}" y="${ry+20}" ${MONO} font-size="11" fill="var(--ink-soft)">scalar ${scalarOf(id).toFixed(3)}</text>`;
+        s += `<text x="${x+424}" y="${ry+20}" text-anchor="end" ${MONO} font-size="10" fill="${isWin?'var(--good)':'var(--bad)'}">${isWin?'survives':'OUT'}</text>`;
+      });
+      s += `<text x="${x+450}" y="${y+14}" ${MONO} font-size="10" fill="var(--ink-faint)">gate Δ</text>`;
+      s += gateBar(x+450, y+22, 110, m.delta_scalar, 7);
+      s += `<text x="${x+450}" y="${y+50}" ${MONO} font-size="12" font-weight="700" fill="var(--good)">${m.delta_scalar}</text>`;
+    });
+    s += `</svg>`;
+    return s;
+  }
+  OPTIONS.push({
+    num:2, title:'Lives-as-pips standings table',
+    rationale:'A rank-ordered leaderboard where lives are the dominant column: ●● two lives, ●○ one life (dropped to LB), ○○ out. Bracket side is a coloured left border (accent=WB, caution=LB, green=champ, red=out) plus a WB/LB/CH/OUT badge. ⚑ marks the gens with a grand-final gate shot. Most legible-at-a-glance for "who’s alive and where".',
+    hero, epoch, round
+  });
+})();
+
+/* ============================ OPTION 3 ============================
+   "Mirror bracket" — the classic double-elim shape: winners' bracket
+   drawn left-to-right on top, losers' bracket drawn right-to-left on the
+   bottom (mirrored), converging at the grand final on the right. Drop
+   connectors literally fall from a WB node down into the LB. This makes
+   bracket-side spatial and the GF convergence explicit.
+   ================================================================ */
+(function(){
+  function node(x,y,id,w,pending,winner,bracket){
+    w = w||64; const h=20;
+    const elim = statusOf(id)==='eliminated';
+    const isWin = winner===id;
+    // a left edge-bar carries the bracket HUE (WB accent / LB caution), so each
+    // node states its bracket even out of band context; the box border keeps the
+    // verdict colour (winner good / eliminated bad / pending dashed).
+    const brHue = bracket==='LB' ? 'var(--caution)' : bracket==='WB' ? 'var(--accent)' : brOf(id).hue;
+    const col = elim?'var(--bad)':isWin?'var(--good)':'var(--ink-faint)';
+    const dash = pending?'stroke-dasharray="3 3"':'';
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="var(--panel)" stroke="${col}" stroke-width="${isWin?1.8:1.1}" ${dash} ${VEC}/>
+      <rect x="${x}" y="${y}" width="3.5" height="${h}" rx="1.5" fill="${brHue}" ${VEC}/>
+      <text x="${x+9}" y="${y+14}" ${MONO} font-size="10" font-weight="${isWin?700:400}" fill="${elim?'var(--bad)':'var(--ink)'}" ${elim?'text-decoration="line-through"':''}>${esc(id)}</text>
+      <text x="${x+w-5}" y="${y+14}" text-anchor="end" font-size="8" fill="${lifeColor(lifeOf(id))}">${lifePips(lifeOf(id))}</text>`;
+  }
+  function hero(){
+    // compact: two mini stacks (WB / LB) + GF
+    const W=1180,H=92;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt3 hero">`;
+    // WB lane band (top) + LB lane band (bottom) tints so the two stacks are
+    // distinct zones, not just two rows.
+    s += `<rect x="0" y="14" width="${W-210}" height="28" rx="6" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.4" ${VEC}/>`;
+    s += `<rect x="0" y="50" width="${W-210}" height="28" rx="6" fill="${BR.LB.tint}" fill-opacity="${BR.LB.tintOp}" stroke="${BR.LB.hue}" stroke-width="1" stroke-opacity="0.4" ${VEC}/>`;
+    s += `<text x="8" y="11" ${MONO} font-size="9" fill="var(--accent)" font-weight="700" letter-spacing="1">●● WINNERS' BRACKET ▶</text>`;
+    s += `<text x="8" y="${H-2}" ${MONO} font-size="9" fill="var(--caution)" font-weight="700" letter-spacing="1">●○ LOSERS' BRACKET ◀</text>`;
+    const wb = DATA.standings.filter(s=>s.side==='WB');
+    const lb = DATA.standings.filter(s=>s.side==='LB');
+    wb.forEach((r,i)=> s += node(70+i*90, 18, r.id, 70, false, r.id, 'WB'));
+    lb.forEach((r,i)=> s += node(70+i*90, 54, r.id, 70, false, undefined, 'LB'));
+    // converge lines to GF
+    s += `<path d="M${70+wb.length*90} 30 C ${W-260} 30, ${W-260} 56, ${W-200} 56" fill="none" stroke="var(--accent)" ${VEC}/>`;
+    s += `<path d="M${70+lb.length*90} 66 C ${W-260} 66, ${W-260} 56, ${W-200} 56" fill="none" stroke="var(--caution)" ${VEC}/>`;
+    s += `<rect x="${W-200}" y="40" width="180" height="34" rx="6" fill="var(--panel-2)" stroke="var(--accent)" stroke-dasharray="4 3" stroke-width="1.4" ${VEC}/>`;
+    s += `<text x="${W-110}" y="54" text-anchor="middle" ${MONO} font-size="9" fill="var(--ink-faint)">GRAND FINAL</text>`;
+    s += `<text x="${W-110}" y="68" text-anchor="middle" ${MONO} font-size="12" font-weight="700" fill="var(--good)">v6 vs v3  ${DATA.gf.delta_scalar}</text>`;
+    s += `</svg>`;
+    return s;
+  }
+  function epoch(){
+    // full mirror bracket — sized so the WB band fully contains its tallest
+    // column (R1 = 8 nodes) with clear gaps above/below each band label.
+    const W=1180;
+    const wbRounds = DATA.rounds.filter(r=>r.bracket==='WB');
+    const lbRounds = DATA.rounds.filter(r=>r.bracket==='LB');
+    const nodeH=20, matchGap=34;                 // each match = 2 stacked nodes
+    const maxWbMatches = Math.max(...wbRounds.map(r=>r.matches.length));
+    const maxLbMatches = Math.max(...lbRounds.map(r=>r.matches.length));
+    // band internal layout. Each band reserves a TITLE row above its column
+    // labels so the bracket title never collides with the "Losers' RN" heads.
+    const wbLabelY=16, wbColLabelY=40, wbNodesTop=50;
+    const wbBandH = wbNodesTop + maxWbMatches*matchGap + 6;       // fits tallest WB col
+    const lbLabelY = wbBandH + 26;            // LB band title (in the inter-band gap)
+    const lbBandTop = lbLabelY + 8;           // LB tinted band starts here
+    const lbColLabelY = lbBandTop + 16;       // LB column heads inside the band
+    const lbNodesTop = lbColLabelY + 12;
+    const lbBandH = maxLbMatches*matchGap + 8;
+    const H = lbNodesTop + lbBandH + 18;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt3 epoch">`;
+    // BOTH bands tinted + hue-bordered (the LB band was previously untinted, so
+    // the losers' region read as empty page — the two zones now balance).
+    s += `<rect x="0" y="6" width="${W-216}" height="${wbBandH}" rx="6" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.45" ${VEC}/>`;
+    s += `<rect x="0" y="${lbBandTop}" width="${W-216}" height="${lbNodesTop + lbBandH - lbBandTop + 4}" rx="6" fill="${BR.LB.tint}" fill-opacity="${BR.LB.tintOp}" stroke="${BR.LB.hue}" stroke-width="1" stroke-opacity="0.45" ${VEC}/>`;
+    s += `<text x="8" y="${wbLabelY}" ${MONO} font-size="11" font-weight="700" fill="var(--accent)" letter-spacing="1.5">●● WINNERS' BRACKET ▶ <tspan fill="var(--ink-faint)" font-weight="400" font-size="8.5" letter-spacing="0">undefeated · 2 lives · flows right</tspan></text>`;
+    s += `<text x="8" y="${lbLabelY}" ${MONO} font-size="11" font-weight="700" fill="var(--caution)" letter-spacing="1.5">●○ LOSERS' BRACKET ◀ <tspan fill="var(--ink-faint)" font-weight="400" font-size="8.5" letter-spacing="0">one loss · last life · climbs to GF</tspan></text>`;
+    const colW=(W-260)/Math.max(wbRounds.length, lbRounds.length+1);
+    const nodeCx = {};                            // id -> {x,y} for drop routing
+    // WB top
+    wbRounds.forEach((r,ci)=>{
+      const cx=40+ci*colW;
+      s += `<text x="${cx+32}" y="${wbColLabelY}" text-anchor="middle" ${MONO} font-size="8.5" fill="var(--ink-faint)">${esc(r.label)}</text>`;
+      r.matches.forEach((m,mi)=>{
+        const my=wbNodesTop+mi*matchGap;
+        m.competitors.forEach((id,k)=>{
+          const ny=my+k*nodeH;
+          s += node(cx, ny, id, 64, m.pending, m.winner, 'WB');
+          nodeCx[id]={x:cx, y:ny};
+        });
+      });
+    });
+    // LB bottom
+    lbRounds.forEach((r,ci)=>{
+      const cx=40+ci*colW;
+      s += `<text x="${cx+32}" y="${lbColLabelY}" text-anchor="middle" ${MONO} font-size="8.5" fill="var(--ink-faint)">${esc(r.label)}</text>`;
+      r.matches.forEach((m,mi)=>{
+        const my=lbNodesTop+mi*matchGap;
+        m.competitors.forEach((id,k)=>{
+          const ny=my+k*nodeH;
+          s += node(cx, ny, id, 64, m.pending, m.winner, 'LB');
+          if(!(id in nodeCx) || ny>nodeCx[id].y) nodeCx['lb:'+id]={x:cx, y:ny};
+        });
+      });
+    });
+    // GF box on the right — the WB/LB crossover, each finalist in its bracket hue.
+    s += `<rect x="${W-200}" y="${H/2-34}" width="184" height="68" rx="7" fill="var(--panel-2)" stroke="var(--accent)" stroke-dasharray="4 3" stroke-width="1.5" ${VEC}/>`;
+    s += `<text x="${W-108}" y="${H/2-19}" text-anchor="middle" ${MONO} font-size="9" fill="var(--ink-faint)">GRAND FINAL · crossover</text>`;
+    s += `<text x="${W-108}" y="${H/2-3}" text-anchor="middle" ${MONO} font-size="12" font-weight="700"><tspan fill="var(--accent)">v6</tspan><tspan fill="var(--ink-faint)"> WB</tspan><tspan fill="var(--ink-faint)">  vs  </tspan><tspan fill="var(--good)">v3</tspan><tspan fill="var(--ink-faint)"> ♛</tspan></text>`;
+    s += `<text x="${W-108}" y="${H/2+13}" text-anchor="middle" ${MONO} font-size="10" fill="var(--good)">margin ${DATA.gf.delta_scalar}</text>`;
+    s += `<text x="${W-108}" y="${H/2+27}" text-anchor="middle" ${MONO} font-size="8" fill="var(--ink-faint)">an LB climber can still reach here</text>`;
+    // drop connector: a real WB R1 loser (v8) falling to its LB R1 re-entry (LB match incl. v8)
+    const dropFrom = nodeCx['v8'], dropTo = nodeCx['lb:v8'];
+    if(dropFrom && dropTo){
+      const fx=dropFrom.x+32, fy=dropFrom.y+nodeH, tx=dropTo.x+32, ty=dropTo.y;
+      s += `<path d="M${fx} ${fy} C ${fx} ${(fy+ty)/2}, ${tx} ${(fy+ty)/2}, ${tx} ${ty-2}" fill="none" stroke="var(--caution)" stroke-dasharray="3 2" ${VEC} marker-end="url(#o3a)"/>`;
+      // label anchored at the FAR RIGHT of the inter-band gap (right-aligned),
+      // clear of both bracket titles which read from the left edge.
+      s += `<text x="${W-230}" y="${lbLabelY}" text-anchor="end" ${MONO} font-size="8" fill="var(--caution)">↳ a WB loss drops to the losers' bracket (a 2nd life)</text>`;
+    }
+    s += `<defs><marker id="o3a" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--caution)"/></marker></defs>`;
+    s += `</svg>`;
+    return s;
+  }
+  function round(){
+    const W=1180,H=150;
+    const r=DATA.rounds.find(x=>x.label==="Winners' final");
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt3 round">`;
+    s += `<text x="8" y="18" ${MONO} font-size="11" fill="var(--accent)">WINNERS' FINAL — winner stays undefeated (2 lives), loser drops to LB final (1 life)</text>`;
+    const m=r.matches[0], x=60,y=44;
+    m.competitors.forEach((id,k)=>{
+      const ry=y+k*48, isWin=id===m.winner;
+      s += `<rect x="${x}" y="${ry}" width="360" height="40" rx="7" fill="var(--panel-2)" stroke="${isWin?'var(--good)':'var(--caution)'}" stroke-width="${isWin?2:1.3}" ${VEC}/>`;
+      s += `<text x="${x+14}" y="${ry+26}" ${MONO} font-size="16" font-weight="700" fill="var(--ink)">${esc(id)}</text>`;
+      s += `<text x="${x+90}" y="${ry+26}" ${MONO} font-size="13" fill="${lifeColor(lifeOf(id))}">${lifePips(lifeOf(id))}</text>`;
+      s += `<text x="${x+150}" y="${ry+26}" ${MONO} font-size="12" fill="var(--ink-soft)">scalar ${scalarOf(id).toFixed(3)}</text>`;
+      s += `<text x="${x+352}" y="${ry+26}" text-anchor="end" ${MONO} font-size="11" fill="${isWin?'var(--good)':'var(--caution)'}">${isWin?'→ GF gate':'↓ to LB (1 life)'}</text>`;
+    });
+    s += `<text x="${x+420}" y="${y+18}" ${MONO} font-size="10" fill="var(--ink-faint)">gate margin Δ</text>`;
+    s += gateBar(x+420, y+26, 200, m.delta_scalar, 9);
+    s += `<text x="${x+420}" y="${y+62}" ${MONO} font-size="13" font-weight="700" fill="var(--good)">${m.delta_scalar}</text>`;
+    s += `</svg>`;
+    return s;
+  }
+  OPTIONS.push({
+    num:3, title:'Mirror bracket (WB top / LB bottom converging at GF)',
+    rationale:'The textbook double-elim shape made literal: winners’ bracket on top flowing right, losers’ bracket mirrored on the bottom, the two converging into the grand-final gate on the right. Drop connectors physically fall from a WB node into the LB band, so a gen’s descent is spatial, not a table number. Bracket-side is encoded by which band you live in.',
+    hero, epoch, round
+  });
+})();
+
+/* ============================ OPTION 4 ============================
+   "Lives-remaining swimlanes" — three stacked horizontal lanes keyed on
+   LIVES (2 / 1 / 0), not on round. A gen is a token that MIGRATES DOWN a
+   lane each time it loses. The horizontal axis is scalar (rank). This
+   foregrounds the single most important fact: lives remaining, and shows
+   exactly the transition WB(2)→LB(1)→out(0).
+   ================================================================ */
+(function(){
+  function token(cx,cy,id,r){
+    r=r||12;
+    const elim=statusOf(id)==='eliminated';
+    // token border = the gen's BRACKET hue (WB accent / LB caution / out bad /
+    // champ good), so a token states its bracket by colour as well as by which
+    // lane it sits in — redundant encoding.
+    const col = elim?'var(--bad)':brOf(id).hue;
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--panel)" stroke="${col}" stroke-width="2" ${VEC}/>
+      <text x="${cx}" y="${cy+4}" text-anchor="middle" ${MONO} font-size="10" font-weight="700" fill="${elim?'var(--bad)':'var(--ink)'}">${esc(id)}</text>`;
+  }
+  // scalar -> x mapping
+  function sx(scalar, x0, x1){
+    const lo=0.30, hi=0.70;
+    return x0 + (x1-x0)*Math.min(1,Math.max(0,(scalar-lo)/(hi-lo)));
+  }
+  function lanes(W,H,x0,x1,laneYs){
+    let s='';
+    // faint lane band tints + bold WINNERS'/LOSERS' labels (lives glyph prefixed),
+    // hue-keyed to the shared WB/LB convention.
+    const bands=[
+      ['●● WINNERS’ BRACKET', BR.WB.hue, BR.WB.tint, BR.WB.tintOp, laneYs[2]],
+      ['●○ LOSERS’ BRACKET',  BR.LB.hue, BR.LB.tint, BR.LB.tintOp, laneYs[1]],
+      ['○○ ELIMINATED',           BR.out.hue, BR.out.tint, BR.out.tintOp, laneYs[0]],
+    ];
+    bands.forEach(([t,c,tint,op,y])=>{
+      s += `<rect x="${x0-10}" y="${y-15}" width="${x1-x0+30}" height="30" rx="6" fill="${tint}" fill-opacity="${op}" ${VEC}/>`;
+      s += `<line x1="${x0-4}" y1="${y}" x2="${x1+8}" y2="${y}" stroke="${c}" stroke-opacity="0.4" ${VEC}/>`;
+      s += `<text x="6" y="${y-18}" ${MONO} font-size="9" font-weight="700" fill="${c}" letter-spacing="1">${t}</text>`;
+    });
+    return s;
+  }
+  function hero(){
+    const W=1180,H=96,x0=150,x1=W-200;
+    const laneYs={2:30,1:58,0:86};
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt4 hero">`;
+    s+=lanes(W,H,x0,x1,laneYs);
+    DATA.standings.filter(s=>s.side!=='champ').forEach(r=>{
+      s+=token(sx(r.scalar,x0,x1), laneYs[r.life], r.id, 11);
+    });
+    // scalar axis hint
+    s+=`<text x="${x0}" y="${H-2}" ${MONO} font-size="8" fill="var(--ink-faint)">better scalar ◀</text>`;
+    s+=`<text x="${x1}" y="${H-2}" text-anchor="end" ${MONO} font-size="8" fill="var(--ink-faint)">▶ worse</text>`;
+    // GF marker
+    s+=`<rect x="${W-180}" y="20" width="166" height="56" rx="6" fill="var(--panel-2)" stroke="var(--accent)" stroke-dasharray="4 3" ${VEC}/>`;
+    s+=`<text x="${W-97}" y="38" text-anchor="middle" ${MONO} font-size="9" fill="var(--ink-faint)">GF gate</text>`;
+    s+=`<text x="${W-97}" y="56" text-anchor="middle" ${MONO} font-size="13" font-weight="700" fill="var(--good)">v6 vs v3</text>`;
+    s+=`<text x="${W-97}" y="70" text-anchor="middle" ${MONO} font-size="11" fill="var(--good)">${DATA.gf.delta_scalar}</text>`;
+    s+=`</svg>`;
+    return s;
+  }
+  function epoch(){
+    // lanes + migration arrows tracing each gen's loss history down the lanes
+    const W=1180,H=244,x0=160,x1=W-60;
+    const laneYs={2:70,1:140,0:206};
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt4 epoch">`;
+    s+=lanes(W,H,x0,x1,laneYs);
+    // migration arrows for gens that have lost (drop one lane per loss)
+    DATA.standings.filter(r=>r.side!=='champ' && r.losses>0).forEach(r=>{
+      const x=sx(r.scalar,x0,x1);
+      // from lane 2 down to current lane
+      for(let l=2;l>r.life;l--){
+        s+=`<path d="M${x} ${laneYs[l]+12} L ${x} ${laneYs[l-1]-12}" stroke="var(--caution)" stroke-dasharray="3 2" ${VEC} marker-end="url(#o4a)"/>`;
+      }
+    });
+    DATA.standings.filter(r=>r.side!=='champ').forEach(r=>{
+      s+=token(sx(r.scalar,x0,x1), laneYs[r.life], r.id, 13);
+    });
+    s+=`<text x="${x0}" y="${H-6}" ${MONO} font-size="9" fill="var(--ink-faint)">scalar axis: better ◀ ... ▶ worse  · a token drops one lane per loss</text>`;
+    s+=`<defs><marker id="o4a" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--caution)"/></marker></defs>`;
+    s+=`</svg>`;
+    return s;
+  }
+  function round(){
+    // a round shown as transitions between lanes
+    const W=1180,H=200,x0=420,x1=W-60;
+    const laneYs={2:50,1:120,0:190};
+    const r=DATA.rounds.find(x=>x.label==="Losers' R2");
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt4 round">`;
+    s+=`<text x="8" y="16" ${MONO} font-size="11" fill="var(--caution)">LOSERS' R2 — both gens enter on 1 life; loser falls to lane 0 (out)</text>`;
+    s+=lanes(W,H,x0,x1,laneYs);
+    r.matches.forEach((m,mi)=>{
+      m.competitors.forEach(id=>{
+        const isWin=id===m.winner;
+        const startX=sx(scalarOf(id),x0,x1);
+        if(isWin){
+          s+=token(startX, laneYs[1], id, 14);
+        } else {
+          // animate-as-static: arrow from lane1 to lane0
+          s+=`<path d="M${startX} ${laneYs[1]+14} L ${startX} ${laneYs[0]-14}" stroke="var(--bad)" stroke-width="1.4" ${VEC} marker-end="url(#o4b)"/>`;
+          s+=token(startX, laneYs[0], id, 14);
+        }
+      });
+      // gate readout per match
+      const gx=20+mi*180;
+      s+=`<text x="${gx}" y="${laneYs[1]-18}" ${MONO} font-size="9" fill="var(--ink-faint)">${esc(m.competitors.join(' vs '))}</text>`;
+      s+=gateBar(gx, laneYs[1]-12, 150, m.delta_scalar, 7);
+      s+=`<text x="${gx}" y="${laneYs[1]+14}" ${MONO} font-size="11" font-weight="700" fill="var(--good)">gate Δ ${m.delta_scalar}</text>`;
+    });
+    s+=`<defs><marker id="o4b" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--bad)"/></marker></defs>`;
+    s+=`</svg>`;
+    return s;
+  }
+  OPTIONS.push({
+    num:4, title:'Lives-remaining swimlanes',
+    rationale:'Lanes keyed on LIVES, not rounds: top lane = 2 lives (WB, undefeated), middle = 1 life (LB), bottom = eliminated. A gen is a token that migrates DOWN one lane per loss, so "second life" is the literal vertical position. The horizontal axis is scalar, so reading left-to-right within a lane is reading rank. The clearest single answer to "who has a life left".',
+    hero, epoch, round
+  });
+})();
+
+/* ============================ OPTION 5 ============================
+   "Bracket-side columns with drop traces" — two side-by-side column
+   stacks (WB | LB), gens listed within each rank-ordered, and explicit
+   curved drop-traces connecting a gen's WB node to where it re-enters LB.
+   Champion + GF pinned in a centre gutter. Directly fixes "merged flat
+   column" by giving WB and LB their own column families.
+   ================================================================ */
+(function(){
+  function pill(x,y,w,id,accentCol,pending){
+    const h=24, elim=statusOf(id)==='eliminated';
+    const dash=pending?'stroke-dasharray="3 3"':'';
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="5" fill="var(--panel)" stroke="${elim?'var(--bad)':accentCol}" stroke-width="1.4" ${dash} ${VEC}/>
+      <text x="${x+9}" y="${y+16}" ${MONO} font-size="12" font-weight="700" fill="${elim?'var(--bad)':'var(--ink)'}" ${elim?'text-decoration="line-through"':''}>${esc(id)}</text>
+      <text x="${x+w*0.5}" y="${y+16}" ${MONO} font-size="9" fill="${lifeColor(lifeOf(id))}">${lifePips(lifeOf(id))}</text>
+      <text x="${x+w-8}" y="${y+16}" text-anchor="end" ${MONO} font-size="9" fill="var(--ink-soft)">${scalarOf(id).toFixed(3)}</text>`;
+  }
+  function hero(){
+    const W=1180,H=92;
+    const wb=DATA.standings.filter(s=>s.side==='WB');
+    const lb=DATA.standings.filter(s=>s.side==='LB');
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt5 hero">`;
+    // the two column FAMILIES as tinted, hue-bordered regions (left WB / right LB).
+    s+=`<rect x="2" y="2" width="${W*0.5-12}" height="50" rx="6" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.4" ${VEC}/>`;
+    s+=`<rect x="${W*0.5+2}" y="2" width="${W*0.5-14}" height="50" rx="6" fill="${BR.LB.tint}" fill-opacity="${BR.LB.tintOp}" stroke="${BR.LB.hue}" stroke-width="1" stroke-opacity="0.4" ${VEC}/>`;
+    s+=`<text x="10" y="16" ${MONO} font-size="10" font-weight="700" fill="var(--accent)" letter-spacing="1">●● WINNERS' BRACKET (2 lives)</text>`;
+    s+=`<text x="${W*0.5+10}" y="16" ${MONO} font-size="10" font-weight="700" fill="var(--caution)" letter-spacing="1">●○ LOSERS' BRACKET (1 life)</text>`;
+    wb.forEach((r,i)=> s+=pill(10+i*150, 24, 140, r.id, 'var(--accent)'));
+    lb.forEach((r,i)=> s+=pill(W*0.5+10+i*150, 24, 140, r.id, 'var(--caution)'));
+    // GF strip bottom
+    s+=`<rect x="8" y="58" width="${W-16}" height="28" rx="6" fill="var(--panel-2)" stroke="var(--accent)" stroke-dasharray="4 3" ${VEC}/>`;
+    s+=`<text x="18" y="76" ${MONO} font-size="10" fill="var(--ink-faint)">GRAND-FINAL GATE ⚑</text>`;
+    s+=`<text x="170" y="76" ${MONO} font-size="13" font-weight="700" fill="var(--good)">v6 (best survivor) vs v3 (champion)</text>`;
+    s+=`<text x="${W-20}" y="76" text-anchor="end" ${MONO} font-size="13" font-weight="700" fill="var(--good)">margin ${DATA.gf.delta_scalar}</text>`;
+    s+=`</svg>`;
+    return s;
+  }
+  function epoch(){
+    const W=1180,H=300, gutter=W*0.5;
+    const wb=DATA.standings.filter(s=>s.side==='WB');
+    const lb=DATA.standings.filter(s=>s.side==='LB');
+    const out=DATA.standings.filter(s=>s.side==='out');
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt5 epoch">`;
+    // two column families
+    s+=`<rect x="0" y="0" width="${gutter-60}" height="${H}" fill="var(--good-soft)" opacity="0.22"/>`;
+    s+=`<text x="14" y="20" ${MONO} font-size="11" fill="var(--accent)" letter-spacing="1.5">WINNERS' BRACKET — 2 lives</text>`;
+    s+=`<text x="${gutter+10}" y="20" ${MONO} font-size="11" fill="var(--caution)" letter-spacing="1.5">LOSERS' BRACKET — 1 life</text>`;
+    wb.forEach((r,i)=> s+=pill(14, 36+i*34, 200, r.id, 'var(--accent)'));
+    lb.forEach((r,i)=> s+=pill(gutter+10, 36+i*34, 200, r.id, 'var(--caution)'));
+    // eliminated, bottom left faint
+    s+=`<text x="14" y="${H-46}" ${MONO} font-size="10" fill="var(--bad)">ELIMINATED (2 losses)</text>`;
+    out.forEach((r,i)=> s+=pill(14+i*120, H-38, 110, r.id, 'var(--bad)'));
+    // drop traces: each LB gen connects to its origin in WB column (illustrative)
+    lb.forEach((r,i)=>{
+      const fromY=36+ (i)*34 +12; // origin near top of WB col
+      const toY=36+i*34+12;
+      s+=`<path d="M214 ${36+ (i%wb.length)*34+12} C ${gutter-30} ${36+(i%wb.length)*34+12}, ${gutter-30} ${toY}, ${gutter+10} ${toY}" fill="none" stroke="var(--caution)" stroke-dasharray="2 3" ${VEC} opacity="0.7" marker-end="url(#o5a)"/>`;
+    });
+    s+=`<text x="${gutter-100}" y="14" ${MONO} font-size="9" fill="var(--caution)">drop traces →</text>`;
+    // GF gutter at far right
+    s+=`<rect x="${W-150}" y="${H/2-40}" width="138" height="80" rx="8" fill="var(--panel-2)" stroke="var(--accent)" stroke-dasharray="4 3" stroke-width="1.5" ${VEC}/>`;
+    s+=`<text x="${W-81}" y="${H/2-22}" text-anchor="middle" ${MONO} font-size="9" fill="var(--ink-faint)">GRAND FINAL</text>`;
+    s+=`<text x="${W-81}" y="${H/2-4}" text-anchor="middle" ${MONO} font-size="14" font-weight="700" fill="var(--good)">v6</text>`;
+    s+=`<text x="${W-81}" y="${H/2+12}" text-anchor="middle" ${MONO} font-size="10" fill="var(--ink-faint)">vs v3 (champ)</text>`;
+    s+=`<text x="${W-81}" y="${H/2+30}" text-anchor="middle" ${MONO} font-size="11" font-weight="700" fill="var(--good)">${DATA.gf.delta_scalar}</text>`;
+    s+=`<defs><marker id="o5a" markerWidth="6" markerHeight="6" refX="4" refY="3" orient="auto"><path d="M0,0 L5,3 L0,6 Z" fill="var(--caution)"/></marker></defs>`;
+    s+=`</svg>`;
+    return s;
+  }
+  function round(){
+    const W=1180,H=150;
+    const wr=DATA.rounds.find(x=>x.label==="Winners' R2");
+    const lr=DATA.rounds.find(x=>x.label==="Losers' R2");
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt5 round">`;
+    s+=`<text x="8" y="16" ${MONO} font-size="11" fill="var(--accent)">WINNERS' R2 (left) — loser drops to LB</text>`;
+    s+=`<text x="${W*0.5+8}" y="16" ${MONO} font-size="11" fill="var(--caution)">LOSERS' R2 (right) — loser eliminated</text>`;
+    function drawMatch(m,x,y,loseFate){
+      m.competitors.forEach((id,k)=>{
+        const ry=y+k*32, isWin=id===m.winner;
+        const col=isWin?'var(--good)':(loseFate==='drop'?'var(--caution)':'var(--bad)');
+        s+=`<rect x="${x}" y="${ry}" width="320" height="28" rx="6" fill="var(--panel)" stroke="${col}" stroke-width="${isWin?2:1.2}" ${VEC}/>`;
+        s+=`<text x="${x+12}" y="${ry+19}" ${MONO} font-size="13" font-weight="700" fill="${(!isWin&&loseFate==='out')?'var(--bad)':'var(--ink)'}" ${(!isWin&&loseFate==='out')?'text-decoration="line-through"':''}>${esc(id)}</text>`;
+        s+=`<text x="${x+70}" y="${ry+19}" ${MONO} font-size="11" fill="${lifeColor(lifeOf(id))}">${lifePips(lifeOf(id))}</text>`;
+        s+=`<text x="${x+314}" y="${ry+19}" text-anchor="end" ${MONO} font-size="10" fill="${col}">${isWin?'wins':(loseFate==='drop'?'↓ drops to LB':'OUT')}</text>`;
+      });
+      s+=gateBar(x, y+70, 320, m.delta_scalar, 6);
+      s+=`<text x="${x}" y="${y+92}" ${MONO} font-size="11" font-weight="700" fill="var(--good)">gate Δ ${m.delta_scalar}</text>`;
+    }
+    drawMatch(wr.matches[0], 14, 40, 'drop');
+    drawMatch(lr.matches[0], W*0.5+8, 40, 'out');
+    s+=`</svg>`;
+    return s;
+  }
+  OPTIONS.push({
+    num:5, title:'Bracket-side columns + drop traces',
+    rationale:'A direct fix for the merged flat column: WB and LB get their own column families (left/right), each rank-ordered with life pips and scalar. Curved drop-traces connect a gen’s WB origin to where it re-enters the LB, so a fallen gen is visibly linked across the divide. Champion + GF gate pinned in a far-right gutter with the margin called out.',
+    hero, epoch, round
+  });
+})();
+
+/* ============================ OPTION 6 ============================
+   "Survival timeline / bracket DAG" — a left-to-right time axis of
+   rounds; each gen is a horizontal life-line that is solid green while
+   alive in WB, turns caution after the first loss (drops to a lower LB
+   track), and terminates in a red X at the second loss. The GF is the
+   convergence node at the right. Encodes lives as line STATE over time.
+   ================================================================ */
+(function(){
+  // assign each gen a y-track; WB survivors high, LB lower, out lowest
+  function tracks(){
+    const order = DATA.standings.slice().sort((a,b)=> a.rank-b.rank);
+    const t={}; order.forEach((r,i)=>{ t[r.id]=i; });
+    return t;
+  }
+  // which round did the gen take its 1st / 2nd loss? derive from matches
+  function lossRounds(id){
+    const losses=[];
+    DATA.rounds.forEach(r=>{
+      r.matches.forEach(m=>{
+        if(!m.pending && m.competitors.includes(id) && m.winner && m.winner!==id){
+          losses.push(r.round_index);
+        }
+      });
+    });
+    return losses;
+  }
+  function hero(){
+    // 9 life-lines need ~14px of vertical rhythm each so the gen labels never
+    // stack onto the neighbouring line; taller than the other heroes by design.
+    const W=1180;
+    const rows=DATA.standings;
+    const topPad=24, botPad=10, rh=14;
+    const H=topPad+rows.length*rh+botPad;
+    const x0=60,x1=W-230;
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt6 hero">`;
+    // a line-STATE key so green-line vs caution-line reads as WB vs LB explicitly.
+    s+=`<text x="${x0-54}" y="14" ${MONO} font-size="9" fill="var(--ink-faint)">life-line state:</text>`;
+    s+=`<line x1="${x0+52}" y1="11" x2="${x0+78}" y2="11" stroke="var(--good)" stroke-width="2.4" ${VEC}/>`;
+    s+=`<text x="${x0+82}" y="14" ${MONO} font-size="9" fill="var(--accent)" font-weight="700">●● WINNERS' (2 lives)</text>`;
+    s+=`<line x1="${x0+232}" y1="11" x2="${x0+258}" y2="11" stroke="var(--caution)" stroke-width="2.4" stroke-dasharray="5 3" ${VEC}/>`;
+    s+=`<text x="${x0+262}" y="14" ${MONO} font-size="9" fill="var(--caution)" font-weight="700">●○ LOSERS' (1 life)</text>`;
+    s+=`<text x="${x0+412}" y="14" ${MONO} font-size="9" fill="var(--bad)" font-weight="700">✕ out (2 losses)</text>`;
+    rows.forEach((r,i)=>{
+      const y=topPad+i*rh;
+      const ls=lossRounds(r.id);
+      const maxR=6;
+      const xe = r.status==='eliminated' ? x0+(x1-x0)*((ls[1]!=null?ls[1]:5)/maxR) : x1;
+      // segment 1: alive 2 lives (green) up to first loss
+      const firstLossX = ls[0]!=null ? x0+(x1-x0)*(ls[0]/maxR) : xe;
+      s+=`<line x1="${x0}" y1="${y}" x2="${firstLossX}" y2="${y}" stroke="var(--good)" stroke-width="2.4" ${VEC}/>`;
+      if(ls[0]!=null){
+        // segment 2: 1 life (caution)
+        s+=`<line x1="${firstLossX}" y1="${y}" x2="${xe}" y2="${y}" stroke="var(--caution)" stroke-width="2.4" stroke-dasharray="${r.status==='eliminated'?'none':'5 3'}" ${VEC}/>`;
+      }
+      // end marker + the gen's CURRENT bracket badge (WB/LB/OUT) in its hue.
+      if(r.status==='eliminated'){ s+=`<text x="${xe+4}" y="${y+4}" ${MONO} font-size="11" fill="var(--bad)">✕</text>`; }
+      else { s+=`<text x="${x1+6}" y="${y+4}" ${MONO} font-size="9" font-weight="700" fill="${brOf(r.id).hue}">${sideBadge(r.id)} ${lifePips(r.life)}</text>`; }
+      s+=`<text x="${x0-6}" y="${y+4}" text-anchor="end" ${MONO} font-size="10" font-weight="700" fill="${statusColor(r.id)}">${esc(r.id)}</text>`;
+    });
+    const gfY=H/2-25;
+    s+=`<rect x="${W-180}" y="${gfY}" width="166" height="50" rx="6" fill="var(--panel-2)" stroke="var(--accent)" stroke-dasharray="4 3" ${VEC}/>`;
+    s+=`<text x="${W-97}" y="${gfY+18}" text-anchor="middle" ${MONO} font-size="9" fill="var(--ink-faint)">GF gate (pending)</text>`;
+    s+=`<text x="${W-97}" y="${gfY+36}" text-anchor="middle" ${MONO} font-size="13" font-weight="700" fill="var(--good)">v6 vs v3  ${DATA.gf.delta_scalar}</text>`;
+    s+=`</svg>`;
+    return s;
+  }
+  function epoch(){
+    const W=1180,H=308;
+    const rows=DATA.standings;
+    const topBand=58;                 // key row + round-axis-label row
+    const rh=(H-topBand-12)/rows.length;
+    const x0=70,x1=W-220;             // extra right gutter for the WB/LB side badge + GF box
+    const maxR=6;
+    const rx=(ri)=> x0+(x1-x0)*(ri/maxR);
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt6 epoch">`;
+    // a line-STATE key (own row) so the green vs caution line state reads as WB vs LB.
+    s+=`<line x1="${x0}" y1="13" x2="${x0+24}" y2="13" stroke="var(--good)" stroke-width="2.6" ${VEC}/>`;
+    s+=`<text x="${x0+30}" y="16" ${MONO} font-size="8.5" fill="var(--accent)" font-weight="700">●● WINNERS' (2 lives)</text>`;
+    s+=`<line x1="${x0+200}" y1="13" x2="${x0+224}" y2="13" stroke="var(--caution)" stroke-width="2.6" stroke-dasharray="6 4" ${VEC}/>`;
+    s+=`<text x="${x0+230}" y="16" ${MONO} font-size="8.5" fill="var(--caution)" font-weight="700">●○ LOSERS' (after 1st loss ●)</text>`;
+    s+=`<text x="${x0+440}" y="16" ${MONO} font-size="8.5" fill="var(--bad)" font-weight="700">✕ out (2 losses)</text>`;
+    // round gridlines (labels on their OWN row below the key)
+    DATA.rounds.forEach(r=>{
+      const x=rx(r.round_index);
+      // round-axis label hue = the bracket that round belongs to (WB/LB/GF).
+      const rHue = r.bracket==='WB'?'var(--accent)':r.bracket==='LB'?'var(--caution)':'var(--good)';
+      s+=`<line x1="${x}" y1="${topBand-8}" x2="${x}" y2="${H-16}" stroke="var(--rule)" stroke-dasharray="2 4" ${VEC}/>`;
+      s+=`<text x="${x}" y="${topBand-14}" text-anchor="middle" ${MONO} font-size="8" fill="${rHue}">${esc(r.label)}</text>`;
+    });
+    rows.forEach((r,i)=>{
+      const y=topBand+i*rh;
+      const ls=lossRounds(r.id);
+      const firstLossX = ls[0]!=null ? rx(ls[0]) : x1;
+      const endX = r.status==='eliminated' ? rx(ls[1]!=null?ls[1]:5) : x1;
+      s+=`<text x="${x0-8}" y="${y+4}" text-anchor="end" ${MONO} font-size="11" font-weight="700" fill="${statusColor(r.id)}">${esc(r.id)}</text>`;
+      // life-line: green (2 lives) then caution (1 life) then end
+      s+=`<line x1="${x0}" y1="${y}" x2="${firstLossX}" y2="${y}" stroke="var(--good)" stroke-width="2.6" ${VEC}/>`;
+      if(ls[0]!=null){
+        s+=`<circle cx="${firstLossX}" cy="${y}" r="3.5" fill="var(--caution)"/>`; // 1st loss = drop
+        s+=`<line x1="${firstLossX}" y1="${y}" x2="${endX}" y2="${y}" stroke="var(--caution)" stroke-width="2.6" stroke-dasharray="${r.status==='eliminated'?'none':'6 4'}" ${VEC}/>`;
+      }
+      if(r.status==='eliminated'){
+        s+=`<text x="${endX+5}" y="${y+5}" ${MONO} font-size="13" font-weight="700" fill="var(--bad)">✕</text>`;
+      } else {
+        // current bracket badge (WB/LB) + lives pips, in the bracket hue.
+        s+=`<text x="${x1+5}" y="${y+4}" ${MONO} font-size="9" font-weight="700" fill="${brOf(r.id).hue}">${sideBadge(r.id)} ${lifePips(r.life)}</text>`;
+      }
+    });
+    // GF convergence at right
+    s+=`<rect x="${W-130}" y="${H/2-28}" width="118" height="56" rx="7" fill="var(--panel-2)" stroke="var(--accent)" stroke-dasharray="4 3" stroke-width="1.4" ${VEC}/>`;
+    s+=`<text x="${W-71}" y="${H/2-10}" text-anchor="middle" ${MONO} font-size="8.5" fill="var(--ink-faint)">GRAND FINAL</text>`;
+    s+=`<text x="${W-71}" y="${H/2+6}" text-anchor="middle" ${MONO} font-size="12" font-weight="700" fill="var(--good)">v6 vs v3</text>`;
+    s+=`<text x="${W-71}" y="${H/2+22}" text-anchor="middle" ${MONO} font-size="10" fill="var(--good)">${DATA.gf.delta_scalar}</text>`;
+    s+=`</svg>`;
+    return s;
+  }
+  function round(){
+    // a round = a vertical slice; show the matches at that round_index with life-state transitions
+    const W=1180,H=170;
+    const ri=2; // Losers' R1 region; show LB R2 (round_index 3) transitions
+    const r=DATA.rounds.find(x=>x.round_index===3);
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt6 round">`;
+    s+=`<text x="8" y="16" ${MONO} font-size="11" fill="var(--caution)">${esc(r.label)} — life-line slice: caution continues for the survivor, ✕ for the loser</text>`;
+    const x0=60,x1=W-120;
+    r.matches.forEach((m,mi)=>{
+      const baseY=44+mi*60;
+      m.competitors.forEach((id,k)=>{
+        const y=baseY+k*26, isWin=id===m.winner;
+        // incoming caution line (already 1 life)
+        s+=`<line x1="${x0}" y1="${y}" x2="${(x0+x1)/2}" y2="${y}" stroke="var(--caution)" stroke-width="2.6" ${VEC}/>`;
+        s+=`<text x="${x0-6}" y="${y+4}" text-anchor="end" ${MONO} font-size="12" font-weight="700" fill="${isWin?'var(--ink)':'var(--bad)'}">${esc(id)}</text>`;
+        if(isWin){
+          s+=`<line x1="${(x0+x1)/2}" y1="${y}" x2="${x1}" y2="${y}" stroke="var(--caution)" stroke-width="2.6" stroke-dasharray="6 4" ${VEC}/>`;
+          s+=`<text x="${x1+6}" y="${y+4}" ${MONO} font-size="10" fill="var(--caution)">survives ●○</text>`;
+        } else {
+          s+=`<text x="${(x0+x1)/2+6}" y="${y+5}" ${MONO} font-size="13" font-weight="700" fill="var(--bad)">✕ out</text>`;
+        }
+      });
+      s+=`<text x="${(x0+x1)/2-40}" y="${baseY-10}" ${MONO} font-size="9" fill="var(--ink-faint)">gate Δ ${m.delta_scalar}</text>`;
+      s+=gateBar((x0+x1)/2-40, baseY-6, 110, m.delta_scalar, 5);
+    });
+    s+=`</svg>`;
+    return s;
+  }
+  OPTIONS.push({
+    num:6, title:'Survival timeline (life-line DAG)',
+    rationale:'A left-to-right round/time axis; each gen is a horizontal life-line whose COLOUR is its lives state: solid green while undefeated (2 lives), caution after the first loss (1 life, dropped to LB), terminating in a red ✕ at the second loss. The dot marks the WB→LB drop. All lifelines converge into the GF gate at the right. Lives become line-state over time.',
+    hero, epoch, round
+  });
+})();
+
+/* ============================ OPTION 7 ============================
+   "Mirror-lane bracket" — the combo of opt 1 + opt 3. It keeps opt 1's
+   strongest device — two full-width tinted LANE BANDS (WB top / LB
+   bottom) with the lives glyph + name + note living in a dedicated left
+   gutter, and a TRUE drop connector that routes a WB loser to the EXACT
+   losers'-bracket match it re-enters — and fuses it with opt 3's
+   strongest device: every round renders BOTH competitors as stacked
+   bracket NODES (winner emphasised, an edge-bar carrying the bracket
+   hue, life pips per node) and a literal GF CROSSOVER box on the right
+   where the WB finalist meets the champion, captioned so an LB climber's
+   path to it stays legible. WB flows left→right on its lane; LB climbs
+   along its lane below; both converge into the crossover.
+   ================================================================ */
+(function(){
+  // rounded orthogonal elbow: a vertical drop from (x0,y0) to a horizontal bus at
+  // busY, a run across to xt, then a short vertical into (xt,yt). Corners are
+  // arc-rounded (radius rr) so the route reads as a calm pipe, not a kinked wire.
+  // Direction-aware so it works whether the target is left or right of the source.
+  function elbow(x0,y0,xt,yt,busY,rr){
+    rr = rr || 6;
+    const dir = xt>=x0 ? 1 : -1;                 // run direction along the bus
+    const downA = busY>y0 ? 1 : -1;              // first vertical sense
+    const downB = yt>busY ? 1 : -1;              // last vertical sense
+    const r1=Math.min(rr,Math.abs(busY-y0)/2);
+    const r2=Math.min(rr,Math.abs(yt-busY)/2,Math.abs(xt-x0)/2);
+    return `M${x0.toFixed(1)} ${y0.toFixed(1)}`
+      + ` L${x0.toFixed(1)} ${(busY-downA*r1).toFixed(1)}`
+      + ` Q${x0.toFixed(1)} ${busY.toFixed(1)} ${(x0+dir*r1).toFixed(1)} ${busY.toFixed(1)}`
+      + ` L${(xt-dir*r2).toFixed(1)} ${busY.toFixed(1)}`
+      + ` Q${xt.toFixed(1)} ${busY.toFixed(1)} ${xt.toFixed(1)} ${(busY+downB*r2).toFixed(1)}`
+      + ` L${xt.toFixed(1)} ${yt.toFixed(1)}`;
+  }
+  // horizontal-first elbow: run right from (x0,y0) to a vertical collector at xc,
+  // turn (rounded), then run vertically to yt — used to feed the GF box.
+  function elbowH(x0,y0,xc,yt,rr){
+    rr = rr || 5;
+    const down = yt>y0 ? 1 : -1;
+    const r=Math.min(rr,Math.abs(xc-x0)/2,Math.abs(yt-y0)/2);
+    return `M${x0.toFixed(1)} ${y0.toFixed(1)}`
+      + ` L${(xc-r).toFixed(1)} ${y0.toFixed(1)}`
+      + ` Q${xc.toFixed(1)} ${y0.toFixed(1)} ${xc.toFixed(1)} ${(y0+down*r).toFixed(1)}`
+      + ` L${xc.toFixed(1)} ${yt.toFixed(1)}`;
+  }
+  // opt3-style stacked match node, but on an opt1-style lane.
+  function node(x,y,id,w,pending,winner,bracket){
+    w = w||66; const h=20;
+    const elim = statusOf(id)==='eliminated';
+    const isWin = winner===id;
+    const brHue = bracket==='LB' ? BR.LB.hue : bracket==='WB' ? BR.WB.hue : brOf(id).hue;
+    const col = elim?'var(--bad)':isWin?'var(--good)':'var(--ink-faint)';
+    const dash = pending?'stroke-dasharray="3 3"':'';
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="var(--panel)" stroke="${col}" stroke-width="${isWin?1.9:1.1}" ${dash} ${VEC}/>
+      <rect x="${x}" y="${y}" width="3.5" height="${h}" rx="1.5" fill="${brHue}" ${VEC}/>
+      <text x="${x+10}" y="${y+14}" ${MONO} font-size="10" font-weight="${isWin?700:400}" fill="${elim?'var(--bad)':'var(--ink)'}" ${elim?'text-decoration="line-through"':''}>${esc(id)}</text>
+      <text x="${x+w-5}" y="${y+14}" text-anchor="end" font-size="8" fill="${lifeColor(lifeOf(id))}">${lifePips(lifeOf(id))}</text>`;
+  }
+  // hero: opt1's compact split rail, but each side shows real stacked nodes + GF crossover (opt3).
+  function hero(){
+    const W=1180, H=116;
+    const wb = DATA.standings.filter(s=>s.side==='WB');
+    const lb = DATA.standings.filter(s=>s.side==='LB');
+    const gutter=196, wbY=20, lbY=64, laneH=38;
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt7 hero">`;
+    // opt1 lane bands + gutter labels
+    s+=`<rect x="0" y="${wbY-3}" width="${W-200}" height="${laneH}" rx="7" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.5" ${VEC}/>`;
+    s+=`<rect x="0" y="${lbY-3}" width="${W-200}" height="${laneH}" rx="7" fill="${BR.LB.tint}" fill-opacity="${BR.LB.tintOp}" stroke="${BR.LB.hue}" stroke-width="1" stroke-opacity="0.5" ${VEC}/>`;
+    s+=`<line x1="${gutter-14}" y1="${wbY-3}" x2="${gutter-14}" y2="${lbY+laneH-3}" stroke="var(--rule)" stroke-dasharray="2 4" ${VEC}/>`;
+    s+=`<text x="12" y="${wbY+15}" ${MONO} font-size="13" fill="${BR.WB.hue}">${BR.WB.lives}</text>`;
+    s+=`<text x="36" y="${wbY+15}" ${MONO} font-size="11" font-weight="700" fill="${BR.WB.hue}" letter-spacing=".5">WINNERS' BRACKET ▶</text>`;
+    s+=`<text x="12" y="${wbY+29}" ${MONO} font-size="8.5" fill="var(--ink-faint)">undefeated · two lives</text>`;
+    s+=`<text x="12" y="${lbY+15}" ${MONO} font-size="13" fill="${BR.LB.hue}">${BR.LB.lives}</text>`;
+    s+=`<text x="36" y="${lbY+15}" ${MONO} font-size="11" font-weight="700" fill="${BR.LB.hue}" letter-spacing=".5">LOSERS' BRACKET ◀</text>`;
+    s+=`<text x="12" y="${lbY+29}" ${MONO} font-size="8.5" fill="var(--ink-faint)">one loss · last life</text>`;
+    wb.forEach((r,i)=> s+=node(gutter+i*100, wbY+5, r.id, 86, false, r.id, 'WB'));
+    lb.forEach((r,i)=> s+=node(gutter+i*100, lbY+5, r.id, 86, false, undefined, 'LB'));
+    // converge lines into GF crossover (opt3) — orthogonal elbows sharing one
+    // collector column, matching the epoch view's calmer routing.
+    const cgx=W-198, colX=cgx-22;
+    s+=`<path d="${elbowH(gutter+wb.length*100, wbY+15, colX, H/2, 5)} L${cgx} ${H/2}" fill="none" stroke="${BR.WB.hue}" stroke-width="1.1" stroke-opacity="0.65" ${VEC}/>`;
+    s+=`<path d="${elbowH(gutter+lb.length*100, lbY+15, colX, H/2, 5)} L${cgx} ${H/2}" fill="none" stroke="${BR.LB.hue}" stroke-width="1.1" stroke-opacity="0.65" ${VEC}/>`;
+    s+=`<rect x="${cgx}" y="${H/2-26}" width="184" height="52" rx="6" fill="var(--panel-2)" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="4 3" ${VEC}/>`;
+    s+=`<text x="${cgx+92}" y="${H/2-10}" text-anchor="middle" ${MONO} font-size="9" fill="var(--ink-faint)">GRAND FINAL · crossover</text>`;
+    s+=`<text x="${cgx+92}" y="${H/2+5}" text-anchor="middle" ${MONO} font-size="12" font-weight="700"><tspan fill="${BR.WB.hue}">v6</tspan><tspan fill="var(--ink-faint)"> WB vs </tspan><tspan fill="var(--good)">v3</tspan><tspan fill="var(--ink-faint)"> ♛</tspan></text>`;
+    s+=`<text x="${cgx+92}" y="${H/2+20}" text-anchor="middle" ${MONO} font-size="9" fill="var(--good)">margin ${DATA.gf.delta_scalar}</text>`;
+    s+=`</svg>`;
+    return s;
+  }
+  // single-round (b) — THE PRIORITY VIEW: opt1's lanes + true drop routing, opt3's stacked nodes + GF crossover.
+  function epoch(){
+    const W=1180;
+    const rounds = DATA.rounds.filter(r=>r.bracket!=='GF');
+    const wbRounds = rounds.filter(r=>r.bracket==='WB');
+    const lbRounds = rounds.filter(r=>r.bracket==='LB');
+    const nodeH=20, matchGap=46;            // a match = 2 stacked nodes + a gap
+    const labelGutter=158;                  // opt1's reserved lane-label gutter
+    const maxWbMatches=Math.max(...wbRounds.map(r=>r.matches.length));
+    const maxLbMatches=Math.max(...lbRounds.map(r=>r.matches.length));
+    // band geometry: WB band on top, LB band below, an inter-band gap for the drop label.
+    const wbTitleY=18, wbColLabelY=40, wbNodesTop=50;
+    const wbBandH=wbNodesTop + maxWbMatches*matchGap + 4;
+    const wbBandTop=6;
+    const gapH=30;
+    const lbBandTop=wbBandTop+wbBandH+gapH;
+    const lbTitleY=lbBandTop-10;
+    const lbColLabelY=lbBandTop+16;
+    const lbNodesTop=lbColLabelY+12;
+    const lbBandH=lbNodesTop + maxLbMatches*matchGap + 4 - lbBandTop;
+    const H=lbBandTop+lbBandH+18;
+    const nodeW=66;
+    // columns: WB rounds across the top by their own index; LB rounds across the bottom.
+    const xR = W-244;                        // right margin before GF box
+    const x0 = labelGutter+24;
+    const wbColW=(xR-x0)/Math.max(1,wbRounds.length);
+    const lbColW=(xR-x0)/Math.max(1,lbRounds.length);
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt7 single-round">`;
+    // ── lane bands (opt1: both tinted + hue-bordered) ──
+    s+=`<rect x="0" y="${wbBandTop}" width="${xR+8}" height="${wbBandH}" rx="7" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.5" ${VEC}/>`;
+    s+=`<rect x="0" y="${lbBandTop}" width="${xR+8}" height="${lbBandH}" rx="7" fill="${BR.LB.tint}" fill-opacity="${BR.LB.tintOp}" stroke="${BR.LB.hue}" stroke-width="1" stroke-opacity="0.5" ${VEC}/>`;
+    // ── lane gutter labels (opt1: lives glyph + name + note); kept inside the
+    //    left gutter (x < gutter rule) so they never overrun the column heads. ──
+    s+=`<text x="12" y="${wbTitleY}" ${MONO} font-size="13" fill="${BR.WB.hue}">●● <tspan font-size="10" font-weight="700" letter-spacing="1.2">WINNERS'</tspan></text>`;
+    s+=`<text x="12" y="${wbTitleY+13}" ${MONO} font-size="8.5" fill="var(--ink-faint)" letter-spacing=".3">undefeated · 2 lives ▶</text>`;
+    s+=`<text x="12" y="${lbColLabelY+18}" ${MONO} font-size="13" fill="${BR.LB.hue}">●○ <tspan font-size="10" font-weight="700" letter-spacing="1.2">LOSERS'</tspan></text>`;
+    s+=`<text x="12" y="${lbColLabelY+31}" ${MONO} font-size="8.5" fill="var(--ink-faint)" letter-spacing=".3">1 loss · last life ▶</text>`;
+    s+=`<line x1="${labelGutter+6}" y1="${wbBandTop}" x2="${labelGutter+6}" y2="${lbBandTop+lbBandH}" stroke="var(--rule)" stroke-dasharray="2 4" ${VEC}/>`;
+
+    // ── render WB columns (opt3 stacked nodes) ──
+    const nodeCx={}, lbNodeCx={};
+    wbRounds.forEach((r,ci)=>{
+      const cx=x0+ci*wbColW;
+      s+=`<text x="${cx+nodeW/2}" y="${wbColLabelY}" text-anchor="middle" ${MONO} font-size="8.5" fill="var(--ink-faint)">${esc(r.label)}</text>`;
+      r.matches.forEach((m,mi)=>{
+        const my=wbNodesTop+mi*matchGap;
+        m.competitors.forEach((id,k)=>{
+          const ny=my+k*nodeH;
+          s+=node(cx, ny, id, nodeW, m.pending, m.winner, 'WB');
+          if(!(id in nodeCx)) nodeCx[id]={x:cx,y:ny};
+        });
+      });
+    });
+    // ── render LB columns ──
+    lbRounds.forEach((r,ci)=>{
+      const cx=x0+ci*lbColW;
+      s+=`<text x="${cx+nodeW/2}" y="${lbColLabelY+2}" text-anchor="middle" ${MONO} font-size="8.5" fill="var(--ink-faint)">${esc(r.label)}</text>`;
+      r.matches.forEach((m,mi)=>{
+        const my=lbNodesTop+mi*matchGap;
+        m.competitors.forEach((id,k)=>{
+          const ny=my+k*nodeH;
+          s+=node(cx, ny, id, nodeW, m.pending, m.winner, 'LB');
+          if(!(id in lbNodeCx)) lbNodeCx[id]={x:cx,y:ny};  // first (leftmost) LB entry
+        });
+      });
+    });
+
+    // ── opt1's TRUE drop connectors: each WB match loser → its exact LB re-entry
+    //    match — rerouted as calm orthogonal pipes. Every drop falls into a shared
+    //    horizontal "drop bus" running through the inter-band gap, then turns once
+    //    and descends into the TOP of its LB node. Buses are staggered onto a few
+    //    parallel lanes (ordered by source x) so overlapping runs never sit on the
+    //    same y, which kills the old fan-of-crossing-curves. ──
+    const drops=[];
+    wbRounds.forEach(r=>{
+      r.matches.forEach(m=>{
+        const lose=m.competitors.find(c=>c!==m.winner);
+        if(!lose || statusOf(lose)==='champion') return;
+        const from=nodeCx[lose], to=lbNodeCx[lose];
+        if(!from || !to) return;
+        drops.push({from,to});
+      });
+    });
+    // assign each drop a bus lane inside the gap; sort by source x so adjacent
+    // sources share lanes predictably and longer runs sit on outer lanes.
+    drops.sort((a,b)=>(a.from.x-b.from.x)||(a.to.x-b.to.x));
+    const gapTop=wbBandTop+wbBandH, gapBot=lbBandTop;
+    const laneN=Math.max(1,drops.length);
+    drops.forEach((d,i)=>{
+      const fx=d.from.x+nodeW/2, fy=d.from.y+nodeH;   // leave WB node bottom-centre
+      const tx=d.to.x+nodeW/2,   ty=d.to.y;           // enter LB node top-centre
+      // spread bus lanes evenly across the gap's usable band (with margins)
+      const busY=gapTop+6+(gapBot-gapTop-12)*((i+0.5)/laneN);
+      s+=`<path d="${elbow(fx,fy,tx,ty,busY,6)}" fill="none" stroke="${BR.LB.hue}" stroke-width="1.1" stroke-opacity="0.7" ${VEC} marker-end="url(#o7a)"/>`;
+    });
+    // a single explanatory drop caption in the inter-band gap (opt3)
+    s+=`<text x="${xR}" y="${lbTitleY}" text-anchor="end" ${MONO} font-size="8.5" fill="${BR.LB.hue}">↳ a WB loss drops to the losers' bracket — a 2nd life</text>`;
+
+    // ── GF crossover box on the right (opt3) ──
+    s+=`<rect x="${W-216}" y="${H/2-38}" width="200" height="76" rx="8" fill="var(--panel-2)" stroke="var(--accent)" stroke-dasharray="4 3" stroke-width="1.5" ${VEC}/>`;
+    s+=`<text x="${W-116}" y="${H/2-21}" text-anchor="middle" ${MONO} font-size="9" fill="var(--ink-faint)">GRAND FINAL · crossover</text>`;
+    s+=`<text x="${W-116}" y="${H/2-3}" text-anchor="middle" ${MONO} font-size="13" font-weight="700"><tspan fill="${BR.WB.hue}">v6</tspan><tspan fill="var(--ink-faint)"> WB  vs  </tspan><tspan fill="var(--good)">v3</tspan><tspan fill="var(--ink-faint)"> ♛</tspan></text>`;
+    s+=`<text x="${W-116}" y="${H/2+15}" text-anchor="middle" ${MONO} font-size="10" fill="var(--good)">margin ${DATA.gf.delta_scalar}</text>`;
+    s+=`<text x="${W-116}" y="${H/2+30}" text-anchor="middle" ${MONO} font-size="8" fill="var(--ink-faint)">an LB climber can still reach here</text>`;
+    // converge lines from the band right edges into the crossover — clean orthogonal
+    // elbows sharing one vertical collector channel just left of the GF box, so the
+    // WB and LB feeds read as two pipes meeting a junction rather than crossed S-curves.
+    const colX=W-236, gfY=H/2, gfLeft=W-216;
+    const wbMidY=wbBandTop+wbBandH/2, lbMidY=lbBandTop+lbBandH/2;
+    s+=`<path d="${elbowH(xR+8,wbMidY,colX,gfY,5)} L${gfLeft} ${gfY}" fill="none" stroke="${BR.WB.hue}" stroke-width="1.1" stroke-opacity="0.55" ${VEC}/>`;
+    s+=`<path d="${elbowH(xR+8,lbMidY,colX,gfY,5)} L${gfLeft} ${gfY}" fill="none" stroke="${BR.LB.hue}" stroke-width="1.1" stroke-opacity="0.55" ${VEC}/>`;
+
+    s+=`<defs><marker id="o7a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="${BR.LB.hue}"/></marker></defs>`;
+    s+=`</svg>`;
+    return s;
+  }
+  // within-round: opt3's clean two-competitor matchup, but on a lane-tinted strip with opt1's gate bar.
+  function round(){
+    const W=1180,H=160;
+    const r=DATA.rounds.find(x=>x.label==="Winners' final");
+    const m=r.matches[0];
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt7 within-round">`;
+    // a WB lane tint behind the matchup so the round's bracket is unmistakable
+    s+=`<rect x="0" y="6" width="${W}" height="${H-12}" rx="8" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.4" ${VEC}/>`;
+    s+=`<text x="14" y="26" ${MONO} font-size="11" font-weight="700" fill="${BR.WB.hue}" letter-spacing="1">●● WINNERS' FINAL — winner stays undefeated (2 lives), loser drops to LB (1 life)</text>`;
+    const x=60,y=50;
+    m.competitors.forEach((id,k)=>{
+      const ry=y+k*48, isWin=id===m.winner;
+      const edgeHue=BR.WB.hue;
+      s+=`<rect x="${x}" y="${ry}" width="380" height="40" rx="7" fill="var(--panel-2)" stroke="${isWin?'var(--good)':'var(--caution)'}" stroke-width="${isWin?2:1.3}" ${VEC}/>`;
+      s+=`<rect x="${x}" y="${ry}" width="4" height="40" rx="2" fill="${edgeHue}" ${VEC}/>`;
+      s+=`<text x="${x+16}" y="${ry+26}" ${MONO} font-size="16" font-weight="700" fill="var(--ink)">${esc(id)}</text>`;
+      s+=`<text x="${x+96}" y="${ry+26}" ${MONO} font-size="13" fill="${lifeColor(lifeOf(id))}">${lifePips(lifeOf(id))}</text>`;
+      s+=`<text x="${x+160}" y="${ry+26}" ${MONO} font-size="12" fill="var(--ink-soft)">scalar ${scalarOf(id).toFixed(3)}</text>`;
+      s+=`<text x="${x+372}" y="${ry+26}" text-anchor="end" ${MONO} font-size="11" fill="${isWin?'var(--good)':'var(--caution)'}">${isWin?'→ GF gate':'↓ to LB (1 life)'}</text>`;
+    });
+    s+=`<text x="${x+440}" y="${y+18}" ${MONO} font-size="10" fill="var(--ink-faint)">gate margin Δ</text>`;
+    s+=gateBar(x+440, y+26, 200, m.delta_scalar, 9);
+    s+=`<text x="${x+440}" y="${y+62}" ${MONO} font-size="13" font-weight="700" fill="var(--good)">${m.delta_scalar}</text>`;
+    s+=`</svg>`;
+    return s;
+  }
+  OPTIONS.push({
+    num:7, title:'Mirror-lane bracket (opt 1 + opt 3 combo)',
+    rationale:'The combo: opt 1’s full-width tinted LANE BANDS (WB top / LB bottom) with the lives glyph + name + note in a dedicated left gutter, and its TRUE drop connectors routing each WB loser to the exact LB match it re-enters — fused with opt 3’s stacked bracket NODES (both competitors shown per match, winner emphasised, an edge-bar carrying the bracket hue, life pips per node) and its literal GF CROSSOVER box where the WB finalist meets the champion. You get opt 3’s match-level detail without losing opt 1’s at-a-glance "which lane, how many lives".',
+    hero, epoch, round
+  });
+})();
+
+/* ============================ OPTION 8 ============================
+   "Radial bracket" — a polar layout. The grand-final crossover sits at
+   the CENTRE; rounds fan OUTWARD as concentric rings. The winners'
+   bracket occupies the upper arc (accent, ●● two lives), the losers'
+   bracket the lower arc (caution, ●○ one life); the dead outer ring is
+   the elimination boundary (○○ two losses). Time reads inward: the
+   outermost ring is round 1, progress spirals toward the GF at the core.
+   A gen that loses crosses the WB↔LB equator on a caution drop-arc, so
+   "second life" is a visible hand-off from the top half to the bottom.
+   ================================================================ */
+(function(){
+  const TAU=Math.PI*2;
+  // polar helper: angle in degrees (0=up, clockwise), radius -> {x,y} about centre.
+  function pol(cx,cy,r,deg){
+    const a=(deg-90)*Math.PI/180;
+    return { x: cx + r*Math.cos(a), y: cy + r*Math.sin(a) };
+  }
+  // an annular-sector wedge path (a ring band slice between two radii / two angles).
+  function wedge(cx,cy,r0,r1,a0,a1){
+    const p0=pol(cx,cy,r1,a0), p1=pol(cx,cy,r1,a1);
+    const p2=pol(cx,cy,r0,a1), p3=pol(cx,cy,r0,a0);
+    const large=(a1-a0)%360>180?1:0;
+    return `M${p0.x.toFixed(1)} ${p0.y.toFixed(1)} A${r1} ${r1} 0 ${large} 1 ${p1.x.toFixed(1)} ${p1.y.toFixed(1)} L${p2.x.toFixed(1)} ${p2.y.toFixed(1)} A${r0} ${r0} 0 ${large} 0 ${p3.x.toFixed(1)} ${p3.y.toFixed(1)} Z`;
+  }
+  // a chip drawn tangent to the ring at (r,deg), text upright (no rotation for legibility).
+  function radChip(cx,cy,r,deg,id,opts){
+    opts=opts||{};
+    const p=pol(cx,cy,r,deg);
+    const w=opts.w||44, h=18;
+    const x=p.x-w/2, y=p.y-h/2;
+    const elim=statusOf(id)==='eliminated';
+    const brHue=opts.bracket==='LB'?BR.LB.hue:opts.bracket==='WB'?BR.WB.hue:brOf(id).hue;
+    const stroke=elim?'var(--bad)':opts.winner?'var(--good)':brHue;
+    const dash=opts.pending?'stroke-dasharray="3 3"':'';
+    let s=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w}" height="${h}" rx="4" fill="var(--panel)" stroke="${stroke}" stroke-width="${opts.winner?1.7:1.1}" ${dash} ${VEC}/>`;
+    s+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="3" height="${h}" rx="1.5" fill="${brHue}" ${VEC}/>`;
+    s+=`<text x="${(x+9).toFixed(1)}" y="${(y+13).toFixed(1)}" ${MONO} font-size="9.5" font-weight="${opts.winner?700:400}" fill="${elim?'var(--bad)':'var(--ink)'}" ${elim?'text-decoration="line-through"':''}>${esc(id)}</text>`;
+    s+=`<text x="${(x+w-4).toFixed(1)}" y="${(y+13).toFixed(1)}" text-anchor="end" font-size="7" fill="${lifeColor(lifeOf(id))}">${lifePips(lifeOf(id))}</text>`;
+    return s;
+  }
+  // shared radial skeleton: WB UPPER half-disc (accent), LB LOWER half-disc (caution),
+  // out rim (bad), GF core. Angles are clockwise from top; the WB top semicircle sweeps
+  // 270→450 (left→top→right), the LB bottom semicircle sweeps 90→270 (right→bottom→left).
+  function skeleton(cx,cy,rMin,rMax,small){
+    let s='';
+    // upper half-disc tint = WB region, lower = LB region, outer rim band = elimination boundary.
+    s+=`<path d="${wedge(cx,cy,rMin,rMax,272,448)}" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.4" ${VEC}/>`;
+    s+=`<path d="${wedge(cx,cy,rMin,rMax,92,268)}" fill="${BR.LB.tint}" fill-opacity="${BR.LB.tintOp}" stroke="${BR.LB.hue}" stroke-width="1" stroke-opacity="0.4" ${VEC}/>`;
+    // elimination rim (○○) just outside the play area
+    s+=`<circle cx="${cx}" cy="${cy}" r="${rMax+5}" fill="none" stroke="var(--bad)" stroke-width="1" stroke-opacity="0.4" stroke-dasharray="2 4" ${VEC}/>`;
+    // the WB↔LB equator (the horizontal diameter) — the line a drop must cross.
+    s+=`<line x1="${cx-rMax-12}" y1="${cy}" x2="${cx+rMax+12}" y2="${cy}" stroke="var(--rule)" stroke-dasharray="3 4" ${VEC}/>`;
+    if(!small){
+      s+=`<text x="${cx}" y="${cy-rMax-12}" text-anchor="middle" ${MONO} font-size="10" font-weight="700" fill="${BR.WB.hue}" letter-spacing="1">●● WINNERS' BRACKET (2 lives)</text>`;
+      s+=`<text x="${cx}" y="${cy+rMax+22}" text-anchor="middle" ${MONO} font-size="10" font-weight="700" fill="${BR.LB.hue}" letter-spacing="1">●○ LOSERS' BRACKET (1 life)</text>`;
+      s+=`<text x="${cx+rMax+10}" y="${cy-4}" ${MONO} font-size="8" fill="var(--bad)" letter-spacing="1">○○ ELIMINATED</text>`;
+      s+=`<text x="${cx+rMax+10}" y="${cy+8}" ${MONO} font-size="7.5" fill="var(--ink-faint)">outer rim = 2nd loss</text>`;
+      s+=`<text x="${cx-rMax-10}" y="${cy-4}" text-anchor="end" ${MONO} font-size="7.5" fill="var(--ink-faint)">R1 outer →</text>`;
+      s+=`<text x="${cx-rMax-10}" y="${cy+8}" text-anchor="end" ${MONO} font-size="7.5" fill="var(--ink-faint)">→ GF core (time spirals in)</text>`;
+    }
+    return s;
+  }
+  // GF crossover node at the centre (the WB finalist meets the champion).
+  function gfCore(cx,cy,small){
+    const rr=small?22:30;
+    let s=`<circle cx="${cx}" cy="${cy}" r="${rr}" fill="var(--panel-2)" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="4 3" ${VEC}/>`;
+    if(small){
+      s+=`<text x="${cx}" y="${cy-2}" text-anchor="middle" ${MONO} font-size="8" fill="var(--ink-faint)">GF</text>`;
+      s+=`<text x="${cx}" y="${cy+9}" text-anchor="middle" ${MONO} font-size="9" font-weight="700"><tspan fill="${BR.WB.hue}">v6</tspan><tspan fill="var(--ink-faint)">·</tspan><tspan fill="var(--good)">v3</tspan></text>`;
+    } else {
+      s+=`<text x="${cx}" y="${cy-9}" text-anchor="middle" ${MONO} font-size="8" fill="var(--ink-faint)">GRAND FINAL</text>`;
+      s+=`<text x="${cx}" y="${cy+4}" text-anchor="middle" ${MONO} font-size="11" font-weight="700"><tspan fill="${BR.WB.hue}">v6</tspan><tspan fill="var(--ink-faint)"> vs </tspan><tspan fill="var(--good)">v3</tspan></text>`;
+      s+=`<text x="${cx}" y="${cy+16}" text-anchor="middle" ${MONO} font-size="8" fill="var(--good)">Δ ${DATA.gf.delta_scalar}</text>`;
+    }
+    return s;
+  }
+  // place a bracket's rounds along an arc: outermost ring = first round, inner = later;
+  // matches spread across the arc angle. side 'WB' = upper sweep, 'LB' = lower sweep.
+  function placeRounds(cx,cy,rMin,rMax,rounds,side,small){
+    let s='';
+    const positions={};                       // id -> {r,deg}
+    const n=rounds.length;
+    // angular sweep for each side: WB spreads across the TOP arc (290°→430°, i.e.
+    // upper-left → top → upper-right); LB across the BOTTOM arc (110°→250°,
+    // lower-right → bottom → lower-left). Both stay clear of the equator.
+    const a0 = side==='WB' ? 290 : 110, a1 = side==='WB' ? 430 : 250;
+    rounds.forEach((r,ri)=>{
+      // outer→inner: round 0 at rMax, last round near rMin.
+      const rr = n>1 ? rMax - (rMax-rMin)*(ri/(n)) : rMax;
+      const mc=r.matches.length;
+      r.matches.forEach((m,mi)=>{
+        // each match gets one angular slot; its two competitors sit a hair apart in angle.
+        const slot = mc>1 ? a0 + (a1-a0)*((mi+0.5)/mc) : (a0+a1)/2;
+        m.competitors.forEach((id,k)=>{
+          const dd = mc>1 ? 7 : 9;
+          const deg = slot + (k===0?-dd:dd);
+          s+=radChip(cx,cy,rr,deg,id,{winner:m.winner===id,pending:m.pending,bracket:side,w:small?38:46});
+          positions[id]={r:rr,deg};
+        });
+      });
+      if(!small){
+        // a faint round-label tick at the arc's leading edge
+        const lp=pol(cx,cy,rr, side==='WB'?a0-6:a1+6);
+        s+=`<text x="${lp.x.toFixed(1)}" y="${lp.y.toFixed(1)}" text-anchor="middle" ${MONO} font-size="7" fill="var(--ink-faint)">${esc(r.label.replace(/Winners'|Losers'/,'').trim())}</text>`;
+      }
+    });
+    return {svg:s, positions};
+  }
+  function hero(){
+    const W=1180,H=150, cx=W/2, cy=H/2, rMin=34, rMax=60;
+    const wbR=DATA.rounds.filter(r=>r.bracket==='WB');
+    const lbR=DATA.rounds.filter(r=>r.bracket==='LB');
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt8 hero">`;
+    s+=skeleton(cx,cy,rMin,rMax,true);
+    // hero: just the standings placed on their side's arc (compact), GF at core.
+    const wb=DATA.standings.filter(x=>x.side==='WB');
+    const lb=DATA.standings.filter(x=>x.side==='LB');
+    wb.forEach((r,i)=>{ const deg=300+ (120)*((i+0.5)/wb.length); s+=radChip(cx,cy,rMax+18,deg,r.id,{bracket:'WB',w:42}); }); // top arc
+    lb.forEach((r,i)=>{ const deg=120+ (120)*((i+0.5)/lb.length); s+=radChip(cx,cy,rMax+18,deg,r.id,{bracket:'LB',w:42}); }); // bottom arc
+    s+=gfCore(cx,cy,true);
+    // compact side captions left/right
+    s+=`<text x="14" y="20" ${MONO} font-size="10" font-weight="700" fill="${BR.WB.hue}" letter-spacing="1">●● WINNERS' (top)</text>`;
+    s+=`<text x="14" y="${H-10}" ${MONO} font-size="10" font-weight="700" fill="${BR.LB.hue}" letter-spacing="1">●○ LOSERS' (bottom)</text>`;
+    s+=`<text x="${W-14}" y="20" text-anchor="end" ${MONO} font-size="9" fill="var(--ink-faint)">rounds spiral inward → GF at core</text>`;
+    s+=`</svg>`;
+    return s;
+  }
+  // single-round (b) — THE PRIORITY VIEW: the full radial progression.
+  function epoch(){
+    const W=1180,H=560, cx=W/2, cy=H/2, rMin=66, rMax=212;
+    const wbR=DATA.rounds.filter(r=>r.bracket==='WB');
+    const lbR=DATA.rounds.filter(r=>r.bracket==='LB');
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt8 single-round">`;
+    s+=skeleton(cx,cy,rMin,rMax,false);
+    const wb=placeRounds(cx,cy,rMin,rMax,wbR,'WB',false);
+    const lb=placeRounds(cx,cy,rMin,rMax,lbR,'LB',false);
+    // drop hand-offs: a WB loser crosses into its LB re-entry chip. Routed as
+    // RIM-HUGGING paths instead of chords through the disc: each drop runs radially
+    // OUT to a transfer ring just past the play area, ARCS along that ring (around
+    // the side, never across the centre) to the target's angle, then radially IN to
+    // the LB chip. Concurrent transfers get staggered transfer radii (concentric,
+    // non-overlapping) and each picks the SHORTER wrap side, so the old tangle of
+    // crossing chords becomes a few clean, followable arcs that skirt the rim.
+    s+=`<defs><marker id="o8a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="${BR.LB.hue}"/></marker></defs>`;
+    const o8drops=[];
+    wbR.forEach(r=>{
+      r.matches.forEach(m=>{
+        const lose=m.competitors.find(c=>c!==m.winner);
+        if(!lose || statusOf(lose)==='champion') return;
+        const from=wb.positions[lose], to=lb.positions[lose];
+        if(!from||!to) return;
+        o8drops.push({lose,from,to});
+      });
+    });
+    // order by source angle so adjacent sources get adjacent transfer rings.
+    o8drops.sort((a,b)=>a.from.deg-b.from.deg);
+    const nD=Math.max(1,o8drops.length);
+    o8drops.forEach((d,i)=>{
+      // normalise angles to [0,360); WB lives on the top arc (~290..430→ around 0),
+      // LB on the bottom arc (~110..250). Pick the wrap side that is shorter.
+      const norm=a=>((a%360)+360)%360;
+      const a0=norm(d.from.deg), a1=norm(d.to.deg);
+      let diff=a1-a0; if(diff>180)diff-=360; if(diff<-180)diff+=360;  // signed shortest sweep
+      const sweepFlag=diff>0?1:0;                                     // SVG arc sweep direction
+      const large=Math.abs(diff)>180?1:0;                            // always 0 here (shortest)
+      // staggered transfer ring outside the rim; spread across a thin band.
+      const rT=rMax+14+(i*7);
+      const pOut=pol(cx,cy,rT,d.from.deg);          // climb to the transfer ring at source angle
+      const pIn =pol(cx,cy,rT,d.to.deg);            // ride the ring to the target angle
+      const pSrc=pol(cx,cy,d.from.r+9,d.from.deg);  // just outside the source chip
+      const pDst=pol(cx,cy,d.to.r+9,d.to.deg);      // just outside the target chip
+      s+=`<path d="M${pSrc.x.toFixed(1)} ${pSrc.y.toFixed(1)} L${pOut.x.toFixed(1)} ${pOut.y.toFixed(1)} `
+        + `A${rT.toFixed(1)} ${rT.toFixed(1)} 0 ${large} ${sweepFlag} ${pIn.x.toFixed(1)} ${pIn.y.toFixed(1)} `
+        + `L${pDst.x.toFixed(1)} ${pDst.y.toFixed(1)}" `
+        + `fill="none" stroke="${BR.LB.hue}" stroke-width="1.1" stroke-dasharray="3 3" stroke-opacity="0.7" ${VEC} marker-end="url(#o8a)"/>`;
+    });
+    s+=wb.svg + lb.svg;
+    s+=gfCore(cx,cy,false);
+    // a single drop legend near the equator
+    s+=`<text x="${cx+rMax-40}" y="${cy-6}" text-anchor="end" ${MONO} font-size="8" fill="${BR.LB.hue}">↘ a WB loss crosses the equator into the LB (2nd life)</text>`;
+    s+=`</svg>`;
+    return s;
+  }
+  // within-round: one match shown as a radial slice (the two competitors on their ring, GF-ward arrow).
+  function round(){
+    const W=1180,H=300, cx=W/2, cy=H/2+10, rMin=54, rMax=120;
+    const r=DATA.rounds.find(x=>x.label==="Winners' final");
+    const m=r.matches[0];
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Opt8 within-round">`;
+    s+=`<text x="${cx}" y="22" text-anchor="middle" ${MONO} font-size="11" font-weight="700" fill="${BR.WB.hue}" letter-spacing="1">●● WINNERS' FINAL — a radial slice: winner spirals inward to the GF core, loser drops across the equator</text>`;
+    // upper WB wedge tint for this match's slice (a slice straddling the TOP, deg 338→382)
+    s+=`<path d="${wedge(cx,cy,rMin,rMax,338,382)}" fill="${BR.WB.tint}" fill-opacity="${BR.WB.tintOp}" stroke="${BR.WB.hue}" stroke-width="1" stroke-opacity="0.4" ${VEC}/>`;
+    s+=`<line x1="${cx-rMax-30}" y1="${cy}" x2="${cx+rMax+30}" y2="${cy}" stroke="var(--rule)" stroke-dasharray="3 4" ${VEC}/>`;
+    s+=`<text x="${cx-rMax-30}" y="${cy-6}" ${MONO} font-size="8" fill="${BR.WB.hue}">WB (top)</text>`;
+    s+=`<text x="${cx-rMax-30}" y="${cy+14}" ${MONO} font-size="8" fill="${BR.LB.hue}">LB (bottom)</text>`;
+    // two competitors at the outer ring, a hair apart in angle, straddling the TOP (deg 0/360)
+    m.competitors.forEach((id,k)=>{
+      const deg=(k===0?348:12);
+      const isWin=id===m.winner;
+      const p=pol(cx,cy,rMax,deg);
+      s+=radChip(cx,cy,rMax,deg,id,{winner:isWin,bracket:'WB',w:64});
+      s+=`<text x="${p.x.toFixed(1)}" y="${(p.y-16).toFixed(1)}" text-anchor="middle" ${MONO} font-size="9" fill="${lifeColor(lifeOf(id))}">${lifePips(lifeOf(id))} · ${scalarOf(id).toFixed(3)}</text>`;
+      // path: winner spirals inward (down toward the core); loser drops across the equator to the LB half
+      if(isWin){
+        const pin=pol(cx,cy,rMin+6,deg);
+        s+=`<path d="M${p.x.toFixed(1)} ${(p.y+10).toFixed(1)} L ${pin.x.toFixed(1)} ${(pin.y).toFixed(1)}" stroke="var(--good)" stroke-width="1.6" ${VEC} marker-end="url(#o8b)"/>`;
+        s+=`<text x="${pin.x.toFixed(1)}" y="${(pin.y-8).toFixed(1)}" text-anchor="middle" ${MONO} font-size="9" fill="var(--good)">→ GF gate</text>`;
+      } else {
+        // caution drop, same rim-hugging language as the epoch view: climb radially
+        // out to a transfer ring, arc around the LEFT side past the equator, descend
+        // radially into the lower (LB) half — no chord through the centre.
+        const rT=rMax+16, landDeg=200;        // landing angle in the lower-left LB region
+        const pSrc=pol(cx,cy,rMax+8,deg), pOut=pol(cx,cy,rT,deg);
+        const pIn=pol(cx,cy,rT,landDeg), land=pol(cx,cy,rMax-6,landDeg);
+        s+=`<path d="M${pSrc.x.toFixed(1)} ${pSrc.y.toFixed(1)} L${pOut.x.toFixed(1)} ${pOut.y.toFixed(1)} `
+          + `A${rT} ${rT} 0 0 0 ${pIn.x.toFixed(1)} ${pIn.y.toFixed(1)} `
+          + `L${land.x.toFixed(1)} ${land.y.toFixed(1)}" fill="none" stroke="${BR.LB.hue}" stroke-width="1.3" stroke-dasharray="3 2" ${VEC} marker-end="url(#o8c)"/>`;
+        s+=`<text x="${land.x.toFixed(1)}" y="${(land.y+16).toFixed(1)}" text-anchor="middle" ${MONO} font-size="9" fill="${BR.LB.hue}">↓ drops to LB (1 life)</text>`;
+      }
+    });
+    // gate bar + GF core
+    s+=`<text x="${cx+rMax+50}" y="${cy-30}" ${MONO} font-size="10" fill="var(--ink-faint)">gate margin Δ</text>`;
+    s+=gateBar(cx+rMax+50, cy-22, 180, m.delta_scalar, 9);
+    s+=`<text x="${cx+rMax+50}" y="${cy+4}" ${MONO} font-size="13" font-weight="700" fill="var(--good)">${m.delta_scalar}</text>`;
+    s+=gfCore(cx,cy,false);
+    s+=`<defs>
+      <marker id="o8b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--good)"/></marker>
+      <marker id="o8c" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="${BR.LB.hue}"/></marker>
+    </defs>`;
+    s+=`</svg>`;
+    return s;
+  }
+  OPTIONS.push({
+    num:8, title:'Radial bracket (polar progression)',
+    rationale:'A polar layout: the grand-final crossover sits at the CENTRE and rounds fan OUTWARD as concentric rings, so time reads inward — the outer ring is round 1, the progression spirals to the GF core. The winners’ bracket owns the UPPER arc (accent, ●● two lives), the losers’ bracket the LOWER arc (caution, ●○ one life), split by a dashed equator; the dashed outer rim is the elimination boundary (○○ two losses). A WB loss is a caution drop-arc that crosses the equator from the top half to the bottom — so "second life" is a visible hand-off between the two halves, and two losses pushes a gen out past the rim.',
+    hero, epoch, round
+  });
+})();
+
+/* ===================== RENDER ALL OPTIONS ===================== */
+function viewBlock(label, tag, svg){
+  return `<div class="view">
+    <div class="view-label">${esc(label)} <span class="tag">${esc(tag)}</span></div>
+    <div class="view-box ${label.toLowerCase().includes('hero')?'hero':''}"><figure>${svg}</figure></div>
+  </div>`;
+}
+const host = document.getElementById('options');
+host.innerHTML = OPTIONS.map(o => `
+  <div class="opt">
+    <div class="opt-head">
+      <span class="opt-num">Opt ${o.num}</span>
+      <span class="opt-title">${esc(o.title)}</span>
+    </div>
+    <div class="opt-rationale">${o.rationale}</div>
+    ${viewBlock('Hero glance — the compacted figure that fills the hero\'s structure slot', 'compact · top-bar width · at-a-glance standings', o.hero())}
+    ${viewBlock('Single-round — the full tournament (across its bracket-rounds / rungs / pairings)', 'whole epoch across its rounds', o.epoch())}
+    ${viewBlock('Within-round — one bracket-round / rung / pairing in detail', 'detailed bracket / match', o.round())}
+  </div>`).join('');
+
+/* ===== Console colour-scheme picker — 16 themes ===== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME = "monokai";
+const THEME_IDS = THEMES.map(t => t[0]);
+function strip(swatches, sm) {
+  return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">` +
+    swatches.map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('') + `</span>`;
+}
+function mountThemePicker(hostId) {
+  const host = document.getElementById(hostId);
+  let value = DEFAULT_THEME, open = false, activeIdx = THEME_IDS.indexOf(value);
+  const byId = new Map(THEMES.map(t => [t[0], t]));
+  host.innerHTML =
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw]) =>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             ${strip(sw)}<span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd = host.querySelector('.dt-cd');
+  const trigger = host.querySelector('.dt-cd-trigger');
+  const trigStrip = host.querySelector('.dt-cd-trig-strip');
+  const trigName = host.querySelector('.dt-cd-trig-name');
+  const list = host.querySelector('.dt-cd-list');
+  const options = Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id) {
+    value = THEME_IDS.includes(id) ? id : DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme', value);
+    const def = byId.get(value);
+    trigStrip.className = 'dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden', 'true');
+    trigStrip.innerHTML = def[2].map(c => `<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent = def[1];
+    options.forEach(o => o.setAttribute('aria-selected', String(o.getAttribute('data-theme') === value)));
+  }
+  function setActive(i) {
+    activeIdx = (i + options.length) % options.length;
+    options.forEach((o,k) => o.classList.toggle('dt-cd-active', k === activeIdx));
+  }
+  function setOpen(next) {
+    open = next; cd.classList.toggle('dt-cd-open', open);
+    trigger.setAttribute('aria-expanded', String(open));
+    if (open) setActive(Math.max(0, THEME_IDS.indexOf(value)));
+  }
+  function choose(id) { applyTheme(id); setOpen(false); }
+  options.forEach(o => o.addEventListener('click', () => choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click', () => setOpen(!open));
+  trigger.addEventListener('keydown', ev => {
+    if (['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)) { ev.preventDefault(); setOpen(true); list.focus?.(); }
+  });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape') { ev.preventDefault(); setOpen(false); trigger.focus(); }
+    else if (ev.key === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx+1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx-1); }
+    else if (['Enter',' ','Spacebar'].includes(ev.key)) {
+      ev.preventDefault();
+      const id = options[activeIdx]?.getAttribute('data-theme'); if (id) choose(id);
+    }
+  });
+  document.addEventListener('click', ev => {
+    if (!open) return; let n = ev.target; while (n) { if (n === cd) return; n = n.parentNode; } setOpen(false);
+  });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+</script>
+<style>html.embed-bare,html.embed-bare body{padding:0!important;margin:0!important}html.embed-bare .opt,html.embed-bare section{margin:0!important}</style>
+<script>window.__EMBED_CFG__={optSel:'#options > div.opt',bareHide:['.opt-head','.opt-rationale','.view-label'],viewSel:'.view',bareKeepViews:[0,1]};</script>
+<script src="_embed.js"></script>
+</body>
+</html>
