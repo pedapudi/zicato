@@ -19,7 +19,7 @@ This document covers:
   (§1).
 - Loop health as a robustness concern — a toothless eval is a
   failure mode (§2).
-- The detectors and their severities (§3): the five "running-but-
+- The detectors and their severities (§3): the six "running-but-
   meaningless" detectors plus the "running-but-fake-progress"
   `generalization_gap` detector and the `refresh_cadence` recommendation.
 - The `LoopHealth` report (§4).
@@ -192,7 +192,29 @@ board is drift-only. Severity is **`info`**, not `warning` —
 drift-loss-only is a supported mode, so this is a *notice*, not an
 alarm. Silent on an empty board.
 
-### 3.5 Stalled loop — `stalled_loop`
+### 3.5 Dead judge — `dead_judge`
+
+**What it catches.** A board-declared in-run **process judge that never
+fires** across the whole epoch. Each board entry's `judges` declares one or
+more process judges; on a violation a judge emits a goldfive `custom` drift
+the reducer attributes back as a `custom:<judge_name>` count on the run's
+`loss.json` ([BOARD-FORMAT.md](BOARD-FORMAT.md) / [SCORING.md](SCORING.md)).
+A judge whose attributed kind appears in *no* run is either mis-wired (it
+keys on events that are never emitted) or its criterion is unreachable —
+dead weight that gives a false sense of coverage. This is the "judge that
+never fires" smell called out in `skills/zicato-design-judges` and failure
+mode #3 in the board-audit playbook (`skills/zicato-audit-board`).
+
+**Signal.** Collects the set of declared judge `name`s from the board and
+the set of attributed judge names that fired across every run's
+`drift_counts`. Any declared judge absent from the fired set is reported in
+one **`warning`** finding (`detail.dead_judges` lists them). The inverse —
+a judge firing on every run — is *not* a finding: loud is not dead, and a
+judge can be legitimately always-on. Silent when no entry declares a judge
+(drift-/expectation-only board) or no run has landed yet (nothing has had a
+chance to fire).
+
+### 3.6 Stalled loop — `stalled_loop`
 
 **What it catches.** The proposer is not finding improvements — a run
 of consecutive rejected generations.
@@ -208,7 +230,7 @@ attention; it is also the L5 circuit breaker's territory
 Silent until `stalled_rejects` evaluated experiments exist and the
 trailing reject-run reaches the threshold.
 
-### 3.6 Generalization gap — `generalization_gap`
+### 3.7 Generalization gap — `generalization_gap`
 
 **What it catches.** The "running-but-**fake-progress**" failure — the
 counterpart to the other detectors' "running-but-meaningless." Where they
@@ -245,7 +267,7 @@ disabled — every generation's holdout loss is `null`) or fewer than two
 generations carry a measured holdout. This is the safe, default-on degrade:
 a board too small to split simply never trips it.
 
-### 3.7 Board-refresh cadence — `refresh_cadence`
+### 3.8 Board-refresh cadence — `refresh_cadence`
 
 **What it catches.** A contract that has been mined for "long enough" even
 without a visibly widening gap — across many generations even the *holdout*
@@ -263,7 +285,7 @@ a **recommendation, never a forced auto-roll**: the operator rolls (or an
 explicitly-configured auto-stop acts). Silent when no ceiling is configured
 or the contract has not yet reached it.
 
-### 3.8 Severity summary
+### 3.9 Severity summary
 
 Each detector emits a *fixed* severity (the shipped detectors do not
 escalate by severity tier — they either fire at their one severity or
@@ -275,6 +297,7 @@ stay silent):
 | `non_differentiating_entry` | `warning` | a board entry's `drift_loss` is identical across every generation it ran under (one finding per such entry) |
 | `flat_drift_signal` | `warning` | total `drift:`-namespace metric count is zero across all runs |
 | `no_expectations` | `info` | fraction of entries without an expectation `> no_expectations_fraction` |
+| `dead_judge` | `warning` | a board-declared in-run judge never fired (no `custom:<judge_name>` count) across any run in the epoch |
 | `stalled_loop` | `warning` | trailing run of `rejected` decisions reaches `stalled_rejects` |
 | `generalization_gap` | `warning` / `critical` | the champion's `holdout_loss - train_loss` gap has *widened* past `generalization_gap_warn` / `_crit` (board memorization) |
 | `refresh_cadence` | `info` | evaluated generations under the contract reach `max_generations_per_contract` |

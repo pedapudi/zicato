@@ -17,11 +17,13 @@ from zicato.core.types import (
     BoardEntry,
     DriftCount,
     Expectation,
+    JudgeSpec,
     LossProfile,
 )
 from zicato.health.diagnostics import (
     HealthFinding,
     assess_loop_health,
+    detect_dead_judge,
     detect_degenerate_scoring,
     detect_flat_drift_signal,
     detect_generalization_gap,
@@ -268,6 +270,64 @@ def test_no_expectations_silent_at_or_below_threshold() -> None:
 
 def test_no_expectations_silent_on_empty_board() -> None:
     assert detect_no_expectations([]) == []
+
+
+# ---------------------------------------------------------------------------
+# dead_judge
+# ---------------------------------------------------------------------------
+
+
+def _board_entry_with_judges(entry_id: str, judge_names: list[str]) -> BoardEntry:
+    """Build a single-turn entry declaring the named in-run judges."""
+    return BoardEntry(
+        id=entry_id,
+        kind="single_turn",
+        wall_clock_budget_seconds=60,
+        input="hello",
+        judges=tuple(
+            JudgeSpec(name=name, mode="inline", body="never violated", severity="warning")
+            for name in judge_names
+        ),
+    )
+
+
+def _custom(judge_name: str) -> DriftCount:
+    """A custom-judge-attributed drift count (what the reducer writes)."""
+    return DriftCount(kind=f"custom:{judge_name}", severity="warning", count=1)
+
+
+def test_dead_judge_fires_for_declared_but_never_fired_judge() -> None:
+    board = [_board_entry_with_judges("e1", ["lives", "dead"])]
+    losses_by_generation = {
+        "v0": [_loss("e1", "v0", drift_counts=(_custom("lives"),))],
+        "v1": [_loss("e1", "v1", drift_counts=(_custom("lives"),))],
+    }
+    findings = detect_dead_judge(losses_by_generation, board)
+    assert len(findings) == 1
+    assert findings[0].code == "dead_judge"
+    assert findings[0].severity == "warning"
+    assert findings[0].detail["dead_judges"] == ["dead"]
+    assert findings[0].detail["fired_judges"] == ["lives"]
+
+
+def test_dead_judge_silent_when_every_judge_fires() -> None:
+    board = [_board_entry_with_judges("e1", ["a", "b"])]
+    losses_by_generation = {
+        "v0": [_loss("e1", "v0", drift_counts=(_custom("a"), _custom("b")))],
+    }
+    assert detect_dead_judge(losses_by_generation, board) == []
+
+
+def test_dead_judge_silent_when_no_judges_declared() -> None:
+    board = [_board_entry("e1", with_expectation=True)]
+    losses_by_generation = {"v0": [_loss("e1", "v0")]}
+    assert detect_dead_judge(losses_by_generation, board) == []
+
+
+def test_dead_judge_silent_when_no_runs_yet() -> None:
+    # A declared judge cannot be "dead" before any run has had a chance to fire.
+    board = [_board_entry_with_judges("e1", ["pending"])]
+    assert detect_dead_judge({}, board) == []
 
 
 # ---------------------------------------------------------------------------
