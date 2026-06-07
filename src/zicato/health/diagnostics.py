@@ -425,6 +425,87 @@ def detect_no_expectations(
     ]
 
 
+def detect_dead_judge(
+    losses_by_generation: dict[str, list[LossProfile]],
+    board_entries: list[BoardEntry],
+) -> list[HealthFinding]:
+    """Flag board-declared in-run judges that never fired across the epoch.
+
+    Every board entry's :attr:`BoardEntry.judges` declares one or more
+    PROCESS judges. On a violation a judge emits a goldfive ``custom``
+    drift the reducer attributes back to the judge as a
+    ``custom:<judge_name>`` :class:`DriftCount` on the run's
+    ``loss.json``. A judge whose attributed kind never appears in ANY run
+    of the epoch fired zero times — it is either mis-wired (the events it
+    keys on are never emitted) or its criterion is unreachable. Either
+    way it contributes no discrimination and gives a false sense of
+    coverage. This is failure mode #3 in the board-audit playbook
+    (``skills/zicato-audit-board``) and the "judge that never fires"
+    smell in ``skills/zicato-design-judges``.
+
+    Severity is ``warning``: a 0-fire judge is dead weight, but a board
+    can still optimize on its other signals. Note the inverse is NOT a
+    finding — a judge firing on EVERY run is loud, not dead, and may be
+    perfectly correct.
+
+    Silent when there are no runs yet (nothing has had a chance to fire)
+    or no entry declares a judge (drift-/expectation-only board).
+    """
+    # Lazy import keeps the diagnostics module dependency-light and
+    # `zicato --help` fast; the reducer owns the attributed-kind parse.
+    from zicato.telemetry.reducer import split_judge_attributed_kind  # noqa: PLC0415
+
+    declared: set[str] = set()
+    for entry in board_entries:
+        for judge in entry.judges:
+            if judge.name:
+                declared.add(judge.name)
+    if not declared:
+        return []
+
+    total_runs = 0
+    fired: set[str] = set()
+    for losses in losses_by_generation.values():
+        for loss in losses:
+            total_runs += 1
+            for count in loss.drift_counts:
+                is_custom, judge_name = split_judge_attributed_kind(count.kind)
+                if is_custom and judge_name:
+                    fired.add(judge_name)
+
+    # No runs yet → no judge has had a chance to fire; stay silent rather
+    # than flag every declared judge on an epoch with no telemetry.
+    if total_runs == 0:
+        return []
+
+    dead = sorted(declared - fired)
+    if not dead:
+        return []
+
+    return [
+        HealthFinding(
+            code="dead_judge",
+            severity="warning",
+            summary=(
+                f"{len(dead)} board-declared judge(s) never fired across all "
+                f"{total_runs} runs in the epoch — dead weight, not coverage: "
+                + ", ".join(repr(name) for name in dead)
+            ),
+            detail={
+                "dead_judges": dead,
+                "declared_judges": sorted(declared),
+                "fired_judges": sorted(fired),
+                "runs_inspected": total_runs,
+                "recommendation": (
+                    "confirm each dead judge is wired to events that actually "
+                    "fire and its criterion is reachable; if it can never fire, "
+                    "remove it or sharpen its body (see zicato-design-judges)"
+                ),
+            },
+        )
+    ]
+
+
 def detect_stalled_loop(
     experiments: list[Any], config: HealthConfig | None = None
 ) -> list[HealthFinding]:
@@ -716,6 +797,7 @@ def assess_loop_health(
     findings.extend(detect_non_differentiating_entry(losses_by_generation))
     findings.extend(detect_flat_drift_signal(losses_by_generation))
     findings.extend(detect_no_expectations(board_entries, health))
+    findings.extend(detect_dead_judge(losses_by_generation, board_entries))
     findings.extend(detect_stalled_loop(experiments, health))
     findings.extend(detect_generalization_gap(experiments, health))
     findings.extend(detect_refresh_cadence(experiments, max_generations_per_contract))
@@ -743,6 +825,7 @@ __all__ = [
     "detect_non_differentiating_entry",
     "detect_flat_drift_signal",
     "detect_no_expectations",
+    "detect_dead_judge",
     "detect_stalled_loop",
     "detect_generalization_gap",
     "detect_refresh_cadence",
