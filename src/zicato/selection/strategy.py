@@ -77,7 +77,9 @@ class Matchup:
         noise lever.
     round_index:
         The bracket round / Swiss round / racing rung this matchup belongs
-        to. Carried through to the persisted record for the dashboard.
+        to (the WITHIN-tournament stage — distinct from a generation's OUTER
+        evolve ``round_index``; see :class:`RoundRecord`). Carried through to
+        the persisted record for the dashboard.
     bracket_slot:
         Single/double-elim bracket position (e.g. ``"WB-R1-0"``); empty
         for structures without a bracket.
@@ -207,6 +209,17 @@ class RoundRecord:
     these so the persisted tournament record (and, later, the dashboard)
     can render the structure's progression. ``matches`` carries the
     per-match generalization of today's single champion-vs-challenger row.
+
+    NB — ``round_index`` here is the WITHIN-tournament stage index (a bracket
+    round / Swiss round / racing rung INSIDE one evolve round); it is a
+    DIFFERENT axis from a generation's ``Generation.round_index`` /
+    ``Experiment.round_index``, which is the OUTER evolve (epoch-child) round
+    the generation was born in. The two share a name only for historical
+    reasons; ``label`` is structure-qualified ("Bracket round N" / "Swiss
+    round N" / "Rung N" / "Winners' bracket") so the unqualified word "Round"
+    is reserved for the evolve round on the dashboard. A future rename to
+    ``stage_index`` would kill the overload at the source (a persisted-key
+    migration, tracked separately).
     """
 
     round_index: int

@@ -135,7 +135,10 @@ class SingleEliminationStrategy(SelectionStrategy):
             self._records.append(
                 RoundRecord(
                     round_index=self._round_index,
-                    label=f"Round {self._round_index + 1}",
+                    # "Bracket round" (not bare "Round") so the within-tournament
+                    # stage never reads as the outer evolution round on the
+                    # dashboard, where a candidate's birth ROUND is the page.
+                    label=f"Bracket round {self._round_index + 1}",
                     matches=tuple(self._round_matches),
                 )
             )
@@ -320,7 +323,7 @@ class SingleEliminationStrategy(SelectionStrategy):
                 )
             return RoundRecord(
                 round_index=self._round_index,
-                label=f"Round {self._round_index + 1}",
+                label=f"Bracket round {self._round_index + 1}",
                 matches=tuple(matches),
             )
         # Final scheduled, result not yet landed.
