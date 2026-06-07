@@ -2196,6 +2196,24 @@
   .dn-elimradial-name.dn-proj { fill: var(--v2-projected); }
   .dn-elimradial-seg.dn-elimradial-pending.dn-proj { stroke: var(--v2-projected-line); }
 
+  /* ---- FIGURE-VARIANT SWITCH (double-elim: combo ⟷ radial) ----
+   * A small segmented control ON the figure that flips between the DEFAULT
+   * orthogonal-pipe combo and the optional radial view of the SAME bracket.
+   * Mirrors the chrome's .dn-theme-switch idiom; pure client-side visibility
+   * (no data change → never disturbs the digest-gated swap). All --v2-* tokens. */
+  .dt-fig-switchrow { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; }
+  .dt-fig-switchlab { font: 9px var(--v2-mono); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--v2-ink-faint); }
+  .dt-fig-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
+  .dt-fig-btn { font: 9.5px var(--v2-mono); padding: 2px 9px; background: transparent;
+    color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
+    border-right: 1px solid var(--v2-rule); }
+  .dt-fig-btn:last-child { border-right: none; }
+  .dt-fig-btn:hover { color: var(--v2-ink); }
+  .dt-fig-btn.dt-fig-active { background: var(--v2-accent); color: var(--v2-paper); }
+  .dt-figview { display: none; }
+  .dt-figview.dt-figview-on { display: block; }
+
   /* ---- RADAR SILHOUETTE (challenger vs champion across the gate axes) ----
    * Candidate = filled accent polygon; champion = dashed faint polygon; OUTER =
    * better. A candidate vertex reads --v2-good when it dominates, --v2-bad when it

@@ -149,6 +149,12 @@ export function normalizeStructure(st, live) {
     // (the promoted survivor of a settled racing tournament). Carried through
     // so the racing renderer can confirm the gate's crowned id.
     champion_lineage: Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [],
+    // the LIVE aggregate scalars + per-gen projection maps — carried through
+    // (additively) so championScalarOf can anchor the racing scalar track /
+    // gauntlet field bars on the champion's running scalar mid-race, not just on
+    // a settled standings row. Absent on a static index payload (⇒ null).
+    partial_champion_agg: (st.partial_champion_agg && typeof st.partial_champion_agg === 'object') ? st.partial_champion_agg : null,
+    projected: (st.projected && typeof st.projected === 'object') ? st.projected : null,
     source: running ? 'live' : (st.source || 'index'),
     phase: st.phase != null ? String(st.phase) : null,
     live: running,
@@ -408,6 +414,10 @@ export function structureDigest(st) {
     // swap fires when a challenger is minted / applied / rejected, but stays
     // stable on a no-op heartbeat.
     field_status: (Array.isArray(st.field_status) ? st.field_status : []).map((f) => [f && f.generation_id, f && f.status]),
+    // the live champion aggregate scalar — anchors the racing scalar track /
+    // gauntlet field bars; ROUNDED so a no-op beat stays byte-identical but a
+    // real champion-scalar move repaints (anti-flash).
+    champ_agg: (st.partial_champion_agg && svg.isNum(st.partial_champion_agg.scalar)) ? st.partial_champion_agg.scalar.toFixed(3) : null,
     source: st.source,
   });
 }
@@ -418,6 +428,7 @@ export function renderStructure(st, ctx, epochId) {
   let nodes;
   if (structure === 'swiss') nodes = renderSwiss(st, ctx, epochId);
   else if (structure === 'racing') nodes = renderRacing(st, ctx, epochId);
+  else if (structure === 'gauntlet') nodes = renderGauntlet(st, ctx, epochId);
   // single_elim + double_elim share the bracket renderer.
   else nodes = renderBracket(st, ctx, epochId, structure);
   // The PROPOSED FIELD section leads so a completed epoch's proposing
@@ -504,41 +515,137 @@ export function elimModel(st) {
   return { winners, losers, championId, benchmarkId, gateState, gateDelta, live, hasMatches };
 }
 
+// Build the elimRadial/elimFlow `rounds` (the elimModel-band shape both
+// renderers consume): the winners' band followed by the losers' band, each round
+// carrying its label + matches. ONE source, two renderers (radial ↔ flow).
+function elimBands(model) {
+  return model.winners.concat(Array.isArray(model.losers) ? model.losers : []);
+}
+
+// The shared figure CAPTION for the bracket flow/radial figures.
+function bracketCaption(model) {
+  const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
+    : model.gateState === 'stands' ? ' · champion-gate: champion stands'
+    : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
+  return el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+    'each lane is a generation; two lanes converge at a match — the winner’s lane continues ↑, the loser’s ends with ✕ — and the champion’s lane reaches the gate ' + CROWN.current
+    + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
+    + (model.losers && model.losers.length ? ' · the losers’ bracket re-converges as a second band (double-elim)' : '')
+    + gateNote
+    + (model.live ? ' · LIVE — in-flight legs are dashed' : '') });
+}
+
 function renderBracket(st, ctx, epochId, structure) {
   const model = elimModel(st) || { winners: splitBand((st && st.rounds) || [], () => true), losers: null, live: !!(st && st.live) };
   const openGen = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
+  const bands = elimBands(model);
+  const hasFigure = model.hasMatches !== false && model.winners.length;
+  const isDouble = structure === 'double_elim';
+
+  // single_elim → the RADIAL bracket leads (single-elim.html opt 6): concentric
+  // rings narrowing to a center champion seat. double_elim → the orthogonal-pipe
+  // elimFlow combo leads (double-elim.html opt 7, the DEFAULT), with the radial
+  // (opt 8, {double:true}) offered as a NON-default toggle on the figure.
+  return isDouble
+    ? renderDoubleElim(st, ctx, epochId, model, bands, hasFigure, openGen)
+    : renderSingleElim(st, ctx, epochId, model, bands, hasFigure, openGen);
+}
+
+// single_elim — RADIAL bracket PRIMARY (the liked opt 6), the bracket-as-FLOW
+// (elimFlow) retained as a secondary companion view (who-converged-with-whom,
+// the lane convergence read).
+function renderSingleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
   const nodes = [];
 
-  // the elim figure is the BRACKET-AS-FLOW (`elimFlow`) — the Tufte lane
-  // convergence that REPLACES the seat/box bracket tree (`elimBracket` retired):
-  // rounds as columns, one lane per generation; two lanes converge at a match
-  // node, the winner's lane continues (↑, good), the loser's terminates (✕,
-  // bad); the champion's lane reaches the crowned gate (♛). The losers' bracket
-  // of a double-elim re-converges as a second band of lanes (the same lanes
-  // re-entering later rounds). Pairing + Δ detail live on HOVER.
-  const isElim = structure === 'single_elim' || structure === 'double_elim';
-  const allBands = model.winners.concat(Array.isArray(model.losers) ? model.losers : []);
-  const flowCard = el('div', { class: 'dn-panel dn-figpane' });
-  flowCard.appendChild(model.hasMatches !== false && model.winners.length
-    ? svg.elimFlow({
-        winners: allBands, championId: model.championId, benchmarkId: model.benchmarkId,
-        gateState: model.gateState, live: model.live, onCompetitor: openGen,
+  // the PRIMARY figure: the concentric-ring radial bracket.
+  const radialCard = el('div', { class: 'dn-panel dn-figpane' });
+  radialCard.appendChild(hasFigure
+    ? svg.elimRadial({
+        rounds: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+        gateState: model.gateState, live: model.live, double: false, onCompetitor: openGen,
       })
     : empty(model.live ? 'The bracket is being seeded — matches fill in as runs land.' : 'No bracket rounds recorded yet.'));
   if (model.winners.length) {
     const gateNote = model.gateState === 'crowned' ? ` · champion-gate: ${model.championId} promoted ${CROWN.current}`
       : model.gateState === 'stands' ? ' · champion-gate: champion stands'
       : model.gateState === 'deciding' ? ' · champion-gate: deciding…' : '';
-    flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      'each lane is a generation; two lanes converge at a match — the winner’s lane continues ↑, the loser’s ends with ✕ — and the champion’s lane reaches the gate ' + CROWN.current
+    radialCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+      'rounds are concentric rings narrowing to the champion seat at the center; each spoke is a generation — the rings it survived read green, the ring it was eliminated at turns red ✕, and the survivor dashes into the center gate ' + CROWN.current
       + (model.benchmarkId ? ' · ' + CROWN.former + ' = displaced incumbent' : '')
-      + (model.losers && model.losers.length ? ' · the losers’ bracket re-converges as a second band (double-elim)' : '')
       + gateNote
-      + (model.live ? ' · LIVE — in-flight legs are dashed' : '') }));
+      + (model.live ? ' · LIVE — still-racing spokes are dashed' : '') }));
   }
-  nodes.push(section(structure === 'double_elim'
-    ? (model.live ? 'Bracket flow · LIVE — winners’ + losers’ lanes' : 'Bracket flow · winners’ + losers’ lanes')
-    : (model.live ? 'Bracket flow · LIVE — lane convergences, click a lane to open the candidate' : 'Bracket flow · lane convergences, click a lane to open the candidate'), flowCard));
+  nodes.push(section(model.live ? 'Bracket · LIVE — rings narrowing to the champion gate' : 'Bracket · rings narrowing to the champion gate', radialCard));
+
+  // SECONDARY: the bracket-as-FLOW (lane convergences) — the who-played-whom read
+  // the radial cannot show. Retained as a companion view below the radial.
+  if (hasFigure) {
+    const flowCard = el('div', { class: 'dn-panel dn-figpane' });
+    flowCard.appendChild(svg.elimFlow({
+      winners: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+      gateState: model.gateState, live: model.live, onCompetitor: openGen,
+    }));
+    flowCard.appendChild(bracketCaption(model));
+    nodes.push(section(model.live ? 'Bracket flow · LIVE — lane convergences, click a lane to open the candidate' : 'Bracket flow · lane convergences, click a lane to open the candidate', flowCard));
+  }
+
+  const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
+  if (standings) nodes.push(section('Standings', standings));
+  return nodes;
+}
+
+// double_elim — the orthogonal-pipe FLOW combo is the DEFAULT figure (the liked
+// opt 7: WB/LB bands + life glyphs). The RADIAL ({double:true}, opt 8) is offered
+// as an OPTIONAL, NON-default variant via a small segmented toggle ON the figure
+// — both are rendered into the card, the radial hidden until the toggle flips it.
+// The toggle is pure client-side visibility (no data change) so it never
+// disturbs the digest-gated swap.
+function renderDoubleElim(st, ctx, epochId, model, bands, hasFigure, openGen) {
+  const nodes = [];
+  const flowCard = el('div', { class: 'dn-panel dn-figpane' });
+  if (!hasFigure) {
+    flowCard.appendChild(empty(model.live ? 'The bracket is being seeded — matches fill in as runs land.' : 'No bracket rounds recorded yet.'));
+    nodes.push(section(model.live ? 'Bracket flow · LIVE — winners’ + losers’ lanes' : 'Bracket flow · winners’ + losers’ lanes', flowCard));
+    const standingsE = standingsTable(st, ctx, epochId, !!(st && st.live));
+    if (standingsE) nodes.push(section('Standings', standingsE));
+    return nodes;
+  }
+
+  // the segmented toggle: COMBO (default) ↔ RADIAL — a small control on the
+  // figure, mirroring the chrome's .dn-theme-switch idiom.
+  const flowPane = el('div', { class: 'dt-figview dt-figview-on' }, [
+    svg.elimFlow({
+      winners: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+      gateState: model.gateState, live: model.live, onCompetitor: openGen,
+    }),
+  ]);
+  const radialPane = el('div', { class: 'dt-figview' }, [
+    svg.elimRadial({
+      rounds: bands, championId: model.championId, benchmarkId: model.benchmarkId,
+      gateState: model.gateState, live: model.live, double: true, onCompetitor: openGen,
+    }),
+  ]);
+  const comboBtn = el('button', { class: 'dt-fig-btn dt-fig-active', type: 'button', text: 'combo' });
+  const radialBtn = el('button', { class: 'dt-fig-btn', type: 'button', text: 'radial' });
+  const show = (which) => {
+    const combo = which === 'combo';
+    flowPane.classList.toggle('dt-figview-on', combo);
+    radialPane.classList.toggle('dt-figview-on', !combo);
+    comboBtn.classList.toggle('dt-fig-active', combo);
+    radialBtn.classList.toggle('dt-fig-active', !combo);
+  };
+  comboBtn.addEventListener('click', () => show('combo'));
+  radialBtn.addEventListener('click', () => show('radial'));
+  flowCard.appendChild(el('div', { class: 'dt-fig-switchrow' }, [
+    el('span', { class: 'dt-fig-switchlab', text: 'figure' }),
+    el('div', { class: 'dt-fig-switch' }, [comboBtn, radialBtn]),
+  ]));
+  flowCard.appendChild(flowPane);
+  flowCard.appendChild(radialPane);
+  flowCard.appendChild(bracketCaption(model));
+  flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:4px 0 0;', text:
+    'default: the winners’ + losers’ orthogonal-pipe combo · switch to “radial” for the concentric-ring (polar) view of the same bracket' }));
+  nodes.push(section(model.live ? 'Bracket flow · LIVE — winners’ + losers’ lanes' : 'Bracket flow · winners’ + losers’ lanes', flowCard));
 
   const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
   if (standings) nodes.push(section('Standings', standings));
@@ -882,7 +989,40 @@ export function racingModel(st) {
   }
   if (!benchmarkId && lineage.length) benchmarkId = lineage[0];
 
-  return { rungs, championId, benchmarkId, gateState, gateDelta, live, hasRungs: rungs.length > 0 };
+  // THE CHAMPION'S ABSOLUTE SCALAR — the benchmark line the racing scalar track
+  // anchors on, and the reference a competitor's absolute scalar is recovered
+  // from (championScalar + Δ-vs-champion). Additive (live.js ignores it).
+  const championScalar = championScalarOf(st, benchmarkId);
+
+  return { rungs, championId, benchmarkId, championScalar, gateState, gateDelta, live, hasRungs: rungs.length > 0 };
+}
+
+// Recover the champion/benchmark's ABSOLUTE scalar from a normalized structure
+// payload — the anchor for the racing scalar track + gauntlet field bars (a
+// competitor's absolute scalar is championScalar + its Δ-vs-champion). Reads, in
+// order: the benchmark's settled standings scalar; the live partial champion
+// aggregate (`partial_champion_agg.scalar`); any competitor row carrying a
+// scalar for the benchmark id. Returns null when the champion scalar is unknown
+// (the builders then fall back to a delta-only domain). PURE.
+export function championScalarOf(st, benchmarkId) {
+  if (!st || typeof st !== 'object') return null;
+  const bid = benchmarkId != null ? String(benchmarkId) : null;
+  const standings = Array.isArray(st.standings) ? st.standings : [];
+  if (bid != null) {
+    const row = standings.find((s) => s && String(s.generation_id) === bid && svg.isNum(s.scalar));
+    if (row) return row.scalar;
+  }
+  // the champion is the only competitor whose role/status names it; its settled
+  // standings scalar is the standard when the benchmark id was not resolved.
+  const champRow = standings.find((s) => s && String(s.status || '').toLowerCase() === 'champion' && svg.isNum(s.scalar));
+  if (champRow) return champRow.scalar;
+  // LIVE: the runner publishes the running champion aggregate as a dict.
+  const agg = st.partial_champion_agg;
+  if (agg && typeof agg === 'object' && svg.isNum(agg.scalar)) return agg.scalar;
+  // the projected champion scalar (live), if the runner wrote one for the bench.
+  const proj = (bid != null && st.projected && typeof st.projected === 'object') ? st.projected[bid] : null;
+  if (proj && typeof proj === 'object' && svg.isNum(proj.scalar)) return proj.scalar;
+  return null;
 }
 
 // shared: attribute in-flight /api/active-runs to per-gen board units (gen →
@@ -1181,6 +1321,10 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     rounds,
     standings,
     champion_lineage: Array.isArray(at.champion_lineage) ? at.champion_lineage : [],
+    // carry the live champion aggregate + projection map so championScalarOf can
+    // anchor the scalar track / field bars mid-race (additive — see normalize).
+    partial_champion_agg: (at.partial_champion_agg && typeof at.partial_champion_agg === 'object') ? at.partial_champion_agg : null,
+    projected: projectedMap && Object.keys(projectedMap).length ? projectedMap : null,
     phase: at.phase != null ? at.phase : (heartbeat && heartbeat.phase) || 'running',
     source: 'live',
   }, true);
@@ -1495,13 +1639,22 @@ function renderRacing(st, ctx, epochId) {
   const gateDelta = (gateMatch && svg.isNum(gateMatch.delta_scalar)) ? gateMatch.delta_scalar : null;
   // the champion v0 the field is raced against (the persistent benchmark line) —
   // distinct from championId (the eventual survivor). Reuse racingModel's
-  // derivation so the ladder + funnel agree on the benchmark id.
-  const benchmarkId = (racingModel(st) || {}).benchmarkId || null;
-  const card = el('div', { class: 'dn-panel dn-figpane' });
-  card.appendChild(rungs.length
-    ? svg.survivalFunnel({
-        rungs, championId, benchmarkId, live, gateState, gateDelta,
-        onCompetitor: (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); },
+  // derivation so the scalar track + funnel agree on the benchmark id + scalar.
+  const rm = racingModel(st) || {};
+  const benchmarkId = rm.benchmarkId || null;
+  const championScalar = svg.isNum(rm.championScalar) ? rm.championScalar : championScalarOf(st, benchmarkId);
+  const openGen = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
+
+  // ── THE PRIMARY FIGURE: the SCALAR TRACK (racing.html opt 1) ─────────
+  // Every gen on a shared scalar number-line; marker SIZE = inverse loss (bigger
+  // = better) so the surviving leader is the fattest dot and the cuts shrink
+  // away; the champion v0 is a dashed benchmark. The track honours all four
+  // lifecycle states (the rungs carry live_progress per the live producer).
+  const trackCard = el('div', { class: 'dn-panel dn-figpane' });
+  trackCard.appendChild(rungs.length
+    ? svg.racingScalarTrack({
+        rungs, championId, benchmarkId, championScalar, live, gateState,
+        onCompetitor: openGen,
       })
     : empty(live ? 'The race is being seeded — the first rung fills in as runs land.' : 'No rungs evaluated yet.'));
   if (rungs.length) {
@@ -1509,13 +1662,207 @@ function renderRacing(st, ctx, epochId) {
       : gateState === 'stands' ? ' · champion-gate: champion stands'
       : gateState === 'deciding' ? ' · champion-gate: deciding…'
       : '';
-    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
-      (benchmarkId ? `the field is raced vs the champion v0 = ${benchmarkId}; every rung Δ is Δ-vs-v0 and v0 defends at the champion-gate · ` : '')
-      + 'each rung races the field on a fraction of the board, then cuts the worst by η · ✕ = cut · ↑ = survives · ' + CROWN.current + ' = champion-gate winner · click a competitor → open'
+    trackCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+      (benchmarkId ? `every gen is plotted on a shared scalar number-line (lower = better); the dashed line is the champion v0 = ${benchmarkId} benchmark · ` : '')
+      + 'marker size = inverse loss (bigger = better) — the survivor is the fattest dot, the cuts shrink away past the cut tick · click a competitor → open'
       + gateNote
-      + (live ? ' · LIVE — the eventual winner is not committed until the final gate' : '') }));
+      + (live ? ' · LIVE — markers grow as boards land; the winner is not committed until the final gate' : '') }));
   }
-  nodes.push(section(live ? 'Survival funnel · LIVE — field narrowing rung-by-rung' : 'Survival funnel · field narrowing rung-by-rung', card));
+  nodes.push(section(live ? 'Scalar track · LIVE — the field on one number-line (lower = better)' : 'Scalar track · the field on one number-line (lower = better)', trackCard));
+
+  // ── SECONDARY: the SURVIVAL FUNNEL (the rung-by-rung FLOW view) ──────
+  // The scalar track shows WHERE each gen lands on the loss axis; the funnel
+  // shows the FLOW of the field narrowing rung-by-rung (who survived each cut,
+  // who was eliminated, per-lane "k/N boards" live progress). It adds live value
+  // the single-axis track cannot — the structural narrowing — so it rides below.
+  if (rungs.length) {
+    const flowCard = el('div', { class: 'dn-panel dn-figpane' });
+    flowCard.appendChild(svg.survivalFunnel({
+      rungs, championId, benchmarkId, live, gateState, gateDelta, onCompetitor: openGen,
+    }));
+    flowCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+      'each rung races the field on a fraction of the board, then cuts the worst by η · ✕ = cut · ↑ = survives · ' + CROWN.current + ' = champion-gate winner'
+      + (live ? ' · LIVE — in-flight lanes read "k/N boards"' : '') }));
+    nodes.push(section(live ? 'Survival funnel · LIVE — field narrowing rung-by-rung' : 'Survival funnel · field narrowing rung-by-rung', flowCard));
+  }
+
+  const standings = standingsTable(st, ctx, epochId, live);
+  if (standings) nodes.push(section('Standings', standings));
+  return nodes;
+}
+
+// ---- gauntlet — the challenger-WAVE model (gauntlet.html opt 5) -----
+//
+// The structure-LEVEL gauntlet figure: ONE wave of challengers measured against
+// the FIXED champion standard on a shared scalar axis (lower = better). Distinct
+// from the gens.js match ladder (the per-duel list) — this is the field-at-a-
+// glance read: who cleared the gate, by how much, who survived. Built PURELY
+// from the normalized structure's rounds + standings + the promote_margin param.
+//
+// → { championId, championScalar, promoteMargin,
+//     challengers:[{ id, scalar|delta, outcome:'cleared'|'failed'|'tied'|null,
+//                    survivor, lane:{inflight,done,total,projected,
+//                    projected_scalar,boards_done,boards_total} }],
+//     live, hasField }
+//
+// FOUR lifecycle states (the gauntletFieldBars builder renders each): a queued
+// challenger has no scalar (parked at the standard); an in-flight one carries a
+// `lane` board tally; a projected one carries lane.projected_scalar; a settled
+// one carries its committed scalar + outcome + survivor mark. The settled render
+// is byte-identical via the live or the completed path (the lane chrome drops
+// once a scalar commits).
+export function gauntletModel(st) {
+  if (!st || String(st.structure || 'gauntlet') !== 'gauntlet') return null;
+  const live = !!st.live;
+  const rounds = Array.isArray(st.rounds) ? st.rounds : [];
+  const standings = Array.isArray(st.standings) ? st.standings : [];
+  const competitors = Array.isArray(st.competitors) ? st.competitors : [];
+  const lineage = Array.isArray(st.champion_lineage) ? st.champion_lineage.map(String) : [];
+  const params = (st.structure_params && typeof st.structure_params === 'object') ? st.structure_params : {};
+
+  // the champion id (the standard the wave is measured against) + its scalar.
+  let championId = null;
+  const champComp = competitors.find((c) => c && String(c.role || c.side || '').toLowerCase() === 'champion');
+  if (champComp && champComp.generation_id != null) championId = String(champComp.generation_id);
+  if (!championId) {
+    const champStand = standings.find((s) => s && String(s.status || '').toLowerCase() === 'champion');
+    if (champStand && champStand.generation_id != null) championId = String(champStand.generation_id);
+  }
+  if (!championId && lineage.length) championId = lineage[0];
+  const championScalar = championScalarOf(st, championId);
+
+  // the promote gate margin (gate = championScalar − margin, lower-is-better).
+  const promoteMargin = svg.isNum(params.promote_margin) ? params.promote_margin
+    : (svg.isNum(params.margin) ? params.margin : null);
+
+  // settled standings (id → row) so the wave reads each challenger's scalar +
+  // outcome from the authoritative standings when the rounds are sparse.
+  const standById = new Map();
+  for (const s of standings) if (s && s.generation_id != null) standById.set(String(s.generation_id), s);
+
+  // collect the wave's challenger ids — every non-champion that played a match,
+  // appears in standings, or is a non-champion competitor. Order: competitors,
+  // then any standings/round id not yet seen (a stable, deterministic order).
+  const order = [];
+  const seen = new Set();
+  const addId = (id) => { const k = String(id); if (k && k !== championId && !seen.has(k)) { seen.add(k); order.push(k); } };
+  for (const c of competitors) if (c && c.generation_id != null) addId(c.generation_id);
+  for (const r of rounds) for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+    for (const g of (Array.isArray(m.competitors) ? m.competitors : [])) addId(g);
+  }
+  for (const s of standings) if (s && s.generation_id != null) addId(s.generation_id);
+
+  // pull a challenger's per-match record (its duel vs the champion) from the
+  // rounds — the match whose competitors include this id (a 1v1 wave).
+  const matchFor = (id) => {
+    for (const r of rounds) for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+      const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
+      if (comps.indexOf(id) >= 0) return m;
+    }
+    return null;
+  };
+
+  const challengers = order.map((id) => {
+    const m = matchFor(id);
+    const s = standById.get(id) || null;
+    // scalar: prefer the settled standings scalar, else recover from the match Δ
+    // (champion + delta_scalar), else leave null (queued).
+    let scalar = (s && svg.isNum(s.scalar)) ? s.scalar : null;
+    let delta = (m && svg.isNum(m.delta_scalar)) ? m.delta_scalar : null;
+    if (scalar == null && championScalar != null && delta != null) scalar = championScalar + delta;
+    if (delta == null && scalar != null && championScalar != null) delta = scalar - championScalar;
+
+    // outcome: an explicit gate decision wins; else derive from scalar vs gate.
+    const dec = m ? String(m.decision || '').toLowerCase() : '';
+    let outcome = null;
+    if (dec === 'promoted') outcome = 'cleared';
+    else if (dec === 'rejected') outcome = 'failed';
+    else if (s && String(s.status || '').toLowerCase() === 'champion') outcome = 'cleared';
+    else if (s && String(s.status || '').toLowerCase() === 'eliminated') outcome = 'failed';
+    // a settled scalar with a known gate resolves the outcome when no decision.
+    if (outcome == null && !live && svg.isNum(scalar) && championScalar != null) {
+      const gate = promoteMargin != null ? championScalar - promoteMargin : championScalar;
+      if (Math.abs(scalar - gate) < 1e-9) outcome = 'tied';
+      else outcome = scalar < gate ? 'cleared' : 'failed';
+    }
+    const survivor = outcome === 'cleared'
+      || (lineage.length && lineage[lineage.length - 1] === id && id !== championId);
+
+    // LIVE lane: an in-flight (still-pending) match overlays a board tally +
+    // projected standing; a settled challenger carries NO lane (byte-identical
+    // settled render via either path).
+    let lane = null;
+    if (live && outcome == null) {
+      const lp = (m && m.live_progress && typeof m.live_progress === 'object') ? m.live_progress[id] : null;
+      const inFlight = !!(s && s.in_flight);
+      if (lp || inFlight || (m && (svg.isNum(m.done) || svg.isNum(m.inflight) || m.pending))) {
+        const projScalar = lp && svg.isNum(lp.projected_scalar) ? lp.projected_scalar
+          : (s && svg.isNum(s.projected_scalar) ? s.projected_scalar : null);
+        lane = {
+          inflight: lp && svg.isNum(lp.inflight) ? lp.inflight : (m && svg.isNum(m.inflight) ? m.inflight : 0),
+          done: lp && svg.isNum(lp.done) ? lp.done : (m && svg.isNum(m.done) ? m.done : 0),
+          total: lp && svg.isNum(lp.total) ? lp.total : (m && svg.isNum(m.total) ? m.total : null),
+          projected: projScalar != null,
+          projected_scalar: projScalar,
+          boards_done: lp && svg.isNum(lp.boards_done) ? lp.boards_done : (s && svg.isNum(s.boards_done) ? s.boards_done : null),
+          boards_total: lp && svg.isNum(lp.boards_total) ? lp.boards_total : (s && svg.isNum(s.boards_total) ? s.boards_total : null),
+        };
+        // a live, still-running challenger has no committed scalar — let the
+        // projected scalar (if any) drive its plotted x via the builder.
+        if (projScalar != null && scalar == null) { /* builder reads lane.projected_scalar */ }
+        else if (scalar == null) { delta = null; }
+      }
+    }
+    const out = { id, outcome, survivor, lane };
+    if (svg.isNum(scalar)) out.scalar = scalar;
+    else if (svg.isNum(delta)) out.delta = delta;
+    return out;
+  });
+
+  return {
+    championId, championScalar, promoteMargin, challengers, live,
+    hasField: challengers.length > 0,
+  };
+}
+
+// A stable digest of the gauntlet wave model — composed into the gauntlet
+// section so the gated swap fires on a real change but stays stable on a no-op
+// heartbeat. (structureDigest already covers rounds/standings/competitors; this
+// folds the DERIVED wave fields the figure actually draws.)
+export function gauntletModelDigest(model) {
+  if (!model || typeof model !== 'object') return 'no-gauntlet';
+  return svg.gauntletFieldBarsDigest({
+    championId: model.championId, championScalar: model.championScalar,
+    promoteMargin: model.promoteMargin, challengers: model.challengers,
+  });
+}
+
+// gauntlet — the structure-LEVEL field-bars figure (gauntlet.html opt 5). One
+// wave of challengers vs the champion standard on a shared scalar axis, the gate
+// threshold line, outcome colours, survivor marks, the projected ghost. This is
+// ADDED alongside (not in place of) the gens.js match ladder.
+function renderGauntlet(st, ctx, epochId) {
+  const nodes = [];
+  const live = !!(st && st.live);
+  const model = gauntletModel(st) || { challengers: [], live, hasField: false };
+  const openGen = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
+
+  const card = el('div', { class: 'dn-panel dn-figpane' });
+  card.appendChild(model.hasField
+    ? svg.gauntletFieldBars({
+        championId: model.championId, championScalar: model.championScalar,
+        promoteMargin: model.promoteMargin, challengers: model.challengers,
+        live: model.live, onCompetitor: openGen,
+      })
+    : empty(live ? 'The gauntlet is being seeded — challengers fill in as runs land.' : 'No challengers recorded for this gauntlet.'));
+  if (model.hasField) {
+    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text:
+      (model.championId ? `the wave is measured against the champion standard = ${model.championId}` + (svg.isNum(model.championScalar) ? ` (${svg.fmt(model.championScalar, 2)})` : '') + ' · ' : '')
+      + 'each bar runs from the standard out to a challenger’s scalar (lower = better); a bar that clears the dashed promote gate reads ↑ survivor · ✕ = failed the gate · click a challenger → open'
+      + (live ? ' · LIVE — in-flight challengers ghost in with a "k/N boards" sub-bar; the winner is not committed until the gate' : '') }));
+  }
+  nodes.push(section(live ? 'Gauntlet field · LIVE — the wave vs the champion standard' : 'Gauntlet field · the wave vs the champion standard', card));
+
   const standings = standingsTable(st, ctx, epochId, live);
   if (standings) nodes.push(section('Standings', standings));
   return nodes;
