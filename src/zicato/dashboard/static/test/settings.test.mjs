@@ -211,6 +211,53 @@ test('settings: editing appearance updates the SAME store the top-bar reads (rou
   assertEqual(ui.readType(), 'D2', 'a stored legacy "display" migrates to D2 on read');
 });
 
+// The typeface picker now lives ONLY in Settings (removed from the top bar).
+// Choosing a face there must still APPLY live (stamp the app root via the shared
+// applyTypeface store) AND PERSIST — so this is the sole live picker now.
+test('settings: the Settings typeface picker still APPLIES + PERSISTS (the sole live picker)', async () => {
+  installFetch();
+  globalThis.window.localStorage.clear();
+  const ui = await import('../js/variants/T/ui.js');
+  // a stable app root the picker's applyTypeface can stamp (applyTypeface falls
+  // back to the shell's `_root` when no root is passed — mountShell sets it, but
+  // here we drive the picker directly and assert via the persisted store).
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'appearance' });
+  await tick();
+  const body = firstClass(host, 'dn-set-body');
+  const tf = firstClass(body, 'dt-tf');
+  assert(tf, 'the typeface grouped popover renders in Settings → Appearance');
+  // pick the T12 option — it must apply via the shared store and persist.
+  const t12 = byClass(tf, 'dt-tf-option').find((o) => o.getAttribute('data-type') === 'T12');
+  assert(t12, 'the popover has the T12 option');
+  t12.dispatchEvent(makeEvent('click'));
+  assertEqual(ui.readType(), 'T12', 'choosing T12 in Settings persisted via the shared typeface store');
+  // and the closed trigger now reflects the chosen face (the live picker synced).
+  const trigger = firstClass(tf, 'dt-cd-trigger');
+  assert(trigger, 'the typeface popover has a closed trigger');
+  assert((trigger.textContent || '').length > 0, 'the trigger shows the chosen face label');
+});
+
+// The RESEARCH-PREVIEW banner is a clear, tasteful product-status statement that
+// LEADS the Settings surface (above the section rail). It renders on every
+// section and carries the label + a one-line subtitle.
+test('settings: the Research-preview banner renders at the top of the Settings surface', async () => {
+  installFetch();
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'appearance' });
+  await tick();
+  const banner = firstClass(host, 'dn-respreview');
+  assert(banner, 'the research-preview banner renders');
+  // it sits ABOVE the section grid (it is the FIRST child of the settings host).
+  assert(host.firstChild === banner, 'the banner leads the Settings surface (first child)');
+  // it carries a status dot, the label, and a one-line subtitle.
+  assert(firstClass(banner, 'dn-respreview-dot'), 'the banner shows a status dot');
+  const label = firstClass(banner, 'dn-respreview-label');
+  assert(label && label.textContent === 'Research preview', 'the banner is clearly labelled "Research preview"');
+  const sub = firstClass(banner, 'dn-respreview-sub');
+  assert(sub && (sub.textContent || '').length > 0, 'the banner carries a one-line subtitle');
+});
+
 test('settings: the Contract section reads /api/epoch as a read-only roll-up', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');

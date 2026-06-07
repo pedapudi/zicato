@@ -878,10 +878,12 @@ test('brand wordmark: renders "zıcato" with a dotless ı (U+0131) and the accen
   assertEqual(dot.getAttribute('fill'), 'var(--zicato-accent)', 'the dot fills with the accent token');
 });
 
-// The TYPEFACE picker is a GROUPED POPOVER in the top bar (the dt-cd idiom),
-// NOT the old button group; the colour SWATCH DROPDOWN stays; and the wordmark
-// dot stays centred for the FIXED brand mono regardless of the selected typeface.
-test('top bar: typeface GROUPED POPOVER (12 faces / 3 groups) beside the colour dropdown; no old button group; wordmark dot centred for the fixed brand mono', async () => {
+// The TYPEFACE picker has been REMOVED from the top-bar chrome (it lives ONLY in
+// Settings → Appearance now). The top bar keeps the colour SWATCH DROPDOWN, the
+// page-scale pill, and the status pill; and the wordmark dot stays centred for
+// the FIXED brand mono regardless of the selected typeface (applyTypeface still
+// works via the shared store + the Settings dropdown).
+test('top bar: NO typeface picker (removed → Settings only); colour dropdown + scale + status remain; wordmark dot centred for the fixed brand mono', async () => {
   freshState(); installFetch();
   const listeners = { hashchange: [] };
   globalThis.HashChangeEvent = function HashChangeEvent() {};
@@ -906,29 +908,27 @@ test('top bar: typeface GROUPED POPOVER (12 faces / 3 groups) beside the colour 
 
   const topbar = allByClass(root, 'dt-topbar')[0];
   assert(topbar, 'the top bar painted');
-  // the OLD typeface button group + its buttons are gone (replaced by the popover).
-  assertEqual(allByClass(topbar, 'dt-type-switch').length, 0, 'no typeface button group in the top bar');
-  assertEqual(allByClass(topbar, 'dt-type-btn').length, 0, 'no typeface buttons in the top bar');
-  // the TYPEFACE grouped popover is present (dt-tf, reusing the dt-cd idiom).
-  const tf = allByClass(topbar, 'dt-tf')[0];
-  assert(tf, 'the typeface grouped popover is in the top bar');
-  assert(allByClass(tf, 'dt-tf-trigger')[0], 'the typeface popover has a trigger');
-  // THREE mode-group headers + TWELVE option rows.
-  assertEqual(allByClass(tf, 'dt-cd-group').length, 3, 'three mode-group headers (Technical / Editorial / Display)');
-  assertEqual(allByClass(tf, 'dt-tf-option').length, 12, 'twelve option rows across the three groups');
-  // a colour swatch dropdown ALSO lives in the top bar (a separate dt-cd); the
-  // typeface options carry dt-type, the colour options dt-theme — no collision.
+  // the TYPEFACE picker (grouped popover OR the old button group) is GONE from
+  // the top bar — it lives ONLY in Settings → Appearance now.
+  assertEqual(allByClass(topbar, 'dt-tf').length, 0, 'no typeface picker in the top bar (moved to Settings)');
+  assertEqual(allByClass(topbar, 'dt-tf-trigger').length, 0, 'no typeface popover trigger in the top bar');
+  assertEqual(allByClass(topbar, 'dt-tf-option').length, 0, 'no typeface option rows in the top bar');
+  assertEqual(allByClass(topbar, 'dt-type-switch').length, 0, 'no legacy typeface button group in the top bar');
+  assertEqual(allByClass(topbar, 'dt-type-btn').length, 0, 'no legacy typeface buttons in the top bar');
+  // the COLOUR swatch dropdown is the SOLE dt-cd popover left in the top bar.
   const cds = allByClass(topbar, 'dt-cd');
-  assert(cds.length >= 2, 'both the colour and typeface popovers use the dt-cd idiom');
+  assertEqual(cds.length, 1, 'only the colour swatch dropdown (dt-cd) remains in the top bar');
+  assert(allByClass(topbar, 'dt-cd-trigger')[0], 'the colour dropdown trigger is present');
+  // the page-scale pill, the status pill, the settings link, and the brand stay.
   assert(allByClass(topbar, 'dt-scale-pill')[0], 'the page-scale pill is still in the top bar');
   assert(allByClass(topbar, 'dt-status')[0], 'the live-status pill is still in the top bar');
+  assert(allByClass(topbar, 'dt-nav-build')[0], 'the settings link is still in the top bar');
+  assert(allByClass(topbar, 'dt-brand')[0], 'the brand is still in the top bar');
 
-  // selecting a typeface option stamps data-t-type + the font-role vars follow
-  // (asserted against the CSS rule below); here we assert the popover applies.
-  const t9 = allByClass(tf, 'dt-tf-option').find((o) => o.getAttribute('data-type') === 'T9');
-  assert(t9, 'the popover has the T9 option');
-  t9.dispatchEvent(makeEvent('click'));
-  assertEqual(root.getAttribute('data-t-type'), 'T9', 'choosing T9 stamps data-t-type="T9" on the root');
+  // applyTypeface still applies live (the shared store path is intact even with
+  // no top-bar dropdown) — stamps data-t-type on the root.
+  shell.applyTypeface('T9', root);
+  assertEqual(root.getAttribute('data-t-type'), 'T9', 'applyTypeface("T9") still stamps data-t-type="T9" on the root');
 
   // the wordmark dot stays centred on the FIXED brand mono — switching the UI
   // typeface (the swappable --v2-mono) must NOT move the geometrically-pinned dot.

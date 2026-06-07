@@ -36,7 +36,7 @@ import { roundsForTree } from './views/rounds.js';
 import { deriveLiveStatus, liveStatusDigest, treeLiveSet } from './livestatus.js';
 import { LiveController } from './live.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
-import { buildTypefaceDropdown, syncTypefaceDropdowns } from './typefacedropdown.js';
+import { syncTypefaceDropdowns } from './typefacedropdown.js';
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
@@ -75,7 +75,6 @@ let _statusTextEl = null;     // the connection word (live/connecting/offline)
 let _runLabelEl = null;       // the structure+phase run label
 let _runCountEl = null;       // the in-flight board-unit count
 let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
-let _typeDropdown = null;       // the typeface grouped-popover controller
 let _typeEl = [];
 let _scaleInput = null;
 let _scaleReadout = null;
@@ -450,16 +449,14 @@ export function mountShell(root) {
   _colorDropdown = buildSwatchDropdown(readColor(), (id) => applyTheme(id));
   const colorSwitch = _colorDropdown.node;
 
-  // TYPEFACE PICKER — a GROUPED POPOVER (the operator's finalized 12 faces, 4
-  // per mode). It reuses the colour picker's `dt-cd` idiom so the top bar reads
-  // as ONE coherent picker style: a trigger showing the current face + a tiny
-  // specimen, opening a grouped listbox (Technical · Editorial · Display headers
-  // + four option rows each, every row a micro-preview in its real faces).
-  // Wired to applyTypeface (root + persist + sync), the SAME store Settings →
-  // Appearance drives, so changing either updates the other in lockstep.
+  // TYPEFACE PICKER — REMOVED from the top-bar chrome (operator's call): it now
+  // lives ONLY in Settings → Appearance (views/settings.js's typefacePicker).
+  // The store + sync path is unchanged: applyTypeface still calls
+  // syncTypefaceDropdowns, which fans out to every LIVE dropdown via the
+  // typefacedropdown.js instance registry — now just the Settings one — so
+  // choosing a face in Settings still applies live + persists, and any other
+  // apply path (keyboard / restore) keeps the Settings picker in lockstep.
   // `_typeEl` stays empty (the old button-group sync loop is now a no-op).
-  _typeDropdown = buildTypefaceDropdown(readType(), (id) => applyTypeface(id));
-  const typeSwitch = _typeDropdown.node;
   _typeEl = [];
 
   // The PAGE-WIDE SCALE pill: a draggable range slider that scales the WHOLE
@@ -555,7 +552,6 @@ export function mountShell(root) {
       el('span', { class: 'dt-nav-build-text', text: 'settings' }),
     ]),
     colorSwitch,
-    typeSwitch,
     scalePill,
     _statusEl,
   ]);

@@ -86,6 +86,25 @@ function normaliseSection(id) {
   return SECTION_IDS.includes(id) ? id : DEFAULT_SECTION;
 }
 
+// ── Research-preview banner — a tasteful product-status statement ─────
+//
+// A prominent card that leads the Settings surface: the zicato accent, a small
+// pulsing status dot, the label "Research preview", and a one-line subtitle.
+// Theme-adaptive — every colour is a Console token (--v2-accent / --v2-ink /
+// --v2-panel / --v2-rule / …), so it recolours across all 16 themes and fits
+// the dense Console aesthetic. The styling lives in console4.css (.dn-respreview
+// + children); this just assembles the nodes.
+function researchPreviewBanner() {
+  return el('div', { class: 'dn-respreview', role: 'note', 'aria-label': 'Research preview' }, [
+    el('span', { class: 'dn-respreview-dot', 'aria-hidden': 'true' }),
+    el('div', { class: 'dn-respreview-copy' }, [
+      el('span', { class: 'dn-respreview-label', text: 'Research preview' }),
+      el('span', { class: 'dn-respreview-sub',
+        text: 'zicato is an early research preview — interfaces and behaviour may change.' }),
+    ]),
+  ]);
+}
+
 export async function render(host, ctx, params) {
   _ctx = ctx;
   _active = normaliseSection(params && params.section);
@@ -93,6 +112,11 @@ export async function render(host, ctx, params) {
   // Build the chrome ONCE per mount; thereafter swap only the section host.
   if (!host.firstChild) {
     clearChildren(host);
+    // The RESEARCH-PREVIEW banner leads the Settings surface — a full-width
+    // status card ABOVE the section rail + body, so it is the first thing the
+    // operator sees on opening Settings. Theme-token-only (it recolours across
+    // all 16 themes); static chrome built once per mount (never beats).
+    host.appendChild(researchPreviewBanner());
     const root = el('div', { class: 'dn-settings' });
     _railHost = el('nav', { class: 'dn-set-rail', 'aria-label': 'Settings sections' });
     _sectionHost = el('div', { class: 'dn-set-body', role: 'region', 'aria-label': 'Settings section' });
