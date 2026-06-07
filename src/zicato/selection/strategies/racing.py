@@ -328,19 +328,67 @@ class RacingStrategy(SelectionStrategy):
 
     # -- live (in-flight) projection --------------------------------------
 
+    def _live_progress(self) -> dict[str, dict[str, Any]]:
+        """Authoritative per-lane live-progress for the in-flight rung.
+
+        The strategy OWNS the rung's topology: which lanes are racing this
+        rung (every ``right`` side of a still-pending duel, plus the
+        champion as the shared ``left`` defender), each lane's
+        ``boards_total`` (the rung's board-slice size), and the lane's
+        last-known running scalar vs the champion when one exists. The
+        runner's per-board ``projected`` map (the scorer's domain) is
+        overlaid later (in the orchestrator's serialiser) to fill the
+        live ``boards_done`` + the streaming ``projected_scalar``; here we
+        seed only what strategy state already knows.
+
+        Each value is ``{boards_total, inflight, projected?, projected_scalar?}``
+        — ``projected_scalar`` is omitted when the lane has no running
+        scalar yet (rung 0 before any duel has landed), so the frontend
+        falls back gracefully to the boards-progress bar alone. The
+        champion lane carries ``boards_total`` + the champion's own
+        last-known scalar so the lane has a stable benchmark to race
+        against, even while its per-duel ``projected`` is re-aggregated.
+        """
+        total = self._rung_board_size()
+        progress: dict[str, dict[str, Any]] = {}
+        lanes: list[str] = []
+        if self._champion is not None:
+            lanes.append(self._champion.generation_id)
+        for _mid, (_left, right) in self._pending.items():
+            lanes.append(right.generation_id)
+        for gid in lanes:
+            row: dict[str, Any] = {"inflight": 1}
+            if total > 0:
+                row["boards_total"] = int(total)
+            scalar = self._scalars.get(gid)
+            if scalar is not None:
+                # The lane's last-known running aggregate vs the champion.
+                row["projected_scalar"] = float(scalar)
+                row["projected"] = True
+            progress[gid] = row
+        return progress
+
     def _pending_round(self) -> RoundRecord | None:
         # Mid rung: ``_pending`` holds this rung's champion-vs-challenger
         # duels. Emit one pending match per duel (keyed by the rung
-        # matchup id) carrying the rung's board fraction.
+        # matchup id) carrying the rung's board fraction + the
+        # authoritative per-lane live-progress for the whole rung (the
+        # frontend reads ``live_progress`` off the rung's first match).
         if self._pending:
             fraction = self._rung_fraction()
+            live_progress = self._live_progress()
             matches = [
                 pending_match_record(
                     mid,
                     (left.generation_id, right.generation_id),
                     board_fraction=fraction,
+                    # Attach the full per-rung live-progress to the FIRST
+                    # match only — the racing model lifts ``live_progress``
+                    # off ``matches[0]`` for the whole rung; the remaining
+                    # per-duel matches keep it empty to avoid duplication.
+                    live_progress=live_progress if slot == 0 else None,
                 )
-                for mid, (left, right) in self._pending.items()
+                for slot, (mid, (left, right)) in enumerate(self._pending.items())
             ]
             return RoundRecord(
                 stage_index=self._rung,

@@ -1706,6 +1706,14 @@ async def _evolve_multi_challenger(
     # raises, so a publish failure cannot abort the resolution.
     def _publish_live_structure(strat: Any) -> None:
         live_rounds = _serialise_rounds(strat.live_rounds())
+        # Overlay the runner's authoritative per-board ``projected`` map (the
+        # scorer's domain) onto the racing rung's per-lane ``live_progress``
+        # topology (the strategy's domain): the strategy publishes which lanes
+        # are racing + their board-slice totals; the scorer publishes each
+        # lane's live ``boards_done`` + streaming ``projected_scalar``. The
+        # two compose here so the rung carries one authoritative per-lane
+        # progress map the dashboard consumes directly.
+        _overlay_projected_live_progress(live_rounds, workspace_root)
         live_standings = _overlay_projected_standings(
             _serialise_standings(strat.live_standings()),
             live_rounds,
@@ -2312,12 +2320,79 @@ def _serialise_rounds(rounds: Any) -> list[dict[str, Any]]:
                     "cut": list(m.cut),
                     "board_fraction": m.board_fraction,
                     "pending": m.pending,
+                    "live_progress": {
+                        str(gid): dict(lane) for gid, lane in (m.live_progress or {}).items()
+                    },
                 }
                 for m in r.matches
             ],
         }
         for r in rounds
     ]
+
+
+def _overlay_projected_live_progress(
+    rounds: list[dict[str, Any]],
+    workspace_root: Path,
+) -> None:
+    """Fold the runner's per-board ``projected`` into the rung ``live_progress``.
+
+    The racing strategy publishes the in-flight rung's per-lane
+    ``live_progress`` TOPOLOGY (which lanes are racing, each lane's
+    ``boards_total`` = the rung's board-slice size, the ``inflight`` flag,
+    and the lane's last-known running scalar vs the champion). The runner's
+    :class:`_IncrementalScorer` writes the live per-board ``projected`` map
+    (``{generation_id: {scalar, boards_done, boards_total, pass_rate}}``)
+    onto :attr:`ActiveTournament.projected` as each board unit settles. This
+    overlays the latter onto the former IN PLACE so each rung lane carries
+    one authoritative progress row the dashboard consumes directly:
+
+    * ``boards_done`` — from the runner's projected row (the strategy can't
+      know mid-duel board progress).
+    * ``projected_scalar`` / ``projected`` — refreshed from the runner's
+      LIVE running aggregate when present (more current than the strategy's
+      last-rung scalar). The strategy's seeded scalar (a prior rung's
+      result) stays as the fallback when no live projected row exists yet.
+    * ``boards_total`` — kept from the strategy's authoritative rung-slice
+      size; only filled from the projected row when the strategy left it
+      unknown (whole-board fallback construction).
+
+    The separation of concerns is preserved: the STRATEGY owns the
+    ``live_progress`` topology (it is written into the serialised rounds),
+    the SCORER owns the ``projected`` scalars (read here from the on-disk
+    state). Best-effort — a missing / unreadable projected map leaves the
+    strategy-published ``live_progress`` untouched. Mutates ``rounds`` in
+    place; a no-op for any round whose matches carry no ``live_progress``
+    (every non-racing structure, and a racing rung before it is scheduled).
+    """
+    has_progress = any(m.get("live_progress") for r in rounds for m in (r.get("matches") or []))
+    if not has_progress:
+        return
+    try:
+        from zicato.runtime.state import read_active_tournament  # noqa: PLC0415
+
+        active = read_active_tournament(workspace_root)
+    except Exception:  # noqa: BLE001 — overlay is best-effort
+        active = None
+    projected = dict(active.projected) if active is not None else {}
+    if not projected:
+        return
+    for r in rounds:
+        for m in r.get("matches") or []:
+            lanes = m.get("live_progress")
+            if not lanes:
+                continue
+            for gid, lane in lanes.items():
+                proj = projected.get(str(gid))
+                if not isinstance(proj, dict):
+                    continue
+                if "boards_done" in proj:
+                    lane["boards_done"] = int(proj["boards_done"])
+                if "boards_total" in proj and "boards_total" not in lane:
+                    lane["boards_total"] = int(proj["boards_total"])
+                if "scalar" in proj:
+                    lane["projected_scalar"] = float(proj["scalar"])
+                    lane["projected"] = True
 
 
 def _serialise_standings(standings: Any) -> list[dict[str, Any]]:

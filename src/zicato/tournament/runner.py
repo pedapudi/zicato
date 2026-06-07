@@ -1399,6 +1399,20 @@ class _IncrementalScorer:
             # Only written when the gen ids were threaded (non-gauntlet /
             # live-envelope path); the seed-scoring path leaves them empty,
             # so this stays byte-identical there.
+            #
+            # NB (racing per-lane live_progress, B1): this scorer is per-DUEL —
+            # a racing rung runs N concurrent champion-vs-challenger duels, each
+            # with its OWN scorer, so the champion's ``projected`` row here is
+            # re-aggregated over only THIS duel's boards (concurrent duels race
+            # to rewrite it). The authoritative per-LANE rung progress is NOT
+            # reconstructed from this per-duel map: the racing STRATEGY owns the
+            # rung's ``live_progress`` topology and the orchestrator overlays
+            # this ``projected`` map onto it per lane (see
+            # ``_overlay_projected_live_progress``). Keeping the scorer per-duel
+            # (rather than a per-rung union champion scorer) is the lower-risk
+            # path — it leaves the gate's per-duel aggregate path and the
+            # scoring/gate behaviour untouched; the topology composes additively
+            # on top.
             projected: dict[str, dict[str, Any]] = {}
             if self._champion_id and champion_agg is not None:
                 projected[self._champion_id] = self._projection_row(

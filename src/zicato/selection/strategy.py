@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -249,6 +249,19 @@ class MatchRecord:
     # ``rounds()`` view never sets it, so the durable record and the
     # post-run envelope are unchanged.
     pending: bool = False
+    # Authoritative per-lane LIVE progress for an in-flight racing rung,
+    # keyed by competitor ``generation_id``. Each value is a small dict the
+    # dashboard's racing scalar-track / survival-funnel consumes directly,
+    # rather than reconstructing it from the per-duel ``projected`` map:
+    # ``{boards_done, boards_total, projected_scalar?, inflight, projected}``.
+    # The STRATEGY owns the topology (which lanes, their ``boards_total`` =
+    # the rung's board-slice size, the ``inflight`` flag, and the lane's
+    # last-known running scalar vs the champion when available); the runner's
+    # per-board ``projected`` map (owned by the scorer) is overlaid at
+    # serialise time to fill ``boards_done`` + the live ``projected_scalar``.
+    # Empty for every settled match and for non-racing structures, so the
+    # durable record + the post-run envelope are byte-unchanged.
+    live_progress: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class SelectionStrategy(ABC):
@@ -383,6 +396,7 @@ def pending_match_record(
     *,
     bracket_slot: str = "",
     board_fraction: float | None = None,
+    live_progress: dict[str, dict[str, Any]] | None = None,
 ) -> MatchRecord:
     """Build a :class:`MatchRecord` for a scheduled-but-unresolved match.
 
@@ -391,6 +405,9 @@ def pending_match_record(
     ``decision=""``, ``pending=True``. Centralising it keeps every
     strategy's :meth:`SelectionStrategy._pending_round` emitting the
     identical pending shape.
+
+    ``live_progress`` is the optional authoritative per-lane live-progress
+    map (racing rungs supply it; every other structure leaves it empty).
     """
     return MatchRecord(
         match_id=match_id,
@@ -400,6 +417,7 @@ def pending_match_record(
         bracket_slot=bracket_slot,
         board_fraction=board_fraction,
         pending=True,
+        live_progress=dict(live_progress) if live_progress else {},
     )
 
 

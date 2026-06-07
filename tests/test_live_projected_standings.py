@@ -135,6 +135,77 @@ def test_partial_aggregate_and_projected_compose(tmp_path: Path) -> None:
     assert back.projected["A"]["scalar"] == 3.0
 
 
+def test_publish_preserves_projected_while_carrying_live_progress(tmp_path: Path) -> None:
+    # The strategy owns the rung's per-lane ``live_progress`` topology (it rides
+    # in ``rounds``); the runner's scorer owns the per-board ``projected`` scalar
+    # map. A full envelope republish (one per scheduled batch) must carry the
+    # new ``live_progress`` AND preserve the runner-written ``projected`` — the
+    # two writers compose, neither clobbers the other (issue-#16 RMW contract).
+    from zicato.orchestrator import _publish_active_tournament  # noqa: PLC0415
+
+    # The runner lands a board first → ``projected`` exists on disk.
+    write_active_tournament(
+        tmp_path,
+        ActiveTournament(
+            tournament_id="t",
+            parent_generation_id="",
+            child_generation_id="",
+            epoch_id="e",
+            started_at="x",
+            structure="racing",
+        ),
+    )
+    update_tournament_projected(
+        tmp_path, {"v1": {"scalar": 0.3, "boards_done": 1, "boards_total": 2}}
+    )
+    # The orchestrator republishes the live structure with the rung carrying its
+    # per-lane live_progress on the in-flight match.
+    rounds = [
+        {
+            "stage_index": 0,
+            "label": "Rung 0",
+            "matches": [
+                {
+                    "match_id": "rung0_m0",
+                    "competitors": ["v0", "v1"],
+                    "winner": None,
+                    "decision": "",
+                    "delta_scalar": None,
+                    "bracket_slot": "",
+                    "bye": False,
+                    "survivors": [],
+                    "cut": [],
+                    "board_fraction": 0.25,
+                    "pending": True,
+                    "live_progress": {
+                        "v0": {"inflight": 1, "boards_total": 2},
+                        "v1": {"inflight": 1, "boards_total": 2, "projected_scalar": 0.3},
+                    },
+                }
+            ],
+        }
+    ]
+    _publish_active_tournament(
+        tmp_path,
+        tournament_id="t",
+        epoch_id="e",
+        structure="racing",
+        structure_params={},
+        competitors=[{"generation_id": "v0", "role": "champion"}],
+        round_index=0,
+        total_rounds=1,
+        rounds=rounds,
+    )
+    back = read_active_tournament(tmp_path)
+    assert back is not None
+    # The runner's projected map survived the full republish (preserve RMW).
+    assert back.projected["v1"]["scalar"] == 0.3
+    # The strategy's live_progress rode through into the published rounds.
+    match = back.rounds[0]["matches"][0]
+    assert match["live_progress"]["v1"]["projected_scalar"] == 0.3
+    assert match["live_progress"]["v0"]["boards_total"] == 2
+
+
 # ---------------------------------------------------------------------------
 # (c) the incremental scorer writes a projected row per settled board
 # ---------------------------------------------------------------------------
