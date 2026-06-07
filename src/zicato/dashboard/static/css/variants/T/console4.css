@@ -1295,7 +1295,7 @@
      plucked-note dot fills with `--zicato-accent` (the green token, defined on
      the root just below + brightened on dark themes). Static chrome — painted
      once, never on a heartbeat. */
-  .dt-brand-mark { height: 17px; width: auto; display: block; flex: none; overflow: visible; }
+  .dt-brand-mark { height: 26px; width: auto; display: block; flex: none; overflow: visible; }
   /* THE WORDMARK — inline SVG "zıcato" (dotless ı + the accent dot geometrically
      pinned over its stem). The letters fill with `currentColor` (so they flip
      dark/light with the theme like the mark); the dot fills with the accent

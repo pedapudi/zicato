@@ -330,30 +330,30 @@ function wireRailHandle(handle, root) {
 // continuous stroke — scroll → string → pluck → damped-sine sparkline → bridge
 // tick). That construction is glorious at ≥24px but MUDDIES into noise below it
 // — the fine spiral whorl and the sparkline ripples collapse at small raster
-// sizes. The top bar renders the mark at ~17px (`.dt-brand-mark { height:17px }`
-// in console4.css), squarely in the "mush small" band. So per the brand size
-// rule we render the FAVICON-Z FORM here instead of the full spiral: a bold `z`
-// (the same heavy geometry as docs/brand/zicato-favicon.svg) plus the single
-// green plucked-note dot, which stays legible all the way down to 16px and KEEPS
-// its accent dot. This is exactly the favicon-swap the brand spec prescribes for
-// sub-24px usage; the full spiral lives on in the lockup, tile, and ≥24px
-// renders. Theme-adaptive by construction: the `z` strokes with `currentColor`
-// so it follows the bar's text colour (dark on a light theme, light on a dark
-// theme), and the dot fills with `var(--zicato-accent)` (per-theme in
-// console4.css) — no tile background, unlike the static favicon file. Built ONCE
-// as static chrome — it is never rebuilt on an SSE heartbeat (digest discipline).
-const _MARK_Z_PATH = 'M74,86 L182,86 L74,170 L182,170';
+// rule we render the FULL SPIRAL here at ~26px (`.dt-brand-mark { height:26px }`
+// in console4.css), comfortably above the ~24px floor, so the scroll, pluck,
+// sparkline, and bridge all read. Operator's call: keep the spiral in the chrome
+// rather than swap to the bold-z. The bold-z favicon form still ships for sub-24px
+// raster uses (docs/brand/zicato-favicon.svg), where the fine spiral muddies.
+// It is the exact geometry of docs/brand/zicato-mark.svg: stroke 5.0 with the
+// single green plucked-note dot (r 5.5) at the pluck vertex. Theme-adaptive: the
+// stroke uses `currentColor` so it follows the bar's text colour (dark/light with
+// the theme), and the dot fills `var(--zicato-accent)` (per-theme). Built ONCE as
+// static chrome, never rebuilt on an SSE heartbeat (digest discipline).
+const _MARK_SPIRAL_PATH = 'M94,52.5 L93.9,52.7 L93.7,52.9 L93.6,53.1 L93.5,53.4 L93.5,53.7 L93.4,54 L93.4,54.3 L93.5,54.6 L93.6,55 L93.7,55.3 L93.9,55.6 L94.1,55.9 L94.4,56.2 L94.7,56.5 L95.1,56.7 L95.4,56.9 L95.9,57.1 L96.3,57.2 L96.8,57.2 L97.3,57.2 L97.9,57.2 L98.4,57 L98.9,56.8 L99.4,56.5 L99.9,56.2 L100.4,55.8 L100.9,55.3 L101.2,54.7 L101.6,54.1 L101.8,53.4 L102,52.6 L102.1,51.9 L102.1,51 L102,50.2 L101.8,49.3 L101.5,48.5 L101.1,47.6 L100.5,46.8 L99.9,46 L99.1,45.3 L98.2,44.7 L97.2,44.1 L96.1,43.7 L94.9,43.4 L93.6,43.2 L92.3,43.2 L91,43.3 L89.6,43.6 L88.2,44.1 L86.8,44.8 L85.5,45.6 L84.2,46.7 L83,47.9 L82,49.3 L81.1,50.9 L80.3,52.7 L79.8,54.6 L79.5,56.6 L79.4,58.7 L79.5,60.9 L80,63.2 L80.7,65.4 L81.8,67.6 L83.1,69.8 L84.8,71.9 L86.7,73.8 L89,75.5 L91.5,77 L94.3,78.3 L97.3,79.2 L100.6,79.8 L104,80 L150,80 L170,102 L190,80 Q206,56 222,80 Q236,102 250,80 Q261,68 272,80 L292,80';
+const _MARK_BRIDGE_PATH = 'M292,66 L292,94';
 
 function brandMark() {
   const stroke = svgEl('g', {
-    fill: 'none', stroke: 'currentColor', 'stroke-width': '22',
+    fill: 'none', stroke: 'currentColor', 'stroke-width': '5.0',
     'stroke-linecap': 'round', 'stroke-linejoin': 'round',
   }, [
-    svgEl('path', { d: _MARK_Z_PATH }),
+    svgEl('path', { d: _MARK_SPIRAL_PATH }),
+    svgEl('path', { d: _MARK_BRIDGE_PATH }),
   ]);
-  const dot = svgEl('circle', { cx: '128', cy: '128', r: '21', fill: 'var(--zicato-accent)' });
+  const dot = svgEl('circle', { cx: '170', cy: '102', r: '5.5', fill: 'var(--zicato-accent)' });
   return svgEl('svg', {
-    class: 'dt-brand-mark', viewBox: '52 52 152 152',
+    class: 'dt-brand-mark', viewBox: '71 35 229 75',
     role: 'img', 'aria-label': 'zicato', focusable: 'false',
   }, [stroke, dot]);
 }
