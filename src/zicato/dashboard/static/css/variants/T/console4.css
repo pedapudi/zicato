@@ -1198,6 +1198,35 @@
     .dn-hovercard, .dn-hovercard.dn-hovercard-on { transition: none; transform: none; }
   }
 
+  /* ── the RESEARCH-PREVIEW note — a QUIET, app-wide product-status mark ────
+   * Pinned to the LOWER-RIGHT of the chrome (position:fixed, bottom-right),
+   * present on every view. The deliberate antithesis of a "light-up rail card":
+   * small, FAINT, monospace, lowercase — the same understated idiom as the
+   * existing faint captions/pills (.dn-faint / the .dn-stat .k keys). It uses the
+   * muted ink-faint token (theme-adaptive across all themes) with a tiny STATIC
+   * accent dot — NO tint fill, NO glow, NO pulse, NO animation. Purely
+   * informational, so the whole note is pointer-events:none and never blocks a
+   * click. A modest z-index keeps it under transient overlays (the hovercard at
+   * 60) yet above page content; a small margin keeps it off the corner. */
+  .dt-respreview {
+    position: fixed;
+    right: 12px; bottom: 10px;
+    z-index: 40;
+    display: flex; align-items: center; gap: 6px;
+    pointer-events: none;            /* informational only — never blocks a click */
+    font: 10.5px/1 var(--v2-mono);
+    letter-spacing: 0.04em;
+    color: var(--v2-ink-faint);
+    opacity: 0.85;
+    user-select: none;
+  }
+  .dt-respreview-dot {
+    flex: none; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--zicato-accent);
+    opacity: 0.8;                    /* a faint, static accent tick — no glow/pulse */
+  }
+  .dt-respreview-text { white-space: nowrap; }
+
   /* Rich hovercard body (board-status popovers): a small titled detail card.
    * Token-only; lives inside .dn-hovercard so it inherits the per-theme card. */
   .dn-hc-body { display: flex; flex-direction: column; gap: 3px; }
@@ -2772,38 +2801,6 @@
   /* A section rail + one section host. The builder section delegates to the
    * full builder view (its own grid takes over), so the body host is just a
    * min-0 column the section paints into. Theme tokens only. */
-
-  /* RESEARCH-PREVIEW banner — a tasteful product-status card that LEADS the
-   * Settings surface (above the section rail). An accent-tinted panel with a
-   * crisp accent hairline, a small pulsing accent status dot, a bold label, and
-   * a quiet one-line subtitle. Every colour is a Console token (recolours across
-   * all 16 themes); the tint is a color-mix off --v2-accent, the same idiom the
-   * rest of the surface uses, so it stays refined rather than gaudy. */
-  .dn-respreview { display: flex; align-items: center; gap: 13px; margin: 0 0 18px;
-    padding: 13px 16px; border-radius: 7px;
-    border: 1px solid color-mix(in srgb, var(--v2-accent) 42%, var(--v2-rule));
-    background:
-      linear-gradient(90deg,
-        color-mix(in srgb, var(--v2-accent) 13%, var(--v2-panel)),
-        color-mix(in srgb, var(--v2-accent) 5%, var(--v2-panel)));
-    box-shadow: inset 3px 0 0 0 var(--v2-accent); }
-  .dn-respreview-dot { flex: none; width: 9px; height: 9px; border-radius: 50%;
-    background: var(--v2-accent);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--v2-accent) 60%, transparent);
-    animation: dn-respreview-pulse 2.2s ease-out infinite; }
-  .dn-respreview-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .dn-respreview-label { font-family: var(--v2-sans); font-size: 13px; font-weight: 700;
-    letter-spacing: 0.02em; color: var(--v2-ink); line-height: 1.2; }
-  .dn-respreview-sub { font-size: 11.5px; color: var(--v2-ink-soft); line-height: 1.35;
-    overflow: hidden; text-overflow: ellipsis; }
-  @keyframes dn-respreview-pulse {
-    0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--v2-accent) 55%, transparent); }
-    70%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--v2-accent) 0%, transparent); }
-    100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--v2-accent) 0%, transparent); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dn-respreview-dot { animation: none; }
-  }
 
   .dn-settings { display: grid; grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
     gap: 22px; align-items: start; min-width: 0; }
