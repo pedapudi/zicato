@@ -63,7 +63,7 @@ class GauntletStrategy(SelectionStrategy):
                 right=self._challenger,
                 board_subset=None,
                 replicates=self._replicates,
-                round_index=0,
+                stage_index=0,
             ),
         )
 
@@ -139,7 +139,7 @@ class GauntletStrategy(SelectionStrategy):
         )
         return (
             RoundRecord(
-                round_index=0,
+                stage_index=0,
                 label="Gauntlet",
                 matches=(
                     MatchRecord(

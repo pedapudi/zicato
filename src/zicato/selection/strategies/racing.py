@@ -148,7 +148,7 @@ class RacingStrategy(SelectionStrategy):
                     right=challenger,
                     board_subset=subset,
                     replicates=self._replicates,
-                    round_index=self._rung,
+                    stage_index=self._rung,
                 )
             )
         self._rung_started = True
@@ -173,7 +173,7 @@ class RacingStrategy(SelectionStrategy):
                 right=self._survivor,
                 board_subset=None,  # full board for the crowning gate
                 replicates=self._replicates,
-                round_index=self._rung + 1,
+                stage_index=self._rung + 1,
             ),
         )
 
@@ -210,7 +210,7 @@ class RacingStrategy(SelectionStrategy):
             self._eliminated_round[c.generation_id] = self._rung
         self._records.append(
             RoundRecord(
-                round_index=self._rung,
+                stage_index=self._rung,
                 label=f"Rung {self._rung}",
                 matches=(
                     MatchRecord(
@@ -307,7 +307,7 @@ class RacingStrategy(SelectionStrategy):
             )
             recs.append(
                 RoundRecord(
-                    round_index=self._rung + 1,
+                    stage_index=self._rung + 1,
                     label="Champion gate",
                     matches=(
                         MatchRecord(
@@ -343,7 +343,7 @@ class RacingStrategy(SelectionStrategy):
                 for mid, (left, right) in self._pending.items()
             ]
             return RoundRecord(
-                round_index=self._rung,
+                stage_index=self._rung,
                 label=f"Rung {self._rung}",
                 matches=tuple(matches),
             )
@@ -351,7 +351,7 @@ class RacingStrategy(SelectionStrategy):
         if self._final_scheduled and self._final_result is None and self._survivor is not None:
             assert self._champion is not None
             return RoundRecord(
-                round_index=self._rung + 1,
+                stage_index=self._rung + 1,
                 label="Champion gate",
                 matches=(
                     pending_match_record(

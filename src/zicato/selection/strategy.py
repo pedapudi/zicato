@@ -75,11 +75,11 @@ class Matchup:
         ``1`` is the gauntlet's exact single-run path; bracket structures
         default to ``>= 2`` because replication, not bracket shape, is the
         noise lever.
-    round_index:
+    stage_index:
         The bracket round / Swiss round / racing rung this matchup belongs
-        to (the WITHIN-tournament stage — distinct from a generation's OUTER
-        evolve ``round_index``; see :class:`RoundRecord`). Carried through to
-        the persisted record for the dashboard.
+        to — the WITHIN-tournament stage, a different axis from a generation's
+        OUTER evolve ``round_index`` (see :class:`RoundRecord`). Carried
+        through to the persisted record for the dashboard.
     bracket_slot:
         Single/double-elim bracket position (e.g. ``"WB-R1-0"``); empty
         for structures without a bracket.
@@ -90,7 +90,7 @@ class Matchup:
     right: Contestant
     board_subset: tuple[str, ...] | None = None
     replicates: int = 1
-    round_index: int = 0
+    stage_index: int = 0
     bracket_slot: str = ""
 
 
@@ -113,7 +113,7 @@ class MatchupResult:
     left_id, right_id:
         The generation ids of the two sides (mirrors the matchup so a
         result is self-describing for the audit trail).
-    round_index, bracket_slot:
+    stage_index, bracket_slot:
         Copied from the matchup for the persisted bracket record.
     """
 
@@ -123,7 +123,7 @@ class MatchupResult:
     left_agg: dict[str, Any]
     right_agg: dict[str, Any]
     outcome: GateOutcome
-    round_index: int = 0
+    stage_index: int = 0
     bracket_slot: str = ""
 
     def left_scalar(self) -> float:
@@ -210,19 +210,20 @@ class RoundRecord:
     can render the structure's progression. ``matches`` carries the
     per-match generalization of today's single champion-vs-challenger row.
 
-    NB — ``round_index`` here is the WITHIN-tournament stage index (a bracket
+    NB — ``stage_index`` here is the WITHIN-tournament stage index (a bracket
     round / Swiss round / racing rung INSIDE one evolve round); it is a
     DIFFERENT axis from a generation's ``Generation.round_index`` /
     ``Experiment.round_index``, which is the OUTER evolve (epoch-child) round
-    the generation was born in. The two share a name only for historical
-    reasons; ``label`` is structure-qualified ("Bracket round N" / "Swiss
-    round N" / "Rung N" / "Winners' bracket") so the unqualified word "Round"
-    is reserved for the evolve round on the dashboard. A future rename to
-    ``stage_index`` would kill the overload at the source (a persisted-key
-    migration, tracked separately).
+    the generation was born in. They were once both called ``round_index``;
+    the within-tournament axis was renamed to ``stage_index`` to kill that
+    overload, so the unqualified word "round" now always means the evolve
+    round. ``label`` stays structure-qualified ("Bracket round N" / "Swiss
+    round N" / "Rung N" / "Winners' bracket"). The persisted ``rounds[]`` JSON
+    key is ``stage_index``; readers still accept the legacy ``round_index``
+    key for workspaces written before the rename.
     """
 
-    round_index: int
+    stage_index: int
     label: str
     matches: tuple[MatchRecord, ...] = ()
 

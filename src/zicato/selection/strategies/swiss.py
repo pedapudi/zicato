@@ -45,7 +45,7 @@ class SwissStrategy(SelectionStrategy):
         self._by_id: dict[str, Contestant] = {}
         self._rounds_n = max(1, _param_int(self.params, "rounds_n", 4))
         self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
-        self._round_index = 0
+        self._stage_index = 0
         self._pending: dict[str, tuple[Contestant, Contestant]] = {}
         self._copeland: dict[str, int] = {}
         self._scalar_sum: dict[str, float] = {}
@@ -81,7 +81,7 @@ class SwissStrategy(SelectionStrategy):
         if self._pending:
             return ()
         # All Swiss rounds played → schedule the champion-gate confirmation.
-        if self._round_index >= self._rounds_n:
+        if self._stage_index >= self._rounds_n:
             return self._maybe_final()
         return self._schedule_swiss_round()
 
@@ -95,7 +95,7 @@ class SwissStrategy(SelectionStrategy):
             if i + 1 < n:
                 left = self._by_id[ordered[i]]
                 right = self._by_id[ordered[i + 1]]
-                mid = f"r{self._round_index}_m{slot}"
+                mid = f"r{self._stage_index}_m{slot}"
                 self._pending[mid] = (left, right)
                 matchups.append(
                     Matchup(
@@ -103,7 +103,7 @@ class SwissStrategy(SelectionStrategy):
                         left=left,
                         right=right,
                         replicates=self._replicates,
-                        round_index=self._round_index,
+                        stage_index=self._stage_index,
                     )
                 )
                 i += 2
@@ -113,7 +113,7 @@ class SwissStrategy(SelectionStrategy):
                 self._copeland[bye_id] = self._copeland.get(bye_id, 0) + 1
                 self._round_matches.append(
                     MatchRecord(
-                        match_id=f"r{self._round_index}_m{slot}",
+                        match_id=f"r{self._stage_index}_m{slot}",
                         competitors=(bye_id,),
                         winner=bye_id,
                         bye=True,
@@ -121,7 +121,7 @@ class SwissStrategy(SelectionStrategy):
                 )
                 i += 1
             slot += 1
-        self._scheduled_round = self._round_index
+        self._scheduled_round = self._stage_index
         return matchups
 
     def _standing_order(self) -> list[str]:
@@ -156,7 +156,7 @@ class SwissStrategy(SelectionStrategy):
                 left=self._champion,
                 right=self._leader,
                 replicates=self._replicates,
-                round_index=self._round_index,
+                stage_index=self._stage_index,
             ),
         )
 
@@ -190,13 +190,13 @@ class SwissStrategy(SelectionStrategy):
         if not self._pending:
             self._records.append(
                 RoundRecord(
-                    round_index=self._round_index,
-                    label=f"Swiss round {self._round_index + 1}",
+                    stage_index=self._stage_index,
+                    label=f"Swiss round {self._stage_index + 1}",
                     matches=tuple(self._round_matches),
                 )
             )
             self._round_matches = []
-            self._round_index += 1
+            self._stage_index += 1
 
     def _tally_scalar(self, gid: str, scalar: float) -> None:
         self._scalar_sum[gid] = self._scalar_sum.get(gid, 0.0) + scalar
@@ -278,7 +278,7 @@ class SwissStrategy(SelectionStrategy):
             )
             recs.append(
                 RoundRecord(
-                    round_index=self._round_index,
+                    stage_index=self._stage_index,
                     label="Champion gate",
                     matches=(
                         MatchRecord(
@@ -311,15 +311,15 @@ class SwissStrategy(SelectionStrategy):
                     )
                 )
             return RoundRecord(
-                round_index=self._round_index,
-                label=f"Swiss round {self._round_index + 1}",
+                stage_index=self._stage_index,
+                label=f"Swiss round {self._stage_index + 1}",
                 matches=tuple(matches),
             )
         # Champion-gate scheduled but its result has not landed yet.
         if self._final_scheduled and self._final_result is None and self._leader is not None:
             assert self._champion is not None
             return RoundRecord(
-                round_index=self._round_index,
+                stage_index=self._stage_index,
                 label="Champion gate",
                 matches=(
                     pending_match_record(

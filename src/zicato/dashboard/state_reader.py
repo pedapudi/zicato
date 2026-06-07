@@ -2652,7 +2652,7 @@ def _structure_from_loss_files(
         "structure": "gauntlet",
         "structure_params": {},
         "competitors": competitors,
-        "rounds": [{"round_index": 0, "label": "Round 1", "matches": [match]}],
+        "rounds": [{"stage_index": 0, "label": "Gauntlet", "matches": [match]}],
         "standings": standings,
         "field_status": field_status,
         "source": "loss_files",

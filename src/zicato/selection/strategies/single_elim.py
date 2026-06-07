@@ -47,7 +47,7 @@ class SingleEliminationStrategy(SelectionStrategy):
         self._audit: list[MatchupResult] = []
         # Bracket state.
         self._current_round: list[Contestant] = []  # survivors entering the next round
-        self._round_index = 0
+        self._stage_index = 0
         self._pending: dict[str, tuple[Contestant, Contestant]] = {}
         self._records: list[RoundRecord] = []
         self._round_matches: list[MatchRecord] = []
@@ -100,7 +100,7 @@ class SingleEliminationStrategy(SelectionStrategy):
         while i < n:
             if i + 1 < n:
                 left, right = contestants[i], contestants[i + 1]
-                mid = f"WB-R{self._round_index}-{slot}"
+                mid = f"WB-R{self._stage_index}-{slot}"
                 self._pending[mid] = (left, right)
                 matchups.append(
                     Matchup(
@@ -108,7 +108,7 @@ class SingleEliminationStrategy(SelectionStrategy):
                         left=left,
                         right=right,
                         replicates=self._replicates,
-                        round_index=self._round_index,
+                        stage_index=self._stage_index,
                         bracket_slot=mid,
                     )
                 )
@@ -119,10 +119,10 @@ class SingleEliminationStrategy(SelectionStrategy):
                 self._current_round.append(bye)
                 self._round_matches.append(
                     MatchRecord(
-                        match_id=f"WB-R{self._round_index}-{slot}",
+                        match_id=f"WB-R{self._stage_index}-{slot}",
                         competitors=(bye.generation_id,),
                         winner=bye.generation_id,
-                        bracket_slot=f"WB-R{self._round_index}-{slot}",
+                        bracket_slot=f"WB-R{self._stage_index}-{slot}",
                         bye=True,
                     )
                 )
@@ -134,16 +134,16 @@ class SingleEliminationStrategy(SelectionStrategy):
         if self._round_matches:
             self._records.append(
                 RoundRecord(
-                    round_index=self._round_index,
+                    stage_index=self._stage_index,
                     # "Bracket round" (not bare "Round") so the within-tournament
                     # stage never reads as the outer evolution round on the
                     # dashboard, where a candidate's birth ROUND is the page.
-                    label=f"Bracket round {self._round_index + 1}",
+                    label=f"Bracket round {self._stage_index + 1}",
                     matches=tuple(self._round_matches),
                 )
             )
             self._round_matches = []
-        self._round_index += 1
+        self._stage_index += 1
 
     def _maybe_final(self) -> Sequence[Matchup]:
         if self._final_scheduled or self._survivor is None:
@@ -156,7 +156,7 @@ class SingleEliminationStrategy(SelectionStrategy):
                 left=self._champion,  # type: ignore[arg-type]
                 right=self._survivor,
                 replicates=self._replicates,
-                round_index=self._round_index,
+                stage_index=self._stage_index,
                 bracket_slot="final",
             ),
         )
@@ -179,7 +179,7 @@ class SingleEliminationStrategy(SelectionStrategy):
         loser = right if winner is left else left
         self._wins[winner_id] = self._wins.get(winner_id, 0) + 1
         self._losses[loser.generation_id] = self._losses.get(loser.generation_id, 0) + 1
-        self._eliminated_round[loser.generation_id] = self._round_index
+        self._eliminated_round[loser.generation_id] = self._stage_index
         self._current_round.append(winner)
         self._round_matches.append(
             MatchRecord(
@@ -287,7 +287,7 @@ class SingleEliminationStrategy(SelectionStrategy):
             )
             recs.append(
                 RoundRecord(
-                    round_index=self._round_index,
+                    stage_index=self._stage_index,
                     label="Final",
                     matches=(
                         MatchRecord(
@@ -322,15 +322,15 @@ class SingleEliminationStrategy(SelectionStrategy):
                     )
                 )
             return RoundRecord(
-                round_index=self._round_index,
-                label=f"Bracket round {self._round_index + 1}",
+                stage_index=self._stage_index,
+                label=f"Bracket round {self._stage_index + 1}",
                 matches=tuple(matches),
             )
         # Final scheduled, result not yet landed.
         if self._final_scheduled and self._final_result is None and self._survivor is not None:
             assert self._champion is not None
             return RoundRecord(
-                round_index=self._round_index,
+                stage_index=self._stage_index,
                 label="Final",
                 matches=(
                     pending_match_record(

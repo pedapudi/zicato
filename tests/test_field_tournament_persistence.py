@@ -66,7 +66,7 @@ def _result(matchup, *, left_scalar: float, right_scalar: float) -> MatchupResul
             delta_scalar=delta,
             delta_pass_rate=0.0,
         ),
-        round_index=matchup.round_index,
+        stage_index=matchup.stage_index,
         bracket_slot=matchup.bracket_slot,
     )
 

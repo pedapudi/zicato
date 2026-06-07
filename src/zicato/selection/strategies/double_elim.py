@@ -62,7 +62,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
 
         # Phase machine: "wb" winners', "lb" losers', "gf" grand final.
         self._phase = "wb"
-        self._round_index = 0
+        self._stage_index = 0
         self._round_matches: list[MatchRecord] = []
 
         # Winners' bracket state.
@@ -142,7 +142,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
         while i < n:
             if i + 1 < n:
                 left, right = contestants[i], contestants[i + 1]
-                mid = f"{prefix}-R{self._round_index}-{slot}"
+                mid = f"{prefix}-R{self._stage_index}-{slot}"
                 pending[mid] = (left, right)
                 matchups.append(
                     Matchup(
@@ -150,7 +150,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
                         left=left,
                         right=right,
                         replicates=self._replicates,
-                        round_index=self._round_index,
+                        stage_index=self._stage_index,
                         bracket_slot=mid,
                     )
                 )
@@ -160,10 +160,10 @@ class DoubleEliminationStrategy(SelectionStrategy):
                 contestants_ref.append(bye)
                 self._round_matches.append(
                     MatchRecord(
-                        match_id=f"{prefix}-R{self._round_index}-{slot}",
+                        match_id=f"{prefix}-R{self._stage_index}-{slot}",
                         competitors=(bye.generation_id,),
                         winner=bye.generation_id,
-                        bracket_slot=f"{prefix}-R{self._round_index}-{slot}",
+                        bracket_slot=f"{prefix}-R{self._stage_index}-{slot}",
                         bye=True,
                     )
                 )
@@ -191,7 +191,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
                 left=self._champion,  # type: ignore[arg-type]
                 right=challenger,
                 replicates=self._replicates,
-                round_index=self._round_index,
+                stage_index=self._stage_index,
                 bracket_slot="GF",
             ),
         )
@@ -200,13 +200,13 @@ class DoubleEliminationStrategy(SelectionStrategy):
         if self._round_matches:
             self._records.append(
                 RoundRecord(
-                    round_index=self._round_index,
+                    stage_index=self._stage_index,
                     label=label,
                     matches=tuple(self._round_matches),
                 )
             )
             self._round_matches = []
-        self._round_index += 1
+        self._stage_index += 1
 
     # -- result folding ----------------------------------------------------
 
@@ -239,7 +239,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
             self._lb_round.append(winner)
             # Second loss eliminates.
             self._eliminated.add(loser.generation_id)
-            self._eliminated_round[loser.generation_id] = self._round_index
+            self._eliminated_round[loser.generation_id] = self._stage_index
 
     def _record_match(
         self,
@@ -351,7 +351,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
                 comp = (self._champion.generation_id, challenger.generation_id)
             recs.append(
                 RoundRecord(
-                    round_index=self._round_index,
+                    stage_index=self._stage_index,
                     label="Grand final",
                     matches=(
                         MatchRecord(
@@ -385,7 +385,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
                     )
                 )
             return RoundRecord(
-                round_index=self._round_index,
+                stage_index=self._stage_index,
                 label=label,
                 matches=tuple(matches),
             )
@@ -396,7 +396,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
             if challenger is not None:
                 comp = (self._champion.generation_id, challenger.generation_id)
             return RoundRecord(
-                round_index=self._round_index,
+                stage_index=self._stage_index,
                 label="Grand final",
                 matches=(pending_match_record(self._gf_match_id, comp, bracket_slot="GF"),),
             )

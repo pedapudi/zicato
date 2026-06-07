@@ -328,4 +328,32 @@ test('live elim bracket: the in-flight (pending) final maps the same as a settle
   assert(cutOn(flow, 'v2', colX(0)), 'a settled R0 loss is still a clean elimination during a live run');
 });
 
+// The persisted within-tournament stage key is `stage_index`; normalizeStructure
+// maps it to the renderer's internal `round_index`, while still accepting the
+// legacy `round_index` key so pre-rename workspaces keep rendering.
+test('normalizeStructure: stage_index → round_index (new key + legacy fallback + mixed)', () => {
+  const newKey = structure.normalizeStructure({
+    structure: 'single_elim',
+    rounds: [
+      { stage_index: 0, label: 'Bracket round 1', matches: [] },
+      { stage_index: 1, label: 'Final', matches: [] },
+    ],
+  }, false);
+  assertEqual(newKey.rounds[0].round_index, 0, 'stage_index 0 maps to round_index 0');
+  assertEqual(newKey.rounds[1].round_index, 1, 'stage_index 1 maps to round_index 1');
+
+  const legacy = structure.normalizeStructure({
+    structure: 'single_elim',
+    rounds: [{ round_index: 2, label: 'Bracket round 3', matches: [] }],
+  }, false);
+  assertEqual(legacy.rounds[0].round_index, 2, 'a legacy round_index key is preserved');
+
+  // If both are present (a transitional record), the explicit round_index wins.
+  const both = structure.normalizeStructure({
+    structure: 'single_elim',
+    rounds: [{ round_index: 5, stage_index: 9, label: 'x', matches: [] }],
+  }, false);
+  assertEqual(both.rounds[0].round_index, 5, 'an explicit round_index is not overwritten by stage_index');
+});
+
 await run();

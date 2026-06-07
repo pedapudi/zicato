@@ -131,7 +131,15 @@ export function normalizeStructure(st, live) {
     // the racing model can recover the FULL challenger field when the published
     // rounds are sparse/degenerate (issue #8).
     entries: Array.isArray(st.entries) ? st.entries : [],
-    rounds: Array.isArray(st.rounds) ? st.rounds : [],
+    // The persisted within-tournament stage key is `stage_index` (a bracket
+    // round / Swiss round / racing rung). Normalize it to the renderer's
+    // internal `round_index` here — accepting the legacy `round_index` key so
+    // workspaces written before the rename still render. (This axis is DISTINCT
+    // from a generation's evolve `round_index`, which never flows through here.)
+    rounds: (Array.isArray(st.rounds) ? st.rounds : []).map((r) =>
+      (r && typeof r === 'object' && r.round_index == null && r.stage_index != null)
+        ? { ...r, round_index: r.stage_index }
+        : r),
     standings: Array.isArray(st.standings) ? st.standings : [],
     // the per-challenger proposing-step outcomes (applied/rejected + reason),
     // carried through so the "Proposed field" section + the live tracker can

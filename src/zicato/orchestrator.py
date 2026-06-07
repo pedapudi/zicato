@@ -1643,7 +1643,7 @@ async def _evolve_multi_challenger(
             left_agg=result.parent_agg,
             right_agg=result.child_agg,
             outcome=result.outcome,
-            round_index=m.round_index,
+            stage_index=m.stage_index,
             bracket_slot=m.bracket_slot,
         )
 
@@ -2297,7 +2297,7 @@ def _serialise_rounds(rounds: Any) -> list[dict[str, Any]]:
     """
     return [
         {
-            "round_index": r.round_index,
+            "stage_index": r.stage_index,
             "label": r.label,
             "matches": [
                 {
@@ -2664,7 +2664,7 @@ def _gauntlet_decision_from_result(
         left_agg=tournament_result.parent_agg,
         right_agg=tournament_result.child_agg,
         outcome=tournament_result.outcome,
-        round_index=matchup.round_index,
+        stage_index=matchup.stage_index,
         bracket_slot=matchup.bracket_slot,
     )
     strategy.record_result(result)
