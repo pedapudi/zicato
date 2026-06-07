@@ -1226,7 +1226,7 @@ async def _propose_and_apply_challenger(
     skills shape every challenger in the field exactly as they shape the
     gauntlet's single challenger.
     """
-    from zicato.epoch import write_experiment  # noqa: PLC0415
+    from zicato.epoch import append_to_lineage, write_experiment  # noqa: PLC0415
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
     from zicato.mutation.validator import (  # noqa: PLC0415
         check_forbidden_ids,
@@ -1322,6 +1322,15 @@ async def _propose_and_apply_challenger(
         )
 
     child_snapshot = last_child_snapshot["path"]
+    # Stamp the EVOLVE round that minted this challenger onto the experiment
+    # so it persists into experiment.json — mirroring the gauntlet path's
+    # round_index stamp. Without it a multi-challenger field's experiments
+    # carry the proposer's default round_index=0, so EVERY in-flight round's
+    # challengers fold onto round 0's bracket (the round mis-attribution in
+    # issue #16). The dashboard's round-grouping treats round_index as the
+    # authoritative birth round, so this stamp is what makes a live round
+    # group correctly by construction.
+    experiment = replace(experiment, round_index=round_index)
     # Persist the proposer-side experiment.json (outcome still None) and
     # fold it into the live index, exactly as the gauntlet path does for
     # its single challenger before the tournament finishes.
@@ -1336,6 +1345,16 @@ async def _propose_and_apply_challenger(
         created_at=_now_iso(),
         round_index=round_index,
     )
+    # Append the challenger to lineage.json AT CREATION with its birth
+    # round_index — not only at round settle. Every queryable store
+    # (lineage.json, the index, CLI status, external tooling) must reflect
+    # the in-flight round continuously, not just the last settled one
+    # (issue #16). The settle-time append_to_lineage upserts the same node
+    # to its final promoted/rejected state; append_to_lineage is an
+    # idempotent update-in-place that preserves round_index, so the
+    # creation-time write and the settle-time write compose cleanly. The
+    # challenger lands as a dead branch (promoted=False) until crowned.
+    append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id)
     return (
         _AppliedChallenger(
             generation_id=next_id,
@@ -1647,6 +1666,34 @@ async def _evolve_multi_challenger(
         entries=_field_entries(competitors_meta),
     )
 
+    # OPEN the durable field-tournament envelope NOW, before the bracket
+    # resolves (issue #16). The runtime ``active_tournament`` envelope above
+    # is ephemeral (cleared on crash, overwritten next round); only the
+    # durable ``tournaments/field-*.json`` record is queryable by the index,
+    # ``zicato reindex``, and any external consumer. Opening it here in
+    # ``in_progress`` state — with the competitor field + proposing status
+    # but no resolved bracket yet — means the in-flight round is visible to
+    # EVERY store the moment its challengers are minted, not only at settle.
+    # The settle write below upserts this same record (same tournament_id)
+    # to ``settled`` with the resolved bracket; the open + settle compose
+    # idempotently, so a resume that re-opens an existing in_progress record
+    # neither duplicates nor corrupts it.
+    first_challenger_id = applied[0].generation_id
+    _persist_field_tournament(
+        workspace_root,
+        field_tournament_id=f"{epoch_id}:field:{first_challenger_id}",
+        first_challenger_id=first_challenger_id,
+        epoch_id=epoch_id,
+        structure=tournament_spec.structure,
+        structure_params=dict(tournament_spec.params),
+        competitors=competitors_meta,
+        rounds=[],
+        standings=[],
+        field_status=field_status or [],
+        decision=None,
+        state="in_progress",
+    )
+
     # --- Live structure publish. Each time the driver schedules a batch
     # of pending matchups, republish the envelope with the LIVE structure:
     # the settled rounds plus the in-flight round (matches with
@@ -1720,8 +1767,9 @@ async def _evolve_multi_challenger(
     # the index alone. The field record carries the same shape the live
     # envelope does, so the dashboard's structure renderers serve the ladder
     # post-run unchanged. Keyed on the round's first applied challenger so a
-    # multi-round epoch keeps a snapshot per round.
-    first_challenger_id = applied[0].generation_id
+    # multi-round epoch keeps a snapshot per round. FINALISES the
+    # ``in_progress`` envelope opened before resolution (issue #16) — the
+    # same tournament_id, so this is an idempotent upsert to ``settled``.
     _persist_field_tournament(
         workspace_root,
         field_tournament_id=f"{epoch_id}:field:{first_challenger_id}",
@@ -1734,6 +1782,7 @@ async def _evolve_multi_challenger(
         standings=_serialise_standings(decision.standings),
         field_status=field_status or [],
         decision=decision,
+        state="settled",
     )
 
     # --- Final champion-gate Ladder-mediated holdout confirmation
@@ -2407,18 +2456,31 @@ def _persist_field_tournament(
     standings: list[dict[str, Any]],
     field_status: list[dict[str, Any]],
     decision: Any,
+    state: str = "settled",
 ) -> None:
-    """Best-effort: durably persist the settled FIELD-level structure.
+    """Best-effort: durably persist a FIELD-level structure record.
 
-    Writes the round's settled field record — round pairings, Copeland
+    Writes the round's field record — round pairings, Copeland
     standings, competitors, proposing field-status, the crowning verdict —
     to its durable ``tournaments/field-*.json`` snapshot AND dual-writes it
     into the analytical index as ONE field-level ``tournaments`` row. The
     snapshot is the canonical source (so ``zicato reindex`` re-derives the
-    row); the dual-write puts the swiss / elim ladder in the index the
-    moment the round settles. A no-op for a degenerate two-competitor
-    (gauntlet) field — the per-challenger row already covers it. Never
-    raises: a durable-state write failure must not abort the round.
+    row); the dual-write puts the swiss / elim ladder in the index.
+
+    ``state`` carries the explicit ``in_progress`` → ``settled`` lifecycle
+    (issue #16): the orchestrator OPENS the envelope at round start
+    (``state="in_progress"``, ``decision=None``, empty rounds/standings —
+    just the competitor field + proposing status so the round is visible to
+    every queryable store mid-flight) and FINALISES it at settle
+    (``state="settled"`` with the resolved bracket + crowning verdict). The
+    record is keyed on the field-level ``tournament_id`` so the settle write
+    upserts the same row the open write created — idempotent, crash-safe,
+    and safe to re-open on resume (the in_progress record is simply
+    overwritten by the next open or the settle).
+
+    A no-op for a degenerate two-competitor (gauntlet) field — the
+    per-challenger row already covers it. Never raises: a durable-state
+    write failure must not abort the round.
     """
     if len(competitors) < 3:
         return
@@ -2432,6 +2494,10 @@ def _persist_field_tournament(
         (c.get("generation_id") for c in competitors if str(c.get("role", "")) == "champion"),
         "",
     )
+    # ``decision`` is None while the round is still in flight (the envelope
+    # is opened before the bracket resolves); the crowning fields stay empty
+    # until settle. getattr tolerates the None case alongside the settled
+    # TournamentDecision so the open + settle writes share one code path.
     record: dict[str, Any] = {
         "tournament_id": field_tournament_id,
         "epoch_id": epoch_id,
@@ -2441,11 +2507,12 @@ def _persist_field_tournament(
         "rounds": rounds,
         "standings": standings,
         "field_status": [dict(f) for f in field_status],
-        "promoted_generation_id": decision.promoted_generation_id or "",
+        "promoted_generation_id": getattr(decision, "promoted_generation_id", "") or "",
         "champion_generation_id": champion_id or "",
         "decision": getattr(decision, "decision", "") or "",
         "reason": getattr(decision, "reason", "") or "",
         "delta_scalar": crowning_delta,
+        "state": state,
         "ran_at": _now_iso(),
     }
     try:
