@@ -29,7 +29,7 @@ import { loadEnvironment, loadServiceIdentity } from '../../core/api.js';
 import { connectSSE } from '../../core/sse.js';
 import { parseRoute, navigate, href, crumbTrail, up } from './router.js';
 import * as D from './data.js';
-import { invalidateLive } from './data.js';
+import { invalidateLive, liveDataSignature } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { normaliseDecision } from './ui.js';
 import { roundsForTree } from './views/rounds.js';
@@ -89,6 +89,11 @@ let _lastViewKey = null;
 let _lastCrumbDigest = null;
 let _lastStatusDigest = null;
 let _lastTreeDigest = null;
+// The signature of the live data AppState last folded in from /api/environment
+// (gen set + statuses + epoch roster). A change means a candidate was added /
+// settled, so the stale drill-down cache must be busted + the views repainted.
+// Unchanged ⇒ a no-op beat ⇒ zero cache busts (no flash, no extra fetches).
+let _lastLiveSig = null;
 const _toggles = new Set();
 const _ctx = { navigate, href };
 
@@ -416,6 +421,9 @@ export function mountShell(root) {
   clearChildren(root);
   _toggles.clear();
   _lastTreeDigest = null;
+  // Reset the live-data signature: a fresh mount must treat the first
+  // post-mount environment fold as a change so the initial cache busts cleanly.
+  _lastLiveSig = null;
   // Reset the exec-link digest: mountShell rebuilds the top bar (a fresh,
   // empty _execHost), so a stale digest must not skip the first paint.
   _lastExecHref = null;
@@ -911,6 +919,21 @@ function onStateChanged() {
   // the 400 ms re-dispatch debounce. The hero patches in place (no full
   // repaint); the structure swap inside it stays digest-gated.
   refreshLive();
+  // THE UNDER-RENDER FIX. The tree + candidate-listing views read data.js's
+  // module cache, which invalidateLive() busts ONLY on a view change — so a NEW
+  // candidate folded into AppState by /api/environment never reached those panes
+  // (stale cache → gen-keyed digests never flipped → hard-refresh needed). Detect
+  // a real live-data change (gen set / statuses / epoch roster) via a signature
+  // off the just-refreshed AppState, and ONLY THEN drop the stale cache + force
+  // the tree to recompute. A no-op beat leaves the signature identical ⇒ no bust,
+  // no fetch, no repaint (no flash); the view/tree digests still gate after a
+  // bust, so only a true add repaints.
+  const sig = liveDataSignature();
+  if (sig !== _lastLiveSig) {
+    _lastLiveSig = sig;
+    invalidateLive();
+    _lastTreeDigest = null;   // force renderTree to rebuild off the fresh cache
+  }
   if (_reRenderTimer != null) return;
   _reRenderTimer = setTimeout(() => {
     _reRenderTimer = null;

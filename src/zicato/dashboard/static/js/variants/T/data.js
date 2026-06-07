@@ -16,6 +16,7 @@
 // core/api.js. Nothing here mutates AppState; callers own their cache.
 
 import { fetchJson } from '../../core/api.js';
+import { state } from '../../core/state.js';
 
 // A tiny module-level cache keyed by URL. Drill-down payloads are immutable
 // for a completed generation, so caching avoids re-fetching on every
@@ -90,6 +91,37 @@ export function invalidateLive() {
       _cache.delete(key);
     }
   }
+}
+
+// THE UNDER-RENDER FIX. The tree + every candidate-listing view read through the
+// module cache above; invalidateLive() — the ONLY thing that busts those keys —
+// fires solely on a VIEW change (shell.dispatch). So a NEW candidate surfaced
+// mid-round by SSE refreshed AppState's lineage but NOT these cached reads → the
+// tree/view digests never flipped → no repaint, forcing a hard-refresh (which
+// clears this cache). A view-change-only invalidation cannot catch an in-place
+// add. The shell now busts the cache when a candidate lands, keyed off this
+// signature so a no-op beat (identical payload) busts nothing — no flash, no
+// extra fetch. Signed off the data AppState folds from /api/environment (the gen
+// SET: id + tri-state status + birth-round + epoch, plus the epoch roster),
+// id-sorted so it is order-independent — only a real membership/status change
+// flips it; the downstream gen-keyed digests still gate after a bust.
+export function liveDataSignature() {
+  const lin = (state.lineage && Array.isArray(state.lineage.generations))
+    ? state.lineage.generations : [];
+  const gens = lin
+    .map((g) => [
+      g && g.generation_id != null ? String(g.generation_id) : '',
+      g && g.promoted == null ? 'p' : (g.promoted ? '1' : '0'),
+      g && Number.isInteger(g.round_index) ? g.round_index : -1,
+      g && g.epoch_id != null ? String(g.epoch_id) : '',
+    ])
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const epochs = (Array.isArray(state.epochs) ? state.epochs : [])
+    .map((e) => (e && e.epoch_id != null ? String(e.epoch_id) : ''))
+    .sort();
+  const wsEpoch = (state.workspace && state.workspace.current_epoch_id != null)
+    ? String(state.workspace.current_epoch_id) : '';
+  return JSON.stringify({ gens, epochs, wsEpoch });
 }
 
 // ---- typed drill-down reads ----------------------------------------

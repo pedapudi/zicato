@@ -32,6 +32,7 @@ const tree = await import('../js/variants/T/tree.js');
 const compare = await import('../js/variants/T/compare.js');
 const livestatus = await import('../js/variants/T/livestatus.js');
 const coreState = await import('../js/core/state.js');
+const { bus } = await import('../js/core/bus.js');
 const { svgEl } = await import('../js/core/dom.js');
 
 const EPOCH_ID = '2026-05-30_e0';
@@ -945,6 +946,115 @@ test('tree sidebar: digest-gated — same model + route + toggles yields the sam
   const d1 = tree.treeDigest(model, route, toggles);
   const d2 = tree.treeDigest(model, route, toggles);
   assertEqual(d1, d2, 'a steady heartbeat (identical model/route) is a true digest no-op');
+});
+
+// ---- THE UNDER-RENDER FIX: a NEW candidate landing mid-round repaints ----
+//
+// The recurring counterpart of the flashing bug class: a real state change (a
+// new candidate minted during a round) failed to repaint, so the operator had
+// to HARD-REFRESH to see new candidates. Root cause: the tree + every
+// candidate-listing view read through data.js's module cache, which was busted
+// ONLY on a VIEW change — never when SSE folded a new generation into AppState.
+// These tests pin (1) the signature flips on an add, (2) a real add repaints the
+// tree to include the new candidate, and (3) a no-op beat does NOT (no flash).
+
+// liveDataSignature() flips on an add / status change but is stable on a no-op.
+test('under-render: liveDataSignature flips when a generation is added (and stays stable on a no-op beat)', () => {
+  coreState.state.lineage = { generations: [
+    { generation_id: 'v0', epoch_id: EPOCH_ID, promoted: true },
+    { generation_id: 'v1', epoch_id: EPOCH_ID, promoted: false },
+  ] };
+  coreState.state.epochs = [{ epoch_id: EPOCH_ID }];
+  coreState.state.workspace = { current_epoch_id: EPOCH_ID };
+  const sig0 = data.liveDataSignature();
+  // a no-op beat: the SAME generations re-folded (order swapped to prove the
+  // signature is order-independent) must yield the IDENTICAL signature.
+  coreState.state.lineage = { generations: [
+    { generation_id: 'v1', epoch_id: EPOCH_ID, promoted: false },
+    { generation_id: 'v0', epoch_id: EPOCH_ID, promoted: true },
+  ] };
+  assertEqual(data.liveDataSignature(), sig0, 'a no-op beat (same gen set) leaves the signature identical');
+  // a NEW candidate landing flips the signature.
+  coreState.state.lineage.generations.push({ generation_id: 'v2', epoch_id: EPOCH_ID, promoted: null });
+  assert(data.liveDataSignature() !== sig0, 'adding a candidate flips the live-data signature');
+  // a pending→settled status transition on an existing candidate flips it too.
+  const sigPending = data.liveDataSignature();
+  coreState.state.lineage.generations[2].promoted = false;
+  assert(data.liveDataSignature() !== sigPending, 'a pending→settled status change flips the signature');
+});
+
+// END-TO-END through the shell: a new candidate folded into AppState (the SSE
+// path) busts the stale cache + repaints the tree to include the new candidate;
+// a no-op state:changed beat writes ZERO new tree DOM (no flash).
+test('under-render: a NEW candidate folded into AppState repaints the tree (no hard-refresh); a no-op beat does NOT', async () => {
+  // drain any pending re-dispatch timer a prior shell-mount test left scheduled
+  // (the shell's re-render debounce is module-scoped) so it cannot race our mount.
+  await new Promise((r) => setTimeout(r, 500));
+  freshState();
+  bus._reset();
+  // a MUTABLE lineage fixture so the post-invalidation re-fetch sees the add —
+  // exactly what /api/lineage returns once the backend surfaces the new gen.
+  const liveLineage = { generations: [
+    { generation_id: 'v0', epoch_id: EPOCH_ID, parent_generation_id: '', promoted: true },
+    { generation_id: 'v1', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false },
+  ] };
+  const liveWs = { current_epoch_id: EPOCH_ID, epochs: [{ epoch_id: EPOCH_ID, generation_count: 2, promoted_count: 1, best_scalar: 70.94, closed: false, goal: 'crisper' }], sparkline: [] };
+  // a SELF-CONSISTENT, FLAT (no round_index) gauntlet epoch so the tree lists
+  // gen LEAVES directly under Generations — NOT collapsed under round nodes (the
+  // global FIXTURE carries round structure + a v2 we must NOT pre-seed here).
+  const liveEpoch = { epoch_id: EPOCH_ID, closed: false, goal: 'crisper', board: [], experiments: [
+    { generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } },
+    { generation_id: 'v1', parent_generation_id: 'v0', outcome: { decision: 'rejected' } },
+  ] };
+  const liveBracket = { epoch_id: EPOCH_ID, champion_lineage: ['v0'], matchups: [] };
+  globalThis.fetch = async (path) => {
+    const base = path.indexOf('?') >= 0 ? path.slice(0, path.indexOf('?')) : path;
+    if (base === '/api/lineage') return { ok: true, json: async () => liveLineage };
+    if (base === '/api/workspace') return { ok: true, json: async () => liveWs };
+    if (base === '/api/epoch') return { ok: true, json: async () => liveEpoch };
+    if (base === '/api/tournaments') return { ok: true, json: async () => liveBracket };
+    if (base === '/api/score-trajectory') return { ok: true, json: async () => ({ points: [] }) };
+    const v = lookupFixture(FIXTURE, path);
+    if (v !== undefined) return { ok: true, json: async () => v };
+    return { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
+  };
+
+  // mount the real shell on the generations view, branch OPEN so the gen leaves
+  // render in the tree (the under-rendered surface).
+  const root = mountLiveShell(`#/e/${EPOCH_ID}/gens`);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 500));   // let the initial dispatch settle.
+
+  const rail = allByClass(root, 'dt-sidebar')[0];
+  assert(rail, 'the shell painted a tree rail');
+  const genRows0 = allByClass(rail, 'dt-node').filter((n) => /^gen/.test(n.getAttribute('data-kind') || ''));
+  assert(genRows0.some((n) => n.textContent.includes('v1')), 'the tree initially lists v1');
+  assert(!genRows0.some((n) => n.textContent.includes('v2')), 'the tree does NOT yet list the not-yet-minted v2');
+  const treeWrites0 = root.innerHTMLWriteCount ? root.innerHTMLWriteCount() : 0;
+
+  // ── (1) a NO-OP beat: identical state re-folded. The signature is unchanged,
+  // so the cache is NOT busted and the tree must NOT repaint (no flash). ──
+  coreState.state.applyEnvironment({ generations: liveLineage, workspace: liveWs, epochs: liveWs.epochs });
+  await new Promise((r) => setTimeout(r, 500));
+  const railNodesAfterNoop = allByClass(allByClass(root, 'dt-sidebar')[0], 'dt-node').filter((n) => /^gen/.test(n.getAttribute('data-kind') || ''));
+  assert(!railNodesAfterNoop.some((n) => n.textContent.includes('v2')), 'a no-op beat does not invent a candidate');
+  assertEqual(railNodesAfterNoop.length, genRows0.length, 'a no-op beat repaints NO new tree rows (no flash)');
+
+  // ── (2) a NEW candidate lands: the backend now surfaces v2; SSE folds it into
+  // AppState (applyEnvironment, exactly what loadEnvironment does post-fetch). ──
+  liveLineage.generations.push({ generation_id: 'v2', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: null });
+  liveWs.epochs[0].generation_count = 3;
+  coreState.state.applyEnvironment({ generations: liveLineage, workspace: liveWs, epochs: liveWs.epochs });
+  // wait out the re-dispatch debounce so renderTree re-reads the busted cache.
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 600));
+
+  const railAfter = allByClass(root, 'dt-sidebar')[0];
+  const genRows1 = allByClass(railAfter, 'dt-node').filter((n) => /^gen/.test(n.getAttribute('data-kind') || ''));
+  assert(genRows1.some((n) => n.textContent.includes('v2')),
+    'THE FIX: the new candidate v2 appears in the tree live — no hard-refresh needed');
+  assert(genRows1.length > genRows0.length, 'the tree grew by the newly-minted candidate');
 });
 
 // ====================================================================
