@@ -784,6 +784,19 @@ test('back button: navigates UP and renders the destination into the MAIN detail
   const detail = allByClass(root, 'dt-viewhost')[0];
   const backBtn = allByClass(root, 'dt-back')[0];
   assert(rail && detail && backBtn, 'the shell painted a rail, a detail pane, and a back button');
+
+  // THE RESEARCH-PREVIEW NOTE — a quiet, app-wide product-status mark mounted
+  // ONCE in the shell (NOT a Settings card). It must be present on this (non-
+  // Settings) candidate view too — pinned chrome that persists across views —
+  // carry the lowercase "research preview" label, and be the OPPOSITE of the
+  // retired light-up card: NO accent-tinted pulsing `dn-respreview` banner exists.
+  const note = allByClass(root, 'dt-respreview')[0];
+  assert(note, 'the lower-right research-preview note is mounted in the shell (app-wide)');
+  assert((note.textContent || '').toLowerCase().includes('research preview'),
+    'the note carries the lowercase "research preview" label');
+  assert(allByClass(note, 'dt-respreview-dot')[0], 'the note shows a tiny static accent dot');
+  assert(allByClass(root, 'dn-respreview').length === 0,
+    'the old light-up Settings research-preview banner is gone');
   const railBefore = rail.innerHTML !== undefined ? rail.textContent : '';
   assert(detail.textContent.includes('Candidate v1'), 'the detail pane starts on the candidate (v1)');
 

@@ -238,24 +238,20 @@ test('settings: the Settings typeface picker still APPLIES + PERSISTS (the sole 
   assert((trigger.textContent || '').length > 0, 'the trigger shows the chosen face label');
 });
 
-// The RESEARCH-PREVIEW banner is a clear, tasteful product-status statement that
-// LEADS the Settings surface (above the section rail). It renders on every
-// section and carries the label + a one-line subtitle.
-test('settings: the Research-preview banner renders at the top of the Settings surface', async () => {
+// The old accent-tinted, pulsing "light-up rail card" research-preview banner is
+// GONE from the Settings surface. The product-status mark is now a QUIET,
+// app-wide lower-right note mounted in the shell (asserted in variant_t.test.mjs),
+// NOT a card that leads Settings — so the Settings host must carry no `dn-respreview`
+// banner and must lead directly with the section grid.
+test('settings: the old research-preview light-up card is gone from Settings', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'appearance' });
   await tick();
-  const banner = firstClass(host, 'dn-respreview');
-  assert(banner, 'the research-preview banner renders');
-  // it sits ABOVE the section grid (it is the FIRST child of the settings host).
-  assert(host.firstChild === banner, 'the banner leads the Settings surface (first child)');
-  // it carries a status dot, the label, and a one-line subtitle.
-  assert(firstClass(banner, 'dn-respreview-dot'), 'the banner shows a status dot');
-  const label = firstClass(banner, 'dn-respreview-label');
-  assert(label && label.textContent === 'Research preview', 'the banner is clearly labelled "Research preview"');
-  const sub = firstClass(banner, 'dn-respreview-sub');
-  assert(sub && (sub.textContent || '').length > 0, 'the banner carries a one-line subtitle');
+  assert(!firstClass(host, 'dn-respreview'), 'no Settings light-up research-preview banner');
+  // the Settings surface now LEADS with the section grid (no card above it).
+  assert(host.firstChild && host.firstChild.classList.contains('dn-settings'),
+    'the Settings surface leads directly with the section grid');
 });
 
 test('settings: the Contract section reads /api/epoch as a read-only roll-up', async () => {

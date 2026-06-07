@@ -421,6 +421,23 @@ function brandWordmark() {
   }, [text, dot]);
 }
 
+// THE RESEARCH-PREVIEW NOTE — a quiet, app-wide product-status mark pinned to
+// the LOWER-RIGHT of the chrome (position:fixed, bottom-right). It is the OPPOSITE
+// of the old accent-tinted, pulsing Settings card: a small, faint, monospace
+// lowercase "research preview" label in the understated idiom of the existing
+// captions/pills (the muted ink-faint token + currentColor, theme-adaptive across
+// all themes), with a tiny static accent dot — NO glow, NO pulse, NO animation. It
+// is purely informational, so the whole note is `pointer-events: none` and never
+// blocks a click. Mounted ONCE in the shell so it persists across every view;
+// static chrome, never rebuilt on an SSE heartbeat (digest discipline). The
+// styling lives in console4.css (.dt-respreview + children).
+function researchPreviewNote() {
+  return el('div', { class: 'dt-respreview', role: 'note', 'aria-label': 'research preview' }, [
+    el('span', { class: 'dt-respreview-dot', 'aria-hidden': 'true' }),
+    el('span', { class: 'dt-respreview-text', text: 'research preview' }),
+  ]);
+}
+
 export function mountShell(root) {
   _root = root;
   clearChildren(root);
@@ -591,6 +608,10 @@ export function mountShell(root) {
   root.appendChild(_heroHost);
 
   root.appendChild(el('div', { class: 'dt-body' }, [_treeHost, _railHandle, _viewHost]));
+
+  // The quiet, app-wide RESEARCH-PREVIEW note — pinned to the lower-right of the
+  // chrome, present on every view (mounted once, never rebuilt on a heartbeat).
+  root.appendChild(researchPreviewNote());
 
   applyTheme(readColor());
   applyTypeface(readType());
