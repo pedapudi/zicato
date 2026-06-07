@@ -1006,14 +1006,14 @@
    * on the surrounding panel/page, so the table can be wide without any element
    * escaping its pane. */
   .dn-table-scroll { max-width: 100%; overflow-x: auto; }
-  .dn-md-table, .dn-board-table, .dn-sc-table, .dn-scores-table {
+  .dn-md-table, .dn-board-table, .dn-scores-table {
     border-collapse: collapse; width: 100%; font-size: 12px; margin: 4px 0 12px; }
   .dn-md-table th, .dn-md-table td, .dn-board-table th, .dn-board-table td,
-  .dn-sc-table th, .dn-sc-table td, .dn-scores-table th, .dn-scores-table td {
+  .dn-scores-table th, .dn-scores-table td {
     border: 1px solid var(--v2-rule); padding: 5px 9px; text-align: left; color: var(--v2-ink); }
-  .dn-md-table th, .dn-board-table th, .dn-sc-table th, .dn-scores-table th {
+  .dn-md-table th, .dn-board-table th, .dn-scores-table th {
     background: var(--v2-rule-soft); font-weight: 600; color: var(--v2-ink-soft); }
-  .dn-md-table .dn-num, .dn-board-table .dn-num, .dn-sc-table .dn-num, .dn-scores-table .dn-num { text-align: right; }
+  .dn-md-table .dn-num, .dn-board-table .dn-num, .dn-scores-table .dn-num { text-align: right; }
   .dn-board-table tr { transition: background 0.12s; }
   .dn-board-table tr.dn-board-champ td { background: var(--v2-good-soft); }
   .dn-board-run { padding: 2px 7px; font-size: 10.5px; }
@@ -1038,7 +1038,6 @@
   .dn-rule-fail .dn-rule-status { color: var(--v2-bad); }
   .dn-rule-pass .dn-rule-status { color: var(--v2-good); }
   .dn-rule-detail { font-size: 11px; line-height: 1.4; }
-  .dn-sc-table .dn-num.dn-mono { font-family: var(--v2-mono); }
 
   /* ===================  side-by-side mutation diff (fix #2)  =================== */
 
@@ -2244,6 +2243,45 @@
   .dn-radar-cand-key { stroke: var(--v2-accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
   .dn-radar-champ-key { stroke: var(--v2-ink-faint); stroke-width: 1.5; stroke-dasharray: 4 3;
     vector-effect: non-scaling-stroke; }
+  /* the radar dossier panel (candidate.js) — cap the silhouette so it sits as a
+   * complementary panel beside the per-board read, never balloons to full bleed.
+   * The radar SVG already scales to width:100%; the pane bounds it. */
+  .dn-radarpane { max-width: 560px; }
+  .dn-radar-cap { font-size: 11px; margin: 6px 0 0; text-align: center; }
+
+  /* ---- GENERALIZATION (train → holdout) — SHRUNK supporting panel ----
+   * The study reduced this from a hero figure to a small, width-capped slope;
+   * the pane caps the max-width so figure svg{width:100%} cannot balloon it. */
+  .dn-genpane { max-width: 300px; }
+  .dn-gen-svg { display: block; width: 100%; height: auto; }
+  .dn-gen-title { fill: var(--v2-ink-faint); font: 9px var(--v2-mono); }
+  .dn-gen-gap { font: 700 9px var(--v2-mono); }
+  .dn-gen-gap.dn-caution { fill: var(--v2-caution); }
+  .dn-gen-gap.dn-bad { fill: var(--v2-bad); }
+  .dn-gen-axlab { fill: var(--v2-ink-faint); font: 8.5px var(--v2-mono); }
+  .dn-gen-slope { stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; }
+  .dn-gen-slope.dn-caution { stroke: var(--v2-caution); }
+  .dn-gen-slope.dn-bad { stroke: var(--v2-bad); }
+  .dn-gen-train { fill: var(--v2-good); vector-effect: non-scaling-stroke; }
+  .dn-gen-holdout.dn-caution { fill: var(--v2-caution); }
+  .dn-gen-holdout.dn-bad { fill: var(--v2-bad); }
+  .dn-gen-val { font: 700 9px var(--v2-mono); }
+  .dn-gen-val.dn-gen-train-t { fill: var(--v2-good); }
+  .dn-gen-val.dn-caution { fill: var(--v2-caution); }
+  .dn-gen-val.dn-bad { fill: var(--v2-bad); }
+  .dn-gen-gaponly { font: 700 12px var(--v2-mono); padding: 6px 0; }
+  .dn-gen-gaponly.dn-caution { color: var(--v2-caution); }
+  .dn-gen-gaponly.dn-bad { color: var(--v2-bad); }
+  .dn-gen-cap { font-size: 11px; margin: 6px 0 0; }
+
+  /* ---- RACING field-relative panels (candidate.js racing variation) ----
+   * Racing cuts the whole field rung-by-rung; the candidate is read against the
+   * field (standings + rung ladder), not a single champion. The candidate's own
+   * row is accented so it stands out among the racers. */
+  .dn-racing-field-cap { font-size: 11px; margin: 0 0 8px; color: var(--v2-accent); letter-spacing: 0.02em; }
+  .dn-racing-standhead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .dn-racing-cand-row td { background: color-mix(in srgb, var(--v2-accent) 14%, transparent); }
+  .dn-racing-cand { color: var(--v2-accent); font-weight: 700; }
 
   /* ---- elimFlow DOUBLE-ELIM bands (WB ●● / LB ●○ tinted) ----
    * The winners' / losers' columns tint into two distinguished bands behind the
