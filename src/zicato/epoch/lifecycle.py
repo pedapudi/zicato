@@ -127,75 +127,37 @@ def _make_epoch_id(workspace_root: Path, name: str) -> str:
 
 
 def _scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
-    from zicato.workspace_loader import (  # noqa: PLC0415
-        overfitting_config_to_dict,
-        tournament_structure_to_dict,
-    )
+    """Serialize :class:`ScoringWeights` to the frozen ``scoring.json`` shape.
 
-    return {
-        "drift_weight": weights.drift_weight,
-        "pass_weight": weights.pass_weight,
-        "severity_weights": dict(weights.severity_weights),
-        "per_kind_weights": dict(weights.per_kind_weights),
-        "per_judge_weights": dict(weights.per_judge_weights),
-        "default_judge_weight": weights.default_judge_weight,
-        "plan_revision_weight": weights.plan_revision_weight,
-        "runtime_weight": weights.runtime_weight,
-        "promote_margin": weights.promote_margin,
-        "pass_rate_monotonicity": weights.pass_rate_monotonicity,
-        "tournament": tournament_structure_to_dict(weights.tournament_structure),
-        "overfitting": overfitting_config_to_dict(weights.overfitting),
-    }
+    Field-enumerating (and recursive over the nested
+    :class:`TournamentStructure` / :class:`OverfittingConfig` /
+    :class:`LadderConfig`) via
+    :func:`zicato.epoch.contract_serde.dataclass_to_jsonable`, so adding a
+    field to any of those dataclasses is covered automatically and the
+    frozen snapshot can never silently drop a field behind the
+    field-enumerating contract canonicalizer (issue #13). The output is
+    byte-compatible with the historical hand-written form: the tournament
+    structure is still emitted under the ``"tournament"`` key.
+    """
+    from zicato.epoch.contract_serde import dataclass_to_jsonable  # noqa: PLC0415
+
+    return dataclass_to_jsonable(weights)
 
 
 def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
-    # Per-judge weighting is optional — only forward the kwarg when the
-    # on-disk scoring.json carries a non-empty mapping so a legacy file
-    # written before per-judge loss promotion (#179) loads at the
-    # dataclass default. ``default_judge_weight`` is forwarded only when
-    # the key is present, for the same back-compat reason. Mirror of
-    # :func:`zicato.workspace_loader._scoring_weights_from_dict`.
-    from zicato.workspace_loader import (  # noqa: PLC0415
-        overfitting_config_from_dict,
-        tournament_structure_from_dict,
-    )
+    """Parse a frozen ``scoring.json`` dict back into :class:`ScoringWeights`.
 
-    judge_kwargs: dict[str, Any] = {}
-    raw_per_judge = d.get("per_judge_weights")
-    if isinstance(raw_per_judge, dict) and raw_per_judge:
-        judge_kwargs["per_judge_weights"] = {str(k): float(v) for k, v in raw_per_judge.items()}
-    if "default_judge_weight" in d:
-        judge_kwargs["default_judge_weight"] = float(d["default_judge_weight"])
-    # The tournament structure rides in the ``tournament`` block; absent
-    # ⇒ gauntlet. Threaded into both ScoringWeights branches below.
-    judge_kwargs["tournament_structure"] = tournament_structure_from_dict(d.get("tournament"))
-    # The anti-overfitting config rides in the ``overfitting`` block;
-    # absent ⇒ the default-on config. Threaded into both branches below.
-    judge_kwargs["overfitting"] = overfitting_config_from_dict(d.get("overfitting"))
-    raw_sev = d.get("severity_weights")
-    if raw_sev:
-        severity = {str(k): float(v) for k, v in raw_sev.items()}
-        return ScoringWeights(
-            drift_weight=float(d.get("drift_weight", 1.0)),
-            pass_weight=float(d.get("pass_weight", 1.0)),
-            severity_weights=severity,
-            per_kind_weights={str(k): float(v) for k, v in d.get("per_kind_weights", {}).items()},
-            plan_revision_weight=float(d.get("plan_revision_weight", 0.5)),
-            runtime_weight=float(d.get("runtime_weight", 0.0)),
-            promote_margin=float(d.get("promote_margin", 0.01)),
-            pass_rate_monotonicity=bool(d.get("pass_rate_monotonicity", True)),
-            **judge_kwargs,
-        )
-    return ScoringWeights(
-        drift_weight=float(d.get("drift_weight", 1.0)),
-        pass_weight=float(d.get("pass_weight", 1.0)),
-        per_kind_weights={str(k): float(v) for k, v in d.get("per_kind_weights", {}).items()},
-        plan_revision_weight=float(d.get("plan_revision_weight", 0.5)),
-        runtime_weight=float(d.get("runtime_weight", 0.0)),
-        promote_margin=float(d.get("promote_margin", 0.01)),
-        pass_rate_monotonicity=bool(d.get("pass_rate_monotonicity", True)),
-        **judge_kwargs,
-    )
+    The inverse of :func:`_scoring_to_dict`, field-enumerating via
+    :func:`zicato.epoch.contract_serde.jsonable_to_dataclass`: every field
+    absent from a legacy ``scoring.json`` falls back to the dataclass
+    default (so files written before a field landed load cleanly), and
+    every present field — including the nested ``tournament`` /
+    ``overfitting`` blocks — round-trips. Mirror of
+    :func:`zicato.workspace_loader._scoring_weights_from_dict`.
+    """
+    from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
+
+    return jsonable_to_dataclass(ScoringWeights, d)
 
 
 def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:

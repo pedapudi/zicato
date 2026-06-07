@@ -180,38 +180,18 @@ def load_current_brief(workspace_root: Path) -> ProposerBrief:
 def _scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     """Build a :class:`ScoringWeights` from a JSON-shaped dict.
 
-    Mirrors :func:`zicato.epoch.lifecycle._scoring_from_dict` so the
-    on-disk format is fully shared. Local copy lives here because
-    importing the private helper across modules would couple this
-    loader to a lifecycle implementation detail.
+    Delegates to the single field-enumerating parser
+    :func:`zicato.epoch.contract_serde.jsonable_to_dataclass`, which is
+    the same code :func:`zicato.epoch.lifecycle._scoring_from_dict` uses,
+    so the writer, the lifecycle parser, and this loader cannot desync —
+    the defect class behind issue #13 (a new contract field threaded
+    through one serializer but not another). Every field absent from a
+    legacy ``scoring.json`` falls back to the dataclass default, and the
+    nested ``tournament`` / ``overfitting`` blocks recurse automatically.
     """
-    raw_sev = d.get("severity_weights")
-    severity_kwarg: dict[str, Any] = {}
-    if raw_sev:
-        severity_kwarg["severity_weights"] = {str(k): float(v) for k, v in raw_sev.items()}
-    judge_kwargs: dict[str, Any] = {}
-    raw_per_judge = d.get("per_judge_weights")
-    if isinstance(raw_per_judge, dict) and raw_per_judge:
-        # Per-judge weighting is optional — only forward the kwarg when
-        # the on-disk scoring.json carries a non-empty mapping so a
-        # legacy file with no per_judge surface still loads at the
-        # dataclass default.
-        judge_kwargs["per_judge_weights"] = {str(k): float(v) for k, v in raw_per_judge.items()}
-    if "default_judge_weight" in d:
-        judge_kwargs["default_judge_weight"] = float(d["default_judge_weight"])
-    return ScoringWeights(
-        drift_weight=float(d.get("drift_weight", 1.0)),
-        pass_weight=float(d.get("pass_weight", 1.0)),
-        per_kind_weights={str(k): float(v) for k, v in d.get("per_kind_weights", {}).items()},
-        plan_revision_weight=float(d.get("plan_revision_weight", 0.5)),
-        runtime_weight=float(d.get("runtime_weight", 0.0)),
-        promote_margin=float(d.get("promote_margin", 0.01)),
-        pass_rate_monotonicity=bool(d.get("pass_rate_monotonicity", True)),
-        tournament_structure=tournament_structure_from_dict(d.get("tournament")),
-        overfitting=overfitting_config_from_dict(d.get("overfitting")),
-        **severity_kwarg,
-        **judge_kwargs,
-    )
+    from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
+
+    return jsonable_to_dataclass(ScoringWeights, d)
 
 
 def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
@@ -222,29 +202,20 @@ def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
     today, and every operator who never touches the knob, gets the
     anti-overfitting machine on, with a safe auto-degrade on small boards.
 
-    A present block forwards each recognised key; unknown keys are
-    ignored. Range/validity is enforced by ``OverfittingConfig``'s
-    ``__post_init__``. Shared by :func:`_scoring_weights_from_dict` (used
-    by the contract canonicalizer) and the lifecycle serializer so the
-    on-disk format is fully shared between the two loaders.
+    A present block forwards each recognised key field-by-field via the
+    single field-enumerating parser
+    :func:`zicato.epoch.contract_serde.jsonable_to_dataclass` (so a new
+    :class:`OverfittingConfig` field is covered automatically and cannot
+    desync from the contract canonicalizer — the defect class behind issue
+    #13); unknown keys are ignored, absent keys fall back to the dataclass
+    default, and the nested ``ladder`` block recurses. Range/validity is
+    enforced by ``OverfittingConfig``'s ``__post_init__``.
     """
+    from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
+
     if not isinstance(raw, Mapping):
         return OverfittingConfig.defaults()
-    kwargs: dict[str, Any] = {}
-    if "enabled" in raw:
-        kwargs["enabled"] = bool(raw["enabled"])
-    if "holdout_fraction" in raw:
-        kwargs["holdout_fraction"] = float(raw["holdout_fraction"])
-    if "min_board_size_for_split" in raw:
-        kwargs["min_board_size_for_split"] = int(raw["min_board_size_for_split"])
-    if "restrict_proposer_visibility" in raw:
-        kwargs["restrict_proposer_visibility"] = bool(raw["restrict_proposer_visibility"])
-    if "rotate_holdout" in raw:
-        kwargs["rotate_holdout"] = bool(raw["rotate_holdout"])
-    if "max_generations_per_contract" in raw and raw["max_generations_per_contract"] is not None:
-        kwargs["max_generations_per_contract"] = int(raw["max_generations_per_contract"])
-    kwargs["ladder"] = ladder_config_from_dict(raw.get("ladder"))
-    return OverfittingConfig(**kwargs)
+    return jsonable_to_dataclass(OverfittingConfig, raw)
 
 
 def ladder_config_from_dict(raw: Any) -> LadderConfig:
@@ -259,51 +230,44 @@ def ladder_config_from_dict(raw: Any) -> LadderConfig:
     ``LadderConfig``'s ``__post_init__``. Folds into the contract hash through
     :class:`OverfittingConfig` automatically (the canonicalizer recurses into
     nested frozen dataclasses), so a ``ladder`` change rolls the epoch.
+
+    Parses field-by-field via the single field-enumerating parser
+    :func:`zicato.epoch.contract_serde.jsonable_to_dataclass`, so a new
+    :class:`LadderConfig` field is covered automatically (issue #13);
+    absent keys fall back to the dataclass default.
     """
+    from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
+
     if not isinstance(raw, Mapping):
         return LadderConfig.defaults()
-    kwargs: dict[str, Any] = {}
-    if "enabled" in raw:
-        kwargs["enabled"] = bool(raw["enabled"])
-    if "threshold" in raw and raw["threshold"] is not None:
-        kwargs["threshold"] = float(raw["threshold"])
-    if "budget" in raw:
-        kwargs["budget"] = int(raw["budget"])
-    if "noise_scale" in raw:
-        kwargs["noise_scale"] = float(raw["noise_scale"])
-    return LadderConfig(**kwargs)
+    return jsonable_to_dataclass(LadderConfig, raw)
 
 
 def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:
     """Serialize an :class:`OverfittingConfig` to the ``overfitting`` block.
 
-    The inverse of :func:`overfitting_config_from_dict`; every field is
-    written so the on-disk form is complete and round-trips cleanly.
+    The inverse of :func:`overfitting_config_from_dict`; field-enumerating
+    (and recursive over the nested ``ladder``) via
+    :func:`zicato.epoch.contract_serde.dataclass_to_jsonable`, so every
+    field is written and a newly-added field is covered automatically
+    (issue #13) — the on-disk form is complete and round-trips cleanly.
     """
-    return {
-        "enabled": cfg.enabled,
-        "holdout_fraction": cfg.holdout_fraction,
-        "min_board_size_for_split": cfg.min_board_size_for_split,
-        "restrict_proposer_visibility": cfg.restrict_proposer_visibility,
-        "rotate_holdout": cfg.rotate_holdout,
-        "max_generations_per_contract": cfg.max_generations_per_contract,
-        "ladder": ladder_config_to_dict(cfg.ladder),
-    }
+    from zicato.epoch.contract_serde import dataclass_to_jsonable  # noqa: PLC0415
+
+    return dataclass_to_jsonable(cfg)
 
 
 def ladder_config_to_dict(cfg: LadderConfig) -> dict[str, Any]:
     """Serialize a :class:`LadderConfig` to the ``ladder`` sub-block.
 
-    The inverse of :func:`ladder_config_from_dict`; every field is written so
-    the on-disk form is complete and round-trips cleanly. ``threshold`` is
-    serialized verbatim (``None`` ⇒ derive from ``promote_margin``).
+    The inverse of :func:`ladder_config_from_dict`; field-enumerating via
+    :func:`zicato.epoch.contract_serde.dataclass_to_jsonable`, so a new
+    field is covered automatically (issue #13). ``threshold`` is serialized
+    verbatim (``None`` ⇒ derive from ``promote_margin``).
     """
-    return {
-        "enabled": cfg.enabled,
-        "threshold": cfg.threshold,
-        "budget": cfg.budget,
-        "noise_scale": cfg.noise_scale,
-    }
+    from zicato.epoch.contract_serde import dataclass_to_jsonable  # noqa: PLC0415
+
+    return dataclass_to_jsonable(cfg)
 
 
 def tournament_structure_from_dict(raw: Any) -> TournamentStructure:
