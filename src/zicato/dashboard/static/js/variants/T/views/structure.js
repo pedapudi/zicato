@@ -1063,6 +1063,24 @@ function inflightByGen(activeRuns, epochGens) {
 // Returns null only when the payload is not the matching structure OR carries
 // NEITHER competitors NOR rounds yet — the caller then shows the honest
 // "starting" placeholder.
+// Merge a reconstructed lane (computed from active-runs + the projected map)
+// with the strategy's AUTHORITATIVE published lane (racing B1 producer): the
+// published projection / scalar / board-progress win when present; the
+// active-run reconstruction supplies only what the publisher omitted (e.g. the
+// running-board count, the partial Δ). A published lane that is in-flight stays
+// in-flight even when no active-run row exists yet.
+function mergeLaneProgress(computed, pub) {
+  if (!pub || typeof pub !== 'object') return computed;
+  const out = Object.assign({}, computed);
+  if (pub.projected != null) out.projected = pub.projected;
+  if (pub.projected_scalar != null) out.projected_scalar = pub.projected_scalar;
+  if (pub.boards_done != null) out.boards_done = pub.boards_done;
+  if (pub.boards_total != null) out.boards_total = pub.boards_total;
+  if (pub.partialDelta != null && out.partialDelta == null) out.partialDelta = pub.partialDelta;
+  if (pub.inflight) out.inflight = out.inflight || pub.inflight;
+  return out;
+}
+
 export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   if (!at || typeof at !== 'object') return null;
   const structure = String(at.structure || '');
@@ -1187,6 +1205,13 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
         for (const g of field) if (merged.indexOf(g) < 0) merged.push(g);
         field = merged;
       }
+      // the AUTHORITATIVE per-lane live_progress the strategy already published on
+      // this rung (racing B1 producer / issue #16): the active-runs reconstruction
+      // below only FILLS fields the publisher omitted — it must never clobber the
+      // projected / projected_scalar / board-progress the backend already owns,
+      // else the hero (which feeds through buildLiveModel) silently drops the live
+      // projection the single-round figure shows.
+      const published = (m.live_progress && typeof m.live_progress === 'object') ? m.live_progress : null;
       const progress = {};
       for (const g of field) {
         const inf = inflight.get(g);
@@ -1196,13 +1221,14 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
         // sub-bar + mark the lane "projected" until its rung settles.
         const lp = projFor(g);
         const laneDelta = (lp != null && champAgg != null) ? (lp.scalar - champAgg) : partialDelta;
-        progress[g] = inf
+        const computed = inf
           ? { inflight: inf.count, done: Math.max(0, Math.floor(inf.sumProgress)), total, partialDelta: laneDelta,
               projected: lp != null, projected_scalar: lp != null ? lp.scalar : null,
               boards_done: lp != null ? lp.boards_done : null, boards_total: lp != null ? lp.boards_total : total }
           : { inflight: 0, done: 0, total, partialDelta: null,
               projected: lp != null, projected_scalar: lp != null ? lp.scalar : null,
               boards_done: lp != null ? lp.boards_done : null, boards_total: lp != null ? lp.boards_total : total };
+        progress[g] = mergeLaneProgress(computed, published ? published[String(g)] : null);
       }
       return Object.assign({}, m, { competitors: field, winner: null, pending: true, queued, live_progress: queued ? null : progress });
     }
@@ -1248,7 +1274,14 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     const ri = svg.isNum(r.round_index) ? r.round_index : i;
     const isActive = isGate ? false : (activeIdx != null ? ri === activeIdx
       : rawRounds.slice(0, i).every(roundSettled));
-    const queued = !isActive;
+    // a racing rung the backend is ALREADY streaming boards on (a non-empty
+    // published live_progress) is inherently in-flight: never let a phase-derived
+    // activeIdx mismatch (e.g. a "rungN" phase that disagrees with round_index)
+    // suppress its authoritative live projection.
+    const streaming = isRacing && !isGate
+      && m0.live_progress && typeof m0.live_progress === 'object'
+      && Object.keys(m0.live_progress).length > 0;
+    const queued = !isActive && !streaming;
     const entering = isRacing && !isGate && i === firstRungIdx;
     const matches = (Array.isArray(r.matches) ? r.matches : []).map((m) => overlay(m, queued, entering));
     return { round_index: ri, label: r.label || (isRacing ? `Rung ${ri}` : `Round ${ri + 1}`), queued, matches };

@@ -40,6 +40,26 @@ function walk(node, fn) {
 function clsOf(n) { return (n.getAttribute && n.getAttribute('class')) || ''; }
 function num(n, a) { const v = n.getAttribute(a); return v == null ? null : Number(v); }
 
+// The double-elim WB→LB drop connector is NOT a <line> — Wave A refined it into a
+// rounded orthogonal <path class="…dn-elimflow-seg-drop…"> built by elbowPath():
+// it dips through a staggered bus and rises into the LB re-entry node, so the
+// visual connection is intact (no orphan dot). A <path> has no x1/x2/y1 attrs, so
+// we recover the seg's endpoints from its `d` grammar. elbowPath emits
+//   M x0 y0  L x0 …  Q …  L …  Q …  L xt yt
+// i.e. the FIRST coordinate pair (the M) is the WB-loss start (x1,y1) and the LAST
+// coordinate pair (the terminal L) is the LB re-entry end (x2,y2). The drop runs
+// on a single lane row, so y1 ≈ y2 ≈ the lane y — exactly what segFromTo matches.
+function dropPathEndpoints(d) {
+  const s = String(d || '');
+  // first command is "M x0 y0"
+  const m = s.match(/^\s*M\s*(-?[\d.]+)[ ,]+(-?[\d.]+)/);
+  // last coordinate pair anywhere in the path is the terminal "L xt yt"
+  const pairs = [...s.matchAll(/(-?[\d.]+)[ ,]+(-?[\d.]+)/g)];
+  if (!m || pairs.length === 0) return null;
+  const last = pairs[pairs.length - 1];
+  return { x1: Number(m[1]), y1: Number(m[2]), x2: Number(last[1]), y2: Number(last[2]) };
+}
+
 // Read the rendered elim-flow into a structured, assertable shape.
 function readFlow(flow) {
   const dots = [];     // { x, y, tone, tip }
@@ -58,8 +78,18 @@ function readFlow(flow) {
       // sibling the harness records is not available, so derive tone only.
       dots.push({ x: num(n, 'cx'), y: num(n, 'cy'), tone });
     } else if (list.includes('dn-elimflow-seg')) {
+      // A <line> seg carries x1/x2/y1; a <path> drop seg (elbowPath) carries `d`
+      // instead — parse its endpoints out of the path grammar so the drop edge is
+      // tracked with real coordinates (not null) and segFromTo can match it.
+      let x1 = num(n, 'x1');
+      let x2 = num(n, 'x2');
+      let y = num(n, 'y1');
+      if (n.localName === 'path' && x1 == null) {
+        const ep = dropPathEndpoints(n.getAttribute('d'));
+        if (ep) { x1 = ep.x1; x2 = ep.x2; y = ep.y1; }
+      }
       segs.push({
-        x1: num(n, 'x1'), x2: num(n, 'x2'), y: num(n, 'y1'),
+        x1, x2, y,
         drop: list.includes('dn-elimflow-seg-drop'),
         pending: list.includes('dn-elimflow-seg-pending'),
       });

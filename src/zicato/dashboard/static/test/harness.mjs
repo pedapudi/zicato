@@ -312,6 +312,17 @@ const _failures = [];
 
 export function test(name, fn) { _tests.push({ name, fn }); }
 
+// The CUMULATIVE totals across every run() call in this process. run-all.mjs
+// imports every *.test.mjs file in sequence and they SHARE this harness module,
+// so these counters aggregate across all files. The per-file "X passed, Y failed"
+// line printed by run() is the batch count for THAT file only — never the grand
+// total. run-all.mjs reads these to print an HONEST grand total at the very end.
+// `fileCount` is bumped once per run() so the report can name the file count too.
+let _fileCount = 0;
+export function totals() {
+  return { passed: _passed, failed: _failed, files: _fileCount, failures: _failures.slice() };
+}
+
 export function assert(cond, msg) {
   if (!cond) throw new Error('assertion failed: ' + (msg || ''));
 }
@@ -333,6 +344,7 @@ export async function run() {
   // so a run() consumes (and clears) only the tests registered since
   // the previous run().
   const batch = _tests.splice(0, _tests.length);
+  _fileCount += 1;
   let batchPassed = 0;
   let batchFailed = 0;
   for (const { name, fn } of batch) {

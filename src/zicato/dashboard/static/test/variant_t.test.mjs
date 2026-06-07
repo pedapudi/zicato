@@ -5161,7 +5161,7 @@ const HERO_LIVE_RACING = {
 
 // ---- (a) the live hero + funnel render; the ticker lists events ----
 
-test('live hero: an active-tournament (racing, running) renders the live hero + funnel and the activity ticker lists events', () => {
+test('live hero: an active-tournament (racing, running) renders the live hero + scalar track and the activity ticker lists events', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
   coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1' });
@@ -5189,9 +5189,10 @@ test('live hero: an active-tournament (racing, running) renders the live hero + 
   // the in-flight unit count.
   const count = allByClass(root, 'dt-live-hero-count')[0];
   assert(count && count.textContent.includes('2'), 'the hero shows the in-flight unit count (2)');
-  // the survival funnel rendered inside the hero.
-  const funnel = svgsByClass(root, 'dn-funnel')[0];
-  assert(funnel, 'the survival funnel rendered inside the live hero');
+  // the racing scalar track rendered inside the hero (the live hero mini is the
+  // single-round PRIMARY figure: the field on one loss number-line).
+  const track = svgsByClass(root, 'dn-scalartrack')[0];
+  assert(track, 'the racing scalar track rendered inside the live hero');
   // the activity ticker lists events derived from the live state.
   const ticker = allByClass(root, 'dt-ticker')[0];
   assert(ticker, 'the activity ticker rendered');
@@ -5204,7 +5205,7 @@ test('live hero: an active-tournament (racing, running) renders the live hero + 
 
 // ---- (b) a live update MUTATES the surfaces without a full repaint ----
 
-test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a full repaint (node identity preserved; structure digest gates the funnel)', () => {
+test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a full repaint (node identity preserved; structure digest gates the scalar track)', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
   coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1' });
@@ -5214,16 +5215,16 @@ test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a 
   const root = mountLiveShell('#/');
   const phaseNodeBefore = allByClass(root, 'dt-live-hero-phase')[0];
   const fillNodeBefore = allByClass(root, 'dt-live-hero-progfill')[0];
-  const funnelBefore = svgsByClass(root, 'dn-funnel')[0];
+  const trackBefore = svgsByClass(root, 'dn-scalartrack')[0];
   const tickerListBefore = allByClass(root, 'dt-ticker-list')[0];
-  assert(phaseNodeBefore && fillNodeBefore && funnelBefore && tickerListBefore, 'the live surfaces mounted');
+  assert(phaseNodeBefore && fillNodeBefore && trackBefore && tickerListBefore, 'the live surfaces mounted');
   const rowsBefore = allByClass(root, 'dt-ticker-row').length;
 
   // a STEADY re-tick with IDENTICAL live state writes no new ticker rows and
-  // does NOT rebuild the funnel (the structure digest is unchanged → no flash).
+  // does NOT rebuild the scalar track (the structure digest is unchanged → no flash).
   coreState.state._changed();
   assertEqual(allByClass(root, 'dt-ticker-row').length, rowsBefore, 'an identical re-tick appends NO ticker rows (no flash)');
-  assert(svgsByClass(root, 'dn-funnel')[0] === funnelBefore, 'an identical re-tick does NOT rebuild the funnel (digest-gated structure)');
+  assert(svgsByClass(root, 'dn-scalartrack')[0] === trackBefore, 'an identical re-tick does NOT rebuild the scalar track (digest-gated structure)');
   // the persistent phase / progress / ticker-list nodes keep identity.
   assert(allByClass(root, 'dt-live-hero-phase')[0] === phaseNodeBefore, 'the phase node keeps identity across a re-tick (patched in place)');
   assert(allByClass(root, 'dt-live-hero-progfill')[0] === fillNodeBefore, 'the progress-fill node keeps identity (its width is patched, not rebuilt)');
@@ -5238,14 +5239,14 @@ test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a 
   coreState.state.setHeartbeat({ phase: 'tournament:round_2:racing-final' });
   coreState.state._changed();
 
-  // the funnel rebuilt (the structure digest changed) — but the ticker LIST and
-  // the phase node are still the SAME persistent nodes (mutated, not replaced).
+  // the scalar track rebuilt (the structure digest changed) — but the ticker LIST
+  // and the phase node are still the SAME persistent nodes (mutated, not replaced).
   assert(allByClass(root, 'dt-ticker-list')[0] === tickerListBefore, 'the ticker list is still the same node after a real change (append-only growth)');
   assert(allByClass(root, 'dt-live-hero-phase')[0] === phaseNodeBefore, 'the phase node is still the same node (patched, not rebuilt)');
   assert(allByClass(root, 'dt-ticker-row').length > rowsBefore, 'a real change (rung cut + run completed) appended new ticker rows');
-  // the newly-built funnel carries the one-shot entrance animation class.
-  const funnelAfter = svgsByClass(root, 'dn-funnel')[0];
-  assert((funnelAfter.getAttribute('class') || '').includes('dt-live-enter'), 'a freshly-built funnel carries the one-shot entrance class (eases in, never repaint-loops)');
+  // the newly-built scalar track carries the one-shot entrance animation class.
+  const trackAfter = svgsByClass(root, 'dn-scalartrack')[0];
+  assert((trackAfter.getAttribute('class') || '').includes('dt-live-enter'), 'a freshly-built scalar track carries the one-shot entrance class (eases in, never repaint-loops)');
 
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;
@@ -5310,7 +5311,7 @@ const HERO_LIVE_SWISS_E3 = {
   standings: [],
 };
 
-test('live hero: a LIVE RACING tournament for the CURRENT epoch renders the survival funnel', () => {
+test('live hero: a LIVE RACING tournament for the CURRENT epoch renders the scalar track', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
   coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1', epoch_id: HERO_EPOCH });
@@ -5318,10 +5319,10 @@ test('live hero: a LIVE RACING tournament for the CURRENT epoch renders the surv
   coreState.state.activeTournament = HERO_LIVE_RACING_E3;
 
   const root = mountLiveShell('#/');
-  const funnel = svgsByClass(root, 'dn-funnel')[0];
-  assert(funnel, 'the survival funnel renders for a LIVE racing tournament whose epoch matches the heartbeat');
-  // the funnel was eligible → no "field fills in…" placeholder fallback.
-  assert(allByClass(root, 'dt-live-hero-nofunnel').length === 0, 'no empty/proposing placeholder when the racing funnel is live');
+  const track = svgsByClass(root, 'dn-scalartrack')[0];
+  assert(track, 'the racing scalar track renders for a LIVE racing tournament whose epoch matches the heartbeat');
+  // the track was eligible → no "field fills in…" placeholder fallback.
+  assert(allByClass(root, 'dt-live-hero-nofunnel').length === 0, 'no empty/proposing placeholder when the racing scalar track is live');
 
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;
@@ -5375,7 +5376,7 @@ const HERO_LIVE_ELIM_E3 = {
   standings: [],
 };
 
-test('live hero: a LIVE ELIM tournament renders the bracket-as-FLOW, NOT the racing funnel or swiss ladder', () => {
+test('live hero: a LIVE SINGLE-ELIM tournament renders the RADIAL bracket, NOT the racing track or swiss ladder', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
   coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH });
@@ -5383,28 +5384,29 @@ test('live hero: a LIVE ELIM tournament renders the bracket-as-FLOW, NOT the rac
   coreState.state.activeTournament = HERO_LIVE_ELIM_E3;
 
   const root = mountLiveShell('#/');
-  const bracket = svgsByClass(root, 'dn-elimflow')[0];
-  assert(bracket, 'the live elim bracket-as-flow rendered in the hero');
+  // single_elim hero is the concentric-ring RADIAL (the single-round primary).
+  const bracket = svgsByClass(root, 'dn-elimradial')[0];
+  assert(bracket, 'the live single-elim radial bracket rendered in the hero');
   assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired');
-  assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'NO racing funnel for a LIVE elim tournament');
+  assertEqual(svgsByClass(root, 'dn-scalartrack').length, 0, 'NO racing scalar track for a LIVE elim tournament');
   assertEqual(svgsByClass(root, 'dn-swissladder').length, 0, 'NO swiss ladder for a LIVE elim tournament');
   assertEqual(allByClass(root, 'dt-live-hero-nofunnel').length, 0, 'no text placeholder once the bracket is live');
-  // the eliminated semifinal lane terminates with ✕ alongside the filling final.
+  // the eliminated semifinal lane terminates with ✕ (the radial emits a cut glyph).
   assert(/✕/.test(bracket.textContent), 'a decided semifinal eliminates a lane (✕)');
 
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;
 });
 
-test('live hero: racing STILL renders the funnel (no swiss/elim regression), and a foreign-epoch elim shows the honest empty state', () => {
+test('live hero: racing STILL renders the scalar track (no swiss/elim regression), and a foreign-epoch elim shows the honest empty state', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
-  // racing for the current epoch → the funnel (unchanged).
+  // racing for the current epoch → the scalar track (unchanged structure-wise).
   coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1', epoch_id: HERO_EPOCH });
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
   coreState.state.activeTournament = HERO_LIVE_RACING_E3;
   let root = mountLiveShell('#/');
-  assert(svgsByClass(root, 'dn-funnel')[0], 'racing still renders the survival funnel');
+  assert(svgsByClass(root, 'dn-scalartrack')[0], 'racing still renders the scalar track');
   assertEqual(svgsByClass(root, 'dn-swissladder').length, 0, 'no swiss ladder for a racing run');
   assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'no elim bracket for a racing run');
 
@@ -5416,6 +5418,7 @@ test('live hero: racing STILL renders the funnel (no swiss/elim regression), and
   coreState.state.activeTournament = foreignElim;
   root = mountLiveShell('#/');
   assertEqual(svgsByClass(root, 'dn-elimbracket').length, 0, 'NO elim bracket for a foreign-epoch tournament while the current epoch proposes');
+  assertEqual(svgsByClass(root, 'dn-elimradial').length, 0, 'NO elim radial either for a foreign-epoch tournament while proposing');
   assertEqual(svgsByClass(root, 'dn-funnel').length, 0, 'no funnel either — honest empty');
   assert(allByClass(root, 'dt-live-hero-nofunnel').length >= 1, 'the hero shows the honest proposing/empty state');
   const heroText = (allByClass(root, 'dt-live-hero')[0] || {}).textContent || '';
