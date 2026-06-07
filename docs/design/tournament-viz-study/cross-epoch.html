@@ -1,0 +1,1169 @@
+<!doctype html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — cross-epoch · tournament-viz study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from src/.../variants/T/console4.css --v2-* roles. The picker sets
+       html[data-theme]; each block fully restyles the page. Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px; line-height: 1.5;
+    transition: background .18s, color .18s; padding: 0 0 80px;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule);
+  }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header .spacer { flex: 1; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin: 34px 0 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 20px; max-width: 88ch; }
+  .lede code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .mono { font-family: inherit; }
+  .good { color: var(--good); } .bad { color: var(--bad); }
+  .faint { color: var(--ink-faint); } .caution { color: var(--caution); }
+
+  /* shared-sample fact strip */
+  .sample {
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--panel);
+    padding: 16px 20px; margin: 0 0 14px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px 24px;
+  }
+  .sample .kv { display: flex; flex-direction: column; gap: 2px; }
+  .sample .kv .k { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+  .sample .kv .v { font-size: 15px; color: var(--ink); }
+  .sample .kv .v b { font-weight: 700; }
+
+  /* option card */
+  .opt {
+    border: 1px solid var(--rule); border-radius: 12px; background: var(--panel);
+    padding: 0; margin-bottom: 22px; overflow: hidden;
+  }
+  .opt > .opt-head {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--rule); background: var(--panel-2);
+  }
+  .opt-head .num {
+    font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--paper);
+    background: var(--accent); border-radius: 5px; padding: 3px 9px; white-space: nowrap;
+  }
+  .opt-head .name { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .opt-head .why { font-size: 12px; color: var(--ink-soft); flex: 1 1 320px; min-width: 240px; }
+  .opt-head .why b { color: var(--ink); }
+  .view { padding: 20px; }
+  .view-cap {
+    font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .view-cap .tag { font-size: 9px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink-faint); }
+  figure { margin: 0; width: 100%; }
+  figure svg { display: block; width: 100%; height: auto; }
+  .fig-wide { max-width: 1040px; }
+  .reveal { font-size: 12px; color: var(--ink-soft); margin: 12px 0 0; border-left: 3px solid var(--accent);
+    padding: 6px 12px; background: var(--panel-2); border-radius: 0 6px 6px 0; max-width: 92ch; }
+  .reveal b { color: var(--ink); }
+
+  .leg { display: flex; gap: 16px; flex-wrap: wrap; font-size: 10.5px; color: var(--ink-faint); margin-top: 12px; }
+  .leg span { display: inline-flex; align-items: center; gap: 6px; }
+  .leg i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+  .leg i.g { background: var(--good); } .leg i.r { background: var(--bad); }
+  .leg i.a { background: var(--accent); } .leg i.f { background: var(--ink-faint); }
+  .leg i.c { background: var(--caution); }
+  .leg i.dash { width: 16px; height: 0; border-top: 2px dashed var(--ink-faint); border-radius: 0; }
+  .leg i.seam { width: 2px; height: 13px; border-radius: 0; background: var(--caution); }
+
+  svg text { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
+
+  footer { max-width: 1180px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+  footer code { font-size: 11px; }
+
+  /* ---- SAMPLE-STRUCTURE SWITCHER (segmented control). Structure is a per-EPOCH
+       attribute, so this sets the structure the chain's epochs RUN under (and the
+       E5 structure-roll target). Hidden in ?bare=1 but ?sample still honored. ---- */
+  .struct-switch { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 18px; }
+  .struct-switch .ss-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .struct-seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; background: var(--panel); }
+  .struct-seg button { font: inherit; font-size: 11.5px; color: var(--ink-soft);
+    background: transparent; border: none; border-right: 1px solid var(--rule);
+    padding: 6px 13px; cursor: pointer; transition: background .12s, color .12s; white-space: nowrap; }
+  .struct-seg button:last-child { border-right: none; }
+  .struct-seg button:hover { color: var(--ink); background: var(--rule-soft); }
+  .struct-seg button[aria-pressed="true"] { color: var(--paper); background: var(--accent); font-weight: 700; }
+  .struct-switch .ss-note { font-size: 11px; color: var(--ink-faint); }
+  html.embed-bare .struct-switch { display: none !important; }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) — mirrors .dt-cd ---- */
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>zıcato — cross-epoch · the meta-loop zoom-level</h1>
+  <span class="spacer"></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+    This is the <b>highest zoom-level</b> — above any single tournament. The unit is the <b>epoch</b>: a short, ORDERED,
+    linear chain, each epoch a frozen <b>contract</b> (<code>board</code> · <code>brief</code> · <code>scoring</code> ·
+    <code>entrypoint</code> · <code>mutable_trees</code> · proposer) plus a chosen tournament <b>structure</b>. The operator's
+    question is not "who won this match" but <b>"is the meta-loop making progress ACROSS contracts?"</b> — which contract
+    change helped or hurt, and where the loss <b>floor reset</b> when a new epoch rolled. These six options are
+    <b>structure-agnostic</b>: structure is just one epoch attribute, and a structure-roll seam makes the best-loss
+    comparison across it a <b>soft</b> one — every figure flags that seam rather than pretending the floor is comparable.
+  </p>
+
+  <!-- SAMPLE-STRUCTURE SWITCHER -->
+  <div class="struct-switch" id="struct-switch" role="group" aria-label="sample structure">
+    <span class="ss-label">sample structure</span>
+    <span class="struct-seg" id="struct-seg"></span>
+    <span class="ss-note">structure is a per-EPOCH attribute — this sets the structure the epochs run under + the E5 structure-roll target; the SAME six figures re-label the roll seam.</span>
+  </div>
+
+  <!-- the shared sample -->
+  <h2>The sample · one realistic 6-epoch chain</h2>
+  <div class="sample" id="sample-strip"></div>
+  <p class="lede" style="margin-top:2px" id="sample-cap">
+    Six epochs, linear lineage (<code>v0_parent = prev_epoch:final_generation</code>). Best-loss <span class="faint">(the FLOOR — lower is better)</span>
+    descends overall but <b>resets</b> at two rolls: <b>E3</b> changed <code>scoring</code> (a re-weight — the floor jumps because the
+    metric itself moved), and <b>E5</b> changed <code>board</code> + <code>structure</code> (harder board + a structure roll — the floor
+    resets and the cross-roll comparison is <span class="caution">SOFT</span>). E1–E5 are closed; <b>E6 is open / in-flight</b>.
+    Every option below renders this <i>identical</i> sample.
+  </p>
+
+  <!-- ============ OPT 1 — STEP + CONTRACT-CHANGE MARKER RAIL ============ -->
+  <section class="opt" id="opt1">
+    <div class="opt-head">
+      <span class="num">OPT 1</span>
+      <span class="name">Loss-floor step chart + contract-change marker rail</span>
+      <span class="why">Floor resets are <b>discontinuous events</b>, not a smooth line — a <b>step chart</b> draws the floor as a held level
+        that snaps at each roll; a color-coded <b>vertical marker rail</b> says <i>which</i> contract component changed there.</span>
+    </div>
+    <div class="view">
+      <div class="view-cap">epoch best-loss as held steps · roll seams as a component-coded rail <span class="tag">decision: did the floor improve or reset, and why</span></div>
+      <figure class="fig-wide"><div id="fig1"></div></figure>
+      <div class="leg">
+        <span><i class="g"></i> floor improved vs prev</span>
+        <span><i class="r"></i> floor reset (worse)</span>
+        <span><i class="dash"></i> open epoch (in-flight)</span>
+        <span><i style="background:var(--accent)"></i> board</span>
+        <span><i style="background:var(--good)"></i> scoring</span>
+        <span><i style="background:var(--caution)"></i> brief</span>
+        <span><i style="background:var(--bad)"></i> structure</span>
+        <span><i class="seam"></i> SOFT seam (structure roll)</span>
+      </div>
+      <p class="reveal"><b>Reveals:</b> the floor is a staircase, not a slope — it drops E1→E2, jumps UP at E3 (scoring re-weight, green rail tick) and again at E5
+        (board+structure, dashed SOFT seam), then resumes descending into the open E6. You read "progress" as <i>net downward steps between resets</i>, and the rail
+        attributes every reset to a named contract change.</p>
+    </div>
+  </section>
+
+  <!-- ============ OPT 2 — SLOPE CHART OVER THE v0_parent SEAM ============ -->
+  <section class="opt" id="opt2">
+    <div class="opt-head">
+      <span class="num">OPT 2</span>
+      <span class="name">Handoff slope chart over the v0_parent seam</span>
+      <span class="why">The epoch→epoch <b>handoff</b> is a pairing: <code>prev:final_generation</code> → <code>this:best</code>. A <b>slope chart</b>
+        makes each handoff one tilted segment — slope sign = did the new contract <i>start from</i> and then <i>beat</i> where the last one ended.</span>
+    </div>
+    <div class="view">
+      <div class="view-cap">v0_parent (inherited start) ↘ this-epoch floor · one slope per handoff <span class="tag">decision: did the contract change pay off from its inherited baseline</span></div>
+      <figure class="fig-wide"><div id="fig2"></div></figure>
+      <div class="leg">
+        <span><i class="g"></i> handoff improved (down slope)</span>
+        <span><i class="r"></i> handoff regressed (up slope)</span>
+        <span><i class="f"></i> v0_parent inherited level</span>
+        <span><i class="seam"></i> SOFT seam (structure roll)</span>
+      </div>
+      <p class="reveal"><b>Reveals:</b> per epoch, the left dot is what it INHERITED (prev epoch's final gen), the right dot is the floor it REACHED. A steep down-slope (E2, E4, E6)
+        = the contract paid off; an up-slope (E3, E5) = the new contract started worse and stayed worse than the inherited baseline — the re-weight / harder board cost floor.
+        The structure-roll handoff (E4→E5) is drawn dashed: that slope is a SOFT comparison.</p>
+    </div>
+  </section>
+
+  <!-- ============ OPT 3 — HEATSTRIP: epochs × contract-components ============ -->
+  <section class="opt" id="opt3">
+    <div class="opt-head">
+      <span class="num">OPT 3</span>
+      <span class="name">Contract-component heatstrip (epochs × components matrix)</span>
+      <span class="why">"What changed" is a small <b>categorical matrix</b>: epochs down, the 5 surfaced components (+ proposer) across. A <b>heatstrip</b>
+        of changed/unchanged cells is the densest possible answer to "which lever moved each roll" — and exposes the proposer column the dashboard diff omits.</span>
+    </div>
+    <div class="view">
+      <div class="view-cap">per-roll contract delta · filled = changed vs predecessor <span class="tag">decision: which lever moved, and is the floor delta attributable to it</span></div>
+      <figure class="fig-wide"><div id="fig3"></div></figure>
+      <div class="leg">
+        <span><i class="a"></i> component changed vs predecessor</span>
+        <span><i class="f" style="opacity:.35"></i> unchanged</span>
+        <span><i class="g"></i> floor improved</span>
+        <span><i class="r"></i> floor reset</span>
+        <span><i class="seam"></i> structure cell = SOFT seam</span>
+      </div>
+      <p class="reveal"><b>Reveals:</b> scan a column to see how often each lever is pulled (board twice, scoring once, structure once); scan a row to read a single roll's whole delta.
+        The right-edge floor-delta chip ties the change-set to the outcome: E3's lone <i>scoring</i> change → floor up; E5's <i>board+structure</i> pair → floor up + SOFT.
+        The <b>proposer</b> column is shown explicitly with a note that the dashboard's contract-diff currently surfaces only the other five.</p>
+    </div>
+  </section>
+
+  <!-- ============ OPT 4 — ICICLE of Epoch ⊃ Round ⊃ Generation ============ -->
+  <section class="opt" id="opt4">
+    <div class="opt-head">
+      <span class="num">OPT 4</span>
+      <span class="name">Icicle of the Epoch ⊃ Round ⊃ Generation hierarchy</span>
+      <span class="why">The corpus is a strict containment tree. An <b>icicle</b> sizes each epoch band by <code>generation_count</code> (how much work it
+        absorbed) and colors it by <code>best_scalar</code> (how good a floor that work bought) — width = effort, hue = payoff, in one structure-agnostic shape.</span>
+    </div>
+    <div class="view">
+      <div class="view-cap">epoch band width ∝ gen_count · hue ∝ best-loss · rounds &amp; champion gen nested below <span class="tag">decision: is effort buying floor, or is a big epoch a low-yield slog</span></div>
+      <figure class="fig-wide"><div id="fig4"></div></figure>
+      <div class="leg">
+        <span><i class="g"></i> low (good) floor</span>
+        <span><i class="c"></i> mid floor</span>
+        <span><i class="r"></i> high (poor) floor</span>
+        <span><i class="a"></i> champion / best generation</span>
+        <span><i class="seam"></i> SOFT seam after structure roll</span>
+      </div>
+      <p class="reveal"><b>Reveals:</b> width tells you E5 absorbed the most generations yet stays reddish (a costly, low-yield slog after the harder board), while the slim E2 is deep green
+        (cheap, big floor win). Drilling the nested row exposes each epoch's rounds and the single champion generation that set its floor. The structure-roll boundary is marked SOFT
+        so you don't read the hue jump as pure regression.</p>
+    </div>
+  </section>
+
+  <!-- ============ OPT 5 — ALLUVIAL / SANKEY of champion lineage ============ -->
+  <section class="opt" id="opt5">
+    <div class="opt-head">
+      <span class="num">OPT 5</span>
+      <span class="name">Champion-lineage alluvial across the v0_parent seam</span>
+      <span class="why">Lineage is a <b>flow</b>: each epoch's champion seeds the next as its v0_parent. An <b>alluvial</b> ribbon makes the carry-over explicit —
+        ribbon thickness = promoted_count carried, and the ribbon recolors / notches where a roll breaks comparability.</span>
+    </div>
+    <div class="view">
+      <div class="view-cap">champion gen of epoch N flows in as v0_parent of N+1 · ribbon width ∝ promoted_count <span class="tag">decision: is the lineage actually carried forward, or reset by a roll</span></div>
+      <figure class="fig-wide"><div id="fig5"></div></figure>
+      <div class="leg">
+        <span><i class="a"></i> champion generation (node)</span>
+        <span><i class="g"></i> floor improved at landing</span>
+        <span><i class="r"></i> floor reset at landing</span>
+        <span><i class="seam"></i> SOFT seam — soft carry across structure roll</span>
+        <span><i class="dash"></i> open epoch (E6, in-flight)</span>
+      </div>
+      <p class="reveal"><b>Reveals:</b> the unbroken chain of champion handoffs reads as a single river — you can see lineage is genuinely carried (not reset) even when the FLOOR resets.
+        The ribbon thins where fewer were promoted (E3) and is <b>notched/striped at the E4→E5 structure roll</b> to say "the champion still flows forward but its loss isn't directly comparable across this seam."</p>
+    </div>
+  </section>
+
+  <!-- ============ OPT 6 — GANTT lifetimes + dumbbell floor delta ============ -->
+  <section class="opt" id="opt6">
+    <div class="opt-head">
+      <span class="num">OPT 6</span>
+      <span class="name">Epoch-lifetime Gantt with a per-epoch floor dumbbell</span>
+      <span class="why">Epochs have real <b>duration</b> (created_at→closed_at, last one open). A <b>Gantt</b> of lifetimes answers "how long did each contract run / which is still
+        live"; a <b>dumbbell</b> docked to each bar pairs predecessor-floor ↔ this-floor so duration and floor-progress read in one row.</span>
+    </div>
+    <div class="view">
+      <div class="view-cap">lifetime bars (open vs closed) + predecessor-floor ●——● this-floor dumbbell per epoch <span class="tag">decision: how long each contract ran and whether its floor moved the right way</span></div>
+      <figure class="fig-wide"><div id="fig6"></div></figure>
+      <div class="leg">
+        <span><i class="f"></i> closed lifetime</span>
+        <span><i class="a"></i> open / live lifetime</span>
+        <span><i class="f" style="border-radius:50%"></i> predecessor floor</span>
+        <span><i class="g" style="border-radius:50%"></i> this floor (improved)</span>
+        <span><i class="r" style="border-radius:50%"></i> this floor (reset)</span>
+        <span><i class="seam"></i> SOFT seam (structure roll)</span>
+      </div>
+      <p class="reveal"><b>Reveals:</b> the bars show E6 is the only still-open contract (accent, no end-cap) and that E5 ran longest; the dumbbells show direction and magnitude of floor change
+        per epoch — a leftward (down) bell = improvement, a rightward (up) bell = reset. The two reset epochs (E3, E5) point the wrong way, and E5's dumbbell carries the SOFT-seam mark since
+        its predecessor floor sits across a structure roll.</p>
+    </div>
+  </section>
+
+  <!-- ============ OPT 7 — COMPOSED: effort-proportional floor staircase + change rail + heatstrip ============ -->
+  <section class="opt" id="opt7">
+    <div class="opt-head">
+      <span class="num">OPT 7</span>
+      <span class="name">Composed meta-loop ledger — effort-proportional floor staircase · contract-change rail · component heatstrip</span>
+      <span class="why">One coherent ledger that braids the three liked views: the <b>held floor staircase</b> (opt 1) sits over epoch bands whose
+        <b>width ∝ generation_count</b> (opt 4 — effort), every roll seam carries opt 1's <b>component-coded change chip</b>, and a dense
+        <b>contract-component heatstrip</b> (opt 3, incl. the proposer column) is docked under each band — trajectory, attribution, and effort/champion in a single scan.</span>
+    </div>
+    <div class="view">
+      <div class="view-cap">floor held-steps over effort-proportional bands · roll seams as component chips · per-epoch component heatstrip + champion reign <span class="tag">decision: is the meta-loop making net progress across contracts, which lever moved each reset, and is effort buying floor</span></div>
+      <figure class="fig-wide"><div id="fig7"></div></figure>
+      <div class="leg">
+        <span><i class="g"></i> floor improved vs prev</span>
+        <span><i class="r"></i> floor reset (worse)</span>
+        <span><i class="dash"></i> open epoch (in-flight)</span>
+        <span><i class="a"></i> changed component / champion gen</span>
+        <span><i class="f" style="opacity:.35"></i> component unchanged</span>
+        <span><i class="seam"></i> SOFT seam (structure roll)</span>
+      </div>
+      <p class="reveal"><b>Reveals:</b> reading top-to-bottom in one figure — the staircase (from <b>opt 1</b>) shows the floor is a stepped descent that jumps UP at E3 (scoring) and E5
+        (board+structure); the band <b>width ∝ effort</b> (from <b>opt 4</b>) shows E5 was the widest, costliest band yet reset the floor, while the slim E2 bought the biggest win cheaply, and
+        each band's champion-reign tick marks the generation that set its floor; the <b>heatstrip</b> beneath (from <b>opt 3</b>) attributes every step to a named lever — including the
+        <b>proposer*</b> column the dashboard contract-diff omits — and the change chip + SOFT-seam stripe at the E5 roll keep the cross-structure comparison honest.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Standalone cross-epoch study · structure-agnostic (the meta-loop zoom-level above any single tournament) ·
+  served from <code>/tmp/zicato-tourney-viz-study/</code> at <code>http://127.0.0.1:7952/cross-epoch.html</code> ·
+  read-only against <code>/home/sunil/git/zicato</code> · theme-adaptive (every figure recolors from the active theme).
+</footer>
+
+<script>
+/* ============================================================
+   ONE shared, realistic sample — a 6-epoch linear chain.
+   best_scalar = the loss FLOOR (lower is better).
+   ============================================================ */
+/* The BASE chain. floors/lineage/gen-counts/changed-sets are FIXED. The only
+   thing the sample-structure switcher changes is WHICH structure the epochs
+   RUN under — structure is a per-EPOCH attribute, so the chain SPANS two
+   structures: E1–E4 run on a prior structure, then E5 performs the structure
+   ROLL into the selected one (the structure-change marker + SOFT seam), and
+   E5–E6 run on the selected structure. Pick any structure and the SAME six
+   figures re-label the roll seam + structure tags. */
+const BASE_EPOCHS = [
+  { id:'E1', name:'baseline',        floor:0.412, v0:null,   gen:38,  promo:4, open:false,
+    days:[0,6],  champ:'gen-0031', changed:[], note:'first contract' },
+  { id:'E2', name:'brief-tighten',   floor:0.276, v0:0.412,  gen:29,  promo:5, open:false,
+    days:[6,11], champ:'gen-0067', changed:['brief'], note:'sharper proposer brief' },
+  { id:'E3', name:'scoring-reweight',floor:0.331, v0:0.276,  gen:44,  promo:3, open:false,
+    days:[11,18],champ:'gen-0102', changed:['scoring'], note:'re-weighted loss → floor not comparable to E2' , reset:true },
+  { id:'E4', name:'tree-expand',     floor:0.243, v0:0.331,  gen:35,  promo:6, open:false,
+    days:[18,23],champ:'gen-0149', changed:['mutable_trees','entrypoint'], note:'more mutation surface' },
+  { id:'E5', name:'board+structure', floor:0.318, v0:0.243,  gen:57,  promo:4, open:false,
+    days:[23,33],champ:'gen-0211', changed:['board','structure'], note:'harder board + structure roll → SOFT seam', reset:true, soft:true, structRoll:true },
+  { id:'E6', name:'proposer-swap',   floor:0.229, v0:0.318,  gen:22,  promo:2, open:true,
+    days:[33,40],champ:'gen-0238', changed:['proposer','brief'], note:'OPEN · new proposer, in-flight' },
+];
+// component column order for the heatstrip (proposer last, flagged as not in dashboard diff)
+const COMPONENTS = ['board','brief','scoring','entrypoint','mutable_trees','structure','proposer'];
+const COMP_LABEL = { board:'board', brief:'brief', scoring:'scoring', entrypoint:'entrypoint',
+  mutable_trees:'mutable_trees', structure:'structure', proposer:'proposer*' };
+
+// structure display labels + a sensible PRIOR structure for the roll (always
+// differs from the selected one so the structure-change marker stays meaningful)
+const STRUCT_LABEL = { gauntlet:'gauntlet', single_elim:'single-elim', double_elim:'double-elim',
+  swiss:'swiss', racing:'racing' };
+const PRIOR_FOR = { gauntlet:'racing', single_elim:'gauntlet', double_elim:'single-elim',
+  swiss:'gauntlet', racing:'gauntlet' };
+
+/* live model (mutated by the switcher; figures read these) */
+let EPOCHS, ACTIVE_STRUCT, PRIOR_STRUCT, ALL_FLOORS, FMIN, FMAX;
+
+function buildModel(structId){
+  ACTIVE_STRUCT = STRUCT_LABEL[structId] ? structId : 'racing';
+  const toLabel = STRUCT_LABEL[ACTIVE_STRUCT];
+  PRIOR_STRUCT = PRIOR_FOR[ACTIVE_STRUCT] || 'gauntlet';
+  // stamp the per-epoch structure: prior structure up to (and incl.) E4, the
+  // rolled-into structure from E5 onward. E5 is the structure-roll seam.
+  EPOCHS = BASE_EPOCHS.map(e=>{
+    const o = Object.assign({}, e);
+    const epochNum = +e.id.slice(1);
+    o.structure = (e.structRoll || epochNum >= 5) ? toLabel : PRIOR_STRUCT;
+    if (e.structRoll) {
+      // keep `name` short (it is a tight gutter/axis label); the rolled-into structure
+      // is surfaced by the heatstrip structure cell + change-rail chip + SOFT-seam + caption.
+      o.note = `harder board + structure roll (${PRIOR_STRUCT}→${toLabel}) → SOFT seam`;
+    }
+    return o;
+  });
+  ALL_FLOORS = EPOCHS.map(e=>e.floor).concat(EPOCHS.map(e=>e.v0).filter(v=>v!=null));
+  FMIN = Math.min(...ALL_FLOORS); FMAX = Math.max(...ALL_FLOORS);
+}
+// hue for a floor (good=low, bad=high) via mix between --good and --bad
+function floorMix(f){ const t=(f-FMIN)/(FMAX-FMIN||1); // 0=good..1=bad
+  const pct=Math.round(t*100);
+  return `color-mix(in srgb, var(--bad) ${pct}%, var(--good))`; }
+
+/* ---------- shared sample fact strip — re-filled on each switch ---------- */
+function fillSampleStrip(){
+  document.getElementById('sample-strip').innerHTML = `
+    <div class="kv"><span class="k">structure</span><span class="v mono"><b class="acc">${STRUCT_LABEL[PRIOR_STRUCT]||PRIOR_STRUCT} → ${STRUCT_LABEL[ACTIVE_STRUCT]}</b> <span class="faint">(roll at E5)</span></span></div>
+    <div class="kv"><span class="k">chain length</span><span class="v"><b>6</b> epochs · linear</span></div>
+    <div class="kv"><span class="k">floor span</span><span class="v"><b>${FMAX.toFixed(3)}</b> → <b class="good">${FMIN.toFixed(3)}</b></span></div>
+    <div class="kv"><span class="k">resets</span><span class="v"><b class="bad">2</b> <span class="faint">(E3 scoring · E5 board+structure)</span></span></div>
+    <div class="kv"><span class="k">soft seams</span><span class="v"><b class="caution">1</b> <span class="faint">(E4→E5 ${STRUCT_LABEL[ACTIVE_STRUCT]} roll)</span></span></div>
+    <div class="kv"><span class="k">open epoch</span><span class="v"><b class="caution">E6</b> proposer-swap</span></div>
+    <div class="kv"><span class="k">total generations</span><span class="v"><b>${EPOCHS.reduce((a,e)=>a+e.gen,0)}</b></span></div>`;
+}
+
+buildModel('racing');  // default; re-set by the switcher on load
+
+/* ============================================================
+   small SVG helpers — all geometry uses non-scaling-stroke,
+   viewBox + width:100%. Colors are theme tokens.
+   ============================================================ */
+const NSS = 'vector-effect="non-scaling-stroke"';
+function svg(vbW, vbH, inner){ return `<svg viewBox="0 0 ${vbW} ${vbH}" preserveAspectRatio="xMidYMid meet" role="img">${inner}</svg>`; }
+function txt(x,y,s,o={}){ const{size=11,fill='var(--ink)',anchor='start',weight=400,op=1,ls=0}=o;
+  return `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" text-anchor="${anchor}" font-weight="${weight}" opacity="${op}"${ls?` letter-spacing="${ls}"`:''}>${s}</text>`; }
+
+/* ============================================================
+   OPT 1 — STEP CHART + CONTRACT-CHANGE MARKER RAIL
+   ============================================================ */
+function fig1(){
+  const W=1100,H=420, L=66,R=150,T=58,B=70;
+  const pw=W-L-R, ph=H-T-B;
+  const n=EPOCHS.length;
+  const slot=pw/n;
+  const yMin=0.18, yMax=0.45;
+  const y=f=> T+ph - (f-yMin)/(yMax-yMin)*ph;
+  let g='';
+  // y gridlines
+  for(let i=0;i<=5;i++){ const v=yMin+(yMax-yMin)*i/5; const yy=y(v);
+    g+=`<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="var(--rule)" stroke-width="1" ${NSS}/>`;
+    g+=txt(L-8,yy+3,v.toFixed(2),{size:10,fill:'var(--ink-faint)',anchor:'end'}); }
+  g+=txt(L,T-14,'loss floor ↓ better',{size:10,fill:'var(--ink-faint)',anchor:'start'});
+  // component color for a roll
+  const rcol={board:'var(--accent)',scoring:'var(--good)',brief:'var(--caution)',structure:'var(--bad)',
+              entrypoint:'var(--accent-2)',mutable_trees:'var(--ink-soft)',proposer:'var(--ink-faint)'};
+  // step path + per-epoch held level
+  let prevF=null;
+  EPOCHS.forEach((e,i)=>{
+    const x0=L+slot*i, x1=L+slot*(i+1);
+    const yy=y(e.floor);
+    const improved = prevF==null ? true : e.floor < prevF;
+    const col = e.open ? 'var(--ink-faint)' : (improved ? 'var(--good)' : 'var(--bad)');
+    // vertical riser from prev level to this level
+    if(prevF!=null){ g+=`<line x1="${x0}" y1="${y(prevF)}" x2="${x0}" y2="${yy}" stroke="${col}" stroke-width="2.5" ${NSS} ${e.open?'stroke-dasharray="5 4"':''}/>`; }
+    // held horizontal level
+    g+=`<line x1="${x0}" y1="${yy}" x2="${x1}" y2="${yy}" stroke="${col}" stroke-width="3" ${NSS} ${e.open?'stroke-dasharray="5 4"':''}/>`;
+    // floor dot + value
+    g+=`<circle cx="${(x0+x1)/2}" cy="${yy}" r="4.5" fill="${col}"/>`;
+    g+=txt((x0+x1)/2, yy-12, e.floor.toFixed(3), {size:11,anchor:'middle',weight:700,fill:col});
+    // x label
+    g+=txt((x0+x1)/2, H-B+22, e.id, {size:12,anchor:'middle',weight:700});
+    g+=txt((x0+x1)/2, H-B+38, e.name, {size:9,anchor:'middle',fill:'var(--ink-faint)'});
+    prevF=e.floor;
+  });
+  // contract-change marker rail — vertical rules at each roll boundary (i>=1)
+  EPOCHS.forEach((e,i)=>{
+    if(i===0) return;
+    const x0=L+slot*i;
+    const changed=e.changed;
+    if(!changed.length) return;
+    const soft = e.soft;
+    // a thin grouped rail: one short colored tick per changed component, stacked at top band
+    let ty=T-30;
+    g+=`<line x1="${x0}" y1="${T-2}" x2="${x0}" y2="${H-B+4}" stroke="var(--rule-soft)" stroke-width="1" ${NSS} ${soft?'stroke-dasharray="3 3"':''}/>`;
+    changed.forEach((c,k)=>{
+      const cy=T-34;
+      g+=`<rect x="${x0-3}" y="${cy - k*0}" width="6" height="0"/>`;
+    });
+    // draw a single labeled chip listing changed components, color = first/primary changed comp.
+    // the `structure` component re-labels with the structure rolled into (e.g. structure→swiss).
+    const primary = changed[0];
+    const chipCol = rcol[primary]||'var(--ink-faint)';
+    const label = changed.map(c=> c==='structure' ? ('structure→'+STRUCT_LABEL[ACTIVE_STRUCT]) : (COMP_LABEL[c]||c)).join('+');
+    const cw = Math.max(54, label.length*6.0+14);
+    const cx = Math.min(W-R-cw/2, Math.max(L+cw/2, x0));
+    g+=`<rect x="${cx-cw/2}" y="${T-40}" width="${cw}" height="18" rx="4" fill="var(--panel-2)" stroke="${chipCol}" stroke-width="1.5" ${soft?'stroke-dasharray="3 3"':''}/>`;
+    g+=txt(cx, T-27, label, {size:9.5,anchor:'middle',fill:'var(--ink)',weight:700});
+    // SOFT seam stripe down the plot for structure rolls
+    if(soft){ g+=`<line x1="${x0}" y1="${T}" x2="${x0}" y2="${H-B}" stroke="var(--caution)" stroke-width="2" ${NSS} stroke-dasharray="2 5"/>`;
+      g+=txt(x0+4, H-B-6, 'SOFT', {size:8.5,fill:'var(--caution)',weight:700}); }
+  });
+  // open-epoch badge — sits just under the held level of the open epoch
+  const eo=EPOCHS[n-1]; const xo=L+slot*(n-1);
+  g+=txt(xo+slot/2, y(eo.floor)+22, '● OPEN', {size:9,anchor:'middle',fill:'var(--ink-faint)',weight:700});
+  document.getElementById('fig1').innerHTML = svg(W,H,g);
+}
+
+/* ============================================================
+   OPT 2 — HANDOFF SLOPE CHART (v0_parent → this floor)
+   ============================================================ */
+function fig2(){
+  const W=1100,H=400, L=60,R=60,T=54,B=64;
+  const pw=W-L-R, ph=H-T-B;
+  const slots=EPOCHS.length;
+  const slot=pw/slots;
+  const yMin=0.18,yMax=0.45;
+  const y=f=> T+ph-(f-yMin)/(yMax-yMin)*ph;
+  let g='';
+  for(let i=0;i<=5;i++){ const v=yMin+(yMax-yMin)*i/5; const yy=y(v);
+    g+=`<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="var(--rule)" stroke-width="1" ${NSS}/>`;
+    g+=txt(L-8,yy+3,v.toFixed(2),{size:10,fill:'var(--ink-faint)',anchor:'end'}); }
+  g+=txt(L-8,T-16,'loss',{size:10,fill:'var(--ink-faint)',anchor:'end'});
+  EPOCHS.forEach((e,i)=>{
+    const cx=L+slot*i+slot/2;
+    const x0=cx-slot*0.30, x1=cx+slot*0.30;
+    const yIn = e.v0==null ? null : y(e.v0);
+    const yOut= y(e.floor);
+    const improved = e.v0==null ? true : e.floor < e.v0;
+    const col = improved ? 'var(--good)' : 'var(--bad)';
+    const soft = e.soft;
+    if(yIn!=null){
+      // inherited dot (left)
+      g+=`<circle cx="${x0}" cy="${yIn}" r="4" fill="none" stroke="var(--ink-faint)" stroke-width="2" ${NSS}/>`;
+      // slope segment
+      g+=`<line x1="${x0}" y1="${yIn}" x2="${x1}" y2="${yOut}" stroke="${col}" stroke-width="3" ${NSS} ${soft?'stroke-dasharray="6 4"':''}/>`;
+      g+=txt(x0, yIn-9, e.v0.toFixed(3), {size:9.5,anchor:'middle',fill:'var(--ink-faint)'});
+    } else {
+      g+=txt(x0, yOut-30, 'first', {size:9,anchor:'middle',fill:'var(--ink-faint)'});
+      g+=`<line x1="${x0}" y1="${yOut}" x2="${x1}" y2="${yOut}" stroke="${col}" stroke-width="3" ${NSS}/>`;
+    }
+    // reached dot (right)
+    g+=`<circle cx="${x1}" cy="${yOut}" r="5" fill="${col}"/>`;
+    g+=txt(x1, yOut+(e.floor>= (e.v0??1)?20:-12)*(e.v0==null?-1:1)+(e.v0!=null&&!improved?2:0), e.floor.toFixed(3), {size:10.5,anchor:'middle',fill:col,weight:700});
+    // labels
+    g+=txt(cx, H-B+22, e.id, {size:12,anchor:'middle',weight:700});
+    g+=txt(cx, H-B+38, e.name, {size:9,anchor:'middle',fill:'var(--ink-faint)'});
+    // direction marker
+    g+=txt(cx, T-22, improved?'↘ paid off':'↗ regressed', {size:9.5,anchor:'middle',fill:col,weight:700});
+    if(soft){ const sx=L+slot*i;
+      g+=`<line x1="${sx}" y1="${T}" x2="${sx}" y2="${H-B}" stroke="var(--caution)" stroke-width="2" ${NSS} stroke-dasharray="2 5"/>`;
+      g+=txt(sx+4,T-6,'SOFT seam ▸',{size:8.5,fill:'var(--caution)',weight:700}); }
+  });
+  // in / out column key
+  g+=txt(L, H-8, '○ inherited (v0_parent = prev:final gen)     ● this-epoch floor', {size:10,fill:'var(--ink-faint)'});
+  document.getElementById('fig2').innerHTML = svg(W,H,g);
+}
+
+/* ============================================================
+   OPT 3 — CONTRACT-COMPONENT HEATSTRIP (epochs × components)
+   ============================================================ */
+function fig3(){
+  const W=1100, rowH=40, top=58, left=120, cellW=104, gap=8;
+  const deltaW=150;
+  const H=top + EPOCHS.length*rowH + 26;
+  const cols=COMPONENTS.length;
+  let g='';
+  // column headers
+  COMPONENTS.forEach((c,j)=>{
+    const x=left + j*cellW + cellW/2;
+    const isProp = c==='proposer';
+    g+=txt(x, top-30, COMP_LABEL[c], {size:10,anchor:'middle',fill:isProp?'var(--caution)':'var(--ink-soft)',weight:700});
+    if(c==='structure') g+=txt(x, top-16, '(rolls epoch)', {size:8,anchor:'middle',fill:'var(--ink-faint)'});
+  });
+  g+=txt(left + cols*cellW + deltaW/2, top-30, 'floor Δ', {size:10,anchor:'middle',fill:'var(--ink-soft)',weight:700});
+  g+=txt(left-12, top-30, 'epoch', {size:10,anchor:'end',fill:'var(--ink-faint)',weight:700});
+  let prevF=null;
+  EPOCHS.forEach((e,i)=>{
+    const yTop=top + i*rowH;
+    const yc=yTop+rowH/2;
+    // row label
+    g+=txt(left-12, yc-3, e.id, {size:12,anchor:'end',weight:700});
+    g+=txt(left-12, yc+11, e.name, {size:8.5,anchor:'end',fill:'var(--ink-faint)'});
+    COMPONENTS.forEach((c,j)=>{
+      const x=left + j*cellW;
+      const changed = e.changed.includes(c);
+      const soft = (c==='structure' && changed);
+      let fill='color-mix(in srgb, var(--ink-faint) 12%, var(--panel))';
+      let strokeCol='var(--rule)';
+      if(changed){ fill = soft ? 'color-mix(in srgb, var(--caution) 30%, var(--panel))' : 'color-mix(in srgb, var(--accent) 34%, var(--panel))'; strokeCol = soft?'var(--caution)':'var(--accent)'; }
+      g+=`<rect x="${x}" y="${yTop+gap/2}" width="${cellW-gap}" height="${rowH-gap}" rx="4" fill="${fill}" stroke="${strokeCol}" stroke-width="${changed?1.6:1}" ${NSS} ${soft?'stroke-dasharray="4 3"':''}/>`;
+      if(changed) g+=txt(x+(cellW-gap)/2, yc+4, soft?('→'+STRUCT_LABEL[ACTIVE_STRUCT]):'●', {size:soft?8.5:12,anchor:'middle',fill:soft?'var(--caution)':'var(--accent)',weight:700});
+    });
+    // floor delta chip
+    const dx=left+cols*cellW;
+    if(prevF!=null){
+      const d=e.floor-prevF;
+      const up=d>0; const col=up?'var(--bad)':'var(--good)';
+      const soft=e.soft;
+      g+=`<rect x="${dx+8}" y="${yTop+gap/2}" width="${deltaW-16}" height="${rowH-gap}" rx="5" fill="var(--panel-2)" stroke="${col}" stroke-width="1.4" ${NSS} ${soft?'stroke-dasharray="4 3"':''}/>`;
+      g+=txt(dx+18, yc+4, `${up?'▲':'▼'} ${(d>0?'+':'')}${d.toFixed(3)}`, {size:11,fill:col,weight:700});
+      if(soft) g+=txt(dx+deltaW-18, yc+4, 'SOFT', {size:8.5,anchor:'end',fill:'var(--caution)',weight:700});
+    } else {
+      g+=txt(dx+18, yc+4, 'baseline', {size:10,fill:'var(--ink-faint)'});
+    }
+    prevF=e.floor;
+  });
+  g+=txt(left, H-8, '* proposer column shown here; the dashboard contract-diff currently surfaces only the other 5 components', {size:9.5,fill:'var(--ink-faint)'});
+  document.getElementById('fig3').innerHTML = svg(W,H,g);
+}
+
+/* ============================================================
+   OPT 4 — ICICLE  (Epoch ⊃ Round ⊃ Generation)
+   width ∝ gen_count · hue ∝ best-loss
+   ============================================================ */
+function fig4(){
+  const W=1100,H=300, L=10,R=10,T=42,B=30;
+  const pw=W-L-R;
+  const totalGen=EPOCHS.reduce((a,e)=>a+e.gen,0);
+  const bandH=64;
+  const rowEpochY=T, rowRoundY=T+bandH+10, rowGenY=T+2*(bandH)+20;
+  let g='';
+  g+=txt(L, T-18, 'EPOCH  (width ∝ generation_count · fill ∝ best-loss)', {size:10,fill:'var(--ink-faint)',weight:700,ls:0.5});
+  let x=L;
+  // fake rounds-per-epoch + champion offset for the nested rows
+  EPOCHS.forEach((e,i)=>{
+    const w=pw*e.gen/totalGen;
+    const fill=floorMix(e.floor);
+    const soft=e.soft;
+    // epoch band
+    g+=`<rect x="${x}" y="${rowEpochY}" width="${w-3}" height="${bandH}" rx="4" fill="${fill}" stroke="var(--rule)" stroke-width="1" ${NSS} ${e.open?'stroke-dasharray="5 4"':''}/>`;
+    g+=txt(x+8, rowEpochY+20, e.id, {size:13,fill:'var(--paper)',weight:700});
+    g+=txt(x+8, rowEpochY+36, `floor ${e.floor.toFixed(3)}`, {size:10,fill:'var(--paper)'});
+    g+=txt(x+8, rowEpochY+52, `${e.gen} gen · ${e.promo} promo`, {size:9.5,fill:'color-mix(in srgb, var(--paper) 78%, transparent)'});
+    if(e.open) g+=txt(x+w-10, rowEpochY+16, 'OPEN', {size:9,anchor:'end',fill:'var(--paper)',weight:700});
+    // ROUND row — split into 2-3 rounds proportional
+    const nr = e.id==='E5'?3 : e.id==='E3'?3 : 2;
+    let rx=x;
+    for(let r=0;r<nr;r++){
+      const rw=(w-3)/nr;
+      g+=`<rect x="${rx+1}" y="${rowRoundY}" width="${rw-2}" height="${bandH-14}" rx="3" fill="color-mix(in srgb, ${fill} 70%, var(--panel))" stroke="var(--rule-soft)" stroke-width="1" ${NSS}/>`;
+      if(rw>40) g+=txt(rx+rw/2, rowRoundY+(bandH-14)/2+3, `R${r+1}`, {size:9.5,anchor:'middle',fill:'var(--ink)',op:.85});
+      rx+=rw;
+    }
+    // GENERATION row — champion strip highlighted
+    g+=`<rect x="${x+1}" y="${rowGenY}" width="${w-5}" height="20" rx="3" fill="color-mix(in srgb, ${fill} 40%, var(--panel))" stroke="var(--rule-soft)" stroke-width="1" ${NSS}/>`;
+    // champion tick within the gen band
+    const champX = x + (w-3)*0.62;
+    g+=`<rect x="${champX-2}" y="${rowGenY-2}" width="4" height="24" rx="1.5" fill="var(--accent)"/>`;
+    if(w>96) g+=txt(x+w/2, rowGenY+14, `champ ${e.champ}`, {size:9,anchor:'middle',fill:'var(--accent)',weight:700});
+    // SOFT seam between this and prev when soft
+    if(soft){ g+=`<line x1="${x}" y1="${rowEpochY-6}" x2="${x}" y2="${rowGenY+26}" stroke="var(--caution)" stroke-width="2" ${NSS} stroke-dasharray="2 5"/>`;
+      g+=txt(x+4, rowEpochY-9, 'SOFT seam (structure roll) ▸', {size:8.5,fill:'var(--caution)',weight:700}); }
+    x+=w;
+  });
+  g+=txt(L, rowRoundY-4, 'ROUND', {size:8.5,fill:'var(--ink-faint)',weight:700});
+  g+=txt(L, rowGenY-4, 'GENERATION · │ = champion', {size:8.5,fill:'var(--ink-faint)',weight:700});
+  document.getElementById('fig4').innerHTML = svg(W,H,g);
+}
+
+/* ============================================================
+   OPT 5 — CHAMPION-LINEAGE ALLUVIAL across the v0_parent seam
+   ============================================================ */
+function fig5(){
+  const W=1100,H=330, L=20,R=20,T=46,B=58;
+  const pw=W-L-R, ph=H-T-B;
+  const n=EPOCHS.length, slot=pw/n;
+  const maxPromo=Math.max(...EPOCHS.map(e=>e.promo));
+  // each champion node sits at a y based on its floor (lower floor → lower on screen = better, draw lower=better at bottom)
+  const yMin=0.18,yMax=0.45;
+  const ny=f=> T+ (f-yMin)/(yMax-yMin)*ph;   // higher floor → lower on screen
+  let g='';
+  // axis hint
+  g+=txt(L, T-22, 'champion of epoch N  ──flows──▸  v0_parent of N+1     (node y = floor · lower band = better floor)', {size:10,fill:'var(--ink-faint)',weight:700});
+  g+=`<line x1="${L}" y1="${T}" x2="${W-R}" y2="${T}" stroke="var(--rule)" stroke-width="1" ${NSS}/>`;
+  g+=`<line x1="${L}" y1="${H-B}" x2="${W-R}" y2="${H-B}" stroke="var(--rule)" stroke-width="1" ${NSS}/>`;
+  g+=txt(W-R, T-6, 'better ↑', {size:9,anchor:'end',fill:'var(--good)'});
+  g+=txt(W-R, H-B+14, 'worse ↓', {size:9,anchor:'end',fill:'var(--bad)'});
+  // node positions
+  const nodes=EPOCHS.map((e,i)=>({x:L+slot*i+slot/2, y:ny(e.floor), e}));
+  // ribbons between consecutive champions
+  for(let i=0;i<n-1;i++){
+    const a=nodes[i], b=nodes[i+1];
+    const tw=6+ (a.e.promo/maxPromo)*22;  // thickness ∝ promoted_count of source
+    const improved = b.e.floor < a.e.floor;
+    const col = improved ? 'var(--good)' : 'var(--bad)';
+    const soft = b.e.soft;
+    const open = b.e.open;
+    const x0=a.x, x1=b.x, y0=a.y, y1=b.y;
+    const mx=(x0+x1)/2;
+    // ribbon as a filled cubic band
+    const path=`M ${x0} ${y0-tw/2} C ${mx} ${y0-tw/2}, ${mx} ${y1-tw/2}, ${x1} ${y1-tw/2}
+                L ${x1} ${y1+tw/2} C ${mx} ${y1+tw/2}, ${mx} ${y0+tw/2}, ${x0} ${y0+tw/2} Z`;
+    g+=`<path d="${path}" fill="color-mix(in srgb, ${col} 30%, var(--panel))" stroke="${col}" stroke-width="1.4" ${NSS}
+          ${(soft||open)?'stroke-dasharray="6 4"':''} opacity="0.95"/>`;
+    // notch / soft marker at the structure-roll seam
+    if(soft){
+      const sx=(x0+x1)/2;
+      g+=`<line x1="${sx}" y1="${T-2}" x2="${sx}" y2="${H-B+2}" stroke="var(--caution)" stroke-width="2" ${NSS} stroke-dasharray="2 5"/>`;
+      // hatch notch across ribbon
+      for(let k=-1;k<=1;k++){ const yy=(y0+y1)/2 + k*5; g+=`<line x1="${sx-7}" y1="${yy-7}" x2="${sx+7}" y2="${yy+7}" stroke="var(--caution)" stroke-width="2" ${NSS}/>`; }
+      g+=txt(sx, T-30, 'SOFT carry (structure roll)', {size:9,anchor:'middle',fill:'var(--caution)',weight:700});
+    }
+  }
+  // nodes on top
+  nodes.forEach(({x,y,e},i)=>{
+    const open=e.open;
+    g+=`<circle cx="${x}" cy="${y}" r="8" fill="var(--accent)" stroke="var(--paper)" stroke-width="1.5" ${open?'stroke-dasharray="3 3"':''}/>`;
+    g+=txt(x, y-15, e.champ, {size:9.5,anchor:'middle',fill:'var(--accent)',weight:700});
+    g+=txt(x, H-B+22, e.id, {size:12,anchor:'middle',weight:700});
+    g+=txt(x, H-B+38, `${e.promo} promoted`, {size:9,anchor:'middle',fill:'var(--ink-faint)'});
+    if(open) g+=txt(x, H-B+50, '● OPEN', {size:8.5,anchor:'middle',fill:'var(--ink-faint)',weight:700});
+  });
+  document.getElementById('fig5').innerHTML = svg(W,H,g);
+}
+
+/* ============================================================
+   OPT 6 — GANTT lifetimes + per-epoch floor DUMBBELL
+   ============================================================ */
+function fig6(){
+  const W=1100, rowH=46, top=58, left=96;
+  const H=top + EPOCHS.length*rowH + 30;
+  // time axis (days)
+  const tMin=0, tMax=Math.max(...EPOCHS.map(e=>e.days[1]));
+  const ganttL=left, ganttR=W*0.50;             // gantt occupies left half
+  const dbL=W*0.56, dbR=W-30;                    // dumbbell occupies right
+  const tx=d=> ganttL + (d-tMin)/(tMax-tMin)*(ganttR-ganttL);
+  // floor axis for dumbbell
+  const fMin=0.18,fMax=0.45;
+  const fx=f=> dbL + (f-fMin)/(fMax-fMin)*(dbR-dbL);
+  let g='';
+  // headers
+  g+=txt(ganttL, top-24, 'LIFETIME  (created_at → closed_at · day index)', {size:10,fill:'var(--ink-faint)',weight:700});
+  g+=txt(dbL, top-24, 'FLOOR  predecessor ●——● this', {size:10,fill:'var(--ink-faint)',weight:700});
+  // gantt time ticks
+  for(let d=0; d<=tMax; d+=10){ const x=tx(d);
+    g+=`<line x1="${x}" y1="${top-8}" x2="${x}" y2="${top+EPOCHS.length*rowH}" stroke="var(--rule)" stroke-width="1" ${NSS}/>`;
+    g+=txt(x, top-12, 'd'+d, {size:9,anchor:'middle',fill:'var(--ink-faint)'}); }
+  // floor axis ticks
+  [0.20,0.30,0.40].forEach(v=>{ const x=fx(v);
+    g+=`<line x1="${x}" y1="${top-8}" x2="${x}" y2="${top+EPOCHS.length*rowH}" stroke="var(--rule)" stroke-width="1" ${NSS}/>`;
+    g+=txt(x, top-12, v.toFixed(2), {size:9,anchor:'middle',fill:'var(--ink-faint)'}); });
+  let prevF=null;
+  EPOCHS.forEach((e,i)=>{
+    const yc=top + i*rowH + rowH/2;
+    // row label
+    g+=txt(left-10, yc+4, e.id, {size:12,anchor:'end',weight:700});
+    // lifetime bar
+    const x0=tx(e.days[0]), x1=tx(e.days[1]);
+    const open=e.open;
+    const barCol = open ? 'var(--accent)' : 'var(--ink-faint)';
+    g+=`<rect x="${x0}" y="${yc-8}" width="${x1-x0}" height="16" rx="4"
+         fill="color-mix(in srgb, ${barCol} 30%, var(--panel))" stroke="${barCol}" stroke-width="1.6" ${NSS}
+         ${open?'stroke-dasharray="6 4"':''}/>`;
+    if(open){ // arrow cap showing still-running
+      g+=`<path d="M ${x1} ${yc-8} L ${x1+10} ${yc} L ${x1} ${yc+8} Z" fill="${barCol}"/>`;
+      g+=txt(x1+14, yc+4, 'live', {size:9,fill:barCol,weight:700});
+    } else {
+      g+=`<line x1="${x1}" y1="${yc-9}" x2="${x1}" y2="${yc+9}" stroke="${barCol}" stroke-width="2.5" ${NSS}/>`;
+    }
+    g+=txt((x0+x1)/2, yc+3, `${e.days[1]-e.days[0]}d`, {size:9,anchor:'middle',fill:'var(--ink)',op:.85});
+    // dumbbell: predecessor floor → this floor
+    const xThis=fx(e.floor);
+    const improved = prevF==null ? true : e.floor < prevF;
+    const thisCol = prevF==null ? 'var(--ink-faint)' : (improved?'var(--good)':'var(--bad)');
+    const soft=e.soft;
+    if(prevF!=null){
+      const xPrev=fx(prevF);
+      g+=`<line x1="${xPrev}" y1="${yc}" x2="${xThis}" y2="${yc}" stroke="${thisCol}" stroke-width="2.5" ${NSS} ${soft?'stroke-dasharray="5 4"':''}/>`;
+      g+=`<circle cx="${xPrev}" cy="${yc}" r="5" fill="none" stroke="var(--ink-faint)" stroke-width="2" ${NSS}/>`;
+      // direction arrowhead
+      const dir = xThis<xPrev ? -1:1;
+      g+=`<path d="M ${xThis} ${yc} L ${xThis-dir*8} ${yc-5} L ${xThis-dir*8} ${yc+5} Z" fill="${thisCol}"/>`;
+    }
+    g+=`<circle cx="${xThis}" cy="${yc}" r="6" fill="${thisCol}"/>`;
+    g+=txt(xThis + (improved?-1:1)*12, yc - 10, e.floor.toFixed(3), {size:10,anchor:improved?'end':'start',fill:thisCol,weight:700});
+    if(soft) g+=txt(dbR, yc+4, 'SOFT', {size:8.5,anchor:'end',fill:'var(--caution)',weight:700});
+    prevF=e.floor;
+  });
+  document.getElementById('fig6').innerHTML = svg(W,H,g);
+}
+
+/* ============================================================
+   OPT 7 — COMPOSED meta-loop ledger.
+   Braids the three operator-liked options into ONE figure over a
+   single, EFFORT-proportional x-axis (epoch band width ∝ gen_count,
+   borrowed from the opt-4 icicle), with three stacked zones:
+     (A) opt-1  floor STAIRCASE  — held steps + risers + change-chip rail + SOFT seam
+     (B) opt-4  effort BANDS      — width ∝ gen_count · hue ∝ floor · champion-reign tick
+     (C) opt-3  component HEATSTRIP — epochs(cols) × components(rows incl. proposer*) + floor-Δ
+   Reuses the shared helpers (svg/txt/NSS/floorMix/STRUCT_LABEL/COMP_LABEL/
+   COMPONENTS) + opt-1's component colour map rather than re-deriving them.
+   ============================================================ */
+function fig7(){
+  const W=1120, L=92, R=150, T=78;
+  const pw=W-L-R;
+  const n=EPOCHS.length;
+  const totalGen=EPOCHS.reduce((a,e)=>a+e.gen,0);
+
+  // ---- shared effort-proportional x geometry (opt-4): each epoch owns a
+  // band whose WIDTH ∝ its generation_count. All three zones index this. ----
+  let acc=L; const bx=[];               // bx[i] = {x0,x1,xc,w}
+  EPOCHS.forEach(e=>{ const w=pw*e.gen/totalGen; bx.push({x0:acc,x1:acc+w,xc:acc+w/2,w}); acc+=w; });
+
+  // component colour map (reused from opt-1 fig1)
+  const rcol={board:'var(--accent)',scoring:'var(--good)',brief:'var(--caution)',structure:'var(--bad)',
+              entrypoint:'var(--accent-2)',mutable_trees:'var(--ink-soft)',proposer:'var(--ink-faint)'};
+
+  // ---- zone layout (top→bottom) ----
+  const stairH=190;                     // (A) floor staircase
+  const stairTop=T, stairBot=T+stairH;
+  const bandTop=stairBot+34, bandH=62;  // (B) effort bands
+  const bandBot=bandTop+bandH;
+  const hsTop=bandBot+40;               // (C) heatstrip
+  const hsRowH=26, deltaW=130;
+  const hsH=hsTop + COMPONENTS.length*hsRowH + 8;
+  const H=hsH + 20;
+
+  // floor → y inside the staircase zone
+  const yMin=0.18,yMax=0.45;
+  const sy=f=> stairTop + stairH - (f-yMin)/(yMax-yMin)*stairH;
+
+  let g='';
+
+  /* ---------- (A) FLOOR STAIRCASE (opt 1) ---------- */
+  g+=txt(L, T-58, 'A · LOSS FLOOR — held steps across epochs (↓ better)', {size:10,fill:'var(--ink-faint)',weight:700,ls:0.5});
+  for(let i=0;i<=4;i++){ const v=yMin+(yMax-yMin)*i/4; const yy=sy(v);
+    g+=`<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="var(--rule)" stroke-width="1" ${NSS}/>`;
+    g+=txt(L-8,yy+3,v.toFixed(2),{size:9.5,fill:'var(--ink-faint)',anchor:'end'}); }
+  let prevF=null;
+  EPOCHS.forEach((e,i)=>{
+    const {x0,x1,xc}=bx[i];
+    const yy=sy(e.floor);
+    const improved = prevF==null ? true : e.floor < prevF;
+    const col = e.open ? 'var(--ink-faint)' : (improved ? 'var(--good)' : 'var(--bad)');
+    if(prevF!=null) g+=`<line x1="${x0}" y1="${sy(prevF)}" x2="${x0}" y2="${yy}" stroke="${col}" stroke-width="2.5" ${NSS} ${e.open?'stroke-dasharray="5 4"':''}/>`;
+    g+=`<line x1="${x0}" y1="${yy}" x2="${x1}" y2="${yy}" stroke="${col}" stroke-width="3" ${NSS} ${e.open?'stroke-dasharray="5 4"':''}/>`;
+    g+=`<circle cx="${xc}" cy="${yy}" r="4.5" fill="${col}"/>`;
+    g+=txt(xc, yy-11, e.floor.toFixed(3), {size:11,anchor:'middle',weight:700,fill:col});
+    prevF=e.floor;
+  });
+  // open badge under the last held level
+  const eo=EPOCHS[n-1];
+  g+=txt(bx[n-1].xc, sy(eo.floor)+20, '● OPEN', {size:8.5,anchor:'middle',fill:'var(--ink-faint)',weight:700});
+
+  /* ---------- contract-change RAIL + chips (opt 1) — at each roll boundary ---------- */
+  EPOCHS.forEach((e,i)=>{
+    if(i===0 || !e.changed.length) return;
+    const x0=bx[i].x0, soft=e.soft;
+    // vertical rail spanning the staircase + bands
+    g+=`<line x1="${x0}" y1="${stairTop-2}" x2="${x0}" y2="${bandBot+4}" stroke="var(--rule-soft)" stroke-width="1" ${NSS} ${soft?'stroke-dasharray="3 3"':''}/>`;
+    const primary=e.changed[0];
+    const chipCol=rcol[primary]||'var(--ink-faint)';
+    const label=e.changed.map(c=> c==='structure' ? ('structure→'+STRUCT_LABEL[ACTIVE_STRUCT]) : (COMP_LABEL[c]||c)).join('+');
+    const cw=Math.max(54, label.length*6.0+14);
+    const cx=Math.min(W-R-cw/2, Math.max(L+cw/2, x0));
+    g+=`<rect x="${cx-cw/2}" y="${T-44}" width="${cw}" height="18" rx="4" fill="var(--panel-2)" stroke="${chipCol}" stroke-width="1.5" ${NSS} ${soft?'stroke-dasharray="3 3"':''}/>`;
+    g+=txt(cx, T-31, label, {size:9.5,anchor:'middle',fill:'var(--ink)',weight:700});
+    // SOFT seam stripe down through staircase + bands
+    if(soft){ g+=`<line x1="${x0}" y1="${stairTop}" x2="${x0}" y2="${bandBot}" stroke="var(--caution)" stroke-width="2" ${NSS} stroke-dasharray="2 5"/>`;
+      g+=txt(x0+4, bandBot-6, 'SOFT', {size:8.5,fill:'var(--caution)',weight:700}); }
+  });
+
+  /* ---------- (B) EFFORT-PROPORTIONAL BANDS (opt 4) ---------- */
+  g+=txt(L, bandTop-8, 'B · EFFORT — band width ∝ generation_count · fill ∝ floor · │ = champion reign', {size:10,fill:'var(--ink-faint)',weight:700,ls:0.5});
+  EPOCHS.forEach((e,i)=>{
+    const {x0,w,xc}=bx[i];
+    const fill=floorMix(e.floor);
+    g+=`<rect x="${x0+1}" y="${bandTop}" width="${w-3}" height="${bandH}" rx="4" fill="${fill}" stroke="var(--rule)" stroke-width="1" ${NSS} ${e.open?'stroke-dasharray="5 4"':''}/>`;
+    g+=txt(x0+8, bandTop+18, e.id, {size:13,fill:'var(--paper)',weight:700});
+    if(w>78) g+=txt(x0+8, bandTop+34, e.name, {size:9,fill:'color-mix(in srgb, var(--paper) 82%, transparent)'});
+    g+=txt(x0+8, bandTop+50, `${e.gen} gen · ${e.promo} promo`, {size:9.5,fill:'color-mix(in srgb, var(--paper) 78%, transparent)'});
+    if(e.open) g+=txt(x0+w-9, bandTop+16, 'OPEN', {size:9,anchor:'end',fill:'var(--paper)',weight:700});
+    // champion-reign tick (opt 4) — a marker for the generation that set the floor
+    const champX=x0 + (w-3)*0.62;
+    g+=`<rect x="${champX-2}" y="${bandTop-4}" width="4" height="${bandH+8}" rx="1.5" fill="var(--accent)"/>`;
+    if(w>104) g+=txt(champX, bandTop+bandH+13, `champ ${e.champ}`, {size:9,anchor:'middle',fill:'var(--accent)',weight:700});
+  });
+
+  /* ---------- (C) COMPONENT HEATSTRIP (opt 3) — epochs(cols) × components(rows) ---------- */
+  g+=txt(L, hsTop-12, 'C · CONTRACT DELTA — filled = lever changed vs predecessor (proposer* not in dashboard diff)', {size:10,fill:'var(--ink-faint)',weight:700,ls:0.5});
+  // component row labels (left gutter)
+  COMPONENTS.forEach((c,r)=>{
+    const yc=hsTop + r*hsRowH + hsRowH/2;
+    const isProp=c==='proposer';
+    g+=txt(L-8, yc+3, COMP_LABEL[c], {size:9.5,anchor:'end',fill:isProp?'var(--caution)':'var(--ink-soft)',weight:isProp?700:400});
+  });
+  prevF=null;
+  EPOCHS.forEach((e,i)=>{
+    const {x0,x1,w,xc}=bx[i];
+    COMPONENTS.forEach((c,r)=>{
+      const yTop=hsTop + r*hsRowH + 2;
+      const changed=e.changed.includes(c);
+      const soft=(c==='structure' && changed);
+      let fill='color-mix(in srgb, var(--ink-faint) 12%, var(--panel))', strokeCol='var(--rule)';
+      if(changed){ fill = soft ? 'color-mix(in srgb, var(--caution) 30%, var(--panel))' : 'color-mix(in srgb, var(--accent) 34%, var(--panel))'; strokeCol = soft?'var(--caution)':'var(--accent)'; }
+      g+=`<rect x="${x0+2}" y="${yTop}" width="${w-5}" height="${hsRowH-4}" rx="3" fill="${fill}" stroke="${strokeCol}" stroke-width="${changed?1.4:1}" ${NSS} ${soft?'stroke-dasharray="4 3"':''}/>`;
+      if(changed) g+=txt(xc, yTop+(hsRowH-4)/2+3, soft?('→'+STRUCT_LABEL[ACTIVE_STRUCT]):'●', {size:soft?8.5:11,anchor:'middle',fill:soft?'var(--caution)':'var(--accent)',weight:700});
+    });
+    // epoch id under its heatstrip column
+    g+=txt(xc, hsTop + COMPONENTS.length*hsRowH + 4, e.id, {size:11,anchor:'middle',weight:700});
+    prevF=e.floor;
+  });
+
+  /* ---------- floor-Δ chips (opt 3) — one per epoch, in the right gutter rail ---------- */
+  g+=txt(W-R+8, hsTop-12, 'floor Δ', {size:10,fill:'var(--ink-soft)',weight:700});
+  prevF=null;
+  EPOCHS.forEach((e,i)=>{
+    // align each Δ chip to its band's vertical center across the band zone
+    const yc=bandTop + bandH/2 + (i-(n-1)/2)*0; // chips stacked in right gutter
+    const rowY=bandTop + (bandH - n*22)/2 + i*22;
+    if(prevF!=null){
+      const d=e.floor-prevF, up=d>0, col=up?'var(--bad)':'var(--good)', soft=e.soft;
+      g+=`<rect x="${W-R+8}" y="${rowY}" width="${deltaW-12}" height="18" rx="5" fill="var(--panel-2)" stroke="${col}" stroke-width="1.3" ${NSS} ${soft?'stroke-dasharray="4 3"':''}/>`;
+      g+=txt(W-R+16, rowY+13, `${e.id} ${up?'▲':'▼'} ${(d>0?'+':'')}${d.toFixed(3)}`, {size:10,fill:col,weight:700});
+      if(soft) g+=txt(W-22, rowY+13, 'SOFT', {size:8,anchor:'end',fill:'var(--caution)',weight:700});
+    } else {
+      g+=`<rect x="${W-R+8}" y="${rowY}" width="${deltaW-12}" height="18" rx="5" fill="var(--panel-2)" stroke="var(--rule)" stroke-width="1" ${NSS}/>`;
+      g+=txt(W-R+16, rowY+13, `${e.id} baseline`, {size:10,fill:'var(--ink-faint)'});
+    }
+    prevF=e.floor;
+  });
+
+  document.getElementById('fig7').innerHTML = svg(W,H,g);
+}
+
+/* ============================================================
+   RENDER ALL FIGURES — fig1..fig7 each fill their own #figN host.
+   Re-run on a sample switch (digest-clean: only the figure host contents
+   change; the static section shells stay stable).
+   ============================================================ */
+function renderFigures(){ fig1(); fig2(); fig3(); fig4(); fig5(); fig6(); fig7(); }
+
+/* ============================================================
+   SAMPLE-STRUCTURE SWITCHER — structure is a per-EPOCH attribute, so this
+   rebuilds the model with the chosen structure (the chain runs prior→selected,
+   rolling at E5) and re-renders. ?sample=gauntlet|single_elim|double_elim|
+   swiss|racing sets the initial structure (a sibling composer drives this).
+   In ?bare=1 the control is hidden (CSS) but ?sample is still honored.
+   Accepts dash- or underscore-form.
+   ============================================================ */
+const STRUCTS = [
+  { id:"gauntlet",    label:"gauntlet" },
+  { id:"single_elim", label:"single-elim" },
+  { id:"double_elim", label:"double-elim" },
+  { id:"swiss",       label:"swiss" },
+  { id:"racing",      label:"racing" },
+];
+function normStruct(v){ if(!v) return null; const k=String(v).toLowerCase().replace(/-/g,"_"); return STRUCT_LABEL[k]?k:null; }
+function setSample(id){
+  const k = normStruct(id) || "racing";
+  buildModel(k);
+  fillSampleStrip();
+  document.getElementById('sample-cap').innerHTML =
+    `Six epochs, linear lineage. <b class="acc">Epochs can span structures:</b> here E1–E4 run on <b>${STRUCT_LABEL[PRIOR_STRUCT]||PRIOR_STRUCT}</b>, ` +
+    `then <b>E5 performs the structure roll into ${STRUCT_LABEL[k]}</b> (the structure-change marker), and E5–E6 run on <b>${STRUCT_LABEL[k]}</b>. ` +
+    `Best-loss <span class="faint">(the FLOOR)</span> descends overall but <b>resets</b> at E3 (<code>scoring</code> re-weight) and E5 ` +
+    `(<code>board</code>+<code>structure</code> → the cross-roll comparison is <span class="caution">SOFT</span>). ` +
+    `Floors, lineage and gen-counts are identical across structures; only the structure tag + roll seam re-label. E1–E5 closed; <b>E6 open / in-flight</b>.`;
+  renderFigures();
+  Array.from(document.querySelectorAll('#struct-seg button')).forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.s === k)));
+}
+(function mountSwitcher(){
+  const seg = document.getElementById('struct-seg');
+  seg.innerHTML = STRUCTS.map(s => `<button type="button" data-s="${s.id}" aria-pressed="false">${s.label}</button>`).join('');
+  seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => setSample(b.dataset.s)));
+  const initial = normStruct(new URLSearchParams(location.search).get('sample')) || "racing";
+  setSample(initial);
+})();
+
+/* ===== Console colour-scheme picker — 16 themes ported from variants/T ===== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME="monokai";
+const THEME_IDS=THEMES.map(t=>t[0]);
+function strip(swatches,sm){ return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">`+
+  swatches.map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('')+`</span>`; }
+function mountThemePicker(hostId){
+  const host=document.getElementById(hostId);
+  let value=DEFAULT_THEME, open=false, activeIdx=THEME_IDS.indexOf(value);
+  const byId=new Map(THEMES.map(t=>[t[0],t]));
+  host.innerHTML=
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw])=>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             ${strip(sw)}<span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd=host.querySelector('.dt-cd');
+  const trigger=host.querySelector('.dt-cd-trigger');
+  const trigStrip=host.querySelector('.dt-cd-trig-strip');
+  const trigName=host.querySelector('.dt-cd-trig-name');
+  const list=host.querySelector('.dt-cd-list');
+  const options=Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id){
+    value=THEME_IDS.includes(id)?id:DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme',value);
+    const def=byId.get(value);
+    trigStrip.className='dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden','true');
+    trigStrip.innerHTML=def[2].map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent=def[1];
+    options.forEach(o=>o.setAttribute('aria-selected',String(o.getAttribute('data-theme')===value)));
+  }
+  function setActive(i){ activeIdx=(i+options.length)%options.length; options.forEach((o,k)=>o.classList.toggle('dt-cd-active',k===activeIdx)); }
+  function setOpen(next){ open=next; cd.classList.toggle('dt-cd-open',open); trigger.setAttribute('aria-expanded',String(open));
+    if(open) setActive(Math.max(0,THEME_IDS.indexOf(value))); }
+  function choose(id){ applyTheme(id); setOpen(false); }
+  options.forEach(o=>o.addEventListener('click',()=>choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click',()=>setOpen(!open));
+  trigger.addEventListener('keydown',ev=>{ if(['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)){ ev.preventDefault(); setOpen(true); list.focus?.(); } });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown',ev=>{
+    if(ev.key==='Escape'){ ev.preventDefault(); setOpen(false); trigger.focus(); }
+    else if(ev.key==='ArrowDown'){ ev.preventDefault(); setActive(activeIdx+1); }
+    else if(ev.key==='ArrowUp'){ ev.preventDefault(); setActive(activeIdx-1); }
+    else if(['Enter',' ','Spacebar'].includes(ev.key)){ ev.preventDefault(); const id=options[activeIdx]?.getAttribute('data-theme'); if(id) choose(id); }
+  });
+  document.addEventListener('click',ev=>{ if(!open) return; let n=ev.target; while(n){ if(n===cd) return; n=n.parentNode; } setOpen(false); });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+</script>
+<style>html.embed-bare,html.embed-bare body{padding:0!important;margin:0!important}html.embed-bare section{margin:0!important}</style>
+<script>window.__EMBED_CFG__={optSel:'main > section.opt',bareHide:['.opt-head','.view-cap','.leg','.reveal']};</script>
+<script src="_embed.js"></script>
+</body>
+</html>

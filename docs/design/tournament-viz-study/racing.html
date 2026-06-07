@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — racing (ASHA) visualization study</title>
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from variants/T console tokens. The picker sets html[data-theme]; each
+       block fully restyles the page. --accent drives flow/bars/hover, --good =
+       survive/promote, --bad = cut, --caution = warn. Default: monokai. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background .18s, color .18s;
+    padding: 0 0 80px;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header h1 .sub { color: var(--ink-faint); font-weight: 400; }
+  header .spacer { flex: 1; }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  section { margin: 44px 0; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px; margin-bottom: 6px;
+  }
+  .lede { color: var(--ink-soft); font-size: 13px; margin: 4px 0 22px; max-width: 84ch; }
+  .lede code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .rationale {
+    display: block; margin: 0 0 18px;
+    border-left: 3px solid var(--accent); padding: 8px 14px;
+    background: var(--panel); border-radius: 0 6px 6px 0; font-size: 12.5px; color: var(--ink-soft);
+  }
+  .rationale b { color: var(--accent); }
+
+  .card {
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--panel);
+    padding: 20px; margin-bottom: 18px;
+  }
+  .card-title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 14px; display:flex; gap:10px; align-items:baseline; }
+  .card-title .tag { font-size:9px; letter-spacing:.08em; padding:2px 7px; border-radius:999px;
+    border:1px solid var(--rule); color:var(--ink-faint); }
+  .card-title .tag.hero  { border-color: var(--accent); color: var(--accent); }
+  .card-title .tag.cross { border-color: var(--caution); color: var(--caution); }
+  .card-title .tag.round { border-color: var(--good); color: var(--good); }
+
+  .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:var(--ink-faint); margin:0 0 14px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .lg-sw { width:13px; height:13px; border-radius:3px; display:inline-block; }
+  .lg-line { width:18px; height:0; display:inline-block; }
+
+  svg { display:block; width:100%; height:auto; }
+  .mono { font-family: inherit; }
+
+  /* shared SVG text helper classes applied via attributes in JS */
+  footer { max-width: 1180px; margin: 40px auto 0; padding: 18px 24px; color: var(--ink-faint); font-size: 11px; border-top: 1px solid var(--rule); }
+
+  /* the COLOUR SWATCH DROPDOWN (16 Console themes) */
+  .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); right: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>zicato · racing <span class="sub">— successive-halving / ASHA · visualization study</span></h1>
+  <span class="spacer"></span>
+  <span class="theme-pick-label">theme</span>
+  <span id="theme-picker"></span>
+</header>
+
+<main>
+  <p class="lede" style="margin-top:24px">
+    Six visual treatments of one live <b>RACING</b> tournament — each shown in three views:
+    a compact <b>hero banner</b> (at-a-glance standings), a <b>cross-rung funnel</b> (the field
+    narrowing across rungs), and a <b>round-level</b> rung detail. The race duels every challenger
+    against the <b>champion benchmark</b> on a board <code>subset</code>; after each rung it <b>cuts
+    the worst by scalar rank</b> (keep top <code>1/eta</code>) — elimination is by rank, not a gate.
+    Survivors re-race on a larger board slice; the final survivor faces a full-board
+    <code>racing-final</code> champion gate. Every option encodes the two things the current funnel
+    drops: <b>scalar magnitude</b> (how close a cut was) and <b>board_fraction</b> (the evidence weight
+    behind each rung). <code>wins/losses</code> are always 0 for racing and are not shown.
+  </p>
+
+  <p style="color:var(--ink-faint);font-size:12px;margin:8px 0 0;line-height:1.55">
+    This is the structure-specific tournament FIGURE at three zooms — the SINGLE-ROUND layer. The hero shell, cross-epoch, cross-round (across evolve-rounds), single-matchup, and single-generation levels are structure-agnostic — see their own pages (<a href="index.html" style="color:inherit;text-decoration:underline">← index</a>).
+  </p>
+
+  <div class="card" id="data-card">
+    <div class="card-title">The shared sample — one mid-race snapshot, identical across all six options</div>
+    <div id="data-summary"></div>
+  </div>
+
+  <div id="options"></div>
+</main>
+
+<footer>
+  Standalone racing visualization study · served from <code>/tmp/zicato-tourney-viz-study/</code> ·
+  modelled read-only against <code>src/zicato/selection/strategies/racing.py</code> · no repo edits.
+</footer>
+
+<script>
+/* =====================================================================
+   SHARED SAMPLE DATASET — one mid-race RACING snapshot.
+   Field of 8 challengers vs the champion benchmark. board_fraction
+   escalates 0.25 -> 0.50 -> 1.0 (eta=2). Lower scalar is better.
+   Rung 0 (8, board 25%) settled -> cut to 4
+   Rung 1 (4, board 50%) settled -> cut to 2
+   Rung 2 (2, board 100%) IN FLIGHT -> will leave 1 survivor
+   racing-final (full board champion gate) PENDING.
+   ===================================================================== */
+
+const CHAMP = { id: "g117", scalar: 0.412, label: "champion" };  // benchmark, never a lane
+
+// per-challenger scalar at the rung where it was last evaluated, plus the
+// rung it exited at (status). Lower scalar = better. Scalars sharpen as the
+// board slice grows (more evidence).
+const GENS = {
+  g142: { rung0: 0.301, rung1: 0.318, rung2: 0.327, status: "alive",      exitRung: null },
+  g148: { rung0: 0.339, rung1: 0.352, rung2: 0.371, status: "alive",      exitRung: null },
+  g145: { rung0: 0.355, rung1: 0.349, rung2: null,  status: "cut",        exitRung: 1 },
+  g143: { rung0: 0.372, rung1: 0.401, rung2: null,  status: "cut",        exitRung: 1 },
+  g149: { rung0: 0.388, rung1: null,  rung2: null,  status: "cut",        exitRung: 0 },
+  g146: { rung0: 0.405, rung1: null,  rung2: null,  status: "cut",        exitRung: 0 },
+  g144: { rung0: 0.451, rung1: null,  rung2: null,  status: "cut",        exitRung: 0 },
+  g147: { rung0: 0.498, rung1: null,  rung2: null,  status: "cut",        exitRung: 0 },
+};
+
+// Rung records — exactly the MatchRecord shape racing.py emits:
+// {competitors (ranked best->worst), survivors, cut, board_fraction}; winner=null.
+const RUNGS = [
+  {
+    rung: 0, label: "Rung 0", board_fraction: 0.25, board_n: 6, board_total: 24,
+    state: "settled",
+    competitors: ["g142","g148","g145","g143","g149","g146","g144","g147"],
+    survivors:   ["g142","g148","g145","g143"],
+    cut:         ["g149","g146","g144","g147"],
+    scalarKey: "rung0",
+  },
+  {
+    rung: 1, label: "Rung 1", board_fraction: 0.50, board_n: 12, board_total: 24,
+    state: "settled",
+    competitors: ["g142","g145","g148","g143"],
+    survivors:   ["g142","g148"],
+    cut:         ["g145","g143"],
+    scalarKey: "rung1",
+  },
+  {
+    rung: 2, label: "Rung 2", board_fraction: 1.00, board_n: 24, board_total: 24,
+    state: "in-flight",
+    competitors: ["g142","g148"],
+    survivors:   ["g142"],        // provisional leader mid-rung
+    cut:         [],
+    scalarKey: "rung2",
+  },
+];
+
+// The final full-board champion gate — PENDING (survivor not yet crowned).
+const FINAL = {
+  match_id: "racing-final", board_fraction: 1.00,
+  survivor: "g142", champion: CHAMP.id,
+  state: "pending",
+  // projected gate margin = champion.scalar - survivor.scalar (positive = beats benchmark)
+  projMargin: +(CHAMP.scalar - GENS.g142.rung2).toFixed(3),
+};
+
+// scalar domain for bar scaling across the whole study
+const ALL_SCALARS = [CHAMP.scalar].concat(Object.values(GENS).flatMap(g => [g.rung0, g.rung1, g.rung2].filter(v => v != null)));
+const S_MIN = Math.min(...ALL_SCALARS) - 0.02;
+const S_MAX = Math.max(...ALL_SCALARS) + 0.02;
+function sx(v){ return (v - S_MIN) / (S_MAX - S_MIN); } // 0..1 position, lower scalar = left
+
+// helper: a challenger's "current" scalar = last evaluated rung
+function curScalar(id){ const g = GENS[id]; return g.rung2 ?? g.rung1 ?? g.rung0; }
+function lastRung(id){ const g = GENS[id]; return g.rung2!=null?2:(g.rung1!=null?1:0); }
+function beatsChamp(id){ return curScalar(id) < CHAMP.scalar; }
+function statusColor(id){
+  const g = GENS[id];
+  if (g.status === "alive") return "var(--good)";
+  return "var(--bad)";
+}
+const ALIVE = Object.keys(GENS).filter(id => GENS[id].status === "alive");
+
+/* escape + small format helpers */
+const f3 = v => v==null ? "—" : v.toFixed(3);
+const pct = v => Math.round(v*100) + "%";
+
+/* ---------- DATA SUMMARY ---------- */
+document.getElementById('data-summary').innerHTML = `
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;font-size:12px">
+    <div><div style="color:var(--ink-faint);font-size:10px;letter-spacing:.08em">CHAMPION BENCHMARK</div>
+      <div style="font-size:18px;color:var(--accent)">${CHAMP.id}</div>
+      <div style="color:var(--ink-soft)">scalar ${f3(CHAMP.scalar)}</div></div>
+    <div><div style="color:var(--ink-faint);font-size:10px;letter-spacing:.08em">FIELD</div>
+      <div style="font-size:18px">8 challengers</div>
+      <div style="color:var(--ink-soft)">eta 2 · board 24 entries</div></div>
+    <div><div style="color:var(--ink-faint);font-size:10px;letter-spacing:.08em">FUNNEL</div>
+      <div style="font-size:18px">8 → 4 → 2 → <span style="color:var(--good)">1</span></div>
+      <div style="color:var(--ink-soft)">rung0 25% · rung1 50% · rung2 100%</div></div>
+    <div><div style="color:var(--ink-faint);font-size:10px;letter-spacing:.08em">NOW</div>
+      <div style="font-size:18px;color:var(--caution)">rung 2 in flight</div>
+      <div style="color:var(--ink-soft)">final gate pending</div></div>
+  </div>`;
+
+/* =====================================================================
+   SVG PRIMITIVES
+   ===================================================================== */
+const NS = "http://www.w3.org/2000/svg";
+function svg(w, h, extra="") {
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" ${extra}>`;
+}
+function txt(x, y, s, opt={}) {
+  const anchor = opt.anchor || "start";
+  const fill = opt.fill || "var(--ink)";
+  const size = opt.size || 11;
+  const weight = opt.weight || 400;
+  const ls = opt.ls != null ? `letter-spacing:${opt.ls}` : "";
+  return `<text x="${x}" y="${y}" text-anchor="${anchor}" font-family="ui-monospace,monospace" font-size="${size}" font-weight="${weight}" fill="${fill}" style="${ls}">${s}</text>`;
+}
+function line(x1,y1,x2,y2,stroke="var(--rule)",w=1,dash=null){
+  return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${w}" ${dash?`stroke-dasharray="${dash}"`:""} vector-effect="non-scaling-stroke"/>`;
+}
+function rect(x,y,w,h,fill,opt={}){
+  const stroke = opt.stroke ? `stroke="${opt.stroke}" stroke-width="${opt.sw||1}" vector-effect="non-scaling-stroke"` : "";
+  const rx = opt.rx != null ? `rx="${opt.rx}"` : "";
+  const dash = opt.dash ? `stroke-dasharray="${opt.dash}"` : "";
+  return `<rect x="${x}" y="${y}" width="${Math.max(0,w)}" height="${h}" fill="${fill}" ${rx} ${stroke} ${dash}/>`;
+}
+function circ(cx,cy,r,fill,opt={}){
+  const stroke = opt.stroke ? `stroke="${opt.stroke}" stroke-width="${opt.sw||1}" vector-effect="non-scaling-stroke"` : "";
+  return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" ${stroke} ${opt.dash?`stroke-dasharray="${opt.dash}"`:""}/>`;
+}
+
+/* =====================================================================
+   OPTION DEFINITIONS — 6 distinct treatments, each {hero, cross, round}.
+   Each returns an SVG/HTML string.
+   ===================================================================== */
+
+/* ---------------------------------------------------------------------
+   OPTION 1 — SCALAR TRACK (number-line "race lane")
+   Every gen is a marker on a shared scalar axis. The champion benchmark
+   is a vertical line; distance left of it = margin. Marker SIZE encodes
+   INVERSE LOSS (bigger = better scalar, area-proportional); fill = survive/
+   cut; the cut markers sit just past the rung's cut-threshold tick so
+   "how close" is literal.
+   --------------------------------------------------------------------- */
+// assign a stagger tier (0,1,2,…) so labels at near x positions sit on
+// different lines instead of overlapping. Greedy by x order; ~28px = a label.
+function staggerTiers(items, minDX=30){
+  const order=[...items].sort((a,b)=>a.x-b.x);
+  const tierLastX=[];
+  order.forEach(it=>{
+    let t=0;
+    while(tierLastX[t]!=null && it.x - tierLastX[t] < minDX) t++;
+    it.tier=t; tierLastX[t]=it.x;
+  });
+  return Math.max(0,...items.map(i=>i.tier));
+}
+function opt1_hero(){
+  const padL=70,padR=20, top=40, axisY=78;
+  // precompute markers + de-collide labels
+  const marks = Object.keys(GENS).map(id=>{
+    const g=GENS[id], v=curScalar(id);
+    // radius encodes INVERSE LOSS — bigger circle = better (lower) scalar, so
+    // the surviving leader looms largest and the cut candidates shrink away.
+    // (sqrt so AREA, not radius, scales with the inverse loss — honest read.)
+    const r = 4 + Math.sqrt(1 - sx(v))*9;
+    return {id, v, r, col:statusColor(id), alive:g.status==="alive"};
+  });
+  const W=560;
+  const X = v => padL + sx(v)*(W-padL-padR);
+  marks.forEach(m=>m.x=X(m.v));
+  const maxTier = staggerTiers(marks, 30);
+  const H = 120 + maxTier*11;            // grow so stacked labels never clip the title
+  const axisYy = axisY + maxTier*11;     // push axis down to leave room for label tiers
+  let s = svg(W,H);
+  // axis
+  s += line(padL, axisYy, W-padR, axisYy, "var(--rule)", 1);
+  s += txt(padL, 22, "SCALAR TRACK — lower is better", {fill:"var(--ink-faint)", size:10, ls:".08em"});
+  // champion benchmark line
+  const cx = X(CHAMP.scalar);
+  s += line(cx, top-4, cx, axisYy+16, "var(--accent)", 1.5, "3 3");
+  s += txt(cx, top-8, "champ "+f3(CHAMP.scalar), {anchor:"middle", fill:"var(--accent)", size:10});
+  // axis ticks
+  s += txt(padL, axisYy+30, f3(S_MIN), {fill:"var(--ink-faint)", size:9});
+  s += txt(W-padR, axisYy+30, f3(S_MAX), {anchor:"end", fill:"var(--ink-faint)", size:9});
+  // markers: radius scales with board_fraction; labels staggered by tier
+  marks.forEach(m=>{
+    s += circ(m.x, axisYy, m.r, m.alive?m.col:"transparent", {stroke:m.col, sw:m.alive?0:1.5});
+    if (m.alive) s += circ(m.x, axisYy, m.r, m.col);
+    const ly = axisYy - m.r - 4 - m.tier*11;
+    // tick connecting marker to its raised label so the pairing stays clear
+    if (m.tier>0) s += line(m.x, axisYy-m.r-1, m.x, ly+2, m.col, 0.8);
+    s += txt(m.x, ly, m.id, {anchor:"middle", fill:m.col, size:9});
+  });
+  s += `</svg>`;
+  return s;
+}
+function opt1_cross(){
+  // taller lanes than fixed-dot version: the inverse-loss circles (bigger = better)
+  // plus their staggered labels need vertical room to clear neighbouring markers.
+  const W=560, rowH=86, top=58, H=top + RUNGS.length*rowH + 4;
+  const padL=78,padR=20;
+  const X = v => padL + sx(v)*(W-padL-padR);
+  let s = svg(W,H);
+  s += txt(padL,18,"one scalar lane per rung — radius = inverse loss · bigger = better; markers slide right as evidence grows",{fill:"var(--ink-faint)",size:10});
+  RUNGS.forEach((r,i)=>{
+    const y = top + i*rowH;
+    // lane
+    s += line(padL, y, W-padR, y, "var(--rule)", 1);
+    // champion benchmark
+    const cx=X(CHAMP.scalar);
+    s += line(cx, y-22, cx, y+14, "var(--accent)", 1.2, "3 3");
+    // rung label + board fraction bar (evidence weight)
+    s += txt(8, y-6, r.label, {fill:"var(--ink)", size:11, weight:700});
+    s += txt(8, y+9, "board "+pct(r.board_fraction), {fill:"var(--ink-faint)", size:9});
+    // evidence bar under the label
+    s += rect(8, y+14, 60*r.board_fraction, 4, r.state==="in-flight"?"var(--caution)":"var(--accent)", {rx:2});
+    s += rect(8, y+14, 60, 4, "none", {stroke:"var(--rule)", rx:2});
+    // markers for everyone evaluated at this rung — labels staggered to de-collide
+    // radius encodes INVERSE LOSS (sqrt → AREA scales with inverse scalar): bigger = better,
+    // matching the HERO glance. Position still encodes scalar; lane still encodes rung.
+    const ms = r.competitors.map(id=>{
+      const v = GENS[id][r.scalarKey];
+      if (v==null) return null;
+      const survived = r.survivors.includes(id);
+      const inflight = r.state==="in-flight";
+      const col = inflight ? "var(--caution)" : (survived ? "var(--good)" : "var(--bad)");
+      const rad = 4 + Math.sqrt(1 - sx(v))*9;
+      return {id, survived, inflight, col, x:X(v), rad};
+    }).filter(Boolean);
+    // gap scales with the largest inverse-loss circle so near-tied big markers don't
+    // bury each other's labels; baseline clears the lane's biggest radius.
+    const maxRad = Math.max(0, ...ms.map(m=>m.rad));
+    staggerTiers(ms, 18 + maxRad);
+    ms.forEach(m=>{
+      s += circ(m.x, y, m.rad, m.survived||m.inflight?m.col:"transparent", {stroke:m.col, sw:1.5, dash: m.inflight?"2 2":null});
+      if (m.survived && !m.inflight) s += circ(m.x,y,m.rad,m.col);
+      const ly = y - maxRad - 5 - m.tier*10;
+      if (m.tier>0) s += line(m.x, y-m.rad-1, m.x, ly+2, m.col, 0.8);
+      s += txt(m.x, ly, m.id, {anchor:"middle", fill:m.col, size:8});
+    });
+  });
+  s += `</svg>`;
+  return s;
+}
+function opt1_round(){
+  // detailed rung 0: every gen on the scalar axis with the cut threshold tick.
+  // The marker radius encodes INVERSE LOSS (sqrt → AREA scales with inverse scalar),
+  // matching the HERO + single-round views; the numeric value beside it reads the
+  // exact loss. Rows are spaced to clear the largest (best-loss) circle.
+  const r = RUNGS[0];
+  const W=560, padL=70,padR=20, top=58;
+  const rows = r.competitors;
+  const rh = 30;                          // row pitch — clears the max inverse-loss radius
+  const H = top + 12 + rows.length*rh + 22;
+  const X = v => padL + sx(v)*(W-padL-padR);
+  let s = svg(W,H);
+  s += txt(8,18,r.label+" detail — 8 challengers, board "+pct(r.board_fraction)+" (6/24 entries)",{fill:"var(--ink)",size:11,weight:700});
+  s += txt(8,33,"cut keeps top 1/eta = 4; radius = inverse loss · bigger = better",{fill:"var(--ink-faint)",size:9});
+  // worst surviving scalar = cut threshold
+  const thr = Math.max(...r.survivors.map(id=>GENS[id][r.scalarKey]));
+  const tx = X(thr);
+  s += line(tx, top, tx, H-22, "var(--caution)", 1.2, "4 3");
+  s += txt(tx, top-4, "cut line", {anchor:"middle", fill:"var(--caution)", size:9});
+  // champion
+  const cx=X(CHAMP.scalar);
+  s += line(cx, top, cx, H-22, "var(--accent)", 1.2, "3 3");
+  s += txt(cx, top-4, "champ", {anchor:"middle", fill:"var(--accent)", size:9});
+  // rows
+  rows.forEach((id,i)=>{
+    const y = top+12+i*rh + rh/2;
+    const v = GENS[id][r.scalarKey];
+    const survived = r.survivors.includes(id);
+    const col = survived ? "var(--good)" : "var(--bad)";
+    const x=X(v);
+    const rad = 4 + Math.sqrt(1 - sx(v))*9;   // area-proportional inverse-loss radius (matches hero/cross)
+    // connector from axis-left to the marker edge
+    s += line(padL, y, x-rad, y, col, 1, survived?null:"3 2");
+    s += circ(x,y,rad,survived?col:"transparent",{stroke:col,sw:1.5});
+    if (survived) s += circ(x,y,rad,col);
+    s += txt(padL-6, y+3, id, {anchor:"end", fill:col, size:10});
+    s += txt(x+rad+6, y+3, f3(v), {fill:"var(--ink-soft)", size:9});
+  });
+  s += `</svg>`;
+  return s;
+}
+
+/* ---------------------------------------------------------------------
+   OPTION 2 — FUNNEL RIBBONS (Sankey-ish flow with graded width)
+   Columns = rungs; each gen is a node; flows connect surviving gens
+   across rungs. Flow/node WIDTH scales with board_fraction; survivors
+   keep flowing (accent/good), cuts terminate in a red stub whose length
+   = scalar gap past the cut line.
+   --------------------------------------------------------------------- */
+function opt2_hero(){
+  const W=560,H=140;
+  const cols = RUNGS.length+1; // +final
+  const colW = (W-40)/cols;
+  let s = svg(W,H);
+  s += txt(12,18,"FUNNEL — field narrows; bar width = evidence (board_fraction)",{fill:"var(--ink-faint)",size:10});
+  const sizes = [8,4,2,1];
+  const labels = ["rung0","rung1","rung2","gate"];
+  const bf = [0.25,0.5,1.0,1.0];
+  sizes.forEach((n,i)=>{
+    const cxL = 20+i*colW;
+    const h = 70;
+    const barW = 18 + bf[i]*30;
+    const x = cxL + (colW-barW)/2;
+    const inflight = i===2, gate = i===3;
+    const col = gate ? "var(--accent)" : inflight ? "var(--caution)" : "var(--good)";
+    s += rect(x, 40, barW, h*(n/8), col, {rx:3, dash: (inflight||gate)?"3 3":null});
+    if (inflight||gate) s += rect(x,40,barW,h*(n/8),"transparent",{stroke:col,sw:1.2,rx:3});
+    s += txt(cxL+colW/2, 32, labels[i], {anchor:"middle", fill:"var(--ink-faint)", size:9});
+    s += txt(cxL+colW/2, 40+h*(n/8)+14, n+(gate?" promote?":""), {anchor:"middle", fill:col, size:11, weight:700});
+    // flow arrow
+    if (i<sizes.length-1){
+      const x2 = 20+(i+1)*colW;
+      s += line(x+barW, 40+h*(n/8)/2, x2+(colW-(18+bf[i+1]*30))/2, 40+(h*(sizes[i+1]/8))/2, "var(--ink-faint)", 1, "2 2");
+    }
+  });
+  s += `</svg>`;
+  return s;
+}
+function opt2_cross(){
+  const W=560, H=300;
+  const cols=[0,1,2,3]; // rung0,1,2,final
+  const colX=[80,210,340,470];
+  const order = RUNGS[0].competitors; // y-position anchored by rung0 rank
+  const yOf = id => 56 + order.indexOf(id)*((H-80)/order.length);
+  let s = svg(W,H);
+  s += txt(12,18,"survivors flow right; cut stubs drop out; node ring = board_fraction",{fill:"var(--ink-faint)",size:10});
+  // column headers
+  ["rung0 · 25%","rung1 · 50%","rung2 · 100%","gate · 100%"].forEach((t,i)=>{
+    s += txt(colX[i],36,t,{anchor:"middle",fill:"var(--ink-faint)",size:9});
+  });
+  // flows: for each adjacent rung, connect survivors
+  function flow(aRung,bRung,bx){
+    aRung.survivors.forEach(id=>{
+      if (!bRung.competitors.includes(id)) return;
+      const inflight = bRung.state==="in-flight";
+      const col = inflight ? "var(--caution)" : "var(--good)";
+      const ax=colX[aRung.rung], ay=yOf(id), by=yOf(id);
+      s += `<path d="M${ax+12},${ay} C${(ax+bx)/2},${ay} ${(ax+bx)/2},${by} ${bx-12},${by}" fill="none" stroke="${col}" stroke-width="${1+ (inflight?1:2)}" ${inflight?'stroke-dasharray="3 3"':''} vector-effect="non-scaling-stroke"/>`;
+    });
+  }
+  flow(RUNGS[0],RUNGS[1],colX[1]);
+  flow(RUNGS[1],RUNGS[2],colX[2]);
+  // final gate flow
+  s += `<path d="M${colX[2]+12},${yOf(FINAL.survivor)} C${(colX[2]+colX[3])/2},${yOf(FINAL.survivor)} ${(colX[2]+colX[3])/2},${yOf(FINAL.survivor)} ${colX[3]-12},${yOf(FINAL.survivor)}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>`;
+  // nodes
+  RUNGS.forEach(r=>{
+    r.competitors.forEach(id=>{
+      const x=colX[r.rung], y=yOf(id);
+      const survived = r.survivors.includes(id);
+      const inflight = r.state==="in-flight";
+      const ring = 3 + r.board_fraction*4;
+      const col = inflight ? "var(--caution)" : survived ? "var(--good)" : "var(--bad)";
+      s += circ(x,y,ring, survived&&!inflight?col:"transparent", {stroke:col, sw:1.5, dash:inflight?"2 2":null});
+      if (survived&&!inflight) s += circ(x,y,ring,col);
+      if (r.rung===0) s += txt(x-ring-5,y+3,id,{anchor:"end",fill:col,size:9});
+      // cut stub: short red mark for the cut gens, with scalar shown
+      if (!survived && !inflight){
+        s += txt(x+ring+4,y+3,"✕ "+f3(GENS[id][r.scalarKey]),{fill:"var(--bad)",size:8});
+      }
+    });
+  });
+  // final node
+  s += circ(colX[3], yOf(FINAL.survivor), 7, "transparent", {stroke:"var(--accent)", sw:1.5, dash:"2 2"});
+  s += txt(colX[3]+11, yOf(FINAL.survivor)+3, "gate", {fill:"var(--accent)", size:9});
+  s += `</svg>`;
+  return s;
+}
+function opt2_round(){
+  const r = RUNGS[1]; // rung1 detail
+  const W=560,H=180;
+  let s = svg(W,H);
+  s += txt(12,18,r.label+" detail — 4 in, keep top 2; bar = scalar, ring = evidence "+pct(r.board_fraction),{fill:"var(--ink)",size:11,weight:700});
+  const rows=r.competitors, rh=(H-50)/rows.length, padL=60, barX=70, barMax=W-90;
+  const thr = Math.max(...r.survivors.map(id=>GENS[id][r.scalarKey]));
+  rows.forEach((id,i)=>{
+    const y=44+i*rh, v=GENS[id][r.scalarKey];
+    const survived=r.survivors.includes(id);
+    const col=survived?"var(--good)":"var(--bad)";
+    const bw = sx(v)*(barMax-barX);
+    s += txt(padL-4,y+12,id,{anchor:"end",fill:col,size:10});
+    s += rect(barX,y+4,bw,12,survived?col:"transparent",{rx:2,stroke:survived?null:col,sw:survived?0:1.2});
+    s += txt(barX+bw+6,y+13,f3(v),{fill:"var(--ink-soft)",size:9});
+  });
+  // cut line
+  const tx = barX + sx(thr)*(barMax-barX);
+  s += line(tx,38,tx,H-6,"var(--caution)",1.2,"4 3");
+  s += txt(tx,H-(rh*0.2),"cut",{anchor:"middle",fill:"var(--caution)",size:8});
+  // champ
+  const cx = barX + sx(CHAMP.scalar)*(barMax-barX);
+  s += line(cx,38,cx,H-6,"var(--accent)",1.2,"3 3");
+  s += `</svg>`;
+  return s;
+}
+
+/* ---------------------------------------------------------------------
+   OPTION 3 — EVIDENCE LADDER (bump-chart of scalar across rungs)
+   X = rung (with width proportional to board_fraction), Y = scalar.
+   Each gen is a line that tracks its scalar across rungs and stops where
+   it's cut. Lines crossing the champion line = beating the benchmark.
+   --------------------------------------------------------------------- */
+function opt3_lines(W,H,compact){
+  const padL=46,padR=14,padT=compact?28:40,padB=28;
+  // x positions weighted by cumulative board_fraction (evidence)
+  const cum=[0]; RUNGS.forEach(r=>cum.push(cum[cum.length-1]+r.board_fraction));
+  const totalW = cum[cum.length-1];
+  const X = ri => padL + (cum[ri]/totalW)*(W-padL-padR);
+  const Y = v => padT + (1 - (S_MAX - v)/(S_MAX - S_MIN))*(H-padT-padB); // higher scalar lower on chart? invert: lower scalar = top(good)
+  // we want lower scalar (better) at TOP
+  const Yg = v => padT + ((v - S_MIN)/(S_MAX - S_MIN))*(H-padT-padB);
+  let s = svg(W,H);
+  // rung gridlines + board fraction labels
+  RUNGS.forEach((r,i)=>{
+    const x0=X(i), x1=X(i+1);
+    s += line(x0,padT,x0,H-padB,"var(--rule-soft)",1);
+    s += rect(x0, padT-(compact?8:10), x1-x0, 4, r.state==="in-flight"?"var(--caution)":"var(--accent)", {});
+    s += txt((x0+x1)/2, padT-(compact?12:16), r.label.replace("Rung","R")+" "+pct(r.board_fraction), {anchor:"middle", fill:"var(--ink-faint)", size:9});
+  });
+  s += line(X(RUNGS.length),padT,X(RUNGS.length),H-padB,"var(--rule-soft)",1);
+  // champion benchmark
+  const cy=Yg(CHAMP.scalar);
+  s += line(padL,cy,W-padR,cy,"var(--accent)",1.2,"4 3");
+  s += txt(W-padR, cy-4, "champ "+f3(CHAMP.scalar), {anchor:"end", fill:"var(--accent)", size:9});
+  s += txt(padL-4, padT+4, "better", {anchor:"end", fill:"var(--ink-faint)", size:8});
+  // per-gen lines; collect labels and de-collide them vertically afterwards
+  const labels=[];
+  Object.keys(GENS).forEach(id=>{
+    const g=GENS[id];
+    const pts=[];
+    [0,1,2].forEach(ri=>{
+      const v=g["rung"+ri];
+      if (v!=null) pts.push([ (X(ri)+X(ri+1))/2, Yg(v) ]);
+    });
+    if (!pts.length) return;
+    const survived=g.status==="alive";
+    const col=survived?"var(--good)":"var(--bad)";
+    const d = "M"+pts.map(p=>p[0]+","+p[1]).join(" L");
+    s += `<path d="${d}" fill="none" stroke="${col}" stroke-width="${survived?2:1.2}" ${survived?"":'stroke-dasharray="3 3"'} vector-effect="non-scaling-stroke"/>`;
+    pts.forEach((p,k)=> s += circ(p[0],p[1],survived?3:2.4,col));
+    const lp=pts[pts.length-1];
+    labels.push({id, col, anchorX:lp[0]+5, py:lp[1], y:lp[1]+(survived?-4:10)});
+  });
+  // vertical de-collision within each x-column (labels share the rung x)
+  const LH=10;
+  const byCol={};
+  labels.forEach(l=>{ const k=Math.round(l.anchorX); (byCol[k]=byCol[k]||[]).push(l); });
+  Object.values(byCol).forEach(group=>{
+    group.sort((a,b)=>a.y-b.y);
+    for(let i=1;i<group.length;i++){
+      if (group[i].y - group[i-1].y < LH) group[i].y = group[i-1].y + LH;
+    }
+    // clamp into the plot area
+    group.forEach(l=>{ l.y=Math.max(padT+7, Math.min(H-padB-1, l.y)); });
+  });
+  labels.forEach(l=>{
+    // leader line from the data point to the nudged label if it moved far
+    if (Math.abs(l.y - l.py) > 7) s += line(l.anchorX-3, l.py, l.anchorX, l.y-3, l.col, 0.7);
+    s += txt(l.anchorX, l.y, l.id, {fill:l.col, size:8});
+  });
+  s += `</svg>`;
+  return s;
+}
+function opt3_hero(){ return opt3_lines(560,150,true); }
+function opt3_cross(){ return opt3_lines(560,260,false); }
+function opt3_round(){
+  // round-level: zoom rung2 (in flight) — the two survivors vs champ on full board
+  const r=RUNGS[2];
+  const W=560,H=150,padL=70,barX=80,barMax=W-100;
+  let s=svg(W,H);
+  s += txt(12,18,r.label+" IN FLIGHT — 2 survivors on the FULL board (100%)",{fill:"var(--ink)",size:11,weight:700});
+  s += txt(12,32,"leader becomes the champion-gate entrant",{fill:"var(--ink-faint)",size:9});
+  const rows=r.competitors, rh=44;
+  rows.forEach((id,i)=>{
+    const y=42+i*rh, v=GENS[id][r.scalarKey];
+    const leader = id===r.survivors[0];
+    const col="var(--caution)";
+    const bw=sx(v)*(barMax-barX);
+    s += txt(padL-4,y+12,id,{anchor:"end",fill:leader?"var(--good)":"var(--ink)",size:11,weight:leader?700:400});
+    s += rect(barX,y+2,bw,16,"transparent",{rx:2,stroke:leader?"var(--good)":col,sw:1.4,dash:"3 3"});
+    s += txt(barX+bw+6,y+14,f3(v)+(leader?"  ← leader":""),{fill:leader?"var(--good)":"var(--ink-soft)",size:10});
+  });
+  const cx=barX+sx(CHAMP.scalar)*(barMax-barX);
+  s += line(cx,34,cx,H-8,"var(--accent)",1.2,"3 3");
+  s += txt(cx,H-2,"champ "+f3(CHAMP.scalar),{anchor:"middle",fill:"var(--accent)",size:9});
+  s += `</svg>`;
+  return s;
+}
+
+/* ---------------------------------------------------------------------
+   OPTION 4 — STANDINGS TABLE+ (data-dense roster with inline magnitudes)
+   A real leaderboard: each row = gen, with a mini scalar bar vs champ,
+   an evidence pip-strip (how many rungs of evidence), and a status chip
+   stating the rung it was cut at + the gap. This is the "legible
+   standings" baseline that the SVG options dress up.
+   --------------------------------------------------------------------- */
+function opt4_table(rowsIds, opt={}){
+  const compact = opt.compact;
+  let h = `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:480px;font-size:12px">`;
+  h += `<thead><tr style="color:var(--ink-faint);font-size:10px;letter-spacing:.06em">
+    <th style="text-align:left;padding:4px 8px">gen</th>
+    <th style="text-align:left;padding:4px 8px">status</th>
+    <th style="text-align:left;padding:4px 8px;width:46%">scalar vs champ ${f3(CHAMP.scalar)}</th>
+    <th style="text-align:left;padding:4px 8px">evidence</th>
+    <th style="text-align:right;padding:4px 8px">Δ champ</th>
+  </tr></thead><tbody>`;
+  rowsIds.forEach(id=>{
+    const g=GENS[id], v=curScalar(id);
+    const alive=g.status==="alive";
+    const col=alive?"var(--good)":"var(--bad)";
+    const dv=+(CHAMP.scalar - v).toFixed(3); // positive = beats champ
+    // mini scalar bar (SVG, full width) with champ tick
+    const bw=320;
+    let bar = svg(bw,16,'style="vertical-align:middle"');
+    const X=val=>sx(val)*bw;
+    bar += rect(0,6,bw,4,"var(--rule-soft)",{rx:2});
+    bar += rect(0,5,X(v),6,col,{rx:2});
+    bar += line(X(CHAMP.scalar),0,X(CHAMP.scalar),16,"var(--accent)",1.4,"2 2");
+    bar += circ(X(v),8,3.5,col);
+    bar += `</svg>`;
+    // evidence pips: filled per rung evaluated, width by board_fraction
+    const nrungs = lastRung(id) + (alive?1:1);
+    let pips="";
+    RUNGS.forEach((r,ri)=>{
+      const got = g["rung"+ri]!=null;
+      const w = 8+r.board_fraction*16;
+      const inflight = r.state==="in-flight" && got;
+      pips += `<span style="display:inline-block;height:9px;width:${w}px;margin-right:2px;border-radius:2px;background:${got?(inflight?"var(--caution)":"var(--accent)"):"transparent"};border:1px solid var(--rule)"></span>`;
+    });
+    const statusChip = alive
+      ? `<span style="color:var(--good)">● racing</span>`
+      : `<span style="color:var(--bad)">✕ cut · rung ${g.exitRung}</span>`;
+    h += `<tr style="border-top:1px solid var(--rule-soft)">
+      <td style="padding:6px 8px;color:${col};font-weight:${alive?700:400}">${id}</td>
+      <td style="padding:6px 8px;font-size:11px">${statusChip}</td>
+      <td style="padding:6px 8px">${bar}</td>
+      <td style="padding:6px 8px">${pips}</td>
+      <td style="padding:6px 8px;text-align:right;color:${dv>0?'var(--good)':'var(--bad)'}">${dv>0?'+':''}${f3(dv)}</td>
+    </tr>`;
+  });
+  h += `</tbody></table></div>`;
+  return h;
+}
+function opt4_hero(){
+  // compact: just the alive + the leader, plus a one-line funnel
+  const ids = [...ALIVE, RUNGS[1].cut[0]]; // show survivors + one nearby cut for contrast
+  let h = `<div style="font-size:11px;color:var(--ink-faint);margin-bottom:8px">still racing: <b style="color:var(--good)">${ALIVE.join(", ")}</b> · gate pending · projected margin <b style="color:${FINAL.projMargin>0?'var(--good)':'var(--bad)'}">${FINAL.projMargin>0?'+':''}${f3(FINAL.projMargin)}</b></div>`;
+  h += opt4_table(ALIVE.concat([RUNGS[1].cut[0]]),{compact:true});
+  return h;
+}
+function opt4_cross(){
+  // full roster sorted by current scalar
+  const ids = Object.keys(GENS).sort((a,b)=>curScalar(a)-curScalar(b));
+  return opt4_table(ids);
+}
+function opt4_round(){
+  // rung 0 table — all 8, sorted, cut line drawn between rows 4 and 5
+  const r=RUNGS[0];
+  const ids=r.competitors;
+  let h=`<div style="font-size:11px;color:var(--ink-faint);margin-bottom:8px">Rung 0 · board ${pct(r.board_fraction)} (6/24) · keep top 4 by scalar rank</div>`;
+  h+=`<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:440px;font-size:12px"><tbody>`;
+  ids.forEach((id,i)=>{
+    const v=GENS[id][r.scalarKey], survived=r.survivors.includes(id), col=survived?"var(--good)":"var(--bad)";
+    const bw=300, X=val=>sx(val)*bw;
+    let bar=svg(bw,14);
+    bar+=rect(0,5,bw,4,"var(--rule-soft)",{rx:2});
+    bar+=rect(0,4,X(v),6,col,{rx:2});
+    bar+=line(X(CHAMP.scalar),0,X(CHAMP.scalar),14,"var(--accent)",1.3,"2 2");
+    bar+=`</svg>`;
+    if (i===4){ // cut line between survivors and cut
+      h+=`<tr><td colspan="4" style="padding:2px 8px"><div style="border-top:1px dashed var(--caution);color:var(--caution);font-size:9px;text-align:center;line-height:0;"><span style="background:var(--panel);padding:0 8px">— cut line · keep top 4 —</span></div></td></tr>`;
+    }
+    h+=`<tr style="border-top:1px solid var(--rule-soft)">
+      <td style="padding:5px 8px;color:var(--ink-faint);width:24px">#${i+1}</td>
+      <td style="padding:5px 8px;color:${col};font-weight:${survived?700:400}">${id}</td>
+      <td style="padding:5px 8px">${bar}</td>
+      <td style="padding:5px 8px;color:var(--ink-soft);text-align:right">${f3(v)} ${survived?'<span style="color:var(--good)">✓</span>':'<span style="color:var(--bad)">✕</span>'}</td>
+    </tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+/* ---------------------------------------------------------------------
+   OPTION 5 — CONFIDENCE BANDS (scalar dot + evidence-scaled error bar)
+   Each gen = a horizontal band centered on its scalar; band WIDTH is
+   INVERSELY proportional to board_fraction (more evidence -> tighter
+   band -> more certain). Overlap with the champion line = "could still
+   be a wash". This directly answers "how certain is this cut".
+   --------------------------------------------------------------------- */
+function opt5_bands(W,H,ids,opt={}){
+  // title on its own line (14), champ caption below it (28), bands start at padT.
+  const padL=58,padR=58,padT=opt.compact?44:48,padB=22;  // padR leaves a value-label gutter
+  const plotR=W-padR;
+  const X=v=>padL+sx(v)*(plotR-padL);
+  let s=svg(W,H);
+  s+=txt(12,14,"band = uncertainty (∝ 1/board_fraction); tight band on champ = confident verdict",{fill:"var(--ink-faint)",size:9});
+  // champion line + caption on their OWN line, clear of the title
+  const cx=X(CHAMP.scalar);
+  s+=line(cx,padT-8,cx,H-padB+4,"var(--accent)",1.4,"4 3");
+  s+=txt(cx,28,"champ "+f3(CHAMP.scalar),{anchor:"middle",fill:"var(--accent)",size:9});
+  const rh=(H-padT-padB)/ids.length;
+  ids.forEach((id,i)=>{
+    const g=GENS[id], v=curScalar(id), y=padT+i*rh+rh/2;
+    const alive=g.status==="alive";
+    const bf = alive ? RUNGS[lastRung(id)].board_fraction : RUNGS[g.exitRung].board_fraction;
+    const inflight = alive && RUNGS[lastRung(id)].state==="in-flight";
+    const half = (0.030/bf) ; // uncertainty in scalar units; shrinks with evidence
+    const col = inflight?"var(--caution)":(alive?"var(--good)":"var(--bad)");
+    const x=X(v);
+    // clamp band whiskers to the plot so wide low-evidence bands don't escape
+    const x0=Math.max(padL, X(v-half)), x1c=Math.min(plotR, X(v+half));
+    const clippedR = X(v+half) > plotR;        // band ran off the right edge
+    // band
+    s+=line(x0,y,x1c,y,col,1.5);
+    s+=line(x0,y-4,x0,y+4,col,1.2);
+    if (clippedR){ // open arrow marker = band extends beyond the plot
+      s+=`<path d="M${x1c-4},${y-4} L${x1c},${y} L${x1c-4},${y+4}" fill="none" stroke="${col}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
+    } else {
+      s+=line(x1c,y-4,x1c,y+4,col,1.2);
+    }
+    s+=circ(x,y,3.5,alive&&!inflight?col:"transparent",{stroke:col,sw:1.4});
+    if (alive&&!inflight) s+=circ(x,y,3.5,col);
+    s+=txt(padL-5,y+3,id,{anchor:"end",fill:col,size:9});
+    // value label pinned to the right gutter, always inside the viewBox
+    s+=txt(W-6,y+3,f3(v)+" · "+pct(bf),{anchor:"end",fill:"var(--ink-faint)",size:8});
+  });
+  s+=`</svg>`;
+  return s;
+}
+function opt5_hero(){
+  return opt5_bands(560,132,ALIVE.concat([RUNGS[1].cut[0]]),{compact:true});
+}
+function opt5_cross(){
+  const ids=Object.keys(GENS).sort((a,b)=>curScalar(a)-curScalar(b));
+  return opt5_bands(560,250,ids);
+}
+function opt5_round(){
+  // rung1: show the 4 with bands at 50% evidence, so the close g145/g143 cut reads as "uncertain"
+  const r=RUNGS[1];
+  const W=560,H=170,padL=58,padR=18,padT=40,padB=22;
+  const X=v=>padL+sx(v)*(W-padL-padR);
+  let s=svg(W,H);
+  s+=txt(12,18,r.label+" — bands at "+pct(r.board_fraction)+" evidence; g145 cut is CLOSE & still wide (less certain)",{fill:"var(--ink)",size:11,weight:700});
+  const cx=X(CHAMP.scalar);
+  s+=line(cx,padT-4,cx,H-padB+2,"var(--accent)",1.3,"4 3");
+  const thr=Math.max(...r.survivors.map(id=>GENS[id][r.scalarKey]));
+  const tx=X(thr);
+  s+=line(tx,padT-4,tx,H-padB+2,"var(--caution)",1.2,"3 3");
+  s+=txt(tx,padT-7,"cut",{anchor:"middle",fill:"var(--caution)",size:9});
+  const rows=r.competitors, rh=(H-padT-padB)/rows.length, half=0.030/r.board_fraction;
+  rows.forEach((id,i)=>{
+    const v=GENS[id][r.scalarKey], y=padT+i*rh+rh/2, survived=r.survivors.includes(id);
+    const col=survived?"var(--good)":"var(--bad)";
+    const x0=X(v-half),x1=X(v+half),x=X(v);
+    s+=line(x0,y,x1,y,col,1.6);
+    s+=line(x0,y-4,x0,y+4,col,1.2); s+=line(x1,y-4,x1,y+4,col,1.2);
+    s+=circ(x,y,3.5,survived?col:"transparent",{stroke:col,sw:1.4});
+    if (survived) s+=circ(x,y,3.5,col);
+    s+=txt(padL-5,y+3,id,{anchor:"end",fill:col,size:10});
+    s+=txt(x1+5,y+3,f3(v),{fill:"var(--ink-faint)",size:8});
+  });
+  s+=`</svg>`;
+  return s;
+}
+
+/* ---------------------------------------------------------------------
+   OPTION 6 — RUNG STACK (escalating-evidence bracket blocks)
+   A vertical stack: each rung is a band whose HEIGHT = board_fraction
+   (so rung0 is thin, the final gate is tall = most evidence). Within a
+   band, surviving gens are solid blocks sized by margin-to-champ; cut
+   gens are hollow blocks that "fall out" below the band. Reads top→down
+   as the race deepens.
+   --------------------------------------------------------------------- */
+function opt6_stack(W,H,opt={}){
+  const padL=10,padR=10,padT=opt.compact?24:32;
+  const bands=RUNGS.concat([{rung:3,label:"Gate",board_fraction:1.0,state:"pending",competitors:[FINAL.survivor],survivors:[FINAL.survivor],cut:[],final:true}]);
+  // Each band has THREE stacked lanes that must never overlap:
+  //   HEADER lane (rung label) · BODY lane (gen id + sized block) · FOOTER (scalar)
+  // board_fraction is encoded by the BODY height only; header/footer are fixed
+  // so short rungs keep their text on separate lines.
+  const HEAD = 16;                       // header lane (own line, above the gens)
+  const FOOT = opt.compact ? 0 : 13;     // scalar line at the band floor
+  const idLH = 11;                       // gen-id label line under the header
+  const bodyMin = opt.compact ? 22 : 30; // floor so blocks never crush the id label
+  const gap = 6;
+  const totalBf=bands.reduce((a,b)=>a+b.board_fraction,0);
+  // distribute the *variable* body budget by board_fraction, on top of fixed lanes
+  const fixedPer = HEAD + FOOT + gap;
+  const usableH = H - padT - 10;
+  const varBudget = Math.max(0, usableH - bands.length*(fixedPer + bodyMin));
+  const bodyOf = r => bodyMin + (r.board_fraction/totalBf)*varBudget;
+  let y=padT;
+  let s=svg(W,H);
+  s+=txt(padL,15,"each rung's BODY height = evidence weight (board_fraction); final gate is tallest",{fill:"var(--ink-faint)",size:9});
+  bands.forEach(r=>{
+    const body=bodyOf(r);
+    const bh=HEAD + body + FOOT;
+    const inflight=r.state==="in-flight", gate=r.final;
+    const accent=gate?"var(--accent)":inflight?"var(--caution)":"var(--good)";
+    // band frame
+    s+=rect(padL,y,W-padL-padR,bh,gate?"var(--good-soft)":"none",{stroke:"var(--rule)",rx:4,dash:(inflight||gate)?"4 3":null});
+    // header on its OWN line
+    s+=txt(padL+8,y+12,r.label+" · "+pct(r.board_fraction)+(gate?" · champion gate":""),{fill:accent,size:10,weight:700});
+    // header rule separating header lane from the gen body
+    s+=line(padL+6,y+HEAD,W-padR-6,y+HEAD,"var(--rule-soft)",1);
+    // gen blocks live strictly inside the BODY lane
+    const bodyTop = y+HEAD+idLH;          // below the id-label line
+    const bodyBot = y+HEAD+body;          // floor of the body lane
+    const ids=r.competitors;
+    const slotW=(W-padL-padR-16)/ids.length;
+    ids.forEach((id,i)=>{
+      const v=GENS[id]["rung"+(gate?2:r.rung)] ?? curScalar(id);
+      const survived=r.survivors.includes(id);
+      const margin=Math.max(0.01,CHAMP.scalar - v); // beats champ -> positive
+      const col=gate?"var(--accent)":inflight?"var(--caution)":survived?"var(--good)":"var(--bad)";
+      const bx=padL+8+i*slotW;
+      const maxBlock=Math.max(6, bodyBot-bodyTop);
+      const blockH=Math.min(maxBlock, 8+margin*120);
+      const by=bodyBot-blockH;
+      const solid=survived;
+      s+=rect(bx+2,by,slotW-6,blockH,solid&&!inflight&&!gate?col:"transparent",{rx:2,stroke:col,sw:1.3,dash:(inflight||gate||!survived)?"3 2":null});
+      // id label on its own line just under the header rule
+      s+=txt(bx+slotW/2,y+HEAD+9,id,{anchor:"middle",fill:col,size:8});
+      // scalar on the footer line, below the body
+      if (FOOT) s+=txt(bx+slotW/2,y+bh-3,f3(v),{anchor:"middle",fill:"var(--ink-faint)",size:8});
+    });
+    y+=bh+gap;
+  });
+  s+=`</svg>`;
+  return s;
+}
+function opt6_hero(){ return opt6_stack(560,212,{compact:true}); }
+function opt6_cross(){ return opt6_stack(560,372,{}); }
+function opt6_round(){
+  // round-level: the FINAL gate block, full detail — survivor vs champ on full board
+  const W=560,H=150;
+  let s=svg(W,H);
+  s+=txt(12,18,"racing-final · champion GATE · full board (100%) — the only step that crowns",{fill:"var(--ink)",size:11,weight:700});
+  const padL=104,barX=110,barMax=W-90;
+  const ids=[CHAMP.id, FINAL.survivor];
+  const vals={[CHAMP.id]:CHAMP.scalar,[FINAL.survivor]:GENS[FINAL.survivor].rung2};
+  ids.forEach((id,i)=>{
+    const y=46+i*46, v=vals[id], isChamp=id===CHAMP.id;
+    const col=isChamp?"var(--accent)":"var(--good)";
+    const bw=sx(v)*(barMax-barX);
+    s+=txt(padL-4,y+12,id+(isChamp?" (champ)":" (survivor)"),{anchor:"end",fill:col,size:10,weight:isChamp?400:700});
+    s+=rect(barX,y+2,bw,16,isChamp?col:"transparent",{rx:2,stroke:col,sw:1.4,dash:isChamp?null:"3 3"});
+    s+=txt(barX+bw+6,y+14,f3(v),{fill:"var(--ink-soft)",size:10});
+  });
+  // margin bracket
+  const cx=barX+sx(CHAMP.scalar)*(barMax-barX);
+  const gx=barX+sx(GENS[FINAL.survivor].rung2)*(barMax-barX);
+  s+=line(gx,30,gx,H-30,"var(--good)",1,"2 2");
+  s+=line(cx,30,cx,H-30,"var(--accent)",1,"2 2");
+  s+=`<path d="M${gx},${H-22} L${cx},${H-22}" stroke="var(--good)" stroke-width="1.4" vector-effect="non-scaling-stroke"/>`;
+  s+=txt((gx+cx)/2,H-26,"gate margin "+(FINAL.projMargin>0?'+':'')+f3(FINAL.projMargin),{anchor:"middle",fill:"var(--good)",size:9});
+  s+=`</svg>`;
+  return s;
+}
+
+/* =====================================================================
+   ASSEMBLE THE 6 OPTION CARDS
+   ===================================================================== */
+const LEGEND = `<div class="legend">
+  <span><i class="lg-sw" style="background:var(--good)"></i> survive / promote</span>
+  <span><i class="lg-sw" style="background:var(--bad)"></i> cut (by rank)</span>
+  <span><i class="lg-sw" style="background:var(--caution)"></i> in-flight rung</span>
+  <span><i class="lg-sw" style="background:var(--accent)"></i> champion benchmark / gate</span>
+  <span><i class="lg-line" style="border-top:2px dashed var(--ink-faint)"></i> pending / projected</span>
+</div>`;
+
+const OPTIONS = [
+  { n:1, title:"Scalar Track",
+    rationale:"Puts every gen on one shared <b>scalar number-line</b> with the champion as a dashed benchmark. Marker SIZE = <b>inverse loss · bigger = better</b>, so the surviving leader is the fattest dot and the cuts shrink away; a barely-cut gen sits a hair right of the cut tick, a blown-out one is far right — <b>cut closeness becomes literal distance</b>.",
+    hero:opt1_hero, cross:opt1_cross, round:opt1_round },
+  { n:2, title:"Funnel Ribbons",
+    rationale:"The survival TOPOLOGY the current view shows — but graded: node ring + flow width scale with <b>board_fraction</b>, and each cut terminates in a red stub annotated with its scalar, so <b>where</b> and <b>by how much</b> a gen dropped both read at once.",
+    hero:opt2_hero, cross:opt2_cross, round:opt2_round },
+  { n:3, title:"Evidence Ladder",
+    rationale:"A bump-chart of <b>scalar across rungs</b> with the x-axis weighted by cumulative board_fraction — rungs get physically wider as evidence accumulates. Lines that dip under the champion line are beating the benchmark; cut lines stop where they were eliminated. Shows trajectory + escalating evidence in one frame.",
+    hero:opt3_hero, cross:opt3_cross, round:opt3_round },
+  { n:4, title:"Standings Table+",
+    rationale:"The legible-standings baseline: a real leaderboard with an inline scalar bar vs champ, an <b>evidence pip-strip</b> (one pip per rung, width = board_fraction), a status chip naming the cut rung, and a signed Δ-champ column. Densest and most scannable; the SVG options dress this data up.",
+    hero:opt4_hero, cross:opt4_cross, round:opt4_round },
+  { n:5, title:"Confidence Bands",
+    rationale:"Each gen is a scalar dot with an error band whose width is <b>inversely</b> proportional to board_fraction — a rung-0 cut on 25% of the board gets a wide, uncertain band; a full-board verdict is tight. A band still overlapping the champion line says \"this could still be a wash\". Directly encodes <b>how certain</b> each cut was.",
+    hero:opt5_hero, cross:opt5_cross, round:opt5_round },
+  { n:6, title:"Rung Stack",
+    rationale:"Vertical bracket where each rung's HEIGHT = board_fraction, so the field visibly sinks into deeper evidence — rung0 is a thin sliver, the final gate is the tallest block. Survivors are solid blocks sized by margin-to-champ; cuts are hollow and fall to the band floor. Reads top→down as the race hardens.",
+    hero:opt6_hero, cross:opt6_cross, round:opt6_round },
+];
+
+const host = document.getElementById('options');
+host.innerHTML = OPTIONS.map(o => `
+  <section>
+    <h2>Option ${o.n} · ${o.title}</h2>
+    <span class="rationale">${o.rationale}</span>
+    ${LEGEND}
+    <div class="card">
+      <div class="card-title"><span class="tag hero">view a</span> Hero glance — the compacted figure that fills the hero's structure slot</div>
+      ${o.hero()}
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="tag cross">view b</span> Single-round — the full tournament (across its bracket-rounds / rungs / pairings)</div>
+      ${o.cross()}
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="tag round">view c</span> Within-round — one bracket-round / rung / pairing in detail</div>
+      ${o.round()}
+    </div>
+  </section>
+`).join('');
+
+/* ===== Console colour-scheme picker — 16 themes ===== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME="monokai";
+const THEME_IDS=THEMES.map(t=>t[0]);
+function strip(swatches,sm){
+  return `<span class="dt-swatch-strip${sm?' dt-swatch-strip-sm':''}" aria-hidden="true">`+
+    swatches.map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('')+`</span>`;
+}
+function mountThemePicker(hostId){
+  const host=document.getElementById(hostId);
+  let value=DEFAULT_THEME, open=false, activeIdx=THEME_IDS.indexOf(value);
+  const byId=new Map(THEMES.map(t=>[t[0],t]));
+  host.innerHTML=
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw])=>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             ${strip(sw)}<span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd=host.querySelector('.dt-cd');
+  const trigger=host.querySelector('.dt-cd-trigger');
+  const trigStrip=host.querySelector('.dt-cd-trig-strip');
+  const trigName=host.querySelector('.dt-cd-trig-name');
+  const list=host.querySelector('.dt-cd-list');
+  const options=Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id){
+    value=THEME_IDS.includes(id)?id:DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme',value);
+    const def=byId.get(value);
+    trigStrip.className='dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden','true');
+    trigStrip.innerHTML=def[2].map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent=def[1];
+    options.forEach(o=>o.setAttribute('aria-selected',String(o.getAttribute('data-theme')===value)));
+  }
+  function setActive(i){ activeIdx=(i+options.length)%options.length; options.forEach((o,k)=>o.classList.toggle('dt-cd-active',k===activeIdx)); }
+  function setOpen(next){ open=next; cd.classList.toggle('dt-cd-open',open); trigger.setAttribute('aria-expanded',String(open)); if(open) setActive(Math.max(0,THEME_IDS.indexOf(value))); }
+  function choose(id){ applyTheme(id); setOpen(false); }
+  options.forEach(o=>o.addEventListener('click',()=>choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click',()=>setOpen(!open));
+  trigger.addEventListener('keydown',ev=>{ if(['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)){ ev.preventDefault(); setOpen(true); list.focus?.(); } });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown',ev=>{
+    if(ev.key==='Escape'){ ev.preventDefault(); setOpen(false); trigger.focus(); }
+    else if(ev.key==='ArrowDown'){ ev.preventDefault(); setActive(activeIdx+1); }
+    else if(ev.key==='ArrowUp'){ ev.preventDefault(); setActive(activeIdx-1); }
+    else if(['Enter',' ','Spacebar'].includes(ev.key)){ ev.preventDefault(); const id=options[activeIdx]?.getAttribute('data-theme'); if(id) choose(id); }
+  });
+  document.addEventListener('click',ev=>{ if(!open) return; let n=ev.target; while(n){ if(n===cd) return; n=n.parentNode; } setOpen(false); });
+  applyTheme(DEFAULT_THEME);
+}
+mountThemePicker('theme-picker');
+</script>
+<style>html.embed-bare,html.embed-bare body{padding:0!important;margin:0!important}html.embed-bare section{margin:0!important}</style>
+<script>window.__EMBED_CFG__={optSel:'#options > section',bareHide:['h2','.rationale','.legend','.card-title'],viewSel:'.card',bareKeepViews:[0,1]};</script>
+<script src="_embed.js"></script>
+</body>
+</html>

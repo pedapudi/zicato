@@ -1,0 +1,1767 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="monokai">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zicato — page-preview composer</title>
+
+<!-- Google Fonts (CDN — no CORS): every family the typeface study's three modes
+     offer. Self-hosted faces (JetBrains/iA Writer/Commit Mono) are @font-face'd
+     in <style> from this server's same-origin fonts/. Validated 200 in study. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Newsreader:opsz,wght@6..72,400;6..72,600;6..72,700&family=Space+Grotesk:wght@400;500;700&family=Archivo+Narrow:wght@400;500;700&family=Inter:wght@400;500;700&family=Sora:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;700&family=Fira+Code:wght@400;500;700&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&family=Google+Sans+Mono:wght@400;500;700&family=Noto+Sans+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Lora:wght@400;500;700&family=Fraunces:wght@400;600;700&family=Spectral:wght@400;500;700&family=Bitter:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Bricolage+Grotesque:wght@400;600;700&family=Big+Shoulders+Display:wght@400;700&family=Outfit:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Red+Hat+Text:wght@400;500;700&family=Red+Hat+Mono:wght@400;500;700&family=Source+Sans+3:wght@400;500;700&family=Source+Code+Pro:wght@400;500;700&family=Spline+Sans:wght@400;500;700&family=Spline+Sans+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Literata:wght@400;500;700&family=Crimson+Pro:wght@400;500;700&family=Zilla+Slab:wght@400;500;700&family=EB+Garamond:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;700&family=Anton&family=Archivo:wght@400;500;700&family=Saira+Condensed:wght@400;500;700&family=Hanken+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;500;700&family=Ubuntu+Mono:wght@400;700&family=Ubuntu:wght@400;500;700&family=Alegreya:wght@400;500;700&family=Vollkorn:wght@400;500;700&family=Domine:wght@400;500;700&family=Familjen+Grotesk:wght@400;500;700&family=Barlow+Condensed:wght@400;500;700&family=Chivo:wght@400;500;700&display=swap" rel="stylesheet">
+
+<style>
+  /* ---- Console THEME tokens: the full 16-theme colour-scheme set, ported 1:1
+       from the study pages (which port them from variants/T/console4.css).
+       The picker sets html[data-theme]; each block fully restyles the page —
+       BOTH the composer chrome AND the in-situ dashboard-page replica.
+       Default: monokai.
+
+       The token names mirror the study pages (--paper / --panel / --ink / …);
+       we ALSO alias them to the real dashboard's `--v2-*` names so the chrome
+       replica reads 1:1 from variants/T/console4.css. ---- */
+  html[data-theme="monokai"] {
+    --paper:#1e1f1c; --panel:#272822; --panel-2:#23241f;
+    --ink:#f8f8f2; --ink-soft:#c9cabf; --ink-faint:#8f908a;
+    --rule:#3a3b34; --rule-soft:#2f302a;
+    --good:#a6e22e; --good-soft:#2c361a; --bad:#f92672; --caution:#e6db74;
+    --accent:#66d9ef; --accent-2:#66d9ef; --zicato-accent:#66d9ef; --flat:#75715e;
+  }
+  html[data-theme="solarized-dark"] {
+    --paper:#04222B; --panel:#0A2D38; --panel-2:#0A2730;
+    --ink:#93A1A1; --ink-soft:#839496; --ink-faint:#5E7079;
+    --rule:#0E3540; --rule-soft:#0B2E39;
+    --good:#8BB80E; --good-soft:#1C3320; --bad:#E0483C; --caution:#C4920A;
+    --accent:#2AA198; --accent-2:#2AA198; --zicato-accent:#2AA198; --flat:#46606B;
+  }
+  html[data-theme="solarized-light"] {
+    --paper:#FDF6E3; --panel:#FBF1D6; --panel-2:#F2E9CE;
+    --ink:#586E75; --ink-soft:#657B83; --ink-faint:#93A1A1;
+    --rule:#E7DCBE; --rule-soft:#F0E7CC;
+    --good:#6B9B0B; --good-soft:#E3ECCB; --bad:#DC322F; --caution:#B58900;
+    --accent:#268BD2; --accent-2:#268BD2; --zicato-accent:#268BD2; --flat:#93A1A1;
+  }
+  html[data-theme="google-light"] {
+    --paper:#FFFFFF; --panel:#F4F4F4; --panel-2:#F8F8F8;
+    --ink:#474A4E; --ink-soft:#5F6368; --ink-faint:#9FA1A4;
+    --rule:#E2E3E4; --rule-soft:#F1F1F1;
+    --good:#34A853; --good-soft:#D2ECD9; --bad:#EA4335; --caution:#C99700;
+    --accent:#1B9CB8; --accent-2:#1B9CB8; --zicato-accent:#1B9CB8; --flat:#9AA0A6;
+  }
+  html[data-theme="google-dark"] {
+    --paper:#202124; --panel:#2C2D30; --panel-2:#28292C;
+    --ink:#FFFFFF; --ink-soft:#E8EAED; --ink-faint:#989A9D;
+    --rule:#444548; --rule-soft:#323336;
+    --good:#34A853; --good-soft:#243F2E; --bad:#EA4335; --caution:#FBBC05;
+    --accent:#24C1E0; --accent-2:#24C1E0; --zicato-accent:#24C1E0; --flat:#5F6368;
+  }
+  html[data-theme="lunaria-light"] {
+    --paper:#EBE4E1; --panel:#E2DCD9; --panel-2:#E6DFDC;
+    --ink:#363434; --ink-soft:#484646; --ink-faint:#898584;
+    --rule:#CEC8C5; --rule-soft:#DCD6D3;
+    --good:#497D46; --good-soft:#C7CDBF; --bad:#783C1F; --caution:#8F750B;
+    --accent:#3778A9; --accent-2:#3778A9; --zicato-accent:#3778A9; --flat:#898584;
+  }
+  html[data-theme="lunaria-eclipse"] {
+    --paper:#323F46; --panel:#3B484F; --panel-2:#38454C;
+    --ink:#DFE2ED; --ink-soft:#C9CDD7; --ink-faint:#8D949D;
+    --rule:#4D5960; --rule-soft:#404C53;
+    --good:#BEDBC1; --good-soft:#516161; --bad:#BA9088; --caution:#F1DFB4;
+    --accent:#C8429F; --accent-2:#C8429F; --zicato-accent:#C8429F; --flat:#6B767D;
+  }
+  html[data-theme="belafonte-day"] {
+    --paper:#D5CCBA; --panel:#CCC3B2; --panel-2:#D0C6B5;
+    --ink:#34292D; --ink-soft:#45373C; --ink-faint:#7F736E;
+    --rule:#BBB1A3; --rule-soft:#C8BFAF;
+    --good:#6E6A4E; --good-soft:#C3BCA7; --bad:#BE100E; --caution:#B57A1E;
+    --accent:#426A79; --accent-2:#426A79; --zicato-accent:#426A79; --flat:#5E5252;
+  }
+  html[data-theme="belafonte-night"] {
+    --paper:#20111B; --panel:#271821; --panel-2:#25161F;
+    --ink:#D5CCBA; --ink-soft:#968C83; --ink-faint:#675B59;
+    --rule:#35272E; --rule-soft:#2B1C24;
+    --good:#A6A07A; --good-soft:#362A2B; --bad:#D6403E; --caution:#EAA549;
+    --accent:#6F8E97; --accent-2:#6F8E97; --zicato-accent:#6F8E97; --flat:#5E5252;
+  }
+  html[data-theme="paper"] {
+    --paper:#F2EEDE; --panel:#E6E2D3; --panel-2:#E8E4D5;
+    --ink:#1A1A1A; --ink-soft:#33312B; --ink-faint:#85837A;
+    --rule:#C6C3B6; --rule-soft:#DCD9CA;
+    --good:#216609; --good-soft:#CCD6B8; --bad:#CC3E28; --caution:#B58900;
+    --accent:#1E6FCC; --accent-2:#1E6FCC; --zicato-accent:#1E6FCC; --flat:#6E6A5E;
+  }
+  html[data-theme="zenburn"] {
+    --paper:#3A3A3A; --panel:#424241; --panel-2:#404040;
+    --ink:#DCDCCC; --ink-soft:#C5C5B8; --ink-faint:#83837C;
+    --rule:#575754; --rule-soft:#494947;
+    --good:#8FB28F; --good-soft:#2E3A2E; --bad:#CC9393; --caution:#FFD7A7;
+    --accent:#8CD0D3; --accent-2:#8CD0D3; --zicato-accent:#8CD0D3; --flat:#757575;
+  }
+  html[data-theme="selenized-black"] {
+    --paper:#181818; --panel:#202020; --panel-2:#1E1E1E;
+    --ink:#DEDEDE; --ink-soft:#B9B9B9; --ink-faint:#606060;
+    --rule:#353535; --rule-soft:#262626;
+    --good:#83C746; --good-soft:#243218; --bad:#FF5E56; --caution:#EFC541;
+    --accent:#56D8C9; --accent-2:#56D8C9; --zicato-accent:#56D8C9; --flat:#3B3B3B;
+  }
+  html[data-theme="relaxed"] {
+    --paper:#353A44; --panel:#3D424B; --panel-2:#3C404A;
+    --ink:#F7F7F7; --ink-soft:#D9D9D9; --ink-faint:#7F8287;
+    --rule:#53575F; --rule-soft:#444851;
+    --good:#A0AC77; --good-soft:#353D2E; --bad:#BC5653; --caution:#EBC17A;
+    --accent:#7EAAC7; --accent-2:#7EAAC7; --zicato-accent:#7EAAC7; --flat:#636363;
+  }
+  html[data-theme="espresso"] {
+    --paper:#323232; --panel:#3A3A3A; --panel-2:#383838;
+    --ink:#FFFFFF; --ink-soft:#D9D9D9; --ink-faint:#8A8A8A;
+    --rule:#4C4C4C; --rule-soft:#3E3E3E;
+    --good:#A5C261; --good-soft:#353D24; --bad:#D25252; --caution:#FFC66D;
+    --accent:#6C99BB; --accent-2:#6C99BB; --zicato-accent:#6C99BB; --flat:#6E6E6E;
+  }
+  html[data-theme="dracula"] {
+    --paper:#282A36; --panel:#343746; --panel-2:#2E303D;
+    --ink:#F8F8F2; --ink-soft:#D4D4CF; --ink-faint:#6272A4;
+    --rule:#44475A; --rule-soft:#353848;
+    --good:#50FA7B; --good-soft:#213A2A; --bad:#FF5555; --caution:#F1FA8C;
+    --accent:#BD93F9; --accent-2:#BD93F9; --zicato-accent:#BD93F9; --flat:#6272A4;
+  }
+  html[data-theme="ubuntu"] {
+    --paper:#300A24; --panel:#3D1530; --panel-2:#371129;
+    --ink:#EEEEEC; --ink-soft:#CBC3C9; --ink-faint:#8A7383;
+    --rule:#4B2640; --rule-soft:#3E1A32;
+    --good:#8AE234; --good-soft:#2E3320; --bad:#CC0000; --caution:#FCE94F;
+    --accent:#34E2E2; --accent-2:#34E2E2; --zicato-accent:#34E2E2; --flat:#847683;
+  }
+
+  /* --zicato-accent override on dark themes mirrors console4.css: the accent
+     green dot brightens on dark grounds so the plucked-note reads. Themes carry
+     it inline above; this keeps parity with the real bar's brightened green. */
+
+  /* ---- TYPEFACE tokens — the dashboard font contract (variants/T/console4.css).
+       --v2-mono  ← data / code / figure-labels / numerals (the "code" face)
+       --v2-sans / --n-font-paper ← body / prose         (the "prose" face)
+       --n-font-head ← headings + big numerals            (the "head" face)
+     The typeface picker rewrites these (chrome doc + every same-origin pane).
+     Default = Technical · T7 (Google Sans Mono).
+     The brand mark/wordmark keep a FIXED JetBrains Mono (--v2-brand-mono),
+     independent of the choice, so the green dot stays on its advance grid. ---- */
+  :root {
+    --v2-brand-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --v2-mono: "IBM Plex Mono", ui-monospace, monospace;
+    --v2-sans: "IBM Plex Sans", system-ui, sans-serif;
+    --n-font-head: "IBM Plex Sans", system-ui, sans-serif;
+    --n-font-paper: "IBM Plex Sans", system-ui, sans-serif;
+  }
+
+  /* ---- self-hosted faces — copied SAME-ORIGIN into this server's fonts/ from
+       the typeface study, so they travel over :7952 with no CORS. ---- */
+  @font-face { font-family:"iA Writer Mono"; font-weight:400; font-display:swap;
+    src:url("fonts/iAWriterMonoS-Regular.woff2") format("woff2"); }
+  @font-face { font-family:"iA Writer Mono"; font-weight:700; font-display:swap;
+    src:url("fonts/iAWriterMonoS-Bold.woff2") format("woff2"); }
+  @font-face { font-family:"JetBrains Mono"; font-weight:400; font-display:swap;
+    src:url("fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
+  @font-face { font-family:"JetBrains Mono"; font-weight:700; font-display:swap;
+    src:url("fonts/JetBrainsMono-Bold.woff2") format("woff2"); }
+  @font-face { font-family:"Commit Mono"; font-weight:400; font-display:swap;
+    src:url("fonts/CommitMono-400-Regular.otf") format("opentype"); }
+  @font-face { font-family:"Commit Mono"; font-weight:700; font-display:swap;
+    src:url("fonts/CommitMono-700-Regular.otf") format("opentype"); }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: var(--v2-sans, ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace);
+    font-size: 13px; line-height: 1.5;
+    transition: background .18s, color .18s;
+    display: flex; height: 100vh; overflow: hidden;
+  }
+
+  /* =====================================================================
+     SIDE RAIL — the study CONTROLS, pulled out of the preview so the
+     preview area reads as a clean dashboard page. Collapsible: a toggle
+     pins/unpins the rail; collapsed leaves only a thin reopen tab.
+     ===================================================================== */
+  .rail {
+    flex: none; width: 326px; overflow-y: auto;
+    border-right: 1px solid var(--rule);
+    background: var(--panel-2);
+    display: flex; flex-direction: column;
+    transition: margin-left .2s ease;
+  }
+  body.rail-collapsed .rail { margin-left: -326px; }
+
+  .rail-head {
+    display: flex; align-items: center; gap: 10px; flex: none;
+    padding: 13px 16px; border-bottom: 1px solid var(--rule);
+    position: sticky; top: 0; background: var(--panel-2); z-index: 2;
+  }
+  .rail-head .rail-title { font-size: 11px; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-soft); }
+  .rail-head .rail-sub { font-size: 9.5px; color: var(--ink-faint); display:block; margin-top:1px; letter-spacing:.04em; }
+  .rail-head .spacer { flex: 1; }
+  .rail-collapse-btn, .rail-reopen {
+    border: 1px solid var(--rule); border-radius: 6px; background: var(--panel);
+    color: var(--ink-soft); cursor: pointer; font: inherit; font-size: 13px;
+    line-height: 1; padding: 5px 9px; transition: border-color .12s, color .12s, background .12s;
+  }
+  .rail-collapse-btn:hover, .rail-reopen:hover { color: var(--ink); border-color: var(--accent); }
+
+  /* the floating reopen tab shown only while collapsed */
+  .rail-reopen {
+    display: none; position: absolute; left: 10px; top: 70px; z-index: 20;
+    box-shadow: 0 2px 10px rgba(0,0,0,.22);
+  }
+  body.rail-collapsed .rail-reopen { display: inline-flex; align-items: center; gap: 6px; }
+
+  .rail-body { padding: 14px 16px 60px; }
+  .rail h2 {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--ink-faint); margin: 20px 0 9px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .rail h2:first-child { margin-top: 2px; }
+  .ctl-note { font-size: 11px; color: var(--ink-faint); margin: -3px 0 10px; line-height: 1.45; }
+
+  /* theme picker block inside the rail */
+  .ctl-themerow { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .ctl-themerow .theme-pick-label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+
+  /* typeface picker block inside the rail */
+  .tf-block { padding: 9px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); }
+  .tf-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+  .tf-row:last-of-type { margin-bottom: 0; }
+  .tf-row .tf-lab { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); width: 46px; flex: none; }
+  .tf-row select { flex: 1; min-width: 0; }
+  .tf-roles { font-size: 10px; color: var(--ink-faint); line-height: 1.45; margin: 9px 0 0; }
+  .tf-roles b { color: var(--ink-soft); }
+
+  /* ---- TYPEFACE PICKER — grouped popover (Console dt-cd idiom). 3 mode groups
+       × 4 finalized options, micro-preview per row, selected state. Drives the
+       same STATE.typeface + applyTypeface() as the old mode/option selects. ---- */
+  .tf-pop { position: relative; }
+  .tf-pop-trigger { display: inline-flex; align-items: center; gap: 9px; width: 100%;
+    border: 1px solid var(--rule); border-radius: 6px; padding: 6px 11px; background: var(--panel-2);
+    color: var(--ink-soft); cursor: pointer; transition: border-color .15s, color .15s; text-align: left; }
+  .tf-pop-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .tf-pop-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tf-pop-trigger .trig-mode { font-family: var(--v2-mono); font-size: 9px;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); flex: none; }
+  .tf-pop-trigger .trig-face { font-size: 13px; font-weight: 600; color: var(--ink); flex: 1; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tf-pop-trigger .trig-caret { font-size: 8px; color: var(--ink-faint); transition: transform .15s; flex: none; }
+  .tf-pop.open .tf-pop-trigger .trig-caret { transform: rotate(180deg); }
+  .tf-pop-list { display: none; position: absolute; top: calc(100% + 5px); left: 0; right: 0; z-index: 80;
+    max-height: 60vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 7px;
+    box-shadow: 0 10px 28px rgba(0,0,0,.30); padding: 5px; }
+  .tf-pop.open .tf-pop-list { display: block; }
+  .tf-pop-group { margin: 2px 0; }
+  .tf-pop-group .grp-label { font-family: var(--v2-mono); font-size: 9px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-faint); padding: 6px 7px 4px; }
+  .tf-pop-option { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 5px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .tf-pop-option:hover, .tf-pop-option.tf-active { background: var(--rule-soft); color: var(--ink); }
+  .tf-pop-option[aria-selected="true"] { background: var(--rule-soft); }
+  .tf-pop-option .opt-radio { width: 13px; height: 13px; flex: none; border-radius: 50%;
+    border: 1.5px solid var(--rule); position: relative; }
+  .tf-pop-option[aria-selected="true"] .opt-radio { border-color: var(--accent); }
+  .tf-pop-option[aria-selected="true"] .opt-radio::after { content: ""; position: absolute;
+    inset: 2.5px; border-radius: 50%; background: var(--accent); }
+  .tf-pop-option .opt-name { font-size: 11.5px; font-weight: 600; flex: 1; min-width: 0; }
+  .tf-pop-option[aria-selected="true"] .opt-name { color: var(--accent); }
+  .tf-pop-option .opt-micro { margin-left: auto; display: flex; align-items: baseline; gap: 7px; flex: none; }
+  .tf-pop-option .opt-micro .mp { font-size: 13px; font-weight: 600; color: var(--ink); }
+  .tf-pop-option .opt-micro .mc { font-size: 11px; color: var(--ink-faint);
+    font-variant-numeric: tabular-nums lining-nums; }
+
+  /* page-template quick-pick */
+  .tpl-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tpl {
+    border: 1px solid var(--rule); border-radius: 7px; background: var(--panel);
+    color: var(--ink-soft); cursor: pointer; font: inherit; font-size: 11.5px;
+    padding: 7px 11px; transition: border-color .12s, color .12s, background .12s;
+  }
+  .tpl:hover { color: var(--ink); border-color: var(--accent); }
+  .tpl.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); font-weight: 700; }
+
+  /* per-level rows */
+  .lvl-row {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 9px; border: 1px solid var(--rule); border-radius: 8px;
+    background: var(--panel); margin-bottom: 8px;
+    transition: opacity .12s, border-color .12s;
+  }
+  .lvl-row.off { opacity: .42; }
+  .lvl-row .chk { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; flex: none; }
+  .lvl-row .meta { flex: 1; min-width: 0; }
+  .lvl-row .lname { font-size: 12px; font-weight: 700; color: var(--ink); }
+  .lvl-row .lq { font-size: 10px; color: var(--ink-faint); display: block; margin-top: 1px; }
+
+  /* option / structure pickers */
+  select {
+    font: inherit; font-size: 11.5px; color: var(--ink);
+    background: var(--panel-2); border: 1px solid var(--rule); border-radius: 6px;
+    padding: 4px 6px; cursor: pointer; transition: border-color .12s;
+  }
+  select:hover { border-color: var(--accent); }
+  select:disabled { opacity: .4; cursor: default; }
+  .opt-sel { width: 58px; flex: none; }
+  .struct-block { margin: 4px 0 8px 0; padding: 9px 10px; border: 1px solid var(--rule);
+    border-radius: 8px; background: var(--panel); }
+  .struct-block.hidden { display: none; }
+  .struct-block .sb-lab { font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-faint); display: block; margin-bottom: 6px; }
+  .struct-block .sb-note { font-size: 10px; color: var(--ink-faint); margin-top: 6px; line-height: 1.4; }
+  .struct-sel { width: 100%; }
+
+  /* =====================================================================
+     DASHBOARD-PAGE REPLICA — the preview reframed as the REAL Console page.
+     The top bar replicates variants/T/console4.css `.dt-*` chrome 1:1; the
+     content sits on `--v2-paper` (== --paper) with panels framed like real
+     dashboard panels (`.dn-panel`-equivalent surfaces).
+     ===================================================================== */
+  .stage { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--paper); }
+
+  /* ---- the TOP BAR replica (.dt-topbar) ---- */
+  .dt-topbar {
+    flex: none;
+    display: flex; align-items: center; gap: 18px;
+    padding: 11px 26px;
+    background: color-mix(in srgb, var(--paper) 92%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--rule);
+  }
+  /* the rail toggle lives where the real bar's "↑ up" back control sits */
+  .dt-back { display: inline-flex; align-items: center; gap: 5px;
+    font-family: inherit; font-size: 11px; color: var(--ink-soft);
+    background: transparent; border: 1px solid var(--rule); border-radius: 5px;
+    padding: 4px 9px; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+  .dt-back:hover { color: var(--paper); background: var(--accent); border-color: var(--accent); }
+  .dt-back-glyph { font-size: 14px; line-height: 1; }
+
+  .dt-brand { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); }
+  .dt-brand-mark { height: 26px; width: auto; display: block; flex: none; overflow: visible; }
+  .dt-brand-name { height: 16px; width: auto; display: block; flex: none; color: var(--ink); align-self: center; overflow: visible; }
+  .dt-brand-variant { font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); }
+
+  .dt-crumbs { display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; color: var(--ink-faint); }
+  .dt-crumb { color: var(--ink-soft); text-decoration: none; }
+  .dt-crumb:hover { color: var(--accent); }
+  .dt-crumb-current { color: var(--ink); }
+  .dt-crumb-sep { opacity: 0.5; margin: 0 1px; }
+  .dt-topbar-spacer { flex: 1; }
+
+  /* settings cog (chrome parity with the real bar) */
+  .dt-nav-build { display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+    color: var(--ink-soft); text-decoration: none; border: 1px solid var(--rule);
+    border-radius: 5px; padding: 3px 8px; transition: background .15s, color .15s, border-color .15s; }
+  .dt-nav-build:hover { background: var(--accent); color: var(--paper); border-color: var(--accent); }
+  .dt-nav-build-glyph { color: var(--accent); }
+  .dt-nav-build:hover .dt-nav-build-glyph { color: var(--paper); }
+
+  /* the live STATUS pill (.dt-status + .dt-run-badge) */
+  .dt-status { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--ink-faint); }
+  .dt-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--flat); transition: background .2s; }
+  .dt-status.dt-connected .dt-status-dot { background: var(--good); }
+  .dt-status.dt-running .dt-status-dot { background: var(--caution); }
+  .dt-run-badge { display: none; align-items: center; gap: 5px; margin-left: 6px;
+    padding: 1px 7px; border-radius: 9px; border: 1px solid var(--rule);
+    background: var(--panel); color: var(--ink-soft); font-size: 10px;
+    letter-spacing: .02em; white-space: nowrap; }
+  .dt-status.dt-running .dt-run-badge { display: inline-flex; }
+  .dt-run-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex: 0 0 auto;
+    box-shadow: 0 0 0 0 var(--good); animation: dt-run-pulse 1.6s ease-out infinite; }
+  .dt-run-label { color: var(--good); text-transform: lowercase; }
+  .dt-run-count { color: var(--ink-faint); }
+  @keyframes dt-run-pulse {
+    0%   { box-shadow: 0 0 0 0 var(--good); opacity: 1; }
+    70%  { box-shadow: 0 0 0 5px transparent; opacity: .7; }
+    100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) { .dt-run-pulse { animation: none; } }
+
+  /* ---- the dashboard PAGE BODY (content on the paper ground) ---- */
+  .dt-page { flex: 1; min-width: 0; overflow-y: auto; background: var(--paper); }
+  /* page header = real `.dn-pagehead`: h1 title, then a descriptive `.dn-lede`
+     sentence stacked beneath it (NOT a study "opt N" summary, NOT an accent tag). */
+  .dt-pagehead {
+    max-width: 2200px; margin: 0 auto; padding: 18px 26px 0;
+  }
+  .dt-pagehead h1 { font-size: 19px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 4px; color: var(--ink); }
+  .dt-pagehead .ph-sub {
+    display: block; font-size: 12.5px; line-height: 1.45; max-width: 78ch;
+    color: var(--ink-soft, var(--ink-faint)); margin: 2px 0 4px;
+  }
+
+  .dt-viewhost { max-width: 2200px; margin: 0 auto; padding: 16px 26px 80px; }
+
+  /* The composed preview reproduces a REAL Console page: a `.dn-section`
+     (generous vertical rhythm) → an underlined `.dn-h2` title in the real
+     section vocabulary → a borderless `.dn-figpane` panel holding the figure.
+     NO study card-header bar, NO accent "opt N" pill, NO ALL-CAPS question —
+     those live in the left control rail, not on the page. */
+  .dn-section { margin: 0 0 30px; }
+  .dn-section:first-child { margin-top: 2px; }
+  .dn-h2 {
+    display: flex; align-items: baseline; gap: 10px;
+    font-size: 13px; font-weight: 600; letter-spacing: .01em; color: var(--ink);
+    margin: 0 0 9px; padding-bottom: 6px; border-bottom: 1px solid var(--rule);
+    font-family: var(--v2-sans, inherit);
+  }
+  /* a faint option marker, dashboard-meta styling — quiet, not an accent pill */
+  .dn-h2 .dn-opt {
+    margin-left: auto; font-size: 10px; font-weight: 400; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--ink-faint); font-family: var(--v2-mono);
+  }
+  /* figure pane: same border/radius as the real `.dn-panel`, but the figure
+     sits on the page `--paper` ground (the embed bodies are paper) so there is
+     no double-background seam inside the frame. */
+  .dn-figpane {
+    border: 1px solid var(--rule); border-radius: 4px; overflow: hidden;
+    background: var(--paper);
+  }
+  .dn-figpane iframe { width: 100%; border: 0; display: block; background: var(--paper); transition: height .12s; }
+  .empty {
+    color: var(--ink-faint); font-size: 12px; text-align: center; padding: 60px 20px;
+    border: 1px dashed var(--rule); border-radius: 11px;
+  }
+
+  /* ---- the COLOUR SWATCH DROPDOWN (16 Console themes) ---- */
+  .dt-cd { position: relative; display: inline-flex; }
+  .dt-cd-trigger { display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 5px; padding: 5px 9px;
+    background: var(--panel); color: var(--ink-soft); cursor: pointer;
+    font: inherit; font-size: 11px; transition: border-color .15s, color .15s; }
+  .dt-cd-trigger:hover { color: var(--ink); border-color: var(--accent); }
+  .dt-cd-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dt-cd-name { color: var(--ink); white-space: nowrap; }
+  .dt-cd-caret { color: var(--ink-faint); font-size: 8px; transition: transform .15s; }
+  .dt-cd.dt-cd-open .dt-cd-caret { transform: rotate(180deg); }
+  .dt-swatch-strip { display: inline-flex; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .dt-swatch { display: inline-block; width: 11px; height: 13px; }
+  .dt-swatch-strip-sm .dt-swatch { width: 9px; height: 11px; }
+  .dt-cd-list { display: none; position: absolute; top: calc(100% + 5px); left: 0; z-index: 60;
+    min-width: 200px; max-height: 70vh; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28); padding: 4px; }
+  .dt-cd.dt-cd-open .dt-cd-list { display: block; }
+  .dt-cd-option { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 4px;
+    cursor: pointer; color: var(--ink-soft); transition: background .12s, color .12s; }
+  .dt-cd-option .dt-cd-name { font-size: 10.5px; }
+  .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--rule-soft); color: var(--ink); }
+  .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--accent); }
+
+  /* ---- TYPEFACE binding for the COMPOSER CHROME — so the chrome re-fonts with
+       the pane figures. DATA-flavoured chrome reads --v2-mono (crumbs, status,
+       run-badge, panel-heads, selects, rail labels); PROSE-flavoured chrome
+       reads --v2-sans (page title/sub, rail notes, template buttons). The brand
+       mark/wordmark are SVGs pinned to JetBrains Mono and never reflow. ---- */
+  .dt-crumbs, .dt-status, .dt-run-badge, .dt-nav-build,
+  .panel-head, .panel-head .badge,
+  select, .opt-sel, .struct-sel,
+  .rail-title, .rail-sub, .theme-pick-label, .sb-lab,
+  .dt-cd-trigger, .dt-cd-name, .dt-cd-option .dt-cd-name,
+  .rail h2 { font-family: var(--v2-mono); }
+  .dt-pagehead h1, #page-title { font-family: var(--n-font-head); }
+  .dt-pagehead .ph-sub, .dt-pagehead .ph-tag,
+  .ctl-note, .tpl, .lvl-row .lname, .lvl-row .lq,
+  .struct-block .sb-note, .empty,
+  .tf-block, .tf-block * { font-family: var(--v2-sans); }
+  /* the trigger's face label shows the currently-picked PROSE face for a live
+     taste; each option row's micro-preview renders in that option's real faces
+     (set inline per-row), so .tf-block's blanket --v2-sans must not override them. */
+  #tf-trig-face { font-family: var(--v2-sans); }
+  .tf-pop-option .opt-micro .mp,
+  .tf-pop-option .opt-micro .mc { font-family: inherit; }
+
+  /* ============================================================
+     PICKS TRAY — a floating, collapsible ballot (bottom-right).
+     Shared design with the typeface study (index.html / the study's
+     index page); both export an identical Markdown shape. Theme-
+     adaptive via the Console tokens. Persists to localStorage.
+     The pane pick toggles live in each composed pane's dn-h2 header
+     (next to the faint .dn-opt marker) and do NOT touch the iframes.
+     ============================================================ */
+  .pick-toggle {
+    flex:none; width:22px; height:22px; border-radius:50%;
+    border:1.5px solid var(--rule); background:transparent; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:12px; line-height:1; color:var(--ink-faint);
+    transition:border-color .14s, color .14s, background .14s, transform .1s;
+    padding:0;
+  }
+  .pick-toggle:hover { border-color:var(--accent); color:var(--ink); }
+  .pick-toggle:active { transform:scale(.9); }
+  .pick-toggle[aria-pressed="true"] {
+    border-color:var(--accent); background:var(--accent); color:var(--paper);
+  }
+  /* the pane toggle sits inside the dn-h2 header, between title and .dn-opt */
+  .dn-h2 .pick-toggle { width:20px; height:20px; font-size:11px; margin-left:auto; }
+  .dn-h2 .pick-toggle + .dn-opt { margin-left:8px; }
+
+  #picks-tray {
+    position:fixed; right:18px; bottom:18px; z-index:200;
+    width:340px; max-width:calc(100vw - 36px);
+    font-family:var(--v2-sans, system-ui, sans-serif);
+    color:var(--ink);
+  }
+  #picks-tray .pt-card {
+    border:1px solid var(--rule); border-radius:10px;
+    background:var(--panel);
+    box-shadow:0 10px 34px rgba(0,0,0,.34);
+    overflow:hidden;
+    display:flex; flex-direction:column;
+    max-height:min(74vh, 720px);
+  }
+  #picks-tray.collapsed .pt-body { display:none; }
+  #picks-tray .pt-head {
+    display:flex; align-items:center; gap:9px;
+    padding:10px 13px; background:var(--panel-2);
+    border-bottom:1px solid var(--rule); cursor:pointer; user-select:none;
+  }
+  #picks-tray.collapsed .pt-head { border-bottom:none; }
+  #picks-tray .pt-title {
+    font-family:var(--v2-mono); font-size:11px; font-weight:700;
+    letter-spacing:.08em; text-transform:uppercase; color:var(--ink);
+  }
+  #picks-tray .pt-count {
+    font-family:var(--v2-mono); font-size:10px;
+    color:var(--paper); background:var(--accent); border-radius:9px;
+    padding:1px 7px; min-width:18px; text-align:center;
+  }
+  #picks-tray .pt-count.zero { background:var(--rule); color:var(--ink-faint); }
+  #picks-tray .pt-spacer { flex:1; }
+  #picks-tray .pt-chevron { color:var(--ink-faint); font-size:10px; transition:transform .15s; }
+  #picks-tray.collapsed .pt-chevron { transform:rotate(180deg); }
+  #picks-tray .pt-body { padding:11px 13px 13px; overflow-y:auto; display:flex; flex-direction:column; gap:11px; }
+
+  /* the "pin current style" control row sits at the top of the tray body */
+  #picks-tray .pt-pin-row { display:flex; gap:7px; align-items:center; }
+  #picks-tray .pt-pin-btn {
+    flex:1; font-family:var(--v2-mono); font-size:11px;
+    border:1px solid var(--rule); border-radius:7px; padding:7px 9px; cursor:pointer;
+    background:var(--panel-2); color:var(--ink-soft);
+    transition:border-color .12s, color .12s, background .12s;
+    text-align:left;
+  }
+  #picks-tray .pt-pin-btn:hover { border-color:var(--accent); color:var(--ink); }
+  #picks-tray .pt-pin-btn b { color:var(--accent); }
+
+  #picks-tray .pt-group { display:flex; flex-direction:column; gap:5px; }
+  #picks-tray .pt-group-label {
+    font-family:var(--v2-mono); font-size:9px; letter-spacing:.13em;
+    text-transform:uppercase; color:var(--accent-2); padding-bottom:2px;
+    border-bottom:1px solid var(--rule-soft);
+  }
+  #picks-tray .pt-item {
+    display:flex; align-items:center; gap:8px; padding:4px 2px;
+    font-size:12px; color:var(--ink); line-height:1.35;
+  }
+  #picks-tray .pt-item .pt-item-text { flex:1; min-width:0; }
+  #picks-tray .pt-item .pt-item-id { font-family:var(--v2-mono); font-size:10px; color:var(--ink-faint); }
+  #picks-tray .pt-item .pt-rm {
+    flex:none; width:18px; height:18px; border-radius:5px; border:1px solid transparent;
+    background:transparent; color:var(--ink-faint); cursor:pointer; font-size:12px; line-height:1;
+    display:inline-flex; align-items:center; justify-content:center;
+    transition:color .12s, border-color .12s, background .12s;
+  }
+  #picks-tray .pt-item .pt-rm:hover { color:var(--bad); border-color:var(--bad); }
+  #picks-tray .pt-empty { font-size:12px; color:var(--ink-faint); font-style:italic; padding:6px 2px; }
+
+  #picks-tray .pt-notes-lab,
+  #picks-tray .pt-export-lab {
+    font-family:var(--v2-mono); font-size:9px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--ink-faint); margin:2px 0 4px;
+  }
+  #picks-tray textarea {
+    width:100%; resize:vertical; font:inherit; font-size:11.5px; line-height:1.45;
+    color:var(--ink); background:var(--panel-2); border:1px solid var(--rule);
+    border-radius:7px; padding:7px 9px;
+  }
+  #picks-tray textarea:focus { outline:none; border-color:var(--accent); }
+  #picks-tray #pt-notes { min-height:46px; }
+  #picks-tray #pt-export {
+    min-height:96px; font-family:var(--v2-mono); font-size:11px; display:none;
+  }
+  #picks-tray.show-export #pt-export { display:block; }
+  #picks-tray .pt-actions { display:flex; gap:7px; }
+  #picks-tray .pt-btn {
+    flex:1; font-family:var(--v2-mono); font-size:11px;
+    border:1px solid var(--rule); border-radius:7px; padding:7px 9px; cursor:pointer;
+    background:var(--panel-2); color:var(--ink-soft);
+    transition:border-color .12s, color .12s, background .12s;
+  }
+  #picks-tray .pt-btn:hover { border-color:var(--accent); color:var(--ink); }
+  #picks-tray .pt-btn.primary { background:var(--accent); color:var(--paper); border-color:var(--accent); font-weight:700; }
+  #picks-tray .pt-btn.primary:hover { filter:brightness(1.08); }
+  #picks-tray .pt-copied { color:var(--good); }
+</style>
+</head>
+<body>
+
+<!-- floating reopen tab (shown only while the rail is collapsed) -->
+<button class="rail-reopen" id="rail-reopen" type="button" title="Show composer controls" aria-label="Show composer controls">☰ controls</button>
+
+<!-- ================= SIDE RAIL (study controls) ================= -->
+<aside class="rail" id="rail">
+  <div class="rail-head">
+    <div>
+      <span class="rail-title">Composer</span>
+      <span class="rail-sub">page-preview · in-situ</span>
+    </div>
+    <span class="spacer"></span>
+    <button class="rail-collapse-btn" id="rail-collapse" type="button" title="Collapse controls" aria-label="Collapse controls">‹</button>
+  </div>
+  <div class="rail-body">
+    <h2>Theme</h2>
+    <p class="ctl-note">Recolours the dashboard chrome AND every composed pane. Sixteen Console themes.</p>
+    <div class="ctl-themerow">
+      <span class="theme-pick-label">colour</span>
+      <span id="theme-picker"></span>
+    </div>
+
+    <h2>Typeface</h2>
+    <p class="ctl-note">Refonts the dashboard chrome AND every composed pane. Pick a <b>mode</b> (Technical / Editorial / Display) then an <b>option</b> from the typeface study. Data/code face drives the figures (<code>--v2-mono</code>); the prose face drives the body.</p>
+    <div class="tf-block" id="tf-block">
+      <div class="tf-pop" id="tf-pop">
+        <button type="button" class="tf-pop-trigger" id="tf-pop-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="typeface">
+          <span class="trig-mode" id="tf-trig-mode"></span>
+          <span class="trig-face" id="tf-trig-face"></span>
+          <span class="trig-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="tf-pop-list" id="tf-pop-list" role="listbox" aria-label="typeface"></div>
+      </div>
+      <p class="tf-roles" id="tf-roles"></p>
+    </div>
+
+    <h2>Page template</h2>
+    <p class="ctl-note">Preset the levels that compose a natural dashboard page. <b>Custom</b> lets you toggle any.</p>
+    <div class="tpl-row" id="tpl-row"></div>
+
+    <h2>Tournament structure</h2>
+    <p class="ctl-note">Governs the WHOLE page. The single-round pane loads <code>{structure}.html</code>; every structure-agnostic pane (hero / cross-round / matchup / generation) re-loads with <code>?sample</code> set to it — so the composed page reads as one coherent tournament.</p>
+    <div class="struct-block" id="struct-block">
+      <span class="sb-lab">structure</span>
+      <select class="struct-sel" id="struct-sel" aria-label="tournament structure"></select>
+    </div>
+
+    <h2>Levels &amp; options</h2>
+    <p class="ctl-note">Toggle a level into the page; pick its visualization option (1–6).</p>
+    <div id="lvl-list"></div>
+
+    <p class="ctl-note" style="margin-top:18px;"><a href="index.html" style="color:var(--accent);text-decoration:none;">↩ study index</a></p>
+  </div>
+</aside>
+
+<!-- ================= STAGE: the dashboard-page replica ================= -->
+<div class="stage">
+  <!-- the TOP BAR replica (faithful to variants/T/console4.css .dt-topbar) -->
+  <header class="dt-topbar">
+    <button class="dt-back" id="rail-toggle" type="button" title="Toggle composer controls" aria-label="Toggle composer controls">
+      <span class="dt-back-glyph" aria-hidden="true">☰</span>
+    </button>
+    <span class="dt-brand">
+      <span id="hdr-mark"></span>
+      <span id="hdr-wordmark"></span>
+      <span class="dt-brand-variant">console</span>
+    </span>
+    <nav class="dt-crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+    <span class="dt-topbar-spacer"></span>
+    <a class="dt-nav-build" href="#" title="Settings (tournament builder + preferences)" aria-label="Open settings" onclick="return false;">
+      <span class="dt-nav-build-glyph" aria-hidden="true">⚙</span>
+      <span>settings</span>
+    </a>
+    <span class="dt-status dt-connected dt-running" id="status">
+      <span class="dt-status-dot"></span>
+      <span class="dt-status-text" id="status-text">live</span>
+      <span class="dt-run-badge" aria-live="polite">
+        <span class="dt-run-pulse" aria-hidden="true"></span>
+        <span class="dt-run-label" id="run-label">double-elim · tournament</span>
+        <span class="dt-run-count" id="run-count">· 3 units</span>
+      </span>
+    </span>
+  </header>
+
+  <!-- the dashboard PAGE BODY: content on the paper ground -->
+  <div class="dt-page">
+    <div class="dt-pagehead">
+      <h1 id="page-title">Round</h1>
+      <p class="ph-sub" id="page-sub"></p>
+    </div>
+    <div class="dt-viewhost" id="preview"></div>
+  </div>
+</div>
+
+<script>
+/* ===================================================================
+   ZICATO MARK + WORDMARK (top bar) — exact geometry from
+   docs/brand/zicato-mark.svg / zicato-lockup.svg, replicated from
+   variants/T/shell.js brandMark()/brandWordmark():
+     · the FULL SPIRAL at 26px (stroke 5.0, accent dot r 5.5)
+     · the "zıcato" wordmark (dotless ı + accent dot pinned over its stem)
+   Theme-adaptive: stroke/letters use currentColor; dots use --zicato-accent.
+   =================================================================== */
+const MARK_SPIRAL = "M94,52.5 L93.9,52.7 L93.7,52.9 L93.6,53.1 L93.5,53.4 L93.5,53.7 L93.4,54 L93.4,54.3 L93.5,54.6 L93.6,55 L93.7,55.3 L93.9,55.6 L94.1,55.9 L94.4,56.2 L94.7,56.5 L95.1,56.7 L95.4,56.9 L95.9,57.1 L96.3,57.2 L96.8,57.2 L97.3,57.2 L97.9,57.2 L98.4,57 L98.9,56.8 L99.4,56.5 L99.9,56.2 L100.4,55.8 L100.9,55.3 L101.2,54.7 L101.6,54.1 L101.8,53.4 L102,52.6 L102.1,51.9 L102.1,51 L102,50.2 L101.8,49.3 L101.5,48.5 L101.1,47.6 L100.5,46.8 L99.9,46 L99.1,45.3 L98.2,44.7 L97.2,44.1 L96.1,43.7 L94.9,43.4 L93.6,43.2 L92.3,43.2 L91,43.3 L89.6,43.6 L88.2,44.1 L86.8,44.8 L85.5,45.6 L84.2,46.7 L83,47.9 L82,49.3 L81.1,50.9 L80.3,52.7 L79.8,54.6 L79.5,56.6 L79.4,58.7 L79.5,60.9 L80,63.2 L80.7,65.4 L81.8,67.6 L83.1,69.8 L84.8,71.9 L86.7,73.8 L89,75.5 L91.5,77 L94.3,78.3 L97.3,79.2 L100.6,79.8 L104,80 L150,80 L170,102 L190,80 Q206,56 222,80 Q236,102 250,80 Q261,68 272,80 L292,80";
+const MARK_BRIDGE = "M292,66 L292,94";
+document.getElementById('hdr-mark').innerHTML =
+  `<svg class="dt-brand-mark" viewBox="71 35 229 75" role="img" aria-label="zicato" focusable="false">
+    <g fill="none" stroke="currentColor" stroke-width="5.0" stroke-linecap="round" stroke-linejoin="round">
+      <path d="${MARK_SPIRAL}"/><path d="${MARK_BRIDGE}"/>
+    </g>
+    <circle cx="170" cy="102" r="5.5" fill="var(--zicato-accent, #2FA46A)"/>
+  </svg>`;
+
+/* the WORDMARK — "zıcato": dotless ı (U+0131) carrying the green dot over its
+   stem, pinned geometrically to the monospace advance grid (parity with
+   shell.js brandWordmark()). */
+const WM_TEXT = 'zıcato', WM_X0 = 1, WM_ADV = 9.6, WM_BASE = 15, WM_DOT_CY = 3.0, WM_DOT_R = 1.7, WM_I = 1;
+const WM_W = WM_X0 * 2 + WM_TEXT.length * WM_ADV;
+const WM_DOT_CX = WM_X0 + (WM_I + 0.5) * WM_ADV;
+document.getElementById('hdr-wordmark').innerHTML =
+  `<svg class="dt-brand-name" viewBox="0 0 ${WM_W} 18" role="img" aria-label="zicato" focusable="false">
+    <text x="${WM_X0}" y="${WM_BASE}" font-family="ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace"
+          font-size="15" font-weight="700" letter-spacing="0"
+          textLength="${WM_TEXT.length * WM_ADV}" lengthAdjust="spacing" fill="currentColor" xml:space="preserve">${WM_TEXT}</text>
+    <circle cx="${WM_DOT_CX}" cy="${WM_DOT_CY}" r="${WM_DOT_R}" fill="var(--zicato-accent, #2FA46A)"/>
+  </svg>`;
+
+/* ===================================================================
+   PICKS-TRAY FOUNDATION — declared before the level model so the
+   preview render (which runs at boot) can reference picksState.
+   A pick is one of:
+     { type:'pane',  level, structure?, opt }   // structure only for single-round
+     { type:'style', theme, tfMode, tfOption }
+   Persisted to localStorage under PICKS_KEY (per-page key). The tray
+   UI + the rest of the pick logic live near the bottom of this script.
+   Shared design + identical Markdown export shape with the typeface study.
+   =================================================================== */
+const PICKS_KEY = 'zicato-tourney-viz-composer-picks-v1';
+
+function loadPicks() {
+  try {
+    const raw = localStorage.getItem(PICKS_KEY);
+    if (raw) {
+      const obj = JSON.parse(raw);
+      if (obj && Array.isArray(obj.picks)) return { picks: obj.picks, notes: obj.notes || '' };
+    }
+  } catch (e) {}
+  return { picks: [], notes: '' };
+}
+function savePicks() {
+  try { localStorage.setItem(PICKS_KEY, JSON.stringify(picksState)); } catch (e) {}
+}
+let picksState = loadPicks();
+
+/* ===================================================================
+   LEVEL MODEL — the natural dashboard zoom levels, in dashboard order.
+   Each maps to a study page (single-round resolves to a structure page).
+
+   `agnostic:true` marks the structure-AGNOSTIC layers (hero / cross-round /
+   single-matchup / single-generation) — these honor ?sample=<structure> so
+   the whole composed page reads as ONE coherent structure. The single-round
+   level loads the {structure}.html page itself (already structure-specific).
+   =================================================================== */
+// `dash` is the title rendered ON the composed preview — it uses the REAL
+// Console section vocabulary (sentence-case, `·`-separated subtitle, underlined
+// dn-h2) so a composed page reads as a genuine dashboard page, NOT a study card.
+// `name`/`q` stay study-facing (rail labels + tooltips).
+const LEVELS = [
+  { key:'hero',              page:'hero',              name:'Hero',            q:'at-a-glance live banner',           dash:'Workspace · at a glance',                  h:170, agnostic:true },
+  { key:'cross-epoch',       page:'cross-epoch',       name:'Cross-epoch',     q:'meta-loop across contracts',        dash:'Cross-epoch trajectory',                   h:430, optCount:7 },
+  { key:'cross-round',       page:'cross-round',       name:'Cross-round',     q:'round-by-round floor & reigns',     dash:'Rounds · floor & reigns across the epoch',  h:360, agnostic:true },
+  { key:'single-round',      page:null,                name:'Single-round',    q:'the tournament over a round',       dash:'Tournament structure',                     h:620, structure:true },
+  { key:'single-matchup',    page:'single-matchup',    name:'Single-matchup',  q:'this duel: did the challenger win?', dash:'Match-up · champion vs challenger',         h:400, agnostic:true },
+  { key:'single-generation', page:'single-generation', name:'Single-generation', q:'the candidate dossier',           dash:'Lifecycle · cause → effect → verdict',      h:680, agnostic:true },
+];
+// per-level option count drives the opt selector (default 6). cross-epoch ships
+// a 7th (composed) option. The single-round level's count is STRUCTURE-aware:
+// double-elim + swiss each gained 2 composed options (8); single-elim / racing /
+// gauntlet stay at 6 — so the dropdown never offers a dead opt for a structure
+// that doesn't have it.
+const OPT_COUNT_DEFAULT = 6;
+const STRUCT_OPT_COUNT = { 'double-elim': 8, 'swiss': 8 };
+const optCountFor = L => L.structure
+  ? (STRUCT_OPT_COUNT[STATE.structure] || OPT_COUNT_DEFAULT)
+  : (L.optCount || OPT_COUNT_DEFAULT);
+
+// The composer's opt dropdowns list ALL options for each level/structure; the
+// operator's LIKED options (their final picks) are MARKED — not filtered — so
+// every option stays selectable while the good ones read at a glance. The data
+// below records which options were liked, per level — and per STRUCTURE for the
+// single-round level. likedOptsFor(L) returns those liked option numbers.
+const LIKED_OPTS = {
+  'hero':              [3],
+  'cross-epoch':       [7],            // final pick: the composed option
+  'cross-round':       [4],
+  'single-matchup':    [6],
+  'single-generation': [2],
+};
+const LIKED_SINGLE_ROUND = {           // single-round, keyed by structure
+  'double-elim': [7, 8],               // 7 (combo) is the DEFAULT; 8 (radial) kept as an optional prototype
+  'swiss':       [8],
+  'single-elim': [6],
+  'racing':      [1],
+  'gauntlet':    [5],
+};
+const likedOptsFor = L => L.structure
+  ? (LIKED_SINGLE_ROUND[STATE.structure] || [1])
+  : (LIKED_OPTS[L.key] || Array.from({ length: optCountFor(L) }, (_, i) => i + 1));
+
+// The marker appended to a LIKED <option>'s label. Restored dropdowns list ALL
+// options (1..optCountFor); liked ones get this heart so they stay visible.
+const LIKED_MARK = ' ♥';
+// Build the <option> list for a level/structure: ALL options 1..optCountFor(L),
+// each marked when it is in the liked set for the current level/structure.
+function optionsMarkupFor(L) {
+  const liked = new Set(likedOptsFor(L));
+  return Array.from({ length: optCountFor(L) }, (_, i) => i + 1)
+    .map(n => `<option value="${n}">opt ${n}${liked.has(n) ? LIKED_MARK : ''}</option>`)
+    .join('');
+}
+// A sensible DEFAULT option for a level: the first liked option, so a freshly
+// built/rebuilt dropdown lands on something the operator liked.
+function defaultOptFor(L) {
+  const liked = likedOptsFor(L);
+  return liked.length ? liked[0] : 1;
+}
+const LEVEL_BY_KEY = Object.fromEntries(LEVELS.map(l => [l.key, l]));
+
+/* Tournament structures. `id` is the file/page slug (hyphenated) the single-
+   round pane loads as `{id}.html`; `sample` is the canonical ?sample= token
+   (underscored) the AGNOSTIC pages' SAMPLES registry keys on
+   (gauntlet|single_elim|double_elim|swiss|racing). */
+const STRUCTURES = [
+  { id:'gauntlet',     sample:'gauntlet'     },
+  { id:'single-elim',  sample:'single_elim'  },
+  { id:'double-elim',  sample:'double_elim'  },
+  { id:'swiss',        sample:'swiss'        },
+  { id:'racing',       sample:'racing'       },
+];
+const STRUCT_BY_ID = Object.fromEntries(STRUCTURES.map(s => [s.id, s]));
+function sampleTokenFor(structId) { return (STRUCT_BY_ID[structId] || {}).sample || structId; }
+/* a human label for the breadcrumb / run badge */
+function structLabel(structId) {
+  return ({ 'gauntlet':'gauntlet', 'single-elim':'single-elim', 'double-elim':'double-elim',
+            'swiss':'swiss', 'racing':'racing' })[structId] || structId;
+}
+
+/* page TEMPLATES — which levels each preset includes (dashboard order), plus a
+   page TITLE + a breadcrumb builder per the page-template spec. */
+const TEMPLATES = {
+  home:      { label:'Home',               title:'Environment', levels:['hero','cross-epoch'],
+               lede:'The workspace as a fleet — every epoch at a glance. Lower scalar (loss) is better.',
+               crumbs: () => ['environment'] },
+  epoch:     { label:'Epoch',              title:'Epoch 7',   levels:['hero','cross-round'],
+               lede:'This epoch round by round — the loss floor each round defended and who held the reign.',
+               crumbs: () => ['environment','epoch-7'] },
+  round:     { label:'Round / Tournament', title:'Round 3',   levels:['hero','single-round'],
+               lede:'How challengers were raced against the reigning champion this round.',
+               crumbs: () => ['environment','epoch-7','round 3 · ' + structLabel(STATE.structure)] },
+  matchup:   { label:'Matchup',            title:'Matchup',   levels:['hero','single-matchup'],
+               lede:'One head-to-head — did the challenger beat the champion, board by board?',
+               crumbs: () => ['environment','epoch-7','v7 vs champion'] },
+  candidate: { label:'Candidate',          title:'Candidate v7', levels:['single-generation','single-matchup'],
+               lede:'This candidate’s full lifecycle — what it changed, how it scored against the champion, and whether it cleared the promote gate.',
+               crumbs: () => ['environment','epoch-7','v7'] },
+  custom:    { label:'Custom',             title:'Custom page', levels:null,
+               lede:'A composed page — pick the levels and visualization options in the rail to build it up.',
+               crumbs: () => ['environment','epoch-7','custom'] },
+};
+const TPL_ORDER = ['home','epoch','round','matchup','candidate','custom'];
+
+/* ---- composer STATE ---- */
+const STATE = {
+  template: 'round',
+  enabled: { 'hero':true, 'single-round':true },   // set by template
+  option:  { 'hero':3, 'cross-epoch':7, 'cross-round':4, 'single-round':7, 'single-matchup':6, 'single-generation':2 },
+  structure: 'double-elim',
+  theme: 'monokai',
+  // TYPEFACE: mode + option id, sourced from the typeface study. Default is the
+  // first finalized Technical option — T7 (Google Sans Mono).
+  typeface: { mode: 'technical', option: 'T7' },
+};
+
+/* ===================================================================
+   TYPEFACE MODEL — pulled 1:1 from /tmp/zicato-typeface-study/index.html.
+   Each option names a prose face + a data/code face (and a heading face).
+   Mapping onto the dashboard font contract (variants/T/console4.css):
+     option data/code face → --v2-mono   (figure labels / numerals / code)
+     option prose face     → --v2-sans / --n-font-paper (body / prose)
+     option head face      → --n-font-head (headings + big numerals)
+   Self-hosted faces (JetBrains/iA Writer/Commit Mono) are @font-face'd from
+   this server's same-origin fonts/; all others are Google-Fonts CDN.
+   =================================================================== */
+const FONT_STACKS = {
+  JBM:   "'JetBrains Mono', ui-monospace, monospace",            // self-hosted
+  IAW:   "'iA Writer Mono', ui-monospace, monospace",            // self-hosted
+  CM:    "'Commit Mono', ui-monospace, monospace",               // self-hosted
+  INTER: "'Inter', system-ui, sans-serif",
+  SS4:   "'Source Serif 4', Georgia, serif",
+  NEWS:  "'Newsreader', Georgia, serif",
+  SG:    "'Space Grotesk', system-ui, sans-serif",
+  AN:    "'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif",
+  SORA:  "'Sora', system-ui, sans-serif",
+  PLEXS: "'IBM Plex Sans', system-ui, sans-serif",
+  PLEXM: "'IBM Plex Mono', ui-monospace, monospace",
+  SPMONO:"'Space Mono', ui-monospace, monospace",
+  FIRAS: "'Fira Sans', system-ui, sans-serif",
+  FIRAC: "'Fira Code', ui-monospace, monospace",
+  DMSANS:"'DM Sans', system-ui, sans-serif",
+  DMMONO:"'DM Mono', ui-monospace, monospace",
+  MARTM: "'Martian Mono', ui-monospace, monospace",
+  PLAYF: "'Playfair Display', Georgia, serif",
+  LORA:  "'Lora', Georgia, serif",
+  FRAUN: "'Fraunces', Georgia, serif",
+  SPECT: "'Spectral', Georgia, serif",
+  BITTER:"'Bitter', Georgia, serif",
+  SYNE:  "'Syne', system-ui, sans-serif",
+  BRICO: "'Bricolage Grotesque', system-ui, sans-serif",
+  BIGSH: "'Big Shoulders Display', 'Archivo Narrow', system-ui, sans-serif",
+  OUTFIT:"'Outfit', system-ui, sans-serif",
+  RHT:   "'Red Hat Text', system-ui, sans-serif",
+  RHM:   "'Red Hat Mono', ui-monospace, monospace",
+  SRCS:  "'Source Sans 3', system-ui, sans-serif",
+  SRCC:  "'Source Code Pro', ui-monospace, monospace",
+  SPLS:  "'Spline Sans', system-ui, sans-serif",
+  SPLM:  "'Spline Sans Mono', ui-monospace, monospace",
+  LITER: "'Literata', Georgia, serif",
+  CRIMS: "'Crimson Pro', Georgia, serif",
+  ZILLA: "'Zilla Slab', Georgia, serif",
+  GARA:  "'EB Garamond', Georgia, serif",
+  OSWALD:"'Oswald', 'Archivo Narrow', system-ui, sans-serif",
+  ANTON: "'Anton', 'Archivo Narrow', system-ui, sans-serif",
+  ARCHV: "'Archivo', system-ui, sans-serif",
+  SAIRAC:"'Saira Condensed', 'Archivo Narrow', system-ui, sans-serif",
+  HANKEN:"'Hanken Grotesk', system-ui, sans-serif",
+  ROBOTO:     "'Roboto', system-ui, sans-serif",
+  ROBOTOMONO: "'Roboto Mono', ui-monospace, monospace",
+  GSMONO:     "'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace",
+  INCON: "'Inconsolata', ui-monospace, monospace",
+  UBUM:  "'Ubuntu Mono', ui-monospace, monospace",
+  UBUNTU:"'Ubuntu', system-ui, sans-serif",
+  ALEG:  "'Alegreya', Georgia, serif",
+  VOLL:  "'Vollkorn', Georgia, serif",
+  DOMINE:"'Domine', Georgia, serif",
+  FAMILJEN:"'Familjen Grotesk', system-ui, sans-serif",
+  BARLOWC:"'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif",
+  CHIVO: "'Chivo', system-ui, sans-serif",
+};
+const F = FONT_STACKS;
+
+/* mode → [ {id, label, head, prose, data, code} ] — labels read as the study
+   labels its cards, e.g. "T3 · IBM Plex", "E5 · Fraunces". */
+/* FINALIZED set — 4 options per mode (operator's selections). Default Technical
+   option is T7 (Google Sans Mono). D5 Bricolage uses the BRICO stack already in
+   FONT_STACKS (Bricolage Grotesque is in this page's Google Fonts links). */
+const TYPEFACE_MODES = {
+  technical: [
+    { id:'T7',  label:'T7 · Google Sans Mono',head:F.GSMONO,prose:F.GSMONO,data:F.GSMONO,code:F.GSMONO },
+    { id:'T9',  label:'T9 · Source Sans 3 + Source Code Pro', head:F.SRCS, prose:F.SRCS, data:F.SRCC, code:F.SRCC },
+    { id:'T12', label:'T12 · Inconsolata',    head:F.INCON, prose:F.INCON, data:F.INCON, code:F.INCON },
+    { id:'T14', label:'T14 · Ubuntu + Ubuntu Mono', head:F.UBUNTU,prose:F.UBUNTU,data:F.UBUM,  code:F.UBUM  },
+  ],
+  editorial: [
+    { id:'E5',  label:'E5 · Fraunces',         head:F.FRAUN, prose:F.FRAUN, data:F.FRAUN, code:F.FRAUN },
+    { id:'E7',  label:'E7 · Bitter',           head:F.BITTER,prose:F.BITTER,data:F.BITTER,code:F.BITTER},
+    { id:'E8',  label:'E8 · Literata',         head:F.LITER, prose:F.LITER, data:F.LITER, code:F.LITER },
+    { id:'E15', label:'E15 · Domine',          head:F.DOMINE,prose:F.DOMINE,data:F.DOMINE,code:F.DOMINE},
+  ],
+  display: [
+    { id:'D2',  label:'D2 · Archivo Narrow + Space Grotesk', head:F.AN, prose:F.SG, data:F.SG, code:F.SG },
+    { id:'D12', label:'D12 · Hanken Grotesk',  head:F.HANKEN,prose:F.HANKEN,data:F.HANKEN,code:F.HANKEN},
+    { id:'D14', label:'D14 · Barlow Condensed + Space Grotesk', head:F.BARLOWC, prose:F.SG, data:F.SG, code:F.SG },
+    { id:'D5',  label:'D5 · Bricolage Grotesque', head:F.BRICO, prose:F.BRICO, data:F.BRICO, code:F.BRICO },
+  ],
+};
+const TF_MODE_ORDER = ['technical','editorial','display'];
+const TF_MODE_LABEL = { technical:'Technical', editorial:'Editorial', display:'Display' };
+
+/* the OPTION currently chosen (resolved object). Falls back to the mode's first. */
+function currentTypeface() {
+  const list = TYPEFACE_MODES[STATE.typeface.mode] || TYPEFACE_MODES.technical;
+  return list.find(o => o.id === STATE.typeface.option) || list[0];
+}
+
+/* the four font <link> + @font-face blocks the panes need. Google-Fonts links
+   are injected per-iframe (CDN, no CORS); self-hosted faces are @font-face'd
+   from this SAME-ORIGIN server (fonts/ copied from the typeface study). */
+const PANE_GFONT_LINKS = [
+  "https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Newsreader:opsz,wght@6..72,400;6..72,600;6..72,700&family=Space+Grotesk:wght@400;500;700&family=Archivo+Narrow:wght@400;500;700&family=Inter:wght@400;500;700&family=Sora:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500;700&display=swap",
+  "https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;700&family=Fira+Code:wght@400;500;700&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap",
+  "https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&family=Google+Sans+Mono:wght@400;500;700&family=Noto+Sans+Mono:wght@400;500;700&display=swap",
+  "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=Lora:wght@400;500;700&family=Fraunces:wght@400;600;700&family=Spectral:wght@400;500;700&family=Bitter:wght@400;500;700&display=swap",
+  "https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Bricolage+Grotesque:wght@400;600;700&family=Big+Shoulders+Display:wght@400;700&family=Outfit:wght@400;500;700&display=swap",
+  "https://fonts.googleapis.com/css2?family=Red+Hat+Text:wght@400;500;700&family=Red+Hat+Mono:wght@400;500;700&family=Source+Sans+3:wght@400;500;700&family=Source+Code+Pro:wght@400;500;700&family=Spline+Sans:wght@400;500;700&family=Spline+Sans+Mono:wght@400;500;700&display=swap",
+  "https://fonts.googleapis.com/css2?family=Literata:wght@400;500;700&family=Crimson+Pro:wght@400;500;700&family=Zilla+Slab:wght@400;500;700&family=EB+Garamond:wght@400;500;700&display=swap",
+  "https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;700&family=Anton&family=Archivo:wght@400;500;700&family=Saira+Condensed:wght@400;500;700&family=Hanken+Grotesk:wght@400;500;700&display=swap",
+  "https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;500;700&family=Ubuntu+Mono:wght@400;700&family=Ubuntu:wght@400;500;700&family=Alegreya:wght@400;500;700&family=Vollkorn:wght@400;500;700&family=Domine:wght@400;500;700&family=Familjen+Grotesk:wght@400;500;700&family=Barlow+Condensed:wght@400;500;700&family=Chivo:wght@400;500;700&display=swap",
+];
+/* @font-face for the 3 self-hosted faces, same-origin on :7952 (no CORS). */
+const PANE_SELF_HOST_CSS = `
+@font-face{font-family:"iA Writer Mono";font-weight:400;font-display:swap;src:url("fonts/iAWriterMonoS-Regular.woff2") format("woff2");}
+@font-face{font-family:"iA Writer Mono";font-weight:700;font-display:swap;src:url("fonts/iAWriterMonoS-Bold.woff2") format("woff2");}
+@font-face{font-family:"JetBrains Mono";font-weight:400;font-display:swap;src:url("fonts/JetBrainsMono-Regular.woff2") format("woff2");}
+@font-face{font-family:"JetBrains Mono";font-weight:700;font-display:swap;src:url("fonts/JetBrainsMono-Bold.woff2") format("woff2");}
+@font-face{font-family:"Commit Mono";font-weight:400;font-display:swap;src:url("fonts/CommitMono-400-Regular.otf") format("opentype");}
+@font-face{font-family:"Commit Mono";font-weight:700;font-display:swap;src:url("fonts/CommitMono-700-Regular.otf") format("opentype");}
+`;
+
+/* The iframe src for a level. Structure-AGNOSTIC panes also receive
+   ?sample=<structure-token> so the whole page reads as ONE coherent
+   structure; the single-round pane loads the {structure}.html page itself. */
+function srcFor(levelKey) {
+  const L = LEVEL_BY_KEY[levelKey];
+  const page = L.structure ? STATE.structure : L.page;   // structure id == file slug
+  const opt = STATE.option[levelKey] || 1;
+  let src = `${page}.html?only=${opt}&bare=1&theme=${STATE.theme}&lvl=${levelKey}`;
+  if (L.agnostic) src += `&sample=${sampleTokenFor(STATE.structure)}`;
+  // the single-round pane shows ONLY the full tournament figure (view 1); the
+  // hero GLANCE (view 0) is redundant here — the hero level already covers it.
+  if (L.structure) src += `&views=1`;
+  return src;
+}
+function enabledLevelsInOrder() {
+  return LEVELS.filter(l => STATE.enabled[l.key]).map(l => l.key);
+}
+
+/* ===================================================================
+   SIDE RAIL — build template quick-pick + level rows
+   =================================================================== */
+function buildTemplateRow() {
+  const row = document.getElementById('tpl-row');
+  row.innerHTML = TPL_ORDER.map(k =>
+    `<button class="tpl" data-tpl="${k}">${TEMPLATES[k].label}</button>`).join('');
+  row.querySelectorAll('.tpl').forEach(b =>
+    b.addEventListener('click', () => applyTemplate(b.dataset.tpl)));
+}
+function syncTemplateActive() {
+  document.querySelectorAll('.tpl').forEach(b =>
+    b.classList.toggle('active', b.dataset.tpl === STATE.template));
+}
+
+function buildLevelList() {
+  const host = document.getElementById('lvl-list');
+  host.innerHTML = LEVELS.map(L => `
+    <div class="lvl-row" id="row-${L.key}" data-key="${L.key}">
+      <input class="chk" type="checkbox" id="chk-${L.key}" aria-label="include ${L.name}">
+      <span class="meta"><span class="lname">${L.name}</span><span class="lq">${L.q}</span></span>
+      <select class="opt-sel" id="opt-${L.key}" aria-label="${L.name} option">
+        ${optionsMarkupFor(L)}
+      </select>
+    </div>
+  `).join('');
+
+  // the standalone STRUCTURE picker — always available (it governs the whole
+  // page's coherent structure, not just the single-round pane).
+  document.getElementById('struct-sel').innerHTML =
+    STRUCTURES.map(s => `<option value="${s.id}">${s.id}</option>`).join('');
+
+  // wire checkboxes + per-level option selects
+  LEVELS.forEach(L => {
+    const chk = document.getElementById('chk-' + L.key);
+    chk.addEventListener('change', () => {
+      STATE.enabled[L.key] = chk.checked;
+      STATE.template = 'custom';          // any manual toggle => Custom
+      syncTemplateActive();
+      syncRowDisabled();
+      renderPreview();
+      renderChrome();
+    });
+    const sel = document.getElementById('opt-' + L.key);
+    sel.addEventListener('change', () => {
+      STATE.option[L.key] = parseInt(sel.value, 10);
+      updatePane(L.key);                  // surgical: only this pane's src
+    });
+  });
+  // wire structure — re-samples EVERY agnostic pane to one coherent structure
+  const ss = document.getElementById('struct-sel');
+  ss.addEventListener('change', () => {
+    STATE.structure = ss.value;
+    rebuildSingleRoundOpts();             // single-round option count is structure-aware (6 or 8)
+    resampleStructure();                  // single-round + all agnostic panes
+    renderChrome();                       // breadcrumb + run badge follow
+  });
+}
+
+// The single-round dropdown is STRUCTURE-aware on two axes: the option COUNT
+// (double-elim/swiss have 8, others 6) AND which options are marked LIKED
+// (the per-structure LIKED_SINGLE_ROUND set). Repopulate it on a structure
+// switch — re-listing ALL options 1..count with the new structure's liked ones
+// re-marked — and snap the selection to a liked option for the new structure if
+// the current one is out of range there.
+function rebuildSingleRoundOpts() {
+  const L = LEVEL_BY_KEY['single-round'];
+  const sel = document.getElementById('opt-' + L.key);
+  if (!sel) return;
+  // Re-list ALL options for the new structure with its liked set re-marked, and
+  // snap the selection onto a LIKED option for the new structure whenever the
+  // current one isn't liked there — so a structure switch always lands on
+  // something good (the operator can still pick any non-liked option after).
+  const liked = likedOptsFor(L);
+  let cur = STATE.option[L.key];
+  if (!liked.includes(cur)) { cur = defaultOptFor(L); STATE.option[L.key] = cur; }
+  sel.innerHTML = optionsMarkupFor(L);
+  sel.value = cur;
+}
+
+function syncControlsFromState() {
+  LEVELS.forEach(L => {
+    document.getElementById('chk-' + L.key).checked = !!STATE.enabled[L.key];
+    document.getElementById('opt-' + L.key).value = STATE.option[L.key] || 1;
+  });
+  document.getElementById('struct-sel').value = STATE.structure;
+  syncRowDisabled();
+  syncTemplateActive();
+}
+function syncRowDisabled() {
+  LEVELS.forEach(L => {
+    const on = !!STATE.enabled[L.key];
+    document.getElementById('row-' + L.key).classList.toggle('off', !on);
+    document.getElementById('opt-' + L.key).disabled = !on;
+  });
+  // the structure picker is ALWAYS enabled — it governs the whole page's
+  // coherent structure (the single-round pane + every agnostic pane), so it is
+  // meaningful even when single-round itself is not in the page.
+}
+
+function applyTemplate(tpl) {
+  STATE.template = tpl;
+  const def = TEMPLATES[tpl];
+  if (def.levels) {
+    STATE.enabled = {};
+    def.levels.forEach(k => STATE.enabled[k] = true);
+  }
+  syncControlsFromState();
+  renderPreview();
+  renderChrome();
+}
+
+/* ===================================================================
+   THE DASHBOARD-PAGE REPLICA — chrome (breadcrumb / title / status) +
+   the composed level panels on the paper ground.
+   =================================================================== */
+
+/* breadcrumb + page title + run badge — driven by the active template. */
+function renderChrome() {
+  const tpl = TEMPLATES[STATE.template];
+
+  // breadcrumb (per the page-template spec)
+  const crumbs = tpl.crumbs();
+  const host = document.getElementById('crumbs');
+  host.innerHTML = crumbs.map((c, i) => {
+    const sep = i > 0 ? `<span class="dt-crumb-sep" aria-hidden="true">›</span>` : '';
+    const last = i === crumbs.length - 1;
+    const cls = last ? 'dt-crumb dt-crumb-current' : 'dt-crumb';
+    const aria = last ? ' aria-current="page"' : '';
+    // non-terminal crumbs render as links (chrome parity); they don't navigate here.
+    const node = last
+      ? `<span class="${cls}"${aria}>${c}</span>`
+      : `<a class="${cls}" href="#" onclick="return false;">${c}</a>`;
+    return sep + node;
+  }).join('');
+
+  // page title + a real descriptive lede (the dashboard's own voice), NOT a
+  // study "opt N" summary — that affordance lives in the left control rail.
+  document.getElementById('page-title').textContent = tpl.title;
+  document.getElementById('page-sub').textContent = tpl.lede || '';
+
+  // the run badge reflects the active structure (the whole page is one structure)
+  document.getElementById('run-label').textContent = structLabel(STATE.structure) + ' · tournament';
+}
+
+/* the composed level panels — one iframe per enabled level (dashboard order).
+   Heights come from postMessage(__zEmbedHeight); the per-level fallback height
+   is used until the message lands. */
+function renderPreview() {
+  const host = document.getElementById('preview');
+  const keys = enabledLevelsInOrder();
+  if (!keys.length) {
+    host.innerHTML = `<div class="empty">No levels selected — pick a template or toggle a level in the controls.</div>`;
+    return;
+  }
+  host.innerHTML = keys.map(k => {
+    const L = LEVEL_BY_KEY[k];
+    const opt = L.structure ? STATE.structure : ('opt ' + (STATE.option[k] || 1));
+    return `
+    <section class="dn-section" data-key="${k}">
+      <h2 class="dn-h2">${L.dash}
+        <button class="pick-toggle" type="button" data-level="${k}" aria-pressed="false" aria-label="Pick this pane">♡</button>
+        <span class="dn-opt" id="badge-${k}">${opt}</span></h2>
+      <div class="dn-figpane">
+        <iframe id="if-${k}" title="${L.dash} preview" src="${srcFor(k)}" style="height:${L.h}px" loading="eager"></iframe>
+      </div>
+    </section>`;
+  }).join('');
+  // wire pane pick toggles (header siblings of the iframe — never touch it)
+  host.querySelectorAll('.dn-h2 .pick-toggle').forEach(btn =>
+    btn.addEventListener('click', e => { e.stopPropagation(); togglePanePick(btn.dataset.level); }));
+  syncPaneToggles();
+}
+
+/* surgical pane update — only re-point one iframe (no full rebuild) */
+function updatePane(key) {
+  const fr = document.getElementById('if-' + key);
+  if (!fr) return;                 // pane not currently shown
+  fr.src = srcFor(key);
+  const badge = document.getElementById('badge-' + key);
+  const L = LEVEL_BY_KEY[key];
+  if (badge) badge.textContent = L.structure ? STATE.structure : ('opt ' + (STATE.option[key] || 1));
+  syncPaneToggles();   // the current config may no longer match a recorded pick
+}
+
+/* structure change — re-point the single-round pane (loads {structure}.html)
+   AND every structure-AGNOSTIC pane (its ?sample= changes), so the whole page
+   re-samples to one coherent structure. */
+function resampleStructure() {
+  enabledLevelsInOrder().forEach(k => {
+    const L = LEVEL_BY_KEY[k];
+    if (L.structure || L.agnostic) updatePane(k);
+  });
+}
+
+/* theme change — re-point EVERY shown iframe's theme= param (cheap rebuild of
+   the src so the embedded figure re-themes); the chrome re-themes via CSS
+   tokens off html[data-theme]. */
+function retheme() {
+  enabledLevelsInOrder().forEach(k => {
+    const fr = document.getElementById('if-' + k);
+    if (fr) fr.src = srcFor(k);
+  });
+}
+
+/* iframe self-sizing via postMessage from the embed pages */
+window.addEventListener('message', ev => {
+  const d = ev.data;
+  if (!d || typeof d !== 'object' || typeof d.__zEmbedHeight !== 'number') return;
+  if (!d.key) return;
+  const fr = document.getElementById('if-' + d.key);
+  if (fr) fr.style.height = Math.max(60, Math.ceil(d.__zEmbedHeight)) + 'px';
+});
+
+/* ===================================================================
+   RAIL collapse / reopen
+   =================================================================== */
+function setRail(collapsed) {
+  document.body.classList.toggle('rail-collapsed', collapsed);
+}
+document.getElementById('rail-collapse').addEventListener('click', () => setRail(true));
+document.getElementById('rail-reopen').addEventListener('click', () => setRail(false));
+document.getElementById('rail-toggle').addEventListener('click', () =>
+  setRail(!document.body.classList.contains('rail-collapsed')));
+
+/* ===== Console colour-scheme picker — 16 themes ===== */
+const THEMES=[
+  ["monokai","monokai",["#1e1f1c","#272822","#f8f8f2","#a6e22e","#f92672","#66d9ef"]],
+  ["solarized-dark","solarized dark",["#04222B","#0A2D38","#93A1A1","#8BB80E","#E0483C","#2AA198"]],
+  ["solarized-light","solarized light",["#FDF6E3","#FBF1D6","#586E75","#6B9B0B","#DC322F","#268BD2"]],
+  ["google-light","google light",["#FFFFFF","#F4F4F4","#474A4E","#34A853","#EA4335","#1B9CB8"]],
+  ["google-dark","google dark",["#202124","#2C2D30","#FFFFFF","#34A853","#EA4335","#24C1E0"]],
+  ["lunaria-light","lunaria light",["#EBE4E1","#E2DCD9","#363434","#497D46","#783C1F","#3778A9"]],
+  ["lunaria-eclipse","lunaria eclipse",["#323F46","#3B484F","#DFE2ED","#BEDBC1","#BA9088","#C8429F"]],
+  ["belafonte-day","belafonte day",["#D5CCBA","#CCC3B2","#34292D","#6e6a4e","#BE100E","#426A79"]],
+  ["belafonte-night","belafonte night",["#20111B","#271821","#D5CCBA","#a6a07a","#d6403e","#6F8E97"]],
+  ["paper","paper",["#F2EEDE","#E6E2D3","#1A1A1A","#216609","#CC3E28","#1E6FCC"]],
+  ["zenburn","zenburn",["#3A3A3A","#424241","#DCDCCC","#8FB28F","#CC9393","#8CD0D3"]],
+  ["selenized-black","selenized black",["#181818","#202020","#DEDEDE","#83C746","#FF5E56","#56D8C9"]],
+  ["relaxed","relaxed",["#353A44","#3D424B","#F7F7F7","#A0AC77","#BC5653","#7EAAC7"]],
+  ["espresso","espresso",["#323232","#3A3A3A","#FFFFFF","#A5C261","#D25252","#6C99BB"]],
+  ["dracula","dracula",["#282A36","#343746","#F8F8F2","#50FA7B","#FF5555","#BD93F9"]],
+  ["ubuntu","ubuntu",["#300A24","#3D1530","#EEEEEC","#8AE234","#CC0000","#34E2E2"]],
+];
+const DEFAULT_THEME="monokai";
+const THEME_IDS=THEMES.map(t=>t[0]);
+function mountThemePicker(hostId, onChange){
+  const host=document.getElementById(hostId);
+  let value=DEFAULT_THEME, open=false, activeIdx=THEME_IDS.indexOf(value);
+  const byId=new Map(THEMES.map(t=>[t[0],t]));
+  host.innerHTML =
+    `<div class="dt-cd" role="group" aria-label="Colour theme">
+      <button class="dt-cd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Colour theme" title="Colour theme">
+        <span class="dt-cd-trig-strip"></span><span class="dt-cd-name dt-cd-trig-name"></span>
+        <span class="dt-cd-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="dt-cd-list" role="listbox" aria-label="Colour theme">
+        ${THEMES.map(([id,label,sw]) =>
+          `<div class="dt-cd-option" role="option" data-theme="${id}" aria-selected="${id===value}" tabindex="-1" title="colour: ${label}">
+             <span class="dt-swatch-strip" aria-hidden="true">${sw.map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('')}</span><span class="dt-cd-name">${label}</span>
+           </div>`).join('')}
+      </div>
+    </div>`;
+  const cd=host.querySelector('.dt-cd'), trigger=host.querySelector('.dt-cd-trigger');
+  const trigStrip=host.querySelector('.dt-cd-trig-strip'), trigName=host.querySelector('.dt-cd-trig-name');
+  const list=host.querySelector('.dt-cd-list'), options=Array.from(host.querySelectorAll('.dt-cd-option'));
+  function applyTheme(id){
+    value=THEME_IDS.includes(id)?id:DEFAULT_THEME;
+    document.documentElement.setAttribute('data-theme',value);   // themes BOTH the chrome AND (via tokens) the page bg
+    const def=byId.get(value);
+    trigStrip.className='dt-cd-trig-strip dt-swatch-strip dt-swatch-strip-sm';
+    trigStrip.setAttribute('aria-hidden','true');
+    trigStrip.innerHTML=def[2].map(c=>`<span class="dt-swatch" style="background:${c}"></span>`).join('');
+    trigName.textContent=def[1];
+    options.forEach(o=>o.setAttribute('aria-selected',String(o.getAttribute('data-theme')===value)));
+    if (onChange) onChange(value);
+  }
+  function setActive(i){ activeIdx=(i+options.length)%options.length; options.forEach((o,k)=>o.classList.toggle('dt-cd-active',k===activeIdx)); }
+  function setOpen(next){ open=next; cd.classList.toggle('dt-cd-open',open); trigger.setAttribute('aria-expanded',String(open)); if(open) setActive(Math.max(0,THEME_IDS.indexOf(value))); }
+  function choose(id){ applyTheme(id); setOpen(false); }
+  options.forEach(o=>o.addEventListener('click',()=>choose(o.getAttribute('data-theme'))));
+  trigger.addEventListener('click',()=>setOpen(!open));
+  trigger.addEventListener('keydown',ev=>{ if(['ArrowDown','Enter',' ','Spacebar'].includes(ev.key)){ev.preventDefault();setOpen(true);list.focus?.();} });
+  list.setAttribute('tabindex','-1');
+  list.addEventListener('keydown',ev=>{
+    if(ev.key==='Escape'){ev.preventDefault();setOpen(false);trigger.focus();}
+    else if(ev.key==='ArrowDown'){ev.preventDefault();setActive(activeIdx+1);}
+    else if(ev.key==='ArrowUp'){ev.preventDefault();setActive(activeIdx-1);}
+    else if(['Enter',' ','Spacebar'].includes(ev.key)){ev.preventDefault();const id=options[activeIdx]?.getAttribute('data-theme'); if(id) choose(id);}
+  });
+  document.addEventListener('click',ev=>{ if(!open) return; let n=ev.target; while(n){ if(n===cd) return; n=n.parentNode; } setOpen(false); });
+  applyTheme(STATE.theme || DEFAULT_THEME);   // honor ?theme= (applyUrlPresets set STATE.theme)
+}
+
+/* ===================================================================
+   TYPEFACE — apply the chosen option to the chrome + every same-origin pane.
+
+   token contract (variants/T/console4.css):
+     --v2-mono   ← option data/code face  (figure labels / numerals / code)
+     --v2-sans   ← option prose face      (body / prose)
+     --n-font-head  ← option head face    (headings + big numerals)
+     --n-font-paper ← option prose face   (publication body)
+   The brand --v2-brand-mono stays FIXED (JetBrains Mono) and is never rewritten.
+   =================================================================== */
+
+/* write the four font vars onto a doc's :root (chrome doc OR a pane's doc). */
+function setFontVars(doc, tf) {
+  const r = doc.documentElement;
+  r.style.setProperty('--v2-mono', tf.code);   // data/code face → figure labels/data
+  r.style.setProperty('--v2-sans', tf.prose);  // prose face → body
+  r.style.setProperty('--n-font-head', tf.head);
+  r.style.setProperty('--n-font-paper', tf.prose);
+}
+
+/* ensure a doc's <head> carries the Google-Fonts <link>s + the self-hosted
+   @font-face block. Idempotent — tagged with data-tf-fonts so re-injection is
+   a no-op (digest-gated: never duplicate on reload). */
+function ensurePaneFonts(doc) {
+  if (!doc || !doc.head) return;
+  if (!doc.querySelector('style[data-tf-fonts="selfhost"]')) {
+    const st = doc.createElement('style');
+    st.setAttribute('data-tf-fonts', 'selfhost');
+    st.textContent = PANE_SELF_HOST_CSS;
+    doc.head.appendChild(st);
+  }
+  if (!doc.querySelector('link[data-tf-fonts="cdn"]')) {
+    PANE_GFONT_LINKS.forEach(href => {
+      const l = doc.createElement('link');
+      l.rel = 'stylesheet'; l.href = href;
+      l.setAttribute('data-tf-fonts', 'cdn');
+      doc.head.appendChild(l);
+    });
+  }
+}
+
+/* inject (or refresh) the OVERRIDE style that actually re-fonts a study pane.
+   The study pages set body { font-family: <literal mono stack> } and a few set
+   svg text { font-family: <literal mono stack> }; we beat those with !important:
+     body  → prose face (so all inherited prose + headings re-font)
+     svg text / text → data/code face (the figure labels + numerals)
+   Heading-ish chrome in the pages inherits from body, which is fine. */
+function applyPaneOverride(doc, tf) {
+  if (!doc || !doc.head) return;
+  let st = doc.querySelector('style[data-tf-fonts="override"]');
+  if (!st) {
+    st = doc.createElement('style');
+    st.setAttribute('data-tf-fonts', 'override');
+    doc.head.appendChild(st);
+  }
+  st.textContent =
+    `:root{--v2-mono:${tf.code};--v2-sans:${tf.prose};--n-font-head:${tf.head};--n-font-paper:${tf.prose};}` +
+    `body{font-family:${tf.prose} !important;}` +
+    `svg text, text{font-family:${tf.code} !important;}`;
+}
+
+/* font a single pane's contentDocument (same-origin :7952 → no CORS). */
+function fontPane(fr, tf) {
+  let doc;
+  try { doc = fr.contentDocument; } catch (e) { return; }   // cross-origin guard
+  if (!doc || !doc.documentElement) return;
+  ensurePaneFonts(doc);
+  setFontVars(doc, tf);
+  applyPaneOverride(doc, tf);
+}
+
+/* re-font EVERY currently shown pane (used on typeface change). */
+function fontAllPanes() {
+  const tf = currentTypeface();
+  enabledLevelsInOrder().forEach(k => {
+    const fr = document.getElementById('if-' + k);
+    if (fr) fontPane(fr, tf);
+  });
+}
+
+/* apply the chosen typeface to the composer CHROME (this doc). */
+function applyTypefaceToChrome() {
+  setFontVars(document, currentTypeface());
+}
+
+/* full typeface apply — chrome + every pane + the picker's roles line + popover. */
+function applyTypeface() {
+  applyTypefaceToChrome();
+  fontAllPanes();
+  syncTypefaceRoles();
+  syncTypefacePicker();
+}
+
+/* one delegated load-listener for the preview host: whenever ANY pane iframe
+   finishes loading (initial render, option/structure/theme reload), re-font it.
+   capture:true so it catches iframe load events (which don't bubble). */
+document.getElementById('preview').addEventListener('load', ev => {
+  const fr = ev.target;
+  if (fr && fr.tagName === 'IFRAME') fontPane(fr, currentTypeface());
+}, true);
+
+/* ---- the typeface PICKER — grouped popover (Console dt-cd idiom) ----
+   3 mode groups × 4 finalized options, micro-preview per row, selected state.
+   Drives the SAME STATE.typeface + applyTypeface() the URL-param path uses, so
+   ?typeface=mode:id still works (syncTypefacePicker repaints from STATE). */
+let syncTypefacePicker = () => {};
+function buildTypefacePicker() {
+  const pop = document.getElementById('tf-pop');
+  const trigger = document.getElementById('tf-pop-trigger');
+  const trigMode = document.getElementById('tf-trig-mode');
+  const trigFace = document.getElementById('tf-trig-face');
+  const list = document.getElementById('tf-pop-list');
+  let open = false;
+
+  // build the grouped rows: one .tf-pop-group per mode, 4 options each.
+  list.innerHTML = TF_MODE_ORDER.map(m => `
+    <div class="tf-pop-group">
+      <div class="grp-label">${TF_MODE_LABEL[m]}</div>
+      ${(TYPEFACE_MODES[m] || []).map(o => `
+        <div class="tf-pop-option" role="option" data-mode="${m}" data-id="${o.id}">
+          <span class="opt-radio" aria-hidden="true"></span>
+          <span class="opt-name">${o.label}</span>
+          <span class="opt-micro">
+            <span class="mp" style="font-family:${o.prose}">Ag</span>
+            <span class="mc" style="font-family:${o.code}">0.123</span>
+          </span>
+        </div>`).join('')}
+    </div>`).join('');
+
+  function paint() {
+    // guard: if the chosen option no longer exists in its mode, fall to first
+    const cur = currentTypeface();
+    STATE.typeface.option = cur.id;
+    list.querySelectorAll('.tf-pop-option').forEach(o =>
+      o.setAttribute('aria-selected',
+        String(o.dataset.mode === STATE.typeface.mode && o.dataset.id === STATE.typeface.option)));
+    trigMode.textContent = TF_MODE_LABEL[STATE.typeface.mode] || '';
+    trigFace.textContent = cur.label;
+  }
+  syncTypefacePicker = paint;
+
+  function setOpen(n) { open = n; pop.classList.toggle('open', open); trigger.setAttribute('aria-expanded', String(open)); }
+  trigger.addEventListener('click', () => setOpen(!open));
+  list.querySelectorAll('.tf-pop-option').forEach(o =>
+    o.addEventListener('click', () => {
+      STATE.typeface.mode = o.dataset.mode;
+      STATE.typeface.option = o.dataset.id;
+      paint();
+      setOpen(false);
+      applyTypeface();
+    }));
+  document.addEventListener('click', ev => {
+    if (!open) return; let n = ev.target; while (n) { if (n === pop) return; n = n.parentNode; } setOpen(false);
+  });
+  paint();   // initial sync from STATE (reflects any ?typeface= preset)
+}
+function syncTypefaceRoles() {
+  const tf = currentTypeface();
+  const face = stack => (stack.match(/'([^']+)'/) || [,stack])[1];
+  document.getElementById('tf-roles').innerHTML =
+    `prose → <b>${face(tf.prose)}</b> · data/code → <b>${face(tf.code)}</b>` +
+    (face(tf.head) !== face(tf.prose) ? ` · head → <b>${face(tf.head)}</b>` : '');
+}
+
+/* ===================================================================
+   PICKS TRAY — selection/ballot for the composer.
+   Pane picks group by level; one "style" group holds style picks.
+   Exports the SHARED Markdown shape. Persists to localStorage.
+   =================================================================== */
+
+/* a pane pick's stable key + its human export label. The single-round level
+   carries the structure (so "single-round · double-elim" is distinct from
+   "single-round · swiss"); other levels are structure-agnostic in the label. */
+function panePickKey(p) {
+  return p.structure ? `pane:${p.level}:${p.structure}:${p.opt}` : `pane:${p.level}:${p.opt}`;
+}
+/* the pick describing the CURRENT config of a pane (for toggling) */
+function currentPanePick(level) {
+  const L = LEVEL_BY_KEY[level];
+  const opt = STATE.option[level] || 1;
+  return L && L.structure
+    ? { type:'pane', level, structure: STATE.structure, opt }
+    : { type:'pane', level, opt };
+}
+function findPaneIdx(pick) {
+  const key = panePickKey(pick);
+  return picksState.picks.findIndex(p => p.type === 'pane' && panePickKey(p) === key);
+}
+function togglePanePick(level) {
+  const pick = currentPanePick(level);
+  const i = findPaneIdx(pick);
+  if (i >= 0) picksState.picks.splice(i, 1);
+  else picksState.picks.push(pick);
+  savePicks(); syncPaneToggles(); renderTray();
+}
+
+/* a style pick = the current theme + typeface mode/option. Deduped on the trio. */
+function currentStylePick() {
+  return { type:'style', theme: STATE.theme, tfMode: STATE.typeface.mode, tfOption: STATE.typeface.option };
+}
+function stylePickKey(p) { return `style:${p.theme}:${p.tfMode}:${p.tfOption}`; }
+function pinStylePick() {
+  const pick = currentStylePick();
+  const key = stylePickKey(pick);
+  const i = picksState.picks.findIndex(p => p.type === 'style' && stylePickKey(p) === key);
+  if (i >= 0) return;                  // already pinned this exact style — no dup
+  picksState.picks.push(pick);
+  savePicks(); renderTray();
+}
+function removePickByKey(key) {
+  const i = picksState.picks.findIndex(p =>
+    (p.type === 'pane' ? panePickKey(p) : stylePickKey(p)) === key);
+  if (i >= 0) { picksState.picks.splice(i, 1); savePicks(); syncPaneToggles(); renderTray(); }
+}
+function clearPicks() {
+  picksState = { picks: [], notes: picksState.notes };
+  savePicks(); syncPaneToggles(); renderTray();
+}
+
+/* reflect pick-state onto each shown pane's heart (pressed when the pane's
+   CURRENT config matches a recorded pane pick). */
+function syncPaneToggles() {
+  document.querySelectorAll('.dn-h2 .pick-toggle[data-level]').forEach(btn => {
+    const on = findPaneIdx(currentPanePick(btn.dataset.level)) >= 0;
+    btn.setAttribute('aria-pressed', String(on));
+    btn.textContent = on ? '♥' : '♡';
+    btn.title = on ? 'Picked — click to remove' : 'Pick this pane';
+  });
+}
+
+/* the human label + the composer deep-link for a style pick */
+function styleExportLabel(p) {
+  const modeLabel = (TF_MODE_LABEL[p.tfMode] || p.tfMode);
+  return `theme=${p.theme} · typeface=${modeLabel}/${p.tfOption}`;
+}
+function styleDeepLink(p) {
+  const params = new URLSearchParams({
+    template: STATE.template,
+    structure: STATE.structure,
+    typeface: `${p.tfMode}:${p.tfOption}`,
+    theme: p.theme,
+  });
+  return `?${params.toString()}`;
+}
+
+/* ---- the SHARED Markdown export ---- */
+function buildMarkdown() {
+  const lines = ['## Tournament-viz picks (composer)'];
+  const panes = picksState.picks.filter(p => p.type === 'pane');
+  const styles = picksState.picks.filter(p => p.type === 'style');
+  // panes in dashboard (LEVELS) order, then by opt
+  const levelOrder = LEVELS.map(l => l.key);
+  panes.sort((a,b) => (levelOrder.indexOf(a.level) - levelOrder.indexOf(b.level)) || ((a.opt||0)-(b.opt||0)));
+  panes.forEach(p => {
+    const lab = p.structure ? `${p.level} · ${p.structure}` : p.level;
+    lines.push(`- ${lab}: opt ${p.opt}`);
+  });
+  styles.forEach(p => {
+    lines.push(`- style: ${styleExportLabel(p)}  ${styleDeepLink(p)}`);
+  });
+  if (lines.length === 1) lines.push('- (none yet)');
+  const notes = (picksState.notes || '').trim();
+  lines.push(`Notes: ${notes || '-'}`);
+  return lines.join('\n');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ---- the floating tray ---- */
+function mountTray() {
+  const tray = document.createElement('div');
+  tray.id = 'picks-tray';
+  tray.innerHTML = `
+    <div class="pt-card">
+      <div class="pt-head" id="pt-head">
+        <span class="pt-title">♥ My picks</span>
+        <span class="pt-count" id="pt-count">0</span>
+        <span class="pt-spacer"></span>
+        <span class="pt-chevron" aria-hidden="true">▾</span>
+      </div>
+      <div class="pt-body">
+        <div class="pt-pin-row">
+          <button class="pt-pin-btn" id="pt-pin-style" type="button" title="Record the current theme + typeface as a style pick">♥ pin current style</button>
+        </div>
+        <div id="pt-list"></div>
+        <div>
+          <div class="pt-notes-lab">notes</div>
+          <textarea id="pt-notes" placeholder="free text for your collaborator…"></textarea>
+        </div>
+        <div class="pt-actions">
+          <button class="pt-btn primary" id="pt-copy" type="button">Copy picks</button>
+          <button class="pt-btn" id="pt-clear" type="button">Clear all</button>
+        </div>
+        <div>
+          <div class="pt-export-lab">export (select-all → copy if clipboard blocked)</div>
+          <textarea id="pt-export" readonly></textarea>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(tray);
+
+  const head = tray.querySelector('#pt-head');
+  if (localStorage.getItem(PICKS_KEY + ':collapsed') === '1') tray.classList.add('collapsed');
+  head.addEventListener('click', () => {
+    tray.classList.toggle('collapsed');
+    localStorage.setItem(PICKS_KEY + ':collapsed', tray.classList.contains('collapsed') ? '1' : '0');
+  });
+
+  tray.querySelector('#pt-pin-style').addEventListener('click', () => {
+    const btn = tray.querySelector('#pt-pin-style');
+    pinStylePick();
+    btn.textContent = '✓ style pinned';
+    setTimeout(() => { btn.textContent = '♥ pin current style'; }, 1300);
+  });
+
+  const notes = tray.querySelector('#pt-notes');
+  notes.value = picksState.notes || '';
+  notes.addEventListener('input', () => { picksState.notes = notes.value; savePicks(); refreshExport(); });
+
+  tray.querySelector('#pt-clear').addEventListener('click', clearPicks);
+  tray.querySelector('#pt-copy').addEventListener('click', () => {
+    const md = buildMarkdown();
+    tray.classList.add('show-export');
+    const ex = tray.querySelector('#pt-export');
+    ex.value = md; ex.focus(); ex.select();
+    const btn = tray.querySelector('#pt-copy');
+    const done = () => { btn.textContent = '✓ Copied'; btn.classList.add('pt-copied');
+      setTimeout(() => { btn.textContent = 'Copy picks'; btn.classList.remove('pt-copied'); }, 1600); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(md).then(done, () => { try { document.execCommand('copy'); } catch(e){} done(); });
+      } else { try { document.execCommand('copy'); } catch(e){} done(); }
+    } catch (e) { done(); }
+  });
+}
+
+function refreshExport() {
+  const tray = document.getElementById('picks-tray');
+  const ex = document.getElementById('pt-export');
+  if (ex && tray && tray.classList.contains('show-export')) ex.value = buildMarkdown();
+}
+
+function renderTray() {
+  const list = document.getElementById('pt-list');
+  const countEl = document.getElementById('pt-count');
+  if (!list) return;
+  const n = picksState.picks.length;
+  countEl.textContent = String(n);
+  countEl.classList.toggle('zero', n === 0);
+
+  const panes = picksState.picks.filter(p => p.type === 'pane');
+  const styles = picksState.picks.filter(p => p.type === 'style');
+  if (!n) {
+    list.innerHTML = `<div class="pt-empty">No picks yet — tap a ♡ in a pane header, or pin the current style.</div>`;
+    refreshExport(); return;
+  }
+  const levelOrder = LEVELS.map(l => l.key);
+  panes.sort((a,b) => (levelOrder.indexOf(a.level) - levelOrder.indexOf(b.level)) || ((a.opt||0)-(b.opt||0)));
+
+  let html = '';
+  if (panes.length) {
+    html += `<div class="pt-group"><div class="pt-group-label">Levels</div>`;
+    panes.forEach(p => {
+      const lab = p.structure ? `${p.level} · ${p.structure}` : p.level;
+      html += `<div class="pt-item">
+        <span class="pt-item-text">${escapeHtml(lab)} <span class="pt-item-id">opt ${p.opt}</span></span>
+        <button class="pt-rm" type="button" data-key="${escapeHtml(panePickKey(p))}" title="Remove">✕</button>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  if (styles.length) {
+    html += `<div class="pt-group"><div class="pt-group-label">Style</div>`;
+    styles.forEach(p => {
+      html += `<div class="pt-item">
+        <span class="pt-item-text">theme=<b style="color:var(--accent-2)">${escapeHtml(p.theme)}</b> <span class="pt-item-id">${escapeHtml((TF_MODE_LABEL[p.tfMode]||p.tfMode))}/${escapeHtml(p.tfOption)}</span></span>
+        <button class="pt-rm" type="button" data-key="${escapeHtml(stylePickKey(p))}" title="Remove">✕</button>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  list.innerHTML = html;
+  list.querySelectorAll('.pt-rm').forEach(b =>
+    b.addEventListener('click', () => removePickByKey(b.dataset.key)));
+  refreshExport();
+}
+
+/* ===================================================================
+   BOOT
+   =================================================================== */
+buildTemplateRow();
+// ---- URL-param presets (deep-links): the typeface study links here with
+//      ?template=candidate to land on a TEXT-HEAVY page; optional
+//      ?typeface=<mode>[:<optionId>] and ?theme=<name>. Applied BEFORE the
+//      pickers build so the controls reflect the preset. ----
+(function applyUrlPresets(){
+  const p = new URLSearchParams(location.search);
+  const tpl = p.get('template');
+  if (tpl && TEMPLATES[tpl]) STATE.template = tpl;
+  const tf = p.get('typeface');
+  if (tf) {
+    const [m, o] = tf.split(':');
+    if (m && TYPEFACE_MODES[m]) {
+      STATE.typeface.mode = m;
+      STATE.typeface.option = (o && TYPEFACE_MODES[m].some(x => x.id === o)) ? o : TYPEFACE_MODES[m][0].id;
+    }
+  }
+  const th = p.get('theme');
+  if (th) STATE.theme = th;
+  const st = p.get('structure');
+  if (st && STRUCT_BY_ID[st]) STATE.structure = st;
+})();
+buildLevelList();
+buildTypefacePicker();
+mountThemePicker('theme-picker', theme => {
+  STATE.theme = theme;
+  retheme();
+});
+// mount the picks tray BEFORE the first preview render so renderTray() has a
+// home; the tray recolors with the theme via the Console tokens (no rebuild).
+mountTray();
+// default preset is Round / Tournament; ?template=<name> (above) overrides it
+applyTemplate(STATE.template);
+// apply the default typeface to the chrome immediately; panes get fonted via the
+// preview host's load-listener as each iframe finishes (and on every reload).
+applyTypeface();
+// paint the tray from any persisted picks + sync the pane hearts
+renderTray();
+syncPaneToggles();
+</script>
+</body>
+</html>
