@@ -44,6 +44,7 @@ from zicato.core.types import (
     MutationPoint,
     OutcomeRecord,
     OutputScope,
+    PassRateMonotonicityScope,
     Patch,
     PatchOpKind,
     Pattern,
@@ -116,6 +117,7 @@ __all__ = [
     "Experiment",
     # epoch / generation
     "ScoringWeights",
+    "PassRateMonotonicityScope",
     "EpochConfig",
     "Generation",
     # patterns

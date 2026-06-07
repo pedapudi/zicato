@@ -4006,6 +4006,9 @@ def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
         kwargs["promote_margin"] = float(raw["promote_margin"])
     if "pass_rate_monotonicity" in raw:
         kwargs["pass_rate_monotonicity"] = bool(raw["pass_rate_monotonicity"])
+    raw_scope = raw.get("pass_rate_monotonicity_scope")
+    if raw_scope in ("per_entry", "aggregate"):
+        kwargs["pass_rate_monotonicity_scope"] = raw_scope
     if "regression_gate_enabled" in raw:
         kwargs["regression_gate_enabled"] = bool(raw["regression_gate_enabled"])
 
@@ -4084,6 +4087,7 @@ def build_gate_breakdown(
     ``unknown`` rather than guessing.
     """
     from zicato.tournament.gate import (  # noqa: PLC0415
+        PASS_RATE_MONOTONICITY_TOLERANCE,
         _regressed_entries,
         _regressed_namespaces,
         evaluate_gate,
@@ -4211,13 +4215,29 @@ def build_gate_breakdown(
     regressed_entries = _regressed_entries(parent_agg, child_agg) if pass_mono_enabled else []
     regressed_ns = _regressed_namespaces(parent_agg, child_agg, weights) if ns_mono_enabled else []
 
+    # The pass-rate monotonicity rule's granularity is operator-selected.
+    # Under "aggregate" the rule fires on an overall pass-rate drop rather
+    # than a per-entry flip — mirror the gate's own predicate
+    # (delta_pass_rate < -tolerance) here so the dashboard never
+    # re-implements a threshold of its own.
+    pass_mono_scope = str(getattr(weights, "pass_rate_monotonicity_scope", "per_entry"))
+    parent_pass_rate = float(parent_agg.get("pass_rate", 1.0))
+    child_pass_rate = float(child_agg.get("pass_rate", 1.0))
+    delta_pass_rate = child_pass_rate - parent_pass_rate
+    if pass_mono_scope == "aggregate":
+        pass_mono_regressed = pass_mono_enabled and (
+            delta_pass_rate < -PASS_RATE_MONOTONICITY_TOLERANCE
+        )
+    else:
+        pass_mono_regressed = bool(pass_mono_enabled and regressed_entries)
+
     # The fired rule is the first that rejects, in gate order. Regression
     # suite is a pre-gate the dashboard cannot replay (no recorded
     # outcome on disk), so it is reported as pass/skipped, never fired.
     fired_rule: str | None = None
     if scalar_failed:
         fired_rule = "scalar_margin"
-    elif pass_mono_enabled and regressed_entries:
+    elif pass_mono_regressed:
         fired_rule = "pass_rate_monotonicity"
     elif ns_mono_enabled and regressed_ns:
         fired_rule = "namespace_monotonicity"
@@ -4283,6 +4303,21 @@ def build_gate_breakdown(
             "status": "not_reached",
             "detail": "not reached (an earlier rule fired)",
             "fired": False,
+        }
+    elif pass_mono_scope == "aggregate":
+        # Aggregate scope: render the overall pass-rate movement, not the
+        # per-entry regressed list — a strictly-better aggregate is allowed
+        # to reshuffle which entries pass.
+        rate_detail = (
+            f"overall {parent_pass_rate:.2f} → {child_pass_rate:.2f} "
+            f"({delta_pass_rate:+.2f}; aggregate scope)"
+        )
+        pass_rule = {
+            "id": "pass_rate_monotonicity",
+            "label": "Pass-rate monotonicity",
+            "status": "fail" if pass_mono_regressed else "pass",
+            "detail": rate_detail,
+            "fired": fired_rule == "pass_rate_monotonicity",
         }
     elif regressed_entries:
         pass_rule = {

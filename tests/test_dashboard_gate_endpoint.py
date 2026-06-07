@@ -215,6 +215,95 @@ def test_gate_pass_rate_monotonicity_rejection(tmp_path: Path) -> None:
     assert rules["namespace_monotonicity"]["status"] == "not_reached"
 
 
+def test_gate_aggregate_scope_promotes_and_renders_rate_delta(tmp_path: Path) -> None:
+    """Under aggregate scope (issue #17) a reshuffled-but-net-neutral
+    challenger promotes, and the pass-rate rule renders the overall
+    pass-rate delta rather than a per-entry regressed list."""
+    champion = _gen_score(
+        scalar=0.50,
+        pass_rate=0.5,
+        per_entry={
+            "entry_x": {"drift_loss": 0.5, "pass_fail": True},
+            "entry_y": {"drift_loss": 0.5, "pass_fail": False},
+        },
+        namespace_aggregates={"drift:": 0.5},
+    )
+    challenger = _gen_score(
+        scalar=0.20,  # improved scalar
+        pass_rate=0.5,  # net pass-rate held: x flipped off, y flipped on
+        per_entry={
+            "entry_x": {"drift_loss": 0.2, "pass_fail": False},
+            "entry_y": {"drift_loss": 0.2, "pass_fail": True},
+        },
+        namespace_aggregates={"drift:": 0.2},
+    )
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={
+            "promote_margin": 0.01,
+            "pass_rate_monotonicity": True,
+            "pass_rate_monotonicity_scope": "aggregate",
+        },
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+
+    assert result["decision"] == "promoted"
+    rules = {r["id"]: r for r in result["rules"]}
+    pass_rule = rules["pass_rate_monotonicity"]
+    assert pass_rule["status"] == "pass"
+    assert pass_rule["fired"] is False
+    # Aggregate detail mentions the overall pass-rate, NOT a regressed id list.
+    assert "overall" in pass_rule["detail"]
+    assert "aggregate scope" in pass_rule["detail"]
+    assert "entry_x" not in pass_rule["detail"]
+
+
+def test_gate_aggregate_scope_fires_on_net_regression(tmp_path: Path) -> None:
+    """A genuine overall pass-rate drop under aggregate scope fires the rule
+    and renders the pass-rate delta detail."""
+    champion = _gen_score(
+        scalar=0.50,
+        pass_rate=1.0,
+        per_entry={
+            "entry_x": {"drift_loss": 0.5, "pass_fail": True},
+            "entry_y": {"drift_loss": 0.5, "pass_fail": True},
+        },
+        namespace_aggregates={"drift:": 0.5},
+    )
+    challenger = _gen_score(
+        scalar=0.20,  # improved scalar, but pass-rate fell 1.0 -> 0.5
+        pass_rate=0.5,
+        per_entry={
+            "entry_x": {"drift_loss": 0.2, "pass_fail": False},
+            "entry_y": {"drift_loss": 0.2, "pass_fail": True},
+        },
+        namespace_aggregates={"drift:": 0.2},
+    )
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={
+            "promote_margin": 0.01,
+            "pass_rate_monotonicity": True,
+            "pass_rate_monotonicity_scope": "aggregate",
+        },
+    )
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+
+    assert result["decision"] == "rejected"
+    assert "overall pass-rate fell by" in result["reason"]
+    rules = {r["id"]: r for r in result["rules"]}
+    pass_rule = rules["pass_rate_monotonicity"]
+    assert pass_rule["status"] == "fail"
+    assert pass_rule["fired"] is True
+    assert "overall" in pass_rule["detail"]
+    # The later namespace rule is not reached.
+    assert rules["namespace_monotonicity"]["status"] == "not_reached"
+
+
 # ---------------------------------------------------------------------------
 # Endpoint wiring + degradation.
 # ---------------------------------------------------------------------------

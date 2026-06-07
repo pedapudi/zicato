@@ -50,7 +50,8 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
   "plan_revision_weight": 0.5,
   "runtime_weight": 0.0,
   "promote_margin": 0.01,
-  "pass_rate_monotonicity": true
+  "pass_rate_monotonicity": true,
+  "pass_rate_monotonicity_scope": "per_entry"
 }
 ```
 
@@ -67,7 +68,8 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
 | `plan_revision_weight` | `0.5` | Coefficient on `plan_revisions`. |
 | `runtime_weight` | `0.0` | Coefficient on per-second runtime. Usually `0.0` — the wall-clock budget is the hard ceiling; set >0 only when runtime matters intrinsically. |
 | `promote_margin` | `0.01` | Minimum scalar improvement the child must show over the parent to be promoted (regression-noise floor). |
-| `pass_rate_monotonicity` | `true` | When true, ANY pass-rate regression rejects the child regardless of drift improvement. |
+| `pass_rate_monotonicity` | `true` | On/off switch for the pass-rate gate. When false, the rule is disabled. |
+| `pass_rate_monotonicity_scope` | `"per_entry"` | Granularity when the rule is on: `"per_entry"` rejects if ANY champion-passed entry flips to fail (invariant/regression boards); `"aggregate"` rejects only if the OVERALL pass-rate drops (sampled evaluation boards). |
 
 (The dataclass also carries an optional `regression_gate_enabled` /
 `regression_test_command` test-suite gate; leave it off unless the snapshot
@@ -99,12 +101,21 @@ A child replaces the parent only when BOTH hold:
 - **Drift margin:** `child.scalar < parent.scalar - promote_margin`. A larger
   `promote_margin` demands a more convincing win and absorbs LLM run-to-run
   noise.
-- **Pass-rate monotonicity:** with `pass_rate_monotonicity: true`, if any entry
-  the parent passed comes back failing on the child, the child is **rejected**
-  regardless of drift gains (rejection reason names the first regressing entry).
-  This guards against the proposer reducing drift by refusing to attempt hard
-  entries. Flip to `false` only for experimental epochs that expect non-monotone
-  exploration.
+- **Pass-rate monotonicity:** with `pass_rate_monotonicity: true`, the gate
+  guards pass-rate. The granularity is `pass_rate_monotonicity_scope`:
+  - `"per_entry"` (default) — if **any** entry the parent passed comes back
+    failing on the child, the child is **rejected** regardless of drift gains
+    (rejection reason lists the regressing entries). Best for
+    invariant/regression-suite boards where every entry must not regress.
+  - `"aggregate"` — reject only when the child's **overall** pass-rate drops
+    below the parent's (modulo float noise). A challenger may trade *which*
+    entries pass as long as the net holds or improves. Best for sampled
+    evaluation boards where individual pass/fail is noisy and a strictly-better
+    challenger should not be vetoed by a single entry flip.
+
+  Both guard against the proposer reducing drift by refusing to attempt hard
+  entries. Flip `pass_rate_monotonicity` to `false` only for experimental epochs
+  that expect non-monotone exploration (there is no `"off"` scope value).
 
 ## `scoring.json` is part of the evaluation contract
 

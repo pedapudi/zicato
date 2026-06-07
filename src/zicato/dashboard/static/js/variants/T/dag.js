@@ -446,8 +446,12 @@ export function lifecycleDag(spec) {
           + (isNum(gx.margin) ? ` (needs ≤ ${fmt(gx.margin, 2)})` : '')
           + ` → ${gx.deltaScalar > 0 ? 'worse than champion → fails the scalar-margin rule → ' : ''}${verb}.`;
       } else if (gx.decidingRule === 'pass_rate_monotonicity') {
-        gateTip += `Scalar may be better, BUT it regressed a previously-passing predicate`
-          + (gx.regressed ? ` (\`${gx.regressed}\`)` : '') + ` — fails the pass-rate-monotonicity rule (rule 2) → ${verb}.`;
+        // Scope is operator-selected (per-entry vs aggregate); the backend
+        // detail/reason already says which way it regressed, so prefer that
+        // wording over hard-coding per-entry semantics here.
+        gateTip += `Scalar may be better, BUT it failed the pass-rate-monotonicity rule (rule 2)`
+          + (gx.detail ? ` — ${gx.detail}` : (gx.regressed ? ` — regressed \`${gx.regressed}\`` : ''))
+          + ` → ${verb}.`;
       } else if (gx.decidingRule === 'namespace_monotonicity') {
         gateTip += `Scalar may be better, BUT it regressed a namespace`
           + (gx.regressed ? ` (\`${gx.regressed}\`)` : '') + ` — fails the namespace-monotonicity rule (rule 3) → ${verb}.`;

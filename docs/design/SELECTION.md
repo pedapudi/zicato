@@ -348,11 +348,17 @@ flowchart TB
    noise-threshold so a microscopic, possibly-spurious gain does not
    change the crown.
 2. **Pass-rate monotonicity** (`pass_rate_monotonicity=True` by
-   default). For *every* board entry the champion passed
-   (`pass_fail=True`), the challenger must also pass. Any such regression
-   rejects the challenger outright, *regardless of how much the scalar
-   improved*. This is the hard per-task feasibility constraint from §1.4
-   — the half of the gate the RL trust-region methods cannot express.
+   default). Its granularity is set by `pass_rate_monotonicity_scope`
+   (`"per_entry"` default, or `"aggregate"`). Under `per_entry`, for
+   *every* board entry the champion passed (`pass_fail=True`) the
+   challenger must also pass; any such regression rejects the challenger
+   outright, *regardless of how much the scalar improved* — the hard
+   per-task feasibility constraint from §1.4, the half of the gate the RL
+   trust-region methods cannot express. Under `aggregate`, only a drop in
+   the challenger's *overall* pass-rate rejects, so a strictly-better
+   challenger may reshuffle which entries pass — the right policy for
+   sampled evaluation boards where individual pass/fail is noisy. See
+   [`SCORING.md`](SCORING.md) §5 for the trade-off.
 3. **Per-namespace monotonicity.** For each metric namespace flagged in
    `namespace_monotonicity`, the challenger's per-namespace aggregate may
    not move in that namespace's "worse" direction (the sign of its

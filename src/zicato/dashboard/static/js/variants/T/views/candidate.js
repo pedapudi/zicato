@@ -325,6 +325,10 @@ function deriveGateExplain(gate) {
     decision,
     decidingRule: deciding ? (deciding.id || null) : null,
     decidingLabel: deciding ? (deciding.label || deciding.id || null) : null,
+    // The deciding rule's raw detail string, scope-agnostic — the gate
+    // tooltip prefers this over hard-coded per-entry wording so an
+    // aggregate-scope pass-rate detail renders verbatim.
+    detail: deciding ? (deciding.detail || null) : null,
     deltaScalar, margin, regressed,
     reason: gate.reason || null,
   };

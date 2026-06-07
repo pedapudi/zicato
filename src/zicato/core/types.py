@@ -1369,6 +1369,30 @@ class MetricMovementActual:
 TournamentDecision = Literal["promoted", "rejected", "deferred"]
 
 
+#: Granularity of the promote gate's pass-rate monotonicity check, gating
+#: how a pass-rate movement rejects a challenger when
+#: :attr:`ScoringWeights.pass_rate_monotonicity` is on:
+#:
+#: * ``"per_entry"`` (default, today's behaviour) — EVERY entry the
+#:   champion passed must still pass on the challenger; any entry that
+#:   flips champion-pass → challenger-fail rejects. The right policy when
+#:   every board entry is a must-not-regress invariant (a regression
+#:   suite).
+#: * ``"aggregate"`` — reject only when the challenger's OVERALL pass-rate
+#:   falls below the champion's (modulo a small float-noise tolerance). A
+#:   challenger may trade individual entries as long as the net pass-rate
+#:   holds or improves. The right policy for sampled evaluation boards
+#:   where individual pass/fail is noisy and promotions should track the
+#:   optimized aggregate.
+#:
+#: There is intentionally no ``"off"`` token: ``off`` is already expressed
+#: by ``pass_rate_monotonicity=False``. Keeping the on/off switch a bool
+#: and the granularity a separate field means existing ``scoring.json``
+#: documents are byte-identical (the new field defaults to ``"per_entry"``)
+#: and the contract hash is unchanged for every epoch already on disk.
+PassRateMonotonicityScope = Literal["per_entry", "aggregate"]
+
+
 #: The five v1 tournament structures. ``"gauntlet"`` is the default and
 #: reproduces the historical king-of-the-hill behaviour byte-for-byte.
 #: The other four are configurable per-epoch via the ``tournament`` block
@@ -1962,11 +1986,24 @@ class ScoringWeights:
         over the parent to be promoted. Acts as a regression-noise
         threshold.
     pass_rate_monotonicity:
-        When ``True`` (default), any regression in pass rate
-        automatically rejects the child regardless of drift-side
-        improvement. The stricter half of the tournament gate; operators
-        can flip to ``False`` for experimental epochs where they expect
-        non-monotone exploration.
+        When ``True`` (default), a pass-rate regression rejects the child
+        regardless of drift-side improvement. The stricter half of the
+        tournament gate; operators can flip to ``False`` for experimental
+        epochs where they expect non-monotone exploration. The on/off
+        switch only — :attr:`pass_rate_monotonicity_scope` selects WHICH
+        movement counts as a regression.
+    pass_rate_monotonicity_scope:
+        Granularity of the pass-rate monotonicity check when
+        :attr:`pass_rate_monotonicity` is on (see
+        :data:`PassRateMonotonicityScope`). ``"per_entry"`` (default,
+        back-compatible) rejects when ANY champion-passed entry flips to
+        fail — the right policy for invariant / regression-suite boards.
+        ``"aggregate"`` rejects only when the OVERALL pass-rate drops below
+        the champion's (modulo a small float-noise tolerance) — the right
+        policy for sampled evaluation boards where individual pass/fail is
+        noisy and a strictly-better challenger should not be vetoed by a
+        single entry flip. There is no ``"off"`` value: disable the check
+        with ``pass_rate_monotonicity=False``.
     regression_gate_enabled:
         When ``True``, the tournament runner shells out to the
         snapshot's own test suite BEFORE evaluating the scoring gate.
@@ -2016,6 +2053,7 @@ class ScoringWeights:
     runtime_weight: float = 0.0
     promote_margin: float = 0.01
     pass_rate_monotonicity: bool = True
+    pass_rate_monotonicity_scope: PassRateMonotonicityScope = "per_entry"
     regression_gate_enabled: bool = False
     regression_test_command: tuple[str, ...] = ("pytest", "tests/", "-q")
     regression_timeout_s: int = 600
@@ -2461,6 +2499,7 @@ __all__ = [
     "DriftMovementActual",
     "MetricMovementActual",
     "TournamentDecision",
+    "PassRateMonotonicityScope",
     "VALID_TOURNAMENT_STRUCTURES",
     "MatchOutcome",
     "TournamentStructure",

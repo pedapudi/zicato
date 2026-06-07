@@ -94,6 +94,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "runtime_weight": 0.3,
         "promote_margin": 0.05,
         "pass_rate_monotonicity": False,
+        "pass_rate_monotonicity_scope": "aggregate",
         "regression_gate_enabled": True,
         "regression_test_command": ("python", "-m", "unittest"),
         "regression_timeout_s": 120,

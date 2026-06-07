@@ -14,12 +14,26 @@ Three rules, applied in order:
    reason. Both reasons state the real child-minus-parent delta.
 
 2. **Pass-rate monotonicity** (when
-   :attr:`ScoringWeights.pass_rate_monotonicity` is true). For every
-   entry where the parent recorded ``pass_fail=True``, the child MUST
-   also record ``pass_fail=True``. If any such entry regressed, the
-   gate rejects with the entry ids listed in the reason. Entries the
-   parent failed (or had no expectation for) are not gated on this
-   rule — the child is allowed to improve or stay the same.
+   :attr:`ScoringWeights.pass_rate_monotonicity` is true). The
+   *granularity* is selected by
+   :attr:`ScoringWeights.pass_rate_monotonicity_scope`:
+
+   * ``"per_entry"`` (default) — for every entry where the parent
+     recorded ``pass_fail=True``, the child MUST also record
+     ``pass_fail=True``. If any such entry regressed, the gate rejects
+     with the entry ids listed in the reason. Entries the parent failed
+     (or had no expectation for) are not gated — the child is allowed to
+     improve or stay the same. The right policy for invariant /
+     regression-suite boards.
+   * ``"aggregate"`` — reject only when the child's OVERALL pass-rate
+     fell below the parent's by more than
+     :data:`PASS_RATE_MONOTONICITY_TOLERANCE`. The child may trade
+     individual entries as long as the net pass-rate holds or improves.
+     The right policy for sampled evaluation boards where individual
+     pass/fail is noisy.
+
+   ``off`` is expressed by ``pass_rate_monotonicity=False`` rather than a
+   third scope value, so existing contracts are byte-identical.
 
 3. **Per-namespace monotonicity.** For each namespace whose flag in
    :attr:`ScoringWeights.namespace_monotonicity` is ``True``, the
@@ -43,12 +57,22 @@ Three rules, applied in order:
    and names every regressing namespace in the reason. Namespaces
    whose flag is missing or ``False`` are not gated this way.
 
+   Note: this rule is ALREADY aggregate-scoped — it compares per-namespace
+   *means*, not per-entry pass/fail — so the issue #17 per-entry-vs-
+   aggregate scope does NOT apply to it. The analogous knob here would be
+   "all-tracked-namespaces combined vs each namespace individually", a
+   different axis the operator already controls by choosing which
+   namespaces to flag in ``namespace_monotonicity``. A combined-axis scope
+   is a documented follow-up, not built here (see SCORING.md §5.2).
+
 If no rule rejects, the gate promotes — UNLESS a holdout-confirmation
 step is supplied (OVERFITTING.md §1/§12 #1, §13). When the caller passes
 a held-out slice's parent/child aggregates, a train-measured win must
 *also* confirm on the holdout: the challenger's holdout scalar may not
-regress past ``promote_margin`` versus the champion's, and no entry the
-champion passed on the holdout may have regressed. A failed confirmation
+regress past ``promote_margin`` versus the champion's, and the holdout
+must not show a pass-rate regression under the SAME
+:attr:`ScoringWeights.pass_rate_monotonicity_scope` the train slice uses
+(per-entry on both sides, or aggregate on both). A failed confirmation
 is just another reason to ``reject`` (reason ``holdout_not_confirmed``);
 the champion stands, exactly as on any other reject — the
 protected-incumbent invariant is untouched. The holdout is
@@ -84,6 +108,16 @@ from zicato.core import ScoringWeights, TournamentDecision
 #: behaviour per namespace can override by computing aggregates
 #: themselves; the surface is intentionally simple at this layer.
 NAMESPACE_MONOTONICITY_TOLERANCE: float = 0.0
+
+#: Float-noise tolerance applied to the overall pass-rate delta under
+#: ``aggregate``-scope pass-rate monotonicity. The check is
+#: ``delta_pass_rate < -PASS_RATE_MONOTONICITY_TOLERANCE`` so a pass-rate
+#: that is *equal* within numerical noise (e.g. ``0.31`` reconstructed two
+#: different ways) is treated as "held", not "regressed". A genuine net
+#: regression — one whose drop exceeds this band — still rejects. Kept
+#: small: pass-rate is a ratio of integer counts, so the only noise here is
+#: float division/round-trip, not measurement variance.
+PASS_RATE_MONOTONICITY_TOLERANCE: float = 1e-9
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +212,56 @@ def _regressed_entries(parent_agg: dict[str, Any], child_agg: dict[str, Any]) ->
     return regressed
 
 
+def _pass_rate(agg: dict[str, Any]) -> float:
+    """Read an aggregate's overall pass-rate, defaulting to ``1.0``.
+
+    Mirrors :func:`evaluate_gate`'s own read so the gate and the holdout
+    check agree on what "overall pass-rate" means for the ``aggregate``
+    scope. A board with no pass/fail expectations reports ``1.0``.
+    """
+    return float(agg.get("pass_rate", 1.0))
+
+
+def _pass_rate_regression_reason(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    weights: ScoringWeights,
+    *,
+    prefix: str = "",
+) -> str:
+    """Return the pass-rate monotonicity reject reason, or ``""`` to allow.
+
+    Honors :attr:`ScoringWeights.pass_rate_monotonicity_scope`:
+
+    * ``per_entry`` — reject when ANY entry the parent passed regressed
+      (the historical behaviour; byte-identical reason for the gate when
+      ``prefix`` is empty).
+    * ``aggregate`` — reject only when the child's OVERALL pass-rate fell
+      below the parent's by more than
+      :data:`PASS_RATE_MONOTONICITY_TOLERANCE`.
+
+    The caller has already checked that ``pass_rate_monotonicity`` is on.
+    ``prefix`` lets the holdout reuse the same wording with its
+    ``holdout_not_confirmed: holdout `` lead-in.
+    """
+    if weights.pass_rate_monotonicity_scope == "aggregate":
+        parent_pass = _pass_rate(parent_agg)
+        child_pass = _pass_rate(child_agg)
+        delta = child_pass - parent_pass
+        if delta < -PASS_RATE_MONOTONICITY_TOLERANCE:
+            return (
+                f"{prefix}pass-rate regression: overall pass-rate fell by "
+                f"{-delta:.6f} "
+                f"(champion {parent_pass:.6f} -> challenger {child_pass:.6f})"
+            )
+        return ""
+    # per_entry (default): every parent-passed entry must still pass.
+    regressed = _regressed_entries(parent_agg, child_agg)
+    if regressed:
+        return f"{prefix}pass-rate regression on entries: " + ", ".join(regressed)
+    return ""
+
+
 def _holdout_confirms(
     holdout_parent_agg: dict[str, Any],
     holdout_child_agg: dict[str, Any],
@@ -193,9 +277,12 @@ def _holdout_confirms(
 
     * the challenger's holdout loss rose past the champion's by more than
       ``promote_margin`` (a real holdout regression, not noise), OR
-    * any entry the champion passed on the holdout regressed (reusing
-      :func:`_regressed_entries`, gated by ``pass_rate_monotonicity`` so
-      operators who disabled it on the train side disable it here too).
+    * the challenger regressed on pass-rate monotonicity (reusing
+      :func:`_pass_rate_regression_reason`, gated by
+      ``pass_rate_monotonicity`` so operators who disabled it on the train
+      side disable it here too, and honoring the SAME
+      ``pass_rate_monotonicity_scope`` so train and holdout apply one
+      consistent policy — per-entry on both sides, or aggregate on both).
 
     The holdout is never asked to clear ``promote_margin`` in the
     *improving* direction — a train-measured win that merely holds flat on
@@ -216,11 +303,14 @@ def _holdout_confirms(
             f"on the holdout slice"
         )
     if weights.pass_rate_monotonicity:
-        regressed = _regressed_entries(holdout_parent_agg, holdout_child_agg)
-        if regressed:
-            return "holdout_not_confirmed: holdout pass-rate regression on entries: " + ", ".join(
-                regressed
-            )
+        reason = _pass_rate_regression_reason(
+            holdout_parent_agg,
+            holdout_child_agg,
+            weights,
+            prefix="holdout_not_confirmed: holdout ",
+        )
+        if reason:
+            return reason
     return ""
 
 
@@ -305,13 +395,16 @@ def evaluate_gate(
             delta_pass_rate=delta_pass_rate,
         )
 
-    # Rule 2: pass-rate monotonicity on entries the parent passed.
+    # Rule 2: pass-rate monotonicity. The scope decides what "regressed"
+    # means — per_entry (every parent-passed entry must still pass) or
+    # aggregate (the overall pass-rate may not drop). Both branches share
+    # the same reason-builder so the gate and the holdout stay symmetric.
     if weights.pass_rate_monotonicity:
-        regressed = _regressed_entries(parent_agg, child_agg)
-        if regressed:
+        pass_reason = _pass_rate_regression_reason(parent_agg, child_agg, weights)
+        if pass_reason:
             return GateOutcome(
                 decision="rejected",
-                reason="pass-rate regression on entries: " + ", ".join(regressed),
+                reason=pass_reason,
                 delta_scalar=delta_scalar,
                 delta_pass_rate=delta_pass_rate,
             )
@@ -355,6 +448,7 @@ def evaluate_gate(
 __all__ = [
     "GateOutcome",
     "NAMESPACE_MONOTONICITY_TOLERANCE",
+    "PASS_RATE_MONOTONICITY_TOLERANCE",
     "evaluate_gate",
     "holdout_confirms",
 ]

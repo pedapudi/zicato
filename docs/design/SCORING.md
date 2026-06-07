@@ -109,9 +109,14 @@ The weights are stored in `scoring.json` per epoch. Keys are the
   "plan_revision_weight": 0.5,
   "runtime_weight": 0.0,
   "promote_margin": 0.01,
-  "pass_rate_monotonicity": true
+  "pass_rate_monotonicity": true,
+  "pass_rate_monotonicity_scope": "per_entry"
 }
 ```
+
+`pass_rate_monotonicity_scope` is optional and defaults to `"per_entry"`;
+set it to `"aggregate"` to gate on the overall pass-rate instead of every
+individual entry (see Rule 2 in §5).
 
 Per-kind weight lookup uses `per_kind_weights[k]` if present and a
 uniform `1.0` otherwise — there is no `_default` sentinel key. An empty
@@ -316,14 +321,42 @@ state the real child-minus-parent delta and cite `promote_margin` as
 the threshold.
 
 **Rule 2 — pass-rate monotonicity** (only when
-`pass_rate_monotonicity` is `true`, the default). For every entry where
-the parent recorded `pass_fail == True`, the child MUST also record
-`pass_fail == True`. A child whose `pass_fail` comes back `False` *or*
-`None` (the expectation no longer evaluated, or the entry did not run)
-on a previously-passing entry is a regression. If any such entry
-regressed the gate rejects with `"pass-rate regression on entries:
-<id>, <id>, ..."` (every regressing entry id, sorted). Entries the
-parent failed or had no expectation for are not gated on this rule.
+`pass_rate_monotonicity` is `true`, the default). The *granularity* is
+selected by `pass_rate_monotonicity_scope` (`"per_entry"` | `"aggregate"`,
+default `"per_entry"`):
+
+- **`per_entry`** (default, back-compatible) — for every entry where the
+  parent recorded `pass_fail == True`, the child MUST also record
+  `pass_fail == True`. A child whose `pass_fail` comes back `False` *or*
+  `None` (the expectation no longer evaluated, or the entry did not run)
+  on a previously-passing entry is a regression. If any such entry
+  regressed the gate rejects with `"pass-rate regression on entries:
+  <id>, <id>, ..."` (every regressing entry id, sorted). Entries the
+  parent failed or had no expectation for are not gated on this rule.
+- **`aggregate`** — reject only when the child's *overall* pass-rate falls
+  below the parent's by more than a tiny float-noise tolerance
+  (`PASS_RATE_MONOTONICITY_TOLERANCE`). The child may trade *which*
+  entries pass as long as the net pass-rate holds or improves. The reject
+  reason reports the overall rate: `"pass-rate regression: overall
+  pass-rate fell by <Δ> (champion <p> -> challenger <c>)"`.
+
+There is no `"off"` scope value — disable the rule entirely with
+`pass_rate_monotonicity: false`. The same scope is applied to the
+holdout-confirmation step, so the train and holdout slices use one
+consistent policy.
+
+**Choosing a scope.** `per_entry` is the right policy when *every* board
+entry is a must-not-regress invariant — a regression suite where any flip
+is a real breakage. `aggregate` is the right policy for *sampled
+evaluation boards*, where each entry is one noisy sample of a capability:
+individual pass/fail is subject to run-to-run nondeterminism (sampling,
+retrieval ties, timeouts), and a strictly-better challenger should not be
+permanently vetoed by a single entry flip when the aggregate — the thing
+the operator actually optimizes — improved or held. Under `per_entry`,
+the champion's exact passing *set* becomes a frozen invariant and any
+nondeterministic entry turns into a ratchet that no amount of aggregate
+improvement can overcome; `aggregate` trades that ratchet for a net-rate
+guard.
 
 **Rule 3 — per-namespace monotonicity** (roadmap surface; see the §2
 note). For each namespace whose flag in `namespace_monotonicity` is
@@ -352,6 +385,17 @@ The strict gate is also a guard against the proposer over-fitting to
 drift patterns at the expense of correctness — a tightened prompt
 might reduce CONFABULATION_RISK by also refusing to attempt the
 question, which would tank pass-rate. The gate catches this.
+
+The per-entry-vs-aggregate granularity is operator-selectable via
+`pass_rate_monotonicity_scope` (see Rule 2). The *namespace* monotonicity
+rule (Rule 3) is already aggregate-scoped — it compares per-namespace
+*means*, not per-entry pass/fail — so the same scope field does not apply
+there. The analogous knob for namespaces would be "all tracked namespaces
+combined vs each individually", a different axis the operator already
+controls by choosing which namespaces to flag in `namespace_monotonicity`.
+A combined-axis namespace scope is a **documented follow-up**, deliberately
+not built alongside the pass-rate scope to avoid conflating two distinct
+concepts under one field.
 
 ### 5.2 Why a tolerance band on drift
 

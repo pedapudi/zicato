@@ -119,6 +119,78 @@ def test_contract_unchanged_returns_same_epoch(tmp_path: Path) -> None:
     assert len(list_epochs(workspace)) == 1
 
 
+def test_default_scope_does_not_auto_roll(tmp_path: Path) -> None:
+    """A live scoring.json that never mentions pass_rate_monotonicity_scope
+    creates an epoch and re-resolves with NO roll — the new field defaults
+    to ``per_entry`` on both the live and frozen sides, so the contract
+    hash is unchanged (issue #17 back-compat)."""
+    workspace, _ = _bootstrap(tmp_path)
+    first = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    second = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    assert first == second
+    assert len(list_epochs(workspace)) == 1
+
+
+def test_aggregate_scope_epoch_new_then_evolve_does_not_auto_roll(tmp_path: Path) -> None:
+    """An ``epoch new`` -> ``evolve`` flow with a NON-DEFAULT scope must not
+    auto-roll: the frozen snapshot captures ``aggregate`` and the next
+    resolve re-hashes identically (issue #17 + the issue #13 serializer)."""
+    workspace, files = _bootstrap(tmp_path)
+    # The operator's live scoring.json opts into aggregate scope.
+    files["scoring"].write_text(
+        json.dumps(
+            {
+                "drift_weight": 1.0,
+                "pass_weight": 1.0,
+                "pass_rate_monotonicity": True,
+                "pass_rate_monotonicity_scope": "aggregate",
+            }
+        )
+    )
+    first = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+
+    # The frozen snapshot persisted the non-default scope, so the loader
+    # reads it back as aggregate (no silent drop to the default).
+    frozen = json.loads((workspace / "epochs" / first / "scoring.json").read_text(encoding="utf-8"))
+    assert frozen["pass_rate_monotonicity_scope"] == "aggregate"
+
+    # Re-resolving (the next evolve) must NOT roll — same contract.
+    second = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    assert first == second
+    assert len(list_epochs(workspace)) == 1
+
+
+def test_flipping_scope_to_aggregate_auto_rolls(tmp_path: Path) -> None:
+    """Changing the scope from the default to ``aggregate`` between resolves
+    DOES roll — it is a real evaluation-contract change (issue #17)."""
+    workspace, files = _bootstrap(tmp_path)
+    first = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    files["scoring"].write_text(
+        json.dumps(
+            {
+                "drift_weight": 1.0,
+                "pass_weight": 1.0,
+                "pass_rate_monotonicity_scope": "aggregate",
+            }
+        )
+    )
+    rolled = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    assert rolled != first
+    assert len(list_epochs(workspace)) == 2
+
+
 # ---------------------------------------------------------------------------
 # Contract changed
 # ---------------------------------------------------------------------------
