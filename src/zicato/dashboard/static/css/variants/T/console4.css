@@ -411,28 +411,28 @@
   --v2-cell-empty: #371129;
 }
 
-/* ===================  the three typeface themes  ===================
+/* ===================  the typeface OPTIONS (12 finalized faces)  ===================
  *
- * Editorial / Technical / Display — three genuinely DIFFERENT voices, body
- * included, so toggling the picker is immediately recognizable:
- *   Editorial — a reading SERIF throughout (body + headings + publication).
- *   Technical — an all-MONOSPACE MIXTURE along a prose↔code axis: iA Writer
- *               Mono (a warm, humanist PROSE mono) for body / headings /
- *               publication, JetBrains Mono (a crisp CODE mono) for data /
- *               labels / code. Reads as prose-mono everywhere except data/code.
- *   Display   — a characterful geometric sans body + a condensed display face
- *               for headings & big numerals.
- * The picker swaps --v2-sans / --v2-mono / --n-font-head / --n-font-paper via
- * [data-t-type] on the root. Editorial's serif + Display's geometric/condensed
- * families load from Google Fonts in app_T.js (display=swap); Technical's two
- * monos are self-hosted woff2 (see @font-face above). Every family lists a
- * system fallback so a slow / blocked font never breaks layout. Default:
- * Technical.
+ * The typeface picker is a GROUPED POPOVER offering the operator's finalized
+ * TWELVE faces — FOUR per mode across THREE modes (Technical · Editorial ·
+ * Display). Each option keys on a `[data-t-type]` id (e.g. `T7`) the picker
+ * stamps on the root; the matching rule below swaps the FOUR font-role tokens
+ * the dashboard reads:
+ *   head  → --n-font-head   (headings / big numerals)
+ *   prose → --v2-sans + --n-font-paper   (body / publication voice)
+ *   data/code → --v2-mono   (data / labels / code)
+ * The exact font-stack strings are lifted BYTE-FOR-BYTE from the typeface study
+ * (FONT_STACKS in compose.html / index.html), so the dashboard matches it.
+ * Every family lists a system fallback so a slow / blocked font never breaks
+ * layout; the Google-Fonts families load in app_T.js (display=swap). The two
+ * self-hosted monos (iA Writer Mono + JetBrains Mono, @font-face above) are
+ * untouched — only the brand mono still pins to JetBrains Mono. DEFAULT: T7
+ * (Google Sans Mono), the first Technical option.
  */
 #variant-root[data-variant="T"] {
   --n-font-base: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --n-font-mono-real: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-  /* prose/humanist mono — warm, reads like text; Technical's body voice. */
+  /* prose/humanist mono — warm, reads like text. */
   --n-font-prose-mono: "iA Writer Mono", "iA Writer Mono S", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --n-font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
   --n-font-display: "Archivo Narrow", "Space Grotesk", "Open Sans", system-ui, sans-serif;
@@ -443,36 +443,103 @@
    * matter which option is selected (the brand never reflows with the UI). */
   --v2-brand-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-  /* Technical (DEFAULT): an all-mono MIXTURE — prose mono body, code mono data. */
-  --v2-sans: var(--n-font-prose-mono);
-  --v2-mono: var(--n-font-mono-real);
-  --n-font-head: var(--n-font-prose-mono);
-  --n-font-paper: var(--n-font-prose-mono);
+  /* DEFAULT (T7 · Google Sans Mono): all four roles = Google Sans Mono (Noto
+   * Sans Mono fallback). Applied unconditionally so a missing data-t-type still
+   * lands on the default voice. */
+  --v2-sans: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --v2-mono: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --n-font-head: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --n-font-paper: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
 }
-/* Editorial: a reading SERIF for the WHOLE panel — body, headings, and
- * publication all read like a typeset document. Data labels stay serif too,
- * leaning on Source Serif 4's tabular figures. */
-#variant-root[data-variant="T"][data-t-type="editorial"] {
-  --v2-sans: var(--n-font-serif);
-  --v2-mono: var(--n-font-serif);
-  --n-font-head: var(--n-font-serif);
-  --n-font-paper: var(--n-font-serif);
+
+/* ----- Technical group ----- */
+/* T7 · Google Sans Mono — all four = Google Sans Mono (Noto Sans Mono fallback). */
+#variant-root[data-variant="T"][data-t-type="T7"] {
+  --v2-sans: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --v2-mono: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --n-font-head: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
+  --n-font-paper: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
 }
-/* Technical (default): an all-MONOSPACE MIXTURE — iA Writer Mono (prose) for
- * body / headings / publication, JetBrains Mono (code) for data / labels. */
-#variant-root[data-variant="T"][data-t-type="technical"] {
-  --v2-sans: var(--n-font-prose-mono);
-  --v2-mono: var(--n-font-mono-real);
-  --n-font-head: var(--n-font-prose-mono);
-  --n-font-paper: var(--n-font-prose-mono);
+/* T9 · Source Sans 3 + Source Code Pro — head/prose = Source Sans 3, data/code = Source Code Pro. */
+#variant-root[data-variant="T"][data-t-type="T9"] {
+  --v2-sans: 'Source Sans 3', system-ui, sans-serif;
+  --v2-mono: 'Source Code Pro', ui-monospace, monospace;
+  --n-font-head: 'Source Sans 3', system-ui, sans-serif;
+  --n-font-paper: 'Source Sans 3', system-ui, sans-serif;
 }
-/* Display: a geometric grotesque BODY (Space Grotesk — clearly NOT Open Sans)
- * with a condensed display face (Archivo Narrow) for headings & big numerals. */
-#variant-root[data-variant="T"][data-t-type="display"] {
-  --v2-sans: var(--n-font-geo);
-  --v2-mono: var(--n-font-mono-real);
-  --n-font-head: var(--n-font-display);
-  --n-font-paper: var(--n-font-geo);
+/* T12 · Inconsolata — all four = Inconsolata. */
+#variant-root[data-variant="T"][data-t-type="T12"] {
+  --v2-sans: 'Inconsolata', ui-monospace, monospace;
+  --v2-mono: 'Inconsolata', ui-monospace, monospace;
+  --n-font-head: 'Inconsolata', ui-monospace, monospace;
+  --n-font-paper: 'Inconsolata', ui-monospace, monospace;
+}
+/* T14 · Ubuntu + Ubuntu Mono — head/prose = Ubuntu, data/code = Ubuntu Mono. */
+#variant-root[data-variant="T"][data-t-type="T14"] {
+  --v2-sans: 'Ubuntu', system-ui, sans-serif;
+  --v2-mono: 'Ubuntu Mono', ui-monospace, monospace;
+  --n-font-head: 'Ubuntu', system-ui, sans-serif;
+  --n-font-paper: 'Ubuntu', system-ui, sans-serif;
+}
+
+/* ----- Editorial group ----- */
+/* E5 · Fraunces — all four = Fraunces. */
+#variant-root[data-variant="T"][data-t-type="E5"] {
+  --v2-sans: 'Fraunces', Georgia, serif;
+  --v2-mono: 'Fraunces', Georgia, serif;
+  --n-font-head: 'Fraunces', Georgia, serif;
+  --n-font-paper: 'Fraunces', Georgia, serif;
+}
+/* E7 · Bitter — all four = Bitter. */
+#variant-root[data-variant="T"][data-t-type="E7"] {
+  --v2-sans: 'Bitter', Georgia, serif;
+  --v2-mono: 'Bitter', Georgia, serif;
+  --n-font-head: 'Bitter', Georgia, serif;
+  --n-font-paper: 'Bitter', Georgia, serif;
+}
+/* E8 · Literata — all four = Literata. */
+#variant-root[data-variant="T"][data-t-type="E8"] {
+  --v2-sans: 'Literata', Georgia, serif;
+  --v2-mono: 'Literata', Georgia, serif;
+  --n-font-head: 'Literata', Georgia, serif;
+  --n-font-paper: 'Literata', Georgia, serif;
+}
+/* E15 · Domine — all four = Domine. */
+#variant-root[data-variant="T"][data-t-type="E15"] {
+  --v2-sans: 'Domine', Georgia, serif;
+  --v2-mono: 'Domine', Georgia, serif;
+  --n-font-head: 'Domine', Georgia, serif;
+  --n-font-paper: 'Domine', Georgia, serif;
+}
+
+/* ----- Display group ----- */
+/* D2 · Archivo Narrow + Space Grotesk — head = Archivo Narrow, prose/data/code = Space Grotesk. */
+#variant-root[data-variant="T"][data-t-type="D2"] {
+  --v2-sans: 'Space Grotesk', system-ui, sans-serif;
+  --v2-mono: 'Space Grotesk', system-ui, sans-serif;
+  --n-font-head: 'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif;
+  --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
+}
+/* D12 · Hanken Grotesk — all four = Hanken Grotesk. */
+#variant-root[data-variant="T"][data-t-type="D12"] {
+  --v2-sans: 'Hanken Grotesk', system-ui, sans-serif;
+  --v2-mono: 'Hanken Grotesk', system-ui, sans-serif;
+  --n-font-head: 'Hanken Grotesk', system-ui, sans-serif;
+  --n-font-paper: 'Hanken Grotesk', system-ui, sans-serif;
+}
+/* D14 · Barlow Condensed + Space Grotesk — head = Barlow Condensed, rest = Space Grotesk. */
+#variant-root[data-variant="T"][data-t-type="D14"] {
+  --v2-sans: 'Space Grotesk', system-ui, sans-serif;
+  --v2-mono: 'Space Grotesk', system-ui, sans-serif;
+  --n-font-head: 'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif;
+  --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
+}
+/* D5 · Bricolage Grotesque — all four = Bricolage Grotesque. */
+#variant-root[data-variant="T"][data-t-type="D5"] {
+  --v2-sans: 'Bricolage Grotesque', system-ui, sans-serif;
+  --v2-mono: 'Bricolage Grotesque', system-ui, sans-serif;
+  --n-font-head: 'Bricolage Grotesque', system-ui, sans-serif;
+  --n-font-paper: 'Bricolage Grotesque', system-ui, sans-serif;
 }
 
 /* ===================  the COZY spacing baseline (density removed)  ===================
@@ -1368,6 +1435,38 @@
   .dt-cd-option:hover, .dt-cd-option.dt-cd-active { background: var(--v2-rule-soft); color: var(--v2-ink); }
   .dt-cd-option[aria-selected="true"] { color: var(--v2-ink); }
   .dt-cd-option[aria-selected="true"] .dt-cd-name { color: var(--v2-accent); }
+
+  /* ---- the TYPEFACE GROUPED POPOVER (12 finalized faces, 4 per mode) ---- */
+  /* Reuses the dt-cd popover idiom; adds mode-group headers + per-option type
+   * specimens. A wider list so the face names + micro-previews read. */
+  .dt-tf-list { min-width: 248px; }
+  /* group headers — uppercase mode labels separating the four-option blocks */
+  .dt-cd-group { padding: 7px 7px 3px; font-family: var(--v2-mono); font-size: 8.5px;
+    text-transform: uppercase; letter-spacing: 0.1em; color: var(--v2-ink-faint);
+    border-top: 1px solid var(--v2-rule-soft); margin-top: 3px; }
+  .dt-cd-group:first-child { border-top: none; margin-top: 0; }
+  /* each option stacks its label over its micro-preview specimen. It mirrors
+   * the dt-cd-option base styling (hover/active/selected) but carries its OWN
+   * class so the colour-picker's dt-cd-option queries never match it. */
+  .dt-tf-option { display: flex; flex-direction: column; align-items: stretch; gap: 3px;
+    padding: 5px 7px; border-radius: 4px; cursor: pointer; color: var(--v2-ink-soft);
+    transition: background 0.12s, color 0.12s; }
+  .dt-tf-option:hover, .dt-tf-option.dt-cd-active { background: var(--v2-rule-soft); color: var(--v2-ink); }
+  .dt-tf-option[aria-selected="true"] { color: var(--v2-ink); }
+  .dt-tf-option[aria-selected="true"] .dt-tf-name { color: var(--v2-accent); }
+  .dt-tf-option .dt-tf-name { font-family: var(--v2-mono); font-size: 10.5px; }
+  /* the type specimen — head "Aa", a prose word, a tabular sample, each in the
+   * option's REAL faces (font-family inlined per span) so the row is a true
+   * specimen independent of the active data-t-type. */
+  .dt-tf-spec { display: inline-flex; align-items: baseline; gap: 9px; color: var(--v2-ink-soft); }
+  .dt-tf-spec-head { font-size: 15px; line-height: 1; }
+  .dt-tf-spec-prose { font-size: 12px; }
+  .dt-tf-spec-data { font-size: 11px; font-variant-numeric: tabular-nums; }
+  /* the closed trigger carries a small specimen beside the current face name */
+  .dt-tf-trigger .dt-tf-spec-sm { gap: 5px; }
+  .dt-tf-spec-sm .dt-tf-spec-head { font-size: 12px; }
+  .dt-tf-spec-sm .dt-tf-spec-prose { font-size: 10px; }
+  .dt-tf-spec-sm .dt-tf-spec-data { font-size: 9.5px; }
 
   .dt-status { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
     font-size: 10.5px; color: var(--v2-ink-faint); }

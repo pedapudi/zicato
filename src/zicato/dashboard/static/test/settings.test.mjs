@@ -160,8 +160,14 @@ test('settings: the Appearance section is EDITABLE and shares the top-bar theme 
     assert(strip, 'option ' + opt.getAttribute('data-theme') + ' shows a colour swatch strip');
     assert(byClass(strip, 'dt-swatch').length >= 4, 'the strip renders representative colour swatches');
   }
-  // typeface buttons, and page-scale / rail ranges.
-  assert(byClass(body, 'dn-set-typebtn').length === 3, 'the three typeface buttons render');
+  // the TYPEFACE picker is now the SHARED grouped popover (dt-tf, reusing the
+  // dt-cd idiom): a trigger + 3 mode-group headers + 12 option rows. The old
+  // 3-button group is gone.
+  const tf = firstClass(body, 'dt-tf');
+  assert(tf, 'the typeface picker is the shared grouped popover (dt-tf)');
+  assert(byClass(body, 'dn-set-typebtn').length === 0, 'the old 3-button typeface group is gone');
+  assertEqual(byClass(tf, 'dt-cd-group').length, 3, 'three mode-group headers in the typeface popover');
+  assertEqual(byClass(tf, 'dt-tf-option').length, 12, 'twelve typeface option rows');
   assertEqual(byClass(body, 'dn-set-range').length, 2, 'page-scale + side-panel-width ranges render');
 
   // choosing a swatch option drives the SHARED store (applyTheme persists it to
@@ -189,14 +195,20 @@ test('settings: editing appearance updates the SAME store the top-bar reads (rou
   globalThis.window.localStorage.clear();
   const ui = await import('../js/variants/T/ui.js');
   // a value set the "top-bar way" (persistType) is reflected by the settings
-  // picker's initial selected button — one source of truth, both directions.
-  ui.persistType('display');
+  // picker's initial selected option — one source of truth, both directions.
+  // (persistType normalises a finalized id; here we use an explicit one.)
+  ui.persistType('E8');
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'appearance' });
   await tick();
   const body = firstClass(host, 'dn-set-body');
-  const onBtn = byClass(body, 'dn-set-typebtn').find((b) => b.classList.contains('dn-set-typebtn-on'));
-  assert(onBtn && onBtn.getAttribute('data-type') === 'display', 'the picker reflects the shared typeface store');
+  const tf = firstClass(body, 'dt-tf');
+  assert(tf, 'the typeface grouped popover renders in Appearance');
+  const onOpt = byClass(tf, 'dt-tf-option').find((o) => o.getAttribute('aria-selected') === 'true');
+  assert(onOpt && onOpt.getAttribute('data-type') === 'E8', 'the popover reflects the shared typeface store (E8 selected)');
+  // a legacy stored mode id MIGRATES to its finalized default on read.
+  ui.persistType('display');
+  assertEqual(ui.readType(), 'D2', 'a stored legacy "display" migrates to D2 on read');
 });
 
 test('settings: the Contract section reads /api/epoch as a read-only roll-up', async () => {

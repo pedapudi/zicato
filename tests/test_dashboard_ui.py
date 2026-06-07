@@ -125,7 +125,7 @@ def test_css_has_no_external_url(style_css: str) -> None:
 def test_js_has_no_external_fetch(app_js: str) -> None:
     """The JS bundle must only talk to relative paths under /api and /events.
 
-    Two literals are NOT network data fetches and are allowed:
+    These literals are NOT network data fetches and are allowed:
 
     * The W3C SVG namespace literal (``http://www.w3.org/2000/svg``) is
       the XML-namespace URI required by ``createElementNS``.
@@ -133,11 +133,18 @@ def test_js_has_no_external_fetch(app_js: str) -> None:
       is the single external dependency the Variant-T brief permits —
       fonts only, injected with ``display=swap`` and system fallbacks, so
       a slow font never blocks paint. No application data crosses it.
+    * The two Google-Fonts ``<link rel="preconnect">`` origins
+      (``https://fonts.googleapis.com`` and ``https://fonts.gstatic.com``)
+      are part of that same fonts-only dependency — they only warm the
+      connection for the css2 request and the woff2 host, no data fetch.
     """
-    # Strip comments first; then strip the permitted literals.
+    # Strip comments first; then strip the permitted literals. Strip the css2
+    # stylesheet URL before the bare preconnect origin so the longer match wins.
     scrubbed = _strip_js_comments(app_js)
     scrubbed = scrubbed.replace("http://www.w3.org/2000/svg", "")
     scrubbed = scrubbed.replace("https://fonts.googleapis.com/css2", "")
+    scrubbed = scrubbed.replace("https://fonts.googleapis.com", "")
+    scrubbed = scrubbed.replace("https://fonts.gstatic.com", "")
     for needle in ("http://", "https://"):
         assert (
             needle not in scrubbed

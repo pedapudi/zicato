@@ -36,6 +36,7 @@ import { roundsForTree } from './views/rounds.js';
 import { deriveLiveStatus, liveStatusDigest, treeLiveSet } from './livestatus.js';
 import { LiveController } from './live.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
+import { buildTypefaceDropdown, syncTypefaceDropdowns } from './typefacedropdown.js';
 import {
   COLOR_THEMES, DEFAULT_COLOR, normaliseColor, readColor, persistColor,
   TYPE_THEMES, DEFAULT_TYPE, normaliseType, readType, persistType,
@@ -74,6 +75,7 @@ let _statusTextEl = null;     // the connection word (live/connecting/offline)
 let _runLabelEl = null;       // the structure+phase run label
 let _runCountEl = null;       // the in-flight board-unit count
 let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
+let _typeDropdown = null;       // the typeface grouped-popover controller
 let _typeEl = [];
 let _scaleInput = null;
 let _scaleReadout = null;
@@ -126,6 +128,10 @@ export function applyTypeface(typeface, rootEl) {
   const root = rootEl || _root;
   if (root) root.setAttribute('data-t-type', t);
   persistType(t);
+  // Sync EVERY live typeface dropdown (top bar AND settings) — one source of
+  // truth, so choosing in either place lockstep-updates the other.
+  syncTypefaceDropdowns(t);
+  // Legacy: keep any old button-group refs in lockstep (now an empty no-op list).
   for (const b of _typeEl) patchClass(b, 'dt-type-active', b.getAttribute('data-type') === t);
   return t;
 }
@@ -444,11 +450,16 @@ export function mountShell(root) {
   _colorDropdown = buildSwatchDropdown(readColor(), (id) => applyTheme(id));
   const colorSwitch = _colorDropdown.node;
 
-  // TYPEFACE PICKER — moved OUT of the top bar (Change 2). The typeface is now
-  // edited ONLY in Settings → Appearance (which drives the SAME applyTypeface
-  // store), keeping the top bar to the theme picker, the scale pill, and the
-  // live indicator. `_typeEl` stays an empty list so applyTypeface's sync loop
-  // is a harmless no-op for the top bar.
+  // TYPEFACE PICKER — a GROUPED POPOVER (the operator's finalized 12 faces, 4
+  // per mode). It reuses the colour picker's `dt-cd` idiom so the top bar reads
+  // as ONE coherent picker style: a trigger showing the current face + a tiny
+  // specimen, opening a grouped listbox (Technical · Editorial · Display headers
+  // + four option rows each, every row a micro-preview in its real faces).
+  // Wired to applyTypeface (root + persist + sync), the SAME store Settings →
+  // Appearance drives, so changing either updates the other in lockstep.
+  // `_typeEl` stays empty (the old button-group sync loop is now a no-op).
+  _typeDropdown = buildTypefaceDropdown(readType(), (id) => applyTypeface(id));
+  const typeSwitch = _typeDropdown.node;
   _typeEl = [];
 
   // The PAGE-WIDE SCALE pill: a draggable range slider that scales the WHOLE
@@ -544,6 +555,7 @@ export function mountShell(root) {
       el('span', { class: 'dt-nav-build-text', text: 'settings' }),
     ]),
     colorSwitch,
+    typeSwitch,
     scalePill,
     _statusEl,
   ]);

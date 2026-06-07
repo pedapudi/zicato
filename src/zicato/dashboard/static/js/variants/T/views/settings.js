@@ -21,7 +21,7 @@
 
 import { el, clearChildren } from '../../../core/dom.js';
 import {
-  gatedSwap, section, empty, TYPE_THEMES, readColor, readType,
+  gatedSwap, section, empty, readColor, readType,
 } from '../ui.js';
 import {
   SCALE_MIN, SCALE_MAX, SCALE_STEP, readScale,
@@ -34,6 +34,11 @@ import * as builder from './builder.js';
 // settings theme picker is the very same control, so the two render identically
 // and stay in lockstep through the shared store (applyTheme → syncSwatchDropdowns).
 import { buildSwatchDropdown } from '../swatchdropdown.js';
+// REUSE the SAME typeface grouped-popover the top bar renders (NOT a fork): the
+// settings typeface picker is the very same control, so the two render
+// identically and stay in lockstep through the shared store (applyTypeface →
+// syncTypefaceDropdowns).
+import { buildTypefaceDropdown } from '../typefacedropdown.js';
 // REUSE the SAME theme/pref mechanism the top-bar controls drive — these apply
 // to the app root, persist (the one localStorage store ui.js owns), AND sync the
 // top-bar pickers. The Appearance section is editable by calling THESE, so the
@@ -72,6 +77,10 @@ let _builderMounted = false; // the builder owns its own shared draft + chrome
 // its node REUSED across re-renders (gatedSwap re-appends the same node), so we
 // never register a fresh instance per repaint. applyTheme keeps it in sync.
 let _themeDropdown = null;
+// The SHARED typeface grouped-popover for the Appearance typeface picker — built
+// ONCE and its node REUSED across re-renders, mirroring _themeDropdown.
+// applyTypeface keeps it in sync via syncTypefaceDropdowns.
+let _typeDropdown = null;
 
 function normaliseSection(id) {
   return SECTION_IDS.includes(id) ? id : DEFAULT_SECTION;
@@ -430,19 +439,18 @@ function themePicker(current) {
   return _themeDropdown.node;
 }
 
-// TYPEFACE — the same three-way button group idiom the top bar uses, wired to
-// applyTypeface (root + persist + top-bar sync).
+// TYPEFACE — the SAME grouped-popover the top bar renders (the shared component,
+// NOT a fork): a trigger + a grouped listbox of the operator's finalized 12
+// faces (4 per mode), each row a micro-preview in its real faces. Built ONCE and
+// its node REUSED across re-renders; choosing applies via applyTypeface (which
+// stamps the root, persists, AND syncs every live dropdown — top bar + here).
 function typefacePicker(current) {
-  const btns = TYPE_THEMES.map(([id, label]) => {
-    const b = el('button', {
-      class: 'dn-set-typebtn' + (id === current ? ' dn-set-typebtn-on' : ''),
-      type: 'button', 'data-type': id, 'aria-pressed': String(id === current),
-      title: 'typeface: ' + id, text: label,
-    });
-    b.addEventListener('click', () => { applyTypeface(id); _redraw(); });
-    return b;
-  });
-  return el('div', { class: 'dn-set-typeswitch', role: 'group', 'aria-label': 'Typeface' }, btns);
+  if (!_typeDropdown) {
+    _typeDropdown = buildTypefaceDropdown(current, (id) => { applyTypeface(id); });
+  } else {
+    _typeDropdown.setValue(current);
+  }
+  return _typeDropdown.node;
 }
 
 // PAGE SCALE — a native range + a % readout + a reset, wired to applyScale /
@@ -498,13 +506,4 @@ function railPicker(current) {
   range.addEventListener('input', onRail);
   range.addEventListener('change', onRail);
   return el('div', { class: 'dn-set-rangewrap' }, [range, out]);
-}
-
-// Re-render the appearance section after a control that changes a selected-state
-// class (the typeface buttons) so the active button highlights immediately.
-function _redraw() {
-  if (_active === 'appearance' && _sectionHost) {
-    _sectionHost.removeAttribute('data-t-digest');
-    renderAppearance();
-  }
 }

@@ -77,29 +77,96 @@ export function persistColor(t) {
   return normaliseColor(t);
 }
 
-// ---- typeface themes (Technical is the default) ---------------------
+// ---- typeface OPTIONS (the operator's finalized 12 faces) -----------
 //
-// Each maps to a `[data-t-type]` value the stylesheet keys on (swapping the
-// --n-font-* custom properties). The three are genuinely DIFFERENT voices —
-// body included — so toggling the picker is immediately recognizable as
-// serif · technical-mono · display.
-//   Editorial — Source Serif 4 throughout (body + headings + publication): a
-//               typeset, literary reading voice.
-//   Technical — an all-MONOSPACE MIXTURE: iA Writer Mono (a warm, humanist
-//               prose mono) for body / headings / publication, JetBrains Mono
-//               (a crisp code mono) for data / labels / code — prose↔code mono.
-//   Display   — Space Grotesk geometric body + Archivo Narrow (condensed)
-//               headings & big numerals: a punchy headline voice.
-export const TYPE_THEMES = [
-  ['editorial', 'Editorial'],
-  ['technical', 'Technical'],
-  ['display', 'Display'],
+// The typeface picker is a GROUPED POPOVER offering the operator's finalized
+// TWELVE faces — FOUR per mode across THREE modes (Technical · Editorial ·
+// Display) — lifted byte-for-byte from the typeface study (FONT_STACKS /
+// TYPEFACE_MODES in compose.html, OPTIONS in index.html). Each option carries
+// its id (the `[data-t-type]` value the stylesheet keys on), its mode group,
+// a human label, and the FOUR font-role stacks the dashboard tokens map to:
+//   head  → --n-font-head   (headings / big numerals)
+//   prose → --v2-sans + --n-font-paper   (body / publication voice)
+//   data  → --v2-mono       (data / labels / code)
+//   code  → (currently folded into --v2-mono; kept for parity with the study)
+//
+// Selecting an option stamps `data-t-type="<id>"` on the root (e.g. `T7`) and
+// the per-id CSS rule in console4.css swaps the four font-role vars to the
+// matching stacks. The micro-preview in each row renders in that option's REAL
+// faces, so the popover reads as a true type specimen.
+//
+// The exact stacks below MIRROR the study's FONT_STACKS so the dashboard
+// matches it byte-for-byte. Self-hosted JetBrains/iA faces are untouched; the
+// Google-Fonts families these reference are loaded by app_T.js's ensureFonts().
+const TF = {
+  GSMONO: "'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace",
+  SRCS: "'Source Sans 3', system-ui, sans-serif",
+  SRCC: "'Source Code Pro', ui-monospace, monospace",
+  INCON: "'Inconsolata', ui-monospace, monospace",
+  UBUNTU: "'Ubuntu', system-ui, sans-serif",
+  UBUM: "'Ubuntu Mono', ui-monospace, monospace",
+  FRAUN: "'Fraunces', Georgia, serif",
+  BITTER: "'Bitter', Georgia, serif",
+  LITER: "'Literata', Georgia, serif",
+  DOMINE: "'Domine', Georgia, serif",
+  AN: "'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif",
+  SG: "'Space Grotesk', system-ui, sans-serif",
+  HANKEN: "'Hanken Grotesk', system-ui, sans-serif",
+  BARLOWC: "'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif",
+  BRICO: "'Bricolage Grotesque', system-ui, sans-serif",
+};
+
+// The mode groups, in display order. Each option: {id, mode, label, head,
+// prose, data, code}. FOUR options per mode = TWELVE total.
+export const TYPE_MODE_ORDER = ['technical', 'editorial', 'display'];
+export const TYPE_MODE_LABEL = { technical: 'Technical', editorial: 'Editorial', display: 'Display' };
+
+export const TYPE_OPTIONS = [
+  // Technical
+  { id: 'T7',  mode: 'technical', label: 'T7 · Google Sans Mono',                head: TF.GSMONO, prose: TF.GSMONO, data: TF.GSMONO, code: TF.GSMONO },
+  { id: 'T9',  mode: 'technical', label: 'T9 · Source Sans 3 + Source Code Pro', head: TF.SRCS,   prose: TF.SRCS,   data: TF.SRCC,   code: TF.SRCC  },
+  { id: 'T12', mode: 'technical', label: 'T12 · Inconsolata',                    head: TF.INCON,  prose: TF.INCON,  data: TF.INCON,  code: TF.INCON },
+  { id: 'T14', mode: 'technical', label: 'T14 · Ubuntu + Ubuntu Mono',          head: TF.UBUNTU, prose: TF.UBUNTU, data: TF.UBUM,   code: TF.UBUM  },
+  // Editorial
+  { id: 'E5',  mode: 'editorial', label: 'E5 · Fraunces',                        head: TF.FRAUN,  prose: TF.FRAUN,  data: TF.FRAUN,  code: TF.FRAUN  },
+  { id: 'E7',  mode: 'editorial', label: 'E7 · Bitter',                          head: TF.BITTER, prose: TF.BITTER, data: TF.BITTER, code: TF.BITTER },
+  { id: 'E8',  mode: 'editorial', label: 'E8 · Literata',                        head: TF.LITER,  prose: TF.LITER,  data: TF.LITER,  code: TF.LITER  },
+  { id: 'E15', mode: 'editorial', label: 'E15 · Domine',                         head: TF.DOMINE, prose: TF.DOMINE, data: TF.DOMINE, code: TF.DOMINE },
+  // Display
+  { id: 'D2',  mode: 'display',   label: 'D2 · Archivo Narrow + Space Grotesk',  head: TF.AN,     prose: TF.SG,     data: TF.SG,     code: TF.SG     },
+  { id: 'D12', mode: 'display',   label: 'D12 · Hanken Grotesk',                 head: TF.HANKEN, prose: TF.HANKEN, data: TF.HANKEN, code: TF.HANKEN },
+  { id: 'D14', mode: 'display',   label: 'D14 · Barlow Condensed + Space Grotesk', head: TF.BARLOWC, prose: TF.SG,  data: TF.SG,     code: TF.SG     },
+  { id: 'D5',  mode: 'display',   label: 'D5 · Bricolage Grotesque',             head: TF.BRICO,  prose: TF.BRICO,  data: TF.BRICO,  code: TF.BRICO },
 ];
-const TYPE_IDS = TYPE_THEMES.map((t) => t[0]);
-export const DEFAULT_TYPE = 'technical';
+
+const TYPE_IDS = TYPE_OPTIONS.map((o) => o.id);
+const TYPE_BY_ID = new Map(TYPE_OPTIONS.map((o) => [o.id, o]));
+
+// BACK-COMPAT shape: `[id, label]` pairs (the prior TYPE_THEMES contract) so
+// existing call sites — shell.js's `TYPEFACES = TYPE_THEMES.map(t => t[0])` and
+// any consumer expecting the tuple form — keep working against the 12 options.
+export const TYPE_THEMES = TYPE_OPTIONS.map((o) => [o.id, o.label]);
+
+// The DEFAULT is T7 · Google Sans Mono (first Technical). FLAGGED in the report
+// so the operator can change it.
+export const DEFAULT_TYPE = 'T7';
 const TYPE_KEY = 'zicato.T.typeface';
 
-export function normaliseType(t) { return TYPE_IDS.includes(t) ? t : DEFAULT_TYPE; }
+// Migrate the THREE legacy mode ids (technical / editorial / display) to a
+// sensible finalized default in their group, so a stored old value keeps a
+// coherent voice instead of snapping back to the global default.
+const LEGACY_TYPE_MAP = { technical: 'T7', editorial: 'E5', display: 'D2' };
+
+// Normalise any stored / passed value to a known option id. Unknown ⇒ default;
+// a legacy mode id ⇒ its migrated finalized id.
+export function normaliseType(t) {
+  if (TYPE_IDS.includes(t)) return t;
+  if (t && LEGACY_TYPE_MAP[t]) return LEGACY_TYPE_MAP[t];
+  return DEFAULT_TYPE;
+}
+// Resolve a value to its full option object (real font stacks). Useful for the
+// picker's micro-previews and for any caller that wants the resolved faces.
+export function typeOption(t) { return TYPE_BY_ID.get(normaliseType(t)) || TYPE_BY_ID.get(DEFAULT_TYPE); }
 export function readType() {
   let stored = null;
   try { stored = window.localStorage.getItem(TYPE_KEY); } catch (e) { /* private mode */ }
