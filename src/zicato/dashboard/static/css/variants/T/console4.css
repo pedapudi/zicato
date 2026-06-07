@@ -2075,6 +2075,170 @@
   .dn-duelflow-lane:focus .dn-duelflow-name { fill: var(--v2-accent); outline: none; }
   .dn-duelflow-lane:focus-visible { outline: 2px solid var(--v2-accent); }
 
+  /* ---- racing SCALAR TRACK (every gen on a shared scalar number-line) ----
+   * Lower loss sits left (better); marker SIZE = inverse loss (bigger = better).
+   * Survivors are filled --v2-good, cuts hollow --v2-bad, live dashed --v2-caution,
+   * projected dn-proj. Champion v0 a dashed accent benchmark; cut tick caution.
+   * All --v2-* tokens (theme-adaptive). */
+  .dn-scalartrack-axis { stroke: var(--v2-rule); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .dn-scalartrack-cap { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
+    text-transform: uppercase; letter-spacing: 0.04em; }
+  .dn-scalartrack-tick { fill: var(--v2-ink-faint); font: 9px var(--v2-mono);
+    font-variant-numeric: tabular-nums; }
+  .dn-scalartrack-bench { stroke: var(--v2-accent); stroke-width: 1.5; stroke-dasharray: 3 3;
+    vector-effect: non-scaling-stroke; }
+  .dn-scalartrack-benchlab { fill: var(--v2-accent); font: 10px var(--v2-mono); }
+  .dn-scalartrack-cut { stroke: var(--v2-caution); stroke-width: 1.2; stroke-dasharray: 4 3;
+    vector-effect: non-scaling-stroke; }
+  .dn-scalartrack-cutlab { fill: var(--v2-caution); font: 9px var(--v2-mono); }
+  .dn-scalartrack-dot { fill: transparent; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+  .dn-scalartrack-dot.dn-good { stroke: var(--v2-good); }
+  .dn-scalartrack-dot.dn-good.dn-scalartrack-filled { fill: var(--v2-good); }
+  .dn-scalartrack-dot.dn-bad { stroke: var(--v2-bad); }
+  .dn-scalartrack-dot.dn-racing { stroke: var(--v2-caution); }
+  .dn-scalartrack-dot.dn-scalartrack-live { stroke-dasharray: 2 2; }
+  .dn-scalartrack-dot.dn-scalartrack-queued { stroke: var(--v2-ink-faint); opacity: 0.6; }
+  .dn-scalartrack-tier { stroke-width: 0.8; opacity: 0.7; vector-effect: non-scaling-stroke; }
+  .dn-scalartrack-tier.dn-good { stroke: var(--v2-good); }
+  .dn-scalartrack-tier.dn-bad { stroke: var(--v2-bad); }
+  .dn-scalartrack-tier.dn-racing { stroke: var(--v2-caution); }
+  .dn-scalartrack-name { fill: var(--v2-ink-soft); font: 9px var(--v2-mono); }
+  .dn-scalartrack-name.dn-good { fill: var(--v2-good); font-weight: 600; }
+  .dn-scalartrack-name.dn-bad { fill: var(--v2-bad); }
+  .dn-scalartrack-name.dn-racing { fill: var(--v2-caution); }
+  .dn-scalartrack-bar-bg { fill: var(--v2-rule-soft); opacity: 0.6; }
+  .dn-scalartrack-bar { fill: var(--v2-accent); opacity: 0.85; transition: width 0.3s ease; }
+  .dn-scalartrack-bar.dn-scalartrack-live { fill: var(--v2-caution); }
+  .dn-scalartrack-mark { cursor: pointer; }
+  .dn-scalartrack-mark:hover .dn-scalartrack-name,
+  .dn-scalartrack-mark:focus .dn-scalartrack-name { fill: var(--v2-accent); outline: none; }
+  .dn-scalartrack-mark:focus-visible { outline: 2px solid var(--v2-accent); }
+
+  /* ---- GAUNTLET FIELD BARS (the wave of challengers vs the champion standard) --
+   * Each challenger a bar from the champion-standard line to its scalar, coloured
+   * by outcome (cleared --v2-good / failed --v2-bad / tied --v2-flat). The champion
+   * standard is a solid accent line; the promote gate a dashed accent threshold;
+   * projected challengers ghost in dn-proj. All --v2-* tokens. */
+  .dn-fieldbars-standard { stroke: var(--v2-accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+  .dn-fieldbars-gate { stroke: var(--v2-accent); stroke-width: 1.2; stroke-dasharray: 4 3;
+    opacity: 0.7; vector-effect: non-scaling-stroke; }
+  .dn-fieldbars-gatelab { fill: var(--v2-accent); font: 9px var(--v2-mono); }
+  .dn-fieldbars-axis { fill: var(--v2-accent); font: 9.5px var(--v2-mono); }
+  .dn-fieldbars-bar { stroke: none; opacity: 0.5; }
+  .dn-fieldbars-bar.dn-good { fill: var(--v2-good); }
+  .dn-fieldbars-bar.dn-bad { fill: var(--v2-bad); }
+  .dn-fieldbars-bar.dn-flat { fill: var(--v2-flat); }
+  .dn-fieldbars-bar.dn-racing { fill: var(--v2-caution); }
+  .dn-fieldbars-bar.dn-fieldbars-live { opacity: 0.4; }
+  .dn-fieldbars-dot { stroke: none; vector-effect: non-scaling-stroke; }
+  .dn-fieldbars-dot.dn-good { fill: var(--v2-good); }
+  .dn-fieldbars-dot.dn-bad { fill: var(--v2-bad); }
+  .dn-fieldbars-dot.dn-flat { fill: var(--v2-flat); }
+  .dn-fieldbars-dot.dn-racing { fill: var(--v2-caution); }
+  .dn-fieldbars-dot.dn-fieldbars-livedot { fill: transparent; stroke: var(--v2-caution); stroke-width: 1.5; stroke-dasharray: 2 2; }
+  .dn-fieldbars-dot.dn-fieldbars-queued { fill: transparent; stroke: var(--v2-ink-faint); stroke-width: 1.2; opacity: 0.6; }
+  .dn-fieldbars-name { fill: var(--v2-ink-soft); font: 10px var(--v2-mono); }
+  .dn-fieldbars-name.dn-good { fill: var(--v2-good); font-weight: 600; }
+  .dn-fieldbars-name.dn-bad { fill: var(--v2-bad); }
+  .dn-fieldbars-name.dn-racing { fill: var(--v2-caution); }
+  .dn-fieldbars-val { font: 9.5px var(--v2-mono); font-variant-numeric: tabular-nums; fill: var(--v2-ink-faint); }
+  .dn-fieldbars-val.dn-good { fill: var(--v2-good); }
+  .dn-fieldbars-val.dn-bad { fill: var(--v2-bad); }
+  .dn-fieldbars-bar-bg { fill: var(--v2-rule-soft); opacity: 0.6; }
+  .dn-fieldbars-livebar { fill: var(--v2-caution); opacity: 0.85; transition: width 0.3s ease; }
+  .dn-fieldbars-row { cursor: pointer; }
+  .dn-fieldbars-row:hover .dn-fieldbars-name,
+  .dn-fieldbars-row:focus .dn-fieldbars-name { fill: var(--v2-accent); outline: none; }
+  .dn-fieldbars-row:focus-visible { outline: 2px solid var(--v2-accent); }
+  /* dn-proj fill overrides for the field-bar marks (projected ghost). */
+  .dn-fieldbars-dot.dn-proj, .dn-scalartrack-dot.dn-proj { fill: var(--v2-projected);
+    stroke: var(--v2-projected-line); }
+  .dn-fieldbars-bar.dn-proj { fill: var(--v2-projected-fill); opacity: 0.5; }
+  .dn-fieldbars-name.dn-proj, .dn-fieldbars-val.dn-proj,
+  .dn-scalartrack-name.dn-proj { fill: var(--v2-projected); }
+
+  /* ---- ELIM RADIAL (concentric bracket — rounds as rings to a center gate) ----
+   * Rounds are concentric rings narrowing to the champion seat at center. Each
+   * spoke's survived segments read --v2-good; the elimination segment --v2-bad +
+   * a red ✕; the survivor dashes accent into the seat. Double-elim splits WB
+   * (upper) / LB (lower) by a dashed equator with rim-hugging transfer arcs.
+   * All --v2-* tokens. */
+  .dn-elimradial-ring { stroke: var(--v2-rule-soft); stroke-width: 1; stroke-dasharray: 2 4;
+    vector-effect: non-scaling-stroke; }
+  .dn-elimradial-ring-outer { stroke: var(--v2-rule); stroke-dasharray: none; }
+  .dn-elimradial-equator { stroke: var(--v2-rule); stroke-dasharray: 3 4; opacity: 0.7;
+    vector-effect: non-scaling-stroke; }
+  .dn-elimradial-seg { stroke-width: 1.8; vector-effect: non-scaling-stroke; }
+  .dn-elimradial-seg.dn-good { stroke: var(--v2-good); }
+  .dn-elimradial-seg.dn-bad { stroke: var(--v2-bad); stroke-width: 2; }
+  .dn-elimradial-seg.dn-elimradial-gateline { stroke: var(--v2-accent); stroke-width: 1.6; stroke-dasharray: 4 3; }
+  .dn-elimradial-seg.dn-elimradial-pending { stroke: var(--v2-ink-faint); stroke-dasharray: 4 3; opacity: 0.7; }
+  .dn-elimradial-node { vector-effect: non-scaling-stroke; }
+  .dn-elimradial-node.dn-good { fill: var(--v2-good); }
+  .dn-elimradial-node.dn-bad { fill: var(--v2-bad); }
+  .dn-elimradial-cut { fill: var(--v2-bad); font: 700 10px var(--v2-sans); }
+  .dn-elimradial-transfer { stroke: var(--v2-caution); stroke-width: 1.1; stroke-dasharray: 3 3;
+    opacity: 0.65; vector-effect: non-scaling-stroke; }
+  .dn-elimradial-name { font: 9px var(--v2-mono); }
+  .dn-elimradial-name.dn-good { fill: var(--v2-good); }
+  .dn-elimradial-name.dn-bad { fill: var(--v2-bad); }
+  .dn-elimradial-name.dn-elimradial-former { fill: var(--v2-ink-faint); font-style: italic; }
+  .dn-elimradial-seat { fill: var(--v2-panel); stroke: var(--v2-accent); stroke-width: 1.5;
+    vector-effect: non-scaling-stroke; }
+  .dn-elimradial-seat.dn-good { stroke: var(--v2-good); }
+  .dn-elimradial-seatlab { fill: var(--v2-accent); font: 11px var(--v2-sans); }
+  .dn-elimradial-seatlab.dn-good { fill: var(--v2-good); }
+  .dn-elimradial-spoke { cursor: pointer; }
+  .dn-elimradial-spoke:hover .dn-elimradial-name { fill: var(--v2-accent); }
+  .dn-elimradial-spoke:focus-visible { outline: 2px solid var(--v2-accent); }
+  .dn-elimradial-gate { cursor: pointer; }
+  .dn-elimradial-gate:focus-visible { outline: 2px solid var(--v2-accent); }
+  .dn-elimradial-name.dn-proj { fill: var(--v2-projected); }
+  .dn-elimradial-seg.dn-elimradial-pending.dn-proj { stroke: var(--v2-projected-line); }
+
+  /* ---- RADAR SILHOUETTE (challenger vs champion across the gate axes) ----
+   * Candidate = filled accent polygon; champion = dashed faint polygon; OUTER =
+   * better. A candidate vertex reads --v2-good when it dominates, --v2-bad when it
+   * pulls in. Live/projected candidate ghosts in dn-proj. All --v2-* tokens. */
+  .dn-radar-ring { stroke: var(--v2-rule-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .dn-radar-spoke { stroke: var(--v2-rule-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .dn-radar-axislab { fill: var(--v2-ink-soft); font: 9.5px var(--v2-mono); }
+  .dn-radar-axistick { fill: var(--v2-ink-faint); font: 7.5px var(--v2-mono); }
+  .dn-radar-champ { stroke: var(--v2-ink-faint); stroke-width: 1.5; stroke-dasharray: 4 3;
+    fill: none; vector-effect: non-scaling-stroke; }
+  .dn-radar-champ-dot { stroke: var(--v2-ink-faint); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .dn-radar-cand { fill: var(--v2-accent); fill-opacity: 0.16; stroke: var(--v2-accent);
+    stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .dn-radar-cand.dn-proj { fill: var(--v2-projected-fill); stroke: var(--v2-projected-line);
+    stroke-dasharray: var(--v2-projected-dash); }
+  .dn-radar-cand-dot { vector-effect: non-scaling-stroke; }
+  .dn-radar-cand-dot.dn-good { fill: var(--v2-good); }
+  .dn-radar-cand-dot.dn-bad { fill: var(--v2-bad); }
+  .dn-radar-cand-dot.dn-proj { fill: var(--v2-projected); }
+  .dn-radar-hot { cursor: pointer; }
+  .dn-radar-hot:focus-visible { outline: 2px solid var(--v2-accent); }
+  .dn-radar-legendbox { fill: var(--v2-panel); stroke: var(--v2-rule); stroke-width: 1;
+    vector-effect: non-scaling-stroke; }
+  .dn-radar-legendcap { fill: var(--v2-ink-faint); font: 9.5px var(--v2-mono); }
+  .dn-radar-legendlab { fill: var(--v2-ink-soft); font: 9.5px var(--v2-mono); }
+  .dn-radar-legendlab.dn-good { fill: var(--v2-good); }
+  .dn-radar-legendlab.dn-bad { fill: var(--v2-bad); }
+  .dn-radar-cand-key { stroke: var(--v2-accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .dn-radar-champ-key { stroke: var(--v2-ink-faint); stroke-width: 1.5; stroke-dasharray: 4 3;
+    vector-effect: non-scaling-stroke; }
+
+  /* ---- elimFlow DOUBLE-ELIM bands (WB ●● / LB ●○ tinted) ----
+   * The winners' / losers' columns tint into two distinguished bands behind the
+   * lanes (the study opt-7 banding); the drop pipes route through a staggered bus.
+   * --v2-good-soft (WB) and a caution mix (LB) keep it theme-adaptive. */
+  .dn-elimflow-band { stroke-width: 1; stroke-opacity: 0.45; vector-effect: non-scaling-stroke; }
+  .dn-elimflow-band.dn-elimflow-band-wb { fill: var(--v2-good-soft); fill-opacity: 0.30; stroke: var(--v2-accent); }
+  .dn-elimflow-band.dn-elimflow-band-lb { fill: color-mix(in srgb, var(--v2-caution) 90%, transparent);
+    fill-opacity: 0.14; stroke: var(--v2-caution); }
+  .dn-elimflow-bandlab { font: 700 9px var(--v2-mono); letter-spacing: 0.06em; }
+  .dn-elimflow-bandlab.dn-elimflow-band-wb { fill: var(--v2-accent); }
+  .dn-elimflow-bandlab.dn-elimflow-band-lb { fill: var(--v2-caution); }
+
   /* ---- the LOSS-FLOOR WATERFALL (the epoch's descent across rounds) ----
    * Each round a step sized by its promotion Δ — improvement reads --v2-good,
    * regression --v2-bad, a held round is flat. The accent spine is the floor. */

@@ -83,6 +83,28 @@ function shortLabel(s, n) {
   return str.length > max ? str.slice(0, max - 1) + '…' : str;
 }
 
+// ── orthogonal-pipe routers (the double-elim drop-bus language) ──────
+//
+// A rounded-corner orthogonal "pipe": a vertical drop from (x0,y0) to a
+// horizontal bus at busY, a run across to xt, then a short vertical into
+// (xt,yt). Corners are arc-rounded (radius rr) so the route reads as a calm
+// pipe, not a kinked wire. Direction-aware (target left OR right of source).
+// Reproduces the study's `elbow()` (double-elim.html opt 7).
+export function elbowPath(x0, y0, xt, yt, busY, rr) {
+  rr = rr || 6;
+  const dir = xt >= x0 ? 1 : -1;
+  const downA = busY > y0 ? 1 : -1;
+  const downB = yt > busY ? 1 : -1;
+  const r1 = Math.min(rr, Math.abs(busY - y0) / 2);
+  const r2 = Math.min(rr, Math.abs(yt - busY) / 2, Math.abs(xt - x0) / 2);
+  return `M${x0.toFixed(1)} ${y0.toFixed(1)}`
+    + ` L${x0.toFixed(1)} ${(busY - downA * r1).toFixed(1)}`
+    + ` Q${x0.toFixed(1)} ${busY.toFixed(1)} ${(x0 + dir * r1).toFixed(1)} ${busY.toFixed(1)}`
+    + ` L${(xt - dir * r2).toFixed(1)} ${busY.toFixed(1)}`
+    + ` Q${xt.toFixed(1)} ${busY.toFixed(1)} ${xt.toFixed(1)} ${(busY + downB * r2).toFixed(1)}`
+    + ` L${xt.toFixed(1)} ${yt.toFixed(1)}`;
+}
+
 // a live racing lane's progress label: "k/N boards" when the rung's board total
 // is known, else "k running" when only the in-flight count is known.
 function laneProgressText(lane) {
@@ -1069,30 +1091,43 @@ export function elimFlow(opts) {
   const genState = new Map();
   const ensure = (id) => {
     const k = String(id);
-    if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), lostAt: new Set(), eliminatedAt: null, pendingAt: new Set() });
+    if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), lostAt: new Set(), eliminatedAt: null, pendingAt: new Set(),
+      // double-elim: which band columns a lane plays in, keyed by side, + the
+      // exact column it RE-ENTERS the losers' bracket (the first LB column it
+      // plays) so a WB→LB drop can route into that node's TOP.
+      sideOf: new Map(), lbEntryCol: null });
     return genState.get(k);
   };
   // the per-round MATCHES (a two-lane convergence each): two competitors meet, the
   // winner's lane continues, the loser's terminates. Captured here so the figure
   // can draw the bracket-as-flow convergence node + carry the pairing onto HOVER.
   const matchesByCol = rounds.map(() => []);
+  // double-elim: each column's bracket side (WB / LB), inferred from its matches'
+  // bracket_slot. A column with any LB-slotted match is an LB (losers') column.
+  const colSide = rounds.map(() => 'WB');
+  let anyLB = false;
   rounds.forEach((r, ci) => {
     for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
       const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String).filter((c) => c && c !== 'tbd');
       const winner = m.winner ? String(m.winner) : null;
       const pending = !!m.pending || (!winner && !m.bye && !m.decision);
+      const slot = String(m.bracket_slot || '');
+      const isLB = slot.startsWith('LB');
+      if (isLB) { colSide[ci] = 'LB'; anyLB = true; }
       // a real two-lane convergence (not a bye / placeholder) is recorded for the
       // match-node layer; a winner+loser pair, with the live state per leg.
       if (comps.length >= 2 && !m.bye) {
         const loser = winner ? comps.find((c) => c !== winner) || null : null;
         matchesByCol[ci].push({ comps, winner, loser, pending, delta: isNum(m.delta_scalar) ? m.delta_scalar : null,
-          slot: m.bracket_slot || m.match_id || '',
+          slot: m.bracket_slot || m.match_id || '', isLB,
           // the per-side live PROJECTED standing on an in-flight match.
           projected: (m.projected && typeof m.projected === 'object') ? m.projected : null });
       }
       for (const c of comps) {
         const g = ensure(c);
         g.played.add(ci);
+        g.sideOf.set(ci, isLB ? 'LB' : 'WB');
+        if (isLB && g.lbEntryCol == null) g.lbEntryCol = ci;
         if (pending) { g.pendingAt.add(ci); continue; }
         if (m.bye) { g.advanced.add(ci); continue; }
         if (winner && c === winner) g.advanced.add(ci);
@@ -1100,6 +1135,7 @@ export function elimFlow(opts) {
       }
     }
   });
+  const isDouble = anyLB;
   // ELIMINATION vs DROP (double-elim correctness): a generation is ELIMINATED at
   // a column only when it lost there AND never plays again in a LATER column. An
   // earlier loss that is followed by a later appearance is a winners→losers DROP
@@ -1160,6 +1196,28 @@ export function elimFlow(opts) {
   const gateX = padL + nCols * colW + 8;           // the champion-gate column x
   const laneY = (li) => top + li * laneH + laneH / 2;
 
+  // ── double-elim: WB / LB tinted bands behind the columns ──
+  // The winners' (●● two-lives) and losers' (●○ one-life) columns are tinted
+  // into two clearly-distinguished bands so the bracket side reads at a glance
+  // (reproducing the study opt-7 banding language). The bands run the full lane
+  // height behind each column group; a side glyph rides each band's first column.
+  if (isDouble) {
+    // contiguous runs of same-side columns → one band rect each.
+    let s = 0;
+    while (s < nCols) {
+      let e = s;
+      while (e + 1 < nCols && colSide[e + 1] === colSide[s]) e++;
+      const x0 = colX(s) - colW / 2 + 6;
+      const x1 = colX(e) + colW / 2 - 6;
+      const bandCls = 'dn-elimflow-band ' + (colSide[s] === 'LB' ? 'dn-elimflow-band-lb' : 'dn-elimflow-band-wb');
+      svg.appendChild(svgEl('rect', { x: x0, y: top - 6, width: Math.max(2, x1 - x0), height: gens.length * laneH + 12, rx: 6, class: bandCls }));
+      const glyph = svgEl('text', { x: colX(s), y: top - 22, class: 'dn-elimflow-bandlab ' + (colSide[s] === 'LB' ? 'dn-elimflow-band-lb' : 'dn-elimflow-band-wb'), 'text-anchor': 'middle' });
+      glyph.textContent = colSide[s] === 'LB' ? "●○ losers'" : "●● winners'";
+      svg.appendChild(glyph);
+      s = e + 1;
+    }
+  }
+
   // round-axis headers (R0 · R1 · … · champion-gate).
   rounds.forEach((r, ci) => {
     const hx = colX(ci);
@@ -1206,6 +1264,11 @@ export function elimFlow(opts) {
     }
   });
 
+  // a per-figure drop-bus lane counter so concurrent WB→LB drops are staggered
+  // onto parallel buses (offset y) — never sharing one y, which is what kills the
+  // old fan-of-crossing curves (the study opt-7 routing discipline).
+  let dropBusN = 0;
+
   // ── one lane per generation: dots at each round it played, a segment to the
   // next column when it advanced, a ✕ where it was cut, the crown at the gate ──
   gens.forEach((g, li) => {
@@ -1240,7 +1303,20 @@ export function elimFlow(opts) {
         // always has a later played column, so it never falls through to here).
         const toX = (nextCi != null) ? colX(nextCi)
           : ((advanced || pending) && ci === nCols - 1 ? gateX : null);
-        if (toX != null) {
+        // a DROP into an LB column (double-elim) routes as a rounded orthogonal
+        // PIPE: it dips to a staggered horizontal drop-bus below the lane row,
+        // runs across, then rises into the TOP of the LB re-entry node — a calm
+        // pipe with no crossing bezier (the study opt-7 elbow routing). Every
+        // other continuation stays a straight lane segment.
+        const dropToLB = dropped && isDouble && nextCi != null && colSide[nextCi] === 'LB';
+        if (toX != null && dropToLB) {
+          const busY = y + laneH * 0.5 + 2 + (dropBusN % 3) * 2.5;   // staggered bus
+          dropBusN++;
+          lane.appendChild(svgEl('path', {
+            d: elbowPath(x, y, toX, y, busY, 5),
+            class: 'dn-elimflow-seg dn-elimflow-seg-drop dn-elimflow-bad', fill: 'none',
+          }));
+        } else if (toX != null) {
           const segCls = 'dn-elimflow-seg ' + (dropped ? 'dn-elimflow-seg-drop dn-elimflow-bad'
             : pending ? 'dn-elimflow-seg-pending' : 'dn-elimflow-good');
           lane.appendChild(svgEl('line', { x1: x, y1: y, x2: toX, y2: y, class: segCls }));
@@ -1550,6 +1626,806 @@ export function duelFlow(opts) {
   clickable(gateG, (champId && o.onCompetitor) && (() => o.onCompetitor(champId)));
   svg.appendChild(gateG);
   return svg;
+}
+
+// ── racing SCALAR TRACK (every gen on a shared scalar number-line) ───
+//
+// The FINAL liked racing study figure (racing.html opt 1). Every generation is
+// a MARKER on one shared scalar number-line — lower loss sits LEFT (better). The
+// marker SIZE encodes INVERSE LOSS (bigger = better) via the study's area-honest
+// radius `r = 4 + sqrt(1 - normLoss) * 9`, so the surviving leader looms largest
+// and the cut candidates shrink away — cut-closeness becomes literal distance.
+// The champion v0 is a dashed accent benchmark line; the cut threshold (the worst
+// surviving scalar) is a dashed caution tick; labels stagger into tiers so near
+// markers never overlap.
+//
+// FOUR lifecycle states (mirroring funnelRunner):
+//   queued      — no scalar yet: a hollow dim marker parked at the axis left.
+//   in-flight   — a live rung lane (live:true + per-gen `live_progress`): the
+//                 marker is dashed/caution + a "k/N boards" progress sub-bar.
+//   projected   — an in-flight lane WITH a server-side projected scalar: the
+//                 marker sits at its projected x in the dashed/amber dn-proj
+//                 treatment + a "~scalar proj" label + a scored progress sub-bar.
+//   settled     — solid (survivor) / hollow-outline (cut) marker, final verdict.
+//
+// CONVERGENCE: a settled marker renders byte-identically whether it arrived via
+// the live path (projected→settled) or a completed record — no live-only chrome
+// survives once `live_progress` is absent and a scalar is committed.
+//
+// opts: {
+//   rungs: [{ label, match_id, board_fraction, competitors:[id],
+//             survivors:[id], cut:[id], deltas:{id: Δ-vs-champ},
+//             scalars:{id: scalar}, live_progress:{id: lane}, pending }],
+//   championId | benchmarkId, championScalar,   // the v0 benchmark line
+//   live, mini|compact, onCompetitor(id), focusRung (default: last)
+// }
+// A rung lane `live_progress[id]` is the SAME shape funnelRunner reads:
+//   { inflight, done, total, boards_done, boards_total, partialDelta,
+//     projected, projected_scalar }.
+// Each competitor's plotted scalar is taken from `rung.scalars[id]` when present,
+// else recovered from the Δ-vs-champ + championScalar (scalar = champ + Δ), else
+// (live, no scalar) the lane's projected_scalar.
+export function racingScalarTrack(opts) {
+  const o = opts || {};
+  const rungs = (Array.isArray(o.rungs) ? o.rungs : []).filter((r) => r);
+  const mini = !!(o.mini || o.compact);
+  const benchId = o.benchmarkId != null ? String(o.benchmarkId)
+    : (o.championId != null ? String(o.championId) : null);
+  const champScalar = isNum(o.championScalar) ? o.championScalar : null;
+
+  // the focus rung — the one whose field is plotted on the track. Default: the
+  // last (deepest) rung that has any competitors, so the hero shows the live edge.
+  let focus = isNum(o.focusRung) ? o.focusRung : -1;
+  if (focus < 0 || focus >= rungs.length) {
+    focus = 0;
+    for (let i = rungs.length - 1; i >= 0; i--) {
+      if (Array.isArray(rungs[i].competitors) && rungs[i].competitors.length) { focus = i; break; }
+    }
+  }
+  const rung = rungs[focus] || { competitors: [], survivors: [], cut: [] };
+
+  // recover each competitor's plotted scalar from the model.
+  const scalarOf = (id, lane) => {
+    if (rung.scalars && isNum(rung.scalars[id])) return rung.scalars[id];
+    if (champScalar != null && rung.deltas && isNum(rung.deltas[id])) return champScalar + rung.deltas[id];
+    if (lane && isNum(lane.projected_scalar)) return lane.projected_scalar;
+    return null;
+  };
+
+  const comps = (Array.isArray(rung.competitors) ? rung.competitors : []).map(String);
+  const survSet = new Set((Array.isArray(rung.survivors) ? rung.survivors : []).map(String));
+  const cutSet = new Set((Array.isArray(rung.cut) ? rung.cut : []).map(String));
+  const prog = (rung.live_progress && typeof rung.live_progress === 'object') ? rung.live_progress : null;
+
+  const W = mini ? 360 : 560;
+  const padL = mini ? 40 : 70;
+  const padR = 20;
+  const top = mini ? 24 : 40;
+
+  // marker model — scalar, radius (inverse loss), verdict, live lane.
+  const vals = [];
+  if (benchId != null && champScalar != null) vals.push(champScalar);
+  const marks = comps.map((id) => {
+    const lane = prog ? prog[id] : null;
+    const v = scalarOf(id, lane);
+    if (isNum(v)) vals.push(v);
+    const survived = survSet.has(id);
+    const cut = cutSet.has(id);
+    const racing = !!lane && !survived && !cut;
+    const projected = !!(lane && lane.projected && racing);
+    return { id, v, lane, survived, cut, racing, projected };
+  });
+  const [lo, hi] = (() => {
+    const e = extent(vals.length ? vals : [0, 1]);
+    return [e[0] - 0.02, e[1] + 0.02];
+  })();
+  const X = scale([lo, hi], [padL, W - padR]);
+  const radOf = (v) => {
+    if (!isNum(v)) return 4;
+    const norm = Math.max(0, Math.min(1, (v - lo) / (hi - lo || 1)));   // 0 best … 1 worst
+    return (mini ? 3 : 4) + Math.sqrt(1 - norm) * (mini ? 6 : 9);       // area-honest inverse loss
+  };
+
+  // stagger labels into tiers so near-x markers don't collide (greedy by x).
+  marks.forEach((m) => { m.x = isNum(m.v) ? X(m.v) : padL; m.r = radOf(m.v); });
+  const minDX = mini ? 22 : 30;
+  const order = [...marks].sort((a, b) => a.x - b.x);
+  const tierLastX = [];
+  order.forEach((m) => {
+    let t = 0;
+    while (tierLastX[t] != null && m.x - tierLastX[t] < minDX) t++;
+    m.tier = t; tierLastX[t] = m.x;
+  });
+  const maxTier = Math.max(0, ...marks.map((m) => m.tier || 0));
+  const tierH = mini ? 9 : 11;
+  const axisY = top + 8 + maxTier * tierH;
+  const H = axisY + (mini ? 26 : 40);
+
+  const svg = svgEl('svg', {
+    class: 'dn-scalartrack', width: '100%', height: H,
+    viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
+    'aria-label': 'racing scalar track — lower is better, bigger marker = better',
+  });
+  if (!comps.length) {
+    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no challengers on the track yet';
+    svg.appendChild(t);
+    return svg;
+  }
+
+  // the axis line.
+  svg.appendChild(svgEl('line', { x1: padL, y1: axisY, x2: W - padR, y2: axisY, class: 'dn-scalartrack-axis' }));
+  if (!mini) {
+    const cap = svgEl('text', { x: padL, y: top - 18, class: 'dn-scalartrack-cap' });
+    cap.textContent = `${shortLabel(rung.label || `Rung ${focus}`, 14)} — scalar, lower is better`;
+    svg.appendChild(cap);
+  }
+  // axis end ticks.
+  if (!mini) {
+    const t0 = svgEl('text', { x: padL, y: axisY + 18, class: 'dn-scalartrack-tick' });
+    t0.textContent = fmt(lo, 3);
+    const t1 = svgEl('text', { x: W - padR, y: axisY + 18, class: 'dn-scalartrack-tick', 'text-anchor': 'end' });
+    t1.textContent = fmt(hi, 3);
+    svg.appendChild(t0); svg.appendChild(t1);
+  }
+
+  // the cut threshold tick (the worst surviving scalar) — only when settled.
+  const survScalars = marks.filter((m) => m.survived && isNum(m.v)).map((m) => m.v);
+  if (survScalars.length && !rung.pending) {
+    const thr = Math.max(...survScalars);
+    const tx = X(thr);
+    svg.appendChild(svgEl('line', { x1: tx, y1: top - 4, x2: tx, y2: axisY + 6, class: 'dn-scalartrack-cut' }));
+    if (!mini) {
+      const ct = svgEl('text', { x: tx, y: top - 8, class: 'dn-scalartrack-cutlab', 'text-anchor': 'middle' });
+      ct.textContent = 'cut';
+      svg.appendChild(ct);
+    }
+  }
+
+  // the champion v0 benchmark line (dashed accent).
+  if (benchId != null && champScalar != null) {
+    const cx = X(champScalar);
+    svg.appendChild(hov(svgEl('line', { x1: cx, y1: top - 4, x2: cx, y2: axisY + (mini ? 6 : 16), class: 'dn-scalartrack-bench' }),
+      `champion v0 = ${benchId} · scalar ${fmt(champScalar, 3)} · the benchmark every Δ is measured against`));
+    const bt = svgEl('text', { x: cx, y: top - (mini ? 4 : 8), class: 'dn-scalartrack-benchlab', 'text-anchor': 'middle' });
+    bt.textContent = mini ? 'v0' : 'champ ' + fmt(champScalar, 3);
+    svg.appendChild(bt);
+  }
+
+  // the markers — radius = inverse loss; survivors filled, cuts hollow, live
+  // dashed; staggered labels with a connector tick when raised.
+  marks.forEach((m) => {
+    const verdictCls = m.cut ? 'dn-bad' : m.survived ? 'dn-good' : m.projected ? 'dn-proj' : m.racing ? 'dn-racing' : '';
+    const g = svgEl('g', { class: 'dn-scalartrack-mark', tabindex: o.onCompetitor ? '0' : null });
+    const filled = m.survived;
+    const dashed = m.racing && !m.projected;
+    const markCls = 'dn-scalartrack-dot ' + verdictCls
+      + (filled ? ' dn-scalartrack-filled' : '')
+      + (m.projected ? ' dn-proj' : '')
+      + (dashed ? ' dn-scalartrack-live' : '')
+      + (isNum(m.v) ? '' : ' dn-scalartrack-queued');
+    const tip = `${m.id} · ${shortLabel(rung.label || 'rung ' + focus, 12)}`
+      + (isNum(m.v) ? ` · scalar ${fmt(m.v, 3)}` : ' · queued')
+      + (rung.deltas && isNum(rung.deltas[m.id]) ? ` · Δ ${fmtSigned(rung.deltas[m.id], 2)} vs champion` : '')
+      + (m.lane ? ' · ' + laneProgressText(m.lane) : '')
+      + (m.projected && isNum(m.lane.projected_scalar) ? ` · projected ~${fmt(m.lane.projected_scalar, 2)} (boards streaming)` : '')
+      + ` · ${m.cut ? 'cut' : m.survived ? 'survives' : m.projected ? 'projected' : m.racing ? 'racing' : 'queued'}`;
+    g.appendChild(hov(svgEl('circle', { cx: m.x, cy: axisY, r: m.r, class: markCls }), tip));
+    // the staggered id label, lifted off the axis by tier.
+    const ly = axisY - m.r - 4 - (m.tier || 0) * tierH;
+    if ((m.tier || 0) > 0) g.appendChild(svgEl('line', { x1: m.x, y1: axisY - m.r - 1, x2: m.x, y2: ly + 2, class: 'dn-scalartrack-tier ' + verdictCls }));
+    const lab = svgEl('text', { x: m.x, y: ly, class: 'dn-scalartrack-name ' + verdictCls + (m.projected ? ' dn-proj' : ''), 'text-anchor': 'middle' });
+    const projSuffix = m.projected && isNum(m.lane.projected_scalar) ? ' ~' + fmt(m.lane.projected_scalar, 1) + ' proj' : '';
+    lab.textContent = shortLabel(m.id, mini ? 6 : 9) + projSuffix;
+    g.appendChild(lab);
+    // a live/projected progress sub-bar UNDER the axis (boards done / total).
+    if (m.lane && (m.lane.inflight || m.lane.done || m.projected)) {
+      const bw = mini ? 26 : 40;
+      const bx = m.x - bw / 2;
+      const by = axisY + (mini ? 6 : 10);
+      const sd = isNum(m.lane.boards_done) ? m.lane.boards_done : m.lane.done;
+      const stot = isNum(m.lane.boards_total) ? m.lane.boards_total : m.lane.total;
+      const frac = (isNum(stot) && stot > 0) ? Math.min(1, (sd || 0) / stot) : (m.lane.inflight ? 0.5 : 0);
+      if (m.projected) {
+        g.appendChild(svgEl('rect', { x: bx, y: by, width: bw, height: 2.4, rx: 1, class: 'dn-proj-bar-bg' }));
+        g.appendChild(svgEl('rect', { x: bx, y: by, width: Math.max(1, bw * frac), height: 2.4, rx: 1, class: 'dn-proj-bar' }));
+      } else {
+        g.appendChild(svgEl('rect', { x: bx, y: by, width: bw, height: 2, rx: 1, class: 'dn-scalartrack-bar-bg' }));
+        g.appendChild(svgEl('rect', { x: bx, y: by, width: Math.max(1, bw * frac), height: 2, rx: 1, class: 'dn-scalartrack-bar dn-scalartrack-live' }));
+      }
+    }
+    clickable(g, o.onCompetitor && (() => o.onCompetitor(m.id)));
+    svg.appendChild(g);
+  });
+  return svg;
+}
+
+// A stable digest of the racingScalarTrack model — changes ONLY when the visible
+// content does (so the digest-gated swap never re-renders on a no-op heartbeat).
+export function racingScalarTrackDigest(opts) {
+  const o = opts || {};
+  const rungs = Array.isArray(o.rungs) ? o.rungs : [];
+  return JSON.stringify({
+    b: o.benchmarkId != null ? String(o.benchmarkId) : (o.championId != null ? String(o.championId) : null),
+    cs: isNum(o.championScalar) ? o.championScalar.toFixed(3) : null,
+    f: isNum(o.focusRung) ? o.focusRung : null,
+    r: rungs.map((r) => [r.match_id, r.label,
+      (r.competitors || []).map(String).join('/'),
+      (r.survivors || []).map(String).join('/'),
+      (r.cut || []).map(String).join('/'),
+      r.scalars ? Object.keys(r.scalars).sort().map((k) => k + ':' + (isNum(r.scalars[k]) ? r.scalars[k].toFixed(3) : '?')).join(',') : '',
+      r.deltas ? Object.keys(r.deltas).sort().map((k) => k + ':' + (isNum(r.deltas[k]) ? r.deltas[k].toFixed(3) : '?')).join(',') : '',
+      r.live_progress ? Object.keys(r.live_progress).sort().map((k) => {
+        const p = r.live_progress[k];
+        return k + ':' + (p.done || 0) + '/' + (p.total == null ? '?' : p.total) + ':' + (p.inflight || 0)
+          + (p.projected ? ':j' + (isNum(p.projected_scalar) ? p.projected_scalar.toFixed(3) : '?')
+            + '/' + (p.boards_done == null ? '?' : p.boards_done) + '/' + (p.boards_total == null ? '?' : p.boards_total) : '');
+      }).join(',') : '',
+      !!r.pending]),
+  });
+}
+
+// ── GAUNTLET FIELD BARS (the wave of challengers vs the champion standard) ──
+//
+// The FINAL liked gauntlet study figure (gauntlet.html opt 5, reinterpreted for
+// the multi-challenger gauntlet wave). One wave of challenger MARKERS measured
+// against the FIXED champion standard on a shared scalar axis (lower = better).
+// Each challenger is a bar from the champion-standard line out to its own scalar,
+// coloured by outcome (cleared = good, failed = bad, tied = flat), survivor-marked
+// (↑); the champion standard is a solid accent line and the PROMOTE GATE (champ −
+// margin) is a dashed accent threshold. A projected (in-flight) challenger is
+// ghosted in the dn-proj treatment + a scored progress sub-bar.
+//
+// FOUR lifecycle states (mirroring funnelRunner):
+//   queued    — no scalar yet: a hollow dim marker parked at the champion line.
+//   in-flight — live:true + per-challenger `lane` ({inflight,done,total}): a
+//               caution marker + a "k/N boards" progress sub-bar.
+//   projected — an in-flight challenger WITH a projected scalar: ghosted dn-proj
+//               at its projected x + "~scalar proj" + a scored sub-bar.
+//   settled   — solid bar to its final scalar, outcome colour + survivor glyph.
+//
+// CONVERGENCE: a settled challenger renders byte-identically via the live or the
+// completed path — no live-only chrome persists once a scalar is committed.
+//
+// opts: {
+//   championId, championScalar,            // the fixed standard (the reference)
+//   promoteMargin,                         // the gate = championScalar - margin
+//   challengers: [{ id, scalar, delta,     // scalar OR delta-vs-champ (champ+Δ)
+//                   outcome:'cleared'|'failed'|'tied', survivor,
+//                   lane:{inflight,done,total,boards_done,boards_total,
+//                         projected,projected_scalar} }],
+//   live, mini|compact, onCompetitor(id)
+// }
+export function gauntletFieldBars(opts) {
+  const o = opts || {};
+  const field = (Array.isArray(o.challengers) ? o.challengers : []).filter((c) => c && c.id != null);
+  const mini = !!(o.mini || o.compact);
+  const champId = o.championId != null ? String(o.championId) : null;
+  const champScalar = isNum(o.championScalar) ? o.championScalar : null;
+  const margin = isNum(o.promoteMargin) ? o.promoteMargin : null;
+
+  const scalarOf = (c) => {
+    if (isNum(c.scalar)) return c.scalar;
+    if (champScalar != null && isNum(c.delta)) return champScalar + c.delta;
+    if (c.lane && isNum(c.lane.projected_scalar)) return c.lane.projected_scalar;
+    return null;
+  };
+  const outcomeOf = (c, v) => {
+    if (c.outcome) return String(c.outcome);
+    if (champScalar == null || !isNum(v)) return 'pending';
+    if (Math.abs(v - champScalar) < 1e-9) return 'tied';
+    return v < champScalar ? 'cleared' : 'failed';
+  };
+
+  const W = mini ? 360 : 600;
+  const padL = mini ? 56 : 110;
+  const padR = mini ? 16 : 30;
+  const top = mini ? 26 : 34;
+  const rowH = mini ? 18 : 22;
+  const H = top + Math.max(1, field.length) * rowH + (mini ? 10 : 26);
+
+  // scalar domain: champion standard + the gate + every challenger scalar.
+  const vals = [];
+  if (champScalar != null) vals.push(champScalar);
+  if (champScalar != null && margin != null) vals.push(champScalar - margin);
+  const rows = field.map((c) => {
+    const v = scalarOf(c);
+    if (isNum(v)) vals.push(v);
+    const lane = c.lane && typeof c.lane === 'object' ? c.lane : null;
+    const racing = !!(lane && (lane.inflight || lane.done)) && c.outcome == null;
+    const projected = !!(lane && lane.projected && racing);
+    return { c, v, lane, racing, projected, outcome: outcomeOf(c, v), survivor: !!c.survivor };
+  });
+  const [lo, hi] = (() => {
+    const e = extent(vals.length ? vals : [0, 1]);
+    return [e[0] - 0.02, e[1] + 0.02];
+  })();
+  const X = scale([lo, hi], [padL, W - padR]);
+
+  const svg = svgEl('svg', {
+    class: 'dn-fieldbars', width: '100%', height: H,
+    viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMinYMin meet', role: 'img',
+    'aria-label': 'gauntlet field vs the champion standard — lower is better',
+  });
+  if (!field.length) {
+    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no challengers have entered the gauntlet';
+    svg.appendChild(t);
+    return svg;
+  }
+  const bandTop = top - 2;
+  const bandBot = H - (mini ? 8 : 22);
+
+  // the champion STANDARD line (solid accent) — the reference all bars start from.
+  if (champScalar != null) {
+    const cx = X(champScalar);
+    svg.appendChild(hov(svgEl('line', { x1: cx, y1: bandTop, x2: cx, y2: bandBot, class: 'dn-fieldbars-standard' }),
+      champId ? `champion ${champId} · standard ${fmt(champScalar, 3)}` : `champion standard ${fmt(champScalar, 3)}`));
+    const ct = svgEl('text', { x: cx, y: bandTop - 4, class: 'dn-fieldbars-axis', 'text-anchor': 'middle' });
+    ct.textContent = mini ? 'champ' : (champId ? shortLabel(champId, 10) + ' standard' : 'champ standard');
+    svg.appendChild(ct);
+  }
+  // the PROMOTE GATE threshold (champ − margin) — a dashed accent line.
+  if (champScalar != null && margin != null) {
+    const gx = X(champScalar - margin);
+    svg.appendChild(hov(svgEl('line', { x1: gx, y1: bandTop, x2: gx, y2: bandBot, class: 'dn-fieldbars-gate' }),
+      `promote gate · champion − margin ${fmt(margin, 3)} = ${fmt(champScalar - margin, 3)} (clear this to be crowned)`));
+    if (!mini) {
+      const gt = svgEl('text', { x: gx, y: bandBot + 12, class: 'dn-fieldbars-gatelab', 'text-anchor': 'middle' });
+      gt.textContent = 'gate −' + fmt(margin, 2);
+      svg.appendChild(gt);
+    }
+  }
+
+  rows.forEach((row, i) => {
+    const cy = top + i * rowH + rowH / 2;
+    const c = row.c;
+    const id = String(c.id);
+    const cls = row.outcome === 'cleared' ? 'dn-good' : row.outcome === 'failed' ? 'dn-bad' : row.outcome === 'tied' ? 'dn-flat' : 'dn-racing';
+    const g = svgEl('g', { class: 'dn-fieldbars-row', tabindex: o.onCompetitor ? '0' : null });
+    const x0 = champScalar != null ? X(champScalar) : padL;
+    const dx = isNum(row.v) ? X(row.v) : x0;
+    // the bar from the champion standard out to the challenger scalar.
+    const barCls = 'dn-fieldbars-bar ' + cls + (row.projected ? ' dn-proj' : '') + (row.racing && !row.projected ? ' dn-fieldbars-live' : '');
+    if (isNum(row.v) && Math.abs(dx - x0) >= 0.5) {
+      svg.appendChild(svgEl('rect', { x: Math.min(x0, dx), y: cy - 3, width: Math.max(1, Math.abs(dx - x0)), height: 6, rx: 1.5, class: barCls }));
+    }
+    // the challenger marker (a dot at its scalar; bigger when a survivor).
+    const dotCls = 'dn-fieldbars-dot ' + cls + (row.projected ? ' dn-proj' : '')
+      + (row.racing && !row.projected ? ' dn-fieldbars-livedot' : '')
+      + (isNum(row.v) ? '' : ' dn-fieldbars-queued');
+    const tip = `${id} vs ${champId || 'champion'}`
+      + (isNum(row.v) ? ` · scalar ${fmt(row.v, 3)}` : ' · queued')
+      + (champScalar != null && isNum(row.v) ? ` · Δ ${fmtSigned(row.v - champScalar, 2)}` : '')
+      + (row.lane ? ' · ' + laneProgressText(row.lane) : '')
+      + (row.projected && isNum(row.lane.projected_scalar) ? ` · projected ~${fmt(row.lane.projected_scalar, 2)} (boards streaming)` : '')
+      + ` · ${row.outcome}`;
+    g.appendChild(hov(svgEl('circle', { cx: dx, cy, r: row.survivor ? 4.4 : 3.3, class: dotCls }), tip));
+    // the challenger label + survivor glyph in the left gutter.
+    const glyph = row.survivor ? ' ↑' : row.outcome === 'failed' ? ' ✕' : row.outcome === 'tied' ? ' =' : '';
+    const lbl = svgEl('text', { x: padL - 6, y: cy + 3, class: 'dn-fieldbars-name ' + cls + (row.projected ? ' dn-proj' : ''), 'text-anchor': 'end' });
+    lbl.textContent = shortLabel(id, mini ? 7 : 11) + glyph;
+    g.appendChild(lbl);
+    // the scalar value just past the marker (settled / projected).
+    if (!mini && isNum(row.v)) {
+      const vt = svgEl('text', { x: dx + (row.survivor ? 8 : 7), y: cy + 3, class: 'dn-fieldbars-val ' + cls + (row.projected ? ' dn-proj' : ''), 'text-anchor': 'start' });
+      vt.textContent = (row.projected ? '~' : '') + fmt(row.v, 3);
+      g.appendChild(vt);
+    }
+    // a live/projected scored progress sub-bar under the marker.
+    if (row.lane && (row.lane.inflight || row.lane.done || row.projected)) {
+      const bw = mini ? 24 : 40;
+      const bx = dx - bw / 2;
+      const by = cy + 6;
+      const sd = isNum(row.lane.boards_done) ? row.lane.boards_done : row.lane.done;
+      const stot = isNum(row.lane.boards_total) ? row.lane.boards_total : row.lane.total;
+      const frac = (isNum(stot) && stot > 0) ? Math.min(1, (sd || 0) / stot) : (row.lane.inflight ? 0.5 : 0);
+      if (row.projected) {
+        g.appendChild(svgEl('rect', { x: bx, y: by, width: bw, height: 2.4, rx: 1, class: 'dn-proj-bar-bg' }));
+        g.appendChild(svgEl('rect', { x: bx, y: by, width: Math.max(1, bw * frac), height: 2.4, rx: 1, class: 'dn-proj-bar' }));
+      } else {
+        g.appendChild(svgEl('rect', { x: bx, y: by, width: bw, height: 2, rx: 1, class: 'dn-fieldbars-bar-bg' }));
+        g.appendChild(svgEl('rect', { x: bx, y: by, width: Math.max(1, bw * frac), height: 2, rx: 1, class: 'dn-fieldbars-livebar' }));
+      }
+    }
+    clickable(g, o.onCompetitor && (() => o.onCompetitor(id)));
+    svg.appendChild(g);
+  });
+  return svg;
+}
+
+// A stable digest of the gauntletFieldBars model.
+export function gauntletFieldBarsDigest(opts) {
+  const o = opts || {};
+  const field = Array.isArray(o.challengers) ? o.challengers : [];
+  return JSON.stringify({
+    c: o.championId != null ? String(o.championId) : null,
+    cs: isNum(o.championScalar) ? o.championScalar.toFixed(3) : null,
+    m: isNum(o.promoteMargin) ? o.promoteMargin.toFixed(3) : null,
+    f: field.map((c) => {
+      const lane = c && c.lane;
+      return [String(c.id),
+        isNum(c.scalar) ? c.scalar.toFixed(3) : (isNum(c.delta) ? 'd' + c.delta.toFixed(3) : '?'),
+        c.outcome || '', !!c.survivor,
+        lane ? (lane.done || 0) + '/' + (lane.total == null ? '?' : lane.total) + ':' + (lane.inflight || 0)
+          + (lane.projected ? ':j' + (isNum(lane.projected_scalar) ? lane.projected_scalar.toFixed(3) : '?')
+            + '/' + (lane.boards_done == null ? '?' : lane.boards_done) + '/' + (lane.boards_total == null ? '?' : lane.boards_total) : '') : ''];
+    }),
+  });
+}
+
+// ── ELIM RADIAL (concentric bracket — rounds as rings to a center gate) ──
+//
+// The FINAL liked single-elim study figure (single-elim.html opt 6), plus an
+// OPT-IN double-elim mode (double-elim.html opt 8). Rounds are CONCENTRIC RINGS
+// narrowing toward the champion seat at the CENTER; each competitor is a spoke
+// from the outer ring inward. The per-round segments a gen SURVIVED render
+// --good; the segment where it was ELIMINATED turns --bad capped with a red ✕;
+// the survivor stays good to the gate ring then dashes accent into the center.
+// In double-elim mode the winners' bracket owns the UPPER arc (accent, ●●) and
+// the losers' bracket the LOWER arc (caution, ●○), split by a dashed equator; a
+// WB→LB drop is a RIM-HUGGING transfer arc (never a chord across the center).
+//
+// FOUR lifecycle states (mirroring funnelRunner): a still-pending (live) spoke
+// segment dashes (queued/in-flight); a spoke with a projected standing reads
+// dn-proj; a settled spoke is solid with its final survive/eliminate verdict.
+//
+// CONVERGENCE: a settled spoke renders byte-identically via the live or the
+// completed path.
+//
+// opts: {
+//   rounds: [{ label, matches:[{ competitors:[id], winner, decision, pending,
+//                                bracket_slot, projected:{id:{scalar,...}} }] }],
+//   championId, benchmarkId, gateState, live, double (bool: double-elim mode),
+//   mini|compact, onCompetitor(id)
+// }
+// The model is the SAME elimModel shape elimFlow consumes; this is a polar
+// alternative renderer (so a caller can swap radial ↔ flow on the same data).
+export function elimRadial(opts) {
+  const o = opts || {};
+  const rounds = (Array.isArray(o.rounds) ? o.rounds : []).filter((r) => r && Array.isArray(r.matches));
+  const mini = !!(o.mini || o.compact);
+  const live = !!o.live;
+  const champId = o.championId != null ? String(o.championId) : null;
+  const benchId = o.benchmarkId != null ? String(o.benchmarkId) : null;
+  const isDouble = !!o.double;
+
+  // ── derive each gen's per-round state (advanced / eliminated / pending) and
+  // its bracket side, from the rounds — the same way elimFlow does. ──
+  const colsSorted = rounds
+    .map((r, i) => ({ r, i, ri: isNum(r.round_index) ? r.round_index : i }))
+    .sort((a, b) => a.ri - b.ri || a.i - b.i)
+    .map((x) => x.r);
+  const nCols = colsSorted.length;
+  const genState = new Map();
+  const ensure = (id) => {
+    const k = String(id);
+    if (!genState.has(k)) genState.set(k, { id: k, played: new Set(), advanced: new Set(), lostAt: new Set(), pendingAt: new Set(), eliminatedAt: null, side: 'WB', proj: null });
+    return genState.get(k);
+  };
+  const projByGen = new Map();
+  colsSorted.forEach((r, ci) => {
+    for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+      const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String).filter((c) => c && c !== 'tbd');
+      const winner = m.winner ? String(m.winner) : null;
+      const pending = !!m.pending || (!winner && !m.bye && !m.decision);
+      const isLB = String(m.bracket_slot || '').startsWith('LB');
+      const projMatch = (m.projected && typeof m.projected === 'object') ? m.projected : null;
+      for (const c of comps) {
+        const g = ensure(c);
+        g.played.add(ci);
+        if (isLB) g.side = 'LB';
+        if (projMatch && pending && projMatch[c] && isNum(projMatch[c].scalar)) projByGen.set(c, projMatch[c]);
+        if (pending) { g.pendingAt.add(ci); continue; }
+        if (m.bye) { g.advanced.add(ci); continue; }
+        if (winner && c === winner) g.advanced.add(ci);
+        else if (winner) g.lostAt.add(ci);
+      }
+    }
+  });
+  for (const g of genState.values()) {
+    const lost = [...g.lostAt].sort((a, b) => a - b);
+    const lastPlayed = g.played.size ? Math.max(...g.played) : -1;
+    for (const ci of lost) { if (ci >= lastPlayed) { g.eliminatedAt = ci; break; } }
+    if (projByGen.has(g.id)) g.proj = projByGen.get(g.id);
+  }
+  const gens = [...genState.values()];
+
+  const sz = mini ? 200 : 340;
+  const W = sz; const H = sz;
+  const cx = W / 2; const cy = H / 2;
+  const labelPad = mini ? 22 : 40;
+  const R = Math.min(cx, cy) - labelPad;
+  const rings = Math.max(2, nCols + 1);             // one ring per round + the center gate ring
+  const rr = (k) => R * (1 - k / rings) + (mini ? 5 : 8);
+
+  const svg = svgEl('svg', {
+    class: 'dn-elimradial', width: '100%', height: H,
+    viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
+    'aria-label': 'radial bracket — rounds as rings narrowing to the champion gate',
+  });
+  if (!nCols || !gens.length) {
+    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'no bracket rounds yet';
+    svg.appendChild(t);
+    return svg;
+  }
+
+  // the concentric ring guides.
+  for (let k = 0; k < rings; k++) {
+    svg.appendChild(svgEl('circle', { cx, cy, r: rr(k), class: 'dn-elimradial-ring' + (k === 0 ? ' dn-elimradial-ring-outer' : ''), fill: 'none' }));
+  }
+
+  // angular placement. Single-elim: spokes spread full circle. Double-elim: WB
+  // on the UPPER arc, LB on the LOWER arc, split by a dashed equator.
+  const ang = (frac) => (-90 + frac * 360) * Math.PI / 180;
+  const pol = (r, a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  if (isDouble) {
+    // the WB↔LB equator (the horizontal diameter a drop must cross).
+    svg.appendChild(svgEl('line', { x1: cx - R - (mini ? 4 : 10), y1: cy, x2: cx + R + (mini ? 4 : 10), y2: cy, class: 'dn-elimradial-equator' }));
+  }
+
+  // order spokes: survivors / champion first (deepest reach), then earlier-out.
+  const reach = (g) => (g.eliminatedAt == null ? nCols + 1 : g.eliminatedAt);
+  gens.sort((a, b) => reach(b) - reach(a) || (a.id === champId ? -1 : b.id === champId ? 1 : 0) || a.id.localeCompare(b.id));
+
+  // assign each spoke an angle. Double-elim: split by side onto two half-arcs.
+  const angleOf = new Map();
+  if (isDouble) {
+    const wb = gens.filter((g) => g.side !== 'LB');
+    const lb = gens.filter((g) => g.side === 'LB');
+    // WB upper arc: 290°→430° (upper-left→top→upper-right); LB lower arc: 110°→250°.
+    const place = (list, a0, a1) => list.forEach((g, i) => {
+      const f = list.length > 1 ? (i + 0.5) / list.length : 0.5;
+      angleOf.set(g.id, ((a0 + (a1 - a0) * f) - 90) * Math.PI / 180);
+    });
+    place(wb, 290, 430);
+    place(lb, 110, 250);
+  } else {
+    gens.forEach((g, i) => angleOf.set(g.id, ang((i + 0.0) / gens.length)));
+  }
+
+  // each spoke: per-round survival segments + node dots + the loss ✕ / gate dash.
+  gens.forEach((g) => {
+    const a = angleOf.get(g.id);
+    const isChamp = champId != null && g.id === champId;
+    const isFormer = benchId != null && g.id === benchId && !isChamp;
+    const eliminated = g.eliminatedAt != null;
+    const proj = !eliminated && g.proj && isNum(g.proj.scalar) ? g.proj : null;
+    // # of survived (advanced) rings = won segments before elimination/gate.
+    const surv = eliminated ? g.eliminatedAt : Math.max(g.advanced.size, g.played.size ? Math.max(...g.played) + 1 : 0);
+    const lane = svgEl('g', { class: 'dn-elimradial-spoke' + (proj ? ' dn-proj' : ''), tabindex: o.onCompetitor ? '0' : null });
+
+    // green (survived) segments rr(k) → rr(k+1).
+    for (let k = 0; k < surv; k++) {
+      const [sx, sy] = pol(rr(k), a); const [ex, ey] = pol(rr(k + 1), a);
+      lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-good' }));
+    }
+    // node dots at each survived ring (each cleared round reads as a beat).
+    for (let k = 0; k <= surv && k < rings; k++) {
+      const [dx, dy] = pol(rr(k), a);
+      lane.appendChild(svgEl('circle', { cx: dx, cy: dy, r: mini ? 1.6 : 2, class: 'dn-elimradial-node dn-good' }));
+    }
+    const pendingSpoke = !eliminated && (g.pendingAt.size > 0) && !isChamp;
+    if (eliminated) {
+      // the LOSS segment (--bad) capped with a red ✕.
+      const [sx, sy] = pol(rr(surv), a); const [ex, ey] = pol(rr(Math.min(surv + 1, rings)), a);
+      lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-bad' }));
+      lane.appendChild(svgEl('circle', { cx: sx, cy: sy, r: mini ? 1.8 : 2.2, class: 'dn-elimradial-node dn-bad' }));
+      const xm = svgEl('text', { x: ex, y: ey + 3.2, class: 'dn-elimradial-cut dn-bad', 'text-anchor': 'middle' });
+      xm.textContent = '✕';
+      lane.appendChild(xm);
+    } else if (isChamp) {
+      // the survivor reaches the gate ring (good) then dashes accent into center.
+      const [gx, gy] = pol(rr(surv), a);
+      lane.appendChild(svgEl('line', { x1: gx, y1: gy, x2: cx, y2: cy, class: 'dn-elimradial-seg dn-elimradial-gateline' }));
+    } else if (pendingSpoke) {
+      // a still-racing spoke: a dashed (in-flight) segment toward the next ring.
+      const [sx, sy] = pol(rr(surv), a); const [ex, ey] = pol(rr(Math.min(surv + 1, rings)), a);
+      lane.appendChild(svgEl('line', { x1: sx, y1: sy, x2: ex, y2: ey, class: 'dn-elimradial-seg dn-elimradial-pending' + (proj ? ' dn-proj' : '') }));
+    }
+
+    // the outer spoke label, anchored & nudged by quadrant so it never clips.
+    const [lx, ly] = pol(rr(0) + (mini ? 4 : 7), a);
+    const ca = Math.cos(a); const sa = Math.sin(a);
+    const anchor = ca < -0.3 ? 'end' : (ca > 0.3 ? 'start' : 'middle');
+    const ldy = sa < -0.3 ? -2 : (sa > 0.3 ? 9 : 3);
+    const lblCls = 'dn-elimradial-name ' + (eliminated ? 'dn-bad' : isChamp ? 'dn-good' : isFormer ? 'dn-elimradial-former' : 'dn-good') + (proj ? ' dn-proj' : '');
+    const tip = `${g.id}`
+      + (isChamp ? ` · champion ${CROWN.current}` : isFormer ? ' · former champion' : eliminated ? ` · eliminated at ${colsSorted[g.eliminatedAt] ? (colsSorted[g.eliminatedAt].label || 'R' + g.eliminatedAt) : 'R' + g.eliminatedAt}` : pendingSpoke ? ' · racing' : ' · advanced')
+      + (proj ? ` · projected scalar ~${fmt(proj.scalar, 2)} (boards streaming)` : '')
+      + (isDouble ? ` · ${g.side === 'LB' ? "losers' bracket ●○" : "winners' bracket ●●"}` : '');
+    const lbl = hov(svgEl('text', { x: lx, y: ly + ldy, class: lblCls, 'text-anchor': anchor }), tip);
+    lbl.textContent = shortLabel(g.id, mini ? 5 : 8) + (isChamp ? ' ' + CROWN.current : isFormer ? ' ' + CROWN.former : '') + (proj ? ' ~' : '');
+    lane.appendChild(lbl);
+    clickable(lane, o.onCompetitor && (() => o.onCompetitor(g.id)));
+    svg.appendChild(lane);
+  });
+
+  // double-elim: rim-hugging WB→LB transfer arcs (a dropped lane's second life).
+  if (isDouble) {
+    const transferR = R + (mini ? 3 : 8);
+    let li = 0;
+    const drops = gens.filter((g) => g.side === 'LB' && g.lostAt.size);
+    drops.forEach((g) => {
+      const a = angleOf.get(g.id);
+      if (a == null) return;
+      // a short rim arc just outside the play area, hugging the rim (not a chord).
+      const aDeg = (a * 180 / Math.PI) + 90;
+      const fromDeg = aDeg - 18;
+      const stagger = transferR + li * (mini ? 2 : 4); li++;
+      const [fx, fy] = pol(stagger, (fromDeg - 90) * Math.PI / 180);
+      const [tx, ty] = pol(stagger, a);
+      const large = 0;
+      svg.appendChild(svgEl('path', {
+        d: `M${fx.toFixed(1)} ${fy.toFixed(1)} A${stagger.toFixed(1)} ${stagger.toFixed(1)} 0 ${large} 1 ${tx.toFixed(1)} ${ty.toFixed(1)}`,
+        class: 'dn-elimradial-transfer', fill: 'none',
+      }));
+    });
+  }
+
+  // the CENTER champion gate.
+  const gateState = o.gateState || (live ? 'deciding' : (champId ? 'crowned' : 'pending'));
+  const crowned = gateState === 'crowned' && !!champId;
+  const seatR = mini ? 11 : 14;
+  const gateG = svgEl('g', { class: 'dn-elimradial-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });
+  gateG.appendChild(svgEl('circle', { cx, cy, r: seatR, class: 'dn-elimradial-seat' + (crowned ? ' dn-good' : '') }));
+  const gt = hov(svgEl('text', { x: cx, y: cy + (mini ? 3.6 : 4.5), class: 'dn-elimradial-seatlab' + (crowned ? ' dn-good' : ''), 'text-anchor': 'middle' }),
+    crowned ? `${champId} · crowned champion ${CROWN.current}`
+      : gateState === 'stands' ? 'champion stands'
+        : gateState === 'deciding' ? 'gate deciding…' : 'champion gate');
+  gt.textContent = crowned ? CROWN.current : gateState === 'deciding' ? '…' : CROWN.former;
+  gateG.appendChild(gt);
+  clickable(gateG, (champId && o.onCompetitor) && (() => o.onCompetitor(champId)));
+  svg.appendChild(gateG);
+  return svg;
+}
+
+// A stable digest of the elimRadial model.
+export function elimRadialDigest(opts) {
+  const o = opts || {};
+  const rounds = Array.isArray(o.rounds) ? o.rounds : [];
+  return JSON.stringify({
+    c: o.championId != null ? String(o.championId) : null,
+    b: o.benchmarkId != null ? String(o.benchmarkId) : null,
+    g: o.gateState || null, d: !!o.double,
+    r: rounds.map((r) => [r.round_index, r.label,
+      (Array.isArray(r.matches) ? r.matches : []).map((m) => [m.match_id, (m.competitors || []).map(String).join('/'), m.winner, m.decision, m.bracket_slot, m.bye, !!m.pending,
+        m.projected ? Object.keys(m.projected).sort().map((k) => k + ':' + (isNum(m.projected[k].scalar) ? m.projected[k].scalar.toFixed(3) : '?')).join(',') : '']),
+    ]),
+  });
+}
+
+// ── RADAR SILHOUETTE (challenger vs champion across the gate's axes) ──
+//
+// The FINAL liked single-generation study figure (single-generation.html opt 2's
+// radar panel). A polar silhouette comparing the CHALLENGER (filled accent
+// polygon) to the CHAMPION (dashed faint polygon) across the axes the gate weighs
+// — scalar (inverse), pass-rate, and each per-judge drift — with OUTER = better.
+// Each vertex carries a hover tooltip with the underlying value per axis; a
+// candidate vertex reads --good when it dominates the champion on that axis,
+// --bad when it pulls in.
+//
+// Lifecycle: a candidate still on boards passes `live:true` + projected axes; the
+// candidate polygon then reads in the dn-proj (dashed/amber) treatment. Absent
+// live data → settled (solid). CONVERGENCE: a settled silhouette renders
+// byte-identically via the live or completed path.
+//
+// opts: {
+//   axes: [{ label, chal, champ }],   // normalised radii 0..1, OUTER = better
+//   raw:  [{ chal, champ, unit, better }],   // optional underlying values (tips)
+//   live, mini|compact, legend (default !mini), onAxis(label)
+// }
+export function radarSilhouette(opts) {
+  const o = opts || {};
+  const axes = (Array.isArray(o.axes) ? o.axes : []).filter((a) => a && isNum(a.chal) && isNum(a.champ));
+  const raw = Array.isArray(o.raw) ? o.raw : [];
+  const mini = !!(o.mini || o.compact);
+  const live = !!o.live;
+  const legend = o.legend != null ? !!o.legend : !mini;
+  const n = axes.length;
+
+  const W = mini ? 200 : (legend ? 560 : 360);
+  const H = mini ? 200 : 360;
+  const cx = mini ? W / 2 : (legend ? 210 : W / 2);
+  const cy = H / 2 - (mini ? 0 : 6);
+  const R = mini ? 76 : 128;
+  const showLabels = !mini && n <= 8;
+
+  const svg = svgEl('svg', {
+    class: 'dn-radar', width: '100%', height: H,
+    viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
+    'aria-label': 'radar — challenger vs champion across the gate axes; outer = better',
+  });
+  if (n < 3) {
+    const t = svgEl('text', { x: W / 2, y: H / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
+    t.textContent = 'not enough axes to plot';
+    svg.appendChild(t);
+    return svg;
+  }
+  const angle = (i) => -Math.PI / 2 + i * 2 * Math.PI / n;
+  const P = (i, r) => {
+    const rr = Math.max(0.05, Math.min(1, r));
+    return [cx + Math.cos(angle(i)) * R * rr, cy + Math.sin(angle(i)) * R * rr];
+  };
+
+  // concentric grid rings.
+  for (const ring of [0.25, 0.5, 0.75, 1]) {
+    const pts = axes.map((_, i) => P(i, ring).join(',')).join(' ');
+    svg.appendChild(svgEl('polygon', { points: pts, class: 'dn-radar-ring', fill: 'none' }));
+  }
+  // spokes + axis labels (suppressed when dense — hover annotates instead).
+  axes.forEach((a, i) => {
+    const [ex, ey] = P(i, 1);
+    svg.appendChild(svgEl('line', { x1: cx, y1: cy, x2: ex, y2: ey, class: 'dn-radar-spoke' }));
+    if (showLabels) {
+      const [lx, ly] = P(i, 1.18);
+      const anchor = Math.abs(lx - cx) < 6 ? 'middle' : lx < cx ? 'end' : 'start';
+      const t = svgEl('text', { x: lx, y: ly + 3, class: 'dn-radar-axislab', 'text-anchor': anchor });
+      t.textContent = shortLabel(String(a.label), 12);
+      svg.appendChild(t);
+    } else if (!mini) {
+      const [lx, ly] = P(i, 1.08);
+      const t = svgEl('text', { x: lx, y: ly + 3, class: 'dn-radar-axistick', 'text-anchor': 'middle' });
+      t.textContent = String(i + 1);
+      svg.appendChild(t);
+    }
+  });
+
+  // the champion polygon (dashed, faint).
+  const champPts = axes.map((a, i) => P(i, a.champ).join(',')).join(' ');
+  svg.appendChild(svgEl('polygon', { points: champPts, class: 'dn-radar-champ', fill: 'none' }));
+  axes.forEach((a, i) => { const [x, y] = P(i, a.champ); svg.appendChild(svgEl('circle', { cx: x, cy: y, r: mini ? 1.8 : 2.5, class: 'dn-radar-champ-dot', fill: 'none' })); });
+
+  // the candidate polygon (filled accent; dn-proj when live/projected).
+  const candPts = axes.map((a, i) => P(i, a.chal).join(',')).join(' ');
+  svg.appendChild(svgEl('polygon', { points: candPts, class: 'dn-radar-cand' + (live ? ' dn-proj' : ''), 'aria-hidden': 'true' }));
+  // vertex dots coloured by per-axis dominance + a generous hover hit-target.
+  const fmtV = (v, u) => (u === 'rate' ? (v * 100).toFixed(1) + '%' : fmt(v, 3));
+  axes.forEach((a, i) => {
+    const [x, y] = P(i, a.chal);
+    const better = a.chal >= a.champ;
+    const dot = svgEl('circle', { cx: x, cy: y, r: mini ? 2.6 : 3.5, class: 'dn-radar-cand-dot ' + (better ? 'dn-good' : 'dn-bad') + (live ? ' dn-proj' : '') });
+    const r = raw[i];
+    const tip = r && isNum(r.chal) && isNum(r.champ)
+      ? `${a.label} · cand ${fmtV(r.chal, r.unit)} vs champ ${fmtV(r.champ, r.unit)} (${r.better || 'lower'} = better)`
+      : `${a.label} · ${better ? 'dominates' : 'pulls in'} (cand ${fmt(a.chal, 2)} vs champ ${fmt(a.champ, 2)})`;
+    svg.appendChild(hov(dot, tip));
+    // a larger transparent hit-circle so the hover target stays generous.
+    const hit = svgEl('circle', { cx: x, cy: y, r: mini ? 8 : 11, class: 'dn-radar-hot', fill: 'transparent', tabindex: o.onAxis ? '0' : null });
+    hov(hit, tip);
+    clickable(hit, o.onAxis && (() => o.onAxis(String(a.label))));
+    svg.appendChild(hit);
+  });
+
+  // the optional legend block.
+  if (legend) {
+    const lx = W - 118; const ly = 64;
+    svg.appendChild(svgEl('rect', { x: lx - 10, y: ly - 18, width: 116, height: 88, rx: 6, class: 'dn-radar-legendbox' }));
+    const cap = svgEl('text', { x: lx, y: ly, class: 'dn-radar-legendcap' }); cap.textContent = 'outer = better';
+    svg.appendChild(cap);
+    svg.appendChild(svgEl('line', { x1: lx, y1: ly + 16, x2: lx + 22, y2: ly + 16, class: 'dn-radar-cand-key' }));
+    const ck = svgEl('text', { x: lx + 28, y: ly + 19, class: 'dn-radar-legendlab' }); ck.textContent = 'candidate';
+    svg.appendChild(ck);
+    svg.appendChild(svgEl('line', { x1: lx, y1: ly + 34, x2: lx + 22, y2: ly + 34, class: 'dn-radar-champ-key' }));
+    const hk = svgEl('text', { x: lx + 28, y: ly + 37, class: 'dn-radar-legendlab' }); hk.textContent = 'champion';
+    svg.appendChild(hk);
+    const gk = svgEl('text', { x: lx, y: ly + 56, class: 'dn-radar-legendlab dn-good' }); gk.textContent = '● gain';
+    svg.appendChild(gk);
+    const bk = svgEl('text', { x: lx + 52, y: ly + 56, class: 'dn-radar-legendlab dn-bad' }); bk.textContent = '● loss';
+    svg.appendChild(bk);
+  }
+  return svg;
+}
+
+// A stable digest of the radarSilhouette model.
+export function radarSilhouetteDigest(opts) {
+  const o = opts || {};
+  const axes = Array.isArray(o.axes) ? o.axes : [];
+  return JSON.stringify({
+    l: !!o.live,
+    a: axes.map((a) => [String(a.label), isNum(a.chal) ? a.chal.toFixed(3) : '?', isNum(a.champ) ? a.champ.toFixed(3) : '?']),
+  });
 }
 
 // The elim epoch overview + Match-ups both render the BRACKET-AS-FLOW
