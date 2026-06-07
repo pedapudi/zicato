@@ -23,14 +23,14 @@
 // /api/round/{e}/{champ}/{chall}/gate,
 // /api/run/{e}/{g}/{entry}/{expectations,per-judge}.
 
-import { el } from '../../../core/dom.js';
+import { el, svgEl } from '../../../core/dom.js';
 import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
-import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch } from './structure.js';
+import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, reconstructRacing, racingModel } from './structure.js';
 import { epochRoundModel, reignModel } from './rounds.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { harmonografIsLive, harmonografLink, harmonografMini } from '../../../core/harmonograf.js';
@@ -160,8 +160,8 @@ export async function render(host, ctx, params, route) {
     ].filter(Boolean)));
 
     nodes.push(splitFrame({
-      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId, structure, reigns) },
-      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true, structure, reigns) } : null,
+      a: { title: genId + (sideA.node.promoted ? ' ♛' : ''), sub: sideA.decision, build: (h) => paintCandidate(h, ctx, epochId, sideA, cmpId, true, !!cmpId, structure, reigns, bracket, liveProjected) },
+      b: cmpId ? { title: cmpId + (sideB.node.promoted ? ' ♛' : ''), sub: sideB.decision, build: (h) => paintCandidate(h, ctx, epochId, sideB, null, false, true, structure, reigns, bracket, liveProjected) } : null,
       emptyTitle: 'no comparison',
       emptyPrompt: 'Choose a candidate above to compare its lifecycle, gate, match-ups and per-board scoring against ' + genId + '.',
     }));
@@ -281,13 +281,116 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
     delta: svg.isNum(championScalar) ? projRow.scalar - championScalar : null,
   } : null;
 
+  // ── the RADAR SILHOUETTE model (single-generation study opt 2's folded-in
+  // panel): the candidate's SHAPE vs the champion across the heterogeneous axes
+  // the gate weighs — scalar (inverse), pass-rate, and each per-judge drift
+  // component — with OUTER = better. Built from the SAME gate payload + per-board
+  // slice the rest of the dossier reads, so a settled silhouette converges
+  // byte-identically whether resolved live or from record. Lifecycle-aware: a
+  // candidate with no settled scalar (boards still streaming) feeds its PROJECTED
+  // scalar and ghosts the candidate polygon (live:true).
+  const radar = buildRadarModel({
+    primaryGate, championScalar,
+    settledScalar: hasSettled ? scalarByGen.get(String(genId)) : null,
+    projected, entries,
+  });
+
+  // the train→holdout GENERALIZATION triplet for THIS candidate — read off its
+  // own experiment outcome record (issue #5: train_loss / holdout_loss /
+  // generalization_gap, absent until the detector lands, so every read is
+  // type-guarded). Rendered as a SMALL, width-capped supporting panel (the study
+  // shrank it from a hero figure), never a crash when the triplet is absent.
+  const generalization = buildGeneralizationModel(exp);
+
   return {
     node, baseline, decision, mpts, entries, mine, gateSpecs, gates,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
-    projected,
+    projected, radar, generalization,
   };
+}
+
+// The candidate's train→holdout generalization triplet from its experiment
+// outcome — `{train, holdout, gap, tolerance}` — or null when none recorded.
+// `gap` falls back to `holdout − train` when only the pair is present; the
+// tolerance reads the per-experiment value when carried.
+function buildGeneralizationModel(exp) {
+  if (!exp || typeof exp !== 'object') return null;
+  const train = svg.isNum(exp.train_loss) ? exp.train_loss : null;
+  const holdout = svg.isNum(exp.holdout_loss) ? exp.holdout_loss : null;
+  let gap = svg.isNum(exp.generalization_gap) ? exp.generalization_gap : null;
+  if (gap == null && train != null && holdout != null) gap = holdout - train;
+  if (train == null && holdout == null && gap == null) return null;
+  const tolerance = svg.isNum(exp.generalization_tolerance) ? exp.generalization_tolerance
+    : (svg.isNum(exp.tolerance) ? exp.tolerance : null);
+  return { train, holdout, gap, tolerance };
+}
+
+// Build the radar silhouette model — `{axes:[{label,chal,champ}], raw:[{chal,
+// champ,unit,better}], live}` — from a candidate's gate data the way the study
+// computes it. Each axis is normalised 0..1 with OUTER = better:
+//   • scalar      — champion vs candidate (settled or projected) Σ-loss, INVERSE
+//                   normalised (lower loss → larger radius).
+//   • pass-rate   — candidate pass-rate (from its per-board pass_fail) vs the
+//                   champion's, recovered via the gate's delta_pass_rate; HIGHER
+//                   is better so it maps directly (no inverse).
+//   • per-judge   — each scalar component (per-judge weighted drift + any
+//                   pass-rate / schema term) from gate.scalar_components,
+//                   champion vs challenger, INVERSE normalised.
+// A loss axis pair shares a padded local [lo,hi] so both points stay visible;
+// the `raw` parallel array carries the underlying numbers for the hover tooltip.
+// Returns null when fewer than 3 plottable axes exist (the radar needs ≥3).
+function buildRadarModel({ primaryGate, championScalar, settledScalar, projected, entries }) {
+  const axes = [];
+  const raw = [];
+  // a loss-type axis (lower = better) → inverse-normalised radius within a padded
+  // local range spanning both points, so champ + cand are both legible.
+  const lossAxis = (label, champ, chal, unit) => {
+    if (!svg.isNum(champ) || !svg.isNum(chal)) return;
+    let lo = Math.min(champ, chal), hi = Math.max(champ, chal);
+    const pad = (hi - lo) * 0.6 || Math.max(0.02, Math.abs(hi) * 0.15) || 0.05;
+    lo -= pad; hi += pad;
+    const span = (hi - lo) || 1;
+    const norm = (v) => Math.max(0.05, Math.min(1, 1 - (v - lo) / span));
+    axes.push({ label, champ: norm(champ), chal: norm(chal) });
+    raw.push({ champ, chal, unit: unit || 'loss', better: 'lower' });
+  };
+
+  // (1) scalar axis — candidate's settled scalar, else its projected scalar.
+  const candScalar = svg.isNum(settledScalar) ? settledScalar
+    : (projected && svg.isNum(projected.scalar) ? projected.scalar : null);
+  const live = !svg.isNum(settledScalar) && projected && svg.isNum(projected.scalar);
+  lossAxis('scalar', championScalar, candScalar, 'loss');
+
+  // (2) pass-rate axis — higher = better, so it maps directly (no inverse). The
+  // candidate's pass-rate is read off its own per-board pass_fail; the champion's
+  // is recovered from the gate's delta_pass_rate (delta = challenger − champion).
+  const passable = (Array.isArray(entries) ? entries : []).filter((e) => e && (e.pass_fail === 0 || e.pass_fail === 1 || e.pass_fail === true || e.pass_fail === false));
+  if (passable.length) {
+    const candRate = passable.filter((e) => e.pass_fail === 1 || e.pass_fail === true).length / passable.length;
+    const dpr = primaryGate && svg.isNum(primaryGate.delta_pass_rate) ? primaryGate.delta_pass_rate : null;
+    const champRate = dpr != null ? Math.max(0, Math.min(1, candRate - dpr)) : null;
+    if (champRate != null) {
+      // a rate axis: both already in 0..1; map a small band around them so the
+      // shape reads (a 0-vs-0 or 1-vs-1 pair still plots at the rim / centre).
+      axes.push({ label: 'pass-rate', champ: Math.max(0.05, champRate), chal: Math.max(0.05, candRate) });
+      raw.push({ champ: champRate, chal: candRate, unit: 'rate', better: 'higher' });
+    }
+  }
+
+  // (3) per-judge / per-component axes — from the gate's scalar_components, the
+  // exact per-component champion-vs-challenger contributions the gate weighs.
+  const sc = primaryGate && primaryGate.scalar_components;
+  if (sc && sc.champion && sc.challenger) {
+    const keys = [...new Set([...Object.keys(sc.champion), ...Object.keys(sc.challenger)])].sort();
+    for (const k of keys) {
+      lossAxis(k, sc.champion[k], sc.challenger[k], 'drift');
+    }
+  }
+
+  if (axes.length < 3) return null;
+  return { axes, raw, live: !!live };
 }
 
 // Read one gate payload (D.gate) into the lifecycle GATE node's explanation:
@@ -377,6 +480,18 @@ function candidateDigest(s) {
     gateExplain: s.gateExplain ? [s.gateExplain.decidingRule, s.gateExplain.decision,
       svg.isNum(s.gateExplain.deltaScalar) ? s.gateExplain.deltaScalar.toFixed(3) : null,
       svg.isNum(s.gateExplain.margin) ? s.gateExplain.margin.toFixed(3) : null, s.gateExplain.regressed] : null,
+    // the RADAR silhouette model — folded in so a change to any axis (scalar,
+    // pass-rate, per-judge) or its live/projected state repaints, but a no-op
+    // heartbeat stays byte-identical. Delegates to svg.radarSilhouetteDigest.
+    radar: s.radar ? svg.radarSilhouetteDigest({ axes: s.radar.axes, live: s.radar.live }) : null,
+    // the train→holdout generalization triplet (rounded) so a change repaints
+    // and a no-op beat stays equal.
+    generalization: s.generalization ? [
+      svg.isNum(s.generalization.train) ? s.generalization.train.toFixed(3) : null,
+      svg.isNum(s.generalization.holdout) ? s.generalization.holdout.toFixed(3) : null,
+      svg.isNum(s.generalization.gap) ? s.generalization.gap.toFixed(3) : null,
+      svg.isNum(s.generalization.tolerance) ? s.generalization.tolerance.toFixed(3) : null,
+    ] : null,
     entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null, !!e.cached]),
     cached: s.cached ? [s.cachedProvenance && s.cachedProvenance.sourceEpoch, s.cachedProvenance && s.cachedProvenance.sourceRun] : null,
     progression: s.progression && Array.isArray(s.progression.stages)
@@ -408,7 +523,7 @@ function candidateDigest(s) {
 // SPLIT-LAYOUT flag — true for BOTH panes whenever a comparison is shown — and
 // drives the figure viewBox WIDTH (so A and B scale identically), independent
 // of the per-side `cmpId` (which is null on B but the layout is still split).
-function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structure, reigns) {
+function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structure, reigns, bracket, liveProjected) {
   const opts = cmpId ? { cmp: cmpId } : undefined;
   const node = s.node;
   const genId = node.id;
@@ -611,6 +726,39 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   }
   host.appendChild(section('Per-board scoring · sorted, vs champion', scoreCard));
 
+  // ---- RADAR SILHOUETTE (the FINAL liked study opt 2's folded-in panel) ----
+  // The candidate's SHAPE vs the champion across the heterogeneous axes the gate
+  // weighs (scalar-inverse, pass-rate, per-judge drift); OUTER = better. Folds in
+  // what was opt 4. A live/projected candidate ghosts in dn-proj. This REPLACES
+  // the old scalar-component bars (removed — redundant with the radar). Vendor-
+  // clean. For racing the silhouette compares against the field-leader reference.
+  if (s.radar && Array.isArray(s.radar.axes) && s.radar.axes.length >= 3) {
+    const racing = String(structure) === 'racing';
+    const radarCard = el('div', { class: 'dn-panel dn-figpane dn-radarpane' });
+    radarCard.appendChild(svg.radarSilhouette({
+      axes: s.radar.axes, raw: s.radar.raw, live: s.radar.live,
+      // compact in the compare split; the legend rides only the wide single view.
+      mini: false, legend: !cmpId,
+      onAxis: null,
+    }));
+    radarCard.appendChild(el('p', { class: 'dn-faint dn-radar-cap', text: racing
+      ? 'silhouette · candidate shape vs the field-leader reference · outer = better · hover a vertex for its value'
+      : 'silhouette · candidate shape vs champion · outer = better · hover a vertex for its value' }));
+    host.appendChild(section('Silhouette · candidate shape vs champion', radarCard));
+  }
+
+  // ---- RACING VARIATION — racing is FIELD-relative, not pairwise ----
+  // Racing cuts the whole field rung-by-rung (successive-halving), so "how good"
+  // only means anything against the field. When THIS candidate's structure is
+  // racing the study swaps the pairwise read for field-relative panels (field
+  // standings · rung ladder), while the shared spine, gate ladder, radar, and
+  // generalization stay put. Built from the REAL racing reconstruction + the
+  // live projected standings — no synthesised field.
+  if (String(structure) === 'racing') {
+    const fieldNodes = racingFieldPanels(bracket, epochId, genId, championId, s.scalarByGen, liveProjected, ctx, cmpId);
+    if (fieldNodes) host.appendChild(fieldNodes);
+  }
+
   if (isPrimary && s.entryParam) host.appendChild(entryDrilldown(ctx, epochId, genId, s.entryParam, s.drillRow, s.exps, s.judges, s.drillHeader));
 
   // ---- fix #3: ALL match-ups for this candidate ----
@@ -621,13 +769,184 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     s.gateSpecs.forEach((k, i) => {
       const g = s.gates[i];
       if (!g || !Array.isArray(g.rules)) return;
-      host.appendChild(section(`Promote gate · ${k.champ} → ${k.chall} (${k.role})`, gatePanel(g, k.champ, k.chall)));
+      host.appendChild(section(`Promote gate · ${k.champ} → ${k.chall} (${k.role})`, gatePanel(g)));
     });
   } else if (!baseline) {
     host.appendChild(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('No gate decomposition recorded for this candidate’s round.')])));
   } else {
     host.appendChild(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('The seed candidate has no gate — it defines the loss floor that challengers must beat.')])));
   }
+
+  // ---- GENERALIZATION · train → holdout (SHRUNK supporting panel) ----
+  // The study reduced this from a hero figure to a small, width-capped slope.
+  // Rendered only when this candidate's experiment carried the train/holdout
+  // triplet (issue #5); absent otherwise (never a crash). The host caps its
+  // width via dn-genpane so `width:100%` cannot balloon it to full width.
+  if (s.generalization) {
+    host.appendChild(section('Generalization · train → holdout', generalizationPanel(s.generalization)));
+  }
+}
+
+// The train→holdout generalization slope as a SMALL, width-capped supporting
+// panel (the study's facetGeneralize, shrunk). A 2-point slope train→holdout
+// with the gap called out; caution when within tolerance, bad when it exceeds.
+// viewBox kept small (240×104); the dn-genpane host caps the max width.
+function generalizationPanel(g) {
+  const card = el('div', { class: 'dn-panel dn-figpane dn-genpane' });
+  const train = svg.isNum(g.train) ? g.train : null;
+  const holdout = svg.isNum(g.holdout) ? g.holdout : null;
+  const gap = svg.isNum(g.gap) ? g.gap : (train != null && holdout != null ? holdout - train : null);
+  const tol = svg.isNum(g.tolerance) ? g.tolerance : null;
+  const within = (gap != null && tol != null) ? gap <= tol : null;
+  const tone = within === false ? 'dn-bad' : 'dn-caution';
+
+  // when we have the full pair, draw the slope; else a compact gap callout.
+  if (train != null && holdout != null) {
+    const W = 240, H = 104, xT = 78, xH = 168, top = 40, bot = 84;
+    const lo = Math.min(train, holdout), hi = Math.max(train, holdout);
+    const padv = (hi - lo) * 0.4 || Math.max(0.01, Math.abs(hi) * 0.1) || 0.02;
+    const dlo = lo - padv, dhi = hi + padv, span = (dhi - dlo) || 1;
+    const Y = (v) => bot - ((v - dlo) / span) * (bot - top);
+    const fig = svgEl('svg', {
+      class: 'dn-gen-svg', width: '100%', height: H, viewBox: `0 0 ${W} ${H}`,
+      preserveAspectRatio: 'xMidYMid meet', role: 'img',
+      'aria-label': 'train to holdout generalization slope',
+    });
+    const txt = (x, y, cls, anchor, t) => { const n = svgEl('text', { x, y, class: cls, 'text-anchor': anchor || 'start' }); n.textContent = t; return n; };
+    fig.appendChild(txt(10, 12, 'dn-gen-title', 'start', 'train → holdout'));
+    const gapLab = svgEl('text', { x: 10, y: 27, class: 'dn-gen-gap ' + tone });
+    gapLab.textContent = `gap ${svg.fmtSigned(gap, 3)}` + (tol != null ? (within ? ` · ≤ tol ${svg.fmt(tol, 2)} · OK` : ` · > tol ${svg.fmt(tol, 2)}`) : '');
+    fig.appendChild(gapLab);
+    fig.appendChild(txt(xT, bot + 14, 'dn-gen-axlab', 'middle', 'train'));
+    fig.appendChild(txt(xH, bot + 14, 'dn-gen-axlab', 'middle', 'holdout'));
+    fig.appendChild(svgEl('line', { x1: xT, y1: Y(train), x2: xH, y2: Y(holdout), class: 'dn-gen-slope ' + tone }));
+    fig.appendChild(svgEl('circle', { cx: xT, cy: Y(train), r: 4, class: 'dn-gen-train' }));
+    fig.appendChild(svgEl('circle', { cx: xH, cy: Y(holdout), r: 4, class: 'dn-gen-holdout ' + tone }));
+    fig.appendChild(txt(xT - 10, Y(train) + 3.5, 'dn-gen-val dn-gen-train-t', 'end', svg.fmt(train, 3)));
+    fig.appendChild(txt(xH + 10, Y(holdout) + 3.5, 'dn-gen-val ' + tone, 'start', svg.fmt(holdout, 3)));
+    card.appendChild(fig);
+  } else if (gap != null) {
+    card.appendChild(el('div', { class: 'dn-gen-gaponly ' + tone, text: `generalization gap ${svg.fmtSigned(gap, 3)}` + (tol != null ? ` (tol ${svg.fmt(tol, 2)})` : '') }));
+  }
+  card.appendChild(el('p', { class: 'dn-faint dn-gen-cap', text: within === false
+    ? 'holdout gap exceeds tolerance — possible memorization'
+    : 'small gap — generalizes (no memorization)' }));
+  return card;
+}
+
+// The RACING field-relative panels — field standings (every racer ranked by
+// scalar, candidate highlighted, survivors vs cut) + the rung ladder (entered /
+// cut / survived per rung, candidate's rank among survivors). Built from the
+// REAL racing reconstruction (reconstructRacing → racingModel) + the live
+// projected standings; returns null when no racing field can be recovered.
+function racingFieldPanels(bracket, epochId, genId, championId, scalarByGen, liveProjected, ctx, cmpId) {
+  const st = reconstructRacing(bracket, epochId);
+  const model = st ? racingModel(st) : null;
+  if (!model || !Array.isArray(model.rungs) || !model.rungs.length) return null;
+  const opts = cmpId ? { cmp: cmpId } : undefined;
+
+  // assemble the FULL field across rungs (every distinct racer), tagging each
+  // with whether it ultimately survived to the gate / champion crown and the
+  // rung it was cut at. Scalar from the settled trajectory, else the live
+  // projected standing.
+  const proj = (liveProjected && typeof liveProjected === 'object') ? liveProjected : {};
+  const scalarOf = (id) => {
+    if (scalarByGen && scalarByGen.has(String(id)) && svg.isNum(scalarByGen.get(String(id)))) return scalarByGen.get(String(id));
+    const pr = proj[String(id)];
+    return pr && svg.isNum(pr.scalar) ? pr.scalar : null;
+  };
+  const racers = new Map(); // id -> { id, scalar, survived, cut_rung }
+  model.rungs.forEach((r, ri) => {
+    const survivors = new Set((r.survivors || []).map(String));
+    const cut = new Set((r.cut || []).map(String));
+    for (const c of (r.competitors || []).map(String)) {
+      if (!racers.has(c)) racers.set(c, { id: c, scalar: scalarOf(c), survived: true, cut_rung: null });
+      // a racer cut at this rung is no longer surviving.
+      if (cut.has(c)) { racers.get(c).survived = false; racers.get(c).cut_rung = ri; }
+      else if (survivors.has(c)) { /* carries on */ }
+    }
+  });
+  const list = [...racers.values()].filter((f) => f.id);
+  if (!list.length) return null;
+  // rank by scalar (lower = better); racers with no scalar sink to the bottom.
+  list.sort((a, b) => {
+    const av = svg.isNum(a.scalar) ? a.scalar : Infinity;
+    const bv = svg.isNum(b.scalar) ? b.scalar : Infinity;
+    return av - bv;
+  });
+  const fieldSize = list.length;
+  const candRank = list.findIndex((f) => String(f.id) === String(genId)) + 1;
+  const survivorCount = list.filter((f) => f.survived).length;
+
+  const wrap = el('div', { class: 'dn-racing-field' });
+  wrap.appendChild(el('div', { class: 'dn-racing-field-cap dn-faint', text:
+    'racing variation · FIELD-relative (not pairwise) — the candidate is one racer cut rung-by-rung against the whole field' }));
+
+  // (1) FIELD STANDINGS — the racing analogue of the pairwise scalar bullet.
+  const standCard = el('div', { class: 'dn-panel' });
+  standCard.appendChild(el('div', { class: 'dn-racing-standhead' }, [
+    el('span', { class: 'dn-pill dn-promoted', text: candRank > 0 ? `rank ${candRank} / ${fieldSize}` : `field of ${fieldSize}` }),
+    el('span', { class: 'dn-faint', text: ` · ${survivorCount} of ${fieldSize} survived the cuts` }),
+  ]));
+  const stbl = el('table', { class: 'dn-board-table dn-racing-standings' });
+  stbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', { text: '#' }), el('th', { text: 'racer' }), el('th', { class: 'dn-num', text: 'scalar' }), el('th', { text: 'status' }),
+  ])]));
+  const stbody = el('tbody');
+  list.forEach((f, i) => {
+    const isCand = String(f.id) === String(genId);
+    const isChamp = String(f.id) === String(championId);
+    const row = el('tr', { class: isCand ? 'dn-racing-cand-row' : '' }, [
+      el('td', { class: 'dn-mono dn-faint', text: String(i + 1) }),
+      el('td', null, [el('span', { class: 'dn-mono' + (isCand ? ' dn-racing-cand' : ''), text: f.id + (isChamp ? ' ♛' : '') })]),
+      el('td', { class: 'dn-num dn-mono', text: svg.isNum(f.scalar) ? svg.fmt(f.scalar, 1) : '—' }),
+      el('td', null, [el('span', { class: 'dn-pill dn-' + (f.survived ? 'promoted' : 'rejected'), text: f.survived ? 'racing' : ('✂ rung ' + f.cut_rung) })]),
+    ]);
+    if (!isCand) { row.style.cursor = 'pointer'; row.addEventListener('click', () => ctx.navigate('candidate', { epochId, gen: f.id }, opts)); }
+    stbody.appendChild(row);
+  });
+  stbl.appendChild(stbody);
+  standCard.appendChild(stbl);
+  standCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'lower scalar = better · ✂ = the rung a racer was cut at · click a racer → its dossier' }));
+  wrap.appendChild(section('Field standings · candidate vs the whole field', standCard));
+
+  // (2) RUNG LADDER — entered / cut / survived per rung; the candidate's rank
+  // among the survivors at each rung it reached (the field-narrowing story).
+  const ladderCard = el('div', { class: 'dn-panel' });
+  const ltbl = el('table', { class: 'dn-board-table dn-racing-ladder' });
+  ltbl.appendChild(el('thead', null, [el('tr', null, [
+    el('th', { text: 'rung' }), el('th', { class: 'dn-num', text: 'entered' }), el('th', { class: 'dn-num', text: 'cut' }),
+    el('th', { class: 'dn-num', text: 'survived' }), el('th', { text: 'candidate' }),
+  ])]));
+  const lbody = el('tbody');
+  model.rungs.forEach((r, ri) => {
+    const competitors = (r.competitors || []).map(String);
+    const entered = competitors.length;
+    const cutN = (r.cut || []).length;
+    const survived = (r.survivors || []).length || (entered - cutN);
+    const inThisRung = competitors.indexOf(String(genId)) >= 0;
+    // the candidate's rank among the racers in this rung, by scalar.
+    let candRungRank = null;
+    if (inThisRung) {
+      const ranked = competitors
+        .map((c) => ({ id: c, scalar: scalarOf(c) }))
+        .sort((a, b) => (svg.isNum(a.scalar) ? a.scalar : Infinity) - (svg.isNum(b.scalar) ? b.scalar : Infinity));
+      candRungRank = ranked.findIndex((x) => String(x.id) === String(genId)) + 1;
+    }
+    lbody.appendChild(el('tr', null, [
+      el('td', { class: 'dn-mono', text: r.label || ('Rung ' + ri) }),
+      el('td', { class: 'dn-num dn-mono', text: String(entered) }),
+      el('td', { class: 'dn-num dn-mono ' + (cutN ? 'dn-bad-t' : ''), text: cutN ? ('✂ ' + cutN) : '0' }),
+      el('td', { class: 'dn-num dn-mono dn-good-t', text: String(survived) }),
+      el('td', { class: 'dn-mono', text: candRungRank ? ('#' + candRungRank + ' of ' + entered) : '—' }),
+    ]));
+  });
+  ltbl.appendChild(lbody);
+  ladderCard.appendChild(ltbl);
+  ladderCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'how the candidate fared as the field narrowed rung by rung' }));
+  wrap.appendChild(section('Rung ladder · how it fared as the field narrowed', ladderCard));
+
+  return wrap;
 }
 
 // fix #3 — every matchup the candidate was in, both roles. Clicking a round
@@ -672,9 +991,13 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
 }
 
 // fix #1 — the stacked, non-overlapping gate panel:
-// (a) decision header, (b) the rules ladder (each rule its own row),
-// (c) a SEPARATE champion-vs-challenger scalar-components comparison block.
-function gatePanel(gate, champion, challenger) {
+// (a) decision header, (b) the rules ladder (each rule its own row).
+// The old (c) champion-vs-challenger SCALAR-COMPONENTS comparison block was
+// REMOVED — the FINAL liked study (single-generation.html opt 2) dropped it as
+// redundant with the RADAR SILHOUETTE (which now compares candidate vs champion
+// across the same scalar / pass-rate / per-judge axes). The deciding-rule detail
+// the components used to carry now reads off the gate-rule ladder + the radar.
+function gatePanel(gate) {
   const card = el('div', { class: 'dn-panel dn-gate' });
   // Class B: a gate with no resolved decision is still pending, not rejected.
   const decision = normaliseDecision(gate) || 'pending';
@@ -704,33 +1027,6 @@ function gatePanel(gate, champion, challenger) {
     card.appendChild(ladder);
   }
 
-  const sc = gate.scalar_components;
-  if (sc && sc.champion && sc.challenger) {
-    const keys = [...new Set([...Object.keys(sc.champion), ...Object.keys(sc.challenger)])].sort();
-    if (keys.length) {
-      card.appendChild(subhead(`Scalar components · champion ${champion} vs challenger ${challenger}`));
-      const tbl = el('table', { class: 'dn-sc-table' });
-      tbl.appendChild(el('thead', null, [el('tr', null, [
-        el('th', { text: 'component' }), el('th', { class: 'dn-num', text: champion }),
-        el('th', { class: 'dn-num', text: challenger }), el('th', { class: 'dn-num', text: 'Δ' }),
-      ])]));
-      const tbody = el('tbody');
-      for (const k of keys) {
-        const a = svg.isNum(sc.champion[k]) ? sc.champion[k] : 0;
-        const b = svg.isNum(sc.challenger[k]) ? sc.challenger[k] : 0;
-        const d = b - a;
-        const dCls = d > 0 ? 'dn-bad-t' : d < 0 ? 'dn-good-t' : '';
-        tbody.appendChild(el('tr', null, [
-          el('td', { class: 'dn-mono', text: k }),
-          el('td', { class: 'dn-num dn-mono', text: svg.fmt(a, 2) }),
-          el('td', { class: 'dn-num dn-mono', text: svg.fmt(b, 2) }),
-          el('td', { class: 'dn-num dn-mono ' + dCls, text: svg.fmtSigned(d, 2) }),
-        ]));
-      }
-      tbl.appendChild(tbody);
-      card.appendChild(tbl);
-    }
-  }
   return card;
 }
 

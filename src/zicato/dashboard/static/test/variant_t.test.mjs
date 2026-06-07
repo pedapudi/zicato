@@ -278,8 +278,27 @@ test('candidate view: the promote gate is ON the candidate page, stacked, no ove
   assert(gate, 'a promote-gate panel rendered on the candidate page');
   const rules = allByClass(host, 'dn-rule');
   assert(rules.length >= 3, 'each gate rule is its own row (3 short-circuiting rules)');
-  assert(allByClass(host, 'dn-sc-table').length >= 1, 'a separate champion-vs-challenger scalar-components block');
+  // The FINAL liked study (single-generation opt 2) DROPPED the scalar-component
+  // bars as redundant with the radar silhouette — they must be GONE.
+  assertEqual(allByClass(host, 'dn-sc-table').length, 0, 'the scalar-components block is REMOVED (folded into the radar)');
   assert(host.textContent.includes('Scalar margin'), 'a rule label present');
+});
+
+// ---- the FINAL liked dossier: radar silhouette folded in, scalar-bars out ----
+
+test('candidate view: the RADAR SILHOUETTE is folded in (candidate vs champion across the gate axes); scalar-bars GONE', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  // the radar silhouette renders (svg.radarSilhouette → .dn-radar) inside its pane.
+  assert(allByClass(host, 'dn-radar')[0], 'the radar silhouette SVG rendered on the candidate page');
+  assert(allByClass(host, 'dn-radarpane')[0], 'the radar sits in its width-capped pane');
+  // each axis carries a hover hit-target so the operator can read the value.
+  assert(allByClass(host, 'dn-radar-hot').length >= 3, 'the radar exposes ≥3 hover-able axis vertices');
+  // the removed scalar-component bars must not reappear anywhere on the page.
+  assertEqual(allByClass(host, 'dn-sc-table').length, 0, 'no scalar-component table anywhere on the dossier');
+  assert(!host.textContent.includes('Scalar components'), 'no "Scalar components" heading');
 });
 
 // ---- FIX #2: patch node → per-candidate side-by-side diff ----------
