@@ -375,11 +375,27 @@ export function structureDigest(st) {
         m.live_progress ? Object.keys(m.live_progress).sort().map((g) => {
           const p = m.live_progress[g];
           return g + ':' + (p.done || 0) + '/' + (p.total == null ? '?' : p.total) + ':' + (p.inflight || 0)
-            + (svg.isNum(p.partialDelta) ? ':' + p.partialDelta.toFixed(2) : '');
+            + (svg.isNum(p.partialDelta) ? ':' + p.partialDelta.toFixed(2) : '')
+            // the per-lane PROJECTED standing — ROUNDED so a no-op beat stays
+            // byte-identical but a real projection change repaints (anti-flash).
+            + (p.projected ? ':j' + (svg.isNum(p.projected_scalar) ? p.projected_scalar.toFixed(3) : '?')
+              + '/' + (p.boards_done == null ? '?' : p.boards_done) + '/' + (p.boards_total == null ? '?' : p.boards_total) : '');
+        }).join(',') : '',
+        // the per-match (swiss/elim) projected map — rounded scalar + integer
+        // board counts, so the gated swap fires on real progress only.
+        m.projected ? Object.keys(m.projected).sort().map((g) => {
+          const p = m.projected[g];
+          return g + ':' + (svg.isNum(p.scalar) ? p.scalar.toFixed(3) : '?')
+            + '/' + (p.boards_done == null ? '?' : p.boards_done) + '/' + (p.boards_total == null ? '?' : p.boards_total);
         }).join(',') : '',
       ]),
     ]),
-    standings: (Array.isArray(st.standings) ? st.standings : []).map((s) => [s.generation_id, s.rank, s.scalar, s.wins, s.losses, s.status]),
+    standings: (Array.isArray(st.standings) ? st.standings : []).map((s) => [s.generation_id, s.rank, s.scalar, s.wins, s.losses, s.status,
+      // the projected-standing overlay — ROUNDED scalar + integer board counts +
+      // the in_flight flag, so an identical projection yields an identical digest
+      // (no repaint) but a board landing or a re-rank fires the swap.
+      s.in_flight ? 'j' + (svg.isNum(s.projected_scalar) ? s.projected_scalar.toFixed(3) : '?')
+        + '/' + (s.boards_done == null ? '?' : s.boards_done) + '/' + (s.boards_total == null ? '?' : s.boards_total) : '']),
     // the proposing-step field — so the "Proposed field" section's gated
     // swap fires when a challenger is minted / applied / rejected, but stays
     // stable on a no-op heartbeat.
@@ -558,6 +574,8 @@ export function swissModel(st) {
           total: svg.isNum(m.total) ? m.total : null,
           inflight: svg.isNum(m.inflight) ? m.inflight : 0,
           pending: !!m.pending,
+          // the per-side live PROJECTED standing on an in-flight pairing.
+          projected: (m.projected && typeof m.projected === 'object') ? m.projected : null,
         };
       }),
     };
@@ -577,6 +595,12 @@ export function swissModel(st) {
       losses: svg.isNum(s.losses) ? s.losses : 0,
       rank: svg.isNum(s.rank) ? s.rank : null,
       status: String(s.status || '').toLowerCase(),
+      // the live PROJECTED standing carried through from the overlay so the
+      // swiss ladder marks an in-flight competitor "projected" (dashed/~).
+      in_flight: !!s.in_flight,
+      projected_scalar: svg.isNum(s.projected_scalar) ? s.projected_scalar : null,
+      boards_done: svg.isNum(s.boards_done) ? s.boards_done : null,
+      boards_total: svg.isNum(s.boards_total) ? s.boards_total : null,
     }));
   } else {
     const tally = new Map();   // id → { points, wins, draws, losses }
@@ -964,9 +988,24 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   };
 
   // a partial aggregate Δ-vs-champion (challenger − champion) for racing lanes.
-  const champAgg = svg.isNum(at.partial_champion_agg) ? at.partial_champion_agg : null;
-  const challAgg = svg.isNum(at.partial_challenger_agg) ? at.partial_challenger_agg : null;
+  // FIX: `partial_*_agg` is a DICT ({scalar, ...}), NOT a number — the old
+  // `svg.isNum(at.partial_*_agg)` guard was ALWAYS false, so partialDelta was
+  // dead. Read the `.scalar` off the dict.
+  const aggScalar = (a) => (a && typeof a === 'object' && svg.isNum(a.scalar)) ? a.scalar : null;
+  const champAgg = aggScalar(at.partial_champion_agg);
+  const challAgg = aggScalar(at.partial_challenger_agg);
   const partialDelta = (challAgg != null && champAgg != null) ? (challAgg - champAgg) : null;
+
+  // ── the live PROJECTED standing per in-flight competitor ──
+  // `at.projected` is the runner's `{generation_id: {scalar, boards_done,
+  // boards_total, pass_rate}}` map, rewritten as each board lands. Read a
+  // per-gen projection so a still-running competitor shows a climbing,
+  // visibly-"projected" standing (dashed, ~prefix, scored sub-bar).
+  const projectedMap = (at.projected && typeof at.projected === 'object') ? at.projected : {};
+  const projFor = (gid) => {
+    const p = projectedMap[String(gid)];
+    return (p && typeof p === 'object' && svg.isNum(p.scalar)) ? p : null;
+  };
 
   // a match is SETTLED when it carries a winner / decision (a racing rung is
   // settled once survivors/cut land; a bye settles a swiss/elim slot).
@@ -1003,18 +1042,36 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
       const progress = {};
       for (const g of field) {
         const inf = inflight.get(g);
+        // PER-LANE projected: each lane's own server-side projected scalar (Δ
+        // vs champion = lane − champion) beats the single champion/challenger
+        // partialDelta when present. boards_done/boards_total drive the scored
+        // sub-bar + mark the lane "projected" until its rung settles.
+        const lp = projFor(g);
+        const laneDelta = (lp != null && champAgg != null) ? (lp.scalar - champAgg) : partialDelta;
         progress[g] = inf
-          ? { inflight: inf.count, done: Math.max(0, Math.floor(inf.sumProgress)), total, partialDelta }
-          : { inflight: 0, done: 0, total, partialDelta: null };
+          ? { inflight: inf.count, done: Math.max(0, Math.floor(inf.sumProgress)), total, partialDelta: laneDelta,
+              projected: lp != null, projected_scalar: lp != null ? lp.scalar : null,
+              boards_done: lp != null ? lp.boards_done : null, boards_total: lp != null ? lp.boards_total : total }
+          : { inflight: 0, done: 0, total, partialDelta: null,
+              projected: lp != null, projected_scalar: lp != null ? lp.scalar : null,
+              boards_done: lp != null ? lp.boards_done : null, boards_total: lp != null ? lp.boards_total : total };
       }
       return Object.assign({}, m, { competitors: field, winner: null, pending: true, queued, live_progress: queued ? null : progress });
     }
-    // swiss / elim: a per-match done/inflight tally over the pairing's gens.
+    // swiss / elim: a per-match done/inflight tally over the pairing's gens, plus
+    // a per-competitor PROJECTED standing so an in-flight pairing shows each side's
+    // climbing projected scalar (dashed/~prefix) before the duel commits.
     const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
     let done = 0; let inf = 0;
-    for (const g of comps) { const u = inflight.get(g); if (u) { inf += u.count; done += Math.floor(u.sumProgress); } }
+    const projected = {};
+    for (const g of comps) {
+      const u = inflight.get(g); if (u) { inf += u.count; done += Math.floor(u.sumProgress); }
+      const lp = queued ? null : projFor(g);
+      if (lp != null) projected[g] = { scalar: lp.scalar, boards_done: lp.boards_done, boards_total: lp.boards_total != null ? lp.boards_total : total };
+    }
     return Object.assign({}, m, { winner: null, pending: true,
-      inflight: queued ? 0 : inf, done: queued ? 0 : done, total, queued });
+      inflight: queued ? 0 : inf, done: queued ? 0 : done, total, queued,
+      projected: Object.keys(projected).length ? projected : null });
   };
 
   // the ACTIVE round/rung is the first PUBLISHED round whose matches are not all
@@ -1066,6 +1123,47 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
         points: 0, wins: 0, draws: 0, losses: 0,
         status: String(c.role || '').toLowerCase() === 'champion' ? 'champion' : '',
       }));
+  }
+
+  // ── OVERLAY the live PROJECTED standing onto the standings rows ──
+  // A competitor IN a still-pending (active, not queued) match is IN FLIGHT;
+  // overlay its server-side projected scalar + boards progress and mark the row
+  // `in_flight` so the table renders the "projected" treatment (dashed row,
+  // ~prefix, proj badge, scored sub-bar). Settled rows are left untouched.
+  // Per-structure RANKING: elim/racing re-sort on the projected scalar (lower is
+  // better) for the in-flight rows; SWISS does NOT project Copeland points — it
+  // keeps the points-rank and only nudges the mean-scalar tiebreak. The backend
+  // already does this server-side; the client mirror keeps the LIVE read honest
+  // when the runner wrote `projected` AFTER the orchestrator's last publish.
+  const inFlightGens = new Set();
+  for (const r of rounds) {
+    if (r.queued) continue;
+    for (const m of (Array.isArray(r.matches) ? r.matches : [])) {
+      if (m.queued || settled(m)) continue;
+      for (const g of (Array.isArray(m.competitors) ? m.competitors : [])) inFlightGens.add(String(g));
+    }
+  }
+  if (standings.length && inFlightGens.size) {
+    standings = standings.map((s) => {
+      const gid = String(s.generation_id != null ? s.generation_id : '');
+      const lp = (gid && inFlightGens.has(gid)) ? projFor(gid) : null;
+      if (lp == null) return s;
+      return Object.assign({}, s, {
+        in_flight: true, projected_scalar: lp.scalar,
+        boards_done: lp.boards_done, boards_total: lp.boards_total != null ? lp.boards_total : null,
+      });
+    });
+    const projKey = (s) => (s.in_flight && svg.isNum(s.projected_scalar)) ? s.projected_scalar
+      : (svg.isNum(s.scalar) ? s.scalar : Infinity);
+    if (structure === 'single_elim' || structure === 'double_elim' || structure === 'racing') {
+      standings = standings.slice().sort((a, b) => projKey(a) - projKey(b));
+      standings = standings.map((s, i) => Object.assign({}, s, { rank: i + 1 }));
+    } else if (structure === 'swiss') {
+      // points authoritative; projected scalar only breaks ties on equal wins.
+      const w = (s) => svg.isNum(s.wins) ? s.wins : (svg.isNum(s.points) ? s.points : 0);
+      standings = standings.slice().sort((a, b) => (w(b) - w(a)) || (projKey(a) - projKey(b)));
+      standings = standings.map((s, i) => Object.assign({}, s, { rank: i + 1 }));
+    }
   }
 
   return normalizeStructure({
@@ -1156,6 +1254,12 @@ export function liveMatchBlocks(model) {
             inflight: svg.isNum(lp.inflight) ? lp.inflight : 0,
             ratio: ratio(lp.done, lp.total != null ? lp.total : m.total),
             outcome: 'pending',
+            // the live PROJECTED standing for this lane (when the runner has
+            // landed at least one board) — drives the "~proj" treatment.
+            projected: !!lp.projected,
+            projected_scalar: svg.isNum(lp.projected_scalar) ? lp.projected_scalar : null,
+            boards_done: svg.isNum(lp.boards_done) ? lp.boards_done : null,
+            boards_total: svg.isNum(lp.boards_total) ? lp.boards_total : null,
           };
         });
         blocks.push({
@@ -1172,10 +1276,18 @@ export function liveMatchBlocks(model) {
       const total = svg.isNum(m.total) ? m.total : null;
       const done = svg.isNum(m.done) ? m.done : 0;
       const seats = comps.length ? comps : ['tbd'];
-      const entries = seats.slice(0, 2).map((g) => ({
-        id: g, done, total, inflight: svg.isNum(m.inflight) ? m.inflight : 0,
-        ratio: ratio(done, total), outcome: 'pending',
-      }));
+      const mproj = (m.projected && typeof m.projected === 'object') ? m.projected : {};
+      const entries = seats.slice(0, 2).map((g) => {
+        const p = mproj[g];
+        return {
+          id: g, done, total, inflight: svg.isNum(m.inflight) ? m.inflight : 0,
+          ratio: ratio(done, total), outcome: 'pending',
+          projected: !!(p && svg.isNum(p.scalar)),
+          projected_scalar: (p && svg.isNum(p.scalar)) ? p.scalar : null,
+          boards_done: (p && svg.isNum(p.boards_done)) ? p.boards_done : null,
+          boards_total: (p && svg.isNum(p.boards_total)) ? p.boards_total : null,
+        };
+      });
       const tag = isFinal(m.match_id)
         ? 'champion-gate'
         : (m.bracket_slot ? String(m.bracket_slot)
@@ -1203,6 +1315,10 @@ export function liveMatchBlocksDigest(blocks) {
       e.id, e.outcome,
       // bucket the progress so only a REAL bucket change re-stamps the DOM.
       svg.isNum(e.ratio) ? Math.round(e.ratio * 10) : (e.inflight ? 'r' : 'q'),
+      // the PROJECTED standing — ROUNDED scalar + integer board counts so an
+      // identical projection stays a no-op but a board landing repaints.
+      e.projected ? 'j' + (svg.isNum(e.projected_scalar) ? e.projected_scalar.toFixed(3) : '?')
+        + '/' + (e.boards_done == null ? '?' : e.boards_done) + '/' + (e.boards_total == null ? '?' : e.boards_total) : '',
     ]),
   ]));
 }
@@ -1429,17 +1545,37 @@ function standingsTable(st, ctx, epochId, live) {
     // "racing"), NEVER a blanket "racing" for a non-racing tournament.
     if (live && (raw === 'champion' || raw === 'eliminated')) raw = 'competing';
     const status = structureStatusLabel(raw, structure);
-    const rowCls = status === 'champion' ? 'dn-board-champ' : status === 'eliminated' ? 'dt-standings-out' : '';
+    // PROJECTED — an in-flight row (boards still streaming) shows a projected
+    // scalar, not a settled one: dashed/dimmed row + a "proj" badge + the
+    // ~prefix on the number + a scored board-progress sub-bar.
+    const proj = !!(s.in_flight && svg.isNum(s.projected_scalar));
+    const rowCls = (status === 'champion' ? 'dn-board-champ' : status === 'eliminated' ? 'dt-standings-out' : '')
+      + (proj ? ' dt-proj-row' : '');
+    const bd = svg.isNum(s.boards_done) ? s.boards_done : null;
+    const bt = svg.isNum(s.boards_total) ? s.boards_total : null;
+    const frac = (bd != null && bt != null && bt > 0) ? Math.min(1, bd / bt) : null;
+    const scalarCell = proj
+      ? el('td', { class: 'dn-num dn-mono dt-proj-val', title: 'projected — boards still streaming in' }, [
+          el('span', { text: '~' + svg.fmt(s.projected_scalar, 1) }),
+          el('span', { class: 'dt-proj-badge', text: 'proj' }),
+        ])
+      : el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' });
     tbody.appendChild(el('tr', { class: rowCls }, [
       el('td', { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' }),
       el('td', { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
       el('td', null, [statusPill(status)]),
-      el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' }),
+      scalarCell,
       ...(showWL ? [
         el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.wins) ? String(s.wins) : '—' }),
         el('td', { class: 'dn-num dn-mono', text: svg.isNum(s.losses) ? String(s.losses) : '—' }),
       ] : []),
-      el('td', null, [s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), text: 'open →' }) : null].filter(Boolean)),
+      el('td', null, [
+        proj && frac != null ? el('span', { class: 'dt-proj-bar', title: bd + '/' + bt + ' boards scored' }, [
+          el('span', { class: 'dt-proj-bar-fill', style: 'width:' + Math.round(frac * 100) + '%;' }),
+        ]) : null,
+        proj && frac != null ? el('span', { class: 'dt-proj-bar-lab', text: bd + '/' + bt }) : null,
+        s.generation_id ? el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: s.generation_id }), text: 'open →' }) : null,
+      ].filter(Boolean)),
     ]));
   }
   tbl.appendChild(tbody);

@@ -61,6 +61,15 @@ export function epochRoundModel(opts) {
 
   const byId = new Map();
   for (const g of gens) if (g && g.id != null) byId.set(String(g.id), g);
+  // the live PROJECTED map ({generation_id: {scalar, boards_done, boards_total}})
+  // from the active tournament: an in-flight round's challenger has no SETTLED
+  // scalar yet, so fall back to its projected scalar (marked `projected`) so the
+  // cross-round timeline shows a climbing standing instead of a blank "—".
+  const projected = (o.projected && typeof o.projected === 'object') ? o.projected : {};
+  const projOf = (id) => {
+    const p = id != null ? projected[String(id)] : null;
+    return (p && typeof p === 'object' && isNum(p.scalar)) ? p : null;
+  };
   const scalarOf = (id) => (id != null && scalarBy.has(String(id)) ? scalarBy.get(String(id)) : null);
   const promotedOf = (id) => { const g = byId.get(String(id)); return g ? !!g.promoted : false; };
 
@@ -76,7 +85,18 @@ export function epochRoundModel(opts) {
       const challengers = r.challengerIds
         .map((id) => String(id))
         .filter((id) => id !== String(carried))   // the carried champion is never a "minted" challenger
-        .map((id) => ({ id, scalar: scalarOf(id), promoted: promotedOf(id) }));
+        .map((id) => {
+          const settled = scalarOf(id);
+          // an in-flight challenger with no settled scalar falls back to its
+          // live PROJECTED scalar, flagged so the timeline marks it "projected".
+          if (settled == null) {
+            const p = projOf(id);
+            if (p != null) return { id, scalar: p.scalar, promoted: promotedOf(id), projected: true,
+              boards_done: isNum(p.boards_done) ? p.boards_done : null,
+              boards_total: isNum(p.boards_total) ? p.boards_total : null };
+          }
+          return { id, scalar: settled, promoted: promotedOf(id) };
+        });
       const promotedChallenger = challengers.find((c) => c.promoted) || null;
       const gateOutcome = promotedChallenger
         ? { kind: 'promoted', gen: promotedChallenger.id }
@@ -210,6 +230,10 @@ export function roundModelDigest(rounds) {
     r.champion ? [r.champion.id, isNum(r.champion.scalar) ? r.champion.scalar.toFixed(2) : null, r.champion.evalMode || ''] : null,
     (Array.isArray(r.challengers) ? r.challengers : []).map((c) => [
       c.id, c.promoted, isNum(c.scalar) ? c.scalar.toFixed(2) : null,
+      // a PROJECTED (in-flight) challenger — flag + ROUNDED scalar + integer
+      // board counts so a no-op beat is byte-identical, a board landing repaints.
+      c.projected ? 'j' + (isNum(c.scalar) ? c.scalar.toFixed(3) : '?')
+        + '/' + (c.boards_done == null ? '?' : c.boards_done) + '/' + (c.boards_total == null ? '?' : c.boards_total) : '',
     ]),
     r.gateOutcome ? [r.gateOutcome.kind, r.gateOutcome.gen] : null,
   ]));

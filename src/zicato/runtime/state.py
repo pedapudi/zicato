@@ -517,6 +517,20 @@ class ActiveTournament:
         the fields. ``from_dict`` still accepts the legacy
         ``partial_parent_agg`` / ``partial_child_agg`` key names so an
         ``active_tournament.json`` written before this rename loads.
+    projected:
+        The **live projected standing** per in-flight competitor, keyed by
+        ``generation_id``. Each value is ``{scalar, boards_done,
+        boards_total, pass_rate}`` — the running aggregate (the same
+        :func:`zicato.tournament.scoring.aggregate_generation_score` the
+        partial aggregate uses) over the board units that have settled SO
+        FAR for that competitor, rewritten by the runner the instant each
+        board unit settles. The dashboard folds these onto the matching
+        standings rows + pending matches and marks them "projected"
+        (visually distinct from a settled scalar) so an in-flight candidate
+        shows a live, climbing standing. Empty before the first board unit
+        completes; old readers ignore the field, and an old
+        ``active_tournament.json`` with no ``projected`` key loads
+        byte-identical.
     """
 
     tournament_id: str
@@ -549,6 +563,13 @@ class ActiveTournament:
     # reads as "N proposed · 0 applied". Defaults empty so an old
     # active_tournament.json (and the gauntlet path) loads byte-identical.
     field_status: list[dict[str, Any]] = field(default_factory=list)
+    # ── NEW: live projected standing per in-flight competitor ──
+    # ``{generation_id: {scalar, boards_done, boards_total, pass_rate}}`` —
+    # the running aggregate over the boards settled so far for an in-flight
+    # competitor, rewritten by the runner as each board unit settles. The
+    # dashboard marks these "projected" (distinct from a settled scalar).
+    # Defaults empty so an old active_tournament.json loads byte-identical.
+    projected: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -569,6 +590,7 @@ class ActiveTournament:
             "rounds": [dict(r) for r in self.rounds],
             "standings": [dict(s) for s in self.standings],
             "field_status": [dict(f) for f in self.field_status],
+            "projected": {str(k): dict(v) for k, v in self.projected.items()},
         }
 
     @classmethod
@@ -598,6 +620,11 @@ class ActiveTournament:
             rounds=[dict(r) for r in d.get("rounds", []) if isinstance(r, dict)],
             standings=[dict(s) for s in d.get("standings", []) if isinstance(s, dict)],
             field_status=[dict(f) for f in d.get("field_status", []) if isinstance(f, dict)],
+            projected={
+                str(k): dict(v)
+                for k, v in (d.get("projected") or {}).items()
+                if isinstance(v, dict)
+            },
         )
 
 
@@ -686,6 +713,37 @@ def update_tournament_partial_aggregate(
     write_active_tournament(workspace_root, replace(current, **updates))
 
 
+def update_tournament_projected(
+    workspace_root: Path,
+    projected: dict[str, dict[str, Any]],
+) -> None:
+    """Merge live projected-standing rows into the active tournament.
+
+    Mirrors :func:`update_tournament_partial_aggregate`: called by the
+    runner the instant a board unit settles, so a reader (the dashboard)
+    watches an in-flight competitor's *projected* standing
+    (``scalar`` / ``boards_done`` / ``boards_total`` / ``pass_rate``)
+    climb as its boards land — distinct from a settled scalar.
+
+    Reads the current tournament JSON, MERGES the supplied per-generation
+    rows onto :attr:`ActiveTournament.projected` (so concurrently-running
+    sides each keep their own row), and atomically writes the result. A
+    competitor settles out of the map naturally once the strategy folds a
+    real settled scalar onto its standing; until then the projected row is
+    the live read. If no tournament file exists, the call is a no-op.
+    """
+    if not projected:
+        return
+    current = read_active_tournament(workspace_root)
+    if current is None:
+        return
+    merged = {str(k): dict(v) for k, v in current.projected.items()}
+    for gid, row in projected.items():
+        if isinstance(row, dict):
+            merged[str(gid)] = dict(row)
+    write_active_tournament(workspace_root, replace(current, projected=merged))
+
+
 def clear_active_tournament(workspace_root: Path) -> None:
     """Remove the active-tournament JSON. Idempotent."""
     backend_for(workspace_root).delete(active_tournament_key())
@@ -706,6 +764,7 @@ __all__ = [
     "write_active_tournament",
     "update_tournament_entry",
     "update_tournament_partial_aggregate",
+    "update_tournament_projected",
     "clear_active_tournament",
     "loss_summary_from_profile",
     "drift_count_snapshot_from_profile",

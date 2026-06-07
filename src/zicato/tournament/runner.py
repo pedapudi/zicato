@@ -1321,14 +1321,34 @@ class _IncrementalScorer:
         "_challenger",
         "_lock",
         "_state",
+        "_champion_id",
+        "_challenger_id",
+        "_board_total",
     )
 
-    def __init__(self, weights: ScoringWeights, workspace_root: Path) -> None:
+    def __init__(
+        self,
+        weights: ScoringWeights,
+        workspace_root: Path,
+        *,
+        champion_id: str = "",
+        challenger_id: str = "",
+        board_total: int = 0,
+    ) -> None:
         self._weights = weights
         self._workspace_root = workspace_root
         self._champion: list[LossProfile] = []
         self._challenger: list[LossProfile] = []
         self._lock = asyncio.Lock()
+        # The two competitors' generation ids + the board size this unit
+        # set runs over — threaded so ``record`` can write the per-generation
+        # live PROJECTED standing (``boards_done`` / ``boards_total``)
+        # alongside the running partial aggregate. Empty / 0 turns the
+        # projected write into a cheap no-op (the gauntlet seed-scoring path
+        # has no live envelope to project onto).
+        self._champion_id = str(champion_id or "")
+        self._challenger_id = str(challenger_id or "")
+        self._board_total = int(board_total or 0)
         # Resolve the runtime-state module once; ``None`` turns every
         # persist into a cheap no-op (no-runtime-state environment).
         rt = _runtime_state()
@@ -1372,6 +1392,44 @@ class _IncrementalScorer:
                 )
             except Exception as exc:  # noqa: BLE001 — partial scoring is best-effort
                 log.debug("partial-aggregate persist skipped: %s", exc)
+            # Live PROJECTED standing per in-flight competitor: the same
+            # running aggregate, keyed by generation_id, with the boards-so-
+            # far / boards-total progress folded in so the dashboard can mark
+            # the row "projected" and grow a scored board-progress sub-bar.
+            # Only written when the gen ids were threaded (non-gauntlet /
+            # live-envelope path); the seed-scoring path leaves them empty,
+            # so this stays byte-identical there.
+            projected: dict[str, dict[str, Any]] = {}
+            if self._champion_id and champion_agg is not None:
+                projected[self._champion_id] = self._projection_row(
+                    champion_agg, len(self._champion)
+                )
+            if self._challenger_id and challenger_agg is not None:
+                projected[self._challenger_id] = self._projection_row(
+                    challenger_agg, len(self._challenger)
+                )
+            if not projected:
+                return
+            try:
+                self._state.update_tournament_projected(self._workspace_root, projected)
+            except Exception as exc:  # noqa: BLE001 — projected scoring is best-effort
+                log.debug("projected-standing persist skipped: %s", exc)
+
+    def _projection_row(self, agg: dict[str, Any], boards_done: int) -> dict[str, Any]:
+        """One ``{scalar, boards_done, boards_total, pass_rate}`` row.
+
+        ``boards_total`` falls back to ``boards_done`` when the board size
+        was not threaded (so progress reads as complete rather than a
+        misleading 0/0); the dashboard treats ``boards_done < boards_total``
+        as still-in-flight.
+        """
+        total = self._board_total if self._board_total > 0 else int(boards_done)
+        return {
+            "scalar": float(agg.get("scalar", 0.0)),
+            "boards_done": int(boards_done),
+            "boards_total": int(total),
+            "pass_rate": float(agg.get("pass_rate", 1.0)),
+        }
 
 
 async def _run_full_board_unit(
@@ -1519,7 +1577,17 @@ async def _run_board_units_full(
     and challenger loss maps.
     """
     semaphore = asyncio.Semaphore(config.parallelism)
-    scorer = _IncrementalScorer(weights, workspace_root)
+    # Thread both competitors' generation ids + the board size so the scorer
+    # writes the live PROJECTED standing per side (boards_done / boards_total)
+    # alongside the running partial aggregate. The dashboard marks these
+    # "projected" so an in-flight candidate shows a climbing standing.
+    scorer = _IncrementalScorer(
+        weights,
+        workspace_root,
+        champion_id=parent_gen.id,
+        challenger_id=child_gen.id,
+        board_total=len(board),
+    )
 
     async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
         async with semaphore:
@@ -1595,7 +1663,14 @@ async def _run_board_units_fast(
     finishes, concurrently with the boards still in flight.
     """
     semaphore = asyncio.Semaphore(config.parallelism)
-    scorer = _IncrementalScorer(weights, workspace_root)
+    # Fast mode runs only the challenger; thread its generation id + the board
+    # size so the live projected standing accrues for the in-flight challenger.
+    scorer = _IncrementalScorer(
+        weights,
+        workspace_root,
+        challenger_id=child_gen.id,
+        board_total=len(board),
+    )
 
     async def _bounded(entry: BoardEntry) -> LossProfile:
         async with semaphore:

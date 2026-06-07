@@ -179,7 +179,12 @@ defaults so an old `active_tournament.json` loads unchanged):
     { "generation_id": "v5", "seed": 3, "role": "challenger" }
   ],
   "rounds": [ /* per-structure round/rung/bracket state, see §2.4 */ ],
-  "standings": [ /* current ranking, see §2.5 */ ]
+  "standings": [ /* current ranking, see §2.5 */ ],
+
+  // ── NEW: live projected standing per in-flight competitor, see §2.5.1 ──
+  "projected": {
+    "v4": { "scalar": 0.42, "boards_done": 3, "boards_total": 8, "pass_rate": 0.9 }
+  }
 }
 ```
 
@@ -196,6 +201,8 @@ defaults so an old `active_tournament.json` loads unchanged):
   else). Default `[]`.
 - `rounds` — the per-structure progression (§2.4). Default `[]`.
 - `standings` — the live ranking (§2.5). Default `[]`.
+- `projected` — the **live projected standing** per in-flight competitor
+  (§2.5.1). Default `{}`.
 
 **Gauntlet back-compat invariant.** For `structure == "gauntlet"`, the
 runner continues to write `parent_generation_id` /
@@ -314,6 +321,43 @@ derivable, always present once any run settles:
 - `wins` / `losses` are meaningful for bracket / Swiss; for racing they
   may be `0` and the UI reads survival from `rounds[].cut`.
 
+**Live projected overlay (optional, in-flight only).** While a competitor
+is being evaluated, the orchestrator's live publish overlays the projected
+fields (§2.5.1) onto its standing row, and re-ranks per the per-structure
+rule below. A settled row carries none of these:
+
+| Overlay field | Meaning |
+|---|---|
+| `in_flight` | `true` for a competitor in a still-pending match; absent/`false` for a settled row. |
+| `projected_scalar` | the running aggregate scalar over boards-so-far (lower is better) — the dashboard renders it as `~<value>` with a "proj" badge. |
+| `boards_done` / `boards_total` | the scored-board progress, driving a projected sub-bar distinct from the time-progress bar. |
+
+### 2.5.1 `projected` — the live projected standing map
+
+`ActiveTournament.projected` is `{generation_id: {scalar, boards_done,
+boards_total, pass_rate}}`, written by the runner's `_IncrementalScorer`
+the instant each board unit settles (alongside `partial_*_agg`), via
+`update_tournament_projected`. The value is the SAME running
+`aggregate_generation_score` over the boards settled so far for that
+competitor, with the boards-so-far / boards-total progress folded in.
+Default `{}` (no projection before the first board settles; old files
+have no key and load empty).
+
+**Per-structure ranking rule** (the dashboard + the orchestrator overlay
+substitute the projected scalar into the EXISTING sort key for the
+in-flight competitor ONLY; a settled competitor keeps its real value):
+
+- `single_elim` / `double_elim` / `racing` — **scalar rank.** The
+  projected scalar replaces the in-flight row's (still-zero) scalar in the
+  sort, so an in-flight leader bubbles up live.
+- `swiss` — **NEVER project Copeland points.** A half-finished duel has
+  crowned no winner; the points-rank is authoritative. The projected
+  scalar only nudges the mean-scalar TIEBREAK among rows on equal wins,
+  and the in-flight pairing is marked visually. The standings are never
+  re-ranked on points by a projection.
+- `gauntlet` — the projected delta (challenger − champion) reads on the
+  two-row view; no multi-competitor standings to re-rank.
+
 ### 2.6 The settled record — `tournaments` table + `OutcomeRecord`
 
 Two settled surfaces, generalized:
@@ -388,7 +432,7 @@ All of the above rides on the **existing storage seams**:
 
 | Reader / data | Old gauntlet workspace behaviour |
 |---|---|
-| `ActiveTournament.from_dict` | missing `structure` ⇒ `"gauntlet"`; missing `competitors`/`rounds`/`standings` ⇒ `[]`; `parent`/`child_generation_id` still authoritative. |
+| `ActiveTournament.from_dict` | missing `structure` ⇒ `"gauntlet"`; missing `competitors`/`rounds`/`standings` ⇒ `[]`; missing `projected` ⇒ `{}`; `parent`/`child_generation_id` still authoritative. |
 | `ActiveTournamentEntry.from_dict` | missing `match_id` ⇒ `""`; `side` stays `"parent"`/`"child"`. |
 | `OutcomeRecord` (journal) | missing `structure` ⇒ `"gauntlet"`; missing rank/round/`match_record` ⇒ `None`/`()`. `tournament_decision` unchanged. |
 | `tournaments` table | incremental open adds the new TEXT columns as `NULL`; a full `reindex` populates them (`"gauntlet"` for runs that predate the feature). |

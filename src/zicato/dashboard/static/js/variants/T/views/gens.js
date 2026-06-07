@@ -204,7 +204,11 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
   const championId = (gens.find((g) => g.promoted) || gens.find((g) => !g.parent) || {}).id || null;
 
-  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId });
+  // the live PROJECTED standing for an in-flight round's challenger (current
+  // epoch only) — falls back to the projected scalar when no settled one exists.
+  const liveAt = state.activeTournament;
+  const liveProjected = (liveBelongsToEpoch(id) && liveAt && liveAt.projected && typeof liveAt.projected === 'object') ? liveAt.projected : {};
+  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected });
   const want = String(roundParam);
   const round = epochRounds.find((r) => String(r.round_index) === want) || null;
 

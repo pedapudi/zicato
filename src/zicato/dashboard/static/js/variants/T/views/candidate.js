@@ -119,11 +119,16 @@ export async function render(host, ctx, params, route) {
     scalarBy: scalarByGen, bracket, structure, championId,
   }));
 
+  // the live PROJECTED standing map ({gen: {scalar, boards_done, boards_total}})
+  // from the current-epoch active tournament — so a candidate with NO settled
+  // scalar yet shows its climbing PROJECTED scalar / Δ (marked "projected").
+  const liveProjected = (at && liveForThisEpoch && at.projected && typeof at.projected === 'object') ? at.projected : {};
+
   // Resolve each side's full panel data (cached). Side B only when comparing.
   // The primary side (A) honours the entry drill-down param; the compare side
   // (B) reads its lifecycle clean.
-  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, bracket, epochInflight);
-  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, bracket, epochInflight) : null;
+  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, bracket, epochInflight, liveProjected);
+  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, bracket, epochInflight, liveProjected) : null;
 
   const digest = JSON.stringify({
     epochId, genId, cmpId, entry: params.entry || null, structure,
@@ -166,7 +171,7 @@ export async function render(host, ctx, params, route) {
 
 // Resolve one candidate's full panel data (all cached reads). `entryParam`
 // only applies to the primary (A) side's drill-down.
-async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, bracket, epochInflight) {
+async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, bracket, epochInflight, liveProjected) {
   const node = genList.find((g) => g.id === genId) || { id: genId, parent: null, promoted: null };
   const baseline = !node.parent;
   const exp = experiments.find((x) => x.generation_id === genId) || null;
@@ -264,11 +269,24 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
     sourceRun: cachedEntries.find((e) => e.source_run)?.source_run || null,
   } : null;
 
+  // the live PROJECTED standing for THIS candidate: shown on the headline only
+  // when the gen has NO settled scalar yet (boards still streaming). `projDelta`
+  // = projected − champion (lower is better), the projected analogue of Δ.
+  const projRow = (liveProjected && typeof liveProjected === 'object') ? liveProjected[String(genId)] : null;
+  const hasSettled = scalarByGen.has(String(genId)) && svg.isNum(scalarByGen.get(String(genId)));
+  const projected = (!hasSettled && projRow && svg.isNum(projRow.scalar)) ? {
+    scalar: projRow.scalar,
+    boards_done: svg.isNum(projRow.boards_done) ? projRow.boards_done : null,
+    boards_total: svg.isNum(projRow.boards_total) ? projRow.boards_total : null,
+    delta: svg.isNum(championScalar) ? projRow.scalar - championScalar : null,
+  } : null;
+
   return {
     node, baseline, decision, mpts, entries, mine, gateSpecs, gates,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
+    projected,
   };
 }
 
@@ -312,11 +330,39 @@ function deriveGateExplain(gate) {
   };
 }
 
+// A headline stat in the PROJECTED treatment — the value reads in the projected
+// tone with a "proj" badge + a scored board-progress sub-bar (boards_done/total)
+// so an in-flight candidate's projected scalar / Δ is visibly NOT a settled one.
+function projStat(value, key, proj) {
+  const bd = proj && svg.isNum(proj.boards_done) ? proj.boards_done : null;
+  const bt = proj && svg.isNum(proj.boards_total) ? proj.boards_total : null;
+  const frac = (bd != null && bt != null && bt > 0) ? Math.min(1, bd / bt) : null;
+  return el('div', { class: 'dn-stat dt-proj', title: 'projected — boards still streaming in' }, [
+    el('span', { class: 'v dt-proj-val' }, [
+      el('span', { text: value }),
+      el('span', { class: 'dt-proj-badge', text: 'proj' }),
+    ]),
+    el('span', { class: 'k', text: key }),
+    frac != null ? el('span', { class: 'dt-proj-bar', title: bd + '/' + bt + ' boards scored' }, [
+      el('span', { class: 'dt-proj-bar-fill', style: 'width:' + Math.round(frac * 100) + '%;' }),
+    ]) : null,
+    frac != null ? el('span', { class: 'dt-proj-bar-lab', text: bd + '/' + bt }) : null,
+  ].filter(Boolean));
+}
+
 function candidateDigest(s) {
   return {
     gen: s.node.id, parent: s.node.parent, decision: s.decision, championId: s.championId,
     champScalar: svg.isNum(s.championScalar) ? s.championScalar.toFixed(3) : null,
     delta: svg.isNum(s.primaryDelta) ? s.primaryDelta.toFixed(3) : null,
+    // the live PROJECTED standing — ROUNDED scalar/Δ + integer board counts so a
+    // no-op heartbeat is byte-identical, a board landing repaints (anti-flash).
+    projected: s.projected ? [
+      svg.isNum(s.projected.scalar) ? s.projected.scalar.toFixed(3) : null,
+      svg.isNum(s.projected.delta) ? s.projected.delta.toFixed(3) : null,
+      s.projected.boards_done == null ? '?' : s.projected.boards_done,
+      s.projected.boards_total == null ? '?' : s.projected.boards_total,
+    ] : null,
     mpts: s.mpts,
     // the candidate-vs-champion comparison + gate-rule explanation surfaced on
     // the lifecycle DAG — part of the digest so a change repaints (no flashing).
@@ -366,9 +412,20 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   const championId = s.championId;
   const championScalar = s.championScalar;
 
+  // PROJECTED headline — a candidate with no SETTLED scalar yet (boards still
+  // streaming) shows its live PROJECTED scalar / Δ: "~<value>" + a "proj" badge
+  // + the dimmed/dashed treatment, distinct from a committed number.
+  const settledScalar = svg.isNum(s.scalarByGen.get(genId)) ? s.scalarByGen.get(genId) : null;
+  const proj = (settledScalar == null && s.projected) ? s.projected : null;
+  const scalarStat = proj
+    ? projStat('~' + svg.fmt(proj.scalar, 1), 'scalar (loss)', proj)
+    : stat(settledScalar != null ? svg.fmt(settledScalar, 1) : '—', 'scalar (loss)');
+  const deltaStat = (proj && svg.isNum(proj.delta))
+    ? projStat('~' + svg.fmtSigned(proj.delta, 1), 'Δ vs champion', proj)
+    : stat(svg.isNum(s.primaryDelta) ? svg.fmtSigned(s.primaryDelta, 1) : '—', 'Δ vs champion');
   host.appendChild(el('div', { class: 'dn-panel dn-row' }, [
-    stat(svg.isNum(s.scalarByGen.get(genId)) ? svg.fmt(s.scalarByGen.get(genId), 1) : '—', 'scalar (loss)'),
-    stat(svg.isNum(s.primaryDelta) ? svg.fmtSigned(s.primaryDelta, 1) : '—', 'Δ vs champion'),
+    scalarStat,
+    deltaStat,
     stat(node.parent || 'seed', 'parent'),
     el('div', { class: 'dn-stat' }, [verdictPill(baseline ? 'baseline' : s.decision)]),
   ]));
@@ -456,11 +513,22 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   const inflight = Array.isArray(s.inflight) ? s.inflight : [];
   if (inflight.length) {
     const liveCard = el('div', { class: 'dn-panel dn-board-inflight' });
+    // a SCORED board-progress sub-bar (boards_done/boards_total) from the live
+    // projected standing — distinct from each run's own time-progress bar below.
+    const pj = s.projected;
+    const sbd = pj && svg.isNum(pj.boards_done) ? pj.boards_done : null;
+    const sbt = pj && svg.isNum(pj.boards_total) ? pj.boards_total : null;
+    const sfrac = (sbd != null && sbt != null && sbt > 0) ? Math.min(1, sbd / sbt) : null;
     liveCard.appendChild(el('div', { class: 'dn-inflight-head' }, [
       el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
       el('span', { class: 'dn-inflight-count', text: String(inflight.length) + (inflight.length === 1 ? ' board running' : ' boards running') }),
       el('span', { class: 'dn-faint', text: ' for this candidate' }),
-    ]));
+      sfrac != null ? el('span', { class: 'dt-proj-badge', text: 'proj' }) : null,
+      sfrac != null ? el('span', { class: 'dt-proj-bar', title: sbd + '/' + sbt + ' boards scored (projected)' }, [
+        el('span', { class: 'dt-proj-bar-fill', style: 'width:' + Math.round(sfrac * 100) + '%;' }),
+      ]) : null,
+      sfrac != null ? el('span', { class: 'dt-proj-bar-lab', text: sbd + '/' + sbt + ' scored' }) : null,
+    ].filter(Boolean)));
     const tbl = el('table', { class: 'dn-board-table dn-inflight-table' });
     tbl.appendChild(el('thead', null, [el('tr', null, [
       el('th', { text: 'board' }), el('th', { text: 'run' }), el('th', { text: 'progress' }), el('th', { text: 'execution' }),

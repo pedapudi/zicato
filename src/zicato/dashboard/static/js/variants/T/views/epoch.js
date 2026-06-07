@@ -95,6 +95,11 @@ export async function render(host, ctx, params) {
   let racingFunnel = null;
   let swissOver = null;
   let elimOver = null;
+  // the live PROJECTED standing map ({gen: {scalar, boards_done, boards_total}})
+  // from the current-epoch active tournament — threaded into the cross-round
+  // timeline so an in-flight round's challenger shows a climbing projected
+  // scalar (marked "projected") rather than a blank "—".
+  let liveProjected = {};
   if (nonGauntlet) {
     const status = deriveLiveStatus({
       heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
@@ -102,6 +107,7 @@ export async function render(host, ctx, params) {
     const liveRaw = status.running ? await D.activeTournament() : null;
     const liveForThisEpoch = (liveRaw && liveRaw.epoch_id != null)
       ? String(liveRaw.epoch_id) === String(epochId) : !!liveRaw;
+    if (liveForThisEpoch && liveRaw && liveRaw.projected && typeof liveRaw.projected === 'object') liveProjected = liveRaw.projected;
     if (structure === 'racing') {
       const liveSt = liveForThisEpoch ? normalizeStructure(liveRaw, true) : null;
       const racingSt = (liveSt && liveSt.live) ? liveSt : reconstructRacing(bracket, epochId);
@@ -135,7 +141,7 @@ export async function render(host, ctx, params) {
   // gauntlet matchups, else a single round 0 (every run so far). The timeline
   // SUBSUMES the old gauntlet reel + the non-gauntlet structure strip — one
   // renderer for all structures, degrading to a single episode for --rounds 1.
-  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId });
+  const epochRounds = epochRoundModel({ gens, scalarBy: scalarByGen, bracket, structure, championId, projected: liveProjected });
 
   // The BOARD-STATUS surface (train/holdout split + ladder + generalization
   // gap). Derived DEFENSIVELY from the epoch payload — graceful empty states

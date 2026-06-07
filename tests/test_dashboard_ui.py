@@ -271,7 +271,15 @@ def test_bundle_under_size_envelope(
     # accessible info popover, the SSE chat reader) and its scoped CSS. That is a
     # whole new interactive surface (~66 KB of view + module + CSS), so the
     # envelope is raised to 820 KB to cover it with headroom for B3's re-homing.
-    assert total < 820_000, f"bundle is {total} bytes, exceeds 820_000 envelope"
+    #
+    # LIVE PROJECTED STANDINGS then adds the projected-standing treatment across
+    # every structure + viz level: the projected overlay + per-structure re-rank
+    # in the live model, the dict-bug fix, the projected render in the funnel /
+    # swiss ladder / elim flow / standings table / live hero / candidate headline,
+    # the cross-round projected fallback, the digest quantization, and the
+    # theme-derived projected tokens + treatment CSS — ~22 KB. The envelope is
+    # raised to 880 KB to cover it with headroom for continued iteration.
+    assert total < 880_000, f"bundle is {total} bytes, exceeds 880_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:

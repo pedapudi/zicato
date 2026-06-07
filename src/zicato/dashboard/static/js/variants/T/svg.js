@@ -811,28 +811,47 @@ function funnelRunner(svg, o, sid, rung, j, x, cy, verdict, lane, barW) {
   const partial = lane && isNum(lane.partialDelta) ? lane.partialDelta : null;
   const delta = (rung.deltas && isNum(rung.deltas[sid])) ? rung.deltas[sid] : partial;
   const glyph = verdict === 'cut' ? ' ✕' : verdict === 'survives' ? ' ↑' : '';
+  // a LIVE racing lane with a server-side PROJECTED standing reads as projected:
+  // a ~prefix on the scalar + a "proj" suffix + the dashed/dimmed dn-proj
+  // treatment + a SCORED board-progress sub-bar, distinct from a settled lane.
+  const projected = !!(lane && lane.projected && verdict === 'racing');
   // a live racing lane appends its "k/N boards" progress to the label.
   const laneSuffix = (verdict === 'racing' && lane) ? ' · ' + laneProgressText(lane) : '';
+  const projSuffix = projected && isNum(lane.projected_scalar)
+    ? ' · ~' + fmt(lane.projected_scalar, 1) + ' proj' : '';
   const cls = 'dn-funnel-name'
-    + (verdict === 'cut' ? ' dn-out dn-bad' : verdict === 'survives' ? ' dn-good' : ' dn-racing');
+    + (verdict === 'cut' ? ' dn-out dn-bad' : verdict === 'survives' ? ' dn-good' : ' dn-racing')
+    + (projected ? ' dn-proj' : '');
   const tip = `${sid} · ${rung.label || 'rung ' + j}`
     + (isNum(rung.board_fraction) ? ` · ${(rung.board_fraction * 100).toFixed(0)}% board` : '')
+    + (projected && isNum(lane.projected_scalar) ? ` · projected scalar ~${fmt(lane.projected_scalar, 2)} (boards still streaming)` : '')
     + (delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : '')
     + (laneSuffix ? ` · ${laneProgressText(lane)}` : '')
-    + ` · ${verdict}`;
+    + ` · ${projected ? 'projected' : verdict}`;
   const g = svgEl('g', { class: 'dn-funnel-runner', tabindex: o.onCompetitor ? '0' : null });
   const t = hov(svgEl('text', { x, y: cy + 3, class: cls }), tip);
-  t.textContent = shortLabel(sid, lane ? 8 : 13) + glyph + laneSuffix;
+  t.textContent = shortLabel(sid, lane ? 8 : 13) + glyph + laneSuffix + projSuffix;
   g.appendChild(t);
-  // a thin in-flight PROGRESS BAR under a live lane (boards done / total).
-  if (lane && (lane.inflight || lane.done)) {
+  // a thin SCORED board-progress sub-bar under a live lane (boards done / total).
+  // A projected lane draws it in the projected (dashed/amber) treatment; a plain
+  // live lane keeps the accent in-flight bar.
+  if (lane && (lane.inflight || lane.done || projected)) {
     const bw = Math.max(20, barW || 80);
-    const frac = (isNum(lane.total) && lane.total > 0)
-      ? Math.min(1, (lane.done || 0) / lane.total)
+    // prefer the scored boards_done/boards_total when present (the projected
+    // standing's own progress); else the live activeRuns done/total tally.
+    const sd = isNum(lane.boards_done) ? lane.boards_done : lane.done;
+    const stot = isNum(lane.boards_total) ? lane.boards_total : lane.total;
+    const frac = (isNum(stot) && stot > 0)
+      ? Math.min(1, (sd || 0) / stot)
       : (lane.inflight ? 0.5 : 0);
-    g.appendChild(svgEl('rect', { x, y: cy + 5, width: bw, height: 2, rx: 1, class: 'dn-funnel-bar-bg' }));
-    g.appendChild(svgEl('rect', { x, y: cy + 5, width: Math.max(1, bw * frac), height: 2, rx: 1,
-      class: 'dn-funnel-bar' + (lane.inflight ? ' dn-funnel-bar-live' : '') }));
+    if (projected) {
+      g.appendChild(svgEl('rect', { x, y: cy + 5, width: bw, height: 2.4, rx: 1, class: 'dn-proj-bar-bg' }));
+      g.appendChild(svgEl('rect', { x, y: cy + 5, width: Math.max(1, bw * frac), height: 2.4, rx: 1, class: 'dn-proj-bar' }));
+    } else {
+      g.appendChild(svgEl('rect', { x, y: cy + 5, width: bw, height: 2, rx: 1, class: 'dn-funnel-bar-bg' }));
+      g.appendChild(svgEl('rect', { x, y: cy + 5, width: Math.max(1, bw * frac), height: 2, rx: 1,
+        class: 'dn-funnel-bar' + (lane.inflight ? ' dn-funnel-bar-live' : '') }));
+    }
   }
   clickable(g, o.onCompetitor && (() => o.onCompetitor(sid)));
   svg.appendChild(g);
@@ -945,14 +964,25 @@ export function swissLadder(opts) {
     const isFormer = sid === ladFormerId;
     const isLeader = sid === leaderId && !ladChampId;
     const emph = isChamp || isLeader;
-    const g = svgEl('g', { class: 'dn-swissladder-stand', tabindex: o.onCompetitor ? '0' : null });
-    const lab = hov(svgEl('text', { x: sx + 6, y: cy + 3, class: 'dn-swissladder-standlab' + (emph ? ' dn-good' : (isFormer ? ' dn-faint' : '')) }),
-      `${sid} · ${isNum(s.points) ? fmt(s.points, 1) : '?'} pts · ${s.wins || 0}W ${s.draws || 0}D ${s.losses || 0}L${isFormer ? ' · former champion' : ''}`);
-    lab.textContent = `${i + 1}. ${shortLabel(sid, 9)}` + (isChamp ? ' ' + CROWN.current : (isFormer || isLeader ? ' ' + CROWN.former : ''));
+    // PROJECTED — an in-flight competitor's mean-scalar is projected (Copeland
+    // points are NOT — a half-finished duel has crowned no winner). Mark the
+    // row "projected" (dashed/~) but never re-rank it on the projection.
+    const proj = !!(s.in_flight && isNum(s.projected_scalar));
+    const g = svgEl('g', { class: 'dn-swissladder-stand' + (proj ? ' dn-proj' : ''), tabindex: o.onCompetitor ? '0' : null });
+    const lab = hov(svgEl('text', { x: sx + 6, y: cy + 3, class: 'dn-swissladder-standlab' + (emph ? ' dn-good' : (isFormer ? ' dn-faint' : '')) + (proj ? ' dn-proj' : '') }),
+      `${sid} · ${isNum(s.points) ? fmt(s.points, 1) : '?'} pts · ${s.wins || 0}W ${s.draws || 0}D ${s.losses || 0}L${isFormer ? ' · former champion' : ''}${proj ? ` · projected scalar ~${fmt(s.projected_scalar, 2)} (boards streaming; points not projected)` : ''}`);
+    lab.textContent = `${i + 1}. ${shortLabel(sid, 9)}` + (isChamp ? ' ' + CROWN.current : (isFormer || isLeader ? ' ' + CROWN.former : '')) + (proj ? ' ~proj' : '');
     g.appendChild(lab);
     const pts = svgEl('text', { x: sx + standW - 6, y: cy + 3, 'text-anchor': 'end', class: 'dn-swissladder-pts' + (emph ? ' dn-good' : '') });
     pts.textContent = isNum(s.points) ? fmt(s.points, s.points % 1 ? 1 : 0) : '—';
     g.appendChild(pts);
+    // a SCORED board-progress sub-bar for a projected row (boards_done/total).
+    if (proj && isNum(s.boards_total) && s.boards_total > 0) {
+      const barW = standW - 12;
+      const frac = Math.min(1, (s.boards_done || 0) / s.boards_total);
+      g.appendChild(svgEl('rect', { x: sx + 6, y: cy + 7, width: barW, height: 2.4, rx: 1, class: 'dn-proj-bar-bg' }));
+      g.appendChild(svgEl('rect', { x: sx + 6, y: cy + 7, width: Math.max(1, barW * frac), height: 2.4, rx: 1, class: 'dn-proj-bar' }));
+    }
     clickable(g, o.onCompetitor && (() => o.onCompetitor(sid)));
     svg.appendChild(g);
   });
@@ -1056,7 +1086,9 @@ export function elimFlow(opts) {
       if (comps.length >= 2 && !m.bye) {
         const loser = winner ? comps.find((c) => c !== winner) || null : null;
         matchesByCol[ci].push({ comps, winner, loser, pending, delta: isNum(m.delta_scalar) ? m.delta_scalar : null,
-          slot: m.bracket_slot || m.match_id || '' });
+          slot: m.bracket_slot || m.match_id || '',
+          // the per-side live PROJECTED standing on an in-flight match.
+          projected: (m.projected && typeof m.projected === 'object') ? m.projected : null });
       }
       for (const c of comps) {
         const g = ensure(c);
@@ -1081,6 +1113,19 @@ export function elimFlow(opts) {
       if (ci >= lastPlayed) { g.eliminatedAt = ci; break; }  // no later column → eliminated here
     }
   }
+  // per-generation live PROJECTED standing (from an in-flight match's
+  // `projected` map): the latest column's projected row wins. Drives the
+  // lane's "projected" treatment (dashed/~prefix) + scored sub-bar.
+  const projByGen = new Map();
+  matchesByCol.forEach((matches) => {
+    for (const m of matches) {
+      if (!m.projected || !m.pending) continue;
+      for (const c of m.comps) {
+        const p = m.projected[c];
+        if (p && isNum(p.scalar)) projByGen.set(String(c), p);
+      }
+    }
+  });
   const gens = [...genState.values()];
   // order lanes: survivors / champion first (by deepest round reached), then the
   // earlier-eliminated; the champion lane floats to the top.
@@ -1138,17 +1183,25 @@ export function elimFlow(opts) {
       const yTop = Math.min(...lys);
       const yBot = Math.max(...lys);
       const ymid = (yTop + yBot) / 2;
+      // a projected (in-flight, with a server-side projected scalar) match draws
+      // the convergence in the projected (dashed/amber) treatment.
+      const projMatch = !!(m.pending && m.projected
+        && m.comps.some((c) => m.projected[c] && isNum(m.projected[c].scalar)));
       // a small convergence elbow: the two lanes pinch toward the node at x.
-      const cls = 'dn-elimflow-conv' + (m.pending ? ' dn-elimflow-conv-pending' : '');
+      const cls = 'dn-elimflow-conv' + (m.pending ? ' dn-elimflow-conv-pending' : '') + (projMatch ? ' dn-proj' : '');
       svg.appendChild(svgEl('path', {
         d: `M${x - 8},${yTop} Q${x},${yTop} ${x},${ymid} Q${x},${yBot} ${x - 8},${yBot}`,
         class: cls, fill: 'none',
       }));
+      const projTip = projMatch
+        ? ' · projected: ' + m.comps.filter((c) => m.projected[c] && isNum(m.projected[c].scalar))
+            .map((c) => `${shortLabel(c, 8)} ~${fmt(m.projected[c].scalar, 2)}`).join(', ')
+        : '';
       const tip = `${m.slot ? m.slot + ': ' : ''}${m.comps.join(' vs ')}`
-        + (m.winner ? ` → ${m.winner} ↑` : m.pending ? ' · racing' : '')
-        + (m.delta != null ? ` · Δ ${fmtSigned(m.delta, 2)}` : '');
+        + (m.winner ? ` → ${m.winner} ↑` : m.pending ? (projMatch ? ' · projected (boards streaming)' : ' · racing') : '')
+        + (m.delta != null ? ` · Δ ${fmtSigned(m.delta, 2)}` : '') + projTip;
       const node = svgEl('circle', { cx: x, cy: ymid, r: m.pending ? 2.6 : 3,
-        class: 'dn-elimflow-convnode' + (m.pending ? ' dn-elimflow-pending' : m.winner ? ' dn-elimflow-good' : '') });
+        class: 'dn-elimflow-convnode' + (m.pending ? ' dn-elimflow-pending' : m.winner ? ' dn-elimflow-good' : '') + (projMatch ? ' dn-proj' : '') });
       svg.appendChild(hov(node, tip));
     }
   });
@@ -1214,11 +1267,22 @@ export function elimFlow(opts) {
       lane.appendChild(gm);
     }
 
-    // the lane label at the right gutter.
-    const lblCls = 'dn-elimflow-name' + (isChamp ? ' dn-elimflow-good' : isFormer ? ' dn-elimflow-former' : g.eliminatedAt != null ? ' dn-elimflow-bad' : '');
-    const lbl = svgEl('text', { x: w - 6, y: y + 3.2, class: lblCls, 'text-anchor': 'end' });
-    lbl.textContent = shortLabel(g.id, 11) + (isChamp ? ' ' + CROWN.current : isFormer ? ' ' + CROWN.former : '');
+    // the lane label at the right gutter. A lane with a live PROJECTED standing
+    // (in-flight, boards streaming) reads "~proj" in the projected treatment.
+    const proj = g.eliminatedAt == null && projByGen.has(g.id) ? projByGen.get(g.id) : null;
+    const lblCls = 'dn-elimflow-name' + (isChamp ? ' dn-elimflow-good' : isFormer ? ' dn-elimflow-former' : g.eliminatedAt != null ? ' dn-elimflow-bad' : '') + (proj ? ' dn-proj' : '');
+    const lbl = hov(svgEl('text', { x: w - 6, y: y + 3.2, class: lblCls, 'text-anchor': 'end' }),
+      proj ? `${g.id} · projected scalar ~${fmt(proj.scalar, 2)} (boards still streaming)` : g.id);
+    lbl.textContent = shortLabel(g.id, 11) + (isChamp ? ' ' + CROWN.current : isFormer ? ' ' + CROWN.former : '') + (proj ? ' ~proj' : '');
     lane.appendChild(lbl);
+    // a SCORED board-progress sub-bar under a projected lane (boards_done/total).
+    if (proj && isNum(proj.boards_total) && proj.boards_total > 0) {
+      const barW = 40;
+      const bx = w - 6 - barW;
+      const frac = Math.min(1, (proj.boards_done || 0) / proj.boards_total);
+      lane.appendChild(svgEl('rect', { x: bx, y: y + 6, width: barW, height: 2.2, rx: 1, class: 'dn-proj-bar-bg' }));
+      lane.appendChild(svgEl('rect', { x: bx, y: y + 6, width: Math.max(1, barW * frac), height: 2.2, rx: 1, class: 'dn-proj-bar' }));
+    }
 
     clickable(lane, o.onCompetitor && (() => o.onCompetitor(g.id)));
     svg.appendChild(lane);

@@ -1252,6 +1252,23 @@
  * detail column. Transitions are CSS `transition`, never infinite.
  * =================================================================== */
 
+/* ===================  LIVE PROJECTED-STANDING TOKENS  ===================
+ * An in-flight candidate (boards still streaming in) shows a PROJECTED
+ * standing — distinct from a SETTLED one. The visual language is consistent
+ * across every structure + viz level: dashed outline, ~prefix on the number,
+ * a "proj" badge, reduced opacity, a scored board-progress sub-bar, and a
+ * subtle pulse (suppressed under prefers-reduced-motion). Every token below
+ * is DERIVED from the already-themed --v2-* variables via color-mix, so the
+ * projected treatment adapts to every theme with NO hardcoded colours. */
+#variant-root[data-variant="T"] {
+  --v2-projected:        var(--v2-caution);                                   /* the projected tone — caution/amber, "not yet committed" */
+  --v2-projected-soft:   color-mix(in srgb, var(--v2-caution) 14%, transparent);
+  --v2-projected-line:   color-mix(in srgb, var(--v2-caution) 55%, transparent);
+  --v2-projected-fill:   color-mix(in srgb, var(--v2-caution) 30%, transparent);
+  --v2-projected-op:     0.7;       /* reduced opacity on a projected row/node */
+  --v2-projected-dash:   4 3;       /* the shared dashed-outline pattern */
+}
+
 /* THE BRAND ACCENT TOKEN — the single non-foreground colour of the mark (the
  * plucked-note dot). Default green on light grounds; brightened on the dark
  * themes for contrast. The stroke itself is `currentColor` (theme ink), so it
@@ -1780,6 +1797,55 @@
   .dn-funnel-gatelab.dn-good { fill: var(--v2-good); font-weight: 700; }
   .dn-funnel-gate:hover .dn-funnel-gatelab,
   .dn-funnel-gate:focus .dn-funnel-gatelab { fill: var(--v2-accent); outline: none; }
+
+  /* ===================  PROJECTED-STANDING TREATMENT  ===================
+   * The single, shared visual language for an in-flight (boards still
+   * streaming) PROJECTED standing — applied to a standings-table ROW, an SVG
+   * NODE (funnel runner / swiss lane / elim node), and the candidate headline.
+   * Distinct from a settled standing: dashed outline + reduced opacity + a
+   * subtle pulse (suppressed under reduced-motion), the ~prefix + "proj" badge
+   * are emitted by the renderers, and a SCORED board-progress sub-bar tracks
+   * boards_done/boards_total. All colours derive from --v2-projected-*. */
+  .dt-proj { opacity: var(--v2-projected-op); }
+  /* a DOM (HTML) projected row: dashed amber outline + a soft fill + pulse. */
+  tr.dt-proj-row td { color: var(--v2-projected); }
+  tr.dt-proj-row { outline: 1px dashed var(--v2-projected-line); outline-offset: -1px;
+    background: var(--v2-projected-soft); animation: dt-proj-pulse 2.2s ease-in-out infinite; }
+  /* the inline "proj" badge — a small caps pill on the projected tone. */
+  .dt-proj-badge { display: inline-block; font: 9px var(--v2-mono); font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--v2-projected);
+    border: 1px dashed var(--v2-projected-line); border-radius: 3px; padding: 0 3px;
+    margin-left: 5px; vertical-align: middle; line-height: 1.5; }
+  /* the ~prefix value reads in the projected tone (the number itself is dimmed). */
+  .dt-proj-val { color: var(--v2-projected); }
+  /* the SCORED board-progress sub-bar (boards_done/boards_total) — DISTINCT from
+   * the time-progress bar: an amber dashed-bounded track in the projected tone. */
+  .dt-proj-bar { display: inline-block; width: 90px; max-width: 30vw; height: 5px;
+    border: 1px dashed var(--v2-projected-line); border-radius: 3px; overflow: hidden;
+    vertical-align: middle; margin-left: 6px; }
+  .dt-proj-bar-fill { display: block; height: 100%; background: var(--v2-projected-fill);
+    transition: width 0.3s ease; }
+  .dt-proj-bar-lab { font: 9.5px var(--v2-mono); color: var(--v2-projected); margin-left: 4px; }
+  /* an SVG node carrying the projected treatment: dashed stroke + projected fill.
+   * (the runner/lane/elim-node classes opt in via .dn-proj.) */
+  .dn-proj { opacity: var(--v2-projected-op); }
+  text.dn-proj, .dn-funnel-name.dn-proj, .dn-swissladder-pairlab.dn-proj,
+  .dn-swissladder-standlab.dn-proj, .dn-elimflow-name.dn-proj { fill: var(--v2-projected); }
+  .dn-funnel-band.dn-proj { fill: var(--v2-projected-soft);
+    stroke: var(--v2-projected-line); stroke-dasharray: var(--v2-projected-dash); }
+  .dn-elimflow-convnode.dn-proj, .dn-elimflow-dot.dn-proj { fill: var(--v2-projected); }
+  .dn-elimflow-conv.dn-proj { stroke: var(--v2-projected-line); stroke-dasharray: var(--v2-projected-dash); }
+  /* the scored board-progress sub-bar drawn INSIDE an SVG figure. */
+  .dn-proj-bar-bg { fill: none; stroke: var(--v2-projected-line);
+    stroke-dasharray: var(--v2-projected-dash); vector-effect: non-scaling-stroke; }
+  .dn-proj-bar { fill: var(--v2-projected-fill); transition: width 0.3s ease; }
+  @keyframes dt-proj-pulse {
+    0%, 100% { background: var(--v2-projected-soft); }
+    50%      { background: color-mix(in srgb, var(--v2-projected) 22%, transparent); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    tr.dt-proj-row { animation: none; }
+  }
 
   /* standings + swiss pairings — reuse the dn-board-table base */
   .dt-standings tr.dt-standings-out td { color: var(--v2-ink-faint); }

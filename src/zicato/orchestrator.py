@@ -1658,7 +1658,13 @@ async def _evolve_multi_challenger(
     # byte-compatible. Best-effort — _publish_active_tournament never
     # raises, so a publish failure cannot abort the resolution.
     def _publish_live_structure(strat: Any) -> None:
-        live_standings = _serialise_standings(strat.live_standings())
+        live_rounds = _serialise_rounds(strat.live_rounds())
+        live_standings = _overlay_projected_standings(
+            _serialise_standings(strat.live_standings()),
+            live_rounds,
+            workspace_root,
+            tournament_spec.structure,
+        )
         _publish_active_tournament(
             workspace_root,
             tournament_id=tournament_id,
@@ -1669,7 +1675,7 @@ async def _evolve_multi_challenger(
             round_index=round_index,
             total_rounds=total_rounds,
             field_status=field_status,
-            rounds=_serialise_rounds(strat.live_rounds()),
+            rounds=live_rounds,
             standings=live_standings,
             entries=_field_entries(competitors_meta, live_standings),
         )
@@ -2106,8 +2112,20 @@ def _publish_active_tournament(
     try:
         from zicato.runtime.state import (  # noqa: PLC0415
             ActiveTournament,
+            read_active_tournament,
             write_active_tournament,
         )
+
+        # PRESERVE the runner-written live fields across a republish. The
+        # runner rewrites ``projected`` / ``partial_*_agg`` per settled board
+        # via its OWN read-modify-write; this full envelope republish (one per
+        # scheduled batch) would otherwise clobber them back to empty, killing
+        # the live projected standing. Carry them forward from the on-disk
+        # record so the two writers compose instead of racing to zero.
+        prior = read_active_tournament(workspace_root)
+        projected = dict(prior.projected) if prior is not None else {}
+        partial_champion = dict(prior.partial_champion_agg) if prior is not None else {}
+        partial_challenger = dict(prior.partial_challenger_agg) if prior is not None else {}
 
         write_active_tournament(
             workspace_root,
@@ -2127,6 +2145,9 @@ def _publish_active_tournament(
                 rounds=[dict(r) for r in (rounds or [])],
                 standings=[dict(s) for s in (standings or [])],
                 entries=list(entries or []),
+                projected=projected,
+                partial_champion_agg=partial_champion,
+                partial_challenger_agg=partial_challenger,
             ),
         )
     except Exception as exc:  # noqa: BLE001 — live state is best-effort
@@ -2178,6 +2199,22 @@ def _field_entries(
             status = "completed" if raw_status in ("eliminated", "champion") else "running"
             scalar = standing.get("scalar")
             loss_summary = {"scalar": float(scalar)} if isinstance(scalar, int | float) else {}
+            # An IN-FLIGHT competitor carries a live PROJECTED scalar (the
+            # runner's running aggregate over boards-so-far). Surface it +
+            # the boards progress on the funnel entry so the rung can render
+            # the "projected" treatment (dashed, ~prefix, scored sub-bar)
+            # before a settled scalar lands.
+            if standing.get("in_flight"):
+                proj = standing.get("projected_scalar")
+                if isinstance(proj, int | float):
+                    loss_summary["projected_scalar"] = float(proj)
+                loss_summary["in_flight"] = 1.0
+                bd = standing.get("boards_done")
+                bt = standing.get("boards_total")
+                if isinstance(bd, int | float):
+                    loss_summary["boards_done"] = float(bd)
+                if isinstance(bt, int | float):
+                    loss_summary["boards_total"] = float(bt)
         entries.append(
             ActiveTournamentEntry(
                 entry_id=gid,
@@ -2256,6 +2293,105 @@ def _serialise_standings(standings: Any) -> list[dict[str, Any]]:
         }
         for s in standings
     ]
+
+
+def _overlay_projected_standings(
+    standings: list[dict[str, Any]],
+    rounds: list[dict[str, Any]],
+    workspace_root: Path,
+    structure: str,
+) -> list[dict[str, Any]]:
+    """Fold the runner's live PROJECTED standing onto the standings rows.
+
+    Reads :attr:`ActiveTournament.projected` (the runner's per-board
+    ``{generation_id: {scalar, boards_done, boards_total, pass_rate}}`` map)
+    and overlays it onto the matching standing rows for the competitors that
+    are IN FLIGHT — i.e. those appearing in a still-pending match of the
+    current live round. Each touched row gains ``projected_scalar``,
+    ``in_flight=True``, ``boards_done`` and ``boards_total``; settled rows
+    are left untouched (no ``in_flight`` key, original scalar).
+
+    Per-structure ranking rule (substitute the projected scalar into the
+    EXISTING sort key for the in-flight competitor ONLY):
+
+    * ``single_elim`` / ``double_elim`` / ``racing`` — scalar rank. The
+      projected scalar replaces the row's (still-zero) scalar in the sort
+      key, so an in-flight leader bubbles up live; settled rows keep their
+      real scalar.
+    * ``swiss`` — Copeland points are NEVER projected (a half-finished duel
+      has no win). The points-based rank is preserved exactly; the projected
+      scalar only nudges the MEAN-SCALAR TIEBREAK among rows on equal points,
+      and the pairing is marked in-flight visually. Never re-ranks on points.
+    * ``gauntlet`` — not routed here (no multi-competitor standings).
+
+    Best-effort: a missing / unreadable projected map yields the input
+    standings unchanged.
+    """
+    if not standings:
+        return standings
+    try:
+        from zicato.runtime.state import read_active_tournament  # noqa: PLC0415
+
+        active = read_active_tournament(workspace_root)
+    except Exception:  # noqa: BLE001 — overlay is best-effort
+        active = None
+    projected = dict(active.projected) if active is not None else {}
+    if not projected:
+        return standings
+
+    # The IN-FLIGHT competitor set: every generation in a pending (unresolved)
+    # match of the live rounds. A row is only projected when its competitor is
+    # actually running right now — a stale projected row for a competitor whose
+    # match already settled must not override its real scalar.
+    in_flight: set[str] = set()
+    for r in rounds:
+        for m in r.get("matches", []) or []:
+            if not m.get("pending"):
+                continue
+            for g in m.get("competitors", []) or []:
+                if g:
+                    in_flight.add(str(g))
+
+    out: list[dict[str, Any]] = []
+    for s in standings:
+        row = dict(s)
+        gid = str(row.get("generation_id", ""))
+        proj = projected.get(gid)
+        if gid and gid in in_flight and isinstance(proj, dict) and "scalar" in proj:
+            row["in_flight"] = True
+            row["projected_scalar"] = float(proj["scalar"])
+            if "boards_done" in proj:
+                row["boards_done"] = int(proj["boards_done"])
+            if "boards_total" in proj:
+                row["boards_total"] = int(proj["boards_total"])
+        out.append(row)
+
+    def _scalar_key(row: dict[str, Any]) -> float:
+        # In-flight rows sort on the projected scalar (lower is better);
+        # settled rows keep their real scalar.
+        if row.get("in_flight") and isinstance(row.get("projected_scalar"), int | float):
+            return float(row["projected_scalar"])
+        sc = row.get("scalar")
+        return float(sc) if isinstance(sc, int | float) else float("inf")
+
+    if structure in ("single_elim", "double_elim", "racing"):
+        out.sort(key=_scalar_key)
+        for i, row in enumerate(out, start=1):
+            row["rank"] = i
+    elif structure == "swiss":
+        # Points-rank is authoritative; the projected scalar only breaks ties
+        # among rows on EQUAL wins (the mean-scalar tiebreak). Never re-rank on
+        # points — a half-finished duel has crowned no winner.
+        def _swiss_key(row: dict[str, Any]) -> tuple[int, float]:
+            wins = row.get("wins")
+            w = int(wins) if isinstance(wins, int) else 0
+            return (-w, _scalar_key(row))
+
+        out.sort(key=_swiss_key)
+        for i, row in enumerate(out, start=1):
+            row["rank"] = i
+    # Any other structure: overlay the markers but leave the published order.
+    return out
 
 
 def _persist_field_tournament(

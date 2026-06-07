@@ -349,7 +349,11 @@ export function liveMatchGroupedBlocks(blocks, onCompetitor) {
     for (const e of (Array.isArray(b.entries) ? b.entries : [])) {
       const queued = e.outcome === 'queued';
       const settled = e.outcome === 'win' || e.outcome === 'loss' || e.outcome === 'timeout';
-      const row = el('div', { class: 'dt-live-match-row', tabindex: onCompetitor ? '0' : null });
+      // PROJECTED — an in-flight side with a server-side projected scalar reads
+      // "~proj" (dimmed/dashed) so the hero distinguishes a climbing projection
+      // from a settled verdict.
+      const proj = !!(e.projected && isNum(e.projected_scalar) && !settled);
+      const row = el('div', { class: 'dt-live-match-row' + (proj ? ' dt-proj' : ''), tabindex: onCompetitor ? '0' : null });
       const name = el('span', { class: 'dt-live-match-name dn-mono', text: String(e.id) });
       const fill = el('span', { class: 'dt-live-match-fill' + (e.inflight ? ' dt-live-match-fill-live' : '') });
       const pct = isNum(e.ratio) ? Math.round(Math.max(0, Math.min(1, e.ratio)) * 100) : (e.inflight ? 50 : 0);
@@ -360,6 +364,11 @@ export function liveMatchGroupedBlocks(blocks, onCompetitor) {
         : (isNum(e.total) && e.total > 0 ? `${e.done || 0}/${e.total}` : (e.inflight ? `${e.inflight}…` : 'running'));
       const glyph = el('span', { class: 'dt-live-match-state' + (e.outcome === 'win' ? ' dn-good' : e.outcome === 'loss' ? ' dn-bad' : ''), text: stateText });
       row.appendChild(name);
+      if (proj) {
+        row.appendChild(el('span', { class: 'dt-proj-val dn-mono', title: 'projected — boards still streaming',
+          text: '~' + (Math.round(e.projected_scalar * 10) / 10) }));
+        row.appendChild(el('span', { class: 'dt-proj-badge', text: 'proj' }));
+      }
       row.appendChild(bar);
       row.appendChild(glyph);
       if (onCompetitor && e.id && e.id !== 'tbd') {
@@ -652,24 +661,41 @@ function liveBelongsToEpoch(at, heartbeat) {
 // stable digests of the structure-relevant model so the swap fires only on a
 // real change (a steady heartbeat writes ZERO DOM): each captures the gate + the
 // per-rung/round/match progress (a board landing fires it; a no-op stays equal).
+// ROUNDED projection encoders so a no-op heartbeat yields a byte-identical
+// digest (ZERO DOM writes) but a real board landing / re-rank fires the swap.
+// `.toFixed(3)` the scalar; integer board counts.
+function projLane(p) {
+  return p && p.projected ? 'j' + (isNum(p.projected_scalar) ? p.projected_scalar.toFixed(3) : '?')
+    + '/' + (p.boards_done == null ? '?' : p.boards_done) + '/' + (p.boards_total == null ? '?' : p.boards_total) : '';
+}
+function projMatch(m) {
+  return m && m.projected ? Object.keys(m.projected).sort().map((g) => {
+    const p = m.projected[g];
+    return g + ':' + (isNum(p.scalar) ? p.scalar.toFixed(3) : '?')
+      + '/' + (p.boards_done == null ? '?' : p.boards_done) + '/' + (p.boards_total == null ? '?' : p.boards_total);
+  }).join(',') : '';
+}
 function structDigest(rungs, model) {
   return JSON.stringify({
     b: model.benchmarkId || null, c: model.championId || null, g: model.gateState || null,
     r: (rungs || []).map((r) => [r.match_id, (r.competitors || []).join('/'), (r.survivors || []).join('/'), (r.cut || []).join('/'), r.pending,
-      r.live_progress ? Object.keys(r.live_progress).sort().map((k) => { const p = r.live_progress[k]; return k + ':' + (p.done || 0) + '/' + (p.total == null ? '?' : p.total) + ':' + (p.inflight || 0); }).join(',') : '']),
+      r.live_progress ? Object.keys(r.live_progress).sort().map((k) => { const p = r.live_progress[k]; return k + ':' + (p.done || 0) + '/' + (p.total == null ? '?' : p.total) + ':' + (p.inflight || 0) + projLane(p); }).join(',') : '']),
   });
 }
 function swissDigest(model) {
   return JSON.stringify({
     b: model.benchmarkId || null, c: model.championId || null, g: model.gateState || null,
-    s: (model.standings || []).map((s) => [s.id, s.points, s.wins, s.draws, s.losses, s.rank]),
+    // points are NOT projected (swiss); but the per-row projected scalar +
+    // boards progress is part of the digest so a board landing repaints.
+    s: (model.standings || []).map((s) => [s.id, s.points, s.wins, s.draws, s.losses, s.rank,
+      s.in_flight ? 'j' + (isNum(s.projected_scalar) ? s.projected_scalar.toFixed(3) : '?') + '/' + (s.boards_done == null ? '?' : s.boards_done) + '/' + (s.boards_total == null ? '?' : s.boards_total) : '']),
     r: (model.rounds || []).map((r) => [r.label, r.queued,
-      (r.pairings || []).map((p) => [p.a, p.b, p.winner, p.bye, p.pending, p.done, p.total, p.inflight])]),
+      (r.pairings || []).map((p) => [p.a, p.b, p.winner, p.bye, p.pending, p.done, p.total, p.inflight, projMatch(p)])]),
   });
 }
 function elimDigest(model) {
   const band = (rs) => (rs || []).map((r) => [r.label, r.queued,
-    (r.matches || []).map((m) => [m.match_id, m.bracket_slot, (m.competitors || []).join('/'), m.winner, m.decision, m.bye, m.pending, m.done, m.total, m.inflight, m.queued])]);
+    (r.matches || []).map((m) => [m.match_id, m.bracket_slot, (m.competitors || []).join('/'), m.winner, m.decision, m.bye, m.pending, m.done, m.total, m.inflight, m.queued, projMatch(m)])]);
   return JSON.stringify({
     b: model.benchmarkId || null, c: model.championId || null, g: model.gateState || null,
     w: band(model.winners), l: band(model.losers),
