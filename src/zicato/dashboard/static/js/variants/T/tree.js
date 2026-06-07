@@ -114,13 +114,24 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
 
     const bundle = model.byEpoch[epoch.id] || { gens: [], boards: [] };
 
-    // Generations group
+    // An epoch's direct children are ROUNDS; each round holds the generations
+    // born / raced that round (epoch ⊃ rounds ⊃ generations). The group node is
+    // labelled "Rounds" whenever real round structure exists (>1 round, or a
+    // round_index stamp); it degrades to a flat "Generations" list only when
+    // there is no round structure to show.
+    const rounds = Array.isArray(bundle.rounds) ? bundle.rounds : [];
+    const stamped = bundle.gens.some((g) => Number.isInteger(g.round_index));
+    const showRounds = rounds.length > 1 || (stamped && rounds.length >= 1);
+
+    // Rounds group (⊃ generations) — a flat "Generations" list when unstructured.
     const gKey = eKey + '/gens';
     const gOpen = open.has(gKey);
     tree.appendChild(branchRow({
-      key: gKey, depth: 2, kind: 'group', label: 'Generations',
-      sub: bundle.gens.length ? String(bundle.gens.length) : null,
-      expandable: bundle.gens.length > 0, isOpen: gOpen,
+      key: gKey, depth: 2, kind: 'group', label: showRounds ? 'Rounds' : 'Generations',
+      sub: showRounds
+        ? (rounds.length ? String(rounds.length) : null)
+        : (bundle.gens.length ? String(bundle.gens.length) : null),
+      expandable: showRounds ? rounds.length > 0 : bundle.gens.length > 0, isOpen: gOpen,
       selected: sel === 'gens' && p.epochId === epoch.id,
       onSelect: () => ctx.navigate('gens', { epochId: epoch.id }),
       onToggle: () => onToggle(gKey),
@@ -179,9 +190,6 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
       // FLAT list (no redundant "Round 0" wrapper). Each round node carries its
       // gate outcome; the carried-in champion is shown as a reference
       // (↑ from R{n-1}), not duplicated under the round.
-      const rounds = Array.isArray(bundle.rounds) ? bundle.rounds : [];
-      const stamped = bundle.gens.some((g) => Number.isInteger(g.round_index));
-      const showRounds = rounds.length > 1 || (stamped && rounds.length >= 1);
       if (showRounds) {
         const gensById = new Map(bundle.gens.map((g) => [String(g.id), g]));
         rounds.forEach((r, ri) => {
