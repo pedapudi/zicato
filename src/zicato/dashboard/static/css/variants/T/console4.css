@@ -2683,21 +2683,40 @@
   .dt-live-match-head { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink-soft);
     margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dt-live-match-rows { display: flex; flex-direction: column; gap: 4px; }
-  .dt-live-match-row { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr) auto;
-    align-items: center; gap: 8px; border-radius: 4px; padding: 1px 2px; }
+  /* ONE dense competitor row, fixed columns L→R that USE the width:
+   *   [ vN ] [ progress bar = 1fr filler ] [ ~scalar ] [ k/N boards ] [ tag ].
+   * The bar is the ONLY flexible track (minmax(40px,1fr)) so it eats the freed
+   * middle space; every other column is content-sized + right-anchored AS A
+   * COLUMN, so nothing floats against the card edge and the k/N boards count is
+   * a first-class column (never the clipped trailing glyph it used to be). */
+  .dt-live-match-row { display: grid;
+    grid-template-columns: max-content minmax(40px, 1fr) max-content max-content max-content;
+    align-items: center; column-gap: 9px; border-radius: 4px; padding: 1px 2px; }
   .dt-live-match-row[tabindex] { cursor: pointer; }
   .dt-live-match-row[tabindex]:hover { background: var(--v2-rule-soft); }
   .dt-live-match-row:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
-  .dt-live-match-name { font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; }
+  .dt-live-match-name { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 8em; }
   .dt-live-match-bar { display: block; height: 7px; border-radius: 4px; background: var(--v2-rule-soft);
-    overflow: hidden; }
+    overflow: hidden; min-width: 0; }
   .dt-live-match-bar-queued { opacity: 0.5; }
   .dt-live-match-fill { display: block; height: 100%; width: 0%; background: var(--v2-good);
     transition: width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1); }
   .dt-live-match-fill-live { background: var(--v2-good); }
-  .dt-live-match-state { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint);
-    text-align: right; min-width: 2.6em; }
+  /* the ~projected scalar column (faint "·" placeholder keeps the column aligned
+   * when a side carries no projection yet). */
+  .dt-live-match-scalar { font-size: calc(11px * var(--dt-font-scale, 1)); text-align: right; min-width: 3.2em;
+    white-space: nowrap; }
+  /* the boards-done k/N column — a FIRST-CLASS, never-clipped column. */
+  .dt-live-match-boards { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
+    text-align: right; min-width: 3.4em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* the trailing tag column: PROJ / a verdict glyph / "queued" / "live". */
+  .dt-live-match-tag { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
+    text-align: right; min-width: 2.6em; white-space: nowrap; }
+  /* the PROJ badge sits in its own grid column now — drop the inline left margin
+   * so it aligns to the column's right edge (the column-gap owns the spacing). */
+  .dt-live-match-tag.dt-proj-badge { margin-left: 0; }
+  .dt-live-match-state { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
   .dt-live-match-state.dn-good { color: var(--v2-good); }
   .dt-live-match-state.dn-bad { color: var(--v2-bad); }
 
