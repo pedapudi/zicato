@@ -301,6 +301,129 @@ test('candidate view: the RADAR SILHOUETTE is folded in (candidate vs champion a
   assert(!host.textContent.includes('Scalar components'), 'no "Scalar components" heading');
 });
 
+// ---- the radar carries MEANINGFUL axis LABELS (not 1–9 indices) ----
+// The operator flagged "the radar chart is missing labels" (it showed axis
+// indices). candidate.js builds + passes `axes[].label` — scalar / pass-rate /
+// each per-judge (gate scalar_components) — so the silhouette names its axes.
+test('candidate view: the radar silhouette names its axes (scalar / pass-rate / per-component), NOT numeric 1–9 indices', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  const radar = svgsByClass(host, 'dn-radar')[0];
+  assert(radar, 'the radar silhouette SVG rendered');
+  // the axis-label texts (dn-radar-axislab) — the meaningful names, not ticks.
+  const labelEls = allByClass(radar, 'dn-radar-axislab');
+  const labels = labelEls.map((n) => (n.textContent || '').trim()).filter(Boolean);
+  assert(labels.length >= 3, 'the radar paints text axis labels (≥3 named axes), not bare index ticks');
+  // the gate-weighed axes the model builds: scalar (inverse), pass-rate, + each
+  // per-component from gate.scalar_components (here: drift, schema). At least the
+  // scalar + pass-rate axes must carry their real names.
+  assert(labels.includes('scalar'), 'the scalar axis is labeled "scalar"');
+  assert(labels.includes('pass-rate'), 'the pass-rate axis is labeled "pass-rate"');
+  assert(labels.includes('drift') || labels.includes('schema'),
+    'a per-component (gate scalar_components) axis carries its component name');
+  // none of the rendered axis LABELS is a bare numeric index (the 1–9 bug).
+  assert(!labels.some((l) => /^\d+$/.test(l)), 'no axis label is a bare numeric index (1–9)');
+  // and no numeric index-tick fallback is used while there are ≤8 named axes.
+  assertEqual(allByClass(radar, 'dn-radar-axistick').length, 0,
+    'no numeric index-tick fallback while the axes are within the labeled range');
+});
+
+// ---- the dossier is REORGANISED per the study (coordinated, not sprawling) ----
+// The study folds the per-board read + gate ladder + labeled radar into ONE
+// coordinated grid beneath the full-width lifecycle spine. Assert the sections
+// are present AND arranged: a 2-column dossier grid (per-board + gate LEFT,
+// silhouette RIGHT), with the lifecycle spine above and generalization below.
+test('candidate view: the dossier reads as one organized layout — coordinated grid (per-board + gate | radar), spine above, generalization below', async () => {
+  freshState(); installFetch();
+  const candidate = await import('../js/variants/T/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  // the coordinated grid exists with a main (per-board + gate) + side (radar) column.
+  const grid = allByClass(host, 'dn-dossier-grid')[0];
+  assert(grid, 'the dossier body is a coordinated grid (not a flat full-bleed stack)');
+  assert(allByClass(host, 'dn-dossier-col--main')[0], 'the grid has a MAIN column (per-board + gate ladder)');
+  assert(allByClass(host, 'dn-dossier-col--side')[0], 'the grid has a SIDE column (the radar silhouette)');
+  // single (non-compare) view → the WIDE grid (not the narrow compare collapse).
+  assertEqual(allByClass(host, 'dn-dossier-grid--narrow').length, 0,
+    'the single-candidate dossier uses the wide 2-column grid (not the narrow collapse)');
+  // the SIDE column holds the radar; the MAIN column holds the per-board dot-plot
+  // (responsive, width-filling) + the gate ladder.
+  const side = allByClass(host, 'dn-dossier-col--side')[0];
+  assert(svgsByClass(side, 'dn-radar')[0], 'the radar sits in the side column');
+  const main = allByClass(host, 'dn-dossier-col--main')[0];
+  const dot = svgsByClass(main, 'dn-valdot')[0];
+  assert(dot, 'the per-board dot-plot sits in the main column');
+  assertEqual(dot.getAttribute('width'), '100%', 'the per-board dot-plot is width-filling (responsive, not crammed right)');
+  assert(allByClass(main, 'dn-gate')[0], 'the promote-gate ladder sits in the main column beside the per-board read');
+  // the lifecycle spine reads ABOVE the grid; the generalization slope BELOW it.
+  assert(host.textContent.includes('Lifecycle · cause → effect → verdict'), 'the lifecycle spine section reads above the grid');
+  assert(allByClass(host, 'dn-genpane')[0] || !host.textContent.includes('Generalization'),
+    'the generalization slope is a small width-capped supporting panel when present');
+});
+
+// ---- a RACING / in-flight candidate shows a PROJECTED radar + the affordance ----
+// While a candidate is racing (only a projected scalar / partial board slice) the
+// dossier must not read bare: it shows a clearly-marked projected/ghosted radar
+// and a "settled comparisons appear once boards finish" affordance, with the
+// settled dumbbell/gate comparisons gated on landed data.
+test('candidate view (RACING): an in-flight candidate ghosts a PROJECTED radar + surfaces the racing affordance (not a bare dossier)', async () => {
+  freshState(); installFetch();
+  // an in-flight racer v3 (champion v0) with NO settled scalar yet — only a live
+  // PROJECTED standing — but a recorded gate (scalar_components) so the silhouette
+  // forms ≥3 axes and can ghost. Per-entry has ONE landed board (pass_fail) so a
+  // pass-rate axis lands too; the rest stream.
+  const F = { ...FIXTURE };
+  F['/api/epoch'] = { ...FIXTURE['/api/epoch'],
+    tournament: { structure: 'racing', params: {} },
+    experiments: [...FIXTURE['/api/epoch'].experiments, { generation_id: 'v3', parent_generation_id: 'v0', outcome: {} }] };
+  F['/api/lineage'] = { generations: [...FIXTURE['/api/lineage'].generations,
+    { generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false }] };
+  // v3 is NOT in the score-trajectory → no settled scalar (it is racing).
+  F[`/api/generation/${EPOCH_ID}/v3/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v3', entries: [
+    { entry_id: 'waffles_single', run_id: 'run_v3_waffles', drift_loss: 58.0, pass_fail: 1, runtime_ms: 120000, wall_clock_budget_exceeded: false },
+  ] };
+  F[`/api/round/${EPOCH_ID}/v0/v3/gate`] = { decision: 'pending', delta_scalar: -2.0, delta_pass_rate: 0.5,
+    rules: [{ id: 'scalar_margin', label: 'Scalar margin', status: 'not_reached', fired: false }],
+    scalar_components: { champion: { drift: 68.5, schema: 1.43 }, challenger: { drift: 60.0, schema: 1.0 } } };
+  globalThis.fetch = async (path) => {
+    const v = lookupFixture(F, path);
+    if (v !== undefined) return { ok: true, json: async () => v };
+    return { ok: false, status: 404, json: async () => ({ error: 'nf' }) };
+  };
+  // the LIVE active tournament (racing) for THIS epoch with a projected standing
+  // for v3 — boards still streaming (3 of 8 scored).
+  coreState.state.activeTournament = { epoch_id: EPOCH_ID, structure: 'racing',
+    projected: { v3: { scalar: 60.0, boards_done: 3, boards_total: 8 } } };
+  coreState.state.heartbeat = { phase: 'tournament:running', epoch_id: EPOCH_ID, last_heartbeat: new Date().toISOString() };
+  coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'picky_stakeholder_emulated', run_id: 'run_v3_picky' }];
+  try {
+    const candidate = await import('../js/variants/T/views/candidate.js');
+    const host = document.createElement('div');
+    await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v3' });
+    // the radar still renders (the projected silhouette), GHOSTED via dn-proj.
+    const radar = svgsByClass(host, 'dn-radar')[0];
+    assert(radar, 'a projected radar silhouette renders for the in-flight candidate (not omitted)');
+    const ghosted = allByClass(radar, 'dn-radar-cand').some((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-proj'));
+    assert(ghosted, 'the candidate polygon is GHOSTED (dn-proj) — clearly marked projected');
+    // it still names its axes (labels, not indices).
+    const labels = allByClass(radar, 'dn-radar-axislab').map((n) => (n.textContent || '').trim()).filter(Boolean);
+    assert(labels.includes('scalar'), 'the projected radar still labels its scalar axis');
+    // the racing affordance surfaces so the dossier is not bare.
+    assert(allByClass(host, 'dn-racing-affordance')[0], 'the "settled comparisons appear once boards finish" affordance is shown');
+    assert(/settled comparisons/i.test(host.textContent), 'the affordance names what is pending (settled comparisons)');
+    // the headline reads a PROJECTED (not settled) scalar.
+    assert(allByClass(host, 'dt-proj')[0], 'the dossier marks the projected (in-flight) treatment');
+    // the live in-flight board panel still reads ("N board running").
+    assert(/board running/i.test(host.textContent), 'the live in-flight board panel still reads for the racing candidate');
+  } finally {
+    coreState.state.activeTournament = null;
+    coreState.state.heartbeat = null;
+    coreState.state.activeRuns = [];
+  }
+});
+
 // ---- FIX #2: patch node → per-candidate side-by-side diff ----------
 
 test('candidate view: the lifecycle PATCH node is clickable → the per-candidate diff route', async () => {

@@ -2300,6 +2300,49 @@
   .dn-radarpane { max-width: 560px; }
   .dn-radar-cap { font-size: 11px; margin: 6px 0 0; text-align: center; }
 
+  /* ════════ CANDIDATE DOSSIER LAYOUT (additive — candidate.js dossier body) ════
+   * The operator flagged the old dossier as sprawling: the per-board dot-plot
+   * crammed to the right, the radar parked bottom-left with empty space, axes
+   * unlabeled. This block reorganises the body per the liked study (opt 2): the
+   * full-width lifecycle spine stays on top; BELOW it a coordinated 2-column grid
+   * pairs the per-board evidence + the promote-gate ladder (LEFT, wider) with the
+   * LABELED radar silhouette (RIGHT), stretched to fill its column. The matchups
+   * + the shrunk generalization slope sit beneath. In the compare split the grid
+   * collapses to one column so each half-width pane stacks its figures. All
+   * selectors are NEW (dn-dossier-*, dn-racing-affordance, dn-radar-projhint) —
+   * nothing existing is mutated. */
+  .dn-dossier-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    gap: 6px 26px; align-items: start; margin: var(--dt-section-gap, 30px) 0; }
+  /* single-column inside the A|B compare split (each pane is already narrow). */
+  .dn-dossier-grid.dn-dossier-grid--narrow { grid-template-columns: minmax(0, 1fr); }
+  .dn-dossier-col { min-width: 0; display: flex; flex-direction: column; }
+  /* the grid already provides the inter-section gap; drop the section's own large
+   * top margin on the FIRST section in each column so the columns line up at the
+   * top (and the side radar tracks the per-board section, no offset). */
+  .dn-dossier-col > .dn-section:first-child { margin-top: 0; }
+  /* the side column's radar fills its column — the old 560px cap is what left the
+   * empty band the operator saw. Inside the dossier grid we let it stretch; the
+   * grid track (0.85fr) bounds it, so it never balloons to full bleed. */
+  .dn-dossier-col--side .dn-radarpane { max-width: 100%; }
+  .dn-dossier-col--side .dn-section { position: sticky; top: 8px; }
+  /* on a narrow viewport (or the compare split) collapse to one column so neither
+   * figure is squeezed below a legible width. */
+  @media (max-width: 900px) {
+    .dn-dossier-grid { grid-template-columns: minmax(0, 1fr); }
+    .dn-dossier-col--side .dn-section { position: static; }
+  }
+
+  /* the "racing — settled comparisons appear once boards finish" affordance: a
+   * compact projected-tone strip so an in-flight dossier reads WHY the settled
+   * dumbbell / gate comparisons are not yet drawn, rather than reading bare. */
+  .dn-racing-affordance { display: flex; align-items: center; gap: 8px;
+    margin: 10px 0 2px; padding: 8px 10px; border: 1px dashed var(--v2-rule);
+    border-radius: 4px; background: color-mix(in srgb, var(--v2-accent) 7%, transparent); }
+  .dn-racing-affordance-lab { display: inline-flex; align-items: baseline; gap: 6px; font-size: 11px; }
+  /* the projected-radar placeholder hint (too few settled axes to plot yet). */
+  .dn-radar-projhint { display: flex; align-items: baseline; gap: 6px;
+    font-size: 11px; margin: 4px 0 2px; }
+
   /* ---- GENERALIZATION (train → holdout) — SHRUNK supporting panel ----
    * The study reduced this from a hero figure to a small, width-capped slope;
    * the pane caps the max-width so figure svg{width:100%} cannot balloon it. */
