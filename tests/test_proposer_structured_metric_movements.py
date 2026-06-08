@@ -258,6 +258,106 @@ def test_drift_metric_accepts_declared_custom_judge_name() -> None:
     assert names == {"drift:file_findability"}
 
 
+def test_metric_movement_accepts_bare_declared_judge_name() -> None:
+    """The canonical, prompt-recommended form — a metric_name that IS the
+    declared judge's bare name — validates with no prefix at all."""
+    payload = {
+        "hypothesis": _base_hypothesis(
+            expected_metric_movements=[
+                {
+                    "metric_name": "file_findability",
+                    "direction": "increase",
+                    "magnitude": "medium",
+                }
+            ]
+        ),
+        "patches": _ok_patches(),
+    }
+    exp = parse_experiment_json(
+        response_text=json.dumps(payload),
+        epoch_id="ep",
+        parent_gen="v0",
+        new_gen="v1",
+        mutations_by_id=_mp(),
+        custom_judge_names=frozenset({"file_findability"}),
+    )
+    names = {m.metric_name for m in exp.hypothesis.expected_metric_movements}
+    assert names == {"file_findability"}
+
+
+@pytest.mark.parametrize(
+    "mangled",
+    ["custom:file_findability", "drift:custom:file_findability"],
+)
+def test_metric_movement_normalizes_mangled_judge_forms(mangled: str) -> None:
+    """The mangles a model naturally emits for a custom judge —
+    ``custom:<name>`` and ``drift:custom:<name>`` — normalize to the
+    declared judge and validate instead of being vacuously rejected.
+
+    This is the exact failure from the live run: the model wrote
+    ``drift:custom:file_findability`` for the declared ``file_findability``
+    judge and the candidate was thrown out for "unknown drift kind"."""
+    payload = {
+        "hypothesis": _base_hypothesis(
+            expected_metric_movements=[
+                {
+                    "metric_name": mangled,
+                    "direction": "increase",
+                    "magnitude": "medium",
+                }
+            ]
+        ),
+        "patches": _ok_patches(),
+    }
+    exp = parse_experiment_json(
+        response_text=json.dumps(payload),
+        epoch_id="ep",
+        parent_gen="v0",
+        new_gen="v1",
+        mutations_by_id=_mp(),
+        custom_judge_names=frozenset({"file_findability"}),
+    )
+    # The candidate validates: the single movement survives, so the
+    # hypothesis is non-empty and the whole candidate is accepted (no
+    # vacuous round). The metric_name is preserved verbatim — the
+    # validator's job is to accept, not to rewrite.
+    assert len(exp.hypothesis.expected_metric_movements) == 1
+    assert exp.hypothesis.expected_metric_movements[0].metric_name == mangled
+
+
+def test_custom_prefixed_unknown_judge_still_rejected() -> None:
+    """A ``custom:<name>`` mangle whose stripped name is NOT a declared
+    judge is still rejected — normalization only resolves REAL judges."""
+    payload = {
+        "hypothesis": _base_hypothesis(
+            expected_metric_movements=[
+                {
+                    "metric_name": "custom:not_a_judge",
+                    "direction": "increase",
+                    "magnitude": "small",
+                }
+            ]
+        ),
+        "patches": _ok_patches(),
+    }
+    with pytest.raises(ExperimentParseError) as exc:
+        parse_experiment_json(
+            response_text=json.dumps(payload),
+            epoch_id="ep",
+            parent_gen="v0",
+            new_gen="v1",
+            mutations_by_id=_mp(),
+            custom_judge_names=frozenset({"file_findability"}),
+        )
+    msg = str(exc.value)
+    assert "unknown drift kind" in msg
+    assert "not_a_judge" in msg
+    # The helpful message lists the declared judges and the valid drift
+    # kinds so the next attempt has the exact vocabulary to repair.
+    assert "file_findability" in msg
+    assert "off_topic" in msg
+
+
 def test_drift_metric_rejects_custom_judge_name_when_not_declared() -> None:
     """``drift:file_findability`` is still rejected when the judge is not
     declared (no ``custom_judge_names`` threaded) — it is neither a

@@ -68,6 +68,43 @@ _DIRECTION_ENUM = [
 ]
 _MAGNITUDE_ENUM = ["small", "medium", "large"]
 
+#: Namespace prefixes a model naturally tacks onto a metric name when it
+#: addresses a board judge. A custom judge emits its goldfive signal under
+#: the single ``"custom"`` drift kind, so a model that knows that detail
+#: writes ``drift:custom:<judge>`` or ``custom:<judge>``; one that thinks of
+#: the judge as a drift signal writes ``drift:<judge>``; one that uses the
+#: bare name writes ``<judge>``. The validator strips these (longest first,
+#: repeatedly) before matching against the declared judge names so all four
+#: forms resolve to the same declared judge. Order matters: ``drift:custom:``
+#: must be tried before ``drift:`` / ``custom:`` so the compound prefix is
+#: peeled in one step.
+_JUDGE_METRIC_PREFIXES = ("drift:custom:", "drift:", "custom:")
+
+
+def _strip_judge_prefixes(metric_name: str) -> str:
+    """Strip known metric prefixes to recover a bare judge-name candidate.
+
+    Repeatedly peels any leading prefix in :data:`_JUDGE_METRIC_PREFIXES`
+    (longest-match first) so that ``drift:custom:file_findability``,
+    ``custom:file_findability``, and ``drift:file_findability`` all collapse
+    to ``file_findability``. Idempotent on a bare name. This only *recovers a
+    candidate* — the caller still gates acceptance on the result resolving to
+    a REAL declared judge, so an unknown ``drift:bogus`` does not become valid
+    by having its prefix stripped.
+    """
+
+    out = metric_name
+    changed = True
+    while changed:
+        changed = False
+        for prefix in _JUDGE_METRIC_PREFIXES:
+            if out.startswith(prefix):
+                out = out[len(prefix) :]
+                changed = True
+                break
+    return out
+
+
 EXPERIMENT_JSON_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -601,13 +638,32 @@ def parse_experiment_json(
         # convention is namespace-prefixed names but we don't lock down
         # the namespace registry here so harnesses can add new namespaces
         # freely.
-        if metric_name.startswith("drift:"):
-            bare = metric_name[len("drift:") :]
+        #
+        # Normalization (defensive): a model that knows the custom-judge
+        # implementation detail naturally writes a declared judge as
+        # ``drift:custom:<name>`` or ``custom:<name>`` — both mangles of
+        # the bare ``<name>``. Before rejecting a ``drift:``-prefixed
+        # name, strip the known prefixes and re-check the recovered bare
+        # token against the declared judge set, so any of
+        # ``file_findability`` / ``custom:file_findability`` /
+        # ``drift:custom:file_findability`` / ``drift:file_findability``
+        # resolves to the same declared judge instead of a vacuous
+        # rejection. Acceptance still requires the stripped token to be a
+        # REAL declared judge (or a built-in kind), so a genuinely-unknown
+        # kind is left to fail.
+        if metric_name.startswith(_JUDGE_METRIC_PREFIXES):
+            bare = _strip_judge_prefixes(metric_name)
             if bare not in GOLDFIVE_DRIFT_KINDS and bare not in judge_names:
+                kinds = ", ".join(sorted(GOLDFIVE_DRIFT_KINDS))
+                judges = ", ".join(sorted(judge_names)) if judge_names else "(none declared)"
                 raise ExperimentParseError(
                     f"hypothesis.expected_metric_movements[{i}]: unknown drift "
                     f"kind {bare!r} in metric_name {metric_name!r} "
-                    f"(not a built-in drift kind and not a declared board judge)"
+                    f"(not a built-in drift kind and not a declared board judge). "
+                    f"To predict a declared board judge improving, use that "
+                    f"judge's bare name as the metric_name. Declared board "
+                    f"judges: {judges}. Built-in drift kinds (use as "
+                    f"'drift:<kind>'): {kinds}"
                 )
         metric_movements.append(
             ExpectedMetricMovement(

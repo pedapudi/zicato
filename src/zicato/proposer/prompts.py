@@ -32,6 +32,7 @@ from __future__ import annotations
 import textwrap
 from collections.abc import Iterable
 
+from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import MutationPoint, Pattern, PriorExperiment, ProposerSkill
 
 #: Hard ceiling on a single mutation point's rendered content. A
@@ -92,6 +93,12 @@ The "hypothesis" object MUST contain:
   Either expected_drift_movements OR expected_metric_movements (or
   both) MUST be present and non-empty. Prefer expected_metric_movements
   for cost / rubric / latency / schema / output objectives.
+  IMPORTANT — declared board judges: to predict a DECLARED BOARD JUDGE
+  moving (a judge named in this board's scoring), set "metric_name" to
+  the judge's BARE name (e.g. "file_findability") — NOT "drift:<name>",
+  "custom:<name>", or "drift:custom:<name>". The user message lists this
+  board's declared judges and the valid built-in drift kinds under
+  "## Valid expectation targets"; reference only names from that section.
 - "expected_pass_rate_delta" (string): predicted change in the board-
   wide pass rate as free text (e.g. "+0.05 to +0.15"). Free text
   is intentional — express the uncertainty band naturally.
@@ -180,6 +187,9 @@ Proposer brief (operator-edited guidance for this epoch):
 USER_PROMPT_TEMPLATE = """\
 ## Current loss summary
 {current_loss_summary}
+
+## Valid expectation targets (what a hypothesis movement may reference)
+{metric_targets_block}
 
 ## Patterns observed (advisory; you may address none, some, or all)
 {pattern_block}
@@ -318,6 +328,60 @@ def render_mutation_block(mutations: Iterable[MutationPoint]) -> str:
             f"you are not changing):\n{indented}"
         )
     return "\n".join(lines)
+
+
+def render_metric_targets_block(custom_judge_names: Iterable[str] = ()) -> str:
+    """Render the board's valid metric-movement targets for the user prompt.
+
+    Enumerates, for THIS board, exactly what a hypothesis movement may
+    reference so the proposer can write a movement that validates without
+    guessing:
+
+    * the declared board judges (e.g. ``file_findability``) — addressed by
+      their BARE name in ``expected_metric_movements[].metric_name`` (NOT a
+      ``drift:custom:<name>`` mangle), since a custom judge emits its
+      goldfive signal under the single ``"custom"`` drift kind but is named
+      by its own judge name in a hypothesis; and
+    * the valid built-in goldfive drift kinds — addressed as
+      ``drift:<kind>``.
+
+    The judge names are passed in by the orchestrator from the active
+    contract (board ``JudgeSpec.name`` ∪ ``per_judge_weights`` keys); the
+    drift-kind set is the registered goldfive mirror. The validator in
+    :func:`zicato.proposer.structured.parse_experiment_json` accepts exactly
+    these forms, so the prompt and the gate agree by construction. An empty
+    judge set renders an explicit "(this board declares no custom judges)"
+    notice so the model sees the absence as a signal rather than a gap.
+    """
+
+    judges = sorted({str(n) for n in custom_judge_names if str(n)})
+    drift_kinds = ", ".join(sorted(GOLDFIVE_DRIFT_KINDS))
+    if judges:
+        judges_line = ", ".join(judges)
+        judge_example = judges[0]
+        judges_section = (
+            f"Declared board judges (THIS board): {judges_line}\n"
+            "  To predict a declared board judge moving, add an entry to\n"
+            '  "expected_metric_movements" whose "metric_name" is the judge\'s\n'
+            "  BARE name — NOT a namespaced or prefixed form. Correct:\n"
+            f'    {{"metric_name": "{judge_example}", "direction": "increase", "magnitude": "medium"}}\n'
+            f'  WRONG (these will be rejected as written): "drift:{judge_example}",\n'
+            f'  "drift:custom:{judge_example}", "custom:{judge_example}". Use the\n'
+            "  bare judge name."
+        )
+    else:
+        judges_section = (
+            "Declared board judges (THIS board): (this board declares no custom judges)"
+        )
+    return (
+        f"{judges_section}\n\n"
+        "Valid built-in drift kinds — reference these in a movement as\n"
+        '"drift:<kind>" (e.g. {"metric_name": "drift:off_topic", ...} or, in\n'
+        'expected_drift_movements, {"kind": "off_topic", ...}):\n'
+        f"  {drift_kinds}\n\n"
+        "Other metric namespaces (cost / rubric / latency / schema / output)\n"
+        'are accepted as-is, e.g. "cost:tokens_spent", "rubric:slide_structure".'
+    )
 
 
 def _bucket_scalar_delta(delta: float) -> str:
@@ -502,6 +566,7 @@ def render_user_prompt(
     insights: str = "",
     prior_experiments: Iterable[PriorExperiment] = (),
     restrict_visibility: bool = False,
+    custom_judge_names: Iterable[str] = (),
 ) -> str:
     """Build the user prompt for one proposer call.
 
@@ -555,10 +620,22 @@ def render_user_prompt(
         buckets (OVERFITTING.md §11). ``False`` (the default here so call
         sites that have not adopted the flag are unaffected) renders both
         verbatim, byte-for-byte as before this lever existed.
+    custom_judge_names:
+        The declared board judges for the active contract (board
+        ``JudgeSpec.name`` ∪ ``per_judge_weights`` keys), threaded by the
+        orchestrator from the same source it passes to the structured
+        validator. Rendered into the ``## Valid expectation targets`` block
+        via :func:`render_metric_targets_block` so the proposer is told, for
+        THIS board, the exact ``metric_name`` to use for a declared judge
+        (its bare name) and the valid built-in drift kinds — keeping the
+        prompt and the validator's accepted forms in lockstep. Empty (the
+        default) renders an explicit "no custom judges" notice alongside the
+        always-present drift-kind enumeration.
     """
 
     body = USER_PROMPT_TEMPLATE.format(
         current_loss_summary=current_loss_summary.strip() or "(no loss summary)",
+        metric_targets_block=render_metric_targets_block(custom_judge_names),
         pattern_block=render_pattern_block(patterns, restrict=restrict_visibility),
         mutation_block=render_mutation_block(mutations),
     )
@@ -616,6 +693,7 @@ def render_user_prompt(
 __all__ = [
     "SYSTEM_PROMPT_TEMPLATE",
     "USER_PROMPT_TEMPLATE",
+    "render_metric_targets_block",
     "render_pattern_block",
     "render_mutation_block",
     "render_prior_experiments_block",
