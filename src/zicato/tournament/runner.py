@@ -1554,6 +1554,7 @@ async def _run_board_units_full(
     replicate_index: int = 0,
     force_fresh: bool = False,
     provenance: dict[str, _UnitProvenance] | None = None,
+    matchup_deadline: float | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     """Run every board entry as a full-mode board unit, bounded concurrency.
 
@@ -1591,7 +1592,39 @@ async def _run_board_units_full(
 
     Returns ``(parent_losses, child_losses)`` — the per-entry champion
     and challenger loss maps.
+
+    Matchup wall-clock budget (opt-in)
+    ----------------------------------
+    ``matchup_deadline`` (a :func:`time.monotonic` instant, or ``None``) is
+    the opt-in cap on the whole matchup's board-unit wall-clock. ``None`` ⇒
+    the historical path: every unit is launched together under one
+    :func:`asyncio.gather`, byte-identical to before. When a deadline IS
+    set the units are launched in board order, ``config.parallelism`` at a
+    time, and the deadline is checked between batches: once it has passed no
+    further unit is LAUNCHED — each remaining unit is recorded as a
+    budget-exceeded :class:`LossProfile` via the SAME aborted-run synthesis a
+    killed worker uses (:func:`_aborted_loss_profile`) and persisted via
+    :func:`_persist_unit_loss`, so the partial aggregate scores consistently
+    and the skipped unit is a cache hit next time. The cut is LOGGED (how
+    many units were skipped) — never silently truncated.
     """
+    if matchup_deadline is not None:
+        return await _run_board_units_full_budgeted(
+            adapter=adapter,
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            match_id=match_id,
+            replicate_index=replicate_index,
+            force_fresh=force_fresh,
+            provenance=provenance,
+            matchup_deadline=matchup_deadline,
+        )
+
     semaphore = asyncio.Semaphore(config.parallelism)
     # Thread both competitors' generation ids + the board size so the scorer
     # writes the live PROJECTED standing per side (boards_done / boards_total)
@@ -1639,6 +1672,186 @@ async def _run_board_units_full(
         parent_loss, child_loss = result  # type: ignore[misc]
         parent_losses[entry.id] = parent_loss
         child_losses[entry.id] = child_loss
+    return parent_losses, child_losses
+
+
+def _skipped_unit_loss(
+    *,
+    generation: Generation,
+    entry: BoardEntry,
+    epoch_id: str,
+    weights: ScoringWeights,
+    match_id: str,
+) -> LossProfile:
+    """Synthesise a budget-exceeded :class:`LossProfile` for an un-run unit.
+
+    A board unit that was never LAUNCHED because the matchup's wall-clock
+    budget was already spent is recorded exactly like a unit whose worker
+    was killed at its deadline: :func:`_aborted_loss_profile` with
+    ``wall_clock_budget_exceeded=True`` and zero runtime (no subprocess
+    ever ran). Reusing that path keeps the scoring + cache semantics
+    identical — the skipped unit aggregates as a worst-case loss for its
+    side, and persisting it makes it a cache HIT on the next need.
+    """
+    return _aborted_loss_profile(
+        run_id=_run_id_for(generation, entry),
+        entry=entry,
+        generation_id=generation.id,
+        epoch_id=epoch_id,
+        weights=weights,
+        runtime_ms=0,
+        match_id=match_id,
+    )
+
+
+async def _run_board_units_full_budgeted(
+    *,
+    adapter: Any,
+    parent_gen: Generation,
+    child_gen: Generation,
+    board: list[BoardEntry],
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    match_id: str,
+    replicate_index: int,
+    force_fresh: bool,
+    provenance: dict[str, _UnitProvenance] | None,
+    matchup_deadline: float,
+) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
+    """Budget-aware variant of :func:`_run_board_units_full`.
+
+    Launches board units in board order, ``config.parallelism`` at a time,
+    checking ``matchup_deadline`` (a :func:`time.monotonic` instant) BEFORE
+    each batch. Once the deadline has passed no further unit is launched —
+    every remaining unit is recorded as a budget-exceeded
+    :class:`LossProfile` (see :func:`_skipped_unit_loss`), persisted via
+    :func:`_persist_unit_loss` for cache consistency, and counted as a fresh
+    (genuinely-evaluated, not cache-reused) board unit in ``provenance``.
+
+    The number of skipped units is LOGGED at WARNING so a cut-short matchup
+    is never mistaken for full coverage. Returns the SAME ``(parent_losses,
+    child_losses)`` shape as the uncapped path, with one entry per board
+    entry — the partial aggregate that the gate scores.
+    """
+    scorer = _IncrementalScorer(
+        weights,
+        workspace_root,
+        champion_id=parent_gen.id,
+        challenger_id=child_gen.id,
+        board_total=len(board),
+    )
+
+    parent_losses: dict[str, LossProfile] = {}
+    child_losses: dict[str, LossProfile] = {}
+    skipped = 0
+    budget_tripped = False
+
+    async def _bounded(entry: BoardEntry) -> tuple[LossProfile, LossProfile]:
+        return await _run_full_board_unit(
+            adapter=adapter,
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            scorer=scorer,
+            match_id=match_id,
+            replicate_index=replicate_index,
+            force_fresh=force_fresh,
+            provenance=provenance,
+        )
+
+    def _record_skip(entry: BoardEntry) -> bool:
+        """Persist + record both sides of an un-run board unit.
+
+        For each side, a unit ALREADY in the cache costs no wall-clock, so it
+        is reused verbatim (the budget never clobbers a good result and the
+        cache stays consistent). A genuine MISS — the unit would have had to
+        run — is recorded as a budget-exceeded loss instead. Returns ``True``
+        iff at least one side was actually skipped (a real miss synthesised),
+        so the caller only counts genuine skips toward the log tally.
+        """
+        any_skipped = False
+        for gen in (parent_gen, child_gen):
+            cached = (
+                None
+                if force_fresh
+                else _resolve_cached_unit(
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    generation_id=gen.id,
+                    entry_id=entry.id,
+                    replicate_index=replicate_index,
+                )
+            )
+            if cached is not None:
+                _record_provenance(provenance, gen.id, cached=True)
+                loss = cached
+            else:
+                loss = _skipped_unit_loss(
+                    generation=gen,
+                    entry=entry,
+                    epoch_id=epoch_id,
+                    weights=weights,
+                    match_id=match_id,
+                )
+                _persist_unit_loss(
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    generation_id=gen.id,
+                    entry_id=entry.id,
+                    replicate_index=replicate_index,
+                    loss=loss,
+                )
+                # A skipped unit was not cache-reused — it produced a freshly
+                # synthesised loss — so it counts as a MISS in the provenance
+                # tally, mirroring a genuine (if budget-exceeded) evaluation.
+                _record_provenance(provenance, gen.id, cached=False)
+                any_skipped = True
+            if gen is parent_gen:
+                parent_losses[entry.id] = loss
+            else:
+                child_losses[entry.id] = loss
+        return any_skipped
+
+    batch_size = max(1, config.parallelism)
+    for start in range(0, len(board), batch_size):
+        batch = board[start : start + batch_size]
+        if not budget_tripped and time.monotonic() >= matchup_deadline:
+            # The cap is spent: stop LAUNCHING. Every unit from here on is
+            # recorded as a budget-exceeded loss instead of being run.
+            budget_tripped = True
+        if budget_tripped:
+            for entry in batch:
+                if _record_skip(entry):
+                    skipped += 1
+            continue
+        results = await asyncio.gather(
+            *(_bounded(entry) for entry in batch),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        for entry, result in zip(batch, results, strict=True):
+            parent_loss, child_loss = result  # type: ignore[misc]
+            parent_losses[entry.id] = parent_loss
+            child_losses[entry.id] = child_loss
+
+    if skipped:
+        log.warning(
+            "matchup %s: wall-clock budget reached after %d/%d board units; "
+            "skipped %d remaining unit(s) (recorded as budget-exceeded losses "
+            "for both sides) — partial aggregate returned",
+            match_id or "(untagged)",
+            len(board) - skipped,
+            len(board),
+            skipped,
+        )
     return parent_losses, child_losses
 
 
@@ -2646,6 +2859,7 @@ async def _run_replicated(
     replicates: int,
     match_id: str = "",
     fast: bool = False,
+    matchup_budget_seconds: float | None = None,
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile], str, dict[str, _UnitProvenance]]:
     """Run a paired board ``replicates`` times, averaging per-entry losses.
 
@@ -2726,6 +2940,16 @@ async def _run_replicated(
         )
         mode = "fast" if left_fully_cached else "fast-degraded"
 
+    # Opt-in matchup-level wall-clock cap. The deadline spans ALL replicates
+    # (it bounds the TOTAL matchup wall-clock, not each replicate), so it is
+    # computed ONCE here from a monotonic clock. ``None`` ⇒ uncapped: the
+    # deadline is never consulted and execution is byte-identical to today.
+    matchup_deadline: float | None = (
+        time.monotonic() + matchup_budget_seconds
+        if matchup_budget_seconds is not None and matchup_budget_seconds > 0.0
+        else None
+    )
+
     runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
     for replicate_index in range(replicate_count):
         # Each replicate keys a distinct cache slot; the same board-unit
@@ -2746,6 +2970,7 @@ async def _run_replicated(
             replicate_index=replicate_index,
             force_fresh=force_fresh,
             provenance=provenance,
+            matchup_deadline=matchup_deadline,
         )
         runs.append((left_losses, right_losses))
 
@@ -2807,6 +3032,7 @@ async def run_matchup(
     total_rounds: int = 0,
     match_id: str = "",
     fast: bool = False,
+    matchup_budget_seconds: float | None = None,
 ) -> TournamentResult:
     """Run ONE duel between two generations, ending in the unchanged gate.
 
@@ -2842,6 +3068,20 @@ async def run_matchup(
     resolved mode (``"fast"`` / ``"fast-degraded"`` / ``"full"``) is
     recorded on the returned :attr:`TournamentResult.champion_eval_mode`
     for journal provenance; it never enters the gate or the contract.
+
+    ``matchup_budget_seconds`` is an OPT-IN wall-clock cap on the duel's
+    TOTAL board-unit execution. ``None`` (the default) ⇒ uncapped: every
+    board unit × replicate × side runs to completion, byte-identical to
+    today. When set, the runner tracks the running wall-clock total and,
+    once it exceeds the cap, STOPS launching further board units; each
+    un-run unit is recorded as a budget-exceeded
+    :class:`~zicato.core.types.LossProfile` via the SAME aborted-run path a
+    killed worker uses (so the partial aggregate scores consistently and the
+    skipped unit is a cache hit next time). The cut-short event is LOGGED
+    (how many units were skipped) — never silently truncated. This bounds
+    the AGGREGATE of an unbounded board × replicates × both-sides sweep
+    (e.g. a racing final rung), a different axis from the per-board
+    :attr:`BoardEntry.wall_clock_budget_seconds` (which bounds ONE unit).
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
@@ -2871,6 +3111,7 @@ async def run_matchup(
         replicates=replicates,
         match_id=match_id,
         fast=fast,
+        matchup_budget_seconds=matchup_budget_seconds,
     )
 
     left_agg = aggregate_generation_score(list(left_losses.values()), weights)

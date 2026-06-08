@@ -214,6 +214,143 @@ def test_run_matchup_replicates_average_losses(monkeypatch, tmp_path):
     assert result.child_agg["drift_loss_mean"] == pytest.approx(0.5)
 
 
+def _config_seq(tmp_path: Path) -> RuntimeConfig:
+    """A config with ``parallelism=1`` so board units launch one batch at a time."""
+
+    async def harness_call(system: str, user: str, model: str) -> str:
+        return ""
+
+    async def aux_call(system: str, user: str, model: str) -> str:
+        return ""
+
+    return RuntimeConfig(
+        instance_id="test",
+        workspace_root=tmp_path,
+        harness_call_llm=harness_call,
+        auxiliary_call_llm=aux_call,
+        parallelism=1,
+    )
+
+
+def _big_board(n: int) -> list[BoardEntry]:
+    return [
+        BoardEntry(id=f"entry_{i}", kind="single_turn", wall_clock_budget_seconds=60, input="x")
+        for i in range(n)
+    ]
+
+
+def test_run_matchup_budget_returns_partial_aggregate(monkeypatch, tmp_path):
+    """A tiny matchup budget stops launching units and marks the rest budget-exceeded.
+
+    The first board unit sleeps past the (tiny) budget; every later unit is
+    NOT launched — it is recorded as a budget-exceeded LossProfile for BOTH
+    sides — so the duel returns a PARTIAL aggregate instead of grinding the
+    whole board.
+    """
+    board = _big_board(4)
+    ran: list[str] = []
+
+    async def slow_run_single(
+        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+    ):
+        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        ran.append(entry.id)
+        await asyncio.sleep(0.05)  # push the running total past the tiny budget
+        return _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True)
+
+    monkeypatch.setattr(runner_mod, "_run_single", slow_run_single)
+
+    result = asyncio.run(
+        run_matchup(
+            adapter=object(),
+            left_gen=_gen(tmp_path, "v0"),
+            right_gen=_gen(tmp_path, "v1"),
+            board=board,
+            weights=ScoringWeights(),
+            config=_config_seq(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            match_id="racing-final",
+            matchup_budget_seconds=0.01,  # spent after the first unit's sleep
+        )
+    )
+
+    # Not every entry was launched — the budget cut the sweep short.
+    launched = set(ran)
+    assert launched != {e.id for e in board}, "budget did not stop launching units"
+
+    # Every board entry STILL has a (left, right) loss pair — the partial
+    # aggregate covers the full board, with skipped units synthesised.
+    assert set(result.per_entry_losses) == {e.id for e in board}
+
+    # At least one skipped unit is marked budget-exceeded on BOTH sides.
+    skipped_ids = {e.id for e in board} - launched
+    assert skipped_ids, "expected some units to be skipped"
+    for entry_id in skipped_ids:
+        left_loss, right_loss = result.per_entry_losses[entry_id]
+        assert left_loss.wall_clock_budget_exceeded is True
+        assert right_loss.wall_clock_budget_exceeded is True
+
+    # A skipped unit is persisted (cache hit next time): re-running with the
+    # SAME (now generous) budget reuses every persisted unit and launches
+    # NOTHING new.
+    ran.clear()
+    asyncio.run(
+        run_matchup(
+            adapter=object(),
+            left_gen=_gen(tmp_path, "v0"),
+            right_gen=_gen(tmp_path, "v1"),
+            board=board,
+            weights=ScoringWeights(),
+            config=_config_seq(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            match_id="racing-final",
+            matchup_budget_seconds=1000.0,
+            fast=True,  # cache-first reuse of every persisted unit
+        )
+    )
+    assert ran == [], "persisted budget-exceeded units were not reused as cache hits"
+
+
+def test_run_matchup_unset_budget_runs_every_unit(monkeypatch, tmp_path):
+    """With no budget set, every board unit × both sides runs (current behaviour)."""
+    board = _big_board(4)
+    ran: list[tuple[str, str]] = []
+
+    async def fast_run_single(
+        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+    ):
+        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        ran.append((generation.id, entry.id))
+        return _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True)
+
+    monkeypatch.setattr(runner_mod, "_run_single", fast_run_single)
+
+    result = asyncio.run(
+        run_matchup(
+            adapter=object(),
+            left_gen=_gen(tmp_path, "v0"),
+            right_gen=_gen(tmp_path, "v1"),
+            board=board,
+            weights=ScoringWeights(),
+            config=_config_seq(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            # matchup_budget_seconds omitted ⇒ uncapped, byte-identical to today.
+        )
+    )
+
+    # Both sides of every board entry ran — nothing skipped.
+    assert {entry_id for _, entry_id in ran} == {e.id for e in board}
+    assert {gen_id for gen_id, _ in ran} == {"v0", "v1"}
+    assert len(ran) == 2 * len(board)
+    for entry_id in result.per_entry_losses:
+        left_loss, right_loss = result.per_entry_losses[entry_id]
+        assert left_loss.wall_clock_budget_exceeded is False
+        assert right_loss.wall_clock_budget_exceeded is False
+
+
 def test_average_losses_majority_pass_vote():
     """_average_losses takes a strict-majority vote for pass_fail."""
     from zicato.tournament.runner import _average_losses
