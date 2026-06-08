@@ -301,7 +301,14 @@ def test_bundle_under_size_envelope(
     # candidate dossier to the study layout, and renders the in-flight rung instead
     # of an empty — adding the full-field/responsive logic + the dossier grid. The
     # envelope is raised to 1.02 MB to cover it with headroom.
-    assert total < 1_020_000, f"bundle is {total} bytes, exceeds 1_020_000 envelope"
+    #
+    # The CROSS-EPOCH META-LOOP LEDGER (tournament-viz study opt 7) then adds the
+    # composed `metaLoopLedger` svg builder + its digest — the held floor
+    # staircase over effort-proportional bands + the contract-component heatstrip
+    # (incl. the proposer* column the contract-diff omits) — wired as the home
+    # view's primary cross-epoch overview. ~11 KB of new data-graphics; the
+    # envelope is raised to 1.06 MB to cover it with headroom.
+    assert total < 1_060_000, f"bundle is {total} bytes, exceeds 1_060_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
