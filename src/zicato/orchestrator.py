@@ -1408,9 +1408,16 @@ async def _propose_and_apply_challenger(
     # (issue #16). The settle-time append_to_lineage upserts the same node
     # to its final promoted/rejected state; append_to_lineage is an
     # idempotent update-in-place that preserves round_index, so the
-    # creation-time write and the settle-time write compose cleanly. The
-    # challenger lands as a dead branch (promoted=False) until crowned.
-    append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id)
+    # creation-time write and the settle-time write compose cleanly.
+    #
+    # The creation-time write is PENDING (promoted=null), NOT a dead branch
+    # (promoted=False). The challenger has applied a snapshot but has not
+    # been crowned or cut — it is still racing. ``promoted=False`` reads as
+    # REJECTED, so a False default would render an in-flight racer as a dead
+    # branch on /api/lineage while it is mid-tournament. Pending → null →
+    # the dashboard maps it to "racing"; the settle-time append flips it to
+    # the resolved bool.
+    append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
     applied_status = {
         "generation_id": next_id,
         "status": "applied",

@@ -366,6 +366,74 @@ def test_racing_overlay_noop_without_projected(tmp_path: Path) -> None:
     assert after == snapshot, "no projected map ⇒ live_progress unchanged"
 
 
+def test_racing_live_arrived_fold_matches_overlay(tmp_path: Path) -> None:
+    """FIX B: the per-board fold in ``update_tournament_projected`` produces
+    the SAME rung ``live_progress`` as a fresh republish + overlay.
+
+    The selection driver only republishes once per scheduled batch (before
+    the rung runs), so the overlay path runs at rung START when nothing has
+    landed. The fold path refreshes the rung as each board lands. This pins
+    that the two paths CONVERGE: a live-arrived rung == republish + overlay.
+    """
+    strategy, champion, challengers = _racing(4)
+    strategy.next_matchups()  # schedule rung 0 (in-flight)
+
+    # Seed the active tournament with the strategy-published rung (the
+    # republish path writes exactly this via _publish_active_tournament).
+    live_rounds = _serialise_rounds(strategy.live_rounds())
+    write_active_tournament(
+        tmp_path,
+        ActiveTournament(
+            tournament_id="t",
+            parent_generation_id="",
+            child_generation_id="",
+            epoch_id="e",
+            started_at="x",
+            structure="racing",
+            competitors=[
+                {"generation_id": "v0", "seed": 1, "role": "champion"},
+                *[
+                    {"generation_id": c.generation_id, "seed": i + 2, "role": "challenger"}
+                    for i, c in enumerate(challengers)
+                ],
+            ],
+            rounds=live_rounds,
+        ),
+    )
+
+    # A board lands for the v1 duel → the FOLD path refreshes the rung.
+    update_tournament_projected(
+        tmp_path,
+        {
+            "v0": {"scalar": 1.0, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
+            "v1": {"scalar": 0.3, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
+        },
+    )
+    from zicato.runtime.state import read_active_tournament  # noqa: PLC0415
+
+    folded = read_active_tournament(tmp_path)
+    assert folded is not None
+    fold_lanes = folded.rounds[0]["matches"][0]["live_progress"]
+
+    # The OVERLAY path: a fresh strategy republish + the orchestrator overlay
+    # over the same on-disk projected map.
+    overlay_rounds = _serialise_rounds(strategy.live_rounds())
+    _overlay_projected_live_progress(overlay_rounds, tmp_path)
+    overlay_lanes = overlay_rounds[0]["matches"][0]["live_progress"]
+
+    # The challenger lanes converge byte-for-byte.
+    assert fold_lanes["v1"] == overlay_lanes["v1"]
+    assert fold_lanes["v1"]["boards_done"] == 1
+    assert fold_lanes["v1"]["projected_scalar"] == 0.3
+    # The champion lane: the fold KEEPS the strategy benchmark (no scalar in
+    # the strategy seed at rung 0 → no projected_scalar), gaining only
+    # boards_done. The overlay (no champion-benchmark guard) would write the
+    # per-duel scalar — so the fold is the stable one. Both agree on
+    # boards_done + boards_total.
+    assert fold_lanes["v0"]["boards_done"] == overlay_lanes["v0"]["boards_done"] == 1
+    assert fold_lanes["v0"]["boards_total"] == overlay_lanes["v0"]["boards_total"]
+
+
 def test_racing_settled_matches_carry_empty_live_progress() -> None:
     # Additive-only: a SETTLED racing match (a cut rung / the champion gate)
     # serialises live_progress as an empty dict — old readers ignore it and the
