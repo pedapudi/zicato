@@ -33,7 +33,7 @@ import { invalidateLive, liveDataSignature } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { normaliseDecision } from './ui.js';
 import { roundsForTree } from './views/rounds.js';
-import { deriveLiveStatus, liveStatusDigest, treeLiveSet } from './livestatus.js';
+import { deriveLiveStatus, liveStatusDigest, treeLiveSet, staleLabel } from './livestatus.js';
 import { LiveController } from './live.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
 import { syncTypefaceDropdowns } from './typefacedropdown.js';
@@ -74,6 +74,7 @@ let _statusEl = null;
 let _statusTextEl = null;     // the connection word (live/connecting/offline)
 let _runLabelEl = null;       // the structure+phase run label
 let _runCountEl = null;       // the in-flight board-unit count
+let _staleEl = null;          // the "last seen Ns ago / stale" affordance
 let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
 let _typeEl = [];
 let _scaleInput = null;
@@ -525,6 +526,10 @@ export function mountShell(root) {
   _statusTextEl = el('span', { class: 'dt-status-text', text: 'connecting…' });
   _runLabelEl = el('span', { class: 'dt-run-label', text: '' });
   _runCountEl = el('span', { class: 'dt-run-count', text: '' });
+  // The stale affordance: when a heartbeat exists but is FROZEN (older than
+  // the staleness window), the run is no longer live — surface "last seen Ns
+  // ago" / "stale" rather than silently freezing the live chrome.
+  _staleEl = el('span', { class: 'dt-status-stale', 'aria-live': 'polite', text: '' });
   _statusEl = el('span', { class: 'dt-status' }, [
     el('span', { class: 'dt-status-dot' }),
     _statusTextEl,
@@ -533,6 +538,7 @@ export function mountShell(root) {
       _runLabelEl,
       _runCountEl,
     ]),
+    _staleEl,
   ]);
 
   // top-left UP control — navigates UP the selection hierarchy (the parent
@@ -834,11 +840,21 @@ function renderStatus() {
   patchText(_statusTextEl || _statusEl, conn);
   patchClass(_statusEl, 'dt-connected', state.connected);
   patchClass(_statusEl, 'dt-running', status.running);
+  // A frozen heartbeat (stale, not live) gets a distinct chrome class so the
+  // dot/badge can read "not live" rather than borrowing the running accent.
+  patchClass(_statusEl, 'dt-stale', !status.running && !!status.heartbeatStale);
 
   if (_runLabelEl) patchText(_runLabelEl, status.running ? status.label : '');
   if (_runCountEl) {
     const n = status.inFlight;
     patchText(_runCountEl, status.running && n > 0 ? ('· ' + n + (n === 1 ? ' unit' : ' units')) : '');
+  }
+  // The stale affordance: surface "last seen Ns ago" when a heartbeat exists
+  // but has frozen (so the run is NOT live) — never a silent freeze. Cleared
+  // while live or when no heartbeat exists at all.
+  if (_staleEl) {
+    patchText(_staleEl, (!status.running && status.heartbeatStale)
+      ? staleLabel(status.heartbeatAgeMs) : '');
   }
 }
 

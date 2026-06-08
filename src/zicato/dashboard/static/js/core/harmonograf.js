@@ -32,6 +32,93 @@
 
 import { el } from './dom.js';
 import { state } from './state.js';
+import { bus } from './bus.js';
+
+// ── UI-PRESENCE PROBE (dead-link gate) ────────────────────────────────
+//
+// THE BUG this gate fixes: the installed harmonograf-server serves NO
+// browser UI — only gRPC-Web + a /healthz endpoint. So a deep-link built
+// from `harmonograf_url` (e.g. `<url>/#/session/<id>`) 404s: there is no SPA
+// to route the hash. Liveness alone is NOT enough — a server can be very much
+// alive and still serve no browser UI.
+//
+// The fix: before rendering ANY harmonograf deep-link, probe the web port for
+// a REAL browser UI — a GET that returns an HTML document, not merely a 200
+// from /healthz. With today's no-UI server the probe fails, so every link is
+// HIDDEN (no dead link). When a real harmonograf SPA is served later the probe
+// succeeds and the links reappear — no code change needed.
+//
+// The probe is async + cached per-base-url; the sync link builders read the
+// cached verdict, so they stay synchronous. A base whose probe has not
+// resolved reads as "no UI yet" (the safe default: hide the link rather than
+// render a maybe-dead one). When the probe resolves it fires `state:changed`
+// so the chrome re-renders and a real link appears.
+
+// Per-base probe cache: base-url → 'pending' | true | false. `true` means a
+// browser UI was confirmed; `false` means the probe ran and found none.
+const _uiProbe = new Map();
+
+// Reset the probe cache — for tests + a workspace switch.
+export function _resetHarmonografUiProbe() {
+  _uiProbe.clear();
+}
+
+// Test/debug seam: seed a probe verdict synchronously for a base url (with or
+// without a trailing slash — normalised to the cache key form). Lets a test
+// assert the link-gating logic without an async fetch round-trip.
+export function _seedHarmonografUiProbe(baseUrl, ok) {
+  if (baseUrl == null) return;
+  const base = String(baseUrl).trim().replace(/\/+$/, '');
+  if (base !== '') _uiProbe.set(base, !!ok);
+}
+
+// Did the probe confirm an HTML response (a real browser UI)? Heuristic:
+// a 2xx response whose Content-Type is text/html. A 404 / a JSON-or-text
+// /healthz body / a network error all read as "no UI".
+async function _probeUi(base) {
+  try {
+    // GET (not HEAD) — some servers answer HEAD differently than GET, and we
+    // need the Content-Type. `redirect: 'follow'` so a `/` → `/index.html`
+    // SPA root still resolves. Same-origin by default for the bound localhost
+    // server; CORS is not in play for the auto-launched workspace server.
+    const resp = await fetch(base + '/', { method: 'GET', redirect: 'follow' });
+    if (!resp || !resp.ok) return false;
+    const ctype = (resp.headers && resp.headers.get && resp.headers.get('content-type')) || '';
+    return /text\/html/i.test(String(ctype));
+  } catch (e) {
+    return false;
+  }
+}
+
+// Kick a probe for `base` if one is not already cached / in flight. On
+// resolution, cache the verdict and (when it changes the answer) fire
+// `state:changed` so any chrome reading harmonografUiAvailable() re-renders.
+function _ensureProbe(base) {
+  if (base == null || base === '') return;
+  if (_uiProbe.has(base)) return;
+  _uiProbe.set(base, 'pending');
+  _probeUi(base).then((ok) => {
+    _uiProbe.set(base, !!ok);
+    // Repaint so a now-available (or now-confirmed-absent) link updates.
+    try { bus.emit('state:changed'); } catch (e) { /* best-effort */ }
+  });
+}
+
+// Is a REAL harmonograf browser UI available for deep-links at the current
+// live base? Synchronous: reads the probe cache. Triggers the probe lazily
+// the first time it is asked about a base. Returns false until a probe has
+// CONFIRMED an HTML UI — so a no-UI server (today's install) hides the link.
+export function harmonografUiAvailable() {
+  if (!harmonografIsLive()) return false;
+  const url = state.heartbeat && state.heartbeat.harmonograf_url;
+  if (typeof url !== 'string') return false;
+  const base = url.trim().replace(/\/+$/, '');
+  if (base === '') return false;
+  const verdict = _uiProbe.get(base);
+  if (verdict === undefined) { _ensureProbe(base); return false; }
+  if (verdict === 'pending') return false;
+  return verdict === true;
+}
 
 // Is a harmonograf server currently reachable for deep-links?
 //
@@ -58,6 +145,12 @@ export function harmonografBase() {
   // Gate on liveness FIRST: a dead run's server is gone, so no link is
   // ever valid then — regardless of a lingering heartbeat url.
   if (!harmonografIsLive()) return null;
+  // Gate on a REAL browser UI being served: the install may answer /healthz
+  // but serve NO SPA, in which case every deep-link 404s. Only resolve a base
+  // once the UI probe has confirmed an HTML document (until then, and for a
+  // no-UI server permanently, no link renders — no dead link). See
+  // harmonografUiAvailable() / the UI-probe block above.
+  if (!harmonografUiAvailable()) return null;
   const url = state.heartbeat && state.heartbeat.harmonograf_url;
   if (typeof url !== 'string') return null;
   const trimmed = url.trim();

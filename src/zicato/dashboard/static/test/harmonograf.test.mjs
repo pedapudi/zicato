@@ -26,14 +26,19 @@ const ADK_SID = 'adk-sess-abc123';
 // --- state helpers ---------------------------------------------------------
 
 // Make the loop LIVE (an active run is in flight) and stamp the heartbeat with
-// a harmonograf_url, OR clear both for the dead path.
-function setLive(live, { url = HG_URL } = {}) {
+// a harmonograf_url, OR clear both for the dead path. `ui` seeds the UI-probe
+// verdict for the url so the dead-link gate is deterministic in tests (default
+// true — a real browser UI is present; pass false to simulate the no-UI
+// install that 404s every deep-link).
+function setLive(live, { url = HG_URL, ui = true } = {}) {
   const s = coreState.state;
   s.heartbeat = url ? { harmonograf_url: url } : null;
   s.activeTournament = null;
   s.activeRuns = live
     ? [{ run_id: 'run_v1_waffles', entry_id: 'waffles_single', generation_id: 'v1', progress: 0.4 }]
     : [];
+  harmonograf._resetHarmonografUiProbe();
+  if (url) harmonograf._seedHarmonografUiProbe(url, ui);
 }
 
 function allByClass(host, cls) {
@@ -74,6 +79,67 @@ test('harmonograf builders: no harmonograf_url ⇒ nothing, even while live', ()
   assertEqual(harmonograf.harmonografLink({ adk_session_id: ADK_SID }), null, 'no url ⇒ no link');
 });
 
+// --- the UI-presence (dead-link) gate --------------------------------------
+// The installed harmonograf-server serves NO browser UI (gRPC-Web + /healthz
+// only), so a deep-link 404s. The gate hides every link until a probe confirms
+// a real HTML UI is served.
+
+test('harmonograf gate: a live server with NO browser UI HIDES every deep-link (no dead link)', () => {
+  // live + a url, but the UI probe says NO browser UI (today's no-UI install).
+  setLive(true, { ui: false });
+  assert(harmonograf.harmonografIsLive(), 'the server is live');
+  assertEqual(harmonograf.harmonografUiAvailable(), false, 'no browser UI is served');
+  assertEqual(harmonograf.harmonografBase(), null, 'no base when no UI is served (link hidden)');
+  assertEqual(harmonograf.harmonografRunUrl({ adk_session_id: ADK_SID }), null, 'no run url');
+  assertEqual(harmonograf.harmonografLink({ adk_session_id: ADK_SID }), null, 'no run link');
+  assertEqual(harmonograf.harmonografMetaUrl(), null, 'no meta url');
+});
+
+test('harmonograf gate: the link REAPPEARS once a real browser UI is served', () => {
+  setLive(true, { ui: false });
+  assertEqual(harmonograf.harmonografBase(), null, 'hidden while no UI');
+  // a real harmonograf SPA is now served — the probe flips true.
+  harmonograf._seedHarmonografUiProbe(HG_URL, true);
+  assertEqual(harmonograf.harmonografUiAvailable(), true, 'a browser UI is now present');
+  assertEqual(harmonograf.harmonografBase(), HG_URL, 'the base resolves once the UI is confirmed');
+  const link = harmonograf.harmonografLink({ adk_session_id: ADK_SID });
+  assert(link, 'the deep-link reappears when a real UI is served');
+});
+
+test('harmonograf gate: an UNPROBED base reads NOT-available (safe default: hide, then probe)', () => {
+  // live + url but NO seeded verdict → the first read returns false (hide) and
+  // schedules the async probe rather than rendering a maybe-dead link.
+  const s = coreState.state;
+  s.activeRuns = [{ run_id: 'r', entry_id: 'e', generation_id: 'v1' }];
+  s.activeTournament = null;
+  s.heartbeat = { harmonograf_url: HG_URL };
+  harmonograf._resetHarmonografUiProbe();
+  // stub fetch so the lazily-scheduled probe does not throw on an unset global.
+  globalThis.fetch = async () => ({ ok: false, status: 404, headers: { get: () => '' } });
+  assertEqual(harmonograf.harmonografUiAvailable(), false, 'an unprobed base hides the link (safe default)');
+});
+
+test('harmonograf probe: an HTML response confirms a UI; a /healthz JSON 200 does NOT', async () => {
+  // GET "/" → text/html ⇒ a real SPA.
+  globalThis.fetch = async () => ({ ok: true, headers: { get: (k) => (k.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : '') } });
+  harmonograf._resetHarmonografUiProbe();
+  const s = coreState.state;
+  s.activeRuns = [{ run_id: 'r', entry_id: 'e', generation_id: 'v1' }];
+  s.activeTournament = null;
+  s.heartbeat = { harmonograf_url: HG_URL };
+  // first read schedules the probe + returns false; await a tick, then re-read.
+  harmonograf.harmonografUiAvailable();
+  await new Promise((r) => setTimeout(r, 0));
+  assertEqual(harmonograf.harmonografUiAvailable(), true, 'an HTML response confirms a browser UI');
+
+  // a /healthz-style JSON 200 (the today install) ⇒ NO UI.
+  globalThis.fetch = async () => ({ ok: true, headers: { get: (k) => (k.toLowerCase() === 'content-type' ? 'application/json' : '') } });
+  harmonograf._resetHarmonografUiProbe();
+  harmonograf.harmonografUiAvailable();
+  await new Promise((r) => setTimeout(r, 0));
+  assertEqual(harmonograf.harmonografUiAvailable(), false, 'a JSON 200 (healthz, no SPA) does NOT confirm a UI — link stays hidden');
+});
+
 // --- standalone (persistent) server gating ---------------------------------
 // A standalone dashboard has NO active runs, but a persistent per-workspace
 // server (signalled by `harmonograf_persistent` on the injected heartbeat)
@@ -83,6 +149,8 @@ test('harmonograf builders: a persistent server reads live with NO active runs',
   s.activeTournament = null;
   s.activeRuns = [];
   s.heartbeat = { harmonograf_url: HG_URL, harmonograf_persistent: true };
+  harmonograf._resetHarmonografUiProbe();
+  harmonograf._seedHarmonografUiProbe(HG_URL, true);
   assert(harmonograf.harmonografIsLive(), 'a persistent server reads as live');
   const href = harmonograf.harmonografRunUrl({ adk_session_id: ADK_SID });
   assertEqual(href, `${HG_URL}/#/session/${encodeURIComponent(ADK_SID)}`,
@@ -126,6 +194,8 @@ test('harmonograf meta: a PERSISTENT server (no active runs) resolves the meta l
   s.activeTournament = null;
   s.activeRuns = [];
   s.heartbeat = { harmonograf_url: HG_URL, harmonograf_persistent: true, harmonograf_meta_session: META_SID };
+  harmonograf._resetHarmonografUiProbe();
+  harmonograf._seedHarmonografUiProbe(HG_URL, true);
   const url = harmonograf.harmonografMetaUrl();
   assertEqual(url, `${HG_URL}/#/session/${encodeURIComponent(META_SID)}`,
     'the persistent server resolves the meta-loop deep-link post-mortem');
@@ -232,6 +302,8 @@ test('candidate view: the per-run link RENDERS against a persistent (post-mortem
   s.activeTournament = null;
   s.activeRuns = [];
   s.heartbeat = { harmonograf_url: HG_URL, harmonograf_persistent: true };
+  harmonograf._resetHarmonografUiProbe();
+  harmonograf._seedHarmonografUiProbe(HG_URL, true);
   const candidate = await import('../js/variants/T/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };

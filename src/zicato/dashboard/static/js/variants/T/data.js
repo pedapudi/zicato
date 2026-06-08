@@ -199,9 +199,14 @@ export function tournamentStructure(epochId, tournamentId) {
 
 // The per-challenger proposing-step outcomes from either the live
 // active-tournament payload or a completed tournament-structure payload.
-// Each entry is {generation_id, status: "applied"|"rejected", reason,
-// seed?}. Absent / malformed (old data, gauntlet) reads as [] so callers
-// render an honest empty tracker rather than throwing.
+// Each entry is {generation_id, status: "proposing"|"applied"|"rejected",
+// reason, attempts, attempt_reasons, hypothesis, seed?}. The `status`
+// "proposing" is the LIVE in-flight slot (the proposer is mid-attempt);
+// `attempt_reasons` is the FULL per-attempt failure list (so the SPECIFIC
+// validation/parse/post-apply message is visible, not just condensed);
+// `attempts` is the retry count; `hypothesis` is the applied challenger's
+// one-line core idea. Absent / malformed (old data, gauntlet) reads as []
+// so callers render an honest empty tracker rather than throwing.
 export function fieldStatus(payload) {
   if (!payload || typeof payload !== 'object') return [];
   const fs = payload.field_status;
@@ -211,10 +216,22 @@ export function fieldStatus(payload) {
     if (!f || typeof f !== 'object') continue;
     const gid = f.generation_id;
     if (gid == null || gid === '') continue;
+    // Normalise status: known tokens pass through, anything else (old
+    // applied/rejected-only data) maps applied → applied, else rejected.
+    let status;
+    if (f.status === 'applied') status = 'applied';
+    else if (f.status === 'proposing') status = 'proposing';
+    else status = 'rejected';
+    const reasons = Array.isArray(f.attempt_reasons)
+      ? f.attempt_reasons.filter((r) => r != null && String(r) !== '').map((r) => String(r))
+      : [];
     out.push({
       generation_id: String(gid),
-      status: f.status === 'applied' ? 'applied' : 'rejected',
+      status,
       reason: f.reason == null ? '' : String(f.reason),
+      attempts: (typeof f.attempts === 'number' && f.attempts >= 0) ? f.attempts : reasons.length,
+      attempt_reasons: reasons,
+      hypothesis: f.hypothesis == null ? '' : String(f.hypothesis),
       seed: (typeof f.seed === 'number') ? f.seed : null,
     });
   }
@@ -222,18 +239,23 @@ export function fieldStatus(payload) {
 }
 
 // Roll a field_status list into the tracker's headline counts:
-// {proposed, applied, rejected, allRejected}. allRejected is true only
-// when a non-empty field minted zero applied challengers — the
-// "0 applied — all rejected" state the live hero must not mistake for idle.
+// {proposed, applied, rejected, proposing, allRejected}. `proposing` is the
+// count of in-flight slots (the proposer is mid-attempt). allRejected is
+// true only when a non-empty, FULLY-SETTLED field (no slot still proposing)
+// minted zero applied challengers — the "0 applied — all rejected" state the
+// live hero must not mistake for idle, and must not declare prematurely
+// while a slot is still being attempted.
 export function fieldStatusSummary(fs) {
   const list = Array.isArray(fs) ? fs : [];
   const applied = list.filter((f) => f && f.status === 'applied').length;
-  const rejected = list.length - applied;
+  const proposing = list.filter((f) => f && f.status === 'proposing').length;
+  const rejected = list.length - applied - proposing;
   return {
     proposed: list.length,
     applied,
     rejected,
-    allRejected: list.length > 0 && applied === 0,
+    proposing,
+    allRejected: list.length > 0 && applied === 0 && proposing === 0,
   };
 }
 

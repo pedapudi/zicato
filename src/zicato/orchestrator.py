@@ -1153,6 +1153,21 @@ class _AppliedChallenger:
     generation: Generation
 
 
+def _trim_reason(reason: str, limit: int = 200) -> str:
+    """Collapse a reason string to one whitespace-normalised tracker line.
+
+    Shared by :func:`_short_reject_reason` (final-outcome one-liner) and the
+    per-attempt ``attempt_reasons`` list the proposing tracker renders so a
+    ``file_findability``-style validation message stays legible. Collapses
+    internal newlines/runs of whitespace and truncates to ``limit`` chars
+    with a trailing ellipsis. Empty/whitespace input ⇒ empty string.
+    """
+    s = " ".join(str(reason).split())
+    if len(s) > limit:
+        s = s[: limit - 1].rstrip() + "…"
+    return s
+
+
 def _short_reject_reason(attempts: list[str]) -> str:
     """Condense a proposer's attempt log into one short tracker reason.
 
@@ -1165,13 +1180,7 @@ def _short_reject_reason(attempts: list[str]) -> str:
     """
     if not attempts:
         return ""
-    last = str(attempts[-1]).strip()
-    # Collapse internal whitespace/newlines so the tracker reads as one line.
-    last = " ".join(last.split())
-    limit = 160
-    if len(last) > limit:
-        last = last[: limit - 1].rstrip() + "…"
-    return last
+    return _trim_reason(attempts[-1], limit=160)
 
 
 async def _propose_and_apply_challenger(
@@ -1195,6 +1204,7 @@ async def _propose_and_apply_challenger(
     custom_judge_names: frozenset[str] = frozenset(),
     prior_experiments: tuple[PriorExperiment, ...] = (),
     restrict_visibility: bool = False,
+    on_status: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
     """Propose + apply ONE challenger child of the champion.
 
@@ -1209,10 +1219,23 @@ async def _propose_and_apply_challenger(
     SelectionStrategy still resolves over whatever applied cleanly) PAIRED
     with a structured **field-status** record for the dashboard's
     proposing-step tracker: ``{generation_id, status: "applied" |
-    "rejected", reason, seed}``. The reason is the same short string the
-    evolve log carries (empty response / invalid JSON / post-apply
-    validation / mutation_id no longer resolves) so a rejected challenger
-    is visible on the dashboard rather than silently dropped.
+    "rejected", reason, attempts, attempt_reasons, hypothesis, seed}``. The
+    ``reason`` is the same short string the evolve log carries (empty
+    response / invalid JSON / post-apply validation / mutation_id no longer
+    resolves); ``attempt_reasons`` is the FULL per-attempt failure list off
+    :attr:`ProposerError.attempts` (so a ``file_findability``-style
+    validation rejection is plainly visible on the dashboard, not just
+    condensed to one line); ``attempts`` is its length; ``hypothesis`` is
+    the one-line core idea when the challenger applies cleanly. A rejected
+    challenger is thus legible on the dashboard rather than silently
+    dropped.
+
+    ``on_status`` — when supplied — is invoked with a ``"proposing"``-status
+    record BEFORE the proposer LLM call begins, so the dashboard's
+    proposing tracker shows each challenger slot enter the field LIVE (not
+    only after the whole batch is minted). It is best-effort; a raising
+    callback never aborts the proposal. The same callback is the seam the
+    caller uses to re-publish the live envelope as each slot resolves.
 
     ``prior_experiments`` is the caller-assembled experiment-memory digest
     threaded into the inner :func:`propose_experiment` call — the settled
@@ -1238,12 +1261,35 @@ async def _propose_and_apply_challenger(
     genstore = default_generation_store(workspace_root)
     last_child_snapshot: dict[str, Path] = {}
 
+    def _emit_status(record: dict[str, Any]) -> None:
+        """Best-effort live publish of one challenger's proposal record."""
+        if on_status is None:
+            return
+        try:
+            on_status(record)
+        except Exception as exc:  # noqa: BLE001 — live status is best-effort
+            log.debug("proposal-status publish skipped: %s", exc)
+
     _beat(
         beater,
         epoch_id=epoch_id,
         generation_id=next_id,
         round_index=round_index,
         phase=f"proposing:round_{round_index}:{next_id}",
+    )
+    # Surface the slot entering the field LIVE — before the proposer LLM
+    # call begins — so the dashboard's proposing tracker shows the
+    # challenger "proposing…" rather than appearing only once it settles.
+    _emit_status(
+        {
+            "generation_id": next_id,
+            "status": "proposing",
+            "reason": "",
+            "attempts": 0,
+            "attempt_reasons": [],
+            "hypothesis": "",
+            "seed": seed,
+        }
     )
 
     async def _validate(candidate: Experiment) -> list[str]:
@@ -1301,12 +1347,22 @@ async def _propose_and_apply_challenger(
             next_id,
             "; ".join(exc.attempts) or exc,
         )
-        return None, {
+        # Carry the FULL per-attempt failure list (parse error / validation
+        # error WITH its exact message / post-apply error) so the dashboard
+        # can render every retry's specific reason, not just the condensed
+        # one-liner. Each entry is trimmed for legibility but kept distinct.
+        attempt_reasons = [_trim_reason(a) for a in exc.attempts]
+        rejected = {
             "generation_id": next_id,
             "status": "rejected",
             "reason": reason,
+            "attempts": len(exc.attempts),
+            "attempt_reasons": attempt_reasons,
+            "hypothesis": "",
             "seed": seed,
         }
+        _emit_status(rejected)
+        return None, rejected
 
     mutations_by_id = {m.id: m for m in mutations}
     for patch in experiment.patches:
@@ -1355,6 +1411,19 @@ async def _propose_and_apply_challenger(
     # creation-time write and the settle-time write compose cleanly. The
     # challenger lands as a dead branch (promoted=False) until crowned.
     append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id)
+    applied_status = {
+        "generation_id": next_id,
+        "status": "applied",
+        "reason": "",
+        "attempts": 1,
+        "attempt_reasons": [],
+        # The proposer's hypothesis summary so the dashboard reads WHAT a
+        # successful challenger proposes, not just that it applied. Trimmed
+        # to a tracker-friendly one line.
+        "hypothesis": _trim_reason(experiment.hypothesis.core_idea),
+        "seed": seed,
+    }
+    _emit_status(applied_status)
     return (
         _AppliedChallenger(
             generation_id=next_id,
@@ -1362,12 +1431,7 @@ async def _propose_and_apply_challenger(
             experiment=experiment,
             generation=child_gen,
         ),
-        {
-            "generation_id": next_id,
-            "status": "applied",
-            "reason": "",
-            "seed": seed,
-        },
+        applied_status,
     )
 
 
@@ -1478,6 +1542,34 @@ async def _evolve_multi_challenger(
     # challenger whose proposer failed contributes no sibling.
     prior = tuple(_load_prior_experiments(workspace_root, epoch_id))
     siblings: list[PriorExperiment] = []
+    # The LIVE field-status map, keyed by generation_id, rewritten as each
+    # challenger slot enters ("proposing"), retries, and settles
+    # ("applied"/"rejected"). The orchestrator publishes a "proposing"-phase
+    # ActiveTournament envelope on every status transition so the dashboard's
+    # proposing tracker updates as each challenger is attempted — not only
+    # after the whole field is minted. (OBSERVABILITY: the operator's "most
+    # of what happens during proposal phase is opaque" pain.)
+    live_status: dict[str, dict[str, Any]] = {}
+    proposing_tournament_id = f"tourn_{epoch_id}_{base_id}"
+
+    def _publish_proposing(record: dict[str, Any]) -> None:
+        live_status[str(record.get("generation_id", ""))] = dict(record)
+        ordered = list(live_status.values())
+        champion_only = [{"generation_id": parent_id, "seed": 1, "role": "champion"}]
+        _publish_active_tournament(
+            workspace_root,
+            tournament_id=proposing_tournament_id,
+            epoch_id=epoch_id,
+            structure=tournament_spec.structure,
+            structure_params=dict(tournament_spec.params),
+            competitors=champion_only,
+            round_index=round_index,
+            total_rounds=total_rounds,
+            field_status=ordered,
+            phase="proposing",
+            entries=_field_entries(champion_only),
+        )
+
     for offset in range(field_n):
         next_id = f"v{base_n + offset}" if base_n is not None else base_id
         # Seed mirrors competitors_meta: champion is seed 1, challengers
@@ -1502,6 +1594,7 @@ async def _evolve_multi_challenger(
             prior_experiments=prior + tuple(siblings),
             proposer_agent=proposer_agent,
             restrict_visibility=weights.overfitting.restrict_proposer_visibility,
+            on_status=_publish_proposing,
         )
         field_status.append(status)
         if challenger is not None:
@@ -2676,6 +2769,37 @@ def _clear_active_tournament(workspace_root: Path) -> None:
         log.debug("active-tournament clear skipped: %s", exc)
 
 
+def _mark_run_terminal(workspace_root: Path) -> None:
+    """Best-effort: mark a cleanly-ended run terminal so it never reads LIVE.
+
+    A normally-ended evolve loop already stamps a terminal heartbeat phase
+    (``evolve_n_rounds:done``), which the dashboard treats as idle. But the
+    runtime ``active_tournament.json`` envelope can linger with
+    ``phase="running"`` (e.g. a mid-resolution structure whose settle write
+    never ran) — and a frontend reading the heartbeat as fresh would then
+    show a "LIVE" tournament on a closed epoch. As a defensive measure on
+    clean shutdown we flip any lingering ``phase="running"`` envelope to a
+    terminal ``"stopped"`` phase, so a normally-ended run does not read as
+    live even before the heartbeat freshness window elapses. A SIGKILLed run
+    cannot self-clean — that case is covered by the frontend freshness gate.
+    Never raises: a teardown-time live-state write failure must not mask the
+    real shutdown reason.
+    """
+    try:
+        from zicato.runtime.state import (  # noqa: PLC0415
+            read_active_tournament,
+            write_active_tournament,
+        )
+
+        current = read_active_tournament(workspace_root)
+        if current is None:
+            return
+        if str(current.phase).strip().lower() == "running":
+            write_active_tournament(workspace_root, replace(current, phase="stopped"))
+    except Exception as exc:  # noqa: BLE001 — terminal-state write is best-effort
+        log.debug("terminal active-tournament mark skipped: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # evolve_n_rounds
 # ---------------------------------------------------------------------------
@@ -3105,6 +3229,14 @@ async def evolve_n_rounds(
         )
         beater.bump_now()
     finally:
+        # Defensive terminal-state write (issue: a dead/closed run reading
+        # LIVE). A cleanly-ended loop stamps a terminal heartbeat phase
+        # above; here we ALSO flip any lingering active-tournament envelope
+        # out of ``phase="running"`` so a normally-ended run never reads as a
+        # live tournament — even inside the heartbeat freshness window. Runs
+        # on BOTH the clean and the error/interrupt path (a SIGKILL still
+        # can't self-clean, which the frontend freshness gate covers).
+        _mark_run_terminal(workspace_root)
         await beater.stop()
         release_workspace_lock(lock)
         # Flush + close the meta-loop emitter BEFORE the harmonograf

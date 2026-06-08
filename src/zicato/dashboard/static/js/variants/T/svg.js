@@ -2717,13 +2717,23 @@ function lcsDiff(a, b) {
 // ---- proposing-step tracker -----------------------------------------
 //
 // The candidate-generation step rendered as the field FORMS: one row per
-// `onCompetitor(gid)` (optional) makes an applied row a drill-in affordance.
+// challenger slot. Each row makes the proposal phase LEGIBLE rather than a
+// black box — for a rejected slot it shows the SPECIFIC reason (the
+// `expected_metric_movements` validation message, an empty/parse failure, a
+// post-apply error) inline + the retry count, with every attempt's reason on
+// hover; for an applied slot it shows the hypothesis; for an in-flight slot
+// it shows a "proposing…" pending state. `onCompetitor(gid)` (optional) makes
+// an applied row a drill-in affordance.
 export function proposingTracker(opts) {
   const o = opts || {};
   const list = (Array.isArray(o.fieldStatus) ? o.fieldStatus : []).filter((f) => f && f.generation_id);
   const applied = list.filter((f) => f.status === 'applied').length;
+  const proposing = list.filter((f) => f.status === 'proposing').length;
+  const rejected = list.filter((f) => f.status === 'rejected').length;
   const proposed = list.length;
-  const allRejected = proposed > 0 && applied === 0;
+  // "all rejected" is only a verdict once the field has FULLY settled — a slot
+  // still proposing must not flip the headline to the alarming all-bad state.
+  const allRejected = proposed > 0 && applied === 0 && proposing === 0;
   const onCompetitor = typeof o.onCompetitor === 'function' ? o.onCompetitor : null;
 
   // headline counts — never an empty/idle read for a field that minted rows.
@@ -2732,29 +2742,75 @@ export function proposingTracker(opts) {
     head = 'minting the field…';
   } else {
     head = `${proposed} proposed · ${applied} applied`;
-    if (allRejected) head += ' — all rejected';
+    if (rejected > 0) head += ` · ${rejected} rejected`;
+    if (proposing > 0) head += ` · ${proposing} proposing…`;
+    else if (allRejected) head += ' — all rejected';
   }
 
   const rows = list.map((f) => {
-    const ok = f.status === 'applied';
+    const st = f.status === 'applied' ? 'applied' : (f.status === 'proposing' ? 'proposing' : 'rejected');
+    const ok = st === 'applied';
+    const pending = st === 'proposing';
     const glyph = el('span', {
-      class: 'dn-prop-glyph ' + (ok ? 'dn-prop-ok' : 'dn-prop-bad'),
-      'aria-hidden': 'true', text: ok ? '✓' : '✗',
+      class: 'dn-prop-glyph ' + (ok ? 'dn-prop-ok' : pending ? 'dn-prop-pending' : 'dn-prop-bad'),
+      'aria-hidden': 'true', text: ok ? '✓' : pending ? '⋯' : '✗',
     });
     const gid = el('span', { class: 'dn-prop-gen', text: shortLabel(String(f.generation_id), 16) });
     const verdict = el('span', {
-      class: 'dn-prop-verdict ' + (ok ? 'dn-prop-ok' : 'dn-prop-bad'),
-      text: ok ? 'applied' : 'rejected',
+      class: 'dn-prop-verdict ' + (ok ? 'dn-prop-ok' : pending ? 'dn-prop-pending' : 'dn-prop-bad'),
+      text: ok ? 'applied' : pending ? 'proposing…' : 'rejected',
     });
-    const reasonText = ok
-      ? `${f.generation_id} applied cleanly`
-      : `${f.generation_id} rejected: ${f.reason || 'no reason recorded'}`;
-    const row = el('div', {
-      class: 'dn-prop-row ' + (ok ? 'dn-prop-row-ok' : 'dn-prop-row-bad'),
-      role: 'listitem',
-    }, [glyph, gid, verdict]);
-    // The reason lives on the existing hovercard (inline-elided rows stay tidy).
-    hov(row, reasonText);
+
+    // The retry badge — only when more than one attempt was made (a retried
+    // slot is worth flagging; a clean first-try slot stays uncluttered).
+    const attempts = (typeof f.attempts === 'number' && f.attempts > 0) ? f.attempts : null;
+    const topRow = [glyph, gid, verdict];
+    if (!pending && attempts != null && attempts > 1) {
+      topRow.push(el('span', {
+        class: 'dn-prop-attempts dn-faint',
+        text: `${attempts} attempts`,
+        title: `${attempts} proposer attempts before this outcome`,
+      }));
+    }
+
+    // The DETAIL line — the part that makes the phase legible. For a rejected
+    // slot it is the SPECIFIC final reason inline (faint mono), so a
+    // file_findability-style validation rejection is plainly visible without a
+    // hover. For an applied slot it is the hypothesis. Proposing slots show a
+    // muted pending note.
+    let detailText = '';
+    let detailClass = 'dn-prop-detail dn-faint';
+    if (pending) {
+      detailText = 'proposing…';
+    } else if (ok) {
+      detailText = f.hypothesis ? String(f.hypothesis) : 'applied cleanly';
+    } else {
+      detailText = f.reason ? String(f.reason) : 'no reason recorded';
+      detailClass = 'dn-prop-detail dn-prop-reason';
+    }
+    const detail = el('div', { class: detailClass, text: detailText });
+
+    const rowClass = 'dn-prop-row ' + (ok ? 'dn-prop-row-ok' : pending ? 'dn-prop-row-pending' : 'dn-prop-row-bad');
+    const top = el('div', { class: 'dn-prop-rowtop' }, topRow);
+    const row = el('div', { class: rowClass, role: 'listitem' }, [top, detail]);
+
+    // Hovercard carries the FULL per-attempt list when a slot was retried, so
+    // every attempt's reason is recoverable even though the inline line shows
+    // only the final one.
+    const reasons = Array.isArray(f.attempt_reasons) ? f.attempt_reasons : [];
+    let tip;
+    if (pending) {
+      tip = `${f.generation_id}: proposing…`;
+    } else if (ok) {
+      tip = `${f.generation_id} applied cleanly` + (f.hypothesis ? `\n${f.hypothesis}` : '');
+    } else if (reasons.length > 1) {
+      tip = `${f.generation_id} rejected after ${reasons.length} attempts:\n`
+        + reasons.map((r, i) => `  attempt ${i + 1}: ${r}`).join('\n');
+    } else {
+      tip = `${f.generation_id} rejected: ${f.reason || (reasons[0] || 'no reason recorded')}`;
+    }
+    hov(row, tip);
+
     if (ok && onCompetitor) {
       row.classList.add('dn-prop-clickable');
       row.tabIndex = 0;
@@ -2779,10 +2835,17 @@ export function proposingTracker(opts) {
 }
 
 // A stable digest of the proposing-step field so the live hero can
-// digest-gate the tracker swap (a no-op heartbeat writes ZERO DOM).
+// digest-gate the tracker swap (a no-op heartbeat writes ZERO DOM). Folds in
+// the attempt count + final reason so a slot transitioning proposing → retry
+// → settled re-stamps, but a steady no-op tick does not.
 export function proposingDigest(fieldStatus) {
   const list = Array.isArray(fieldStatus) ? fieldStatus : [];
-  return 'prop|' + list.map((f) => (f && f.generation_id) + ':' + (f && f.status)).join(',');
+  return 'prop|' + list.map((f) => {
+    if (!f) return '';
+    const att = (typeof f.attempts === 'number') ? f.attempts : '';
+    const reason = f.reason ? String(f.reason).slice(0, 48) : '';
+    return `${f.generation_id}:${f.status}:${att}:${reason}`;
+  }).join(',');
 }
 
 // ── the CHAMPION-SPINE ROUND TIMELINE — the epoch overview hero ──────

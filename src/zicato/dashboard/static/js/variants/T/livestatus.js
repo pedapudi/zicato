@@ -202,6 +202,10 @@ export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {
   // `heartbeatStale` is the public flag the chrome/digest read: a heartbeat
   // that EXISTS but is not fresh (old OR untimestamped) is stale.
   const heartbeatStale = hb != null && !heartbeatFresh;
+  // The heartbeat AGE in ms (for the "last seen Ns ago" affordance), or NaN
+  // when there is no ageable timestamp (an untimestamped frozen heartbeat —
+  // stale, but with no age to report).
+  const heartbeatAgeMs = isFinite(hbTs) ? Math.max(0, now - hbTs) : NaN;
 
   // The orchestrator-derived live signals (the heartbeat `phase` and the
   // active-tournament `phase === "running"`) only count as live while the
@@ -228,8 +232,25 @@ export function deriveLiveStatus({ heartbeat, activeRuns, activeTournament } = {
     tournamentRunning,
     phaseActive,
     heartbeatStale,
+    heartbeatAgeMs,
     label,
   };
+}
+
+// Format a heartbeat age (ms) into a short "last seen Ns ago" affordance.
+// `NaN` (an untimestamped frozen heartbeat) reads as a bare "stale" — there
+// is no age to report but the run is still not live. Used by the chrome to
+// show WHY a frozen run is no longer live, rather than a silent freeze.
+export function staleLabel(ageMs) {
+  if (!isFinite(ageMs)) return 'stale';
+  const s = Math.round(ageMs / 1000);
+  // Keep seconds precision under two minutes — for a just-killed run the exact
+  // "last seen 90s ago" is more actionable than a coarse "1m ago".
+  if (s < 120) return `last seen ${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `last seen ${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `last seen ${h}h ago`;
 }
 
 // ── the TREE LIVE-ACTIVITY set (Task 2) ──────────────────────────────
@@ -263,6 +284,11 @@ export function treeLiveSet({ activeRuns, running, epochId } = {}) {
 // change (digest-gated — a steady heartbeat ping writes ZERO DOM).
 export function liveStatusDigest(conn, status) {
   const s = status || {};
+  // Bucket the heartbeat age to ~5s so a steady tick does not re-stamp the
+  // chrome every frame, but a transition into the stale window (and the
+  // coarse "last seen Ns ago" climb) still flips the digest.
+  const ageBucket = (s.heartbeatStale && isFinite(s.heartbeatAgeMs))
+    ? Math.floor(s.heartbeatAgeMs / 5000) : '';
   return [
     conn,
     s.running ? 'R' : '-',
@@ -270,6 +296,7 @@ export function liveStatusDigest(conn, status) {
     s.phase || '',
     s.inFlight || 0,
     s.tournamentRunning ? 'T' : '',
+    s.heartbeatStale ? 'S' + ageBucket : '',
     s.label || '',
   ].join('|');
 }
