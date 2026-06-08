@@ -246,7 +246,10 @@ export async function render(host, ctx, params) {
     if (inflight.length) {
       const liveCard = el('div', { class: 'dn-panel dn-board-inflight' });
       liveCard.appendChild(el('div', { class: 'dn-inflight-head' }, [
-        el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
+        el('span', { class: 'dn-inflight-pill' }, [
+          el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
+          el('span', { text: 'live' }),
+        ]),
         el('span', { class: 'dn-inflight-count', text: String(inflight.length) + (inflight.length === 1 ? ' candidate running' : ' candidates running') }),
         el('span', { class: 'dn-faint', text: ' on this board entry' }),
       ]));

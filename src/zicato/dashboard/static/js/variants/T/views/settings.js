@@ -87,9 +87,9 @@ function normaliseSection(id) {
 }
 
 // NOTE: the product-status "research preview" mark is NOT a Settings card any
-// more. It is a quiet, app-wide note pinned to the lower-right of the chrome
-// (mounted once in the shell — see shell.js's researchPreviewNote()), so it
-// persists across every view rather than leading the Settings surface.
+// more. It is a quiet pill pinned NEXT TO the wordmark in the top bar (mounted
+// once in the shell — see shell.js's researchPreviewPill()), so it persists
+// across every view rather than leading the Settings surface.
 
 export async function render(host, ctx, params) {
   _ctx = ctx;

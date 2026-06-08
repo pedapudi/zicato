@@ -422,20 +422,19 @@ function brandWordmark() {
   }, [text, dot]);
 }
 
-// THE RESEARCH-PREVIEW NOTE — a quiet, app-wide product-status mark pinned to
-// the LOWER-RIGHT of the chrome (position:fixed, bottom-right). It is the OPPOSITE
-// of the old accent-tinted, pulsing Settings card: a small, faint, monospace
-// lowercase "research preview" label in the understated idiom of the existing
-// captions/pills (the muted ink-faint token + currentColor, theme-adaptive across
-// all themes), with a tiny static accent dot — NO glow, NO pulse, NO animation. It
-// is purely informational, so the whole note is `pointer-events: none` and never
-// blocks a click. Mounted ONCE in the shell so it persists across every view;
-// static chrome, never rebuilt on an SSE heartbeat (digest discipline). The
-// styling lives in console4.css (.dt-respreview + children).
-function researchPreviewNote() {
-  return el('div', { class: 'dt-respreview', role: 'note', 'aria-label': 'research preview' }, [
-    el('span', { class: 'dt-respreview-dot', 'aria-hidden': 'true' }),
-    el('span', { class: 'dt-respreview-text', text: 'research preview' }),
+// THE RESEARCH-PREVIEW PILL — a quiet product-status tag pinned NEXT TO the
+// "zıcato console" wordmark in the top bar. It echoes the wordmark's own
+// register (the .dt-brand-variant "console" tag): small, faint, monospace,
+// uppercase tracking, theme-adaptive (the muted ink-faint token + currentColor).
+// The label is STACKED on two lines ("research" / "preview") so it reads as a
+// compact corner tag beside the wordmark rather than a wide strip. It is purely
+// informational (role="note"); built ONCE as static chrome, never rebuilt on an
+// SSE heartbeat (digest discipline). The styling lives in console4.css
+// (.dt-respreview + children). This supersedes the old lower-right corner note.
+function researchPreviewPill() {
+  return el('span', { class: 'dt-respreview', role: 'note', 'aria-label': 'research preview' }, [
+    el('span', { class: 'dt-respreview-line', text: 'research' }),
+    el('span', { class: 'dt-respreview-line', text: 'preview' }),
   ]);
 }
 
@@ -557,6 +556,7 @@ export function mountShell(root) {
       brandMark(),
       brandWordmark(),
       el('span', { class: 'dt-brand-variant', text: 'console' }),
+      researchPreviewPill(),
     ]),
     _crumbHost,
     el('span', { class: 'dt-topbar-spacer' }),
@@ -615,9 +615,9 @@ export function mountShell(root) {
 
   root.appendChild(el('div', { class: 'dt-body' }, [_treeHost, _railHandle, _viewHost]));
 
-  // The quiet, app-wide RESEARCH-PREVIEW note — pinned to the lower-right of the
-  // chrome, present on every view (mounted once, never rebuilt on a heartbeat).
-  root.appendChild(researchPreviewNote());
+  // (The research-preview status tag now lives as a pill NEXT TO the wordmark in
+  // the top bar — see researchPreviewPill() in brandWordmark's topbar block —
+  // superseding the old lower-right corner note.)
 
   applyTheme(readColor());
   applyTypeface(readType());

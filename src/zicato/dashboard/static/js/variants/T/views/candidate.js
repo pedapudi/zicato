@@ -639,7 +639,10 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     const sbt = pj && svg.isNum(pj.boards_total) ? pj.boards_total : null;
     const sfrac = (sbd != null && sbt != null && sbt > 0) ? Math.min(1, sbd / sbt) : null;
     liveCard.appendChild(el('div', { class: 'dn-inflight-head' }, [
-      el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
+      el('span', { class: 'dn-inflight-pill' }, [
+        el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
+        el('span', { text: 'live' }),
+      ]),
       el('span', { class: 'dn-inflight-count', text: String(inflight.length) + (inflight.length === 1 ? ' board running' : ' boards running') }),
       el('span', { class: 'dn-faint', text: ' for this candidate' }),
       sfrac != null ? el('span', { class: 'dt-proj-badge', text: 'proj' }) : null,

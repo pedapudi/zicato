@@ -673,7 +673,9 @@
 
   .dn-good-t { color: var(--v2-good); }
   .dn-finding { margin-bottom: 9px; }
-  .dn-drill { border-left: 3px solid var(--v2-accent); }
+  /* the drill-down detail card wears the standard faint .dn-panel border like
+   * every other card — NOT a coloured accent left rail. */
+  .dn-drill { }
 
   .dn-quicklinks { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0 4px; }
 
@@ -733,7 +735,9 @@
     border: 1px solid var(--v2-accent); border-radius: 4px; background: transparent; transition: background 0.15s, color 0.15s; }
   a.dn-linkbtn:hover { background: var(--v2-accent); color: var(--v2-paper); }
 
-  .dn-objective { border-left: 3px solid var(--v2-accent); padding: 5px 0 5px 14px; margin: 9px 0 4px; }
+  /* the objective callout is led by its faint mono uppercase "objective" label
+   * (the standard caption idiom) + spacing — NOT a coloured accent left rail. */
+  .dn-objective { padding: 5px 0 5px 0; margin: 9px 0 4px; }
   .dn-objective .lab { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--v2-ink-faint); }
   .dn-objective .txt { font-size: 16px; line-height: 1.35; color: var(--v2-ink); max-width: 66ch; }
 
@@ -1208,34 +1212,27 @@
     .dn-hovercard, .dn-hovercard.dn-hovercard-on { transition: none; transform: none; }
   }
 
-  /* ── the RESEARCH-PREVIEW note — a QUIET, app-wide product-status mark ────
-   * Pinned to the LOWER-RIGHT of the chrome (position:fixed, bottom-right),
-   * present on every view. The deliberate antithesis of a "light-up rail card":
-   * small, FAINT, monospace, lowercase — the same understated idiom as the
-   * existing faint captions/pills (.dn-faint / the .dn-stat .k keys). It uses the
-   * muted ink-faint token (theme-adaptive across all themes) with a tiny STATIC
-   * accent dot — NO tint fill, NO glow, NO pulse, NO animation. Purely
-   * informational, so the whole note is pointer-events:none and never blocks a
-   * click. A modest z-index keeps it under transient overlays (the hovercard at
-   * 60) yet above page content; a small margin keeps it off the corner. */
+  /* ── the RESEARCH-PREVIEW pill — a QUIET product-status tag pinned NEXT TO
+   * the "zıcato console" wordmark in the top bar. It echoes the wordmark's own
+   * register (the sibling .dt-brand-variant "console" tag): small, FAINT,
+   * monospace, uppercase tracking, theme-adaptive (the muted ink-faint token).
+   * The label is STACKED on two lines ("research" / "preview") so it reads as a
+   * compact corner tag beside the wordmark — a quiet status mark, not a loud
+   * badge. NO tint fill, NO glow, NO pulse, NO animation. Purely informational
+   * (pointer-events:none). This supersedes the old lower-right corner note. */
   .dt-respreview {
-    position: fixed;
-    right: 12px; bottom: 10px;
-    z-index: 40;
-    display: flex; align-items: center; gap: 6px;
+    display: inline-flex; flex-direction: column; justify-content: center;
+    align-self: center;
     pointer-events: none;            /* informational only — never blocks a click */
-    font: 10.5px/1 var(--v2-mono);
-    letter-spacing: 0.04em;
+    font: 7.5px/1.25 var(--v2-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
     color: var(--v2-ink-faint);
-    opacity: 0.85;
+    border-left: 1px solid var(--v2-rule);   /* a faint hairline divider off the wordmark, NOT a coloured rail */
+    padding-left: 7px; margin-left: 1px;
     user-select: none;
   }
-  .dt-respreview-dot {
-    flex: none; width: 5px; height: 5px; border-radius: 50%;
-    background: var(--zicato-accent);
-    opacity: 0.8;                    /* a faint, static accent tick — no glow/pulse */
-  }
-  .dt-respreview-text { white-space: nowrap; }
+  .dt-respreview-line { white-space: nowrap; display: block; }
 
   /* Rich hovercard body (board-status popovers): a small titled detail card.
    * Token-only; lives inside .dn-hovercard so it inherits the per-theme card. */
@@ -1537,10 +1534,19 @@
   }
   @media (prefers-reduced-motion: reduce) { .dt-run-pulse { animation: none; } }
 
-  /* board-detail — the LIVE in-flight candidates panel. */
-  .dn-board-inflight { border-left: 2px solid var(--v2-good); }
+  /* board-detail — the LIVE in-flight candidates panel. Liveness is carried by
+   * the idiomatic header vocabulary (the pulsing status dot + the faint mono
+   * "live" pill), NOT a coloured left rail — it wears the standard faint
+   * .dn-panel border like every other card. */
   .dn-inflight-head { display: flex; align-items: center; gap: 6px; font-family: var(--v2-mono);
     font-size: 11px; margin-bottom: 6px; }
+  /* the faint mono "live" status pill in the in-flight header — the same pill
+   * register as the wordmark/.dn-pill vocabulary; colour lives in the small dot
+   * + text, never a slab. */
+  .dn-inflight-pill { display: inline-flex; align-items: center; gap: 4px; flex: none;
+    font-family: var(--v2-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--v2-good); border: 1px solid var(--v2-rule); border-radius: 9px; padding: 0 6px; }
+  .dn-inflight-pill .dn-inflight-pulse { width: 5px; height: 5px; }
   .dn-inflight-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--v2-good); flex: 0 0 auto;
     animation: dt-run-pulse 1.6s ease-out infinite; }
   .dn-inflight-count { color: var(--v2-good); font-weight: 600; }
@@ -2526,8 +2532,12 @@
   .dn-prop-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px;
     border: 1px solid var(--v2-rule); border-radius: 5px; background: var(--v2-panel);
     font-size: 12px; }
-  .dn-prop-row-ok { border-left: 3px solid var(--v2-good); }
-  .dn-prop-row-bad { border-left: 3px solid var(--v2-bad); background: var(--v2-bad-soft); }
+  /* status is carried by the row's glyph (✓/⋯/✗) + the coloured verdict text +
+   * the faint mono status pill in the row head — NOT a coloured left rail. The
+   * rejected row keeps a gentle soft fill (the same understated tint .dn-pill.
+   * dn-rejected uses), never a slab edge. */
+  .dn-prop-row-ok { /* status conveyed by the ✓ glyph + "applied" verdict + pill */ }
+  .dn-prop-row-bad { background: var(--v2-bad-soft); }
   .dn-prop-glyph { font-family: var(--v2-mono); font-weight: 700; width: 1em; text-align: center; }
   .dn-prop-gen { font-family: var(--v2-mono); color: var(--v2-ink); flex: 1 1 auto; }
   .dn-prop-verdict { font-size: 11px; letter-spacing: 0.02em; }
@@ -2548,7 +2558,9 @@
   .dn-prop-attempts { font-family: var(--v2-mono); font-size: 10.5px; color: var(--v2-ink-faint);
     border: 1px solid var(--v2-rule); border-radius: 4px; padding: 0 5px; }
   .dn-prop-pending { color: var(--v2-caution); }
-  .dn-prop-row-pending { border-left: 3px solid var(--v2-caution); }
+  /* status conveyed by the ⋯ glyph + "proposing…" verdict text (the same
+   * dot+text vocabulary used elsewhere) — never a coloured left rail. */
+  .dn-prop-row-pending { /* glyph + verdict carry the status */ }
 
   .dt-live-hero-ticker { min-width: 0; }
   .dt-live-hero-tickerhead { font-family: var(--v2-mono); font-size: 10px; text-transform: uppercase;
