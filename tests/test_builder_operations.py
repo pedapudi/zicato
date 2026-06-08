@@ -101,6 +101,31 @@ def test_set_gate() -> None:
     assert patch.changed["promote_margin"]["to"] == 0.05
 
 
+def test_set_gate_monotonicity_scope() -> None:
+    """The gate operation can author the issue-#17 monotonicity scope, and
+    it survives the draft's scoring serialization."""
+    import json
+
+    import pytest
+
+    draft = TournamentDraft()
+    # Default is per_entry; flipping to aggregate records the change.
+    assert draft.scoring.pass_rate_monotonicity_scope == "per_entry"
+    patch = ops.set_gate(draft, monotonicity_scope="aggregate")
+    assert draft.scoring.pass_rate_monotonicity_scope == "aggregate"
+    assert patch.changed["pass_rate_monotonicity_scope"]["from"] == "per_entry"
+    assert patch.changed["pass_rate_monotonicity_scope"]["to"] == "aggregate"
+
+    # It is carried in the draft's serialized form (the shape the builder
+    # persists / the REST surface returns).
+    serialized = json.loads(json.dumps(draft.to_dict()))
+    assert serialized["scoring"]["pass_rate_monotonicity_scope"] == "aggregate"
+
+    # An invalid token is rejected, not silently coerced.
+    with pytest.raises(ValueError, match="per_entry"):
+        ops.set_gate(TournamentDraft(), monotonicity_scope="bogus")
+
+
 def test_edit_board_entry_add_then_replace() -> None:
     draft = TournamentDraft()
     p1 = ops.edit_board_entry(draft, _entry("x1"))

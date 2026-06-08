@@ -260,10 +260,25 @@ def set_weights(
 def set_gate(
     promote_margin: float | None = None,
     monotonicity: bool | None = None,
+    monotonicity_scope: str | None = None,
 ) -> str:
-    """Set the promote gate: the margin floor + pass-rate monotonicity."""
+    """Set the promote gate: the margin floor + pass-rate monotonicity.
+
+    ``monotonicity`` toggles the pass-rate guard on/off. When on,
+    ``monotonicity_scope`` selects its granularity: ``"per_entry"``
+    (default) rejects if any champion-passed entry flips to fail — right
+    for invariant / regression-suite boards; ``"aggregate"`` rejects only
+    if the overall pass-rate drops — right for sampled evaluation boards
+    where a strictly-better challenger should not be vetoed by one entry
+    flip.
+    """
     ctx = _active_context()
-    patch = ops.set_gate(ctx.draft(), promote_margin=promote_margin, monotonicity=monotonicity)
+    patch = ops.set_gate(
+        ctx.draft(),
+        promote_margin=promote_margin,
+        monotonicity=monotonicity,
+        monotonicity_scope=monotonicity_scope,
+    )
     return _result_json(_summary(patch))
 
 

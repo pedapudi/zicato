@@ -601,6 +601,42 @@ them into different drift kinds.
 Because `per_judge_weights` is part of `ScoringWeights`, it is frozen
 per epoch — changing it rolls the epoch.
 
+### 6.4 Pass-rate monotonicity scope — match it to your board's shape
+
+The promote gate's pass-rate monotonicity rule (SCORING.md §5, Rule 2)
+has a *granularity* knob, `pass_rate_monotonicity_scope`, that should be
+chosen to match what your board's entries represent:
+
+```json
+"pass_rate_monotonicity": true,
+"pass_rate_monotonicity_scope": "per_entry"
+```
+
+- **`per_entry`** (default) — *every* entry the champion passed must
+  still pass on the challenger, or the gate rejects and names the
+  regressed entry ids. Choose this when each entry is a
+  **must-not-regress invariant** — a regression suite where any
+  previously-green entry going red is a real breakage. The default, so
+  existing boards are unaffected.
+
+- **`aggregate`** — the gate rejects only when the challenger's
+  **overall** pass-rate falls below the champion's (modulo float noise).
+  A challenger may trade *which* individual entries pass as long as the
+  net pass-rate holds or improves. Choose this for a **sampled
+  evaluation board**, where the entries are samples of a capability and
+  individual pass/fail is noisy: under `per_entry`, any entry with
+  run-to-run nondeterminism (sampling, retrieval ties, timeouts) becomes
+  a permanent veto that no amount of aggregate improvement can overcome,
+  and a strictly-better challenger can be rejected over a single entry
+  flip. `aggregate` lets promotions track the aggregate the operator
+  actually optimizes.
+
+There is no `"off"` scope value — disable the rule entirely with
+`pass_rate_monotonicity: false`. The chosen scope applies to both the
+train slice and the holdout-confirmation check, so the two use one
+consistent policy. Because the scope is part of `ScoringWeights`, it is
+frozen per epoch — changing it rolls the epoch.
+
 ## 7. Typed enums, no magic strings
 
 Every choice field in the authoring surface is a typed enum. There
