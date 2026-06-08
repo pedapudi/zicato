@@ -305,6 +305,44 @@ def test_racing_live_progress_seeds_projected_scalar_after_a_rung_settles() -> N
         assert lane["projected_scalar"] == scalars[gid]
 
 
+def test_racing_champion_lane_seeds_its_real_benchmark_scalar() -> None:
+    # CHAMPION BENCHMARK: the champion is the shared ``left`` defender of every
+    # duel, so it is never in ``_scalars`` (challenger-keyed) — but the in-flight
+    # rung's champion lane must still carry the REAL champion loss as its
+    # ``projected_scalar`` benchmark, so the dashboard's dashed champion line is
+    # the true value (not omitted / a fabricated default). After rung 0 lands, the
+    # champion lane on the next rung seeds the champion's own last-known scalar.
+    strategy, _champion, _challengers = _racing(4)
+    batch = strategy.next_matchups()
+    # champion loss 68.0 across every duel; challengers vary.
+    champ_loss = 68.0
+    chall = {"v1": 9.5, "v2": 9.8, "v3": 70.0, "v4": 71.0}
+    for m in batch:
+        strategy.record_result(
+            _result(m, left_scalar=champ_loss, right_scalar=chall[m.right.generation_id])
+        )
+    strategy.next_matchups()  # schedule the next rung (in-flight)
+    progress = _rung_live_progress(_serialise_rounds(strategy.live_rounds()))
+    assert "v0" in progress, "the champion lane is present on the in-flight rung"
+    assert (
+        progress["v0"]["projected_scalar"] == champ_loss
+    ), "the champion lane carries the REAL champion loss as its benchmark"
+    assert progress["v0"]["projected"] is True
+
+
+def test_racing_champion_lane_unseeded_before_any_duel_lands() -> None:
+    # Honesty: before ANY duel of the FIRST rung lands, the champion has no
+    # last-known scalar, so its lane carries NO projected_scalar (the dashboard
+    # then omits the benchmark line rather than fabricating one).
+    strategy, _champion, _challengers = _racing(4)
+    strategy.next_matchups()  # schedule rung 0; record nothing.
+    progress = _rung_live_progress(_serialise_rounds(strategy.live_rounds()))
+    assert "v0" in progress
+    assert (
+        "projected_scalar" not in progress["v0"]
+    ), "no champion scalar yet ⇒ no fabricated benchmark"
+
+
 def test_racing_overlay_folds_runner_projected_into_live_progress(tmp_path: Path) -> None:
     # some-boards-landed: the runner's per-board projected map is overlaid onto
     # the strategy-published live_progress topology IN PLACE.
