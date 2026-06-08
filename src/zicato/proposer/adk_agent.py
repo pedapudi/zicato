@@ -66,7 +66,11 @@ from zicato.proposer.structured import (
     PostApplyValidationError,
     parse_experiment_json,
 )
-from zicato.proposer.tools import ProposerToolContext, bind_proposer_tool_context
+from zicato.proposer.tools import (
+    DEFAULT_PROPOSER_TOOLS,
+    ProposerToolContext,
+    bind_proposer_tool_context,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.proposer.agent import ProposerContext
@@ -83,6 +87,61 @@ _AGENT_SYMBOL = "agent"
 #: per ``propose`` invocation but the app / user labels are constant.
 _APP_NAME = "zicato-proposer"
 _USER_ID = "zicato"
+
+#: Static instruction for the built-in default tool-using proposer. It tells
+#: the agent HOW to work — ground with the read-only tools, then emit the
+#: structured JSON — while the per-round WHAT (brief, skills, mutation
+#: manifest, patterns, loss, prior experiments, the JSON schema) arrives as
+#: the run's input (:func:`_render_task_text`). A custom ``agent.py`` may
+#: override this entirely; the built-in default uses it verbatim.
+_DEFAULT_PROPOSER_INSTRUCTION = (
+    "You are an improvement-proposer for a multi-agent system. The user "
+    "message you receive carries the proposer brief, the available mutation "
+    "points, the observed patterns, the current loss summary, the prior "
+    "experiments, and the exact JSON schema your answer must follow.\n\n"
+    "Before you answer, USE YOUR READ-ONLY TOOLS to ground your proposal:\n"
+    "- call `list_mutation_points` to confirm the exact ids you may target;\n"
+    "- call `read_mutable_file` / `grep_mutable` to inspect how a candidate "
+    "target is used in the current generation's source;\n"
+    "- call `read_journal` / `read_insights` to recall what prior rounds "
+    "already tried and what the analyzer observed.\n\n"
+    "Then emit a SINGLE JSON object matching the schema in the user message "
+    "— no prose, no markdown fences. The first character of your final "
+    "response MUST be '{' and the last MUST be '}'."
+)
+
+#: Name of the built-in default proposer's ADK ``LlmAgent``.
+_DEFAULT_PROPOSER_AGENT_NAME = "zicato_default_proposer"
+
+
+def build_default_adk_agent(model: Any) -> Any:
+    """Build the built-in default tool-using proposer ``LlmAgent``.
+
+    This is the agent zicato runs when a contract does NOT configure a
+    proposer dir — the DEFAULT proposer. It is a native ADK
+    :class:`~google.adk.agents.LlmAgent` that declares ``model=`` (the model
+    string the orchestrator threads from the workspace's auxiliary model,
+    via :attr:`ProposerContext.model`) and opts into the full read-only
+    proposer tool registry
+    (:data:`zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS`), so the default
+    proposer can ground its proposal in the parent snapshot, the journal,
+    and the analyzer insights while it reasons — capabilities the
+    single-shot text shim cannot express.
+
+    ``model`` is the agent's own model (a model string ADK understands or a
+    built :class:`~google.adk.models.BaseLlm`). ADK is imported lazily here
+    so this module stays importable without the optional ``google-adk``
+    extra; the import error, if any, surfaces only when the default agent is
+    actually built (i.e. when an ``evolve`` round runs).
+    """
+    from google.adk.agents import LlmAgent  # noqa: PLC0415
+
+    return LlmAgent(
+        name=_DEFAULT_PROPOSER_AGENT_NAME,
+        model=model,
+        instruction=_DEFAULT_PROPOSER_INSTRUCTION,
+        tools=list(DEFAULT_PROPOSER_TOOLS),
+    )
 
 
 def _render_task_text(spec: ProposerSpec, ctx: ProposerContext, feedback: str) -> str:
@@ -137,9 +196,9 @@ def _resolve_generation_root(ctx: ProposerContext) -> Path:
 class ADKProposerAgent:
     """A tool-using proposer run on ADK's own ``Runner`` (Design A).
 
-    Wraps a native ADK ``LlmAgent`` — loaded from
-    ``proposers/<name>/agent.py``'s ``agent`` symbol, or injected directly
-    for tests — and drives it on an
+    Wraps a native ADK ``LlmAgent`` — the built-in default agent, an agent
+    loaded from ``proposers/<name>/agent.py``'s ``agent`` symbol, or an
+    agent injected directly for tests — and drives it on an
     :class:`~google.adk.runners.InMemoryRunner`. The agent declares its own
     ``model=``; this class never calls the auxiliary text shim
     (``ctx.aux_call_llm``). Each run is wrapped in a
@@ -149,8 +208,14 @@ class ADKProposerAgent:
     parse → forbidden-id → post-apply-validation loop as the default
     proposer, retrying within the bounded budget.
 
-    Construct it one of two ways:
+    Construct it one of three ways:
 
+    * as the BUILT-IN DEFAULT proposer —
+      ``ADKProposerAgent(spec, builtin_default=True)``. The agent is built
+      lazily on first :meth:`propose` from :func:`build_default_adk_agent`,
+      bound to ``ctx.model`` (the workspace's auxiliary model string). This
+      is what ``build_proposer_agent`` returns when a contract configures no
+      proposer dir — the default proposer is a tool-using ADK agent; or
     * from a proposer dir — ``ADKProposerAgent(spec, proposer_path=<dir>)``;
       the ``agent`` symbol is loaded lazily on first
       :meth:`propose` (mirroring the harness adapter's module load); or
@@ -164,27 +229,58 @@ class ADKProposerAgent:
     spec: ProposerSpec
     proposer_path: Path | None = None
     #: Injected pre-built ADK ``LlmAgent`` (the test seam). When set,
-    #: ``proposer_path`` is ignored and no disk load happens.
+    #: ``proposer_path`` / ``builtin_default`` are ignored and no disk load
+    #: or default-agent build happens.
     agent: Any | None = None
+    #: When ``True`` this is the BUILT-IN DEFAULT proposer: the agent is
+    #: built from :func:`build_default_adk_agent` bound to ``ctx.model`` on
+    #: first :meth:`propose` (no ``agent.py`` on disk, no injected agent).
+    #: ``build_proposer_agent`` sets this for the builtin-default spec. The
+    #: per-run model is the auxiliary model the operator already configured,
+    #: so the model-collusion smell test is intentionally skipped for the
+    #: default (it is the documented, expected posture, not an author error).
+    builtin_default: bool = False
 
-    def _load_agent(self) -> Any:
-        """Return the ADK ``LlmAgent``, loading it from disk if needed.
+    def _load_agent(self, ctx: ProposerContext | None = None) -> Any:
+        """Return the ADK ``LlmAgent``, building / loading it if needed.
 
-        When an ``agent`` was injected at construction (the test seam) it
-        is returned as-is. Otherwise the ``proposers/<name>/agent.py``
-        module is imported with ``proposer_path`` at the front of
-        ``sys.path`` and its module-level ``agent`` symbol is fetched —
-        mirroring :meth:`zicato.adapters.adk.ADKHarnessAdapter.load`. ADK
-        is imported lazily here so this class stays importable without the
+        Resolution order:
+
+        * an ``agent`` injected at construction (the test seam) wins and is
+          returned as-is;
+        * when :attr:`builtin_default` is set, the agent is built from
+          :func:`build_default_adk_agent` bound to ``ctx.model`` (the
+          auxiliary model string the orchestrator threads on the context),
+          and cached on :attr:`agent`. ``ctx`` MUST be supplied in this
+          mode (``propose`` always supplies it);
+        * otherwise the ``proposers/<name>/agent.py`` module is imported
+          with ``proposer_path`` at the front of ``sys.path`` and its
+          module-level ``agent`` symbol is fetched — mirroring
+          :meth:`zicato.adapters.adk.ADKHarnessAdapter.load`.
+
+        ADK is imported lazily (inside :func:`build_default_adk_agent` or
+        further down) so this class stays importable without the
         ``google-adk`` extra.
         """
         if self.agent is not None:
             return self.agent
+        if self.builtin_default:
+            if ctx is None:  # pragma: no cover — propose always supplies ctx
+                raise ProposerError(
+                    [
+                        "ADKProposerAgent built-in default needs a "
+                        "ProposerContext to resolve its model from"
+                    ]
+                )
+            agent = build_default_adk_agent(ctx.model)
+            self.agent = agent
+            return agent
         if self.proposer_path is None:
             raise ProposerError(
                 [
-                    "ADKProposerAgent has neither an injected agent nor a "
-                    "proposer_path to load proposers/<name>/agent.py from"
+                    "ADKProposerAgent has neither an injected agent, a "
+                    "builtin_default flag, nor a proposer_path to load "
+                    "proposers/<name>/agent.py from"
                 ]
             )
 
@@ -314,8 +410,13 @@ class ADKProposerAgent:
         per-attempt errors — identical contract to the default path. The
         auxiliary callable (``ctx.aux_call_llm``) is NEVER invoked.
         """
-        agent = self._load_agent()
-        self._warn_on_model_collusion(agent, ctx)
+        agent = self._load_agent(ctx)
+        # The model-collusion smell test is a check on AUTHOR-supplied custom
+        # agents. The built-in default deliberately runs on the auxiliary
+        # model string the operator configured, so a match there is the
+        # expected posture rather than a misconfiguration — skip the warning.
+        if not self.builtin_default:
+            self._warn_on_model_collusion(agent, ctx)
 
         generation_root = _resolve_generation_root(ctx)
         workspace_root = ctx.workspace_root if ctx.workspace_root is not None else Path.cwd()
@@ -382,4 +483,4 @@ class ADKProposerAgent:
         raise ProposerError(attempt_errors)
 
 
-__all__ = ["ADKProposerAgent"]
+__all__ = ["ADKProposerAgent", "build_default_adk_agent"]

@@ -1,6 +1,6 @@
 ---
 name: zicato-design-proposer
-description: Configure zicato's proposer — the agent that proposes each round's mutation. Two tiers: the skill-composed default (drop skills/*.md, no code, runs single-shot on --auxiliary-call-llm) and a custom ADK agent (proposers/<name>/agent.py with its OWN model= and the read-only tool registry). Use when you want to steer HOW the proposer reasons (add a skill), or give it tools to read the snapshot / journal while it reasons (custom agent). Explains when each tier suffices, the Design-A model rule (the proposer's model must differ from the harness model), the read-only tools, and that editing the proposer or a skill ROLLS THE EPOCH — same as editing the brief.
+description: Configure zicato's proposer — the agent that proposes each round's mutation. The DEFAULT (no proposer dir) is a tool-using ADK agent that owns the read-only tool registry and runs on ADK's own Runner. Two opt-in customizations: a skill-composed text-shim proposer (drop skills/*.md, no code, runs single-shot on --auxiliary-call-llm) and a custom ADK agent (proposers/<name>/agent.py with its OWN model= and the read-only tool registry). Use when you want to steer HOW the proposer reasons (add a skill), or own the model / curate the tools (custom agent). Explains when each suffices, the Design-A model rule (a custom proposer's model should differ from the harness model), the read-only tools, and that editing the proposer or a skill ROLLS THE EPOCH — same as editing the brief.
 ---
 
 # Designing a zicato proposer
@@ -28,30 +28,37 @@ Spec: [PROPOSER.md](../../docs/design/PROPOSER.md),
 > Both are contract inputs; this skill is about the agent, `zicato-write-brief`
 > is about the brief.
 
-## The two tiers — which one, when
+## The default + two opt-in customizations — which one, when
 
-A proposer lives on disk as `proposers/<name>/`. The *presence of an
-`agent.py`* selects the tier.
+The DEFAULT — **no proposer dir configured at all** — is a built-in
+**tool-using ADK agent**: it owns the full read-only tool registry and runs on
+ADK's own `Runner`, bound per round to the workspace's auxiliary model. So out
+of the box the proposer already greps the mutable surface, reads the parent
+snapshot, and consults the journal / analyzer insights while it reasons. You
+need configure NOTHING to get a capable proposer.
 
-| You want to… | Tier | What you ship |
+To CUSTOMIZE, a proposer lives on disk as `proposers/<name>/`. The *presence of
+an `agent.py`* selects which customization you get:
+
+| You want to… | Customization | What you ship |
 |---|---|---|
-| Steer HOW the default proposer reasons (grounding rules, house style, a checklist) without code | **(a) skill-composed default** | One or more `skills/*.md`, NO `agent.py`. Runs single-shot on `--auxiliary-call-llm`; your skill bodies are injected into the system prompt. |
-| Give the proposer the ability to READ the world while it reasons — grep the mutable surface, inspect the parent snapshot, recall prior rounds | **(b) custom ADK agent** | A `proposers/<name>/agent.py` exposing a module-level `agent` — a native ADK `LlmAgent` with its OWN `model=` and `tools=` from the read-only registry. |
+| Steer HOW the proposer reasons (grounding rules, house style, a checklist) over the text shim, without code | **(a) skill-composed (text shim)** | One or more `skills/*.md`, NO `agent.py`. Runs single-shot on `--auxiliary-call-llm`; your skill bodies are injected into the system prompt. (This is the text-shim engine — it does NOT have tools.) |
+| OWN the model the proposer runs on, curate its tool subset, or write a bespoke instruction | **(b) custom ADK agent** | A `proposers/<name>/agent.py` exposing a module-level `agent` — a native ADK `LlmAgent` with its OWN `model=` and `tools=` from the read-only registry. |
 
-**Default to tier (a).** Reach for tier (b) ONLY when the proposer genuinely
-needs tools — a custom agent is more to own (its own model, its own
-instruction, the optional `google-adk` extra). If all you need is to change the
-*reasoning*, a skill is strictly cheaper.
-
-When no proposer dir is configured at all, the proposer is the built-in default
-agent — no skills, no tools.
+**Prefer the default.** The default already has tools, so reach for a
+customization only when you specifically want to change the *reasoning* (a
+skill — but note it drops to the text shim, which has no tools) or *own the
+model* (a custom agent). If you want tools AND custom reasoning, write a custom
+`agent.py`.
 
 ## (a) Add a skill — drop a `SKILL.md`-format file
 
 A skill is a markdown file under `proposers/<name>/skills/`. It is SKILL.md
 format: an optional `---`-fenced frontmatter block (`name` + `description`)
 followed by a free-form markdown body. The body is what gets injected into the
-default proposer's system prompt.
+skill-composed (text-shim) proposer's system prompt. (Adding a skill, with no
+`agent.py`, switches the proposer from the tool-using default to the text-shim
+engine — the skill bodies steer it, but it has no tools.)
 
 ```
 proposers/fancy/
@@ -158,14 +165,19 @@ and `zicato-manage-epochs-and-rounds`.
 
 ## A good proposer design
 
-- **Start with the built-in default; add a skill before you add an agent.**
-  Most steering is reasoning, not capability — a `skills/*.md` is the cheaper,
-  contract-clean lever.
-- **Only go custom-agent when the proposer needs to READ the world** (grep,
-  snapshot, journal) while it reasons. Tools are the whole reason tier (b)
-  exists.
-- **Set the proposer model distinct from the harness model.** It is your
-  responsibility, not a hard gate.
+- **Start with the built-in default — it already has tools.** The default
+  tool-using ADK agent greps the surface, reads the snapshot, and consults the
+  journal out of the box. Configure nothing unless you have a specific reason.
+- **A skill drops you to the text shim (no tools).** Add a `skills/*.md` only
+  when you want to steer the *reasoning* over the text-shim engine and don't
+  need tools; it is the cheaper, contract-clean lever for pure reasoning
+  changes, but it trades away the default's tools.
+- **Go custom-agent to OWN the model, curate the tool subset, or write a
+  bespoke instruction** while keeping tools. That is the whole reason the
+  custom-agent path exists.
+- **Set a custom proposer's model distinct from the harness model.** It is your
+  responsibility, not a hard gate. (The built-in default reuses the auxiliary
+  model on purpose — that smell test is skipped for it.)
 - **Treat a skill edit like a brief edit** — it rolls the epoch, so batch
   proposer changes with your other contract edits.
 - **Never start a live `zicato evolve` to test a proposer without the

@@ -3,6 +3,16 @@
 These tests stub every external dependency (LLM callables, harness
 adapter, telemetry sink, reducer) so the orchestrator can be exercised
 end-to-end without goldfive, google-adk, or any real model traffic.
+
+The DEFAULT proposer is now the tool-using ADK agent, which would pull in
+the optional ``google-adk`` extra and a real model at propose time. These
+tests are about the orchestrator's tournament / promotion / lineage logic,
+not the proposer model, so the shared conftest autouse fixture
+(``_pin_default_proposer_to_text_shim``) pins the builtin-default proposer
+to the text-shim :class:`DefaultProposerAgent` — the same skill-composed
+engine these tests have always driven through the auxiliary callable. The
+real ADK default-agent path is covered by
+``tests/test_proposer_adk_agent.py`` (which gates on ``google.adk``).
 """
 
 from __future__ import annotations

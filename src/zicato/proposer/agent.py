@@ -18,16 +18,28 @@ Two halves:
   :func:`build_proposer_agent` — the protocol, the skills-aware built-in
   implementation, and the spec→agent builder.
 
-Two agent implementations ship here. The built-in
-:class:`DefaultProposerAgent` is the single-shot text-shim path: it drives
-:func:`propose_experiment` over the auxiliary callable. A proposer dir that
-carries a custom ``agent.py`` (``spec.agent_source_sha256`` is set) selects
-the Design-A path instead — :func:`build_proposer_agent` returns an
-:class:`~zicato.proposer.adk_agent.ADKProposerAgent`, a native ADK agent
+Two agent implementations ship here. The
+:class:`~zicato.proposer.adk_agent.ADKProposerAgent` is a native ADK agent
 that declares its own ``model=`` and runs on ADK's own ``Runner`` (NOT the
 auxiliary text shim, which cannot express the function calls a tool-using
-agent needs). The ADK module is imported lazily so the default path stays
-free of the optional ``google-adk`` extra.
+agent needs); :class:`DefaultProposerAgent` is the single-shot text-shim
+path that drives :func:`propose_experiment` over the auxiliary callable.
+
+:func:`build_proposer_agent` selects between them:
+
+* **no proposer dir configured (the DEFAULT)** ⇒ the tool-using
+  ``ADKProposerAgent`` in ``builtin_default`` mode, bound to the auxiliary
+  model and the full read-only proposer tool registry. The default proposer
+  reads the world while it reasons;
+* **a proposer dir with a custom ``agent.py``**
+  (``spec.agent_source_sha256`` is set) ⇒ ``ADKProposerAgent`` loading that
+  author-owned agent from disk;
+* **a proposer dir with skills but no ``agent.py``** ⇒ the skill-composed
+  ``DefaultProposerAgent`` — the EXPLICIT opt-in into the single-shot
+  text-shim engine.
+
+The ADK module is imported lazily so importing this module never forces the
+optional ``google-adk`` extra.
 """
 
 from __future__ import annotations
@@ -152,22 +164,37 @@ def build_proposer_agent(
 ) -> ProposerAgent:
     """Build the :class:`ProposerAgent` for a resolved proposer spec.
 
-    Returns a :class:`DefaultProposerAgent` — the skills-aware single-shot
-    built-in — for the built-in default spec and for any ``dir:*`` proposer
-    that carries *no* custom agent module (``spec.agent_source_sha256`` is
-    ``None``). Such a proposer steers the default engine purely through its
-    skills, over the auxiliary text shim.
+    Three outcomes, in resolution order:
 
-    When the proposer dir ships a ``proposers/<name>/agent.py``
-    (``spec.agent_source_sha256`` is set), this returns an
-    :class:`~zicato.proposer.adk_agent.ADKProposerAgent` — the Design-A
-    tool-using path: a native ADK agent that declares its own ``model=``
-    and runs on ADK's own ``Runner`` (the auxiliary callable does NOT
-    govern it). ``proposer_path`` is the proposer dir the
-    ``agent.py`` module is loaded from; the orchestrator threads the same
-    frozen ``proposer_path`` it resolved the spec from. The ADK module is
-    imported lazily so the default path never requires the ``google-adk``
-    extra.
+    1. **Custom ADK agent** — when the proposer dir ships a
+       ``proposers/<name>/agent.py`` (``spec.agent_source_sha256`` is set),
+       this returns an :class:`~zicato.proposer.adk_agent.ADKProposerAgent`
+       that loads that author-owned agent from disk. ``proposer_path`` is
+       the dir the module is loaded from; the orchestrator threads the same
+       frozen ``proposer_path`` it resolved the spec from.
+
+    2. **Built-in default (the DEFAULT)** — when a contract configures NO
+       proposer dir, ``spec`` is :meth:`ProposerSpec.default` (agent id
+       ``"builtin:default"``). This returns an
+       :class:`~zicato.proposer.adk_agent.ADKProposerAgent` in
+       ``builtin_default`` mode: a native ADK tool-using agent
+       (:func:`~zicato.proposer.adk_agent.build_default_adk_agent`) bound to
+       the workspace's auxiliary model and the full read-only proposer tool
+       registry. The DEFAULT proposer therefore reads the world (the parent
+       snapshot, the journal, the analyzer insights) while it reasons, on
+       ADK's own ``Runner`` — NOT the single-shot text shim.
+
+    3. **Skill-composed default (EXPLICIT opt-in)** — a ``dir:*`` proposer
+       that carries *no* custom agent module (``spec.agent_source_sha256``
+       is ``None``) but DOES configure a proposer dir (e.g. to drop
+       ``skills/*.md``). This returns a :class:`DefaultProposerAgent`, the
+       single-shot text-shim engine, steered purely through its skills over
+       the auxiliary callable. Configuring a proposer dir is the explicit
+       opt-in into this path; the bare default (#2) is the tool-using agent.
+
+    Every ``google.adk`` import is lazy, so importing this module never
+    forces the optional ``google-adk`` extra — only constructing an
+    ``ADKProposerAgent``'s agent (at first ``propose``) pulls it in.
 
     Raises
     ------
@@ -176,6 +203,11 @@ def build_proposer_agent(
         ``proposer_path`` was supplied to load it from — a misconfiguration
         the caller must fix rather than silently fall back to the default.
     """
+    # Lazy import: ADKProposerAgent pulls in the optional google-adk extra
+    # only when its agent is actually built (at first propose), so importing
+    # this module stays dependency-light.
+    from zicato.proposer.adk_agent import ADKProposerAgent  # noqa: PLC0415
+
     if spec.agent_source_sha256 is not None:
         if proposer_path is None:
             raise ValueError(
@@ -183,12 +215,15 @@ def build_proposer_agent(
                 "set) but no proposer_path was supplied to load "
                 "proposers/<name>/agent.py from"
             )
-        # Lazy import: ADKProposerAgent pulls in the optional google-adk
-        # extra only when actually constructed, so the default path stays
-        # dependency-light.
-        from zicato.proposer.adk_agent import ADKProposerAgent  # noqa: PLC0415
-
         return ADKProposerAgent(spec=spec, proposer_path=proposer_path)
+
+    if spec == ProposerSpec.default():
+        # The DEFAULT proposer: a tool-using ADK agent bound to the
+        # auxiliary model at propose time. No proposer dir was configured.
+        return ADKProposerAgent(spec=spec, builtin_default=True)
+
+    # A configured proposer dir with skills but no custom agent.py — the
+    # skill-composed single-shot engine, the explicit opt-in.
     return DefaultProposerAgent(spec)
 
 
