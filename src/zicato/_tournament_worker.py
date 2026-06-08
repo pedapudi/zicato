@@ -700,6 +700,8 @@ def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
         pass_weight=float(raw.get("pass_weight", defaults.pass_weight)),
         severity_weights=dict(raw.get("severity_weights", defaults.severity_weights)),
         per_kind_weights=dict(raw.get("per_kind_weights", defaults.per_kind_weights)),
+        per_judge_weights=dict(raw.get("per_judge_weights", defaults.per_judge_weights)),
+        default_judge_weight=float(raw.get("default_judge_weight", defaults.default_judge_weight)),
         plan_revision_weight=float(raw.get("plan_revision_weight", defaults.plan_revision_weight)),
         runtime_weight=float(raw.get("runtime_weight", defaults.runtime_weight)),
         promote_margin=float(raw.get("promote_margin", defaults.promote_margin)),

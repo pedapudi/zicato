@@ -261,6 +261,66 @@ def test_worker_penalises_aborted_run_in_loss_json(tmp_path: Path) -> None:
     assert profile.task_failure_ratio == pytest.approx(1.0)
 
 
+def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
+    """``per_judge_weights`` weight a custom-judge drift through the WORKER path.
+
+    Regression for the P0 in which ``per_judge_weights`` and
+    ``default_judge_weight`` were silently dropped when scoring weights
+    were serialised for the subprocess worker — so every tournament run
+    scored custom-judge drift at the dataclass default ``1.0`` instead of
+    the operator's configured weight. The first-class ``per_kind_weights``
+    were carried, masking the bug for non-judge drift.
+
+    This walks the exact transport the worker uses: the serialise side
+    (:func:`zicato.tournament.runner._weights_spec`) → a JSON round-trip
+    (the args file is JSON) → the deserialise side
+    (:func:`zicato._tournament_worker._weights_from_args`), then feeds the
+    reconstructed weights into the same drift-loss consumer the worker
+    invokes (:func:`compute_drift_loss` via ``reduce_loss``).
+
+    Hand-check: a ``file_findability`` custom judge emitting raw drift 14
+    (count 14 × ``info`` severity weight 1.0) configured at weight 2.0 must
+    contribute 28 to ``drift_loss``. The dropped-weight bug yields 14.
+    """
+    from zicato._tournament_worker import _weights_from_args
+    from zicato.core import DriftCount
+    from zicato.telemetry.reducer import compute_drift_loss
+    from zicato.tournament.runner import _weights_spec
+
+    weights = ScoringWeights(
+        severity_weights={"info": 1.0, "warning": 3.0, "critical": 10.0},
+        per_judge_weights={"file_findability": 2.0},
+        default_judge_weight=1.0,
+    )
+
+    # Serialise → JSON → deserialise: exactly what the worker subprocess sees.
+    spec = _weights_spec(weights)
+    assert spec["per_judge_weights"] == {"file_findability": 2.0}
+    assert spec["default_judge_weight"] == 1.0
+    round_tripped = _weights_from_args({"weights": json.loads(json.dumps(spec))})
+    assert round_tripped.per_judge_weights == {"file_findability": 2.0}
+    assert round_tripped.default_judge_weight == 1.0
+
+    # raw drift = count 14 × info severity 1.0 = 14.
+    drift = (DriftCount(kind="custom:file_findability", severity="info", count=14),)
+
+    weighted = compute_drift_loss(
+        drift, plan_revisions=0, task_failure_ratio=0.0, runtime_ms=0, weights=round_tripped
+    )
+    # 14 raw × per_judge weight 2.0 = 28. The bug (weight dropped to the
+    # default 1.0) would give 14.
+    assert weighted == pytest.approx(28.0)
+
+    # Counterfactual: the unconfigured worker-side path (weight dropped)
+    # produces the under-counted 14 — the exact bug we are guarding.
+    dropped = ScoringWeights(severity_weights={"info": 1.0, "warning": 3.0, "critical": 10.0})
+    under_counted = compute_drift_loss(
+        drift, plan_revisions=0, task_failure_ratio=0.0, runtime_ms=0, weights=dropped
+    )
+    assert under_counted == pytest.approx(14.0)
+    assert weighted != under_counted
+
+
 def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
     """The active_runs file the worker writes carries the WORKER's pid.
 
