@@ -27,6 +27,7 @@ import { el, svgEl } from '../../../core/dom.js';
 import { state } from '../../../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, normaliseDecision, decisionFor, densityTokens } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
@@ -701,11 +702,17 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // In the compare split the panes are already narrow, so the grid collapses to
   // one column (dn-dossier-grid is single-column there) and the figures stack.
 
-  // (LEFT) ── per-board scoring dot-plot ──
-  // Each per-entry record carries the tournament context it ran in (match_id /
-  // rung). The SAME board entry can appear several times — raced across rungs /
-  // rounds — so we surface a short context tag per row to disambiguate the
-  // duplicates, and route a click to that SPECIFIC run's board drill-down.
+  // (LEFT) ── per-board champion○ → candidate● DUMBBELL (study opt 2) ──
+  // The study's per-board figure is an explicit per-row DUMBBELL: on each board
+  // the CHAMPION's loss ON THAT BOARD (hollow ○) and THIS candidate's loss
+  // (filled ●) ride a shared per-row value axis, joined by a connector coloured
+  // improved (candidate left of champion) / regressed (right); the Δ (cand −
+  // champ) + the pass/fail/timeout marker sit at the right edge, worst-first.
+  // This is the paired champ→cand read — NOT the old single-series dot-plot
+  // against one aggregate champion reference rule. Each per-entry record carries
+  // the tournament context it ran in (match_id / rung); the SAME board can appear
+  // several times (raced across rungs / rounds), so we keep the short dim context
+  // tag per row + route a click to that SPECIFIC run's board drill-down.
   const scoreCard = el('div', { class: 'dn-panel' });
   // a cached champion's per-board results are reused from a prior epoch/run —
   // tag the section so it reads "cached · from <source_epoch>", never "no
@@ -718,32 +725,39 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     ]));
   }
   if (s.entries.length) {
-    const items = s.entries
+    // the per-board champion value comes from s.championLoss (the champion's
+    // per-board drift_loss on the SAME slice, matched by entry_id; absent for the
+    // seed / when the candidate IS the champion → a candidate-only row, no ○).
+    const champByEntry = s.championLoss || {};
+    const rows = s.entries
       .filter((e) => svg.isNum(e.drift_loss))
       .sort((a, b) => b.drift_loss - a.drift_loss)
       .map((e) => ({
         label: e.entry_id, value: e.drift_loss, id: e.entry_id,
+        champ: svg.isNum(champByEntry[e.entry_id]) ? champByEntry[e.entry_id] : null,
         pass: e.pass_fail, timeout: !!e.wall_clock_budget_exceeded,
         context: tournamentContext(e),
         entry_id: e.entry_id, run_id: e.run_id || null, gen: genId,
       }));
-    // RESPONSIVE: the dot-plot fills the width of its dossier column (the
-    // operator's "cramped to the right" was the old full-bleed section centring a
-    // 560-wide viewBox in a wide pane). `responsive:true` is the shared-contract
-    // aspect-locked flag; the wider viewBox + the grid column do the rest.
-    scoreCard.appendChild(svg.valueDotPlot({
-      width: narrow ? 480 : 720, rowHeight: dt.dotRow, labelWidth: narrow ? 160 : 200, items,
-      responsive: true,
-      reference: svg.isNum(championScalar) ? { value: championScalar, label: `champion ${championId}` } : null,
-      // click a row (board name AND dot) → the board drill-down for THIS exact
-      // run: the board view opens its inline transcript for the selected gen.
+    // RESPONSIVE: the dumbbell fills the width of its dossier column. The
+    // candidate-vs-champion comparison rides per-row (each board's own ○ → ●),
+    // so the de-emphasised aggregate champion tick is just a faint reference at
+    // the foot — NOT the per-row comparator (that's the dumbbell).
+    scoreCard.appendChild(perBoardDumbbell({
+      width: narrow ? 480 : 720, rowHeight: dt.dotRow, labelWidth: narrow ? 160 : 200, rows,
+      championId,
+      aggregate: svg.isNum(championScalar) ? { value: championScalar, label: `champion ${championId}` } : null,
+      // click a row (board name, either dot, AND the Δ) → the board drill-down for
+      // THIS exact run: the board view opens its inline transcript for the gen.
       onClick: (it) => ctx.navigate('board', { epochId, entry: it.entry_id || it.id, gen: it.gen || genId }),
     }));
+    const anyPaired = rows.some((r) => svg.isNum(r.champ));
     scoreCard.appendChild(el('div', { class: 'dn-legend' }, [
-      svg.isNum(championScalar) ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champion ${championId} = ${svg.fmt(championScalar, 1)}`]) : null,
-      el('span', null, [el('i', { class: 'dotact' }), 'pass']),
-      el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-bad);' }), 'fail']),
-      el('span', { class: 'dn-faint', text: '⏱ timeout · dim tag = rung/round it ran in · click an entry → its drill-down' }),
+      anyPaired ? el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-ink-faint);' }), `champion ${championId} ○`]) : null,
+      el('span', null, [el('i', { class: 'dotact', style: 'background:var(--v2-good);' }), 'candidate ● · improved']),
+      el('span', null, [el('i', { class: 'dotact', style: 'background:var(--v2-bad);' }), 'candidate ● · regressed']),
+      svg.isNum(championScalar) ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champ aggregate ${svg.fmt(championScalar, 1)}`]) : null,
+      el('span', { class: 'dn-faint', text: '⏱ timeout · Δ = candidate − champion · dim tag = rung/round it ran in · click → drill-down' }),
     ].filter(Boolean)));
   } else if (s.radar && s.radar.projectedOnly) {
     // RACING / IN-FLIGHT with no SETTLED per-board rows yet: don't read "no
@@ -752,7 +766,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   } else {
     scoreCard.appendChild(empty('No per-entry scores for this candidate (the index may not be built).'));
   }
-  const scoreSection = section('Per-board scoring · sorted, vs champion', scoreCard);
+  const scoreSection = section('Per-board scoring · champion ○ → candidate ● · sorted', scoreCard);
 
   // (LEFT) ── the STACKED promote gate(s) (fix #1) — moved INTO the dossier grid
   // so the deciding rules read beside the per-board evidence + the silhouette.
@@ -909,6 +923,141 @@ function racingAffordance() {
       el('span', { class: 'dn-faint', text: ' settled comparisons (per-board dumbbell · gate ladder) appear once boards finish' }),
     ]),
   ]);
+}
+
+// ── the per-board champion○ → candidate● DUMBBELL (study opt 2, inline) ──
+// An explicit per-row dumbbell, faithful to the study's dossierDotPlot: each
+// board row carries, on a SHARED per-row value axis spanning every board's
+// champion + candidate value, the champion's loss ON THAT BOARD as a hollow ○
+// and this candidate's as a filled ●, joined by a connector coloured improved
+// (candidate left of champion) / regressed (right of champion); the Δ (cand −
+// champ) + the pass/fail/timeout marker ride the right edge; rows are passed
+// pre-sorted (worst-first). A de-emphasised dashed champion AGGREGATE tick sits
+// at the foot — context, NOT the per-row comparator. Rendered INLINE with
+// svgEl(...) — NO builder is added to / modified in svg.js. Each row is a
+// clickable <g> (board name, either dot, the connector, the Δ) → onClick(row).
+// The shared-contract responsive flag (width:100% + viewBox) keeps it filling
+// its dossier column. A board with NO champion value (seed / cand IS champion)
+// renders candidate-only (just the ●), so the figure never crashes.
+function perBoardDumbbell(opts) {
+  const o = opts || {};
+  const rows = (Array.isArray(o.rows) ? o.rows : []).filter((r) => r && svg.isNum(r.value));
+  const w = svg.isNum(o.width) ? o.width : 720;
+  const rh = svg.isNum(o.rowHeight) ? o.rowHeight : 22;
+  const labelW = svg.isNum(o.labelWidth) ? o.labelWidth : 200;
+  const top = 18;          // headroom above the first row
+  const glyphW = 16;       // right-edge pass/fail/timeout glyph gutter
+  const deltaW = 40;       // the Δ value column, just left of the glyph
+  const footH = 16;        // the faint aggregate-tick caption band at the foot
+  const h = Math.max(rh + top + footH, top + rows.length * rh + footH);
+  const svgNode = svgEl('svg', {
+    class: 'dn-dumbbell', width: '100%', height: h,
+    viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: 'xMidYMin meet', role: 'img',
+    'aria-label': 'per-board champion to candidate dumbbell',
+  });
+  if (!rows.length) {
+    const t = svgEl('text', { x: 4, y: 16, class: 'dn-empty-label' });
+    t.textContent = 'no scored entries';
+    svgNode.appendChild(t);
+    return svgNode;
+  }
+  const x0 = labelW + 6;
+  const x1 = w - glyphW - deltaW;
+  // a shared per-row value axis spanning BOTH champion + candidate across all
+  // boards, so every ○/● sits on one comparable scale (the study's `X`).
+  const vals = [];
+  for (const r of rows) { vals.push(r.value); if (svg.isNum(r.champ)) vals.push(r.champ); }
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (lo === hi) hi += 1;
+  const pad = (hi - lo) * 0.08;
+  lo -= pad; hi += pad;
+  const X = (v) => x0 + ((v - lo) / (hi - lo)) * (x1 - x0);
+
+  rows.forEach((r, i) => {
+    const cy = top + i * rh + rh / 2;
+    const paired = svg.isNum(r.champ);
+    const dx = X(r.value);
+    const cx = paired ? X(r.champ) : null;
+    // good when the candidate is BETTER (lower loss) than the champion on THIS
+    // board; bad when worse; neutral when unpaired (seed) or exactly equal.
+    const better = paired ? (r.value < r.champ) : null;
+    const worse = paired ? (r.value > r.champ) : null;
+    const dirCls = better ? 'dn-good' : worse ? 'dn-bad' : 'dn-flat';
+    const g = svgEl('g', { class: 'dn-dumbbell-row', tabindex: o.onClick ? '0' : null });
+
+    // board name + the dim rung/round context tag, two stacked right-anchored
+    // lines in the label gutter (matches the dot-plot's dim-tag treatment).
+    const hasCtx = r.context != null && String(r.context) !== '';
+    const lbl = svgEl('text', { x: labelW, y: hasCtx ? cy - 2 : cy + 3, class: 'dn-dumbbell-label', 'text-anchor': 'end' });
+    lbl.textContent = shortText(r.label, 22);
+    g.appendChild(lbl);
+    if (hasCtx) {
+      const ctxt = svgEl('text', { x: labelW, y: cy + 9, class: 'dn-dumbbell-ctx', 'text-anchor': 'end' });
+      ctxt.textContent = shortText(String(r.context), 22);
+      g.appendChild(ctxt);
+    }
+
+    // faint full-row baseline, then the champ→candidate connector on top.
+    g.appendChild(svgEl('line', { x1: x0, y1: cy, x2: x1, y2: cy, class: 'dn-dumbbell-base' }));
+    if (paired) {
+      g.appendChild(svgEl('line', { x1: cx, y1: cy, x2: dx, y2: cy, class: 'dn-dumbbell-conn ' + dirCls }));
+      // champion marker — HOLLOW ○ (panel fill + faint stroke) on THIS board.
+      const champDot = svgEl('circle', { cx, cy, r: 3.4, class: 'dn-dumbbell-champ' });
+      attachHovercard(champDot, `${r.label}: champion ${svg.fmt(r.champ, 2)} (on this board)`);
+      g.appendChild(champDot);
+    }
+    // candidate marker — FILLED ● coloured by the per-board verdict.
+    const candDot = svgEl('circle', { cx: dx, cy, r: 4, class: 'dn-dumbbell-cand ' + dirCls });
+    attachHovercard(candDot, paired
+      ? `${r.label}: candidate ${svg.fmt(r.value, 2)} vs champ ${svg.fmt(r.champ, 2)} (Δ ${svg.fmtSigned(r.value - r.champ, 2)})`
+      : `${r.label}: candidate ${svg.fmt(r.value, 2)}`);
+    g.appendChild(candDot);
+
+    // per-board Δ (candidate − champion) just left of the glyph gutter.
+    if (paired) {
+      const dt = svgEl('text', { x: w - glyphW - 2, y: cy + 3, class: 'dn-dumbbell-delta ' + dirCls, 'text-anchor': 'end' });
+      dt.textContent = svg.fmtSigned(r.value - r.champ, 2);
+      g.appendChild(dt);
+    }
+    // the pass/fail/timeout marker at the right edge.
+    const gx = w - glyphW + 6;
+    if (r.timeout) {
+      const tm = svgEl('text', { x: gx, y: cy + 3, class: 'dn-dumbbell-timeout', 'text-anchor': 'middle' });
+      tm.textContent = '⏱';
+      g.appendChild(tm);
+    } else if (r.pass === 1 || r.pass === true) {
+      g.appendChild(svgEl('circle', { cx: gx, cy, r: 2.6, class: 'dn-dumbbell-pass' }));
+    } else if (r.pass === 0 || r.pass === false) {
+      g.appendChild(svgEl('line', { x1: gx - 2.6, y1: cy - 2.6, x2: gx + 2.6, y2: cy + 2.6, class: 'dn-dumbbell-fail' }));
+      g.appendChild(svgEl('line', { x1: gx - 2.6, y1: cy + 2.6, x2: gx + 2.6, y2: cy - 2.6, class: 'dn-dumbbell-fail' }));
+    }
+
+    if (o.onClick) {
+      g.addEventListener('click', () => o.onClick(r));
+      g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); o.onClick(r); } });
+    }
+    svgNode.appendChild(g);
+  });
+
+  // de-emphasised aggregate champion tick (dashed) at the foot — context, NOT
+  // the per-row comparator (the dumbbell is the comparator). Only when in range.
+  if (o.aggregate && svg.isNum(o.aggregate.value) && o.aggregate.value >= lo && o.aggregate.value <= hi) {
+    const ax = X(o.aggregate.value);
+    const ayb = h - 4;
+    svgNode.appendChild(svgEl('line', { x1: ax, y1: top - 6, x2: ax, y2: ayb - 9, class: 'dn-dumbbell-aggtick' }));
+    const at = svgEl('text', { x: ax, y: ayb, class: 'dn-dumbbell-aggcap', 'text-anchor': 'middle' });
+    at.textContent = (o.aggregate.label || 'champ aggregate') + ' ' + svg.fmt(o.aggregate.value, 1);
+    svgNode.appendChild(at);
+  }
+  return svgNode;
+}
+
+// short-truncate a label to N chars with an ellipsis (local to candidate.js so
+// it does not reach into svg.js's private shortLabel).
+function shortText(s, n) {
+  const max = svg.isNum(n) ? n : 22;
+  const str = s == null ? '' : String(s);
+  return str.length > max ? str.slice(0, max - 1) + '…' : str;
 }
 
 // The RACING field-relative panels — field standings (every racer ranked by
