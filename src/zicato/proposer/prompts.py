@@ -474,12 +474,31 @@ def render_system_prompt(
     )
 
 
+#: How much of the model's prior raw response to echo back on a repair
+#: turn. Enough to show the model the SHAPE of what it produced (the stray
+#: ``<think>`` block, the prose preamble, the trailing commentary) without
+#: blowing the context budget — the failure mode is almost always visible
+#: in the opening few hundred characters.
+_FEEDBACK_PRIOR_OUTPUT_LIMIT_CHARS = 800
+
+
+def _truncate_prior_output(text: str) -> str:
+    """Clip a prior raw response for echo-back on a repair turn."""
+
+    clipped = text[:_FEEDBACK_PRIOR_OUTPUT_LIMIT_CHARS]
+    if len(text) > _FEEDBACK_PRIOR_OUTPUT_LIMIT_CHARS:
+        clipped = clipped.rstrip() + "\n[... truncated ...]"
+    return clipped
+
+
 def render_user_prompt(
     *,
     current_loss_summary: str,
     patterns: Iterable[Pattern],
     mutations: Iterable[MutationPoint],
     feedback: str = "",
+    feedback_prior_output: str = "",
+    feedback_was_empty: bool = False,
     insights: str = "",
     prior_experiments: Iterable[PriorExperiment] = (),
     restrict_visibility: bool = False,
@@ -495,9 +514,21 @@ def render_user_prompt(
     mutations:
         Iterable of :class:`MutationPoint` — the valid patch targets.
     feedback:
-        Optional retry feedback. When non-empty, an extra section is
-        prepended explaining the previous parse failure so the model
-        can correct itself.
+        Optional retry feedback. When non-empty, a repair section is
+        prepended explaining the previous failure so the model can
+        correct itself. This turns each retry into a genuine repair turn
+        rather than a blind re-ask.
+    feedback_prior_output:
+        The model's PRIOR raw response, echoed back (truncated) on a
+        repair turn so the model can see exactly what it produced — the
+        stray ``<think>`` block, the prose preamble, the trailing
+        commentary. Only rendered when ``feedback`` is also non-empty.
+    feedback_was_empty:
+        When ``True``, the prior response was empty (the model most likely
+        spent its entire output budget on reasoning). The repair section
+        switches to a targeted instruction: skip ALL reasoning and emit
+        the JSON object immediately. Only consulted when ``feedback`` is
+        non-empty.
     insights:
         Optional markdown body produced by the decision-telemetry
         analyzer (see :func:`zicato.analyzer.load_latest_insights`).
@@ -542,13 +573,43 @@ def render_user_prompt(
         insights_prefix = f"## Recent telemetry insights\n{insights.strip()}\n\n"
         body = insights_prefix + body
     if feedback:
-        prefix = (
-            "## Previous attempt was rejected\n"
-            "Your previous response failed to parse. Reason:\n\n"
-            f"    {feedback}\n\n"
-            "Re-emit a single JSON object that conforms to the schema.\n\n"
-        )
-        return prefix + body
+        sections = [
+            "## Previous attempt was rejected",
+            "Your previous response failed to parse. Reason:",
+            "",
+            f"    {feedback}",
+            "",
+        ]
+        if feedback_was_empty:
+            # Targeted variant: an empty response means the model most
+            # likely burned its whole output budget on reasoning before
+            # ever reaching the JSON. Tell it to skip reasoning entirely.
+            sections += [
+                "Your previous output was EMPTY — you most likely spent your entire "
+                "output budget on reasoning before emitting any JSON.",
+                "",
+                "Do NOT think step by step. Do NOT emit any <think>/<thinking>/"
+                "<reasoning> block. Skip all reasoning and emit the JSON object "
+                "IMMEDIATELY as the very first thing you write.",
+                "",
+            ]
+        elif feedback_prior_output.strip():
+            echoed = textwrap.indent(_truncate_prior_output(feedback_prior_output), "    ")
+            sections += [
+                "Your previous output was:",
+                "",
+                echoed,
+                "",
+            ]
+        sections += [
+            "Respond with ONLY the JSON object — no <think>/<thinking>/<reasoning> "
+            "blocks, no markdown code fences, no prose before or after it. The "
+            'first character of your response MUST be "{" and the last MUST be '
+            '"}". The top-level keys must be exactly "hypothesis" and "patches".',
+            "",
+            "",
+        ]
+        return "\n".join(sections) + body
     return body
 
 
