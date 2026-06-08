@@ -51,6 +51,7 @@ in heavy NLP deps. Single-turn entries leave both fields ``None``.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import Counter
 from dataclasses import asdict
@@ -344,6 +345,37 @@ def not_completed_penalty(weights: ScoringWeights) -> float:
     """
     sev_vals = list(weights.severity_weights.values()) or [1.0]
     return _NOT_COMPLETED_HEAVY_TERM_FACTOR * max(sev_vals)
+
+
+def _continuous_score(expectation_result: ExpectationResult) -> float:
+    """Coerce an :class:`ExpectationResult` into a clamped ``[0, 1]`` score.
+
+    The single guard the scalar trusts. A rogue scorer must never poison
+    the aggregate, so the rules are:
+
+    * a result that already carries a continuous ``score`` is clamped to
+      ``[0.0, 1.0]``; a non-finite value (``NaN`` / ``±inf``) is treated
+      as an outright MISS (``0.0``) rather than propagating into the mean;
+    * otherwise the binary ``passed`` bit maps to ``1.0`` / ``0.0``.
+
+    The bool path is exactly ``float(passed)``, so a board whose entries
+    are all bool produces a per-entry score sequence identical to its
+    binary pass/fail sequence — which is what makes ``mean_score`` collapse
+    to the binary ``pass_rate`` byte-for-byte.
+    """
+    raw = expectation_result.score
+    if raw is None:
+        return 1.0 if expectation_result.passed else 0.0
+    value = float(raw)
+    if not math.isfinite(value):
+        # A rogue scorer returned NaN / inf: count it as a miss rather
+        # than letting it poison the mean.
+        return 0.0
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
 
 
 # The bare wire-canonical drift-kind string a custom judge emits. All
@@ -1037,11 +1069,29 @@ def reduce_loss(
         # watchdog kill. See docstring for rationale.
         drift_loss += not_completed_penalty(weights)
 
-    # --- 4. Pass/fail derivation ---
+    # --- 4. Pass/fail + continuous-score derivation ---
 
     pass_fail: bool | None = None
+    score: float | None = None
+    metrics: dict[str, float] | None = None
     if expectation_result is not None:
         pass_fail = expectation_result.passed
+        # Record the per-entry continuous score (bool -> 1.0/0.0, a float
+        # clamped to [0,1], NaN/inf treated as a miss). The bool case is
+        # exactly float(passed), so an all-bool board yields a score
+        # sequence identical to its pass/fail sequence — mean_score then
+        # equals pass_rate byte-for-byte (see tournament.scoring).
+        score = _continuous_score(expectation_result)
+        # Carry the scorer's optional decomposition (precision/recall/...)
+        # straight through; coerce to float and drop non-finite entries so
+        # loss.json never serialises a NaN.
+        if expectation_result.metrics:
+            cleaned: dict[str, float] = {}
+            for key, raw_val in expectation_result.metrics.items():
+                val = float(raw_val)
+                if math.isfinite(val):
+                    cleaned[str(key)] = val
+            metrics = cleaned or None
 
     if not run_id:
         run_id = f"{generation_id}:{entry.id}"
@@ -1094,6 +1144,8 @@ def reduce_loss(
         schema_failures=schema_failures,
         adk_session_id=adk_session_id,
         per_judge_loss=per_judge_loss,
+        score=score,
+        metrics=metrics,
     )
 
 
@@ -1180,11 +1232,27 @@ def read_loss_profile(path: Path) -> LossProfile:
     if exp is None:
         expectation_result = None
     else:
+        exp_score = exp.get("score")
+        exp_metrics_raw = exp.get("metrics")
+        exp_metrics = (
+            {str(k): float(v) for k, v in exp_metrics_raw.items()}
+            if isinstance(exp_metrics_raw, dict)
+            else None
+        )
         expectation_result = ExpectationResult(
             kind=exp["kind"],
             passed=bool(exp["passed"]),
             detail=exp.get("detail", ""),
+            score=float(exp_score) if exp_score is not None else None,
+            metrics=exp_metrics,
         )
+    score_raw = d.get("score")
+    metrics_raw = d.get("metrics")
+    metrics = (
+        {str(k): float(v) for k, v in metrics_raw.items()}
+        if isinstance(metrics_raw, dict)
+        else None
+    )
     return LossProfile(
         run_id=d["run_id"],
         entry_id=d["entry_id"],
@@ -1211,6 +1279,8 @@ def read_loss_profile(path: Path) -> LossProfile:
         cached=bool(d.get("cached", False)),
         source_epoch=str(d.get("source_epoch", "") or ""),
         source_run=str(d.get("source_run", "") or ""),
+        score=float(score_raw) if score_raw is not None else None,
+        metrics=metrics,
     )
 
 

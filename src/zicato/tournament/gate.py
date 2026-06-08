@@ -18,19 +18,23 @@ Three rules, applied in order:
    *granularity* is selected by
    :attr:`ScoringWeights.pass_rate_monotonicity_scope`:
 
-   * ``"per_entry"`` (default) — for every entry where the parent
-     recorded ``pass_fail=True``, the child MUST also record
-     ``pass_fail=True``. If any such entry regressed, the gate rejects
-     with the entry ids listed in the reason. Entries the parent failed
-     (or had no expectation for) are not gated — the child is allowed to
-     improve or stay the same. The right policy for invariant /
-     regression-suite boards.
-   * ``"aggregate"`` — reject only when the child's OVERALL pass-rate
+   * ``"per_entry"`` (default) — for every entry the parent SCORED, the
+     child's continuous score may not drop below the parent's by more
+     than :data:`PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE`. A BOOL entry
+     the parent passed has score ``1.0``, so the child must still score
+     ``1.0`` (within the tiny tolerance) — i.e. it must still pass,
+     exactly as before. A continuous entry may dip by the tolerance band
+     to absorb small-board scoring jitter. If any tracked entry regressed,
+     the gate rejects with the entry ids listed in the reason. Entries the
+     parent failed (score ``0.0``) or had no expectation for are not gated.
+     The right policy for invariant / regression-suite boards.
+   * ``"aggregate"`` — reject only when the child's OVERALL ``mean_score``
      fell below the parent's by more than
      :data:`PASS_RATE_MONOTONICITY_TOLERANCE`. The child may trade
-     individual entries as long as the net pass-rate holds or improves.
-     The right policy for sampled evaluation boards where individual
-     pass/fail is noisy.
+     individual entries as long as the net continuous outcome holds or
+     improves. (``mean_score`` equals the binary pass-rate on an all-bool
+     board, so this is byte-identical there.) The right policy for sampled
+     evaluation boards where individual pass/fail is noisy.
 
    ``off`` is expressed by ``pass_rate_monotonicity=False`` rather than a
    third scope value, so existing contracts are byte-identical.
@@ -109,15 +113,27 @@ from zicato.core import ScoringWeights, TournamentDecision
 #: themselves; the surface is intentionally simple at this layer.
 NAMESPACE_MONOTONICITY_TOLERANCE: float = 0.0
 
-#: Float-noise tolerance applied to the overall pass-rate delta under
-#: ``aggregate``-scope pass-rate monotonicity. The check is
-#: ``delta_pass_rate < -PASS_RATE_MONOTONICITY_TOLERANCE`` so a pass-rate
-#: that is *equal* within numerical noise (e.g. ``0.31`` reconstructed two
-#: different ways) is treated as "held", not "regressed". A genuine net
-#: regression — one whose drop exceeds this band — still rejects. Kept
-#: small: pass-rate is a ratio of integer counts, so the only noise here is
-#: float division/round-trip, not measurement variance.
+#: Float-noise tolerance applied to the overall pass-rate / mean-score delta
+#: under ``aggregate``-scope monotonicity. The check is
+#: ``delta < -PASS_RATE_MONOTONICITY_TOLERANCE`` so an aggregate that is
+#: *equal* within numerical noise (e.g. ``0.31`` reconstructed two different
+#: ways) is treated as "held", not "regressed". A genuine net regression —
+#: one whose drop exceeds this band — still rejects. Kept small: pass-rate is
+#: a ratio of integer counts, so the only noise here is float
+#: division/round-trip, not measurement variance.
 PASS_RATE_MONOTONICITY_TOLERANCE: float = 1e-9
+
+#: Tolerance band for a PER-ENTRY continuous-score regression under
+#: ``per_entry``-scope monotonicity. A continuous score may *dip* by up to
+#: this much on an entry the parent scored higher without tripping the gate —
+#: small-board F1 / similarity scores carry measurement jitter, and a knife-
+#: edge per-entry rule would make the gate as jumpy as the binary path it
+#: replaces. The check is ``child_score < parent_score - tolerance`` ⇒ reject.
+#: A BINARY entry the parent passed (score == 1.0) is the limiting case: any
+#: child score below ``1.0 - tolerance`` is a regression, so a bool 1.0 -> 0.0
+#: flip rejects exactly as the historical "must-still-pass" rule did. Kept
+#: small so the bool case stays effectively a strict must-still-pass.
+PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE: float = 0.02
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,36 +205,92 @@ def _regressed_namespaces(
     return regressed
 
 
-def _regressed_entries(parent_agg: dict[str, Any], child_agg: dict[str, Any]) -> list[str]:
-    """Return ids where parent passed and child failed (sorted).
+def _row_score(row: dict[str, Any] | None) -> float | None:
+    """Read one ``per_entry`` row's continuous outcome in ``[0, 1]``, or ``None``.
 
-    "Failed" means either ``pass_fail=False`` OR ``pass_fail=None`` on
-    the child side for an entry the parent passed cleanly — a child
-    that no longer evaluates a previously-evaluated expectation is
-    still a regression in the operator's pass-rate view, and the gate
-    flags it. (A child that simply did not run a given entry will not
-    appear in the child's ``per_entry`` map at all; that case is
-    treated the same way for monotonicity purposes.)
+    The single reader the per-entry gate scope trusts, and the seam that
+    keeps the continuous rule byte-identical to the historical bool rule:
+
+    * a row carrying an explicit ``"score"`` (the new
+      :func:`zicato.tournament.scoring.entry_score` output) uses it,
+      clamped to ``[0, 1]``; a non-finite score is treated as a miss
+      (``0.0``);
+    * a row WITHOUT a ``"score"`` key — a pre-score aggregate, or a
+      hand-built one — falls back to the binary ``pass_fail`` bit
+      (True->1.0, False->0.0). This is what makes an all-bool /
+      score-less aggregate score exactly as it did before this field
+      existed;
+    * a row with neither (``pass_fail is None`` and no score) returns
+      ``None`` — no ground truth, excluded from the rule, exactly as the
+      historical rule skipped entries the parent had no clean pass for.
+    """
+    if row is None:
+        return None
+    if "score" in row and row["score"] is not None:
+        value = float(row["score"])
+        if value != value or value in (float("inf"), float("-inf")):  # NaN / inf
+            return 0.0
+        if value < 0.0:
+            return 0.0
+        if value > 1.0:
+            return 1.0
+        return value
+    pf = row.get("pass_fail")
+    if pf is None:
+        return None
+    return 1.0 if pf else 0.0
+
+
+def _regressed_entries(parent_agg: dict[str, Any], child_agg: dict[str, Any]) -> list[str]:
+    """Return ids whose per-entry outcome regressed beyond tolerance (sorted).
+
+    The per_entry scope under CONTINUOUS scores: for every entry the
+    parent scored (``parent_score is not None``), the child's score may
+    not drop below ``parent_score - PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE``.
+    A child that no longer evaluates a previously-evaluated expectation
+    (no row, or ``score``/``pass_fail`` both ``None``) is treated as a
+    score of ``0.0`` — a child that drops ground truth is still a
+    regression in the operator's view, and the gate flags it (matching the
+    historical "child no longer passes" treatment of a vanished row).
+
+    Byte-identical to the historical bool rule on a score-less / all-bool
+    board: there a parent-passed entry has ``parent_score == 1.0`` and any
+    child below ``1.0 - tolerance`` (i.e. a 1.0 -> 0.0 flip, or a vanished
+    row read as 0.0) regresses, while a parent-FAILED entry
+    (``parent_score == 0.0``) is never gated because no child score can
+    fall below ``0.0 - tolerance``. The small tolerance only loosens the
+    purely-continuous case; it cannot make a bool pass->fail flip slip
+    through.
     """
     parent_per: dict[str, dict[str, Any]] = parent_agg.get("per_entry", {})
     child_per: dict[str, dict[str, Any]] = child_agg.get("per_entry", {})
     regressed: list[str] = []
     for entry_id, parent_row in parent_per.items():
-        if parent_row.get("pass_fail") is True:
-            child_row = child_per.get(entry_id)
-            if child_row is None or child_row.get("pass_fail") is not True:
-                regressed.append(entry_id)
+        parent_score = _row_score(parent_row)
+        if parent_score is None:
+            continue
+        child_score = _row_score(child_per.get(entry_id))
+        effective_child = 0.0 if child_score is None else child_score
+        if effective_child < parent_score - PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE:
+            regressed.append(entry_id)
     regressed.sort()
     return regressed
 
 
-def _pass_rate(agg: dict[str, Any]) -> float:
-    """Read an aggregate's overall pass-rate, defaulting to ``1.0``.
+def _mean_score(agg: dict[str, Any]) -> float:
+    """Read an aggregate's overall continuous outcome, defaulting to ``1.0``.
 
-    Mirrors :func:`evaluate_gate`'s own read so the gate and the holdout
-    check agree on what "overall pass-rate" means for the ``aggregate``
-    scope. A board with no pass/fail expectations reports ``1.0``.
+    The aggregate scope runs on ``mean_score`` — the uniform continuous
+    outcome :func:`zicato.tournament.scoring.aggregate_generation_score`
+    now reports. Because ``mean_score`` equals ``pass_rate`` on an all-bool
+    board, an aggregate that predates the field (or a hand-built one that
+    only carries ``pass_rate``) reads identically: the lookup falls back to
+    ``pass_rate`` and then to ``1.0`` for a board with no expectations.
+    This keeps the aggregate scope byte-identical for all-bool boards while
+    letting a graded board's net quality move continuously.
     """
+    if "mean_score" in agg:
+        return float(agg["mean_score"])
     return float(agg.get("pass_rate", 1.0))
 
 
@@ -245,17 +317,22 @@ def _pass_rate_regression_reason(
     ``holdout_not_confirmed: holdout `` lead-in.
     """
     if weights.pass_rate_monotonicity_scope == "aggregate":
-        parent_pass = _pass_rate(parent_agg)
-        child_pass = _pass_rate(child_agg)
+        parent_pass = _mean_score(parent_agg)
+        child_pass = _mean_score(child_agg)
         delta = child_pass - parent_pass
         if delta < -PASS_RATE_MONOTONICITY_TOLERANCE:
+            # Wording kept as "pass-rate" for back-compat with consumers
+            # that match this reason text; the quantity is now mean_score,
+            # which equals pass_rate on an all-bool board.
             return (
                 f"{prefix}pass-rate regression: overall pass-rate fell by "
                 f"{-delta:.6f} "
                 f"(champion {parent_pass:.6f} -> challenger {child_pass:.6f})"
             )
         return ""
-    # per_entry (default): every parent-passed entry must still pass.
+    # per_entry (default): every entry the parent scored must hold within
+    # tolerance (a bool entry the parent passed must still pass — see
+    # :func:`_regressed_entries`).
     regressed = _regressed_entries(parent_agg, child_agg)
     if regressed:
         return f"{prefix}pass-rate regression on entries: " + ", ".join(regressed)
@@ -449,6 +526,7 @@ __all__ = [
     "GateOutcome",
     "NAMESPACE_MONOTONICITY_TOLERANCE",
     "PASS_RATE_MONOTONICITY_TOLERANCE",
+    "PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE",
     "evaluate_gate",
     "holdout_confirms",
 ]

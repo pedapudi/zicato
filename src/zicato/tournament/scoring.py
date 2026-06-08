@@ -12,14 +12,24 @@ epoch's :class:`~zicato.core.ScoringWeights`. The dict carries:
   exceeded before the matcher fired) are EXCLUDED from both numerator
   and denominator. When no entries had pass/fail at all, pass rate is
   reported as ``1.0`` so the ``(1 - pass_rate)`` term does not penalize
-  a board that simply lacks expectations.
+  a board that simply lacks expectations. Kept for display / the gate's
+  per-entry scope alongside the continuous ``mean_score``.
+* ``mean_score`` — the UNIFORM continuous outcome axis: the arithmetic
+  mean of each entry's :func:`entry_score` (a bool maps to ``1.0`` /
+  ``0.0``; a continuous score is clamped to ``[0, 1]``) over the same
+  expectation denominator as ``pass_rate``. This is what the scalar's
+  pass component runs on. Because a bool maps to exactly
+  ``float(pass_fail)``, ``mean_score`` equals ``pass_rate`` byte-for-byte
+  on an all-bool board, so the substitution is back-compat-neutral.
 * ``expectation_count`` — number of entries that contributed to pass
-  rate (denominator).
+  rate / mean_score (denominator).
 * ``entry_count`` — number of entries that contributed to drift loss
   (denominator for the drift term).
 * ``scalar`` — the multi-objective combined score. Lower = better.
 * ``per_entry`` — ``{entry_id: {"drift_loss": float, "pass_fail":
-  bool|None}}`` for entry-level deltas the gate needs.
+  bool|None, "score": float|None}}`` for entry-level deltas the gate
+  needs. ``score`` is the per-entry :func:`entry_score` the gate's
+  per-entry continuous-monotonicity scope reads.
 * ``namespace_aggregates`` — ``{namespace: weighted_aggregate}`` for
   every namespace observed in the inputs or named in
   :attr:`ScoringWeights.namespace_weights`. Each value is the
@@ -29,7 +39,8 @@ epoch's :class:`~zicato.core.ScoringWeights`. The dict carries:
   values sum exactly to ``scalar``. Includes ``"drift"`` (the
   drift-weight × drift_loss_mean term, kept for back-compat with
   callers that only know the drift term), ``"pass"`` (the
-  ``(1 - pass_rate)`` term), and one entry per namespace whose weight
+  ``(1 - mean_score)`` term — equal to the historical
+  ``(1 - pass_rate)`` term on an all-bool board), and one entry per namespace whose weight
   is non-zero — minus the ``"drift:"`` namespace, which the drift
   component already covers to avoid double-counting.
 
@@ -44,9 +55,49 @@ to this single function.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from zicato.core import LossProfile, ScoringWeights
+
+
+def entry_score(loss: LossProfile) -> float | None:
+    """Return one loss's continuous outcome score in ``[0, 1]``, or ``None``.
+
+    The single, UNIFORM mapping the scalar and gate read:
+
+    * a profile with an explicit continuous ``score`` returns that value,
+      clamped to ``[0.0, 1.0]`` (a non-finite value is treated as a miss,
+      ``0.0``, so a rogue scorer can never poison the mean);
+    * otherwise the binary ``pass_fail`` bit maps to ``1.0`` / ``0.0``;
+    * an entry with neither a score NOR a pass/fail (``pass_fail is None``
+      and ``score is None`` — no expectation, or one that could not fire)
+      returns ``None`` and is EXCLUDED from the mean, exactly as the binary
+      ``pass_rate`` already excludes ``pass_fail is None``.
+
+    The bool path is exactly ``float(pass_fail)``, so a board whose entries
+    are all bool produces a per-entry score sequence identical to its
+    pass/fail sequence. ``mean_score`` over that sequence therefore equals
+    the binary ``pass_rate`` byte-for-byte — the property the all-bool
+    back-compat proof test pins.
+
+    Reads ``score`` via ``getattr`` so a duck-typed loss stand-in (or a
+    profile materialised before the field existed) that carries only
+    ``pass_fail`` still resolves to the binary outcome.
+    """
+    raw_score = getattr(loss, "score", None)
+    if raw_score is not None:
+        value = float(raw_score)
+        if not math.isfinite(value):
+            return 0.0
+        if value < 0.0:
+            return 0.0
+        if value > 1.0:
+            return 1.0
+        return value
+    if loss.pass_fail is None:
+        return None
+    return 1.0 if loss.pass_fail else 0.0
 
 
 def per_run_drift_loss(loss: LossProfile, weights: ScoringWeights) -> float:
@@ -175,22 +226,44 @@ def aggregate_generation_score(
     drift_total = 0.0
     pass_count = 0
     expectation_count = 0
+    score_total = 0.0
+    score_count = 0
 
     for loss in losses:
         drift = per_run_drift_loss(loss, weights)
+        entry_outcome = entry_score(loss)
         per_entry[loss.entry_id] = {
             "drift_loss": drift,
             "pass_fail": loss.pass_fail,
+            # The continuous per-entry outcome the gate's per_entry scope
+            # reads. ``None`` for an entry with no expectation; a bool
+            # entry carries 1.0/0.0 so the gate can treat bool and float
+            # entries uniformly.
+            "score": entry_outcome,
         }
         drift_total += drift
         if loss.pass_fail is not None:
             expectation_count += 1
             if loss.pass_fail:
                 pass_count += 1
+        if entry_outcome is not None:
+            score_total += entry_outcome
+            score_count += 1
 
     entry_count = len(losses)
     drift_loss_mean = drift_total / entry_count if entry_count > 0 else 0.0
     pass_rate = pass_count / expectation_count if expectation_count > 0 else 1.0
+    # ``mean_score`` is the UNIFORM outcome axis: the arithmetic mean of each
+    # entry's continuous :func:`entry_score` over every entry that produced
+    # one (``score_count``). On an all-bool board every entry with a
+    # pass/fail also produces a score and every entry without one produces
+    # neither, so ``score_count == expectation_count`` AND
+    # ``score_total == pass_count`` — hence ``mean_score == pass_rate``
+    # byte-for-byte. That is the back-compat proof: substituting mean_score
+    # for pass_rate in the pass component below is a no-op on all-bool
+    # boards. A board with no scored entries reports 1.0, exactly as
+    # pass_rate does, so the (1 - mean_score) term contributes zero.
+    mean_score = score_total / score_count if score_count > 0 else 1.0
 
     # Namespace aggregates are already weight-multiplied per
     # :func:`aggregate_namespaced_metrics` — they slot straight into
@@ -204,7 +277,12 @@ def aggregate_generation_score(
     # otherwise duplicate the drift contribution; we route it through
     # the named ``"drift"`` component instead.
     drift_component = weights.drift_weight * drift_loss_mean
-    pass_component = weights.pass_weight * (1.0 - pass_rate)
+    # The pass component runs on the UNIFORM mean_score, not the binary
+    # pass_rate. On an all-bool board mean_score == pass_rate (see above),
+    # so this is byte-identical to the historical
+    # ``pass_weight * (1 - pass_rate)`` term; on a board with continuous
+    # scores it tracks the graded quality with no threshold cliff.
+    pass_component = weights.pass_weight * (1.0 - mean_score)
 
     scalar_components: dict[str, float] = {
         "drift": drift_component,
@@ -226,6 +304,11 @@ def aggregate_generation_score(
     return {
         "drift_loss_mean": drift_loss_mean,
         "pass_rate": pass_rate,
+        # The uniform continuous outcome the scalar's pass component and
+        # the gate's aggregate scope read. Equals pass_rate on an all-bool
+        # board; kept alongside pass_rate so display and the per_entry gate
+        # scope still have the binary view.
+        "mean_score": mean_score,
         "expectation_count": expectation_count,
         "entry_count": entry_count,
         "scalar": scalar,
@@ -238,5 +321,6 @@ def aggregate_generation_score(
 __all__ = [
     "aggregate_generation_score",
     "aggregate_namespaced_metrics",
+    "entry_score",
     "per_run_drift_loss",
 ]

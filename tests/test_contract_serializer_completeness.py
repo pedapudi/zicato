@@ -316,3 +316,23 @@ def test_legacy_scoring_json_loads_at_defaults() -> None:
     legacy = {"drift_weight": 1.0, "pass_weight": 1.0, "promote_margin": 0.01}
     w = _scoring_weights_from_dict(legacy)
     assert w == ScoringWeights()
+
+
+def test_continuous_score_adds_no_scoring_contract_field() -> None:
+    """The per-entry continuous-score feature (#18 cap 1) adds NO scoring config.
+
+    ``score`` / ``metrics`` are reducer OUTPUT (loss.json), not contract
+    inputs, so they must never appear in the scoring canon — otherwise they
+    would enter the contract hash and roll the epoch. Enabling continuous
+    scores is opt-in per board entry (the operator writes a float scorer),
+    not via a ScoringWeights flag; back-compat is automatic via score=None.
+    """
+    canon = _scoring_to_canon(ScoringWeights())
+    assert "score" not in canon
+    assert "metrics" not in canon
+    assert "mean_score" not in canon
+    # And the default contract hash is unchanged shape-wise: no new top-level
+    # scoring key was introduced by this feature.
+    field_names = {f.name for f in fields(ScoringWeights)}
+    assert "score" not in field_names
+    assert "metrics" not in field_names

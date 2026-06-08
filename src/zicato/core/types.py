@@ -864,11 +864,32 @@ class ExpectationResult:
         judge rationale). Empty string when the matcher had nothing
         useful to say. Stored to give the journal something concrete to
         render alongside a pass/fail bit.
+    score:
+        Optional CONTINUOUS per-entry quality in ``[0.0, 1.0]`` — F1,
+        similarity, a partial-credit rubric, etc. ``None`` (the default)
+        means the matcher only produced a binary verdict; in that case
+        the scalar and gate fall back to the binary ``passed`` bit, so a
+        result with ``score=None`` is byte-identical to the pre-score
+        behaviour. When a SCORER callable returns a float, the matcher
+        clamps it to ``[0.0, 1.0]`` and records it here while ``passed``
+        carries the thresholded bit for display / back-compat. A bool
+        matcher leaves this ``None`` and the reducer derives the score as
+        ``1.0`` / ``0.0`` from ``passed`` so the uniform mean still
+        collapses to the binary pass-rate.
+    metrics:
+        Optional per-entry metric carrier (e.g.
+        ``{"precision": 0.3, "recall": 0.6}``) a scorer may populate
+        alongside its scalar ``score``. ``None`` (the default) when the
+        matcher exposed no decomposition. Carried out to ``loss.json`` so
+        downstream aggregation (the proposer's failure-mode profile) can
+        read precision/recall as numbers without re-running the scorer.
     """
 
     kind: ExpectationKind
     passed: bool
     detail: str = ""
+    score: float | None = None
+    metrics: dict[str, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -922,6 +943,10 @@ class LossProfile:
         Derived from :attr:`expectation_result`; ``None`` when no
         expectation was attached. Allows pass-rate aggregation across
         the board to ignore entries without ground truth.
+    score, metrics:
+        Continuous per-entry outcome and its optional decomposition. See
+        the field comments below — these are the prerequisite numbers the
+        outcome-marginal proposer feedback (Capability 2) consumes.
 
     Multi-turn extras (single-turn entries leave these as ``None``)
     ----------------------------------------------------------------
@@ -1031,6 +1056,22 @@ class LossProfile:
     cached: bool = False
     source_epoch: str = ""
     source_run: str = ""
+    # Continuous per-entry outcome. ``score`` is the entry's quality in
+    # ``[0.0, 1.0]`` (F1, similarity, a partial-credit rubric, ...).
+    # ``None`` (the back-compat default) means the entry had only a binary
+    # verdict; downstream scoring then derives the score from ``pass_fail``
+    # (True->1.0, False->0.0, None->excluded), so a profile with
+    # ``score=None`` is byte-identical to the pre-score binary path. The
+    # reducer always populates this when an expectation fired (a bool
+    # matcher yields 1.0/0.0, a float scorer yields the clamped value), so
+    # the field is ``None`` ONLY on profiles written before this field
+    # existed or on entries with no expectation. ``metrics`` carries any
+    # per-entry decomposition the scorer exposed (e.g.
+    # ``{"precision": .., "recall": ..}``) out to ``loss.json``; ``None``
+    # when the scorer exposed none. Both are OUTPUT only — they are not
+    # contract fields and never enter the contract hash.
+    score: float | None = None
+    metrics: dict[str, float] | None = None
 
     def unified_metrics(self) -> tuple[MetricCount, ...]:
         """Return the merged metric view across drift_counts + metric_counts.

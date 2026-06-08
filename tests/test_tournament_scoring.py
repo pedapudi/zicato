@@ -81,10 +81,11 @@ def test_aggregate_mixed_pass_fail_and_none_expectations() -> None:
     expected_scalar = 1.0 * agg["drift_loss_mean"] + 2.0 * (1.0 - 0.5)
     assert agg["scalar"] == expected_scalar
 
-    # Per-entry mapping preserves raw signals
-    assert agg["per_entry"]["a"] == {"drift_loss": 0.0, "pass_fail": True}
-    assert agg["per_entry"]["b"] == {"drift_loss": 2.0, "pass_fail": False}
-    assert agg["per_entry"]["c"] == {"drift_loss": 1.0, "pass_fail": None}
+    # Per-entry mapping preserves raw signals. ``score`` is the uniform
+    # continuous outcome (bool -> 1.0/0.0; None for a no-expectation entry).
+    assert agg["per_entry"]["a"] == {"drift_loss": 0.0, "pass_fail": True, "score": 1.0}
+    assert agg["per_entry"]["b"] == {"drift_loss": 2.0, "pass_fail": False, "score": 0.0}
+    assert agg["per_entry"]["c"] == {"drift_loss": 1.0, "pass_fail": None, "score": None}
 
 
 def test_aggregate_with_no_expectations_yields_pass_rate_one() -> None:
