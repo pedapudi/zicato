@@ -3316,9 +3316,9 @@ export function reignGantt(opts) {
 // is nothing to diff against — the change map is all-unchanged).
 //
 //   opts: {
-//     epochs: [{ epoch_id, floor, champion_gen, generation_count, structure,
-//                open|closed, changed_components:{name:bool}, changed_list:[..],
-//                soft }],
+//     epochs: [{ epoch_id, floor, champion_gen, champion_index, generation_count,
+//                structure, open|closed, changed_components:{name:bool},
+//                changed_list:[..], soft }],
 //     currentEpochId, onEpoch(epoch_id), responsive
 //   }
 const LEDGER_COMPONENTS = ['board', 'brief', 'scoring', 'entrypoint', 'mutable_trees', 'structure', 'proposer'];
@@ -3485,7 +3485,7 @@ export function metaLoopLedger(opts) {
   });
 
   // ───────── (B) EFFORT-PROPORTIONAL BANDS (opt 4) ─────────
-  svg.appendChild(txt(L, bandTop - 8, 'B · EFFORT — band width ∝ generation_count · fill ∝ floor · │ = champion reign',
+  svg.appendChild(txt(L, bandTop - 8, 'B · EFFORT — band width ∝ generation_count · fill ∝ floor · │ = champion reign · position = when the floor was set',
     { class: 'dn-metaledger-zonecap', 'text-anchor': 'start' }));
   rows.forEach((e, i) => {
     const b = bx[i];
@@ -3510,15 +3510,30 @@ export function metaLoopLedger(opts) {
       g.appendChild(txt(b.x0 + b.w - 9, bandTop + 16, 'OPEN',
         { class: 'dn-metaledger-bandopen', 'text-anchor': 'end' }));
     }
-    // champion-reign tick — the generation that set the floor
+    // champion-reign tick — anchored to WHEN in the epoch the floor was
+    // set: x ∝ champion_index / generation_count, so an early champion
+    // sits near the band's left edge, a late one near its right. With no
+    // locatable champion_index we draw ONLY the label (no misleading bar).
     if (e.champion_gen != null) {
-      const champX = b.x0 + Math.max(6, (b.w - 3) * 0.62);
-      g.appendChild(svgEl('rect', {
-        x: champX - 2, y: bandTop - 4, width: 4, height: bandH + 8, rx: 1.5,
-        class: 'dn-metaledger-champtick',
-      }));
+      const ci = e.champion_index;
+      const gc = Math.max(1, e.generation_count || 0);
+      const hasIdx = isNum(ci) && ci >= 0;
+      const pad = 5;
+      const x0 = b.x0 + pad;
+      const x1 = b.x0 + Math.max(2, b.w - 3) - pad;
+      let labelX;
+      if (hasIdx) {
+        const champX = Math.min(Math.max(b.x0 + ((ci + 0.5) / gc) * Math.max(2, b.w - 3), x0), x1);
+        labelX = champX;
+        g.appendChild(svgEl('rect', {
+          x: champX - 2, y: bandTop - 4, width: 4, height: bandH + 8, rx: 1.5,
+          class: 'dn-metaledger-champtick',
+        }));
+      } else {
+        labelX = b.x0 + Math.max(6, (b.w - 3) * 0.5);
+      }
       if (b.w > 104) {
-        g.appendChild(txt(champX, bandTop + bandH + 13, 'champ ' + shortLabel(String(e.champion_gen), 8),
+        g.appendChild(txt(labelX, bandTop + bandH + 13, 'champ ' + shortLabel(String(e.champion_gen), 8),
           { class: 'dn-metaledger-champlbl', 'text-anchor': 'middle' }));
       }
     }
@@ -3564,7 +3579,8 @@ export function metaLoopLedger(opts) {
 // The content DIGEST for the meta-loop ledger — the home view gates its DOM
 // swap on this so a no-op SSE heartbeat (identical ledger) churns nothing. It
 // quantizes the floor to 3 dp (the rendered precision) and folds every field
-// the figure draws: floor, champion, effort, structure, lifecycle, and the
+// the figure draws: floor, champion, champion_index (the tick POSITION → a
+// position change regates the DOM), effort, structure, lifecycle, and the
 // per-component change set (incl. proposer + structure). Two ledgers that
 // render byte-identically MUST produce the same digest — the live (open) and
 // settled (closed) paths included.
@@ -3577,6 +3593,7 @@ export function metaLoopLedgerDigest(opts) {
       String(e.epoch_id),
       isNum(e.floor) ? e.floor.toFixed(3) : null,
       e.champion_gen != null ? String(e.champion_gen) : null,
+      isNum(e.champion_index) ? e.champion_index : null,
       isNum(e.generation_count) ? e.generation_count : 0,
       e.structure || 'gauntlet',
       (e.open || e.closed === false) ? 'o' : 'c',

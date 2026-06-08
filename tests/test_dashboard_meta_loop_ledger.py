@@ -178,6 +178,105 @@ def test_ledger_per_epoch_rows_and_floor(tmp_path: Path) -> None:
     assert by["e0"]["closed"] is True and by["e0"]["open"] is False
 
 
+def test_ledger_champion_index_matches_floor_setter_position(tmp_path: Path) -> None:
+    """``champion_index`` is the 0-based ordinal of the floor-setting gen.
+
+    In the chain workspace e0 (v0,v1) sets its floor at v1 → index 1; e1
+    (v2,v3) at v3 → index 1; e2 (v4 only) at v4 → index 0. Each is the
+    position of ``champion_gen`` in the epoch's sorted generation list.
+    """
+    ws = _chain_workspace(tmp_path)
+    by = {r["epoch_id"]: r for r in build_meta_loop_ledger(WorkspacePaths(ws))["epochs"]}
+    assert by["e0"]["champion_gen"] == "v1" and by["e0"]["champion_index"] == 1
+    assert by["e1"]["champion_gen"] == "v3" and by["e1"]["champion_index"] == 1
+    assert by["e2"]["champion_gen"] == "v4" and by["e2"]["champion_index"] == 0
+
+
+def test_ledger_champion_index_early_vs_late(tmp_path: Path) -> None:
+    """A floor set EARLY → a small index; set LATE → a large index.
+
+    Two 4-generation epochs: ``ee`` sets its floor at the FIRST gen
+    (index 0, early), ``el`` at the LAST gen (index 3, late). The index
+    tracks the gen's ordinal among the epoch's sorted generations.
+    """
+    ws = tmp_path / "ws"
+    (ws / "epochs").mkdir(parents=True, exist_ok=True)
+    (ws / "current_epoch").write_text("el\n", encoding="utf-8")
+    comp = {
+        "board": "b",
+        "brief": "r",
+        "scoring": "s",
+        "entrypoint": "e",
+        "mutable_trees": "m",
+        "proposer": "p",
+    }
+    _make_epoch(
+        ws, "ee", components=comp, structure="racing", gens=["v0", "v1", "v2", "v3"], closed=True
+    )
+    _make_epoch(
+        ws, "el", components=comp, structure="racing", gens=["v0", "v1", "v2", "v3"], closed=False
+    )
+    _build_index(
+        ws / "index.db",
+        [
+            # ee: floor at the FIRST gen v0 (early).
+            ("ee", "v0", "x", 0.10),
+            ("ee", "v1", "x", 0.40),
+            ("ee", "v2", "x", 0.30),
+            ("ee", "v3", "x", 0.50),
+            # el: floor at the LAST gen v3 (late).
+            ("el", "v0", "x", 0.50),
+            ("el", "v1", "x", 0.40),
+            ("el", "v2", "x", 0.30),
+            ("el", "v3", "x", 0.10),
+        ],
+    )
+    by = {r["epoch_id"]: r for r in build_meta_loop_ledger(WorkspacePaths(ws))["epochs"]}
+    assert by["ee"]["champion_gen"] == "v0"
+    assert by["ee"]["champion_index"] == 0, "an early floor-setter → index 0 (left of the band)"
+    assert by["el"]["champion_gen"] == "v3"
+    assert by["el"]["champion_index"] == 3, "a late floor-setter → index 3 (right of the band)"
+
+
+def test_ledger_champion_index_null_without_a_floor(tmp_path: Path) -> None:
+    """No scored generation → no champion → ``champion_index`` is null.
+
+    With no ``loss_profiles`` rows nothing sets a floor, so both
+    ``champion_gen`` and ``champion_index`` are ``None`` (never a guess).
+    """
+    ws = tmp_path / "ws"
+    (ws / "epochs").mkdir(parents=True, exist_ok=True)
+    (ws / "current_epoch").write_text("e0\n", encoding="utf-8")
+    _make_epoch(
+        ws,
+        "e0",
+        components={
+            "board": "b",
+            "brief": "r",
+            "scoring": "s",
+            "entrypoint": "e",
+            "mutable_trees": "m",
+        },
+        structure="gauntlet",
+        gens=["v0", "v1"],
+        closed=False,
+    )
+    _build_index(ws / "index.db", [])  # an index with NO loss_profiles rows
+    e0 = build_meta_loop_ledger(WorkspacePaths(ws))["epochs"][0]
+    assert e0["floor"] is None
+    assert e0["champion_gen"] is None
+    assert e0["champion_index"] is None
+
+
+def test_ledger_champion_index_surfaced_on_workspace_view(tmp_path: Path) -> None:
+    """``champion_index`` rides the same /api/workspace ledger the UI reads."""
+    ws = _chain_workspace(tmp_path)
+    view = build_workspace_view(WorkspacePaths(ws))
+    by = {r["epoch_id"]: r for r in view["ledger"]}
+    assert by["e0"]["champion_index"] == 1
+    assert by["e2"]["champion_index"] == 0
+
+
 def test_ledger_first_epoch_has_all_unchanged_map(tmp_path: Path) -> None:
     ws = _chain_workspace(tmp_path)
     rows = build_meta_loop_ledger(WorkspacePaths(ws))["epochs"]
