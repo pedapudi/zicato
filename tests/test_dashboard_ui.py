@@ -294,7 +294,14 @@ def test_bundle_under_size_envelope(
     # combo, their wiring across structure.js / candidate.js / the live hero, and
     # the live-protocol coverage — ~70 KB of real new data-graphics. The envelope
     # is raised to 980 KB to cover the redesign with headroom for iteration.
-    assert total < 980_000, f"bundle is {total} bytes, exceeds 980_000 envelope"
+    #
+    # The LIVE-RENDERING pass then makes every structure figure responsive
+    # (aspect-locked scale-to-width), renders each racing rung's FULL field (union
+    # lane source) with a no-scalar spread, names the radar axes, reorganizes the
+    # candidate dossier to the study layout, and renders the in-flight rung instead
+    # of an empty — adding the full-field/responsive logic + the dossier grid. The
+    # envelope is raised to 1.02 MB to cover it with headroom.
+    assert total < 1_020_000, f"bundle is {total} bytes, exceeds 1_020_000 envelope"
 
 
 def test_each_file_is_non_empty() -> None:
