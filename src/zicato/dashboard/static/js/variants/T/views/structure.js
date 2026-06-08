@@ -368,6 +368,88 @@ export function reconstructRacing(brk, epochId) {
   }, false);
 }
 
+// ── the ONE non-gauntlet structure RESOLVER (live ↔ recorded) ───────
+//
+// THE SINGLE SOURCE OF TRUTH for "what tournament payload renders for this
+// epoch". Both the ALL-ROUNDS Match-ups page (renderConfiguredStructure) AND the
+// PER-ROUND drill-down (renderRoundDrilldown) MUST resolve their racing/swiss/
+// elim `st` THROUGH HERE, so the two paths can never drift (the recurring round-
+// view-empty bug class: the round view used to read the per-round FIELD record
+// directly, but a racing field record carries `rounds: []` — rungs live in the
+// per-challenger records + the live envelope, NOT the aggregate field record —
+// so the round view came up with zero rungs while the epoch view, which went
+// live-first → reconstructRacing, showed them).
+//
+// PURE + SYNCHRONOUS: it consumes ALREADY-FETCHED inputs (the live
+// active-tournament payload, the /api/tournaments bracket, the heartbeat /
+// active-runs, and an OPTIONAL already-fetched completed per-tournament record)
+// and returns { st, source } — so it unit-tests without a DOM and the caller
+// owns the async fetch. The CONVERGENCE GUARANTEE holds because a SETTLED epoch
+// (no live run) resolves the SAME reconstructed/recorded `st` regardless of
+// which page asks.
+//
+//   structure      — the configured structure ('racing'|'swiss'|'single_elim'|…)
+//   bracket        — the /api/tournaments payload (for reconstructRacing + the
+//                    per-tournament fallback record selection)
+//   epochId        — scopes reconstructRacing + the live guard
+//   liveRaw        — the /api/active-tournament payload (null when idle / foreign)
+//   heartbeat,     — the live signals the progressive builders overlay
+//   activeRuns
+//   params         — the contract's structure params (fallback for a sparse record)
+//   completedRecord— an OPTIONAL already-fetched per-tournament structure record
+//                    (swiss/elim completed fallback); racing uses reconstructRacing
+//                    so it does not need this.
+//
+// → { st, source } where source ∈ 'live' | 'reconstructed' | 'record' | null.
+export function resolveNonGauntletSt(opts) {
+  const o = opts || {};
+  const structure = String(o.structure || 'gauntlet');
+  const bracket = (o.bracket && typeof o.bracket === 'object') ? o.bracket : {};
+  const epochId = o.epochId != null ? o.epochId : null;
+  const liveRaw = (o.liveRaw && typeof o.liveRaw === 'object') ? o.liveRaw : null;
+
+  // (1) LIVE-FIRST — a run in flight for THIS epoch governs the topology so the
+  // ladder fills in rung/round-by-round and in-flight competitors are shown
+  // racing, never prematurely crowned/rejected. The progressive builders
+  // accumulate completed rounds + fill the active one board-by-board; a plain
+  // normalize is the fallback when the structure is not one they handle.
+  let liveSt = null;
+  if (liveRaw && (String(liveRaw.structure) === structure || isNonGauntlet(String(liveRaw.structure)))) {
+    const ls = String(liveRaw.structure);
+    const epochGens = (Array.isArray(liveRaw.competitors) ? liveRaw.competitors : [])
+      .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
+    const args = { at: liveRaw, heartbeat: o.heartbeat, activeRuns: o.activeRuns, epochGens: epochGens.length ? epochGens : null };
+    if (ls === 'racing') liveSt = buildLiveRacingModel(args) || normalizeStructure(liveRaw, true);
+    else if (ls === 'swiss') liveSt = buildLiveSwissModel(args) || normalizeStructure(liveRaw, true);
+    else if (ls === 'single_elim' || ls === 'double_elim') liveSt = buildLiveElimModel(args) || normalizeStructure(liveRaw, true);
+    else liveSt = normalizeStructure(liveRaw, true);
+  }
+  // ADOPT the live model when it is flagged live OR when it carries an IN-FLIGHT,
+  // STREAMING racing rung (the authoritative streaming-rung signal even when the
+  // phase string has not flipped `live` — mirrors renderConfiguredStructure).
+  const hasStreamingRacingRung = (s) => {
+    if (!s || String(s.structure) !== 'racing') return false;
+    const m = racingModel(s);
+    return !!(m && Array.isArray(m.rungs) && m.rungs.some((r) =>
+      r && r.pending && r.live_progress && typeof r.live_progress === 'object'
+      && Object.keys(r.live_progress).length > 0));
+  };
+  if (liveSt && (liveSt.live || hasStreamingRacingRung(liveSt))) return { st: liveSt, source: 'live' };
+
+  // (2) RACING — reconstruct the rung/gate ladder from the per-challenger records
+  // on the bracket (the aggregate field record carries `rounds: []` by design).
+  if (structure === 'racing') {
+    const recon = reconstructRacing(bracket, epochId);
+    if (recon) return { st: recon, source: 'reconstructed' };
+  }
+
+  // (3) the COMPLETED per-tournament record (swiss/elim — or racing when no
+  // per-challenger records reconstruct), already fetched + normalized by the
+  // caller. Null ⇒ no recorded structure for this epoch.
+  if (o.completedRecord) return { st: o.completedRecord, source: 'record' };
+  return { st: null, source: null };
+}
+
 // A stable digest of a structure payload so the gated swap re-renders only
 // on a real change.
 export function structureDigest(st) {
